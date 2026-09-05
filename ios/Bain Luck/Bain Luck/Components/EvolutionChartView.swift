@@ -45,8 +45,13 @@ private struct EvolutionRoundBoundary: Identifiable {
 // MARK: - EvolutionChartView
 
 /// Multi-outcome probability evolution chart with interactive crosshair,
-/// combined probability line, and leaderboard grid. Drop-in replacement for
-/// TournamentChartView with feature parity to the web EvolutionChart.
+/// combined probability line, and leaderboard grid. Feature parity with the web
+/// EvolutionChart.
+///
+/// It replaced `TournamentChartView`, which was deleted along with the RACE
+/// chart's arrival (#2911) after sitting with zero call sites: a dead chart in
+/// a tree whose next job is "every chart becomes a primitive" is a thing
+/// somebody eventually ports.
 struct EvolutionChartView: View {
     let marketId: Int
     var hours: Int = 168

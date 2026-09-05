@@ -300,6 +300,163 @@ class TestResolveDiscoveredSeries:
         assert ("series", "Tennis") in svc.calls
 
 
+class _PerTagService(_FakeService):
+    """A venue that answers for some tags and fails for others.
+
+    `_FakeService`'s `raise_on={"series"}` fails EVERY tag, which is the case
+    the old code already handled: nothing is discovered, so nothing is cached.
+    The dangerous case is asymmetric and needs its own rig.
+    """
+
+    def __init__(self, per_tag_series, fail_tags=(), **kw):
+        super().__init__(**kw)
+        self._per_tag_series = per_tag_series
+        self._fail_tags = set(fail_tags)
+
+    async def get_series(self, category=None, tags=None, limit=200, cursor=None):
+        self.calls.append(("series", tags))
+        if tags in self._fail_tags:
+            raise RuntimeError(f"venue down for {tags}")
+        return [{"ticker": t} for t in self._per_tag_series.get(tags, [])], None
+
+
+class TestAPartialCatalogIsNeverCached:
+    """CERT-963's required repair.
+
+    The healthy 33-Football/27-Tennis split works. What did not: a tag-local
+    Tennis catalog failure beside a successful Football response was saved as a
+    Football-only discovery entry for the production three-hour TTL
+    (`_DISCOVERY_TTL_S = 10800`). Every beat in that window then skipped the US
+    Open doubles and Honey Deuce series — the exact eviction the Football
+    widening was built not to cause, arriving by the cache instead of by
+    `_fair_shares`.
+
+    The old save gate asked only whether the CENSUS was whole. A partial census
+    cannot evict a series (it undercounts open events; selection still sees
+    every ticker). A partial CATALOG can, because a tag that raised contributes
+    no tickers at all and the saved entry reads as "these are the series that
+    exist".
+    """
+
+    @staticmethod
+    def _svc(fail_tags=()):
+        return _PerTagService(
+            per_tag_series={
+                "Tennis": ["KXATPDOUBLES", "KXWTADOUBLES", "KXHONEYDEUCE"],
+                "Football": ["KXNFLRACE", "KXNFLFIRSTTD"],
+            },
+            fail_tags=fail_tags,
+            census={
+                "KXATPDOUBLES": 32, "KXWTADOUBLES": 22, "KXHONEYDEUCE": 7,
+                "KXNFLRACE": 80, "KXNFLFIRSTTD": 16,
+            },
+        )
+
+    def test_tennis_raising_beside_a_healthy_football_is_not_cached(self):
+        """THE guard. Every other test in this file passes with the bug."""
+        svc = self._svc(fail_tags={"Tennis"})
+        saved: list = []
+        selected, receipt = asyncio.run(
+            svc.resolve_discovered_series(save=saved.append)
+        )
+
+        # Preconditions: this beat looks entirely healthy from every angle the
+        # old gate could see. Football answered, the census exhausted, and a
+        # non-empty selection came out — which is exactly why it was cached.
+        assert selected, "precondition: a selection must still be made and USED"
+        assert receipt["census"]["exhausted"] is True, (
+            "precondition: the census must be whole, or the old gate catches "
+            "this for the wrong reason and the test proves nothing"
+        )
+        assert "KXNFLRACE" in {t for t, _ in selected}
+
+        assert saved == [], (
+            "a Football-only catalog was cached for the three-hour TTL — every "
+            "beat until it expires skips the US Open doubles draw"
+        )
+        assert receipt["not_cached"] == "catalog_partial:Tennis"
+
+    def test_the_next_call_re_measures_rather_than_reading_the_gap_back(self):
+        """Not caching is only half of it: the point is the next beat asks
+        again, and gets tennis once the venue is back."""
+        svc = self._svc(fail_tags={"Tennis"})
+        saved: list = []
+        asyncio.run(svc.resolve_discovered_series(save=saved.append))
+        assert saved == []
+
+        # Same service, venue recovered. There is no cache to hand back, so the
+        # caller re-measures and the doubles return the very next beat.
+        svc._fail_tags = set()
+        selected, receipt = asyncio.run(
+            svc.resolve_discovered_series(cached=(saved[0] if saved else None),
+                                          save=saved.append)
+        )
+        assert receipt["source"] == "live", "it must re-measure, not read back"
+        assert "KXATPDOUBLES" in {t for t, _ in selected}
+        assert saved and saved[0]["selected"], "a WHOLE catalog is cached"
+
+    def test_a_whole_catalog_is_still_cached(self):
+        """The repair must not turn the cache off. A beat where every tag
+        answers pays the ~20s measurement once and not every beat."""
+        svc = self._svc()
+        saved: list = []
+        selected, receipt = asyncio.run(
+            svc.resolve_discovered_series(save=saved.append)
+        )
+        assert "not_cached" not in receipt
+        assert saved and saved[0]["selected"]
+        tickers = {t for t, _ in selected}
+        assert "KXATPDOUBLES" in tickers and "KXNFLRACE" in tickers
+
+    def test_completeness_is_recorded_per_tag_not_as_one_flag(self):
+        """`error` was a single string overwritten by the last failing tag, so
+        two tags failing looked like one and nothing said WHICH answered."""
+        svc = self._svc(fail_tags={"Tennis"})
+        _, disc = asyncio.run(
+            svc.discover_series_for_tags(("Tennis", "Football"))
+        )
+        assert disc["complete"] == {"Tennis": False, "Football": True}
+        assert disc["incomplete_tags"] == ["Tennis"]
+        assert "Tennis" in disc["errors"]
+        assert "Football" not in disc["errors"]
+
+    def test_every_tag_failing_is_still_recorded_per_tag(self):
+        svc = self._svc(fail_tags={"Tennis", "Football"})
+        _, disc = asyncio.run(
+            svc.discover_series_for_tags(("Tennis", "Football"))
+        )
+        assert disc["incomplete_tags"] == ["Football", "Tennis"]
+        assert set(disc["errors"]) == {"Tennis", "Football"}
+
+    def test_a_tag_truncated_by_the_deadline_is_incomplete_too(self):
+        """A walk the deadline cut is as partial as one that raised, and it
+        raises nothing — so an exception-only rule misses it entirely."""
+        import time as _time
+
+        svc = self._svc()
+        _, disc = asyncio.run(svc.discover_series_for_tags(
+            ("Tennis", "Football"), deadline=_time.monotonic() - 1.0,
+        ))
+        assert disc["incomplete_tags"] == ["Football", "Tennis"]
+        assert "errors" not in disc, (
+            "nothing raised — which is the whole point: a completeness rule "
+            "keyed on exceptions would call this catalog whole and cache it"
+        )
+
+    def test_the_reason_reaches_a_reader(self):
+        """`catalog` is dropped by the persisted projection, so `not_cached` is
+        the only way this fact reaches `/api/admin/kalshi/scan-report`."""
+        from app.utils.kalshi_series_selection import summarize_discovery_receipt
+
+        svc = self._svc(fail_tags={"Tennis"})
+        _, receipt = asyncio.run(svc.resolve_discovered_series(save=lambda _p: None))
+        out = summarize_discovery_receipt(receipt)
+        assert out["not_cached"] == "catalog_partial:Tennis", (
+            "the beat knows why it could not cache and the artifact cannot "
+            "say so — #2214/#2927 verbatim"
+        )
+
+
 class TestStageDeadlines:
     """#999 and #2214 were the same mistake. Discovery is the third stage."""
 
@@ -538,7 +695,14 @@ class TestWiring:
     def test_discovery_tags_are_measured_before_they_are_added(self):
         # Widening this is the whole knob. It is asserted so that adding a tag
         # is a deliberate act with a test to update, not a one-word edit.
-        assert ka._DISCOVERY_TAGS == ("Tennis",)
+        # Football added 2026-09-05 (lane1b/040) — see FOOTBALL_OPEN_COUNTS for
+        # the venue measurement that chose it over the other seven tags.
+        assert ka._DISCOVERY_TAGS == ("Tennis", "Football")
+
+    def test_the_series_cap_is_the_measured_one(self):
+        # 40 -> 60. Raising it further without re-timing the loop is how the
+        # discovery reserve starts overrunning the market backfill's floor.
+        assert ka._DISCOVERY_MAX_SERIES == 60
 
     def test_discovered_series_fetch_with_nested_markets_page_size(self):
         # 50, and for #995's reason: discovered series are fetched WITH nested

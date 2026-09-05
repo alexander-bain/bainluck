@@ -102,6 +102,7 @@ enum NativeDiscoverDebugState {
 struct DiscoverView: View {
     @StateObject private var vm = DiscoverViewModel()
     @EnvironmentObject private var authManager: AuthManager
+    @EnvironmentObject private var navCoordinator: NavigationCoordinator
     @State private var visibleCount = 20
 
     // First-render attribution (L2-206 Item 3 / L2-210 Item 2 / L2-212 Item 2):
@@ -123,9 +124,28 @@ struct DiscoverView: View {
     // collapse to ~2 cards.
     @State private var dismissedAt: [String: TimeInterval] = Self.loadDismissed()
 
-    // Never let client-side filtering (dismiss + group-collapse) shrink the
-    // rendered feed below this many cards when the API returned more (#1221).
-    static let feedFloor = 8
+    // Never let a SUBTRACTIVE client filter (dismiss, category cooldown) shrink
+    // the rendered feed below this many cards when the API returned more
+    // (#1221). This is SHOWABLE-1 gate G1: "Discover shows the feed the API
+    // sends". `/api/feed?limit=50` serves 50 cards on page one (110 available,
+    // measured 2026-09-04) and a clean install renders all 50 — the defect only
+    // ever appeared on an install with swipe history, where these two stages
+    // were allowed to throw ~84% of a healthy page away.
+    //
+    // Why this is safe to set high: `applyFloor` appends the backfill AFTER the
+    // kept cards, so raising the floor does not resurrect a card into a good
+    // slot — it turns "delete the card" into "sink the card", which is what a
+    // personalization signal is supposed to do. It also can never invent cards
+    // the API did not send (`testShortPageIsNotInflated`).
+    static let feedFloor = 28
+
+    // The group-collapse escape hatch is a DIFFERENT floor and deliberately
+    // stays where it was. `enforceGroupFloor` meets its floor by expanding
+    // futures groups back into singles, so raising it to `feedFloor` would spray
+    // ladder/bucket markets ("Trump 2024: …" × 6) across page one — the exact
+    // thing the feed audit bans (`ladder/bucket-rate@20=0`). Collapsing a ladder
+    // into one card is the feed working, not a filter starving it.
+    static let groupExpansionFloor = 8
     private static let dismissTTL: TimeInterval = 14 * 24 * 3600
     private static let dismissCap = 500
     @State private var scrollTarget: String? = nil
@@ -644,14 +664,18 @@ struct DiscoverView: View {
         return 1
     }
 
-    /// Futures group-collapse must not shrink the visible feed below `feedFloor`
-    /// (#1221). When a page of many small futures groups collapses too far, expand
-    /// the largest prefix/group-id groups (kind == nil — never the API's intentional
-    /// comparison bundles) back into singles until the floor is met or nothing is
-    /// left to expand.
+    /// Futures group-collapse must not shrink the visible feed below
+    /// `groupExpansionFloor` (#1221). When a page of many small futures groups
+    /// collapses too far, expand the largest prefix/group-id groups (kind == nil
+    /// — never the API's intentional comparison bundles) back into singles until
+    /// the floor is met or nothing is left to expand.
+    ///
+    /// Deliberately NOT `feedFloor`: this floor is met by un-collapsing ladders,
+    /// so chasing the G1 card count here would put back exactly the near-
+    /// duplicate cards grouping exists to remove.
     private func enforceGroupFloor(_ items: [DiscoverGroupedItem]) -> [DiscoverGroupedItem] {
         var result = items
-        while result.count < Self.feedFloor {
+        while result.count < Self.groupExpansionFloor {
             let expandable = result.enumerated().filter { entry in
                 if case .group(_, let its, let kind, _) = entry.element {
                     return kind == nil && its.count >= 2
@@ -1265,6 +1289,16 @@ struct DiscoverView: View {
             )
         }
         .navigationDestination(for: Route.self) { RouteDestination(route: $0) }
+        // #2998, second half. `bainluck://daily` and `bainluck://challenge/<code>`
+        // both route to this tab, and Discover never read `pendingRoute` either —
+        // so a shared challenge invite switched to Discover and showed the ordinary
+        // feed. The issue named Browse as the only unreachable tab; it was two.
+        .onChange(of: navCoordinator.pendingRoute) { _, _ in
+            if navCoordinator.selectedTab == .discover,
+               let route = navCoordinator.consumeRoute() {
+                navigationPath.append(route)
+            }
+        }
         }
     }
 

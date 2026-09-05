@@ -130,8 +130,8 @@ describe("the /sports FINAL card", () => {
     // The whole defect in one assertion: `Opened 40/60` could not do this.
     const html = renderFeedCard(KALSHI_FINAL);
 
-    expect(html).toContain("Before the game, the market gave San Diego Padres");
-    expect(html).toContain("Before the game, the market gave Cincinnati Reds");
+    expect(html).toContain("Pre-match probability: San Diego Padres");
+    expect(html).toContain("Pre-match probability: Cincinnati Reds");
   });
 
   it("drops the Opened footnote now that the per-team numbers exist", () => {
@@ -166,29 +166,49 @@ describe("the /sports FINAL card", () => {
     expect(renderFeedCard(KALSHI_FINAL)).not.toContain("Pre-match ·");
   });
 
-  it("says which rung the spoken sentence is quoting, not just the visible label", () => {
-    // The label "Pre-match · books" is the caveat a SIGHTED reader gets. The
-    // sentence beside the number is what everyone else gets, and it used to say
-    // "the market gave" on every card — including the books rung, which is a
-    // sportsbook median and not a market at all. Measured on the served /sports
-    // payload 2026-09-03: 13 of 13 finished cards were the books rung, so the
-    // unlabelled sentence was what a screen-reader user heard every time.
+  it("speaks one venue-free sentence, whichever rung the number came from", () => {
+    // D65 (Alex, 2026-09-04): "Can't we just say 'pre-match odds' or 'pre-match
+    // probability'? Shouldn't reference sportsbooks."
     //
-    // BOTH ARMS. The books arm alone would pass against a card that said
-    // "sportsbooks opened" unconditionally, which is the same defect mirrored.
+    // This test used to assert the OPPOSITE — that the clause forked, saying
+    // "sportsbooks opened" on the books rung and "the market gave" on Kalshi.
+    // That fork was itself a repair: before it, "the market gave" was read out
+    // over a sportsbook median on 13 of 13 finished cards on the served /sports
+    // payload (2026-09-03), which is a false claim about a venue. Alex's answer
+    // removes the claim instead of correcting it — "pre-match probability" is
+    // true of every rung.
+    //
+    // BOTH ARMS, still, for the opposite reason: the point is now that the two
+    // rungs are INDISTINGUISHABLE by ear, so a card that reintroduced a fork in
+    // either direction fails here.
+    const books = renderFeedCard(
+      makeData({
+        opening_odds: { home_probability: 0.6, away_probability: 0.4, favorite: "home" },
+      })
+    );
+    const market = renderFeedCard(KALSHI_FINAL);
+
+    for (const html of [books, market]) {
+      expect(html).toContain("Pre-match probability: San Diego Padres");
+      expect(html).not.toContain("sportsbooks opened");
+      expect(html).not.toContain("the market gave");
+    }
+  });
+
+  it("still carries the rung where a measurement can read it", () => {
+    // Dropping the words must not drop the fact. The venue leaves the SPOKEN
+    // sentence only — `data-prematch-source` and the visible marker are how the
+    // hub, the capture suites and anyone auditing still tell the rungs apart,
+    // and D65 did not ask for those.
     const books = renderFeedCard(
       makeData({
         opening_odds: { home_probability: 0.6, away_probability: 0.4, favorite: "home" },
       })
     );
 
-    expect(books).toContain("Before the game, sportsbooks opened San Diego Padres");
-    expect(books).not.toContain("the market gave");
-
-    expect(renderFeedCard(KALSHI_FINAL)).toContain(
-      "Before the game, the market gave San Diego Padres"
-    );
-    expect(renderFeedCard(KALSHI_FINAL)).not.toContain("sportsbooks opened");
+    expect(books).toContain('data-prematch-source="books"');
+    expect(books).toContain("Pre-match · books");
+    expect(renderFeedCard(KALSHI_FINAL)).toContain('data-prematch-source="kalshi"');
   });
 
   it("prints nothing at all when we hold no pre-match reading", () => {
@@ -250,20 +270,23 @@ describe("the Discover FINAL card", () => {
     expect(html).toContain("Pre-match · books");
   });
 
-  it("and says so in the spoken sentence too, not only the label", () => {
+  it("speaks the same venue-free sentence as /sports, on both rungs", () => {
+    // D65. The two cards are separate components that each built the clause
+    // privately, so "they agree" is a real assertion and not a tautology — the
+    // phrase now has one owner (`PREMATCH_SAID` in `lib/prematchReading`) and
+    // this is the test that notices if one of them stops reading it.
     const books = renderDiscoverCard(
       makeData({
         opening_odds: { home_probability: 0.6, away_probability: 0.4, favorite: "home" },
       })
     );
+    const market = renderDiscoverCard(KALSHI_FINAL);
 
-    expect(books).toContain("Before the game, sportsbooks opened San Diego Padres");
-    expect(books).not.toContain("the market gave");
-
-    expect(renderDiscoverCard(KALSHI_FINAL)).toContain(
-      "Before the game, the market gave San Diego Padres"
-    );
-    expect(renderDiscoverCard(KALSHI_FINAL)).not.toContain("sportsbooks opened");
+    for (const html of [books, market]) {
+      expect(html).toContain("Pre-match probability: San Diego Padres");
+      expect(html).not.toContain("sportsbooks opened");
+      expect(html).not.toContain("the market gave");
+    }
   });
 
   it("shows no strip on a card we hold no reading for", () => {

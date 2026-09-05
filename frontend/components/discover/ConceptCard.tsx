@@ -14,6 +14,7 @@ import Link from "next/link";
 import { buildDiscoverShareUrl } from "@/lib/share";
 import { eventPath } from "@/lib/eventKey";
 import type { FeedConceptData } from "@/lib/types";
+import { conceptHeadlineBout } from "@/lib/eventConceptDisplay";
 import { DismissBtn, ActionBar } from "./shared";
 import { formatConceptMovement } from "./utils";
 
@@ -55,8 +56,12 @@ export function ConceptCard({
   // same way `feedItemSuppressionReason` guards it — the classifier admitted this
   // card on exactly this test, so the renderer must not be laxer than the gate
   // that let it in, or an admitted card can still paint "undefined%".
+  // ux/1070 item 2: the main event of a fight card, as a bout — two names, two
+  // numbers, the date. Same resolver as the Sports-tab card, so the two
+  // surfaces cannot print one fight two ways.
+  const bout = conceptHeadlineBout(data);
   const leader =
-    !whatHit && data.leader && (data.leader.name ?? "").trim() &&
+    !whatHit && !bout && data.leader && (data.leader.name ?? "").trim() &&
     typeof data.leader.probability === "number"
       ? data.leader
       : null;
@@ -137,6 +142,28 @@ export function ConceptCard({
                 both — "settled means settled". Mirrors the native concept card's
                 grammar (name · probability chip · movement · "of N") so the two
                 surfaces print the same fact the same way. */}
+            {bout && (
+              <div className="mt-2 w-full max-w-[260px] space-y-1">
+                {bout.sides.map((side) => (
+                  <div
+                    key={side.name}
+                    className="flex items-center justify-between gap-3"
+                  >
+                    <span className="text-white text-sm font-bold drop-shadow truncate">
+                      {side.name}
+                    </span>
+                    <span className="bg-white/20 text-white text-[11px] font-bold px-2 py-0.5 rounded-full flex-shrink-0 tabular-nums">
+                      {side.percent}%
+                    </span>
+                  </div>
+                ))}
+                {bout.dateLabel && (
+                  <div className="text-white/70 text-[11px] text-center pt-0.5">
+                    {bout.dateLabel}
+                  </div>
+                )}
+              </div>
+            )}
             {leader && (
               <div className="mt-2 flex items-center justify-center flex-wrap gap-1.5">
                 <span className="text-white text-sm font-bold drop-shadow">

@@ -8,7 +8,7 @@ Kalshi markets provide bid/ask spreads and last traded prices.
 import logging
 import os
 from datetime import datetime, timedelta, timezone
-from typing import Callable, Optional, Sequence
+from typing import Callable, Dict, Optional, Sequence
 
 import httpx
 
@@ -284,6 +284,13 @@ _ALWAYS_FETCH_SERIES = {
 # below fetches their markets per-event, lazily + bounded. Small
 # championship series (KXNBA, KXNBAEAST, KXMLBAL…) keep nested.
 _HEAVY_TOKENS = ("GAME", "SPREAD", "TOTAL", "1H", "2H", "WINNER", "SERIES")
+
+#: Pages of `/markets?series_ticker=…` the empty-event backfill will walk for
+#: one series before moving on (#3149). At `limit=1000` this is 10,000 markets;
+#: the largest series measured at the venue on 2026-09-05 (`KXMLBGAME`, every
+#: status) was 1,826 over 2 pages. The cap exists so one pathological series
+#: cannot eat the whole reserve, not because any real one approaches it.
+_BACKFILL_SERIES_MAX_PAGES = 10
 # #999 / Queue #166: fetch the priority (golf) rescue tickers FIRST so
 # they get first claim on the reserved supplementary window. Even with
 # the main-scan cap, the earlier championship/game series could otherwise
@@ -306,15 +313,62 @@ _PRIORITY_RESCUE_PREFIXES = ("KXPGA", "KXLPGA", "KXLIV", "KXDPWORLD")
 # So membership becomes discovered. These constants are the BOUNDS on that
 # discovery, not the membership itself.
 # ---------------------------------------------------------------------------
-#: Tags whose series are discovered. Deliberately one tag: this is the widening
-#: knob, and a tag goes in only once its open-event population has been
-#: measured against the fetch budget. `Sports` in full is 3,648 series and
-#: 1,263 with open events — discovery scoped to the whole category would need
-#: ~380s of paging against a 240s budget, so "discover everything" is not a
-#: braver version of this, it is a beat that finishes nothing.
-_DISCOVERY_TAGS = ("Tennis",)
-#: Hard cap on series one beat may ADD. Today's tennis selection is ~30.
-_DISCOVERY_MAX_SERIES = 40
+#: Tags whose series are discovered. A tag goes in only once its open-event
+#: population has been measured against the fetch budget. `Sports` in full is
+#: ~4,073 series with open events across 13,946 open events — discovery scoped
+#: to the whole category would need ~380s of paging against a 240s budget, so
+#: "discover everything" is not a braver version of this, it is a beat that
+#: finishes nothing.
+#:
+#: **Football added 2026-09-05 (lane1b/040).** Measured at the venue by tag
+#: catalog + one exhausted open-listing census (70 pages, 13,946 events, 22s),
+#: `scripts/census_sports_tag_coverage.py`, all nine SPORTS_TAGS:
+#:
+#:     tag              listed  live  openEv   UNCARRIED  selectable(openEv)
+#:     Football            552   264    2874        2744          40 / 958
+#:     Soccer             1403   580    3243        3243          40 / 390
+#:     Baseball            214    98     883         794          40 / 351
+#:     Basketball          534   138     321         315          40 / 199
+#:     Tennis (today)      140    39     329         300          27 / 179
+#:     Hockey               72    21      78          75          16 /  54
+#:     Golf                118    19      22          21          18 /  21
+#:     Olympics             46     0       0           0           0 /   0
+#:     Winter Olympics       0     0       0           0           0 /   0
+#:
+#: Football is the darkest tag by a wide margin and the one in season: 2,744
+#: open events the venue lists in series the hand list does not name. Soccer
+#: holds more raw events but 2,526 of its 3,243 are `heavy_payload_shape`
+#: (KXMLSGAME, KXLALIGAGAME…) — the #995 population — so its selectable yield is
+#: 390 against Football's 958. Soccer is the natural next widening once the
+#: market backfill's headroom is measured, not this one.
+_DISCOVERY_TAGS = ("Tennis", "Football")
+#: Hard cap on series one beat may ADD, across all tags, split per tag by
+#: `_fair_shares`. Raised 40 → 60 on 2026-09-05, sized by replaying the shipped
+#: per-series loop against the live venue rather than by arithmetic
+#: (`scripts/probe_discovery_fetch_cost.py`). The cost is NOT proportional to
+#: series count — football's nested pages carry 11,239 markets across 44 pages
+#: where tennis's 27 pages carry 815 — so the whole selection was timed:
+#:
+#:     cap 60 (Tennis 27 + Football 33, 64 pages): 10 samples,
+#:         median 16.7s, worst 22.3s, against `_DISCOVERY_RESERVE_S` = 25.0s
+#:     cap 54 (27 + 27, 58 pages): median 16.1s, worst 17.5s
+#:
+#: So 60 fits with the worst observation still inside the reserve. The single
+#: 22.3s outlier was a cold connection pool on the first run; the other nine
+#: samples span 15.8-17.5s. Cost is dominated by the fixed `sleep(0.2)` per page
+#: (12.8s of the 64-page total), which is why adding series is cheaper than the
+#: series count suggests and why the page ceiling matters more than the cap.
+#:
+#: An overrun is survivable, not silent: the loop is deadline-checked per series
+#: AND per page, so it truncates, reports `fetch_truncated_after`, and — because
+#: the tags are interleaved — costs every tag its smallest series rather than one
+#: tag its whole draw. It never eats the market backfill's 45s floor.
+#:
+#: 60 is also the number at which tennis loses nothing. Its selection is 27, so
+#: on an equal split of 30 it releases 3 to Football, which takes 33. Measured:
+#: `selected_per_tag = {'Football': 33, 'Tennis': 27}`, 0 tennis series lost
+#: against the shipped tennis-only selection.
+_DISCOVERY_MAX_SERIES = 60
 #: Refuse a series holding more open events than one beat could drain.
 _DISCOVERY_MAX_OPEN_EVENTS = 100
 #: Events per page for a discovered series. `_MAIN_SCAN_PAGE_LIMIT`'s value and
@@ -569,6 +623,7 @@ class KalshiAPIService(BaseAPIClient):
         event_ticker: Optional[str] = None,
         limit: int = 1000,
         cursor: Optional[str] = None,
+        series_ticker: Optional[str] = None,
     ) -> tuple[list[dict], Optional[str]]:
         """
         Get markets from Kalshi.
@@ -578,6 +633,14 @@ class KalshiAPIService(BaseAPIClient):
             event_ticker: Filter to specific event
             limit: Max results per page (1-1000)
             cursor: Pagination cursor
+            series_ticker: Filter to every event of one series (#3149). The
+                venue has always supported this; we only ever asked one event
+                at a time. Measured 2026-09-05 against the live endpoint:
+                `KXMLBGAME` with no status filter is 1,826 markets over 2 pages
+                in 1.0s, spanning every event of the series and each market
+                carrying its own `event_ticker`. The empty-event backfill was
+                paying one request plus a mandatory 0.3s sleep PER EVENT for
+                the same data.
 
         Returns:
             Tuple of (markets list, next cursor or None)
@@ -589,6 +652,8 @@ class KalshiAPIService(BaseAPIClient):
             params["status"] = status
         if event_ticker:
             params["event_ticker"] = event_ticker
+        if series_ticker:
+            params["series_ticker"] = series_ticker
         if cursor:
             params["cursor"] = cursor
 
@@ -1089,6 +1154,14 @@ class KalshiAPIService(BaseAPIClient):
         here is the venue's own catalog, so a series we have never held is
         exactly as visible as one we have.
 
+        The receipt carries ``by_tag`` — the tickers themselves, per tag, not
+        just a count. Selection needs to know which tag a ticker came from,
+        because the cap is split per tag rather than shared (lane1b/040): a flat
+        list cannot express "tennis keeps its 27", and ranked flat against
+        Football's catalog tennis drops to 3. ``by_tag`` lives in the catalog
+        sub-receipt, which ``summarize_discovery_receipt`` drops, so it costs the
+        persisted ring nothing.
+
         Never raises, for the same reason as the census.
         """
         import asyncio
@@ -1097,12 +1170,27 @@ class KalshiAPIService(BaseAPIClient):
         tickers: list[str] = []
         seen: set[str] = set()
         per_tag: dict[str, int] = {}
+        by_tag: dict[str, list[str]] = {}
         requests = 0
         error: Optional[str] = None
+        # CERT-963's repair. Completeness is PER TAG because the failure is per
+        # tag: this loop swallows a tag's exception and carries on, so a catalog
+        # where Tennis raised and Football answered is indistinguishable, from
+        # the outside, from a catalog where Kalshi genuinely lists no tennis
+        # series. Cached under the second reading, that evicts the US Open
+        # doubles draw for the full three-hour TTL — the exact eviction the
+        # Football widening promised not to cause.
+        #
+        # A tag is complete only if its walk ended because the venue said there
+        # was no more. Three ways it does not: the request raised, the deadline
+        # cut the walk, or the 5-page cap was hit with a cursor still live.
+        complete: dict[str, bool] = {}
+        errors: dict[str, str] = {}
 
         for tag in tags:
             cursor: Optional[str] = None
             page = 0
+            tag_complete = False
             try:
                 while page < 5:
                     if deadline is not None and _time.monotonic() >= deadline:
@@ -1130,16 +1218,38 @@ class KalshiAPIService(BaseAPIClient):
                         if t and t not in seen:
                             seen.add(t)
                             tickers.append(t)
+                            by_tag.setdefault(tag, []).append(t)
                             per_tag[tag] = per_tag.get(tag, 0) + 1
                     page += 1
                     if not cursor:
+                        # The venue said that is all of them. The ONLY way a
+                        # tag's catalog is known to be whole.
+                        tag_complete = True
                         break
             except Exception as e:  # noqa: BLE001 — see docstring
+                errors[tag] = f"{type(e).__name__}: {e}"
                 error = f"{tag}: {type(e).__name__}: {e}"
                 logger.warning("Kalshi series discovery failed for tag %s: %s", tag, e)
-                continue
+            complete[tag] = tag_complete
 
-        receipt = {"tags": list(tags), "per_tag": per_tag, "requests": requests}
+        incomplete = sorted(t for t, ok in complete.items() if not ok)
+        if incomplete:
+            logger.warning(
+                "Kalshi series discovery: catalog INCOMPLETE for %s — this "
+                "measurement must not be cached, or the tags that did answer "
+                "evict the ones that did not for the whole TTL.",
+                ", ".join(incomplete),
+            )
+        receipt = {
+            "tags": list(tags),
+            "per_tag": per_tag,
+            "by_tag": by_tag,
+            "requests": requests,
+            "complete": complete,
+            "incomplete_tags": incomplete,
+        }
+        if errors:
+            receipt["errors"] = errors
         if error:
             receipt["error"] = error
         return tickers, receipt
@@ -1192,8 +1302,13 @@ class KalshiAPIService(BaseAPIClient):
             deadline=deadline, progress_cb=progress_cb,
         )
 
+        # Tagged when the catalog said which tag each ticker came from, so the
+        # cap splits per tag instead of letting the biggest catalog take it all
+        # (lane1b/040). Falls back to the flat list if `by_tag` is missing — a
+        # degraded catalog must still select something.
+        _by_tag = disc_receipt.get("by_tag")
         selected, receipt = select_discovered_series(
-            discovered=discovered,
+            discovered=_by_tag if _by_tag else discovered,
             open_counts=counts,
             guaranteed=_SPORTS_SERIES_TICKERS,
             heavy_tokens=_HEAVY_TOKENS,
@@ -1206,7 +1321,23 @@ class KalshiAPIService(BaseAPIClient):
         receipt["catalog"] = disc_receipt
         receipt["census"] = census_receipt
 
-        if save is not None and census_receipt.get("exhausted") and selected:
+        # CERT-963's repair. The save gate used to ask only whether the CENSUS
+        # was whole. A partial census cannot evict anything — it undercounts
+        # open events, and selection still sees every series. A partial CATALOG
+        # can: a tag whose `/series` call raised contributes no tickers at all,
+        # so the saved entry is "these are the series that exist" for three
+        # hours, and every beat in that window skips the tag outright. Tennis
+        # failing beside a healthy Football is precisely that, and it takes the
+        # US Open doubles draw and Honey Deuce off the site until the TTL runs.
+        #
+        # Not caching costs the next beat ~20s to re-measure. Caching a partial
+        # catalog costs three hours of a missing draw. The trade is not close.
+        _incomplete = list(disc_receipt.get("incomplete_tags") or [])
+        if not census_receipt.get("exhausted"):
+            receipt["not_cached"] = "census_partial"
+        elif _incomplete:
+            receipt["not_cached"] = "catalog_partial:" + ",".join(_incomplete)
+        elif save is not None and selected:
             try:
                 save({"selected": [list(s) for s in selected], "receipt": receipt})
             except Exception:
@@ -1214,8 +1345,6 @@ class KalshiAPIService(BaseAPIClient):
                 # measurement costs the next beat ~20s to re-measure; raising
                 # here would cost it the whole fetch.
                 pass
-        elif not census_receipt.get("exhausted"):
-            receipt["not_cached"] = "census_partial"
 
         return selected, receipt
 
@@ -1469,6 +1598,15 @@ class KalshiAPIService(BaseAPIClient):
                     "source": "failed", "error": f"{type(e).__name__}: {e}",
                 }
                 logger.warning("Kalshi series discovery failed: %s", e)
+
+        # CERT-953: the census count per selected series, used below to say what
+        # each one was SUPPOSED to bring. A cached receipt carries it too, so a
+        # cache-served beat alarms on the same evidence as a live one.
+        _disc_expected: dict = {}
+        try:
+            _disc_expected = dict(_discovery_receipt.get("selected_expected") or {})
+        except Exception:  # noqa: BLE001 — telemetry never breaks the fetch
+            _disc_expected = {}
 
         # main scan → guaranteed floor → discovered → market backfill, each
         # stopping where the next one's floor begins. The arithmetic is a pure
@@ -1744,19 +1882,37 @@ class KalshiAPIService(BaseAPIClient):
         # covered and is empty.
         _disc_added = 0
         _disc_series_fetched = 0
+        # CERT-953: per-SERIES results, because the aggregate cannot carry the
+        # ship. `events_added` sums every selected series AND counts only events
+        # the main/supplementary scan had not already mapped, so it fails in
+        # both directions: a dead KXATPDOUBLES hides behind a live sibling that
+        # added events, and a perfectly healthy doubles fetch whose events the
+        # main scan already held reports zero unique additions and would alarm.
+        # `returned` is the number the VENUE handed back for this series — the
+        # only one of the three that answers "did this draw arrive".
+        _disc_series: dict[str, dict] = {}
         for _dst, _dpages in _discovered_series:
             if _past_disc_fetch_deadline():
                 _discovery_receipt["fetch_truncated_after"] = _disc_series_fetched
+                # Series never attempted are NOT zero-return series; recording
+                # them as such would alarm on the reserve running out, which
+                # `fetch_truncated_after` already says precisely.
                 logger.warning(
                     "Kalshi discovery reserve spent after %d/%d series",
                     _disc_series_fetched, len(_discovered_series),
                 )
                 break
             _progress(f"fetch:disc:{_dst}")
+            _dsr = _disc_series.setdefault(
+                _dst,
+                {"expected": int(_disc_expected.get(_dst) or 0),
+                 "returned": 0, "unique_added": 0, "truncated": False},
+            )
             try:
                 _dcursor = None
                 for _dp in range(_dpages):
                     if _past_disc_fetch_deadline():
+                        _dsr["truncated"] = True
                         break
                     await asyncio.sleep(0.2)
                     _progress(f"fetch:disc:{_dst}:p{_dp}")
@@ -1778,13 +1934,19 @@ class KalshiAPIService(BaseAPIClient):
                         )
                     except Exception:
                         _progress(f"fetch:disc:{_dst}:p{_dp}:parse_timeout")
+                        _dsr["parse_failed"] = True
                         _dparsed = []
                     for parsed_event in _dparsed:
-                        if (
-                            parsed_event
-                            and parsed_event.event_ticker not in all_events
-                        ):
+                        if not parsed_event:
+                            continue
+                        # Counted BEFORE the dedup check: this is what the venue
+                        # listed for this series, which is the question the
+                        # alarm asks. Whether we already had the event is our
+                        # bookkeeping, not the draw's existence.
+                        _dsr["returned"] += 1
+                        if parsed_event.event_ticker not in all_events:
                             all_events[parsed_event.event_ticker] = parsed_event
+                            _dsr["unique_added"] += 1
                             _disc_added += 1
                             # Queue 355 / #1845: `supplementary_events` is one
                             # half of an identity the report CHECKS every beat
@@ -1798,10 +1960,12 @@ class KalshiAPIService(BaseAPIClient):
                         break
                 _disc_series_fetched += 1
             except Exception as e:
+                _dsr["error"] = f"{type(e).__name__}: {e}"
                 logger.debug("Discovered-series fetch for %s failed: %s", _dst, e)
 
         _discovery_receipt["series_fetched"] = _disc_series_fetched
         _discovery_receipt["events_added"] = _disc_added
+        _discovery_receipt["series_results"] = _disc_series
         _tel["series_discovery"] = _discovery_receipt
         if _disc_added:
             logger.info(
@@ -1888,6 +2052,15 @@ class KalshiAPIService(BaseAPIClient):
             empty_events and _past_deadline()
         )
         _tel["market_backfill_filled"] = 0
+        # #3149: what the batched shape cost and whether it served everyone it
+        # asked for. Initialised here, not only inside the branch, so a beat
+        # that never runs the step reports zeroes rather than absence.
+        _tel["market_backfill_series_worked"] = 0
+        _tel["market_backfill_requests"] = 0
+        _tel["market_backfill_unmatched"] = 0
+        # None means "worked the whole list". Anything else is the count it had
+        # ATTEMPTED when the deadline cut it off — the number that was missing.
+        _tel["market_backfill_truncated_after"] = None
         if empty_events and _past_deadline():
             logger.warning(
                 "Kalshi fetch: the empty-event market backfill was SKIPPED "
@@ -1904,38 +2077,120 @@ class KalshiAPIService(BaseAPIClient):
                 "Backfilling markets for %d sports events with 0 nested markets",
                 len(empty_events),
             )
+            # #3149: ask the venue once per SERIES, not once per event.
+            #
+            # The loop this replaces spent one request plus a mandatory 0.3s
+            # sleep on every candidate. Against the 10,901-candidate list of
+            # 2026-09-05 that is 3,270s of sleep alone, inside beats that finish
+            # in 327s, which is why `filled` sat at 367-496 while candidates
+            # climbed past 10,000 — a correlation of -0.869, supply falling as
+            # demand rose. No reserve can fix a per-item cost that exceeds the
+            # whole beat; the cost per item is the bug.
+            #
+            # `/markets?series_ticker=…` returns the markets of EVERY event in a
+            # series, each carrying its own `event_ticker`. Measured directly
+            # against the venue on 2026-09-05: `KXMLBGAME` with no status filter
+            # is 1,826 markets over 2 pages in 1.0s — the whole MLB game series,
+            # for the price the old loop paid for three events.
+            #
+            # Grouping preserves `order_market_backfill_candidates`' priority:
+            # groups are keyed in first-appearance order, so the stripped game
+            # series it promotes stay at the front and a cut still lands on the
+            # accidental tail.
+            _groups: Dict[str, list] = {}
+            for _e in empty_events:
+                _groups.setdefault(event_series_ticker(_e.event_ticker), []).append(_e)
+
             backfilled = 0
-            for _bi, event in enumerate(empty_events):
-                _progress(f"fetch:markets_backfill:{_bi}")
+            _attempted = 0
+            _requests = 0
+            _series_worked = 0
+            #: Candidates whose series answered but whose own event_ticker was
+            #: in none of the markets returned. An aggregate `filled` cannot
+            #: show this: a batch that quietly serves 9 of 10 events reads the
+            #: same as one that serves 9 events. It is the per-item outage the
+            #: batching could introduce and the per-event loop could not.
+            _unmatched = 0
+            for _series, _members in _groups.items():
                 if _past_deadline():
+                    # #2214 follow-up: record the cut, do not just log it. This
+                    # break is how the backfill ends on every beat in the ring,
+                    # and it wrote nothing to telemetry — so the report's only
+                    # deadline field (`skipped_past_deadline`, which covers the
+                    # step never starting) said False and the beat read as if
+                    # the reserved floor were holding with room to spare.
+                    _tel["market_backfill_truncated_after"] = _attempted
                     logger.warning(
                         "Kalshi fetch deadline hit during empty-event backfill "
-                        "(%d/%d done)", backfilled, len(empty_events),
+                        "— attempted %d of %d candidates over %d series in %d "
+                        "requests, filled %d. The remaining %d events keep zero "
+                        "markets and are dropped by `if not event.markets: "
+                        "continue` this beat.",
+                        _attempted, len(empty_events), _series_worked,
+                        _requests, backfilled, len(empty_events) - _attempted,
                     )
                     break
+                _progress(f"fetch:markets_backfill:{_attempted}")
+                if not _series:
+                    # An event with no parseable ticker cannot be asked for by
+                    # either shape. Counted as attempted so the cutoff stays a
+                    # true position in the list.
+                    _attempted += len(_members)
+                    continue
+                _wanted = {(_e.event_ticker or "").upper() for _e in _members}
+                _by_event: Dict[str, list] = {}
                 try:
-                    await asyncio.sleep(0.3)
-                    # #995 attempt-7: bound this fetch too (same hang class).
-                    raw_markets, _ = await asyncio.wait_for(
-                        self.get_markets(
-                            status=None,
-                            event_ticker=event.event_ticker,
-                            limit=200,
-                        ),
-                        timeout=45.0,
-                    )
-                    if raw_markets:
-                        parsed = [self._parse_market(m) for m in raw_markets]
-                        event.markets = [m for m in parsed if m is not None]
-                        if event.markets:
-                            backfilled += 1
+                    _cursor = None
+                    for _page in range(_BACKFILL_SERIES_MAX_PAGES):
+                        await asyncio.sleep(0.3)
+                        # #995 attempt-7: bound this fetch too (same hang class).
+                        raw_markets, _cursor = await asyncio.wait_for(
+                            self.get_markets(
+                                status=None,
+                                series_ticker=_series,
+                                limit=1000,
+                                cursor=_cursor,
+                            ),
+                            timeout=45.0,
+                        )
+                        _requests += 1
+                        for _m in raw_markets or []:
+                            _et = (_m.get("event_ticker") or "").upper()
+                            if _et in _wanted:
+                                _by_event.setdefault(_et, []).append(_m)
+                        if not _cursor or not raw_markets:
+                            break
+                        # Every candidate in this series is served; the rest of
+                        # the series is somebody else's history.
+                        if _wanted <= set(_by_event):
+                            break
+                        if _past_deadline():
+                            break
                 except Exception as e:
                     logger.warning(
-                        "Failed to backfill markets for %s: %s",
-                        event.event_ticker, e,
+                        "Failed to backfill markets for series %s (%d events): "
+                        "%s", _series, len(_members), e,
                     )
-            logger.info("Backfilled markets for %d events", backfilled)
+                for _e in _members:
+                    _raws = _by_event.get((_e.event_ticker or "").upper())
+                    if not _raws:
+                        _unmatched += 1
+                        continue
+                    parsed = [self._parse_market(_m) for _m in _raws]
+                    _e.markets = [m for m in parsed if m is not None]
+                    if _e.markets:
+                        backfilled += 1
+                _attempted += len(_members)
+                _series_worked += 1
+            logger.info(
+                "Backfilled markets for %d events across %d series in %d "
+                "requests (%d candidates attempted, %d unmatched)",
+                backfilled, _series_worked, _requests, _attempted, _unmatched,
+            )
             _tel["market_backfill_filled"] = backfilled
+            _tel["market_backfill_series_worked"] = _series_worked
+            _tel["market_backfill_requests"] = _requests
+            _tel["market_backfill_unmatched"] = _unmatched
             # Re-count: the backfill's whole job is to move events OUT of this
             # bucket, so reporting the pre-backfill number would credit it with
             # work it did not do.

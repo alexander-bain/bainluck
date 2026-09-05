@@ -743,15 +743,20 @@ async def _shared_redis_client() -> Any:
 
 async def _read_cross_worker(
     namespace: str, key: tuple, ttl_s: float
-) -> tuple[bool, Any]:
-    """Return `(hit, value)` from the Redis tier. Never raises.
+) -> tuple[bool, Any, float]:
+    """Return `(hit, value, age_s)` from the Redis tier. Never raises.
 
     Bounded, and every failure mode — disabled, no client, stall, malformed
-    envelope, wrong namespace/key, too old — returns `(False, None)`, i.e. the
-    caller builds exactly as it does today.
+    envelope, wrong namespace/key, too old — returns `(False, None, 0.0)`, i.e.
+    the caller builds exactly as it does today.
+
+    `age_s` is how old the artifact ALREADY was when this worker read it, and it
+    is returned rather than discarded because the caller promotes the value into
+    the local tier. A promotion that forgets the age restarts the TTL (LAT-P229)
+    — see the promotion site.
     """
     if not cross_worker_enabled():
-        return False, None
+        return False, None, 0.0
     from app.utils import request_cache as _rc
 
     try:
@@ -761,7 +766,7 @@ async def _read_cross_worker(
     except Exception:
         logger.debug("shared build: no redis client", exc_info=True)
         _stats["cross_worker_failures"] += 1
-        return False, None
+        return False, None, 0.0
 
     redis_key = redis_key_for(namespace, key)
     result = await _rc.bounded_redis_call(
@@ -769,42 +774,42 @@ async def _read_cross_worker(
     )
     if result.is_failure:
         _stats["cross_worker_failures"] += 1
-        return False, None
+        return False, None, 0.0
     if not result.is_ok:
         _stats["cross_worker_misses"] += 1
-        return False, None
+        return False, None, 0.0
 
     raw = wire_decode(result.value)
     if raw is None:
         _stats["cross_worker_failures"] += 1
-        return False, None
+        return False, None, 0.0
 
     try:
         envelope = json.loads(raw)
     except (ValueError, TypeError):
         _stats["cross_worker_failures"] += 1
-        return False, None
+        return False, None, 0.0
     if not isinstance(envelope, dict) or envelope.get("v") != 1:
         _stats["cross_worker_failures"] += 1
-        return False, None
+        return False, None, 0.0
 
     # A digest is a hash. Identity is the stored key repr, checked here, so a
     # collision between two distinct cache keys can only cost a rebuild.
     if envelope.get("ns") != namespace or envelope.get("k") != repr(key):
         _stats["cross_worker_misses"] += 1
-        return False, None
+        return False, None, 0.0
 
     stored_wall = envelope.get("stored_wall")
     if not isinstance(stored_wall, (int, float)) or isinstance(stored_wall, bool):
         _stats["cross_worker_failures"] += 1
-        return False, None
+        return False, None, 0.0
     # Wall clock, because L1's monotonic clock means nothing in the process that
     # wrote this. A negative age is a writer whose clock runs ahead: the entry is
     # YOUNGER than it looks, so clamping to 0 is the conservative reading.
     age_s = max(0.0, time.time() - float(stored_wall))
     if age_s > ttl_s:
         _stats["cross_worker_misses"] += 1
-        return False, None
+        return False, None, 0.0
 
     try:
         value = decode_shared_payload(envelope["payload"])
@@ -813,10 +818,10 @@ async def _read_cross_worker(
             "shared build: undecodable payload for namespace=%s — building", namespace
         )
         _stats["cross_worker_failures"] += 1
-        return False, None
+        return False, None, 0.0
 
     _stats["cross_worker_hits"] += 1
-    return True, value
+    return True, value, age_s
 
 
 async def _publish_cross_worker(
@@ -980,11 +985,22 @@ async def get_or_build(
         # against a hit. A cold worker (fresh dyno, restarted worker, or simply
         # one of the other `WEB_CONCURRENCY` processes) reaches the artifact
         # here instead of rebuilding it.
-        ok, value = await _read_cross_worker(namespace, key, _ttl)
+        ok, value, age_s = await _read_cross_worker(namespace, key, _ttl)
         if ok:
             # Promote into L1 so this worker's NEXT request skips the hop too.
+            #
+            # BACKDATED BY THE AGE IT ARRIVED WITH (LAT-P229). Storing `_clock()`
+            # here — which is what this line did — reset the artifact's age to
+            # zero, so an entry read from Redis at 59s under a 60s TTL got a
+            # second full TTL locally and the real staleness bound was 2 x TTL.
+            # The promotion is still right; only the timestamp was.
+            #
+            # `age_s` is a DURATION measured on the wall clock, and `_clock()` is
+            # monotonic. Subtracting one from the other is sound because only the
+            # difference is ever read (`_read_fresh` compares `now - stored_at`),
+            # and durations are the same quantity on both clocks.
             entries = _store.setdefault(namespace, {})
-            entries[key] = (_clock(), copy.deepcopy(value))
+            entries[key] = (_clock() - age_s, copy.deepcopy(value))
             _evict_if_needed(entries, namespace)
             _note_reuse(namespace, reuse_sink, SHARED_TIER_CROSS_WORKER)
             return value

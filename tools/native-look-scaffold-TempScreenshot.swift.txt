@@ -1,0 +1,100 @@
+// REFERENCE COPY — not compiled from here. Proved working 2026-09-04 (native/009).
+//
+// Copy to `ios/Bain Luck/Bain Luck/Utilities/TempScreenshot.swift`, add the two hooks
+// listed at the bottom, build, shoot, then DELETE the file and revert the hooks.
+// Residue grep:  grep -rn "LOOK SCAFFOLD\|TempScreenshot\|temp_screenshot" "ios/Bain Luck/"
+//
+// Kept as .txt on purpose: a .swift file anywhere under the repo risks being swept into a
+// file-system-synchronized target (objectVersion = 77 — filesystem presence IS membership).
+
+// LOOK SCAFFOLD — TEMPORARY. Delete before commit.
+import Foundation
+import SwiftUI
+
+enum TempScreenshot {
+    private static let d = UserDefaults.standard
+
+    /// Suppresses the notification permission alert, which otherwise covers the
+    /// middle of every shot 5s after launch and survives app termination.
+    static var quiet: Bool { d.bool(forKey: "temp_screenshot_quiet") }
+
+    static var tab: AppTab? {
+        switch d.string(forKey: "temp_screenshot_tab") {
+        case "discover": return .discover
+        case "sports": return .feed
+        case "browse": return .leagues
+        case "search": return .search
+        case "mystuff": return .myStuff
+        default: return nil
+        }
+    }
+
+    static var hubSlug: String? { d.string(forKey: "temp_screenshot_hub") }
+    static var hubName: String { d.string(forKey: "temp_screenshot_hub_name") ?? "US Open 2026" }
+    static var eventID: Int? {
+        let v = d.integer(forKey: "temp_screenshot_event")
+        return v > 0 ? v : nil
+    }
+
+    /// 0 = top, 1 = bottom.
+    static var scrollFraction: CGFloat? {
+        guard d.object(forKey: "temp_screenshot_scroll") != nil else { return nil }
+        return CGFloat(d.double(forKey: "temp_screenshot_scroll"))
+    }
+
+    /// Published from `Bain_LuckApp`'s `.task`, after a delay, so the observers
+    /// are mounted and see a real change. Route wins over a bare tab.
+    @MainActor
+    static func seed(_ nav: NavigationCoordinator) async {
+        guard tab != nil || hubSlug != nil || eventID != nil else { return }
+        try? await Task.sleep(nanoseconds: 2_500_000_000)
+        if let slug = hubSlug {
+            nav.navigate(to: .tournamentHub(slug: slug, name: hubName), tab: .feed)
+        } else if let id = eventID {
+            nav.navigate(to: .eventDetail(id: id), tab: .feed)
+        } else if let tab {
+            nav.selectedTab = tab
+        }
+    }
+}
+
+/*
+HOOK 1 — Bain_LuckApp.swift, inside the existing `.task { ... }` on ContentView:
+
+                    NotificationManager.shared.navCoordinator = navCoordinator
+                    if !TempScreenshot.quiet {                       // LOOK SCAFFOLD — TEMPORARY
+                        NotificationManager.shared.requestPermissionAfterDelay()
+                    }
+                    ...
+                    await TempScreenshot.seed(navCoordinator)        // LOOK SCAFFOLD — TEMPORARY
+
+HOOK 2 (only if you need to scroll) — wrap the target ScrollView's content:
+
+                ScrollViewReader { proxy in                          // LOOK SCAFFOLD — TEMPORARY
+                ScrollView {
+                    <content>
+                        .id("surface")                               // LOOK SCAFFOLD — TEMPORARY
+                }
+                .onAppear {                                          // LOOK SCAFFOLD — TEMPORARY
+                    guard let f = TempScreenshot.scrollFraction else { return }
+                    Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 2_000_000_000)   // 4s on Discover
+                        proxy.scrollTo("surface", anchor: UnitPoint(x: 0, y: f))
+                    }
+                }
+                }
+
+DiscoverView already has a ScrollViewReader at the LazyVGrid — reuse that `proxy`, put the
+`.id` and `.onAppear` on the grid, and use a 4s sleep (it paginates).
+
+SHOOT:
+  UDID=76D961F0-8575-479F-ABCE-652D8A79DBF9        # iPhone 17 — PIN IT, `booted` picks the iPad
+  xcrun simctl shutdown <iPad UDID>
+  xcrun simctl install "$UDID" ".../Debug-iphonesimulator/Bain Luck.app"
+  xcrun simctl terminate "$UDID" com.bainluck.Bain-Luck
+  xcrun simctl launch "$UDID" com.bainluck.Bain-Luck \
+      -temp_screenshot_quiet YES -discover_onboarded YES -bainluck_telemetry_consent none \
+      -temp_screenshot_hub us-open -temp_screenshot_scroll 0.8
+  sleep 15
+  xcrun simctl io "$UDID" screenshot out.png
+*/

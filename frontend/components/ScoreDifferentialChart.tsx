@@ -16,7 +16,7 @@ import {
 import { format, parseISO } from "date-fns";
 import { makeEnsurePoint, fillMinuteGaps } from "@/lib/chartTimeline";
 import { sourceLabel } from "@/lib/sourceColors";
-import { sportVocab } from "@/lib/marketMapUtils";
+import { sportVocab, playedCountAbsence } from "@/lib/marketMapUtils";
 import type {
   OddsHistoryPoint,
   BookmakerHistoryPoint,
@@ -265,12 +265,20 @@ export default function ScoreDifferentialChart({
     (filteredScoreHistory.length > 0 ||
       filteredEspnHistory.some((p) => p.home_score != null && p.away_score != null));
 
-  /** The sentence the chart owes a reader whose actual line is missing. */
+  /**
+   * The sentence the chart owes a reader whose actual line is missing.
+   *
+   * #3136: the claim itself comes from `playedCountAbsence` — shared with the
+   * Games map's subtitle a few hundred pixels down the same page, because the
+   * two are missing the same number for the same reason and a reader who is
+   * told "not captured YET" here and "did not record" there learns to trust
+   * neither. Only the wrapping sentence is this widget's own.
+   */
   const unitMismatchNote = (() => {
     if (scoreboardCountsTheUnit) return null;
     const vocab = sportVocab(sportKey);
     if (!vocab.scoreboardUnit) return null;
-    return `Played ${vocab.unit} are not captured yet — the scoreboard reports ${vocab.scoreboardUnit}. The line below is the books' projected ${vocab.unitSingular} margin.`;
+    return `The scoreboard reports ${vocab.scoreboardUnit}, so ${playedCountAbsence(vocab.unit, isClosed)}. The line below is the books' projected ${vocab.unitSingular} margin.`;
   })();
 
   // Build chart data by merging projected and actual score data on timeline.

@@ -28,6 +28,15 @@ import {
   dataForPrincipal,
 } from "@/lib/myStuffIdentity";
 import { classifyMyStuffOutcome, reportMyStuffTelemetry } from "@/lib/myStuffTelemetry";
+import {
+  PROGRESSION_STAGES,
+  detectMarketTypeFromName,
+  extractMarketType,
+} from "@/lib/myStuffProgression";
+import { groupAwardRows, type AwardNominee } from "@/lib/myStuffAwards";
+import { MY_STUFF_FEED_PARAMS, followedSportFutures } from "@/lib/myStuffSections";
+import { feedItemHasRenderableContent } from "@/components/discover/utils";
+import EntityImage from "@/components/EntityImage";
 import { eventSectionKey, isSuspendedStatus, liveSectionTitle } from "@/lib/eventState";
 
 export default function MyStuffPage() {
@@ -152,7 +161,23 @@ function MyTeamsFeed({ principal }: { principal: string }) {
     myStuffKey(principal, "feed"),
     async () => {
       const t0 = typeof performance !== "undefined" ? performance.now() : 0;
-      const data = await fetchFeed({ limit: 100, my_teams_only: true, include_futures: false });
+      // FUTURES ARE ON, and the flag's history is the reason this line needs a
+      // comment. `include_futures: false` was added in Feb 2026 with the layout
+      // redesign that moved team odds to `/api/feed/my-team-futures`: once that
+      // endpoint owned them, the feed's futures half was pure duplication and
+      // pure cost, so it was switched off.
+      //
+      // ux/1070 item 5 makes it not duplication. A followed sport with no teams
+      // — golf, tennis — is admitted by `_score_futures` and by nothing else;
+      // `my-team-futures` cannot serve it, because there is no team to hang it
+      // off. With the flag off, that whole admission path is unreachable and
+      // the ship is invisible, which is exactly how it was first shipped and
+      // caught (CERT-942). The page-side dedupe below is what keeps the team
+      // half from printing twice now that it arrives again.
+      //
+      // The params are imported, not written here, so the request test asserts
+      // against the object this page actually sends.
+      const data = await fetchFeed(MY_STUFF_FEED_PARAMS);
       networkMsRef.current =
         (typeof performance !== "undefined" ? performance.now() : 0) - t0;
       return bindToPrincipal(principal, data);
@@ -231,15 +256,47 @@ function MyTeamsFeed({ principal }: { principal: string }) {
       .filter((e): e is Event => e !== undefined);
   }, [feedData, fetchedPinnedEvents, pinnedIds]);
 
-  // Pinned futures
-  const feedFuturesIds = useMemo(() => {
-    if (!feedData) return new Set<number>();
-    return new Set(
-      feedData.items
-        .filter(i => i.type === "futures")
-        .map(i => (i.data as FeedFuturesData).id)
-    );
-  }, [feedData]);
+  // ux/1070 item 5: the markets that arrived because of a SPORT follow rather
+  // than a team follow — golf and tennis, which have no team block to live in.
+  // Computed HERE, above the pinned-futures dedupe, because that dedupe has to
+  // ask "will the page render this from the feed?" and the answer is this list.
+  //
+  // `feedItemHasRenderableContent` is the SAME fail-closed guard `FeedCard`
+  // applies at its own leaf (L2-215 / #1486), applied here so the two agree. A
+  // futures item with no `top_outcomes` and no settled reading makes `FeedCard`
+  // return `null`, so counting it here would print "Your Sports This Week 5"
+  // above a grid holding three cards — a heading and a count that describe
+  // markets nobody can see. It is not hypothetical for this section: six of the
+  // eighteen in-window golf markets on production carry zero outcomes.
+  //
+  // The partition itself stays in `lib/myStuffSections` and stays pure — it is
+  // about sport SHAPE. Whether a card can draw is a rendering question and is
+  // composed here, where the renderer is.
+  const followedSportItems = useMemo(
+    () =>
+      feedData
+        ? followedSportFutures(feedData.items).filter(feedItemHasRenderableContent)
+        : [],
+    [feedData],
+  );
+
+  // Pinned futures.
+  //
+  // THE SET IS WHAT THE PAGE ACTUALLY RENDERS FROM THE FEED, not every futures
+  // item in it — and the distinction only started to matter when futures were
+  // switched back on above. A pinned market in this set is deliberately NOT
+  // re-fetched, because it will already be drawn once in "Your Sports This
+  // Week"; drawing it in Pinned as well is the double-print this guards.
+  //
+  // Reading it as "every futures item" instead would silently DELETE pinned
+  // team-sport markets: the feed now carries them again, so they would be
+  // skipped here as though something else were drawing them, while the section
+  // loop below drops every futures item and `followedSportFutures` keeps only
+  // the non-team sports. Nothing would draw them at all.
+  const feedFuturesIds = useMemo(
+    () => new Set(followedSportItems.map(i => (i.data as FeedFuturesData).id)),
+    [followedSportItems],
+  );
 
   const missingPinnedFuturesIds = useMemo(() => {
     return pinnedFuturesIds.filter(id => !feedFuturesIds.has(id));
@@ -270,7 +327,11 @@ function MyTeamsFeed({ principal }: { principal: string }) {
 
     for (const item of feedData.items) {
       if (item.type === "futures") {
-        // Skip futures from feed — team futures section handles them
+        // Team-sport futures arrive again — merged, laddered and deduped across
+        // sources — from `/api/feed/my-team-futures`, so they are skipped here.
+        // A FOLLOWED sport with no teams (golf, tennis) has no team block to
+        // arrive in and gets its own section below; dropping it here would
+        // throw away a market the server admitted on purpose (ux/1070 item 5).
         continue;
       }
       if (item.type === "tournament") {
@@ -342,7 +403,8 @@ function MyTeamsFeed({ principal }: { principal: string }) {
   const hasEvents = feedSections.length > 0;
   const hasFutures = Boolean(teamFuturesData && teamFuturesData.items.length > 0);
   const hasPinned = pinnedEvents.length > 0 || pinnedFutures.length > 0;
-  const hasContent = hasEvents || hasFutures || hasPinned;
+  const hasFollowedSport = followedSportItems.length > 0;
+  const hasContent = hasEvents || hasFutures || hasPinned || hasFollowedSport;
 
   // ---- Attribution (L2-217 Item 3 / C88) ------------------------------------
   // Two distinct milestones, both hook-ordered ABOVE every conditional return.
@@ -350,7 +412,9 @@ function MyTeamsFeed({ principal }: { principal: string }) {
   // fires only once a real card is actually committed to the DOM. An empty
   // success, a required failure, or a superseded identity therefore reports a
   // classified outcome but never a first-card time.
-  const requiredRenderableCount = feedSections.reduce((n, s) => n + s.items.length, 0);
+  const requiredRenderableCount =
+    feedSections.reduce((n, s) => n + s.items.length, 0) +
+    followedSportItems.length;
   const requiredSettled = Boolean(feedData) || Boolean(feedError);
   const outcomeClass = classifyMyStuffOutcome({
     identityReady: true,
@@ -528,6 +592,39 @@ function MyTeamsFeed({ principal }: { principal: string }) {
                 </section>
               ))}
 
+              {/* ux/1070 item 5 — the sports you follow that have no teams.
+                  A PGA follow used to reach this page as a single tournament
+                  card with four names on it; the tournament's own grid
+                  (Winner · Top 5 · Top 10 · Top 20 · Make the Cut) was in the
+                  database and had nowhere to be rendered. */}
+              {hasFollowedSport && (
+                <section>
+                  <div className="flex items-center gap-2 mb-3">
+                    <span className="text-sm">&#127937;</span>
+                    <h2 className="text-sm font-semibold text-text-primary">
+                      Your Sports This Week
+                    </h2>
+                    <span className="text-[11px] text-text-muted bg-surface-elevated px-1.5 py-0.5 rounded-full font-medium">
+                      {followedSportItems.length}
+                    </span>
+                  </div>
+                  <div
+                    className="grid gap-3"
+                    style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 320px), 1fr))" }}
+                  >
+                    {followedSportItems.map((item) => (
+                      <FeedCard
+                        key={`my-sport-${(item.data as FeedFuturesData).id}`}
+                        item={item}
+                        category={
+                          (item.data as FeedFuturesData).llm_sport_category ?? "other"
+                        }
+                      />
+                    ))}
+                  </div>
+                </section>
+              )}
+
               {/* Your Teams' Odds Section */}
               {hasFutures && (
                 <TeamFuturesSection
@@ -576,35 +673,6 @@ interface MergedTeamFuture {
   bestChange: number | null;
   /** Extracted market_type from canonical_market_key (e.g., "championship", "make_playoffs"). */
   marketType: string | null;
-}
-
-// Playoff progression stages — order determines funnel display.
-// Labels match ProgressionLadder demo style (short, no "Make"/"Win" prefix).
-const PROGRESSION_STAGES: Record<string, { order: number; label: string }> = {
-  make_playoffs: { order: 1, label: "Playoffs" },
-  division_winner: { order: 2, label: "Division" },
-  conference_winner: { order: 3, label: "Conf Finals" },
-  championship: { order: 4, label: "Champion" },
-};
-
-/** Extract market_type from canonical_market_key (format: sport:league:type:season). */
-function extractMarketType(key: string | null | undefined): string | null {
-  if (!key) return null;
-  const parts = key.split(":");
-  return parts.length >= 3 ? parts[2] : null;
-}
-
-/**
- * Detect market type from market name when canonical_market_key is missing.
- * Mirrors backend _MARKET_TYPE_PATTERNS in futures_categorization.py.
- */
-function detectMarketTypeFromName(name: string): string | null {
-  const n = name.toLowerCase();
-  if (/make.*playoffs|playoffs.*qualification|will make.*playoffs/i.test(n)) return "make_playoffs";
-  if (/division\s*(winner|champion|title)|\b(afc|nfc|al|nl)\s+(east|west|north|south|central)\b/i.test(n)) return "division_winner";
-  if (/conference\s*(winner|champion|title|finals)|\b(afc|nfc)\s+(champion|winner)\b/i.test(n) && !/seed|#\d|mvp/i.test(n)) return "conference_winner";
-  if (/champion(ship)?\s*(winner|20\d{2})|win.*championship|nba\s+champion|nfl\s+champion|mlb\s+champion|nhl\s+champion|world\s+series|super\s+bowl|stanley\s+cup/i.test(n)) return "championship";
-  return null;
 }
 
 /** Convert hex color (e.g. "1D428A" or "#1D428A") to RGB string (e.g. "29, 66, 138"). */
@@ -982,7 +1050,7 @@ function TeamFuturesSection({
       {(displayedAwards.length > 0 || displayedOther.length > 0) && (
         <div className="bg-surface-card border border-surface-border rounded-card overflow-hidden">
           {displayedAwards.length > 0 && (
-            <MergedFuturesGroup label="Awards & Players" items={displayedAwards} />
+            <AwardsGroup items={displayedAwards} />
           )}
           {displayedOther.length > 0 && (
             <MergedFuturesGroup
@@ -1013,6 +1081,122 @@ function TeamFuturesSection({
 // ---------------------------------------------------------------------------
 // Flat items (awards, other) — individual rows with cross-source merging
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Awards & Players — ux/1070 item 4
+//
+// The award is a HEADING and the nominees are rows under it. Before this, the
+// three Red Sox names on the AL MVP market were three rows each repeating "AL
+// MVP Winner? · 2026", each wearing the team crest and none wearing a face.
+// The card contract (#2910) row is: the nominee, the number, the movement.
+// ---------------------------------------------------------------------------
+
+function AwardsGroup({ items }: { items: MergedTeamFuture[] }) {
+  const groups = useMemo(
+    () =>
+      groupAwardRows(
+        items.map((m) => ({
+          key: `${m.primary.market_id}-${m.primary.outcome_id}`,
+          marketId: m.primary.market_id,
+          marketName: m.primary.market_name || "",
+          outcomeName: m.primary.outcome_name || "",
+          teamName: m.primary.matched_team.name || "",
+          seasonLabel: deriveSeasonYear(m.primary),
+          probability: m.sources.length > 1 ? m.avgProbability : m.primary.probability,
+          change: m.bestChange,
+          rank: m.primary.rank,
+          totalOutcomes: m.primary.total_outcomes,
+          sources: m.sources.map((s) => ({
+            source: s.source,
+            probability: s.probability,
+          })),
+        })),
+      ),
+    [items],
+  );
+
+  return (
+    <div>
+      <p className="text-[10px] uppercase tracking-widest text-text-muted px-3 pt-2.5 pb-1">
+        Awards &amp; Players
+      </p>
+      {groups.map((group) => (
+        <div key={group.marketId} className="border-t border-surface-border/40">
+          <Link
+            href={`/futures/${group.marketId}`}
+            className="flex items-baseline gap-1.5 px-3 pt-2 pb-1 hover:bg-surface-elevated/50 transition-colors"
+          >
+            <span className="text-xs font-semibold text-text-primary">
+              {group.title}
+            </span>
+            {group.seasonLabel && (
+              <span className="text-[11px] text-text-muted">
+                {group.seasonLabel}
+              </span>
+            )}
+          </Link>
+          <div className="divide-y divide-surface-border/40">
+            {group.nominees.map((nominee) => (
+              <AwardNomineeRow key={nominee.key} nominee={nominee} />
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function AwardNomineeRow({ nominee }: { nominee: AwardNominee }) {
+  const pct =
+    nominee.probability !== null ? Math.round(nominee.probability * 100) : null;
+  const change = nominee.change;
+  const showChange =
+    change !== null && change !== 0 && Math.abs(change) >= 0.001;
+
+  return (
+    <Link
+      href={`/futures/${nominee.marketId}`}
+      className="flex items-center gap-2.5 px-3 py-2 hover:bg-surface-elevated/50 transition-colors"
+    >
+      {/* The nominee's own face. `showsFace` is false for a team-named outcome
+          ("Boston" on Best Record), which keeps its crest. */}
+      {nominee.showsFace ? (
+        <EntityImage
+          type="wikipedia"
+          name={nominee.outcomeName}
+          size={24}
+          className="flex-shrink-0 rounded-full"
+        />
+      ) : (
+        <div className="w-6 h-6 flex-shrink-0 rounded-full bg-surface-elevated" />
+      )}
+      <p className="flex-1 min-w-0 text-sm text-text-primary truncate">
+        {nominee.outcomeName}
+      </p>
+      {nominee.rank && nominee.totalOutcomes && (
+        <span className="text-[11px] text-text-muted flex-shrink-0 tabular-nums">
+          #{nominee.rank} of {nominee.totalOutcomes}
+        </span>
+      )}
+      <span className="text-sm font-bold text-text-primary font-mono tabular-nums flex-shrink-0 w-10 text-right">
+        {pct !== null ? `${pct}%` : "-"}
+      </span>
+      <span
+        className={`text-[11px] font-medium flex-shrink-0 w-11 text-right ${
+          showChange
+            ? change! > 0
+              ? "text-accent-live"
+              : "text-accent-danger"
+            : "text-transparent"
+        }`}
+      >
+        {showChange
+          ? `${change! > 0 ? "↑" : "↓"}${Math.abs(change! * 100).toFixed(1)}%`
+          : " "}
+      </span>
+    </Link>
+  );
+}
 
 function MergedFuturesGroup({
   label,

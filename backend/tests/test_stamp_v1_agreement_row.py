@@ -27,7 +27,10 @@ the miss by where it falls against our own inventory, publishes
   state 691 production rows are in today, with zero anchors between them;
 * a column write surviving an anchor refusal, which would leave a row that says
   linked and resolves nothing;
-* a failed read publishing a percentage.
+* a failed read publishing a percentage;
+* the agreement row's denominator being drawn from the stamper's write window,
+  which silently subtracts every game of ours past the edge of a rolling
+  schedule from the number that governs a flip (CERT-962).
 """
 
 from __future__ import annotations
@@ -93,11 +96,24 @@ class RecordingSession:
         self.commits = 0
         self.rollbacks = 0
         self.updates: list[dict] = []
+        #: The bounds of every CANDIDATES read, in order. The task now makes two
+        #: with DIFFERENT bounds — the narrow one it writes ids over and the wider
+        #: one it measures the agreement row over — and a fake that handed both
+        #: the same rows is what let CERT-962's defect pass a green suite.
+        self.candidate_windows: list[tuple[datetime, datetime]] = []
 
     async def execute(self, statement, params=None):
         sql = str(statement)
         if sql == task.CANDIDATES:
-            return FakeResult(self._candidates)
+            params = params or {}
+            start, end = params["window_start"], params["window_end"]
+            self.candidate_windows.append((start, end))
+            # Honour the bounds, exactly as `WHERE commence_time BETWEEN` does.
+            # A fake that ignores the window it was handed cannot tell a query
+            # that reads our whole horizon from one that reads a slice of it.
+            return FakeResult(
+                [r for r in self._candidates if r[3] is not None and start <= r[3] <= end]
+            )
         if sql == task.SET_FIXTURE_ID:
             self.updates.append(dict(params or {}))
             return FakeResult(rowcount=self._update_rowcount)
@@ -432,30 +448,44 @@ async def test_our_row_and_their_contest_both_get_a_receipt_when_the_clock_disag
     drive,
 ):
     """The five 04:00Z rows, in miniature: the stamper refuses to write and the
-    agreement row still calls it one game, off by hours."""
+    agreement row still calls it one game, off by hours.
+
+    TWO games, not one, and the second is not decoration. The disagreeing row is
+    20 hours from its contest, so it is only a stamping candidate at all if the
+    write window is wider than 20 hours — which in production it always is (1404
+    NHL fixtures spanning September to April) and in a one-fixture miniature it
+    never is. A single-fixture version of this test passes the row to the
+    agreement row and never to the stamper, and would therefore go green on a
+    stamper that had stopped receipting entirely.
+    """
     puck_drop = datetime(2026, 10, 2, 0, 0, tzinfo=timezone.utc)
     ours_at = datetime(2026, 10, 1, 4, 0, tzinfo=timezone.utc)  # midnight Eastern
+    opener = datetime(2026, 9, 30, 23, 0, tzinfo=timezone.utc)
     fixtures = [
+        _fixture("652870", "Boston Bruins", "Buffalo Sabres", opener, stats_id="68970"),
         _fixture(
             "652878", "Minnesota Wild", "Nashville Predators", puck_drop, stats_id="68976"
-        )
+        ),
     ]
-    rows = [_candidate(15168041, "Minnesota Wild", "Nashville Predators", ours_at)]
+    rows = [
+        _candidate(15168040, "Boston Bruins", "Buffalo Sabres", opener),
+        _candidate(15168041, "Minnesota Wild", "Nashville Predators", ours_at),
+    ]
     summary, session, anchors = await drive(fixtures, rows, spec=task.NHL)
 
-    # The stamper writes nothing and says so from both ends.
-    assert summary["stamped"] == 0
-    assert session.updates == []
-    assert anchors == []
+    # The opener stamps; the 04:00Z row does not, and says so from both ends.
+    assert summary["stamped"] == 1
+    assert [u["event_id"] for u in session.updates] == [15168040]
+    assert [a["event_id"] for a in anchors] == [15168040]
     assert summary["unmatched_fixture_receipts"][0]["statpal_id"] == "652878"
     assert summary["unmatched_row_receipts"][0]["event_id"] == 15168041
 
     # The agreement row calls it one game with a clock disagreement, which is the
     # whole of spec rule 4.
     agreement = summary["agreement"]
-    assert agreement["identity"]["both"] == 1
+    assert agreement["identity"]["both"] == 2
     assert agreement["identity"]["pct"] == 100.0
-    assert agreement["schedule"]["within"] == 0
+    assert agreement["schedule"]["within"] == 1
     assert agreement["schedule"]["off_by_hours"] == 1
     assert agreement["schedule"]["governs"] is False
 
@@ -503,3 +533,176 @@ async def test_the_summary_the_endpoint_publishes_names_its_own_sport(drive):
     nhl, _s, _a = await drive(fixtures, rows, spec=task.NHL)
     assert nhl["sport_key"] == "icehockey_nhl"
     assert nhl["agreement"]["sport_key"] == "icehockey_nhl"
+
+
+# ---------------------------------------------------------------------------
+# The seven-day count rides on the row the endpoint publishes (authority/021)
+# ---------------------------------------------------------------------------
+
+
+async def test_the_pass_folds_its_own_day_into_the_durable_ledger(drive, monkeypatch):
+    """The chain, not the two ends.
+
+    `authority_streak` is proved pure in `test_authority_streak.py` and the
+    durable substrate is proved in Queue 298's own guards — and both being green
+    says nothing about whether a real pass ever calls either. The seven-day count
+    D50 gates on only exists if THIS function attaches it to THIS row, because
+    the endpoint publishes the banked `agreement` block verbatim.
+    """
+    import app.services.durable_snapshots as ds
+
+    published = []
+
+    async def _read(identity, **kwargs):
+        return SimpleNamespace(
+            status="missing", missing=True, ok=False, envelope=None, error=None
+        )
+
+    async def _publish(envelope, *, expected_generation=None):
+        published.append(envelope)
+        return {"status": "ok"}
+
+    monkeypatch.setattr(ds, "read_snapshot_standalone", _read)
+    monkeypatch.setattr(ds, "publish_cas_snapshot_standalone", _publish)
+
+    fixtures = [_fixture("1050110", "Boston Celtics", "Detroit Pistons", TIPOFF)]
+    rows = [_candidate(1, "Boston Celtics", "Detroit Pistons", TIPOFF)]
+    summary, _s, _a = await drive(fixtures, rows)
+
+    streak = summary["agreement"]["streak"]
+    assert streak["days"] == 1
+    assert streak["recorded"] is True
+    assert streak["meets_flip_gate"] is False
+    assert len(published) == 1
+    assert published[0].identity == "authority-agreement-ledger:basketball_nba"
+    assert published[0].payload["days"][0]["state"] == "MEETS"
+
+
+async def test_a_ledger_that_cannot_be_written_never_reads_as_a_streak_of_zero(drive):
+    """No durable substrate is stubbed here, so the read fails.
+
+    The pass must still succeed — a stamper that read both StatPal endpoints and
+    wrote its anchors has done its job — and the row must say the day was not
+    recorded rather than publishing a count that looks like a measurement.
+    """
+    fixtures = [_fixture("1050110", "Boston Celtics", "Detroit Pistons", TIPOFF)]
+    rows = [_candidate(1, "Boston Celtics", "Detroit Pistons", TIPOFF)]
+    summary, _s, _a = await drive(fixtures, rows)
+
+    streak = summary["agreement"]["streak"]
+    assert streak["state"] == "UNRECORDED"
+    assert "days" not in streak
+    assert summary["agreement"]["identity"]["governing"]["gate"] == "MEETS"
+
+
+# ---------------------------------------------------------------------------
+# The measurement population. CERT-962: the write window is not the denominator.
+# ---------------------------------------------------------------------------
+
+
+async def test_an_october_row_beyond_a_rolling_schedule_stays_in_the_denominator(drive):
+    """MLB's real shape, in miniature, and the defect CERT-962 named.
+
+    StatPal's MLB `season-schedule` is a rolling ~17-day window, not a season —
+    measured 2026-08-31T21:05Z to 2026-09-17T00:40Z on production. Our own
+    inventory runs past the end of it. The question the governing number asks is
+    "of the games WE list, does StatPal have them?", and the pass used to read
+    our rows with `commence_time BETWEEN` StatPal's own first and last fixture
+    ±1h before asking it — so a game of ours in October was removed by SQL and
+    could be neither counted as missing nor placed by the horizon split. The
+    denominator was horizon-subtracted at selection while the row published
+    `ours_covered_pct` as though it were not.
+
+    Three things this pins, and the first is the one that was wrong:
+
+      * the October row is IN the denominator: 1 of 2, not 1 of 1;
+      * it is placed in `beyond_statpal_last`, so a reader can tell "past the
+        edge of what StatPal publishes" from a real disagreement;
+      * the STAMPER never saw it. Its write window is unchanged and narrow, which
+        is correct — there is no fixture out there to match it against, and a
+        wider write window is how a stamper writes an identity claim on a guess.
+    """
+    #: StatPal's rolling window, anchored so it ends well before our October row.
+    first = datetime(2026, 8, 31, 21, 5, tzinfo=timezone.utc)
+    last = first + timedelta(days=17)
+    october = datetime(2026, 10, 7, 0, 5, tzinfo=timezone.utc)
+    assert october > last, "the row must be past StatPal's last fixture to be the case"
+
+    fixtures = [
+        _fixture("2001", "Boston Red Sox", "New York Yankees", first),
+        _fixture("2002", "Chicago Cubs", "St. Louis Cardinals", last),
+    ]
+    rows = [
+        _candidate(9001, "Boston Red Sox", "New York Yankees", first),
+        # Our postseason row. StatPal's rolling schedule cannot reach it.
+        _candidate(9002, "Los Angeles Dodgers", "San Diego Padres", october),
+    ]
+    summary, session, _anchors = await drive(fixtures, rows, spec=task.MLB)
+
+    identity = summary["agreement"]["identity"]
+    # 1 of 2. Before this repair it read 1 of 1 == 100%, and the missing game was
+    # not "excluded" anywhere on the row — it was never selected.
+    assert identity["ours_only"] == 1
+    assert identity["ours_covered_pct"] == 50.0
+    assert identity["ours_only_by_horizon"] == {
+        "before_statpal_first": 0,
+        "inside_statpal_span": 0,
+        "beyond_statpal_last": 1,
+        "unplaceable": 0,
+    }
+
+    # The write window is unchanged: StatPal's span ±1h, and the October row is
+    # outside it. The measurement window is wider and holds both.
+    write_window, measurement_window = session.candidate_windows
+    assert write_window == (first - task.CANDIDATE_SLACK, last + task.CANDIDATE_SLACK)
+    assert measurement_window[0] <= first and measurement_window[1] >= october
+    assert summary["rows_in_window"] == 1
+    assert summary["rows_measured"] == 2
+
+    # And the stamper wrote only the game it had a fixture for.
+    assert [u["event_id"] for u in session.updates] == [9001]
+
+
+async def test_the_two_populations_are_read_as_two_queries_with_different_bounds(drive):
+    """The call-site guard. The repair is a separate read, not a wider one.
+
+    A single widened query would also put the October row in the denominator —
+    and would hand the stamper candidates it has no fixture to match, which is
+    how `MATCH_WINDOW` stops being the thing that decides a write. This asserts
+    the shape: two reads, the write one strictly inside the measurement one.
+    """
+    first = datetime(2026, 8, 31, 21, 5, tzinfo=timezone.utc)
+    fixtures = [_fixture("2001", "Boston Red Sox", "New York Yankees", first)]
+    rows = [_candidate(9001, "Boston Red Sox", "New York Yankees", first)]
+    _summary, session, _anchors = await drive(fixtures, rows, spec=task.MLB)
+
+    assert len(session.candidate_windows) == 2
+    (write_start, write_end), (measure_start, measure_end) = session.candidate_windows
+    assert measure_start <= write_start
+    assert measure_end >= write_end
+    assert (measure_start, measure_end) != (write_start, write_end)
+
+
+async def test_a_sport_whose_inventory_sits_inside_statpals_span_is_unmoved(drive):
+    """The blast radius, pinned. NBA/NHL/NFL numbers must not move.
+
+    `measurement_bounds` unions rather than replaces, so a sport whose local rows
+    already sit inside StatPal's span reads exactly the population it read before
+    this existed. Measured on production 2026-09-05: NFL 322 rows in both, NBA
+    41, NHL 32 — only MLB moved, 222 to 729. Three seven-day clocks were already
+    running when this landed, and a repair that redefined their denominators
+    underneath them would have reset all three without saying so.
+    """
+    fixtures = [
+        _fixture("1050110", "Boston Celtics", "Detroit Pistons", TIPOFF),
+        _fixture("1050112", "Miami Heat", "Toronto Raptors", TIPOFF + timedelta(days=3)),
+    ]
+    rows = [
+        _candidate(1, "Boston Celtics", "Detroit Pistons", TIPOFF),
+        _candidate(2, "Miami Heat", "Toronto Raptors", TIPOFF + timedelta(days=3)),
+    ]
+    summary, _session, _anchors = await drive(fixtures, rows)
+
+    assert summary["rows_in_window"] == summary["rows_measured"] == 2
+    assert summary["agreement"]["identity"]["ours_covered_pct"] == 100.0
+    assert summary["agreement"]["identity"]["ours_only"] == 0

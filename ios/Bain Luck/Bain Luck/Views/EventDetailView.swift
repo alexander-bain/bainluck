@@ -242,6 +242,7 @@ struct EventDetailView: View {
                             history: history,
                             homeTeam: event.homeTeam,
                             awayTeam: event.awayTeam,
+                            sportKey: event.sport,
                             commenceTime: event.commenceTime,
                             eventStatus: event.status,
                             homeTeamColor: teamColors(event).home,
@@ -280,6 +281,7 @@ struct EventDetailView: View {
                             awayTeam: event.awayTeam,
                             homeColor: teamColors(event).home,
                             awayColor: teamColors(event).away,
+                            sportKey: event.sport,
                             overUnder: event.currentOdds?.overUnder,
                             homeScore: event.homeScore,
                             awayScore: event.awayScore
@@ -608,10 +610,20 @@ struct EventDetailView: View {
                             .fontWeight(.medium)
                             .foregroundStyle(.secondary)
                     }
-                    // Projected final score
+                    // Projected final score.
+                    //
+                    // The unit is NAMED where the scoreboard counts something
+                    // else. On the live Pegula–Fernandez US Open match the hero
+                    // printed a bare "Proj. 13-13" two lines under a 1–1 SET
+                    // score: two numbers that read as a scoreline, in games,
+                    // for a match nobody scores in games. Naming the unit is
+                    // the smallest honest fix — the projection is real and
+                    // useful, it was simply anonymous.
                     if let phs = event.currentOdds?.projectedHomeScore, let pas = event.currentOdds?.projectedAwayScore,
                        !isFinished {
-                        Text("Proj. \(Int(pas.rounded()))-\(Int(phs.rounded()))")
+                        let vocab = SportVocab.forSport(event.sport)
+                        let pair = "\(Int(pas.rounded()))-\(Int(phs.rounded()))"
+                        Text("Proj. \(vocab.scoreboardCountsTheUnit ? pair : vocab.withUnit(pair))")
                             .font(.system(size: 10))
                             .foregroundStyle(.tertiary)
                     }

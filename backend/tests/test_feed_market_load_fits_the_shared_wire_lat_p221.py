@@ -181,12 +181,28 @@ def _row_at_kinds(
     return row
 
 
+#: The kinds of `DERIVED_MARKET_COLUMNS`, declared BY NAME because they are not
+#: on `FuturesMarket` and `_column_kinds` therefore cannot introspect them. A
+#: derived column added without a line here is a `KeyError` in this fixture, not
+#: a silently-cheap `str` that shrinks the artifact relative to production —
+#: which is the whole reason the loaded kinds are introspected in the first
+#: place. `price_polled_at` is a `datetime`, and a datetime is a TAGGED value on
+#: this wire (~31 bytes of codec around it), so it must be measured as one.
+_DERIVED_KINDS = {"price_polled_at": "dt"}
+
+
 def _production_scale_payload() -> dict:
     """A `to_plain`-shaped artifact at the measured production shape."""
     rng = random.Random(20260904)
-    market_kinds = _column_kinds(FuturesMarket, fs.MARKET_COLUMNS)
+    market_kinds = _column_kinds(FuturesMarket, fs.MARKET_COLUMNS) + [
+        _DERIVED_KINDS[name] for name in fs.DERIVED_MARKET_COLUMNS
+    ]
     outcome_kinds = _column_kinds(FuturesOutcome, fs.OUTCOME_COLUMNS)
-    market_null = _nullable(FuturesMarket, fs.MARKET_COLUMNS)
+    # Derived values are nullable by construction: `to_plain` writes `None` for
+    # a market the caller's map does not cover (a market with no outcome rows).
+    market_null = _nullable(FuturesMarket, fs.MARKET_COLUMNS) + [True] * len(
+        fs.DERIVED_MARKET_COLUMNS
+    )
     outcome_null = _nullable(FuturesOutcome, fs.OUTCOME_COLUMNS)
     per_market = PROD_OUTCOMES // PROD_MARKETS
     remainder = PROD_OUTCOMES - per_market * PROD_MARKETS
@@ -341,10 +357,13 @@ async def test_the_published_artifact_round_trips_byte_for_byte(payload, monkeyp
     key = ("market_load", 2, "roundtrip")
 
     await pic._publish_cross_worker("market_load", key, payload, 60)
-    ok, value = await pic._read_cross_worker("market_load", key, 60)
+    ok, value, age_s = await pic._read_cross_worker("market_load", key, 60)
 
     assert ok, "the artifact we just published did not read back"
     assert value == payload
+    # LAT-P229: the reader also reports how old the artifact already was, so the
+    # promotion into the local tier can backdate it instead of restarting its TTL.
+    assert 0.0 <= age_s < 60.0, "a just-published artifact read back as aged"
     assert fs.is_snapshot_payload(value), "it read back in an unusable shape"
 
 

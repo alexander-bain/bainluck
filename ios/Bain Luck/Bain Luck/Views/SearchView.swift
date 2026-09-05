@@ -321,6 +321,27 @@ struct SearchView: View {
                         .padding(.vertical, 4)
                 }
 
+                // Tournaments with a hub screen. These navigate straight to the
+                // hub rather than seeding a text query, because the query is the
+                // thing that does not work: "US Open" matches no event text.
+                if !featuredTournaments.isEmpty {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Tournaments")
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 4)
+
+                        FlowLayout(spacing: 8) {
+                            ForEach(featuredTournaments) { hub in
+                                quickSearchChip(icon: hub.icon, label: hub.title) {
+                                    path.append(Route.tournamentHub(slug: hub.slug, name: hub.title))
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // Quick Search by Sport
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Browse by Sport")
@@ -546,6 +567,29 @@ struct SearchView: View {
 
     private func searchResults(_ results: SearchResponse) -> some View {
         List {
+            // Tournament hubs the query names, above everything else.
+            //
+            // Searching "US Open" during the US Open returned no events at all —
+            // the matches are there (`tennis_atp_us_open`, Alcaraz vs Paul) but
+            // nothing in an event's searchable text says "US Open", so the whole
+            // tournament came back as ten loose futures rows and no way in. The
+            // hub is the answer to that query and it goes first.
+            let hubs = featuredTournaments(matching: results.query)
+            if !hubs.isEmpty {
+                Section {
+                    ForEach(hubs) { hub in
+                        NavigationLink(value: Route.tournamentHub(slug: hub.slug, name: hub.title)) {
+                            searchTournamentRow(hub)
+                        }
+                    }
+                } header: {
+                    Label("Tournament", systemImage: "trophy.fill")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .textCase(nil)
+                }
+            }
+
             // Did you mean
             if let dym = results.didYouMean {
                 Section {
@@ -630,11 +674,84 @@ struct SearchView: View {
                 }
             }
 
-            if !results.futures.isEmpty {
+            // #3124: the server already grouped these. Ten sibling rows for
+            // "US Open" — the same two questions, twice each, once per source —
+            // were ten rows because the phone decoded `futures` and threw
+            // `futures_families` away. Families draw first, as one answer each,
+            // and their markets come OUT of the flat list below so nothing is
+            // drawn twice. Backend is the composition source of truth; the phone
+            // only decides what to show, exactly as `/search` does on the web.
+            let families = results.futuresFamilies ?? []
+            let flatFutures = SearchGrouping.flatFutures(results.futures, families: families)
+
+            ForEach(families) { family in
+                Section {
+                    NavigationLink(value: Route.futuresDetail(id: family.headline.id)) {
+                        searchFamilyRow(family.headline, prominent: true)
+                    }
+                    ForEach(family.members) { member in
+                        NavigationLink(value: Route.futuresDetail(id: member.id)) {
+                            searchFamilyRow(member, prominent: false)
+                        }
+                    }
+                } header: {
+                    HStack(spacing: 6) {
+                        Label(family.label, systemImage: "square.stack.3d.up.fill")
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                            .textCase(nil)
+                        // Counts the rows this section DRAWS, like every other
+                        // header here — never `memberCount`, which counts members
+                        // the payload does not carry.
+                        Text("\(family.members.count + 1)")
+                            .font(.caption2)
+                            .fontWeight(.medium)
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Color.secondary.opacity(0.12))
+                            .clipShape(Capsule())
+                    }
+                } footer: {
+                    if let more = SearchGrouping.moreBelowLabel(family) {
+                        Text(more)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+
+            // Concepts the page does not already draw as markets. Almost always
+            // empty — see `SearchGrouping.novelConcepts` for the measurement and
+            // why drawing them unfiltered would re-create the very duplication
+            // the families above remove.
+            let concepts = SearchGrouping.novelConcepts(
+                results.eventConcepts ?? [],
+                families: families,
+                flatFutures: flatFutures
+            )
+            if !concepts.isEmpty {
+                Section {
+                    ForEach(concepts) { concept in
+                        if let marketId = concept.marketId {
+                            NavigationLink(value: Route.futuresDetail(id: marketId)) {
+                                searchConceptRow(concept)
+                            }
+                        }
+                    }
+                } header: {
+                    Label("Events", systemImage: "calendar")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .textCase(nil)
+                }
+            }
+
+            if !flatFutures.isEmpty {
                 Section {
                     if sizeClass == .regular {
                         LazyVGrid(columns: iPadGridColumns, spacing: 12) {
-                            ForEach(results.futures) { market in
+                            ForEach(flatFutures) { market in
                                 Button {
                                     path.append(Route.futuresDetail(id: market.id))
                                 } label: {
@@ -648,7 +765,7 @@ struct SearchView: View {
                         }
                         .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
                     } else {
-                        ForEach(results.futures) { market in
+                        ForEach(flatFutures) { market in
                             NavigationLink(value: Route.futuresDetail(id: market.id)) {
                                 searchFuturesRow(market)
                             }
@@ -656,11 +773,15 @@ struct SearchView: View {
                     }
                 } header: {
                     HStack(spacing: 6) {
-                        Label("Futures", systemImage: "chart.line.uptrend.xyaxis")
+                        // "More markets" once families have taken the headline
+                        // answers: calling this section "Futures" above a family
+                        // card would imply the family was something else.
+                        Label(families.isEmpty ? "Futures" : "More markets",
+                              systemImage: "chart.line.uptrend.xyaxis")
                             .font(.subheadline)
                             .fontWeight(.semibold)
                             .textCase(nil)
-                        Text("\(results.futures.count)")
+                        Text("\(flatFutures.count)")
                             .font(.caption2)
                             .fontWeight(.medium)
                             .foregroundStyle(.secondary)
@@ -672,7 +793,13 @@ struct SearchView: View {
                 }
             }
 
-            if results.results.isEmpty && results.futures.isEmpty && (results.teams ?? []).isEmpty {
+            // A hub counts as a result. Saying "No results found for US Open"
+            // above a US Open hub row would be the page contradicting itself.
+            // Families count too: they can carry a headline the flat `futures`
+            // slice had no room for, so a page with a family is never empty.
+            if results.results.isEmpty && results.futures.isEmpty
+                && families.isEmpty && concepts.isEmpty
+                && (results.teams ?? []).isEmpty && hubs.isEmpty {
                 ContentUnavailableView(
                     "No Results",
                     systemImage: "magnifyingglass",
@@ -684,6 +811,31 @@ struct SearchView: View {
         #if os(iOS)
         .listStyle(.insetGrouped)
         #endif
+    }
+
+    // MARK: - Tournament Row
+
+    private func searchTournamentRow(_ hub: FeaturedTournament) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: hub.icon)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.white)
+                .frame(width: 32, height: 32)
+                .background(Color.yellow.gradient, in: RoundedRectangle(cornerRadius: 8))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(hub.title)
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                Text(hub.subtitle)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+        }
+        .padding(.vertical, 2)
     }
 
     // MARK: - Event Row
@@ -764,6 +916,68 @@ struct SearchView: View {
                 }
             }
             Spacer()
+        }
+        .padding(.vertical, 2)
+    }
+
+    // MARK: - Family Rows (#3124)
+
+    /// One answer inside a family card: the question on the left, its leader and
+    /// probability on the right.
+    ///
+    /// Deliberately NOT `searchFuturesRow`. That row exists to tell loose results
+    /// apart, so it prints the source badge and the category — and inside a family
+    /// those are the two things that made the page look broken, because the
+    /// duplicate pair differs by nothing else. Here the source is dropped: which
+    /// venue is quoting is not the reader's question (the blend is the product),
+    /// and a family is a set of questions, so the answer belongs on each row.
+    private func searchFamilyRow(_ market: SearchFuturesMarket, prominent: Bool) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(market.name)
+                .font(.subheadline)
+                .fontWeight(prominent ? .semibold : .regular)
+                .foregroundStyle(prominent ? Color.primary : Color.secondary)
+                .lineLimit(2)
+
+            Spacer(minLength: 4)
+
+            if let leader = SearchGrouping.leaderOutcome(market),
+               let probability = leader.probability {
+                HStack(spacing: 4) {
+                    Text(leader.name)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    Text(formatProbability(probability))
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .monospacedDigit()
+                }
+                .layoutPriority(1)
+            } else if let count = market.outcomeCount {
+                // No priced leader is a real state, not a blank: a market with 48
+                // runners and no quote should say so rather than print nothing.
+                Text("\(count) outcome\(count == 1 ? "" : "s")")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .layoutPriority(1)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    /// A tournament/ceremony concept — named as the thing, not as the market.
+    private func searchConceptRow(_ concept: SearchEventConcept) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            if let domain = concept.domain {
+                Text(domain.uppercased())
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
+            Text(concept.name)
+                .font(.subheadline)
+                .fontWeight(.medium)
+                .lineLimit(2)
         }
         .padding(.vertical, 2)
     }

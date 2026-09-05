@@ -58,34 +58,8 @@ private let allLeagues: [LeagueInfo] = [
 
 private let groupOrder = ["Major US Leagues", "College", "Other US Leagues", "Soccer", "Individual"]
 
-// MARK: - Featured tournament hubs
-
-private struct FeaturedTournament: Identifiable {
-    let slug: String
-    let title: String
-    let subtitle: String
-    let icon: String
-
-    var id: String { slug }
-}
-
-/// Tournament hubs promoted to the top of Browse.
-///
-/// HAND-MAINTAINED, and that is the known limitation rather than the design:
-/// `REGISTERED_TOURNAMENTS` lives on the server and is not exposed as a list, so
-/// the phone cannot ask which hubs exist or which one is being played this week.
-/// A slug listed here stays listed after its final — the hub itself degrades
-/// honestly (it keeps serving results and the finished board), but Browse will
-/// keep offering the US Open in March until either this list is edited or the
-/// API grows an index. Tracked as a follow-up; not worth blocking the hub on.
-private let featuredTournaments: [FeaturedTournament] = [
-    FeaturedTournament(
-        slug: "us-open",
-        title: "US Open",
-        subtitle: "Live matches, results, title odds",
-        icon: "tennis.racket"
-    ),
-]
+// Featured tournament hubs — `Utilities/FeaturedTournaments.swift`. Shared with
+// Search, which offers the same hubs to a query that names one.
 
 private struct CategoryLink: Identifiable {
     let id: String
@@ -106,6 +80,7 @@ private let categoryLinks: [CategoryLink] = [
 // MARK: - View
 
 struct LeaguesView: View {
+    @EnvironmentObject private var navCoordinator: NavigationCoordinator
     @State private var path = NavigationPath()
 
     var body: some View {
@@ -127,17 +102,26 @@ struct LeaguesView: View {
             .onAppear {
                 AnalyticsService.trackScreen(name: "leagues", type: "leagues_index")
             }
+            // #2998 — Browse was the one tab `navigate(to:tab:)` could target and
+            // could not receive. `bainluck://playoffs/<slug>` and `/calibration`
+            // both switched to this tab and then silently dropped their route,
+            // because nothing here ever read `pendingRoute`. Feed, Search and My
+            // Stuff have always had this observer; Browse never did.
+            .onChange(of: navCoordinator.pendingRoute) { _, _ in
+                if navCoordinator.selectedTab == .leagues,
+                   let route = navCoordinator.consumeRoute() {
+                    path.append(route)
+                }
+            }
         }
     }
 
+    /// Subtitle only. The word "Browse" is already the navigation title, and
+    /// printing it again here rendered the tab's name twice, one line apart.
     private var browseHeader: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Browse")
-                .font(.title2.weight(.bold))
-            Text("Markets, sports, and tools")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-        }
+        Text("Markets, sports, and tools")
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
     }
 
     private var featuredGrid: some View {

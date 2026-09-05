@@ -179,10 +179,13 @@ describe("ux/1034 B5 — Score Differential", () => {
     expect(html).toContain('data-actual-series="false"');
 
     // And the absence is stated, in both units, rather than left as a gap.
+    // #3136 moved the CLAIM half into `playedCountAbsence` and put it in the
+    // match's own tense; this fixture is `eventStatus="completed"`, so the
+    // sentence is past. `settledMapTense.test.tsx` owns the tense itself.
     expect(html).toContain('data-testid="score-diff-unit-note"');
     const text = visibleText(html);
-    expect(text).toContain("Played games are not captured yet");
-    expect(text).toContain("the scoreboard reports sets");
+    expect(text).toContain("we did not record the games played");
+    expect(text).toContain("The scoreboard reports sets");
   });
 
   it("still draws it for a point sport — the control", () => {
@@ -219,8 +222,10 @@ describe("ux/1034 B5 — the two market maps", () => {
     expect(text).not.toContain("expected vs final");
     expect(text).toContain("Game margin map");
     expect(text).toContain("Games map");
-    // …and the card says which two units it is refusing to mix.
+    // …and the card says which two units it is refusing to mix. (#3136 put the
+    // trailing clause in the match's tense — this fixture is completed.)
     expect(text).toContain("The scoreboard reports sets, this market quotes games");
+    expect(text).toContain("we did not record the games played");
   });
 
   it("still grades a point sport against its own scoreboard — the control", () => {

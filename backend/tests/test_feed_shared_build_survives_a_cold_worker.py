@@ -845,3 +845,73 @@ async def test_the_tier_header_vocabulary_is_closed(
     value = r2.headers.get("X-Feed-Shared-Tier", "")
     assert value, dict(r2.headers)
     assert set(value.split(",")) <= pic.SHARED_TIER_NAMES
+
+
+# --------------------------------------------------------------------------
+# LAT-P229 — the promotion must not restamp the artifact's age
+# --------------------------------------------------------------------------
+#
+# `get_or_build` promotes a Redis hit into the process-local tier so the next
+# request on this worker skips the hop. It stored the promoted entry under
+# `_clock()` — a FRESH timestamp — which silently reset the artifact's age to
+# zero. A 59s-old artifact read from Redis under a 60s TTL therefore got a
+# second full 60s of life locally, so the real staleness bound was 2 x TTL.
+#
+# That matters beyond tidiness. `market_load` carries market PRICES, and #2216
+# wrote down and defended the number those live under: "60 seconds is the live
+# ceiling — the oldest a payload containing a live card may be and still be
+# served". A TTL that means 120s where it says 60s puts the composed payload
+# age past that ceiling without anyone choosing to. It also makes the TTL
+# unusable as a lever: you cannot reason about raising a bound that is already
+# quietly worth double.
+#
+# The promotion is still the right thing to do — this is about the timestamp it
+# carries, not about whether to promote.
+
+
+@pytest.mark.asyncio
+async def test_a_promoted_artifact_keeps_its_age_and_dies_on_schedule(
+    cold_worker_redis,
+):
+    """An artifact promoted from Redis at age 55s must expire 5s later, not 60s.
+
+    Driven on an explicit monotonic clock rather than real time: the whole
+    property is about which timestamp the promotion writes, so the test has to
+    own the clock that timestamp is read against.
+    """
+    key = ("all", (), 55_229)
+    builder = _Counter([_concept_card()])
+    ttl = 60.0
+
+    # One worker builds and publishes.
+    await pic.get_or_build("concepts", key, builder, ttl_s=ttl)
+    assert builder.calls == 1
+
+    # Age the published envelope to 55s — inside the TTL, with 5s of life left.
+    redis_key = pic.redis_key_for("concepts", key)
+    envelope = json.loads(pic.wire_decode(cold_worker_redis.store[redis_key]))
+    envelope["stored_wall"] = envelope["stored_wall"] - 55
+    cold_worker_redis.store[redis_key] = pic.wire_encode(json.dumps(envelope))
+
+    # A cold worker reads it across the boundary and promotes it into L1.
+    pic.clear_shared_builds()
+    now = [1000.0]
+    out = await pic.get_or_build(
+        "concepts", key, builder, ttl_s=ttl, clock=lambda: now[0]
+    )
+    assert builder.calls == 1, "the cold worker rebuilt instead of reading Redis"
+    assert out == builder.value
+
+    # Redis expires it (its own `EX` was set from the ORIGINAL publish, so a
+    # 55s-old entry has ~5s left). From here the local tier is the only copy,
+    # and the question is purely how old that copy thinks it is.
+    del cold_worker_redis.store[redis_key]
+
+    # Ten seconds later the artifact is 65s old — past the TTL.
+    now[0] += 10.0
+    await pic.get_or_build("concepts", key, builder, ttl_s=ttl, clock=lambda: now[0])
+
+    assert builder.calls == 2, (
+        "a 65s-old artifact was served under a 60s TTL — the promotion restamped "
+        "its age to zero, so the TTL is worth up to 2x what it says"
+    )

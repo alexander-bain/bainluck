@@ -102,10 +102,30 @@ def _open_weather_query():
     - Non-open markets (resolved, suspended, closed)
     - Markets whose resolution_date is in the past (zombie markets)
     - Markets not updated in the last 7 days (stale)
+    - Markets we hold no price for (see below)
     - Health/pandemic markets misclassified as weather by the LLM
     """
     now = datetime.now(timezone.utc)
     stale_cutoff = now - timedelta(days=7)
+    # Every weather card prints a probability, and every one of them derives it
+    # from a scan that opens at 0.0 (`_highest_prob`). A market carrying no
+    # priced outcome therefore renders as a confident red 0% — the most wrong
+    # number available — rather than as the absence it is. Six of those were on
+    # the live page: four "Number of tornadoes in <month> 2026?", the 6.0+
+    # earthquake market, and NYC monthly rainfall. Absence is not zero, so a
+    # market with nothing priced never reaches a card; the sections' existing
+    # empty states say so honestly instead.
+    #
+    # The predicate is IS NOT NULL, not > 0: a genuine 0.0 IS a price, and a
+    # market the venue prices at zero keeps its row.
+    has_priced_outcome = (
+        select(FuturesOutcome.id)
+        .where(
+            FuturesOutcome.market_id == FuturesMarket.id,
+            FuturesOutcome.current_probability.is_not(None),
+        )
+        .exists()
+    )
     return (
         select(FuturesMarket)
         .options(selectinload(FuturesMarket.outcomes))
@@ -117,6 +137,7 @@ def _open_weather_query():
                 FuturesMarket.resolution_date > now,
             ),
             FuturesMarket.updated_at >= stale_cutoff,
+            has_priced_outcome,
             # Exclude health/pandemic markets misclassified as weather
             not_(FuturesMarket.name.ilike("%pandemic%")),
             not_(FuturesMarket.name.ilike("%bird flu%")),
@@ -442,11 +463,24 @@ MIN_HISTORY_POINTS = 3
 
 
 def _downsample(points: list[float], limit: int) -> list[float]:
-    """Thin ``points`` to about ``limit``, always keeping the first and last."""
+    """Thin ``points`` to AT MOST ``limit``, always keeping the first and last.
+
+    ux/1074, UX-1069-DOWNSAMPLE-LIMIT-CONTRACT: the limit is a hard ceiling, not
+    an approximation. The first version spaced ``limit`` indices across the
+    series and then unioned in ``len - 1`` to pin the end, which adds a
+    ``limit + 1``-th point whenever that last spaced index falls short of the
+    end — 15 points out of a 14-point budget for a 15-capture market. The end is
+    now pinned by construction: the stride spans the last index, so ``i = 0``
+    lands on the first point and ``i = limit - 1`` lands on the last, and the
+    set can only shrink from ``limit``, never grow past it.
+    """
     if len(points) <= limit:
         return points
-    step = len(points) / limit
-    keep = sorted({int(i * step) for i in range(limit)} | {len(points) - 1})
+    if limit <= 1:
+        return points[:1]
+    last = len(points) - 1
+    step = last / (limit - 1)
+    keep = sorted({round(i * step) for i in range(limit)})
     return [points[i] for i in keep]
 
 

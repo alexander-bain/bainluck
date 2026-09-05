@@ -38,7 +38,7 @@
 import { ROUND_LABELS, ROUND_NAMES, type RoundName } from "./bracket";
 /* CERT-812: the one place that decides whether a rung needs saying out loud.
    Imported rather than re-declared — see `prematchAttribution`. */
-import { isPredictionMarketSource } from "./prematchReading";
+import { PREMATCH_SAID, isPredictionMarketSource } from "./prematchReading";
 import { formatProbabilityPercent } from "./probabilityDisplay";
 import { renderedDuelPercents } from "./renderedPercent";
 import type { PlayerImage } from "./slate";
@@ -542,6 +542,33 @@ export function resultScoreLine(result: TournamentResult): {
 }
 
 /**
+ * A score line split into the pieces a line break may fall BETWEEN (live/071).
+ *
+ * The phone's score column is capped (`fit-content(72px)` — see `RESULT_GRID`),
+ * so a four-set score wraps, and the browser's default break opportunities put
+ * one of them AFTER A HYPHEN: `7-6, 6-` / `7, 6-3, 6-4`, measured in the
+ * capture rig. A set score broken across its own hyphen is not a shorter
+ * score, it is a different one — `6-` over `7` reads as neither 6–7 nor 6.
+ *
+ * No CSS property says "break at the spaces and nowhere else": breaking after a
+ * hyphen is UAX#14 line-break class BA and `word-break: keep-all` only governs
+ * CJK. So the pieces are marked in the markup — each chunk renders inside a
+ * `whitespace-nowrap` span — and this decides where they are.
+ *
+ * SPLIT ON THE COMMA, not on whitespace, so a tiebreak stays with its set:
+ * `7-6 (7-4), 3-6, 6-4` is three chunks and never `7-6` / `(7-4),`. The widest
+ * chunk any real score produces is `7-6 (7-4)` at ~60px, which is under the cap
+ * — a chunk WIDER than the cap is not truncated either, because `fit-content`
+ * floors at min-content; the column would simply grow for that list.
+ *
+ * The non-score lines (`walkover`, `no score`) come back as a single chunk,
+ * which is what they are: two short words that should not be split up.
+ */
+export function scoreWrapChunks(text: string): string[] {
+  return text.split(", ");
+}
+
+/**
  * The provenance clause about matches that did not run their course, or `null`
  * when every rendered row is an ordinary completed match (UX-P147).
  *
@@ -768,6 +795,12 @@ export const BOOKS_MARKER = "books";
  *
  * `said` is a full clause and never a fragment: a screen reader gets the same
  * sentence shape whichever rung answered, so the two are comparable by ear.
+ *
+ * D65 (Alex, 2026-09-04) went further: it is now the same STRING whichever rung
+ * answered — `PREMATCH_SAID`, "Pre-match probability:" — because a phrase that
+ * names no venue cannot name the wrong one. The field stays per-value rather
+ * than being hoisted out: `marker` still forks here, the component reads the two
+ * together, and a future ruling that re-splits the clause has a place to put it.
  */
 export interface PrematchAttribution {
   /** The rung id for `data-prematch-source`, or `null` when unstated. */
@@ -785,11 +818,11 @@ export function prematchAttribution(player: ResultPlayer): PrematchAttribution {
   // field. Absent must not read as "unknown rung" and pick up a books marker —
   // that would put the caveat on 111 rows that do not need it.
   if (isPredictionMarketSource(source) || source === null) {
-    return { source, said: "Before the match, the market gave", marker: null };
+    return { source, said: PREMATCH_SAID, marker: null };
   }
   return {
     source,
-    said: "Before the match, sportsbooks opened",
+    said: PREMATCH_SAID,
     marker: BOOKS_MARKER,
   };
 }

@@ -141,11 +141,24 @@ class _MockResult:
 
 
 class _MockDB:
-    def __init__(self, rows, event_rows=None):
+    """`list_card_concepts` makes THREE reads; this answers each with its own rows.
+
+    The access path told the first two apart (`.all()` vs `.scalars().all()`),
+    but `_attach_headline_bouts`'s `futures_outcomes` projection also reads
+    `.all()` and would otherwise be handed the Kalshi market rows — five-tuples
+    where it expects three. Dispatch on the statement, so a read this mock has
+    not been given rows for answers empty rather than answering with somebody
+    else's.
+    """
+
+    def __init__(self, rows, event_rows=None, outcome_rows=None):
         self._rows = rows
         self._event_rows = event_rows or []
+        self._outcome_rows = outcome_rows or []
 
-    async def execute(self, *_a, **_k):
+    async def execute(self, statement=None, *_a, **_k):
+        if statement is not None and "futures_outcomes" in str(statement):
+            return _MockResult(self._outcome_rows, [])
         return _MockResult(self._rows, self._event_rows)
 
 

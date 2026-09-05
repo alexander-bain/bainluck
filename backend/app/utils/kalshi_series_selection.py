@@ -70,10 +70,79 @@ buries the eight that matter.
 from __future__ import annotations
 
 import math
-from typing import Iterable, Mapping, NamedTuple, Optional, Sequence
+from typing import Iterable, Mapping, NamedTuple, Optional, Sequence, Union
 
 #: How many dormant series to name in the receipt before switching to a count.
 _DORMANT_SAMPLE = 8
+
+#: The tag a flat (untagged) ticker list is filed under. One tag means the
+#: per-tag machinery below collapses to exactly the single-tag behaviour that
+#: shipped for tennis: whole cap to that tag, plain open-count-descending order.
+_UNTAGGED = "_"
+
+
+def _fair_shares(wants: Mapping[str, int], cap: int) -> dict[str, int]:
+    """Split ``cap`` slots across tags so a big tag cannot evict a small one.
+
+    This function is the whole of lane1b/040 and it exists because the naive
+    widening is wrong in a way only a measurement shows. Measured at the venue
+    2026-09-05: tennis carries 27 selectable series, Football carries 256
+    uncarried live series of which 200+ are selectable. Ranked together on one
+    global cap of 40 by open-event count, **tennis drops from 27 series to 3** —
+    `KXWTADOUBLES`, `KXITFDOUBLES` and `KXHONEYDEUCE` among the 24 evicted, i.e.
+    exactly the US Open doubles coverage that shipped four beats ago. Raising the
+    cap does not fix it: at 80 tennis still loses 17, because Football's long
+    tail out-ranks tennis's small futures on raw open-event count forever.
+
+    That is one cap over two populations of very different size, which caps the
+    smaller one out of existence. So the cap is split rather than shared:
+
+    * every tag with something to select starts on an equal share;
+    * a tag that wants fewer slots than its share **releases the remainder**,
+      which is re-offered to the tags still short (water-filling, repeated until
+      nothing more can be given away);
+    * a tag never receives more than it wants, so no slot is reserved for a
+      dormant tag — an out-of-season tag costs the others nothing, which is the
+      same promise ``has_discovered`` makes to the guaranteed floor.
+
+    With today's numbers and ``max_series=60``: two tags, 30 each; tennis wants
+    27 so releases 3; Football takes 33. Tennis keeps **every** series it selects
+    today and Football adds 33 — which is the ship, without un-shipping the last
+    one.
+
+    Deterministic: shares depend only on ``wants`` and ``cap``, and the leftover
+    from integer division is handed out in sorted tag order.
+    """
+    live = {t: n for t, n in wants.items() if n > 0}
+    if not live or cap <= 0:
+        return {t: 0 for t in wants}
+
+    shares = {t: 0 for t in wants}
+    remaining = int(cap)
+    open_tags = set(live)
+
+    while remaining > 0 and open_tags:
+        share, extra = divmod(remaining, len(open_tags))
+        if share == 0:
+            # Fewer slots left than tags still short: hand them out one apiece in
+            # sorted tag order rather than dropping them on the floor.
+            for tag in sorted(open_tags)[:remaining]:
+                shares[tag] += 1
+                remaining -= 1
+            break
+        granted = 0
+        for i, tag in enumerate(sorted(open_tags)):
+            allot = share + (1 if i < extra else 0)
+            take = min(allot, live[tag] - shares[tag])
+            shares[tag] += take
+            granted += take
+        remaining -= granted
+        open_tags = {t for t in open_tags if shares[t] < live[t]}
+        if granted == 0:
+            # Everyone is full; the cap simply exceeds total demand.
+            break
+
+    return shares
 
 
 class StageDeadlines(NamedTuple):
@@ -125,7 +194,7 @@ def fetch_stage_deadlines(
 
 
 def select_discovered_series(
-    discovered: Iterable[str],
+    discovered: Union[Iterable[str], Mapping[str, Iterable[str]]],
     open_counts: Mapping[str, int],
     guaranteed: Iterable[str],
     heavy_tokens: Sequence[str],
@@ -138,22 +207,30 @@ def select_discovered_series(
 
     Args:
         discovered: series tickers the venue lists for the tags we asked about.
+            Either a flat iterable (one anonymous tag — the tennis-only shape,
+            behaviour unchanged) or a ``{tag: tickers}`` mapping, which is what
+            turns the cap from shared into split (see ``_fair_shares``). A ticker
+            listed under two tags belongs to the first tag that claims it, in the
+            mapping's own order, so the split is deterministic.
         open_counts: series ticker → count of OPEN events, from the census walk.
             A series absent from this mapping has no open events.
         guaranteed: the hand-listed floor. Already fetched, so selecting one
             again would spend the discovery reserve on work already done.
         heavy_tokens: substrings that mark a monster-nested-payload series.
-        max_series: hard cap on how many series one beat may add.
+        max_series: hard cap on how many series one beat may add, across all tags.
         max_open_events: refuse a series holding more open events than this.
         page_limit: events per page the caller will request.
         max_pages: hard per-series page ceiling.
 
     Returns:
         ``(selected, receipt)``. ``selected`` is a list of
-        ``(series_ticker, pages)`` ordered by open-event count descending then
-        ticker ascending — deterministic, so a guard test can assert on it and
-        so the biggest gap is closed first if the deadline truncates the loop.
-        ``pages`` is derived from the census count, never a uniform guess.
+        ``(series_ticker, pages)``. Within a tag it is open-event count
+        descending then ticker ascending; across tags the tags are INTERLEAVED
+        round-robin, so a truncated beat loses the tail of every tag rather than
+        the whole of one. That is gotcha #41 at tag scale — "ask what the
+        ordering starts on" — and with one tag it collapses to the plain
+        descending order that shipped. ``pages`` is derived from the census
+        count, never a uniform guess.
 
     Pure and total: an unparseable or duplicated ticker is skipped, not raised.
     A fetch must never fail on a bookkeeping concern.
@@ -161,7 +238,13 @@ def select_discovered_series(
     _guaranteed = {str(g).upper() for g in guaranteed if g}
     _tokens = tuple(t.upper() for t in heavy_tokens)
 
+    if isinstance(discovered, Mapping):
+        by_tag = {str(k): list(v or []) for k, v in discovered.items()}
+    else:
+        by_tag = {_UNTAGGED: list(discovered or [])}
+
     counts: dict[str, int] = {}
+    tag_of: dict[str, str] = {}
     dormant: list[str] = []
     skipped: dict[str, int] = {}
     detail: dict[str, str] = {}
@@ -172,41 +255,62 @@ def select_discovered_series(
             detail[ticker] = reason
 
     seen: set[str] = set()
-    for raw in discovered:
-        ticker = str(raw or "").strip().upper()
-        if not ticker or ticker in seen:
-            continue
-        seen.add(ticker)
+    for tag, tickers in by_tag.items():
+        for raw in tickers:
+            ticker = str(raw or "").strip().upper()
+            if not ticker or ticker in seen:
+                continue
+            seen.add(ticker)
 
-        n_open = int(open_counts.get(ticker) or 0)
-        if n_open <= 0:
-            # Counted, not named: dormant series are the bulk of any catalog and
-            # naming them all would bury the refusals a reader can act on.
-            dormant.append(ticker)
-            _skip(ticker, "no_open_events", with_detail=False)
-            continue
-        if ticker in _guaranteed:
-            _skip(ticker, "already_guaranteed")
-            continue
-        if any(tok in ticker for tok in _tokens):
-            _skip(ticker, "heavy_payload_shape")
-            continue
-        if n_open > max_open_events:
-            _skip(ticker, "too_many_open_events")
-            continue
-        counts[ticker] = n_open
+            n_open = int(open_counts.get(ticker) or 0)
+            if n_open <= 0:
+                # Counted, not named: dormant series are the bulk of any catalog
+                # and naming them all would bury the refusals a reader can act on.
+                dormant.append(ticker)
+                _skip(ticker, "no_open_events", with_detail=False)
+                continue
+            if ticker in _guaranteed:
+                _skip(ticker, "already_guaranteed")
+                continue
+            if any(tok in ticker for tok in _tokens):
+                _skip(ticker, "heavy_payload_shape")
+                continue
+            if n_open > max_open_events:
+                _skip(ticker, "too_many_open_events")
+                continue
+            counts[ticker] = n_open
+            tag_of[ticker] = tag
 
-    ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    # Rank within each tag, then give each tag a share of the cap it cannot be
+    # squeezed out of by a bigger neighbour.
+    ranked_by_tag: dict[str, list[tuple[str, int]]] = {t: [] for t in by_tag}
+    for ticker, n_open in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])):
+        ranked_by_tag[tag_of[ticker]].append((ticker, n_open))
 
-    selected: list[tuple[str, int]] = []
-    for ticker, n_open in ranked:
-        if len(selected) >= max_series:
+    shares = _fair_shares({t: len(r) for t, r in ranked_by_tag.items()}, max_series)
+
+    taken: dict[str, list[tuple[str, int]]] = {}
+    for tag, ranked in ranked_by_tag.items():
+        keep = shares.get(tag, 0)
+        taken[tag] = ranked[:keep]
+        for ticker, _ in ranked[keep:]:
             # Not a failure — the cap is what keeps one busy tag from eating the
             # whole reserve. Named so a beat that hits it is visible.
             _skip(ticker, "over_budget")
-            continue
-        pages = max(1, min(max_pages, math.ceil(n_open / max(1, page_limit))))
-        selected.append((ticker, pages))
+
+    # Interleave: tag A's biggest, tag B's biggest, tag A's second… A deadline
+    # that cuts the loop short then costs every tag its smallest series, not one
+    # tag its entire draw.
+    order = sorted(taken)
+    selected: list[tuple[str, int]] = []
+    for rank in range(max((len(v) for v in taken.values()), default=0)):
+        for tag in order:
+            if rank < len(taken[tag]):
+                ticker, n_open = taken[tag][rank]
+                pages = max(
+                    1, min(max_pages, math.ceil(n_open / max(1, page_limit)))
+                )
+                selected.append((ticker, pages))
 
     receipt = {
         "discovered": len(seen),
@@ -214,8 +318,194 @@ def select_discovered_series(
         "selected": [t for t, _ in selected],
         "selected_count": len(selected),
         "selected_open_events": sum(counts[t] for t, _ in selected),
+        # Which tag each slot went to. The split is the policy, so a reader who
+        # sees tennis at 27 and Football at 33 can tell a healthy share from a
+        # tag that has quietly been squeezed to nothing.
+        "selected_per_tag": {
+            t: len(v) for t, v in sorted(taken.items()) if t != _UNTAGGED
+        },
+        # CERT-953: what the census said EACH selected series holds. The fetch
+        # needs it per series to say "KXATPDOUBLES was supposed to bring 32 and
+        # brought 0" rather than reporting one aggregate in which a dead series
+        # is invisible behind a live sibling.
+        "selected_expected": {t: counts[t] for t, _ in selected},
         "skipped": skipped,
         "skipped_detail": detail,
         "dormant_sample": sorted(dormant)[:_DORMANT_SAMPLE],
     }
     return selected, receipt
+
+
+#: Hard caps on the persisted copy of a discovery receipt. The live receipt is
+#: bounded by policy (see the module docstring); these bound it by arithmetic,
+#: because the scan report keeps 48 of them in a shared 100MB Redis and a
+#: catalog that grows must not turn telemetry into a memory problem.
+_PERSIST_MAX_LIST = 24
+_PERSIST_MAX_DETAIL = 24
+
+#: The receipt keys worth keeping across beats, in reading order. `source` and
+#: `events_added` are the two the reader is actually here for — everything else
+#: explains a number that surprised them.
+_PERSIST_SCALARS = (
+    "source",
+    "events_added",
+    "series_fetched",
+    "discovered",
+    "with_open_events",
+    "selected_count",
+    "selected_open_events",
+    "fetch_truncated_after",
+    "not_cached",
+    "error",
+)
+
+
+def summarize_discovery_receipt(receipt: Optional[Mapping]) -> dict:
+    """The part of a discovery receipt worth persisting on every beat.
+
+    The receipt as measured carries two nested sub-receipts (the catalog read
+    and the census walk) that answer "why is this number what it is" for the
+    beat that produced it. Across 48 ring entries they are noise, so this keeps
+    the counters and drops the sub-receipts — with one exception: `census` is
+    reduced to `exhausted`, because a census that did not exhaust is the one
+    condition under which a *small* `selected_count` is expected rather than
+    alarming, and a reader who cannot see it will misread the beat.
+
+    Never raises. A receipt is telemetry, and telemetry that can fail the report
+    it rides on is worse than no telemetry (the whole reason this function
+    exists is that the receipt was silently dropped instead).
+    """
+    if not receipt:
+        return {"source": "absent"}
+    try:
+        out: dict = {}
+        for key in _PERSIST_SCALARS:
+            if key in receipt:
+                out[key] = receipt[key]
+        out.setdefault("source", "unknown")
+
+        selected = receipt.get("selected")
+        if isinstance(selected, (list, tuple)):
+            out["selected"] = [str(s) for s in selected[:_PERSIST_MAX_LIST]]
+            if len(selected) > _PERSIST_MAX_LIST:
+                out["selected_truncated"] = len(selected) - _PERSIST_MAX_LIST
+
+        skipped = receipt.get("skipped")
+        if isinstance(skipped, Mapping):
+            out["skipped"] = {str(k): int(v) for k, v in skipped.items()}
+
+        # The tag split. Tiny (one int per tag) and the only field that can show
+        # a tag being squeezed out, which is the failure `_fair_shares` exists to
+        # prevent — so it survives every cap here.
+        per_tag = receipt.get("selected_per_tag")
+        if isinstance(per_tag, Mapping) and per_tag:
+            out["selected_per_tag"] = {str(k): int(v) for k, v in per_tag.items()}
+
+        detail = receipt.get("skipped_detail")
+        if isinstance(detail, Mapping):
+            items = sorted(detail.items())[:_PERSIST_MAX_DETAIL]
+            out["skipped_detail"] = {str(k): str(v) for k, v in items}
+            if len(detail) > _PERSIST_MAX_DETAIL:
+                out["skipped_detail_truncated"] = len(detail) - _PERSIST_MAX_DETAIL
+
+        census = receipt.get("census")
+        if isinstance(census, Mapping) and "exhausted" in census:
+            out["census_exhausted"] = bool(census["exhausted"])
+
+        # CERT-953: the per-series results, which are the only fields that can
+        # answer "did THIS draw arrive". Bounded like everything else here, but
+        # ordered so the ones a reader must not lose survive the cap: anything
+        # that returned nothing or errored sorts first.
+        results = receipt.get("series_results")
+        if isinstance(results, Mapping):
+            def _rank(item):
+                ticker, res = item
+                if not isinstance(res, Mapping):
+                    return (2, ticker)
+                bad = bool(res.get("error")) or int(res.get("returned") or 0) <= 0
+                return (0 if bad else 1, ticker)
+
+            kept = sorted(results.items(), key=_rank)[:_PERSIST_MAX_DETAIL]
+            out["series_results"] = {
+                str(t): {
+                    k: v for k, v in dict(r).items()
+                    if k in ("expected", "returned", "unique_added",
+                             "truncated", "parse_failed", "error")
+                }
+                for t, r in kept
+                if isinstance(r, Mapping)
+            }
+            if len(results) > _PERSIST_MAX_DETAIL:
+                out["series_results_truncated"] = len(results) - _PERSIST_MAX_DETAIL
+
+        return out
+    except Exception:  # noqa: BLE001 — see docstring
+        return {"source": "unsummarizable"}
+
+
+#: Receipt `source` values that mean the discovery stage actually resolved a
+#: series list this beat, so `events_added == 0` is a result and not a no-op.
+_DISCOVERY_RAN_SOURCES = frozenset({"live", "cache"})
+
+
+def discovery_dead_series(receipt: Optional[Mapping]) -> list[str]:
+    """Selected series the venue returned NOTHING for — named, one by one.
+
+    This is the gotcha #53 reading for this stage, and it has to be per series.
+    The aggregate `events_added` cannot carry it, in both directions (CERT-953):
+
+    * **It hides a real outage.** `events_added` sums every selected series, so
+      a dead `KXATPDOUBLES` returning zero is invisible behind a live
+      `KXWTADOUBLES` that added events. The alarm would stay quiet through
+      exactly the half-outage it exists to catch — the men's draw vanishing off
+      the site while the women's draw keeps it looking healthy.
+    * **It invents one that is not there.** `events_added` counts only events
+      the main and supplementary scans had not already mapped. A perfectly
+      healthy doubles fetch whose events the main scan already held contributes
+      zero UNIQUE additions, and an aggregate alarm would fire on a beat where
+      nothing whatsoever is wrong.
+
+    So the question is asked of the venue's own answer for each series:
+    `returned` — how many events came back for this ticker, counted before the
+    dedup — plus an outright fetch error. Neither depends on a sibling, and
+    neither depends on what we already held.
+
+    Deliberately NOT dead:
+
+    * a series the reserve never reached (`truncated` with nothing returned).
+      `fetch_truncated_after` already says that precisely, and alarming on it
+      would turn a budget signal into a coverage alarm.
+    * a beat that selected nothing at all. The `skipped` counters explain it,
+      and firing every night the tournament is dark is how an alarm gets
+      ignored on the night it matters.
+    * a stage that never ran (`not_wired`, `disabled`, `failed`) — those name
+      their own failure in `source`.
+
+    Returns the sorted tickers so the caller can print them; empty means clean.
+    """
+    if not receipt:
+        return []
+    try:
+        if str(receipt.get("source") or "") not in _DISCOVERY_RAN_SOURCES:
+            return []
+        results = receipt.get("series_results")
+        if not isinstance(results, Mapping):
+            return []
+        dead = []
+        for ticker, res in results.items():
+            if not isinstance(res, Mapping):
+                continue
+            if res.get("error"):
+                dead.append(str(ticker))
+                continue
+            if int(res.get("returned") or 0) > 0:
+                continue
+            # Zero returned. Only an alarm if we actually got to ask.
+            if res.get("truncated") or res.get("parse_failed"):
+                continue
+            if int(res.get("expected") or 0) <= 0:
+                continue
+            dead.append(str(ticker))
+        return sorted(dead)
+    except Exception:  # noqa: BLE001 — telemetry never raises
+        return []

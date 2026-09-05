@@ -46,16 +46,19 @@ import pytest
 
 from app.services.statpal_api import StatPalAPIService
 from app.utils.authority_agreement import (
+    MEASUREMENT_HORIZON,
     READ_FAILED,
     READ_OK,
     RECEIPT_CAP,
     SHADOW_STAMPERS,
     Side,
+    TIGHTEST_OFFSEASON_GAP,
     WITHIN,
     WRONG_DAY,
     build_agreement_row,
     is_placeholder,
     ledger_line,
+    measurement_bounds,
 )
 from app.utils.nfl_team_matching import normalize_team
 
@@ -133,6 +136,15 @@ def test_a_five_hour_kickoff_gap_is_one_game_not_two_misses():
             "unplaceable": 0,
         },
         "ours_covered_pct": 100.0,
+        # Nor is anything ours-only, so the mirrored split is empty too. Both
+        # splits are always present: a bucket that appears only when it is
+        # non-zero is a bucket a reader can mistake for a zero.
+        "ours_only_by_horizon": {
+            "before_statpal_first": 0,
+            "inside_statpal_span": 0,
+            "beyond_statpal_last": 0,
+            "unplaceable": 0,
+        },
         # D63: NFL is scored on BOTH numbers, because both sides carry the same
         # population and where the two questions have the same answer asking
         # both is free. Here they do, and the day advances the streak.
@@ -320,6 +332,15 @@ def test_a_contest_we_hold_no_row_for_is_statpal_only():
         # has no answer when we hold none, and 0.0 would read as a total
         # disagreement (the same reasoning as `_pct`).
         "ours_covered_pct": None,
+        # We hold nothing, so there is nothing of ours for StatPal to be missing
+        # — every bucket zero, including `unplaceable`, which counts misses and
+        # not the absence of a span.
+        "ours_only_by_horizon": {
+            "before_statpal_first": 0,
+            "inside_statpal_span": 0,
+            "beyond_statpal_last": 0,
+            "unplaceable": 0,
+        },
         # D63 + spec rule 6. `pct` IS scored here (0.0 — StatPal lists a game
         # and we list none), but the other governing number has no denominator,
         # and a sport does not half clear a bar. So the day is NO-SCORE: it
@@ -547,6 +568,248 @@ def test_an_empty_but_successful_read_is_a_row_with_no_score():
 
 
 # ---------------------------------------------------------------------------
+# Our own misses, placed against StatPal's published span (#2867)
+#
+# `ours_covered_pct` — "of the games WE list, does StatPal have them?" — governs
+# NBA and NHL under D63 and is one of NFL's two numbers. Its complement is
+# `ours_only`, and until the mirror existed nothing said whether one of those
+# absences sat inside the window StatPal publishes or past the edge of it.
+#
+# MLB is the sport that makes the distinction load-bearing: its `season-schedule`
+# is a rolling ~17-day window, so a game of ours in October is guaranteed to be
+# `ours_only` and guarantees nothing. The dates below are that shape.
+# ---------------------------------------------------------------------------
+
+#: The first day of StatPal's rolling MLB window in these tests. Every span
+#: below is measured from it so the three buckets cannot be confused by a date
+#: that happens to sit in two of them.
+WINDOW_OPENS = _utc("2026-09-05T23:05:00")
+WINDOW_CLOSES = WINDOW_OPENS + timedelta(days=17)
+
+#: An October game of ours: real, on the site, and six weeks past the last date
+#: StatPal's rolling schedule reaches. The absence this whole split exists to
+#: stop being read as a disagreement.
+PAST_THEIR_WINDOW = WINDOW_CLOSES + timedelta(days=44)
+
+
+def _mlb(fixtures, rows, **kw):
+    """The same pure builder, keyed to a sport with no governing number yet.
+
+    `baseball_mlb` is absent from `GOVERNING_IDENTITY_NUMBERS` on purpose (its
+    two numbers are still being read), so these rows gate nothing — which is the
+    point: the split has to be published for a sport BEFORE that sport can be
+    ruled on, or the ruling is made on an undivided count.
+    """
+    return build_agreement_row(
+        sport_key="baseball_mlb",
+        fixtures=fixtures,
+        rows=rows,
+        normalize=normalize_team,
+        **kw,
+    )
+
+
+def _statpal_window():
+    """Two real fixtures at the two ends of StatPal's rolling window."""
+    return [
+        _fixture("2001", "Seattle Mariners", "Athletics", WINDOW_OPENS, label="MLB"),
+        _fixture("2002", "New York Mets", "Atlanta Braves", WINDOW_CLOSES, label="MLB"),
+    ]
+
+
+def test_a_game_of_ours_past_statpals_window_is_their_horizon_not_a_disagreement():
+    """The MLB case this was built for.
+
+    Our table holds an October game; StatPal's schedule endpoint stops seventeen
+    days out. That absence is not evidence StatPal would have left a hole in the
+    site, and a governing number read without this split cannot tell it from one
+    that is.
+    """
+    rows = [
+        _row(1, "Seattle Mariners", "Athletics", WINDOW_OPENS),
+        _row(2, "New York Mets", "Atlanta Braves", WINDOW_CLOSES),
+        _row(3, "Los Angeles Dodgers", "San Diego Padres", PAST_THEIR_WINDOW),
+    ]
+    row = _mlb(_statpal_window(), rows)
+
+    assert row["identity"]["ours_only"] == 1
+    assert row["identity"]["ours_only_by_horizon"] == {
+        "before_statpal_first": 0,
+        "inside_statpal_span": 0,
+        "beyond_statpal_last": 1,
+        "unplaceable": 0,
+    }
+
+
+def test_a_game_of_ours_inside_statpals_window_is_the_finding():
+    """The bucket that IS a disagreement, and the one an ingestion gap lands in.
+
+    StatPal publishes that date and has no such game. Same shape as the test
+    above, one date moved inside the window, and the answer must change — a
+    split whose buckets do not move with the date is not a split.
+    """
+    rows = [
+        _row(1, "Seattle Mariners", "Athletics", WINDOW_OPENS),
+        _row(2, "New York Mets", "Atlanta Braves", WINDOW_CLOSES),
+        _row(3, "Los Angeles Dodgers", "San Diego Padres", WINDOW_OPENS + timedelta(days=3)),
+    ]
+    row = _mlb(_statpal_window(), rows)
+
+    assert row["identity"]["ours_only_by_horizon"]["inside_statpal_span"] == 1
+    assert row["identity"]["ours_only_by_horizon"]["beyond_statpal_last"] == 0
+
+
+def test_a_game_of_ours_before_statpals_window_opens_is_also_their_horizon():
+    """The backward edge. A rolling window has two of them, and a split that
+    only knows about the far one reports a settled yesterday as a disagreement."""
+    rows = [
+        _row(1, "Seattle Mariners", "Athletics", WINDOW_OPENS),
+        _row(2, "Chicago Cubs", "Milwaukee Brewers", WINDOW_OPENS - timedelta(days=2)),
+    ]
+    row = _mlb(_statpal_window(), rows)
+
+    assert row["identity"]["ours_only_by_horizon"]["before_statpal_first"] == 1
+    assert row["identity"]["ours_only_by_horizon"]["inside_statpal_span"] == 0
+
+
+def test_an_untimed_row_of_ours_is_unplaceable_and_not_quietly_inside():
+    """No kickoff on our side means no bucket. Defaulting it to `inside` would
+    invent a disagreement; defaulting it to `beyond` would excuse one."""
+    rows = [
+        _row(1, "Seattle Mariners", "Athletics", WINDOW_OPENS),
+        _row(2, "Chicago Cubs", "Milwaukee Brewers", None),
+    ]
+    row = _mlb(_statpal_window(), rows)
+
+    assert row["identity"]["ours_only_by_horizon"]["unplaceable"] == 1
+    assert row["identity"]["ours_only_by_horizon"]["inside_statpal_span"] == 0
+    assert row["identity"]["ours_only_by_horizon"]["beyond_statpal_last"] == 0
+
+
+def test_a_read_with_no_timed_fixture_places_nothing_beyond_statpals_last():
+    """StatPal returned games with no clock, so it published no span.
+
+    The mirror of the empty-table rule on the other side: zeros here would claim
+    every game we hold falls inside a window that does not exist, and a confident
+    `beyond_statpal_last` would excuse the whole list.
+    """
+    fixtures = [_fixture("2003", "Texas Rangers", "Houston Astros", None, label="MLB")]
+    rows = [
+        _row(1, "Seattle Mariners", "Athletics", WINDOW_OPENS),
+        _row(2, "New York Mets", "Atlanta Braves", WINDOW_CLOSES),
+    ]
+    row = _mlb(fixtures, rows)
+
+    assert row["identity"]["ours_only"] == 2
+    assert row["identity"]["ours_only_by_horizon"] == {
+        "before_statpal_first": 0,
+        "inside_statpal_span": 0,
+        "beyond_statpal_last": 0,
+        "unplaceable": 2,
+    }
+
+
+def test_the_two_splits_measure_against_opposite_spans_in_one_pass():
+    """The catching test for the copy-paste this change is one keystroke from.
+
+    Both splits take a list of misses and a list to draw the span from, and the
+    two lists are DIFFERENT: StatPal's misses are placed against our rows, ours
+    against StatPal's fixtures. Wire the mirror to `real_rows` — the argument
+    sitting right beside it — and this pass still produces four buckets that
+    still sum correctly, and both of them are wrong.
+
+    The crossing has to be made VISIBLE, and one detail decides whether it is:
+    every ours-only row is itself a member of the list our own span is drawn
+    from, so read against OUR span it is inside by construction — which is the
+    same answer the mirror gives for a real disagreement. A case whose expected
+    bucket is `inside` therefore cannot fail, no matter how the wires are run.
+    The discriminating case is a miss OUTSIDE the other side's span: our October
+    game sits past StatPal's window (`beyond_statpal_last`), and against our own
+    span it is the last game we hold (`inside`). The two answers differ, so the
+    crossing shows up.
+
+    The StatPal-side split is pinned in the same pass, on a fixture that lands
+    in a different bucket again, so neither direction can be silently satisfied
+    by the other's span.
+    """
+    mid = WINDOW_OPENS + timedelta(days=8)
+    fixtures = _statpal_window() + [
+        _fixture("2004", "Boston Red Sox", "New York Yankees", mid, label="MLB")
+    ]
+    rows = [
+        _row(1, "Seattle Mariners", "Athletics", WINDOW_OPENS),
+        _row(2, "New York Mets", "Atlanta Braves", WINDOW_CLOSES),
+        _row(3, "Los Angeles Dodgers", "San Diego Padres", PAST_THEIR_WINDOW),
+    ]
+    row = _mlb(fixtures, rows)
+
+    # Our span runs to October, so StatPal's one miss is inside it — a real
+    # ingestion gap, and the bucket that IS a finding on that side.
+    assert row["identity"]["statpal_only_by_horizon"] == {
+        "before_our_first": 0,
+        "inside_our_span": 1,
+        "beyond_our_last": 0,
+        "unplaceable": 0,
+    }
+    # StatPal's span stops seventeen days out, so our October game is past
+    # their horizon — the OPPOSITE verdict to the one our own span would give
+    # for the same row, which is what makes this a check.
+    assert row["identity"]["ours_only_by_horizon"] == {
+        "before_statpal_first": 0,
+        "inside_statpal_span": 0,
+        "beyond_statpal_last": 1,
+        "unplaceable": 0,
+    }
+
+
+def test_a_placeholder_fixture_cannot_widen_the_span_it_is_excluded_from():
+    """Exclusions come off first, and the span is drawn from what survives.
+
+    A `TBD` bracket entry six months out is not a claim that StatPal publishes
+    six months of baseball. Drawing the span from the raw fixture list instead of
+    the real one would move our October game from `beyond_statpal_last` into
+    `inside_statpal_span` — inventing a disagreement out of a row the spec has
+    already declared unusable (spec rule 5).
+    """
+    fixtures = _statpal_window() + [
+        _fixture("2005", "TBD", "TBD", WINDOW_CLOSES + timedelta(days=180), label="MLB")
+    ]
+    rows = [
+        _row(1, "Seattle Mariners", "Athletics", WINDOW_OPENS),
+        _row(2, "New York Mets", "Atlanta Braves", WINDOW_CLOSES),
+        _row(3, "Los Angeles Dodgers", "San Diego Padres", PAST_THEIR_WINDOW),
+    ]
+    row = _mlb(fixtures, rows)
+
+    assert row["excluded"]["statpal_placeholders"] == 1
+    assert row["identity"]["ours_only_by_horizon"]["beyond_statpal_last"] == 1
+    assert row["identity"]["ours_only_by_horizon"]["inside_statpal_span"] == 0
+
+
+def test_the_mirror_is_reported_beside_the_governing_number_never_inside_it():
+    """Spec rule 5, on the side that governs.
+
+    Three of our four games are past StatPal's window, so a split that subtracted
+    would publish 100% and clear the bar on a sport nobody has measured. The
+    number stays 25.0 and the split stands beside it.
+    """
+    rows = [
+        _row(1, "Seattle Mariners", "Athletics", WINDOW_OPENS),
+        _row(2, "Chicago Cubs", "Milwaukee Brewers", WINDOW_CLOSES + timedelta(days=30)),
+        _row(3, "Los Angeles Dodgers", "San Diego Padres", PAST_THEIR_WINDOW),
+        _row(4, "Texas Rangers", "Houston Astros", WINDOW_CLOSES + timedelta(days=51)),
+    ]
+    row = _mlb(_statpal_window(), rows)
+
+    assert row["identity"]["ours_only"] == 3
+    assert row["identity"]["ours_covered_pct"] == 25.0
+    assert row["identity"]["ours_only_by_horizon"]["beyond_statpal_last"] == 3
+    # And it still gates nothing: MLB has no governing number, and publishing a
+    # split is not the same as answering which question scores the sport.
+    assert row["identity"]["governing"]["gate"] == "PENDING-NO-GOVERNING-NUMBER"
+
+
+# ---------------------------------------------------------------------------
 # Receipts are capped; counts never are
 # ---------------------------------------------------------------------------
 
@@ -653,3 +916,120 @@ def test_the_shadow_registry_names_only_sports_that_have_a_stamper():
             f"{sport_key} claims stamper {task_name}, which app.tasks does not "
             f"export"
         )
+
+
+# ---------------------------------------------------------------------------
+# The measurement population's bounds. CERT-962.
+# ---------------------------------------------------------------------------
+
+
+class TestMeasurementBounds:
+    """`measurement_bounds` decides which of OUR rows the governing number is over.
+
+    It exists because the stamper's write window was doing that job as a side
+    effect. Writing an id only makes sense where StatPal has a fixture to match
+    against, so the write window is StatPal's own span — and measuring
+    `ours_covered_pct` over StatPal's own span answers "does StatPal have our
+    games?" only where StatPal has already said yes.
+    """
+
+    NOW = datetime(2026, 9, 5, 7, 22, tzinfo=timezone.utc)
+
+    def test_it_never_narrows_the_write_window(self):
+        """The property that kept three running seven-day clocks intact.
+
+        NFL, NBA and NHL all hold local inventory that already sits inside
+        StatPal's span — 322, 41 and 32 rows, measured on production 2026-09-05,
+        identical under both bounds. A repair that redefined their denominators
+        would have silently reset three streaks mid-count.
+        """
+        season = (
+            datetime(2026, 8, 6, 23, 0, tzinfo=timezone.utc),
+            datetime(2027, 2, 15, 0, 30, tzinfo=timezone.utc),
+        )
+        start, end = measurement_bounds(season, now=self.NOW)
+        assert start <= season[0]
+        assert end >= season[1]
+
+    def test_it_reaches_past_the_end_of_a_rolling_schedule(self):
+        """MLB's measured window: 2026-08-31T21:05Z to 2026-09-17T00:40Z, ~17 days.
+
+        An October game of ours is the case CERT-962 named. Under the write
+        window it is not selected at all; under these bounds it is in the
+        population and the horizon split can place it.
+        """
+        rolling = (
+            datetime(2026, 8, 31, 21, 5, tzinfo=timezone.utc),
+            datetime(2026, 9, 17, 0, 40, tzinfo=timezone.utc),
+        )
+        start, end = measurement_bounds(rolling, now=self.NOW)
+        october = datetime(2026, 10, 7, 0, 5, tzinfo=timezone.utc)
+        assert start <= october <= end
+        # And backwards, which is the same artifact seen from the other side: a
+        # game we played last week has left a rolling window too.
+        assert start <= datetime(2026, 8, 12, 23, 10, tzinfo=timezone.utc)
+
+    def test_the_horizon_cannot_span_two_seasons(self):
+        """The ceiling on `MEASUREMENT_HORIZON`, and the reason it is a constant.
+
+        A span anchored in an offseason that reaches both sides of it compares one
+        season's inventory against another season's schedule, and every row in the
+        older season is `before_statpal_first` — a number that looks like total
+        disagreement and means nothing at all.
+
+        `TIGHTEST_OFFSEASON_GAP` is measured, not recalled: 97.0 days between the
+        NHL's last playoff game (2026-06-15) and its first preseason game
+        (2026-09-19), the shortest of the four sports over a 700-day sample of
+        `events` read 2026-09-05. NBA's is 128.8, the NFL's 179.0.
+
+        This test is the one that fails if a later edit widens the horizon to
+        "just a bit more" without re-measuring the gap. Widening it is allowed;
+        widening it silently is not.
+        """
+        assert 2 * MEASUREMENT_HORIZON < TIGHTEST_OFFSEASON_GAP
+
+    def test_the_horizon_is_wider_than_the_rolling_window_it_exists_to_see_past(self):
+        """The floor. A horizon narrower than a provider's own window leaves the
+        subtraction exactly where it was — the guard would be set below what the
+        defect produces and could never fire. MLB's measured window is ~17 days."""
+        assert MEASUREMENT_HORIZON > timedelta(days=17)
+
+    def test_it_does_not_read_the_clock_itself(self):
+        """`now` is passed, never called for (gotcha #44). A bound that reads the
+        clock inside itself cannot be pinned by a test at a fixed date, and this
+        one decides a denominator that is compared across days."""
+        window = (
+            datetime(2026, 8, 31, 21, 5, tzinfo=timezone.utc),
+            datetime(2026, 9, 17, 0, 40, tzinfo=timezone.utc),
+        )
+        once = measurement_bounds(window, now=self.NOW)
+        again = measurement_bounds(window, now=self.NOW)
+        assert once == again
+        # A different `now` moves it, which proves the argument is the source.
+        later = measurement_bounds(window, now=self.NOW + timedelta(days=30))
+        assert later[1] > once[1]
+
+    def test_the_row_publishes_the_span_it_was_measured_over(self):
+        """`window` and `measurement_window` are no longer the same span, and a
+        reader cannot tell which produced a denominator by looking at the number.
+        Both are published, always — a field that appears only when the two
+        differ is a field whose absence has to be interpreted."""
+        write = (
+            datetime(2026, 8, 31, 21, 5, tzinfo=timezone.utc),
+            datetime(2026, 9, 17, 0, 40, tzinfo=timezone.utc),
+        )
+        measure = measurement_bounds(write, now=self.NOW)
+        row = build_agreement_row(
+            sport_key="baseball_mlb",
+            fixtures=[],
+            rows=[],
+            normalize=lambda s: (s or "").lower(),
+            window=write,
+            measurement_window=measure,
+        )
+        assert row["window"] == [write[0].isoformat(), write[1].isoformat()]
+        assert row["measurement_window"] == [
+            measure[0].isoformat(),
+            measure[1].isoformat(),
+        ]
+        assert row["measurement_window"] != row["window"]

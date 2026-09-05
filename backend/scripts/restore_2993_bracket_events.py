@@ -68,6 +68,29 @@ async def _table_exists(session, name):
     )
 
 
+def _populate_insert(table, on_conflict_nothing):
+    """`INSERT ... jsonb_populate_record(...)` with the `:row` bind TYPED JSONB.
+
+    Same defect, same fix, same file-pair as #3026's undo — see the long note on
+    `_populate_insert` in `restore_3026_question_events.py`. In short: `text()`
+    leaves the bind `NullType`, the banked rows arrive from `to_jsonb()` as
+    decoded Python dicts, and SQLAlchemy's asyncpg jsonb codec calls `.encode()`
+    on them. Typing the bind restores the `json.dumps` step in between.
+
+    This one is not hypothetical debt: `bak_2993_bracket_events` is on
+    production right now, so until this line changed there was a repair standing
+    behind an undo that would have raised on its first insert.
+    """
+    from sqlalchemy import bindparam, text
+    from sqlalchemy.dialects.postgresql import JSONB
+
+    tail = " ON CONFLICT DO NOTHING" if on_conflict_nothing else ""
+    return text(
+        f"INSERT INTO {table} "
+        f"SELECT (jsonb_populate_record(NULL::{table}, :row)).*{tail}"
+    ).bindparams(bindparam("row", type_=JSONB))
+
+
 async def restore_events(session, apply):
     """Re-insert deleted events and their children, by original id."""
     from sqlalchemy import text
@@ -132,21 +155,13 @@ async def restore_events(session, apply):
         # jsonb_populate_record rebuilds the row from the banked snapshot, so
         # this survives columns being added to `events` after the backup.
         await session.execute(
-            text(
-                "INSERT INTO events SELECT (jsonb_populate_record(NULL::events, :row)).*"
-            ),
-            {"row": event_row},
+            _populate_insert("events", on_conflict_nothing=False), {"row": event_row}
         )
         for child_rows, table in ((anchor_rows, "event_provider_anchors"),
                                   (lma_rows, "line_movement_analyses")):
             for child in child_rows or []:
                 await session.execute(
-                    text(
-                        f"INSERT INTO {table} "
-                        f"SELECT (jsonb_populate_record(NULL::{table}, :row)).* "
-                        f"ON CONFLICT DO NOTHING"
-                    ),
-                    {"row": child},
+                    _populate_insert(table, on_conflict_nothing=True), {"row": child}
                 )
         report["reinserted"] += 1
 

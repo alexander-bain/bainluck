@@ -113,6 +113,40 @@ def gradeable_winner(status: str | None, result: str | None) -> bool | None:
     return value == "yes"
 
 
+#: The authority rung a venue declaration is written on. Named here rather than
+#: spelled at each write site so :func:`graded_columns` and the string it emits
+#: cannot drift apart.
+VENUE_SETTLEMENT_SOURCE = "api_settlement"
+
+
+def graded_columns(status: str | None, result: str | None) -> dict[str, object]:
+    """The ``is_winner`` / ``resolution_source`` pair to WRITE — or ``{}``.
+
+    :func:`gradeable_winner` states the judgment; this states what a writer does
+    with it, and it exists because *stating* the judgment was not enough. CAL-P053
+    shipped the three-state read in August and ``backfill_winners`` adopted it, but
+    the two forward-capture writes in ``app/tasks/kalshi.py`` kept their own
+    two-state copy for another three weeks — so the backward repair drained a
+    population the live poll was still refilling every two hours.
+
+    MEASURED against the venue 2026-09-04 (CAL-P1004), 120 legs our DB graded
+    ``is_winner=false`` / ``api_settlement`` on tier<=2 markets we still call OPEN:
+    **111** were ``status=active result=""`` — still trading, never graded — and
+    **8** were ``status=finalized result="yes"``, i.e. the venue says they WON.
+    **Zero** were real losses.
+
+    An empty mapping means the venue has not answered, and a caller must then
+    write NEITHER column — not ``is_winner=False``, and not a ``NULL``
+    ``resolution_source`` over a grade a real settlement already established
+    (gotcha #21). Splatting ``{}`` into an upsert's ``set_`` is what makes that
+    the structurally cheap thing to do, instead of the thing you remember.
+    """
+    won = gradeable_winner(status, result)
+    if won is None:
+        return {}
+    return {"is_winner": won, "resolution_source": VENUE_SETTLEMENT_SOURCE}
+
+
 def is_terminal(status: str | None) -> bool:
     """True when a Kalshi market status means "no longer trading toward a result"."""
     return bool(status) and status in TERMINAL_STATUSES

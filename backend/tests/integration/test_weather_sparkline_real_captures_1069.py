@@ -370,7 +370,24 @@ class TestDownsample:
         assert thinned[0] == 0.0
         assert thinned[-1] == 499.0
         assert thinned == sorted(thinned)
-        assert len(thinned) <= MAX_HISTORY_POINTS + 1
+        assert len(thinned) <= MAX_HISTORY_POINTS
+
+    async def test_the_limit_is_a_ceiling_at_every_length(self):
+        """ux/1074 — the budget is 14, so 15 is a bug at any input length.
+
+        The defect this pins was invisible at 500 points and visible at 15: the
+        end index was unioned in AFTER the stride had already spent the whole
+        budget, so one more point than the limit came out whenever the last
+        strided index missed the end. Sweeping every length up to 4x the limit
+        catches that class rather than the one length that happened to show it.
+        """
+        for n in range(1, MAX_HISTORY_POINTS * 4):
+            points = [float(i) for i in range(n)]
+            thinned = _downsample(points, MAX_HISTORY_POINTS)
+            assert len(thinned) <= MAX_HISTORY_POINTS, f"{n} points -> {len(thinned)}"
+            assert thinned[0] == points[0], f"{n} points dropped its first"
+            assert thinned[-1] == points[-1], f"{n} points dropped its last"
+            assert thinned == sorted(set(thinned)), f"{n} points repeated a capture"
 
     async def test_a_dense_market_is_thinned_not_truncated(self):
         """Truncation would chart a month-old window and call it now."""
@@ -379,7 +396,7 @@ class TestDownsample:
 
         series = (await _leader_histories(db, [market]))[13]
 
-        assert len(series) <= MAX_HISTORY_POINTS + 1
+        assert len(series) <= MAX_HISTORY_POINTS
         assert series[0] == 0.1
         assert series[-1] == 60.0
 

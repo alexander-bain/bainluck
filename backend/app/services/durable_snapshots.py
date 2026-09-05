@@ -77,6 +77,67 @@ _UPSERT_SQL = text(
 # CAST(:payload AS jsonb) rather than ``:payload::jsonb``: asyncpg drops a bind
 # param immediately followed by a ``::`` cast.
 
+_CAS_CREATE_SQL = text(
+    """
+    INSERT INTO durable_state_snapshots
+        (identity, schema_version, generation, generated_at, payload,
+         checksum, complete, source, updated_at)
+    VALUES
+        (:identity, :schema_version, :generation, :generated_at,
+         CAST(:payload AS jsonb), :checksum, :complete, :source, NOW())
+    ON CONFLICT (identity) DO NOTHING
+    RETURNING generation
+    """
+)
+# ^ The `expected_generation is None` arm: the caller read `missing`, so it is
+# creating the row. If somebody created it first, DO NOTHING returns no row and
+# the caller is told `cas-miss` — it must re-read, because the fold it built on
+# "there is nothing here" is now wrong.
+
+_CAS_UPSERT_SQL = text(
+    """
+    INSERT INTO durable_state_snapshots
+        (identity, schema_version, generation, generated_at, payload,
+         checksum, complete, source, updated_at)
+    VALUES
+        (:identity, :schema_version, :generation, :generated_at,
+         CAST(:payload AS jsonb), :checksum, :complete, :source, NOW())
+    ON CONFLICT (identity) DO UPDATE SET
+        schema_version = EXCLUDED.schema_version,
+        generation     = EXCLUDED.generation,
+        generated_at   = EXCLUDED.generated_at,
+        payload        = EXCLUDED.payload,
+        checksum       = EXCLUDED.checksum,
+        complete       = EXCLUDED.complete,
+        source         = EXCLUDED.source,
+        updated_at     = NOW()
+    WHERE durable_state_snapshots.generation = :expected_generation
+    RETURNING generation
+    """
+)
+# ^ COMPARE-AND-SWAP (CERT-955). `_UPSERT_SQL`'s `stored <= EXCLUDED` answers
+# "is my copy at least as new as yours", which is right for a snapshot every
+# writer builds identically — the freshest wins and an idempotent republish of
+# the same generation still lands.
+#
+# It is WRONG for a read-modify-write. Two writers that both read generation `g`
+# both propose `g+1`; the first lands, and the second passes `stored <=
+# proposed` on EQUALITY, returns `ok`, and overwrites a fold it never read. The
+# day the first writer added is gone and both callers were told they succeeded.
+#
+# The predicate here is equality against the generation the caller ACTUALLY
+# READ, so exactly one of those two writers commits and the other is told
+# `cas-miss` and must re-read. `:expected_generation` is the read's generation,
+# never the proposed one — passing the proposed value restores the bug in a form
+# that still reads like a CAS.
+
+#: A CAS write that did not land because the row moved under the caller. Not
+#: `superseded` (which means "a good copy of this same thing is already there"):
+#: a read-modify-write's loser has NOT been stored by anybody, and its caller has
+#: to fold again.
+STATUS_CAS_MISS = "cas-miss"
+
+
 _SELECT_SQL = text(
     """
     SELECT identity, schema_version, generation, generated_at,
@@ -386,6 +447,114 @@ async def publish_snapshot_standalone(envelope: DurableEnvelope) -> dict:
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "durable publish could not open a session for %s: %s", envelope.identity, exc
+        )
+        return {
+            "status": "error",
+            "identity": envelope.identity,
+            "generation": envelope.generation,
+            "error_class": exc.__class__.__name__,
+            "error": str(exc)[:200],
+        }
+
+
+async def publish_cas_snapshot(
+    db: AsyncSession, envelope: DurableEnvelope, *, expected_generation: Optional[int]
+) -> dict:
+    """Compare-and-swap publish: land only if the row is still where we read it.
+
+    For read-modify-write callers — the ones whose payload is a FOLD of what
+    they read rather than an independent rebuild. `expected_generation` is the
+    generation the caller read; `None` means it read `missing` and is creating
+    the row, which then must not clobber a row somebody else created meanwhile.
+
+    Returns the same stage dict shape as :func:`publish_snapshot`, with
+    :data:`STATUS_CAS_MISS` where that one would say `superseded`.
+    """
+    params = {
+        "identity": envelope.identity,
+        "schema_version": envelope.schema_version,
+        "generation": envelope.generation,
+        "generated_at": envelope.generated_at,
+        "payload": canonical_json(envelope.payload),
+        "checksum": envelope.checksum,
+        "complete": envelope.complete,
+        "source": envelope.source,
+    }
+    sql = _CAS_CREATE_SQL if expected_generation is None else _CAS_UPSERT_SQL
+    if expected_generation is not None:
+        params["expected_generation"] = int(expected_generation)
+
+    try:
+        await db.execute(
+            text(f"SET LOCAL statement_timeout = {DURABLE_WRITE_TIMEOUT_MS}")
+        )
+        result = await db.execute(sql, params)
+        written = result.scalar_one_or_none()
+    except Exception as exc:  # noqa: BLE001 — classified for the caller
+        try:
+            await db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+        logger.warning(
+            "durable CAS publish failed for %s (expected %s): %s",
+            envelope.identity, expected_generation, exc,
+        )
+        return {
+            "status": "error",
+            "identity": envelope.identity,
+            "generation": envelope.generation,
+            "error_class": exc.__class__.__name__,
+            "error": str(exc)[:200],
+        }
+
+    if written is None:
+        try:
+            await db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+        return {
+            "status": STATUS_CAS_MISS,
+            "identity": envelope.identity,
+            "generation": envelope.generation,
+            "expected_generation": expected_generation,
+        }
+
+    try:
+        await db.commit()
+    except Exception as exc:  # noqa: BLE001
+        try:
+            await db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+        return {
+            "status": "error",
+            "identity": envelope.identity,
+            "generation": envelope.generation,
+            "error_class": exc.__class__.__name__,
+            "error": str(exc)[:200],
+        }
+    return {
+        "status": "ok",
+        "identity": envelope.identity,
+        "generation": envelope.generation,
+    }
+
+
+async def publish_cas_snapshot_standalone(
+    envelope: DurableEnvelope, *, expected_generation: Optional[int]
+) -> dict:
+    """:func:`publish_cas_snapshot` on its own short-lived task session."""
+    from app.tasks.base import get_task_session
+
+    try:
+        async with get_task_session() as db:
+            return await publish_cas_snapshot(
+                db, envelope, expected_generation=expected_generation
+            )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "durable CAS publish could not open a session for %s: %s",
+            envelope.identity, exc,
         )
         return {
             "status": "error",

@@ -6,12 +6,57 @@ import Foundation
 nonisolated struct SearchResponse: Decodable, Sendable {
     let query: String
     let teams: [SearchTeam]?
+    /// Tournament/ceremony concepts the server derived from the matched markets
+    /// (#999 L2-65). Optional because it post-dates this model and an older
+    /// cached payload has no such key.
+    let eventConcepts: [SearchEventConcept]?
     let results: [SearchEvent]
     let futures: [SearchFuturesMarket]
+    /// Server-composed topical families (#993 L2-41/42) — the grouping that turns
+    /// ten sibling rows into one answer. See `SearchFuturesFamily`.
+    let futuresFamilies: [SearchFuturesFamily]?
     let pagination: SearchPagination?
     let sports: [SportFacet]?
     let filters: SearchFilters?
     let didYouMean: String?
+}
+
+/// A tournament, ceremony or race the query names, derived server-side from the
+/// winner-field markets that matched (#999 L2-65).
+///
+/// `marketId` is the market it was DERIVED FROM, not a separate thing — which is
+/// why `SearchGrouping.novelConcepts` exists. See the note there.
+nonisolated struct SearchEventConcept: Decodable, Identifiable, Sendable {
+    /// Canonical `event:<domain>:<slug>`.
+    let key: String
+    let name: String
+    let domain: String?
+    let marketId: Int?
+
+    var id: String { key }
+}
+
+/// One server-composed family of related markets.
+///
+/// The server groups by story key or query-named entity, ranks the members, and
+/// hands back a `headline` plus up to four `members`. A family forms only at two
+/// or more members, so a lone market never arrives wrapped in group chrome.
+///
+/// Two counts, and they mean different things:
+///  - `memberCount` is the TRUE family size (19 for Grand Slam Tennis today).
+///  - `moreCount` is a promise about THIS PAGE: how many further members the
+///    response also ships in the flat `futures` list, i.e. how many are drawn
+///    BELOW this card. It is deliberately not `memberCount - shown` (#2646);
+///    that read once printed "+6 more markets below" above a page with one.
+nonisolated struct SearchFuturesFamily: Decodable, Identifiable, Sendable {
+    let familyKey: String
+    let label: String
+    let headline: SearchFuturesMarket
+    let members: [SearchFuturesMarket]
+    let moreCount: Int?
+    let memberCount: Int?
+
+    var id: String { familyKey }
 }
 
 /// Event result returned by search endpoints.

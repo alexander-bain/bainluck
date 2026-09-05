@@ -441,3 +441,59 @@ export function withUnit(value: string | number, vocab: SportScoringVocab): stri
 export function unitPhrase(prefix: string, vocab: SportScoringVocab, suffix: string): string {
   return [prefix, vocab.unit, suffix].filter(Boolean).join(" ");
 }
+
+/**
+ * How a widget admits it does not hold the played count — IN THE TENSE THE
+ * MATCH IS ACTUALLY IN.
+ *
+ * #3136, Alex, on `/events/15301243` (Wu 0–3 Alcaraz, FINAL the day before):
+ *
+ *   > "we do not hold the games played **yet**" — the *yet* is a promise about
+ *   > a match still in progress. This one is complete.
+ *
+ * He is right, and the promise is one nothing will keep. Re-measured on that
+ * event 2026-09-05: `/api/events/15301243/history` returns `espn_history` with
+ * **0** entries and `score_history` with **4**, every one of them a SET count
+ * (`0-0, 0-1, 0-2, 0-3`); `/api/events/15301243` carries `home_score` /
+ * `away_score` and nothing per-set. No payload this page fetches has ever held
+ * a game count for this match, and none will now that it is over. "Yet" on a
+ * FINAL page is therefore not optimism, it is a false claim about our roadmap.
+ *
+ * ── WHY THIS IS A SHARED HELPER AND NOT TWO STRING LITERALS ──────────────────
+ *
+ * TWO widgets on that one page owe the reader this sentence — the Games map and
+ * the Score Differential note directly above it — and they owe it about the same
+ * missing number for the same reason. The tense is the part that goes stale, so
+ * it is the part that must not be written twice: the day one of them learns that
+ * a finished match is finished and the other does not, the page tells a reader
+ * both that the count is coming and that it never came. `sportVocab` is already
+ * shared between these two for exactly this reason ("two answers to it is how
+ * one of them comes to disagree with the other"); this is that rule applied to
+ * the clause rather than to the unit.
+ *
+ * Each surface keeps its own sentence AROUND the clause, because a card subtitle
+ * and a chart footnote are not the same sentence — only the claim is.
+ */
+export function playedCountAbsence(unit: string, isDone: boolean): string {
+  const what = unit ? `the ${unit} played` : "the played count";
+  return isDone ? `we did not record ${what}` : `we do not hold ${what} yet`;
+}
+
+/**
+ * The heading over a column of market maps, counted rather than assumed.
+ *
+ * #3136, Alex: *"The section heading is `GAMES MAPS`, plural, over a single
+ * card."* The column heading has been unconditionally plural since #2442 wrote
+ * it, which is right on an NFL page (a full-game map plus 1H and 2H) and wrong
+ * on the very common page that has exactly one — a tennis match has no halves,
+ * so its totals column has always held one card under a heading announcing
+ * several.
+ *
+ * The singular form is the sport's DECLARED title, not the plural with its `s`
+ * removed, so a vocabulary whose title does not happen to end in " map" cannot
+ * be mangled into one. The plural keeps #2442's construction verbatim for the
+ * multi-card case that was already correct.
+ */
+export function mapColumnHeading(title: string, cardCount: number): string {
+  return cardCount > 1 ? `${title.replace(/ map$/i, "")} maps` : title;
+}

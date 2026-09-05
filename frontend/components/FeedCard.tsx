@@ -16,7 +16,7 @@ import { formatMovementPoints, isRenderedMove } from "@/lib/probabilityDisplay";
 import { renderedDuelPercents, renderedCardPercents, cardSumReason, renderedLeaderPercent } from "@/lib/renderedPercent";
 import { cardSumExplanation } from "@/lib/cardSum";
 import { eventPath } from "@/lib/eventKey";
-import { conceptDomainEmoji } from "@/lib/eventConceptDisplay";
+import { conceptDomainEmoji, conceptHeadlineBout } from "@/lib/eventConceptDisplay";
 import { leaderFirstSlice } from "@/lib/discover/leaderOrder";
 import { heroOutcome } from "@/lib/discover/heroOutcome";
 import { getLeagueDisplay, getEmojiForLeague, getEmojiForCategory, getNameForCategory } from "@/lib/sportCategories";
@@ -33,7 +33,7 @@ import {
   isSuspendedStatus,
   suspendedSummary,
 } from "@/lib/eventState";
-import { isPredictionMarketSource, prematchReading } from "@/lib/prematchReading";
+import { PREMATCH_SAID, prematchReading } from "@/lib/prematchReading";
 import { probabilityBarPair, SEGMENT_OPACITY } from "@/lib/probabilityBarPair";
 import TeamNameLink from "./TeamNameLink";
 
@@ -532,15 +532,12 @@ function EventFeedCard({
   // `lib/prematchReading.ts` owns the fallback for a cached payload predating
   // `prematch_odds`, and the reason only the books rung carries a label.
   const prematch = isFinished ? prematchReading(data) : null;
-  // THE SPOKEN SENTENCE CARRIES THE LABEL TOO. The visible card says which rung
-  // the number came from ("Pre-match · books"); the screen-reader sentence used
-  // to say "the market gave" on every card regardless, so the one reader who
-  // cannot see the label got the exact claim this ship exists to stop making —
-  // and on the served /sports payload 2026-09-03 all 13 finished cards were the
-  // books rung. Same rule as the label, one decision: `isPredictionMarketSource`.
-  const prematchSaid = isPredictionMarketSource(prematch?.source)
-    ? "Before the game, the market gave"
-    : "Before the game, sportsbooks opened";
+  // THE SPOKEN SENTENCE NAMES NO VENUE (D65). It used to fork on the rung, so a
+  // books median was read out as "sportsbooks opened" — a repair for the older
+  // bug where "the market gave" was said over a sportsbook median. Alex ruled
+  // the fork away: "pre-match probability" is true of every rung, so there is no
+  // venue claim left to get wrong. One phrase, owned by `prematchReading`.
+  const prematchSaid = PREMATCH_SAID;
 
   // For the probability bar: finished events show opening odds, others show current
   const barHomeProb = isFinished
@@ -1152,8 +1149,13 @@ function ConceptFeedCard({ item, data }: { item: FeedItem; data: FeedConceptData
   const winner = data.winner?.trim() || null;
   const resultSummary = data.result_summary?.trim() || null;
   // #1939 — guarded exactly as the admitting classifier guards it, never laxer.
+  // ux/1070 item 2: a fight card's main event is a BOUT — two fighters, two
+  // numbers, the date — and it takes precedence over the outright hero, which
+  // on a fight card is the most lopsided fight of the night rather than the one
+  // the card is named after. One shared resolver for both concept renderers.
+  const bout = conceptHeadlineBout(data);
   const leader =
-    !whatHit && data.leader && (data.leader.name ?? "").trim() &&
+    !whatHit && !bout && data.leader && (data.leader.name ?? "").trim() &&
     typeof data.leader.probability === "number"
       ? data.leader
       : null;
@@ -1237,6 +1239,33 @@ function ConceptFeedCard({ item, data }: { item: FeedItem; data: FeedConceptData
               {resultSummary || "Final result — see the recap"}
             </p>
           )
+        ) : bout ? (
+          // ux/1070 item 2: THE GAME ARCHETYPE. Both fighters, both numbers,
+          // the date — and the container line under it ("14 fights on the
+          // card"), because the card is a fight night and the bout is its
+          // headline, not its whole content. Tapping opens the card page, where
+          // every bout on it is listed.
+          <>
+            <div className="flex items-center justify-between gap-2 mt-1.5">
+              <span className="text-sm font-semibold text-text-primary truncate">
+                {bout.sides[0].name}
+              </span>
+              <span className="text-sm font-bold text-text-primary font-mono tabular-nums flex-shrink-0">
+                {bout.sides[0].percent}%
+              </span>
+            </div>
+            <div className="flex items-center justify-between gap-2 mt-0.5">
+              <span className="text-sm font-semibold text-text-secondary truncate">
+                {bout.sides[1].name}
+              </span>
+              <span className="text-sm font-bold text-text-secondary font-mono tabular-nums flex-shrink-0">
+                {bout.sides[1].percent}%
+              </span>
+            </div>
+            <p className="text-[11px] text-text-muted mt-1">
+              {[bout.dateLabel, item.reason].filter(Boolean).join(" · ")}
+            </p>
+          </>
         ) : leader ? (
           // #1939: the favourite. The Discover concept card gained this in the
           // same commit — this surface is admitted by the SAME predicate
