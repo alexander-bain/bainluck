@@ -1745,7 +1745,17 @@ export interface LeagueFuturesResponse {
   upcoming_games_has_more?: boolean;
   recent_results?: LeagueGameBrief[];
   recent_results_has_more?: boolean;
-  /** Settled games behind "The record" — spec §5.3. */
+  /**
+   * Matches whose kickoff has passed while the row still says `scheduled` —
+   * #3211. Its OWN rail rather than part of `recent_results`, and the reason is
+   * measured: these rows are stamped midnight of the current day (gotcha #14),
+   * so on a `commence_time DESC LIMIT 8` rail they sort above every Final and
+   * took all eight slots, pushing the league's actual results off the page.
+   */
+  unreported_games?: LeagueGameBrief[];
+  unreported_games_has_more?: boolean;
+  /** Settled games behind "The record" — spec §5.3. Deliberately excludes
+   *  `unreported_games`: a match nobody reported is not a receipt. */
   record_n?: number;
 }
 

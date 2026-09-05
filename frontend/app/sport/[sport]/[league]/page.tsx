@@ -362,6 +362,7 @@ export default function LeagueShowcasePage() {
   const tier = leagueMarkets?.tier ?? null;
   const upcomingGames = leagueMarkets?.upcoming_games ?? [];
   const recentResults = leagueMarkets?.recent_results ?? [];
+  const unreportedGames = leagueMarkets?.unreported_games ?? [];
   const marketSections = Object.entries(leagueMarkets?.sections ?? {});
   const gridTeams = grid?.teams?.length ?? 0;
 
@@ -492,6 +493,30 @@ export default function LeagueShowcasePage() {
           title="Recent Results"
           games={recentResults}
           hasMore={leagueMarkets?.recent_results_has_more}
+          settled
+        />
+
+        {/* #3211 — matches whose kickoff has passed while the row still says
+            `scheduled`. Before this they were on NO rail on this page: 171 US
+            Open matches, the whole fortnight, permanently unreachable.
+
+            A THIRD rail rather than more rows on "Recent Results", because they
+            are stamped midnight of the current day (gotcha #14) and therefore
+            sort above every Final — all eight of that rail's slots, measured,
+            with the league's real results pushed off the page. One cap over two
+            populations of very different size starves the smaller one; the fix
+            is to split the bound, not to raise or reorder it.
+
+            The heading is the same sentence the cards under it print, and it is
+            deliberately not "Awaiting results": a promise about a future update
+            is not a description of the state, and this state's whole job is to
+            say exactly what is and is not known right now. It renders BELOW the
+            results because it is the page's least informative content — every
+            card says the same thing, which is that we do not know. */}
+        <LeagueGameRail
+          title="No result reported"
+          games={unreportedGames}
+          hasMore={leagueMarkets?.unreported_games_has_more}
           settled
         />
 

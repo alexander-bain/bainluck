@@ -746,9 +746,17 @@ class TestTheSharedVocabularyIsWhatBothRailsSpend:
         import inspect
 
         source = inspect.getsource(importlib.import_module(module))
-        assert "recent_rail_condition" in source, (
-            f"{module} does not spend the shared recent-rail condition"
-        )
+        # One of the two ways a surface can spend the shared past-rails: the
+        # league page SPLITS them (`settled_` + `unreported_`, because one cap
+        # over two unequal populations starved the Finals out of all eight
+        # slots) and the team page keeps ONE list
+        # (`recent_or_unreported_condition`, because its cap spans one team's
+        # own schedule and nothing starves). Either is fine; hand-writing the
+        # vocabulary is not, and that is what this asserts.
+        assert (
+            "settled_rail_condition" in source
+            or "recent_or_unreported_condition" in source
+        ), f"{module} does not spend a shared past-rail condition"
         assert "upcoming_rail_condition" in source, (
             f"{module} does not spend the shared upcoming-rail condition — the "
             "two rails are only correct as a pair, and a route that shares one "
@@ -785,7 +793,8 @@ class TestTheSharedVocabularyIsWhatBothRailsSpend:
         """
         reverted_recent = 'Event.status.in_(["completed", "closed"]),'
         assert 'status.in_(["completed", "closed"])' in reverted_recent
-        assert "recent_rail_condition" not in reverted_recent
+        assert "settled_rail_condition" not in reverted_recent
+        assert "recent_or_unreported_condition" not in reverted_recent
 
         reverted_upcoming = (
             'Event.status.in_(["live", "scheduled"]),\n'

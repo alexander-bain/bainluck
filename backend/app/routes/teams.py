@@ -5,7 +5,10 @@ import re
 import time
 from datetime import datetime, timedelta, timezone
 
-from app.utils.event_rails import recent_rail_condition, upcoming_rail_condition
+from app.utils.event_rails import (
+    recent_or_unreported_condition,
+    upcoming_rail_condition,
+)
 from app.utils.lifecycle import served_event_status
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -118,7 +121,16 @@ async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession
             # The 30-day lookback is PASSED, not assumed — a team plays less
             # often than its league does, and that difference is this page's
             # decision rather than the shared module's.
-            recent_rail_condition(now, lookback=timedelta(days=30)),
+            #
+            # 🔴 ONE LIST HERE, THREE RAILS ON THE LEAGUE PAGE, and the asymmetry
+            # is reasoned rather than inherited: that page's cap spans every
+            # concurrent match in a league (hundreds, during a Grand Slam), so
+            # result-less rows starved the Finals out of all eight slots. This
+            # cap spans ONE team's own schedule, where a result-less game is one
+            # fixture among the handful the rail was sized for. Comparable
+            # populations, no starvation. `unreported_rail_condition` carries the
+            # measurement and this call site is named in it.
+            recent_or_unreported_condition(now, lookback=timedelta(days=30)),
         )
         .order_by(Event.commence_time.desc())
         .limit(5)

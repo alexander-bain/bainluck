@@ -25,7 +25,11 @@ from app.routes.events import (
 )
 from app.services import get_db
 from app.utils.aggregation import compute_aggregate_probability
-from app.utils.event_rails import recent_rail_condition, upcoming_rail_condition
+from app.utils.event_rails import (
+    settled_rail_condition,
+    unreported_rail_condition,
+    upcoming_rail_condition,
+)
 from app.utils.game_state import normalize_live_game_state
 from app.utils.entity_page_tiers import (
     AVAILABILITY_DEGRADED,
@@ -220,6 +224,18 @@ RESULTS_LOOKBACK_DAYS = 14
 UPCOMING_GAMES_LIMIT = 8
 RESULTS_LIMIT = 8
 
+#: The NO RESULT REPORTED rail's cap (#3211). Its OWN constant, not a share of
+#: `RESULTS_LIMIT`: the rail exists precisely because one cap over two
+#: populations of very different size starved the smaller one out of existence,
+#: and two rails governed by one number can never be tuned apart again.
+#:
+#: Smaller than the other two on purpose. This is the page's least informative
+#: content — every card says the same thing, which is that we do not know — so
+#: it earns fewer slots than the games a reader can still watch or the results
+#: they came for. The cap is DECLARED like the others, so the rest is a number
+#: the payload states rather than a truncation it hides.
+UNREPORTED_LIMIT = 6
+
 
 def upcoming_games_query(sport_key: str, now: datetime):
     """The UPCOMING GAMES rail, scoped to one league.
@@ -325,7 +341,15 @@ def recent_results_query(sport_key: str, now: datetime):
             # only correct as a pair and it was written twice. A copy is how the
             # omission survived CERT-786's sweep of the feed and
             # `GET /api/events`, and then survived live/056's sweep of this file.
-            recent_rail_condition(now, lookback=timedelta(days=RESULTS_LOOKBACK_DAYS)),
+            #
+            # 🔴 #3211 rows are NOT here — they are `unreported_games_query`
+            # below, and the split is load-bearing rather than tidy. They are
+            # stamped midnight of the current day, so on this rail's
+            # `commence_time DESC LIMIT 8` they sort above every Final: all
+            # eight slots, measured against production, with Sabalenka's result
+            # pushed off the page. Widening this condition is the same
+            # disappearance aimed at the other population.
+            settled_rail_condition(now, lookback=timedelta(days=RESULTS_LOOKBACK_DAYS)),
         )
         .offset(literal_column("0"))
         .subquery()
@@ -335,6 +359,47 @@ def recent_results_query(sport_key: str, now: datetime):
         select(fenced_event)
         .order_by(fenced_event.commence_time.desc())
         .limit(RESULTS_LIMIT + 1)
+    )
+
+
+def unreported_games_query(sport_key: str, now: datetime):
+    """The NO RESULT REPORTED rail, scoped to one league — #3211.
+
+    Matches whose kickoff has passed while the row still says `scheduled`. They
+    are on this page at all because of #3211 (171 US Open matches were on no
+    rail whatsoever) and they are on a rail of their OWN because of the cap:
+    `utils.event_rails.unreported_rail_condition` carries the measurement.
+
+    Same shape as `recent_results_query` deliberately, down to the `OFFSET 0`
+    fence, because it is the same shape of question — a status filter over one
+    league inside a 14-day window, ordered by time and capped. The fence's
+    measurement (LAT-P110) is a claim about that shape and about this table's
+    indexes, so it transfers; what would NOT transfer is inheriting the sibling
+    rail's *no-fence* decision, which was measured on an ORDER BY leading with a
+    CASE and does not apply here.
+
+    Its own cap constant rather than a share of `RESULTS_LIMIT`: two rails whose
+    lengths are set by one number cannot be tuned independently, and the whole
+    reason this rail exists is that one number over two populations starved one
+    of them.
+    """
+    inner = (
+        select(Event)
+        .join(Sport, Sport.id == Event.sport_id)
+        .where(
+            Sport.key == sport_key,
+            unreported_rail_condition(
+                now, lookback=timedelta(days=RESULTS_LOOKBACK_DAYS)
+            ),
+        )
+        .offset(literal_column("0"))
+        .subquery()
+    )
+    fenced_event = aliased(Event, inner)
+    return (
+        select(fenced_event)
+        .order_by(fenced_event.commence_time.desc())
+        .limit(UNREPORTED_LIMIT + 1)
     )
 
 
@@ -1019,15 +1084,20 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
     # section on the team page: a failure here degrades the rails, never the page.
     upcoming_games: list[dict] = []
     recent_results: list[dict] = []
+    unreported_games: list[dict] = []
     more_games = False
     more_results = False
+    more_unreported = False
     try:
         _games_q = upcoming_games_query(sport_key, now)
         _results_q = recent_results_query(sport_key, now)
+        _unreported_q = unreported_games_query(sport_key, now)
         _g = await asyncio.wait_for(db.execute(_games_q), timeout=10)
         _g_events = list(_g.scalars().all())
         _r = await asyncio.wait_for(db.execute(_results_q), timeout=10)
         _r_events = list(_r.scalars().all())
+        _u = await asyncio.wait_for(db.execute(_unreported_q), timeout=10)
+        _u_events = list(_u.scalars().all())
 
         # UX-P074 (#1860): colours and logos for the SHARED event card, fetched
         # ONCE for both rails. `_build_team_lookup` is the same in-memory-cached
@@ -1038,7 +1108,7 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
         # rails down from here, one statement before the guard that exists to
         # stop exactly that (gotcha #42).
         _team_names: list[str] = []
-        for _e in (*_g_events, *_r_events):
+        for _e in (*_g_events, *_r_events, *_u_events):
             for _n in (
                 getattr(_e, "home_team_name", None),
                 getattr(_e, "away_team_name", None),
@@ -1079,6 +1149,10 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
         _rrows = _format_all(_r_events)
         more_results = len(_rrows) > RESULTS_LIMIT
         recent_results = _rrows[:RESULTS_LIMIT]
+
+        _urows = _format_all(_u_events)
+        more_unreported = len(_urows) > UNREPORTED_LIMIT
+        unreported_games = _urows[:UNREPORTED_LIMIT]
     except Exception:
         logger.exception("league page: games rails failed for %s", sport_key)
 
@@ -1127,6 +1201,10 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
         # Settled games are the league's receipts. This is what makes a registered
         # league with zero live answers a legitimate T0 PAGE (a statement with a
         # record on it) rather than a generation-gate 404.
+        # #3211: `unreported_games` is deliberately NOT added in. A match nobody
+        # reported is not a receipt — it is the absence of one — and counting it
+        # would let a league with no results at all claim a record it does not
+        # have. Same reasoning as the settled-only census clause above.
         record_n=len(recent_results),
         next_event_count=len(upcoming_games),
         season_known=False,
@@ -1165,6 +1243,11 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
         "upcoming_games_has_more": more_games,
         "recent_results": recent_results,
         "recent_results_has_more": more_results,
+        # #3211 — its own key, its own declared cap. NOT folded into
+        # `recent_results`: these rows sort above every Final and would have
+        # taken all eight of its slots (see `unreported_games_query`).
+        "unreported_games": unreported_games,
+        "unreported_games_has_more": more_unreported,
         "record_n": len(recent_results),
         "tier": tiering["tier"],
         # Ruling 025's vocabulary, never live/stale_ok/unavailable (register E10).
@@ -1173,9 +1256,15 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
         # and timeout paths, which is the whole point of declaring it. "Nothing"
         # has to include the games rails, or a league mid-season with a full
         # schedule and no futures would declare itself empty.
+        #
+        # #3211: `unreported_games` counts too. A league whose entire visible
+        # fortnight is matches nobody reported has content — that is exactly
+        # what the tennis pages were during the US Open — and calling that page
+        # EMPTY would be the same claim of absence this issue exists to remove,
+        # made one level up in the envelope.
         "availability": (
             AVAILABILITY_FRESH
-            if (sections or upcoming_games or recent_results)
+            if (sections or upcoming_games or recent_results or unreported_games)
             else AVAILABILITY_EMPTY
         ),
         "pool_counts": pool_counts,

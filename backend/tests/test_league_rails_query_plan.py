@@ -54,9 +54,11 @@ from app.utils.event_completion import UPCOMING_GRACE
 from app.routes.league_futures import (
     RESULTS_LIMIT,
     RESULTS_LOOKBACK_DAYS,
+    UNREPORTED_LIMIT,
     UPCOMING_GAMES_LIMIT,
     build_league,
     recent_results_query,
+    unreported_games_query,
     upcoming_games_query,
 )
 
@@ -93,6 +95,38 @@ def _split_on_fence(sql: str) -> tuple[str, str]:
 def test_recent_results_query_carries_the_offset_zero_fence():
     sql = _sql(recent_results_query("americanfootball_cfl", NOW))
     _split_on_fence(sql)
+
+
+def test_unreported_games_query_carries_the_fence_too():
+    """#3211's rail is the same SHAPE of question as the recent one — a status
+    filter over one league inside the 14-day window, ordered by time and capped
+    — so LAT-P110's measurement transfers and the fence comes with it.
+
+    What must NOT be inherited is the sibling UPCOMING rail's *no-fence*
+    decision: that was measured on an ORDER BY leading with a CASE, which has no
+    LIMIT pushdown to prevent, and this query orders on `commence_time` exactly
+    as the fenced one does. A fence is a claim about one plan, and this rail's
+    plan is the fenced rail's plan.
+    """
+    sql = _sql(unreported_games_query("americanfootball_cfl", NOW))
+    _split_on_fence(sql)
+    inside, outside = _split_on_fence(sql)
+    assert "ORDER BY" not in inside.upper(), "the ORDER BY was pushed inside the fence"
+    assert "ORDER BY" in outside.upper()
+
+
+def test_the_unreported_rail_declares_its_own_cap():
+    """+1, like the other two, so the cap is DECLARED rather than silently
+    applied — and its OWN constant, because the entire reason this rail exists
+    is that one cap shared across two unequal populations starved the smaller
+    one out of existence."""
+    sql = _sql(unreported_games_query("tennis_wta", NOW), literal=True)
+    assert re.search(rf"LIMIT {UNREPORTED_LIMIT + 1}\b", sql)
+    assert UNREPORTED_LIMIT != RESULTS_LIMIT, (
+        "the unreported rail's cap has become the results rail's cap — two "
+        "rails governed by one number cannot be tuned apart, which is the "
+        "trap #3211's third rail exists to escape"
+    )
 
 
 def test_the_fence_is_a_literal_zero_not_a_bind():
@@ -169,43 +203,47 @@ def test_the_two_rails_ask_for_different_statuses():
     """A live/scheduled rail and a completed/closed rail. Cheap, but it is the
     assertion that catches a copy-paste between the two builders.
 
-    🔴 AMENDED BY #3211, AND THE AMENDMENT IS THE INTERESTING PART. This used to
-    finish `assert "'scheduled'" not in results`, and that literal absence
-    stopped being true: the recent rail now admits a `scheduled` row whose
-    kickoff is more than `UPCOMING_GRACE` behind `now`, because such a row was
-    on NEITHER rail and 171 US Open matches were invisible for a fortnight.
+    🔴 AMENDED BY #3211: THERE ARE THREE BUILDERS NOW, so "the two rails ask for
+    different statuses" needs a third column or it certifies two thirds of the
+    page.
 
-    The property the old line was reaching for — the two rails do not overlap
-    and do not leave a gap — is not a statement about which words appear in
-    which statement, and cannot be, now that both statements contain
-    `'scheduled'`. It is a statement about ROWS, so it is asserted over rows in
-    `test_the_two_rails_are_jointly_exhaustive_3211.py`, which executes both
-    conditions against a status × time matrix.
+    #3211's rows — `scheduled`, kickoff already past — were on neither of the
+    original rails, and 171 US Open matches were invisible for a fortnight. They
+    could not simply join the recent rail: they sort above every Final on a
+    `commence_time DESC LIMIT 8` and took all eight slots (measured). So they
+    have their own builder, `unreported_games_query`, and the settled rail is
+    exactly as narrow as it always was — which is why the original assertions
+    below are UNCHANGED rather than relaxed.
 
-    What survives here is what this file is actually for: the two builders have
-    not been copy-pasted into each other. The upcoming rail must never name a
-    settled state, and the recent rail must never name `live` — those two are
-    still true, still cheap, and still the shape a careless edit would break.
+    The property this test reaches for is that no two builders have been
+    copy-pasted into each other. That it holds over ROWS — exactly one rail per
+    row, no gap and no overlap — is a different and stronger claim, asserted
+    where it can be executed rather than grepped, in
+    `test_the_two_rails_are_jointly_exhaustive_3211.py`.
     """
     upcoming = _sql(upcoming_games_query("soccer_epl", NOW), literal=True)
     results = _sql(recent_results_query("soccer_epl", NOW), literal=True)
+    unreported = _sql(unreported_games_query("soccer_epl", NOW), literal=True)
 
     assert "'live'" in upcoming and "'scheduled'" in upcoming
     assert "'completed'" not in upcoming and "'closed'" not in upcoming
     assert "'completed'" in results and "'closed'" in results
-    assert "'live'" not in results
+    assert "'live'" not in results and "'scheduled'" not in results
 
-    # #3211 — `'scheduled'` is now in BOTH, and the grace boundary is what keeps
-    # them apart. Asserting it appears is not decoration: if a later edit drops
-    # the arm, this test would otherwise go quiet while the gap re-opened.
-    assert "'scheduled'" in results, (
-        "the recent rail stopped admitting a past-kickoff `scheduled` row — "
-        "that is #3211, and it puts every unsettled row back on no rail at all"
-    )
+    # #3211's own rail: `scheduled` and nothing else. If it ever names a settled
+    # state it has become a second results rail, and the page would print one
+    # match twice.
+    assert "'scheduled'" in unreported
+    assert "'completed'" not in unreported and "'closed'" not in unreported
+    assert "'live'" not in unreported
+
+    # It splits from the UPCOMING rail on the same grace expression, from the
+    # two sides. One constant, or they overlap or leave a sliver between them —
+    # and a sliver is #3211 again, one minute wide.
     grace_edge = (NOW - UPCOMING_GRACE).strftime("%Y-%m-%d %H:%M:%S")
-    assert grace_edge in results and grace_edge in upcoming, (
-        "the two rails no longer split on the SAME grace boundary — one "
-        "constant, or they overlap or leave a sliver between them"
+    assert grace_edge in unreported and grace_edge in upcoming, (
+        "the upcoming and unreported rails no longer split on the SAME grace "
+        f"boundary ({grace_edge})"
     )
 
 
@@ -259,17 +297,25 @@ def _build(sport_key: str) -> _RecordingSession:
 
 def test_build_league_emits_the_fenced_statement_for_the_results_rail():
     """The wiring proof. A builder that compiles the right SQL while the route
-    keeps an inline copy of the old one is green everywhere else in this file."""
+    keeps an inline copy of the old one is green everywhere else in this file.
+
+    TWO fenced statements since #3211, not one: the past is now two rails, and
+    `unreported_games_query` is the same shape of question as the results one,
+    so it carries the same fence for the same measured reason. The count is
+    asserted exactly rather than loosened to `>= 1` — that would have let the
+    original defect this test exists for (an inline copy beside a correct
+    helper) come back through the new rail."""
     session = _build("americanfootball_cfl")
 
     fenced = [s for s in session.statements if "LIMIT ALL OFFSET 0" in s]
-    assert len(fenced) == 1, (
-        "expected exactly one fenced statement from build_league, got "
-        f"{len(fenced)} of {len(session.statements)} — the route is not using "
-        "recent_results_query()"
+    assert len(fenced) == 2, (
+        "expected exactly two fenced statements from build_league — the "
+        "results rail and #3211's unreported rail — got "
+        f"{len(fenced)} of {len(session.statements)}"
     )
-    assert "events.commence_time" in fenced[0]
-    assert re.search(r"ORDER BY anon_\d+\.commence_time DESC", fenced[0])
+    for statement in fenced:
+        assert "events.commence_time" in statement
+        assert re.search(r"ORDER BY anon_\d+\.commence_time DESC", statement)
 
 
 def test_build_league_still_emits_an_unfenced_upcoming_statement():
@@ -289,12 +335,18 @@ def test_build_league_still_emits_an_unfenced_upcoming_statement():
     )
 
 
-def test_build_league_issues_exactly_three_statements():
-    """One futures query and the two rails. A fourth would mean the fence had
+def test_build_league_issues_exactly_four_statements():
+    """One futures query and the three rails. A FIFTH would mean the fence had
     been paid for with an extra round trip — the sport_id-resolving form of this
-    fix, which was measured and rejected in favour of keeping the join."""
+    fix, which was measured and rejected in favour of keeping the join.
+
+    Was three; #3211 split the past into settled and unreported, and one more
+    round trip is the honest price of that split. It is priced rather than
+    assumed: the alternative was one shared cap, and that cost every real result
+    on the page (see `unreported_rail_condition`). An exact count, still, so the
+    next rail has to argue for its own round trip too."""
     session = _build("americanfootball_cfl")
-    assert len(session.statements) == 3, session.statements
+    assert len(session.statements) == 4, session.statements
 
 
 @pytest.mark.parametrize(

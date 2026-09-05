@@ -2,28 +2,37 @@
 
 ═══ WHY THIS SUITE EXISTS ═══
 
-A league page and a team page each render one PAIR of lists: what is on now or
-still to come, and what has already happened. The pair is only correct if it is
-**jointly exhaustive and mutually exclusive** over the states a row can be in —
-every row the surface can reach satisfies exactly one side.
+A league page and a team page each split their events into rails: what is on now
+or still to come, and what has already happened. The split is only correct if it
+is **jointly exhaustive and mutually exclusive** over the states a row can be in
+— every row the surface can reach lands on exactly one rail.
 
-Nobody ever asserted that, and the pair has now been wrong three times, each
+Nobody ever asserted that, and the split has now been wrong three times, each
 time for a different word, each time repaired by widening one literal and
 leaving the structure that produced it:
 
-    #1204     `closed` was in neither rail. A settled doubleheader vanished.
-    live/056  `suspended` was in neither. A rain-delayed match vanished.
-    #3211     `scheduled` past its own kickoff is in neither. **171 US Open
+    #1204     `closed` was on no rail. A settled doubleheader vanished.
+    live/056  `suspended` was on no rail. A rain-delayed match vanished.
+    #3211     `scheduled` past its own kickoff was on no rail. **171 US Open
               matches** vanished — the whole fortnight, permanently.
 
 The third one is the reason this file is named after the INVARIANT and not after
 tennis. A suite called `test_tennis_matches_are_reachable` would have passed all
 the way through #1204 and live/056 and would not catch the fourth word either.
-What has to be true is a property of the two conditions, and it is checkable
-over the whole vocabulary at once:
+What has to be true is a property of the conditions, and it is checkable over
+the whole vocabulary at once:
 
     for every status the ladder can write, at every position on the time axis:
-        exactly one of {upcoming_rail_condition, recent_rail_condition} admits it
+        EXACTLY ONE rail admits it
+
+⚠️ THE FILE NAME SAYS "TWO RAILS" AND THERE ARE NOW THREE. Kept deliberately:
+the name is the ISSUE's name and the thing being asserted has not changed — a
+rename would orphan every reference to #3211's guard in `event_rails`, both
+routes and the ledger, to describe an implementation detail. The third rail
+(`unreported`) is #3211's own repair: these rows could not simply join the
+settled one, because they outnumber it and sort above it, so one shared cap
+starved the Finals out of all eight visible slots. See
+`unreported_rail_condition` for the measurement.
 
 ═══ WHAT IS DELIBERATELY OUTSIDE THE CLAIM ═══
 
@@ -32,11 +41,11 @@ Two exclusions, both principled, both asserted rather than assumed (see
 quietly widening what the sweep ignores:
 
   * `RETIRED_STATUSES` — `merged` and `voided` mean "stop showing this row"
-    (lane1/132). Both rails are allowlists, so these are excluded by
-    construction, and landing on NEITHER rail is the correct answer for them.
-  * anything older than the recent rail's lookback. That is a HORIZON, not a
-    gap: it applies to a Final exactly as it applies to everything else, and it
-    is what keeps the recent rail from growing without bound.
+    (lane1/132). Every rail is an allowlist, so these are excluded by
+    construction, and landing on NO rail is the correct answer for them.
+  * anything older than the lookback. That is a HORIZON, not a gap: it applies
+    to a Final exactly as it applies to everything else, and it is what keeps
+    the past rails from growing without bound.
 
 ═══ RED-FIRST ═══
 
@@ -87,7 +96,9 @@ from app.utils.event_completion import (  # noqa: E402
     started_without_result,
 )
 from app.utils.event_rails import (  # noqa: E402
-    recent_rail_condition,
+    recent_or_unreported_condition,
+    settled_rail_condition,
+    unreported_rail_condition,
     upcoming_rail_condition,
 )
 
@@ -177,10 +188,23 @@ def _ids(session, condition):
 
 
 def _rails(session):
-    return (
-        _ids(session, upcoming_rail_condition(NOW)),
-        _ids(session, recent_rail_condition(NOW, lookback=LOOKBACK)),
-    )
+    """The league page's THREE rails, by name.
+
+    A dict rather than a tuple because the invariant is "exactly one of these",
+    and a failure has to be able to say WHICH — with three rails, `(a, b, c)`
+    unpacking at every call site is how a later fourth rail gets bolted on
+    without the sweep noticing it.
+    """
+    return {
+        "upcoming": _ids(session, upcoming_rail_condition(NOW)),
+        "settled": _ids(session, settled_rail_condition(NOW, lookback=LOOKBACK)),
+        "unreported": _ids(session, unreported_rail_condition(NOW, lookback=LOOKBACK)),
+    }
+
+
+def _rails_holding(session, eid):
+    """The names of every rail that admits this row. Length 1 is the invariant."""
+    return sorted(name for name, ids in _rails(session).items() if eid in ids)
 
 
 def _in_horizon(status, offset_cell):
@@ -198,14 +222,13 @@ def _in_horizon(status, offset_cell):
 class TestTheInvariant:
     """Exactly one rail, for every cell inside the horizon."""
 
-    def test_no_row_lands_on_neither_rail(self, corpus):
+    def test_no_row_lands_on_no_rail(self, corpus):
         session, index = corpus
-        upcoming, recent = _rails(session)
 
         orphans = sorted(
             (eid, index[eid])
             for eid in index
-            if _in_horizon(*index[eid]) and eid not in upcoming and eid not in recent
+            if _in_horizon(*index[eid]) and not _rails_holding(session, eid)
         )
         assert orphans == [], (
             "these (status, time) cells are on NO rail — the row is in the "
@@ -213,30 +236,29 @@ class TestTheInvariant:
             f"league page permanently: {orphans}"
         )
 
-    def test_no_row_lands_on_both_rails(self, corpus):
-        """The other half of "exactly one". A row on both is a match that is
-        simultaneously about to start and already over — and it is the failure
-        mode a careless widening produces, so it is not a theoretical case."""
+    def test_no_row_lands_on_two_rails(self, corpus):
+        """The other half of "exactly one". A row on two rails is a match that
+        is simultaneously about to start and already over — and it is the
+        failure mode a careless widening produces, so it is not theoretical."""
         session, index = corpus
-        upcoming, recent = _rails(session)
 
-        both = sorted((eid, index[eid]) for eid in upcoming & recent)
-        assert both == [], f"these cells are on BOTH rails: {both}"
+        doubled = sorted(
+            (eid, index[eid], _rails_holding(session, eid))
+            for eid in index
+            if len(_rails_holding(session, eid)) > 1
+        )
+        assert doubled == [], f"these cells are on more than one rail: {doubled}"
 
-    def test_the_specimen_is_reachable(self, corpus):
+    def test_the_specimen_is_reachable_and_is_not_called_a_result(self, corpus):
         """The named row, not just the shape of it. 171 of these were invisible
-        on 2026-09-05, and this is one of them."""
-        session, _ = corpus
-        upcoming, recent = _rails(session)
+        on 2026-09-05, and this is one of them.
 
-        assert SPECIMEN_ID in recent, (
-            "the US Open specimen is not on the recent rail — this is the "
-            "defect, and the matrix above should have caught it too"
-        )
-        assert SPECIMEN_ID not in upcoming, (
-            "a match three days past its kickoff is not UPCOMING; putting it "
-            "there is the false start time this repair exists to refuse"
-        )
+        It must land on `unreported` SPECIFICALLY — not merely somewhere. On the
+        `settled` rail it would be filed among the league's receipts, which is
+        the false Final live/048 removed; on `upcoming` it would advertise a
+        start time three days gone."""
+        session, _ = corpus
+        assert _rails_holding(session, SPECIMEN_ID) == ["unreported"]
 
 
 class TestTheDefectReproduces:
@@ -295,45 +317,34 @@ class TestTheHealthyDirectionIsUntouched:
     """Controls. Each routes only through behaviour that predates #3211, so a
     control going red means the change was too wide — not that it is absent."""
 
-    def test_a_fixture_tomorrow_is_still_upcoming_and_only_upcoming(self, corpus):
-        session, index = corpus
-        upcoming, recent = _rails(session)
-
-        cells = [
+    def _cells(self, index, statuses, cell_name):
+        found = [
             eid
             for eid, (status, cell) in index.items()
-            if status == "scheduled" and cell == "an hour from now"
+            if status in statuses and cell == cell_name
         ]
-        assert cells
-        for eid in cells:
-            assert eid in upcoming and eid not in recent
+        assert found, f"the corpus holds no {statuses} row at {cell_name!r}"
+        return found
 
-    def test_a_final_is_still_recent_and_only_recent(self, corpus):
+    def test_a_fixture_an_hour_out_is_still_upcoming_and_only_upcoming(self, corpus):
         session, index = corpus
-        upcoming, recent = _rails(session)
+        for eid in self._cells(index, {"scheduled"}, "an hour from now"):
+            assert _rails_holding(session, eid) == ["upcoming"]
 
-        cells = [
-            eid
-            for eid, (status, cell) in index.items()
-            if status in ("completed", "closed") and cell == "yesterday"
-        ]
-        assert cells
-        for eid in cells:
-            assert eid in recent and eid not in upcoming
-
-    def test_a_suspended_match_still_rides_the_recent_rail(self, corpus):
-        """live/056's ship. It must not have been moved by this one."""
+    def test_a_final_is_still_settled_and_only_settled(self, corpus):
         session, index = corpus
-        upcoming, recent = _rails(session)
+        for eid in self._cells(index, {"completed", "closed"}, "yesterday"):
+            assert _rails_holding(session, eid) == ["settled"]
 
-        cells = [
-            eid
-            for eid, (status, cell) in index.items()
-            if status == EVENT_SUSPENDED and cell == "yesterday"
-        ]
-        assert cells
-        for eid in cells:
-            assert eid in recent and eid not in upcoming
+    def test_a_suspended_match_still_rides_the_settled_rail(self, corpus):
+        """live/056's ship. It must not have been moved by this one — in
+        particular it must NOT have been swept onto the new `unreported` rail,
+        which would quietly undo live/056 while looking like tidying: a
+        suspended row carries a partial score and the recents rail is where it
+        was deliberately put."""
+        session, index = corpus
+        for eid in self._cells(index, {EVENT_SUSPENDED}, "yesterday"):
+            assert _rails_holding(session, eid) == ["settled"]
 
 
 class TestTheExclusionsAreDeliberate:
@@ -345,30 +356,27 @@ class TestTheExclusionsAreDeliberate:
         rails are allowlists, so neither admits them — by construction, which is
         the point. If one ever does, the retirement is not a retirement."""
         session, index = corpus
-        upcoming, recent = _rails(session)
 
         retired = [
             eid for eid, (status, _) in index.items() if status in RETIRED_STATUSES
         ]
         assert retired, "the corpus holds no retired row, so this proves nothing"
         for eid in retired:
-            assert eid not in upcoming and eid not in recent
+            assert _rails_holding(session, eid) == []
 
     def test_beyond_the_lookback_is_a_horizon_not_a_gap(self, corpus):
         """A Final ages off; so does everything else, at the same bound. The
         distinction from the #3211 gap is that this one MOVES a row out of view
         as time passes rather than never showing it at all."""
         session, _ = corpus
-        upcoming, recent = _rails(session)
 
         old = _event(990_001, NOW - LOOKBACK - timedelta(days=1), "completed")
         old_scheduled = _event(990_002, NOW - LOOKBACK - timedelta(days=1), "scheduled")
         session.add_all([old, old_scheduled])
         session.flush()
         try:
-            upcoming, recent = _rails(session)
-            assert 990_001 not in upcoming | recent
-            assert 990_002 not in upcoming | recent
+            assert _rails_holding(session, 990_001) == []
+            assert _rails_holding(session, 990_002) == []
         finally:
             session.delete(old)
             session.delete(old_scheduled)
@@ -383,20 +391,20 @@ class TestThePredicateAndTheSQLAgree:
     """
 
     @pytest.mark.parametrize("cell,offset", sorted(TIME_CELLS.items()))
-    def test_started_without_result_matches_the_recent_rail_arm(
+    def test_started_without_result_matches_the_unreported_rail(
         self, corpus, cell, offset
     ):
         session, index = corpus
-        _, recent = _rails(session)
+        unreported = _rails(session)["unreported"]
 
         eid = next(
             e for e, (status, c) in index.items() if status == "scheduled" and c == cell
         )
         by_predicate = started_without_result("scheduled", NOW + offset, NOW)
-        by_sql = eid in recent
+        by_sql = eid in unreported
         assert by_predicate == by_sql, (
-            f"`started_without_result` and the recent rail disagree at {cell!r}: "
-            f"predicate={by_predicate}, sql={by_sql}"
+            f"`started_without_result` and the unreported rail disagree at "
+            f"{cell!r}: predicate={by_predicate}, sql={by_sql}"
         )
 
     def test_the_predicate_refuses_every_other_status(self):
@@ -419,21 +427,52 @@ class TestThePredicateAndTheSQLAgree:
 
 
 class TestBothSurfacesSpendOneDefinition:
-    """The league page and the team page differ ONLY in their lookback. That is
-    the difference each page is entitled to make; anything else diverging is how
-    the pair got written twice in the first place.
+    """The league page and the team page differ in their lookback and in whether
+    they SPLIT the past into two rails. Both differences are decisions the pages
+    are entitled to make; anything else diverging is how the rails got written
+    twice in the first place.
     """
 
-    def test_the_two_lookbacks_are_the_only_difference(self, corpus):
+    def test_the_lookback_is_the_only_thing_the_horizon_changes(self, corpus):
         session, _ = corpus
 
-        league = _ids(session, recent_rail_condition(NOW, lookback=timedelta(days=14)))
-        team = _ids(session, recent_rail_condition(NOW, lookback=timedelta(days=30)))
+        league = _ids(session, settled_rail_condition(NOW, lookback=timedelta(days=14)))
+        team = _ids(session, settled_rail_condition(NOW, lookback=timedelta(days=30)))
 
         assert league <= team, (
             "the 30-day team rail does not contain the 14-day league rail — the "
             "lookback has stopped being the only thing that differs"
         )
+
+    def test_the_team_page_sees_exactly_what_the_league_page_sees_split(self, corpus):
+        """🔴 THE ASYMMETRY IS A LAYOUT DECISION, NOT A COVERAGE ONE.
+
+        The league page renders the past as two rails because one shared cap
+        starved the Finals out of all eight slots; the team page renders it as
+        one because its cap spans a single team's own schedule, where the two
+        populations are comparable and nothing starves.
+
+        That difference must be about PRESENTATION only. If the combined
+        condition ever admitted a different set of rows than the two split ones
+        together, one of the two pages would be hiding something — which is the
+        defect this whole file is about, re-created by the repair for it."""
+        session, _ = corpus
+
+        combined = _ids(session, recent_or_unreported_condition(NOW, lookback=LOOKBACK))
+        split = _ids(session, settled_rail_condition(NOW, lookback=LOOKBACK)) | _ids(
+            session, unreported_rail_condition(NOW, lookback=LOOKBACK)
+        )
+
+        assert combined == split
+        assert combined, "the corpus admits nothing at all, so this proves nothing"
+
+    def test_the_two_split_rails_do_not_overlap(self, corpus):
+        """Otherwise the team page's single list would render a row twice."""
+        session, _ = corpus
+
+        settled = _ids(session, settled_rail_condition(NOW, lookback=LOOKBACK))
+        unreported = _ids(session, unreported_rail_condition(NOW, lookback=LOOKBACK))
+        assert settled & unreported == set()
 
     def test_the_upcoming_rail_takes_no_lookback_at_all(self, corpus):
         """It is bounded by status, not by a window: a `live` row is live for as
