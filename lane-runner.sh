@@ -220,9 +220,27 @@ inbox_restocks () { ls "$1"/RESTOCK-*.md "$1"/RESTOCK-*.md.running 2>/dev/null |
 # directive's authoring.
 STALE_RUNNING_GRACE="${LANE_STALE_RUNNING_GRACE:-300}"
 
-# macOS `stat -f`, GNU `stat -c`. Prints nothing if neither works, and every
-# caller treats "no reading" as "not eligible" — the safe direction.
-file_ctime () { stat -f %c "$1" 2>/dev/null || stat -c %Z "$1" 2>/dev/null ; }
+# GNU FORM FIRST, AND THE ORDER IS THE WHOLE POINT. On BSD/macOS `stat -f` takes
+# a format string and `%c` is ctime. On GNU coreutils `-f` means "filesystem
+# status" and `%c` is the filesystem's TOTAL INODE COUNT — so `stat -f %c` there
+# is not an error, it exits 0 and prints a large number that is not a time at
+# all. Probing BSD-first therefore handed Linux a silent, plausible-looking
+# wrong answer: every marker read as decades old, and the reaper retired live
+# sessions' markers. Caught by CI 2026-09-05; structurally invisible on the
+# macOS laptop this was written on. GNU's `-c` is rejected outright by BSD stat
+# (exit 1, "illegal option"), so this order fails in the safe direction on both.
+#
+# The result is then range-checked: a real ctime is an epoch, an inode count is
+# not. Prints nothing if no form yields a plausible timestamp, and every caller
+# treats "no reading" as "not eligible" — a marker is never retired on a reading
+# we do not trust.
+file_ctime () {
+  local V
+  V=$(stat -c %Z "$1" 2>/dev/null) || V=$(stat -f %c "$1" 2>/dev/null) || return 1
+  case "${V:-}" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$V" -ge 1000000000 ] || return 1     # 2001-09-09; below that it is not a ctime
+  echo "$V"
+}
 
 # Rename one marker out of the way and say so. One place, so the idle reaper and
 # the post-session sweep can never drift in what they leave behind.

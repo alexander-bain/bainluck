@@ -993,6 +993,20 @@ def test_reaper_unwedges_a_lane_orphaned_by_its_own_session(tmp_path):
     assert rc == 0, out
     assert "retired orphaned marker 047-orphan.md.running" in out, out
 
+    # The reported age must be a real elapsed time, not an epoch subtracted from
+    # something that was never a clock. `stat -f %c` is not an error on GNU
+    # coreutils — there `-f` selects FILESYSTEM status and `%c` is the total
+    # inode count, so it exits 0 and yields a large number that is not a time.
+    # Probing BSD-first read every marker as decades stale on Linux and retired
+    # live sessions' markers; the symptom surfaced in the negative arm, but this
+    # is the assertion that names the cause. Deliberately platform-independent:
+    # it fails on whichever OS gets the probe order wrong.
+    age = int(re.search(r"\((\d+)s old,", out).group(1))
+    assert age < 3600, (
+        f"the reaper aged this marker at {age}s ({age / 86400:.0f} days) — it is "
+        "seconds old, so file_ctime is not reading a timestamp on this platform"
+    )
+
     assert not (inbox / "047-orphan.md.running").exists(), "the orphan still wedges the lane"
     names = sorted(p.name for p in inbox.iterdir())
     assert any(n.startswith("047-orphan.md.stale-") for n in names), names
