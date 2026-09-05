@@ -43,6 +43,11 @@ from app.services.kalshi_api import KalshiAPIService
 from app.utils.kalshi_resolution_window import derive_resolution_window
 from app.utils.kalshi_retention import PROVABLY_PURGED_AGE_DAYS
 
+# The band's calendar. Reused rather than restated: this is the SAME Eastern
+# reading the ticker parser uses, so the day the band asks for and the day the
+# ticker names cannot drift apart into a second implementation.
+from app.utils.market_identity import eastern_game_date
+
 #: What ONE unattended beat run may touch.
 #:
 #: 500 is the limit every attended run of this repair has used (CAL-P989's
@@ -206,10 +211,33 @@ def past_event_band_tokens(
     played right now out of the band, where it would only spend a venue read to
     be told the backstop again.
 
+    TODAY IS THE VENUE'S DAY, NOT UTC's — #3293 / CAL-P1017, CERT-1939's named
+    follow-up, and it is not cosmetic. The ticker's ``YYMONDD`` is a US Eastern
+    trading day
+    (:func:`app.utils.market_identity.ticker_game_date`), while the beat fires at
+    04:20Z. Under EDT that instant is 00:20 ET on the SAME calendar day and the
+    two readings agree, which is why the 2026-09-05 measurement could not see
+    this. Under EST it is 23:20 ET on the day BEFORE, so a UTC reading of
+    "strictly before today" admits the Eastern day still in progress. Measured on
+    production 2026-09-05, that day is the *largest* cohort in the whole band —
+    785 eligible rows on `26SEP05` against 212 on the finished `26SEP04` — so at
+    rank 0 it would fill the entire 500-row batch with games that have not
+    finished, and the batch would never reach a played day at all. The band
+    would invert into the starvation it was built to end, on 2026-11-01, with no
+    code change to blame.
+
+    ``purge_floor`` deliberately stays on the UTC clock: it is an age in absolute
+    time, not a position in the venue's calendar.
+
     Newest first, so the caller can also read the list as the order in which the
     band's days became answerable.
     """
-    today = now.date()
+    today = eastern_game_date(now)
+    if today is None:
+        raise TypeError(
+            "past_event_band_tokens needs a datetime to read the venue's day; "
+            f"got {type(now).__name__}"
+        )
     tokens: list[str] = []
     for back in range(1, max(0, int(days)) + 1):
         d = today - timedelta(days=back)
