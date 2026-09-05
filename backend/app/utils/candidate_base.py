@@ -98,6 +98,40 @@ _REDIS_NS = "bainluck:candidate_base:v2"
 # freshness contract. A payload older than this is served (if at all) as bounded
 # ``last_good``.
 CANDIDATE_BASE_FRESH_SECONDS = _env_int("CANDIDATE_BASE_FRESH_SECONDS", 60)
+
+
+def candidate_base_refresh_headroom_s() -> float:
+    """Slack between the base's freshness window and the beat that refreshes it.
+
+    Negative means the invariant is violated::
+
+        CANDIDATE_BASE_FRESH_SECONDS <= CANDIDATE_BASE_REPUBLISH_PERIOD_S
+
+    A base labelled ``fresh`` for LONGER than the period of the beat that
+    republishes it would mean the beat can never be the thing keeping it fresh —
+    the same defect #2236 had, where a 120s warm rail fed a 60s ceiling and
+    nothing compared the two numbers.
+
+    LAT-P230 (#3144) made this load-bearing in a second way. ``market_load``'s
+    shared-artifact TTL is derived from ``CANDIDATE_BASE_REPUBLISH_PERIOD_S``,
+    because the artifact's key is a membership digest of THIS base: past one
+    republish period the key may rotate and a longer TTL buys nothing. So the
+    period now bounds a TTL in another module, and the two numbers have to be
+    reachable from one place.
+
+    Note what this function does NOT claim. The base being REBUILT is not the
+    same event as its membership CHANGING — a rebuild that yields the same ID set
+    leaves the key, and therefore the shared artifact, untouched. Production
+    measured `market_load` sharing across a 45s gap 4/4 with zero pairs dropped,
+    which says the ID set is materially more stable than the rebuild cadence.
+    How much more is a production measurement (the LAT-P230 gap curve), not an
+    arithmetic one, and nothing here should be read as bounding it.
+    """
+    from app.utils.principal_independent_cache import (
+        CANDIDATE_BASE_REPUBLISH_PERIOD_S,
+    )
+
+    return CANDIDATE_BASE_REPUBLISH_PERIOD_S - CANDIDATE_BASE_FRESH_SECONDS
 # The bounded last-good window: how stale a base may be and still be served as a
 # truthfully labelled fallback rather than forcing the inline direct queries.
 CANDIDATE_BASE_LAST_GOOD_MAX_AGE_S = _env_int(

@@ -192,6 +192,64 @@ MAX_ENTRIES_BY_NAMESPACE: dict[str, int] = {"market_load": 6}
 #: coarsest boundary those values move on (marquee pin windows are hours).
 DEFAULT_TTL_S = 60.0
 
+# --- LAT-P230 (#3144): the cadences a shared artifact's TTL is DERIVED from ---
+#
+# `market_load` died at 60s while its own KEY lived for ~120s, so the second half
+# of every key generation was thrown away. Measured 2026-09-05 by the LAT-P229 gap
+# sweep: the artifact shares at a 45s gap (4/4, zero pairs dropped) and not at 75s,
+# and the cost tracks it directly — 2,632ms median elapsed shared against 5,140ms
+# unshared.
+#
+# Both cadences are declared HERE, beside the TTL they bound, on the #2236
+# precedent: that incident was a 120 in the beat file and a 60 in `feed_cache.py`
+# with nothing comparing them, and a literal in one file would rebuild that
+# arrangement exactly. `test_shared_artifact_total_age_lat_p230.py` reads the REAL
+# beat schedule and fails if either drifts.
+#: `precompute-discover-candidate-base`, `crontab(minute="*/2")`.
+CANDIDATE_BASE_REPUBLISH_PERIOD_S = 120.0
+#: `poll_live_prediction_markets`, `schedule: 120.0`.
+LIVE_MARKET_POLL_PERIOD_S = 120.0
+
+
+def market_load_ttl_ceiling_s() -> float:
+    """The longest TTL `market_load` may be given before it buys nothing.
+
+    Two independent bounds, and the TTL must respect the tighter of them:
+
+    * `CANDIDATE_BASE_REPUBLISH_PERIOD_S` — the artifact's key is a membership
+      digest of the candidate base. Past one republish period the key rotates,
+      so a longer TTL holds entries nobody will ask for again. Against a
+      six-entry cap that is not merely wasteful, it EVICTS live ones.
+    * `LIVE_MARKET_POLL_PERIOD_S` — past it the artifact would be staler than
+      the source's own update cadence, which is the point where a cache stops
+      being a copy of the data and starts being a different answer.
+
+    The two agreeing on 120s is the reason to trust the number; neither was
+    chosen for being round.
+
+    A function and not a bare `assert` at import time for the reason
+    `live_republish_headroom_s()` gives: a guard should FAIL loudly and by name
+    rather than take the web dyno down.
+    """
+    return min(CANDIDATE_BASE_REPUBLISH_PERIOD_S, LIVE_MARKET_POLL_PERIOD_S)
+
+
+#: Per-namespace TTL default, for artifacts whose key outlives `DEFAULT_TTL_S`.
+#: `market_load`'s value is DERIVED — see `market_load_ttl_ceiling_s()`.
+TTL_S_BY_NAMESPACE: dict[str, float] = {"market_load": 120.0}
+
+
+def market_load_ttl_headroom_s() -> float:
+    """Slack in the LAT-P230 invariant. Negative means it is violated.
+
+        TTL_S_BY_NAMESPACE["market_load"] <= market_load_ttl_ceiling_s()
+
+    Whoever next shortens either cadence will be editing this function's
+    neighbours, and the guard test fails if they do not also lower the TTL.
+    """
+    return market_load_ttl_ceiling_s() - TTL_S_BY_NAMESPACE["market_load"]
+
+
 #: The clock-bucket width for a shared key that carries one (LAT-P104).
 #:
 #: **A key that rotates faster than the TTL discards entries that are still
@@ -381,15 +439,74 @@ def assert_shared_key(key: Any) -> None:
     _walk(key, 0)
 
 
-def shared_build_ttl_s() -> float:
-    """The process-wide TTL, from `FEED_SHARED_BUILD_TTL_S`. 0 disables sharing."""
-    raw = os.environ.get("FEED_SHARED_BUILD_TTL_S")
+def _parse_ttl(raw: Optional[str]) -> Optional[float]:
+    """`raw` as a non-negative TTL, or `None` if it is absent or unparseable.
+
+    `None` rather than a fallback value so the caller can tell "not set" from
+    "set to something", which is the whole of the precedence order below. An
+    unparseable value reads as absent so a typo falls through to the next rule
+    rather than to zero, which would silently disable the cache.
+    """
     if raw is None:
-        return DEFAULT_TTL_S
+        return None
     try:
         return max(0.0, float(raw))
     except (TypeError, ValueError):
-        return DEFAULT_TTL_S
+        return None
+
+
+def _namespace_ttl_env(namespace: str) -> str:
+    """The per-namespace TTL env var name, e.g. `FEED_SHARED_BUILD_TTL_S_MARKET_LOAD`."""
+    return f"FEED_SHARED_BUILD_TTL_S_{namespace.upper()}"
+
+
+def shared_build_ttl_s(namespace: Optional[str] = None) -> float:
+    """The staleness bound for `namespace`, in seconds. 0 disables sharing.
+
+    Was one number for every namespace until LAT-P230. `market_load`'s key
+    outlives `DEFAULT_TTL_S` by 2x, so one process-wide number meant the flagship
+    artifact was thrown away halfway through its own key's life.
+
+    Precedence, in order, and the order is the whole contract:
+
+    1. ``FEED_SHARED_BUILD_TTL_S=0`` — the operator kill switch, and it stays
+       ABSOLUTE. A per-namespace default that could outlive it would mean the one
+       lever that turns sharing off no longer turns sharing off.
+    2. ``FEED_SHARED_BUILD_TTL_S_<NAMESPACE>`` — a per-namespace operator override.
+    3. ``FEED_SHARED_BUILD_TTL_S`` — an explicit process-wide operator choice binds
+       every namespace, including ones carrying a built-in default. An operator who
+       sets the global expects it to bind, and a built-in that quietly outranked it
+       would be a lever that lies.
+    4. ``TTL_S_BY_NAMESPACE[namespace]`` — the built-in per-namespace default.
+    5. ``DEFAULT_TTL_S``.
+
+    Called with no `namespace` it is the process-wide value, byte-identical to the
+    pre-LAT-P230 behaviour — which is what `clock_bucket_s()` still wants, since
+    the bucket it clamps belongs to `concepts`.
+    """
+    global_raw = os.environ.get("FEED_SHARED_BUILD_TTL_S")
+    global_ttl = _parse_ttl(global_raw)
+
+    # (1) The kill switch, before anything else can outrank it.
+    if global_ttl == 0.0:
+        return 0.0
+
+    if namespace is not None:
+        # (2)
+        namespace_ttl = _parse_ttl(os.environ.get(_namespace_ttl_env(namespace)))
+        if namespace_ttl is not None:
+            return namespace_ttl
+
+    # (3)
+    if global_ttl is not None:
+        return global_ttl
+
+    # (4)
+    if namespace is not None and namespace in TTL_S_BY_NAMESPACE:
+        return TTL_S_BY_NAMESPACE[namespace]
+
+    # (5)
+    return DEFAULT_TTL_S
 
 
 def clock_bucket_s() -> float:
@@ -647,18 +764,25 @@ def _lock_for(namespace: str, key: tuple) -> asyncio.Lock:
 
 def _read_fresh(
     namespace: str, key: tuple, ttl_s: float, now: float
-) -> tuple[bool, Any]:
+) -> tuple[bool, Any, float]:
+    """`(hit, value, age_s)` from the process-local tier.
+
+    `age_s` (LAT-P230) is how old the entry already was — the first term of the
+    total-age sum in `feed_cache.live_total_age_headroom_s()`. A miss reports
+    `0.0`, which is never read: the caller only consults the age on a hit.
+    """
     entries = _store.get(namespace)
     if not entries:
-        return False, None
+        return False, None, 0.0
     hit = entries.get(key)
     if hit is None:
-        return False, None
+        return False, None, 0.0
     stored_at, value = hit
-    if (now - stored_at) > ttl_s:
+    age_s = now - stored_at
+    if age_s > ttl_s:
         entries.pop(key, None)
-        return False, None
-    return True, value
+        return False, None, 0.0
+    return True, value, max(0.0, age_s)
 
 
 # The ambient reuse sink for one request. A contextvar rather than a threaded
@@ -679,25 +803,77 @@ _tier_sink_var: ContextVar[Optional[list]] = ContextVar(
     "feed_shared_tier_sink", default=None
 )
 
+# LAT-P230: how old the shared artifacts this request CONSUMED already were.
+#
+# Artifact age and response age ADD. `feed_response_cache_ttls()` could see the
+# second term and not the first, so a payload could pass a 60s response TTL while
+# carrying 60s-old inputs — the exact shape of #2236, two individually-correct
+# numbers whose PRODUCT nobody computed. This is the missing term.
+#
+# A third sink rather than a field on the tier sink, for the reason written above
+# it: the tier sink's contents are a closed vocabulary filtered on the way to a
+# header, and smuggling a float through it would mean loosening that filter.
+# Three closed vocabularies, three sinks.
+_age_sink_var: ContextVar[Optional[list]] = ContextVar(
+    "feed_shared_age_sink", default=None
+)
 
-def bind_reuse_sink(sink: list, tier_sink: Optional[list] = None) -> None:
-    """Bind `sink` (and optionally `tier_sink`) for the current context."""
+
+def bind_reuse_sink(
+    sink: list,
+    tier_sink: Optional[list] = None,
+    age_sink: Optional[list] = None,
+) -> None:
+    """Bind `sink` (and optionally `tier_sink` / `age_sink`) for this context."""
     _reuse_sink_var.set(sink)
     if tier_sink is not None:
         _tier_sink_var.set(tier_sink)
+    if age_sink is not None:
+        _age_sink_var.set(age_sink)
 
 
 @contextlib.contextmanager
-def reuse_scope(sink: list, tier_sink: Optional[list] = None) -> Iterator[None]:
+def reuse_scope(
+    sink: list,
+    tier_sink: Optional[list] = None,
+    age_sink: Optional[list] = None,
+) -> Iterator[None]:
     """Collect shared-artifact reuse into `sink` for the duration of this scope."""
     token = _reuse_sink_var.set(sink)
     tier_token = _tier_sink_var.set(tier_sink) if tier_sink is not None else None
+    age_token = _age_sink_var.set(age_sink) if age_sink is not None else None
     try:
         yield
     finally:
         _reuse_sink_var.reset(token)
         if tier_token is not None:
             _tier_sink_var.reset(tier_token)
+        if age_token is not None:
+            _age_sink_var.reset(age_token)
+
+
+def _note_age(age_s: float) -> None:
+    """Record the age of ONE shared artifact this request consumed.
+
+    A freshly-built artifact records `0.0` rather than nothing, deliberately: it
+    makes "this request touched a shared artifact and it was new" distinguishable
+    from "this request touched none at all". An empty sink then means the latter,
+    and a reader cannot mistake a silent instrument for a fresh payload.
+    """
+    sink = _age_sink_var.get()
+    if sink is not None:
+        sink.append(max(0.0, float(age_s)))
+
+
+def oldest_consumed_artifact_age_s(age_sink: Optional[Iterable[float]]) -> float:
+    """The age of the OLDEST shared artifact a request consumed. `0.0` if none.
+
+    The MAX and not the mean: a payload is only as fresh as its stalest input,
+    and averaging would let one fresh artifact pay for an ancient one.
+    """
+    if not age_sink:
+        return 0.0
+    return max((max(0.0, float(a)) for a in age_sink), default=0.0)
 
 
 def _note_reuse(
@@ -931,7 +1107,7 @@ async def get_or_build(
     worker pays nothing for it and a cold one trades ~1ms against the rebuild.
     """
     _clock = clock or time.monotonic
-    _ttl = shared_build_ttl_s() if ttl_s is None else ttl_s
+    _ttl = shared_build_ttl_s(namespace) if ttl_s is None else ttl_s
 
     if _ttl <= 0:
         _stats["builds"] += 1
@@ -947,12 +1123,13 @@ async def get_or_build(
         _stats["builds"] += 1
         return await builder()
 
-    ok, value = _read_fresh(namespace, key, _ttl, _clock())
+    ok, value, age_s = _read_fresh(namespace, key, _ttl, _clock())
     if ok:
         # L1 hit — the Redis tier is never consulted here. This is the path the
         # module docstring's "deliberately NOT Redis" sentence is about, and it
         # is byte-for-byte the path LAT-P084 shipped.
         _note_reuse(namespace, reuse_sink, SHARED_TIER_LOCAL)
+        _note_age(age_s)
         return copy.deepcopy(value)
 
     lock = _lock_for(namespace, key)
@@ -975,9 +1152,10 @@ async def get_or_build(
     try:
         # Re-read under the lock: the caller we queued behind may have just
         # stored it, which is the whole point of coalescing.
-        ok, value = _read_fresh(namespace, key, _ttl, _clock())
+        ok, value, age_s = _read_fresh(namespace, key, _ttl, _clock())
         if ok:
             _note_reuse(namespace, reuse_sink, SHARED_TIER_LOCAL)
+            _note_age(age_s)
             return copy.deepcopy(value)
 
         # LAT-P103: L1 missed, so the alternative is a 683-1249ms rebuild.
@@ -1003,6 +1181,7 @@ async def get_or_build(
             entries[key] = (_clock() - age_s, copy.deepcopy(value))
             _evict_if_needed(entries, namespace)
             _note_reuse(namespace, reuse_sink, SHARED_TIER_CROSS_WORKER)
+            _note_age(age_s)
             return value
 
         _stats["builds"] += 1
@@ -1023,6 +1202,10 @@ async def get_or_build(
         entries = _store.setdefault(namespace, {})
         entries[key] = (_clock(), copy.deepcopy(built))
         _evict_if_needed(entries, namespace)
+        # Age zero — this request BUILT it. Recorded rather than skipped so an
+        # empty age sink means "no shared artifact was consumed at all" and not
+        # "the instrument was silent" (LAT-P230).
+        _note_age(0.0)
         # Snapshot for the publisher too: the caller mutates its cards in place
         # (`_rank_score`, bundling, pin flags), and the publish runs after this
         # function has handed `built` back.

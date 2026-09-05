@@ -1956,6 +1956,12 @@ async def get_feed(
     # before this change, only the second closes the residual, and only a header
     # can tell them apart in production without a timing argument.
     _shared_tiers: list[str] = []
+    # LAT-P230 (#3144): how old each shared artifact this request consumed already
+    # was. Artifact age and response age ADD, and until now only the second term
+    # was visible to `feed_response_cache_ttls` — so a live payload could pass a
+    # 60s response TTL while carrying 60s-old inputs. This is the missing term;
+    # `live_total_age_headroom_s()` is the arithmetic that spends it.
+    _shared_ages: list[float] = []
     # Bind it as this request's ambient sink. The second shared artifact
     # (`canonical_counts`) is resolved three frames down inside `_score_futures`;
     # a contextvar avoids threading a diagnostic through a scoring signature,
@@ -1963,7 +1969,7 @@ async def get_feed(
     # had to be re-centralized in Queue 275. Each request runs in its own task
     # and therefore its own context copy, so the binding does not need an
     # explicit reset to stay request-scoped.
-    _bind_shared_reuse_sink(_shared_reuse, _shared_tiers)
+    _bind_shared_reuse_sink(_shared_reuse, _shared_tiers, _shared_ages)
 
     if (debug or exclude_reviewed) and not await _check_admin_auth(secret, request, db):
         _set_feed_timing_header(response, _started_at)
@@ -2057,6 +2063,8 @@ async def get_feed(
             my_teams_only=my_teams_only,
             identified=bool(feed_user or feed_session_id),
             live=payload_contains_live_event(payload),
+            # LAT-P230: the age the payload's INPUTS had already spent.
+            oldest_artifact_age_s=_pic.oldest_consumed_artifact_age_s(_shared_ages),
         )
 
     def _payload_built_at(payload):
@@ -3556,6 +3564,11 @@ async def get_feed(
                         my_teams_only=False,
                         identified=False,
                         live=payload_contains_live_event(_page_base_body),
+                        # LAT-P230: the page base is published for OTHER readers,
+                        # so the age its inputs already spent travels with it.
+                        oldest_artifact_age_s=_pic.oldest_consumed_artifact_age_s(
+                            _shared_ages
+                        ),
                     )
                     _page_base_json = _json_module.dumps(
                         _page_base_body, default=str
