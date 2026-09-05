@@ -8201,6 +8201,40 @@ _PLAYER_PROP_RE = re.compile(
 )
 _THRESHOLD_RE = re.compile(r"(\d+(?:\.\d+)?)")
 
+# THE LINE IS THE NUMBER BESIDE THE O/U TOKEN, NOT THE FIRST NUMBER IN THE NAME.
+# `_THRESHOLD_RE.search` takes whatever number comes first, and a tennis market
+# name puts one in front of the line (#3161):
+#
+#     Paul vs. Alcaraz: Set 1 Games O/U 9.5
+#                           ^                 <- what `search` took: 1.0
+#                                       ^^^   <- the line
+#
+# Measured on production 2026-09-05, `GET /api/events/15304847/game-markets`
+# served rungs at 1.0 and 4.0 beside the two real match totals (36.5, 40.5), and
+# the map's headline is the rung closest to 50% — so a pre-game reader was told
+# `Projected 4` on a rail that runs past 40. It also DELETED rungs: the three
+# Set-1 markets (O/U 8.5, 9.5, 10.5) all parsed to 1.0 and then collapsed into
+# one another in the threshold dedup below.
+#
+# Kalshi's outcome path ("Over 224.5") carries no O/U token and is unambiguous
+# already, so it falls through to the original regex and does not move (#1976 §5
+# documents that provider split).
+_OU_THRESHOLD_RE = re.compile(
+    r"\b(?:o\s*/\s*u|over\s*/\s*under)\b[^\d]{0,4}(\d+(?:\.\d+)?)",
+    re.IGNORECASE,
+)
+
+# A tennis totals market is not always a MATCH total. Polymarket lists per-set
+# games lines ("… Set 1 Games O/U 9.5") and a sets-COUNT line ("… Total Sets
+# O/U 3.5") beside the match line ("… Match O/U 36.5"), and all three classify
+# `game_total`. The map they land on is drawn in match GAMES, so a set line is
+# the wrong SCOPE and a sets line is the wrong UNIT: P(this match goes past 9.5
+# games) is ~1, not the 53% the set market quotes for its own set. #3161.
+_TENNIS_SET_SCOPED_TOTAL_RE = re.compile(r"\bset\s*\d+\b", re.IGNORECASE)
+_TENNIS_SETS_UNIT_TOTAL_RE = re.compile(
+    r"\b(?:total\s+sets|sets\s*:?\s*o\s*/\s*u)\b", re.IGNORECASE
+)
+
 # Polymarket names a player prop "<Player>: <Stat> O/U <line>" — the line is on the
 # MARKET, and the outcomes are a bare "Over"/"Under". That shape has to be told apart
 # from a genuine total that also carries "O/U" ("Cardinals vs. Reds: O/U 10.5") and
@@ -8445,9 +8479,51 @@ def _extract_period_from_name(market_name: str, outcome_name: str) -> Optional[s
 
 
 def _extract_threshold(outcome_name: str) -> Optional[float]:
-    """Extract the numeric threshold from an outcome name like 'Over 224.5'."""
-    m = _THRESHOLD_RE.search(outcome_name)
+    """Extract the numeric threshold from a name like 'Over 224.5'.
+
+    Where the name carries an O/U token the line is the number beside it, and
+    only where it does not do we fall back to the first number in the string.
+    See `_OU_THRESHOLD_RE` for the tennis names that made the difference
+    visible, and for why the Kalshi outcome path is untouched (#3161).
+    """
+    m = _OU_THRESHOLD_RE.search(outcome_name) or _THRESHOLD_RE.search(outcome_name)
     return float(m.group(1)) if m else None
+
+
+def _is_match_scope_tennis_total(market_name: Optional[str]) -> bool:
+    """False for a tennis totals market that is not scoped to the whole match.
+
+    See `_TENNIS_SET_SCOPED_TOTAL_RE`. The question this answers is "may this
+    market be a rung on the match games rail", so a name that says nothing about
+    sets is match-scope by default — a refusal here deletes real rungs, which is
+    the quieter regression of the two.
+    """
+    name = market_name or ""
+    return not (
+        _TENNIS_SET_SCOPED_TOTAL_RE.search(name)
+        or _TENNIS_SETS_UNIT_TOTAL_RE.search(name)
+    )
+
+
+def _match_scope_tennis_totals(
+    game_totals: list[dict], sport_prefix: Optional[str]
+) -> list[dict]:
+    """Keep only match-scope rungs on a tennis games map. FAIL-OPEN.
+
+    The drop happens ONLY when a match-scope rung survives it. On the finished
+    Wu v Alcaraz page (measured 2026-09-05) the whole totals list is one set
+    line and one sets line, and an unconditional drop would empty `totals` —
+    which takes the map down with it, and with the map live/073's `FINAL 26`
+    marker, the one thing on that card that says how the match actually went.
+    A map with two wrong-scope rungs is worse than one without them; a map that
+    is gone is worse than both.
+    """
+    if sport_prefix != "tennis":
+        return game_totals
+    match_scope = [
+        t for t in game_totals if _is_match_scope_tennis_total(t.get("market_name"))
+    ]
+    return match_scope or game_totals
 
 
 # ---- Queue #190 Item 3: settled player-prop grading ------------------------
@@ -9501,6 +9577,13 @@ async def _build_game_markets(
     if team_range:
         lo, hi = team_range
         team_total_items = [t for t in team_total_items if lo <= t["threshold"] <= hi]
+
+    # 7a-ii. A tennis games map is a MATCH map (#3161). This runs BEFORE the
+    # monotonicity pass on purpose: mixing scopes corrupts the prices as well as
+    # the labels — on the finished page the sets rung (0.05%) sorts below the
+    # match total and caps its 0.45% down to its own, so the match line would be
+    # served a price no venue quoted.
+    game_totals = _match_scope_tennis_totals(game_totals, sport_prefix)
 
     # 7b. Enforce monotonicity on totals — P(Over X) must decrease as X increases.
     # Thinly traded Kalshi half-period markets often have non-monotonic prices
