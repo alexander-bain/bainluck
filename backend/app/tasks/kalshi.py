@@ -1277,6 +1277,10 @@ async def _poll_kalshi_markets():
                 KalshiScanReport,
                 save_scan_report,
             )
+            from app.utils.kalshi_series_selection import (
+                discovery_dead_series,
+                summarize_discovery_receipt,
+            )
 
             _n_new = int(stats.get("new_events_fetched") or 0)
             _n_existing = int(stats.get("existing_events_fetched") or 0)
@@ -1324,6 +1328,13 @@ async def _poll_kalshi_markets():
                 market_backfill_filled=int(
                     _scan_tel.get("market_backfill_filled") or 0
                 ),
+                # #2927: the discovery receipt, carried to the artifact. Same
+                # omission as the market_backfill_* block above and the same
+                # fix — the fetch measured it, nobody copied it, so it reached
+                # no reader. Bounded here because the ring keeps 48 of these.
+                series_discovery=summarize_discovery_receipt(
+                    _scan_tel.get("series_discovery")
+                ),
                 duration_s=round(time.monotonic() - _task_started, 1),
             )
             save_scan_report(_report)
@@ -1353,6 +1364,35 @@ async def _poll_kalshi_markets():
                     _recon["main_plus_supplementary"],
                     _recon["main_plus_supplementary_delta"],
                     _recon["events_fetched"],
+                )
+            # #2927 / gotcha #53: an empty discovery yield is a response shape,
+            # not an absence. Asked PER SERIES (CERT-953) — a dead
+            # `KXATPDOUBLES` must not hide behind a live `KXWTADOUBLES`, and a
+            # healthy series whose events the main scan already held must not
+            # alarm. Both are aggregate failures; `returned` is per series and
+            # is the venue's own answer for that ticker.
+            _disc = _report.series_discovery or {}
+            stats["discovery_source"] = _disc.get("source")
+            stats["discovery_events_added"] = _disc.get("events_added")
+            _dead = discovery_dead_series(_disc)
+            stats["discovery_dead_series"] = _dead
+            if _dead:
+                _results = _disc.get("series_results") or {}
+                logger.error(
+                    "poll_kalshi series discovery: %d SELECTED SERIES RETURNED "
+                    "NOTHING — %s (source=%s). Each was chosen off a census "
+                    "that said it holds open events; the venue then handed back "
+                    "none. Treat as a per-draw coverage outage, not a quiet "
+                    "night. Detail: %s",
+                    len(_dead), ", ".join(_dead), _disc.get("source"),
+                    {t: _results.get(t) for t in _dead[:10]},
+                )
+            elif _disc.get("source") in ("failed", "unsummarizable"):
+                logger.error(
+                    "poll_kalshi series discovery: stage did not resolve "
+                    "(source=%s, error=%s). The rescue list is the hand list "
+                    "alone this beat.",
+                    _disc.get("source"), _disc.get("error"),
                 )
         except Exception as exc:
             logger.warning("poll_kalshi: scan report failed: %s", exc)

@@ -188,6 +188,28 @@ class KalshiScanReport:
     #: Events the backfill actually put markets into.
     market_backfill_filled: int = 0
 
+    # --- the discovered half of the rescue list (#2927) -------------------
+    #: The series-discovery receipt for this beat, bounded for persistence by
+    #: `kalshi_series_selection.summarize_discovery_receipt`.
+    #:
+    #: This field exists because #2927 repeated, one ship later, the exact
+    #: mistake the `market_backfill_*` block above was added to correct. The
+    #: receipt was assembled in `kalshi_api` (`_tel["series_discovery"]`),
+    #: carried every number a reader needs — `source: live|cache|failed|
+    #: not_wired`, `events_added`, why each declined series was declined — and
+    #: then no caller copied it here, so it reached no artifact and no reader.
+    #:
+    #: What that cost: the ship worked (the first post-deploy beat, 18:45Z on
+    #: 2026-09-04, created the first 32 `KXATPDOUBLES`, 30 `KXWTADOUBLES` and
+    #: `KXHONEYDEUCE-01JAN27` rows we have ever held), and it could only be
+    #: proved from `futures_markets.created_at` — i.e. from the effect, after
+    #: the fact. The instrument built to say so said nothing. Worse in the
+    #: failure direction: a discovery stage that quietly stops yielding
+    #: presents as "the doubles draw stopped updating", which is the exact
+    #: outage #2927 was built to end and the exact one the receipt was built
+    #: to catch first.
+    series_discovery: Dict[str, Any] = field(default_factory=dict)
+
     duration_s: float = 0.0
     notes: List[str] = field(default_factory=list)
 
