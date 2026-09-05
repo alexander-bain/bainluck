@@ -64,6 +64,7 @@ from app.tasks.redis_state import (
     QUOTA_GUARD_CONSERVATION_INTERVAL,
     QUOTA_GUARD_PRIORITY_SPORTS,
 )
+from app.utils.sport_keys import ESPN_SPORT_MAPPING
 
 
 #: The pass duration distribution measured on production 2026-08-31 over the 50
@@ -524,20 +525,40 @@ class _Result:
 
 
 class _FakeSession:
-    """Dispatches on the rendered SQL — the task issues four distinct shapes."""
+    """Dispatches on the rendered SQL — the task issues four distinct shapes.
 
-    def __init__(self, sport_rows, score_sports):
+    #3285 made the dispatch order load-bearing. The ESPN-coverage probe used to
+    be one COUNT per sport with no `GROUP BY`, so `"GROUP BY" in sql` was a safe
+    first test; it is now a single GROUPED count, which the old dispatcher fed
+    the sport-data rows and which failed 11 tests with a tuple-unpack error.
+    Match on the marker that is UNIQUE to each shape, not on one both share:
+    only sport-data selects `bool_or(`, and only the coverage probe pairs
+    `count(` with `GROUP BY`.
+    """
+
+    def __init__(self, sport_rows, score_sports, espn_covered=()):
         self.sport_rows = sport_rows
         self.score_sports = score_sports
+        #: Sports the coverage probe should report as fully ESPN-matched, i.e.
+        #: ZERO unmatched events. The real query emits NO ROW for those (see the
+        #: structural-zero note in the task), so they are modelled by omission.
+        self.espn_covered = set(espn_covered)
+        #: Every rendered coverage query, so a guard can count how many times a
+        #: pass paid for it. A list, not a counter: the SQL is the evidence.
+        self.espn_coverage_queries = []
 
     async def execute(self, statement):
         sql = str(statement)
-        if "GROUP BY" in sql:               # the sport-data query
+        if "bool_or(" in sql:               # the sport-data query
             return _Result(rows=self.sport_rows)
         if "DISTINCT" in sql:               # sports needing scores
             return _Result(rows=[(k,) for k in self.score_sports])
-        if "count(" in sql:                 # ESPN-coverage probe; non-zero =>
-            return _Result(scalar=5)        # not covered => scores really fetch
+        if "count(" in sql:                 # ESPN-coverage probe, one grouped
+            self.espn_coverage_queries.append(sql)   # query for every candidate
+            return _Result(rows=[
+                (k, 5) for k in self.score_sports
+                if k in ESPN_SPORT_MAPPING and k not in self.espn_covered
+            ])                              # a row => unmatched => NOT covered
         return _Result(rows=[])
 
     def add(self, _obj):
@@ -548,10 +569,16 @@ class _FakeSession:
 
 
 class _FakeRedis:
-    def __init__(self, last_poll_ts, sport_404=(), quota_hash=None):
+    def __init__(self, last_poll_ts, sport_404=(), quota_hash=None,
+                 last_score_fetch_ts=None):
         self.last_poll_ts = last_poll_ts
         self.sport_404 = set(sport_404)
         self.quota_hash = quota_hash
+        #: #3285 — the per-sport score cadence stamp. `None` means "never
+        #: fetched", which is what every test before #3285 assumed and which
+        #: makes every sport due. Set it to model the ~9-passes-in-10 case where
+        #: no sport is due, which is the case the coverage query must not cost.
+        self.last_score_fetch_ts = last_score_fetch_ts
 
     def get(self, key):
         if key.startswith("bainluck:last_poll:"):
@@ -559,6 +586,10 @@ class _FakeRedis:
         if key.startswith("bainluck:sport_404:"):
             sport = key.split("bainluck:sport_404:", 1)[1]
             return b"1" if sport in self.sport_404 else None
+        if key.startswith("bainluck:last_score_fetch:"):
+            if self.last_score_fetch_ts is None:
+                return None
+            return str(self.last_score_fetch_ts).encode()
         return None                          # no unchanged_count
 
     def hget(self, *_a, **_k):
@@ -580,7 +611,8 @@ class _FakeRedis:
 
 async def _run_poll(*, outer, per_sport, sport_key="basketball_nba",
                     last_poll_age_s=100.0, score_sports=(), sports=None,
-                    sport_404=(), boundary=None):
+                    sport_404=(), boundary=None, espn_covered=(),
+                    last_score_fetch_age_s=None):
     """Execute the real `_poll_all_odds` and hand back its Odds API ledger.
 
     `sports` drives a MULTI-sport pass (the sport-data query returns one live
@@ -596,6 +628,7 @@ async def _run_poll(*, outer, per_sport, sport_key="basketball_nba",
         [(k, datetime.now(timezone.utc) - timedelta(minutes=5), True)
          for k in sport_keys],
         list(score_sports),
+        espn_covered=espn_covered,
     )
 
     service = MagicMock()
@@ -637,7 +670,13 @@ async def _run_poll(*, outer, per_sport, sport_key="basketball_nba",
     with patch("app.tasks.odds_polling.check_quota_guard", side_effect=_guard), \
             patch("app.tasks.odds_polling.OddsAPIService", return_value=service), \
             patch("app.tasks.odds_polling.get_redis_client",
-                  return_value=_FakeRedis(now_ts - last_poll_age_s, sport_404)), \
+                  return_value=_FakeRedis(
+                      now_ts - last_poll_age_s, sport_404,
+                      last_score_fetch_ts=(
+                          None if last_score_fetch_age_s is None
+                          else now_ts - last_score_fetch_age_s
+                      ),
+                  )), \
             patch("app.tasks.odds_polling.get_task_session", return_value=_CM()), \
             patch("app.tasks.odds_polling.detect_and_close_stale_events",
                   # live/048: two outcomes, not one. StatPal's end time closes a
@@ -650,6 +689,7 @@ async def _run_poll(*, outer, per_sport, sport_key="basketball_nba",
 
     service.guard_calls = guard_calls
     service.passwide_guard_reads = len(passwide_calls)
+    service.session = session            # #3285: the coverage-query ledger
     return result, service
 
 
@@ -1366,4 +1406,146 @@ class TestTheScoresLoopObeysTheOtherTwoQuotaBands:
         )
         assert "scores_skipped_quota" in result, (
             f"the quota refusals never reach the run's own result: {result}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# #3285 — THE ESPN-COVERAGE SKIP-SET STOPS COSTING 24 SECONDS OF EVERY PASS
+#
+# Measured on production 2026-09-05 with EXPLAIN ANALYZE against the real
+# `events` table: the per-sport COUNT this replaces took ~2,176 ms and touched
+# ~190,000 shared blocks to return a count of 2, because `sports.key` is applied
+# as a nested-loop Join Filter rather than an index condition — so every call
+# re-scanned the entire 3-day scheduled/live population. There were 11
+# ESPN-mapped sports in `sports_for_scores`, i.e. ~24 s per pass, paid eagerly
+# before any sport had passed its 300 s score cadence.
+#
+# Three things must hold, and all three are separately breakable:
+#   1. ONE query, not one per sport.
+#   2. ZERO queries on a pass where no sport is due for scores.
+#   3. The covered set is still CORRECT — and the zero it keys on is structural,
+#      so a covered sport is one the query returns NO ROW for.
+# ---------------------------------------------------------------------------
+
+
+class TestTheCoverageProbeIsPaidOncePerPassAtMost:
+
+    #: Three ESPN-mapped sports plus one that is not, so a per-sport loop and a
+    #: grouped query give visibly different query counts (3 vs 1).
+    ESPN_SPORTS = ("baseball_mlb", "americanfootball_nfl", "icehockey_nhl")
+
+    def setup_method(self):
+        for key in self.ESPN_SPORTS:
+            assert key in ESPN_SPORT_MAPPING, (
+                f"{key} left ESPN_SPORT_MAPPING — this test's arithmetic (one "
+                f"query vs {len(self.ESPN_SPORTS)}) is only meaningful while "
+                "every one of these is a candidate"
+            )
+
+    async def test_three_espn_sports_cost_exactly_one_coverage_query(self):
+        _result, service = await _run_poll(
+            outer=(True, "ok_600000"), per_sport=(True, "ok_600000"),
+            score_sports=self.ESPN_SPORTS,
+        )
+        n = len(service.session.espn_coverage_queries)
+        assert n == 1, (
+            f"the coverage probe ran {n} times for {len(self.ESPN_SPORTS)} "
+            "ESPN-mapped sports. On production each of these costs ~2.2 s and "
+            "scans ~190k blocks, so a per-sport loop is ~24 s of every pass "
+            "(#3285). It must be ONE grouped query."
+        )
+
+    async def test_it_is_not_paid_at_all_when_no_sport_is_due_for_scores(self):
+        # The ~9-passes-in-10 case: scores are on a 300 s per-sport cadence
+        # against a 30 s beat, so most passes have nothing to fetch. This is the
+        # whole reason the probe moved BELOW the cadence gate.
+        _result, service = await _run_poll(
+            outer=(True, "ok_600000"), per_sport=(True, "ok_600000"),
+            score_sports=self.ESPN_SPORTS,
+            last_score_fetch_age_s=10.0,     # every sport fetched 10 s ago
+        )
+        assert service.get_scores.await_count == 0, (
+            "control failed: the cadence gate did not actually hold every "
+            "sport back, so the zero below would be vacuous"
+        )
+        assert service.session.espn_coverage_queries == [], (
+            "a pass with no sport due for scores still paid for the coverage "
+            "probe. The probe must sit BELOW the cadence gate, not above it "
+            "(#3285) — otherwise ~9 passes in 10 buy an answer they cannot use."
+        )
+
+    async def test_the_probe_is_reused_and_not_re_issued_per_sport(self):
+        # Two sports both due: the lazy helper must memoise, or this is a
+        # per-sport loop wearing a cache's clothes.
+        _result, service = await _run_poll(
+            outer=(True, "ok_600000"), per_sport=(True, "ok_600000"),
+            score_sports=self.ESPN_SPORTS,
+            last_score_fetch_age_s=10_000.0,   # far past the 300 s cadence
+        )
+        assert service.get_scores.await_count == len(self.ESPN_SPORTS), (
+            "control failed: not every sport reached the fetch, so a query "
+            "count of 1 would prove nothing"
+        )
+        assert len(service.session.espn_coverage_queries) == 1
+
+
+class TestTheCoveredSetIsStillCorrect:
+    """Speed is worthless if the skip-set changed meaning."""
+
+    async def test_a_fully_matched_sport_still_skips_its_score_fetch(self):
+        # `espn_covered` models the STRUCTURAL zero: the grouped query returns
+        # no row at all for a sport with no unmatched events.
+        _result, service = await _run_poll(
+            outer=(True, "ok_600000"), per_sport=(True, "ok_600000"),
+            score_sports=("baseball_mlb",),
+            espn_covered=("baseball_mlb",),
+        )
+        assert service.get_scores.await_count == 0, (
+            "an ESPN-covered sport fetched scores anyway. The covered set must "
+            "be derived by SUBTRACTION from the candidate list — a sport with "
+            "zero unmatched events produces NO ROW, so reading `== 0` off the "
+            "returned rows yields an empty set and the skip never fires."
+        )
+
+    async def test_an_unmatched_sport_still_fetches(self):
+        _result, service = await _run_poll(
+            outer=(True, "ok_600000"), per_sport=(True, "ok_600000"),
+            score_sports=("baseball_mlb",),
+            espn_covered=(),                  # has unmatched events
+        )
+        assert service.get_scores.await_count == 1, (
+            "a sport with events ESPN has not matched stopped fetching scores "
+            "— the skip-set is now over-broad and completion detection dies "
+            "with it"
+        )
+
+    async def test_covered_and_uncovered_sports_are_separated_in_one_pass(self):
+        # The discriminating case: one query, two verdicts. A set built by
+        # reading `== 0` off the rows would skip NEITHER; one built by
+        # subtracting the returned keys from the candidates skips exactly one.
+        _result, service = await _run_poll(
+            outer=(True, "ok_600000"), per_sport=(True, "ok_600000"),
+            score_sports=("baseball_mlb", "icehockey_nhl"),
+            espn_covered=("baseball_mlb",),
+        )
+        assert service.get_scores.await_count == 1, (
+            "exactly one of the two sports should have fetched scores; got "
+            f"{service.get_scores.await_count}"
+        )
+        fetched = [c.args[0] for c in service.get_scores.await_args_list]
+        assert fetched == ["icehockey_nhl"], fetched
+
+    async def test_a_non_espn_sport_is_never_in_the_candidate_set(self):
+        # `sports_for_scores` is much wider than the ESPN mapping (61 sports vs
+        # 11 candidates on production). A sport outside the mapping must fetch
+        # regardless of what the probe says, and must not be silenced by it.
+        assert "tennis_atp_us_open" not in ESPN_SPORT_MAPPING
+        _result, service = await _run_poll(
+            outer=(True, "ok_600000"), per_sport=(True, "ok_600000"),
+            score_sports=("tennis_atp_us_open",),
+        )
+        assert service.get_scores.await_count == 1
+        assert service.session.espn_coverage_queries == [], (
+            "a pass whose only score sport is outside ESPN_SPORT_MAPPING still "
+            "ran the coverage query — there are no candidates to ask about"
         )

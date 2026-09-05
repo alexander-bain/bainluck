@@ -1463,22 +1463,72 @@ async def _poll_all_odds():
 
             # Skip score fetching for ESPN-mapped sports where ALL recent
             # events have espn_event_id (ESPN already provides scores faster).
-            espn_covered_sports = set()
-            for sport_key in sports_for_scores:
-                if sport_key in ESPN_SPORT_MAPPING:
-                    unmatched = await session.execute(
-                        select(func.count(Event.id))
-                        .join(Sport)
-                        .where(
-                            Sport.key == sport_key,
-                            Event.commence_time <= now,
-                            Event.commence_time >= now - timedelta(days=3),
-                            Event.status.in_(["scheduled", "live"]),
-                            Event.espn_id.is_(None),
-                        )
+            #
+            # 🔴 #3285 — THIS SKIP-SET COST 24 SECONDS OF EVERY PASS TO DECIDE A
+            # SKIP. It used to be a `for` loop issuing one COUNT per ESPN-mapped
+            # sport, eagerly, before any sport had passed its cadence gate.
+            # Measured on production 2026-09-05 (EXPLAIN ANALYZE): 11 ESPN-mapped
+            # sports were in `sports_for_scores`, and each COUNT took ~2.2 s and
+            # touched ~190,000 shared blocks to return a count of 2. The planner
+            # cannot push `sports.key` into the index — the plan applies it as a
+            # nested-loop Join Filter — so every call re-scanned the WHOLE 3-day
+            # scheduled/live event population and threw away the other sports.
+            # 11 x 2.2 s = ~24 s per pass, which is most of the gap between the
+            # 15.1 s pass measured on 08-31 and the 71 s mean measured on 09-05.
+            # It also explains the *shape* of the regression: the cost is
+            # O(espn_sports x all_events_3d), so it grew super-linearly when the
+            # US Open and the NFL season landed inside the window.
+            #
+            # Two changes, both of which have to hold or the cost comes back:
+            #   1. ONE grouped query for every candidate sport instead of N.
+            #      Same 190k-block scan, paid once (~2.3 s measured) not 11 times.
+            #   2. Computed LAZILY, below the cadence gate. Scores are on a 300 s
+            #      per-sport cadence against a 30 s beat, so on ~9 passes in 10 no
+            #      sport is due and this now costs exactly nothing.
+            # Never restore an eager per-sport COUNT here: the skip is cheaper than
+            # the question, and the question was being asked of every sport whether
+            # or not it could possibly act on the answer.
+            espn_covered_sports: set[str] | None = None
+
+            async def _get_espn_covered_sports() -> set[str]:
+                """The ESPN-mapped sports whose recent events ALL carry an espn_id.
+
+                Computed at most once per pass, on first demand. One grouped query
+                over every candidate, not one per sport.
+                """
+                nonlocal espn_covered_sports
+                if espn_covered_sports is not None:
+                    return espn_covered_sports
+
+                candidates = [
+                    key for key in sports_for_scores if key in ESPN_SPORT_MAPPING
+                ]
+                if not candidates:
+                    espn_covered_sports = set()
+                    return espn_covered_sports
+
+                unmatched_rows = await session.execute(
+                    select(Sport.key, func.count(Event.id))
+                    .join(Event, Event.sport_id == Sport.id)
+                    .where(
+                        Sport.key.in_(candidates),
+                        Event.commence_time <= now,
+                        Event.commence_time >= now - timedelta(days=3),
+                        Event.status.in_(["scheduled", "live"]),
+                        Event.espn_id.is_(None),
                     )
-                    if (unmatched.scalar() or 0) == 0:
-                        espn_covered_sports.add(sport_key)
+                    .group_by(Sport.key)
+                )
+                # 🔴 The zero is STRUCTURAL: a sport with no unmatched events
+                # produces no row at all, and "covered" is exactly that case. So
+                # the covered set is derived by subtraction from the CANDIDATE
+                # list — never by reading `== 0` off the returned rows, which can
+                # never contain a zero and would make the set permanently empty.
+                has_unmatched = {
+                    key for key, count in unmatched_rows.all() if (count or 0) > 0
+                }
+                espn_covered_sports = set(candidates) - has_unmatched
+                return espn_covered_sports
 
             for sport_key in sports_for_scores:
                 # 🔴 THE SAME CLASS, ONE LEVEL DOWN — and it is closed here
@@ -1549,9 +1599,6 @@ async def _poll_all_odds():
                     scores_skipped_quota += 1
                     continue
 
-                if sport_key in espn_covered_sports:
-                    continue
-
                 # Skip sports that returned 404 (cached for 24h)
                 if r:
                     try:
@@ -1571,6 +1618,18 @@ async def _poll_all_odds():
                                 continue
                     except Exception:
                         pass
+
+                # #3285 — ORDER IS THE WHOLE POINT. This check used to sit ABOVE
+                # the two Redis skips; it is below them now so that the ~2.3 s
+                # query behind it is only ever paid by a pass that has at least
+                # one sport genuinely due for a score fetch. Every predicate
+                # between the quota guard and here is a side-effect-free
+                # `continue`, so reordering them changes which passes pay, never
+                # which sports fetch. The quota guard stays FIRST in the body —
+                # that ordering is load-bearing (CERT-528/535/541) and did not
+                # move.
+                if sport_key in await _get_espn_covered_sports():
+                    continue
 
                 try:
                     pre_used = service.last_requests_used
