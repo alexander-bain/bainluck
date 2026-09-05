@@ -428,6 +428,12 @@ export default function MarketMapSection({
         // means is the distribution the market had before play, which is
         // what the reader is looking at on the rail beside it.
         ? "Where it landed vs what was expected"
+        // #3210, the same tense bug on the map directly above the totals one.
+        // Fixed in the same pass deliberately: leaving it would put "Final
+        // margin distribution" and "Where it's heading vs what was expected"
+        // on two rails of one live card, which is worse than the bug.
+        : status === "live" && hasScoreboard
+        ? "Where it's heading vs what was expected"
         : `Final ${vocab.unit === "runs" ? "run-" : vocab.unit === "goals" ? "goal-" : ""}margin distribution`,
       headline,
       rangeMin,
@@ -603,6 +609,16 @@ export default function MarketMapSection({
         // has no unit to interpolate, and inlining it produced "Final
         // distribution" with a double space.
         ? "Where it landed vs what was expected"
+        // #3210: THREE TENSES, NOT TWO. This used to be the `else` of "done",
+        // so a match in play was told where its games "Final"-ly landed while
+        // an ACTUAL rung sat on the rail beside it counting them as they were
+        // played (confirmed live 2026-09-05 on `/events/15304420`: `ACTUAL 14
+        // games` under "Final games distribution", second set in progress).
+        // The data was present-tense and only the sentence was past-tense.
+        // Gated on the same `scored` the ACTUAL marker is gated on, so the
+        // sentence promises a comparison exactly when the rail draws one.
+        : status === "live" && scored != null
+        ? "Where it's heading vs what was expected"
         : unitPhrase("Final", vocab, "distribution"),
       headline: headlineValue,
       rangeMin,

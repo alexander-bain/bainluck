@@ -16,6 +16,7 @@ import {
   eventTournamentKey,
   isTournamentSportKey,
   resolveEventOutcome,
+  liveHeroGamesLine,
 } from "@/lib/eventOutcome";
 import SettledOutcomeHero from "@/components/event/SettledOutcomeHero";
 const ChartSkeleton = () => <div className="animate-pulse h-48 bg-surface-card rounded-xl" />;
@@ -640,6 +641,17 @@ export default function EventPage({ params }: EventPageProps) {
     linescore: event.linescore,
   });
 
+  // #3330: the games under the sets, while it is still being played — the live
+  // counterpart of `settledOutcome.resultLine` above. Every rule it follows
+  // (home-first, why not `orientLinescore`, why it refuses a finished match)
+  // is stated on the helper, beside the settled one it mirrors.
+  const liveGamesLine = liveHeroGamesLine({
+    isFinished,
+    isLive,
+    hasStarted,
+    linescore: event.linescore,
+  });
+
   // L2-131 Item 1: the settled hero gains the pregame mark — the winner's
   // pre-game win probability ("were 35% pregame"). This is what makes an upset
   // read surprising at a glance. Data = the opening blend (opening_odds).
@@ -1145,6 +1157,19 @@ export default function EventPage({ params }: EventPageProps) {
               )}
             </div>
           </div>
+
+          {/* #3330: the games, under the sets, while it is still being played.
+              Centered under the row rather than inside either column, because
+              one line states BOTH sides and splitting it would ask the reader
+              to re-pair `6` with `3` across the probability. Reads
+              left-to-right against the two columns — see `liveGamesLine`. */}
+          {liveGamesLine && (
+            <div className="text-center mt-3">
+              <span className="text-[13px] font-semibold text-text-primary tabular-nums font-mono bg-surface-elevated px-2.5 py-1 rounded">
+                {liveGamesLine}
+              </span>
+            </div>
+          )}
 
           {/* Stakes context from standings */}
           {event.standings_context?.stakes && (
