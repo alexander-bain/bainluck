@@ -10,7 +10,8 @@
     "PLAYER_PROPS_MIDPOINT_BAND_LO",
     "PLAYER_PROPS_NAME_PATTERN",
     "PLAYER_PROPS_PLACEHOLDER_EXCLUDED_CELLS",
-    "REPRESENTATIVE_TIE_AUTHORITY"
+    "REPRESENTATIVE_TIE_AUTHORITY",
+    "SUM_ARM_ONLY_EXCLUDED_CELLS"
   ],
   "hashed_roots": [
     "_calibration_population_ctes",
@@ -18,7 +19,7 @@
     "_virtual_market_ctes",
     "compute_calibration_payload"
   ],
-  "input_count": 65,
+  "input_count": 66,
   "inputs": [
     {
       "covered_by_value": false,
@@ -626,6 +627,20 @@
       ]
     },
     {
+      "covered_by_value": true,
+      "definition_sha16": null,
+      "impact": "sql_shaping",
+      "name": "SUM_ARM_ONLY_EXCLUDED_CELLS",
+      "origin": "app.tasks.precompute_calibration:SUM_ARM_ONLY_EXCLUDED_CELLS",
+      "sql_interpolated": true,
+      "used_in": [
+        "_calibration_population_ctes",
+        "compute_calibration_payload",
+        "nonexclusive_bundle_cell_columns_sql",
+        "nonexclusive_bundle_cell_labels"
+      ]
+    },
+    {
       "covered_by_value": false,
       "definition_sha16": null,
       "impact": "sql_shaping",
@@ -768,7 +783,7 @@
   ],
   "schema": "calibration-fingerprint-derived/v1",
   "source": "backend/app/tasks/precompute_calibration.py",
-  "source_sha256": "4253d26f33f6ec256461bb3a0a08636bd5288b14b4b9baf962051e907c68389f",
+  "source_sha256": "56dcadf9de2356a81a5d62f4862cedf09f66d67a48a2f77bdbf5cc1bf7443f60",
   "uncovered_behavior_or_evidence": 32,
   "uncovered_count": 54,
   "uncovered_sql_shaping": 22

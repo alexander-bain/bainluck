@@ -1536,6 +1536,82 @@ NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS = (
 
 
 # ---------------------------------------------------------------------------
+# CAL-P1002F (#1978) — D66, `kalshi/entertainment`: RULE E's SUM ARM ONLY.
+#
+# Freeze exception: **Alex, 2026-09-04 08:55 PT, "d66:a"** against the D66 block
+# in `YOUR-TURN-ARCHIVE-2026-09-04-0700.md` line 49 — the copy that was live when
+# he answered. (That archive's own roll call, line 149, lists the open letters as
+# D62 · D63 · D65 · D66; D64 was already recorded as ruled overnight, in the "say
+# so if you disagree" block. `RULINGS-BATCH` line 333 reads the same keystroke as
+# D64 on the stated ground that "the only open lettered default was D64", which
+# that page contradicts. The correction is
+# `NOTE-TO-ORCHESTRATOR-FROM-CALIBRATION-1002f-…`.)
+#
+# 🔴 THIS IS A SUM-ARM-ONLY ALLOWLIST AND IT IS NOT `NONEXCLUSIVE_BUNDLE_
+# EXCLUDED_CELLS`. Putting `('kalshi','entertainment')` in that tuple is the
+# obvious way to ship D66 and it is the WRONG one, because that tuple activates
+# BOTH of RULE E's arms and the REALIZATION arm removes this cell's BETTER half.
+# Measured, at no production cost, off the served payload's own
+# `nonexclusive_bundle_census` — the census that exists to answer exactly this
+# question before a cell is added:
+#
+#   entertainment  published 12,330 | realized-arm cohort 5,872 @ ECE 4.26
+#                                   | remainder          6,458 @ ECE 9.49
+#
+# The >=2-winner cohort is calibrated nearly twice as well as what would be left
+# behind. Excluding on the realization arm would take the published cell TOWARDS
+# 9.49, not away from it. The census's own rule text says this is why it is
+# published: "a blanket exclusion would delete 81% of hockey (ECE 0.87pp) and
+# 47% of tennis (ECE 2.42pp)". Entertainment is that shape.
+#
+# WHAT ALEX ACTUALLY RULED, which is the sum arm and only the sum arm. His A read
+# "apply the rule we already use for four other categories — **when our copy of
+# the prices doesn't add up, that question doesn't count towards the score**. It
+# removes 14% of the entertainment rows and takes the over-confidence from +3.5
+# points to +0.8." Both halves of that pin the sum arm: the definition he was
+# given is the sum test, and 14% / +3.5 -> +0.8 are the sum-arm-only numbers from
+# `REPORT-calibration-1002-…` §7d. The both-arms rendering removes ~48% of the
+# rows and does not produce +0.8. **Shipping both arms would have violated the
+# ruling's own stated numbers**, so the narrower rule is the faithful reading of
+# D66 = A, not an expansion of it.
+#
+# WHY THIS CELL. `kalshi/entertainment` is rank 1 on the problem board — 29,353
+# excess-outcomes. Kalshi asks "will this song be #1 / #2 / #3" as three SEPARATE
+# markets and our writer staples them into one multi-outcome market, so the legs
+# are not a partition and their prices are not a distribution.
+# `KXBBCHARTPOSITIONSONG-26SEP05BOS` publishes #2 at 0.955, #3 at 0.400 and #1 at
+# 0.050 — sum 1.405 on a question where at most one rank can be true, and the
+# 0.955 leg lost. The published price sum sorts the cell monotonically: legs that
+# DO sum to a distribution score 1.70 (better than the 3.0 bar), sum 1.15-2 score
+# 8.9, sum 2-5 score 25, sum 5-15 score 42.25. The sorter is the PRICES, not the
+# winners, so this is not a pattern found among the losers.
+#
+# WHAT IT IS WORTH, AND IT DOES NOT CLEAR THE CELL. Measured on the same fold
+# (§7d): 8,954 rows -> 7,698 (1,256 rows, 14.0%), ECE 6.31 -> 5.47, gap +3.48 ->
+# +0.82. **The systematic over-prediction essentially disappears; the dispersion
+# does not.** 5.47 is still well over the 3.0 bar. Anyone reading "rank 1
+# repaired" as "rank 1 retired" is wrong, and Alex was told so before he ruled.
+# What is left is cancellation between two adjacent streaming series biased 8 pp
+# in OPPOSITE directions — `KXARTISTSTREAMS` (1,047 rows, ECE 16.32, gap -7.99,
+# the cumulative "Above 65M / Above 66M" ladder, gotcha #17) against
+# `KXALBUMSTREAMSU` (601 rows, ECE 28.82, gap +17.24). That is a separate repair.
+#
+# SCOPED BY SOURCE AS WELL AS CATEGORY, inherited from CAL-P114 rather than
+# re-derived: a category-only entry would also act on `polymarket/entertainment`,
+# which nobody has folded, and CAL-P112 item 3's standing warning is that RULE T's
+# category-only widening moved `polymarket/tech` 8.04 -> 12.62 — WORSE — on a cell
+# that was likewise unmeasured.
+#
+# 🔴 DO NOT ADD `('kalshi','tech')` HERE ON THIS EVIDENCE. It was folded the same
+# way (§7h) and the sum relationship holds — but tech is wrong in the OPPOSITE
+# direction, UNDER-confident by ~9 pp, because its problem is a genuine cumulative
+# ladder rather than stapled questions. Same broken premise, opposite sign. Each
+# cell is a separate ruling with its own measured evidence; that is the filter's
+# own rule text and D66 does not widen it.
+SUM_ARM_ONLY_EXCLUDED_CELLS = (("kalshi", "entertainment"),)
+
+
+# ---------------------------------------------------------------------------
 # CAL-P168 (#1978) — RANK 1, `polymarket/baseball`. K' = R1 + R2 + R3 + M1.
 #
 # Design + ruling: `artifacts/cal-p117/RULE-DESIGN-polymarket-baseball.md`
@@ -1820,6 +1896,17 @@ def nonexclusive_bundle_cell_labels() -> tuple[tuple[str, str], ...]:
         (f"{src}/{cat}", f"nxb_cell_{idx}")
         for idx, (src, cat) in enumerate(NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS)
     ]
+    # CAL-P1002F (#1978) D66: the sum-arm-only cells are disclosed on the same
+    # terms as the both-arms cells — Alex's 2026-08-28 clause is "the removed rows
+    # are disclosed on the page as a named, counted exclusion", and a row removed
+    # by one arm is as removed as a row removed by two. Their own column prefix,
+    # not a shared `nxb_cell_` index, so the count cannot be mistaken for a
+    # both-arms cell's and so the two allowlists can be reordered independently
+    # without silently renumbering each other's columns.
+    labels += [
+        (f"{src}/{cat}", f"nxb_sum_cell_{idx}")
+        for idx, (src, cat) in enumerate(SUM_ARM_ONLY_EXCLUDED_CELLS)
+    ]
     # CAL-P168 (#1978): rank 1's cells report through the SAME per-cell map,
     # because the page renders one filter as one bullet and a reader who meets
     # "N rows were removed" must meet "and part of that is coming back" in the
@@ -1865,6 +1952,15 @@ def nonexclusive_bundle_cell_columns_sql() -> str:
         parts.append(
             "COUNT(*) FILTER (WHERE is_esports_bundle "
             f"AND source = '{src}' AND category = '{cat}') AS nxb_cell_{idx}"
+        )
+    # CAL-P1002F (#1978) D66. Same flag, same row shape: a sum-arm-only cell is
+    # still flagged `is_esports_bundle` by the CTE — it is the ARM that differs,
+    # not the flag — so the cell conjunct is what makes this column count its own
+    # label rather than its neighbour's.
+    for idx, (src, cat) in enumerate(SUM_ARM_ONLY_EXCLUDED_CELLS):
+        parts.append(
+            "COUNT(*) FILTER (WHERE is_esports_bundle "
+            f"AND source = '{src}' AND category = '{cat}') AS nxb_sum_cell_{idx}"
         )
     # CAL-P168 (#1978): rank 1's per-cell counts. A DIFFERENT flag on the same
     # row shape — the cell conjunct is kept anyway so the column counts what its
@@ -1937,7 +2033,17 @@ ESPORTS_MULTI_BUNDLE_RULE_TEXT = (
     "resolved with >=2 winners OR when its published prices sum past 1.15. A "
     "genuine partition sums to ~1 whatever it resolves to, so the sum is what "
     "identifies a bundle that happened to land on a single rung — the class the "
-    ">=2-winner test could never see. Read-side only; never mutates resolutions."
+    ">=2-winner test could never see. Read-side only; never mutates resolutions. "
+    # CAL-P1002F (#1978) D66. A reader doing the arithmetic on a sum-arm-only
+    # cell cannot reconcile the count against ">=2 winners OR sum past 1.15", so
+    # the page has to say that some cells are ruled onto one arm. Pointed at
+    # `excluded_cells` for the same reason as the D12 sentence above: the list is
+    # derived from the constants, this sentence is not.
+    "Since 2026-09-04 a cell may be ruled onto the SUM ARM ALONE, where the "
+    ">=2-winner arm is withheld because that cohort was measured to be BETTER "
+    "calibrated than the rows it would leave behind — removing it would move the "
+    "cell the wrong way. Which arms each cell is ruled onto is a measured fact "
+    "about that cell and never a default; see `excluded_cells`."
 )
 
 
@@ -1980,6 +2086,19 @@ def market_is_esports_multi_bundle(
         n_outcomes, n_winners, cp_sum, exclusivity_proved=exclusivity_proved
     ):
         return False
+    # CAL-P1002F (#1978) D66 — the SUM-ARM-ONLY cells, tested BEFORE the
+    # both-arms cells so the narrower rule cannot be reached through the wider
+    # one. A cell here is excluded only when its published price sum exceeds the
+    # threshold; the >=2-winner arm is WITHHELD on measured evidence (it removes
+    # `kalshi/entertainment`'s better half — see SUM_ARM_ONLY_EXCLUDED_CELLS).
+    #
+    # The structural gate above has already passed by EITHER arm, so this arm has
+    # to be re-asked here rather than inferred from it. `cp_sum is None` means the
+    # market contributed no eligible priced outcome and cannot be shown to be
+    # structurally non-exclusive, so it fails closed — same as the SQL, where
+    # `NULL > 1.15` is NULL.
+    if source is not None and (source, category) in SUM_ARM_ONLY_EXCLUDED_CELLS:
+        return cp_sum is not None and cp_sum > MEX_NORMALIZE_THRESHOLD
     if category == ESPORTS_MULTI_BUNDLE_CATEGORY:
         return True
     # D12 (#1978, CAL-P150). The mirror has to move with the CTE or it stops
@@ -3174,27 +3293,56 @@ def _calibration_population_ctes(
                 JOIN market_info mi ON mi.market_id = mrs.market_id
                 LEFT JOIN bundle_price_sum bps ON bps.market_id = mrs.market_id
                 WHERE mrs.n_outcomes >= 3
-                  -- RULE E, arm 1 of 2: the shipped REALIZATION test, unchanged.
-                  -- Arm 2 is the STRUCTURE — a partition sums to ~1 whatever it
-                  -- resolves to, a bundle of independent binaries sums to N x p —
-                  -- and it is the only arm that can see a bundle which happened
-                  -- to land on one rung. That 1-winner tail is the whole published
-                  -- residue of `polymarket/esports` and 13.4% of
-                  -- `kalshi/economics`. Mirrors
-                  -- market_is_nonexclusive_bundle_structural().
-                  AND (
-                        mrs.win_count >= 2
-                        OR bps.cp_sum > {MEX_NORMALIZE_THRESHOLD}
-                  )
                   -- RULE E's disjointness clause, load-bearing: proved-exclusive
                   -- fields are the normalizer's input and are NORMALIZED, never
                   -- excluded. An INCOMPLETE proved field can sum past 1.15
-                  -- without being a bundle; this is the row it saves.
+                  -- without being a bundle; this is the row it saves. Hoisted
+                  -- above the cell/arm test by CAL-P1002F and applies to EVERY
+                  -- arm — it guarded both before and it guards all three now.
                   AND NOT ({exclusivity_proved_sql('mi', 'mrs')})
+                  -- 🔴 THE ARMS ARE PAIRED WITH THE CELLS THEY WERE RULED FOR,
+                  -- and CAL-P1002F (D66) is why this is no longer one flat
+                  -- "cells AND arms" conjunction. A cell may be ruled onto BOTH
+                  -- arms or onto the SUM ARM ALONE, and which one is a measured
+                  -- fact about that cell, never a default. Mirrors
+                  -- market_is_esports_multi_bundle().
                   AND (
-                        mrs.category = '{ESPORTS_MULTI_BUNDLE_CATEGORY}'
-                        OR (mi.source, mrs.category)
-                            IN {_sql_pair_tuple(NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS)}
+                        -- BOTH ARMS — esports on any source, plus the cells in
+                        -- NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS. Arm 1 is the
+                        -- shipped REALIZATION test. Arm 2 is the STRUCTURE — a
+                        -- partition sums to ~1 whatever it resolves to, a bundle
+                        -- of independent binaries sums to N x p — and it is the
+                        -- only arm that can see a bundle which happened to land
+                        -- on one rung. That 1-winner tail is the whole published
+                        -- residue of `polymarket/esports` and 13.4% of
+                        -- `kalshi/economics`.
+                        (
+                            (
+                                mrs.category = '{ESPORTS_MULTI_BUNDLE_CATEGORY}'
+                                OR (mi.source, mrs.category)
+                                    IN {_sql_pair_tuple(NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS)}
+                            )
+                            AND (
+                                mrs.win_count >= 2
+                                OR bps.cp_sum > {MEX_NORMALIZE_THRESHOLD}
+                            )
+                        )
+                        -- SUM ARM ONLY — D66's cells. The realization arm is
+                        -- WITHHELD here on measured evidence, not omitted by
+                        -- oversight: on `kalshi/entertainment` the >=2-winner
+                        -- cohort is the cell's BETTER half (5,872 rows @ 4.26
+                        -- against a 6,458-row remainder @ 9.49, off the served
+                        -- `nonexclusive_bundle_census`), so taking it would move
+                        -- the cell the wrong way. See SUM_ARM_ONLY_EXCLUDED_CELLS.
+                        -- `bps.cp_sum` is NULL when the market contributed no
+                        -- eligible priced outcome, and `NULL > 1.15` is NULL, so
+                        -- a market with no sum falls out of this arm — fails
+                        -- closed, matching the Python mirror's `cp_sum is None`.
+                        OR (
+                            (mi.source, mrs.category)
+                                IN {_sql_pair_tuple(SUM_ARM_ONLY_EXCLUDED_CELLS)}
+                            AND bps.cp_sum > {MEX_NORMALIZE_THRESHOLD}
+                        )
                   )
             ),
             -- CAL-P168 (#1978) RANK 1 — K''s three MARKET-level arms.
@@ -6355,12 +6503,34 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
             # so this list is the only place a reader can see that a second cell
             # is being deleted here. Hard-coding it would have restated the
             # constant and could not have drifted from the constant it restated.
+            # CAL-P1002F (#1978) D66: the sum-arm-only cells belong in BOTH lists.
+            # A row removed by one arm is as removed as a row removed by two, and
+            # a reader who finds `kalshi/entertainment` absent from `applies_to`
+            # while 14% of its rows have left is being told something false —
+            # which is the whole pillar this filter is disclosed under. Which
+            # ARMS a cell is ruled onto is the separate `sum_arm_only_cells` key
+            # below, so the existing two lists keep their meaning ("this cell is
+            # excluded here") for consumers that already read them.
             "applies_to": ", ".join(
                 [ESPORTS_MULTI_BUNDLE_CATEGORY]
-                + [f"{src}/{cat}" for src, cat in NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS]
+                + [
+                    f"{src}/{cat}"
+                    for src, cat in NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS
+                    + SUM_ARM_ONLY_EXCLUDED_CELLS
+                ]
             ),
             "excluded_cells": [
-                list(pair) for pair in NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS
+                list(pair)
+                for pair in NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS
+                + SUM_ARM_ONLY_EXCLUDED_CELLS
+            ],
+            # Additive key, deliberately NOT a reshape of `excluded_cells`: an
+            # existing consumer keeps reading a flat list of excluded cells, and
+            # a consumer that cares which arms took the rows has somewhere honest
+            # to look instead of inferring it from a count that will not
+            # reconcile against ">=2 winners OR sum past 1.15".
+            "sum_arm_only_cells": [
+                list(pair) for pair in SUM_ARM_ONLY_EXCLUDED_CELLS
             ],
             "rule": ESPORTS_MULTI_BUNDLE_RULE_TEXT,
             "excluded": esports_bundle_excluded,
@@ -6864,6 +7034,21 @@ def _main_input_fingerprint() -> str:
         # Hashed by NAME as well as value, like its two neighbours above, so it
         # is greppable rather than an incidental substring.
         f"nonexclusive_bundle_cells={sorted(NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS)}",
+        # CAL-P1002F (#1978) D66 — the SIXTH instance of the same hole, closed on
+        # the deploy that opens it rather than after an incident. Its sibling
+        # above is the whole argument: this tuple is INTERPOLATED into the emitted
+        # SQL, so `inspect.getsource` hashes the f-string TEMPLATE and never the
+        # value. Adding or removing a sum-arm-only cell changes which rows the
+        # curve publishes while leaving a template digest identical, and a cursor
+        # banked under one allowlist would stay resumable by code with a different
+        # one — two populations merged into one payload.
+        #
+        # 🔴 AND THIS ONE MOVES THE FINGERPRINT ON PURPOSE. Deploying D66 MUST
+        # discard the in-flight bank: the rows it removes are rows already banked
+        # under the old population, and resuming across the change would publish a
+        # curve that is half old-population and half new. That is why this entry
+        # is here and why the merge waits for a publish (D45).
+        f"sum_arm_only_cells={sorted(SUM_ARM_ONLY_EXCLUDED_CELLS)}",
         # CAL-P162 (#1978) — the FIFTH instance of the same hole, found by the
         # same question the comment above prescribes. `MEX_NORMALIZE_THRESHOLD`
         # was already interpolated into the emitted SQL (so the template hash
