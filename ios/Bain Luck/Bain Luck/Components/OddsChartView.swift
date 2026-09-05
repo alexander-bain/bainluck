@@ -67,6 +67,94 @@ enum PeriodChipGeometry {
     /// collisions. Beyond about 12 periods there IS no room, and dropping is then
     /// the correct behaviour rather than a compromise.
     static var minSpacingFraction: Double { chipWidthPoints / plotWidthPoints }
+
+    /// Per-label chip width, for the questions `chipWidthPoints` cannot answer:
+    /// does THIS chip fit inside the plot, and does it hit its neighbour.
+    ///
+    /// `chipWidthPoints` is deliberately a conservative bound on the widest
+    /// TWO-character chip and is the right basis for the spacing rule. It is the
+    /// wrong basis for a five-character "Final", which is genuinely wider than
+    /// any inning number and was the chip that overhung the plot.
+    ///
+    /// The character figure is MEASURED off the rendered chips rather than
+    /// guessed: on the 2026-09-05 iPhone 17 shots (`n024-after-walkoff.png`,
+    /// 3.07px/pt) "8th" renders ~22pt and "Final" ~30pt, i.e. ~4.7–5.3pt per
+    /// glyph at size-10 bold plus the 4pt padding each side. 6pt per character is
+    /// the round number above that, so every chip's computed width is an upper
+    /// bound on its drawn width — which is the safe direction for a rule that
+    /// decides whether two chips collide. `chipWidth(for: "10")` must stay at or
+    /// under `chipWidthPoints`, asserted in `OddsChartEdgeLabelTests`, so the
+    /// spacing constant keeps being the conservative bound it claims to be.
+    static let horizontalPaddingPoints: Double = 4
+    static let characterWidthPoints: Double = 6
+
+    static func chipWidth(for label: String) -> Double {
+        horizontalPaddingPoints * 2 + Double(label.count) * characterWidthPoints
+    }
+
+    /// Keep a chip's full width inside the plot (#3237).
+    ///
+    /// `rawX` is the chip's ideal centre — the x of the period boundary it marks,
+    /// measured from the plot's leading edge. A marker at or near `x = 0` centres
+    /// a chip whose left half hangs over the y-axis gutter, on top of the "100%"
+    /// label; the same happens at the trailing edge against the plot's right
+    /// border. Clamping the CENTRE by half the chip's width is the whole fix: the
+    /// chip still names its period, it just stops overhanging the frame.
+    ///
+    /// A plot too narrow to hold the chip at all has no non-overlapping answer,
+    /// so it centres — visibly wrong beats arbitrarily wrong.
+    static func clampedCenterX(rawX: Double, label: String, plotWidth: Double) -> Double {
+        let width = chipWidth(for: label)
+        guard plotWidth > width else { return plotWidth / 2 }
+        let half = width / 2
+        return min(max(rawX, half), plotWidth - half)
+    }
+
+    /// One chip asking to be drawn: `key` is the caller's identity for it, so the
+    /// placement can be matched back to a marker without this type knowing what a
+    /// marker is.
+    struct ChipRequest: Equatable {
+        let key: Int
+        let label: String
+        let rawX: Double
+    }
+
+    struct ChipPlacement: Equatable {
+        let key: Int
+        let centerX: Double
+    }
+
+    /// Place the chips that will actually be drawn (#3237).
+    ///
+    /// The clamp above cannot be applied on its own: pulling a wide trailing chip
+    /// inside the plot moves it INTO its neighbour. Measured on 15302915, the
+    /// 10-inning walk-off — clamping alone drew "Final" over "9th" so the strip
+    /// read "9Final". The spacing rule in `extractPeriodMarkers` had already
+    /// passed that pair, correctly, because it measures separation against a
+    /// two-character chip and neither chip had moved yet.
+    ///
+    /// So the last word on overlap belongs here, where the final positions are
+    /// known. When two chips would touch, the EARLIER one is dropped — the same
+    /// preference the spacing rule states ("keep later/more informative label"),
+    /// and the right one for this case: the collision is created by the terminal
+    /// chip, and "Final" is the more informative of the two. The drop cascades,
+    /// because removing one chip can expose an overlap with the one before it.
+    ///
+    /// Requests are placed in the order given; the caller passes them in time
+    /// order, which is x order on a linear axis.
+    static func place(_ requests: [ChipRequest], plotWidth: Double) -> [ChipPlacement] {
+        var kept: [(placement: ChipPlacement, halfWidth: Double)] = []
+        for request in requests {
+            let half = chipWidth(for: request.label) / 2
+            let centerX = clampedCenterX(
+                rawX: request.rawX, label: request.label, plotWidth: plotWidth)
+            while let last = kept.last, centerX - half < last.placement.centerX + last.halfWidth {
+                kept.removeLast()
+            }
+            kept.append((ChipPlacement(key: request.key, centerX: centerX), half))
+        }
+        return kept.map(\.placement)
+    }
 }
 
 // MARK: - Chart Moment
@@ -924,21 +1012,39 @@ struct OddsChartView: View {
             dataPoints: dataPoints, selectedDate: selectedDate,
             homeShort: homeShort, awayShort: awayShort, moments: moments)))
         .chartXScale(domain: xAxisDomain(for: dataPoints))
-        // Period marker labels positioned inside chart via overlay
+        // Period marker labels positioned inside chart via overlay.
+        //
+        // #3237, two corrections in one place, because they are the same mistake:
+        // `proxy.position(forX:)` is measured from the PLOT AREA's origin, while
+        // this GeometryReader spans the WHOLE chart — the y-axis gutter included.
+        // Positioning a plot-relative x in chart space drew every chip a gutter's
+        // width to the LEFT of the inning it marks, and put the first chip on top
+        // of the "100%" axis label. So: convert into chart space with
+        // `plotFrame.minX`, and clamp the centre so the chip's own width stays
+        // inside the plot at both ends.
         .chartOverlay { proxy in
             GeometryReader { geo in
+                let plotFrame = geo[proxy.plotAreaFrame]
+                let placements = PeriodChipGeometry.place(
+                    visibleMarkers.enumerated().compactMap { index, marker in
+                        proxy.position(forX: marker.date).map {
+                            PeriodChipGeometry.ChipRequest(
+                                key: index, label: marker.label, rawX: Double($0))
+                        }
+                    },
+                    plotWidth: plotFrame.width
+                )
                 // Small floating period chips near the top of the chart
-                ForEach(Array(visibleMarkers.enumerated()), id: \.element.id) { index, marker in
-                    if let xPos = proxy.position(forX: marker.date) {
-                        Text(marker.label)
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 2)
-                            .background(.ultraThinMaterial)
-                            .clipShape(RoundedRectangle(cornerRadius: 4))
-                            .position(x: xPos, y: 10)
-                    }
+                ForEach(placements, id: \.key) { placement in
+                    let marker = visibleMarkers[placement.key]
+                    Text(marker.label)
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 2)
+                        .background(.ultraThinMaterial)
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                        .position(x: plotFrame.minX + placement.centerX, y: 10)
                 }
             }
         }
@@ -956,11 +1062,14 @@ struct OddsChartView: View {
         }
         .chartXAxis {
             let plan = Self.xAxisPlan(for: xAxisDomain(for: dataPoints))
-            AxisMarks(values: .stride(by: plan.component, count: plan.count)) { _ in
+            AxisMarks(values: .stride(by: plan.component, count: plan.count)) { value in
                 AxisGridLine(stroke: StrokeStyle(lineWidth: 0.15))
                     .foregroundStyle(.secondary.opacity(0.3))
-                AxisValueLabel(format: plan.format, anchor: .top)
-                    .font(.system(size: 9))
+                AxisValueLabel(
+                    format: plan.format,
+                    anchor: Self.xAxisLabelAnchor(index: value.index, count: value.count)
+                )
+                .font(.system(size: 9))
             }
         }
         .chartXSelection(value: $selectedDate)
@@ -1562,6 +1671,30 @@ struct OddsChartView: View {
         }
         let last = xAxisStrides[xAxisStrides.count - 1]
         return XAxisPlan(component: last.component, count: last.count, labelStyle: .calendarDay)
+    }
+
+    /// Where a time label hangs off its own tick (#3237).
+    ///
+    /// `anchor: .top` centres every label on its tick, which is right in the
+    /// middle of the axis and wrong at both ends: the last tick sits ON the
+    /// plot's trailing edge, so half the label is outside the plot and SwiftUI
+    /// truncates what is left. Measured on 15303441 (Athletics @ Mariners,
+    /// 2026-09-05): the axis drew `Fri 11 PM · Sat 12 AM · S…`, and "S…" is the
+    /// END of the game — the part of the chart people actually read.
+    ///
+    /// So the two end labels hang INWARD: the last label's trailing edge sits on
+    /// its tick and it grows left, the first label's leading edge sits on its
+    /// tick and it grows right. Everything between still centres. Nothing moves
+    /// the ticks themselves — this is labelling only, no change to the domain or
+    /// the drawn line.
+    ///
+    /// `count <= 1` is the degenerate single-tick axis: centring is the least
+    /// wrong thing when the same label is both ends.
+    static func xAxisLabelAnchor(index: Int, count: Int) -> UnitPoint {
+        guard count > 1 else { return .top }
+        if index <= 0 { return .topLeading }
+        if index >= count - 1 { return .topTrailing }
+        return .top
     }
 
     // MARK: - Period Label Normalization
