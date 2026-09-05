@@ -271,6 +271,59 @@ class TestBackfillTruncationIsRead:
         s = summarize_history(history)
         assert s["backfill_unreached_latest"] == 0
 
+    def test_a_skipped_backfill_is_a_cut_at_zero_not_a_completed_list(self):
+        """CERT-1857's repair, half one.
+
+        `skipped_past_deadline` is the one deadline case the mid-flight cutoff
+        cannot express: the step never started, so the loop's `break` never
+        ran and the cutoff stays null. Reading that null as "finished its
+        list" turned the worst beat there is — 10,901 candidates, not one
+        attempted — into the healthiest reading in the summary.
+        """
+        history = [{
+            "market_backfill_skipped_past_deadline": True,
+            "market_backfill_truncated_after": None,
+            "market_backfill_candidates": 10901,
+        }]
+        s = summarize_history(history)
+        assert s["runs_backfill_truncated"] == 1
+        assert s["runs_backfill_complete"] == 0
+        assert s["backfill_truncated_every_measured_beat"] is True
+        assert s["backfill_unreached_latest"] == 10901, (
+            "every candidate was left on the floor; a beat that attempted "
+            "nothing must not report nothing missing"
+        )
+
+    def test_a_cutoff_of_zero_is_a_cut_not_a_finished_list(self):
+        """CERT-1857's repair, half two: `after or candidates` erases a real 0.
+
+        A cutoff of zero is the loop breaking on its very first candidate.
+        Folded through an `or` it is falsy, so it read as "worked the whole
+        list" and reported nothing unreached — the loudest fact rendered as
+        the quietest one, which is the same defect the nullable field was
+        introduced to avoid in the other direction.
+        """
+        history = [{
+            "market_backfill_truncated_after": 0,
+            "market_backfill_candidates": 10901,
+        }]
+        s = summarize_history(history)
+        assert s["runs_backfill_truncated"] == 1
+        assert s["runs_backfill_complete"] == 0
+        assert s["backfill_truncated_after_max"] == 0
+        assert s["backfill_unreached_latest"] == 10901
+
+    def test_a_skipped_beat_predating_the_cutoff_field_still_says_so(self):
+        """`skipped_past_deadline` is older than the cutoff, and it is knowable.
+
+        Such a beat is not `unknown`: it states outright that the step did not
+        run, which is strictly more than silence.
+        """
+        history = [{"market_backfill_skipped_past_deadline": True}]
+        s = summarize_history(history)
+        assert s["runs_backfill_truncated"] == 1
+        assert s["runs_backfill_unknown"] == 0
+
     def test_the_newest_beat_that_can_say_is_the_one_read(self):
         """A ring whose newest entries predate the field still reports."""
         history = [

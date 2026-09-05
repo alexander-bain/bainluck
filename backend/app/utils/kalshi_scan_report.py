@@ -438,9 +438,19 @@ def summarize_history(history: List[Dict[str, Any]]) -> Dict[str, Any]:
         except (TypeError, ValueError):
             latest_candidates = None
         if latest_candidates is not None:
-            # What the newest measured beat left on the floor. `after` is None
-            # on a beat that finished its list, and then nothing is unreached.
-            latest_unreached = max(0, latest_candidates - (after or latest_candidates))
+            # What the newest measured beat left on the floor. `after is None`
+            # means it finished its list, and then nothing is unreached.
+            #
+            # The arithmetic is written out rather than folded into
+            # `after or latest_candidates`, because CERT-1857 caught exactly
+            # that shorthand: a real cutoff of ZERO — the backfill attempted
+            # nothing — is falsy, so it read as "finished the list" and the
+            # worst beat there is reported nothing left on the floor. A zero
+            # that means something is the one value an `or` must never touch.
+            if after is None:
+                latest_unreached = 0
+            else:
+                latest_unreached = max(0, latest_candidates - after)
         break
 
     return {
@@ -501,14 +511,23 @@ def _history_backfill_cutoff(
     cutoff field existed, so its silence is absence of measurement, not
     evidence the loop finished. A stored ``None`` under a PRESENT key is the
     opposite and is reported as ``False`` — that beat worked its whole list.
+
+    A beat that SKIPPED the step outright is a cut after zero, not a completed
+    list. CERT-1857 caught this: `skipped_past_deadline` is the one deadline
+    case the mid-flight cutoff cannot express, it leaves the cutoff null, and
+    reading that null as "finished" turned the worst possible beat — 10,901
+    candidates, not one of them attempted — into the healthiest reading in the
+    summary. The two fields describe one step and have to be read together.
     """
+    if bool(h.get("market_backfill_skipped_past_deadline")):
+        return True, 0
     if "market_backfill_truncated_after" not in h:
         return None, None
-    raw = h.get("market_backfill_truncated_after")
-    if raw is None:
+    stored = h.get("market_backfill_truncated_after")
+    if stored is None:
         return False, None
     try:
-        return True, int(raw)
+        return True, int(stored)
     except (TypeError, ValueError):
         return None, None
 
