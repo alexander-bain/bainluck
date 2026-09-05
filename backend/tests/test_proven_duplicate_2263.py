@@ -564,7 +564,14 @@ class TestTheIdColumnMap:
             event.external_id = None
             event.statpal_fixture_id = None
 
-            assert _attach_claim(event, EventClaim(source, "written-by-attach")) is True
+            assert (
+                _attach_claim(
+                    event,
+                    EventClaim(source, "written-by-attach"),
+                    espn_id_is_held=False,
+                )
+                is True
+            )
             assert getattr(event, column) == "written-by-attach", (
                 f"_attach_claim({source!r}) did not write {column!r}"
             )
@@ -580,7 +587,9 @@ class TestTheIdColumnMap:
             event.statpal_fixture_id = None
 
             assert _claim_id_value(event, source) is None
-            _attach_claim(event, EventClaim(source, "round-trip"))
+            _attach_claim(
+                event, EventClaim(source, "round-trip"), espn_id_is_held=False
+            )
             assert _claim_id_value(event, source) == "round-trip"
 
     def test_a_source_with_no_id_column_reads_as_unbound(self):
