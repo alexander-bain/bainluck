@@ -105,3 +105,69 @@ describe("GamePlayCard settled state is not printed twice (#2815)", () => {
     expect(badge(html)).toBe("10:00 - 1st Quarter");
   });
 });
+
+// ---------------------------------------------------------------------------
+// #3295 — THE PAIR ON THIS CARD SUMS TO 100
+//
+// Seen on production during US Open R32, event 15304209, while Fritz was in his
+// fourth set. The hero printed `62% – 38%`. This card, one scroll below it,
+// printed `Fritz 62% — Cerundolo 39%`. Same page, same instant, two different
+// numbers for Cerundolo, and 101 between them on a page whose whole promise is
+// honest probability.
+//
+// `OddsChart`'s scrub handler emits `awayProb: 1 - homeProb`, so the pair is an
+// exact complement by construction, and rounding each side independently with
+// half-up sends BOTH up whenever `p * 100` lands on `.5`. It is the same defect
+// #2452 fixed on the tournament match list, #2060 and UX-P114 fixed before
+// that, and the hero was already immune because it goes through
+// `renderedDuelPercents`. This card was the surface still calling a bare
+// per-side `Math.round`, which is exactly why it was the one disagreeing.
+// ---------------------------------------------------------------------------
+
+describe("#3295 — the probability pair sums to 100", () => {
+  /** The two rendered percents, in DOM order (home first, then away). */
+  function percents(html: string): number[] {
+    return [...html.matchAll(/>(\d{1,3})%</g)].map((m) => Number(m[1]));
+  }
+
+  it("prints 62/38, not 62/39, on the half-cent pair that was live", () => {
+    // 0.615 is the blend that produced the report: Math.round(61.5) = 62 and
+    // Math.round(38.5) = 39.
+    const html = render(makePoint({ homeProb: 0.615, awayProb: 0.385 }));
+    const pair = percents(html);
+    expect(pair).toHaveLength(2);
+    expect(pair[0] + pair[1]).toBe(100);
+    expect(pair).toEqual([62, 38]);
+  });
+
+  it("never sums to 101 across the whole half-cent grid", () => {
+    // Every pair that lands both sides on a .5 boundary — the only inputs that
+    // can break, and the reason a single spot-check is not the test.
+    for (let half = 5; half < 1000; half += 10) {
+      const home = half / 1000;
+      const html = render(makePoint({ homeProb: home, awayProb: 1 - home }));
+      const pair = percents(html);
+      expect(pair).toHaveLength(2);
+      expect(pair[0] + pair[1]).toBe(100);
+    }
+  });
+
+  it("agrees with the hero, which rounds the same pair the same way", () => {
+    // The two surfaces are a scroll apart. If they can round differently the
+    // reader sees the disagreement, whatever either number is on its own.
+    const { renderedDuelPercents } = require("../../lib/renderedPercent");
+    for (const home of [0.615, 0.605, 0.5, 0.995, 0.005, 0.7834]) {
+      const html = render(makePoint({ homeProb: home, awayProb: 1 - home }));
+      const [awayPct, homePct] = renderedDuelPercents(1 - home, home);
+      expect(percents(html)).toEqual([homePct, awayPct]);
+    }
+  });
+
+  // CONTROL — a pair that is genuinely NOT complementary is left alone rather
+  // than normalised into a fiction. `renderedDuelPercents` refuses outside
+  // [0.99, 1.01], and this card must not be the layer that overrides it.
+  it("does not normalise a pair that is not a complement", () => {
+    const html = render(makePoint({ homeProb: 0.7, awayProb: 0.2 }));
+    expect(percents(html)).toEqual([70, 20]);
+  });
+});
