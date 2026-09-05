@@ -58,12 +58,22 @@ final class NavigationCoordinator: ObservableObject {
                 navigate(to: .eventDetail(id: id), tab: .feed)
                 return true
             }
+            // A link to the collection, not to one row. `bainluck://events` is
+            // what LiveGamesWidget's tap-through and every one of its empty
+            // states hand out, and what MenuBarView opens — and it used to fall
+            // out of this switch and return false, so a reader who tapped a
+            // widget showing three live games got the app's default tab
+            // instead of the list they were looking at.
+            selectedTab = .feed
+            return true
 
         case "futures":
             if pathComponents.count >= 2, let id = Int(pathComponents[1]) {
                 navigate(to: .futuresDetail(id: id), tab: .feed)
                 return true
             }
+            navigate(to: .futuresList, tab: .feed)
+            return true
 
         case "ei":
             selectedTab = .feed
@@ -75,6 +85,28 @@ final class NavigationCoordinator: ObservableObject {
             if let query, !query.isEmpty {
                 pendingSearchQuery = query
             }
+            return true
+
+        case "tournaments":
+            // The US Open link. `bainluck.com/tournaments/<slug>` is a real web
+            // page and `Route.tournamentHub` is a real screen that Browse and
+            // Search both push — but this switch had no case for it, so the one
+            // surface Alex shops during a Grand Slam was the one surface no link
+            // could open. Routed to Browse, which is where the hub is reached by
+            // hand and the tab that consumes `pendingRoute` for it (#2998).
+            if pathComponents.count >= 2 {
+                let slug = pathComponents[1]
+                // `?name=` lets a caller that already knows the real title pass
+                // it, so the title bar does not have to be guessed from a slug.
+                let name = queryItems?.first(where: { $0.name == "name" })?.value
+                navigate(
+                    to: .tournamentHub(slug: slug, name: name ?? tournamentDisplayName(forSlug: slug)),
+                    tab: .leagues
+                )
+                return true
+            }
+            // A link to the collection: Browse is the list of hubs.
+            selectedTab = .leagues
             return true
 
         case "playoffs":

@@ -46,6 +46,25 @@ let featuredTournaments: [FeaturedTournament] = [
     ),
 ]
 
+// MARK: - Naming a hub from its slug
+
+/// The title to show for a hub slug that arrived from a link.
+///
+/// `Route.tournamentHub` carries a display name because the hub screen shows it
+/// as the navigation title while the payload loads and in the error state — so
+/// a link has to supply one. The catalog above is the authority when it knows
+/// the slug (`us-open` → `US Open`); anything else falls back to the shared
+/// acronym-safe title caser, which is what keeps a slug the catalog has not
+/// heard of from rendering as "Us Open" (#1938's class of defect). The loaded
+/// hub renders the server's own name regardless — this only owns the title bar.
+nonisolated func tournamentDisplayName(
+    forSlug slug: String,
+    in catalog: [FeaturedTournament] = featuredTournaments
+) -> String {
+    if let known = catalog.first(where: { $0.slug == slug }) { return known.title }
+    return toTitleCaseAcronymSafe(slug.replacingOccurrences(of: "-", with: " "))
+}
+
 // MARK: - Matching a search query to a hub
 
 /// The tokens of `text`, lowercased, split on everything that is not a letter or digit.
