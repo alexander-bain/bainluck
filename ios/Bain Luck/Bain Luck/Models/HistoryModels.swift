@@ -16,6 +16,9 @@ nonisolated struct EventHistoryResponse: Decodable, Sendable {
     let winProbHistory: [String: [WinProbHistoryPoint]]?
     let winProbSources: [String: WinProbSourceInfo]?
     let scoringPlays: [ScoringPlay]?
+    /// The Moments Engine's confident subset (#1168 consumer 3, #3196). Optional
+    /// because it is additive: an older cached payload has no key at all.
+    let moments: [GameMomentPoint]?
     let aggregateLine: [AggregateLinePoint]?
     let points: Int?
     let bookmakerCount: Int?
@@ -104,6 +107,36 @@ nonisolated struct ScoringPlay: Decodable, Sendable {
     let awayScore: Int?
     let period: String?
     let gameClock: String?
+}
+
+// MARK: - Game Moment
+
+/// One confident "this is what moved the line" annotation from the Moments Engine
+/// (#1168): a scoring event joined to a win-probability swing, offline, and gated
+/// server-side.
+///
+/// EVERY FIELD IS OPTIONAL AND THAT IS THE POINT. This type sits inside
+/// `EventHistoryResponse`, so a single moment row that throws takes the whole
+/// history payload down and blanks the chart — the reader loses the curve to gain
+/// nothing (gotcha #42: one bad item must never wipe the pass). Optional fields make
+/// the element unable to throw, which is also why there is no tolerant per-element
+/// decoder here: it would be unreachable code. The rows that cannot be drawn are
+/// dropped in exactly one place, `OddsChartView.chartMoments(from:points:)`, which is
+/// pure and tested.
+///
+/// The `confidence >= 0.5` gate and the `moments:surface_enabled` kill switch both
+/// live in `routes/events.py`. The client deliberately does NOT re-gate: an empty
+/// array is the kill switch working, and a second client-side threshold would make
+/// the server's switch a half-measure that needs an App Store release to complete.
+nonisolated struct GameMomentPoint: Decodable, Sendable {
+    let ts: String?
+    let label: String?
+    let confidence: Double?
+    let momentType: String?
+    let actorTeam: String?
+    /// Signed swing in probability points, 0.0–1.0 (0.935 = "+93.5 pts" in the label).
+    let probDelta: Double?
+    let period: String?
 }
 
 // MARK: - Aggregate Line
