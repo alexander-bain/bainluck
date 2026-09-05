@@ -236,6 +236,80 @@ def worker_boot_alive(rc, boot_id: str | None) -> bool:
         return False
 
 
+INFLIGHT_LEASE_PREFIX = "bainluck:inflight:"
+
+#: Returned by :func:`acquire_inflight_lease` when Redis could not be consulted at
+#: all. It is a TOKEN, not a failure: the caller runs. See the fail-open rationale
+#: on the acquire function — and note :func:`release_inflight_lease` refuses it, so
+#: an ungated pass can never delete a real holder's lease on the way out.
+LEASE_UNGATED = "__ungated__"
+
+#: Compare-and-delete. `DEL` alone is the classic bug: a holder whose lease already
+#: expired mid-pass would delete its SUCCESSOR's lease on the way out, and two
+#: copies would run with neither holding anything. The read and the delete have to
+#: be one server-side step or the same race just moves inside the client.
+_RELEASE_LEASE_LUA = """
+if redis.call('get', KEYS[1]) == ARGV[1] then
+    return redis.call('del', KEYS[1])
+end
+return 0
+"""
+
+
+def acquire_inflight_lease(name: str, ttl_s: int) -> str | None:
+    """Claim the right to run ``name``; ``None`` if another copy already holds it.
+
+    One `SET key token NX EX ttl` — a SINGLE command, which is the whole design.
+    **CERT-1920 is the reason this is not two.** That ship wrote a marker and its
+    expiry as separate round trips under a swallowing `except`, and an interrupted
+    pair left an immortal key at TTL `-1`. An immortal key here does not merely
+    mislead a reader: it disables odds ingestion permanently, because the lease
+    nobody can release is the lease nobody can acquire. `SET ... NX EX` cannot
+    produce that state — there is no instant at which the key exists without its
+    expiry.
+
+    **Fails OPEN, deliberately.** If Redis is unreachable this returns
+    :data:`LEASE_UNGATED` and the caller runs ungated. The alternative — refusing
+    to poll when the coordination store is down — converts a Redis blip into a
+    total ingestion outage, which is strictly worse than the concurrency this
+    lease exists to bound. The caller reports which of the two it got, so an
+    ungated pass is visible rather than silently indistinguishable from a held one.
+    """
+    if ttl_s <= 0:
+        # Redis rejects a non-positive EX, and a lease with no expiry is the exact
+        # failure this function exists to make unreachable — so refuse to gate
+        # rather than fall back to an unexpiring SET.
+        logger.warning("in-flight lease %s asked for a non-positive TTL %s", name, ttl_s)
+        return LEASE_UNGATED
+
+    token = _uuid.uuid4().hex
+    try:
+        rc = get_redis_client()
+        if rc.set(INFLIGHT_LEASE_PREFIX + name, token, nx=True, ex=int(ttl_s)):
+            return token
+        return None
+    except Exception:
+        logger.warning("in-flight lease %s unreadable; running ungated", name, exc_info=True)
+        return LEASE_UNGATED
+
+
+def release_inflight_lease(name: str, token: str | None) -> bool:
+    """Release ``name`` if ``token`` still owns it. True when this call freed it.
+
+    Best-effort and never raises: a release that fails costs at most the remainder
+    of the TTL, whereas an exception escaping a `finally` would replace the real
+    error the pass was already raising.
+    """
+    if not token or token == LEASE_UNGATED:
+        return False
+    try:
+        rc = get_redis_client()
+        return bool(rc.eval(_RELEASE_LEASE_LUA, 1, INFLIGHT_LEASE_PREFIX + name, token))
+    except Exception:
+        logger.warning("in-flight lease %s release failed", name, exc_info=True)
+        return False
+
+
 def compute_odds_hash(events_data: list) -> str:
     """Compute hash of odds data to detect changes."""
     # Extract just the odds-relevant data

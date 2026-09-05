@@ -963,13 +963,38 @@ def discover_events(self):
 
 @celery_app.task(bind=True, max_retries=3, name="app.tasks.poll_all_odds")
 def poll_all_odds(self):
-    """Poll odds for all configured sports with adaptive polling."""
+    """Poll odds for all configured sports with adaptive polling.
+
+    TWO GATES, ANSWERING DIFFERENT QUESTIONS (#3251). `should_poll_now()` asks
+    "is it time?" and reads a clock stamped when the last pass FINISHED, so it is
+    blind to a pass still running — while a copy is in flight that stamp is
+    frozen, `elapsed` only grows, and every delivery behind it passes. The lease
+    asks "is one already running?", which is the question that bounds concurrency.
+    Production measured 2.17 concurrent copies of this task against
+    `worker-realtime`'s 4 slots; the derivation is on
+    `ODDS_POLL_INFLIGHT_LEASE_TTL_S`.
+
+    Declining here rather than inside `_tracked_run` is deliberate: no start is
+    recorded, so the decline lands in `self_gated_fires` on
+    `/api/admin/celery/schedule-adherence` — the surface built to make exactly
+    this visible — instead of looking like a beat that never fired.
+    """
+    from app.tasks.config import ODDS_POLL_INFLIGHT_LEASE_TTL_S
     from app.tasks.odds_polling import _poll_all_odds
-    from app.tasks.redis_state import should_poll_now
+    from app.tasks.redis_state import (
+        LEASE_UNGATED,
+        acquire_inflight_lease,
+        release_inflight_lease,
+        should_poll_now,
+    )
 
     should_poll, reason = should_poll_now()
     if not should_poll:
         return {"skipped": True, "reason": reason}
+
+    lease = acquire_inflight_lease("poll_all_odds", ODDS_POLL_INFLIGHT_LEASE_TTL_S)
+    if lease is None:
+        return {"skipped": True, "reason": "inflight"}
 
     try:
         result = _tracked_run("poll_odds", _poll_all_odds())
@@ -987,9 +1012,22 @@ def poll_all_odds(self):
         except Exception as dg_exc:
             logger.warning("DataGolf live poll failed: %s", dg_exc)
             result["datagolf_live_error"] = str(dg_exc)[:200]
-        return {**result, "poll_reason": reason}
+        return {
+            **result,
+            "poll_reason": reason,
+            # An ungated pass ran without holding anything (Redis was down). It is
+            # reported rather than folded into the held case, because the two have
+            # different remedies and the same appearance.
+            "lease": "ungated" if lease == LEASE_UNGATED else "held",
+        }
     except Exception as exc:
         raise self.retry(exc=exc, countdown=60)
+    finally:
+        # Runs on the success path, on the exception path, and on `self.retry`'s
+        # own `Retry` — a retry is a fresh delivery that must be able to acquire.
+        # Without this the lease would only ever be freed by its TTL, and a task
+        # that fails fast would still hold the worker's right to run for 198s.
+        release_inflight_lease("poll_all_odds", lease)
 
 
 @celery_app.task(bind=True, name="app.tasks.poll_sport_odds")

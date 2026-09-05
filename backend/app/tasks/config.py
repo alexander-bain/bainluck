@@ -90,6 +90,55 @@ LIVE_POLL_MARGIN_SECONDS = 4
 LIVE_POLL_INTERVAL = (
     ODDS_POLL_BEAT_SECONDS - SLOWEST_MEASURED_ODDS_PASS_SECONDS - LIVE_POLL_MARGIN_SECONDS
 )
+#: 🔴 `should_poll_now()` CANNOT SEE A COPY THAT IS STILL RUNNING, and that is a
+#: different failure from the cadence one above it (#3251). It gates on
+#: `elapsed >= LIVE_POLL_INTERVAL` against a clock `update_poll_state` stamps when
+#: a pass FINISHES. While a pass is in flight that stamp does not move, so every
+#: delivery behind it reads an ever-LARGER `elapsed` and every one of them passes
+#: the gate. A cadence gate reading a completion stamp does not merely fail to
+#: stop the pile-up — it is monotonically more permissive the longer the pile-up
+#: lasts.
+#:
+#: Measured on production 2026-09-05 (`/api/admin/celery/schedule-adherence` and
+#: the `poll_odds` duration ring, 50 runs spanning 2,106 s):
+#:
+#:     the pass takes           mean 65.2 s   p50 67.7 s   p95 110.5 s   max 131.8 s
+#:     the beat delivers        every 30 s
+#:     => concurrent copies     65.2 / 30 = 2.17 of `worker-realtime`'s 4 slots
+#:
+#: One task held over half the realtime worker, which is how the `realtime` queue
+#: reached 454 deep and how `prewarm_live_feed_shapes` — whose messages carry a
+#: 40 s `expires` bound — stopped running entirely for 187 minutes: the worker
+#: reaches each rail message already older than its own bound and discards it,
+#: recording neither a start nor a failure. The front page then goes cold.
+#:
+#: So the lease below bounds CONCURRENCY, which the cadence gate never did.
+#: `SLOWEST_MEASURED_ODDS_PASS_SECONDS` (16, measured 2026-08-31) is deliberately
+#: NOT reused for it: that constant is a p95 and it is 7x smaller than today's, and
+#: sizing a lease off a stale p95 would expire it mid-pass on the majority of runs.
+ODDS_POLL_MEASURED_MAX_PASS_SECONDS = 132
+
+#: Which way to be wrong, stated rather than assumed — the two errors are NOT
+#: symmetric:
+#:
+#:   * too SHORT — the lease lapses during an unusually slow pass, a second copy
+#:     starts, and the task degrades to exactly the behaviour it has today. Bad,
+#:     bounded, self-correcting.
+#:   * too LONG — a holder that is SIGKILLed (dyno cycle past the warm-shutdown
+#:     window, OOM) cannot run its release, and odds ingestion is DARK for the
+#:     remainder of the TTL. Bad and not self-correcting inside the window.
+#:
+#: Erring short degrades; erring long outages. Hence a modest multiple of the
+#: measured worst case rather than a comfortable one. A clean Celery warm shutdown
+#: runs the `finally` and releases, so only a hard kill can reach the bad case.
+ODDS_POLL_INFLIGHT_LEASE_MARGIN_MULTIPLE = 1.5
+
+#: 132 * 1.5 = 198. Every term is measured or declared above; none is a literal
+#: chosen to make the arithmetic come out.
+ODDS_POLL_INFLIGHT_LEASE_TTL_S = int(
+    ODDS_POLL_MEASURED_MAX_PASS_SECONDS * ODDS_POLL_INFLIGHT_LEASE_MARGIN_MULTIPLE
+)
+
 SOON_POLL_INTERVAL = 300      # 5 minutes for games starting in 0-1 hours
 LATER_POLL_INTERVAL = 3600    # 1 hour for games starting in 1-6 hours
 
