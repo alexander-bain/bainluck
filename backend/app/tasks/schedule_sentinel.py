@@ -572,6 +572,9 @@ def pair_events(truth: list[TruthGame], ours: list[OurEvent],
     taken_o: set[int] = set()
     pairs: list[dict] = []
     duplicate_ids: set[str] = set()
+    #: id value -> EVERY one of our event ids asserting it, duplicated or not.
+    #: Filtered to the duplicated ones on the way out (CERT-1954).
+    duplicate_id_events: dict[str, list[int]] = {}
 
     # --- Stage 0: identity. ------------------------------------------------
     if truth_id_attr:
@@ -587,6 +590,13 @@ def pair_events(truth: list[TruthGame], ours: list[OurEvent],
                 # stages — but the REFUSAL travels out with them (``duplicate_ids``)
                 # so the caller can report the contradiction instead of inferring
                 # innocence from the absence of an id pair.
+                #
+                # CERT-1954: the implicated ROWS travel with it too. Carrying only
+                # the id value made the contradiction reportable only where a row
+                # happened to pair on names, so two dissimilar-named rows sharing
+                # one official id produced paired 0 / REAL 0 and a literal GREEN.
+                # The set of rows asserting an id is known HERE and nowhere else.
+                duplicate_id_events.setdefault(str(val), []).append(o.id)
                 if str(val) in by_our_id:
                     by_our_id[str(val)] = -1
                     duplicate_ids.add(str(val))
@@ -673,7 +683,14 @@ def pair_events(truth: list[TruthGame], ours: list[OurEvent],
 
     return {"pairs": pairs, "unmatched_truth": unmatched_truth,
             "unmatched_ours": unmatched_ours, "near_miss_ours": near_miss,
-            "duplicate_ids": duplicate_ids}
+            "duplicate_ids": duplicate_ids,
+            # Only the CONTRADICTED ids, and every row implicated in each. A row
+            # that uniquely holds its id is not a finding and must not travel
+            # here, or the caller cannot tell a duplicate from a census.
+            "duplicate_id_events": {
+                v: sorted(ids) for v, ids in duplicate_id_events.items()
+                if v in duplicate_ids
+            }}
 
 
 # ---------------------------------------------------------------------------
@@ -745,6 +762,61 @@ def reconcile(truth: list[TruthGame], ours: list[OurEvent], spec: LeagueSpec,
     paired_by_id = 0
     foreign_id_space = 0
     duplicate_ids = paired.get("duplicate_ids") or set()
+
+    # --- DUPLICATE IDENTITY, emitted BEFORE and INDEPENDENTLY of pairing. ------
+    #
+    # CERT-1954. This used to be raised inside the pairs loop below, which made a
+    # provable defect conditional on an inference: two of our rows sharing one
+    # official id were reported only if one of them ALSO happened to name-pair to
+    # the official game. The specimen that blocked it is one official NCAAB game
+    # plus two scheduled rows with dissimilar names sharing `espn_id='espn-dup'` —
+    # paired 0, REAL 0, UNVERIFIED 0, literal GREEN, while the user sees two rows
+    # claiming one game.
+    #
+    # Pairing cannot be a precondition here. "Two of our rows assert the same
+    # official identifier" is decided entirely within our own data and needs no
+    # truth game to be true; the truth game is context, not evidence. So this pass
+    # runs over `duplicate_id_events` — every contradicted id, every row that
+    # asserts it — and the truth key is attached only when one happens to exist.
+    #
+    # ONE FINDING PER IMPLICATED ROW, unchanged from what CERT-1954's predecessor
+    # certified ("both rows asserting the id are implicated"). Each now also
+    # carries `event_ids` — the whole implicated set — so a filing names its
+    # siblings without a re-query, which is the half the BLOCK asked for.
+    duplicate_id_events = paired.get("duplicate_id_events") or {}
+    truth_by_key = {}
+    for t in truth:
+        try:
+            if t.key not in (None, ""):
+                truth_by_key.setdefault(str(t.key), t)
+        except Exception as exc:  # gotcha #42
+            logger.warning("schedule sentinel truth key index failed: %s", exc)
+    for dup_value, event_ids in sorted(duplicate_id_events.items()):
+        t = truth_by_key.get(dup_value)
+        claimed = (f"the one official game {t.label}" if t is not None
+                   else f"one official game — an id this window's authority read "
+                        f"does not list, so not even the official game is in view")
+        others = len(event_ids) - 1
+        siblings = ("so does 1 other of our rows" if others == 1
+                    else f"so do {others} others of our rows")
+        for eid in event_ids:
+            try:
+                out.append(_finding(
+                    "schedule_duplicate_identity", "critical",
+                    f"{L} event {eid} asserts {truth_id_attr}={dup_value!r}, and "
+                    f"{siblings} in this window ({event_ids}) — all of them claim "
+                    f"to be {claimed}. A shared provider id is evidence of "
+                    f"identity, never proof of it (#1947), so this is either a "
+                    f"duplicate row or a mis-stamped id; both are defects",
+                    kind="DUPLICATE", event_id=eid, event_ids=event_ids,
+                    truth_key=(t.key if t is not None else None),
+                    duplicated_id=dup_value, id_space=truth_id_attr,
+                    truth_game_in_window=t is not None,
+                ))
+            except Exception as exc:  # gotcha #42
+                logger.warning(
+                    "schedule sentinel duplicate-identity emit failed: %s", exc)
+
     for p in paired["pairs"]:
         try:
             if p.get("paired_by") == "id":
@@ -767,17 +839,11 @@ def reconcile(truth: list[TruthGame], ours: list[OurEvent], spec: LeagueSpec,
                 # pairing did not come from it. Codex C-SEN-2: counting these as
                 # `foreign_id_space` is the mislabel that produced the green.
                 if our_same_space_id in duplicate_ids:
-                    out.append(_finding(
-                        "schedule_duplicate_identity", "critical",
-                        f"{L} {o.label} asserts {truth_id_attr}="
-                        f"{our_same_space_id!r}, and so does another of our rows in "
-                        f"this window — two rows claim to be the one official game "
-                        f"{t.label}. A shared provider id is evidence of identity, "
-                        f"never proof of it (#1947), so this is either a duplicate "
-                        f"row or a mis-stamped id; both are defects",
-                        kind="DUPLICATE", event_id=o.id, truth_key=t.key,
-                        duplicated_id=our_same_space_id, id_space=truth_id_attr,
-                    ))
+                    # Already reported once, by id, in the pass above — reporting
+                    # it again here would file the same defect twice for a pair
+                    # that adds nothing. The `continue` still matters: a
+                    # duplicated id must not fall through to the conflict arm and
+                    # be re-described as a row naming a DIFFERENT game.
                     continue
                 if our_same_space_id != str(t.key or ""):
                     out.append(_finding(
