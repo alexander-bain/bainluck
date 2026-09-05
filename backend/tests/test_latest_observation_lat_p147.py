@@ -57,6 +57,7 @@ from __future__ import annotations
 
 import inspect
 import re
+from datetime import datetime, timezone
 
 import pytest
 from sqlalchemy import select
@@ -310,6 +311,10 @@ class TestTheMappingItReturns:
 # --------------------------------------------------------------------------
 
 
+#: The single stamp the route-driving fakes below observe at.
+_OBSERVED_AT = datetime(2026, 8, 30, 0, 0, 0, tzinfo=timezone.utc)
+
+
 class TestTheRouteIssuesIt:
     """Drives the real `_load_prices`. A test that rebuilt the statement itself
     would keep passing while the route went back to the aggregate."""
@@ -328,7 +333,13 @@ class TestTheRouteIssuesIt:
                         )
                     ]
                 ),
-                _Rows([_Row(id=11, observed_at="2026-08-30T00:00:00+00:00")]),
+                # A real `datetime`, as asyncpg returns for a `timestamptz`.
+                # It used to be the ISO string, which reads as harmless fixture
+                # licence and is not: #3243 made `_load_prices` COMPARE this
+                # stamp against `futures_outcomes.last_updated`, and a str has
+                # no `tzinfo`. A fake that cannot hold the type the driver
+                # returns cannot see a comparison bug in the code it drives.
+                _Rows([_Row(id=11, observed_at=_OBSERVED_AT)]),
             ]
         )
 
@@ -363,7 +374,7 @@ class TestTheRouteIssuesIt:
         from app.routes import tournaments
 
         prices = await tournaments._load_prices(self._session(), [11])
-        assert prices[11]["observed_at"] == "2026-08-30T00:00:00+00:00"
+        assert prices[11]["observed_at"] == _OBSERVED_AT
         assert prices[11]["source_name"] == "Alcaraz"
         assert prices[11]["probability"] == pytest.approx(0.25)
 

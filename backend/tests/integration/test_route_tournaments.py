@@ -135,19 +135,44 @@ class TestTodaysRowsOpen:
 
 
 class TestFreshnessSource:
-    """`futures_outcomes.last_updated` is not a freshness signal — census-proven."""
+    """Freshness is the newer of two clocks — BOTH halves census-proven.
 
-    def test_route_never_reads_last_updated(self):
-        """Bans the ACCESS, not the mention.
+    This class used to be titled "`futures_outcomes.last_updated` is not a
+    freshness signal" and banned the attribute access outright, on the Day-1
+    census that measured it a month stale on the Polymarket men's field while
+    its snapshots ran current. That census is still true and its half is still
+    guarded below.
 
-        The module's docstring names `futures_outcomes.last_updated` in order
-        to refuse it, and a substring ban would red on the refusal itself —
-        then get "fixed" by deleting the explanation. So the guard looks for
-        the attribute access, which is the only form that could be the bug.
+    #3243 measured the inverse on production 2026-09-05: the 18 Kalshi `duel`
+    markets behind the Round-of-32 slate had `last_updated` moving every ~30 s
+    against a `captured_at` of 06:53:42Z, identical to the microsecond on all
+    18, because `kalshi_ws` prices an in-play match every 2 s and writes no
+    snapshot row by design. Reading either column ALONE has now shipped a wrong
+    freshness word once each, in opposite directions.
+
+    So the ban became a composition, and the guard follows: neither clock may
+    be dropped, and the answer is their max. Behaviour — both measured
+    populations driven through the real function — is
+    `tests/test_tournament_price_clock_3243.py`; this file keeps the wiring.
+    """
+
+    def test_route_never_reads_last_updated_alone(self):
+        """The Day-1 half, restated as the invariant rather than a substring ban.
+
+        The old spelling asserted the string was absent. That could only stay
+        green by never fixing #3243, and a guard whose green depends on a live
+        bug is pinning the wrong thing (gotcha #124's shape, one level up). What
+        the census actually proved is that the touch stamp cannot be the whole
+        answer — so that is what is asserted: it is read, and it is read THROUGH
+        the composer, never straight into `observed_at`.
         """
-        source = inspect.getsource(tournaments)
-        assert "FuturesOutcome.last_updated" not in source
-        assert ".last_updated" not in source.replace("_outcomes.last_updated", "")
+        source = inspect.getsource(tournaments._load_prices)
+        assert "FuturesOutcome.last_updated" in source
+        assert '"observed_at": row.last_updated' not in source
+        assert '"observed_at": _price_observed_at(' in source
+
+        composer = inspect.getsource(tournaments._price_observed_at)
+        assert "max(" in composer, "the two clocks must compose as a max"
 
     def test_route_reads_captured_at_from_snapshots(self):
         """Follows the CALL, because the statement moved (LAT-P147, #2328).
