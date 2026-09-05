@@ -1932,11 +1932,17 @@ async def statpal_authority_agreement(
     is ever blended into another (spec rule 2). And it does not hide its own
     staleness: `pass_age_seconds` and `last_pass_at` are on every sport, because
     a row from yesterday's pass answers a question about yesterday.
+
+    The `gate` string is `FLIP_GATE_SUMMARY`, imported rather than written here.
+    Which of identity's two numbers scores a sport is a PER-SPORT ruling (D63),
+    so the summary sends its reader to that sport's `identity.governing` instead
+    of naming a number — the payload's opening sentence is the last place a
+    reader should be pointed at the wrong one.
     """
     _check_admin_secret(secret, request=request)
 
     from app.tasks.redis_state import get_task_metrics
-    from app.utils.authority_agreement import SHADOW_STAMPERS
+    from app.utils.authority_agreement import FLIP_GATE_SUMMARY, SHADOW_STAMPERS
     from app.utils.provider_anchor_keys import statpal_id_space
 
     now = datetime.now(timezone.utc)
@@ -2007,12 +2013,10 @@ async def statpal_authority_agreement(
     return {
         "generated_at": now.isoformat(),
         "spec": ".claude/handoff/ARTIFACT-AUTHORITY-LEDGER-SPEC.md",
-        "gate": (
-            "D50: a flip needs 7 consecutive daily rows with identity >= 99.5% "
-            "on the governing bucket, plus a YOUR-TURN entry Alex has seen. "
-            "Identity governs; schedule and anchors are reported and gate "
-            "nothing."
-        ),
+        # Imported, never re-typed here: the summary names the four gate states,
+        # and a copy of those names living in a route file is a copy that keeps
+        # saying MEETS after the constant stops.
+        "gate": FLIP_GATE_SUMMARY,
         "sports": sports,
     }
 

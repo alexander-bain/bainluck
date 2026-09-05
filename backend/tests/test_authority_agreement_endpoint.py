@@ -163,6 +163,70 @@ async def test_the_banked_row_is_published_verbatim(call):
     assert "identity governs" in out["gate"].lower() or "Identity governs" in out["gate"]
 
 
+# ---------------------------------------------------------------------------
+# The summary above the sports
+#
+# It is the first sentence anybody reading this payload reads, so it is the
+# cheapest place to send a reader to the wrong number — and the reader it sends
+# is the bus, which turns a wrong number into a seven-day streak. The wording it
+# replaced said "identity >= 99.5% on the governing bucket", which was true of
+# the buckets and wrong about the numbers: identity carries TWO, and the one a
+# reader reaches for after that sentence reads 3.40 for NBA and governs nothing.
+# ---------------------------------------------------------------------------
+
+
+def test_the_summary_names_every_gate_state():
+    """A fifth state added without the copy is a state nobody reading is told about."""
+    from app.utils import authority_agreement as aa
+
+    states = {aa.GATE_MEETS, aa.GATE_BELOW, aa.GATE_NO_SCORE, aa.GATE_PENDING}
+    missing = sorted(s for s in states if s not in aa.FLIP_GATE_SUMMARY)
+    assert not missing, (
+        f"the gate summary does not name {missing}; a reader who meets that "
+        "state in a row has to guess whether it advances, resets or carries"
+    )
+    # And it says what each state DOES, not merely that it exists.
+    for verb in ("advances", "resets", "carry it unchanged"):
+        assert verb in aa.FLIP_GATE_SUMMARY
+
+
+def test_the_summary_never_scores_identity_as_a_single_number():
+    """The pre-D63 wording, and every rephrasing of it, stays out.
+
+    `identity` is one bucket holding two questions with different answers. Any
+    sentence that puts the bar straight after the bare word sends the reader to
+    `identity.pct` — which is the governing number for NFL and meaningless for
+    NBA and NHL, and telling the two apart is the whole of D63.
+    """
+    import re
+
+    from app.utils.authority_agreement import FLIP_BAR_PCT, FLIP_GATE_SUMMARY
+
+    offender = re.search(
+        r"identity[^.]{0,40}(>=|≥|at least|above)\s*9?9",
+        FLIP_GATE_SUMMARY,
+        re.IGNORECASE,
+    )
+    assert offender is None, (
+        f"the summary scores 'identity' against the bar directly ({offender!r}); "
+        "identity has two numbers and which one governs is per sport"
+    )
+    assert "per sport" in FLIP_GATE_SUMMARY
+    assert "identity.governing" in FLIP_GATE_SUMMARY
+    assert str(FLIP_BAR_PCT) in FLIP_GATE_SUMMARY
+
+
+async def test_the_endpoint_publishes_the_shared_summary_not_a_copy_of_it(call):
+    """A second copy in the route file keeps saying MEETS after the constant stops."""
+    from app.utils.authority_agreement import FLIP_GATE_SUMMARY
+
+    out = await call(
+        metrics={"last_result_summary": {"agreement": _agreement_row()}},
+        session=FakeSession(),
+    )
+    assert out["gate"] == FLIP_GATE_SUMMARY
+
+
 async def test_the_table_census_is_reported_beside_the_pass_not_merged_into_it(call):
     session = FakeSession(anchors=244, column_agrees=240, duplicate_ids=2)
     out = await call(
