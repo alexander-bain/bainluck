@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from app.services import kalshi_api as ka
 from app.services.kalshi_api import KalshiAPIService
 from app.tasks.kalshi import (
     _build_game_market_name,
@@ -526,7 +527,12 @@ class TestSupplementaryRescueBudgetReservation:
     a phase must never be starved by an earlier phase draining the whole budget.
     """
 
-    _PRIORITY = ("KXPGA", "KXLPGA", "KXLIV", "KXDPWORLD")
+    # ux/1076: read the real tuple rather than mirroring it. This literal was a
+    # copy of `_PRIORITY_RESCUE_PREFIXES`, so the day a perishable series joined
+    # the priority group (rain) the test's idea of "priority" silently stopped
+    # matching the service's, and the ordering invariant below would have gone
+    # on passing while asserting something else.
+    _PRIORITY = ka._PRIORITY_RESCUE_PREFIXES
     _RESCUE_RESERVE_S = 60.0
     _BACKFILL_RESERVE_S = 45.0
 

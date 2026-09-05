@@ -261,6 +261,45 @@ _SPORTS_SERIES_TICKERS = [
     "KXATPNATSTAGE", "KXWTANATSTAGE",
 ]
 
+# Weather (ux/1076). The golf-class gap, FIFTH occurrence — and the first one
+# outside sport, on the surface whose own headline asks the question. /weather
+# opens with "What are the odds it rains tomorrow?" and its Rain & rainfall
+# section said "No live rainfall markets right now".
+#
+# Measured 2026-09-05 against Kalshi's own series API (notice 26 — the venue,
+# not our mirror): KXRAIN carried 44 open markets across KXRAIN-26SEP05 and
+# -26SEP06 (22 cities a day) and KXRAINWKND 22 for this weekend, while our
+# database held ZERO September rain events of either series. The 40 KXRAIN rows
+# we did have carry the fingerprint of this exact class: KXRAIN-26AUG20 was
+# CREATED 2026-08-29, seven days AFTER it resolved on 08-22, and every sibling
+# is the same shape. We do not fail to ingest daily rain — we ingest it a week
+# late, which for "will it rain tomorrow" is the same as never.
+#
+# Neither carries a _HEAVY_TOKEN, so they fetch WITH nested markets; a rain
+# event is one page of ~22 single two-outcome city markets, among the smallest
+# nested payloads on the exchange and nowhere near the #995 monster-page
+# threshold. Ordering measured before adding them (gotcha #41 — ask what the
+# ordering starts on): `status=None` paginates expiry-DESC, so page 0 of
+# KXRAIN opens on `KXRAIN-26SEP06` — tomorrow — and KXRAINWKND page 0 opens on
+# `-26SEP05` and is the whole series in one page. The 5-page cap is not in the
+# way.
+#
+# Deliberately NOT here: KXRAINNYCM and the monthly city-rain series. Monthly
+# events turn over slowly enough that the main scan does reach them (4 open
+# KXRAINNYCM rows in our DB prove it), and the supplementary reserve is
+# contended — a series that is already arriving on time buys nothing and costs
+# a slot the daily series needs.
+_WEATHER_SERIES_TICKERS = [
+    "KXRAIN", "KXRAINWKND",
+]
+
+# What the supplementary rescue actually walks. Sport was the whole of this
+# policy until weather joined it; the two lists stay separate because they
+# carry separate evidence, and every consumer below reads the concatenation so
+# the fetch, the discovery hand-off and the empty-event backfill cannot drift
+# apart on which series the net covers.
+_RESCUE_SERIES_TICKERS = _SPORTS_SERIES_TICKERS + _WEATHER_SERIES_TICKERS
+
 # Series whose supplementary fetch runs even when the main scan already
 # produced an event with the same prefix.
 #
@@ -272,10 +311,20 @@ _SPORTS_SERIES_TICKERS = [
 # shape our own data was already in (8 open KXATPMATCH rows, every one
 # of them created 2026-08-19). "We have one of these" is not "we have
 # these"; for a daily series it is the reverse.
+#
+# ux/1076: the rain series are here for the tennis reason, and our data was
+# already in the self-sealing shape the paragraph above describes — 40 KXRAIN
+# rows in the listing, not one of them open. `startswith` cannot tell "we have
+# rain" from "we have today's rain", and for a series that mints a fresh event
+# every morning those are opposites. Note also that "KXRAIN" is a prefix of
+# "KXRAINWKND" and of every KXRAIN*M monthly series, so without this set a
+# single stale weekend or monthly event would satisfy the short-circuit and
+# skip the daily slate on its own.
 _ALWAYS_FETCH_SERIES = {
     "KXNBAGAME", "KXNHLGAME", "KXMLBGAME", "KXNFLGAME",
     "KXATPMATCH", "KXWTAMATCH",
     "KXATPNATSTAGE", "KXWTANATSTAGE",
+    "KXRAIN", "KXRAINWKND",
 }
 # #995 attempt-8 (targeted): game-level series (GAME/SPREAD/TOTAL/1H/2H/
 # WINNER/SERIES) explode into monster nested-markets payloads — the exact
@@ -297,7 +346,20 @@ _BACKFILL_SERIES_MAX_PAGES = 10
 # eat the whole reserve before the loop ever reached the golf entries at
 # the tail of the list. `str.startswith` accepts a tuple; `sorted` is
 # stable, so within each group the original order is preserved.
-_PRIORITY_RESCUE_PREFIXES = ("KXPGA", "KXLPGA", "KXLIV", "KXDPWORLD")
+#
+# ux/1076: the rain series join the priority group, on PERISHABILITY. Appending
+# weather to `_RESCUE_SERIES_TICKERS` puts it at the tail of a ~60-series walk
+# — precisely the position this constant exists because the deadline eats — and
+# a rain event is the most perishable row on the exchange: KXRAIN-26SEP06 is
+# worth something today and worthless on Sep 7, where a missed KXNBA beat costs
+# nothing because the championship is still there in two hours. The two entries
+# are one page each (~22 city markets, no _HEAVY_TOKEN), so they take ~1-2s of
+# the 60s reserve. `sorted` is stable and the sports list is concatenated
+# first, so golf keeps its first claim; what rain jumps is the ~50 non-priority
+# sports series behind it.
+_PRIORITY_RESCUE_PREFIXES = (
+    "KXPGA", "KXLPGA", "KXLIV", "KXDPWORLD", "KXRAIN",
+)
 
 # ---------------------------------------------------------------------------
 # Series DISCOVERY (#2927 container principle, applied to series).
@@ -1310,7 +1372,7 @@ class KalshiAPIService(BaseAPIClient):
         selected, receipt = select_discovered_series(
             discovered=_by_tag if _by_tag else discovered,
             open_counts=counts,
-            guaranteed=_SPORTS_SERIES_TICKERS,
+            guaranteed=_RESCUE_SERIES_TICKERS,
             heavy_tokens=_HEAVY_TOKENS,
             max_series=_DISCOVERY_MAX_SERIES,
             max_open_events=_DISCOVERY_MAX_OPEN_EVENTS,
@@ -1795,7 +1857,7 @@ class KalshiAPIService(BaseAPIClient):
 
         supplemented = 0
         _ordered_series = sorted(
-            _SPORTS_SERIES_TICKERS,
+            _RESCUE_SERIES_TICKERS,
             key=lambda s: 0 if s.upper().startswith(_PRIORITY_RESCUE_PREFIXES) else 1,
         )
         for st in _ordered_series:
@@ -1988,7 +2050,7 @@ class KalshiAPIService(BaseAPIClient):
         # by definition the population `_HEAVY_TOKENS` emptied.
         _stripped_series = {
             st.upper()
-            for st in _SPORTS_SERIES_TICKERS
+            for st in _RESCUE_SERIES_TICKERS
             if any(tok in st.upper() for tok in _HEAVY_TOKENS)
         }
         empty_events = [
