@@ -31,6 +31,7 @@ from app.models.models import (
     UserFavorite,
 )
 from app.services.database import get_db
+from app.utils.lifecycle import served_event_status
 from app.utils.odds_math import probability_to_american
 from app.data.seed_history import SEED_HISTORY, NOTABLE_UPSETS
 from app.utils.seed_matchups import (
@@ -287,7 +288,11 @@ def _build_bracket_game(event, tournament_type: str) -> dict:
         "seed_away": event.tournament_seed_away,
         "score_home": event.score_home,
         "score_away": event.score_away,
-        "status": event.status,
+        # Q438: the lifecycle invariant, not the raw column — a bracket slot must
+        # not read LIVE before tip-off. See `app/utils/lifecycle`.
+        "status": served_event_status(
+            event.status, event.commence_time, datetime.now(timezone.utc)
+        ),
         "commence_time": event.commence_time.isoformat() if event.commence_time else None,
     }
 

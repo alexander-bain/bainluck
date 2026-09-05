@@ -49,6 +49,7 @@ from app.utils.discover_provenance import PROVENANCE_HEADER, normalize_provenanc
 # rather than spelling the literal so a widened vocabulary is a rename here, not
 # a string this route silently stops matching (CERT-786).
 from app.utils.event_completion import EVENT_SUSPENDED
+from app.utils.event_rails import started_live
 from app.utils.external_curator_freshness import (
     recall_cutoff as _curator_recall_cutoff,
 )
@@ -6277,7 +6278,12 @@ async def _score_events(
         # belt-and-braces bound if the quotas are ever edited to sum higher.
         query = query.order_by(
             case(
-                (Event.status == "live", 0),
+                # Q438/CERT-1924: live AND started. This tiering is the feed's
+                # own (finished ranks ABOVE upcoming here, unlike the rails), so
+                # only the first branch is shared — but it is the branch that
+                # decides whether a game nobody has kicked off yet enters the
+                # candidate pool as though it were in progress.
+                (started_live(now), 0),
                 # live/048 — `suspended` rides with the finished tier, not with
                 # the `else_` that holds `scheduled`. Tier 2 is sorted by
                 # commence_time DESC over rows whose times are in the FUTURE, so

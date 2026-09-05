@@ -42,7 +42,7 @@ sweep a matrix and no anchor can rot (gotcha #44).
 
 from datetime import timedelta
 
-from sqlalchemy import and_, or_
+from sqlalchemy import and_, case, or_
 
 from app.models.models import Event
 from app.utils.event_completion import RECENT_RAIL_STATUSES, UPCOMING_GRACE
@@ -87,6 +87,73 @@ def upcoming_rail_condition(now):
             Event.status == "scheduled",
             Event.commence_time >= now - UPCOMING_GRACE,
         ),
+    )
+
+
+def started_live(now):
+    """``live`` AND its own start time has passed — the SQL half of
+    :func:`app.utils.lifecycle.served_event_status`.
+
+    One definition, because the two ordering clauses below differ only in what
+    they do with everything else. Two copies of this and a surface can sort on
+    one reading while printing the other, which is the whole defect.
+    """
+    return and_(Event.status == "live", Event.commence_time <= now)
+
+
+def live_first_order(now):
+    """Put what is ACTUALLY being played at the top. The ORDER BY twin of
+    :func:`upcoming_rail_condition`, and deliberately its neighbour.
+
+    Every caller of that condition wrote ``case((Event.status == "live", 0),
+    else_=1)`` underneath it — the raw column, with no time half. That is the
+    same sentence :func:`app.utils.lifecycle.served_event_status` refuses on the
+    display side, so a row could be relabelled ``scheduled`` for the reader and
+    still be sorted as though it were live. The label and the position have to
+    answer to one predicate or the page argues with itself.
+
+    🔴 MEASURED on production 2026-09-05 (Q438 / #1207), and it is what the
+    condition above says is covered when it is not. That docstring accepts one
+    exposure — "a row STUCK in ``live`` … would then sit at the top of this rail
+    indefinitely" — and banks on the staleness nets, which write
+    ``EVENT_SUSPENDED`` once a row passes its sport's maximum duration. Those
+    nets are ONE-SIDED: they measure age past commence, so they catch a row that
+    is live too LONG and can never catch one that is live too EARLY.
+
+    Event 14969919 (Chicago Fire vs Vancouver Whitecaps) is the specimen — DB
+    ``live`` since 2026-06-30, kickoff 2026-10-06. It is not stale and never
+    will be, so no net moves it, and on 09-05 it held the FIRST slot of
+    ``/sport/soccer/mls`` above eight matches kicking off that evening, under a
+    heading reading "LIVE & UPCOMING" for a league with nothing live in it.
+
+    A genuinely live game is unaffected: it satisfies both halves and still
+    leads the rail. A premature-live row simply takes its place in date order,
+    which is where a fixture a month out belongs.
+    """
+    return case((started_live(now), 0), else_=1)
+
+
+def live_scheduled_settled_order(now):
+    """Live, then upcoming, then finished — the THREE-way twin of
+    :func:`live_first_order`, for surfaces that also sort completed rows last.
+
+    Same first branch, same predicate, one definition (:func:`started_live`).
+    The second branch is what makes a premature-live row land where its own
+    label puts it: it is served as ``scheduled``, so it sorts with the scheduled
+    games rather than ahead of them. A row only reaches the ``live`` arm of
+    branch two by having failed branch one, which is exactly the premature case.
+
+    Found by CERT-1924 on the two-way clause's own presentation: the public
+    futures "Games This Week" list (``get_related_events``) spelled this out as
+    a MULTILINE ``case(...)`` on the raw column, so it survived both the repair
+    and the source guard written to catch it — a future raw-live row was
+    promoted ahead of nearer scheduled games and then serialized as
+    ``scheduled``. The guard is now an AST scan for that reason.
+    """
+    return case(
+        (started_live(now), 0),
+        (Event.status.in_(("live", "scheduled")), 1),
+        else_=2,
     )
 
 

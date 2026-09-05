@@ -13,7 +13,7 @@ import json
 import logging
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, Path
-from sqlalchemy import select, and_, or_, func, case, literal_column
+from sqlalchemy import select, and_, or_, func, literal_column
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload
 
@@ -26,11 +26,13 @@ from app.routes.events import (
 from app.services import get_db
 from app.utils.aggregation import compute_aggregate_probability
 from app.utils.event_rails import (
+    live_first_order,
     settled_rail_condition,
     unreported_rail_condition,
     upcoming_rail_condition,
 )
 from app.utils.game_state import normalize_live_game_state
+from app.utils.lifecycle import served_event_status
 from app.utils.entity_page_tiers import (
     AVAILABILITY_DEGRADED,
     AVAILABILITY_EMPTY,
@@ -263,8 +265,12 @@ def upcoming_games_query(sport_key: str, now: datetime):
             Sport.key == sport_key,
             upcoming_rail_condition(now),
         )
+        # Q438: live-AND-started, not the raw column. A row that is live a month
+        # before kickoff held this rail's first slot for ten weeks. The comment
+        # sits ABOVE the clause because `league_rails_fence_mutations:M4` pins
+        # the ORDER BY block verbatim as its needle.
         .order_by(
-            case((Event.status == "live", 0), else_=1),
+            live_first_order(now),
             Event.commence_time.asc(),
         )
         # +1 so the cap can be DECLARED rather than silently applied. A full
@@ -489,7 +495,18 @@ def _format_game_brief(
             if getattr(event, "completed_at", None)
             else None
         ),
-        "status": event.status,
+        # Q438: through the lifecycle invariant, not raw. This is the SHARED
+        # event card's status, so a raw read here puts a LIVE badge on every
+        # surface that draws the card. Measured on production 2026-08-29:
+        # `/api/leagues/americanfootball_nfl` served 15292756 (Colts vs Lions,
+        # kickoff 17:00Z) and 15292757 (Titans vs Bears, 22:00Z) as `"live"`
+        # hours before either kicked off, while `/api/events` — which already
+        # routed through this helper — served the same two rows as `scheduled`.
+        # One row, two answers, and the one the league page drew was the wrong
+        # one. Admin/debug surfaces deliberately keep the raw value.
+        "status": served_event_status(
+            event.status, event.commence_time, datetime.now(timezone.utc)
+        ),
         "home_score": event.home_score,
         "away_score": event.away_score,
         "home_win_probability": home_prob,

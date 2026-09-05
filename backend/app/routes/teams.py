@@ -6,13 +6,14 @@ import time
 from datetime import datetime, timedelta, timezone
 
 from app.utils.event_rails import (
+    live_first_order,
     recent_or_unreported_condition,
     upcoming_rail_condition,
 )
 from app.utils.lifecycle import served_event_status
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select, or_, case, func
+from sqlalchemy import select, or_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -88,7 +89,9 @@ async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession
             upcoming_rail_condition(now),
         )
         .order_by(
-            case((Event.status == "live", 0), else_=1),
+            # Q438: the same live-AND-started predicate the league rail uses —
+            # the pair is only correct as a pair.
+            live_first_order(now),
             Event.commence_time.asc(),
         )
         .limit(5)
