@@ -224,9 +224,9 @@ def _ambiguity(
     none of them are reachable on one tournament-day. Resolving globally would
     refuse matches nobody could confuse.
 
-    **Ambiguity is a property of the MATCH, not of a name in the window**, and
-    that distinction is the whole of CERT-1909. Two earlier versions were wrong in
-    opposite directions and both are worth keeping on the record:
+    **Ambiguity is a property of the candidate COMPONENT**, and each earlier
+    version located it one level too low. All three are on the record because the
+    progression is the finding:
 
       * CERT-1904 — excluding the FIXTURE and leaving its candidate rows in the
         population. `G. Garcia` published `ambiguous_identity=1` AND
@@ -238,20 +238,28 @@ def _ambiguity(
         Medvedev`, the Medvedev match was held out of a Sinner fixture's
         arithmetic. **It cannot be that fixture** — the opponent settles it — so a
         real match left the denominator and the row read 0/0/0.
+      * CERT-1910 — then refusing any fixture with two complete-match candidates.
+        Two Alcaraz–Sinner meetings a week apart give each fixture two candidates
+        and the row published `0/0/0/0` with two exclusions, **bypassing the
+        nearest-kickoff pairing this module says handles repeat meetings.** Two
+        fixtures and two rows are not an ambiguity; they are a one-to-one
+        assignment with a tiebreak already specified for it.
 
-    A name being contested somewhere in the draw is not ambiguity; it is only
-    ambiguity when it leaves **two complete matches** we cannot choose between.
-    So the question asked here is the match question: how many of our rows agree
-    with this fixture on BOTH players, in either orientation? One is an answer.
-    Two is a refusal. Zero is an ordinary miss and not this function's business.
+    So the question is asked of the **component**, not of a name, a match or a
+    fixture: take the connected component of the agreement graph and ask whether
+    it resolves ONE-TO-ONE. One fixture and one row resolves. Two fixtures and two
+    rows resolves, and the kickoff says which is which. One fixture and two rows
+    does not — there is a spare row and nothing to choose on — and that is the
+    only shape that is genuinely a refusal.
 
-    `resolve_tennis_name` is still called — it names WHICH player the register
-    holds twice, so the receipt says why rather than just that — but it no longer
-    decides. Naming the reason and choosing the outcome are different jobs, and
-    the first one must not be allowed to do the second.
+    See :func:`_resolve_components`, which owns that walk. This function is now
+    only the RECEIPT: it names which player the register holds twice, via
+    `resolve_tennis_name`, so a refusal says why rather than merely that.
+    **Naming the reason and choosing the outcome are different jobs, and letting
+    the first do the second is the shape of all three blocks on this branch.**
     """
     candidates = [r for r in rows if _sides_agree(fixture, r)]
-    if len(candidates) < 2:
+    if not candidates:
         return None
 
     # Which player is the contested one, for the receipt only. Resolved against
@@ -289,6 +297,104 @@ def _ambiguity(
     return receipt, candidates
 
 
+def _components(
+    fixtures: Sequence[Side], rows: Sequence[Side]
+) -> list[tuple[list[int], list[int]]]:
+    """Connected components of the fixture-row agreement graph, as index lists.
+
+    A fixture with no agreeing row, and a row with no agreeing fixture, are each
+    a component of one and are handled by the caller as an ordinary miss — they
+    are returned here too so that every side lands in exactly one component and
+    nothing can be dropped by falling between the cases.
+    """
+    edges: dict[int, list[int]] = {fi: [] for fi in range(len(fixtures))}
+    back: dict[int, list[int]] = {ri: [] for ri in range(len(rows))}
+    for fi, f in enumerate(fixtures):
+        for ri, r in enumerate(rows):
+            if _sides_agree(f, r):
+                edges[fi].append(ri)
+                back[ri].append(fi)
+
+    seen_f: set[int] = set()
+    seen_r: set[int] = set()
+    out: list[tuple[list[int], list[int]]] = []
+    for start in range(len(fixtures)):
+        if start in seen_f:
+            continue
+        comp_f: list[int] = []
+        comp_r: list[int] = []
+        stack: list[tuple[str, int]] = [("f", start)]
+        seen_f.add(start)
+        while stack:
+            side, idx = stack.pop()
+            if side == "f":
+                comp_f.append(idx)
+                for ri in edges[idx]:
+                    if ri not in seen_r:
+                        seen_r.add(ri)
+                        stack.append(("r", ri))
+            else:
+                comp_r.append(idx)
+                for fi in back[idx]:
+                    if fi not in seen_f:
+                        seen_f.add(fi)
+                        stack.append(("f", fi))
+        out.append((sorted(comp_f), sorted(comp_r)))
+    for ri in range(len(rows)):
+        if ri not in seen_r:
+            out.append(([], [ri]))
+    return out
+
+
+def _resolve_components(
+    fixtures: Sequence[Side], rows: Sequence[Side]
+) -> tuple[list[tuple[Side, Side]], list[Side], list[Side], list[list[int]], list[list[int]]]:
+    """Pair every component that resolves one-to-one; refuse the ones that cannot.
+
+    Returns `(paired, statpal_only, ours_only, refused_fixture_idx,
+    refused_row_idx)`.
+
+    A component resolves when the greedy nearest-kickoff pass inside it consumes
+    EVERY fixture and EVERY row it contains. That is the honest test, and it is
+    the one CERT-1910 asked for: two meetings of the same pair a week apart are
+    two fixtures and two rows, a perfect matching exists, and the kickoff decides
+    which is which — exactly what `pair_greedily` is for. One fixture against two
+    rows leaves a spare with nothing to choose on, and only that is a refusal.
+
+    Greedy is used rather than a maximum-matching algorithm because these
+    components are tiny — two or three a side at the very worst on real tennis
+    data — and because when greedy fails to find a perfect matching that a better
+    algorithm would have found, this refuses and reports. That is the LOUD
+    failure, and the population it could bite is the one #2693 is already about.
+    """
+    paired: list[tuple[Side, Side]] = []
+    statpal_only: list[Side] = []
+    ours_only: list[Side] = []
+    refused_f: list[list[int]] = []
+    refused_r: list[list[int]] = []
+
+    for comp_f, comp_r in _components(fixtures, rows):
+        # A side with no counterpart at all is an ordinary miss, not an
+        # ambiguity: nobody had to choose anything.
+        if not comp_r:
+            statpal_only.extend(fixtures[i] for i in comp_f)
+            continue
+        if not comp_f:
+            ours_only.extend(rows[i] for i in comp_r)
+            continue
+
+        sub_f = [fixtures[i] for i in comp_f]
+        sub_r = [rows[i] for i in comp_r]
+        sub_paired, spare_f, spare_r = pair_greedily(sub_f, sub_r, _sides_agree)
+        if not spare_f and not spare_r:
+            paired.extend(sub_paired)
+            continue
+        refused_f.append(comp_f)
+        refused_r.append(comp_r)
+
+    return paired, statpal_only, ours_only, refused_f, refused_r
+
+
 def pair_tennis_sides(
     fixtures: Sequence[Side],
     rows: Sequence[Side],
@@ -310,37 +416,26 @@ def pair_tennis_sides(
     usable_f = [f for f in fixtures if _readable(f)]
     usable_r = [r for r in rows if _readable(r)]
 
-    # Ambiguity is decided BEFORE pairing, against the whole usable pool, and the
-    # ambiguous fixtures leave the population entirely. Deciding it after would
-    # mean the greedy pass had already consumed one of the two candidate rows,
-    # and the leftover would be published as `ours_only` — a duplicate printed as
-    # a disagreement about a match.
+    # Every decision is made over COMPONENTS of the agreement graph, not over
+    # names, matches or fixtures. See `_resolve_components` and the progression
+    # of three blocks recorded on `_ambiguity`.
+    (
+        paired,
+        statpal_only,
+        ours_only,
+        refused_f_idx,
+        refused_r_idx,
+    ) = _resolve_components(usable_f, usable_r)
+
     refused: list[dict[str, Any]] = []
-    contested_rows: list[Side] = []
-    joinable_f: list[Side] = []
-    for f in usable_f:
-        found = _ambiguity(f, usable_r)
-        if found is None:
-            joinable_f.append(f)
-        else:
-            receipt, implicated = found
-            refused.append(receipt)
-            contested_rows.extend(implicated)
-
-    paired, spare_f, spare_r = pair_greedily(joinable_f, usable_r, _sides_agree)
-
-    # The contested rows leave the denominator only if the pairing did NOT
-    # already place them, and that order is the whole of the repair's care.
-    #
-    # Removing them from `usable_r` up front would have been simpler and wrong:
-    # a row our register holds under a contested name can still be the
-    # unambiguous answer to a DIFFERENT fixture on the same day, and dropping it
-    # before the pass would turn a real agreement into a silent exclusion. So the
-    # greedy pass runs over the whole pool, keeps every pairing it can prove, and
-    # only the leftovers implicated in a refusal are held out of `ours_only`.
-    contested_refs = {r.ref for r in contested_rows}
-    held_out = [r for r in spare_r if r.ref in contested_refs]
-    ours_only = [r for r in spare_r if r.ref not in contested_refs]
+    held_out: list[Side] = []
+    for comp_f, comp_r in zip(refused_f_idx, refused_r_idx):
+        comp_rows = [usable_r[i] for i in comp_r]
+        for fi in comp_f:
+            found = _ambiguity(usable_f[fi], comp_rows)
+            if found is not None:
+                refused.append(found[0])
+        held_out.extend(comp_rows)
 
     refusals: dict[str, list[dict[str, Any]]] = {}
     if refused:
@@ -357,8 +452,8 @@ def pair_tennis_sides(
                 "label": r.label,
                 "column_holds": r.held_id,
                 "why": (
-                    "one of the rows an ambiguous StatPal name could not be told "
-                    "apart between, and unpaired at the end of the pass. Left in "
+                    "in a candidate component that does not resolve one-to-one, "
+                    "so we cannot say which match this row is. Left in "
                     "`ours_only` it would publish a duplicate of ours as a match "
                     "StatPal is missing"
                 ),
@@ -366,11 +461,14 @@ def pair_tennis_sides(
             for r in held_out
         ]
 
+    refused_f_refs = {usable_f[i].ref for comp in refused_f_idx for i in comp}
+    held_refs = {r.ref for r in held_out}
+
     return Join(
-        fixtures=joinable_f,
-        rows=[r for r in usable_r if r.ref not in {h.ref for h in held_out}],
+        fixtures=[f for f in usable_f if f.ref not in refused_f_refs],
+        rows=[r for r in usable_r if r.ref not in held_refs],
         paired=paired,
-        statpal_only=spare_f,
+        statpal_only=statpal_only,
         ours_only=ours_only,
         unusable_fixtures=[f for f in fixtures if not _readable(f)],
         unusable_rows=[r for r in rows if not _readable(r)],

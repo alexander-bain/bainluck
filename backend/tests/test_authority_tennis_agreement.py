@@ -340,6 +340,111 @@ class TestAmbiguityIsPublishedNotAbsorbed:
         assert singles["excluded"][AMBIGUOUS_CANDIDATE_ROWS] == 2
         assert singles["identity"]["ours_only"] == 0
 
+    def test_two_repeat_meetings_resolve_one_to_one_rather_than_refusing(self):
+        """CERT-1910, and the exact specimen it was found on.
+
+        The same pair meets twice a week apart. Each fixture has TWO complete
+        candidates, so a "two candidates means refuse" rule threw the whole
+        component away and published `0/0/0/0` — bypassing the nearest-kickoff
+        pairing this module's own docstring says handles repeat meetings.
+
+        Two fixtures and two rows are not an ambiguity. They are a one-to-one
+        assignment with a tiebreak already specified for it.
+        """
+        early, late = NOW, NOW + timedelta(days=7)
+        rows = build_tennis_agreements(
+            fixtures=[
+                f("1", "C. Alcaraz", "J. Sinner", start=early),
+                f("2", "C. Alcaraz", "J. Sinner", start=late),
+            ],
+            rows=[
+                r("11", "Carlos Alcaraz", "Jannik Sinner", start=early),
+                r("12", "Carlos Alcaraz", "Jannik Sinner", start=late),
+            ],
+        )
+        singles = rows[SINGLES]
+        assert singles["identity"]["both"] == 2
+        assert singles["identity"]["statpal_only"] == 0
+        assert singles["identity"]["ours_only"] == 0
+        assert singles["denominator"] == 2
+        assert AMBIGUOUS_REFUSAL not in singles["excluded"]
+
+    def test_the_repeat_meetings_pair_by_nearest_start(self):
+        """Not just THAT they pair — that they pair with the right one.
+
+        Two pairings and two rows can be fully consumed by pairing them
+        crosswise, which would report agreement while joining Monday's match to
+        next Monday's row. The count alone cannot see that.
+        """
+        early, late = NOW, NOW + timedelta(days=7)
+        join = pair_tennis_sides(
+            [
+                f("1", "C. Alcaraz", "J. Sinner", start=early),
+                f("2", "C. Alcaraz", "J. Sinner", start=late),
+            ],
+            [
+                r("11", "Carlos Alcaraz", "Jannik Sinner", start=early),
+                r("12", "Carlos Alcaraz", "Jannik Sinner", start=late),
+            ],
+        )
+        assert {(fx.ref, row.ref) for fx, row in join.paired} == {("1", "11"), ("2", "12")}
+
+    def test_a_spare_row_in_the_component_still_refuses_the_whole_component(self):
+        """The boundary between CERT-1910's case and CERT-1904's.
+
+        Two fixtures against THREE indistinguishable rows does not resolve
+        one-to-one: something is left over and there is nothing to choose on. It
+        refuses, as the one-fixture-two-rows case does.
+        """
+        early, late = NOW, NOW + timedelta(days=7)
+        rows = build_tennis_agreements(
+            fixtures=[
+                f("1", "C. Alcaraz", "J. Sinner", start=early),
+                f("2", "C. Alcaraz", "J. Sinner", start=late),
+            ],
+            rows=[
+                r("11", "Carlos Alcaraz", "Jannik Sinner", start=early),
+                r("12", "Carlos Alcaraz", "Jannik Sinner", start=late),
+                r("13", "Carlos Alcaraz", "Jannik Sinner", start=late),
+            ],
+        )
+        singles = rows[SINGLES]
+        assert singles["excluded"][AMBIGUOUS_CANDIDATE_ROWS] == 3
+        assert singles["identity"]["both"] == 0
+        assert singles["identity"]["ours_only"] == 0
+
+    def test_a_spare_fixture_refuses_the_component_too(self):
+        """The MIRROR of the spare-row case, and a mutation found it missing.
+
+        StatPal has two meetings of one pair; we hold one row that could be
+        either. Tolerating a spare fixture pairs ours with whichever kickoff is
+        nearest and reports the other as `statpal_only` — asserting WHICH of the
+        two we have, which is the one thing this component cannot say.
+
+        The refusal is deliberately SYMMETRIC even though the two spares are not
+        equally suspicious: a spare row of ours is most likely our own duplicate,
+        while a spare fixture of theirs is most likely a real match we lack. That
+        asymmetry is an argument for treating them differently and it rests on a
+        claim about which side's duplicate is more common — a judgment no
+        measurement here supports. Refusing both is the loud answer; guessing
+        either is the silent one.
+        """
+        early, late = NOW, NOW + timedelta(days=7)
+        rows = build_tennis_agreements(
+            fixtures=[
+                f("1", "C. Alcaraz", "J. Sinner", start=early),
+                f("2", "C. Alcaraz", "J. Sinner", start=late),
+            ],
+            rows=[r("11", "Carlos Alcaraz", "Jannik Sinner", start=early)],
+        )
+        singles = rows[SINGLES]
+        assert singles["excluded"][AMBIGUOUS_REFUSAL] == 2
+        assert singles["identity"]["both"] == 0
+        assert singles["identity"]["statpal_only"] == 0, (
+            "pairing one and reporting the other as statpal_only asserts which "
+            "of the two meetings we hold, which is exactly what is unknown"
+        )
+
     def test_ambiguity_is_counted_over_matches_not_over_names(self):
         """The invariant behind both regressions, stated once.
 
