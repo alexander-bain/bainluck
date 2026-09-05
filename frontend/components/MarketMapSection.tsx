@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import MarketMap from "./MarketMap";
 import type { MarketMapMarker, MarketMapLadderRow } from "./MarketMap";
 import type { GameMarketsResponse } from "@/lib/api";
+import type { PlayedLinescore } from "@/lib/marketMapUtils";
 import {
   parseSpreadOutcome,
   isFullGameSpread,
@@ -14,6 +15,7 @@ import {
   withUnit,
   unitPhrase,
   playedCountAbsence,
+  playedUnits,
   mapColumnHeading,
   posOnRail,
   collapseDuplicateRungs,
@@ -36,6 +38,12 @@ interface MarketMapSectionProps {
   overUnder?: number | null;
   sportKey?: string;
   espnHistory?: Array<{ period?: string; home_score?: number; away_score?: number; timestamp?: string }>;
+  /**
+   * The per-set games line, where the event has one (live/073). It is what
+   * makes a tennis map able to say where the match landed: the scoreboard
+   * beside it counts sets, and every rail on this page is drawn in games.
+   */
+  linescore?: PlayedLinescore | null;
 }
 
 interface HalfScores {
@@ -160,6 +168,7 @@ export default function MarketMapSection({
   overUnder,
   sportKey,
   espnHistory,
+  linescore,
 }: MarketMapSectionProps) {
   const hAbbr = deriveAbbr(homeTeam, homeAbbr);
   const aAbbr = deriveAbbr(awayTeam, awayAbbr);
@@ -182,9 +191,21 @@ export default function MarketMapSection({
    *
    * The maps keep every rung, every density and every pre-game marker. What
    * goes is only the half we cannot state — see `scoreboardCountsTheUnit`.
+   *
+   * live/073: AND WHERE THE SCOREBOARD DOES NOT COUNT THE UNIT, THE LINESCORE
+   * DOES. The half we could not state is stated now — `6-3, 6-4, 6-1` is 26
+   * games — so these two stop being null on a tennis page that has a line, and
+   * every one of those six downstream call sites lands on the real number
+   * without knowing where it came from. `playedUnits` is the one place that
+   * decides; see its note.
    */
-  const homeScore = vocab.scoreboardCountsTheUnit ? gameMarkets.home_score : null;
-  const awayScore = vocab.scoreboardCountsTheUnit ? gameMarkets.away_score : null;
+  const played = playedUnits(
+    vocab,
+    { home: gameMarkets.home_score, away: gameMarkets.away_score },
+    linescore
+  );
+  const homeScore = played?.home ?? null;
+  const awayScore = played?.away ?? null;
 
   /**
    * The sentence a suppressed map owes the reader.
@@ -199,8 +220,16 @@ export default function MarketMapSection({
    * helper — the tense is shared with the Score Differential note above this
    * card precisely so the two cannot disagree on one page.
    */
+  //
+  // live/073: `played` and not `scoreboardCountsTheUnit`, so the sentence
+  // disappears the moment the number arrives. A page that holds the line and
+  // still says it did not record the games is the same false claim in the
+  // opposite direction.
   const unitMismatchNote =
-    !vocab.scoreboardCountsTheUnit && vocab.scoreboardUnit && (isLive || isDone)
+    !vocab.scoreboardCountsTheUnit &&
+    vocab.scoreboardUnit &&
+    (isLive || isDone) &&
+    played == null
       ? `The scoreboard reports ${vocab.scoreboardUnit}, this market quotes ` +
         `${vocab.unit} — ${playedCountAbsence(vocab.unit, isDone)}.`
       : null;

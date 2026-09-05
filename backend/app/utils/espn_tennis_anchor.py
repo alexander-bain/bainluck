@@ -801,6 +801,138 @@ def authority_score_write(
     return {"changes": changes, "reason": None}
 
 
+#: Why the authority declined to state a GAMES line, on top of every reason
+#: :func:`authority_score` can already give — the line rides the score, so those
+#: are inherited verbatim and this is the only one that is its own.
+LINE_RAGGED = "ragged-line"
+
+
+def authority_games_line(
+    ours: list[str], competition: dict[str, Any]
+) -> dict[str, Any]:
+    """The per-set GAMES line ESPN states, in OUR home/away order.
+
+    Returns ``{"sets": [[home_games, away_games], ...], "home_games", "away_games",
+    "reason"}``; ``sets`` is empty and the totals are ``None`` whenever ``reason``
+    is set.  Pure, like everything else on this rail.
+
+    ═══ THE LINE RIDES THE SCORE ═══
+
+    The first clause is :func:`authority_score`, not a state check.  Both
+    statements are about the same match on the same page — the hero prints the
+    SET score this rail writes, the line prints the games under it — so a rule
+    that let one through while refusing the other would put a set-by-set line
+    beside a blank or stale hero and make the page argue with itself.  One
+    verdict, one orientation, one read of one payload.
+
+    That inherits the retirement policy deliberately.  Five of the six
+    retirements on the 2026-09-03 board are refused a set score because ESPN
+    awards the abandoned set to nobody (see
+    :data:`COMPLETED_WINNER_SET_COUNTS`), and their games are real games that
+    were really played — but printing ``6-4, 3-0`` under a hero with no result
+    at all is the half-answer the refusal exists to avoid.  When those rows get
+    a set score they get a line in the same pass, for free.
+
+    ``ragged-line`` is the one refusal of its own: two sides reporting different
+    numbers of sets is a mid-write read of the scoreboard, and pairing the
+    common prefix would print a set the other player has not been credited with.
+    :func:`espn_tennis.format_score` refuses the same shape for the same reason.
+    A set whose value did not parse is already dropped by
+    :func:`espn_tennis.competition_sides`, which is exactly what makes the
+    length test able to see it.
+    """
+    blank: dict[str, Any] = {"sets": [], "home_games": None, "away_games": None}
+
+    verdict = authority_score(ours, competition)
+    if verdict["reason"] is not None:
+        return {**blank, "reason": verdict["reason"]}
+
+    # Re-orienting rather than threading the sides out of `authority_score`:
+    # that function's contract is a set score and widening its return to carry
+    # its intermediates would make every caller of it depend on this one. The
+    # call is pure and the input is a dict already in memory.
+    oriented = orient_sides(ours, competition.get("sides") or [])
+    if oriented is None:  # pragma: no cover — authority_score refuses first
+        return {**blank, "reason": SCORE_ORIENTATION_UNRESOLVED}
+    home, away = oriented
+
+    home_games = [int(g) for g in (home.get("games") or [])]
+    away_games = [int(g) for g in (away.get("games") or [])]
+    if len(home_games) != len(away_games):
+        return {**blank, "reason": LINE_RAGGED}
+    if not home_games:  # pragma: no cover — authority_score refuses `no-line`
+        return {**blank, "reason": SCORE_NO_LINE}
+
+    return {
+        "sets": [[h, a] for h, a in zip(home_games, away_games)],
+        "home_games": sum(home_games),
+        "away_games": sum(away_games),
+        "reason": None,
+    }
+
+
+#: The key ``box_score_data`` holds a tennis line under. Named once, here,
+#: because a writer and three readers spelling it themselves is how a column
+#: grows two shapes.
+BOX_SCORE_TENNIS_KEY = "tennis"
+
+
+def games_line_write(
+    *,
+    ours: list[str],
+    our_box_score_data: Any,
+    competition: dict[str, Any],
+) -> dict[str, Any]:
+    """What the authority changes about the stored games line — or nothing.
+
+    Returns ``{"box_score_data": dict | None, "reason": str | None}``.  The dict
+    is the WHOLE new column value, ready to assign; ``None`` means leave the row
+    alone, and ``reason`` separates a refusal (named) from an agreement
+    (``None``), exactly as :func:`authority_score_write` does.
+
+    ═══ WHY ``box_score_data`` AND NOT A COLUMN OF ITS OWN ═══
+
+    Because this IS the box score of a tennis match, on the column whose comment
+    already says "populated after game completion", and because every other
+    writer of it merges a key of its own (``scoring_plays``, ``players``) and
+    every reader ``.get()``s only its own.  A new column would be a migration,
+    and a migration is an attended merge (D45) for a value that needs no index,
+    no constraint and no join.
+
+    The merge is a NEW DICT, never a mutation of the one passed in: JSONB
+    written through an in-place change of an existing dict is the silent no-op
+    of gotcha #4, and a caller that assigns this return value cannot make that
+    mistake.  A non-dict existing value is REPLACED rather than merged into —
+    there is no shape to preserve, and refusing would strand the row forever.
+
+    Freshness is the score's.  A line and the set score beside it are written in
+    the same pass off the same payload, so a page can never show a line from one
+    moment under a hero from another; there is deliberately no timestamp stored
+    beside it, because a stamp nothing checks is a freshness claim nobody
+    measured (see ``r_onupdate_column_is_not_a_freshness_signal``).
+    """
+    verdict = authority_games_line(ours, competition)
+    if verdict["reason"] is not None:
+        return {"box_score_data": None, "reason": verdict["reason"]}
+
+    line = {
+        "sets": verdict["sets"],
+        "home_games": verdict["home_games"],
+        "away_games": verdict["away_games"],
+        "source": "espn",
+    }
+    existing = our_box_score_data if isinstance(our_box_score_data, dict) else {}
+    if existing.get(BOX_SCORE_TENNIS_KEY) == line:
+        # THE ROW ALREADY SAYS THIS. Returning `None` rather than an identical
+        # dict keeps a 3-minute beat from writing 200 unchanged JSONB values
+        # every cycle, and keeps `line_writes` a count of MOVEMENT.
+        return {"box_score_data": None, "reason": None}
+    return {
+        "box_score_data": {**existing, BOX_SCORE_TENNIS_KEY: line},
+        "reason": None,
+    }
+
+
 #: The tour segment in a tennis sport key: ``tennis_<tour>_<tournament>``.
 TENNIS_TOURS = ("atp", "wta")
 

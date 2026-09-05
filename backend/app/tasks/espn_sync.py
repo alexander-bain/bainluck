@@ -1936,6 +1936,7 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
         anchorable_sport_keys,
         authority_score_write,
         authority_write,
+        games_line_write,
         state_contradiction,
     )
     from app.utils.espn_id_stamp import STAMPED, stamp_espn_id_if_unheld
@@ -1962,6 +1963,11 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
         "score_blanks_filled": 0,
         "score_corrections": 0,
         "score_refused": {},
+        # live/073: the GAMES line, off the same read. `line_writes` counts rows
+        # whose stored line the authority moved; `line_refused` is keyed by
+        # reason for the same reason `score_refused` is.
+        "line_writes": 0,
+        "line_refused": {},
         "contradictions": {},
         "row_errors": 0,
         "stamp_refused": 0,
@@ -2265,6 +2271,37 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
                             event.home_score, event.away_score,
                         )
 
+                # ═══ AND THE GAMES UNDER IT (live/073) ═══
+                #
+                # The set score says WHO won; the line says what by. A US Open
+                # match page prints `0 – 3` today and, three cards further
+                # down, "the scoreboard reports sets, this market quotes games
+                # — we did not record the games played" over a Games map frozen
+                # on its pre-game quote. Measured 2026-09-05: 207 of the 211
+                # settled tennis rows of the last 10 days are anchored here, and
+                # 0 of 211 carry any box score — so every one of those pages
+                # says it. The number was already in `competition["sides"]`,
+                # parsed, on the read this task was already doing.
+                #
+                # Unconditional on the score write above for the same reason
+                # that one is unconditional on the state write: the population
+                # that needs it most is the row the authority already agrees
+                # with, which produces no `changes` at all.
+                line = games_line_write(
+                    ours=ours,
+                    our_box_score_data=event.box_score_data,
+                    competition=competition,
+                )
+                if line["reason"] is not None:
+                    stats["line_refused"][line["reason"]] = (
+                        stats["line_refused"].get(line["reason"], 0) + 1
+                    )
+                elif line["box_score_data"] is not None:
+                    # A WHOLE NEW DICT, not a key set on the old one — an
+                    # in-place JSONB edit does not flush (gotcha #4).
+                    event.box_score_data = line["box_score_data"]
+                    stats["line_writes"] += 1
+
             except Exception as exc:  # noqa: BLE001 — one row never costs the pass
                 stats["row_errors"] += 1
                 logger.warning("Tennis ESPN sync: event %s failed: %s", event.id, exc)
@@ -2274,11 +2311,13 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
     logger.info(
         "Tennis ESPN sync: %d events, %d anchored (%d already), %d refused, "
         "%d status writes, %d closes revoked, %d contradictions, "
-        "%d score writes (%d blanks filled, %d corrected), %d scores refused",
+        "%d score writes (%d blanks filled, %d corrected), %d scores refused, "
+        "%d games lines written, %d lines refused",
         stats["events_considered"], stats["anchored"], stats["already_anchored"],
         sum(stats["refused"].values()), stats["status_writes"],
         stats["completions_revoked"], sum(stats["contradictions"].values()),
         stats["score_writes"], stats["score_blanks_filled"],
         stats["score_corrections"], sum(stats["score_refused"].values()),
+        stats["line_writes"], sum(stats["line_refused"].values()),
     )
     return {"status": "ok", **stats}

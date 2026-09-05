@@ -479,6 +479,86 @@ export function playedCountAbsence(unit: string, isDone: boolean): string {
   return isDone ? `we did not record ${what}` : `we do not hold ${what} yet`;
 }
 
+/** The per-period line the API serves beside a set score. `Event["linescore"]`. */
+export interface PlayedLinescore {
+  sets: [number, number][];
+  home_games: number;
+  away_games: number;
+  source?: string;
+}
+
+/**
+ * THE TWO NUMBERS IN THE UNIT THE MARKET QUOTES — or `null` if we hold none.
+ *
+ * live/073.  ux/1034 B5 nulled the scoreboard on a tennis page because
+ * `home_score` is SETS and every rail on it is drawn in GAMES, and that was
+ * right: a real number read in the wrong unit is worse than an absent one.
+ * What it left behind is a page that says `PRE-GAME 29` on a match that
+ * finished, under "we did not record the games played" — measured over the 207
+ * anchored settled tennis rows of 2026-09-05, all of them.
+ *
+ * The games ARE recorded now.  `Event.linescore` carries the per-set line the
+ * tennis authority writes off ESPN's board, in our home/away order, and its
+ * totals are exactly the quantity the game-total market quotes.  So the rule
+ * this helper states is not "trust the scoreboard" but *"count the unit"*:
+ *
+ *   1. the scoreboard, where it counts the unit (every sport but tennis);
+ *   2. the linescore, where it does not and we have one;
+ *   3. `null`, and the widgets say so in the sport's own words.
+ *
+ * ONE HELPER, because the answer is asked for by four maps and a chart on one
+ * page, and the failure mode ux/1034 B5 was fixing is precisely two of them
+ * answering it differently.  A caller that reaches past this into
+ * `gameMarkets.home_score` is reintroducing that bug.
+ */
+export function playedUnits(
+  vocab: SportScoringVocab,
+  scoreboard: { home: number | null | undefined; away: number | null | undefined },
+  linescore?: PlayedLinescore | null
+): { home: number; away: number } | null {
+  if (vocab.scoreboardCountsTheUnit) {
+    const { home, away } = scoreboard;
+    return home != null && away != null ? { home, away } : null;
+  }
+  // NOT `home_games != null` alone: a line with no sets in it is an absence
+  // wearing a shape, and `0 – 0` beside a finished match is the empty-card
+  // class all over again.
+  if (
+    linescore &&
+    linescore.sets?.length > 0 &&
+    typeof linescore.home_games === "number" &&
+    typeof linescore.away_games === "number"
+  ) {
+    return { home: linescore.home_games, away: linescore.away_games };
+  }
+  return null;
+}
+
+/**
+ * `"6-3, 6-4, 6-1"` — the line as a reader says it.
+ *
+ * The API serves `sets` in OUR home/away order, which is the order everything
+ * else on the response is in and is NOT the order a result is spoken in.
+ * `reversed` prints the away side first, because a scoreline read the other way
+ * up asks the reader to reverse it in their head and half of them will not —
+ * the rule `espn_tennis.format_score` states on the backend, applied to the
+ * same data.
+ *
+ * WHO WON IS THE CALLER'S TO KNOW, and it is deliberately not inferred from the
+ * games here: a tennis match is won on SETS and the loser can finish with more
+ * games than the winner (6-7, 6-4, 6-2 is 18 games to 19 in the wrong
+ * direction). The caller holds the set score; it passes the answer in.
+ */
+export function formatLinescore(
+  sets: [number, number][] | undefined | null,
+  { reversed = false }: { reversed?: boolean } = {}
+): string {
+  if (!sets || sets.length === 0) return "";
+  return sets
+    .map(([home, away]) => (reversed ? `${away}-${home}` : `${home}-${away}`))
+    .join(", ");
+}
+
 /**
  * The heading over a column of market maps, counted rather than assumed.
  *

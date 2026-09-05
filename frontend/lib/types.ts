@@ -172,6 +172,21 @@ export interface Event {
   status: EventStatus;
   home_score: number | null;
   away_score: number | null;
+  /**
+   * The per-period line under the score, when the authority holds one.
+   *
+   * Tennis only today, and PRESENT-ONLY: `home_score` on a tennis match is the
+   * SET count (`0 – 3`) and this is what those sets were won by, in the same
+   * home/away order — `sets: [[3, 6], [4, 6], [1, 6]]` for Alcaraz d. Wu
+   * 6-3, 6-4, 6-1. `home_games`/`away_games` are the totals, which is the unit
+   * the game-total market on the same page quotes (live/073).
+   */
+  linescore?: {
+    sets: [number, number][];
+    home_games: number;
+    away_games: number;
+    source?: string;
+  } | null;
   current_odds?: CurrentOdds;
   bookmaker_odds?: BookmakerOddsDetail[];
   highlight?: Highlight;

@@ -657,7 +657,8 @@ class _Event:
     """Just enough of an `events` row for the write path."""
 
     def __init__(self, id, home, away, status, commence_time, completed_at=None,
-                 espn_id=None, home_score=None, away_score=None):
+                 espn_id=None, home_score=None, away_score=None,
+                 box_score_data=None):
         self.id = id
         self.home_team_name = home
         self.away_team_name = away
@@ -671,6 +672,11 @@ class _Event:
         # rather than exercising anything.
         self.home_score = home_score
         self.away_score = away_score
+        # live/073: the games line rides in `box_score_data`. On the stub for
+        # the same reason the scores are — the task READS it before deciding,
+        # and a stub without it turns every row of every test in this file into
+        # a row error that the per-row `except` swallows.
+        self.box_score_data = box_score_data
 
 
 class _Result:
@@ -835,6 +841,87 @@ class TestTennisSyncTask:
         assert stats["score_writes"] == 0
         assert stats["score_refused"] == {}
 
+    async def test_the_settled_row_gets_the_games_it_was_won_by(self, monkeypatch):
+        """END TO END for live/073's ship: the same anchored row that gets its
+        set score comes out holding the per-set GAMES, so the match page can
+        stop saying "we did not record the games played".
+
+        Note this fires on the row of the CONTROL above — a row whose set score
+        the authority already agrees with, which writes nothing else.  That is
+        the population: 207 of 211 settled tennis rows are anchored and 0 held
+        a box score, and most of them are already correctly scored.  A line
+        write gated on a score change would have reached almost none of them.
+        """
+        from app.tasks.espn_sync import _sync_tennis_from_espn
+
+        event = _Event(
+            15293821, "Roman Safiullin", "Carlos Alcaraz", "completed",
+            _at("2026-08-30T19:30Z"), completed_at=_at("2026-08-30T22:00Z"),
+            espn_id="182705", home_score=0, away_score=3,
+        )
+        _install(
+            monkeypatch,
+            payloads=[_payload([_competition(
+                "182705", ["Carlos Alcaraz", "Roman Safiullin"], state="post",
+                status_name="STATUS_FINAL", period=3,
+                date="2026-08-30T19:30Z",
+                linescores=[_won(6, 6, 6), _lost(4, 4, 4)],
+                winners=[True, False],
+            )])],
+            errors=[],
+            sport_keys=["tennis_atp_us_open"],
+            events=[event],
+        )
+
+        stats = await _sync_tennis_from_espn()
+
+        # OUR order: Safiullin is home and lost every set 4-6.
+        assert event.box_score_data == {"tennis": {
+            "sets": [[4, 6], [4, 6], [4, 6]],
+            "home_games": 12,
+            "away_games": 18,
+            "source": "espn",
+        }}
+        assert stats["line_writes"] == 1
+        assert stats["score_writes"] == 0     # the control still holds
+
+    async def test_the_second_pass_writes_the_line_again_to_nobody(
+        self, monkeypatch
+    ):
+        """THE CONTROL for the ship. This pass runs on a beat; a row already
+        holding the line must not be rewritten every cycle."""
+        from app.tasks.espn_sync import _sync_tennis_from_espn
+
+        event = _Event(
+            15293821, "Roman Safiullin", "Carlos Alcaraz", "completed",
+            _at("2026-08-30T19:30Z"), completed_at=_at("2026-08-30T22:00Z"),
+            espn_id="182705", home_score=0, away_score=3,
+            box_score_data={"tennis": {
+                "sets": [[4, 6], [4, 6], [4, 6]],
+                "home_games": 12,
+                "away_games": 18,
+                "source": "espn",
+            }},
+        )
+        _install(
+            monkeypatch,
+            payloads=[_payload([_competition(
+                "182705", ["Carlos Alcaraz", "Roman Safiullin"], state="post",
+                status_name="STATUS_FINAL", period=3,
+                date="2026-08-30T19:30Z",
+                linescores=[_won(6, 6, 6), _lost(4, 4, 4)],
+                winners=[True, False],
+            )])],
+            errors=[],
+            sport_keys=["tennis_atp_us_open"],
+            events=[event],
+        )
+
+        stats = await _sync_tennis_from_espn()
+
+        assert stats["line_writes"] == 0
+        assert stats["line_refused"] == {}
+
     async def test_a_retirement_the_authority_cannot_score_is_reported(
         self, monkeypatch
     ):
@@ -867,6 +954,13 @@ class TestTennisSyncTask:
         assert event.home_score is None and event.away_score is None
         assert stats["score_writes"] == 0
         assert stats["score_refused"] == {"not-a-completed-result": 1}
+        # live/073: THE LINE RIDES THE SCORE. A row the authority will not score
+        # gets no games line either — a set-by-set line under a hero with no
+        # result at all is half an answer, and the refusal is reported by the
+        # same name rather than counted as a silent skip.
+        assert event.box_score_data is None
+        assert stats["line_writes"] == 0
+        assert stats["line_refused"] == {"not-a-completed-result": 1}
 
     async def test_a_contested_competition_anchors_nobody(self, monkeypatch):
         """Writing the id on both twins would ARM `merge-duplicate-events`, which

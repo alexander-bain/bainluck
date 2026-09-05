@@ -628,6 +628,8 @@ export default function EventPage({ params }: EventPageProps) {
     homeScore: bestHomeScore,
     awayScore: bestAwayScore,
     tournamentResult: eventTournament?.result ?? null,
+    // live/073: what the sets above were won BY, when the event carries a line.
+    linescore: event.linescore,
   });
 
   // L2-131 Item 1: the settled hero gains the pregame mark — the winner's
@@ -1389,6 +1391,11 @@ export default function EventPage({ params }: EventPageProps) {
                the three widgets on this page cannot disagree about whether
                `home_score` counts the thing the projection is quoted in. */
             sportKey={event.sport || undefined}
+            /* live/073: same reason as `sportKey` — this note and the Games
+               map's are the same claim about the same missing number, and one
+               of them going stale is how the page tells a reader both that we
+               hold the games and that we do not. */
+            linescore={event.linescore}
             pmSpreadData={historyData?.pm_spread_data}
           />
         </div>
@@ -1415,6 +1422,10 @@ export default function EventPage({ params }: EventPageProps) {
           overUnder={event.current_odds?.over_under ?? null}
           sportKey={event.sport || undefined}
           espnHistory={historyData?.espn_history as Array<{ period?: string; home_score?: number; away_score?: number; timestamp?: string }>}
+          // live/073: the games this match was actually played to. Without it a
+          // tennis map has nothing to put beside its pre-game quote, because
+          // the scoreboard two cards up is counting sets.
+          linescore={event.linescore}
         />
         </SectionErrorBoundary>
       )}

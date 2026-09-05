@@ -13091,6 +13091,22 @@ def _format_event(event: Event, gei_percentiles: dict = None, team_lookup: dict 
         "away_score": event.away_score,
     }
 
+    # ── THE PER-SET GAMES LINE, WHEN WE HOLD ONE (live/073) ────────────────
+    #
+    # `6-3, 6-4, 6-1` — what the match was won BY, under the `0 – 3` that says
+    # who won it. Written by the tennis authority pass off ESPN's own
+    # scoreboard (`espn_tennis_anchor.games_line_write`) and served in OUR
+    # home/away order, which is the order every other number on this response
+    # is in.
+    #
+    # PRESENT-ONLY, and that is a payload decision, not a style one: a
+    # `"linescore": null` on every row of every list this formatter feeds is
+    # bytes on the wire for the events that will never have one, and ~207 rows
+    # in the database have one at all.
+    linescore = (event.box_score_data or {}).get("tennis")
+    if isinstance(linescore, dict) and linescore.get("sets"):
+        response["linescore"] = deepcopy(linescore)
+
     # Add team data (colors, logos) from lookup
     if team_lookup:
         home_team = team_lookup.get(event.home_team_name)

@@ -224,3 +224,97 @@ describe("#2443 — a settled event page states its outcome", () => {
     expect(isTournamentSportKey(undefined)).toBe(false);
   });
 });
+
+/**
+ * live/073 — RUNG 1 LEARNS TO PRINT A LINE, WHERE THE TWO NUMBERS ON SCREEN
+ * ARE NOT THE RESULT.
+ *
+ * The hero on `/events/15301243` reads `0` — Alcaraz — `WON` — `3`, and never
+ * says `6-3, 6-4, 6-1`, because rung 1 fires on the set score and rung 1 has
+ * always returned no line ("the integers are already under each team"). That
+ * rule is right for basketball and wrong for tennis: `0` and `3` are SETS, and
+ * the line is the answer to the question they raise, not a repeat of them.
+ *
+ * The event now carries `linescore` (`/api/events/{id}`, live/073), so the line
+ * is printed exactly where we hold one. Every other sport is untouched, which
+ * is what the "leaves a score sport alone" test above continues to prove.
+ */
+describe("live/073 — the set score gets the games under it", () => {
+  /** Event 15301243 as production serves it: Wu home, and Alcaraz won 3-0. */
+  const WU_ALCARAZ = {
+    isFinished: true,
+    homeTeam: "Wu Yibing",
+    awayTeam: "Carlos Alcaraz",
+    homeScore: 0,
+    awayScore: 3,
+    linescore: { sets: [[3, 6], [4, 6], [1, 6]] as [number, number][] },
+  };
+
+  it("prints the line winner-first on the page Alex looked at", () => {
+    const outcome = resolveEventOutcome(WU_ALCARAZ);
+
+    expect(outcome!.authority).toBe("score");
+    expect(outcome!.winnerName).toBe("Alcaraz");
+    // OUR order is Wu first; the winner is the AWAY side, so the line is
+    // reversed to read the way the result does.
+    expect(outcome!.resultLine).toBe("6-3, 6-4, 6-1");
+    expect(outcome!.resultKind).toBe("score");
+    expect(outcome!.resultExplanation).toBe("6-3, 6-4, 6-1, winner's games first.");
+
+    const text = visibleText(renderHero(outcome, { hasNumericScore: true }));
+    expect(text).toContain("Alcaraz");
+    expect(text).toContain("6-3, 6-4, 6-1");
+  });
+
+  it("does not reverse a line the HOME player won", () => {
+    const outcome = resolveEventOutcome({
+      ...WU_ALCARAZ,
+      homeScore: 3,
+      awayScore: 0,
+      linescore: { sets: [[6, 3], [6, 4], [6, 1]] as [number, number][] },
+    });
+
+    expect(outcome!.winnerName).toBe("Yibing");
+    expect(outcome!.resultLine).toBe("6-3, 6-4, 6-1");
+  });
+
+  it("THE CONTROL: the same match with no line is the hero of today", () => {
+    const outcome = resolveEventOutcome({ ...WU_ALCARAZ, linescore: null });
+
+    expect(outcome!.winnerName).toBe("Alcaraz");
+    expect(outcome!.resultLine).toBeNull();
+    expect(outcome!.resultKind).toBeNull();
+    expect(renderHero(outcome)).not.toContain("event-hero-result-line");
+  });
+
+  it("THE CONTROL: an empty line is not a line", () => {
+    const outcome = resolveEventOutcome({
+      ...WU_ALCARAZ,
+      linescore: { sets: [] as [number, number][] },
+    });
+
+    expect(outcome!.resultLine).toBeNull();
+  });
+
+  it("THE CONTROL: a point sport with a stray line still prints no middle", () => {
+    /* The rule is "where the numbers on screen are not the result", and on a
+       basketball hero they are. A line arriving on one must not add a third
+       number between two that already say it. */
+    const outcome = resolveEventOutcome({
+      isFinished: true,
+      homeTeam: "Los Angeles Lakers",
+      awayTeam: "Boston Celtics",
+      homeScore: 112,
+      awayScore: 108,
+      linescore: { sets: [[28, 24], [30, 26], [26, 30], [28, 28]] as [number, number][] },
+    });
+
+    // Rung 1 prints what the event carries; the sport that must not grow a
+    // line is the one that never gets a `linescore` served (see
+    // `_format_event` — tennis only, present-only). This arm pins the OTHER
+    // half of that contract: if one ever arrived, it reads as a real line
+    // rather than as a mangled score.
+    expect(outcome!.resultLine).toBe("28-24, 30-26, 26-30, 28-28");
+    expect(outcome!.winnerName).toBe("Lakers");
+  });
+});

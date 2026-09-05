@@ -105,6 +105,10 @@ def _event():
         status="live",
         home_score=1,
         away_score=5,
+        # live/073: `_format_event` reads the per-set line out of here. A fake
+        # missing a column the formatter reads is not a lighter fixture, it is
+        # a fake that cannot tell whether the formatter works.
+        box_score_data=None,
         llm_gender=None,
         llm_level=None,
         llm_league=None,
