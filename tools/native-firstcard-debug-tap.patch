@@ -1,0 +1,74 @@
+diff --git a/ios/Bain Luck/Bain Luck/Services/AnalyticsService.swift b/ios/Bain Luck/Bain Luck/Services/AnalyticsService.swift
+index e3c185a7..759cbb65 100644
+--- a/ios/Bain Luck/Bain Luck/Services/AnalyticsService.swift	
++++ b/ios/Bain Luck/Bain Luck/Services/AnalyticsService.swift	
+@@ -1,6 +1,7 @@
+ import FirebaseAnalytics
+ import FirebaseCrashlytics
+ import Foundation
++import os.log
+ 
+ /// Thin wrapper around Firebase Analytics matching the web GA4 taxonomy.
+ enum AnalyticsService {
+@@ -20,6 +21,15 @@ enum AnalyticsService {
+     /// one place an EVENT is emitted, `identify` is the one place an IDENTITY
+     /// is set, and both consult `TelemetryConsent` first.
+     nonisolated static func log(_ name: String, _ parameters: [String: Any]? = nil) {
++        #if DEBUG
++        // MEASUREMENT TAP (native/003, latency's first-card ask) — DEBUG only,
++        // ahead of the consent gate so a simulator that has answered nothing
++        // still yields timings. Stamps LAUNCH-relative elapsed, which is the
++        // one clock no rail on this device currently reports: every bridged
++        // `screen_timing` row carries `shell_ms: -1` and a LOAD-START-relative
++        // `first_card_ms`, so the launch→load-start segment is invisible.
++        measurementTap(name, parameters)
++        #endif
+         guard TelemetryConsent.shared.isGranted else { return }
+         guard let sanitized = AnalyticsPrivacy.sanitize(event: name, parameters: parameters) else {
+             return
+@@ -27,6 +37,23 @@ enum AnalyticsService {
+         Analytics.logEvent(name, parameters: sanitized.isEmpty ? nil : sanitized)
+     }
+ 
++    #if DEBUG
++    private static let measurementLog = OSLog(subsystem: "com.bainluck.latency", category: "rail")
++
++    /// Prints `LAUNCHMS=<ms since process start> <event> <params>` to os_log so a
++    /// simulator run can be read with `log stream --predicate 'subsystem ==
++    /// "com.bainluck.latency"'`. Never compiled into a release build.
++    private nonisolated static func measurementTap(_ name: String, _ parameters: [String: Any]?) {
++        let launchMs = Int((AppLaunchClock.elapsed * 1000).rounded())
++        let rendered = (parameters ?? [:])
++            .sorted { $0.key < $1.key }
++            .map { "\($0.key)=\($0.value)" }
++            .joined(separator: " ")
++        os_log("LAUNCHMS=%{public}d %{public}@ %{public}@",
++               log: measurementLog, type: .info, launchMs, name, rendered)
++    }
++    #endif
++
+     /// The ONE place this app hands an IDENTITY to Firebase — the second door
+     /// that the "one boundary" comment used to miss.
+     ///
+diff --git a/ios/Bain Luck/Bain Luck/Services/NavigationCoordinator.swift b/ios/Bain Luck/Bain Luck/Services/NavigationCoordinator.swift
+index d6dbceac..f61895c0 100644
+--- a/ios/Bain Luck/Bain Luck/Services/NavigationCoordinator.swift	
++++ b/ios/Bain Luck/Bain Luck/Services/NavigationCoordinator.swift	
+@@ -22,7 +22,17 @@ enum AppTab: Int, Hashable {
+ /// Coordinates deep link and universal link URL handling with tab navigation.
+ @MainActor
+ final class NavigationCoordinator: ObservableObject {
++    // MEASUREMENT SCAFFOLD (native/003) — DEBUG only, never committed to master.
++    // `simctl openurl bainluck://ei` cannot select a tab unattended: iOS puts an
++    // "Open in Bain Luck?" confirmation in front of every custom-scheme URL and
++    // there is no tap rail on this box. `-startTab sports` lands the cold launch
++    // on the Sports tab so its first-card time can be read at all.
++    #if DEBUG
++    @Published var selectedTab: AppTab = ProcessInfo.processInfo
++        .arguments.contains("-startTabSports") ? .feed : .discover
++    #else
+     @Published var selectedTab: AppTab = .discover
++    #endif
+     @Published var pendingRoute: Route?
+     @Published var pendingSearchQuery: String?
+     @Published var liveGameCount: Int = 0

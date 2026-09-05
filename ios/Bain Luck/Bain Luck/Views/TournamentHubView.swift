@@ -108,6 +108,27 @@ struct TournamentHubSurface: View {
                     }
                 }
 
+                // "More predictions" is Alex's name for this section (UX-P140)
+                // and the web reads it from one constant for the same reason
+                // this does: "Props/Futures" is gambling vocabulary and was the
+                // only heading on a probability-first page that needed a
+                // sportsbook to parse.
+                TournamentHubSection(title: "More predictions", accent: DS.amber) {
+                    if let note = presentation.propsEmptyNote {
+                        TournamentHubNote(text: note)
+                    } else {
+                        VStack(spacing: 10) {
+                            ForEach(presentation.props) { TournamentHubPropCard(row: $0) }
+                            if let trim = presentation.propsTrimNote {
+                                Text(trim)
+                                    .font(.caption2)
+                                    .foregroundStyle(DS.textMuted)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
+                    }
+                }
+
                 TournamentHubSection(title: "Draw", accent: DS.textMuted) {
                     TournamentHubNote(text: presentation.bracketNote)
                 }
@@ -318,30 +339,42 @@ private struct TournamentHubBoardCard: View {
     let board: TournamentHubPresentation.BoardSection
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            ForEach(board.rows) { row in
-                HStack(spacing: 10) {
-                    Text(row.rank.map(String.init) ?? "–")
-                        .font(.caption.weight(.bold).monospacedDigit())
-                        .foregroundStyle(DS.textMuted)
-                        .frame(width: 16, alignment: .trailing)
-                    TournamentHubFlag(url: row.flagUrl)
-                    Text(row.name)
-                        .font(.subheadline)
-                        .foregroundStyle(DS.textPrimary)
-                        .lineLimit(1)
-                    Spacer(minLength: 6)
-                    if let delta = row.deltaPoints {
-                        Text(delta > 0
-                             ? "+\(String(format: "%.0f", delta))"
-                             : String(format: "%.0f", delta))
-                            .font(.caption2.weight(.semibold).monospacedDigit())
-                            .foregroundStyle(delta > 0 ? DS.emerald : DS.danger)
+        VStack(alignment: .leading, spacing: 12) {
+            // The chart first, then the list it summarises. #2911: the race is
+            // the story and the standings are the detail, not the other way
+            // round — and a reader who sees three named lines then reads the
+            // same three names at the top of the list never has to work out
+            // which rows are drawn.
+            RaceChartView(data: board.chart)
+                .id(board.id)
+
+            Divider().overlay(DS.border)
+
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(board.rows) { row in
+                    HStack(spacing: 10) {
+                        Text(row.rank.map(String.init) ?? "–")
+                            .font(.caption.weight(.bold).monospacedDigit())
+                            .foregroundStyle(DS.textMuted)
+                            .frame(width: 16, alignment: .trailing)
+                        TournamentHubFlag(url: row.flagUrl)
+                        Text(row.name)
+                            .font(.subheadline)
+                            .foregroundStyle(DS.textPrimary)
+                            .lineLimit(1)
+                        Spacer(minLength: 6)
+                        if let delta = row.deltaPoints {
+                            Text(delta > 0
+                                 ? "+\(String(format: "%.0f", delta))"
+                                 : String(format: "%.0f", delta))
+                                .font(.caption2.weight(.semibold).monospacedDigit())
+                                .foregroundStyle(delta > 0 ? DS.emerald : DS.danger)
+                        }
+                        Text(row.percentText)
+                            .font(.subheadline.weight(.bold).monospacedDigit())
+                            .foregroundStyle(DS.textPrimary)
+                            .frame(minWidth: 44, alignment: .trailing)
                     }
-                    Text(row.percentText)
-                        .font(.subheadline.weight(.bold).monospacedDigit())
-                        .foregroundStyle(DS.textPrimary)
-                        .frame(minWidth: 44, alignment: .trailing)
                 }
             }
 
@@ -349,6 +382,103 @@ private struct TournamentHubBoardCard: View {
                 Text(note)
                     .font(.caption2)
                     .foregroundStyle(DS.textMuted)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(DS.cardBg, in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(DS.border, lineWidth: 0.5))
+    }
+}
+
+// MARK: - Curated question card (#3043)
+
+/// One curated question — "Will Sinner actually play?".
+///
+/// Every judgement this card renders was made in `TournamentHubPresentation`;
+/// the view's only job is to keep the honesty treatment visible, which on this
+/// screen means exactly one thing: **a number that is not a current answer is
+/// never drawn in the confident type.** `row.headlineIsMuted` and
+/// `outcome.isMuted` are that decision, taken once for the whole card, and the
+/// view must not second-guess either from anything it can see locally.
+private struct TournamentHubPropCard: View {
+    let row: TournamentHubPresentation.PropRow
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text(row.question)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(DS.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if let headline = row.headline {
+                    Text(headline)
+                        .font(.title3.weight(.bold).monospacedDigit())
+                        .foregroundStyle(row.headlineIsMuted ? DS.textSecondary : DS.textPrimary)
+                        .layoutPriority(1)
+                }
+            }
+
+            if let answerLine = row.answerLine {
+                Text(answerLine)
+                    .font(.caption2)
+                    .foregroundStyle(DS.textMuted)
+            }
+
+            if let settled = row.settledLine {
+                Text(settled)
+                    .font(.caption2)
+                    .foregroundStyle(DS.textMuted)
+            }
+
+            if let hook = row.hook {
+                Text(hook)
+                    .font(.caption)
+                    .foregroundStyle(DS.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if !row.outcomes.isEmpty {
+                VStack(spacing: 4) {
+                    ForEach(row.outcomes) { outcome in
+                        HStack(spacing: 10) {
+                            Text(outcome.name)
+                                .font(.caption)
+                                .foregroundStyle(DS.textSecondary)
+                                .lineLimit(1)
+                            Spacer(minLength: 6)
+                            // A subject with no reading says so in WORDS. An
+                            // em dash in the number column reads as "zero" or
+                            // as a layout artefact, and the whole point of
+                            // keeping the row is that the reader knows the name
+                            // is in the comparison and that we have nothing.
+                            if let percent = outcome.percentText {
+                                Text(percent)
+                                    .font(.caption.weight(.semibold).monospacedDigit())
+                                    .foregroundStyle(outcome.isMuted ? DS.textSecondary : DS.textPrimary)
+                            } else if let missing = outcome.missingText {
+                                Text(missing)
+                                    .font(.caption2)
+                                    .foregroundStyle(DS.textMuted)
+                            }
+                        }
+                    }
+                }
+                .padding(.top, 2)
+            }
+
+            if let note = row.freshnessNote {
+                Text(note)
+                    .font(.caption2)
+                    .foregroundStyle(DS.textMuted)
+            }
+
+            if let note = row.incompleteNote {
+                Text(note)
+                    .font(.caption2)
+                    .foregroundStyle(DS.amber)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .padding(14)

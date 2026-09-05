@@ -116,14 +116,12 @@ struct LeaguesView: View {
         }
     }
 
+    /// Subtitle only. The word "Browse" is already the navigation title, and
+    /// printing it again here rendered the tab's name twice, one line apart.
     private var browseHeader: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Browse")
-                .font(.title2.weight(.bold))
-            Text("Markets, sports, and tools")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-        }
+        Text("Markets, sports, and tools")
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
     }
 
     private var featuredGrid: some View {
