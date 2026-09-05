@@ -991,9 +991,10 @@ jobs:
           fi
           git remote add heroku https://heroku:$HEROKU_API_KEY@git.heroku.com/bainluck.git 2>/dev/null || true
 
-          # `| cut` keeps the pipeline green if ls-remote fails, so an unreadable
-          # live ref falls through to the push, where git adjudicates it for us.
-          LIVE="$(git ls-remote heroku refs/heads/master | cut -f1)"
+          # `|| true` keeps an unreadable live ref from reddening the job (and
+          # holds under `-o pipefail` too); it falls through to the push, where
+          # git adjudicates it for us.
+          LIVE="$(git ls-remote heroku refs/heads/master 2>/dev/null | cut -f1 || true)"
           git fetch --quiet heroku refs/heads/master 2>/dev/null || true
           if [ -z "$LIVE" ]; then
             echo "Could not read Heroku's live commit — deferring to the push below."
@@ -1020,17 +1021,59 @@ jobs:
             exit 0
           fi
 
-          # Rejected. Either a newer commit landed mid-push — the correct
-          # outcome, leave it alone — or master's history was rewritten, in which
-          # case no fast-forward exists and --force is the intended path. We have
-          # already established that the live commit is not ahead of us.
-          LIVE_NOW="$(git ls-remote heroku refs/heads/master | cut -f1)"
+          # Rejected. Do NOT force by reflex. A rejection can perfectly well mean
+          # a NEWER deploy won the race, and forcing then rewinds production —
+          # the exact incident this guard exists to prevent. So establish what is
+          # live and whether we can REASON about it before doing anything, and
+          # treat "cannot prove" as a refusal rather than as permission.
+          LIVE_NOW="$(git ls-remote heroku refs/heads/master 2>/dev/null | cut -f1 || true)"
           git fetch --quiet heroku refs/heads/master 2>/dev/null || true
-          if [ -n "$LIVE_NOW" ] && [ "$LIVE_NOW" != "$LIVE" ] \
-             && git merge-base --is-ancestor "$GITHUB_SHA" "$LIVE_NOW"; then
+          # Ancestry is only meaningful for a commit whose object we actually
+          # hold. `merge-base --is-ancestor` on a commit we never fetched exits
+          # non-zero, which reads identically to a truthful "no" — so ask
+          # directly instead of inferring it from a failure.
+          HAVE_LIVE=0
+          if [ -n "$LIVE_NOW" ] && git cat-file -e "${LIVE_NOW}^{commit}" 2>/dev/null; then
+            HAVE_LIVE=1
+          fi
+
+          if [ "$HAVE_LIVE" = 1 ] && git merge-base --is-ancestor "$GITHUB_SHA" "$LIVE_NOW"; then
             echo "Superseded mid-push: $LIVE_NOW is newer than $GITHUB_SHA. Leaving it."
             exit 0
           fi
-          echo "Push rejected and the live commit (${LIVE_NOW:-<unknown>}) is not ahead of"
-          echo "$GITHUB_SHA — master history diverged; forcing."
-          git push heroku "$GITHUB_SHA:refs/heads/master" --force
+
+          if [ "$HAVE_LIVE" = 1 ] && git merge-base --is-ancestor "$LIVE_NOW" "$GITHUB_SHA"; then
+            # The live commit is provably BEHIND us, so a fast-forward does exist
+            # and the rejection was transient. Retry as a fast-forward — never as
+            # a force. A second rejection reddens the job under `-e`, which is
+            # the honest outcome: somebody should look.
+            echo "Live commit $LIVE_NOW is behind $GITHUB_SHA and a fast-forward exists; retrying."
+            git push heroku "$GITHUB_SHA:refs/heads/master"
+            echo "Deployed $GITHUB_SHA."
+            exit 0
+          fi
+
+          # What is left is either genuinely diverged history, or a live commit
+          # whose ancestry we cannot establish. A force push in EITHER state can
+          # rewind a newer production, so both fail closed.
+          #
+          # One exception, and only one: when this commit IS GitHub's current
+          # master tip there is no newer commit for a force to lose, so a history
+          # rewrite can still self-heal without a human. Note the direction of
+          # the test — the tip is used here to NARROW when forcing is allowed,
+          # never to decide whether to deploy. That inversion is #3171.
+          ORIGIN_TIP="$(git ls-remote origin refs/heads/master 2>/dev/null | cut -f1 || true)"
+          if [ -n "$ORIGIN_TIP" ] && [ "$ORIGIN_TIP" = "$GITHUB_SHA" ]; then
+            echo "Push rejected and the live commit (${LIVE_NOW:-<unreadable>}) has no provable"
+            echo "ancestry with $GITHUB_SHA — but this commit IS origin/master's tip, so there is"
+            echo "no newer commit to rewind past. History diverged; forcing."
+            git push heroku "$GITHUB_SHA:refs/heads/master" --force
+            exit 0
+          fi
+
+          echo "REFUSING to deploy. The push was rejected, the live commit"
+          echo "(${LIVE_NOW:-<unreadable>}) has no provable ancestry with $GITHUB_SHA, and this"
+          echo "commit is not origin/master's tip (${ORIGIN_TIP:-<unreadable>}). Forcing from here"
+          echo "could rewind a newer production, so this fails closed. Deploy by hand once the"
+          echo "divergence is understood."
+          exit 1
