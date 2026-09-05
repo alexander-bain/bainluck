@@ -75,17 +75,46 @@ run back-to-back with no idle: any lengthening of the small tasks eats the
 headroom, and the queue tips back to growing. Re-run the sum before adding
 anything to `realtime`.
 
-Observed after deploy (`a705abcc`): `realtime` depth 623 → 550 at **−11.9/min**,
-where the pre-ship trend was **+1.7/min**; skip counters
-(`bainluck:inflight:skipped:*`) at 153 / 27 / 17 / 7 for the four tasks. The
-derivative flipping sign is the proof, not the depth — the depth was still
-falling from the backlog accumulated before the deploy.
+Observed after deploy (`a705abcc`, production 19:03Z): the pre-ship trend was
+**+1.7/min sustained for hours** (454 → 796); after the ship the derivative
+flipped sign and `realtime` fell 631 → 362 between 18:41Z and 19:48:40Z, a
+measured **−4.0/min**, still falling at the last read. The derivative flipping
+sign is the proof, not any single depth.
 
-⚠️ A DRAINED QUEUE IS NOT A WARM FRONT PAGE. `prewarm_live_feed_shapes` spends
-mean 19.7s / p50 20.1 / max 20.2 against `FEED_LIVE_REPUBLISH_BUDGET_S = 20` —
-49 of 50 runs cut off AT the budget, so that is a ceiling, not a measurement,
-and its last result was `0`. Getting its slot back does not make it warm
-anything. Tracked separately as #3268; never read one claim as the other.
+⚠️ DO NOT QUOTE THE FIRST DRAIN RATE. The initial post-deploy read looked like
+**−11.9/min** and was briefly used to predict a ~70-minute clear. It is an
+artifact and was retracted by the measuring lane (latency/168): a worker restart
+dumps the messages already past their 40 s `expires` in one burst, so the first
+minutes measure *discard*, not *drain*. A rate taken across a restart boundary
+is not this guard's effect. The −4.0/min above is taken after that burst
+settled. (A later "plateau at ~625, publication and consumption balanced" read
+over a 25-minute window did not hold either — the queue kept draining to 362.
+Sample longer than the thing you are trying to see.)
+
+The instrument for this guard is NOT queue depth — depth moves for reasons that
+have nothing to do with us. It is the skip counters, which count declines
+directly: `bainluck:inflight:skipped:*`, read one key at a time via
+``/api/admin/redis-read?key=bainluck:inflight:skipped:app.tasks.<task>``. Live
+at 19:48:40Z: **266 / 52 / 31 / 17** for the four leased tasks (153 / 27 / 17 / 7
+at 19:17Z). `poll_all_odds` accrues ~2.0 declines/min against a 30 s beat —
+i.e. essentially every tick declines, which is what a 71 s mean pass on a 30 s
+interval must look like when the guard is working.
+
+Note `schedule-adherence` reports `self_gated_fires: null` for all four leased
+tasks and always will: that field is withheld unless two counters' windows agree
+within `SELF_GATE_WINDOW_TOLERANCE`, and it is *not* wired to this counter. Do
+not read its `null` as "the lease never fired" — read the Redis counters above.
+
+⚠️ A DRAINED QUEUE IS NOT A WARM FRONT PAGE — and this is now measured, not
+predicted. At 19:48:40Z, with the queue down to 362 and skips firing,
+`prewarm_live_feed_shapes` had **still not started once since 14:08:48Z** — 5h40m
+dead on a 40 s beat, 5h20m of that with a lease in place. Freeing slots did not
+revive it. Its messages carry `expires=40`, so it stays dark until service
+latency is under 40 s, which draining to 362 did not achieve; and even when it
+does run it spends mean 19.7s / p50 20.1 / max 20.2 against
+`FEED_LIVE_REPUBLISH_BUDGET_S = 20`, so 49 of 50 runs cut off AT the budget —
+a ceiling, not a measurement — and its last result was `0`. This ship does not
+fix the cold front page. That is #3268; never read one claim as the other.
 
 Trade-off, stated rather than hidden: the TTL is sized off the runtime's
 *guaranteed* bound (`task_time_limit`), not off a measured p95 or max, because a
