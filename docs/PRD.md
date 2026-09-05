@@ -58,6 +58,8 @@ A user hears a name — a team, a golfer, a bill, a nominee — and types it int
 ### Live second screen
 During a tournament or game night, the event/concept page is the second screen: live blended win probability, a fused leaderboard (golf), bout cards (fight night), all state-correct to the minute, with a freshness signal.
 
+**Its named test is the catcher's-son test** — a thirteen-year-old with zero navigation and zero betting literacy opens the app mid-event and can answer *"who's winning, and what's about to happen?"* in ten seconds. Canonical definition (five steps, and why WWE is deliberately the hard case): `docs/strategy-live-context.md` §2. The pre-game ritual test above is Alex before the game; this one is Dexter during it.
+
 ### Daily return: the digest
 One morning notification: the 3–5 most interesting probabilities today, personalized. (Notifications v1 is the digest ONLY — no movers spam, no streak nags.)
 
