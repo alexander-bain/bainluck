@@ -378,6 +378,15 @@ private struct TournamentHubBoardCard: View {
                 }
             }
 
+            // #3033: what the `+33` in the rows above measures, said once, so a
+            // reader is not left to reconcile it against the chart's own footer
+            // by inference.
+            if let note = board.deltaWindowNote {
+                Text(note)
+                    .font(.caption2)
+                    .foregroundStyle(DS.textMuted)
+            }
+
             if let note = board.trimNote {
                 Text(note)
                     .font(.caption2)

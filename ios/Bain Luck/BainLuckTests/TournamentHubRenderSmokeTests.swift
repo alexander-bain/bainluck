@@ -97,6 +97,39 @@ final class TournamentHubRenderSmokeTests: XCTestCase {
             + "stands in for them")
     }
 
+    /// #3032 + #3033, drawn rather than computed.
+    ///
+    /// The presentation tests prove the ceiling picks 0.75 and the note picks
+    /// its sentence; this proves the board card that a reader sees carries both
+    /// — a rule wired into the value type and left out of the view passes every
+    /// unit test and is invisible on the phone.
+    ///
+    /// It also stands in for a shot the unattended camera cannot take: the board
+    /// is below the fold on the hub, `simctl` has no scroll, and this renders the
+    /// real `TournamentHubSurface` from a real payload instead.
+    func testTheMensBoardDrawsItsRaceAgainstAThreeQuarterCeiling() throws {
+        let presentation = try RaceChartBoardFixture.presentation()
+        let board = try XCTUnwrap(presentation.boards.first, "the fixture carries one board")
+
+        // The chart is a CHART, not the "one reading" note standing in for one.
+        XCTAssertNil(board.chart.emptyNote, "the fixture's rows carry drawable series")
+        XCTAssertEqual(board.chart.series.count, 3)
+        XCTAssertEqual(
+            RaceChart.ceiling(
+                board.chart.series, range: board.chart.initialRange, starts: board.chart.starts),
+            0.75,
+            "a 44.5% leader against a 100% ceiling is #3032")
+
+        // Six standing rows, five of them tracked from 6 Aug and one from
+        // 26 Aug — so this board is the mixed case, and says so.
+        XCTAssertEqual(board.rows.count, 6)
+        XCTAssertEqual(
+            board.deltaWindowNote, "Movement since each contender's first number.")
+
+        let png = try render(presentation, name: "mens-board-race", scale: 2)
+        XCTAssertGreaterThan(png.count, 5_000, "the board render is suspiciously empty")
+    }
+
     func testRenderingIsDeterministicForAFixedPayload() throws {
         let first = try render(presentation(Self.emptyJSON), name: "empty-a")
         let second = try render(presentation(Self.emptyJSON), name: "empty-b")

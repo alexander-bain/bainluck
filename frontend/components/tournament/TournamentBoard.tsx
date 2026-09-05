@@ -5,7 +5,7 @@ import LiquidityMark from "../LiquidityMark";
 import TrendSparkline from "./TrendSparkline";
 import PlayerAvatar from "./PlayerAvatar";
 import ShowMore from "./ShowMore";
-import { COLLAPSED_ROW_COUNT } from "@/lib/contenderChart";
+import { COLLAPSED_ROW_COUNT, deltaWindowNote } from "@/lib/contenderChart";
 import { TITLE_COLUMN_LABEL } from "@/lib/bracket";
 import {
   boardNotice,
@@ -187,6 +187,10 @@ export default function TournamentBoard({
   const visible = expanded ? board.rows : board.rows.slice(0, COLLAPSED_ROW_COUNT);
   const hidden = board.rows.length - visible.length;
 
+  // #3033. Over the VISIBLE rows, not the whole board: the note reconciles the
+  // deltas a reader can actually see against the chart above them.
+  const deltaWindow = deltaWindowNote(visible);
+
   return (
     <section data-testid="tournament-board" data-draw={board.draw}>
       <h2 className="mb-2 mt-6 text-xs font-bold uppercase tracking-[0.07em] text-text-muted">
@@ -260,6 +264,15 @@ export default function TournamentBoard({
               </div>
             )}
           </>
+        )}
+
+        {deltaWindow && board.rows.length > 0 && (
+          <div
+            className="border-t border-surface-border px-3.5 py-2 text-[11px] text-text-muted"
+            data-testid="board-delta-window"
+          >
+            {deltaWindow}
+          </div>
         )}
 
         {board.unpriced > 0 && board.rows.length > 0 && (

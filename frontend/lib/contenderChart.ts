@@ -510,16 +510,30 @@ export interface ChartGeometry {
  * probability and a player at 9% is drawn at 9% of the ceiling, not floated up
  * from a fake floor.
  *
- * What adapts is the CEILING, and only in coarse steps: 10%, 25%, 50%, 100%.
- * Coarse deliberately — a continuous fit-to-max would rescale the plot every
- * time the leader moved a point, and a chart whose axis changes daily makes
- * movement unreadable, which is the opposite of the standing ruling that
- * movement is the product. Four steps means the axis holds still for weeks at a
+ * What adapts is the CEILING, and only in coarse steps: 10%, 25%, 50%, 75%,
+ * 100%. Coarse deliberately — a continuous fit-to-max would rescale the plot
+ * every time the leader moved a point, and a chart whose axis changes daily
+ * makes movement unreadable, which is the opposite of the standing ruling that
+ * movement is the product. Five steps means the axis holds still for weeks at a
  * time and changes when the shape of the race genuinely changes.
  *
  * Worked on the men's board Alex was reading: max 0.345 → ceiling 0.5. Alcaraz
  * lands at 69% of the plot height instead of 34%, Zverev at 47%, Shelton at
  * 19%. The gap he could not see is now half the plot.
+ *
+ * ### The 75 step, and why the ladder had a cliff in it (#3032)
+ *
+ * The ladder shipped as 10/25/50/100, and the gap between the last two is where
+ * it stopped paying. Measured on the live men's board this morning: Alcaraz at
+ * **0.445** wants `0.445 × 1.15 = 0.512`, so the first step that fits is
+ * **1.0** — and the entire title race draws in the bottom half with an empty
+ * top half. That is #2451's own complaint arrived at from the other direction,
+ * and it bites precisely when a tournament has a clear favourite, which is the
+ * moment the chart is most worth reading.
+ *
+ * `0.75` covers leaders from 44% to 65%; Alcaraz then occupies 59% of the plot
+ * instead of 44%. The ladder stays coarse — five steps is still an axis that
+ * holds still for weeks — and the labels keep it honest.
  *
  * ### And it is only honest because it is LABELLED
  *
@@ -527,7 +541,7 @@ export interface ChartGeometry {
  * one: the reader would have no way to know the top had changed. The labels are
  * the other half of this fix, not a decoration on it — see `chartYLabels`.
  */
-const CEILING_STEPS = [0.1, 0.25, 0.5, 1] as const;
+const CEILING_STEPS = [0.1, 0.25, 0.5, 0.75, 1] as const;
 
 /** Room above the leader, so the top line is not welded to the frame. */
 const CEILING_HEADROOM = 1.15;
@@ -566,11 +580,11 @@ export function chartCeiling(series: ChartSeries[], timeframe: Timeframe): numbe
 export function chartYLabels(ceiling: number): { probability: number; label: string }[] {
   return [ceiling, ceiling / 2, 0].map((probability) => ({
     probability,
-    // Whole percents: the steps are 10/25/50/100, so halves land on 5/12.5/25/50
-    // and only the 25 case needs a decimal. `12.5%` is correct and reads as
-    // precision nobody asked for on an axis label, so it rounds — and the
-    // rounding is visible only on a rule the reader is using to place a line,
-    // never on a number the page states as a fact.
+    // Whole percents: the steps are 10/25/50/75/100, so halves land on
+    // 5/12.5/25/37.5/50 and only the 25 and 75 cases need a decimal. `12.5%` is
+    // correct and reads as precision nobody asked for on an axis label, so it
+    // rounds — and the rounding is visible only on a rule the reader is using to
+    // place a line, never on a number the page states as a fact.
     label: `${Math.round(probability * 100)}%`,
   }));
 }
@@ -989,6 +1003,48 @@ export function seriesEndpoint(
   const [x, y] = last.split(",").map(Number);
   if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
   return { x, y };
+}
+
+/**
+ * ═══ THE `+33` SAYS WHICH WINDOW IT MEASURES (#3033) ═══
+ *
+ * On the men's board, in one frame: the chart opens on `Draw`, its footer says
+ * "6d shown · 30 Aug – 5 Sep", and Alcaraz's line climbs about 19 points across
+ * it. The row directly under it reads **+33.4**.
+ *
+ * Both numbers are correct. `trend_delta` is measured over the row's WHOLE
+ * tracked history — verified against the wire, it is exactly
+ * `trend[last] − trend[0]` (Alcaraz 0.334374 = 0.456374 − 0.122) — and the chart
+ * is showing the tournament. They sit six points apart on one card and the only
+ * thing that reconciles them is a footer the reader has to notice and then
+ * reason about.
+ *
+ * This is the cheap honest fix: the board says, once, what its movement column
+ * measures. Making the badge FOLLOW the chart's range is truer and is not this
+ * — it needs the selected range lifted out of `ContenderChart`'s own state, and
+ * it is a bigger change than the disagreement warrants.
+ *
+ * **It is computed over the rows on screen, and it is not one date per board.**
+ * The obvious version of this — one window stated once for the whole board —
+ * is wrong, and measurably so: on the live men's board 23 rows start 6 Aug, 12
+ * start 26 Aug and one starts 7 Aug, because a contender's history begins when
+ * a market first priced them. So when the visible rows agree the note names
+ * their shared date, and when they do not it says so rather than picking one
+ * row's date and printing it over the others. Expanding the board can therefore
+ * change the sentence, which is the truth changing, not the copy wobbling.
+ */
+export function deltaWindowNote(rows: TournamentRow[]): string | null {
+  const starts = new Set<string>();
+  for (const row of rows) {
+    // A row with no delta shown contributes no claim to reconcile.
+    if (row.trend_delta === null) continue;
+    const first = row.trend?.[0]?.date;
+    if (first) starts.add(first);
+  }
+  if (starts.size === 0) return null;
+  if (starts.size > 1) return "Movement since each contender's first number.";
+  const [only] = Array.from(starts);
+  return `Movement since ${shortDateLabel(only)}.`;
 }
 
 /** Short legend name: `Aryna Sabalenka` -> `A. Sabalenka`. */

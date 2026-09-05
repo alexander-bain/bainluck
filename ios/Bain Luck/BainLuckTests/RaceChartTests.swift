@@ -116,7 +116,7 @@ final class RaceChartTests: XCTestCase {
 
     // MARK: - The ceiling ladder (#2451)
 
-    /// Zero stays; only the top moves, and only onto 10/25/50/100.
+    /// Zero stays; only the top moves, and only onto 10/25/50/75/100.
     func testCeilingClimbsTheLadderWithHeadroom() {
         // (the field's peak, the step 1.15 × it must land on)
         let ladder: [(Double, Double)] = [
@@ -126,7 +126,11 @@ final class RaceChartTests: XCTestCase {
             (0.20, 0.25),   // 23%    -> 25
             (0.22, 0.50),   // 25.3%  -> 50
             (0.345, 0.50),  // 39.7%  -> 50; Alex's men's board in #2451
-            (0.44, 1.00),   // 50.6%  -> 100
+            (0.43, 0.50),   // 49.5%  -> 50, the last value the 50 step holds
+            (0.44, 0.75),   // 50.6%  -> 75  (#3032: was 100, the cliff)
+            (0.445, 0.75),  // 51.2%  -> 75; the live men's board, 2026-09-05
+            (0.65, 0.75),   // 74.8%  -> 75, the last value the 75 step holds
+            (0.66, 1.00),   // 75.9%  -> 100
             (0.90, 1.00),   // 103.5% -> 100 by the fallback, never above 1
         ]
         for (peak, expected) in ladder {
@@ -168,6 +172,102 @@ final class RaceChartTests: XCTestCase {
     /// the rounding is visible is a rule the reader uses to place a line.
     func testQuarterCeilingMidLabelRounds() {
         XCTAssertEqual(RaceChart.yLabels(ceiling: 0.25).map(\.label), ["25%", "13%", "0%"])
+    }
+
+    /// #3032's new step, labelled. A moving ceiling nobody can read is worse
+    /// than a fixed one, so the step is only allowed to exist because the axis
+    /// says what it is — and its midpoint is the second of the two that round.
+    func testTheSeventyFiveStepIsLabelled() {
+        XCTAssertEqual(RaceChart.yLabels(ceiling: 0.75).map(\.label), ["75%", "38%", "0%"])
+    }
+
+    /// The live men's board on 2026-09-05, the case #3032 was filed on: a
+    /// runaway favourite at 44.5% used to want 51.2% and land on the 100 step,
+    /// which drew the whole title race in the bottom half of the plot.
+    func testCeilingForTheRunawayFavourite() {
+        let field = [
+            series("alcaraz", [(1, 0.122), (2, 0.445)], current: 0.445, index: 0),
+            series("zverev", [(1, 0.107), (2, 0.200)], current: 0.200, index: 1),
+            series("fritz", [(1, 0.027), (2, 0.103)], current: 0.103, index: 2),
+        ]
+        XCTAssertEqual(
+            RaceChart.ceiling(field, range: .all, starts: noStarts), 0.75,
+            "a 44.5% leader must not be drawn against a 100% ceiling")
+    }
+
+    /// The ladder is one contract with `CEILING_STEPS` in
+    /// `frontend/lib/contenderChart.ts`. Pinned as a literal here so a divergence
+    /// on either side fails a test rather than shipping two different charts.
+    func testTheLadderIsTheOneWeShareWithTheWeb() {
+        XCTAssertEqual(RaceChart.ceilingSteps, [0.1, 0.25, 0.5, 0.75, 1.0])
+        XCTAssertEqual(RaceChart.ceilingHeadroom, 1.15)
+    }
+
+    // MARK: - What the movement column measures (#3033)
+
+    /// Built through the DECODER rather than a memberwise init, so these rows
+    /// are the wire shape the screen actually receives.
+    private func boardRow(
+        _ key: String,
+        delta: Double?,
+        trendStart: String?
+    ) -> TournamentHubBoardRow {
+        var row: [String: Any] = [
+            "entity_key": key, "display_name": key, "state": "live",
+            "probability": 0.2, "rank": 1,
+        ]
+        if let delta { row["trend_delta"] = delta }
+        if let trendStart {
+            row["trend"] = [
+                ["date": trendStart, "probability": 0.1],
+                // A second point so the row is a line and not a lone reading.
+                ["date": "2026-09-05", "probability": 0.2],
+            ]
+        }
+        let data = try! JSONSerialization.data(withJSONObject: row)
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try! decoder.decode(TournamentHubBoardRow.self, from: data)
+    }
+
+    func testTheNoteNamesTheSharedDateWhenTheDrawnRowsAgree() {
+        let rows = [
+            boardRow("a", delta: 0.33, trendStart: "2026-08-06"),
+            boardRow("b", delta: 0.10, trendStart: "2026-08-06"),
+        ]
+        XCTAssertEqual(RaceChart.deltaWindowNote(rows: rows), "Movement since 6 Aug.")
+    }
+
+    /// The reason this is not one date per board. On the live men's board 23
+    /// rows start 6 Aug, 12 start 26 Aug and one starts 7 Aug — printing the
+    /// first row's date over the others would be a new false statement, not a
+    /// fix for the old one.
+    func testMixedWindowsGetTheGeneralSentenceRatherThanOneRowsDate() {
+        let rows = [
+            boardRow("a", delta: 0.33, trendStart: "2026-08-06"),
+            boardRow("b", delta: 0.02, trendStart: "2026-08-26"),
+        ]
+        XCTAssertEqual(
+            RaceChart.deltaWindowNote(rows: rows),
+            "Movement since each contender's first number.")
+    }
+
+    /// A row whose delta is absent shows no badge, so it has no claim to
+    /// reconcile and must not drag the note into the mixed case.
+    func testARowWithNoDeltaDoesNotWidenTheWindow() {
+        let rows = [
+            boardRow("a", delta: 0.33, trendStart: "2026-08-06"),
+            boardRow("b", delta: nil, trendStart: "2026-07-01"),
+        ]
+        XCTAssertEqual(RaceChart.deltaWindowNote(rows: rows), "Movement since 6 Aug.")
+    }
+
+    func testNoDeltasAtAllMeansNoSentence() {
+        XCTAssertNil(RaceChart.deltaWindowNote(rows: [
+            boardRow("a", delta: nil, trendStart: "2026-08-06"),
+            boardRow("b", delta: 0.2, trendStart: nil),
+        ]))
+        XCTAssertNil(RaceChart.deltaWindowNote(rows: []))
     }
 
     // MARK: - Windows and timeframes
