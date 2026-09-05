@@ -181,6 +181,76 @@ def rate_arm_is_structurally_blind(interval_s, counter_ttl_s):
     return interval_s > counter_ttl_s / MIN_EXPECTED_FIRES
 
 
+def _newest_stamp(newest_terminal_age_s, newest_start_age_s):
+    """``(age_s, kind)`` of the freshest usable stamp, or ``None``.
+
+    Shared by BOTH arms on purpose. The negative-age guard below is the whole
+    reason this is a function: a clock-skewed stamp yields a negative age, which
+    sails through every ``age <= limit`` comparison as the freshest reading
+    possible and certifies a dead beat as healthy. That guard was written once
+    for the stamp arm and has a mutation test on it; giving the rate arm its own
+    copy of the same three lines is how the two would drift apart.
+    """
+    ages = [
+        (a, k)
+        for a, k in (
+            (newest_terminal_age_s, "terminal"),
+            (newest_start_age_s, "start"),
+        )
+        if a is not None and a >= 0
+    ]
+    return min(ages) if ages else None
+
+
+def _stamp_tolerance_s(interval_s):
+    """How old the newest stamp may be before a beat is ``missing``.
+
+    One definition, used by both arms. See ``STAMP_LATE_TOLERANCE`` and
+    ``STAMP_MIN_TOLERANCE_S`` for why the two terms and why these values.
+    """
+    return max(interval_s * STAMP_LATE_TOLERANCE, STAMP_MIN_TOLERANCE_S)
+
+
+def _self_gate_fraction(deliveries, deliveries_window_s, starts, starts_window_s):
+    """Fraction of delivered fires whose body declined to start, or ``None``.
+
+    RATES, NOT COUNTS, AND THAT IS THE ENTIRE POINT. ``self_gated_fires`` above
+    is a SUBTRACTION, so it is only computed when the two counters describe
+    comparable windows (``SELF_GATE_WINDOW_TOLERANCE``) and is ``None``
+    otherwise — correctly, because subtracting across unequal windows is this
+    module's founding defect. But "the windows drifted" is not "the task does
+    not self-gate", and the veto below needs an answer in exactly that case:
+    measured on production 2026-09-05, ``poll_all_odds`` had a delivery window
+    of 64,957s against a starts window of 49,447s — a 23.9% drift, so
+    ``self_gated_fires`` was ``None`` — while genuinely self-gating.
+
+    Dividing each count by its OWN window first makes the comparison window-safe
+    without the cross-window arithmetic the module refuses: two rates measured
+    over two spans are comparable even when the spans are not. On the same
+    production reading that is 2024/64957 = 0.0312 deliveries/s against
+    1318/49447 = 0.0267 starts/s, so 14.5% of fires self-gated — against
+    ``prewarm_live_feed_shapes``, dead four hours, at 1327/79469 vs 1327/80011
+    = 0.68%. A 21x separation either side of ``SELF_GATE_MATERIAL_RATIO``.
+
+    ``None`` means UNKNOWN — no delivery counter, or a window of zero — and the
+    caller must not read it as zero. That is gotcha #53 in the small: the
+    absence of an observation is not an observation of absence, and the veto
+    treats the two oppositely.
+    """
+    if deliveries is None or not deliveries_window_s or not starts_window_s:
+        return None
+    if deliveries_window_s <= 0 or starts_window_s <= 0:
+        return None
+    delivery_rate = deliveries / deliveries_window_s
+    if delivery_rate <= 0:
+        return None
+    start_rate = (starts or 0) / starts_window_s
+    # Clamped into [0, 1]: a start rate above the delivery rate is counter noise
+    # at a window boundary, not a negative gate, and reporting -0.03 as fact is
+    # the same over-reach the clamp on `self_gated_fires` exists to prevent.
+    return max(0.0, min(1.0, 1.0 - (start_rate / delivery_rate)))
+
+
 def _grade_on_stamp(
     out, interval_s, newest_terminal_age_s, newest_start_age_s, counter_ttl_s
 ):
@@ -212,9 +282,7 @@ def _grade_on_stamp(
     a task that has simply never been seen would be reported as one that stopped.
     """
     out["arm"] = "stamp"
-    ages = [(a, k) for a, k in
-            ((newest_terminal_age_s, "terminal"), (newest_start_age_s, "start"))
-            if a is not None and a >= 0]
+    stamp = _newest_stamp(newest_terminal_age_s, newest_start_age_s)
     ceiling = counter_ttl_s / MIN_EXPECTED_FIRES if counter_ttl_s else None
     if not out["rate_arm_blind"]:
         # Reached via the no-window route, not the too-slow one. Say which, or a
@@ -226,16 +294,16 @@ def _grade_on_stamp(
                       f"{ceiling:.0f}s ceiling from counter TTL)")
     else:
         blind_note = "rate arm blind"
-    if not ages:
+    if stamp is None:
         out["reason"] = f"{blind_note}; no start or terminal stamp recorded"
         return out
 
-    age, kind = min(ages)
+    age, kind = stamp
     out["stamp_age_s"] = round(age, 1)
     out["stamp_kind"] = kind
     out["stamp_age_over_interval"] = round(age / interval_s, 2)
 
-    tolerance_s = max(interval_s * STAMP_LATE_TOLERANCE, STAMP_MIN_TOLERANCE_S)
+    tolerance_s = _stamp_tolerance_s(interval_s)
     if age <= tolerance_s:
         out["verdict"] = "on_schedule"
         out["reason"] = (
@@ -267,6 +335,7 @@ def adherence(
     durations_saturated=None,
     newest_terminal_age_s=None,
     newest_start_age_s=None,
+    newest_delivery_age_s=None,
     counter_ttl_s=None,
 ):
     """Grade one task's schedule adherence from its recorded counters.
@@ -340,6 +409,17 @@ def adherence(
         "deliveries": deliveries,
         "numerator": "deliveries" if use_deliveries else "starts",
         "self_gated_fires": None,
+        # Both default to None on EVERY row so the payload shape does not depend
+        # on which branch graded it — a key that appears only when the veto was
+        # considered makes `.get()` mean two different things to a reader.
+        "self_gate_fraction": None,
+        "stamp_veto_withheld": None,
+        # CERT-1943: the delivery MOMENT, published beside the delivery COUNT
+        # for the same reason `stamp_age_s` is published beside the fire count —
+        # a reader asked to trust a withheld veto has to be able to see the
+        # evidence it was withheld on. Defaulted on every row, like the two
+        # above, so the payload shape never depends on which branch graded it.
+        "delivery_age_s": None,
         "terminals": terminals,
         "never_completes": False,
         "ratio": None,
@@ -412,6 +492,247 @@ def adherence(
 
     ratio = (fires or 0) / exp
     out["ratio"] = round(ratio, 2)
+
+    # --- #3276: the rate arm being ABLE to speak does not make it the right
+    # instrument, and until now "able" was the only test applied. -------------
+    #
+    # The two arms were written as ALTERNATIVES — the stamp is reached (L~397)
+    # only when the rate arm is mute — so a task with a healthy-looking ratio
+    # never had its stamp read at all, even though the caller passes it in and
+    # it is live in this scope.
+    #
+    # THE SCOPE MISMATCH, which is this module's founding defect (#1790) one
+    # field further left. A ratio is an average over `window_s`, and an average
+    # cannot see a hole much shorter than its own window. Measured on production
+    # 2026-09-05: `prewarm_live_feed_shapes` — the beat that keeps Discover and
+    # Sports warm — had been dead for 3h43m on a 40s interval, and graded
+    # `on_schedule` with an EMPTY REASON, because 3.7h of death inside a 21h
+    # counter window only moved the ratio to 0.70, above BEHIND_RATIO. Its
+    # `last_started_at` was 334x its interval old the whole time. Every visitor
+    # ate a cold build for four hours and this surface said nothing.
+    #
+    # Worse, it might never have spoken: as the window saturates at the counter
+    # TTL the ratio bottoms out at 1327/(86400/40) = 0.61 — still above 0.6. The
+    # beat only becomes visible ~24h later, when the counters expire and L~397
+    # finally hands it to the stamp arm. A detector whose first report of a dead
+    # rail is a day late is not a detector.
+    #
+    # Lowering BEHIND_RATIO is NOT the fix and is explicitly rejected: it would
+    # only shorten the blindness (never remove it — the bound above is 0.61) and
+    # would re-redden the four `expires`-carrying beats of #2014.
+    #
+    # So: read the moment, not just the count. This module already argues the
+    # point in `_grade_on_stamp`'s own comment — "A count of unknown age is
+    # unusable; a moment is not" — and then only acts on it when the count is
+    # missing. The tolerance, the negative-age guard and the `missing` verdict
+    # are all REUSED from that arm rather than restated, so the two cannot
+    # disagree about what "dead" means.
+    #
+    # CHECKED BEFORE `overruns` DELIBERATELY. `p95_over_interval` is computed
+    # from a duration ring that describes the past; a beat that has recorded
+    # nothing for many intervals is not lapping, it is absent, and returning
+    # `overruns` first would mask the sharper fact. `arm` stays "rate" because
+    # the rate arm is still what graded the fire count — the stamp is a veto on
+    # its `on_schedule`, not a replacement for it.
+    #
+    # ONLY THE START STAMP MAY VETO HERE, and the distinction is load-bearing
+    # rather than cautious. `_grade_on_stamp` takes the newest of {terminal,
+    # start} because it runs when there is no counter at all, so any stamp is
+    # the best evidence in the room. On THIS arm the counter has already given
+    # positive evidence that fires happened, and the two stamps then answer
+    # different questions:
+    #
+    #   * a stale START says the beat did not FIRE — which is exactly what
+    #     adherence grades, and is decisive;
+    #   * a stale TERMINAL says nothing FINISHED, which is compatible with a
+    #     beat that is firing and hanging. That is #1716's open question, it
+    #     already has its own flag (`never_completes`), and answering it here
+    #     would decide it by accident — the thing this module refuses to do.
+    #
+    # Concretely: 2 starts counted in 3 days against a terminal stamp 10 days
+    # old is a task that runs and never completes, NOT a missing beat, and
+    # grading it `missing` off the terminal would be a false alarm. There is a
+    # guard test on exactly that row.
+    #
+    # Gotcha #53 holds: no start stamp at all leaves the verdict alone. An
+    # absent observation is not an observed absence, and a task nobody has ever
+    # stamped must not be reported as one that stopped.
+    start_stamp = _newest_stamp(None, newest_start_age_s)
+    if start_stamp is not None and interval_s:
+        age, kind = start_stamp
+        # Reported unconditionally, fresh or stale. A reader comparing a count
+        # against a moment needs both on the row; publishing the moment only
+        # when it is damning is how a surface becomes an alarm instead of an
+        # instrument.
+        out["stamp_age_s"] = round(age, 1)
+        out["stamp_kind"] = kind
+        out["stamp_age_over_interval"] = round(age / interval_s, 2)
+
+        # --- CERT-1932 repair: A START STAMP MEASURES THE GATE, NOT THE BEAT,
+        # ON A TASK THAT SELF-GATES. ------------------------------------------
+        #
+        # The veto's claim is "nothing STARTED, therefore the beat did not
+        # fire". That inference is only sound while starts track deliveries.
+        # `record_task_started` is called from inside `_tracked_run`, which the
+        # task BODY calls after its own gate has run, so on a self-gating task a
+        # stale start stamp is the expected reading of a perfectly healthy beat:
+        # the fire was delivered, the body declined, nothing stamped.
+        #
+        # The row that caught this is `poll_all_odds`, which drops to a 600s
+        # adaptive cadence when no sport is live. Graded on the first
+        # presentation of #3276 it returned `missing` on 20/20 deliveries, 19
+        # self-gated fires, ratio 1.0 and a 301s start age — a false alarm on
+        # the largest publisher into the queue, on the very surface this program
+        # is making trustworthy. A detector whose first act is to cry wolf about
+        # the healthiest beat on the board does not get read a second time.
+        #
+        # SELF-GATING IS STILL A FINDING, NOT AN EXCUSE, and the distinction is
+        # the one this module's own docstring insists on (LAT-P159: "a large
+        # `self_gated_fires` on `poll_all_odds` is a finding again, not a
+        # footnote"). Nothing here suppresses that number — the fraction is
+        # published on every row and the `self_gated_fires` sentence downstream
+        # is untouched. What it withdraws is one specific inference: that a
+        # self-gated fire is an ABSENT one. It fired.
+        #
+        # UNKNOWN FAILS THE VETO CLOSED-MOUTHED, NOT CLOSED. `None` means there
+        # is no delivery counter to compare against, so the module cannot tell a
+        # gate from a grave — and asserting the sharpest verdict it owns off
+        # evidence it does not have is exactly the over-reach `unmeasurable`
+        # exists to refuse (gotcha #53). The reason string says so out loud
+        # rather than leaving a silently ungraded row.
+        gate_fraction = _self_gate_fraction(
+            deliveries, deliveries_window_s, starts, starts_window_s
+        )
+        out["self_gate_fraction"] = (
+            round(gate_fraction, 3) if gate_fraction is not None else None
+        )
+
+        # WRITTEN TO ITS OWN FIELD, NOT TO `reason`. A withheld veto is not the
+        # grade — the row still goes on to be graded `overruns` / `behind` /
+        # `on_schedule` on its rate, and those branches own `reason` and would
+        # overwrite anything left there. Recording it separately is what keeps
+        # the #3276 failure mode legible: `on_schedule` with an EMPTY reason was
+        # the original defect, and `on_schedule` beside a stamp 10x its interval
+        # with no note saying why that was tolerated would be the same silence
+        # wearing the fix's clothes.
+        tolerance_s = _stamp_tolerance_s(interval_s)
+
+        # --- CERT-1943 repair: A HISTORY IS NOT A HEARTBEAT. ------------------
+        #
+        # The clause above ends "the fires are arriving" — and on the evidence
+        # it had, it could not know that. `gate_fraction` is a whole-window
+        # statistic: 24h of counters divided by 24h of counters. It says fires
+        # WERE arriving, averaged over a day. A mature self-gating task that
+        # stopped dead five minutes ago has exactly the same fraction it had
+        # while healthy, because 5 minutes moves a 24h average by nothing — so
+        # the veto went on withholding and the task read `on_schedule`.
+        #
+        # This is the module's founding defect (#1790) for the third time, one
+        # field further right, and it is worth naming as such: an average over
+        # a long window cannot see a hole much shorter than the window. The
+        # rate arm was blind to it, the stamp arm fixed that for STARTS, and
+        # then the self-gate exemption re-opened it by keying the exemption on
+        # another long-window average. The graded row that caught it:
+        # `starts=2462, deliveries=2880` over equal 86400s windows, interval
+        # 30s, newest start 301s old — ratio 1.0, fraction 0.145, veto
+        # withheld, `on_schedule`, on a beat that had not fired in ten periods.
+        #
+        # So the exemption now needs a MOMENT, not just a history. The
+        # self-gate story is "the fire was delivered and the body declined" —
+        # that story has an observable consequence, which is a fresh DELIVERY
+        # alongside the stale start. When deliveries have stopped too, nothing
+        # is being declined, and there is no gate left to blame the silence on.
+        # Delivery recency is judged on the same `_stamp_tolerance_s` as the
+        # start stamp, deliberately reusing the helper rather than restating a
+        # threshold, so the two moments cannot drift apart on what "stale" is.
+        #
+        # UNKNOWN STILL FAILS CLOSED-MOUTHED (gotcha #53). A `None` delivery
+        # age is "no delivery has been stamped", which is NOT "no delivery has
+        # arrived": delivery counters carry a 24h TTL and survive a dyno
+        # restart, so for one interval after every deploy a perfectly healthy
+        # self-gating beat has a live counter and no stamp yet. Reading that
+        # gap as staleness would grade `poll_all_odds` `missing` after every
+        # release — CERT-1932's false positive, bought straight back. The
+        # withheld note names which of the two it is, so the row never claims
+        # more than it measured.
+        # NORMALISED TO ONE REPRESENTATION OF UNKNOWN, FIRST, and a guard test
+        # exists because the first draft of this repair got it wrong. A stamp
+        # in the FUTURE is ahead-drift (ruling 008 names two lane-lock
+        # incidents caused by it), and the draft let a negative age fall past
+        # the `delivery_fresh` test into the `missing` branch — so a
+        # clock-skewed delivery stamp would have graded a healthy self-gating
+        # beat dead, which is CERT-1932's false positive wearing a new stamp.
+        # Unknown and stale are treated OPPOSITELY here, so they must never be
+        # reachable through the same value: `_stamp_ages_s` collapses
+        # ahead-drift to `None` at the caller and this collapses it again for
+        # every other caller of a public function.
+        if newest_delivery_age_s is not None and newest_delivery_age_s < 0:
+            newest_delivery_age_s = None
+
+        delivery_fresh = (
+            newest_delivery_age_s is not None
+            and newest_delivery_age_s <= tolerance_s
+        )
+        if newest_delivery_age_s is not None:
+            out["delivery_age_s"] = round(newest_delivery_age_s, 1)
+
+        if age > tolerance_s and gate_fraction is None:
+            out["stamp_veto_withheld"] = (
+                f"newest {kind} stamp is {out['stamp_age_over_interval']:.2f}x "
+                f"its {interval_s:.0f}s interval, but this task has no delivery "
+                "counter to compare against, so a self-gating body cannot be "
+                "told from a dead beat — not graded `missing` on a stamp alone"
+            )
+        elif (
+            age > tolerance_s
+            and gate_fraction > SELF_GATE_MATERIAL_RATIO
+            and newest_delivery_age_s is None
+        ):
+            out["stamp_veto_withheld"] = (
+                f"newest {kind} stamp is {out['stamp_age_over_interval']:.2f}x "
+                f"its {interval_s:.0f}s interval and {gate_fraction * 100:.0f}% "
+                "of delivered fires self-gate, but no delivery has been stamped "
+                "yet, so whether fires are STILL arriving is unknown — not "
+                "graded `missing` on a whole-window average alone"
+            )
+        elif (
+            age > tolerance_s
+            and gate_fraction > SELF_GATE_MATERIAL_RATIO
+            and delivery_fresh
+        ):
+            out["stamp_veto_withheld"] = (
+                f"newest {kind} stamp is {out['stamp_age_over_interval']:.2f}x "
+                f"its {interval_s:.0f}s interval, but {gate_fraction * 100:.0f}% "
+                "of delivered fires self-gate and a delivery landed "
+                f"{newest_delivery_age_s:.0f}s ago, so the stamp measures the "
+                "gate and not the beat — the fires are arriving"
+            )
+        elif age > tolerance_s:
+            out["verdict"] = "missing"
+            out["reason"] = (
+                f"nothing started for {age / 3600.0:.1f}h — newest {kind} stamp "
+                f"is {out['stamp_age_over_interval']:.2f}x its {interval_s:.0f}s "
+                f"interval, over a {tolerance_s:.0f}s tolerance. The fire count "
+                f"still reads {ratio:.2f} because it averages over "
+                f"{window_s / 3600.0:.1f}h and cannot see an outage this short"
+            )
+            # CERT-1943: on a task that DOES self-gate materially, the reader's
+            # first objection to `missing` is the one the exemption above
+            # exists to answer — "it self-gates, so of course nothing started".
+            # The row has to pre-empt it with the fact that overrode it, or
+            # this verdict looks like the false positive rather than the catch.
+            if (
+                gate_fraction is not None
+                and gate_fraction > SELF_GATE_MATERIAL_RATIO
+                and out["delivery_age_s"] is not None
+            ):
+                out["reason"] += (
+                    f". {gate_fraction * 100:.0f}% of fires self-gate, which "
+                    "would normally excuse a stale start stamp — but the last "
+                    f"DELIVERY was also {out['delivery_age_s']:.0f}s ago, so "
+                    "there is nothing arriving for the gate to decline"
+                )
+            return out
 
     # Runtime-over-interval is checked FIRST and reported even when the fire
     # rate looks fine, because it is the *cause* shape: a task using ~all of its
@@ -550,11 +871,28 @@ def find_lapping(graded):
     # unchanged so the existing relative order is preserved exactly.
     order = {"missing": -1, "overruns": 0, "behind": 1, "unmeasurable": 3}
 
+    # #3276: WITHIN ``missing``, rank by how many of its own intervals the beat
+    # has been silent — not by ``ratio``, which is meaningless for a beat that
+    # is not running. Two dead beats sort by the number that says which one is
+    # more dead; sorting them by a fire-count average would put a rail silent
+    # for 348 intervals below one silent for 5, purely on the shape of their
+    # counter windows. Before this arm existed every ``missing`` row came from a
+    # beat too slow to have a usable ratio, so the question never arose; now the
+    # rate arm produces them too and they all carry a ratio.
+    #
+    # Non-``missing`` rows contribute a constant here, so the existing relative
+    # order — including the ratio tie-break below — is preserved exactly.
     def _key(item):
         _name, g = item
+        deadness = (
+            -(g.get("stamp_age_over_interval") or 0.0)
+            if g["verdict"] == "missing"
+            else 0.0
+        )
         return (
             0 if g.get("never_completes") else 1,
             order.get(g["verdict"], 2),
+            deadness,
             g["ratio"] if g["ratio"] is not None else 99,
         )
 

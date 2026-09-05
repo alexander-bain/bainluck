@@ -45,11 +45,13 @@ measurement defect rather than a scheduling one.
 
 import ast
 import inspect
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
-from app.routes.admin_celery import build_schedule_adherence
+from app.routes.admin_celery import _delivery_age_s, build_schedule_adherence
 from app.tasks import redis_state
 from app.tasks.redis_state import TASK_DELIVERY_PREFIX, TASK_METRICS_PREFIX
 from app.utils.schedule_adherence import adherence, find_lapping
@@ -154,7 +156,13 @@ class TestGetAllTaskDeliveries:
         redis_state.record_task_delivery("app.tasks.a")
         fake.ttls[f"{TASK_DELIVERY_PREFIX}:app.tasks.a"] = 86_400 - 600
         got = redis_state.get_all_task_deliveries()
-        assert got == {"app.tasks.a": {"fires": 2, "window_s": 600.0}}
+        # Exact shape, deliberately: this row is a contract, and CERT-1943
+        # widened it by one key. `last_delivered_at` is asserted separately in
+        # `TestTheLastDeliveryStamp` rather than pinned to a clock here.
+        assert set(got) == {"app.tasks.a"}
+        row = got["app.tasks.a"]
+        assert set(row) == {"fires", "window_s", "last_delivered_at"}
+        assert (row["fires"], row["window_s"]) == (2, 600.0)
 
     def test_unmeasurable_window_is_none_not_zero(self, fake):
         # A key with no expiry is an unbounded lifetime total. Zero age would
@@ -515,3 +523,168 @@ class TestTheAttemptFilterCannotBeDroppedSilently:
         src = " ".join(ast.dump(h) for h in handlers)
         assert "retries" in src, "the prerun receiver no longer filters retries"
         assert "is_eager" in src, "the prerun receiver no longer filters eager runs"
+
+
+# ---------------------------------------------------------------------------
+# CERT-1943: the delivery MOMENT, beside the delivery COUNT
+# ---------------------------------------------------------------------------
+
+class TestTheLastDeliveryStamp:
+    """A count says fires WERE arriving; only a moment says they still are.
+
+    The CERT-1932 exemption withheld the stale-start veto on any materially
+    self-gating task, which let a mature self-gating beat that actually
+    stopped go on reading `on_schedule` — its 24h gate fraction is unmoved by
+    a five-minute outage. The grader's new input is this stamp.
+    """
+
+    def test_the_moment_is_written_beside_the_count(self, fake):
+        redis_state.record_task_delivery("app.tasks.poll_all_odds")
+        stamp = fake.strings[
+            f"{redis_state.TASK_LAST_DELIVERY_PREFIX}:app.tasks.poll_all_odds"
+        ]
+        assert abs(float(stamp) - time.time()) < 5
+        # The counter is still keyed and written exactly as before.
+        assert fake.strings[
+            f"{TASK_DELIVERY_PREFIX}:app.tasks.poll_all_odds"
+        ] == b"1"
+
+    def test_the_stamp_is_overwritten_by_every_delivery(self, fake):
+        # THE OPPOSITE CONTRACT TO THE WINDOW STAMP ABOVE, and the distinction
+        # LAT-P024 turns on. The window start is written under `NX` so it can
+        # never slide; this is a LAST-SEEN moment, so it must slide on every
+        # delivery or it measures the first fire forever — which would make a
+        # long-dead task look freshly delivered for a whole day.
+        key = f"{redis_state.TASK_LAST_DELIVERY_PREFIX}:app.tasks.x"
+        redis_state.record_task_delivery("app.tasks.x")
+        fake.strings[key] = b"1.0"          # an ancient stamp
+        redis_state.record_task_delivery("app.tasks.x")
+        assert float(fake.strings[key]) > 1.0
+
+    def test_the_expiry_rides_the_same_set(self, fake):
+        # A stamp written without its TTL in the same command is immortal for
+        # exactly as long as the process that dies between the two writes.
+        redis_state.record_task_delivery("app.tasks.x")
+        key = f"{redis_state.TASK_LAST_DELIVERY_PREFIX}:app.tasks.x"
+        assert fake.ttls[key] == redis_state.WINDOW_COUNTER_TTL
+
+    def test_the_stamp_outlives_nothing_the_counter_does_not(self, fake):
+        # Matched TTLs on purpose: the stamp must go stale AND READABLE rather
+        # than vanish, because an absent stamp reads as UNKNOWN and withholds
+        # the veto. If it expired first, a dead task would present a live
+        # counter and no moment — the hole this key exists to close.
+        redis_state.record_task_delivery("app.tasks.x")
+        assert (fake.ttls[f"{redis_state.TASK_LAST_DELIVERY_PREFIX}:app.tasks.x"]
+                == fake.ttls[f"{TASK_DELIVERY_PREFIX}:app.tasks.x"])
+
+    def test_the_reader_returns_the_moment_with_the_rate(self, fake):
+        redis_state.record_task_delivery("app.tasks.poll_all_odds")
+        row = redis_state.get_all_task_deliveries()["app.tasks.poll_all_odds"]
+        assert row["fires"] == 1
+        assert abs(row["last_delivered_at"] - time.time()) < 5
+
+    def test_an_unstamped_counter_reads_none_not_zero(self, fake):
+        # The post-deploy state, and gotcha #53 in the small: delivery
+        # counters carry a 24h TTL and survive a dyno restart while this stamp
+        # is written fresh, so a HEALTHY task has a live counter and no stamp
+        # for one interval after every release. Zero would be epoch 1970 — the
+        # deadest row on the board — and would fire the very veto this field
+        # gates, grading `poll_all_odds` missing after every deploy.
+        fake.strings[f"{TASK_DELIVERY_PREFIX}:app.tasks.x"] = b"20"
+        row = redis_state.get_all_task_deliveries()["app.tasks.x"]
+        assert row["fires"] == 20
+        assert row["last_delivered_at"] is None
+
+    def test_a_malformed_stamp_degrades_to_unknown(self, fake):
+        fake.strings[f"{TASK_DELIVERY_PREFIX}:app.tasks.x"] = b"20"
+        fake.strings[f"{redis_state.TASK_LAST_DELIVERY_PREFIX}:app.tasks.x"] = b"nope"
+        assert redis_state.get_all_task_deliveries()["app.tasks.x"][
+            "last_delivered_at"] is None
+
+    def test_the_stamp_is_not_read_back_as_a_phantom_task(self, fake):
+        # The hazard `TASK_DELIVERY_PREFIX`'s own comment names: a key parked
+        # under a scanned prefix becomes a task on the health surface. The
+        # stamp lives under its own top-level prefix, so the delivery scan
+        # must return exactly one row for one task.
+        redis_state.record_task_delivery("app.tasks.x")
+        assert list(redis_state.get_all_task_deliveries()) == ["app.tasks.x"]
+
+    def test_never_raises_when_redis_is_down(self, monkeypatch):
+        # It runs before every task in the system; it may never be the reason
+        # one fails to start.
+        def boom():
+            raise RuntimeError("redis down")
+        monkeypatch.setattr(redis_state, "get_redis_client", boom)
+        redis_state.record_task_delivery("app.tasks.x")
+        assert redis_state.get_all_task_deliveries() == {}
+
+
+def _iso(epoch):
+    return datetime.fromtimestamp(epoch, tz=timezone.utc).isoformat()
+
+
+class TestTheRouteTurnsTheStampIntoAnAge:
+    """`_delivery_age_s` — the only place with a clock, like `_stamp_ages_s`."""
+
+    def test_a_stamp_becomes_an_age(self):
+        assert _delivery_age_s({"last_delivered_at": 1000.0}, 1301.0) == 301.0
+
+    def test_an_absent_stamp_is_unknown(self):
+        assert _delivery_age_s({}, 1301.0) is None
+        assert _delivery_age_s({"last_delivered_at": None}, 1301.0) is None
+        assert _delivery_age_s(None, 1301.0) is None
+
+    def test_a_future_stamp_is_unknown_not_negative(self):
+        # Ahead-drift, the rule `_stamp_ages_s` already carries. A negative age
+        # passes every `<= tolerance` test as the freshest possible reading, so
+        # a skewed stamp would withhold the veto on a beat that truly stopped.
+        assert _delivery_age_s({"last_delivered_at": 2000.0}, 1301.0) is None
+
+    def test_a_malformed_stamp_is_unknown(self):
+        assert _delivery_age_s({"last_delivered_at": "nope"}, 1301.0) is None
+
+    def test_the_grader_receives_it_end_to_end(self):
+        # The wiring proof: a stale start stamp plus a STALE delivery on a
+        # materially self-gating task must reach `missing` through the real
+        # route, not just through a direct call to the grader.
+        now = 1_787_000_000.0
+        beat = {"odds": {"task": "app.tasks.poll_all_odds", "schedule": 30.0}}
+        metrics = [{
+            "task": "poll_all_odds", "starts_24h": 2462,
+            "starts_window_s": 86400.0,
+            "last_started_at": _iso(now - 301.0),
+            "successes_24h": 2462, "failures_24h": 0, "incompletes_24h": 0,
+        }]
+        deliveries = {"app.tasks.poll_all_odds": {
+            "fires": 2880, "window_s": 86400.0,
+            "last_delivered_at": now - 301.0,
+        }}
+        out = build_schedule_adherence(
+            beat, metrics, {"app.tasks.poll_all_odds": "poll_all_odds"},
+            deliveries=deliveries, now_epoch=now,
+        )
+        row = out["all"]["app.tasks.poll_all_odds"]
+        assert row["delivery_age_s"] == 301.0
+        assert row["verdict"] == "missing"
+
+    def test_a_fresh_delivery_through_the_same_route_stays_healthy(self):
+        # The silence case beside the alarm case: identical row, delivery
+        # moment fresh.
+        now = 1_787_000_000.0
+        beat = {"odds": {"task": "app.tasks.poll_all_odds", "schedule": 30.0}}
+        metrics = [{
+            "task": "poll_all_odds", "starts_24h": 2462,
+            "starts_window_s": 86400.0,
+            "last_started_at": _iso(now - 301.0),
+            "successes_24h": 2462, "failures_24h": 0, "incompletes_24h": 0,
+        }]
+        deliveries = {"app.tasks.poll_all_odds": {
+            "fires": 2880, "window_s": 86400.0, "last_delivered_at": now - 5.0,
+        }}
+        out = build_schedule_adherence(
+            beat, metrics, {"app.tasks.poll_all_odds": "poll_all_odds"},
+            deliveries=deliveries, now_epoch=now,
+        )
+        row = out["all"]["app.tasks.poll_all_odds"]
+        assert row["delivery_age_s"] == 5.0
+        assert row["verdict"] != "missing"
