@@ -338,6 +338,23 @@ def _collapsed_subquery(where_clauses, name: str):
     Factored out for :func:`deduplicated_event_ids` (My Stuff) so the two
     surfaces cannot drift into two different definitions of "the same fixture".
     A second, subtly different partition key is a second set of duplicates.
+
+    #2263: the proven-duplicate predicate is applied HERE, in the shared pass,
+    for that same reason — and it is a DIFFERENT guard from the collapse below
+    rather than a widening of it.  The collapse fuses rows that are identical on
+    ``(sport, home, away, commence_time)``; the twins #2263 found differ by ONE
+    MINUTE and by ``"St.Louis"`` vs ``"St. Louis"``, so the partition never
+    groups them and both surfaces printed both rows.  Near-miss aliases stay out
+    of scope for the collapse exactly as this module's header says — the
+    difference is that a proven duplicate is not a near-miss guess.  It was
+    established at the write side, by ESPN's own fixture resolving onto two of
+    our rows, and this reads that finding rather than re-deriving it.
+
+    It is deliberately not in the two callers.  #2213 exists because My Stuff
+    took the other branch of an ``if`` and missed a guard Discover had; putting
+    this in ``event_candidate_ids`` alone would rebuild that asymmetry, and
+    #2213 does not already cover it — its twins were identical on the partition
+    key, and #2263's are not.  In the shared pass a third caller cannot miss it.
     """
     dedup_partition = [
         Event.sport_id,
@@ -346,6 +363,8 @@ def _collapsed_subquery(where_clauses, name: str):
         Event.commence_time,
         case((identity_incomplete_expr(), Event.id), else_=None),
     ]
+
+    where_clauses = [*where_clauses, not_a_proven_duplicate()]
 
     return (
         select(
@@ -397,6 +416,12 @@ def deduplicated_event_ids(where_clauses) -> Select:
     would need an id-anchored correspondence, which measurement says does not
     exist — 0 of 41 duplicate MLB pairs share any provider id (#2213).  That
     merge stays the registry's, behind the anchor channel.
+
+    #2263 widened this: My Stuff also drops rows the registry has *proven* to
+    duplicate another, which the partition key above cannot catch because those
+    twins differ by a minute and a punctuation mark.  It arrives through the
+    shared collapse pass, so this surface can never again be the one that missed
+    a guard Discover had.
     """
     collapsed = _collapsed_subquery(where_clauses, "my_stuff_candidates_collapsed")
     return select(collapsed.c.id).where(collapsed.c.dup_rn == 1)
@@ -413,19 +438,9 @@ def event_candidate_ids(where_clauses) -> Select:
     pass on purpose: quotas computed over an unfiltered pool would hand a
     filtered request the wrong slice.
 
-    #2263: proven duplicates are dropped here too, and that is a DIFFERENT guard
-    from the collapse below rather than a widening of it.  The collapse fuses
-    rows that are byte-identical on ``(sport, home, away, commence_time)``; the
-    twins #2263 found differ by ONE MINUTE and by ``"St.Louis"`` vs
-    ``"St. Louis"``, so the partition never groups them and the flagship surface
-    printed both.  Near-miss aliases remain out of scope for the collapse exactly
-    as this module's header says — the difference is that a proven duplicate is
-    not a near-miss guess.  It was established at the write side, by ESPN's own
-    fixture resolving onto two of our rows, and this reads the finding rather
-    than re-deriving it.
+    #2263: proven duplicates are dropped as well, by the shared collapse pass —
+    see :func:`_collapsed_subquery` for why it lives there and not here.
     """
-    where_clauses = [*where_clauses, not_a_proven_duplicate()]
-
     collapsed = _collapsed_subquery(where_clauses, "feed_event_candidates_collapsed")
 
     ranked = (

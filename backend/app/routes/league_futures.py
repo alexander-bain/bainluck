@@ -343,6 +343,21 @@ def recent_results_query(sport_key: str, now: datetime):
         .join(Sport, Sport.id == Event.sport_id)
         .where(
             Sport.key == sport_key,
+            # #2263, as on the upcoming rail. Placed INSIDE the fence with the
+            # other filters, which is where the fence's own measurement says the
+            # filtering happens — it runs to completion before the sort either
+            # way, so this adds a predicate to a scan that was already reading
+            # these rows and does not change the plan shape the table above
+            # measured. The largest inner set across all 29 leagues is 470 rows.
+            #
+            # It sits ABOVE `settled_rail_condition` rather than below it, and
+            # that is deliberate: these are ANDed, so the order is semantically
+            # free, but `scripts/evals/league_rails_fence_mutations.py` anchors
+            # M1, M2 and M7 on `settled_rail_condition(...)` being the last line
+            # before the fence's `)`. Splitting that pair drifts three needles at
+            # once — three mutants that then score NOT-APPLIED and silently guard
+            # nothing. Free ordering, so spend it on keeping the needles alive.
+            not_a_proven_duplicate(),
             # 'closed' as well as 'completed' — #1204's lesson: a settled
             # doubleheader (and every source that closes rather than completes)
             # is orphaned from a recents rail that only looks for 'completed'.
@@ -364,13 +379,6 @@ def recent_results_query(sport_key: str, now: datetime):
             # pushed off the page. Widening this condition is the same
             # disappearance aimed at the other population.
             settled_rail_condition(now, lookback=timedelta(days=RESULTS_LOOKBACK_DAYS)),
-            # #2263, as on the upcoming rail. Placed INSIDE the fence with the
-            # other filters, which is where the fence's own measurement says the
-            # filtering happens — it runs to completion before the sort either
-            # way, so this adds a predicate to a scan that was already reading
-            # these rows and does not change the plan shape the table above
-            # measured. The largest inner set across all 29 leagues is 470 rows.
-            not_a_proven_duplicate(),
         )
         .offset(literal_column("0"))
         .subquery()

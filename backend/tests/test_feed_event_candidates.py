@@ -45,6 +45,7 @@ def _array_on_sqlite(type_, compiler, **kw):  # pragma: no cover - DDL shim
 
 from app.models import Event, Sport  # noqa: E402
 from app.models.models import Base  # noqa: E402
+from app.services.anchor_channel import duplicate_tag  # noqa: E402
 from app.utils.feed_event_candidates import (  # noqa: E402
     EVENT_CANDIDATE_BUDGET,
     TIER_LIVE,
@@ -1020,3 +1021,110 @@ def test_the_my_stuff_arm_keeps_its_own_safety_cap():
     a user with many teams unbounded."""
     my_stuff_arm, _ = _score_events_arms()
     assert "limit(200)" in my_stuff_arm
+
+
+# ---------------------------------------------------------------------------
+# 10 — #2263: the proven-duplicate guard reaches BOTH arms, not just Discover
+# ---------------------------------------------------------------------------
+#
+# The rescued Q437 branch added `not_a_proven_duplicate()` to `event_candidate_ids`
+# alone. That rebuilds the exact asymmetry #2213 was filed for — My Stuff took the
+# other branch of the `if` and missed a guard Discover had — so lane1/136 moved the
+# predicate into `_collapsed_subquery`, the pass both arms share.
+#
+# These tests are non-vacuous BY CONSTRUCTION, and that is the whole point of the
+# corpus below. The twins differ by ONE MINUTE and by "St.Louis" vs "St. Louis",
+# so `dedup_partition` — which keys on exact `commence_time` and exact
+# `home_team_name` — cannot group them. If the guard is deleted, the collapse
+# alone does NOT rescue these assertions; `test_the_collapse_alone_cannot_catch
+# _these_twins` pins that, and it is the control that makes the other two mean
+# something.
+
+_TWIN_START = NOW - timedelta(minutes=30)
+_CANONICAL_TWIN_ID = 15310001   # the row ESPN's fixture resolved onto
+_PROVEN_TWIN_ID = 15310002      # the bare twin, one minute later, "St.Louis"
+
+
+def _twin_corpus(tag_the_duplicate: bool):
+    canonical = _event(
+        id=_CANONICAL_TWIN_ID,
+        sport_id=S_MLB,
+        home="St. Louis Cardinals",
+        away="Chicago Cubs",
+        commence_time=_TWIN_START,
+        status="live",
+        sources={"espn": {"value": 0.41}, "betting": {"value": 0.44}},
+        home_score=2,
+        away_score=1,
+    )
+    duplicate = _event(
+        id=_PROVEN_TWIN_ID,
+        sport_id=S_MLB,
+        home="St.Louis Cardinals",
+        away="Chicago Cubs",
+        commence_time=_TWIN_START + timedelta(minutes=1),
+        status="live",
+        sources={"espn": {"value": 0.39}},
+    )
+    if tag_the_duplicate:
+        duplicate.event_tags = [duplicate_tag(_CANONICAL_TWIN_ID)]
+    return [canonical, duplicate]
+
+
+@pytest.fixture()
+def tagged_twins(engine):
+    with Session(engine) as s:
+        _seed(s, _twin_corpus(tag_the_duplicate=True))
+        yield s
+
+
+@pytest.fixture()
+def untagged_twins(engine):
+    with Session(engine) as s:
+        _seed(s, _twin_corpus(tag_the_duplicate=False))
+        yield s
+
+
+def test_the_collapse_alone_cannot_catch_these_twins(untagged_twins):
+    """THE CONTROL. Without the tag both arms print both cards.
+
+    This is what makes the two tests below non-vacuous: it proves the partition
+    key genuinely cannot see this pair, so a green result under the tag is the
+    guard working and not the collapse doing it anyway.
+    """
+    both = {_CANONICAL_TWIN_ID, _PROVEN_TWIN_ID}
+    assert _admitted(untagged_twins) == both
+    assert _mystuff_admitted(untagged_twins) == both
+
+
+def test_my_stuff_drops_a_proven_duplicate(tagged_twins):
+    """THE ship for the surface the rescue left out."""
+    assert _mystuff_admitted(tagged_twins) == {_CANONICAL_TWIN_ID}
+
+
+def test_discover_drops_a_proven_duplicate(tagged_twins):
+    """The arm the branch already covered — unchanged by the move."""
+    assert _admitted(tagged_twins) == {_CANONICAL_TWIN_ID}
+
+
+def test_the_guard_is_in_the_shared_pass_so_a_third_caller_cannot_miss_it():
+    """Asserted on the source, because this is a placement claim.
+
+    Both arms passing is consistent with the predicate being pasted into each of
+    them, which is the arrangement that drifts. What must hold is that it is
+    applied ONCE, in `_collapsed_subquery`.
+    """
+    import ast
+    import inspect
+
+    from app.utils import feed_event_candidates as mod
+
+    tree = ast.parse(inspect.getsource(mod))
+    fns = {
+        n.name: ast.unparse(n)
+        for n in ast.walk(tree)
+        if isinstance(n, ast.FunctionDef)
+    }
+    assert "not_a_proven_duplicate()" in fns["_collapsed_subquery"]
+    assert "not_a_proven_duplicate()" not in fns["event_candidate_ids"]
+    assert "not_a_proven_duplicate()" not in fns["deduplicated_event_ids"]
