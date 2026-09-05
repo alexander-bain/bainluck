@@ -40,6 +40,7 @@ class _FakeRedis:
         self.strings: dict[str, str] = {}
         self.expires: list[int] = []
         self.setex_calls: list[tuple] = []
+        self.set_calls: list[tuple] = []
         self.raise_on = raise_on or set()
 
     def pipeline(self, transaction=False):
@@ -75,6 +76,19 @@ class _FakeRedis:
             raise RuntimeError("redis down")
         self.setex_calls.append((key, ttl, value))
         self.strings[key] = str(value)
+
+    def set(self, key, value, nx=False, ex=None):
+        if "set" in self.raise_on:
+            raise RuntimeError("redis down")
+        self.set_calls.append((key, value, nx, ex))
+        if nx and key in self.strings:
+            return None
+        self.strings[key] = str(value)
+        return True
+
+    def delete(self, *keys):
+        for k in keys:
+            self.strings.pop(k, None)
 
 
 def _futures(mid, name="card"):
@@ -297,12 +311,13 @@ class TestTheReaderReportsAStateAndNotJustAList:
         assert sig.unreadable_shapes == 2
 
     # --- and the two that are unhealthy but must not alarm --------------------
-    def test_no_marker_at_all_is_NEVER_SEEN_and_permits_green(self, monkeypatch):
-        """A first deploy must not alarm on its own bootstrap."""
+    def test_the_first_sighting_of_an_empty_store_is_NEVER_SEEN(self, monkeypatch):
+        """A first deploy must not alarm on its own bootstrap — ONCE."""
         rc = _FakeRedis()
         sig = self._signal(rc, monkeypatch)
         assert sig.state == fsm.SERVED_NEVER_SEEN
         assert sig.green_allowed
+        assert rc.strings[fsm.SERVED_SIGNAL_FIRST_MISSING_KEY] == str(int(_NOW))
 
     def test_a_recent_marker_is_WARMING_UP_and_permits_green(self, monkeypatch):
         """Inside the grace nothing has been demonstrated wrong yet.
@@ -354,6 +369,115 @@ class TestTheReaderReportsAStateAndNotJustAList:
             {"at": int(_NOW), "ids": [1, "2", None, True, -4, 0, 6]}
         )
         assert self._signal(rc, monkeypatch).ids == [1, 6]
+
+
+class TestTheBootstrapExemptionHasAClock:
+    """🔴 CERT-1974's finding. `never_seen` was an ABSORBING state.
+
+    The first repair exempted a cold start — nothing can have regressed in an arm
+    that has never run — and then gave the exemption no way to expire. On a
+    HEALTHY Redis holding no served hash and no last-healthy marker, every read
+    returned `never_seen`, permitted green, and deliberately wrote nothing. The
+    grader probed the blocked sha at 0h, 4h, 24h and 744h and got
+    `never_seen` / `is_green=True` every time.
+
+    That is not a cold start, it is a rail that never started — a broken pre-warm
+    hook, a beat its queue never reaches — and it would have kept the enforced
+    task green forever while a page-one-only card sat outside every refresh arm.
+    The exemption had swallowed the state it was written to survive.
+    """
+
+    def _signal(self, rc, monkeypatch, *, now):
+        monkeypatch.setattr(
+            "app.tasks.redis_state.get_redis_client", lambda **kw: rc
+        )
+        return fsm.served_signal(now=now)
+
+    def test_an_empty_healthy_store_stops_permitting_green_after_the_grace(
+        self, monkeypatch
+    ):
+        """THE REQUIRED REGRESSION: the same store, at t0 and t0 + grace + 1.
+
+        One `_FakeRedis` across both reads, deliberately — the defect is only
+        visible in a store that PERSISTS what the first read wrote. A fresh fake
+        per call would pass against the blocked code.
+        """
+        rc = _FakeRedis()
+
+        first = self._signal(rc, monkeypatch, now=_NOW)
+        assert first.state == fsm.SERVED_NEVER_SEEN
+        assert first.green_allowed
+
+        later = self._signal(
+            rc, monkeypatch, now=_NOW + fsm.SERVED_SIGNAL_GRACE_S + 1
+        )
+        assert later.state == fsm.SERVED_UNAVAILABLE
+        assert not later.green_allowed
+
+    def test_inside_the_grace_it_is_warming_up_and_still_green(self, monkeypatch):
+        rc = _FakeRedis()
+        self._signal(rc, monkeypatch, now=_NOW)
+        mid = self._signal(
+            rc, monkeypatch, now=_NOW + fsm.SERVED_SIGNAL_GRACE_S - 60
+        )
+        assert mid.state == fsm.SERVED_WARMING_UP
+        assert mid.green_allowed
+
+    def test_the_stamp_is_written_once_and_never_moved_forward(self, monkeypatch):
+        """A clock whose hands are put back on every read is not a clock.
+
+        This is the mutation that would restore the endless bootstrap while every
+        other test in this class still passed, so it is asserted on the stored
+        VALUE rather than on the state it produces.
+        """
+        rc = _FakeRedis()
+        for offset in (0, 60, 3_600, 100_000):
+            self._signal(rc, monkeypatch, now=_NOW + offset)
+        assert rc.strings[fsm.SERVED_SIGNAL_FIRST_MISSING_KEY] == str(int(_NOW))
+
+    def test_the_stamps_ttl_outlives_the_grace_by_orders_of_magnitude(self):
+        """If the key expired the clock would restart and the bootstrap would
+
+        come back one grace window at a time — the same endless green, merely
+        slower. Its TTL is refreshed on read; its value is not, which is the
+        distinction "non-renewing" actually forbids.
+        """
+        assert (
+            fsm.SERVED_SIGNAL_FIRST_MISSING_TTL_S > 1000 * fsm.SERVED_SIGNAL_GRACE_S
+        )
+
+    def test_a_healthy_observation_clears_the_bootstrap_clock(self, monkeypatch):
+        """Once the arm has worked, `last_ok` drives everything and a surviving
+
+        first-missing stamp is residue. One clock at a time.
+        """
+        rc = _FakeRedis()
+        monkeypatch.setattr(
+            "app.tasks.redis_state.get_redis_client", lambda **kw: rc
+        )
+        fsm.served_signal(now=_NOW)
+        assert fsm.SERVED_SIGNAL_FIRST_MISSING_KEY in rc.strings
+        fsm.note_served_signal_healthy(now=_NOW + 10)
+        assert fsm.SERVED_SIGNAL_FIRST_MISSING_KEY not in rc.strings
+
+    def test_a_failure_writing_the_clock_reads_unavailable(self, monkeypatch):
+        """Same conservative direction as every other branch: an arm we cannot
+
+        ask about is not an arm we may claim coverage from.
+        """
+        rc = _FakeRedis(raise_on={"set"})
+        assert (
+            self._signal(rc, monkeypatch, now=_NOW).state == fsm.SERVED_UNAVAILABLE
+        )
+
+    def test_a_last_ok_marker_takes_precedence_over_the_bootstrap_clock(
+        self, monkeypatch
+    ):
+        """The bootstrap branch must be unreachable once the arm has been healthy."""
+        rc = _FakeRedis()
+        rc.strings[fsm.SERVED_SIGNAL_LAST_OK_KEY] = str(int(_NOW - 60))
+        assert self._signal(rc, monkeypatch, now=_NOW).state == fsm.SERVED_WARMING_UP
+        assert fsm.SERVED_SIGNAL_FIRST_MISSING_KEY not in rc.strings
 
 
 class TestARetiredShapeCannotStayPriorityWorkForever:

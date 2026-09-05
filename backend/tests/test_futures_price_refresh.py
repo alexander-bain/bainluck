@@ -1266,6 +1266,71 @@ class TestAnUnavailablePageOneSignalCannotReadGreen:
         assert not classify_summary(stats).is_green
         assert "unavailable" in stats["reason"]
 
+    @pytest.mark.asyncio
+    async def test_a_rail_that_never_started_stops_reading_green(self, monkeypatch):
+        """🔴 CERT-1974's regression, end to end, in the shape the block required.
+
+        "Drive the real `served_signal()` against the same empty healthy store at
+        t0 and t0 + grace + 1, then feed the latter through
+        `_refresh_stale_futures_prices()` with successful class writes and prove
+        the verdict is not green."
+
+        `never_seen` used to be ABSORBING: a healthy Redis holding nothing kept
+        the enforced task green at 0h, 4h, 24h and 744h, so a pre-warm hook that
+        never fired would have looked exactly like a working one forever. The
+        signal below is produced by the REAL state machine against a store that
+        PERSISTS what the first read wrote — a fresh fake per call passes against
+        the blocked code and proves nothing.
+        """
+        from app.utils import feed_served_markets as fsm
+        from tests.test_feed_served_markets import _FakeRedis
+
+        rc = _FakeRedis()
+        monkeypatch.setattr(
+            "app.tasks.redis_state.get_redis_client", lambda **kw: rc
+        )
+        anchor = 1_788_600_000.0
+
+        first = fsm.served_signal(now=anchor)
+        assert first.state == fsm.SERVED_NEVER_SEEN, "control: the cold start"
+
+        aged = fsm.served_signal(now=anchor + fsm.SERVED_SIGNAL_GRACE_S + 1)
+        assert aged.state == fsm.SERVED_UNAVAILABLE
+
+        harness = _RunHarness(signal=aged, class_rows=_brazil_class_row())
+        stats = await harness.run(monkeypatch)
+
+        assert stats["snapshots_written"] >= 1, (
+            "the class arm must succeed, or this proves only that a failing run "
+            "fails"
+        )
+        assert stats["served_state"] == fsm.SERVED_UNAVAILABLE
+        assert stats["terminal"] == "partial"
+        assert not classify_summary(stats).is_green
+
+    @pytest.mark.asyncio
+    async def test_the_cold_start_control_still_runs_green(self, monkeypatch):
+        """The other side of the same store: at t0 the run is green.
+
+        Without this, the test above is satisfied by a repair that simply never
+        permits green during bootstrap — which would alarm on every first deploy
+        and be switched off within a week.
+        """
+        from app.utils import feed_served_markets as fsm
+        from tests.test_feed_served_markets import _FakeRedis
+
+        rc = _FakeRedis()
+        monkeypatch.setattr(
+            "app.tasks.redis_state.get_redis_client", lambda **kw: rc
+        )
+        signal = fsm.served_signal(now=1_788_600_000.0)
+        assert signal.state == fsm.SERVED_NEVER_SEEN
+
+        harness = _RunHarness(signal=signal, class_rows=_brazil_class_row())
+        stats = await harness.run(monkeypatch)
+        assert stats["terminal"] == "complete"
+        assert classify_summary(stats).is_green
+
     def test_the_terminal_guard_is_not_dead_code(self):
         """It has to fire on the summary shape the run actually returns.
 

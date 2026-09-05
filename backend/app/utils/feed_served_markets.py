@@ -170,6 +170,34 @@ SERVED_SIGNAL_LAST_OK_KEY = "bainluck:futures_price_refresh:served_signal_last_o
 #: bounded so a permanently-retired signal does eventually stop accusing.
 SERVED_SIGNAL_LAST_OK_TTL_S = 30 * 86_400
 
+#: 🔴 THE BOOTSTRAP CLOCK (CERT-1974). When this key was absent, ``never_seen``
+#: had no way out.
+#:
+#: The first repair gave a cold start an exemption — nothing can have regressed
+#: in an arm that has never run — and then gave it no clock. On a healthy Redis
+#: with no served hash and no last-healthy marker, every read returned
+#: ``never_seen``, permitted green, and deliberately wrote nothing, so the state
+#: was ABSORBING. Probed at the blocked sha, an empty healthy store stayed
+#: ``never_seen`` / ``is_green=True`` at 0h, 4h, 24h and **744h**. A warm rail
+#: that never starts — a broken pre-warm hook, a shape list that renders no
+#: futures, a queue the beat never reaches — would have kept the enforced task
+#: green forever while a page-one-only card sat outside every arm. The exemption
+#: had swallowed the very state it was written to survive.
+#:
+#: So the FIRST time a healthy store is seen to hold nothing, that observation is
+#: written down. The exemption then lasts exactly one grace window instead of
+#: forever.
+SERVED_SIGNAL_FIRST_MISSING_KEY = (
+    "bainluck:futures_price_refresh:served_signal_first_missing"
+)
+
+#: A year, and the length is doing work. The value is written ONCE and never
+#: rewritten (see :func:`_bootstrap_state`), so if the key expired the clock
+#: would restart and the endless bootstrap would return one grace window at a
+#: time. Its TTL is therefore refreshed on read while its VALUE is not — those
+#: are different things, and only the second is what "non-renewing" forbids.
+SERVED_SIGNAL_FIRST_MISSING_TTL_S = 365 * 86_400
+
 #: How long an unavailable signal is tolerated after the last healthy sighting
 #: before the sweep refuses a green verdict.
 #:
@@ -418,7 +446,10 @@ def _unavailable_or_never_seen(now: float) -> str:
         return SERVED_UNAVAILABLE
 
     if raw is None:
-        return SERVED_NEVER_SEEN
+        # Never healthy in living memory. That is a cold start OR a rail that has
+        # never started, and those two are indistinguishable at a single instant
+        # — so the answer is a CLOCK, not a verdict (CERT-1974).
+        return _bootstrap_state(rc, now)
     if isinstance(raw, (bytes, bytearray)):
         raw = raw.decode()
     try:
@@ -428,6 +459,55 @@ def _unavailable_or_never_seen(now: float) -> str:
         # arm has been healthy at least once. Fail toward not-green.
         return SERVED_UNAVAILABLE
     if now - last_ok > SERVED_SIGNAL_GRACE_S:
+        return SERVED_UNAVAILABLE
+    return SERVED_WARMING_UP
+
+
+def _bootstrap_state(rc, now: float) -> str:
+    """How long a healthy store has been holding nothing at all.
+
+    🔴 THE VALUE IS WRITTEN ONCE AND NEVER REWRITTEN, and that is the entire
+    mechanism. A timestamp refreshed on each read is a clock whose hands are put
+    back every time you look at it — which is what the absent key amounted to
+    before CERT-1974, and it kept an empty healthy store green at 744 hours.
+
+    ``SET ... NX`` does the once-only write in one round trip and reports which
+    happened, so the first observation can answer ``never_seen`` without a second
+    read. The TTL is refreshed on later reads: the key expiring would restart the
+    clock and hand back the endless bootstrap one grace window at a time, and
+    extending an expiry is not rewriting a value.
+
+    Fails toward ``unavailable`` on any Redis error, for the same reason every
+    other branch here does — an arm we cannot ask about is not an arm we may
+    claim coverage from.
+    """
+    try:
+        created = rc.set(
+            SERVED_SIGNAL_FIRST_MISSING_KEY,
+            str(int(now)),
+            nx=True,
+            ex=SERVED_SIGNAL_FIRST_MISSING_TTL_S,
+        )
+        if created:
+            # First sighting. Genuinely nothing has regressed yet.
+            return SERVED_NEVER_SEEN
+        raw = rc.get(SERVED_SIGNAL_FIRST_MISSING_KEY)
+        rc.expire(SERVED_SIGNAL_FIRST_MISSING_KEY, SERVED_SIGNAL_FIRST_MISSING_TTL_S)
+    except Exception:
+        logger.debug("served-signal bootstrap clock failed", exc_info=True)
+        return SERVED_UNAVAILABLE
+
+    if raw is None:
+        # It existed a moment ago and does not now. Something is racing or
+        # evicting; either way we cannot establish how long this has been dark.
+        return SERVED_UNAVAILABLE
+    if isinstance(raw, (bytes, bytearray)):
+        raw = raw.decode()
+    try:
+        first_missing = float(raw)
+    except (TypeError, ValueError):
+        return SERVED_UNAVAILABLE
+    if now - first_missing > SERVED_SIGNAL_GRACE_S:
         return SERVED_UNAVAILABLE
     return SERVED_WARMING_UP
 
@@ -449,5 +529,10 @@ def note_served_signal_healthy(now: float | None = None) -> None:
             SERVED_SIGNAL_LAST_OK_TTL_S,
             str(int(time.time() if now is None else now)),
         )
+        # The bootstrap clock is only meaningful while the arm has never been
+        # healthy. Once it has, `last_ok` drives every later decision and a
+        # surviving first-missing stamp is residue that could only confuse a
+        # reader. Cleared here so the state machine has exactly one clock.
+        rc.delete(SERVED_SIGNAL_FIRST_MISSING_KEY)
     except Exception:
         logger.debug("served-signal last-ok write failed", exc_info=True)
