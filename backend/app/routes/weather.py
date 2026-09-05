@@ -975,19 +975,7 @@ async def get_rain(db: AsyncSession):
     monthly_result = await db.execute(monthly_query)
     monthly_markets: list[FuturesMarket] = list(monthly_result.scalars().all())
 
-    # Dedup by city — keep the market with the latest resolution date per city.
-    # The period ("Aug 2026") is carried through: a city's surviving market is
-    # not necessarily the current month's, so the card cannot infer the month
-    # from the clock — it has to be told which month each row is actually about.
-    city_best: dict[str, tuple] = {}  # city -> (resolution_date, market, period)
-    for m in monthly_markets:
-        city_match = re.search(r"Rain in (.+?) in (\w+ \d{4})", m.name, re.I)
-        city_name = city_match.group(1).strip() if city_match else m.name
-        period = city_match.group(2).strip() if city_match else None
-        res_date = m.resolution_date
-        existing = city_best.get(city_name)
-        if not existing or (res_date and (not existing[0] or res_date > existing[0])):
-            city_best[city_name] = (res_date, m, period)
+    city_best = _monthly_city_best(monthly_markets)
 
     monthly_rain = []
     for city_name, (_, m, period) in city_best.items():
@@ -1017,6 +1005,57 @@ async def get_rain(db: AsyncSession):
         "daily": daily_rain,
         "monthly": monthly_rain,
     }
+
+
+#: "Rain in <city> in <Mon YYYY>?" — Kalshi's monthly city-rain title. The city
+#: capture is non-greedy so "Rain in Los Angeles in Sep 2026?" keeps the whole
+#: city name and stops at the month, not at the first " in ".
+_MONTHLY_CITY_RE = re.compile(r"Rain in (.+?) in (\w+ \d{4})", re.I)
+
+
+def _monthly_city_best(markets) -> dict:
+    """One monthly rain market per city: the NEAREST unresolved month.
+
+    Returns ``{city: (resolution_date, market, period)}``.
+
+    This kept the LATEST resolution date until ux/1082 (#3143). Kalshi opens
+    several months of a city's rain market at once — NYC currently carries Sep,
+    Oct, Nov and Dec 2026 — so "latest" meant a card titled "Monthly rainfall"
+    answered for DECEMBER while September was the month being rained in. The
+    month a reader cares about is the next one to settle, not the last.
+
+    #3143 was filed LATENT and is not latent any more, which is why it moves
+    here rather than waiting: it could only ever be seen once the markets
+    underneath carried prices, and #3250 — the ingest half shipped alongside
+    this — is exactly what makes them do that. Fixing the ingest without this
+    would have put December on the live card the same afternoon, so the two are
+    one change.
+
+    `_open_weather_query()` has already dropped every market whose
+    resolution_date is in the past, so every candidate here is unresolved and
+    "nearest" is simply the minimum. A row with no resolution_date cannot be
+    compared and wins only if its city has nothing else — the same rule the old
+    code applied at the other end of the ordering, kept when the ordering
+    flipped.
+
+    The period ("Sep 2026") is carried through rather than derived from the
+    clock: a city whose current month has already settled legitimately shows
+    its next one, and the card has to say which month it is answering for.
+
+    Extracted so its guard drives this expression instead of rebuilding it —
+    a test that reconstructs a production judgement is only accidentally
+    testing production (`stripped_market_series`, CERT-1893).
+    """
+    city_best: dict[str, tuple] = {}  # city -> (resolution_date, market, period)
+    for m in markets:
+        city_match = _MONTHLY_CITY_RE.search(m.name or "")
+        city_name = city_match.group(1).strip() if city_match else m.name
+        period = city_match.group(2).strip() if city_match else None
+        res_date = m.resolution_date
+        existing = city_best.get(city_name)
+        if not existing or (res_date and (not existing[0] or res_date < existing[0])):
+            city_best[city_name] = (res_date, m, period)
+    return city_best
 
 
 #: The date Kalshi puts at the end of a daily rain ticker: `KXRAIN-26SEP06`,

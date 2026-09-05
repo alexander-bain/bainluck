@@ -42,13 +42,23 @@ def _stale_rain_event():
 
     Every KXRAIN row we held was resolved. `startswith` cannot tell that from
     "we have today's rain".
+
+    A RAW payload, not a `KalshiEvent` (ux/1082). The fetch parses what
+    `get_events` hands back, and `_parse_event` reads it with `.get()` inside a
+    try/except that logs and returns None — so a ready-made `KalshiEvent`
+    fixture is silently DROPPED and never reaches `all_events`. Both
+    short-circuit tests below were built that way and were therefore vacuous:
+    with `KXRAIN` and `KXRAINWKND` deleted from `_ALWAYS_FETCH_SERIES`
+    altogether, all nine tests in this file still passed. They were asserting
+    that a series on the rescue list gets fetched — true, but not the claim —
+    while the seal they exist to defeat was never set.
     """
-    return KalshiEvent(
-        event_ticker="KXRAIN-26AUG20",
-        title="Where will it rain on Aug 20, 2026?",
-        category="Climate and Weather",
-        markets=[],
-    )
+    return {
+        "event_ticker": "KXRAIN-26AUG20",
+        "title": "Where will it rain on Aug 20, 2026?",
+        "category": "Climate and Weather",
+        "markets": [],
+    }
 
 
 async def _run_fetch(client, monkeypatch, main_scan_events=()):
@@ -70,8 +80,10 @@ async def _run_fetch(client, monkeypatch, main_scan_events=()):
     main_scan_events_consumed: list[int] = []
     monkeypatch.setattr(client, "get_events", fake_get_events)
     monkeypatch.setattr(asyncio, "sleep", _no_sleep)
-    await client._fetch_all_events_unfiltered(deadline=time.monotonic() + 1000)
-    return supplementary, nested_by_series
+    events = await client._fetch_all_events_unfiltered(
+        deadline=time.monotonic() + 1000
+    )
+    return supplementary, nested_by_series, events
 
 
 @pytest.mark.asyncio
@@ -79,7 +91,7 @@ class TestRainReachesTheGuaranteedRescue:
     async def test_daily_rain_is_fetched_when_we_hold_nothing(
         self, client, monkeypatch
     ):
-        supp, _ = await _run_fetch(client, monkeypatch)
+        supp, _, seeded = await _run_fetch(client, monkeypatch)
         assert "KXRAIN" in supp, (
             "the daily 'Where will it rain' series must be on the guaranteed "
             "rescue — the main scan's rotation reaches it a week after each "
@@ -97,8 +109,12 @@ class TestRainReachesTheGuaranteedRescue:
         event is enough to satisfy that for every one of today's 22 cities —
         and settled August events are precisely what our listing was full of.
         """
-        supp, _ = await _run_fetch(
+        supp, _, seeded = await _run_fetch(
             client, monkeypatch, main_scan_events=[_stale_rain_event()]
+        )
+        assert any(e.event_ticker == "KXRAIN-26AUG20" for e in seeded), (
+            "the stale event never reached `all_events`, so the short-circuit "
+            "this test exists to defeat was never set (ux/1082)"
         )
         assert "KXRAIN" in supp, (
             "a resolved KXRAIN-26AUG20 in the listing must not stand in for "
@@ -112,21 +128,24 @@ class TestRainReachesTheGuaranteedRescue:
         """`KXRAIN` is a PREFIX of `KXRAINWKND` and of the monthly KXRAIN*M
         series, so the short-circuit could be satisfied by a sibling series
         entirely — a stale weekend event suppressing the daily slate."""
-        weekend = KalshiEvent(
-            event_ticker="KXRAINWKND-26AUG22",
-            title="Where will it rain this weekend (Aug 22 - Aug 23)?",
-            category="Climate and Weather",
-            markets=[],
-        )
-        monthly = KalshiEvent(
-            event_ticker="KXRAINNYCM-26APR",
-            title="Rain in NYC in Apr 2026?",
-            category="Climate and Weather",
-            markets=[],
-        )
-        supp, _ = await _run_fetch(
+        weekend = {
+            "event_ticker": "KXRAINWKND-26AUG22",
+            "title": "Where will it rain this weekend (Aug 22 - Aug 23)?",
+            "category": "Climate and Weather",
+            "markets": [],
+        }
+        monthly = {
+            "event_ticker": "KXRAINNYCM-26APR",
+            "title": "Rain in NYC in Apr 2026?",
+            "category": "Climate and Weather",
+            "markets": [],
+        }
+        supp, _, seeded = await _run_fetch(
             client, monkeypatch, main_scan_events=[weekend, monthly]
         )
+        assert {"KXRAINWKND-26AUG22", "KXRAINNYCM-26APR"} <= {
+            e.event_ticker for e in seeded
+        }, "the sibling events never reached `all_events` — seal never set"
         assert "KXRAIN" in supp
         assert "KXRAINWKND" in supp
 
@@ -137,7 +156,7 @@ class TestRainReachesTheGuaranteedRescue:
         markets it arrives empty and waits on the backfill — which is the
         stripped-game-series path, and rain carries no `_HEAVY_TOKEN` precisely
         so it does not need it."""
-        _, nested = await _run_fetch(client, monkeypatch)
+        _, nested, _seeded = await _run_fetch(client, monkeypatch)
         assert nested.get("KXRAIN") is True
         assert nested.get("KXRAINWKND") is True
 
@@ -150,7 +169,7 @@ class TestRainReachesTheGuaranteedRescue:
         and a rain event is worth nothing the day after. Championship series
         are still there in two hours; tomorrow's rain is not.
         """
-        supp, _ = await _run_fetch(client, monkeypatch)
+        supp, _, seeded = await _run_fetch(client, monkeypatch)
         rain = [i for i, s in enumerate(supp) if s.upper().startswith("KXRAIN")]
         plain_sports = [
             i for i, s in enumerate(supp)
@@ -165,7 +184,7 @@ class TestRainReachesTheGuaranteedRescue:
         """Rain joins the priority group; it does not displace the series the
         group was created for. `sorted` is stable and sport is concatenated
         first, so golf still goes first — what rain jumps is the tail."""
-        supp, _ = await _run_fetch(client, monkeypatch)
+        supp, _, seeded = await _run_fetch(client, monkeypatch)
         golf = [
             i for i, s in enumerate(supp)
             if s.upper().startswith(("KXPGA", "KXLPGA", "KXLIV", "KXDPWORLD"))

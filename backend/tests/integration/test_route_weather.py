@@ -570,7 +570,26 @@ class TestMonthlyRainCarriesItsOwnPeriod:
         assert item["period"] == "Nov 2026"
 
     async def test_period_follows_the_market_the_dedup_actually_kept(self, client, mock_db):
-        """Two months for one city: the surviving row's period is the kept one."""
+        """Two months for one city: the surviving row's period is the kept one.
+
+        The EXPECTED MONTH here changed with #3143 (ux/1082) and the arm was
+        rewritten rather than deleted. The dedup used to keep the LATEST
+        resolving market per city, so this test asserted December; keeping the
+        farthest month meant that the moment prices arrived the card answered
+        for December while September was the month in play. The dedup now keeps
+        each city's NEAREST unresolved month, so the kept row — and therefore
+        the period — is September's.
+
+        What the arm is FOR is unchanged and is the reason it survives the
+        contract change: the period must travel with the row the dedup kept,
+        not be inferred at render time off the reader's clock (UX-P170).
+
+        So it no longer asserts a month string alone, which under the new rule
+        is also just "the nearest month" and would pass on a card that read the
+        period off one market and the price off another. It pins period and
+        probability TOGETHER: both must come from the September market (40%),
+        neither from December's (55%).
+        """
         now = datetime.now(timezone.utc)
         mock_db.execute.side_effect = [
             _query_result([]),
@@ -593,10 +612,12 @@ class TestMonthlyRainCarriesItsOwnPeriod:
         ]
 
         body = (await client.get("/api/weather/rain")).json()
-        # Dedup keeps the latest resolution date per city — so the period the
-        # reader is shown must be December's, not September's.
+        # Dedup keeps each city's nearest unresolved month (#3143) — so the row
+        # the reader is shown is September's, in both its fields.
         assert len(body["monthly"]) == 1
-        assert body["monthly"][0]["period"] == "Dec 2026"
+        kept = body["monthly"][0]
+        assert kept["period"] == "Sep 2026"
+        assert kept["prob"] == 40
 
     async def test_period_is_none_when_the_name_does_not_carry_one(self, client, mock_db):
         """The key is always present, so the client never reads `undefined`."""
