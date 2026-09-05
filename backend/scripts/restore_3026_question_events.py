@@ -1,34 +1,43 @@
-"""#2993 — the D51 undo for `repair_2993_bracket_events.py`.
+"""#3026 — the D51 undo for `repair_3026_question_events.py`.
 
 D51 = B(b) (Alex, 2026-09-03): a data repair that writes a backup first and
 ships a one-command restore may be applied UNATTENDED by the owning lane. This
 file is that one command.
 
     heroku run:detached -a bainluck \
-      "python3 scripts/restore_2993_bracket_events.py --apply"
+      "python3 scripts/restore_3026_question_events.py --apply"
 
 WHAT IT PUTS BACK, in the order the foreign keys require:
 
-  1. the deleted `events` rows, re-inserted from `bak_2993_bracket_events`
+  1. the deleted `events` rows, re-inserted from `bak_3026_question_events`
      WITH THEIR ORIGINAL ids — every child below points at those ids;
-  2. their `event_provider_anchors` and `line_movement_analyses` children,
-     which went with them (one CASCADE, one deleted explicitly);
-  3. the renamed row's two name columns;
-  4. `futures_markets.event_id` for all 32 unlinked markets, from
-     `bak_2993_market_links`.
+  2. their CASCADE children, banked by table name before the row went:
+     `event_provider_anchors`, `win_prob_snapshots`, `espn_snapshots`,
+     `game_moments` — so the win-probability series comes back too, not just
+     the row that carried it;
+  3. their `line_movement_analyses`, which the repair deleted explicitly;
+  4. `futures_markets.event_id` for all 104 unlinked markets, from
+     `bak_3026_market_links`.
 
 WHAT IT WILL NOT DO. Overwrite a row that has moved on since. A re-insert is
-skipped when an event with that id already exists, a rename is only undone when
-the CURRENT names are the ones the repair wrote, and a market is only re-linked
-when its `event_id` is still NULL. Anything else is reported as DIVERGED and
-left alone — an undo that stomps a later, unrelated decision is not an undo.
+skipped when an event with that id already exists, and a market is only
+re-linked when its `event_id` is still NULL; anything else is reported as
+DIVERGED and left alone. An undo that stomps a later, unrelated decision is not
+an undo.
+
+WHY THE DRY RUN UNDER-REPORTS `relinked`, and why that is correct rather than a
+bug. `restore_links` re-points a market only when the event it belongs to
+exists. In a dry run the events have not been re-inserted yet, so every market
+whose event is still deleted counts as `missing_event`. Under `--apply` the
+inserts land first in the same session and those markets re-link. #2993's undo
+behaves identically and was left alone for the same reason.
 
 Idempotent and re-runnable: every guard makes a second run a no-op, and a
 partial restore followed by a full one converges.
 
 `--apply` is required. Without it this prints exactly what it would put back.
 
-The `bak_2993_*` tables are NOT Alembic-managed. `alembic revision
+The `bak_3026_*` tables are NOT Alembic-managed. `alembic revision
 --autogenerate` will propose DROPping them — expected, and to be deleted from
 the generated migration rather than accepted. Drop them deliberately with
 `--drop-backups` once the repair is trusted and this undo is no longer wanted.
@@ -41,8 +50,45 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-BAK_EVENTS = "bak_2993_bracket_events"
-BAK_LINKS = "bak_2993_market_links"
+BAK_EVENTS = "bak_3026_question_events"
+BAK_LINKS = "bak_3026_market_links"
+
+# Only these tables may be re-inserted from the banked `cascade_rows` object.
+# The key comes out of a jsonb document, so it is checked against this tuple
+# before it is ever interpolated into SQL.
+RESTORABLE_CASCADE_TABLES = (
+    "event_provider_anchors",
+    "win_prob_snapshots",
+    "espn_snapshots",
+    "game_moments",
+)
+
+
+def _populate_insert(table, on_conflict_nothing):
+    """`INSERT ... jsonb_populate_record(...)` with the `:row` bind TYPED JSONB.
+
+    The type is the whole point. `text()` gives an unannotated bind `NullType`,
+    which has no bind processor, so the value reaches asyncpg untouched — and
+    the banked rows come back off `to_jsonb()` already DECODED into Python
+    dicts. SQLAlchemy's asyncpg jsonb codec expects its own serializer to have
+    produced a string and calls `.encode()`, so every insert here raised
+    `AttributeError: 'dict' object has no attribute 'encode'` and this undo
+    could not run at all. Typing the bind puts `JSON._make_bind_processor` back
+    in the path: dict in, `json.dumps` string out, codec satisfied.
+
+    Nothing about the failure is visible without a server. The statement
+    compiles, the script imports, the dry run — which never executes an insert —
+    reports a full and correct plan. Only `--apply` touches this line, and
+    `--apply` is the one run nobody gets to rehearse.
+    """
+    from sqlalchemy import bindparam, text
+    from sqlalchemy.dialects.postgresql import JSONB
+
+    tail = " ON CONFLICT DO NOTHING" if on_conflict_nothing else ""
+    return text(
+        f"INSERT INTO {table} "
+        f"SELECT (jsonb_populate_record(NULL::{table}, :row)).*{tail}"
+    ).bindparams(bindparam("row", type_=JSONB))
 
 
 def _session_factory():
@@ -61,109 +107,55 @@ async def _table_exists(session, name):
 
     return bool(
         (
-            await session.execute(
-                text("SELECT to_regclass(:name)"), {"name": name}
-            )
+            await session.execute(text("SELECT to_regclass(:name)"), {"name": name})
         ).scalar()
     )
 
 
-def _populate_insert(table, on_conflict_nothing):
-    """`INSERT ... jsonb_populate_record(...)` with the `:row` bind TYPED JSONB.
-
-    Same defect, same fix, same file-pair as #3026's undo — see the long note on
-    `_populate_insert` in `restore_3026_question_events.py`. In short: `text()`
-    leaves the bind `NullType`, the banked rows arrive from `to_jsonb()` as
-    decoded Python dicts, and SQLAlchemy's asyncpg jsonb codec calls `.encode()`
-    on them. Typing the bind restores the `json.dumps` step in between.
-
-    This one is not hypothetical debt: `bak_2993_bracket_events` is on
-    production right now, so until this line changed there was a repair standing
-    behind an undo that would have raised on its first insert.
-    """
-    from sqlalchemy import bindparam, text
-    from sqlalchemy.dialects.postgresql import JSONB
-
-    tail = " ON CONFLICT DO NOTHING" if on_conflict_nothing else ""
-    return text(
-        f"INSERT INTO {table} "
-        f"SELECT (jsonb_populate_record(NULL::{table}, :row)).*{tail}"
-    ).bindparams(bindparam("row", type_=JSONB))
-
-
 async def restore_events(session, apply):
-    """Re-insert deleted events and their children, by original id."""
+    """Re-insert deleted events and every child that went with them."""
     from sqlalchemy import text
 
     rows = (
         await session.execute(
             text(
-                f"SELECT event_id, action, event_row, lma_rows, anchor_rows, applied_names "
+                f"SELECT event_id, why, event_row, lma_rows, cascade_rows "
                 f"FROM {BAK_EVENTS} ORDER BY event_id"
             )
         )
     ).all()
 
-    report = {"reinserted": 0, "already_present": 0, "renamed_back": 0, "diverged": 0}
+    report = {"reinserted": 0, "already_present": 0, "children_reinserted": 0}
 
-    for event_id, action, event_row, lma_rows, anchor_rows, applied in rows:
-        current = (
+    for event_id, _why, event_row, lma_rows, cascade_rows in rows:
+        present = (
             await session.execute(
-                text(
-                    "SELECT home_team_name, away_team_name FROM events WHERE id = :eid"
-                ),
-                {"eid": event_id},
+                text("SELECT 1 FROM events WHERE id = :eid"), {"eid": event_id}
             )
-        ).first()
-
-        if action == "rename":
-            # Only undo a rename that is still exactly as the repair left it.
-            if current is None or not applied or list(current) != [
-                applied.get("home"), applied.get("away")
-            ]:
-                report["diverged"] += 1
-                print(
-                    f"  DIVERGED {event_id}: names are {current}, "
-                    f"repair left {applied} — not touching it"
-                )
-                continue
-            if apply:
-                await session.execute(
-                    text(
-                        "UPDATE events SET home_team_name = :h, away_team_name = :a "
-                        "WHERE id = :eid"
-                    ),
-                    {
-                        "eid": event_id,
-                        "h": event_row["home_team_name"],
-                        "a": event_row["away_team_name"],
-                    },
-                )
-            report["renamed_back"] += 1
-            continue
-
-        present = current is not None
-
+        ).scalar()
         if present:
             report["already_present"] += 1
             continue
 
+        report["reinserted"] += 1
+        children = list(("line_movement_analyses", child) for child in (lma_rows or []))
+        for table in RESTORABLE_CASCADE_TABLES:
+            for child in (cascade_rows or {}).get(table) or []:
+                children.append((table, child))
+        report["children_reinserted"] += len(children)
+
         if not apply:
-            report["reinserted"] += 1
             continue
 
         # jsonb_populate_record rebuilds the row from the banked snapshot, so
-        # this survives columns being added to `events` after the backup.
+        # this survives columns being added to the table after the backup.
         await session.execute(
             _populate_insert("events", on_conflict_nothing=False), {"row": event_row}
         )
-        for child_rows, table in ((anchor_rows, "event_provider_anchors"),
-                                  (lma_rows, "line_movement_analyses")):
-            for child in child_rows or []:
-                await session.execute(
-                    _populate_insert(table, on_conflict_nothing=True), {"row": child}
-                )
-        report["reinserted"] += 1
+        for table, child in children:
+            await session.execute(
+                _populate_insert(table, on_conflict_nothing=True), {"row": child}
+            )
 
     return report
 
@@ -244,7 +236,11 @@ async def run(args):
 
         print({"events": events_report, "markets": links_report})
         if not args.apply:
-            print("DRY RUN — nothing written. Re-run with --apply.")
+            print(
+                "DRY RUN — nothing written. Re-run with --apply. "
+                "`missing_event` counts markets whose event has not been "
+                "re-inserted yet; under --apply they re-link."
+            )
         return 0
 
 
