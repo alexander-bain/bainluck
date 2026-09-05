@@ -16,6 +16,28 @@ an endpoint that returns its own census, never an incantation):
     POST /api/admin/repairs/kalshi-fabricated-loss?apply=true&plan_hash=<hash>
     ...then drain with ?after_date=<..>&after_id=<..> from ``next_cursor``
 
+CAL-P1015 (#3257) — START THE DRAIN WHERE THE VENUE STILL ANSWERS. The sort is
+oldest-first within the retention floor, and CAL-P1014 measured what that head is
+made of: the venue answers NOTHING between 70 and 86 days and everything by 54.
+So an unbanded drain spends ~15 pages and ~600 venue lookups on 597 markets that
+are already purged before it reaches the 552-market at-risk tail behind them —
+and that tail is the only cohort with a deadline. ``?band=47-67`` (ages in days,
+youngest first) pages that tail first. It is a SELECTOR, not a floor: it excludes
+nothing, changes no verdict, and does not retune :mod:`app.utils.kalshi_retention`
+— see :func:`parse_band` for why a second floor was the wrong instrument, and why
+a banded page reports ``exhausted_scope`` and ``population_exhausted`` rather than
+letting one boolean say a slice was the whole thing.
+
+CAL-P1018 (CERT-1935) — THE BAND'S WINDOW BELONGS TO THE WALK, NOT TO THE PAGE.
+Two ages become two dates only once you say WHEN FROM, and that "when" was
+``NOW()``, re-read on every request. A drain is many requests: the window slid
+forward between them while the keyset cursor stayed put, so the rows sharing the
+cursor's own timestamp came to sit after the cursor AND older than the moved old
+edge — selectable by no page of that walk, and silently counted as the band being
+exhausted. Page one now mints a ``band_as_of`` and returns it INSIDE
+``next_cursor``; a banded resume that omits it is refused by name rather than
+re-anchored to today. See :func:`band_anchor`.
+
 CAL-P1008 — THE CAPTURE IS PART OF THE RUNBOOK, not housekeeping after it. The
 durable plan slot (:data:`PLAN_IDENTITY`) holds ONE plan and a drain over
 :data:`APPLY_MARKET_CAP` markets per call runs many, so batch N+1's dry-run
@@ -154,7 +176,7 @@ from __future__ import annotations
 import logging
 import re
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import text
@@ -355,6 +377,32 @@ def declared_curve_movement(
     skipped: **2,887 of 2,887 target markets — 100%, 18,688 legs — are already
     excluded.** A row that is not on the curve cannot be removed from it.
 
+    **CAL-P1015 replaces that census with a containment argument, because a
+    census of a moving population goes stale and this does not.** The two
+    predicates are the same aggregate on the same basis, and each says so:
+
+    * :data:`~app.utils.kalshi_fabricated_loss.POPULATION_HAVING_SQL` opens with
+      ``COUNT(*) >= 2 AND COUNT(*) FILTER (WHERE fo.is_winner) = 0``, and
+      ``_WORK_SQL`` applies it through a LATERAL over ALL outcomes of the market
+      with no leg filter;
+    * ``no_winner_markets`` is ``n_outcomes >= 2 AND win_count = 0`` over
+      ``market_result_shape``, whose comment states the counts are *"over ALL
+      outcomes of the market (never the eligibility-filtered subset)"*;
+    * every published row passes ``AND NOT ro.is_no_winner_market``.
+
+    So a target inside ``market_info`` is necessarily excluded, and a target
+    outside it has no legs on the curve at all. And retraction cannot move that
+    membership either way: it writes ``resolution_source`` and leaves
+    ``is_winner = false``, so ``win_count`` stays 0. The shrink is unreachable
+    rather than merely unobserved.
+
+    **The growth has a published ceiling too** (CAL-P1015, #2528). The restore
+    arm's addition is bounded by the curve's own ``no_winner_filter.excluded`` —
+    11,319 outcomes against a 741,487 population on 2026-09-05, i.e. **+1.53%
+    for a drain of the ENTIRE population**, against the publish gate's ±5%
+    ``POPULATION_TOLERANCE``. So neither arm can refuse a publish, and the
+    numbers to re-read are both already in ``GET /api/calibration``.
+
     **The movement, if any, is an ADDITION.** A ``restore_winner`` flips
     ``win_count`` 0 → 1, the market LEAVES ``no_winner_markets``, and its whole
     surviving leg set is ADMITTED. So the predicted sign is **positive n**, and
@@ -370,9 +418,12 @@ def declared_curve_movement(
             "legs_retracted": losses_retracted,
             "predicted_curve_delta": 0,
             "why": (
-                "the rail's population IS the curve's own no_winner_markets "
-                "exclusion — measured 2,887/2,887 markets (100%), 18,688 legs, "
-                "already excluded (CAL-P057, 15 shards, none skipped)"
+                "the rail's population is CONTAINED IN the curve's own "
+                "no_winner_markets exclusion — the same aggregate over the same "
+                "all-outcomes basis, and retraction leaves is_winner false so "
+                "membership cannot move (CAL-P1015). A row that is not on the "
+                "curve cannot be removed from it. CAL-P057 measured the same "
+                "thing as a census: 2,887/2,887 markets, 18,688 legs"
             ),
             "if_it_moves": (
                 "HALT. A non-zero delta on this arm means the population and "
@@ -388,6 +439,19 @@ def declared_curve_movement(
                 "ADMITTING its whole surviving leg set to the curve"
             ),
             "declare": "the count of admitted legs, never the retracted ones",
+            # CAL-P1015 (#2528): the operator's actual question at approval time
+            # is "can this stop the curve publishing", and the answer is a
+            # standing NO with a number behind it. Stated in the plan they
+            # approve rather than in a report, because the publish gate has
+            # refused ~30 builds (#2129-#2280) and "probably fine" is why the
+            # apply sat held.
+            "publish_gate_ceiling": (
+                "a drain of the ENTIRE population is bounded by the curve's own "
+                "no_winner_filter.excluded — 11,319 outcomes against a 741,487 "
+                "population on 2026-09-05, i.e. +1.53% against the gate's +/-5% "
+                "POPULATION_TOLERANCE. Re-read both numbers from "
+                "GET /api/calibration; neither needs a query."
+            ),
         },
         "measure_after": (
             "recompute, then compare the published curve's n and "
@@ -1037,6 +1101,36 @@ _WORK_SQL = f"""
         -- digits compiled to a parameter nobody supplies. Caught by the real
         -- Postgres gate on the first run of the fix for this very line.
         AND (CAST(:sport AS text) IS NULL OR fm.llm_sport_category = CAST(:sport AS text))
+        -- #3257 shape 3: band-first paging. Two ages in days, applied as bounds
+        -- on the SAME column the sort and the keyset already use, so the band
+        -- composes with the cursor instead of replacing it. Both halves cast for
+        -- the reason the floor above spells out.
+        --
+        -- The band's MAX is the OLDER edge, so it is a LOWER bound on the date;
+        -- the MIN is the younger edge and an UPPER bound. Getting that backwards
+        -- returns rows and looks like it worked, which is why the parser names
+        -- the two numbers as ages and refuses an inverted pair.
+        --
+        -- CAL-P1018 (CERT-1935): the two edges are AGES, and an age is only a
+        -- date once you say WHEN from. That "when" is a property of the WALK,
+        -- not of the page, so it is BOUND, not recomputed. Read `band_anchor`
+        -- for the row this repairs; the short version is that a band whose
+        -- origin moved between two requests strands every row that shares the
+        -- cursor's timestamp — they are after the keyset AND before the new old
+        -- edge, so no page ever selects them again. COALESCE, not a bare bind:
+        -- a band arriving with a NULL anchor must degrade to today's window,
+        -- because a NULL comparison excludes every row and an empty page reads
+        -- as "nothing to repair" (gotcha #53).
+        AND (
+              CAST(:band_max_age AS double precision) IS NULL
+           OR fm.resolution_date >= COALESCE(CAST(:band_as_of AS timestamptz), NOW())
+              - (CAST(:band_max_age AS double precision) * INTERVAL '1 day')
+            )
+        AND (
+              CAST(:band_min_age AS double precision) IS NULL
+           OR fm.resolution_date <= COALESCE(CAST(:band_as_of AS timestamptz), NOW())
+              - (CAST(:band_min_age AS double precision) * INTERVAL '1 day')
+            )
         AND (
               CAST(:after_date AS timestamptz) IS NULL
            OR (fm.resolution_date, fm.id)
@@ -1064,6 +1158,55 @@ _WORK_SQL = f"""
     ORDER BY s.resolution_date ASC, s.id ASC
     LIMIT :lim
 """
+
+
+#: The instant the band's two ages are measured FROM. Read from the database
+#: rather than from the app's clock so it is the SAME clock ``_WORK_SQL``'s own
+#: ``NOW()`` would have used: Postgres' ``NOW()`` is ``transaction_timestamp()``,
+#: so inside one request's transaction this statement and the work selection
+#: agree to the microsecond, and the anchor a page hands back is provably the
+#: instant its own predicate ran on.
+_BAND_ANCHOR_SQL = "SELECT NOW() AS band_as_of"
+
+
+async def band_anchor(session) -> datetime:
+    """Page one's ``as_of`` — the origin the whole banded walk is measured from.
+
+    **CAL-P1018 (CERT-1935): a band's bounds are a property of the RUN, not of
+    the page.** ``?band=47-67`` is two ages, and the query turned each age into a
+    date with ``NOW()`` — evaluated afresh on every request. A drain is many
+    requests, so the window slid forward between them while the keyset stayed
+    where it was, and the two moved independently.
+
+    That strands rows, and it strands exactly the ones a keyset cannot recover:
+
+    * page one selects the band and stops on the row ``(T, 1)``, where ``T`` is
+      the oldest ``resolution_date`` in the band and ids ``2, 3, …`` share it;
+    * the cursor is now ``(T, 1)``, so ids 2+ are correctly AFTER it;
+    * page two, an hour later, recomputes the old edge as ``NOW() - 67 days``,
+      which is now LATER than ``T``. Ids 2+ fail ``resolution_date >= old_edge``.
+
+    They are after the cursor and before the edge, so no page of that walk can
+    select them again — the walk reports the band exhausted having never asked
+    the venue about them, and they fall back behind the measured dead head where
+    the next unbanded drain will not reach them before the venue purges them.
+    The exact predicate counterexample: ``at_page_1=True``, ``after_cursor=True``,
+    ``at_page_2=False``. Oldest-first (``parse_band``) makes the departures rare;
+    it does not make them impossible, because the cursor STARTS at the old edge.
+
+    So the anchor is computed once, handed back inside ``next_cursor``, and
+    required on every resume — a resume that has to be given the anchor cannot
+    silently take a different one.
+
+    **The retention floor deliberately keeps its own ``NOW()``.**
+    ``PROVABLY_PURGED_AGE_DAYS`` is not paging: it is where the population ends
+    because the venue no longer holds the data. Rows it sheds as the clock
+    advances are rows that have genuinely crossed into the purged zone, and
+    admitting them again would be pinning the rail to a stale measurement rather
+    than pinning a page to its own window. Its drift is the safe direction
+    (behind the cursor); the band's was not.
+    """
+    return (await session.execute(text(_BAND_ANCHOR_SQL))).scalar_one()
 
 
 async def _legs(session, market_id: int) -> list[Any]:
@@ -1888,6 +2031,8 @@ async def repair(
     after_id: int | None = None,
     after_date: str | None = None,
     sport: str | None = None,
+    band: str | None = None,
+    band_as_of: str | None = None,
     plan_hash: str | None = None,
 ) -> dict[str, Any]:
     """Per-leg retraction/restoration against the venue's own declaration.
@@ -1924,9 +2069,54 @@ async def repair(
         }
 
     if apply:
+        if band_as_of is not None:
+            # CAL-P1018 (CERT-1935): the anchor is half of a ?band=, and the
+            # apply selects nothing, so it is refused for the same reason and
+            # BY ITS OWN NAME. Folding it into BAND_ON_APPLY would report a
+            # band the operator did not pass.
+            return {
+                "measured": False,
+                "refused": "BAND_ANCHOR_ON_APPLY",
+                "presented_band_as_of": band_as_of,
+                "reason": (
+                    "?band_as_of= pins the window a DRY RUN's ?band= selected "
+                    "in. An apply executes the reviewed plan by leg id and "
+                    "selects nothing, so an anchor here would narrow nothing "
+                    "while appearing to. The window the plan was built under is "
+                    "in its own context."
+                ),
+                "elapsed_s": round(time.monotonic() - started, 1),
+            }
+        if band is not None:
+            # #3257: the apply re-selects NOTHING — it writes the leg ids the
+            # plan named. A band accepted here would be a silent no-op that
+            # reads, in an operator's scrollback, exactly like the scope of the
+            # write. The band that actually chose these rows is recorded in the
+            # plan's own context; this is refused so the two can never disagree.
+            return {
+                "measured": False,
+                "refused": "BAND_ON_APPLY",
+                "presented_band": band,
+                "reason": (
+                    "?band= is a selector for the DRY RUN. An apply executes the "
+                    "reviewed plan by leg id and selects nothing, so a band here "
+                    "would narrow nothing while appearing to. The band the plan "
+                    "was built under is in its own context."
+                ),
+                "elapsed_s": round(time.monotonic() - started, 1),
+            }
         return await _apply_reviewed_plan(session, plan_hash, started)
 
-    return await _dry_run(session, limit, after_id, after_date, sport, started)
+    return await _dry_run(
+        session,
+        limit,
+        after_id,
+        after_date,
+        sport,
+        started,
+        band=band,
+        band_as_of=band_as_of,
+    )
 
 
 #: A UTC offset whose ``+`` a query string has already eaten. Anchored to the
@@ -1992,7 +2182,159 @@ def parse_cursor_date(after_date: str | None) -> datetime | None:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
-async def _dry_run(session, limit, after_id, after_date, sport, started):
+#: ``?band=`` as the operator writes it: two ages in DAYS, youngest edge first,
+#: e.g. ``47-67``. Anchored, integers only. A float would read fine and then
+#: disagree with the ages this rail PRINTS (``age_days`` is rounded to one
+#: place), so the boundary an operator can name is the boundary they can see.
+_BAND_FORM = re.compile(r"^(\d+)\s*-\s*(\d+)$")
+
+
+class BandRefused(ValueError):
+    """A ``?band=`` this rail will not run, carrying its own refusal name."""
+
+    def __init__(self, refused: str, reason: str) -> None:
+        super().__init__(reason)
+        self.refused = refused
+        self.reason = reason
+
+
+def parse_band(band: str | None) -> tuple[int, int] | None:
+    """``"47-67"`` -> ``(47, 67)`` in days of age, or ``None`` for no band.
+
+    #3257, shape 3. This is a PAGING selector and nothing else: it changes which
+    part of the existing sort an operator asks for first. It excludes no market
+    from the population, it changes no verdict, and it cannot make the rail write
+    on a row the venue did not answer for — the fail-open guarantee lives in
+    :func:`classify_market`, which this never reaches.
+
+    **Why paging and not a second floor.** CAL-P1014 measured the venue's yield
+    across the sort: zero from 70 to 86 days, everything by 54, the transition
+    between 66 and 70. So the walk's first ~15 pages (597 markets, measured
+    2026-09-05) are spent on markets the venue has already purged, before the
+    first repairable row. A floor at 74 was the filed suggestion and it is the
+    wrong instrument twice over — 74 is still inside the dead zone, and
+    :mod:`app.utils.kalshi_retention` is explicit that its constants record a
+    measurement over a stated population and are not quietly retuned when a new
+    observation arrives. A band leaves that record intact.
+
+    **The upper edge may not exceed the floor.** ``PROVABLY_PURGED_AGE_DAYS`` is
+    where the population itself stops; a band that reached past it would be
+    asking for rows the work SQL never selects, and returning an empty page for
+    that is a lie by omission. It is refused BY NAME instead.
+
+    **Drift is safe in one direction only, which is why the sort stays
+    oldest-first.** The band is relative to ``NOW()`` at call time, so between
+    two calls of one drain every market ages: rows fall out of the OLD edge and
+    new rows arrive at the YOUNG edge. Walking oldest-first means the departures
+    are all BEHIND the cursor and the arrivals are all ahead of it, so nothing is
+    ever stepped over. Reverse the sort and the same drift silently skips rows —
+    gotcha #41, third payout in this one ``ORDER BY``.
+
+    Raises :class:`BandRefused` for anything it will not run. Never returns
+    ``None`` for a value that was supplied: a band silently dropped would page
+    the dead head while reporting the band the operator asked for.
+    """
+    if band is None:
+        return None
+    m = _BAND_FORM.match(str(band).strip())
+    if not m:
+        raise BandRefused(
+            "BAND_UNPARSEABLE",
+            f"?band={band!r} is not two whole ages in days. Write it "
+            "youngest-first as MIN-MAX, e.g. ?band=47-67 for the at-risk tail.",
+        )
+    low, high = int(m.group(1)), int(m.group(2))
+    if low >= high:
+        raise BandRefused(
+            "BAND_INVERTED",
+            f"?band={band!r} has MIN >= MAX ({low} >= {high}). The two numbers "
+            "are AGES IN DAYS and the walk runs oldest-first inside them, so "
+            "the second must be the older edge.",
+        )
+    if high > PROVABLY_PURGED_AGE_DAYS:
+        raise BandRefused(
+            "BAND_ABOVE_RETENTION_FLOOR",
+            f"?band={band!r} asks past {PROVABLY_PURGED_AGE_DAYS} days, which is "
+            "where this rail's population ends (PROVABLY_PURGED_AGE_DAYS, "
+            "measured). Rows older than that are not selected at all, so a band "
+            "reaching over the floor would return an empty page and read as "
+            "'nothing to repair'. Narrow the band; the floor is a measurement "
+            "and ?band= does not retune it.",
+        )
+    return low, high
+
+
+def parse_band_as_of(
+    band_as_of: str | None,
+    *,
+    banded: bool,
+    resuming: bool,
+) -> datetime | None:
+    """The band anchor as the operator pastes it back, validated against the walk.
+
+    CAL-P1018 (CERT-1935). :func:`band_anchor` says WHY the anchor exists; this
+    says what the rail will and will not run with, and every answer is a named
+    refusal rather than a silent default, because each of the three mistakes
+    below produces a page that looks exactly like a correct one.
+
+    * **A banded RESUME with no anchor is refused.** This is the defect itself.
+      Accepting it would recompute the window from today, which is the moving
+      old edge that strands the cursor's own timestamp group. Required, not
+      defaulted: a resume the rail quietly re-anchors reports a band it did not
+      walk.
+    * **An anchor with no band is refused.** It selects nothing on its own, so
+      honouring it would be a no-op that reads, in a scrollback, like a pinned
+      window. Same shape as ``BAND_ON_APPLY``.
+    * **An unreadable anchor is refused**, never dropped to ``None`` — a dropped
+      anchor is the first case wearing the second's clothes.
+
+    Page one of a banded walk passes ``None`` and gets ``None``: there is nothing
+    to pin to yet, and :func:`band_anchor` mints it. An anchor supplied WITH a
+    band and no cursor is accepted — that is an operator re-running a walk from
+    its head against the window it originally measured, which is the pinning
+    this repair is for.
+
+    Parsing is :func:`parse_cursor_date`'s, deliberately: the anchor travels in
+    the same ``next_cursor`` object, through the same query string, and would
+    otherwise arrive with the same ``+``-eaten-to-a-space wound (CERT-1892).
+    """
+    if band_as_of is None:
+        if banded and resuming:
+            raise BandRefused(
+                "BAND_ANCHOR_MISSING",
+                "A banded resume must carry the `band_as_of` this rail handed "
+                "back in `next_cursor`, alongside after_date and after_id. The "
+                "band's two numbers are AGES, and re-measuring them from today "
+                "moves the window forward while the cursor stays put: every row "
+                "sharing the cursor's timestamp is then after the cursor AND "
+                "older than the new edge, so no page selects it again "
+                "(CERT-1935). Paste the whole next_cursor, not two thirds of it.",
+            )
+        return None
+    if not banded:
+        raise BandRefused(
+            "BAND_ANCHOR_WITHOUT_BAND",
+            f"?band_as_of={band_as_of!r} was given with no ?band=. The anchor is "
+            "the instant a band's ages are measured from and it selects nothing "
+            "by itself, so honouring it here would be a no-op that reads like a "
+            "pinned window. Pass the band it belongs to, or drop it.",
+        )
+    try:
+        return parse_cursor_date(band_as_of)
+    except (TypeError, ValueError) as e:
+        raise BandRefused(
+            "BAND_ANCHOR_UNPARSEABLE",
+            f"?band_as_of={band_as_of!r} is not the ISO timestamp this rail "
+            f"returned in `next_cursor` (for example {_CURSOR_EXAMPLE}). It is "
+            "REFUSED rather than ignored: an anchor dropped to None re-measures "
+            "the band from today and strands the cursor's timestamp group, "
+            "which is the exact defect the anchor exists to close.",
+        ) from e
+
+
+async def _dry_run(
+    session, limit, after_id, after_date, sport, started, band=None, band_as_of=None
+):
     """Select, ask the venue, judge, and emit the reviewed plan. No writes."""
     from app.services.kalshi_api import KalshiAPIService
 
@@ -2005,6 +2347,34 @@ async def _dry_run(session, limit, after_id, after_date, sport, started):
                 "after_date and after_id are ONE position and must be passed "
                 "together — half a keyset is a different walk, not a resume."
             ),
+            "elapsed_s": round(time.monotonic() - started, 1),
+        }
+
+    try:
+        parsed_band = parse_band(band)
+    except BandRefused as e:
+        return {
+            "measured": False,
+            "refused": e.refused,
+            "presented_band": band,
+            "reason": e.reason,
+            "elapsed_s": round(time.monotonic() - started, 1),
+        }
+    band_min_age, band_max_age = parsed_band if parsed_band else (None, None)
+
+    try:
+        anchor = parse_band_as_of(
+            band_as_of,
+            banded=parsed_band is not None,
+            resuming=after_id is not None,
+        )
+    except BandRefused as e:
+        return {
+            "measured": False,
+            "refused": e.refused,
+            "presented_band": band,
+            "presented_band_as_of": band_as_of,
+            "reason": e.reason,
             "elapsed_s": round(time.monotonic() - started, 1),
         }
 
@@ -2028,6 +2398,14 @@ async def _dry_run(session, limit, after_id, after_date, sport, started):
         await session.execute(
             text(f"SET LOCAL statement_timeout = {_SELECT_TIMEOUT_MS}")
         )
+        # CAL-P1018 (CERT-1935): page one of a banded walk MINTS the anchor, and
+        # every later page is handed the one it minted. Inside this request's
+        # transaction `NOW()` is `transaction_timestamp()`, so this read is the
+        # same instant the work selection below would have computed for itself —
+        # the anchor handed back is the window that actually ran, not a second
+        # measurement of the clock that happens to be close to it.
+        if parsed_band is not None and anchor is None:
+            anchor = await band_anchor(session)
         rows = (
             await session.execute(
                 text(_WORK_SQL),
@@ -2036,6 +2414,9 @@ async def _dry_run(session, limit, after_id, after_date, sport, started):
                     "sport": sport,
                     "after_date": cursor_date,
                     "after_id": after_id,
+                    "band_min_age": band_min_age,
+                    "band_max_age": band_max_age,
+                    "band_as_of": anchor,
                 },
             )
         ).all()
@@ -2184,13 +2565,27 @@ async def _dry_run(session, limit, after_id, after_date, sport, started):
         # answer to "does the position I advance to skip anything" is that there
         # is no such position.
         cursor = {"after_date": after_date, "after_id": int(after_id)}
+    # CAL-P1018 (CERT-1935): the anchor rides IN the cursor, because the cursor
+    # is the one object the rail's own instruction tells an operator to paste
+    # back whole. A resume is a position AND the window that position is a
+    # position within; handing back only the position is what let the window
+    # move underneath it. Absent with no band: there is no window to pin, and an
+    # anchor in that cursor would be refused on the way back in.
+    if cursor is not None and parsed_band is not None:
+        cursor = {**cursor, "band_as_of": url_safe_isoformat(anchor)}
     plan = build_plan(
         planned_legs,
         context={
             "rail": "kalshi-fabricated-loss",
             "sport": sport,
+            "band": band if parsed_band else None,
+            "band_as_of": url_safe_isoformat(anchor) if parsed_band else None,
             "window": window,
-            "resumed_from": {"after_date": after_date, "after_id": after_id},
+            "resumed_from": {
+                "after_date": after_date,
+                "after_id": after_id,
+                "band_as_of": band_as_of,
+            },
             "next_cursor": cursor,
             "examined": examined,
         },
@@ -2217,7 +2612,33 @@ async def _dry_run(session, limit, after_id, after_date, sport, started):
             "limit": window,
             "returned": len(rows),
             "sport": sport,
-            "resumed_from": {"after_date": after_date, "after_id": after_id},
+            # #3257: echoed PARSED, not as presented. An operator reading their
+            # own string back learns nothing about whether it took effect.
+            "band": (
+                {
+                    "min_age_days": band_min_age,
+                    "max_age_days": band_max_age,
+                    "walks": "oldest-first inside the band, from the max edge",
+                    # CAL-P1018 (CERT-1935): the two AGES resolved to the two
+                    # DATES this page actually selected between. An age is not a
+                    # window until it is anchored, and the anchor is the thing
+                    # every later page of this walk must be handed back.
+                    "as_of": url_safe_isoformat(anchor),
+                    "older_edge": url_safe_isoformat(
+                        anchor - timedelta(days=band_max_age)
+                    ),
+                    "younger_edge": url_safe_isoformat(
+                        anchor - timedelta(days=band_min_age)
+                    ),
+                }
+                if parsed_band
+                else None
+            ),
+            "resumed_from": {
+                "after_date": after_date,
+                "after_id": after_id,
+                "band_as_of": band_as_of,
+            },
         },
         "examined": examined,
         "market_verdicts": market_verdicts,
@@ -2274,6 +2695,31 @@ async def _dry_run(session, limit, after_id, after_date, sport, started):
         # rows it never asked about, which is gotcha #53's shape exactly ("it
         # returned" is not "it worked").
         "exhausted": (not timed_out) and (not rate_limited) and len(rows) < window,
+        # #3257: `exhausted` answers "did THIS selection run out", and with a
+        # band in force that selection is a slice. A drain reading one boolean
+        # would call the whole population finished having asked for 20 days of
+        # it — the same "it returned is not it worked" shape as the rate-limit
+        # clause above (gotcha #53), one level up. So the scope is stated and the
+        # population's own answer is a SEPARATE key that a band can only make
+        # false, never true.
+        "exhausted_scope": "band" if parsed_band else "population",
+        "population_exhausted": (
+            False
+            if parsed_band
+            else ((not timed_out) and (not rate_limited) and len(rows) < window)
+        ),
+        "band_note": (
+            f"?band={band_min_age}-{band_max_age} selected a slice of the sort; "
+            "it EXCLUDED nothing from the population and changed no verdict. "
+            "`exhausted` above is about this band only. Markets outside it are "
+            "untouched and still need their own pass — re-run with no ?band= "
+            "(or a different one) to reach them. Resume this band with the WHOLE "
+            "`next_cursor`: `band_as_of` is the instant its two ages were "
+            "measured from, and a resume without it is refused rather than "
+            "silently re-anchored to today (CERT-1935)."
+            if parsed_band
+            else None
+        ),
         "stopped_on_time_budget": timed_out,
         "stopped_on_venue_rate_limit": rate_limited,
         "rate_limit_note": (

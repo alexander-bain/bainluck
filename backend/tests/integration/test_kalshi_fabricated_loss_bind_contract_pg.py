@@ -39,6 +39,7 @@ the gate did not silently skip.
 """
 
 import os
+import time
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -144,7 +145,17 @@ async def _seed_one_fabricated_loss_market(
 async def _work(session, **params):
     from sqlalchemy import text
 
-    args = {"lim": 10, "sport": None, "after_date": None, "after_id": None}
+    args = {
+        "lim": 10,
+        "sport": None,
+        "after_date": None,
+        "after_id": None,
+        "band_min_age": None,
+        "band_max_age": None,
+        # CAL-P1018: absent means "measure the ages from NOW()", which is the
+        # pre-repair behaviour every test above was written against.
+        "band_as_of": None,
+    }
     args.update(params)
     return (await session.execute(text(rail._WORK_SQL), args)).all()
 
@@ -425,7 +436,8 @@ async def _seed_market(
     session,
     *,
     ext,
-    days_ago,
+    days_ago=None,
+    resolved_at=None,
     legs=("YES", "NO"),
     winner_leg=None,
     source=REPAIRABLE_SOURCE,
@@ -437,10 +449,21 @@ async def _seed_market(
     ``legs`` sizes the market (a ONE-leg market is the ``COUNT(*) >= 2`` edge),
     ``winner_leg`` gives it a winner (the ``FILTER (WHERE is_winner) = 0`` edge)
     and ``source`` sets the grading provenance (the ``api_settlement`` edge).
+
+    ``resolved_at`` places the row at an EXACT instant instead of an age.
+    CAL-P1018 needs several markets sharing one ``resolution_date`` to the
+    microsecond — the cursor's own timestamp group is where the band's moving
+    edge stranded rows — and an age in whole days cannot express that.
     """
     from sqlalchemy import text
 
-    resolved = datetime.now(timezone.utc) - timedelta(days=days_ago)
+    if (days_ago is None) == (resolved_at is None):
+        raise ValueError("seed a market by AGE or by INSTANT, not both or neither")
+    resolved = (
+        resolved_at
+        if resolved_at is not None
+        else datetime.now(timezone.utc) - timedelta(days=days_ago)
+    )
     market_id = (
         await session.execute(
             text("""
@@ -662,6 +685,311 @@ async def test_the_near_misses_stay_out_of_the_lateral_form(pg_session):
         ("KXWORK-PURGED", "past the purge bound the venue cannot answer"),
     ):
         assert excluded not in selected, why
+
+
+async def _band_population(session):
+    """Five members spread across the sort, one per decade of age.
+
+    Ages descend against the insertion order for the same reason
+    ``_mixed_population`` does: a band that reads the wrong edge still returns
+    rows, and a fixture whose id order agrees with its date order cannot tell a
+    correct band from a lucky one.
+    """
+    ids = {}
+    for age in (80, 65, 55, 40, 20):
+        ids[age] = await _seed_market(session, ext=f"KXBAND-{age}", days_ago=age)
+    return ids
+
+
+async def test_the_band_selects_the_ages_it_names_and_no_others(pg_session):
+    """``?band=47-67`` means ages 47..67 INCLUSIVE, and nothing outside it.
+
+    #3257 shape 3. The whole point of the band is that an operator can name the
+    stretch of the sort the venue still answers for, so the mapping from the two
+    numbers to the two date bounds is the contract — and it is the one thing a
+    fixture-only test cannot hold, because ``NOW() - :n * INTERVAL '1 day'`` is
+    evaluated by Postgres.
+    """
+    ids = await _band_population(pg_session)
+
+    selected = {
+        r.market_id
+        for r in await _work(pg_session, lim=50, band_min_age=47, band_max_age=67)
+    }
+
+    assert selected == {ids[65], ids[55]}, (
+        "the band must admit exactly the seeded ages inside 47..67 — got "
+        f"{selected}, expected the 65d and 55d markets"
+    )
+    assert ids[80] not in selected, "80d is older than the band's max edge"
+    assert ids[40] not in selected, "40d is younger than the band's min edge"
+    assert ids[20] not in selected, "20d is younger than the band's min edge"
+
+
+async def test_the_max_is_the_OLDER_edge_not_the_younger_one(pg_session):
+    """The direction, held on its own, because reversing it still returns rows.
+
+    ``band_max_age`` is a LOWER bound on ``resolution_date`` and ``band_min_age``
+    is an UPPER one. Swap the two binds in ``_WORK_SQL`` and this fixture still
+    yields a non-empty, plausible page — every row in it is a genuine population
+    member — so nothing but an assertion about WHICH rows can catch it. Under the
+    swap the band below selects the 20d and 40d markets instead of the 80d one.
+    """
+    ids = await _band_population(pg_session)
+
+    selected = {
+        r.market_id
+        for r in await _work(pg_session, lim=50, band_min_age=70, band_max_age=86)
+    }
+
+    assert selected == {ids[80]}, (
+        "band=70-86 is the OLD end of the sort (the measured dead head); it must "
+        f"select the 80-day market alone — got {selected}"
+    )
+
+
+async def test_a_band_keeps_the_oldest_first_sort_inside_itself(pg_session):
+    """Band-first paging is worthless if the band is not itself drained in order.
+
+    The at-risk cohort is drained oldest-first so the rows nearest the purge
+    cliff go first; and the keyset resumes at a POSITION in this order, so a band
+    that reordered its own page would hand back a cursor that skips.
+    """
+    await _band_population(pg_session)
+
+    rows = await _work(pg_session, lim=50, band_min_age=30, band_max_age=86)
+
+    dates = [r.resolution_date for r in rows]
+    assert dates == sorted(dates), "oldest first inside the band too"
+    assert len(rows) == 4, "30..86 covers every seeded age but the 20-day one"
+
+
+async def test_no_band_is_the_whole_population_unchanged(pg_session):
+    """The default path must be byte-identical to the pre-band behaviour.
+
+    Both binds NULL is the no-band case, and it is the one every existing caller
+    takes. A band predicate that failed open to "select nothing" would empty the
+    drain while every band test still passed.
+    """
+    ids = await _band_population(pg_session)
+
+    selected = {r.market_id for r in await _work(pg_session, lim=50)}
+
+    assert set(ids.values()) <= selected, (
+        "with no band the walk must still see every member of the population"
+    )
+
+
+async def test_a_band_narrower_than_the_population_still_pages_by_keyset(pg_session):
+    """The band COMPOSES with the cursor; it does not replace it.
+
+    Shape 3 was chosen over a floor partly because it stacks on the existing
+    keyset. If the cursor were ignored inside a band, a drain would re-read the
+    band's first page forever and report progress each time.
+    """
+    ids = await _band_population(pg_session)
+
+    first = await _work(pg_session, lim=1, band_min_age=30, band_max_age=86)
+    assert [r.market_id for r in first] == [ids[80]]
+
+    resumed = await _work(
+        pg_session,
+        lim=50,
+        band_min_age=30,
+        band_max_age=86,
+        after_date=first[0].resolution_date,
+        after_id=first[0].market_id,
+    )
+
+    assert [r.market_id for r in resumed] == [ids[65], ids[55], ids[40]], (
+        "the resume must continue inside the band, not restart it"
+    )
+
+
+async def _one_timestamp_cohort(session, *, as_of, band_max_age=67, count=3):
+    """``count`` markets sharing ONE ``resolution_date``, just inside the old edge.
+
+    Half an hour inside it, deliberately: at ``as_of`` every one of them is in
+    the band, and an hour later not one of them is. That half hour is the whole
+    defect — the drain's pages are minutes to hours apart.
+    """
+    at = as_of - timedelta(days=band_max_age) + timedelta(minutes=30)
+    ids = [
+        await _seed_market(session, ext=f"KXPIN-{n}", resolved_at=at)
+        for n in range(count)
+    ]
+    return at, sorted(ids)
+
+
+async def test_band_resume_pins_the_page_one_as_of(pg_session):
+    """CERT-1935, at the rows. The band's window belongs to the WALK.
+
+    THE DEFECT. ``?band=47-67`` is two AGES, and the query turned each into a
+    date with ``NOW()`` — re-evaluated on every request. The keyset does not do
+    that: it is an absolute ``(resolution_date, id)``. So across the many
+    requests of one drain the window slid forward while the cursor stood still,
+    and the rows sharing the cursor's own timestamp came to sit AFTER the cursor
+    and OLDER than the moved edge. No page of that walk can select them again;
+    the walk reports the band exhausted having never asked the venue about them,
+    and they fall back behind the measured dead head to be purged.
+
+    The existing band cases could not see it: they resume inside one test
+    transaction, where ``NOW()`` is ``transaction_timestamp()`` and cannot move.
+    This one advances the request clock explicitly — the anchor is a BIND now, so
+    "an hour later" is a value, not a wait — and runs the two arms side by side
+    with nothing between them but which origin the band is measured from.
+    """
+    from datetime import timedelta as _td
+
+    as_of = await rail.band_anchor(pg_session)
+    at, cohort = await _one_timestamp_cohort(pg_session, as_of=as_of)
+    # A second, younger member so the band is a band and not just the cohort,
+    # and so a resume that selected nothing could not be called "the end".
+    younger = await _seed_market(
+        pg_session, resolved_at=as_of - _td(days=55), ext="KXPIN-YOUNGER"
+    )
+
+    # Page one: one row, so the cursor lands INSIDE the shared timestamp.
+    page_one = await _work(
+        pg_session, lim=1, band_min_age=47, band_max_age=67, band_as_of=as_of
+    )
+    assert [r.market_id for r in page_one] == [cohort[0]], (
+        "oldest-first must start on the oldest timestamp's lowest id"
+    )
+
+    stranded = cohort[1:]
+    an_hour_later = as_of + _td(hours=1)
+
+    # THE COUNTEREXAMPLE, at the rows: same cursor, clock moved, window not
+    # pinned. `at_page_1=True`, `after_cursor=True`, `at_page_2=False`.
+    unpinned = {
+        r.market_id
+        for r in await _work(
+            pg_session,
+            lim=50,
+            band_min_age=47,
+            band_max_age=67,
+            band_as_of=an_hour_later,
+            after_date=at,
+            after_id=cohort[0],
+        )
+    }
+    assert not (set(stranded) & unpinned), (
+        "the pre-repair shape: re-measuring the band from a later clock must be "
+        f"what strands {stranded} — if they are selected here this test no "
+        "longer reproduces CERT-1935 and its fix is unproven"
+    )
+    assert younger in unpinned, (
+        "the control: the younger member is unaffected by the moved OLD edge, so "
+        "an empty page above would have proved nothing"
+    )
+
+    # THE REPAIR: identical call, page one's anchor.
+    pinned = {
+        r.market_id
+        for r in await _work(
+            pg_session,
+            lim=50,
+            band_min_age=47,
+            band_max_age=67,
+            band_as_of=as_of,
+            after_date=at,
+            after_id=cohort[0],
+        )
+    }
+    assert set(stranded) <= pinned, (
+        f"every remaining row of the cursor's own timestamp group ({stranded}) "
+        f"must still be selectable an hour into the walk — got {sorted(pinned)}"
+    )
+    assert younger in pinned
+
+
+async def test_the_rail_carries_its_own_anchor_round_the_resume(pg_session):
+    """The bind above is only a fix if the RAIL is the thing that binds it.
+
+    So this drives the shipping `_dry_run` twice against real rows: page one
+    mints the anchor and hands it back inside `next_cursor`, the resume is given
+    that cursor whole, and the stranded cohort is selected — before
+    `exhausted_scope: band` is allowed to be the walk's last word. A resume that
+    drops the anchor is refused here rather than re-anchored, which is what makes
+    the pin something an operator cannot skip.
+    """
+    from datetime import timedelta as _td
+
+    import app.services.kalshi_api as kalshi_api
+
+    class _Silent:
+        async def get_markets(self, *, event_ticker=None, **_):
+            return [], None
+
+        async def close(self):
+            pass
+
+    async def _no_bank(plan):
+        return True, "test: not banked"
+
+    original_service = kalshi_api.KalshiAPIService
+    original_save = rail._save_plan
+    kalshi_api.KalshiAPIService = _Silent
+    rail._save_plan = _no_bank
+    try:
+        as_of = await rail.band_anchor(pg_session)
+        _, cohort = await _one_timestamp_cohort(pg_session, as_of=as_of)
+        younger = await _seed_market(
+            pg_session, resolved_at=as_of - _td(days=55), ext="KXPIN2-YOUNGER"
+        )
+
+        page_one = await rail._dry_run(
+            pg_session, 1, None, None, None, time.monotonic(), band="47-67"
+        )
+        cursor = page_one["next_cursor"]
+        assert set(cursor) == {"after_date", "after_id", "band_as_of"}, (
+            "the anchor must ride INSIDE the cursor — the one object the rail "
+            f"tells an operator to paste back. Got {cursor}"
+        )
+        assert cursor["after_id"] == cohort[0]
+        assert page_one["exhausted_scope"] == "band"
+        assert page_one["population_exhausted"] is False
+
+        # The path the operator cannot take by accident.
+        refused = await rail._dry_run(
+            pg_session,
+            50,
+            cursor["after_id"],
+            cursor["after_date"],
+            None,
+            time.monotonic(),
+            band="47-67",
+        )
+        assert refused["refused"] == "BAND_ANCHOR_MISSING"
+
+        resumed = await rail._dry_run(
+            pg_session,
+            50,
+            cursor["after_id"],
+            cursor["after_date"],
+            None,
+            time.monotonic(),
+            band="47-67",
+            band_as_of=cursor["band_as_of"],
+        )
+        assert resumed["window"]["band"]["as_of"] == cursor["band_as_of"], (
+            "the resume must walk the window page one measured, not a new one"
+        )
+        # The venue is silent, so every market this page reached is reported by
+        # id under a named exclusion (ruling 054) — which is how the rail says
+        # WHICH rows it examined.
+        reached = {s["market_id"] for s in resumed["excluded_examples"]}
+        assert set(cohort[1:]) <= reached, (
+            "the rest of the cursor's timestamp group must be reached on the "
+            f"resume — got {sorted(reached)}, wanted {cohort[1:]}"
+        )
+        assert younger in reached
+        assert resumed["exhausted_scope"] == "band"
+        assert resumed["population_exhausted"] is False
+    finally:
+        kalshi_api.KalshiAPIService = original_service
+        rail._save_plan = original_save
 
 
 async def test_the_per_market_leg_read_executes(pg_session):
