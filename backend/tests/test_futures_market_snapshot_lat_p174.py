@@ -606,19 +606,19 @@ def test_the_validator_accepts_the_payload_the_encoder_actually_produces():
         ("market row too short", [[[1, 2, 3], [], None]]),
         (
             "market row too long",
-            [[[None] * (len(fms.MARKET_COLUMNS) + 1), [], None]],
+            [[[None] * (len(fms.MARKET_ROW_COLUMNS) + 1), [], None]],
         ),
         (
             "outcome row wrong width",
-            [[[None] * len(fms.MARKET_COLUMNS), [[1, 2]], None]],
+            [[[None] * len(fms.MARKET_ROW_COLUMNS), [[1, 2]], None]],
         ),
         (
             "outcomes is not a sequence",
-            [[[None] * len(fms.MARKET_COLUMNS), "nope", None]],
+            [[[None] * len(fms.MARKET_ROW_COLUMNS), "nope", None]],
         ),
         (
             "sport row wrong width",
-            [[[None] * len(fms.MARKET_COLUMNS), [], ["key", "name", "extra"]]],
+            [[[None] * len(fms.MARKET_ROW_COLUMNS), [], ["key", "name", "extra"]]],
         ),
     ],
 )

@@ -7774,6 +7774,13 @@ async def _score_futures(
                 .options(*base_options)
                 .where(FuturesMarket.id.in_(market_ids))
             )
+            # `to_plain` folds `price_polled_at` (CERT-949) out of the outcome
+            # rows this SELECT just loaded, while they are still hydrated and at
+            # no extra query. The obvious alternative — a second
+            # `SELECT market_id, MAX(last_updated) … GROUP BY market_id` over the
+            # same ids — was written and measured on production at 423 ms warm,
+            # ~72% of this whole stage, and thrown away
+            # (`OUTCOME_LOAD_ONLY_EXTRA` carries the numbers).
             return _futures_snapshot.to_plain(result.scalars().unique().all())
 
         _snapshot_payload = await _pic.get_or_build(
@@ -8385,17 +8392,18 @@ async def _score_futures(
                     # Already loaded — `outcome_team_ids` above walks the same
                     # list, so the field and freshness tests cost no read.
                     outcome_count=len(market.outcomes or []),
-                    # The MARKET row's age, not a per-outcome one. The obvious
-                    # read is `max(o.last_updated)`, and it costs a column on
-                    # every outcome in the shared Redis artifact — measured at
-                    # +15% on a 2.9 MB budget for one timestamp repeated across
-                    # up to 193 outcomes. `updated_at` is already loaded, is one
-                    # value per market, and measured within 0.4h of the outcome
-                    # timestamps on every row of the in-window population. Full
-                    # reasoning and its caveat: the note under `OUTCOME_COLUMNS`
-                    # in `futures_market_snapshot.py`. `_utc` for the same
-                    # naive/aware reason as `resolution_date`.
-                    priced_at=_utc(market.updated_at),
+                    # WHEN THE PRICES WERE POLLED — `MAX(outcome.last_updated)`,
+                    # folded per market by `to_plain` and carried on the row as
+                    # `price_polled_at` (`DERIVED_MARKET_COLUMNS`).
+                    # NOT `market.updated_at`: that column is `onupdate` on ANY
+                    # write and the six-hourly hook enricher bumps it without
+                    # touching a price, which is CERT-949 and is why this reads
+                    # a derived value instead of a free one.
+                    # `__dict__.get` because a market rehydrated from a snapshot
+                    # written by an older build has no such key and must read as
+                    # UNKNOWN (⇒ not admitted), never as fresh. `_utc` for the
+                    # same naive/aware reason as `resolution_date`.
+                    priced_at=_utc(market.__dict__.get("price_polled_at")),
                 )
                 if not _followed_sport_market:
                     # Skip Tier 3 sports — same filter as events to avoid false

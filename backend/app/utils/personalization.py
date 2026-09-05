@@ -645,7 +645,7 @@ _MY_STUFF_AWARD_TIER = 3
 #: as a card with nothing on it.
 _MY_STUFF_MIN_FIELD_OUTCOMES = 3
 
-#: How old a price may be and still be "what is on this week".
+#: How old a PRICE POLL may be and still be "what is on this week".
 #:
 #: MEASURED, not chosen. On production 2026-09-04 the markets this section admits
 #: split into two populations with nothing between them: the live ones were
@@ -656,6 +656,16 @@ _MY_STUFF_MIN_FIELD_OUTCOMES = 3
 #:
 #: 48h sits in that gap with room on both sides: a source that refreshes at least
 #: every two days qualifies, and the 10-day-old US Open bracket does not.
+#:
+#: 🔴 WHAT THE AGE IS MEASURED **OF** IS PART OF THE CONSTANT (CERT-949). The
+#: caller must pass the newest PRICE-POLL stamp — `MAX(FuturesOutcome.
+#: last_updated)`, carried to the feed as `price_polled_at`. It first passed
+#: `FuturesMarket.updated_at`, which is `onupdate` on any write, and the
+#: six-hourly hook enricher bumps it while touching no price. The two columns
+#: agreeing to within 0.4h across that day's in-window population did NOT license
+#: the swap, and that is the lesson worth keeping: the enricher only rewrites
+#: markets whose hooks have gone stale, so a population sampled at one moment
+#: cannot show you the rows it is about to make look fresh.
 MY_STUFF_MAX_PRICE_AGE_HOURS = 48
 
 
@@ -730,8 +740,15 @@ def my_stuff_admits_followed_sport(
     Nearly half the section would have been numbers that are no longer true, on a
     page headed "what is on this week", which is a worse page than the one this
     queue set out to fix and is the reliability bar rather than a nicety. So
-    `priced_at` — the newest outcome price on the market — must be inside
-    `max_price_age_hours`, and an unpriced market is not admitted.
+    `priced_at` — the newest outcome PRICE POLL on the market,
+    `MAX(FuturesOutcome.last_updated)` — must be inside `max_price_age_hours`,
+    and an unpriced market is not admitted.
+
+    `priced_at` IS NOT `FuturesMarket.updated_at`, and the difference is the
+    whole bound: see the note on `MY_STUFF_MAX_PRICE_AGE_HOURS` (CERT-949). A
+    caller with only a market-row timestamp to hand should pass `None` and show
+    nothing rather than pass the wrong clock — absent evidence excludes, which is
+    what every other bound in this function does too.
 
     Freshness is checked LAST because it is the bound most likely to change
     underneath us: lane1b's series-discovery ingest (#2927) is what makes the

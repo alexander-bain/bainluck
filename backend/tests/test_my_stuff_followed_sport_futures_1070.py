@@ -323,6 +323,12 @@ class TestThePriceIsFromThisWeekToo:
     The field bound got the section to 23 markets. Measured again for FRESHNESS,
     11 of those 23 were not current — on a page headed "what is on this week",
     during a live US Open. Every age below is production, 2026-09-04.
+
+    These cases are about the PREDICATE. What `priced_at` is measured OF — the
+    newest price poll, not the market row's "any write" clock — is CERT-949 and
+    lives in `tests/test_my_stuff_price_freshness_cert949.py`. The two halves
+    fail independently, which is the point: this class passed while the route
+    was feeding the predicate the wrong column.
     """
 
     @pytest.mark.parametrize(
@@ -499,10 +505,19 @@ class TestTheRouteSubtractsTheTeamSports:
         # `_unused_priced_at=` contains that, so the loose pin survives the kwarg
         # being renamed out of the call. Second instance of this collision in
         # this file — see the note above about `market_name=market.name`.
-        assert "\n                    priced_at=_utc(market.updated_at)," in call, (
+        assert (
+            "\n                    priced_at="
+            '_utc(market.__dict__.get("price_polled_at")),' in call
+        ), (
             "the followed-sport admission no longer reads the price age — the "
             "ten-day-old US Open bracket is back on a page headed 'this week'"
         )
+        # CERT-949: and it must not read the MARKET ROW's clock, which is
+        # `onupdate` on any write and is bumped six-hourly by the hook enricher
+        # without a price moving. `tests/test_my_stuff_price_freshness_cert949.py`
+        # owns the behaviour; this line keeps the wrong column from returning to
+        # a call the rest of this test is already reading.
+        assert "priced_at=_utc(market.updated_at)" not in call
         assert "outcome_count=len(market.outcomes or [])," in call, (
             "the followed-sport admission no longer reads the field size — the "
             "empty-shell cards are back and the section renders titles with "
