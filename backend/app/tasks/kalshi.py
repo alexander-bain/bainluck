@@ -1240,7 +1240,7 @@ async def _poll_kalshi_markets():
                 save_scan_report,
             )
             from app.utils.kalshi_series_selection import (
-                discovery_is_silent_zero,
+                discovery_dead_series,
                 summarize_discovery_receipt,
             )
 
@@ -1328,26 +1328,26 @@ async def _poll_kalshi_markets():
                     _recon["events_fetched"],
                 )
             # #2927 / gotcha #53: an empty discovery yield is a response shape,
-            # not an absence. A beat that resolved a live list, picked series
-            # off it, and still added nothing is what a poisoned cache, a spent
-            # reserve, or a venue that stopped listing the draw all look like —
-            # and all three present to a user as "the doubles matches stopped
-            # updating". Every other failure here names itself in `source`;
-            # this one only names itself if we say so.
+            # not an absence. Asked PER SERIES (CERT-953) — a dead
+            # `KXATPDOUBLES` must not hide behind a live `KXWTADOUBLES`, and a
+            # healthy series whose events the main scan already held must not
+            # alarm. Both are aggregate failures; `returned` is per series and
+            # is the venue's own answer for that ticker.
             _disc = _report.series_discovery or {}
             stats["discovery_source"] = _disc.get("source")
             stats["discovery_events_added"] = _disc.get("events_added")
-            if discovery_is_silent_zero(_disc):
+            _dead = discovery_dead_series(_disc)
+            stats["discovery_dead_series"] = _dead
+            if _dead:
+                _results = _disc.get("series_results") or {}
                 logger.error(
-                    "poll_kalshi series discovery: SELECTED %s SERIES AND "
-                    "ADDED 0 EVENTS (source=%s, selected_open_events=%s, "
-                    "series_fetched=%s, census_exhausted=%s). The stage ran "
-                    "and yielded nothing — treat as a coverage outage, not a "
-                    "quiet night.",
-                    _disc.get("selected_count"), _disc.get("source"),
-                    _disc.get("selected_open_events"),
-                    _disc.get("series_fetched"),
-                    _disc.get("census_exhausted"),
+                    "poll_kalshi series discovery: %d SELECTED SERIES RETURNED "
+                    "NOTHING — %s (source=%s). Each was chosen off a census "
+                    "that said it holds open events; the venue then handed back "
+                    "none. Treat as a per-draw coverage outage, not a quiet "
+                    "night. Detail: %s",
+                    len(_dead), ", ".join(_dead), _disc.get("source"),
+                    {t: _results.get(t) for t in _dead[:10]},
                 )
             elif _disc.get("source") in ("failed", "unsummarizable"):
                 logger.error(

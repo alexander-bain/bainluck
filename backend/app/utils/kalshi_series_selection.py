@@ -214,6 +214,11 @@ def select_discovered_series(
         "selected": [t for t, _ in selected],
         "selected_count": len(selected),
         "selected_open_events": sum(counts[t] for t, _ in selected),
+        # CERT-953: what the census said EACH selected series holds. The fetch
+        # needs it per series to say "KXATPDOUBLES was supposed to bring 32 and
+        # brought 0" rather than reporting one aggregate in which a dead series
+        # is invisible behind a live sibling.
+        "selected_expected": {t: counts[t] for t, _ in selected},
         "skipped": skipped,
         "skipped_detail": detail,
         "dormant_sample": sorted(dormant)[:_DORMANT_SAMPLE],
@@ -290,6 +295,32 @@ def summarize_discovery_receipt(receipt: Optional[Mapping]) -> dict:
         if isinstance(census, Mapping) and "exhausted" in census:
             out["census_exhausted"] = bool(census["exhausted"])
 
+        # CERT-953: the per-series results, which are the only fields that can
+        # answer "did THIS draw arrive". Bounded like everything else here, but
+        # ordered so the ones a reader must not lose survive the cap: anything
+        # that returned nothing or errored sorts first.
+        results = receipt.get("series_results")
+        if isinstance(results, Mapping):
+            def _rank(item):
+                ticker, res = item
+                if not isinstance(res, Mapping):
+                    return (2, ticker)
+                bad = bool(res.get("error")) or int(res.get("returned") or 0) <= 0
+                return (0 if bad else 1, ticker)
+
+            kept = sorted(results.items(), key=_rank)[:_PERSIST_MAX_DETAIL]
+            out["series_results"] = {
+                str(t): {
+                    k: v for k, v in dict(r).items()
+                    if k in ("expected", "returned", "unique_added",
+                             "truncated", "parse_failed", "error")
+                }
+                for t, r in kept
+                if isinstance(r, Mapping)
+            }
+            if len(results) > _PERSIST_MAX_DETAIL:
+                out["series_results_truncated"] = len(results) - _PERSIST_MAX_DETAIL
+
         return out
     except Exception:  # noqa: BLE001 — see docstring
         return {"source": "unsummarizable"}
@@ -300,27 +331,64 @@ def summarize_discovery_receipt(receipt: Optional[Mapping]) -> dict:
 _DISCOVERY_RAN_SOURCES = frozenset({"live", "cache"})
 
 
-def discovery_is_silent_zero(receipt: Optional[Mapping]) -> bool:
-    """True when discovery ran, selected series, and still added nothing.
+def discovery_dead_series(receipt: Optional[Mapping]) -> list[str]:
+    """Selected series the venue returned NOTHING for — named, one by one.
 
-    This is the gotcha #53 shape for this stage: `events_added: 0` from a beat
-    that resolved a live list and picked series off it is a response, not an
-    absence, and it is exactly what a poisoned cache, a spent reserve or a
-    venue that quietly stopped listing the draw all look like. It is the one
-    reading that must be loud, because every other failure mode here already
-    names itself in `source`.
+    This is the gotcha #53 reading for this stage, and it has to be per series.
+    The aggregate `events_added` cannot carry it, in both directions (CERT-953):
 
-    A beat that selected nothing is NOT this: `selected_count == 0` is already
-    explained by the `skipped` counters, and calling it silent would fire the
-    alarm every night the tournament is dark.
+    * **It hides a real outage.** `events_added` sums every selected series, so
+      a dead `KXATPDOUBLES` returning zero is invisible behind a live
+      `KXWTADOUBLES` that added events. The alarm would stay quiet through
+      exactly the half-outage it exists to catch — the men's draw vanishing off
+      the site while the women's draw keeps it looking healthy.
+    * **It invents one that is not there.** `events_added` counts only events
+      the main and supplementary scans had not already mapped. A perfectly
+      healthy doubles fetch whose events the main scan already held contributes
+      zero UNIQUE additions, and an aggregate alarm would fire on a beat where
+      nothing whatsoever is wrong.
+
+    So the question is asked of the venue's own answer for each series:
+    `returned` — how many events came back for this ticker, counted before the
+    dedup — plus an outright fetch error. Neither depends on a sibling, and
+    neither depends on what we already held.
+
+    Deliberately NOT dead:
+
+    * a series the reserve never reached (`truncated` with nothing returned).
+      `fetch_truncated_after` already says that precisely, and alarming on it
+      would turn a budget signal into a coverage alarm.
+    * a beat that selected nothing at all. The `skipped` counters explain it,
+      and firing every night the tournament is dark is how an alarm gets
+      ignored on the night it matters.
+    * a stage that never ran (`not_wired`, `disabled`, `failed`) — those name
+      their own failure in `source`.
+
+    Returns the sorted tickers so the caller can print them; empty means clean.
     """
     if not receipt:
-        return False
+        return []
     try:
         if str(receipt.get("source") or "") not in _DISCOVERY_RAN_SOURCES:
-            return False
-        if int(receipt.get("selected_count") or 0) <= 0:
-            return False
-        return int(receipt.get("events_added") or 0) <= 0
+            return []
+        results = receipt.get("series_results")
+        if not isinstance(results, Mapping):
+            return []
+        dead = []
+        for ticker, res in results.items():
+            if not isinstance(res, Mapping):
+                continue
+            if res.get("error"):
+                dead.append(str(ticker))
+                continue
+            if int(res.get("returned") or 0) > 0:
+                continue
+            # Zero returned. Only an alarm if we actually got to ask.
+            if res.get("truncated") or res.get("parse_failed"):
+                continue
+            if int(res.get("expected") or 0) <= 0:
+                continue
+            dead.append(str(ticker))
+        return sorted(dead)
     except Exception:  # noqa: BLE001 — telemetry never raises
-        return False
+        return []
