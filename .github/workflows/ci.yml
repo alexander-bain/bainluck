@@ -371,6 +371,35 @@ jobs:
             exit 1
           fi
 
+      - name: "#1852 fabricated-loss drain bind contract (real Postgres)"
+        # The drain for 63,733 fabricated Kalshi losses was built 2026-08-14,
+        # certified twice, and had never completed a single work selection
+        # through its own endpoint. `AND (:sport IS NULL OR
+        # fm.llm_sport_category = :sport)`: asyncpg prepares with no parameter
+        # types, so the first occurrence of a parameter fixes it — `$1 IS NULL`
+        # fixes `$1` as `unknown`, `= $1` can no longer resolve it, and the
+        # prepare dies with `AmbiguousParameterError` before a row is read,
+        # whatever value is bound. Measured on production 2026-09-05, both
+        # unsharded and with `?sport=`, in 0.1 s.
+        #
+        # Real Postgres because nothing cheaper can reject it: the statement
+        # COMPILES, the module IMPORTS, sqlite types binds by value, and the
+        # unit suite's session doubles never prepare anything — the WHERE clause
+        # never meets a type system. Only a server inferring parameter types can
+        # tell.
+        #
+        # Same skip-detection as the gates around it: pytest exits 0 when every
+        # test skips, so a gate that silently did not run is indistinguishable
+        # from one that passed.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_kalshi_fabricated_loss_bind_contract_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/fabricated_loss_bind.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/fabricated_loss_bind.txt; then
+            echo "::error::#1852 fabricated-loss bind contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: futures_outcomes grade schema parity (real Postgres)
         # CERT-521. `is_winner` was widened to nullable so a metadata-built test
         # database could finally express "nobody graded this" — and the widening

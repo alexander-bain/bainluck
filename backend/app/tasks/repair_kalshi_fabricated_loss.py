@@ -510,7 +510,17 @@ _WORK_SQL = f"""
     WHERE fm.source = 'kalshi'
       AND fm.resolution_date IS NOT NULL
       AND fm.resolution_date >= NOW() - INTERVAL '{PROVABLY_PURGED_AGE_DAYS} days'
-      AND (:sport IS NULL OR fm.llm_sport_category = :sport)
+      -- CAST is NOT decoration. asyncpg prepares this statement with no
+      -- parameter types, so Postgres must infer them from the text alone, and
+      -- the FIRST occurrence of a parameter fixes its type: `$1 IS NULL` fixes
+      -- `$1` as `unknown`, the later `= $1` can no longer resolve it, and the
+      -- prepare dies with `AmbiguousParameterError: could not determine data
+      -- type of parameter $1` — before a row is read, whatever value is bound.
+      -- That is why the keyset below casts both halves, and why every sibling
+      -- rail writes `:sport::text` on BOTH sides (`repair_polymarket_leg_label`
+      -- :457-458, :758). This line was the one that did not, so the drain's
+      -- endpoint has never completed a work selection.
+      AND (CAST(:sport AS text) IS NULL OR fm.llm_sport_category = CAST(:sport AS text))
       AND (
             CAST(:after_date AS timestamptz) IS NULL
          OR (fm.resolution_date, fm.id)
