@@ -552,7 +552,21 @@ async def _save_census(record: dict[str, Any]) -> tuple[bool, str]:
                 identity=CENSUS_IDENTITY,
                 schema_version=CENSUS_SCHEMA,
                 payload=record,
-                complete=bool(record.get("complete")),
+                # CERT-1903 — TWO DIFFERENT COMPLETIONS, and conflating them
+                # killed the resume. The envelope's `complete` means THE ARTIFACT
+                # IS INTACT: `decode_envelope` classifies `complete=False` as
+                # `malformed / IncompleteArtifact` and refuses to hand it back,
+                # which is right — that flag exists to reject a torn write. It
+                # says nothing about whether the WORK the payload describes
+                # finished. Every checkpoint this writes is a whole, checksummed
+                # artifact, so it is `complete=True` even when the walk is
+                # halfway. The walk's own completion is `record["complete"]`, in
+                # the payload, where a reader can act on it. Passing the walk's
+                # state here made every partial checkpoint unreadable, so the
+                # next `?after_id=` call got CENSUS_CURSOR_MOVED and the multi-
+                # call walk — the entire point of the change — could never
+                # resume.
+                complete=True,
                 source="repair:kalshi-fabricated-loss-census",
             )
         )

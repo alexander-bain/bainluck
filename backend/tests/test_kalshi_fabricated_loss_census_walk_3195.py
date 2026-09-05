@@ -29,17 +29,17 @@ query that is ``measured: false``, every time.
 
 from __future__ import annotations
 
+import json
 import math
 
 import pytest
 
 from app.tasks import repair_kalshi_fabricated_loss as rail
+from app.utils.durable_state import DEFAULT_MAX_AGE_S, canonical_json, decode_envelope
 from app.utils.kalshi_fabricated_loss import (
     POPULATION_HAVING_SQL,
     RETENTION_BAND_SQL,
 )
-
-from tests.test_kalshi_fabricated_loss_p062 import _DurableStore
 
 
 class _StatementTimeout(Exception):
@@ -205,10 +205,96 @@ class _CensusSession:
         self.rollbacks += 1
 
 
+class _FaithfulDurableStore:
+    """The durable slot, read back through the PRODUCTION DECODER.
+
+    CERT-1903 blocked the first presentation of this change on exactly the gap a
+    permissive fake leaves. ``_save_census`` banked each partial checkpoint with
+    the envelope flag ``complete=False`` — reading "the walk is not finished" —
+    and ``decode_envelope`` classifies such an envelope ``malformed /
+    IncompleteArtifact`` and refuses to return it. So in production every
+    checkpoint was unreadable, the next ``?after_id=`` call got
+    ``CENSUS_CURSOR_MOVED``, and the multi-call walk could never resume. The
+    suite was green throughout, because the fake it ran against answered ``ok``
+    for an incomplete envelope.
+
+    So this store does not judge envelopes itself. It stores the same field dict
+    the production upsert writes (``publish_snapshot_in_txn``) and reads it back
+    through the real :func:`decode_envelope` — the same function the real reader
+    calls. Every completeness, checksum, version and age rule is therefore the
+    shipped one, and a fake can no longer be more forgiving than the database.
+
+    The three levers of the store it replaces are kept, because tests here use
+    them: ``no_op`` (answers without persisting), ``forced_status`` (a status of
+    our choosing), ``unreadable`` (a read that fails, which must never read as
+    absent).
+    """
+
+    def __init__(self) -> None:
+        self.rows: dict[str, dict] = {}
+        self.reads: list[str] = []
+        self.publishes: list[str] = []
+        self.no_op: set[str] = set()
+        self.forced_status: dict[str, str] = {}
+        self.unreadable: dict[str, str] = {}
+
+    def install(self, monkeypatch) -> "_FaithfulDurableStore":
+        import app.services.durable_snapshots as ds
+
+        monkeypatch.setattr(ds, "read_snapshot_standalone", self.read)
+        monkeypatch.setattr(ds, "publish_snapshot_standalone", self.publish)
+        return self
+
+    async def publish(self, envelope):
+        self.publishes.append(envelope.identity)
+        status = self.forced_status.get(envelope.identity, "ok")
+        if envelope.identity in self.no_op or status != "ok":
+            return {
+                "status": status,
+                "identity": envelope.identity,
+                "generation": envelope.generation,
+            }
+        existing = self.rows.get(envelope.identity)
+        if existing is not None and existing["generation"] > envelope.generation:
+            return {
+                "status": "superseded",
+                "identity": envelope.identity,
+                "generation": envelope.generation,
+            }
+        # The same columns `_UPSERT_SQL` writes, and the payload round-tripped
+        # through canonical_json exactly as the JSONB column would.
+        self.rows[envelope.identity] = {
+            "identity": envelope.identity,
+            "schema_version": envelope.schema_version,
+            "generation": envelope.generation,
+            "generated_at": envelope.generated_at,
+            "payload": json.loads(canonical_json(envelope.payload)),
+            "checksum": envelope.checksum,
+            "complete": envelope.complete,
+            "source": envelope.source,
+        }
+        return {
+            "status": "ok",
+            "identity": envelope.identity,
+            "generation": envelope.generation,
+        }
+
+    async def read(self, identity, *, expected_version=None, max_age_s=None):
+        self.reads.append(identity)
+        if identity in self.unreadable:
+            raise RuntimeError(f"durable read failed: {self.unreadable[identity]}")
+        return decode_envelope(
+            self.rows.get(identity),
+            tier="durable",
+            expected_version=expected_version,
+            max_age_s=max_age_s if max_age_s is not None else DEFAULT_MAX_AGE_S,
+        )
+
+
 @pytest.fixture
 def store(monkeypatch):
     """The durable slot the walk accumulates in."""
-    return _DurableStore().install(monkeypatch)
+    return _FaithfulDurableStore().install(monkeypatch)
 
 
 # =============================================================================
@@ -593,13 +679,105 @@ class TestTheWalkTerminates:
         assert "the_completion_test" in limits
 
 
+class TestTheCheckpointIsReadableByTheProductionDecoder:
+    """CERT-1903's named repair, and its named test.
+
+    THE DEFECT: ``_save_census`` banked each partial checkpoint with the ENVELOPE
+    flag ``complete=False``, reading it as "the walk is not finished". But that
+    flag means "the artifact is intact" — ``decode_envelope`` classifies
+    ``complete=False`` as ``malformed / IncompleteArtifact`` and refuses to
+    return it, which is correct: the flag exists to reject a torn write. So every
+    checkpoint was unreadable, the next ``?after_id=`` call got
+    ``CENSUS_CURSOR_MOVED``, and the multi-call walk — the entire point of the
+    change — could never resume. Two different completions, conflated.
+
+    The shape the BLOCK asked for: first call persists, the REAL decoder reads,
+    second call completes.
+    """
+
+    @pytest.mark.asyncio
+    async def test_first_call_persists_real_decoder_reads_second_call_completes(
+        self, store, monkeypatch
+    ):
+        clock = _budgeted(monkeypatch, step=0.6, budget=1.0)
+        first = await rail.census(_CensusSession(clock=clock))
+        assert first["walk"]["complete"] is False, "this arm needs a PARTIAL walk"
+        assert first["walk"]["progress_banked"] is True
+
+        # The production reader, not a fake's opinion of it.
+        banked, reason = await rail._load_census()
+
+        assert banked is not None, (
+            f"the checkpoint must survive the production decoder — got {reason}. "
+            "A partial walk still writes a WHOLE artifact."
+        )
+        assert banked["complete"] is False, (
+            "and the WALK's completion still lives in the payload, where a "
+            "reader can act on it"
+        )
+
+        monkeypatch.setattr(rail, "_CENSUS_WALL_BUDGET_S", 1000.0)
+        second = await rail.census(
+            _CensusSession(clock=_Clock()), after_id=first["walk"]["next_after_id"]
+        )
+
+        assert second["measured"] is True, second.get("detail") or second.get("reason")
+        assert second["walk"]["complete"] is True
+        assert _cells_from(second["breakdown"]) == _expected_cells()
+
+    @pytest.mark.asyncio
+    async def test_the_envelope_flag_is_intactness_not_walk_completion(self, store):
+        """Stated directly, so a future edit cannot re-conflate them quietly."""
+        clock = _Clock()
+        await rail.census(_CensusSession(clock=clock))
+        complete_walk = store.rows[rail.CENSUS_IDENTITY]
+
+        assert complete_walk["complete"] is True
+        assert complete_walk["payload"]["complete"] is True
+
+    @pytest.mark.asyncio
+    async def test_a_partial_checkpoint_is_stored_intact(self, store, monkeypatch):
+        clock = _budgeted(monkeypatch, step=0.6, budget=1.0)
+        await rail.census(_CensusSession(clock=clock))
+        partial = store.rows[rail.CENSUS_IDENTITY]
+
+        assert partial["complete"] is True, (
+            "the ARTIFACT is whole even when the walk is halfway — this is the "
+            "flag decode_envelope refuses on"
+        )
+        assert partial["payload"]["complete"] is False, "the WALK is not"
+
+    @pytest.mark.asyncio
+    async def test_a_torn_checkpoint_is_still_refused(self, store, monkeypatch):
+        """The repair must not buy resumability by disarming the real check.
+
+        `complete=True` is now unconditional, so the guard that has to still bite
+        is the checksum: a payload that does not match its own address is a torn
+        write and must not be resumed from.
+        """
+        clock = _budgeted(monkeypatch, step=0.6, budget=1.0)
+        first = await rail.census(_CensusSession(clock=clock))
+        assert first["walk"]["complete"] is False, "this arm needs a PARTIAL walk"
+        store.rows[rail.CENSUS_IDENTITY]["payload"]["next_after_id"] = 999_999
+
+        banked, reason = await rail._load_census()
+
+        assert banked is None, "a payload that does not match its checksum is torn"
+        assert "malformed" in reason
+
+        resumed = await rail.census(
+            _CensusSession(), after_id=first["walk"]["next_after_id"]
+        )
+        assert resumed["reason"] == rail.REASON_CENSUS_CURSOR_MOVED
+
+
 class TestProgressIsBanked:
     @pytest.mark.asyncio
     async def test_a_completed_walk_banks_its_totals(self, store):
         result = await rail.census(_CensusSession())
 
         assert result["walk"]["progress_banked"] is True
-        banked = store.rows[rail.CENSUS_IDENTITY].payload
+        banked = store.rows[rail.CENSUS_IDENTITY]["payload"]
         assert banked["complete"] is True
         assert _cells_from(banked["breakdown"]) == _expected_cells()
 
