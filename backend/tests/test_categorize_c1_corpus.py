@@ -233,13 +233,23 @@ def test_p1_evidence_is_counted_per_distinct_term_not_per_regex():
     )
 
 
-def test_p1_ambiguity_is_relative_to_the_claiming_category():
-    """P1-3: a flat ambiguity set discounted a word for every category at once.
+def test_p1_a_track_meet_is_not_filed_as_baseball():
+    """P1-3: "athletics" is the Oakland A's to this file, so a track meet scored
+    baseball 1, nothing outscored 1, and a lone ambiguous match wins unopposed.
 
-    "athletics" is doubtful evidence for BASEBALL (the Oakland A's) and decisive
-    for track and field. Category-blind, it scored baseball 1, nothing outscored
-    1, and a lone ambiguous match wins unopposed -- so a track meet was filed as
-    baseball, which is what corrupts the canonical key.
+    WHAT ACTUALLY CARRIES THIS TEST, stated because the BLOCK diagnosed P1-3 as
+    "`_AMBIGUOUS_EVIDENCE` is category-blind" and the repair for the *specimen*
+    is not the pairing: it is the veto. Verified by mutation -- reverting
+    `_evidence_weight` to the flat set leaves this test GREEN, while dropping
+    "athletics" from `_VETO_ONLY_CATEGORIES` or removing `world\\s+athletics`
+    from the strong patterns turns it RED. Making ambiguity a (category, word)
+    relation is an anti-drift change with NO behavioural delta on any reachable
+    input (measured: the only vocabulary entries whose discount it changes are
+    "open" and "giants", and no pattern in this file ever emits either as bare
+    matched text -- they always match inside "the open" / "us open" /
+    "san francisco giants"). It is pinned structurally by
+    `test_ambiguity_pairs_are_derived_from_the_patterns_not_restated`, not here.
+    Do not read this test as coverage of the pairing.
     """
     assert categorize_by_rules("World Athletics Championship 100m Winner") != "baseball"
     # Veto-only: we can recognise the domain without having a category for it, so
