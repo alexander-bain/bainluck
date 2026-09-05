@@ -171,7 +171,11 @@ from app.services.anchor_channel import (
 )
 from app.services.authority_ledger import record_agreement_day
 from app.services.statpal_api import StatPalFixture, get_statpal_service
-from app.utils.authority_agreement import Side, build_agreement_row
+from app.utils.authority_agreement import (
+    Side,
+    build_agreement_row,
+    measurement_bounds,
+)
 from app.utils.nfl_team_matching import normalize_team, pair_matches
 from app.utils.provider_anchor_keys import statpal_anchor_key, statpal_id_space
 from app.utils.statpal_league_rosters import is_known_league_team
@@ -413,6 +417,11 @@ class StampRun:
     sport_key: str = ""
     fixtures_read: int = 0
     rows_in_window: int = 0
+    #: Rows in the WIDER agreement-row population (`measurement_bounds`). Beside
+    #: `rows_in_window` rather than replacing it: the gap between the two is how
+    #: much of our inventory the write window cannot see, and for a rolling
+    #: provider that gap is the whole reason the row's denominator moved.
+    rows_measured: int = 0
     stamped: int = 0
     #: Column already held this exact contest; the missing anchor was written.
     anchored_only: int = 0
@@ -473,6 +482,7 @@ class StampRun:
             "sport_key": self.sport_key,
             "fixtures_read": self.fixtures_read,
             "rows_in_window": self.rows_in_window,
+            "rows_measured": self.rows_measured,
             "stamped": self.stamped,
             "anchored_only": self.anchored_only,
             "already_linked": self.already_linked,
@@ -775,6 +785,31 @@ async def _read_fixtures(
     return fixtures, anchor_space
 
 
+def _measurement_population(
+    wide: list[dict[str, Any]], write_pool: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """The agreement row's population: the wide read, sharing the write pool's rows.
+
+    Two reads of the same table hand back two sets of dicts, and the difference
+    matters for exactly one field. The stamping loop mutates a candidate's
+    `statpal_fixture_id` in place as it writes, and the agreement row is built
+    afterwards so that a row this pass just stamped is published as anchored
+    rather than as a hole it created itself. A second read taken BEFORE those
+    writes cannot see them, so the overlapping rows are substituted for the write
+    pool's own objects and the in-place mutation reaches the row as it always did.
+
+    The union, not the wide read alone. `measurement_bounds` never narrows, so
+    every write-pool row should already be in `wide` — but a population that
+    silently drops a row it was asked to measure is the exact failure this whole
+    change exists to remove, and the belt costs one pass over a few hundred dicts.
+    """
+    by_id = {r["id"]: r for r in write_pool}
+    population = [by_id.get(r["id"], r) for r in wide]
+    seen = {r["id"] for r in wide}
+    population.extend(r for r in write_pool if r["id"] not in seen)
+    return population
+
+
 async def _candidates(
     session, spec: LeagueSpec, start: datetime, end: datetime
 ) -> list[dict[str, Any]]:
@@ -923,16 +958,32 @@ async def _run_stamp_v1_statpal_fixtures(
     starts = [f.start_time for f in fixtures if f.start_time]
     window_start = (min(starts) if starts else now) - CANDIDATE_SLACK
     window_end = (max(starts) if starts else now) + CANDIDATE_SLACK
+    #: WIDER than the write window, and read separately for that reason. Writing
+    #: ids only makes sense where StatPal has a fixture to match, but MEASURING
+    #: "of the games we list, does StatPal have them?" over StatPal's own span
+    #: answers it only where StatPal already said yes (CERT-962).
+    measure_start, measure_end = measurement_bounds(
+        (window_start, window_end), now=now
+    )
 
     async with get_task_session() as session:
         pool = await _candidates(session, spec, window_start, window_end)
         run.rows_in_window = len(pool)
-        #: The pool as it was read, kept because `pool` is pruned as rows are
-        #: claimed. The agreement row is measured over EVERY row in the window,
+        #: The measurement population, read in the SAME session as the write pool
+        #: so both describe one moment (precedent D46). It is a superset of the
+        #: write pool by construction — `measurement_bounds` never narrows — so
+        #: the three sports whose local inventory already sits inside StatPal's
+        #: span read exactly the rows they read before this existed.
+        #:
+        #: Kept separately rather than reusing `pool`, which is pruned as rows are
+        #: claimed. The agreement row is measured over EVERY row in the population,
         #: including the ones this pass stamped — a denominator that shrinks as
         #: the task succeeds cannot be compared to yesterday's, and the seven-day
         #: count is exactly that comparison.
-        all_rows = list(pool)
+        all_rows = _measurement_population(
+            await _candidates(session, spec, measure_start, measure_end), pool
+        )
+        run.rows_measured = len(all_rows)
         #: Which of our rows some contest claimed, so the leftovers can be
         #: reported as candidate phantoms. Claimed covers every verdict that
         #: names a row, not only the ones written: a contradicted or polluted row
@@ -1127,6 +1178,7 @@ async def _run_stamp_v1_statpal_fixtures(
         read_failures=run.read_failures,
         sources_read=run.sources_read,
         window=(window_start, window_end),
+        measurement_window=(measure_start, measure_end),
         is_anchor_id=is_statpal_contest_id,
     )
 

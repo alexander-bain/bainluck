@@ -52,6 +52,10 @@ WHAT A ROW SAYS
     with no stamper yet reads as a disagreement.
   * ``excluded`` — every row left out, by name and count. An unstated exclusion
     is how a bar becomes unreachable by design (spec rule 5).
+  * ``measurement_window`` — the span of OUR inventory the row was measured over,
+    stated beside ``window`` (the narrower span the stamper writes ids in)
+    because they are no longer the same span and a reader cannot tell which
+    produced a denominator by looking at the number.
 
 WHAT IT REFUSES TO DO
 ═════════════════════
@@ -77,6 +81,40 @@ WITHIN = timedelta(hours=1)
 #: and a Sunday night game are ~7 hours apart, and calling that a wrong week
 #: would file the league's own schedule as a defect.
 WRONG_DAY = timedelta(days=1.2)
+
+#: The shortest gap between two consecutive games of ONE league in our own
+#: table — a league's offseason, measured rather than recalled. NHL's, from
+#: 2026-06-15 (last playoff game) to 2026-09-19 (first preseason game), over a
+#: 700-day sample of `events` read 2026-09-05. NBA's is 128.8 days, the NFL's
+#: 179.0; MLB's does not appear because our MLB inventory begins mid-season.
+#:
+#: It is here as the ceiling on `MEASUREMENT_HORIZON` and for nothing else.
+TIGHTEST_OFFSEASON_GAP = timedelta(days=97)
+
+#: How far either side of NOW our own inventory is measured for the agreement
+#: row, over and above the span the stamper writes ids in.
+#:
+#: The two spans are different questions and used to be one query. The stamper
+#: matches ids, so it reads only where StatPal has fixtures to match against —
+#: correctly. The row ANSWERS "of the games we list, does StatPal have them?",
+#: and reading that over StatPal's own span answers it only where StatPal has
+#: already said yes: a game of ours past the edge of a rolling schedule was
+#: dropped by SQL before it could be counted as missing (CERT-962). The
+#: denominator was horizon-subtracted at selection while the row said it was not.
+#:
+#: 40 days, and the number is bounded from both ends:
+#:
+#:   * it must be WIDER than any provider's rolling window, or the subtraction
+#:     survives. MLB's `season-schedule` is ~17 days, measured.
+#:   * it must be narrower than half `TIGHTEST_OFFSEASON_GAP`, or a span anchored
+#:     in an offseason reaches two different seasons and the row compares one
+#:     season's inventory to another's schedule. 2 × 40 = 80 days against a
+#:     measured 97, a 17-day margin. `test_measurement_horizon_cannot_span_two_seasons`
+#:     fails if a later edit spends that margin.
+#:
+#: This is a horizon, not a season: `events` carries no season column, and a
+#: bound derived from one we do hold beats a bound named after one we do not.
+MEASUREMENT_HORIZON = timedelta(days=40)
 
 #: Team-name tokens that name no franchise. A StatPal playoff bracket carries
 #: these until the seeding is known; there is nothing for us to disagree with,
@@ -456,6 +494,37 @@ def _pct(numerator: int, denominator: int) -> Optional[float]:
     return round(100.0 * numerator / denominator, 2)
 
 
+def measurement_bounds(
+    write_window: tuple[datetime, datetime],
+    *,
+    now: datetime,
+    horizon: timedelta = MEASUREMENT_HORIZON,
+) -> tuple[datetime, datetime]:
+    """The span of OUR inventory an agreement row is measured over.
+
+    The union of the stamper's own write window with ``now ± horizon``, and the
+    union rather than the wider of the two on purpose. Two properties fall out of
+    it, and both are load-bearing:
+
+      * **It is never narrower than the write window.** So no sport whose local
+        inventory already sits inside StatPal's span can have its denominator
+        moved by this function, and the three sports whose seven-day clocks are
+        already running do not have their numbers redefined underneath them.
+        Measured 2026-09-05: NFL 322 rows, NBA 41, NHL 32 — unchanged either way.
+        Only MLB moves, 222 → 729, which is the sport this exists for and the one
+        sport with no governing number yet.
+      * **It reaches past the edge of a rolling schedule.** A game of ours in
+        October, while StatPal's window ends after 17 days, is now inside the
+        population and lands in ``ours_only_by_horizon.beyond_statpal_last``
+        instead of never being read at all.
+
+    `now` is passed, never called for: a bound that reads the clock itself cannot
+    be pinned by a test at a fixed date (gotcha #44).
+    """
+    start, end = write_window
+    return (min(start, now - horizon), max(end, now + horizon))
+
+
 def _split_against_span(
     misses: Sequence[Side],
     span_source: Sequence[Side],
@@ -556,10 +625,18 @@ def _ours_only_by_horizon(
     MLB's governing number cannot be ruled on until the same split exists on this
     side (`ARTIFACT-AUTHORITY-20260905-*`, #2867).
 
-    Reported, never subtracted: `ours_covered_pct` keeps its full denominator.
-    An exclusion that quietly moves the governing number is spec rule 5's failure
-    mode, and it would be worse here than on the StatPal side precisely because
-    this side governs.
+    Reported, never subtracted: every row this splits is still in
+    `ours_covered_pct`'s denominator. An exclusion that quietly moves the
+    governing number is spec rule 5's failure mode, and it would be worse here
+    than on the StatPal side precisely because this side governs.
+
+    That sentence was once false where it mattered most, and the correction is
+    the reason `measurement_bounds` exists. The split is honest about the rows it
+    receives, but the caller used to hand it only the rows inside StatPal's own
+    span ±1h — so an October game of ours, against a 17-day rolling schedule, was
+    subtracted by SQL before this function could report it (CERT-962). The
+    denominator is bounded by `MEASUREMENT_HORIZON` and by nothing else, and that
+    bound is published on the row as ``measurement_window``.
     """
     return _split_against_span(
         ours_only,
@@ -579,6 +656,7 @@ def build_agreement_row(
     read_failures: Sequence[str] = (),
     sources_read: Sequence[str] = (),
     window: Optional[tuple[datetime, datetime]] = None,
+    measurement_window: Optional[tuple[datetime, datetime]] = None,
     is_anchor_id: Callable[[Optional[str]], bool] = lambda v: bool(
         v and str(v).strip().isdigit()
     ),
@@ -597,6 +675,14 @@ def build_agreement_row(
     }
     if window:
         row["window"] = [window[0].isoformat(), window[1].isoformat()]
+    if measurement_window:
+        # Stated even when it equals `window`, which for three of the four sports
+        # it does: a field that appears only when the two spans differ is a field
+        # whose absence a reader has to interpret.
+        row["measurement_window"] = [
+            measurement_window[0].isoformat(),
+            measurement_window[1].isoformat(),
+        ]
 
     if read_failures:
         row["read"] = READ_FAILED

@@ -46,16 +46,19 @@ import pytest
 
 from app.services.statpal_api import StatPalAPIService
 from app.utils.authority_agreement import (
+    MEASUREMENT_HORIZON,
     READ_FAILED,
     READ_OK,
     RECEIPT_CAP,
     SHADOW_STAMPERS,
     Side,
+    TIGHTEST_OFFSEASON_GAP,
     WITHIN,
     WRONG_DAY,
     build_agreement_row,
     is_placeholder,
     ledger_line,
+    measurement_bounds,
 )
 from app.utils.nfl_team_matching import normalize_team
 
@@ -913,3 +916,120 @@ def test_the_shadow_registry_names_only_sports_that_have_a_stamper():
             f"{sport_key} claims stamper {task_name}, which app.tasks does not "
             f"export"
         )
+
+
+# ---------------------------------------------------------------------------
+# The measurement population's bounds. CERT-962.
+# ---------------------------------------------------------------------------
+
+
+class TestMeasurementBounds:
+    """`measurement_bounds` decides which of OUR rows the governing number is over.
+
+    It exists because the stamper's write window was doing that job as a side
+    effect. Writing an id only makes sense where StatPal has a fixture to match
+    against, so the write window is StatPal's own span — and measuring
+    `ours_covered_pct` over StatPal's own span answers "does StatPal have our
+    games?" only where StatPal has already said yes.
+    """
+
+    NOW = datetime(2026, 9, 5, 7, 22, tzinfo=timezone.utc)
+
+    def test_it_never_narrows_the_write_window(self):
+        """The property that kept three running seven-day clocks intact.
+
+        NFL, NBA and NHL all hold local inventory that already sits inside
+        StatPal's span — 322, 41 and 32 rows, measured on production 2026-09-05,
+        identical under both bounds. A repair that redefined their denominators
+        would have silently reset three streaks mid-count.
+        """
+        season = (
+            datetime(2026, 8, 6, 23, 0, tzinfo=timezone.utc),
+            datetime(2027, 2, 15, 0, 30, tzinfo=timezone.utc),
+        )
+        start, end = measurement_bounds(season, now=self.NOW)
+        assert start <= season[0]
+        assert end >= season[1]
+
+    def test_it_reaches_past_the_end_of_a_rolling_schedule(self):
+        """MLB's measured window: 2026-08-31T21:05Z to 2026-09-17T00:40Z, ~17 days.
+
+        An October game of ours is the case CERT-962 named. Under the write
+        window it is not selected at all; under these bounds it is in the
+        population and the horizon split can place it.
+        """
+        rolling = (
+            datetime(2026, 8, 31, 21, 5, tzinfo=timezone.utc),
+            datetime(2026, 9, 17, 0, 40, tzinfo=timezone.utc),
+        )
+        start, end = measurement_bounds(rolling, now=self.NOW)
+        october = datetime(2026, 10, 7, 0, 5, tzinfo=timezone.utc)
+        assert start <= october <= end
+        # And backwards, which is the same artifact seen from the other side: a
+        # game we played last week has left a rolling window too.
+        assert start <= datetime(2026, 8, 12, 23, 10, tzinfo=timezone.utc)
+
+    def test_the_horizon_cannot_span_two_seasons(self):
+        """The ceiling on `MEASUREMENT_HORIZON`, and the reason it is a constant.
+
+        A span anchored in an offseason that reaches both sides of it compares one
+        season's inventory against another season's schedule, and every row in the
+        older season is `before_statpal_first` — a number that looks like total
+        disagreement and means nothing at all.
+
+        `TIGHTEST_OFFSEASON_GAP` is measured, not recalled: 97.0 days between the
+        NHL's last playoff game (2026-06-15) and its first preseason game
+        (2026-09-19), the shortest of the four sports over a 700-day sample of
+        `events` read 2026-09-05. NBA's is 128.8, the NFL's 179.0.
+
+        This test is the one that fails if a later edit widens the horizon to
+        "just a bit more" without re-measuring the gap. Widening it is allowed;
+        widening it silently is not.
+        """
+        assert 2 * MEASUREMENT_HORIZON < TIGHTEST_OFFSEASON_GAP
+
+    def test_the_horizon_is_wider_than_the_rolling_window_it_exists_to_see_past(self):
+        """The floor. A horizon narrower than a provider's own window leaves the
+        subtraction exactly where it was — the guard would be set below what the
+        defect produces and could never fire. MLB's measured window is ~17 days."""
+        assert MEASUREMENT_HORIZON > timedelta(days=17)
+
+    def test_it_does_not_read_the_clock_itself(self):
+        """`now` is passed, never called for (gotcha #44). A bound that reads the
+        clock inside itself cannot be pinned by a test at a fixed date, and this
+        one decides a denominator that is compared across days."""
+        window = (
+            datetime(2026, 8, 31, 21, 5, tzinfo=timezone.utc),
+            datetime(2026, 9, 17, 0, 40, tzinfo=timezone.utc),
+        )
+        once = measurement_bounds(window, now=self.NOW)
+        again = measurement_bounds(window, now=self.NOW)
+        assert once == again
+        # A different `now` moves it, which proves the argument is the source.
+        later = measurement_bounds(window, now=self.NOW + timedelta(days=30))
+        assert later[1] > once[1]
+
+    def test_the_row_publishes_the_span_it_was_measured_over(self):
+        """`window` and `measurement_window` are no longer the same span, and a
+        reader cannot tell which produced a denominator by looking at the number.
+        Both are published, always — a field that appears only when the two
+        differ is a field whose absence has to be interpreted."""
+        write = (
+            datetime(2026, 8, 31, 21, 5, tzinfo=timezone.utc),
+            datetime(2026, 9, 17, 0, 40, tzinfo=timezone.utc),
+        )
+        measure = measurement_bounds(write, now=self.NOW)
+        row = build_agreement_row(
+            sport_key="baseball_mlb",
+            fixtures=[],
+            rows=[],
+            normalize=lambda s: (s or "").lower(),
+            window=write,
+            measurement_window=measure,
+        )
+        assert row["window"] == [write[0].isoformat(), write[1].isoformat()]
+        assert row["measurement_window"] == [
+            measure[0].isoformat(),
+            measure[1].isoformat(),
+        ]
+        assert row["measurement_window"] != row["window"]
