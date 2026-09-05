@@ -79,6 +79,82 @@ FEED_LIVE_REPUBLISH_PERIOD_S = 40
 #: before the PREVIOUS publication's stale mirror expires.
 FEED_LIVE_REPUBLISH_BUDGET_S = 20
 
+# --- #3233: the term the budget never counted — how much ONE build costs ------
+# The two numbers above bound the pass. Neither says anything about the work
+# inside it, and that gap is what #3233 measured: the pass ran its targets
+# SEQUENTIALLY, each given `BUDGET / N`, and once N reached 5 that slice (4 s)
+# fell below the cost of a single feed build. Every target was then started and
+# killed — 1,322 passes a day, 290 timeouts in 24 h, nothing published, every
+# counter green — and a reader opening the Sports tab paid a 4–6 s cold build
+# once a minute.
+#
+# The generalisation, because this file has now hosted it twice (#2236 was a
+# period and a ceiling nobody compared; LAT-P099 was a per-item deadline that
+# tightened on every addition):
+#
+#     A per-item deadline obtained by dividing a wall by an item count drops
+#     below the cost of one item as items are added, and at that moment the pass
+#     stops doing anything at all rather than doing less.
+#
+# So the cost of one item is declared here, next to the wall it has to fit in,
+# and `live_republish_target_headroom_s()` compares them.
+
+#: What ONE feed build is assumed to cost, as a floor for "is it worth starting".
+#: Measured on production 2026-09-05 (#3233): the 40 s rail's targets timed out
+#: at slices of 3.5–5.0 s, so a build costs MORE than 5 s; the 120 s host pass
+#: times out on `discover` at its own 11.4 s slice, so the tail runs past 11 s.
+#: 6 s is deliberately the FLOOR of the observed range and not the tail — it is
+#: used to decide whether starting a build can possibly pay, and a floor is the
+#: honest bound for that question. A target with less than this left is skipped
+#: rather than started, because a build that will be killed costs the same
+#: database work as one that completes and publishes nothing.
+FEED_PREWARM_MIN_VIABLE_BUILD_S = 6.0
+
+#: How many republish targets may build AT ONCE.
+#:
+#: Concurrency is the only lever #2236 leaves. `PERIOD + BUDGET == 60` exactly,
+#: with zero headroom against the live ceiling, so the wall cannot grow; and
+#: five sequential 6 s builds need 30 s, which no ordering fits into 20 s.
+#:
+#: 3 is bounded by the task database pool, not chosen: `tasks/base.py` declares
+#: `pool_size=3, max_overflow=2`. Three concurrent builds take the pooled slots
+#: and leave the overflow entirely to co-resident tasks, so this is the largest
+#: value that never reaches for overflow. `test_live_prewarm_concurrency.py`
+#: reads that pool out of the source rather than restating it.
+FEED_LIVE_REPUBLISH_CONCURRENCY = 3
+
+
+def live_republish_target_headroom_s(target_count: int) -> float:
+    """Spare wall seconds after serving ``target_count`` targets. Negative = cannot.
+
+    The second invariant of the republish pass, stated once (#3233):
+
+        ceil(N / CONCURRENCY) * MIN_VIABLE_BUILD_S <= BUDGET
+
+    Read it as waves. With ``CONCURRENCY`` builds in flight at a time, N targets
+    take ``ceil(N / CONCURRENCY)`` waves, and a wave cannot be assumed cheaper
+    than one build. If the waves do not fit the wall, the pass is structurally
+    unable to serve its targets no matter how the budget is divided — which is
+    the state #3233 found, where the division itself was the mechanism.
+
+    A function and not an import-time ``assert`` for the same reason as
+    `live_republish_headroom_s()`: a guard test should fail loudly by name rather
+    than take a dyno down. It is what makes a shape added past the pass's real
+    capacity fail at the moment of the addition instead of a day later in
+    production.
+
+    At the numbers declared above that capacity is
+    ``CONCURRENCY * floor(BUDGET / MIN_VIABLE_BUILD_S)`` = 9 shapes, and today's
+    five sit at 8 s of headroom. The capacity is stated because it was NOT
+    obvious: the first draft of #3233 asserted a sixth shape would trip this, and
+    the arithmetic says the tenth does. A bound nobody has evaluated is a bound
+    nobody knows the value of.
+    """
+    if target_count <= 0:
+        return float(FEED_LIVE_REPUBLISH_BUDGET_S)
+    waves = math.ceil(target_count / FEED_LIVE_REPUBLISH_CONCURRENCY)
+    return FEED_LIVE_REPUBLISH_BUDGET_S - waves * FEED_PREWARM_MIN_VIABLE_BUILD_S
+
 
 def live_republish_headroom_s() -> int:
     """Seconds of slack in the #2236 invariant. Negative means it is violated.
