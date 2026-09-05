@@ -1651,3 +1651,90 @@ async def test_a_sibling_republication_is_not_invalidated():
         "a 3-second-old sibling republication was deleted by an invalidation "
         "aimed at a 70-second-old artifact"
     )
+
+
+# ---------------------------------------------------------------------------
+# LAT-P231 follow-up — the ceiling counts the artifacts that CAN be live
+# ---------------------------------------------------------------------------
+#
+# Measured on production within the hour after the ceiling shipped (commit
+# `70cabe63`): 5 of 40 anonymous `/api/feed` polls came back EMPTY —
+# `X-Feed-Cache: unavailable`, `reason: input_age_ceiling`, zero items — while
+# every card on the page was current. `X-Feed-Shared` named `market_load` on
+# EVERY refusal, and the two builds that reused only `canonical_counts,concepts`
+# were served normally.
+#
+# So the artifact emptying Discover was the one that provably cannot make a page
+# live: `market_load` carries `FuturesMarket` rows, whose `status` is
+# open/closed/resolved/active, and a futures price is not what a 60-second LIVE
+# ceiling is about (the live-market poll is 2 minutes and a page with no live
+# card is cacheable for 60s + 300s anyway). The clamp is unchanged for every
+# namespace that CAN carry live state — `concepts` copies a concept's `status`,
+# `live` included — and the exemption is one guarded set, not an argument.
+
+
+@pytest.mark.asyncio
+async def test_a_seventy_second_market_load_does_not_empty_a_live_page(monkeypatch):
+    """The production regression, as a test. The refusal must not fire here."""
+    import app.routes.feed as feed_mod
+
+    rc._reset_last_good_for_tests()
+    during_build, fired, _shim, _bound = _seed_artifact_and_build_time(
+        monkeypatch, feed_mod, artifact_age_s=0.0, build_s=0.0
+    )
+
+    def _consume_market_load():
+        during_build()
+        # The REAL recording seam `get_or_build` calls, inside the route's own
+        # context, so the route's own sink decides what this is worth.
+        pic._note_age("market_load", 70.0)
+
+    resp = await _drive_live_feed(
+        monkeypatch, redis=_SeededRedis(), during_build=_consume_market_load
+    )
+
+    assert fired["n"] >= 1
+    body = resp.json()
+    assert body["cache"]["status"] == "miss", (
+        "a live page was refused because a FUTURES-market artifact was 70s old "
+        "— the artifact cannot carry a live score, and this is the 5-in-40 "
+        "empty Discover measured on production at 70cabe63"
+    )
+    assert body["cache"]["live"] is True
+    assert body["items"]
+    rc._reset_last_good_for_tests()
+
+
+@pytest.mark.asyncio
+async def test_a_seventy_second_concepts_artifact_still_refuses(monkeypatch):
+    """THE CONTROL, and the one that keeps the exemption from becoming a hole.
+
+    `_score_event_concepts` copies a concept's `status` onto the card, `live`
+    included. So a stale `concepts` artifact CAN put a live score on the page,
+    and the ceiling must still refuse it — same request, same age, opposite
+    answer, and the only difference is which namespace recorded the age.
+    """
+    import app.routes.feed as feed_mod
+
+    rc._reset_last_good_for_tests()
+    during_build, fired, _shim, _bound = _seed_artifact_and_build_time(
+        monkeypatch, feed_mod, artifact_age_s=0.0, build_s=0.0
+    )
+
+    def _consume_concepts():
+        during_build()
+        pic._note_age("concepts", 70.0)
+
+    resp = await _drive_live_feed(
+        monkeypatch, redis=_SeededRedis(), during_build=_consume_concepts
+    )
+
+    assert fired["n"] >= 1
+    body = resp.json()
+    assert body["cache"]["status"] == "unavailable", (
+        "a live page built from a 70s-old CONCEPTS artifact was served — that "
+        "artifact can carry `status: live` and the ceiling is exactly the rule "
+        "that stops it (CERT-1856)"
+    )
+    assert body["cache"]["reason"] == "input_age_ceiling"
+    rc._reset_last_good_for_tests()
