@@ -24,7 +24,7 @@ enum DiscoverSwipeOutcome: Equatable, Sendable {
 ///     `removing = true` and never cleared them, on the assumption that the row
 ///     always disappears. It does not. `DiscoverView.filteredItems` BACKFILLS the
 ///     least-recently-dismissed cards whenever dismissal would drop the feed below
-///     `feedFloor` (8), and pull-to-refresh clears the dismiss store outright — both
+///     `feedFloor`, and pull-to-refresh clears the dismiss store outright — both
 ///     re-present the same `gi.id`, and `ForEach(id:)` + `.id(gi.id)` mean SwiftUI
 ///     reuses that row's `@State` rather than rebuilding it. The card came back with
 ///     `opacity(0)` AND an un-latchable axis: an invisible, permanently dead grid

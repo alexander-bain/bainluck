@@ -49,26 +49,36 @@ struct MarketMapView: View {
     private var isDone: Bool { eventStatus == "completed" || eventStatus == "closed" }
     private var isLive: Bool { eventStatus == "live" }
     private var isPre: Bool { !isDone && !isLive }
-    private var maxMargin: Int {
-        let key = (sportKey ?? "").lowercased()
-        if key.contains("baseball") || key.contains("mlb") { return 8 }
-        if key.contains("hockey") || key.contains("nhl") { return 5 }
-        if key.contains("soccer") || key.contains("mls") || key.contains("epl") { return 5 }
-        return 18
+    /// The sport's own words and rail width. Was a pair of local `switch`es
+    /// that knew four sports and no tennis, so a US Open match got basketball's
+    /// ±18 rail and "Projected total points" over a 26.5 GAME line.
+    private var vocab: SportVocab { SportVocab.forSport(sportKey) }
+    private var maxMargin: Int { vocab.marginRange }
+
+    /// The scoreboard's two numbers, ONLY where they count the thing this
+    /// map's rail is drawn in (ux/1034 B5, ported from `MarketMapSection.tsx`).
+    ///
+    /// On a tennis match they are SETS (`1 — 1`) and the rail is GAMES, so
+    /// every downstream use — the ACTUAL margin marker, the ACTUAL total
+    /// marker, the live pace projection — was comparing sets against a game
+    /// line and printing the answer as a fact. Nulled once here rather than at
+    /// each use: there are several call sites across the maps on this page, and
+    /// a gate per site is a gate somebody adds one more site beside.
+    private var scoredHomeScore: Int? {
+        vocab.scoreboardCountsTheUnit ? (gameMarkets.homeScore ?? homeScore) : nil
+    }
+    private var scoredAwayScore: Int? {
+        vocab.scoreboardCountsTheUnit ? (gameMarkets.awayScore ?? awayScore) : nil
+    }
+    /// Pace is derived from the scoreboard, so it inherits the same gate.
+    private var scoredPace: GameMarketPace? {
+        vocab.scoreboardCountsTheUnit ? gameMarkets.pace : nil
     }
 
-    private var vocab: (marginTitle: String, totalTitle: String, unit: String) {
-        let key = (sportKey ?? "").lowercased()
-        if key.contains("baseball") || key.contains("mlb") {
-            return ("Run margin map", "Runs map", "runs")
-        }
-        if key.contains("hockey") || key.contains("nhl") {
-            return ("Goal margin map", "Goals map", "goals")
-        }
-        if key.contains("soccer") || key.contains("mls") || key.contains("epl") {
-            return ("Goal margin map", "Goals map", "goals")
-        }
-        return ("Margin map", "Total map", "points")
+    /// The sentence a suppressed map owes the reader, once the match is under
+    /// way and the missing tile would otherwise be conspicuous.
+    private var unitMismatchNote: String? {
+        (isLive || isDone) ? vocab.unitMismatchNote : nil
     }
 
     private var hasSpreads: Bool { !(gameMarkets.spreads ?? []).isEmpty }
@@ -84,41 +94,85 @@ struct MarketMapView: View {
     var body: some View {
         if !hasSpreads && !hasTotals { EmptyView() }
         else if useColumns {
-            HStack(alignment: .top, spacing: 12) {
-                if hasSpreads {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("MARGIN MAPS")
-                            .font(.system(size: 11, weight: .heavy))
-                            .foregroundStyle(.secondary)
-                            .tracking(1)
-                        fullMarginMap
-                        halfMarginMaps
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .top, spacing: 12) {
+                    if hasSpreads {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("MARGIN MAPS")
+                                .font(.system(size: 11, weight: .heavy))
+                                .foregroundStyle(.secondary)
+                                .tracking(1)
+                            fullMarginMap
+                            halfMarginMaps
+                        }
+                        .frame(maxWidth: .infinity)
                     }
-                    .frame(maxWidth: .infinity)
-                }
-                if hasTotals {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("TOTAL MAPS")
-                            .font(.system(size: 11, weight: .heavy))
-                            .foregroundStyle(.secondary)
-                            .tracking(1)
-                        fullTotalMap
-                        halfTotalMaps
+                    if hasTotals {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("TOTAL MAPS")
+                                .font(.system(size: 11, weight: .heavy))
+                                .foregroundStyle(.secondary)
+                                .tracking(1)
+                            fullTotalMap
+                            halfTotalMaps
+                        }
+                        .frame(maxWidth: .infinity)
                     }
-                    .frame(maxWidth: .infinity)
                 }
+                unitMismatchFootnote
             }
         } else {
             VStack(spacing: 12) {
                 if hasSpreads { fullMarginMap; halfMarginMaps }
                 if hasTotals { fullTotalMap; halfTotalMaps }
+                unitMismatchFootnote
             }
+        }
+    }
+
+    /// Said once under the maps, not per card: the suppressed ACTUAL tiles are
+    /// all one absence, and four copies of one sentence reads as four faults.
+    @ViewBuilder
+    private var unitMismatchFootnote: some View {
+        if let note = unitMismatchNote {
+            Text(note)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
     // MARK: - Full Game Margin Map
 
+    /// True when the margin map would draw nothing a market said.
+    ///
+    /// `buildDensityFromSpreads([])` returns a FLAT rail — a uniform shape that
+    /// looks like a distribution and is not one. On the live US Open match the
+    /// two spread rows were Kalshi "No" legs, which name no player, so nothing
+    /// parsed: the card was a title, a subtitle and a decorative rail. With the
+    /// unit-mismatched ACTUAL tile now gone (see `scoredHomeScore`) there was
+    /// literally nothing left in it, and empty chrome reads worse than an
+    /// absent card.
+    private var marginMapIsEmptyChrome: Bool {
+        let parsed = (gameMarkets.spreads ?? [])
+            .filter { isFullGameSpread($0.marketName) }
+            .compactMap { parseSprOutcome($0) }
+        guard parsed.isEmpty else { return false }
+        let hasProjection = homeSpread != nil
+        let hasScoreTile = scoredHomeScore != nil && scoredAwayScore != nil && (isLive || isDone)
+        return !hasProjection && !hasScoreTile
+    }
+
+    @ViewBuilder
     private var fullMarginMap: some View {
+        if marginMapIsEmptyChrome {
+            EmptyView()
+        } else {
+            marginMapCard
+        }
+    }
+
+    private var marginMapCard: some View {
         let spreads = gameMarkets.spreads ?? []
         let fullGame = spreads.filter { isFullGameSpread($0.marketName) }
         let parsed = fullGame.compactMap { parseSprOutcome($0) }
@@ -146,8 +200,8 @@ struct MarketMapView: View {
         var markers: [MapMarker] = []
         let projValue = homeSpread != nil ? -(homeSpread!) : closestToEvenMargin(parsed)
         if isDone {
-            if let homeScoreValue = gameMarkets.homeScore ?? homeScore,
-               let awayScoreValue = gameMarkets.awayScore ?? awayScore {
+            if let homeScoreValue = scoredHomeScore,
+               let awayScoreValue = scoredAwayScore {
                 let margin = homeScoreValue - awayScoreValue
                 markers.append(MapMarker(id: "final", value: Double(margin), type: .final_, label: "FINAL", displayValue: "\(margin > 0 ? hAbbr : aAbbr) +\(abs(margin))"))
             }
@@ -155,8 +209,8 @@ struct MarketMapView: View {
                 markers.append(MapMarker(id: "pre", value: pv, type: .pre, label: "PRE-GAME", displayValue: "\(pv > 0 ? hAbbr : aAbbr) +\(String(format: "%.1f", abs(pv)))"))
             }
         } else if isLive {
-            if let homeScoreValue = gameMarkets.homeScore ?? homeScore,
-               let awayScoreValue = gameMarkets.awayScore ?? awayScore {
+            if let homeScoreValue = scoredHomeScore,
+               let awayScoreValue = scoredAwayScore {
                 let margin = homeScoreValue - awayScoreValue
                 markers.append(MapMarker(id: "actual", value: Double(margin), type: .actual, label: "ACTUAL", displayValue: "\(margin > 0 ? hAbbr : aAbbr) +\(abs(margin))"))
             }
@@ -198,7 +252,11 @@ struct MarketMapView: View {
         let fullGame = totals.filter { !$0.outcomeName.contains(":") }
         let thresholds = extractTotalThresholds(fullGame)
         let allThresh = thresholds.map(\.threshold)
-        let rangeMin = (allThresh.min() ?? 180) - 10
+        // A TOTAL cannot be negative, and the -10 padding put the rail's left
+        // edge at "-7" on the live US Open match (a stray 2.5 threshold among
+        // 21.5/22.5 game lines dragged the minimum down). Padding below zero is
+        // never a real outcome, so the floor is zero on every sport.
+        let rangeMin = max(0, (allThresh.min() ?? 180) - 10)
         let rangeMax = (allThresh.max() ?? 230) + 10
         let density = buildDensityFromThresholds(thresholds, rangeMin: rangeMin, rangeMax: rangeMax, segments: 14)
 
@@ -209,8 +267,8 @@ struct MarketMapView: View {
         var markers: [MapMarker] = []
         let ouLine = overUnder ?? thresholds.first(where: { abs($0.overProb - 0.5) < 0.1 })?.threshold
         if isDone {
-            if let homeScoreValue = gameMarkets.homeScore ?? homeScore,
-               let awayScoreValue = gameMarkets.awayScore ?? awayScore {
+            if let homeScoreValue = scoredHomeScore,
+               let awayScoreValue = scoredAwayScore {
                 let totalScore = homeScoreValue + awayScoreValue
                 markers.append(MapMarker(id: "final", value: Double(totalScore), type: .final_, label: "FINAL", displayValue: "\(totalScore) \(vocab.unit)"))
             }
@@ -218,9 +276,9 @@ struct MarketMapView: View {
                 markers.append(MapMarker(id: "pre", value: ou, type: .pre, label: "PRE-GAME", displayValue: formatThreshold(ou)))
             }
         } else if isLive {
-            if let homeScoreValue = gameMarkets.homeScore ?? homeScore,
-               let awayScoreValue = gameMarkets.awayScore ?? awayScore,
-               let pace = gameMarkets.pace, let proj = pace.projectedTotal {
+            if let homeScoreValue = scoredHomeScore,
+               let awayScoreValue = scoredAwayScore,
+               let pace = scoredPace, let proj = pace.projectedTotal {
                 let totalScore = homeScoreValue + awayScoreValue
                 markers.append(MapMarker(id: "actual", value: Double(totalScore), type: .actual, label: "ACTUAL", displayValue: "\(totalScore)"))
                 markers.append(MapMarker(id: "proj", value: proj, type: .proj, label: "PROJECTED", displayValue: "\(Int(proj.rounded()))"))

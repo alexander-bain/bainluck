@@ -9,6 +9,7 @@ struct ScoreDifferentialChartView: View {
     let history: EventHistoryResponse
     let homeTeam: String
     let awayTeam: String
+    var sportKey: String?
     var commenceTime: String?
     var eventStatus: String?
     var homeTeamColor: Color?
@@ -30,6 +31,29 @@ struct ScoreDifferentialChartView: View {
         eventStatus == "live" || eventStatus == "completed" || eventStatus == "closed"
     }
 
+    /// ux/1034 B5, ported from `ScoreDifferentialChart.tsx`: the actual line is
+    /// only drawn where the scoreboard counts the unit the projection is in.
+    ///
+    /// On a tennis match `score_history` is SETS — `1-0`, `1-1` — while
+    /// `projectedHomeScore`/`projectedAwayScore` are the books' GAME spread.
+    /// The teal "Actual Score Diff" line was a three-step staircase under a ±6
+    /// game axis: a category error drawn as a fact. The widget keeps its
+    /// projection and stops drawing a line in the wrong unit; the note below it
+    /// says which two units it is refusing to mix, because a widget that just
+    /// goes quiet reads as broken.
+    private var vocab: SportVocab { SportVocab.forSport(sportKey) }
+    private var scoreboardCountsTheUnit: Bool { vocab.scoreboardCountsTheUnit }
+
+    /// The sentence the chart owes a reader whose actual line is missing.
+    private var unitMismatchNote: String? {
+        guard !scoreboardCountsTheUnit, !vocab.scoreboardUnit.isEmpty, !vocab.unit.isEmpty else {
+            return nil
+        }
+        return "Played \(vocab.unit) are not captured yet — the scoreboard reports "
+            + "\(vocab.scoreboardUnit). The line below is the books' projected "
+            + "\(vocab.unitSingular) margin."
+    }
+
     private var gameStartDate: Date? {
         commenceTime?.asDate
     }
@@ -46,6 +70,13 @@ struct ScoreDifferentialChartView: View {
                     .font(.subheadline)
                     .fontWeight(.semibold)
                     .foregroundStyle(.primary)
+
+                if let note = unitMismatchNote {
+                    Text(note)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
 
                 HStack(spacing: 0) {
                     // Vertical team labels: home on top (positive), away on bottom (negative)
@@ -151,8 +182,15 @@ struct ScoreDifferentialChartView: View {
             }
         }
 
-        // Actual scores from ESPN history
+        // Actual scores — only where the scoreboard counts the unit the
+        // projection is quoted in. For tennis this stays empty on purpose: the
+        // scoreboard's sets are not the rail's games (see `vocab`).
         var actualByMinute: [Int: (date: Date, diff: Double)] = [:]
+        guard scoreboardCountsTheUnit else {
+            return mergeDiffPoints(projectedByMinute: projectedByMinute,
+                                   actualByMinute: actualByMinute,
+                                   endDate: endDate)
+        }
         for ep in history.espnHistory ?? [] {
             guard let date = ep.timestamp.asDate,
                   let hs = ep.homeScore, let as_ = ep.awayScore else { continue }
@@ -185,7 +223,18 @@ struct ScoreDifferentialChartView: View {
             }
         }
 
-        // Merge projected and actual into unified points
+        return mergeDiffPoints(projectedByMinute: projectedByMinute,
+                               actualByMinute: actualByMinute,
+                               endDate: endDate)
+    }
+
+    /// Merge projected and actual into unified points. Extracted so the
+    /// unit-gated early return above shares one exit with the normal path.
+    private func mergeDiffPoints(
+        projectedByMinute: [Int: DiffPoint],
+        actualByMinute: [Int: (date: Date, diff: Double)],
+        endDate: Date?
+    ) -> [DiffPoint] {
         let allBuckets = Set(projectedByMinute.keys).union(actualByMinute.keys)
         var merged: [DiffPoint] = []
         for bucket in allBuckets {
