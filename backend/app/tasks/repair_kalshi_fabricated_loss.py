@@ -149,6 +149,7 @@ with it would be the same class of error one layer down.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -202,6 +203,7 @@ from app.utils.repair_apply_plan import (
     keyset_after,
     mutations_outside_approved,
     plan_reason_for_read,
+    url_safe_isoformat,
 )
 
 logger = logging.getLogger(__name__)
@@ -1260,21 +1262,56 @@ async def repair(
     return await _dry_run(session, limit, after_id, after_date, sport, started)
 
 
+#: A UTC offset whose ``+`` a query string has already eaten. Anchored to the
+#: END of the value and to the exact ``HH:MM`` an offset is, so this repairs the
+#: one transport artefact and refuses everything else that contains a space.
+_PLUS_EATEN_BY_THE_QUERY_STRING = re.compile(r"^(.*\d) (\d{2}:\d{2})$")
+
+#: The example the refusal text shows an operator. DERIVED from the emit path
+#: rather than typed, because this string is the rail's own instruction — the
+#: one CERT-1892 followed literally to find that the advertised form could not
+#: survive being pasted. An example that is not what ``next_cursor`` hands back
+#: is the same defect wearing prose.
+_CURSOR_EXAMPLE = url_safe_isoformat(
+    datetime(2026, 6, 16, 12, 27, 30, tzinfo=timezone.utc)
+)
+
+
 def parse_cursor_date(after_date: str | None) -> datetime | None:
     """The ISO string this rail HANDS BACK, turned into what asyncpg will take.
 
-    CAL-P1010. ``keyset_after`` emits ``after_date`` as ``date.isoformat()``, the
-    operator pastes that back into ``?after_date=``, the route declares it
-    ``str`` — and asyncpg refuses a ``str`` for a ``timestamptz`` parameter
-    rather than casting it, which psycopg2 would have done silently. So the
-    cursor this rail returns was a cursor it could not accept, and page two of
-    every drain died on ``DataError: invalid input for query argument``. Same
-    specimen as the cliff drain one rail over (#1884), which is why this is a
-    parse and not a wider predicate.
+    Two transport layers sit between the cursor and the query, and each one
+    dropped it.
+
+    **CAL-P1010 — the driver.** ``keyset_after`` emits ``after_date`` as an ISO
+    string, the operator pastes it back into ``?after_date=``, the route
+    declares it ``str`` — and asyncpg refuses a ``str`` for a ``timestamptz``
+    parameter rather than casting it, which psycopg2 would have done silently.
+    Page two of every drain died on ``DataError: invalid input for query
+    argument``. Same specimen as the cliff drain one rail over (#1884).
+
+    **CAL-P1010-R (CERT-1892) — the query string.** Fixing that was not enough,
+    because the value never arrived intact. ``isoformat()`` writes the UTC
+    offset as ``+00:00``, and a literal ``+`` in a query string is
+    ``application/x-www-form-urlencoded`` for a SPACE, so what reached this
+    function was ``2026-06-16T12:27:30.636456 00:00`` and the parse refused it
+    by name. The rail's own instruction is *paste ``next_cursor`` into
+    ``?after_date=``*, so following the instruction exactly was the failing
+    path.
+
+    Both ends are fixed, deliberately:
+
+    * :func:`~app.utils.repair_apply_plan.url_safe_isoformat` now emits ``Z``
+      instead of ``+00:00``, so a NEW cursor carries no character a query string
+      will rewrite;
+    * this parse also repairs the eaten ``+``, because a cursor an operator
+      already holds — in a captured response, a terminal scrollback, a ticket —
+      must not become unusable, and because the guarantee has to hold for a
+      value that took the old path.
 
     A naive value is read as UTC rather than refused: an operator typing
-    ``?after_date=2026-06-16`` by hand means the same instant the column stores,
-    and asyncpg wants the tzinfo explicit.
+    ``?after_date=2026-06-16`` by hand means the instant the column stores, and
+    asyncpg wants the tzinfo explicit.
 
     Raises ``ValueError`` for anything it cannot read. Never returns ``None``
     for a value that was supplied — a cursor silently dropped to ``None`` reads
@@ -1283,7 +1320,8 @@ def parse_cursor_date(after_date: str | None) -> datetime | None:
     """
     if after_date is None:
         return None
-    parsed = datetime.fromisoformat(after_date)
+    candidate = _PLUS_EATEN_BY_THE_QUERY_STRING.sub(r"\1+\2", after_date.strip())
+    parsed = datetime.fromisoformat(candidate)
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
@@ -1312,7 +1350,7 @@ async def _dry_run(session, limit, after_id, after_date, sport, started):
             "presented_after_date": after_date,
             "reason": (
                 "after_date must be the ISO timestamp this rail returned in "
-                "`next_cursor` (for example 2026-06-16T12:27:30+00:00). It is "
+                f"`next_cursor` (for example {_CURSOR_EXAMPLE}). It is "
                 "REFUSED rather than ignored: a dropped cursor half re-reads "
                 "page one and reports it as a resume."
             ),

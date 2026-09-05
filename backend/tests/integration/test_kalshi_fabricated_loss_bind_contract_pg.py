@@ -86,7 +86,9 @@ async def pg_session():
     await engine.dispose()
 
 
-async def _seed_one_fabricated_loss_market(session, *, sport="baseball", ext="KXBIND-26"):
+async def _seed_one_fabricated_loss_market(
+    session, *, sport="baseball", ext="KXBIND-26"
+):
     """One market in the drain's population: 2 legs, no winner, all api_settlement.
 
     Raw ``text()`` INSERTs deliberately — this gate exists to exercise the
@@ -99,8 +101,7 @@ async def _seed_one_fabricated_loss_market(session, *, sport="baseball", ext="KX
     resolved = datetime.now(timezone.utc) - timedelta(days=PROVABLY_PURGED_AGE_DAYS - 5)
     market_id = (
         await session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO futures_markets
                     (name, source, category, mutually_exclusive, status,
                      resolution_date, external_id, llm_sport_category)
@@ -108,8 +109,7 @@ async def _seed_one_fabricated_loss_market(session, *, sport="baseball", ext="KX
                     (:name, 'kalshi', 'championship', TRUE, 'resolved',
                      :resolved, :ext, :sport)
                 RETURNING id
-                """
-            ),
+                """),
             {
                 "name": "Fabricated-loss bind contract market",
                 "resolved": resolved,
@@ -121,13 +121,11 @@ async def _seed_one_fabricated_loss_market(session, *, sport="baseball", ext="KX
 
     for leg in ("YES", "NO"):
         await session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO futures_outcomes
                     (market_id, name, external_id, is_winner, resolution_source)
                 VALUES (:mid, :name, :ext, FALSE, :source)
-                """
-            ),
+                """),
             {
                 "mid": market_id,
                 "name": leg.title(),
@@ -179,7 +177,9 @@ async def test_the_sharded_work_selection_still_filters(pg_session):
         pg_session, sport="hockey", ext="KXBIND-HOCK"
     )
 
-    assert [r.market_id for r in await _work(pg_session, sport="baseball")] == [baseball]
+    assert [r.market_id for r in await _work(pg_session, sport="baseball")] == [
+        baseball
+    ]
     assert await _work(pg_session, sport="chess") == []
     assert len(await _work(pg_session)) == 2, "no shard means no filter"
 
@@ -194,12 +194,25 @@ async def test_the_cursor_this_rail_hands_back_is_one_it_accepts(pg_session):
     parameter rather than casting it (psycopg2 would have). Page one worked;
     page two died on ``DataError: invalid input for query argument``.
 
-    So the assertion is deliberately the whole loop rather than a bind type:
-    the cursor is taken FROM `keyset_after`, carried through `parse_cursor_date`
-    exactly as the route's string would be, and executed. Nothing here restates
-    a value the rail computed — every step is the shipping one.
+    So the assertion is the whole loop rather than a bind type: the cursor is
+    taken FROM `keyset_after`, put through the REAL query-string decoder, then
+    through `parse_cursor_date`, then executed. Nothing here restates a value
+    the rail computed.
+
+    CERT-1892 blocked the version of this test that skipped the decoder. A
+    params dictionary is not a query string, and the character that was being
+    eaten — `isoformat()`'s `+` — is eaten only by the transport. The test was
+    green over a user path that could not work. `QueryParams` is the same class
+    Starlette hands the route, so it is in the loop now; the route itself, with
+    the cursor appended to a URL as text, is pinned in
+    `tests/test_kalshi_fabricated_loss_cursor_transport_p1010.py`.
     """
+    from starlette.datastructures import QueryParams
+
     from app.utils.repair_apply_plan import keyset_after
+
+    def _through_the_query_string(value: str) -> str:
+        return QueryParams(f"after_date={value}")["after_date"]
 
     first, _ = await _seed_one_fabricated_loss_market(pg_session, ext="KXBIND-P1")
     second, _ = await _seed_one_fabricated_loss_market(pg_session, ext="KXBIND-P2")
@@ -209,26 +222,33 @@ async def test_the_cursor_this_rail_hands_back_is_one_it_accepts(pg_session):
 
     cursor = keyset_after(page_one, examined=1)
     assert cursor["after_id"] == first
-    assert isinstance(cursor["after_date"], str), (
-        "the emitted cursor is a STRING — that is the fact the parse exists for"
-    )
+    assert isinstance(
+        cursor["after_date"], str
+    ), "the emitted cursor is a STRING — that is the fact the parse exists for"
+    assert (
+        _through_the_query_string(cursor["after_date"]) == cursor["after_date"]
+    ), "the cursor changed in transit, which is CERT-1892's defect"
 
     page_two = await _work(
         pg_session,
         lim=1,
-        after_date=rail.parse_cursor_date(cursor["after_date"]),
+        after_date=rail.parse_cursor_date(
+            _through_the_query_string(cursor["after_date"])
+        ),
         after_id=cursor["after_id"],
     )
-    assert [r.market_id for r in page_two] == [second], (
-        "the resume must advance past the row page one returned"
-    )
+    assert [r.market_id for r in page_two] == [
+        second
+    ], "the resume must advance past the row page one returned"
 
     exhausted = keyset_after(page_two, examined=1)
     assert (
         await _work(
             pg_session,
             lim=1,
-            after_date=rail.parse_cursor_date(exhausted["after_date"]),
+            after_date=rail.parse_cursor_date(
+                _through_the_query_string(exhausted["after_date"])
+            ),
             after_id=exhausted["after_id"],
         )
         == []

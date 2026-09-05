@@ -1700,9 +1700,36 @@ def keyset_after(rows: Sequence[Any], examined: int) -> dict[str, Any] | None:
     last = rows[min(examined, len(rows)) - 1]
     date = getattr(last, "resolution_date", None)
     return {
-        "after_date": date.isoformat() if hasattr(date, "isoformat") else date,
+        "after_date": url_safe_isoformat(date),
         "after_id": int(getattr(last, "market_id")),
     }
+
+
+def url_safe_isoformat(value: Any) -> Any:
+    """An ISO timestamp an operator can paste into a query string LITERALLY.
+
+    CAL-P1010-R (CERT-1892). ``datetime.isoformat()`` writes a UTC offset as
+    ``+00:00``, and a literal ``+`` in a query string is
+    ``application/x-www-form-urlencoded`` for a SPACE — so Starlette hands the
+    route ``2026-06-16T12:27:30.636456 00:00`` and the parse on the other side
+    refuses it. The rail's own instruction is *paste ``next_cursor`` into
+    ``?after_date=``*, so the cursor it hands back has to survive that
+    instruction being followed exactly.
+
+    ``Z`` is the same instant with no character a query string will rewrite.
+    Naive values and plain dates already carry no offset and are returned
+    unchanged; anything without ``isoformat`` is passed through, because a
+    cursor this cannot format is a cursor the caller must see as it is rather
+    than as a guess.
+    """
+    from datetime import timezone
+
+    if not hasattr(value, "isoformat"):
+        return value
+    tz = getattr(value, "tzinfo", None)
+    if tz is None:
+        return value.isoformat()
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def cursor_skips_unprocessed(

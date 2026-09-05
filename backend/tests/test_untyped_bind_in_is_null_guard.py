@@ -83,6 +83,7 @@ def test_no_raw_sql_tests_an_untyped_bind_for_null():
 #: POSTGRES and not to SQLAlchemy, which is the entire point of the guard below.
 _SQL_LINE_COMMENT = re.compile(r"--[^\n]*")
 
+
 def _binds(sql: str) -> set[str]:
     """What SQLAlchemy itself would bind — asked, never re-derived.
 
@@ -111,7 +112,9 @@ def _sql_constants():
         module_name = ".".join(rel.parts)
         try:
             module = importlib.import_module(module_name)
-        except Exception:  # noqa: BLE001 — an unimportable module is another test's problem
+        except (
+            Exception
+        ):  # noqa: BLE001 — an unimportable module is another test's problem
             continue
         for attr in dir(module):
             if not attr.endswith("_SQL"):
