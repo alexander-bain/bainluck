@@ -8,6 +8,12 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services import get_db
+from app.tasks.futures_price_refresh import (  # noqa: E402
+    ELIGIBLE_POOL_SQL,
+    HIGH_VALUE_SQL,
+    UNPRICED_POOL_LIMIT,
+    VALUE_POOL_LIMIT,
+)
 from app.utils.futures_liveness import (
     BASE_LIVENESS_SQL,
     LIVE_MARKET_SQL,
@@ -155,40 +161,39 @@ async def source_health(
 # times out against the 179M-row snapshot table; this rides
 # `idx_fos_outcome_captured` and stops at the first row inside the window.
 
+#: ONE SCAN, and the collapse is a cost decision with a correctness dividend.
+#:
+#: This was three statements over the same pool — the dark grouping, the worst-25
+#: list, and the eligible denominator. Under the tier-1 fence that pool was 3,081
+#: rows and each was fast. #3315's pool is 4,500, and each statement pays the
+#: whole ~10s scan (measured on production 2026-09-05): three of them plus the
+#: settled report is over 30s, which is the Heroku router's H12 boundary. A guard
+#: that times out is not a stricter guard, it is no guard.
+#:
+#: So the darkness is a SELECT expression rather than a WHERE clause, every
+#: eligible row comes back once, and the endpoint derives all three answers from
+#: the one result. That the denominator and the numerator now come from the same
+#: scan is the dividend: they cannot describe two different populations, which is
+#: the failure mode this endpoint exists to make impossible one level up.
 _PRICE_DARK_SQL = f"""
-    SELECT fm.source,
+    {ELIGIBLE_POOL_SQL}
+    SELECT fm.source, fm.external_id, fm.name, fm.volume, fm.market_tier,
            COALESCE(fm.llm_sport_category, 'uncategorized') AS category,
-           COUNT(*) AS dark
-      FROM futures_markets fm
-     WHERE {LIVE_MARKET_SQL}
-       AND fm.market_tier = 1
-       AND fm.volume >= :volume_floor
-       AND NOT EXISTS (
+           NOT EXISTS (
              SELECT 1 FROM futures_outcomes fo
                JOIN futures_odds_snapshots s ON s.outcome_id = fo.id
               WHERE fo.market_id = fm.id
                 AND s.captured_at > NOW() - make_interval(hours => :max_age_hours)
-           )
-     GROUP BY 1, 2
-     ORDER BY 3 DESC
+           ) AS is_dark
+      FROM futures_markets fm
+      JOIN pool ON pool.id = fm.id
+     ORDER BY fm.volume DESC NULLS LAST
 """
 
-_PRICE_DARK_WORST_SQL = f"""
-    SELECT fm.source, fm.external_id, fm.name, fm.volume,
-           COALESCE(fm.llm_sport_category, 'uncategorized') AS category
-      FROM futures_markets fm
-     WHERE {LIVE_MARKET_SQL}
-       AND fm.market_tier = 1
-       AND fm.volume >= :volume_floor
-       AND NOT EXISTS (
-             SELECT 1 FROM futures_outcomes fo
-               JOIN futures_odds_snapshots s ON s.outcome_id = fo.id
-              WHERE fo.market_id = fm.id
-                AND s.captured_at > NOW() - make_interval(hours => :max_age_hours)
-           )
-     ORDER BY fm.volume DESC
-     LIMIT 25
-"""
+#: How many of the worst dark markets the response names. A SAMPLE, and the
+#: response says so — calling a truncated list `markets` is how a cap reads as
+#: coverage.
+_WORST_SAMPLE = 25
 
 #: The registered-coverage half, and the reason it is a separate query.
 #:
@@ -237,10 +242,9 @@ _SETTLED_EXCLUDED_SQL = f"""
            fm.source, fm.external_id, fm.name, fm.volume
       FROM futures_markets fm
      WHERE {BASE_LIVENESS_SQL}
-       AND fm.market_tier = 1
-       AND fm.volume >= :volume_floor
+       AND {HIGH_VALUE_SQL}
        AND {SETTLED_ONLY_SQL}
-     ORDER BY fm.volume DESC
+     ORDER BY fm.volume DESC NULLS LAST
 """
 
 
@@ -261,39 +265,35 @@ async def futures_price_freshness(
 
     from app.tasks.futures_price_refresh import HIGH_VALUE_VOLUME_FLOOR
 
-    params = {
+    # #3315: the pool bounds are the task's own, imported rather than restated.
+    # This endpoint's whole job is to assert over the set the task refreshes, so
+    # a bound it chose for itself would be a second definition of eligibility —
+    # and the reader of a green verdict would have no way to know which one it
+    # meant.
+    pool_params = {
         "volume_floor": HIGH_VALUE_VOLUME_FLOOR,
-        "max_age_hours": max_age_hours,
+        "value_pool_limit": VALUE_POOL_LIMIT,
+        "unpriced_pool_limit": UNPRICED_POOL_LIMIT,
     }
-    rows = (await db.execute(text(_PRICE_DARK_SQL), params)).fetchall()
-    worst = (await db.execute(text(_PRICE_DARK_WORST_SQL), params)).fetchall()
+    params = {**pool_params, "max_age_hours": max_age_hours}
+    eligible = (await db.execute(text(_PRICE_DARK_SQL), params)).fetchall()
     settled = (
         await db.execute(
             text(_SETTLED_EXCLUDED_SQL), {"volume_floor": HIGH_VALUE_VOLUME_FLOOR}
         )
     ).fetchall()
 
-    total_eligible = (
-        await db.execute(
-            text(
-                """
-                SELECT COUNT(*) FROM futures_markets fm
-                 WHERE fm.status = 'open'
-                   AND fm.source IN ('kalshi', 'polymarket')
-                   AND fm.market_tier = 1
-                   AND fm.volume >= :volume_floor
-                   AND (fm.resolution_date IS NULL OR fm.resolution_date > NOW())
-                """
-            ),
-            {"volume_floor": HIGH_VALUE_VOLUME_FLOOR},
-        )
-    ).scalar() or 0
+    # One scan, three answers. Ordered by volume DESC in SQL, so `worst` is a
+    # slice rather than a second sort with a second chance to disagree.
+    total_eligible = len(eligible)
+    dark = [r for r in eligible if r[6]]
+    dark_total = len(dark)
+    worst = dark[:_WORST_SAMPLE]
 
     by_category: dict = {}
-    dark_total = 0
-    for source, category, dark in rows:
-        by_category.setdefault(category, {})[source] = int(dark)
-        dark_total += int(dark)
+    for r in dark:
+        cat = by_category.setdefault(r[5], {})
+        cat[r[0]] = cat.get(r[0], 0) + 1
 
     # The curated half. Every market a committed register renders, at any tier.
     from app.utils.tournament_register import registered_market_ids
@@ -321,13 +321,19 @@ async def futures_price_freshness(
 
     return {
         "invariant": (
-            f"a tier-1 open market with volume >= {HIGH_VALUE_VOLUME_FLOOR} and a "
-            f"future resolution date must have a price capture within "
-            f"{max_age_hours}h, in every category"
+            f"an open market with volume >= {HIGH_VALUE_VOLUME_FLOOR}, at ANY "
+            f"tier, or a tier-1 one with no recorded volume, and a future "
+            f"resolution date, must have a price capture within {max_age_hours}h, "
+            f"in every category"
         ),
-        # UNCHANGED SEMANTICS: this is the tier-1 value class only, because
-        # CERT-404 G5 and the existing dashboards read it. Read `status_all` for
-        # "is anything price-dark".
+        # #3315 WIDENED THIS DENOMINATOR AND THE WORDING ABOVE SAYS SO. It used
+        # to read "a tier-1 open market with volume >= N". That sentence was
+        # true of what was measured and false of what a reader took it to mean:
+        # the front page is tier 2, so `status: green` was compatible with every
+        # card on it being 46 days stale. A guard's invariant string is the only
+        # place its blind spots are visible, so widening the set without
+        # rewriting the sentence would have been the worse half of the fix.
+        # Expect `red` while the sweep works through the newly-admitted backlog.
         "status": "green" if dark_total == 0 else "red",
         "status_all": (
             "green" if dark_total == 0 and not registered_dark else "red"
@@ -386,15 +392,20 @@ async def futures_price_freshness(
             ],
         },
         "by_category": by_category,
+        # #3315: `market_tier` is reported because the tier fence is exactly
+        # what this endpoint could not see. A reader looking at a dark market
+        # needs to know it is tier 2 without going to the database to find out.
         "worst_offenders": [
             {
                 "source": r[0],
                 "external_id": r[1],
                 "name": r[2],
                 "volume": int(r[3]) if r[3] is not None else None,
-                "category": r[4],
+                "market_tier": r[4],
+                "category": r[5],
             }
             for r in worst
         ],
+        "worst_offenders_sample_limit": _WORST_SAMPLE,
         "checked_at": datetime.now(timezone.utc).isoformat(),
     }

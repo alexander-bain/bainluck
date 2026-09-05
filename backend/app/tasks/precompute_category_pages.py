@@ -1006,6 +1006,10 @@ async def _prewarm_feed_shape(
         feed_response_cache_ttls,
         payload_contains_live_event,
     )
+    from app.utils.feed_served_markets import (
+        market_ids_in_feed_payload,
+        record_served_market_ids,
+    )
 
     label = shape["label"]
     started = _time.monotonic()
@@ -1119,6 +1123,13 @@ async def _prewarm_feed_shape(
     # a key of its own. Written here and only here, from the scope readback two
     # statements above — the same value that was just published to.
     _record_shape_cache_key(rc, label, cache_key)
+    # #3315: and carry forward WHAT IT RENDERED, so the hourly price sweep can
+    # select on "a reader is looking at this" instead of on a volume floor that
+    # stood in for it. Every shape here is `offset = 0`, so this set IS page one.
+    # Written from the published payload by the writer that built it, for the
+    # same reason the cache key is: it is the route's own answer and cannot
+    # disagree with what a reader is served. Never raises.
+    record_served_market_ids(rc, label, market_ids_in_feed_payload(payload))
     logger.info(
         "Pre-warmed %s feed in %.1fs (%d items, ttl=%ds, stale=%ds, live=%s)",
         label,

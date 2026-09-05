@@ -1249,21 +1249,31 @@ def check_kalshi_freshness():
     time_limit=600,
 )
 def refresh_stale_futures_prices(self, budget: int = 0):
-    """#2199: price-refresh high-value open futures the discovery polls cannot reach.
+    """#2199 / #3315: price-refresh open futures the discovery polls cannot reach.
 
     Both discovery scans are bounded by an ordering that puts already-known
     markets last — Polymarket's newest-startDate-first window spans about ten
     hours, Kalshi defers existing events behind new ones past its deadline — so
     long-lived championship fields went 8-32 days without a capture while the
-    polls reported success. Full mechanism: ``app/tasks/futures_price_refresh``.
+    polls reported success. Since #3315 it also re-prices whatever Discover and
+    Sports page one are currently rendering, at any tier and any volume: the old
+    tier-1 fence meant every card on the front page was outside the net, and one
+    of them carried a 13.7-point error for 46 days. Full mechanism:
+    ``app/tasks/futures_price_refresh``.
+
+    ``budget`` is a manual-run override and it applies to EACH source, so the
+    run is capped at ``2 x budget`` markets. Left at 0, each source uses its own
+    measured budget — the two are not interchangeable numbers (one Kalshi market
+    costs about five Polymarket ones), which is why there is no single total to
+    override.
     """
-    from app.tasks.futures_price_refresh import (
-        DEFAULT_MARKET_BUDGET,
-        _refresh_stale_futures_prices,
+    from app.tasks.futures_price_refresh import _refresh_stale_futures_prices
+
+    kwargs = (
+        {"kalshi_budget": budget, "polymarket_budget": budget} if budget else {}
     )
     return _tracked_run(
-        "futures_price_refresh",
-        _refresh_stale_futures_prices(budget=budget or DEFAULT_MARKET_BUDGET),
+        "futures_price_refresh", _refresh_stale_futures_prices(**kwargs)
     )
 
 
