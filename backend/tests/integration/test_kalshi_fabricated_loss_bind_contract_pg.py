@@ -184,27 +184,81 @@ async def test_the_sharded_work_selection_still_filters(pg_session):
     assert len(await _work(pg_session)) == 2, "no shard means no filter"
 
 
-async def test_the_keyset_resume_executes_and_advances(pg_session):
-    """Both halves of the cursor are bound together, and they are typed too.
+async def test_the_cursor_this_rail_hands_back_is_one_it_accepts(pg_session):
+    """The round trip, closed: `next_cursor` out, `?after_date=` in, and page two.
 
-    The keyset was already cast (`62e84233`); this holds that, and proves the
-    resume walks forward rather than re-reading page one — the failure mode
-    `?offset=` was retired for.
+    The population is 63,733 legs at ``APPLY_MARKET_CAP`` markets a call, so the
+    drain is nothing BUT paging — and this loop was open. ``keyset_after``
+    emits ``after_date`` as ``date.isoformat()``, the route declares
+    ``after_date: str``, and asyncpg refuses a ``str`` for a ``timestamptz``
+    parameter rather than casting it (psycopg2 would have). Page one worked;
+    page two died on ``DataError: invalid input for query argument``.
+
+    So the assertion is deliberately the whole loop rather than a bind type:
+    the cursor is taken FROM `keyset_after`, carried through `parse_cursor_date`
+    exactly as the route's string would be, and executed. Nothing here restates
+    a value the rail computed — every step is the shipping one.
     """
-    first, resolved = await _seed_one_fabricated_loss_market(
-        pg_session, ext="KXBIND-P1"
-    )
+    from app.utils.repair_apply_plan import keyset_after
+
+    first, _ = await _seed_one_fabricated_loss_market(pg_session, ext="KXBIND-P1")
     second, _ = await _seed_one_fabricated_loss_market(pg_session, ext="KXBIND-P2")
 
     page_one = await _work(pg_session, lim=1)
     assert [r.market_id for r in page_one] == [first]
 
+    cursor = keyset_after(page_one, examined=1)
+    assert cursor["after_id"] == first
+    assert isinstance(cursor["after_date"], str), (
+        "the emitted cursor is a STRING — that is the fact the parse exists for"
+    )
+
     page_two = await _work(
-        pg_session, lim=1, after_date=resolved.isoformat(), after_id=first
+        pg_session,
+        lim=1,
+        after_date=rail.parse_cursor_date(cursor["after_date"]),
+        after_id=cursor["after_id"],
     )
     assert [r.market_id for r in page_two] == [second], (
         "the resume must advance past the row page one returned"
     )
+
+    exhausted = keyset_after(page_two, examined=1)
+    assert (
+        await _work(
+            pg_session,
+            lim=1,
+            after_date=rail.parse_cursor_date(exhausted["after_date"]),
+            after_id=exhausted["after_id"],
+        )
+        == []
+    ), "the walk must end, not wrap"
+
+
+async def test_a_hand_typed_date_is_accepted_and_a_broken_one_is_refused(pg_session):
+    """The two shapes an operator actually types, and neither may be ignored.
+
+    A naive date is what somebody pastes from the plan by hand; it is read as
+    UTC. Anything unreadable is REFUSED by name — a cursor half silently
+    dropped to ``None`` re-reads page one and reports it as a resume, which is
+    the `?offset=` bug rebuilt one level down.
+    """
+    first, _ = await _seed_one_fabricated_loss_market(pg_session, ext="KXBIND-H1")
+    await _seed_one_fabricated_loss_market(pg_session, ext="KXBIND-H2")
+
+    naive = rail.parse_cursor_date("2000-01-01T00:00:00")
+    assert naive.tzinfo is not None, "asyncpg wants the tzinfo explicit"
+    rows = await _work(pg_session, after_date=naive, after_id=0)
+    assert len(rows) == 2, "a floor before both rows must return both"
+
+    with pytest.raises(ValueError):
+        rail.parse_cursor_date("page two please")
+
+    out = await rail.repair(
+        pg_session, apply=False, after_date="page two please", after_id=first
+    )
+    assert out["refused"] == "CURSOR_DATE_UNPARSEABLE"
+    assert out["measured"] is False
 
 
 async def test_the_census_executes_against_real_postgres(pg_session):

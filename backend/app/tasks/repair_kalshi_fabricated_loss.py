@@ -1260,6 +1260,33 @@ async def repair(
     return await _dry_run(session, limit, after_id, after_date, sport, started)
 
 
+def parse_cursor_date(after_date: str | None) -> datetime | None:
+    """The ISO string this rail HANDS BACK, turned into what asyncpg will take.
+
+    CAL-P1010. ``keyset_after`` emits ``after_date`` as ``date.isoformat()``, the
+    operator pastes that back into ``?after_date=``, the route declares it
+    ``str`` — and asyncpg refuses a ``str`` for a ``timestamptz`` parameter
+    rather than casting it, which psycopg2 would have done silently. So the
+    cursor this rail returns was a cursor it could not accept, and page two of
+    every drain died on ``DataError: invalid input for query argument``. Same
+    specimen as the cliff drain one rail over (#1884), which is why this is a
+    parse and not a wider predicate.
+
+    A naive value is read as UTC rather than refused: an operator typing
+    ``?after_date=2026-06-16`` by hand means the same instant the column stores,
+    and asyncpg wants the tzinfo explicit.
+
+    Raises ``ValueError`` for anything it cannot read. Never returns ``None``
+    for a value that was supplied — a cursor silently dropped to ``None`` reads
+    page one forever and calls it a resume, which is the ``?offset=`` bug
+    rebuilt one level down.
+    """
+    if after_date is None:
+        return None
+    parsed = datetime.fromisoformat(after_date)
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
 async def _dry_run(session, limit, after_id, after_date, sport, started):
     """Select, ask the venue, judge, and emit the reviewed plan. No writes."""
     from app.services.kalshi_api import KalshiAPIService
@@ -1277,6 +1304,22 @@ async def _dry_run(session, limit, after_id, after_date, sport, started):
         }
 
     try:
+        cursor_date = parse_cursor_date(after_date)
+    except (TypeError, ValueError):
+        return {
+            "measured": False,
+            "refused": "CURSOR_DATE_UNPARSEABLE",
+            "presented_after_date": after_date,
+            "reason": (
+                "after_date must be the ISO timestamp this rail returned in "
+                "`next_cursor` (for example 2026-06-16T12:27:30+00:00). It is "
+                "REFUSED rather than ignored: a dropped cursor half re-reads "
+                "page one and reports it as a resume."
+            ),
+            "elapsed_s": round(time.monotonic() - started, 1),
+        }
+
+    try:
         await session.execute(
             text(f"SET LOCAL statement_timeout = {_SELECT_TIMEOUT_MS}")
         )
@@ -1286,7 +1329,7 @@ async def _dry_run(session, limit, after_id, after_date, sport, started):
                 {
                     "lim": window,
                     "sport": sport,
-                    "after_date": after_date,
+                    "after_date": cursor_date,
                     "after_id": after_id,
                 },
             )
