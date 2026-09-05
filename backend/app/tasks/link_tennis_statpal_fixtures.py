@@ -133,7 +133,13 @@ from app.services.anchor_channel import (
     WROTE,
     record_anchor,
 )
+from app.services.authority_ledger import record_agreement_day
 from app.services.statpal_api import StatPalFixture, get_statpal_service
+from app.utils.authority_agreement import Side
+from app.utils.authority_tennis_agreement import (
+    build_tennis_agreements,
+    tennis_measurement_bounds,
+)
 from app.utils.provider_anchor_keys import (
     STATPAL_ID_SPACE_TENNIS,
     statpal_anchor_key,
@@ -172,6 +178,29 @@ SELECT e.id, s.key, e.home_team_name, e.away_team_name, e.commence_time,
   JOIN sports s ON s.id = e.sport_id
  WHERE s.key LIKE 'tennis%'
    AND e.statpal_fixture_id IS NULL
+   AND e.commence_time >= :window_start
+   AND e.commence_time <= :window_end
+"""
+
+#: Every tennis row in the MEASUREMENT span, linked or not, with what its column
+#: holds.
+#:
+#: A different question from `CANDIDATES` and therefore a different statement.
+#: That one asks "what may this pass write to?" and so excludes rows that already
+#: carry an id — correctly. This one asks "of the matches we list, does StatPal
+#: have them?", and a row we linked last week is squarely part of that
+#: population. Reusing the write pool would give a denominator that shrinks every
+#: time the linker succeeds, and a seven-day count is a comparison between days.
+#:
+#: `statpal_fixture_id` comes back so the row can report the id join
+#: (`anchors`), which is the number that says the join is usable and is never the
+#: agreement number.
+MEASUREMENT_ROWS = """
+SELECT e.id, s.key, e.home_team_name, e.away_team_name, e.commence_time,
+       e.statpal_fixture_id
+  FROM events e
+  JOIN sports s ON s.id = e.sport_id
+ WHERE s.key LIKE 'tennis%'
    AND e.commence_time >= :window_start
    AND e.commence_time <= :window_end
 """
@@ -427,6 +456,44 @@ async def _read_fixtures(service, run: LinkRun) -> list[StatPalFixture]:
     return fixtures
 
 
+def fixture_side(fixture: StatPalFixture) -> Side:
+    """A StatPal tennis fixture in the shared comparison shape."""
+    return Side(
+        ref=str(fixture.fixture_id),
+        home=fixture.home_team,
+        away=fixture.away_team,
+        start=fixture.start_time,
+        label=fixture.league,
+    )
+
+
+async def _measurement_rows(session, now: datetime) -> list[Side]:
+    """Our tennis inventory over the measurement span, as comparison sides.
+
+    The span is `tennis_measurement_bounds`', not the linker's ±36h write window:
+    a row of ours past the edge of what StatPal serves has to be INSIDE the
+    population to be reported as `beyond_statpal_last`, and read out of it by SQL
+    it would simply never be counted at all (CERT-962).
+    """
+    start, end = tennis_measurement_bounds((now, now), now=now)
+    rows = (
+        await session.execute(
+            text(MEASUREMENT_ROWS), {"window_start": start, "window_end": end}
+        )
+    ).fetchall()
+    return [
+        Side(
+            ref=str(r[0]),
+            home=r[2],
+            away=r[3],
+            start=r[4],
+            label=r[1],
+            held_id=r[5],
+        )
+        for r in rows
+    ]
+
+
 async def _candidates(session, start: datetime, end: datetime) -> list[dict[str, Any]]:
     rows = (
         await session.execute(
@@ -593,7 +660,41 @@ async def _run_link_tennis_statpal_fixtures(
             run.sources_read,
             run.read_failures,
         )
-        return run.summary()
+        # A zero yield is a ROW, not a skip (spec rule 6). Zero fixtures with no
+        # read failure is a real answer — a Monday between tournaments. Zero WITH
+        # failures means we could not ask. Both carry the streak unchanged and
+        # they are different facts, and returning early without banking either
+        # would leave the ledger unable to tell them apart (gotcha #53).
+        #
+        # OUR side is still measured on a successful empty read, and that is the
+        # CERT-1904 repair. Banking `rows=[]` published denominator 0 — "nobody
+        # lists anything" — on a day when our own tennis inventory was nonempty
+        # and StatPal's was not. That is the strongest `statpal_only` finding the
+        # row can make, and the first version erased it into a zero that looks
+        # like a quiet day. A READ FAILURE is different and skips the query: the
+        # row is READ-FAILED and carries no counts whatever we measure, so asking
+        # would spend a query to publish nothing.
+        measured_rows: list[Side] = []
+        if not run.read_failures:
+            async with get_task_session() as session:
+                measured_rows = await _measurement_rows(session, now)
+
+        empty = build_tennis_agreements(
+            fixtures=[],
+            rows=measured_rows,
+            read_failures=run.read_failures,
+            sources_read=run.sources_read,
+            measurement_window=(
+                None if run.read_failures else tennis_measurement_bounds((now, now), now=now)
+            ),
+        )
+        for row in empty.values():
+            await record_agreement_day(row, at=now, apply=apply)
+        return {
+            **run.summary(),
+            "rows_measured": len(measured_rows),
+            "agreements": empty,
+        }
 
     starts = [f.start_time for f in fixtures if f.start_time]
     window_start = (min(starts) if starts else now) - MATCH_WINDOW
@@ -742,10 +843,41 @@ async def _run_link_tennis_statpal_fixtures(
                     fixture.fixture_id, candidate["id"], outcome,
                 )
 
+        # Measured in the SAME session as the write pool so both describe one
+        # moment (precedent D46), and read SEPARATELY from it. `CANDIDATES`
+        # filters `statpal_fixture_id IS NULL`, which is right for deciding what
+        # to write and wrong for deciding what to measure: a denominator that
+        # shrinks every time the task succeeds cannot be compared to yesterday's,
+        # and the seven-day count is exactly that comparison.
+        measured_rows = await _measurement_rows(session, now)
+
+    agreements = build_tennis_agreements(
+        fixtures=[fixture_side(f) for f in fixtures],
+        rows=measured_rows,
+        read_failures=run.read_failures,
+        sources_read=run.sources_read,
+        window=(window_start, window_end),
+        measurement_window=tennis_measurement_bounds((now, now), now=now),
+    )
+    for row in agreements.values():
+        # Both populations gate PENDING-NO-GOVERNING-NUMBER, so neither advances
+        # anything — the day is recorded anyway, exactly as MLB's is. A carried
+        # day is a measured day, and the history has to exist before the ruling
+        # that would score it, or the ruling arrives to an empty ledger.
+        await record_agreement_day(row, at=now, apply=apply)
+
     summary = run.summary()
     logger.info("StatPal tennis linker: %s", summary)
     return {
         **summary,
+        "rows_measured": len(measured_rows),
+        # PLURAL, and keyed by population. One task banks two rows, because
+        # singles and doubles are two draws that must never share a denominator
+        # (`authority_agreement.MEASUREMENT_POPULATIONS`). The endpoint reads
+        # `agreements[sport_key]`; `agreement` stays absent rather than holding
+        # one of the two, because a reader that took the singular here would get
+        # whichever draw this file happened to list first.
+        "agreements": agreements,
         "ambiguous_receipts": run.ambiguous,
         "unmatched_receipts": run.unmatched,
         "collision_receipts": run.collisions,

@@ -47,6 +47,7 @@ from typing import Any, Iterable, Optional
 from app.utils.authority_agreement import (
     FLIP_BAR_PCT,
     GOVERNING_IDENTITY_NUMBERS,
+    MEASUREMENT_POPULATIONS,
     SHADOW_STAMPERS,
 )
 
@@ -166,6 +167,64 @@ DISCOVERY_BEAT_WITHOUT_A_WORKING_PARSE: dict[str, str] = {
     ),
 }
 
+#: Stamped and measured daily, with no `sync_statpal_schedules` beat AT ALL.
+#:
+#: A third list rather than an entry in the one above, because that dict's name
+#: makes a claim — *a beat exists and it parses nothing* — that is false here,
+#: and filing tennis under it would assert a scheduled task nobody has written.
+#: The distinction is not pedantry: the two states have different fixes. NFL's is
+#: to teach an existing hourly task a nesting; tennis's is to decide whether to
+#: schedule one at all, which is a bigger question because it would create events
+#: under a `statpal` claim — the registry's door, and lane1's under D50.
+#:
+#: Tennis is a WORSE case than NFL, not a lesser one, and the second clause is
+#: the reason it must be named rather than left to "no beat yet": **the ingest
+#: parser could not read tennis even if a beat called it.** Measured on the
+#: pinned real payloads with the shipped parsers — 0 of 7 fixtures on
+#: `statpal_tennis_daily_20260903.json` and 0 of 11 on the livescores fixture,
+#: against 7 and 11 on the authority path.
+#:
+#: **The blindness has TWO independent causes, and this was found by mutation
+#: rather than by reading.** The first was the one on record; repairing it alone
+#: still yields zero, so a fix that stopped there would ship a beat that creates
+#: nothing while the ticket read closed:
+#:
+#:   1. `_extract_match_items` never reaches the matches. Tennis's
+#:      `scores.tournament` is a LIST of draws and the extractor guards
+#:      `isinstance(tournament, dict)`. Teaching it the list shape makes 7 items
+#:      reachable — and the count stays 0, because of:
+#:   2. `_parse_single_fixture` returns `None` for every one of them. It reads
+#:      `item["home"]` and `item["away"]`; a tennis match carries neither, it
+#:      carries `player: [{name: "G. Monfils"}, {name: "L. Tien"}]`. Both team
+#:      names come out empty and the fixture is dropped.
+#:
+#: So this is not NFL's stage-nesting gap wearing a different hat, and it is not
+#: one shape gap either — it is a container mismatch and a record mismatch, in
+#: two different functions. Fixing NFL's fixes neither (#3193).
+#:
+#: So a tennis agreement streak, however perfect, could only ever prove that we
+#: agree about the matches we already had — never that StatPal would have found
+#: one we missed, which is this lane's whole ship. `flip_permitted` refuses these
+#: keys earlier and for a stronger reason (they are measurement populations, not
+#: sport keys), and this list is what stops that earlier refusal from letting the
+#: discovery question go unrecorded.
+DISCOVERY_NO_BEAT_AND_NO_PARSE: dict[str, str] = {
+    "tennis_singles": (
+        "no sync-statpal-schedules-tennis beat exists, and the ingest parser "
+        "could not read tennis if one did: get_fixtures('tennis') parses 0 of "
+        "the 7 fixtures in statpal_tennis_daily_20260903.json and 0 of 11 in the "
+        "livescores fixture, because scores.tournament is a LIST of draws and "
+        "_extract_match_items guards isinstance(tournament, dict). The authority "
+        "read path (_parse_tennis_daily) reads both payloads, which is why the "
+        "agreement row can be measured at all. #3193"
+    ),
+    "tennis_doubles": (
+        "same blind parser as tennis_singles — one endpoint family serves both "
+        "draws, so neither is discoverable and the doubles draw is additionally "
+        "the one the linker refuses to write links for. #3193"
+    ),
+}
+
 #: For each sport that has flipped: the seven-day evidence it flipped on.
 #:
 #: Empty, because nothing has flipped. Each entry, when there is one, holds the
@@ -225,6 +284,23 @@ def flip_permitted(
     the second half is a YOUR-TURN entry Alex has seen, and no function can
     check that.
     """
+    if sport_key in MEASUREMENT_POPULATIONS:
+        # Asked before everything else, because this one is not a "no" about
+        # tennis at all — it is a "wrong question". `tennis_singles` is a draw we
+        # measure, not a row anything joins on: our tennis matches live under 42
+        # different `sports.key`s. A caller that flipped this string would flip
+        # nothing and would believe it had, which is worse than a refusal.
+        #
+        # The honest flip for tennis is per real `sports.key`, and it needs a
+        # ruling that says which of the 42 the measured draw stands for. That
+        # ruling does not exist and this file will not invent it.
+        return False, (
+            f"{sport_key} is a MEASUREMENT POPULATION, not a sport key — our "
+            "tennis rows are spread over 42 `sports.key`s and none of them is "
+            "this string. There is nothing here to flip; a flip for tennis is "
+            "per real sport key and needs a ruling naming which keys a draw's "
+            "row stands for"
+        )
     if sport_key not in SHADOW_STAMPERS:
         return False, (
             f"{sport_key} has no shadow stamper, so there is no id join to flip "

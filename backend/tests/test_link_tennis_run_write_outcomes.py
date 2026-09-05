@@ -107,8 +107,16 @@ class RecordingSession:
     response shape, not an absence).
     """
 
-    def __init__(self, *, candidates, holders, update_rowcount=1):
+    def __init__(self, *, candidates, holders, update_rowcount=1, measured=None):
         self._candidates = candidates
+        # The agreement population, asked for separately from the write pool and
+        # answered separately here. Defaulting it to the write pool would have
+        # hidden the very thing the separate query exists for — `CANDIDATES`
+        # filters `statpal_fixture_id IS NULL`, the measurement must not — so a
+        # test that cares says so and every other test measures an empty
+        # population and asserts nothing about it.
+        self._measured = list(measured or [])
+        self.measurement_windows: list[dict] = []
         # A SEQUENCE of answers, because the task asks twice: once up front for
         # the batch, and again after a lost race, when the whole point is that
         # the world changed underneath (CERT-895 repair). A plain list is
@@ -132,6 +140,9 @@ class RecordingSession:
             answer = self._holders[min(self.holder_reads, len(self._holders) - 1)]
             self.holder_reads += 1
             return FakeResult(answer)
+        if sql == task.MEASUREMENT_ROWS:
+            self.measurement_windows.append(dict(params or {}))
+            return FakeResult(self._measured)
         if sql == task.SET_FIXTURE_ID:
             self.updates.append(dict(params or {}))
             return FakeResult(rowcount=self._update_rowcount)
@@ -161,6 +172,7 @@ def drive(monkeypatch):
         holders=(),
         update_rowcount=1,
         raises=None,
+        measured=None,
     ):
         if candidates is None:
             candidates = [
@@ -177,6 +189,7 @@ def drive(monkeypatch):
             candidates=candidates,
             holders=holders,
             update_rowcount=update_rowcount,
+            measured=measured,
         )
 
         @asynccontextmanager
@@ -664,3 +677,85 @@ class TestTheWindowThePassAsksFor:
         assert window["window_start"] == START - task.MATCH_WINDOW
         assert window["window_end"] == START + task.MATCH_WINDOW
         assert task.MATCH_WINDOW == timedelta(hours=36)
+
+
+class TestASuccessfulEmptyReadStillMeasuresOurSide:
+    """CERT-1904 finding 2, at the task.
+
+    StatPal serving no tennis is a real answer — a Monday between tournaments.
+    Our own inventory on that day is not empty, and the gap between the two IS
+    the row's strongest `statpal_only` finding. The first version returned before
+    `MEASUREMENT_ROWS` and banked denominator 0, which reads as "nobody lists
+    anything" rather than "we list these and the venue has none".
+
+    A READ FAILURE is the other case and must stay cheap: the row is READ-FAILED
+    and carries no counts whatever we measure, so the query is not spent.
+    """
+
+    @pytest.fixture
+    def drive_empty(self, monkeypatch):
+        async def _drive(*, measured=(), fail=False):
+            session = RecordingSession(
+                candidates=[], holders=(), measured=list(measured)
+            )
+
+            @asynccontextmanager
+            async def _session():
+                yield session
+
+            import app.tasks.base as task_base
+
+            monkeypatch.setattr(task_base, "get_task_session", _session)
+
+            from app.services.statpal_api import StatPalUpstreamError
+
+            async def _no_fixtures(*args, **kwargs):
+                if fail:
+                    raise StatPalUpstreamError("daily/d1: 500")
+                return []
+
+            service = SimpleNamespace(
+                get_live_fixtures=_no_fixtures,
+                get_schedule_fixtures=_no_fixtures,
+                close=_empty_none,
+            )
+            monkeypatch.setattr(task, "get_statpal_service", lambda: service)
+
+            summary = await task._run_link_tennis_statpal_fixtures(now=START)
+            return summary, session
+
+        return _drive
+
+    async def test_an_empty_venue_read_still_counts_our_matches(self, drive_empty):
+        summary, session = await drive_empty(
+            measured=[
+                (11, "tennis_atp_us_open", "Carlos Alcaraz", "Jannik Sinner", START, None),
+                (12, "tennis_atp", "Novak Djokovic", "Daniil Medvedev", START, None),
+            ]
+        )
+        assert summary["fixtures_read"] == 0
+        assert summary["rows_measured"] == 2
+        # The population query RAN — the bug was that it never did.
+        assert len(session.measurement_windows) == 1
+
+        singles = summary["agreements"]["tennis_singles"]
+        assert singles["denominator"] == 2, (
+            "a successful empty venue read against a nonempty inventory banked "
+            "denominator 0 — the finding erased into a quiet day"
+        )
+        assert singles["identity"]["ours_only"] == 2
+        assert singles["identity"]["ours_covered_pct"] == 0.0
+
+    async def test_a_failed_read_does_not_spend_the_query(self, drive_empty):
+        summary, session = await drive_empty(
+            measured=[
+                (11, "tennis_atp", "Carlos Alcaraz", "Jannik Sinner", START, None)
+            ],
+            fail=True,
+        )
+        assert summary["read_failures"], "the harness did not produce a read failure"
+        assert session.measurement_windows == []
+        assert summary["rows_measured"] == 0
+        for row in summary["agreements"].values():
+            assert row["read"] == "READ-FAILED"
+            assert "identity" not in row

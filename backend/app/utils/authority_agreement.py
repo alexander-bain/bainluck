@@ -66,7 +66,7 @@ reset a streak that should only pause (spec rule 6, gotcha #53).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Callable, Optional, Sequence
 
@@ -129,6 +129,29 @@ RECEIPT_CAP = 40
 READ_OK = "READ-OK"
 READ_FAILED = "READ-FAILED"
 
+#: Why a sport's `schedule` bucket is refused rather than counted.
+#:
+#: Tennis is an EXISTENCE authority and not a TIME authority, and the two are not
+#: degrees of the same thing. StatPal stamps `15:00` UTC on unplayed tennis as a
+#: session placeholder — 66 of 70 fixtures on the measured day — and backfills the
+#: real minute only after the match is played; we carry our own midnight-UTC
+#: placeholder on unlinked rows. Every paired fixture would therefore land in
+#: `wrong_day`, and the row would publish a four-figure disagreement count about a
+#: field neither side has committed to.
+#:
+#: `governs: False` is not enough on its own. It is already true of every
+#: schedule bucket, and it says the number does not gate a flip — not that the
+#: number is manufactured. A published count is read.
+SCHEDULE_NOT_SCORED = (
+    "not scored: this source is an EXISTENCE authority for this sport, not a "
+    "TIME authority. StatPal stamps a 15:00 UTC session placeholder on unplayed "
+    "tennis and backfills the real minute after the match, and our unlinked rows "
+    "carry a midnight-UTC placeholder, so a clock comparison here measures two "
+    "placeholders rather than a disagreement. The identity join uses the clock "
+    "only to choose WHICH of two admissible pairings to make, never whether to "
+    "make one."
+)
+
 #: Which sports have a shadow stamper, and which task banks their row.
 #:
 #: One entry per sport that program step 2/3 has landed — a sport is here
@@ -141,7 +164,39 @@ SHADOW_STAMPERS: dict[str, str] = {
     "basketball_nba": "stamp_nba_statpal_fixtures",
     "icehockey_nhl": "stamp_nhl_statpal_fixtures",
     "baseball_mlb": "stamp_mlb_statpal_fixtures",
+    "tennis_singles": "link_tennis_statpal_fixtures",
+    "tennis_doubles": "link_tennis_statpal_fixtures",
 }
+
+#: The keys above that are MEASUREMENT POPULATIONS rather than `sports.key`s.
+#:
+#: Every other key in `SHADOW_STAMPERS` is a real `sports.key` you could join
+#: `events` on. These two are not, and the difference has to be loud, because a
+#: reader who assumes otherwise writes `AUTHORITY_BY_SPORT["tennis_singles"]` and
+#: flips nothing at all — our tennis rows live under `tennis_atp`,
+#: `tennis_wta`, `tennis_other` and one key per tournament, 42 of them measured
+#: on production 2026-09-05.
+#:
+#: Two facts force the split, and they pull in opposite directions:
+#:
+#:   * **Our 42 keys are ONE StatPal id space.** StatPal numbers every tennis
+#:     match in a single sequence and serves them from one endpoint family, which
+#:     is why `provider_anchor_keys.statpal_id_space` folds every `tennis*` key to
+#:     `tennis`. A row per `sports.key` would be 42 rows measuring one population.
+#:   * **Singles and doubles are TWO populations and must never share a
+#:     denominator.** Doubles outnumber singles better than 2:1 on a US Open day
+#:     and `tennis_names_agree` refuses to match a doubles name to a singles one
+#:     — correctly. Under one denominator every doubles fixture StatPal publishes
+#:     lands in `statpal_only` and the row reports a large phantom gap that no
+#:     amount of matching could ever close: spec rule 5's unreachable-by-design,
+#:     manufactured by the shape of the denominator rather than by the data.
+#:
+#: So the honest unit is neither our key nor their space — it is the DRAW. Named
+#: apart here so `test_a_measurement_population_is_never_a_sport_key` can assert
+#: no flip switch, and no consumer of one, ever reads one of these as a sport.
+MEASUREMENT_POPULATIONS: frozenset[str] = frozenset(
+    {"tennis_singles", "tennis_doubles"}
+)
 
 #: The bar a governing number must clear, on seven consecutive daily rows, before
 #: a sport's authority may be flipped (ledger spec rule 1, D50). Stated once,
@@ -203,9 +258,34 @@ FLIP_BAR_PCT = 99.5
 #:     So MLB stays absent, and the blocker is now a number rather than a wait:
 #:     re-measure the inside-span figure once #3093 is fixed. Proposing it as a
 #:     governing number is a D63 amendment and Alex's, not this file's.
-#:   * ``tennis_atp`` / ``tennis_wta`` — the forward matcher has not landed, and
-#:     tennis is an existence authority rather than a time authority
-#:     (`ARTIFACT-AUTHORITY-20260903-TENNIS.md`).
+#:   * ``tennis_singles`` / ``tennis_doubles`` — MEASURED from today, and absent
+#:     for a reason that no number can retire: **tennis has no D63 ruling at
+#:     all.** D63 answered the question for NBA, NHL and NFL and was not asked
+#:     about tennis, so there is nothing here to look up and a default would be
+#:     this file inventing one. The row publishes both numbers and gates
+#:     `PENDING-NO-GOVERNING-NUMBER`, exactly as MLB does, and the clock does not
+#:     start — a streak counted against a question nobody has chosen is seven
+#:     days of evidence for nothing.
+#:
+#:     Two further things must be true before tennis could be proposed, and
+#:     neither is today:
+#:
+#:       - **Discovery.** The ingest parser reads 0 of 7 tennis fixtures on
+#:         `statpal_tennis_daily_20260903.json` and 0 of 11 on the livescores
+#:         fixture, because tennis's `scores.tournament` is a LIST of draws while
+#:         `_extract_match_items` guards `isinstance(tournament, dict)` (#3193).
+#:         A sport that discovers nothing can post seven perfect days and prove
+#:         only that we agree about the matches we already had.
+#:       - **Duplicates.** Over the last 120 days of singles, 1,811 player pairs
+#:         appear twice within five days of each other — 1,170 of them under two
+#:         different `sports.key`s (production 2026-09-05). Those are two of our
+#:         rows for one match, not two matches; each one inflates `ours_only` by
+#:         a row that agrees with nothing by construction. Same shape as #3093's
+#:         contribution to MLB's in-span misses, and lane1's under D39/#2693.
+#:
+#:     Proposing a governing number for either population is a D63 amendment and
+#:     Alex's, not this file's — and it needs those two fixed first, or the number
+#:     it proposes is measuring them.
 GOVERNING_IDENTITY_NUMBERS: dict[str, tuple[str, ...]] = {
     "americanfootball_nfl": ("pct", "ours_covered_pct"),
     "basketball_nba": ("ours_covered_pct",),
@@ -566,6 +646,117 @@ def _pair_within_key(
     return paired, spare_f, spare_r
 
 
+@dataclass(frozen=True)
+class Join:
+    """Which fixtures are which rows, and everything the join could not place.
+
+    The return of a *join strategy* — the one part of a row that is sport-shaped.
+    Everything else `build_agreement_row` does (the identity block, the horizon
+    splits, the governing verdict, the receipts) is arithmetic over this and is
+    shared by every sport, which is the point: two sports may disagree about what
+    "the same game" means and must not disagree about what a row says.
+
+    `fixtures` and `rows` are the USABLE sides, already stripped of
+    `unusable_*` — published back because the horizon splits are measured
+    against the span of the other side's usable list, and a strategy that drops
+    a row without saying so would move a denominator silently.
+    """
+
+    fixtures: list[Side]
+    rows: list[Side]
+    paired: list[tuple[Side, Side]]
+    statpal_only: list[Side]
+    ours_only: list[Side]
+    unusable_fixtures: list[Side]
+    unusable_rows: list[Side]
+    #: Exclusions a strategy makes that the default does not, each under its own
+    #: name. Counted into `excluded` and receipted under the same key.
+    #:
+    #: This exists so a strategy can refuse without lying. Tennis's resolver can
+    #: answer AMBIGUOUS — "two of our rows could be this match and I will not
+    #: choose" — which is neither agreement nor disagreement. Dropping it into
+    #: `statpal_only` would publish it as *"StatPal has a match we do not"*,
+    #: which is the opposite of what happened, and is spec rule 5's failure:
+    #: an exclusion that quietly moves the governing number.
+    refusals: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    #: What this strategy's denominator IS, in one sentence, published on the row
+    #: as `denominator_is`.
+    #:
+    #: Carried by the strategy rather than written once in `build_agreement_row`,
+    #: because the sentence is a description of the JOIN and the join is the one
+    #: part of a row that differs by sport. The default below describes the key
+    #: join; a strategy that leaves it is asserting the key join's semantics, and
+    #: `test_every_join_strategy_describes_its_own_denominator` fails if a
+    #: strategy whose relation differs keeps it (CERT-1904 — tennis shipped for
+    #: one grading round describing an ordered pair key it does not use).
+    denominator_is: str = (
+        "distinct fixtures under the union of both sides, keyed on the "
+        "normalised (away, home) pair; kickoff is a tiebreak within a key and "
+        "never a filter"
+    )
+
+
+#: The signature every join strategy has. `normalize` is the default strategy's
+#: and is accepted (and ignored) by the others so that `build_agreement_row` has
+#: one call shape rather than a branch.
+JoinStrategy = Callable[
+    [Sequence[Side], Sequence[Side], Callable[[Optional[str]], str]], Join
+]
+
+
+def pair_by_normalized_key(
+    fixtures: Sequence[Side],
+    rows: Sequence[Side],
+    normalize: Callable[[Optional[str]], str],
+) -> Join:
+    """The default join: equal normalised `(away, home)` pair, nearest kickoff.
+
+    Lifted out of `build_agreement_row` unchanged when tennis needed a different
+    one, and unchanged is the operative word: NFL, NBA and NHL have seven-day
+    clocks running on numbers this function produces, and a refactor that moved
+    one of them by a game would restart three clocks to tidy a signature.
+    `test_the_default_join_is_the_same_join_it_always_was` pins that.
+
+    It is a KEY join, and that is exactly why tennis cannot use it. A key groups
+    by equality, and equality is transitive; tennis's identity relation is not,
+    because `keys_agree` reads a missing given name as UNKNOWN rather than as a
+    difference (a third of our field has no given name at all). `Garcia` and
+    `Garcia Garcia` are both reachable from `G. Garcia` and are not each other,
+    so no key can hold them — group by one and the census goes blind exactly
+    where the matcher is tolerant.
+    """
+    usable_f = [f for f in fixtures if _pair_key(f, normalize) is not None]
+    usable_r = [r for r in rows if _pair_key(r, normalize) is not None]
+
+    by_key_f: dict[str, list[Side]] = {}
+    for f in usable_f:
+        by_key_f.setdefault(_pair_key(f, normalize), []).append(f)  # type: ignore[arg-type]
+    by_key_r: dict[str, list[Side]] = {}
+    for r in usable_r:
+        by_key_r.setdefault(_pair_key(r, normalize), []).append(r)  # type: ignore[arg-type]
+
+    paired: list[tuple[Side, Side]] = []
+    statpal_only: list[Side] = []
+    ours_only: list[Side] = []
+    for key in set(by_key_f) | set(by_key_r):
+        p, spare_f, spare_r = _pair_within_key(
+            by_key_f.get(key, []), by_key_r.get(key, [])
+        )
+        paired.extend(p)
+        statpal_only.extend(spare_f)
+        ours_only.extend(spare_r)
+
+    return Join(
+        fixtures=usable_f,
+        rows=usable_r,
+        paired=paired,
+        statpal_only=statpal_only,
+        ours_only=ours_only,
+        unusable_fixtures=[f for f in fixtures if _pair_key(f, normalize) is None],
+        unusable_rows=[r for r in rows if _pair_key(r, normalize) is None],
+    )
+
+
 def _schedule_bucket(fixture: Side, row: Side) -> str:
     d = _delta(fixture, row)
     if d is None:
@@ -784,6 +975,8 @@ def build_agreement_row(
     is_anchor_id: Callable[[Optional[str]], bool] = lambda v: bool(
         v and str(v).strip().isdigit()
     ),
+    pair_sides: Optional[JoinStrategy] = None,
+    time_authority: bool = True,
 ) -> dict[str, Any]:
     """One sport's ledger row, from both sides of the same moment.
 
@@ -791,6 +984,18 @@ def build_agreement_row(
     `READ-FAILED` and carries no percentage: the spec pauses a streak on a
     failed read and resets it on a real disagreement, and a row that cannot tell
     those apart makes the seven-day count meaningless.
+
+    `pair_sides` is the sport-shaped part — see :class:`Join`. Omitted, the
+    default key join runs and every sport that had a row before this parameter
+    existed still gets the identical one.
+
+    `time_authority=False` says this provider's clock is not evidence, and the
+    `schedule` bucket is then REFUSED rather than computed. It is not the same as
+    `governs=False`, which every schedule bucket already carries: a reported
+    bucket that gates nothing is still a published count of disagreements, and
+    for a source that stamps a placeholder hour on unplayed fixtures that count
+    is manufactured. Publishing "1,900 wrong_day" beside a note saying to ignore
+    it is how a number nobody should read gets read anyway.
     """
     row: dict[str, Any] = {
         "sport_key": sport_key,
@@ -825,28 +1030,15 @@ def build_agreement_row(
     real_fixtures = [
         f for f in fixtures if not (is_placeholder(f.home) or is_placeholder(f.away))
     ]
-    unusable_fixtures = [f for f in real_fixtures if _pair_key(f, normalize) is None]
-    unusable_rows = [r for r in rows if _pair_key(r, normalize) is None]
-    real_fixtures = [f for f in real_fixtures if _pair_key(f, normalize) is not None]
-    real_rows = [r for r in rows if _pair_key(r, normalize) is not None]
 
-    by_key_f: dict[str, list[Side]] = {}
-    for f in real_fixtures:
-        by_key_f.setdefault(_pair_key(f, normalize), []).append(f)  # type: ignore[arg-type]
-    by_key_r: dict[str, list[Side]] = {}
-    for r in real_rows:
-        by_key_r.setdefault(_pair_key(r, normalize), []).append(r)  # type: ignore[arg-type]
-
-    paired: list[tuple[Side, Side]] = []
-    statpal_only: list[Side] = []
-    ours_only: list[Side] = []
-    for key in set(by_key_f) | set(by_key_r):
-        p, spare_f, spare_r = _pair_within_key(
-            by_key_f.get(key, []), by_key_r.get(key, [])
-        )
-        paired.extend(p)
-        statpal_only.extend(spare_f)
-        ours_only.extend(spare_r)
+    join = (pair_sides or pair_by_normalized_key)(real_fixtures, rows, normalize)
+    unusable_fixtures = join.unusable_fixtures
+    unusable_rows = join.unusable_rows
+    real_fixtures = join.fixtures
+    real_rows = join.rows
+    paired = join.paired
+    statpal_only = join.statpal_only
+    ours_only = join.ours_only
 
     both = len(paired)
     denominator = both + len(statpal_only) + len(ours_only)
@@ -866,10 +1058,11 @@ def build_agreement_row(
     unanchored = 0
 
     for f, r in paired:
-        bucket = _schedule_bucket(f, r)
-        schedule[bucket] += 1
-        if bucket != "within" and len(schedule_receipts) < RECEIPT_CAP:
-            schedule_receipts.append(_fixture_receipt(f, r, bucket=bucket))
+        if time_authority:
+            bucket = _schedule_bucket(f, r)
+            schedule[bucket] += 1
+            if bucket != "within" and len(schedule_receipts) < RECEIPT_CAP:
+                schedule_receipts.append(_fixture_receipt(f, r, bucket=bucket))
 
         held = r.held_id
         if held is not None and str(held).strip() and not is_anchor_id(held):
@@ -887,15 +1080,19 @@ def build_agreement_row(
     row.update(
         {
             "denominator": denominator,
-            "denominator_is": (
-                "distinct fixtures under the union of both sides, keyed on the "
-                "normalised (away, home) pair; kickoff is a tiebreak within a "
-                "key and never a filter"
-            ),
+            # The JOIN says what its own denominator is. A sentence written here
+            # describes whichever strategy the author had in mind, and is wrong
+            # for every other one (CERT-1904).
+            "denominator_is": join.denominator_is,
             "excluded": {
                 "statpal_placeholders": len(placeholder_fixtures),
                 "statpal_unusable_names": len(unusable_fixtures),
                 "our_unusable_names": len(unusable_rows),
+                # A strategy's own refusals, each under its own name. Merged into
+                # `excluded` rather than published beside it so that spec rule 5's
+                # promise — every row left out is named and counted in one place —
+                # survives a strategy adding a reason the default never had.
+                **{name: len(items) for name, items in join.refusals.items()},
             },
             "identity": _identity_block(
                 sport_key,
@@ -906,12 +1103,21 @@ def build_agreement_row(
                 horizon=horizon,
                 ours_horizon=ours_horizon,
             ),
-            "schedule": {
-                **schedule,
-                "governs": False,
-                "within_is": f"kickoffs within {WITHIN}",
-                "wrong_day_is": f"kickoffs more than {WRONG_DAY} apart",
-            },
+            "schedule": (
+                {
+                    **schedule,
+                    "scored": True,
+                    "governs": False,
+                    "within_is": f"kickoffs within {WITHIN}",
+                    "wrong_day_is": f"kickoffs more than {WRONG_DAY} apart",
+                }
+                if time_authority
+                else {
+                    "scored": False,
+                    "governs": False,
+                    "why": SCHEDULE_NOT_SCORED,
+                }
+            ),
             "anchors": {
                 "anchored": anchored,
                 "unanchored": unanchored,
@@ -935,6 +1141,10 @@ def build_agreement_row(
                 "statpal_placeholders": [
                     _fixture_receipt(f) for f in placeholder_fixtures[:RECEIPT_CAP]
                 ],
+                **{
+                    name: items[:RECEIPT_CAP]
+                    for name, items in join.refusals.items()
+                },
             },
         }
     )
@@ -975,11 +1185,35 @@ def ledger_line(row: dict[str, Any], *, day: str, streak: str = "?/7") -> str:
         # bus operator advances a streak by reading a word, not by remembering
         # which question NBA is asked.
         f"| gate={_gate_text(ident)} "
-        f"| schedule={sched['within']}/{sched['off_by_hours']}/{sched['wrong_day']}"
-        f"/{sched['time_missing']} "
+        # A refused schedule bucket renders as one token rather than as four
+        # zeros. `0/0/0/0` is what a sport with no disagreements looks like, and
+        # printing it for a sport whose clock was never compared would be the
+        # strongest-looking field on the line.
+        f"| schedule={_schedule_text(sched)} "
         f"| anchors={row['anchors']['anchored']} "
         f"| streak={streak} | {READ_OK}"
     )
+
+
+def _schedule_text(schedule: dict[str, Any]) -> str:
+    """`schedule=` as either the four counts or an explicit refusal.
+
+    `scored` is read with a `False` default rather than a `True` one: a row
+    banked before that key existed carries the four counts and nothing else, and
+    defaulting it to unscored would render every historical row as NOT-SCORED.
+    So the four counts are the fallback and the refusal is opt-in — but a row
+    that has neither, which is a shape this module has never produced, renders as
+    NOT-SCORED rather than raising in a ledger line.
+    """
+    if schedule.get("scored") is False:
+        return "NOT-SCORED"
+    try:
+        return (
+            f"{schedule['within']}/{schedule['off_by_hours']}"
+            f"/{schedule['wrong_day']}/{schedule['time_missing']}"
+        )
+    except KeyError:
+        return "NOT-SCORED"
 
 
 def _gate_text(identity: dict[str, Any]) -> str:

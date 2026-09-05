@@ -35,6 +35,7 @@ from app.config.authority_by_sport import (
     AUTHORITY_BY_SPORT,
     DEFAULT_AUTHORITY,
     DISCOVERY_BEAT_WITHOUT_A_WORKING_PARSE,
+    DISCOVERY_NO_BEAT_AND_NO_PARSE,
     DISCOVERY_SCHEDULED_SPORTS,
     ESPN,
     FLIP_EVIDENCE,
@@ -527,6 +528,101 @@ def test_a_listed_sport_actually_parses_and_an_excluded_one_actually_does_not():
         )
 
 
+def test_tennis_is_blind_to_the_ingest_parser_on_both_of_its_real_payloads():
+    """`DISCOVERY_NO_BEAT_AND_NO_PARSE`'s second clause, proven not asserted.
+
+    The first clause — no beat — is checkable against `beat_schedule` and is
+    covered above. This is the clause that makes tennis a WORSE case than NFL
+    rather than a lesser one: even given a beat, `get_fixtures("tennis")` would
+    create nothing, because tennis's `scores.tournament` is a LIST of draws while
+    `_extract_match_items` guards `isinstance(tournament, dict)`.
+
+    There are TWO independent causes and this test asserts both, because a
+    mutation that repaired only the first left the end-to-end count at zero and
+    every assertion here still green. A guard that watches only the total cannot
+    tell "still broken" from "half fixed", and half fixed is the dangerous state:
+    it ships a beat that creates nothing while the ticket reads closed.
+
+    Both counts are read from the shipped parsers rather than quoted from a
+    scratch script, and the AUTHORITY side is asserted alongside: `> 0` there is
+    what makes `== 0` here a parser gap rather than an empty payload. A fixture
+    that had simply gone empty would satisfy the zero on its own.
+    """
+    import json
+    from pathlib import Path
+
+    from app.services.statpal_api import StatPalAPIService
+
+    service = StatPalAPIService.__new__(StatPalAPIService)
+    for name in (
+        "statpal_tennis_daily_20260903.json",
+        "statpal_tennis_livescores_20260903.json",
+    ):
+        path = Path(__file__).parent / "fixtures" / name
+        assert path.exists(), f"no pinned tennis payload at {path}"
+        payload = json.loads(path.read_text())
+
+        authority = StatPalAPIService._parse_tennis_daily(service, payload)
+        ingest = StatPalAPIService._parse_fixtures(service, payload, "tennis")
+
+        assert len(authority) > 0, (
+            f"{name} parses to nothing on the AUTHORITY path either — the payload "
+            "has gone empty, so the ingest zero below proves nothing about the "
+            "parser and this fixture needs replacing"
+        )
+        assert len(ingest) == 0, (
+            f"{name} now parses on the INGEST path ({len(ingest)} fixtures) — "
+            "#3193 has been fixed. Tennis can discover games; update "
+            "`DISCOVERY_NO_BEAT_AND_NO_PARSE` and decide whether a "
+            "sync-statpal-schedules-tennis beat should exist"
+        )
+
+        # `daily` answers under `scores`, `livescores` under `livescores` — the
+        # same two keys `_extract_match_items` itself walks.
+        section = payload.get("scores") or payload.get("livescores")
+        assert isinstance(section, dict), f"{name}: no scores/livescores section"
+        reachable = [
+            m
+            for t in section["tournament"]
+            for m in (
+                t.get("match", [])
+                if isinstance(t.get("match"), list)
+                else [t.get("match")]
+            )
+            if isinstance(m, dict)
+        ]
+        assert reachable, f"{name}: no matches to hand-extract — fixture changed"
+
+        # CAUSE 1: the extractor never reaches the matches, because
+        # `scores.tournament` is a LIST of draws and it guards for a dict.
+        #
+        # It does not return EMPTY, which is the detail worth pinning: it falls
+        # through to a catch-all that hands back the whole envelope, so the
+        # ingest chain gets one item that is the response itself. "Returned
+        # something" and "returned matches" are not the same, and an
+        # emptiness assertion here would have been false while sounding right.
+        extracted = StatPalAPIService._extract_match_items(payload)
+        assert not any(m in extracted for m in reachable), (
+            f"{name}: _extract_match_items now reaches tennis matches. That is "
+            "cause 1 of #3193 fixed — check cause 2 below before moving tennis "
+            "into DISCOVERY_SCHEDULED_SPORTS"
+        )
+
+        # CAUSE 2, and the one a reader misses: reaching them is not enough.
+        # `_parse_single_fixture` reads `item["home"]`/`item["away"]`; a tennis
+        # match carries `player: [{name}, {name}]` and neither key exists, so
+        # every reachable item still parses to None. Asserted against items
+        # pulled out by hand precisely BECAUSE the extractor cannot supply them
+        # — this is the half that survives fixing cause 1.
+        assert all(
+            StatPalAPIService._parse_single_fixture(service, m) is None
+            for m in reachable
+        ), (
+            f"{name}: _parse_single_fixture now reads a tennis match. That is "
+            "cause 2 of #3193 fixed; tennis is discoverable once cause 1 is too"
+        )
+
+
 def test_nfl_cannot_be_flipped_today_and_its_running_clock_does_not_change_that():
     """The ship of CERT-1875's repair, stated where it bites.
 
@@ -656,15 +752,47 @@ def test_every_stamped_sport_is_accounted_for_as_discoverable_or_named_broken():
         set(SHADOW_STAMPERS)
         - set(DISCOVERY_SCHEDULED_SPORTS)
         - set(DISCOVERY_BEAT_WITHOUT_A_WORKING_PARSE)
+        # THREE lists now, and the third is not a softening of the guard. A beat
+        # that parses nothing and no beat at all are different states with
+        # different fixes, and tennis is in the second: filing it under the
+        # second list would assert a scheduled task nobody has written.
+        - set(DISCOVERY_NO_BEAT_AND_NO_PARSE)
     )
     assert (
         not unaccounted
     ), f"stamped, measured daily, and in neither discovery list: {sorted(unaccounted)}"
-    for sport_key, reason in DISCOVERY_BEAT_WITHOUT_A_WORKING_PARSE.items():
-        assert len(reason) > 40, (
-            f"{sport_key}'s exclusion has no usable reason attached; a bare "
-            "exclusion is indistinguishable from a mistake"
-        )
+    for named in (
+        DISCOVERY_BEAT_WITHOUT_A_WORKING_PARSE,
+        DISCOVERY_NO_BEAT_AND_NO_PARSE,
+    ):
+        for sport_key, reason in named.items():
+            assert len(reason) > 40, (
+                f"{sport_key}'s exclusion has no usable reason attached; a bare "
+                "exclusion is indistinguishable from a mistake"
+            )
+
+
+def test_the_two_discovery_exclusion_lists_do_not_overlap():
+    """A sport is in one state or the other, never filed under both.
+
+    The lists mean opposite things about whether a beat exists, so an entry in
+    both is a contradiction that would let either reason be quoted — and the
+    refusal text a reader acts on would then be a coin toss.
+    """
+    both = set(DISCOVERY_BEAT_WITHOUT_A_WORKING_PARSE) & set(
+        DISCOVERY_NO_BEAT_AND_NO_PARSE
+    )
+    assert not both, f"filed under two contradictory discovery states: {sorted(both)}"
+
+
+def test_no_sport_is_both_scheduled_and_named_broken():
+    """The strongest version: a working discovery pass and a named failure."""
+    for named in (
+        DISCOVERY_BEAT_WITHOUT_A_WORKING_PARSE,
+        DISCOVERY_NO_BEAT_AND_NO_PARSE,
+    ):
+        clash = set(DISCOVERY_SCHEDULED_SPORTS) & set(named)
+        assert not clash, f"discoverable AND named broken: {sorted(clash)}"
 
 
 def test_a_mapped_sport_with_no_discovery_beat_is_refused_however_perfect(
