@@ -42,7 +42,7 @@ sweep a matrix and no anchor can rot (gotcha #44).
 
 from datetime import timedelta
 
-from sqlalchemy import and_, or_
+from sqlalchemy import and_, case, or_
 
 from app.models.models import Event
 from app.utils.event_completion import RECENT_RAIL_STATUSES, UPCOMING_GRACE
@@ -87,6 +87,41 @@ def upcoming_rail_condition(now):
             Event.status == "scheduled",
             Event.commence_time >= now - UPCOMING_GRACE,
         ),
+    )
+
+
+def live_first_order(now):
+    """Put what is ACTUALLY being played at the top. The ORDER BY twin of
+    :func:`upcoming_rail_condition`, and deliberately its neighbour.
+
+    Every caller of that condition wrote ``case((Event.status == "live", 0),
+    else_=1)`` underneath it — the raw column, with no time half. That is the
+    same sentence :func:`app.utils.lifecycle.served_event_status` refuses on the
+    display side, so a row could be relabelled ``scheduled`` for the reader and
+    still be sorted as though it were live. The label and the position have to
+    answer to one predicate or the page argues with itself.
+
+    🔴 MEASURED on production 2026-09-05 (Q438 / #1207), and it is what the
+    condition above says is covered when it is not. That docstring accepts one
+    exposure — "a row STUCK in ``live`` … would then sit at the top of this rail
+    indefinitely" — and banks on the staleness nets, which write
+    ``EVENT_SUSPENDED`` once a row passes its sport's maximum duration. Those
+    nets are ONE-SIDED: they measure age past commence, so they catch a row that
+    is live too LONG and can never catch one that is live too EARLY.
+
+    Event 14969919 (Chicago Fire vs Vancouver Whitecaps) is the specimen — DB
+    ``live`` since 2026-06-30, kickoff 2026-10-06. It is not stale and never
+    will be, so no net moves it, and on 09-05 it held the FIRST slot of
+    ``/sport/soccer/mls`` above eight matches kicking off that evening, under a
+    heading reading "LIVE & UPCOMING" for a league with nothing live in it.
+
+    A genuinely live game is unaffected: it satisfies both halves and still
+    leads the rail. A premature-live row simply takes its place in date order,
+    which is where a fixture a month out belongs.
+    """
+    return case(
+        (and_(Event.status == "live", Event.commence_time <= now), 0),
+        else_=1,
     )
 
 

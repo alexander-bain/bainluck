@@ -13,7 +13,7 @@ import json
 import logging
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, Path
-from sqlalchemy import select, and_, or_, func, case, literal_column
+from sqlalchemy import select, and_, or_, func, literal_column
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload
 
@@ -26,6 +26,7 @@ from app.routes.events import (
 from app.services import get_db
 from app.utils.aggregation import compute_aggregate_probability
 from app.utils.event_rails import (
+    live_first_order,
     settled_rail_condition,
     unreported_rail_condition,
     upcoming_rail_condition,
@@ -265,7 +266,9 @@ def upcoming_games_query(sport_key: str, now: datetime):
             upcoming_rail_condition(now),
         )
         .order_by(
-            case((Event.status == "live", 0), else_=1),
+            # Q438: live-AND-started, not the raw column. A row that is live a
+            # month before kickoff held this rail's first slot for ten weeks.
+            live_first_order(now),
             Event.commence_time.asc(),
         )
         # +1 so the cap can be DECLARED rather than silently applied. A full

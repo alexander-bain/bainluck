@@ -11,7 +11,13 @@ with `"status": "live"` — a LIVE badge on the league page for a game three hou
 away, and for one five weeks away. `GET /api/events/15292756` served the SAME row
 as `"scheduled"`. One row, two answers.
 
-This file pins the three separate defects that produced that, because they fail
+RE-MEASURED 2026-09-05, on the rescue of this branch. Two of the three rows have
+rolled to `completed`; **14969919 is still `live` in the database with a kickoff a
+month away**, and `/api/leagues/soccer_usa_mls` still serves it as `"live"` in
+`upcoming_games[0]` while `/api/events/14969919` serves the same row as
+`"scheduled"`. Ten weeks on, one row, still two answers.
+
+This file pins the four separate defects that produced that, because they fail
 independently and each one alone is enough to put the badge back.
 
 1. THE SERVED VALUE (the ship)
@@ -51,6 +57,18 @@ created **48 events since 2026-05-15 and all 48 were created before their own
 commence_time** — it has never once created a game that was in progress. The
 sibling SCORE write ten lines above already refused on `live_write_is_premature`
 (#1945); the CREATE did not.
+
+4. THE POSITION (found by LOOKing at the page, 2026-09-05)
+-----------------------------------------------------------
+Repairing §1 fixes what the card SAYS and not where it SITS. Both league rails
+ordered on `case((Event.status == "live", 0), else_=1)` — the raw column, with no
+time half — so 14969919 held the first slot of `/sport/soccer/mls` above eight
+matches kicking off that evening, and had done since 2026-06-30. `event_rails`'
+own docstring names this exposure and banks on the staleness nets; those nets
+measure age PAST commence, so they catch a row that is live too long and can
+never catch one that is live too early. `live_first_order(now)` is the ORDER BY
+twin of `upcoming_rail_condition(now)`, and the two rails plus both typeahead
+pools now share it.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -85,6 +103,59 @@ TITANS = _row(15292757, datetime(2026, 8, 29, 22, 0, tzinfo=timezone.utc),
 FIRE = _row(14969919, datetime(2026, 10, 6, 18, 0, tzinfo=timezone.utc),
             served="scheduled", sport="soccer_usa_mls",
             home="Chicago Fire", away="Vancouver Whitecaps FC")
+
+
+def _raw_status_sites_in(module_name: str, source: str) -> list[tuple[str, str, str]]:
+    """Every dict literal in `source` that prints a raw ``<name>.status`` beside
+    a ``commence_time`` key, outside a ``/debug`` route.
+
+    The pair is the point. A payload that carries only a status states nothing
+    checkable; a payload that carries the status AND the kickoff it contradicts
+    is the shape of the 08-29 specimen, and is what a reader (or a sentinel)
+    could have caught. Serialising through ``served_event_status`` turns the
+    value into a ``Call`` rather than an ``Attribute``, so a repaired site drops
+    out of this scan by construction and cannot be re-admitted by an allowlist
+    entry that has gone stale.
+
+    AST, not a regex: `"status": event.status` spans lines, hides inside
+    comprehensions, and appears in strings and comments that must not count.
+    """
+    import ast
+
+    hits: list[tuple[str, str, str]] = []
+    tree = ast.parse(source)
+    for fn in ast.walk(tree):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        paths = [
+            d.args[0].value
+            for d in fn.decorator_list
+            if isinstance(d, ast.Call) and d.args
+            and isinstance(d.args[0], ast.Constant)
+            and isinstance(d.args[0].value, str)
+        ]
+        if any("/debug" in p for p in paths):
+            continue
+        for node in ast.walk(fn):
+            if not isinstance(node, ast.Dict):
+                continue
+            keys = {
+                k.value for k in node.keys
+                if isinstance(k, ast.Constant) and isinstance(k.value, str)
+            }
+            if "commence_time" not in keys:
+                continue
+            for key, value in zip(node.keys, node.values):
+                if not (isinstance(key, ast.Constant) and key.value == "status"):
+                    continue
+                if isinstance(value, ast.Attribute) and value.attr == "status":
+                    base = (
+                        value.value.id
+                        if isinstance(value.value, ast.Name)
+                        else "<expr>"
+                    )
+                    hits.append((module_name, fn.name, f"{base}.status"))
+    return hits
 
 
 class TestTheDetectorWasBlind:
@@ -163,15 +234,44 @@ class TestEveryPublicSurfaceConsumesTheInvariant:
         "app/routes/futures.py",          # the futures event list
     )
 
-    #: `app/routes/golf.py` IS a fifth site and is deliberately absent. Its
-    #: upcoming rail serves a raw `e.status` today, and Q438 fixed it — then
-    #: reverted the fix, because `program/ux-122` DELETES that block wholesale:
-    #: the rail is being rebuilt from the DataGolf schedule
-    #: (`_upcoming_from_schedule`) rather than the `events` table, so there is
-    #: no event-row status left to repair. Guarding it here would have bought a
-    #: guaranteed merge conflict against code on its way out. If ux-122 is
-    #: abandoned, golf.py needs adding to the list above — that is the carry
-    #: this comment exists to keep alive rather than leave to memory.
+    #: `app/routes/golf.py` was the fifth site, and its absence from the tuple
+    #: above is what CERT-440 blocked this ship on:
+    #:
+    #:     BLOCK, 2026-08-29 16:54Z, `backend/app/routes/golf.py:2161` — "the
+    #:     public `GET /api/golf` overview selects upcoming golf events with an
+    #:     explicit `Event.status == "live"` arm and serializes each as
+    #:     `"status": e.status`. […] G6 asks for every public raw-status
+    #:     serializer." Fix-sketch: "route this serializer through
+    #:     `served_event_status` […] or restage on a base that actually removes
+    #:     the endpoint."
+    #:
+    #: It is the second branch of that sketch that discharged it, and by the
+    #: base rather than by an edit here. `b44b3778` (UX-P169, "the golf page
+    #: stops hiding what's coming up") is an ancestor of this commit and was NOT
+    #: an ancestor of the cert's base `d9b76e9b` — which is the whole difference
+    #: from the cert's reading, since it refused the same argument while the
+    #: deletion sat on an unmerged neighbour. `_upcoming_from_schedule` now
+    #: builds that rail from the DataGolf schedule, emits **no `status` key at
+    #: all**, and filters `start <= now` away, so there is no event-row status
+    #: left on any public golf surface to repair.
+    #:
+    #: The hand-maintained tuple above is not how that is kept true. A list of
+    #: consumers that a human extends is the mechanism that lost golf in the
+    #: first place — the docstring at the top of this file says so about the
+    #: guard this one replaced, and then this class did it again one level down.
+    #: `test_no_public_surface_serializes_a_raw_event_status` DERIVES the set
+    #: instead, so the next golf fails here.
+
+    #: Public serializers that emit a raw `.status` beside a `commence_time` and
+    #: are nonetheless correct: the status is a MARKET's (`open`/`closed`/
+    #: `settled`), which has no `live` value and so cannot state the
+    #: contradiction this file exists to remove. Keyed by (module, function) so
+    #: the inventory survives line drift. A site that is not here fails.
+    MARKET_STATUS_SERIALIZERS = {
+        ("feed.py", "build_effective_settlement_followup_item"),
+        ("futures.py", "_format_market_detail"),
+        ("futures.py", "get_group"),
+    }
 
     #: Deliberately NOT repaired: an operator debugging a contradictory row must
     #: SEE the contradiction. Repairing the admin/debug read is what would have
@@ -201,6 +301,164 @@ class TestEveryPublicSurfaceConsumesTheInvariant:
         src = self._source("app/routes/league_futures.py")
         assert '"status": event.status,' not in src
         assert "served_event_status(" in src
+
+    # -- the derived guard (CERT-440's repair) -----------------------------
+
+    def test_the_scanner_can_fire_on_the_block_it_was_written_for(self):
+        """RED-first, against the REAL blocked code rather than a fixture.
+
+        A scanner guard that selects nothing passes forever, so this pins that
+        it fires — on the literal serializer CERT-440 named, lifted verbatim
+        from `golf.py` as it stood at the cert's base `d9b76e9b`."""
+        blocked = '''
+async def get_golf(db=None):
+    events_query = (
+        select(Event)
+        .where(or_(Event.status == "live", Event.commence_time.between(a, b)))
+    )
+    upcoming_events = [
+        {
+            "id": e.id,
+            "name": e.home_team_name,
+            "commence_time": e.commence_time.isoformat() if e.commence_time else None,
+            "status": e.status,
+        }
+        for e in events_result.scalars().all()
+    ]
+'''
+        found = _raw_status_sites_in("golf.py", blocked)
+        assert found == [("golf.py", "get_golf", "e.status")], found
+
+    def test_the_golf_rail_that_replaced_it_cannot_state_the_contradiction(self):
+        """The discharge, asserted rather than described. Not just "the line is
+        gone" — the rail that replaced it has no status to be wrong with, and
+        drops anything that has already started, so a not-yet-begun tournament
+        has nothing on it that could read LIVE."""
+        src = self._source("app/routes/golf.py")
+        assert "_upcoming_from_schedule" in src
+        assert '"status": e.status' not in src
+        # The replacement is schedule-derived and status-free.
+        rail = src.split("def _upcoming_from_schedule")[1].split("\ndef ")[0]
+        assert '"status"' not in rail
+        assert "if start <= now:" in rail
+
+    def test_no_public_surface_serializes_a_raw_event_status(self):
+        """G6, derived. Every dict on a public route that prints a raw
+        `<x>.status` beside a `commence_time` — the two fields whose
+        disagreement IS the defect — must either route through the invariant or
+        be a known market serializer. Operator surfaces are exempt, and the
+        exemption is read off the ROUTE (an `admin_*` module, or a `/debug`
+        path), never off a list of filenames."""
+        import pathlib
+
+        routes = pathlib.Path(__file__).resolve().parents[1] / "app/routes"
+        offenders = []
+        for path in sorted(routes.glob("*.py")):
+            if path.name.startswith("admin_"):
+                continue
+            for site in _raw_status_sites_in(path.name, path.read_text()):
+                if (site[0], site[1]) not in self.MARKET_STATUS_SERIALIZERS:
+                    offenders.append(site)
+        assert not offenders, (
+            "public serializer(s) emit a raw status beside a commence_time: "
+            f"{offenders}. Route the value through "
+            "`app.utils.lifecycle.served_event_status`, or — if it is a market "
+            "status, which has no `live` value — add (module, function) to "
+            "MARKET_STATUS_SERIALIZERS with the reason."
+        )
+
+
+class TestThePositionAgreesWithTheLabel:
+    """§4 — found by LOOKing at the shipped page, not by reading the diff.
+
+    Repairing the SERVED status fixes the badge and leaves the row where it was.
+    On 2026-09-05 `/sport/soccer/mls` led with Chicago Fire vs Vancouver
+    Whitecaps — kickoff 2026-10-06 — above eight matches starting that evening,
+    because the rail's ORDER BY still read the raw column. The heading said
+    "LIVE & UPCOMING" for a league with nothing live in it.
+
+    So the label and the position have to answer to one predicate. These run the
+    REAL `live_first_order` clause as real SQL rather than asserting on its
+    source, because the whole class of bug here is an expression that looks
+    right and sorts wrong.
+    """
+
+    NOW = datetime(2026, 9, 5, 18, 0, tzinfo=timezone.utc)
+
+    #: id, status, commence — the production specimen plus its two neighbours.
+    ROWS = (
+        (1, "live", "2026-10-06 18:00:00.000000"),      # 14969919, a month out
+        (2, "scheduled", "2026-09-05 23:30:00.000000"),  # kicks off tonight
+        (3, "live", "2026-09-05 17:00:00.000000"),      # genuinely being played
+    )
+
+    def _order_under(self, clause):
+        """Execute the clause against a real `events` table and return the ids.
+
+        The models' JSONB columns cannot be created under SQLite, so the table
+        is the three columns this ORDER BY actually touches. The EXPRESSION is
+        the shipping one — it renders `events.status` / `events.commence_time`
+        by name, so it binds to this table unchanged.
+        """
+        from sqlalchemy import (
+            Column, DateTime, Integer, MetaData, String, Table,
+            create_engine, select,
+        )
+
+        from app.models.models import Event
+
+        md = MetaData()
+        Table(
+            "events", md,
+            Column("id", Integer, primary_key=True),
+            Column("status", String),
+            Column("commence_time", DateTime(timezone=True)),
+        )
+        engine = create_engine("sqlite://")
+        md.create_all(engine)
+        with engine.begin() as conn:
+            conn.exec_driver_sql(
+                "INSERT INTO events (id,status,commence_time) VALUES (?,?,?)",
+                list(self.ROWS),
+            )
+            stmt = select(Event.id).order_by(clause, Event.commence_time.asc())
+            return [row[0] for row in conn.execute(stmt)]
+
+    def test_the_premature_row_no_longer_leads_the_rail(self):
+        from app.utils.event_rails import live_first_order
+
+        assert self._order_under(live_first_order(self.NOW)) == [3, 2, 1]
+
+    def test_a_genuinely_live_game_still_leads_it(self):
+        """The fix must not cost the thing the live-first sort is FOR."""
+        from app.utils.event_rails import live_first_order
+
+        assert self._order_under(live_first_order(self.NOW))[0] == 3
+
+    def test_the_clause_this_replaced_sorted_it_second(self):
+        """RED, executed rather than asserted: the raw-column clause put a
+        fixture a month away above a match kicking off in five hours."""
+        from sqlalchemy import case
+
+        from app.models.models import Event
+
+        raw = case((Event.status == "live", 0), else_=1)
+        assert self._order_under(raw) == [3, 1, 2]
+
+    def test_no_rail_still_orders_on_the_raw_column(self):
+        """Every live-first sort goes through the shared clause. A fifth site
+        that spells it out again is the drift this consolidates."""
+        import pathlib
+
+        routes = pathlib.Path(__file__).resolve().parents[1] / "app/routes"
+        spelled_out = [
+            p.name for p in sorted(routes.glob("*.py"))
+            if 'case((Event.status == "live", 0)' in p.read_text()
+        ]
+        assert spelled_out == [], (
+            f"{spelled_out} order on the raw status; use "
+            "`app.utils.event_rails.live_first_order(now)`"
+        )
 
 
 class TestTheWriterStopsMintingThem:

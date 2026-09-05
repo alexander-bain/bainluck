@@ -29,6 +29,7 @@ from app.services.anchor_channel import (
 )
 from app.utils.sport_keys import SPORT_PREFIX_TO_LLM_CATEGORY
 from app.utils.prop_window import prop_window_closed
+from app.utils.event_rails import live_first_order
 from app.utils.lifecycle import served_event_status
 # ONE definition of the state vocabulary (live/048) — imported, not spelled, so
 # that widening it is a rename here rather than a literal this route quietly
@@ -5838,7 +5839,10 @@ async def typeahead_search(
             Event.commence_time <= now + timedelta(days=7),
         )
         .order_by(
-            case((Event.status == "live", 0), else_=1),
+            # Q438: live-AND-started. This pool serves its status through
+            # `served_event_status`, so ordering on the raw column would sort a
+            # row above the field that the same payload prints as `scheduled`.
+            live_first_order(now),
             Event.commence_time.asc(),
         )
         .limit(_EVENT_POOL_FETCH_LIMIT)
@@ -6413,7 +6417,8 @@ async def typeahead_search(
                         Event.commence_time <= now + timedelta(days=7),
                     )
                     .order_by(
-                        case((Event.status == "live", 0), else_=1),
+                        # Q438: live-AND-started, matching the pool above.
+                        live_first_order(now),
                         Event.commence_time.asc(),
                     )
                     .limit(3)
