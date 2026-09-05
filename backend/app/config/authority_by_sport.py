@@ -95,32 +95,70 @@ AUTHORITY_BY_SPORT: dict[str, str] = {
 #: this lane's entire ship (*every game exists on the site before any market lists
 #: it*). A sport can post seven perfect days and discover nothing.
 #:
-#: What makes a sport discoverable is one concrete thing: a scheduled
-#: `sync_statpal_schedules` beat, which is the only StatPal path that CREATES
-#: events (via `find_or_create_event`, under a `statpal` claim). Twelve sports are
-#: in `STATPAL_SPORT_MAPPING`; only these four are on that beat. `golf_pga` and the
-#: seven soccer leagues are livescore-only ON PURPOSE — the soccer season-schedule
-#: endpoint returns thousands of global fixtures and overwhelms a single run — so
-#: their absence here is a standing fact, not a gap to close in passing.
+#: What makes a sport discoverable is one concrete thing, and **it is not that a
+#: beat exists** (CERT-1875, which struck exactly that mistake in this file's first
+#: version). It is that the scheduled task's own service call returns fixtures for
+#: that sport. The only StatPal path that CREATES events is
+#: `sync_statpal_schedules` → `StatPalAPIService.get_fixtures(sport)` →
+#: `_parse_fixtures` → `find_or_create_event` under a `statpal` claim. A sport
+#: whose payload that chain cannot parse has an hourly task that creates nothing,
+#: hour after hour, greenly.
 #:
-#: **`tennis_atp` and `tennis_wta` are the live case**: both are mapped, neither is
-#: on the discovery beat, and tennis is the next sport this lane stamps.
+#: Twelve sports are in `STATPAL_SPORT_MAPPING` and four are on the beat; of those
+#: four, **three parse**. `golf_pga` and the seven soccer leagues are livescore-only
+#: ON PURPOSE — the soccer season-schedule endpoint returns thousands of global
+#: fixtures and overwhelms a single run — so their absence is a standing fact, not
+#: a gap to close in passing.
 #:
-#: Kept as an explicit set rather than derived from the beat schedule at import
-#: time, because `app.config` importing `app.tasks` is a circular-import hazard the
-#: repo has paid for before. `test_authority_flip_switch` derives the same set from
-#: the live beat schedule and fails if the two disagree, so this cannot rot in
-#: either direction: adding a tennis discovery beat without listing it here, or
-#: listing a sport that has no beat, is a red CI run rather than a silent
-#: permission to flip.
+#: **`tennis_atp` and `tennis_wta` are the other live case**: both mapped, neither
+#: on the beat, and tennis is the next sport this lane stamps.
+#:
+#: Kept as an explicit set rather than derived at import time, because `app.config`
+#: importing `app.tasks` is a circular-import hazard the repo has paid for.
+#: `test_authority_flip_switch` derives the beat side from
+#: `celery_app.conf.beat_schedule` AND proves each listed sport's real pinned
+#: payload parses non-empty, so this cannot rot in either direction.
 DISCOVERY_SCHEDULED_SPORTS: frozenset[str] = frozenset(
     {
-        "americanfootball_nfl",
         "basketball_nba",
         "icehockey_nhl",
         "baseball_mlb",
     }
 )
+
+#: On the discovery beat, and discovering nothing. Each entry is a live defect,
+#: named rather than silently dropped from the set above.
+#:
+#: **NFL, found by CERT-1875 and reproduced on the pinned real payload.** The 374-game
+#: `season-schedule` response nests its games `scores.tournament.stage[] → week[] →
+#: matches → match`, two levels below where `_extract_match_items` looks (it knows
+#: `tournament.match` and `tournament.week`). So `get_fixtures("nfl")` returns
+#: **zero** rows on a payload with 374 games in it, and the hourly
+#: `sync-statpal-schedules-nfl` beat has been creating no NFL events at all.
+#:
+#: The reason this was invisible: **the authority read path parses it fine.**
+#: `get_schedule_fixtures("nfl")` → `_parse_nfl_season_schedule` walks the stage
+#: nesting correctly, which is why NFL's agreement row reads 99.69% and its
+#: seven-day clock is running. Two parsers over one payload, one of them blind, and
+#: the blind one is the only one that writes. That is the shape: *the number that
+#: looks good comes from the path that does not create anything.*
+#:
+#: Being listed here is not a permanent exemption — it is a bug with a name. The
+#: fix is to teach the ingest parser the stage nesting (or route it through
+#: `_parse_nfl_season_schedule`), which is a change to what a live task WRITES and
+#: therefore its own ship, not a line in a config. `test_authority_flip_switch`
+#: asserts each excluded sport still parses zero, so the day someone fixes it the
+#: test fails and says to move the sport into the set above.
+DISCOVERY_BEAT_WITHOUT_A_WORKING_PARSE: dict[str, str] = {
+    "americanfootball_nfl": (
+        "sync-statpal-schedules-nfl runs hourly and creates nothing: "
+        "get_fixtures('nfl') parses 0 of 374 games because the payload nests them "
+        "under scores.tournament.stage[].week[].matches.match, which "
+        "_extract_match_items does not walk. The authority read path "
+        "(_parse_nfl_season_schedule) reads the same payload correctly, which is "
+        "why the agreement row looks healthy. CERT-1875"
+    ),
+}
 
 #: For each sport that has flipped: the seven-day evidence it flipped on.
 #:
@@ -162,9 +200,10 @@ def flip_permitted(
     SIX meanings here:
 
       * no dark id join for this sport at all, so there is nothing to flip TO;
-      * no scheduled discovery pass, so agreeing about the games we already have
-        is the only thing this sport's streak could ever prove — add the beat,
-        do not wait for days;
+      * no WORKING discovery pass — either no beat at all, or a beat whose
+        service call parses nothing (NFL today) — so agreeing about the games we
+        already have is the only thing this sport's streak could ever prove. Fix
+        the path, do not wait for days;
       * no governing number ruled, so no day could ever have advanced (D63);
       * no ledger at all — not measured, which is not a streak of zero;
       * a streak that is real and not seven days long yet;
@@ -191,12 +230,18 @@ def flip_permitted(
         # same seven MEETS days forever, because the only fixtures it is scored
         # over are the ones we already have. Reading the streak first and
         # reporting "6/7" would describe it as a wait.
+        broken = DISCOVERY_BEAT_WITHOUT_A_WORKING_PARSE.get(sport_key)
         return False, (
-            f"{sport_key} has no scheduled StatPal discovery pass, so its "
-            "agreement streak is measured only over games we already have — it "
-            "cannot show StatPal finding one we missed, which is the whole point "
-            "of the flip. This is a build step (a `sync_statpal_schedules` beat), "
-            "not a wait"
+            f"{sport_key} has no working StatPal discovery pass, so its agreement "
+            "streak is measured only over games we already have — it cannot show "
+            "StatPal finding one we missed, which is the whole point of the flip. "
+            + (
+                f"The beat exists and does nothing: {broken}. Fixing that path is "
+                "a build step, not a wait"
+                if broken
+                else "This is a build step (a `sync_statpal_schedules` beat), "
+                "not a wait"
+            )
         )
     if not GOVERNING_IDENTITY_NUMBERS.get(sport_key):
         return False, (

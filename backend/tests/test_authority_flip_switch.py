@@ -34,6 +34,7 @@ from app.config import authority_by_sport as abs_module
 from app.config.authority_by_sport import (
     AUTHORITY_BY_SPORT,
     DEFAULT_AUTHORITY,
+    DISCOVERY_BEAT_WITHOUT_A_WORKING_PARSE,
     DISCOVERY_SCHEDULED_SPORTS,
     ESPN,
     FLIP_EVIDENCE,
@@ -435,24 +436,137 @@ def test_the_discovery_list_is_the_beat_schedules_own_list():
         and (entry.get("kwargs") or {}).get("sport_key")
     }
 
-    assert scheduled == set(DISCOVERY_SCHEDULED_SPORTS), (
-        "the beat schedule and `DISCOVERY_SCHEDULED_SPORTS` disagree about which "
-        "sports StatPal can discover a game in. On the beat but not listed: "
-        f"{sorted(scheduled - set(DISCOVERY_SCHEDULED_SPORTS))}. Listed but not "
-        f"on the beat: {sorted(set(DISCOVERY_SCHEDULED_SPORTS) - scheduled)}. "
-        "The second list is the one that lets a sport be flipped on an agreement "
-        "streak it could never have failed"
+    assert not (set(DISCOVERY_SCHEDULED_SPORTS) - scheduled), (
+        "listed as discoverable with no beat at all: "
+        f"{sorted(set(DISCOVERY_SCHEDULED_SPORTS) - scheduled)}. This is the "
+        "direction that PERMITS — a flip on an agreement streak that never had to "
+        "find a single fixture ESPN missed"
+    )
+    accounted = set(DISCOVERY_SCHEDULED_SPORTS) | set(
+        DISCOVERY_BEAT_WITHOUT_A_WORKING_PARSE
+    )
+    assert scheduled <= accounted, (
+        "on the discovery beat and in neither list: "
+        f"{sorted(scheduled - accounted)}. A beat is either working (list it in "
+        "`DISCOVERY_SCHEDULED_SPORTS`) or broken (name it, with the reason, in "
+        "`DISCOVERY_BEAT_WITHOUT_A_WORKING_PARSE`). Silently absent is the state "
+        "this pair of constants exists to make impossible"
+    )
+    assert not (
+        set(DISCOVERY_SCHEDULED_SPORTS) & set(DISCOVERY_BEAT_WITHOUT_A_WORKING_PARSE)
+    ), "a sport cannot be both discoverable and named as not discovering"
+
+
+def test_a_listed_sport_actually_parses_and_an_excluded_one_actually_does_not():
+    """CERT-1875's finding, pinned: a beat is not a discovery path.
+
+    The first version of this file listed NFL because
+    `sync-statpal-schedules-nfl` runs hourly. It does — and it creates nothing.
+    `get_fixtures("nfl")` walks `_extract_match_items`, which knows
+    `tournament.match` and `tournament.week`; the real 374-game NFL payload nests
+    its games two levels deeper, under `stage[] → week[] → matches → match`. Zero
+    rows, every hour, green. Meanwhile the AUTHORITY read path
+    (`_parse_nfl_season_schedule`) reads the same bytes correctly, which is why
+    NFL's agreement row says 99.69% and its seven-day clock is running. Two
+    parsers over one payload, one of them blind, and the blind one is the only one
+    that writes.
+
+    So membership is proven against the ingest chain's own parser on each sport's
+    pinned real payload — never against the existence of a beat, and never against
+    the parser the authority path happens to use.
+
+    The exclusion assertion is the half that retires itself: the day somebody
+    teaches the ingest parser the stage nesting, NFL starts parsing, this test
+    fails, and its message says to move NFL into `DISCOVERY_SCHEDULED_SPORTS`.
+    """
+    import json
+    from pathlib import Path
+
+    from app.services.statpal_api import StatPalAPIService
+    from app.tasks.config import STATPAL_SPORT_MAPPING
+
+    pinned = {
+        "basketball_nba": "statpal_nba_season_schedule_20260904.json",
+        "icehockey_nhl": "statpal_nhl_season_schedule_20260904.json",
+        "baseball_mlb": "statpal_mlb_season_schedule_20260904.json",
+        "americanfootball_nfl": "statpal_nfl_season_schedule_20260903.json",
+    }
+    service = StatPalAPIService.__new__(StatPalAPIService)
+
+    def _ingest_parse(sport_key: str) -> int:
+        path = Path(__file__).parent / "fixtures" / pinned[sport_key]
+        assert path.exists(), f"no pinned payload for {sport_key} at {path}"
+        payload = json.loads(path.read_text())
+        # The exact call the CREATING path makes: sync_statpal_schedules ->
+        # get_fixtures(sport) -> _parse_fixtures(data, sport).
+        return len(
+            StatPalAPIService._parse_fixtures(
+                service, payload, STATPAL_SPORT_MAPPING[sport_key]
+            )
+        )
+
+    for sport_key in sorted(DISCOVERY_SCHEDULED_SPORTS):
+        assert _ingest_parse(sport_key) > 0, (
+            f"{sport_key} is listed as discoverable, but the ingest parser reads "
+            "ZERO fixtures out of its real pinned payload — the beat runs and "
+            "creates nothing, which is precisely the mistake CERT-1875 struck"
+        )
+
+    for sport_key in sorted(DISCOVERY_BEAT_WITHOUT_A_WORKING_PARSE):
+        assert _ingest_parse(sport_key) == 0, (
+            f"{sport_key} now parses out of its pinned payload — the ingest path "
+            "has been fixed. Move it into `DISCOVERY_SCHEDULED_SPORTS` and delete "
+            "its entry from `DISCOVERY_BEAT_WITHOUT_A_WORKING_PARSE`; the flip "
+            "gate is refusing a sport that can now discover games"
+        )
+
+
+def test_nfl_cannot_be_flipped_today_and_its_running_clock_does_not_change_that():
+    """The ship of CERT-1875's repair, stated where it bites.
+
+    NFL's seven-day clock started 2026-09-05 and reads MEETS at 99.69%. Before
+    this repair, seven of those days would have returned `permitted=True` for a
+    sport whose event-creating path has never created an event. It now refuses,
+    by name, with the beat's own failure quoted into the reason.
+    """
+    assert "americanfootball_nfl" in SHADOW_STAMPERS
+    assert GOVERNING_IDENTITY_NUMBERS.get("americanfootball_nfl")
+
+    permitted, why = flip_permitted(
+        "americanfootball_nfl", _run_of(REQUIRED_STREAK_DAYS, GATE_MEETS)
     )
 
+    assert not permitted
+    assert "no working StatPal discovery pass" in why
+    assert "creates nothing" in why, (
+        "the refusal must quote the actual failure; a generic 'no discovery pass' "
+        "reads as 'nobody built it yet' for a sport where somebody did"
+    )
+    assert "not a wait" in why
 
-def test_every_stamped_sport_is_discoverable_today_so_this_arm_is_dark():
-    """The new refusal changes no answer for any sport we currently measure.
 
-    All four stamped sports are on the discovery beat, so `flip_permitted` gives
-    exactly the answers it gave before this arm existed. That is the point: a
-    gate clause added while it cannot fire is a clause nobody had to trust.
+def test_every_stamped_sport_is_accounted_for_as_discoverable_or_named_broken():
+    """No stamped sport may be silently outside both lists.
+
+    This used to assert `SHADOW_STAMPERS <= DISCOVERY_SCHEDULED_SPORTS` — the
+    darkness claim — and CERT-1875 is the reason it cannot: NFL is stamped and is
+    NOT discoverable, so the arm is no longer dark and saying it is would be the
+    comfortable lie. What must hold instead is that every stamped sport is in one
+    list or the other, with a reason attached when it is the second.
     """
-    assert set(SHADOW_STAMPERS) <= set(DISCOVERY_SCHEDULED_SPORTS)
+    unaccounted = (
+        set(SHADOW_STAMPERS)
+        - set(DISCOVERY_SCHEDULED_SPORTS)
+        - set(DISCOVERY_BEAT_WITHOUT_A_WORKING_PARSE)
+    )
+    assert (
+        not unaccounted
+    ), f"stamped, measured daily, and in neither discovery list: {sorted(unaccounted)}"
+    for sport_key, reason in DISCOVERY_BEAT_WITHOUT_A_WORKING_PARSE.items():
+        assert len(reason) > 40, (
+            f"{sport_key}'s exclusion has no usable reason attached; a bare "
+            "exclusion is indistinguishable from a mistake"
+        )
 
 
 def test_a_mapped_sport_with_no_discovery_beat_is_refused_however_perfect(
@@ -482,7 +596,11 @@ def test_a_mapped_sport_with_no_discovery_beat_is_refused_however_perfect(
     permitted, why = flip_permitted("tennis_atp", _run_of(10, GATE_MEETS))
 
     assert not permitted
-    assert "no scheduled StatPal discovery pass" in why
+    assert "no working StatPal discovery pass" in why
+    assert "a `sync_statpal_schedules` beat" in why, (
+        "tennis has no beat at all, so the reason must point at building one — "
+        "not at a broken parse, which is NFL's different problem"
+    )
     assert "not a wait" in why
     # And it must not describe the streak at all — there is nothing wrong with it.
     assert f"/{REQUIRED_STREAK_DAYS}" not in why
