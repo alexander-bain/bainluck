@@ -78,6 +78,47 @@ export const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000
 const AUTH_TOKEN_TIMEOUT_MS = 2500;
 
 /**
+ * Upper bound on the jitter added to a `Retry-After` wait (CAL-P1023, #3297).
+ *
+ * Every client behind one NAT shares one rate-limit bucket and is therefore
+ * told to come back at the SAME second — the window boundary. Retrying exactly
+ * then is a synchronised herd that re-saturates the next window, i.e. the fix
+ * causing the bug. Spreading the return over a second is enough to break the
+ * lockstep and is invisible next to a wait measured in whole seconds.
+ */
+const RETRY_AFTER_JITTER_MS = 1000;
+
+/**
+ * How long a 429 says to wait, in ms, or `null` when it did not say.
+ *
+ * Two places carry it and both are read, header first: `Retry-After` is the
+ * HTTP-standard answer and the one a proxy or CDN in front of us would set,
+ * while `detail.retry_after` is what our own limiter puts in the JSON body
+ * (`app/utils/rate_limit.py`). Preferring the header means an intermediary that
+ * throttles us before the request reaches our app is still honoured.
+ *
+ * Deliberately strict: only a finite, positive, whole-second count is a wait.
+ * `Retry-After` also permits an HTTP-date form, which we do NOT parse — a date
+ * needs a trusted clock and a wrong one produces either an instant retry or a
+ * wait of days. Unparseable means "the server did not say", which routes to the
+ * caller's existing backoff rather than to a guess.
+ */
+export function parseRetryAfterMs(
+  header: string | null | undefined,
+  detail: unknown,
+): number | null {
+  const fromHeader = Number((header ?? "").trim());
+  if (Number.isFinite(fromHeader) && fromHeader > 0) {
+    return Math.round(fromHeader * 1000);
+  }
+  const fromBody = (detail as { retry_after?: unknown })?.retry_after;
+  if (typeof fromBody === "number" && Number.isFinite(fromBody) && fromBody > 0) {
+    return Math.round(fromBody * 1000);
+  }
+  return null;
+}
+
+/**
  * Auth token getter — set by AuthProvider when user signs in.
  * This avoids a circular dependency between api.ts and useAuth.ts.
  */
@@ -188,6 +229,45 @@ async function apiFetch<T>(
         const apiError = new Error(message) as ApiError;
         apiError.status = res.status;
         apiError.detail = detail;
+
+        // 429 is the one !res.ok status the server tells us how to recover from
+        // (CAL-P1023, #3297). Before this, it threw here on the first attempt
+        // and the advertised `Retry-After` was discarded unread — so a reader
+        // whose network was two seconds over the 60/min anonymous bucket got a
+        // hard "Failed to load", not the page. That is not a rare state: carrier
+        // CGNAT, office Wi-Fi and university NAT put many readers behind one
+        // IPv4 and therefore one bucket.
+        //
+        // SWR's own retry is off globally on purpose (`SWRProvider`, #L2-137:
+        // single source of retry), which is exactly why the 429 has to be
+        // handled HERE and not by re-enabling that.
+        //
+        // The wait is bounded by `timeoutMs` — the caller's OWN per-attempt
+        // budget, so this is derived from what the caller already agreed to
+        // spend, not a second pinned constant (ruling 075). The limiter's window
+        // is fixed at 60s, so `retry_after` runs 1..60 and a large value means
+        // the window has barely started: waiting `timeoutMs` and retrying then
+        // would burn the reader's seconds AND still be inside the same saturated
+        // window. So an over-budget wait is not clamped, it is REFUSED — throw
+        // now and let the page say we were throttled, which is true and fast.
+        if (res.status === 429 && attempt < maxRetries) {
+          const retryAfterMs = parseRetryAfterMs(
+            res.headers.get("retry-after"),
+            detail,
+          );
+          if (retryAfterMs !== null && retryAfterMs <= timeoutMs) {
+            await new Promise((r) =>
+              setTimeout(r, retryAfterMs + Math.random() * RETRY_AFTER_JITTER_MS),
+            );
+            // The reader may have navigated away during the wait; a retry then
+            // is a request nobody is waiting for.
+            if (externalSignal?.aborted) {
+              throw new DOMException("Aborted", "AbortError");
+            }
+            continue;
+          }
+        }
+
         throw apiError;
       }
 

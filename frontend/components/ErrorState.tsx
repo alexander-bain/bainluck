@@ -10,6 +10,20 @@
  */
 
 interface ErrorStateProps {
+  /**
+   * Optional heading naming WHICH failure this was ("Too many requests").
+   *
+   * Added by CAL-P1023 so this component can render a `LoadFailure`
+   * (`lib/loadFailure.ts`) whole. That module's rule is that the server's own
+   * `detail` stays as the message because it is the most specific true thing
+   * available, "and the title is only ever a heading over it" — so a caller
+   * that renders the message without the title publishes a raw machine
+   * sentence ("Rate limit exceeded: 60/minute") with nothing naming it.
+   *
+   * Optional, and absent by default: every existing caller renders exactly as
+   * it did before.
+   */
+  title?: string;
   /** Main message shown to the user */
   message?: string;
   /** Optional retry handler — shows a retry button when provided */
@@ -19,6 +33,7 @@ interface ErrorStateProps {
 }
 
 export default function ErrorState({
+  title,
   message = "Failed to load data",
   onRetry,
   className,
@@ -26,6 +41,9 @@ export default function ErrorState({
   return (
     <div className={className ?? "py-20"}>
       <div className="text-center max-w-md mx-auto px-4">
+        {title && (
+          <p className="text-text-primary text-base font-semibold mb-1">{title}</p>
+        )}
         <p className="text-text-secondary text-sm">{message}</p>
         {onRetry && (
           <button
