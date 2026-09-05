@@ -206,6 +206,20 @@ class KalshiScanReport:
     #: no reader could get — and it is the one that decides whether a new series
     #: class can be admitted at all, so it is the one that has to be legible.
     market_backfill_truncated_after: Optional[int] = None
+    #: How many series the backfill worked, and how many venue requests that
+    #: cost (#3149). Before the batching these were the same as the candidate
+    #: count by construction — one request per event, plus 0.3s of mandatory
+    #: sleep each, which is 3,270s for a 10,901-long list inside a beat that
+    #: finishes in 327s. Keeping the request count is how a future reader can
+    #: tell a backfill that is cheap from one that has silently gone back to
+    #: paying per event.
+    market_backfill_series_worked: int = 0
+    market_backfill_requests: int = 0
+    #: Candidates whose series answered but whose own event ticker appeared in
+    #: none of the markets returned. This is the failure the batching could
+    #: introduce and the per-event loop could not: `filled` alone cannot tell a
+    #: batch that served 9 of 10 events from one that was only asked about 9.
+    market_backfill_unmatched: int = 0
 
     # --- the discovered half of the rescue list (#2927) -------------------
     #: The series-discovery receipt for this beat, bounded for persistence by

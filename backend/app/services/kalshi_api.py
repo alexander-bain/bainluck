@@ -8,7 +8,7 @@ Kalshi markets provide bid/ask spreads and last traded prices.
 import logging
 import os
 from datetime import datetime, timedelta, timezone
-from typing import Callable, Optional, Sequence
+from typing import Callable, Dict, Optional, Sequence
 
 import httpx
 
@@ -284,6 +284,13 @@ _ALWAYS_FETCH_SERIES = {
 # below fetches their markets per-event, lazily + bounded. Small
 # championship series (KXNBA, KXNBAEAST, KXMLBAL…) keep nested.
 _HEAVY_TOKENS = ("GAME", "SPREAD", "TOTAL", "1H", "2H", "WINNER", "SERIES")
+
+#: Pages of `/markets?series_ticker=…` the empty-event backfill will walk for
+#: one series before moving on (#3149). At `limit=1000` this is 10,000 markets;
+#: the largest series measured at the venue on 2026-09-05 (`KXMLBGAME`, every
+#: status) was 1,826 over 2 pages. The cap exists so one pathological series
+#: cannot eat the whole reserve, not because any real one approaches it.
+_BACKFILL_SERIES_MAX_PAGES = 10
 # #999 / Queue #166: fetch the priority (golf) rescue tickers FIRST so
 # they get first claim on the reserved supplementary window. Even with
 # the main-scan cap, the earlier championship/game series could otherwise
@@ -616,6 +623,7 @@ class KalshiAPIService(BaseAPIClient):
         event_ticker: Optional[str] = None,
         limit: int = 1000,
         cursor: Optional[str] = None,
+        series_ticker: Optional[str] = None,
     ) -> tuple[list[dict], Optional[str]]:
         """
         Get markets from Kalshi.
@@ -625,6 +633,14 @@ class KalshiAPIService(BaseAPIClient):
             event_ticker: Filter to specific event
             limit: Max results per page (1-1000)
             cursor: Pagination cursor
+            series_ticker: Filter to every event of one series (#3149). The
+                venue has always supported this; we only ever asked one event
+                at a time. Measured 2026-09-05 against the live endpoint:
+                `KXMLBGAME` with no status filter is 1,826 markets over 2 pages
+                in 1.0s, spanning every event of the series and each market
+                carrying its own `event_ticker`. The empty-event backfill was
+                paying one request plus a mandatory 0.3s sleep PER EVENT for
+                the same data.
 
         Returns:
             Tuple of (markets list, next cursor or None)
@@ -636,6 +652,8 @@ class KalshiAPIService(BaseAPIClient):
             params["status"] = status
         if event_ticker:
             params["event_ticker"] = event_ticker
+        if series_ticker:
+            params["series_ticker"] = series_ticker
         if cursor:
             params["cursor"] = cursor
 
@@ -2034,6 +2052,12 @@ class KalshiAPIService(BaseAPIClient):
             empty_events and _past_deadline()
         )
         _tel["market_backfill_filled"] = 0
+        # #3149: what the batched shape cost and whether it served everyone it
+        # asked for. Initialised here, not only inside the branch, so a beat
+        # that never runs the step reports zeroes rather than absence.
+        _tel["market_backfill_series_worked"] = 0
+        _tel["market_backfill_requests"] = 0
+        _tel["market_backfill_unmatched"] = 0
         # None means "worked the whole list". Anything else is the count it had
         # ATTEMPTED when the deadline cut it off — the number that was missing.
         _tel["market_backfill_truncated_after"] = None
@@ -2053,9 +2077,41 @@ class KalshiAPIService(BaseAPIClient):
                 "Backfilling markets for %d sports events with 0 nested markets",
                 len(empty_events),
             )
+            # #3149: ask the venue once per SERIES, not once per event.
+            #
+            # The loop this replaces spent one request plus a mandatory 0.3s
+            # sleep on every candidate. Against the 10,901-candidate list of
+            # 2026-09-05 that is 3,270s of sleep alone, inside beats that finish
+            # in 327s, which is why `filled` sat at 367-496 while candidates
+            # climbed past 10,000 — a correlation of -0.869, supply falling as
+            # demand rose. No reserve can fix a per-item cost that exceeds the
+            # whole beat; the cost per item is the bug.
+            #
+            # `/markets?series_ticker=…` returns the markets of EVERY event in a
+            # series, each carrying its own `event_ticker`. Measured directly
+            # against the venue on 2026-09-05: `KXMLBGAME` with no status filter
+            # is 1,826 markets over 2 pages in 1.0s — the whole MLB game series,
+            # for the price the old loop paid for three events.
+            #
+            # Grouping preserves `order_market_backfill_candidates`' priority:
+            # groups are keyed in first-appearance order, so the stripped game
+            # series it promotes stay at the front and a cut still lands on the
+            # accidental tail.
+            _groups: Dict[str, list] = {}
+            for _e in empty_events:
+                _groups.setdefault(event_series_ticker(_e.event_ticker), []).append(_e)
+
             backfilled = 0
-            for _bi, event in enumerate(empty_events):
-                _progress(f"fetch:markets_backfill:{_bi}")
+            _attempted = 0
+            _requests = 0
+            _series_worked = 0
+            #: Candidates whose series answered but whose own event_ticker was
+            #: in none of the markets returned. An aggregate `filled` cannot
+            #: show this: a batch that quietly serves 9 of 10 events reads the
+            #: same as one that serves 9 events. It is the per-item outage the
+            #: batching could introduce and the per-event loop could not.
+            _unmatched = 0
+            for _series, _members in _groups.items():
                 if _past_deadline():
                     # #2214 follow-up: record the cut, do not just log it. This
                     # break is how the backfill ends on every beat in the ring,
@@ -2063,39 +2119,78 @@ class KalshiAPIService(BaseAPIClient):
                     # deadline field (`skipped_past_deadline`, which covers the
                     # step never starting) said False and the beat read as if
                     # the reserved floor were holding with room to spare.
-                    _tel["market_backfill_truncated_after"] = _bi
+                    _tel["market_backfill_truncated_after"] = _attempted
                     logger.warning(
                         "Kalshi fetch deadline hit during empty-event backfill "
-                        "— attempted %d of %d candidates, filled %d. The "
-                        "remaining %d events keep zero markets and are dropped "
-                        "by `if not event.markets: continue` this beat.",
-                        _bi, len(empty_events), backfilled,
-                        len(empty_events) - _bi,
+                        "— attempted %d of %d candidates over %d series in %d "
+                        "requests, filled %d. The remaining %d events keep zero "
+                        "markets and are dropped by `if not event.markets: "
+                        "continue` this beat.",
+                        _attempted, len(empty_events), _series_worked,
+                        _requests, backfilled, len(empty_events) - _attempted,
                     )
                     break
+                _progress(f"fetch:markets_backfill:{_attempted}")
+                if not _series:
+                    # An event with no parseable ticker cannot be asked for by
+                    # either shape. Counted as attempted so the cutoff stays a
+                    # true position in the list.
+                    _attempted += len(_members)
+                    continue
+                _wanted = {(_e.event_ticker or "").upper() for _e in _members}
+                _by_event: Dict[str, list] = {}
                 try:
-                    await asyncio.sleep(0.3)
-                    # #995 attempt-7: bound this fetch too (same hang class).
-                    raw_markets, _ = await asyncio.wait_for(
-                        self.get_markets(
-                            status=None,
-                            event_ticker=event.event_ticker,
-                            limit=200,
-                        ),
-                        timeout=45.0,
-                    )
-                    if raw_markets:
-                        parsed = [self._parse_market(m) for m in raw_markets]
-                        event.markets = [m for m in parsed if m is not None]
-                        if event.markets:
-                            backfilled += 1
+                    _cursor = None
+                    for _page in range(_BACKFILL_SERIES_MAX_PAGES):
+                        await asyncio.sleep(0.3)
+                        # #995 attempt-7: bound this fetch too (same hang class).
+                        raw_markets, _cursor = await asyncio.wait_for(
+                            self.get_markets(
+                                status=None,
+                                series_ticker=_series,
+                                limit=1000,
+                                cursor=_cursor,
+                            ),
+                            timeout=45.0,
+                        )
+                        _requests += 1
+                        for _m in raw_markets or []:
+                            _et = (_m.get("event_ticker") or "").upper()
+                            if _et in _wanted:
+                                _by_event.setdefault(_et, []).append(_m)
+                        if not _cursor or not raw_markets:
+                            break
+                        # Every candidate in this series is served; the rest of
+                        # the series is somebody else's history.
+                        if _wanted <= set(_by_event):
+                            break
+                        if _past_deadline():
+                            break
                 except Exception as e:
                     logger.warning(
-                        "Failed to backfill markets for %s: %s",
-                        event.event_ticker, e,
+                        "Failed to backfill markets for series %s (%d events): "
+                        "%s", _series, len(_members), e,
                     )
-            logger.info("Backfilled markets for %d events", backfilled)
+                for _e in _members:
+                    _raws = _by_event.get((_e.event_ticker or "").upper())
+                    if not _raws:
+                        _unmatched += 1
+                        continue
+                    parsed = [self._parse_market(_m) for _m in _raws]
+                    _e.markets = [m for m in parsed if m is not None]
+                    if _e.markets:
+                        backfilled += 1
+                _attempted += len(_members)
+                _series_worked += 1
+            logger.info(
+                "Backfilled markets for %d events across %d series in %d "
+                "requests (%d candidates attempted, %d unmatched)",
+                backfilled, _series_worked, _requests, _attempted, _unmatched,
+            )
             _tel["market_backfill_filled"] = backfilled
+            _tel["market_backfill_series_worked"] = _series_worked
+            _tel["market_backfill_requests"] = _requests
+            _tel["market_backfill_unmatched"] = _unmatched
             # Re-count: the backfill's whole job is to move events OUT of this
             # bucket, so reporting the pre-backfill number would credit it with
             # work it did not do.

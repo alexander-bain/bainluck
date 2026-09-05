@@ -218,6 +218,25 @@ class _FakeClock:
         self.t += seconds
 
 
+def _venue_markets(event_tickers) -> list[dict]:
+    """Markets shaped the way the venue actually returns them (#3149).
+
+    `GET /markets?series_ticker=…` answers for EVERY event of the series and
+    each market carries its own `event_ticker`. Verified directly against
+    `api.elections.kalshi.com` on 2026-09-05: `KXMLBGAME` with no status filter
+    is 1,826 markets over 2 pages, spanning every event of the series.
+
+    The fakes these replace keyed off the `event_ticker` REQUEST parameter and
+    echoed it back, which could not distinguish "the venue answered for this
+    event" from "we asked about it" — precisely the confusion a batched fetch
+    has to be guarded against.
+    """
+    return [
+        {"ticker": f"{t}-BOS", "event_ticker": t, "yes_bid": 55, "yes_ask": 57}
+        for t in event_tickers
+    ]
+
+
 @pytest.mark.asyncio
 async def test_market_backfill_gets_a_reserved_floor_of_the_fetch_budget(
     monkeypatch,
@@ -257,9 +276,11 @@ async def test_market_backfill_gets_a_reserved_floor_of_the_fetch_budget(
 
     markets_calls: list[str] = []
 
-    async def fake_get_markets(status=None, event_ticker=None, limit=200, **kw):
-        markets_calls.append(event_ticker)
-        return ([{"ticker": f"{event_ticker}-BOS", "yes_bid": 55, "yes_ask": 57}], None)
+    async def fake_get_markets(
+        status=None, event_ticker=None, series_ticker=None, limit=200, **kw
+    ):
+        markets_calls.append(series_ticker)
+        return (_venue_markets([RED_FIRST_TICKER]), None)
 
     monkeypatch.setattr(svc, "get_events", fake_get_events)
     monkeypatch.setattr(svc, "get_markets", fake_get_markets)
@@ -269,7 +290,7 @@ async def test_market_backfill_gets_a_reserved_floor_of_the_fetch_budget(
         deadline=clock.t + 240.0, telemetry=tel
     )
 
-    assert markets_calls == [RED_FIRST_TICKER], (
+    assert markets_calls == ["KXMLBGAME"], (
         "the backfill never ran: the reserve was consumed by an earlier phase, "
         f"telemetry={tel}"
     )
@@ -319,9 +340,11 @@ async def test_a_stripped_game_series_is_a_candidate_without_a_sport_category(
 
     markets_calls: list[str] = []
 
-    async def fake_get_markets(status=None, event_ticker=None, limit=200, **kw):
-        markets_calls.append(event_ticker)
-        return ([{"ticker": f"{event_ticker}-BOS", "yes_bid": 55, "yes_ask": 57}], None)
+    async def fake_get_markets(
+        status=None, event_ticker=None, series_ticker=None, limit=200, **kw
+    ):
+        markets_calls.append(series_ticker)
+        return (_venue_markets([RED_FIRST_TICKER]), None)
 
     monkeypatch.setattr(svc, "get_events", fake_get_events)
     monkeypatch.setattr(svc, "get_markets", fake_get_markets)
@@ -329,7 +352,7 @@ async def test_a_stripped_game_series_is_a_candidate_without_a_sport_category(
     tel: dict = {}
     await svc._fetch_all_events_unfiltered(deadline=clock.t + 240.0, telemetry=tel)
 
-    assert markets_calls == [RED_FIRST_TICKER]
+    assert markets_calls == ["KXMLBGAME"]
     assert tel["market_backfill_stripped_candidates"] == 1
 
 
@@ -399,7 +422,12 @@ async def test_a_backfill_the_deadline_cuts_off_says_where_it_stopped(
     monkeypatch.setattr(_asyncio, "sleep", clock.sleep)
 
     svc = KalshiAPIService()
-    tickers = [f"KXMLBGAME-26AUG26BOSMI{i:02d}" for i in range(40)]
+    # Eight series of five events each. #3149 batches by series, so the cut now
+    # lands on a series boundary — the list position it reports must still be
+    # the CANDIDATE count, because that is the number of events left with no
+    # markets, and that is what a reader is trying to learn.
+    series = [f"KXMLBGAME{s}" for s in range(8)]
+    tickers = [f"{s}-26AUG26BOSMI{i:02d}" for s in series for i in range(5)]
 
     async def fake_get_events(
         status=None, series_ticker=None, with_nested_markets=True,
@@ -412,14 +440,18 @@ async def test_a_backfill_the_deadline_cuts_off_says_where_it_stopped(
 
     calls: list[str] = []
 
-    async def fake_get_markets(status=None, event_ticker=None, limit=200, **kw):
-        calls.append(event_ticker)
-        # Each candidate costs 3s on top of the loop's own 0.3s sleep — 40 of
-        # them is 132s against an 80s budget, so the deadline lands partway
-        # down the list. That is the production shape, where the list is 10,901
-        # long at 0.3s of mandatory sleep each and the whole beat takes 327s.
-        clock.t += 3.0
-        return ([{"ticker": f"{event_ticker}-BOS", "yes_bid": 55}], None)
+    async def fake_get_markets(
+        status=None, event_ticker=None, series_ticker=None, limit=200, **kw
+    ):
+        calls.append(series_ticker)
+        # Each SERIES request costs 20s on top of the loop's 0.3s sleep — eight
+        # of them is 162s against an 80s budget, so the deadline lands partway
+        # down the list, which is the production shape at a smaller scale.
+        clock.t += 20.0
+        return (
+            _venue_markets([t for t in tickers if t.startswith(f"{series_ticker}-")]),
+            None,
+        )
 
     monkeypatch.setattr(svc, "get_events", fake_get_events)
     monkeypatch.setattr(svc, "get_markets", fake_get_markets)
@@ -430,19 +462,21 @@ async def test_a_backfill_the_deadline_cuts_off_says_where_it_stopped(
     )
 
     assert tel["market_backfill_candidates"] == 40
-    assert 0 < len(calls) < 40, (
+    assert 0 < len(calls) < 8, (
         "precondition: the deadline must cut the loop off PARTWAY, otherwise "
-        f"this test proves nothing. attempted={len(calls)}"
+        f"this test proves nothing. series attempted={len(calls)}"
     )
     assert tel["market_backfill_skipped_past_deadline"] is False, (
         "precondition: the step DID start — this is the case the existing "
         "field cannot describe, and the reason a reader saw headroom"
     )
-    assert tel["market_backfill_truncated_after"] == len(calls), (
-        "the beat must say how many candidates it got through before the "
+    assert tel["market_backfill_truncated_after"] == len(calls) * 5, (
+        "the beat must say how many CANDIDATES it got through before the "
         "deadline; without it a starved backfill is indistinguishable from a "
-        "finished one"
+        "finished one. Batching by series must not turn the cutoff into a "
+        "count of requests — 5 requests is 25 events served, not 5"
     )
+    assert tel["market_backfill_filled"] == len(calls) * 5
 
 
 @pytest.mark.asyncio
@@ -471,8 +505,10 @@ async def test_a_backfill_that_finishes_the_list_reports_no_cut(monkeypatch):
                       "category": "Sports", "markets": []}], None)
         return ([], None)
 
-    async def fake_get_markets(status=None, event_ticker=None, limit=200, **kw):
-        return ([{"ticker": f"{event_ticker}-BOS", "yes_bid": 55}], None)
+    async def fake_get_markets(
+        status=None, event_ticker=None, series_ticker=None, limit=200, **kw
+    ):
+        return (_venue_markets([RED_FIRST_TICKER]), None)
 
     monkeypatch.setattr(svc, "get_events", fake_get_events)
     monkeypatch.setattr(svc, "get_markets", fake_get_markets)
@@ -652,3 +688,258 @@ def test_the_reserve_does_not_starve_the_rescue_it_was_carved_beside():
     assert 1000.0 - d.guaranteed == pytest.approx(backfill)
     # The rescue's own floor is intact: it is not carved out of #999's reserve.
     assert d.guaranteed - d.main_scan == pytest.approx(rescue)
+
+
+# ---------------------------------------------------------------------------
+# #3149 — the cost per candidate is the bug.
+#
+# The backfill asked the venue once per EVENT, with a mandatory 0.3s sleep in
+# front of each request. Against the 10,901-candidate list of 2026-09-05 that
+# is 3,270s of sleep alone, inside beats that finish in 327s. `filled` sat at
+# 367-496 while candidates climbed past 10,000 — corr(filled, candidates) =
+# -0.869, supply falling as demand rose, the signature of a time-bound step.
+# No reserve can fix a per-item cost larger than the whole beat.
+#
+# `GET /markets?series_ticker=…` answers for every event of a series at once.
+# Measured against the live venue 2026-09-05: KXMLBGAME with no status filter
+# is 1,826 markets over 2 pages in 1.0s — the whole MLB game series for the
+# price the old loop paid for three events.
+# ---------------------------------------------------------------------------
+
+
+def _one_series_service(monkeypatch, tickers, *, categories=None):
+    """A service whose supplementary fetch hands back `tickers`, all empty."""
+    import asyncio as _asyncio
+    import time as _time
+
+    clock = _FakeClock()
+    monkeypatch.setattr(_time, "monotonic", clock.monotonic)
+    monkeypatch.setattr(_asyncio, "sleep", clock.sleep)
+
+    svc = KalshiAPIService()
+    cats = categories or {}
+
+    async def fake_get_events(
+        status=None, series_ticker=None, with_nested_markets=True,
+        limit=200, cursor=None, deadline=None, progress_cb=None, **kw,
+    ):
+        if series_ticker == "KXMLBGAME":
+            return ([{"event_ticker": t, "title": t,
+                      "category": cats.get(t, "Sports"), "markets": []}
+                     for t in tickers], None)
+        return ([], None)
+
+    monkeypatch.setattr(svc, "get_events", fake_get_events)
+    return svc, clock
+
+
+@pytest.mark.asyncio
+async def test_the_backfill_asks_once_per_series_not_once_per_event(monkeypatch):
+    """THE SHIP. Thirty events of one series cost one request, not thirty.
+
+    RED-FIRST against the per-event loop, which made thirty calls and paid
+    thirty 0.3s sleeps for the same markets.
+    """
+    tickers = [f"KXMLBGAME-26AUG26BOSMI{i:02d}" for i in range(30)]
+    svc, clock = _one_series_service(monkeypatch, tickers)
+
+    calls: list[str] = []
+
+    async def fake_get_markets(
+        status=None, event_ticker=None, series_ticker=None, limit=200, **kw
+    ):
+        calls.append(series_ticker)
+        assert event_ticker is None, (
+            "the batched path must ask by series; an event_ticker here means "
+            "it silently went back to one request per candidate"
+        )
+        return (_venue_markets(tickers), None)
+
+    monkeypatch.setattr(svc, "get_markets", fake_get_markets)
+
+    tel: dict = {}
+    events = await svc._fetch_all_events_unfiltered(
+        deadline=clock.t + 240.0, telemetry=tel
+    )
+
+    assert calls == ["KXMLBGAME"], f"{len(calls)} requests for one series"
+    assert tel["market_backfill_candidates"] == 30
+    assert tel["market_backfill_filled"] == 30, (
+        "every event of the series must come back with markets — a batch that "
+        "serves one event is not cheaper, it is broken"
+    )
+    assert tel["market_backfill_requests"] == 1
+    assert tel["market_backfill_series_worked"] == 1
+    assert tel["market_backfill_unmatched"] == 0
+    assert tel["market_backfill_truncated_after"] is None
+    filled = [e for e in events if e.markets]
+    assert len(filled) == 30
+
+
+@pytest.mark.asyncio
+async def test_a_candidate_the_series_did_not_answer_for_is_counted(monkeypatch):
+    """The per-item outage batching could introduce and the old loop could not.
+
+    An aggregate `filled` cannot tell a batch that served 9 of 10 events from
+    one that was only ever asked about 9. So the miss is counted by name.
+    """
+    tickers = [f"KXMLBGAME-26AUG26BOSMI{i:02d}" for i in range(10)]
+    svc, clock = _one_series_service(monkeypatch, tickers)
+
+    async def fake_get_markets(
+        status=None, event_ticker=None, series_ticker=None, limit=200, **kw
+    ):
+        # The venue answers for nine of the ten. Nothing errors.
+        return (_venue_markets(tickers[:9]), None)
+
+    monkeypatch.setattr(svc, "get_markets", fake_get_markets)
+
+    tel: dict = {}
+    events = await svc._fetch_all_events_unfiltered(
+        deadline=clock.t + 240.0, telemetry=tel
+    )
+
+    assert tel["market_backfill_filled"] == 9
+    assert tel["market_backfill_unmatched"] == 1, (
+        "the tenth event went back to the caller with zero markets and will be "
+        "dropped by `if not event.markets: continue`; a beat that cannot say so "
+        "reads as a clean batch"
+    )
+    by_ticker = {e.event_ticker: e for e in events}
+    assert not by_ticker[tickers[9]].markets
+
+
+@pytest.mark.asyncio
+async def test_pagination_stops_once_every_candidate_is_served(monkeypatch):
+    """A series' history is somebody else's; we stop when our events are served.
+
+    KXMLBGAME carries 1,826 markets across every status at the venue. Walking
+    all of it to serve tonight's slate would hand back the per-event problem in
+    a new currency.
+    """
+    tickers = [f"KXMLBGAME-26AUG26BOSMI{i:02d}" for i in range(4)]
+    svc, clock = _one_series_service(monkeypatch, tickers)
+
+    pages: list[str] = []
+
+    async def fake_get_markets(
+        status=None, event_ticker=None, series_ticker=None, limit=200,
+        cursor=None, **kw
+    ):
+        pages.append(cursor or "first")
+        # Every candidate is served by page one, and the venue offers more.
+        return (_venue_markets(tickers), "there-is-more")
+
+    monkeypatch.setattr(svc, "get_markets", fake_get_markets)
+
+    tel: dict = {}
+    await svc._fetch_all_events_unfiltered(deadline=clock.t + 240.0, telemetry=tel)
+
+    assert pages == ["first"], f"walked {len(pages)} pages to serve 4 events"
+    assert tel["market_backfill_filled"] == 4
+
+
+@pytest.mark.asyncio
+async def test_a_series_the_venue_paginates_is_walked_until_our_events_appear(
+    monkeypatch,
+):
+    """The other direction: stopping early must not mean stopping too early."""
+    tickers = [f"KXMLBGAME-26AUG26BOSMI{i:02d}" for i in range(3)]
+    svc, clock = _one_series_service(monkeypatch, tickers)
+
+    async def fake_get_markets(
+        status=None, event_ticker=None, series_ticker=None, limit=200,
+        cursor=None, **kw
+    ):
+        if cursor is None:
+            # Page one is the series' settled history — none of ours.
+            return (_venue_markets(["KXMLBGAME-25JUL04OLDOLD"]), "page2")
+        return (_venue_markets(tickers), None)
+
+    monkeypatch.setattr(svc, "get_markets", fake_get_markets)
+
+    tel: dict = {}
+    await svc._fetch_all_events_unfiltered(deadline=clock.t + 240.0, telemetry=tel)
+
+    assert tel["market_backfill_filled"] == 3
+    assert tel["market_backfill_requests"] == 2
+
+
+@pytest.mark.asyncio
+async def test_grouping_keeps_the_stripped_series_at_the_front(monkeypatch):
+    """Batching must not undo `order_market_backfill_candidates` (gotcha #41).
+
+    Groups are keyed in first-appearance order over the ORDERED candidate list,
+    so a cut still lands on the accidental tail rather than on the game series
+    the backfill exists to serve.
+    """
+    accidental = [f"KXFAKEFUTURES-26AUG26X{i:02d}" for i in range(3)]
+    promised = [f"KXMLBGAME-26AUG26BOSMI{i:02d}" for i in range(3)]
+    # Deliberately fetched accidental-first, so only the ordering can save it.
+    svc, clock = _one_series_service(monkeypatch, accidental + promised)
+
+    calls: list[str] = []
+
+    async def fake_get_markets(
+        status=None, event_ticker=None, series_ticker=None, limit=200, **kw
+    ):
+        calls.append(series_ticker)
+        clock.t += 60.0  # one series is all the budget allows
+        return (_venue_markets(promised + accidental), None)
+
+    monkeypatch.setattr(svc, "get_markets", fake_get_markets)
+
+    tel: dict = {}
+    await svc._fetch_all_events_unfiltered(deadline=clock.t + 70.0, telemetry=tel)
+
+    assert tel["market_backfill_candidates"] == 6
+    assert calls[0] == "KXMLBGAME", (
+        "the series `_HEAVY_TOKENS` deliberately emptied must be served before "
+        f"the ones empty by accident; asked {calls}"
+    )
+    assert tel["market_backfill_truncated_after"] == 3
+
+
+def test_the_batched_counters_reach_the_scan_report():
+    """The omission this module records three times over, not repeated a fourth.
+
+    `market_backfill_requests` is the one that tells a future reader whether the
+    backfill is still cheap: a beat where requests ≈ candidates has quietly gone
+    back to asking per event, and no other field would show it.
+    """
+    import ast
+    from pathlib import Path
+
+    from app.utils.kalshi_scan_report import KalshiScanReport
+
+    data = KalshiScanReport(
+        market_backfill_series_worked=42,
+        market_backfill_requests=57,
+        market_backfill_unmatched=3,
+    ).to_dict()
+    for key in (
+        "market_backfill_series_worked",
+        "market_backfill_requests",
+        "market_backfill_unmatched",
+    ):
+        assert key in data, f"{key} never reaches the report a reader loads"
+    assert data["market_backfill_requests"] == 57
+
+    # And the task actually copies them across — a dataclass field nobody
+    # populates is the same defect wearing a fourth hat.
+    src = Path(__file__).resolve().parents[1] / "app" / "tasks" / "kalshi.py"
+    tree = ast.parse(src.read_text())
+    passed = {
+        kw.arg
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "KalshiScanReport"
+        for kw in node.keywords
+    }
+    for key in (
+        "market_backfill_series_worked",
+        "market_backfill_requests",
+        "market_backfill_unmatched",
+    ):
+        assert key in passed, f"{key} is computed and never carried to the report"
