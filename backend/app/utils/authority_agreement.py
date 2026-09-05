@@ -181,12 +181,28 @@ FLIP_BAR_PCT = 99.5
 #: a gap tags loudly and never silently passes. Absent today, each for a stated
 #: reason and neither by omission:
 #:
-#:   * ``baseball_mlb`` — joins the shadow today (program step 5) and has never
-#:     produced a row, so the shape of its two numbers is UNMEASURED. Its
-#:     `season-schedule` is a rolling ~17-day window (227 games) rather than a
-#:     season, so it is a priori neither NFL's case nor NBA's, and guessing which
-#:     would be the half-configured sport `LeagueSpec` exists to forbid. Decide
-#:     it from its first seven rows, not from this comment.
+#:   * ``baseball_mlb`` — MEASURED now, and the answer is that neither published
+#:     number may govern it yet. Its `season-schedule` is a rolling ~17-day
+#:     window (227 games) rather than a season, so it is neither NFL's case nor
+#:     NBA's, and the split this ship added is what makes the reason sayable
+#:     rather than a suspicion. Over the honest denominator (`measurement_bounds`,
+#:     729 rows, production 2026-09-05) our inventory falls **507 before StatPal's
+#:     first fixture, 222 inside its span, 0 beyond its last**:
+#:
+#:       - ``ours_covered_pct`` cannot govern MLB. At most 227 of 729 rows can
+#:         match, so it is capped near 31% by StatPal's retention policy and not
+#:         by any disagreement about a game. It could never reach 99.5% however
+#:         perfect the matching became — spec rule 5's unreachable-by-design, and
+#:         the reason to say so here rather than let seven daily rows say it.
+#:       - the only candidate that could govern MLB is the same number measured
+#:         INSIDE StatPal's span, which is what the pre-filtered row was already
+#:         reporting under the wrong name: **157 of 222, 70.72%**. That is 29
+#:         points below the bar, and #3093 (two of our rows for one game) is a
+#:         known contributor of unmeasured size to the 65-game complement.
+#:
+#:     So MLB stays absent, and the blocker is now a number rather than a wait:
+#:     re-measure the inside-span figure once #3093 is fixed. Proposing it as a
+#:     governing number is a D63 amendment and Alex's, not this file's.
 #:   * ``tennis_atp`` / ``tennis_wta`` — the forward matcher has not landed, and
 #:     tennis is an existence authority rather than a time authority
 #:     (`ARTIFACT-AUTHORITY-20260903-TENNIS.md`).
