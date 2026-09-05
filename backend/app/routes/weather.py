@@ -9,7 +9,7 @@ import json
 import logging
 import re
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional, Sequence
 
 from fastapi import APIRouter, Depends
@@ -939,8 +939,15 @@ async def get_rain(db: AsyncSession):
         # NYC label — the event leader, not New York.
         if prob is None:
             continue
-        dt = m.resolution_date
-        day_key = dt.date()
+        day_key = _rain_day(m)
+        # `resolution_date` is when Kalshi SETTLES the question — 08:00Z, which
+        # is 4am ET the morning AFTER the day being priced. Labelling the row
+        # with it printed every probability one day late: Sep 5's 8% appeared
+        # under "Sep 6" (ux/1078, #3219). Gotcha #14 in its original form — the
+        # true day is ticker-derived, so `_rain_day` reads the market's own key
+        # and only falls back to the settlement column when that fails.
+        if day_key is None:
+            continue
         # A day can be answered by both shapes if the legacy series ever wakes
         # up. One row per day; the first writer wins and the ordering above is
         # by resolution_date, so the pair is adjacent and the choice is stable.
@@ -948,8 +955,13 @@ async def get_rain(db: AsyncSession):
             continue
         seen_days.add(day_key)
         daily_rain.append({
-            "day": dt.strftime("%a"),
-            "date": dt.strftime("%b %d").replace(" 0", " "),
+            "day": day_key.strftime("%a"),
+            "date": day_key.strftime("%b %d").replace(" 0", " "),
+            # The machine-readable twin of `date`. The card used to decide which
+            # tile says "Today" by array index, which calls tomorrow "Today" the
+            # moment today's question closes. It can only be answered against a
+            # clock, so the clock needs a date to compare with.
+            "iso": day_key.isoformat(),
             "prob": prob,
             "icon": _rain_icon(prob),
         })
@@ -1003,6 +1015,56 @@ async def get_rain(db: AsyncSession):
         "daily": daily_rain,
         "monthly": monthly_rain,
     }
+
+
+#: The date Kalshi puts at the end of a daily rain ticker: `KXRAIN-26SEP06`,
+#: legacy `KXRAINNYC-26SEP06`. Two-digit year, three-letter month, day.
+_TICKER_DAY_RE = re.compile(r"-(\d{2})([A-Z]{3})(\d{2})$")
+#: The same day written out in the market's name, for either stored shape:
+#: "Where will it rain on Sep 6, 2026?" / "Will it rain in NYC on Sep 6, 2026?"
+_NAME_DAY_RE = re.compile(r"\bon\s+([A-Za-z]{3})[a-z]*\s+(\d{1,2}),\s*(\d{4})")
+_MONTH_ABBR = {
+    "JAN": 1, "FEB": 2, "MAR": 3, "APR": 4, "MAY": 5, "JUN": 6,
+    "JUL": 7, "AUG": 8, "SEP": 9, "OCT": 10, "NOV": 11, "DEC": 12,
+}
+
+
+def _rain_day(market: FuturesMarket) -> Optional[date]:
+    """The day a daily rain market is ABOUT, or None if we cannot tell.
+
+    Never `resolution_date`. Kalshi settles a daily rain question at 08:00Z —
+    4am ET on the morning AFTER the day it prices — so the settlement column is
+    reliably one day late, and reading the label off it printed Sep 5's rain
+    chance under "Sep 6" on the live card (#3219). Gotcha #14: the trustworthy
+    day is the one in the ticker.
+
+    Returning None drops the row. That is deliberate and it follows this page's
+    own rule (ux/1075): a card would rather say nothing than say something
+    confident and wrong, and a probability under the wrong date is exactly that.
+    """
+    ticker = (market.external_id or "").upper()
+    m = _TICKER_DAY_RE.search(ticker)
+    if m:
+        month = _MONTH_ABBR.get(m.group(2))
+        if month:
+            try:
+                return date(2000 + int(m.group(1)), month, int(m.group(3)))
+            except ValueError:
+                # A real ticker cannot say FEB 30, but a typo upstream can, and
+                # a 500 on the weather page is a worse answer than one fewer row.
+                pass
+
+    # Second reading, so a ticker rename does not silently empty the card.
+    name_match = _NAME_DAY_RE.search(market.name or "")
+    if name_match:
+        month = _MONTH_ABBR.get(name_match.group(1).upper())
+        if month:
+            try:
+                return date(int(name_match.group(3)), month, int(name_match.group(2)))
+            except ValueError:
+                pass
+
+    return None
 
 
 #: The venue's own key for the New York City leg of a daily KXRAIN event

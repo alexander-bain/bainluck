@@ -458,7 +458,14 @@ class TestWeatherRain:
             _query_result([
                 _market(
                     market_id=901,
-                    name="Will it rain in NYC on Tuesday?",
+                    # ux/1078 (#3219): was "…on Tuesday?", which carries no day
+                    # a reader or the route could resolve. Every real market in
+                    # both stored shapes names its date, and the route now
+                    # takes the row's label from that day rather than from
+                    # `resolution_date` (the settlement instant, one day later),
+                    # dropping any row whose day it cannot determine. A weekday
+                    # with no date is not a shape production ever serves.
+                    name="Will it rain in NYC on Sep 8, 2026?",
                     source="kalshi",
                     outcomes=[
                         _outcome("Yes", 0.73, outcome_id=9010),
@@ -478,10 +485,14 @@ class TestWeatherRain:
         item = body["daily"][0]
         assert "day" in item
         assert "date" in item
+        assert "iso" in item
         assert "prob" in item
         assert "icon" in item
         assert isinstance(item["day"], str)
         assert isinstance(item["date"], str)
+        # The label is the day the market is ABOUT, never its settlement day.
+        assert item["iso"] == "2026-09-08"
+        assert item["date"] == "Sep 8"
         assert isinstance(item["prob"], (int, float))
         assert 0 <= item["prob"] <= 100
         assert isinstance(item["icon"], str)

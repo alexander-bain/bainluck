@@ -1,7 +1,7 @@
 "use client";
 
 import useSWR from "swr";
-import { probColor } from "./data";
+import { probColor, nycToday } from "./data";
 import type { RainDay, MonthlyRain as MonthlyRainType } from "./data";
 import { SourceBadge } from "./SourceBadge";
 import { fetchRain } from "@/lib/weatherApi";
@@ -106,6 +106,11 @@ export default function RainForecast() {
   // loaded-and-empty, and must show an honest card rather than a skeleton that
   // pulses forever (the daily NYC series stopped resolving on 2026-07-22).
   const loaded = liveRain !== undefined;
+  // Computed per render rather than memoised: the tiles only ever paint after
+  // SWR resolves on the client, so there is no server/client pair to disagree,
+  // and a card left open across midnight should start saying "Today" about the
+  // new day on its next paint rather than hold yesterday's answer.
+  const today = nycToday();
   const rain: RainDay[] | null = (liveRain as { daily: RainDay[] })?.daily?.length ? (liveRain as { daily: RainDay[] }).daily : null;
   const monthlyLive = (liveRain as { monthly: MonthlyRainType[] })?.monthly;
   const monthly: MonthlyRainType[] | null = monthlyLive?.length ? monthlyLive : null;
@@ -154,14 +159,19 @@ export default function RainForecast() {
                   className="grid gap-2 mt-5 overflow-x-auto"
                   style={{ gridTemplateColumns: "repeat(7, minmax(70px, 1fr))" }}
                 >
-                  {rain.map((d: RainDay, i: number) => {
-                    const isToday = i === 0;
+                  {rain.map((d: RainDay) => {
+                    // Was `i === 0` — the first row was ASSERTED to be today
+                    // without consulting a clock, so the card called tomorrow
+                    // "Today" from the moment today's question closed at the
+                    // venue (#3219). A row earns the word only by matching the
+                    // date in New York; a payload with no `iso` never does.
+                    const isToday = !!d.iso && d.iso === today;
                     const barCol = rainBarColor(d.prob);
                     const txtCol = rainTextColor(d.prob);
 
                     return (
                       <div
-                        key={d.date}
+                        key={d.iso ?? d.date}
                         className="flex flex-col items-center text-center border py-3 px-1"
                         style={{
                           borderColor: isToday ? "#BAE6FD" : "var(--surface-border)",
@@ -208,7 +218,7 @@ export default function RainForecast() {
 
                 <div className="mt-4 pt-3 border-t border-dashed border-surface-border flex items-center justify-between">
                   <span className="text-xs text-text-muted">
-                    Resolves daily at midnight ET
+                    Each day resolves the following morning, ET
                   </span>
                   <span className="text-xs text-text-muted font-mono">
                     {rain[0].date} – {rain[rain.length - 1].date}
