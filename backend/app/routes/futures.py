@@ -10,7 +10,7 @@ from statistics import mean, median
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from sqlalchemy import select, and_, or_, func, case
+from sqlalchemy import select, and_, or_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
@@ -18,6 +18,7 @@ from app.models import FuturesMarket, FuturesOutcome, FuturesOddsSnapshot, Sport
 from app.services import get_db, OddsAPIService
 from app.utils import movement_pool, probability_to_american
 from app.utils.leader_order import leader_first_outcomes
+from app.utils.event_rails import live_scheduled_settled_order
 from app.utils.lifecycle import served_event_status
 from app.utils.sport_keys import LLM_CATEGORY_TO_SPORT_PREFIX
 from app.utils.tournament_stages import (
@@ -2707,13 +2708,12 @@ async def get_related_events(
             Event.commence_time.between(week_ago, week_ahead),
             *sport_filters,
         )
+        # Live first, then upcoming, then completed — Q438/CERT-1924: through
+        # the shared clause, so a row that is live before its own kickoff sorts
+        # with the scheduled games it is SERVED as, instead of being promoted
+        # above nearer ones and then printed `scheduled` three lines later.
         .order_by(
-            # Live first, then upcoming, then completed
-            case(
-                (Event.status == "live", 0),
-                (Event.status == "scheduled", 1),
-                else_=2,
-            ),
+            live_scheduled_settled_order(now),
             Event.commence_time.asc(),
         )
         .limit(20)

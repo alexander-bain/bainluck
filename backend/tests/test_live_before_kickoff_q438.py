@@ -392,7 +392,7 @@ class TestThePositionAgreesWithTheLabel:
         (3, "live", "2026-09-05 17:00:00.000000"),      # genuinely being played
     )
 
-    def _order_under(self, clause):
+    def _order_under(self, clause, rows=None):
         """Execute the clause against a real `events` table and return the ids.
 
         The models' JSONB columns cannot be created under SQLite, so the table
@@ -419,7 +419,7 @@ class TestThePositionAgreesWithTheLabel:
         with engine.begin() as conn:
             conn.exec_driver_sql(
                 "INSERT INTO events (id,status,commence_time) VALUES (?,?,?)",
-                list(self.ROWS),
+                list(self.ROWS if rows is None else rows),
             )
             stmt = select(Event.id).order_by(clause, Event.commence_time.asc())
             return [row[0] for row in conn.execute(stmt)]
@@ -445,19 +445,109 @@ class TestThePositionAgreesWithTheLabel:
         raw = case((Event.status == "live", 0), else_=1)
         assert self._order_under(raw) == [3, 1, 2]
 
-    def test_no_rail_still_orders_on_the_raw_column(self):
-        """Every live-first sort goes through the shared clause. A fifth site
-        that spells it out again is the drift this consolidates."""
+    #: The four classes CERT-1924 requires the three-way clause to separate.
+    #: id, status, commence, and the status a public surface must PRINT.
+    FOUR_CLASSES = (
+        (10, "live", "2026-09-05 17:00:00.000000", "live"),       # being played
+        (11, "scheduled", "2026-09-05 23:30:00.000000", "scheduled"),  # tonight
+        (12, "live", "2026-09-11 18:00:00.000000", "scheduled"),  # premature
+        (13, "completed", "2026-09-04 23:30:00.000000", "completed"),  # finished
+    )
+
+    def test_the_futures_week_list_sorts_the_four_classes_correctly(self):
+        """CERT-1924's required regression. Live, then upcoming — with the
+        premature row among the upcoming games in DATE order, not ahead of
+        them — then completed last."""
+        from app.utils.event_rails import live_scheduled_settled_order
+
+        rows = [(i, s, c) for i, s, c, _ in self.FOUR_CLASSES]
+        assert self._order_under(
+            live_scheduled_settled_order(self.NOW), rows=rows
+        ) == [10, 11, 12, 13]
+
+    def test_the_clause_it_replaced_promoted_the_premature_row(self):
+        """RED, executed: the raw three-way CASE put a game six days out ahead
+        of one kicking off in five hours — and then printed it `scheduled`."""
+        from sqlalchemy import case
+
+        from app.models.models import Event
+
+        raw = case(
+            (Event.status == "live", 0),
+            (Event.status == "scheduled", 1),
+            else_=2,
+        )
+        rows = [(i, s, c) for i, s, c, _ in self.FOUR_CLASSES]
+        assert self._order_under(raw, rows=rows) == [10, 12, 11, 13]
+
+    def test_the_position_matches_the_printed_status_for_every_class(self):
+        """The two halves stated together, which is the ship: what each row is
+        SERVED as, beside where it SITS. The premature row prints `scheduled`
+        and sits with the scheduled games."""
+        from app.utils.event_rails import live_scheduled_settled_order
+
+        served = {
+            row_id: served_event_status(
+                status, datetime.fromisoformat(commence).replace(tzinfo=timezone.utc),
+                self.NOW,
+            )
+            for row_id, status, commence, _ in self.FOUR_CLASSES
+        }
+        assert served == {i: expected for i, _, _, expected in self.FOUR_CLASSES}
+
+        order = self._order_under(
+            live_scheduled_settled_order(self.NOW),
+            rows=[(i, s, c) for i, s, c, _ in self.FOUR_CLASSES],
+        )
+        # Every row printed `scheduled` sits in one contiguous block, in date
+        # order, after the live one and before the completed one.
+        printed_scheduled = [i for i in order if served[i] == "scheduled"]
+        assert printed_scheduled == [11, 12]
+        assert order.index(10) < order.index(11)
+        assert order.index(13) == len(order) - 1
+
+    def test_no_route_still_orders_on_the_raw_column(self):
+        """Every live-first sort goes through a shared clause.
+
+        🔴 THIS TEST'S FIRST VERSION WAS A SUBSTRING MATCH FOR
+        `case((Event.status == "live", 0)` AND CERT-1924 BLOCKED ON WHAT IT
+        MISSED. `futures.py`'s "Games This Week" list spelled the same sentence
+        as a MULTILINE `case(...)`, so it survived both the repair and the guard
+        written to catch the repair — a raw-live row a week out was promoted
+        above nearer scheduled games and then serialized as `scheduled`.
+
+        A formatting difference must not decide whether a guard sees a defect,
+        so this is an AST scan: any `case(...)` whose FIRST branch tests
+        `Event.status == "live"` is the raw ordering, however it is laid out.
+        """
+        import ast
         import pathlib
 
         routes = pathlib.Path(__file__).resolve().parents[1] / "app/routes"
-        spelled_out = [
-            p.name for p in sorted(routes.glob("*.py"))
-            if 'case((Event.status == "live", 0)' in p.read_text()
-        ]
-        assert spelled_out == [], (
-            f"{spelled_out} order on the raw status; use "
-            "`app.utils.event_rails.live_first_order(now)`"
+        offenders = []
+        for path in sorted(routes.glob("*.py")):
+            if path.name.startswith("admin_"):
+                continue
+            for node in ast.walk(ast.parse(path.read_text())):
+                if not (isinstance(node, ast.Call)
+                        and isinstance(node.func, ast.Name)
+                        and node.func.id == "case"
+                        and node.args):
+                    continue
+                first = node.args[0]
+                if not (isinstance(first, ast.Tuple) and len(first.elts) == 2):
+                    continue
+                test = first.elts[0]
+                if (isinstance(test, ast.Compare)
+                        and isinstance(test.left, ast.Attribute)
+                        and test.left.attr == "status"
+                        and isinstance(test.comparators[0], ast.Constant)
+                        and test.comparators[0].value == "live"):
+                    offenders.append((path.name, test.lineno))
+        assert offenders == [], (
+            f"{offenders} lead a CASE with a raw `status == 'live'` test. Use "
+            "`app.utils.event_rails.live_first_order(now)` (two-way) or "
+            "`live_scheduled_settled_order(now)` (three-way, completed last)."
         )
 
 
