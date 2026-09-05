@@ -37,7 +37,9 @@ class _FakeRedis:
 
     def __init__(self, *, raise_on=None):
         self.hash: dict[str, str] = {}
+        self.strings: dict[str, str] = {}
         self.expires: list[int] = []
+        self.setex_calls: list[tuple] = []
         self.raise_on = raise_on or set()
 
     def pipeline(self, transaction=False):
@@ -61,6 +63,18 @@ class _FakeRedis:
         if "hgetall" in self.raise_on:
             raise RuntimeError("redis down")
         return {k.encode(): v.encode() for k, v in self.hash.items()}
+
+    def get(self, key):
+        if "get" in self.raise_on:
+            raise RuntimeError("redis down")
+        v = self.strings.get(key)
+        return v.encode() if v is not None else None
+
+    def setex(self, key, ttl, value):
+        if "setex" in self.raise_on:
+            raise RuntimeError("redis down")
+        self.setex_calls.append((key, ttl, value))
+        self.strings[key] = str(value)
 
 
 def _futures(mid, name="card"):
@@ -131,6 +145,14 @@ class TestTheWalkerFindsEveryCard:
 
 
 class TestTheWriterReplacesRatherThanAccumulates:
+    def test_every_entry_carries_its_own_write_time(self):
+        """The stamp the per-shape age bound is built on. Key-wide TTL cannot
+        retire one shape while its siblings keep the key alive."""
+        rc = _FakeRedis()
+        fsm.record_served_market_ids(rc, "discover", [1])
+        entry = json.loads(rc.hash["discover"])
+        assert isinstance(entry["at"], int) and entry["at"] > 0
+
     def test_a_second_warm_replaces_the_shapes_list(self):
         """A merge would make this "ever shown", which is not a page-one signal.
 
@@ -142,21 +164,21 @@ class TestTheWriterReplacesRatherThanAccumulates:
         rc = _FakeRedis()
         fsm.record_served_market_ids(rc, "discover", [1, 2, 3])
         fsm.record_served_market_ids(rc, "discover", [4])
-        assert json.loads(rc.hash["discover"]) == [4]
+        assert json.loads(rc.hash["discover"])["ids"] == [4]
 
     def test_shapes_do_not_overwrite_each_other(self):
         rc = _FakeRedis()
         fsm.record_served_market_ids(rc, "discover", [1])
         fsm.record_served_market_ids(rc, "sports", [2])
-        assert json.loads(rc.hash["discover"]) == [1]
-        assert json.loads(rc.hash["sports"]) == [2]
+        assert json.loads(rc.hash["discover"])["ids"] == [1]
+        assert json.loads(rc.hash["sports"])["ids"] == [2]
 
     def test_an_empty_payload_writes_an_empty_list_rather_than_skipping(self):
         """Otherwise a shape's last interesting answer stands for six hours."""
         rc = _FakeRedis()
         fsm.record_served_market_ids(rc, "sports", [7])
         fsm.record_served_market_ids(rc, "sports", [])
-        assert json.loads(rc.hash["sports"]) == []
+        assert json.loads(rc.hash["sports"])["ids"] == []
 
     def test_the_ttl_is_refreshed_on_every_write_including_the_empty_one(self):
         """The expiry tracks the RAIL's liveness, not the last interesting payload."""
@@ -177,7 +199,7 @@ class TestTheWriterReplacesRatherThanAccumulates:
         rc = _FakeRedis()
         with caplog.at_level("WARNING"):
             fsm.record_served_market_ids(rc, "big", list(range(1, 2000)))
-        stored = json.loads(rc.hash["big"])
+        stored = json.loads(rc.hash["big"])["ids"]
         assert len(stored) == fsm.MAX_SERVED_IDS_PER_SHAPE
         assert "capping" in caplog.text
 
@@ -187,37 +209,230 @@ class TestTheWriterReplacesRatherThanAccumulates:
         assert rc.hash == {}
 
 
-class TestTheReaderIsTotal:
-    def _reader_over(self, rc, monkeypatch):
+_NOW = 1_788_600_000.0  # a fixed anchor; gotcha #44 — offset from it, never branch on it
+
+
+class TestTheReaderReportsAStateAndNotJustAList:
+    """🔴 CERT-1970's finding, and the reason this class replaced a simpler one.
+
+    The first version returned `[]` for a missing key, a corrupt hash, a failed
+    read AND a page with no futures cards. The first three mean the arm is not
+    working; the fourth means it is working and idle. They are opposite, and the
+    sweep's verdict has to be able to tell them apart or a dark front page reads
+    `terminal: complete`.
+    """
+
+    def _signal(self, rc, monkeypatch, *, now=_NOW):
         monkeypatch.setattr(
             "app.tasks.redis_state.get_redis_client", lambda **kw: rc
         )
-        return fsm.served_market_ids()
+        return fsm.served_signal(now=now)
 
-    def test_it_unions_every_shape_and_sorts(self, monkeypatch):
-        rc = _FakeRedis()
-        fsm.record_served_market_ids(rc, "discover", [9, 3])
-        fsm.record_served_market_ids(rc, "sports", [3, 1])
-        assert self._reader_over(rc, monkeypatch) == [1, 3, 9]
+    def _write(self, rc, label, ids, *, age_s=0):
+        rc.hash[label] = json.dumps({"at": int(_NOW - age_s), "ids": list(ids)})
 
-    def test_a_redis_outage_reads_empty_rather_than_raising(self, monkeypatch):
-        rc = _FakeRedis(raise_on={"hgetall"})
-        assert self._reader_over(rc, monkeypatch) == []
-
-    def test_a_corrupt_value_drops_that_shape_and_keeps_the_others(
+    # --- the two healthy states ------------------------------------------------
+    def test_a_page_with_cards_is_fresh_and_the_ids_are_unioned_and_sorted(
         self, monkeypatch
     ):
+        rc = _FakeRedis()
+        self._write(rc, "discover", [9, 3])
+        self._write(rc, "sports", [3, 1])
+        sig = self._signal(rc, monkeypatch)
+        assert sig.state == fsm.SERVED_FRESH
+        assert sig.ids == [1, 3, 9]
+        assert sig.shapes == 2
+        assert sig.green_allowed
+
+    def test_a_page_with_no_futures_cards_is_EMPTY_and_stays_valid(
+        self, monkeypatch
+    ):
+        """The one state that legitimately has no ids. It must not read as broken.
+
+        The block's required control: a present-but-empty signal remains valid.
+        """
+        rc = _FakeRedis()
+        self._write(rc, "discover", [])
+        sig = self._signal(rc, monkeypatch)
+        assert sig.state == fsm.SERVED_EMPTY
+        assert sig.ids == []
+        assert sig.green_allowed
+
+    # --- the three unhealthy ones, which used to be indistinguishable ---------
+    def test_a_redis_outage_is_UNAVAILABLE_and_never_never_seen(self, monkeypatch):
+        """The conservative direction, and the whole of it.
+
+        A read that raised cannot rule out that this arm was healthy, so calling
+        it a cold start would restore the false green. `never_seen` is a claim
+        about history; a failed read is the absence of one.
+        """
+        rc = _FakeRedis(raise_on={"hgetall"})
+        sig = self._signal(rc, monkeypatch)
+        assert sig.state == fsm.SERVED_UNAVAILABLE
+        assert not sig.green_allowed
+
+    def test_a_missing_key_with_a_stale_last_ok_marker_is_UNAVAILABLE(
+        self, monkeypatch
+    ):
+        rc = _FakeRedis()
+        rc.strings[fsm.SERVED_SIGNAL_LAST_OK_KEY] = str(
+            int(_NOW - fsm.SERVED_SIGNAL_GRACE_S - 1)
+        )
+        sig = self._signal(rc, monkeypatch)
+        assert sig.state == fsm.SERVED_UNAVAILABLE
+        assert not sig.green_allowed
+
+    def test_a_hash_of_only_corrupt_entries_is_UNAVAILABLE_not_empty(
+        self, monkeypatch
+    ):
+        """Corrupt is not idle. This is the case the old `[]` hid most completely."""
+        rc = _FakeRedis()
+        rc.hash["discover"] = "{not json"
+        rc.hash["sports"] = json.dumps({"ids": [1]})  # no `at` — cannot be aged
+        rc.strings[fsm.SERVED_SIGNAL_LAST_OK_KEY] = str(
+            int(_NOW - fsm.SERVED_SIGNAL_GRACE_S - 1)
+        )
+        sig = self._signal(rc, monkeypatch)
+        assert sig.state == fsm.SERVED_UNAVAILABLE
+        assert sig.unreadable_shapes == 2
+
+    # --- and the two that are unhealthy but must not alarm --------------------
+    def test_no_marker_at_all_is_NEVER_SEEN_and_permits_green(self, monkeypatch):
+        """A first deploy must not alarm on its own bootstrap."""
+        rc = _FakeRedis()
+        sig = self._signal(rc, monkeypatch)
+        assert sig.state == fsm.SERVED_NEVER_SEEN
+        assert sig.green_allowed
+
+    def test_a_recent_marker_is_WARMING_UP_and_permits_green(self, monkeypatch):
+        """Inside the grace nothing has been demonstrated wrong yet.
+
+        Its own state rather than a reuse of `never_seen`: a reader asking "has
+        this ever worked" must not be told "no" about a signal that worked
+        twenty minutes ago.
+        """
+        rc = _FakeRedis()
+        rc.strings[fsm.SERVED_SIGNAL_LAST_OK_KEY] = str(int(_NOW - 20 * 60))
+        sig = self._signal(rc, monkeypatch)
+        assert sig.state == fsm.SERVED_WARMING_UP
+        assert sig.green_allowed
+
+    def test_the_grace_boundary_is_the_grace_constant(self, monkeypatch):
+        """Both sides of it, offset from one anchor (gotcha #44)."""
+        rc = _FakeRedis()
+        for offset, expected in (
+            (fsm.SERVED_SIGNAL_GRACE_S - 60, fsm.SERVED_WARMING_UP),
+            (fsm.SERVED_SIGNAL_GRACE_S + 60, fsm.SERVED_UNAVAILABLE),
+        ):
+            rc.strings[fsm.SERVED_SIGNAL_LAST_OK_KEY] = str(int(_NOW - offset))
+            assert self._signal(rc, monkeypatch).state == expected
+
+    def test_an_unparseable_marker_still_counts_as_history(self, monkeypatch):
+        """Something wrote it, so the arm has been healthy at least once."""
+        rc = _FakeRedis()
+        rc.strings[fsm.SERVED_SIGNAL_LAST_OK_KEY] = "not-a-number"
+        assert self._signal(rc, monkeypatch).state == fsm.SERVED_UNAVAILABLE
+
+    def test_a_marker_read_that_raises_is_UNAVAILABLE(self, monkeypatch):
+        rc = _FakeRedis(raise_on={"get"})
+        assert self._signal(rc, monkeypatch).state == fsm.SERVED_UNAVAILABLE
+
+    # --- partial health --------------------------------------------------------
+    def test_one_corrupt_shape_does_not_wipe_its_siblings(self, monkeypatch):
         """One bad item must never wipe the pass (gotcha #42)."""
         rc = _FakeRedis()
-        fsm.record_served_market_ids(rc, "discover", [5])
+        self._write(rc, "discover", [5])
         rc.hash["sports"] = "{not json"
-        rc.hash["native"] = json.dumps({"nope": 1})
-        assert self._reader_over(rc, monkeypatch) == [5]
+        sig = self._signal(rc, monkeypatch)
+        assert sig.state == fsm.SERVED_FRESH
+        assert sig.ids == [5]
+        assert sig.unreadable_shapes == 1
 
     def test_a_non_integer_id_is_refused(self, monkeypatch):
         rc = _FakeRedis()
-        rc.hash["discover"] = json.dumps([1, "2", None, True, -4, 0, 6])
-        assert self._reader_over(rc, monkeypatch) == [1, 6]
+        rc.hash["discover"] = json.dumps(
+            {"at": int(_NOW), "ids": [1, "2", None, True, -4, 0, 6]}
+        )
+        assert self._signal(rc, monkeypatch).ids == [1, 6]
+
+
+class TestARetiredShapeCannotStayPriorityWorkForever:
+    """`L1B-051-PER-SHAPE-SERVED-SIGNAL-EXPIRY` — CERT-1970's follow-up.
+
+    Redis expiry is key-wide. A shape that is retired, renamed or simply stops
+    warming keeps its ids alive for as long as any SIBLING keeps refreshing the
+    key's TTL, so without a per-entry stamp a dead label is priority work
+    indefinitely — re-pricing markets nobody is being shown, at any tier and any
+    volume, which is exactly the licence the served arm is not supposed to be.
+    """
+
+    def _signal(self, rc, monkeypatch):
+        monkeypatch.setattr(
+            "app.tasks.redis_state.get_redis_client", lambda **kw: rc
+        )
+        return fsm.served_signal(now=_NOW)
+
+    def test_a_shape_past_the_age_bound_is_pruned_while_its_siblings_live(
+        self, monkeypatch
+    ):
+        rc = _FakeRedis()
+        rc.hash["discover"] = json.dumps({"at": int(_NOW - 60), "ids": [1]})
+        rc.hash["retired"] = json.dumps(
+            {"at": int(_NOW - fsm.SERVED_SHAPE_MAX_AGE_S - 60), "ids": [999]}
+        )
+        sig = self._signal(rc, monkeypatch)
+        assert sig.ids == [1], "a shape that stopped warming is still priority work"
+        assert sig.stale_shapes == 1
+        assert sig.shapes == 1
+        assert sig.state == fsm.SERVED_FRESH
+
+    def test_a_hash_of_only_stale_shapes_is_not_read_as_a_working_arm(
+        self, monkeypatch
+    ):
+        rc = _FakeRedis()
+        rc.hash["discover"] = json.dumps(
+            {"at": int(_NOW - fsm.SERVED_SHAPE_MAX_AGE_S - 1), "ids": [1]}
+        )
+        rc.strings[fsm.SERVED_SIGNAL_LAST_OK_KEY] = str(
+            int(_NOW - fsm.SERVED_SIGNAL_GRACE_S - 1)
+        )
+        assert self._signal(rc, monkeypatch).state == fsm.SERVED_UNAVAILABLE
+
+    def test_the_age_bound_can_actually_fire(self):
+        """Above the key's own TTL it would be unreachable code."""
+        assert fsm.SERVED_SHAPE_MAX_AGE_S < fsm.SERVED_MARKET_IDS_TTL_S
+        # ...and above the warm rail's longest observed gap (2,511s), so a
+        # struggling rail is not mistaken for a stopped one.
+        assert fsm.SERVED_SHAPE_MAX_AGE_S > 2_511
+
+    def test_an_entry_without_a_stamp_is_refused_rather_than_assumed_fresh(self):
+        """Assuming fresh reinstates the immortal retired shape."""
+        assert fsm._decode(json.dumps({"ids": [1]})) is None
+        assert fsm._decode(json.dumps({"at": True, "ids": [1]})) is None
+        assert fsm._decode(json.dumps({"at": 1, "ids": "nope"})) is None
+
+
+class TestTheConsumerWritesTheHealthMarker:
+    def test_it_records_a_timestamp_under_a_long_ttl(self, monkeypatch):
+        rc = _FakeRedis()
+        monkeypatch.setattr(
+            "app.tasks.redis_state.get_redis_client", lambda **kw: rc
+        )
+        fsm.note_served_signal_healthy(now=_NOW)
+        assert rc.setex_calls == [
+            (fsm.SERVED_SIGNAL_LAST_OK_KEY, fsm.SERVED_SIGNAL_LAST_OK_TTL_S, str(int(_NOW)))
+        ]
+
+    def test_it_never_raises(self, monkeypatch):
+        rc = _FakeRedis(raise_on={"setex"})
+        monkeypatch.setattr(
+            "app.tasks.redis_state.get_redis_client", lambda **kw: rc
+        )
+        fsm.note_served_signal_healthy(now=_NOW)
+
+    def test_the_marker_outlives_the_grace_by_a_wide_margin(self):
+        """Otherwise its own expiry reads as "this arm never worked"."""
+        assert fsm.SERVED_SIGNAL_LAST_OK_TTL_S > 100 * fsm.SERVED_SIGNAL_GRACE_S
 
 
 class TestThePreWarmerPublishesWhatItRendered:

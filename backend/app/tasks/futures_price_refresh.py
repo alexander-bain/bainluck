@@ -1106,7 +1106,12 @@ async def _refresh_stale_futures_prices(
 ) -> dict:
     """Refresh prices for stale high-value open futures markets. See module docstring."""
     from app.tasks.base import get_task_session
-    from app.utils.feed_served_markets import served_market_ids
+    from app.utils.feed_served_markets import (
+        SERVED_EMPTY,
+        SERVED_FRESH,
+        note_served_signal_healthy,
+        served_signal,
+    )
     from app.utils.tournament_register import registered_market_ids
 
     started = time.monotonic()
@@ -1141,6 +1146,16 @@ async def _refresh_stale_futures_prices(
         # (gotcha #53) — and the first of the two silently restores the coverage
         # this arm exists to end.
         "served_known": 0,
+        # CERT-1970: the state, and whether it permits a green verdict. Reported
+        # even on the happy path, because the field a reader needs in order to
+        # trust `terminal: complete` must be present in every summary that
+        # carries one — a diagnostic that appears only when things are broken
+        # cannot be used to establish that they are not.
+        "served_state": None,
+        "served_signal_ok": True,
+        "served_shapes": 0,
+        "served_stale_shapes": 0,
+        "served_unreadable_shapes": 0,
         "served_candidates": 0,
         "served_attempted": 0,
         "served_priced": 0,
@@ -1165,8 +1180,27 @@ async def _refresh_stale_futures_prices(
         # somebody looking at this", which is a question about the product. A
         # single predicate would have to pick one of those to be, and #3315 is
         # what happened while it picked the first.
-        served_ids = served_market_ids()
+        # 🔴 A STATE, NOT A LIST (CERT-1970). `served_market_ids()` used to return
+        # `[]` for a missing key, a corrupt hash, a failed read AND a page with no
+        # futures cards, the run recorded only the count, and `_terminal` never
+        # looked — so a low-value page-one card could stay stale forever behind
+        # `terminal: complete`. Gotcha #53, in the plumbing of a change that cited
+        # gotcha #53. `served_signal()` names the four facts; the sweep refuses a
+        # green verdict on the one that means this arm is dark.
+        signal = served_signal()
+        served_ids = signal.ids
+        stats["served_state"] = signal.state
+        stats["served_signal_ok"] = signal.green_allowed
         stats["served_known"] = len(served_ids)
+        stats["served_shapes"] = signal.shapes
+        stats["served_stale_shapes"] = signal.stale_shapes
+        stats["served_unreadable_shapes"] = signal.unreadable_shapes
+        if signal.state in (SERVED_FRESH, SERVED_EMPTY):
+            # The consumer's own memory that this arm has worked, which is what
+            # the grace above is measured from. Written only on a POSITIVE
+            # observation — writing it on `warming_up` would let the grace renew
+            # itself forever and the signal could never be reported dark.
+            note_served_signal_healthy()
         served_scan = await _scan_served_candidates(
             session,
             market_ids=served_ids,
@@ -1245,6 +1279,17 @@ async def _refresh_stale_futures_prices(
                 if not scan
                 else "every stale market was attempted inside the current window"
             )
+            # ...unless we could not see page one, in which case "nothing was
+            # stale" is a claim about a population we were unable to enumerate.
+            # Same rule as the main terminal below, applied on the path that
+            # returns first (CERT-1970: a false green does not become true by
+            # being reached through a shorter branch).
+            if not stats["served_signal_ok"]:
+                stats["terminal"] = "no_work"
+                stats["reason"] = (
+                    f"served page-one signal {stats['served_state']}: "
+                    "page-one coverage could not be established"
+                )
             stats["remaining_stale"] = len(scan)
             return stats
 
@@ -1481,5 +1526,17 @@ def _terminal(stats: dict) -> str:
     if stats["snapshots_written"] == 0:
         return "failed"
     if stats["budget_hit"] or stats["errors"]:
+        return "partial"
+    # CERT-1970. The class arm can succeed completely while the arm that reaches
+    # PAGE ONE is dark, and the run has no other way to say so. `partial` is the
+    # existing word for exactly this — real work banked, coverage not proven —
+    # and `task_verdict.NOT_GREEN` already contains it, so the enforced verdict
+    # stops reading green without inventing a fifth terminal.
+    #
+    # `.get(..., True)` so a caller that assembles a summary without the field
+    # (every existing test of this function, and any future partial dict) keeps
+    # its old meaning. The states that DO permit green are enumerated in
+    # `feed_served_markets.SERVED_GREEN_STATES`, not re-listed here.
+    if not stats.get("served_signal_ok", True):
         return "partial"
     return "complete"

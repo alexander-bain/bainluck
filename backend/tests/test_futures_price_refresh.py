@@ -1042,3 +1042,244 @@ def _extract_sql_literal(source: str, name: str) -> str:
 
 def _normalise(sql: str) -> str:
     return re.sub(r"\s+", " ", sql).strip().lower()
+
+
+# --- CERT-1970: an unavailable page-one signal must not read green ------------
+
+
+class _RunHarness:
+    """Drives `_refresh_stale_futures_prices` end to end without a database.
+
+    Deliberately NOT a stub of `_terminal`. The block's finding was that the
+    field existed and nothing consulted it, so a test that asserts `_terminal`
+    in isolation proves the honouring and not the WIRING — and the wiring is
+    where the defect lived. This runs the real entry point, so the summary it
+    classifies is the one production returns.
+    """
+
+    def __init__(self, *, signal, class_rows):
+        self.signal = signal
+        self.class_rows = class_rows
+        self.snapshot_probabilities: list[float] = []
+        self.marker_written = False
+
+    class _Result:
+        def __init__(self, rows=(), scalar=0):
+            self._rows = list(rows)
+            self._scalar = scalar
+
+        def fetchall(self):
+            return self._rows
+
+        def scalar(self):
+            return self._scalar
+
+    class _Session:
+        def __init__(self, outer):
+            self.outer = outer
+
+        async def execute(self, statement, params=None):
+            sql = str(statement)
+            if "WITH pool AS MATERIALIZED" in sql:
+                if "COUNT(*)" in sql:
+                    return _RunHarness._Result(scalar=0)
+                return _RunHarness._Result(self.outer.class_rows)
+            if "SELECT id, external_id FROM futures_outcomes" in sql:
+                return _RunHarness._Result([(11, "0xabc")])
+            if sql.lstrip().upper().startswith("INSERT INTO FUTURES_ODDS_SNAPSHOTS"):
+                self.outer.snapshot_probabilities.append(
+                    float(statement.compile().params["probability"])
+                )
+                return _RunHarness._Result()
+            if "fm.id = ANY(:market_ids)" in sql:
+                return _RunHarness._Result([], scalar=0)
+            return _RunHarness._Result()
+
+        async def commit(self):
+            return None
+
+        async def rollback(self):
+            return None
+
+    async def run(self, monkeypatch):
+        import contextlib
+
+        from app.tasks import futures_price_refresh as mod
+
+        session = self._Session(self)
+
+        @contextlib.asynccontextmanager
+        async def _fake_session():
+            yield session
+
+        monkeypatch.setattr("app.tasks.base.get_task_session", _fake_session)
+        monkeypatch.setattr(
+            "app.utils.tournament_register.registered_market_ids", lambda: set()
+        )
+        monkeypatch.setattr(
+            "app.utils.feed_served_markets.served_signal", lambda: self.signal
+        )
+
+        def _note(*a, **kw):
+            self.marker_written = True
+
+        monkeypatch.setattr(
+            "app.utils.feed_served_markets.note_served_signal_healthy", _note
+        )
+        monkeypatch.setattr(mod, "_load_attempt_skips", lambda ids: set())
+        monkeypatch.setattr(mod, "_mark_attempted", lambda ids, ttl_seconds: None)
+
+        class _Service:
+            async def close(self):
+                return None
+
+        monkeypatch.setattr(
+            "app.services.polymarket_api.PolymarketAPIService", lambda: _Service()
+        )
+
+        async def _priced(service, event_ids):
+            return {
+                eid: [
+                    {
+                        "external_id": "0xabc",
+                        "probability": 0.399,
+                        "yes_bid": 0.39,
+                        "yes_ask": 0.40,
+                        "last_price": 0.399,
+                    }
+                ]
+                for eid in event_ids
+            }
+
+        monkeypatch.setattr(mod, "_fetch_polymarket_prices", _priced)
+        return await mod._refresh_stale_futures_prices()
+
+
+def _brazil_class_row():
+    """One class-arm market that WILL price: tier-2 Brazil, addressable."""
+    return [(112996, "polymarket", "0xbrazil", 114_137_967, "45915", None)]
+
+
+class TestAnUnavailablePageOneSignalCannotReadGreen:
+    """🔴 THE CERT-1970 REGRESSION, in the exact shape the block required.
+
+    "Force the served-signal read unavailable while another class market prices
+    successfully and prove the task summary does not classify green; add a
+    sibling present-but-empty control that remains valid."
+
+    The failure it catches is not "the terminal is wrong". It is that the third
+    arm — the only thing that makes "front-page cards show the venue's quote"
+    true at ANY tier and volume — can go dark while the enforced verdict says
+    `complete`, so a low-value page-one card stays stale forever with nothing
+    anywhere disagreeing. That is the same class of silence #3315 itself was.
+    """
+
+    @pytest.mark.asyncio
+    async def test_unavailable_plus_successful_class_writes_is_not_green(
+        self, monkeypatch
+    ):
+        from app.utils.feed_served_markets import SERVED_UNAVAILABLE, ServedSignal
+
+        harness = _RunHarness(
+            signal=ServedSignal(state=SERVED_UNAVAILABLE, ids=[]),
+            class_rows=_brazil_class_row(),
+        )
+        stats = await harness.run(monkeypatch)
+
+        # The class arm really did work — otherwise this proves nothing about
+        # the served arm, only that a failing run fails.
+        assert stats["snapshots_written"] >= 1
+        assert stats["markets_priced"] >= 1
+
+        assert stats["served_state"] == SERVED_UNAVAILABLE
+        assert stats["served_signal_ok"] is False
+        assert stats["terminal"] == "partial"
+        assert not classify_summary(stats).is_green, (
+            "a run whose page-one arm is dark read GREEN off successful class "
+            "work — the exact false green CERT-1970 blocked"
+        )
+        assert not harness.marker_written, (
+            "the health marker was refreshed on an unhealthy observation, which "
+            "would let the grace renew itself forever"
+        )
+
+    @pytest.mark.asyncio
+    async def test_present_but_empty_is_valid_and_still_green(self, monkeypatch):
+        """THE CONTROL. Without it the test above is satisfied by "never green".
+
+        A page one that genuinely holds no futures cards is the arm WORKING. If
+        that also read not-green the repair would be a permanent alarm, and a
+        permanent alarm is not an instrument.
+        """
+        from app.utils.feed_served_markets import SERVED_EMPTY, ServedSignal
+
+        harness = _RunHarness(
+            signal=ServedSignal(state=SERVED_EMPTY, ids=[], shapes=2),
+            class_rows=_brazil_class_row(),
+        )
+        stats = await harness.run(monkeypatch)
+
+        assert stats["snapshots_written"] >= 1
+        assert stats["served_state"] == SERVED_EMPTY
+        assert stats["served_signal_ok"] is True
+        assert stats["terminal"] == "complete"
+        assert classify_summary(stats).is_green
+        assert harness.marker_written, (
+            "a healthy observation must refresh the marker the grace is measured "
+            "from, or the grace expires under a working rail"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_cold_start_is_not_treated_as_a_regression(self, monkeypatch):
+        """`never_seen` permits green: a first deploy must not alarm on bootstrap.
+
+        And it must NOT write the marker, or the very first run would forge the
+        history the `unavailable` branch is supposed to check for.
+        """
+        from app.utils.feed_served_markets import SERVED_NEVER_SEEN, ServedSignal
+
+        harness = _RunHarness(
+            signal=ServedSignal(state=SERVED_NEVER_SEEN, ids=[]),
+            class_rows=_brazil_class_row(),
+        )
+        stats = await harness.run(monkeypatch)
+        assert stats["terminal"] == "complete"
+        assert classify_summary(stats).is_green
+        assert not harness.marker_written
+
+    @pytest.mark.asyncio
+    async def test_the_short_return_path_cannot_read_green_either(self, monkeypatch):
+        """A false green does not become true by being reached through a branch.
+
+        With nothing stale the run returns early, long before `_terminal`. On
+        that path "nothing was stale" is a claim about a population we could not
+        enumerate, so it must not be `complete`.
+        """
+        from app.utils.feed_served_markets import SERVED_UNAVAILABLE, ServedSignal
+
+        harness = _RunHarness(
+            signal=ServedSignal(state=SERVED_UNAVAILABLE, ids=[]), class_rows=[]
+        )
+        stats = await harness.run(monkeypatch)
+        assert stats["markets_attempted"] == 0
+        assert stats["terminal"] == "no_work"
+        assert not classify_summary(stats).is_green
+        assert "unavailable" in stats["reason"]
+
+    def test_the_terminal_guard_is_not_dead_code(self):
+        """It has to fire on the summary shape the run actually returns.
+
+        Pinned separately because the block's probe was exactly this: a plausible
+        summary dict fed to the classifier. It returned green.
+        """
+        base = {
+            "markets_attempted": 3,
+            "snapshots_written": 3,
+            "budget_hit": False,
+            "errors": [],
+        }
+        assert fpr._terminal({**base, "served_signal_ok": True}) == "complete"
+        assert fpr._terminal({**base, "served_signal_ok": False}) == "partial"
+        # A summary that predates the field keeps its old meaning rather than
+        # turning every legacy caller amber.
+        assert fpr._terminal(base) == "complete"
