@@ -120,6 +120,16 @@ class _FakeBackfillSession:
             self.anchors[key] = params["event_id"]
             return _Result(first=(params["event_id"],))
 
+        if "SELECT espn_id, external_id, statpal_fixture_id FROM events" in sql:
+            # `anchor_channel.anchor_is_current` corroborates an incumbent anchor
+            # against the event's own scalar id column. Answer it from the same
+            # rows this fixture already holds, in `_SCALAR_COLUMN_ORDER`.
+            for row in self.events:
+                if row[0] == params["event_id"]:
+                    _id, external_id, espn_id, statpal_fixture_id, _commence = row
+                    return _Result(first=(espn_id, external_id, statpal_fixture_id))
+            return _Result(first=None)
+
         if "SELECT event_id FROM event_provider_anchors" in sql:
             key = (params["source"], params["source_id"], params["id_kind"])
             incumbent = self.anchors.get(key)
