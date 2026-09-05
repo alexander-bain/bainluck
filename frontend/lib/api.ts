@@ -93,9 +93,19 @@ const RETRY_AFTER_JITTER_MS = 1000;
  *
  * Two places carry it and both are read, header first: `Retry-After` is the
  * HTTP-standard answer and the one a proxy or CDN in front of us would set,
- * while `detail.retry_after` is what our own limiter puts in the JSON body
- * (`app/utils/rate_limit.py`). Preferring the header means an intermediary that
- * throttles us before the request reaches our app is still honoured.
+ * while `retry_after` is what our own limiter puts at the ROOT of the JSON body
+ * — a sibling of `detail`, not a field inside it (`app/utils/rate_limit.py`,
+ * both the Redis and the in-memory path). Preferring the header means an
+ * intermediary that throttles us before the request reaches our app is still
+ * honoured.
+ *
+ * IN A BROWSER THE BODY IS USUALLY THE ONLY ONE OF THE TWO WE CAN READ, and
+ * that is measured, not assumed: `api.bainluck.com` is a different origin, so
+ * `res.headers.get()` sees only the CORS-exposed set, and `main.py`'s
+ * `expose_headers` lists nine `X-…` headers and not `Retry-After`. A production
+ * run of this exact path logged one `429` and no retry until the body was read
+ * correctly. The header branch therefore stays for same-origin and for
+ * intermediaries, but the body branch is the one that fires for real readers.
  *
  * Deliberately strict: only a finite, positive, whole-second count is a wait.
  * `Retry-After` also permits an HTTP-date form, which we do NOT parse — a date
@@ -105,13 +115,13 @@ const RETRY_AFTER_JITTER_MS = 1000;
  */
 export function parseRetryAfterMs(
   header: string | null | undefined,
-  detail: unknown,
+  body: unknown,
 ): number | null {
   const fromHeader = Number((header ?? "").trim());
   if (Number.isFinite(fromHeader) && fromHeader > 0) {
     return Math.round(fromHeader * 1000);
   }
-  const fromBody = (detail as { retry_after?: unknown })?.retry_after;
+  const fromBody = (body as { retry_after?: unknown })?.retry_after;
   if (typeof fromBody === "number" && Number.isFinite(fromBody) && fromBody > 0) {
     return Math.round(fromBody * 1000);
   }
@@ -251,9 +261,14 @@ async function apiFetch<T>(
         // window. So an over-budget wait is not clamped, it is REFUSED — throw
         // now and let the page say we were throttled, which is true and fast.
         if (res.status === 429 && attempt < maxRetries) {
+          // `error`, not `detail`: the limiter puts `retry_after` at the root
+          // of the body, beside `detail`, and `detail` itself is the message
+          // string. Passing `detail` here type-checks, passes a parser unit
+          // test written to the same mistake, and silently never retries —
+          // which is exactly what a production run of this path showed.
           const retryAfterMs = parseRetryAfterMs(
             res.headers.get("retry-after"),
-            detail,
+            error,
           );
           if (retryAfterMs !== null && retryAfterMs <= timeoutMs) {
             await new Promise((r) =>
