@@ -400,6 +400,32 @@ jobs:
             exit 1
           fi
 
+      - name: "#2722 sweep settlement bind contract (real Postgres)"
+        # The Kalshi resolution sweep's UPDATE now carries two shapes a server
+        # has to be able to type: `COALESCE(:resolution_date, resolution_date)`
+        # bound to NULL, and `CASE WHEN :venue_settled THEN 'resolved' ELSE
+        # status END` bound to a Python bool. asyncpg prepares with no parameter
+        # types, so a parameter Postgres cannot infer dies at PREPARE, before a
+        # row is read — the same class that left the sibling drain unable to
+        # complete one work selection (the gate directly above).
+        #
+        # Real Postgres because nothing cheaper can reject it: the statement
+        # COMPILES, the module IMPORTS, sqlite types binds by value and is happy
+        # to put a bool in a CASE WHEN, and the unit suite's session doubles
+        # never prepare anything.
+        #
+        # Same skip-detection as the gates around it: pytest exits 0 when every
+        # test skips, so a gate that silently did not run is indistinguishable
+        # from one that passed.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_kalshi_sweep_settlement_bind_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/sweep_settlement_bind.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/sweep_settlement_bind.txt; then
+            echo "::error::#2722 sweep settlement bind contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: futures_outcomes grade schema parity (real Postgres)
         # CERT-521. `is_winner` was widened to nullable so a metadata-built test
         # database could finally express "nobody graded this" — and the widening

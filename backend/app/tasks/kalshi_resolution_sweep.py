@@ -24,6 +24,16 @@ zero-yield discipline is documented at its definition below and was ratified by
 CERT-766 / CAL-P992 — none of it is re-argued here, because none of it changed
 in this move. What is NEW in this module is only :func:`run_sweep`: the bound,
 unattended entry point the beat calls, and the terminal truth it returns.
+
+CAL-P1019 / #2722 — THE SWEEP NOW READS THE VENUE'S STATUS, NOT ONLY ITS DATES.
+Every candidate's event is already fetched with its nested markets, and every
+leg of that payload carries the venue's own ``status``. It was being discarded.
+That is the only signal that reaches the 20% of the settled cohort Kalshi
+finalises EARLY — measured at the venue 2026-09-02, 10 of 49 sampled settled
+markets still hold a FUTURE ``close_time``, so no date field and no date
+predicate can ever select them, and the row goes on claiming to be open. The
+write is at :data:`UPDATE_SQL`: ``status`` and ``settled_at``, on the venue's
+word only, and never a grade (#1852's line is unchanged).
 """
 
 from __future__ import annotations

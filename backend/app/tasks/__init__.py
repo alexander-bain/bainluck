@@ -1346,8 +1346,15 @@ def sweep_kalshi_resolution_window(self, limit: int = 500, concurrency: int = 6)
 
     Bounded by construction: one batch of `limit`, ordered `updated_at ASC`, so
     every write refreshes the stamp and the sweep ROTATES instead of re-reading
-    its own head. It writes two date columns and nothing else — never `status`,
-    never `is_winner`, never a price (CAL-P061's constraint, inherited).
+    its own head.
+
+    It writes the two date columns, and — since CAL-P1019 / #2722 — `status`
+    and `settled_at` when the VENUE itself reports every leg of the event
+    `settled`/`finalized`. That second half exists because 20% of the settled
+    cohort (10 of 49 sampled at the venue, 2026-09-02) finalises EARLY and keeps
+    a future `close_time`, so no date and no date predicate can ever reach it.
+    It still writes NO GRADE — never `is_winner`, never a price (CAL-P061's
+    constraint and #1852's line, both inherited unchanged).
     """
     from app.tasks.kalshi_resolution_sweep import run_sweep
     return _tracked_run(
