@@ -826,6 +826,58 @@ def parse_results(payloads: Iterable[dict[str, Any]], *, event_name: str) -> dic
                             # wants to DRAW this pairing rather than compare it
                             # reads this; see `_competitor_view`.
                             "competitors": competitor_views,
+                            # THE GAMES, FOR A MATCH THAT IS STILL BEING PLAYED
+                            # (live/063, #2746). `status_detail` says WHICH set
+                            # is on; this says what happened in all of them, and
+                            # without it the hub's live row can only print "1st
+                            # Set" over a match that is 6-4, 2-1.
+                            #
+                            # `competition_sides` and not `_competitor_view`:
+                            # the view is the pairing (who, with identity) and
+                            # widening it with a score would make every consumer
+                            # of a NAME carry a line it never reads. This is the
+                            # same read `scoreboard_competitions` publishes
+                            # under the same key, so the two maps describe one
+                            # board in one vocabulary.
+                            #
+                            # Raw. Orientation is the CONSUMER's — ours is the
+                            # Odds API's home/away and ESPN's order is its own,
+                            # so a side list oriented here would be oriented
+                            # against nothing. See `espn_tennis_anchor.
+                            # orient_sides`, which is where that decision has
+                            # the two names to make it with.
+                            #
+                            # ═══ IN PLAY ONLY, AND IT IS MEASURED ═══
+                            #
+                            # This map is JSON and goes to Redis (the linker
+                            # reads it from `RESULTS_PREFIX`), and Redis here is
+                            # ONE shared 100MB LRU. Measured against the live US
+                            # Open board 2026-09-05, 625 competitions: publishing
+                            # `sides` on all of them grew the map 362,985 ->
+                            # 462,920 bytes, and 81,191 of those 99,935 added
+                            # bytes were `decided` competitions.
+                            #
+                            # Not one of which the slate can read. A decided
+                            # fixture returns `None, "DECIDED"` from
+                            # `build_match_row` and is skipped outright by
+                            # `build_slate`'s scoreboard pass — its score belongs
+                            # to `build_results`, which parses the payload itself
+                            # and prints it winner-first. An `upcoming` one has
+                            # no games at all by construction, because a
+                            # scoring competition is promoted to `in_progress`
+                            # by `play_refutes_upcoming` above before it gets
+                            # here.
+                            #
+                            # So the field means "the games of a match being
+                            # played", and 637 bytes says it. IF YOU NEED A
+                            # DECIDED MATCH'S LINE, it is in `build_results` and
+                            # in `scoreboard_competitions` — widening this is
+                            # paying 81KB of a shared cache for a second copy.
+                            **(
+                                {"sides": competition_sides(competition)}
+                                if slate_state == IN_PROGRESS_SLATE_STATE
+                                else {}
+                            ),
                         }
                         stats[slate_state] += 1
                     else:

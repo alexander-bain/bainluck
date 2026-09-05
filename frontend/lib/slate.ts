@@ -21,6 +21,8 @@
  *   "today" is a claim about the person reading, not about UTC.
  */
 
+import type { SlateLinescore } from "./linescore";
+
 /**
  * `unpriced` is NOT a fourth flavour of stale (UX-P142).
  *
@@ -109,6 +111,18 @@ export interface SlateMatch {
   live_state?: "in_progress" | "upcoming" | null;
   /** ESPN's words for that state — "2nd Set". Beside the enum, never instead. */
   status_detail?: string | null;
+  /**
+   * What the sets were played to (live/063, #2746).
+   *
+   * `status_detail` says WHICH set is on; this says what happened in all of
+   * them. ABSENT rather than `null` when ESPN states no line — the backend
+   * drops the key on every one of `authority_games_line`'s refusals, so an
+   * undefined here means "no line to draw" and never "a line of zeroes".
+   *
+   * Off the same board read as `live_state` and `status_detail`, so the line
+   * and the caption beside it describe one instant of one match.
+   */
+  linescore?: SlateLinescore | null;
   /**
    * Is `scheduled_date` a TIME, or a day wearing one (Q463)?
    *
