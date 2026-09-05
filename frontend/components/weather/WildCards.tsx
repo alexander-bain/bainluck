@@ -1,7 +1,7 @@
 "use client";
 
 import useSWR from "swr";
-import { probColor, probLabel, sparkFrom, type WildCard } from "./data";
+import { probColor, probLabel, realSpark, type WildCard } from "./data";
 import { fetchWildCards } from "@/lib/weatherApi";
 import Sparkline from "@/components/Sparkline";
 import { SourceBadge } from "./SourceBadge";
@@ -73,7 +73,9 @@ export default function WildCards() {
       {cards.map((card, i) => {
         const color = probColor(card.prob);
         const label = probLabel(card.prob);
-        const spark = sparkFrom(i * 137 + 42, card.prob);
+        // Real captures or nothing — the generator this replaced was seeded on
+        // the card's grid position. ux/1069, #2960.
+        const spark = realSpark(card.history);
 
         return (
           <div
@@ -146,18 +148,21 @@ export default function WildCards() {
                   </p>
                 ) : null}
               </div>
-              <Sparkline
-                data={spark}
-                color={color}
-                width={80}
-                height={24}
-                padX={3}
-                padTop={3}
-                padBottom={3}
-                area="gradient"
-                endDot
-                animate
-              />
+              {/* No real history, no line — and no empty slot either. */}
+              {spark && (
+                <Sparkline
+                  data={spark}
+                  color={color}
+                  width={80}
+                  height={24}
+                  padX={3}
+                  padTop={3}
+                  padBottom={3}
+                  area="gradient"
+                  endDot
+                  animate
+                />
+              )}
             </div>
 
             {/* Footer */}

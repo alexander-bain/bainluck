@@ -15,6 +15,12 @@ export type FeaturedMarket = {
   tag: string;
   closes: string;
   leader?: string | null;
+  /** Real captured prices for the leader outcome, oldest first, 0-100. The
+   *  sparkline's only permitted input — see {@link realSpark}. OPTIONAL for
+   *  the same reason `leader` is: the hourly Redis cache can serve a payload
+   *  built before the field existed, and an absent field must mean "no line",
+   *  never "invent one". */
+  history?: number[];
 };
 
 export type CityData = {
@@ -85,6 +91,8 @@ export type WildCard = {
   tag: string;
   /** See {@link FeaturedMarket.leader} — same field, same contract. */
   leader?: string | null;
+  /** See {@link FeaturedMarket.history} — same field, same contract. */
+  history?: number[];
 };
 
 // Colors sourced from the one registry (@/lib/sourceColors). color=solid hex,
@@ -160,17 +168,32 @@ export function toC(city: CityData): number {
   return city.high.unit === "C" ? city.high.mode : ((city.high.mode - 32) * 5) / 9;
 }
 
-export function sparkFrom(seed: number, end: number, n = 14): number[] {
-  let s = seed;
-  const rng = () => { s = (s * 9301 + 49297) % 233280; return s / 233280; };
-  const start = Math.max(2, Math.min(98, end + (rng() * 30 - 15)));
-  const pts: number[] = [];
-  let cur = start;
-  for (let i = 0; i < n - 1; i++) {
-    const target = start + ((end - start) * i) / (n - 1);
-    cur = cur * 0.55 + target * 0.45 + (rng() * 8 - 4);
-    pts.push(Math.max(2, Math.min(98, cur)));
-  }
-  pts.push(end);
-  return pts;
+// ux/1069 (#2960) — `sparkFrom(seed, end)` used to live here. It drew a
+// 14-point sparkline in which exactly ONE point, the last, was the real price:
+// a seeded LCG walked a noise path from a random-offset start toward it, and
+// the hero and every wild card rendered that path in the same ink a real price
+// history would use. On a probability site an invented line is worse than a
+// missing one, because a missing one cannot be believed. It is gone, and
+// nothing may replace it — the series now comes from the backend as
+// `history`, which contains only rows captured from the market.
+
+/** Fewest real captures that may be drawn as a line.
+ *
+ *  Two points is a straight segment, and a straight segment reads as a trend
+ *  the data has not earned — the same lie the generator told, just cheaper to
+ *  draw. Mirrors `MIN_HISTORY_POINTS` in `app/routes/weather.py`: the backend
+ *  already withholds shorter series, and this is the second lock, because the
+ *  hourly Redis cache can serve a payload built before that filter existed. */
+export const MIN_SPARK_POINTS = 3;
+
+/** The real capture series to draw, or null when there is nothing honest to draw.
+ *
+ *  Returns null — not `[]` — so the caller has to branch and omit the element
+ *  entirely. Passing a short array to `<Sparkline>` would render nothing but
+ *  leave its sized wrapper behind, and an empty box where a chart belongs is a
+ *  placeholder by another name. */
+export function realSpark(history: number[] | null | undefined): number[] | null {
+  if (!Array.isArray(history)) return null;
+  const pts = history.filter((v) => typeof v === "number" && Number.isFinite(v));
+  return pts.length >= MIN_SPARK_POINTS ? pts : null;
 }

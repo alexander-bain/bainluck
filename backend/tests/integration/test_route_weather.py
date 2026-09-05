@@ -87,21 +87,51 @@ class _MockScalars:
 
 
 class _MockResult:
-    def __init__(self, items):
+    """One mocked SQLAlchemy Result serving BOTH query shapes this route uses.
+
+    `scalars()` yields the entity rows (markets); `all()` yields the COLUMN
+    rows, which since ux/1069 (#2960) is a second, different query — the
+    `futures_odds_snapshots` capture history behind the sparkline. They are not
+    the same rows and must not be served from the same list: `all()` used to
+    hand the markets back, and a caller unpacking a market into
+    `(outcome_id, bookmaker, probability)` gets a TypeError, not a wrong answer.
+
+    `rows` defaults to empty, which is the honest default for these fixtures:
+    no captures ⇒ `history: []` ⇒ no sparkline.
+    """
+
+    def __init__(self, items, rows=None):
         self._scalars = _MockScalars(items)
+        self._rows = list(rows or [])
 
     def scalars(self):
         return self._scalars
 
     def all(self):
-        return self._scalars.all()
+        return self._rows
 
     def first(self):
         return self._scalars.first()
 
 
-def _query_result(items):
-    return _MockResult(items)
+def _query_result(items, rows=None):
+    """`scalars()` -> the entities; `all()` -> the column rows, none by default."""
+    return _MockResult(items, rows)
+
+
+def _entity_result(items):
+    """For a route whose only query is an ENTITY select it reads through
+    `result.all()` rather than `result.scalars().all()`.
+
+    `test_route_event_concept.py` imports this — `prefetch_open_markets` and the
+    evolution-series builder both call `result.all()`, and every one of those
+    calls wants the fixture's markets back. It used to import `_query_result`,
+    which meant the same thing until ux/1069 (#2960) gave the weather route a
+    second, COLUMN query and `all()` had to start answering that one instead.
+    Two callers wanting two different rows out of one mocked `execute` is why
+    the question is now asked by name.
+    """
+    return _MockResult(items, rows=items)
 
 
 # ============================================================================

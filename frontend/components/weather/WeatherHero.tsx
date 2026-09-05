@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import useSWR from "swr";
-import { SOURCES, probColor, probLabel, sparkFrom } from "./data";
+import { SOURCES, probColor, probLabel, realSpark } from "./data";
 import type { FeaturedMarket } from "./data";
 import { fetchWeatherFeatured } from "@/lib/weatherApi";
 import Sparkline from "@/components/Sparkline";
@@ -61,7 +61,10 @@ export default function WeatherHero() {
 
   const current = items?.[idx];
   const src = current ? SOURCES[current.src] : null;
-  const spark = current ? sparkFrom(idx * 7 + 3, current.prob) : [];
+  // Real captures or nothing. The generator this replaced took `idx` as its
+  // seed, which is the tell: the line was a function of the card's position in
+  // the rotation, not of the market. ux/1069, #2960.
+  const spark = current ? realSpark(current.history) : null;
 
   return (
     <section className="mb-10 px-4 md:px-6 pt-6">
@@ -186,19 +189,23 @@ export default function WeatherHero() {
                 </div>
               </div>
 
-              {/* Sparkline */}
-              <div className="w-28 h-12 flex-shrink-0">
-                <Sparkline
-                  data={spark}
-                  color={probColor(current.prob)}
-                  padX={3}
-                  padTop={3}
-                  padBottom={3}
-                  area="gradient"
-                  endDot
-                  animate
-                />
-              </div>
+              {/* Sparkline — omitted ENTIRELY, wrapper and all, when there is
+                  no real history. An empty sized box where a chart belongs is
+                  still a placeholder, and the ruling was: no shape. */}
+              {spark && (
+                <div className="w-28 h-12 flex-shrink-0">
+                  <Sparkline
+                    data={spark}
+                    color={probColor(current.prob)}
+                    padX={3}
+                    padTop={3}
+                    padBottom={3}
+                    area="gradient"
+                    endDot
+                    animate
+                  />
+                </div>
+              )}
             </div>
 
             {/* Resolution date */}
