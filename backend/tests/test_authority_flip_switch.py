@@ -30,9 +30,12 @@ Three defect classes, each with its own band below:
     waited on when what it needed was a ruling.
 """
 
+from app.config import authority_by_sport as abs_module
 from app.config.authority_by_sport import (
     AUTHORITY_BY_SPORT,
     DEFAULT_AUTHORITY,
+    DISCOVERY_BEAT_WITHOUT_A_WORKING_PARSE,
+    DISCOVERY_SCHEDULED_SPORTS,
     ESPN,
     FLIP_EVIDENCE,
     STATPAL,
@@ -400,3 +403,277 @@ def test_todays_real_nba_and_nhl_populations_still_clear_the_floor():
             f"{sport_key}'s measured {both}-game population no longer scores; "
             "the minimum denominator is #3071's and is Alex's to rule"
         )
+
+
+# ---------------------------------------------------------------------------
+# Agreement is not coverage. lane1, 2026-09-05, reviewing this lane's step-7
+# handoff; their PR #3178 pins the beat-side half of the same invariant.
+# ---------------------------------------------------------------------------
+
+
+def test_the_discovery_list_is_the_beat_schedules_own_list():
+    """The switch's idea of "discoverable" must be the scheduler's, or it rots.
+
+    `DISCOVERY_SCHEDULED_SPORTS` is written out longhand rather than derived at
+    import time, because `app.config` importing `app.tasks` is a circular-import
+    hazard this repo has paid for (gotcha #3 is the standing version of it). The
+    cost of writing it out is that it can drift from the thing it describes, and
+    the drift is silent and one-directional in the dangerous way: adding a
+    `sync-statpal-schedules-tennis` beat is a happy moment, nobody thinks about a
+    config in `app/config/`, and a tennis flip becomes permissible on an
+    agreement streak that never had to find a single fixture ESPN missed.
+
+    So the test derives the set the switch refuses to derive. It fails in BOTH
+    directions on purpose — a beat with no entry here, and an entry here with no
+    beat — because the second one is the worse bug: it permits.
+    """
+    from app.tasks import celery_app
+
+    scheduled = {
+        entry["kwargs"]["sport_key"]
+        for entry in celery_app.conf.beat_schedule.values()
+        if entry["task"] == "app.tasks.sync_statpal_schedules"
+        and (entry.get("kwargs") or {}).get("sport_key")
+    }
+
+    assert not (set(DISCOVERY_SCHEDULED_SPORTS) - scheduled), (
+        "listed as discoverable with no beat at all: "
+        f"{sorted(set(DISCOVERY_SCHEDULED_SPORTS) - scheduled)}. This is the "
+        "direction that PERMITS — a flip on an agreement streak that never had to "
+        "find a single fixture ESPN missed"
+    )
+    accounted = set(DISCOVERY_SCHEDULED_SPORTS) | set(
+        DISCOVERY_BEAT_WITHOUT_A_WORKING_PARSE
+    )
+    assert scheduled <= accounted, (
+        "on the discovery beat and in neither list: "
+        f"{sorted(scheduled - accounted)}. A beat is either working (list it in "
+        "`DISCOVERY_SCHEDULED_SPORTS`) or broken (name it, with the reason, in "
+        "`DISCOVERY_BEAT_WITHOUT_A_WORKING_PARSE`). Silently absent is the state "
+        "this pair of constants exists to make impossible"
+    )
+    assert not (
+        set(DISCOVERY_SCHEDULED_SPORTS) & set(DISCOVERY_BEAT_WITHOUT_A_WORKING_PARSE)
+    ), "a sport cannot be both discoverable and named as not discovering"
+
+
+def test_a_listed_sport_actually_parses_and_an_excluded_one_actually_does_not():
+    """CERT-1875's finding, pinned: a beat is not a discovery path.
+
+    The first version of this file listed NFL because
+    `sync-statpal-schedules-nfl` runs hourly. It does — and it creates nothing.
+    `get_fixtures("nfl")` walks `_extract_match_items`, which knows
+    `tournament.match` and `tournament.week`; the real 374-game NFL payload nests
+    its games two levels deeper, under `stage[] → week[] → matches → match`. Zero
+    rows, every hour, green. Meanwhile the AUTHORITY read path
+    (`_parse_nfl_season_schedule`) reads the same bytes correctly, which is why
+    NFL's agreement row says 99.69% and its seven-day clock is running. Two
+    parsers over one payload, one of them blind, and the blind one is the only one
+    that writes.
+
+    So membership is proven against the ingest chain's own parser on each sport's
+    pinned real payload — never against the existence of a beat, and never against
+    the parser the authority path happens to use.
+
+    The exclusion assertion is the half that retires itself: the day somebody
+    teaches the ingest parser the stage nesting, NFL starts parsing, this test
+    fails, and its message says to move NFL into `DISCOVERY_SCHEDULED_SPORTS`.
+    """
+    import json
+    from pathlib import Path
+
+    from app.services.statpal_api import StatPalAPIService
+    from app.tasks.config import STATPAL_SPORT_MAPPING
+
+    pinned = {
+        "basketball_nba": "statpal_nba_season_schedule_20260904.json",
+        "icehockey_nhl": "statpal_nhl_season_schedule_20260904.json",
+        "baseball_mlb": "statpal_mlb_season_schedule_20260904.json",
+        "americanfootball_nfl": "statpal_nfl_season_schedule_20260903.json",
+    }
+    service = StatPalAPIService.__new__(StatPalAPIService)
+
+    def _ingest_parse(sport_key: str) -> int:
+        path = Path(__file__).parent / "fixtures" / pinned[sport_key]
+        assert path.exists(), f"no pinned payload for {sport_key} at {path}"
+        payload = json.loads(path.read_text())
+        # The exact call the CREATING path makes: sync_statpal_schedules ->
+        # get_fixtures(sport) -> _parse_fixtures(data, sport).
+        return len(
+            StatPalAPIService._parse_fixtures(
+                service, payload, STATPAL_SPORT_MAPPING[sport_key]
+            )
+        )
+
+    for sport_key in sorted(DISCOVERY_SCHEDULED_SPORTS):
+        assert _ingest_parse(sport_key) > 0, (
+            f"{sport_key} is listed as discoverable, but the ingest parser reads "
+            "ZERO fixtures out of its real pinned payload — the beat runs and "
+            "creates nothing, which is precisely the mistake CERT-1875 struck"
+        )
+
+    for sport_key in sorted(DISCOVERY_BEAT_WITHOUT_A_WORKING_PARSE):
+        assert _ingest_parse(sport_key) == 0, (
+            f"{sport_key} now parses out of its pinned payload — the ingest path "
+            "has been fixed. Move it into `DISCOVERY_SCHEDULED_SPORTS` and delete "
+            "its entry from `DISCOVERY_BEAT_WITHOUT_A_WORKING_PARSE`; the flip "
+            "gate is refusing a sport that can now discover games"
+        )
+
+
+def test_nfl_cannot_be_flipped_today_and_its_running_clock_does_not_change_that():
+    """The ship of CERT-1875's repair, stated where it bites.
+
+    NFL's seven-day clock started 2026-09-05 and reads MEETS at 99.69%. Before
+    this repair, seven of those days would have returned `permitted=True` for a
+    sport whose event-creating path has never created an event. It now refuses,
+    by name, with the beat's own failure quoted into the reason.
+    """
+    assert "americanfootball_nfl" in SHADOW_STAMPERS
+    assert GOVERNING_IDENTITY_NUMBERS.get("americanfootball_nfl")
+
+    permitted, why = flip_permitted(
+        "americanfootball_nfl", _run_of(REQUIRED_STREAK_DAYS, GATE_MEETS)
+    )
+
+    assert not permitted
+    assert "no working StatPal discovery pass" in why
+    assert "creates nothing" in why, (
+        "the refusal must quote the actual failure; a generic 'no discovery pass' "
+        "reads as 'nobody built it yet' for a sport where somebody did"
+    )
+    assert "not a wait" in why
+
+
+def test_every_stamped_sport_is_accounted_for_as_discoverable_or_named_broken():
+    """No stamped sport may be silently outside both lists.
+
+    This used to assert `SHADOW_STAMPERS <= DISCOVERY_SCHEDULED_SPORTS` — the
+    darkness claim — and CERT-1875 is the reason it cannot: NFL is stamped and is
+    NOT discoverable, so the arm is no longer dark and saying it is would be the
+    comfortable lie. What must hold instead is that every stamped sport is in one
+    list or the other, with a reason attached when it is the second.
+    """
+    unaccounted = (
+        set(SHADOW_STAMPERS)
+        - set(DISCOVERY_SCHEDULED_SPORTS)
+        - set(DISCOVERY_BEAT_WITHOUT_A_WORKING_PARSE)
+    )
+    assert (
+        not unaccounted
+    ), f"stamped, measured daily, and in neither discovery list: {sorted(unaccounted)}"
+    for sport_key, reason in DISCOVERY_BEAT_WITHOUT_A_WORKING_PARSE.items():
+        assert len(reason) > 40, (
+            f"{sport_key}'s exclusion has no usable reason attached; a bare "
+            "exclusion is indistinguishable from a mistake"
+        )
+
+
+def test_a_mapped_sport_with_no_discovery_beat_is_refused_however_perfect(
+    monkeypatch,
+):
+    """Tennis's exact shape, which is the next sport this lane stamps.
+
+    `tennis_atp` is in `STATPAL_SPORT_MAPPING` and there is no
+    `sync-statpal-schedules-tennis` beat. Give it everything else it could
+    possibly need — a stamper, a ruled governing number, and TEN consecutive
+    perfect days, three more than D50 asks for — and the flip is still refused,
+    because agreement is measured over the fixtures both sources already share
+    and that population can never demonstrate the thing the flip is for.
+
+    The refusal must not read as a wait. "10/7 days, please hold" would be a
+    sentence about patience for a problem that no amount of time solves.
+    """
+    monkeypatch.setattr(
+        abs_module, "SHADOW_STAMPERS", {**SHADOW_STAMPERS, "tennis_atp": "stamp_tennis"}
+    )
+    monkeypatch.setattr(
+        abs_module,
+        "GOVERNING_IDENTITY_NUMBERS",
+        {**GOVERNING_IDENTITY_NUMBERS, "tennis_atp": ("ours_covered_pct",)},
+    )
+
+    permitted, why = flip_permitted("tennis_atp", _run_of(10, GATE_MEETS))
+
+    assert not permitted
+    assert "no working StatPal discovery pass" in why
+    assert "a `sync_statpal_schedules` beat" in why, (
+        "tennis has no beat at all, so the reason must point at building one — "
+        "not at a broken parse, which is NFL's different problem"
+    )
+    assert "not a wait" in why
+    # And it must not describe the streak at all — there is nothing wrong with it.
+    assert f"/{REQUIRED_STREAK_DAYS}" not in why
+
+
+def test_the_discovery_refusal_does_not_shadow_the_no_stamper_one(monkeypatch):
+    """Order matters, and the first question is still "is there anything to flip to?".
+
+    A sport with neither a stamper nor a discovery beat — soccer_epl, today —
+    must be told about the stamper, because that is the step that comes first.
+    Reporting the discovery gap to a sport with no id join at all would send a
+    reader to build the wrong thing.
+    """
+    assert "soccer_epl" not in SHADOW_STAMPERS
+    assert "soccer_epl" not in DISCOVERY_SCHEDULED_SPORTS
+
+    _permitted, why = flip_permitted("soccer_epl", _run_of(10, GATE_MEETS))
+    assert "no shadow stamper" in why
+    assert "discovery" not in why
+
+
+def test_a_discoverable_sport_is_unaffected_and_still_permits_at_seven():
+    """The blast radius, from the other side: NBA's answer is byte-for-byte its old one."""
+    permitted, why = flip_permitted(
+        "basketball_nba", _run_of(REQUIRED_STREAK_DAYS, GATE_MEETS)
+    )
+    assert permitted
+    assert "discovery" not in why
+
+
+def test_every_mapped_sport_off_the_discovery_beat_is_refused_by_name(monkeypatch):
+    """The whole tier, not one specimen — and derived, so it grows by itself.
+
+    lane1's review of the step-7 handoff (their PR #3178) closed this tier with a
+    hand-written inventory. Deriving it instead means a sport added to
+    `STATPAL_SPORT_MAPPING` without a schedule beat lands in this guard the day it
+    is mapped, rather than the day somebody remembers a list. Today that set is
+    `golf_pga`, seven soccer leagues, `tennis_atp` and `tennis_wta`.
+
+    The trap lane1 hit and warned about, which this avoids: without FULL
+    evidencing, every one of these sports is already refused at the first clause
+    (no shadow stamper), so the test passes green with the discovery clause
+    deleted — true by construction, which is not a test. Each sport here is given
+    a stamper, a governing number and ten perfect days first, so the only thing
+    left that can refuse it is the clause under test.
+    """
+    from app.tasks.config import STATPAL_SPORT_MAPPING
+
+    off_the_beat = set(STATPAL_SPORT_MAPPING) - set(DISCOVERY_SCHEDULED_SPORTS)
+    assert off_the_beat, (
+        "every mapped sport is on the discovery beat, so this guard is vacuous — "
+        "if that is genuinely true now, this test should be deleted, not left to "
+        "pass over an empty set"
+    )
+
+    for sport_key in sorted(off_the_beat):
+        monkeypatch.setattr(
+            abs_module,
+            "SHADOW_STAMPERS",
+            {**SHADOW_STAMPERS, sport_key: f"stamp_{sport_key}"},
+        )
+        monkeypatch.setattr(
+            abs_module,
+            "GOVERNING_IDENTITY_NUMBERS",
+            {**GOVERNING_IDENTITY_NUMBERS, sport_key: ("ours_covered_pct",)},
+        )
+
+        permitted, why = flip_permitted(sport_key, _run_of(10, GATE_MEETS))
+
+        assert not permitted, (
+            f"{sport_key} is mapped to StatPal with no scheduled discovery pass, "
+            "and ten perfect agreement days let it through the flip gate"
+        )
+        assert (
+            "discovery" in why
+        ), f"{sport_key} was refused, but not for the reason that applies to it: {why!r}"
