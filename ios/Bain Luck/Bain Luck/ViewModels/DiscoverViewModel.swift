@@ -212,6 +212,38 @@ final class DiscoverViewModel: ObservableObject {
     /// Backoff between transient retries, clamped to the remaining budget.
     private let retryBackoff: TimeInterval
 
+    /// Delays between BACKGROUND recovery attempts made AFTER the initial load has
+    /// already settled to the honest error with nothing on screen (#3180).
+    ///
+    /// This is not a longer budget — Q425's short empty-screen budget stands, and the
+    /// reader still gets told the truth within it. It fixes the other half: that the
+    /// truth was TERMINAL. Measured 2026-09-05 on master, first cold launch after a
+    /// simulator erase: `GET /api/feed?limit=50` answered **200 in 7.08s**, one second
+    /// past the 6s budget, so the phone drew "Couldn't load feed" over a response that
+    /// was already on its way — and then sat there until someone tapped. The very next
+    /// launch on the same build loaded normally, because the server's response cache
+    /// was warm by then. That is precisely the failure a spaced retry heals, and it is
+    /// invisible server-side: the request returned 200.
+    ///
+    /// Bounded on purpose. Three attempts over ~17s of waiting is enough to cover a
+    /// slow cold build; a genuinely dark network settles to the same terminal error it
+    /// reaches today, without a retry storm. Injectable so tests drive it
+    /// deterministically, and so the existing deadline/SWR suites keep asserting the
+    /// synchronous terminal state by passing an empty ladder.
+    private let autoRecoveryDelays: [TimeInterval]
+
+    /// The in-flight background recovery ladder, if one is running. At most one:
+    /// scheduling cancels its predecessor, and any caller-initiated `load()`
+    /// (pull-to-refresh, the Retry button, an identity rebind) cancels it outright —
+    /// the newest load owns the feed and schedules its own recovery if it needs one.
+    private var recoveryTask: Task<Void, Never>?
+
+    /// True while the background recovery ladder is running, so the view can say the
+    /// app is still trying instead of implying it has given up (#3180). The error card
+    /// stays put while this is true — a recovery attempt must not flicker the screen
+    /// back to a full-page spinner every few seconds.
+    @Published private(set) var isRecovering = false
+
     /// Monotonic load identity (L2-201 / #1472). Each `load()` claims the next
     /// value; a load whose generation is superseded by a newer `load()` (pull to
     /// refresh, account switch, rapid re-entry) discards its late response instead
@@ -241,7 +273,8 @@ final class DiscoverViewModel: ObservableObject {
         telemetry: (@Sendable (DiscoverFeedTelemetry) -> Void)? = { AnalyticsService.trackDiscoverFeedCache($0) },
         retryBudget: TimeInterval = 6,
         seededRetryBudget: TimeInterval = 20,
-        retryBackoff: TimeInterval = 1
+        retryBackoff: TimeInterval = 1,
+        autoRecoveryDelays: [TimeInterval] = [2, 5, 10]
     ) {
         self.client = client
         self.lastGood = lastGood
@@ -249,13 +282,23 @@ final class DiscoverViewModel: ObservableObject {
         self.retryBudget = retryBudget
         self.seededRetryBudget = seededRetryBudget
         self.retryBackoff = retryBackoff
+        self.autoRecoveryDelays = autoRecoveryDelays
     }
 
     /// #1883: one set, shared with the view (they were byte-identical copies).
     private static var sportsCategories: Set<String> { DiscoverCategory.sportsCategories }
 
+    /// - Parameter isRecoveryAttempt: true only when the background recovery ladder
+    ///   (#3180) drove this load. Such a load neither cancels the ladder that is
+    ///   awaiting it nor schedules a second one; the ladder owns both decisions. Every
+    ///   caller-initiated load (cold start, pull-to-refresh, Retry, identity rebind)
+    ///   leaves this false and therefore supersedes any ladder already running.
     @MainActor
-    func load() async {
+    func load(isRecoveryAttempt: Bool = false) async {
+        // A caller-initiated load owns the feed from here: stop any recovery ladder
+        // still counting down behind the error card. If this load also ends with
+        // nothing to show, its own terminal schedules a fresh one.
+        if !isRecoveryAttempt { cancelColdStartRecovery() }
         // Claim a load identity so a superseded (older) load discards its late
         // response instead of overwriting a newer session's feed (L2-201 / #1472).
         loadGeneration &+= 1
@@ -455,6 +498,9 @@ final class DiscoverViewModel: ObservableObject {
                         telemetry?(DiscoverFeedTelemetry(
                             outcome: .revalidateFailedNoCache,
                             networkMs: Self.elapsedMs(since: netStart), itemCount: 0))
+                        if !isRecoveryAttempt {
+                            scheduleColdStartRecovery(after: generation)
+                        }
                     } else {
                         refreshFailedShowingCache = true
                         error = "Showing recent markets — couldn't refresh"
@@ -550,7 +596,73 @@ final class DiscoverViewModel: ObservableObject {
             telemetry?(DiscoverFeedTelemetry(
                 outcome: .revalidateFailedNoCache,
                 networkMs: Self.elapsedMs(since: netStart), itemCount: 0))
+            // The honest error is drawn — and it is no longer the end of the road
+            // (#3180). Keep trying quietly behind it.
+            if !isRecoveryAttempt { scheduleColdStartRecovery(after: generation) }
         }
+    }
+
+    /// Keep trying, quietly, after the initial load has already settled to the honest
+    /// error with an empty screen (#3180).
+    ///
+    /// The contract, which the guard tests pin:
+    ///   • it runs ONLY with nothing on screen — a kept last-good cache already has its
+    ///     own honest "couldn't refresh" banner and must never be reloaded from under
+    ///     the reader;
+    ///   • it is bounded by `autoRecoveryDelays` and stops the moment cards land;
+    ///   • it defers to any newer load: a pull-to-refresh, a Retry tap or an identity
+    ///     rebind cancels it, and a load it did not itself start ends it;
+    ///   • at most one ladder exists at a time.
+    @MainActor
+    private func scheduleColdStartRecovery(after generation: Int) {
+        guard !autoRecoveryDelays.isEmpty else { return }
+        // Only the empty-screen terminal recovers. Anything on screen — including a
+        // last-good seed behind the "showing recent" banner — is the reader's content.
+        guard items.isEmpty else { return }
+        // A newer load already claimed the feed while this one was settling; it will
+        // schedule its own ladder if it needs one.
+        guard generation == loadGeneration else { return }
+
+        recoveryTask?.cancel()
+        isRecovering = true
+        let delays = autoRecoveryDelays
+        recoveryTask = Task { @MainActor [weak self] in
+            // The generation this ladder is allowed to speak for. Advances to each
+            // recovery load's own generation so the next rung can still tell "my
+            // attempt" from "somebody else's load".
+            var owned = generation
+            for delay in delays {
+                try? await Task.sleep(for: .seconds(delay))
+                guard !Task.isCancelled, let self else { return }
+                // Superseded while we waited — the newer load owns the screen.
+                guard owned == self.loadGeneration else { break }
+                // Cards arrived some other way; there is nothing left to recover.
+                guard self.items.isEmpty else { break }
+
+                // `load()` claims the next generation as its first act, so the load we
+                // are about to start is ours iff the counter lands exactly one past
+                // where it was. Anything else means a caller-initiated load overtook
+                // us mid-flight and now owns the feed.
+                let before = self.loadGeneration
+                await self.load(isRecoveryAttempt: true)
+                guard !Task.isCancelled else { return }
+                guard self.loadGeneration == before &+ 1 else { break }
+                owned = self.loadGeneration
+                // Healed — the feed is on screen.
+                if !self.items.isEmpty { break }
+            }
+            guard let self, !Task.isCancelled else { return }
+            self.isRecovering = false
+            self.recoveryTask = nil
+        }
+    }
+
+    /// Stop the recovery ladder and clear its "still trying" state (#3180).
+    @MainActor
+    private func cancelColdStartRecovery() {
+        recoveryTask?.cancel()
+        recoveryTask = nil
+        isRecovering = false
     }
 
     /// Whether a fetched network response may be PUBLISHED to the on-screen feed
