@@ -335,6 +335,7 @@ def adherence(
     durations_saturated=None,
     newest_terminal_age_s=None,
     newest_start_age_s=None,
+    newest_delivery_age_s=None,
     counter_ttl_s=None,
 ):
     """Grade one task's schedule adherence from its recorded counters.
@@ -413,6 +414,12 @@ def adherence(
         # considered makes `.get()` mean two different things to a reader.
         "self_gate_fraction": None,
         "stamp_veto_withheld": None,
+        # CERT-1943: the delivery MOMENT, published beside the delivery COUNT
+        # for the same reason `stamp_age_s` is published beside the fire count —
+        # a reader asked to trust a withheld veto has to be able to see the
+        # evidence it was withheld on. Defaulted on every row, like the two
+        # above, so the payload shape never depends on which branch graded it.
+        "delivery_age_s": None,
         "terminals": terminals,
         "never_completes": False,
         "ratio": None,
@@ -609,6 +616,66 @@ def adherence(
         # with no note saying why that was tolerated would be the same silence
         # wearing the fix's clothes.
         tolerance_s = _stamp_tolerance_s(interval_s)
+
+        # --- CERT-1943 repair: A HISTORY IS NOT A HEARTBEAT. ------------------
+        #
+        # The clause above ends "the fires are arriving" — and on the evidence
+        # it had, it could not know that. `gate_fraction` is a whole-window
+        # statistic: 24h of counters divided by 24h of counters. It says fires
+        # WERE arriving, averaged over a day. A mature self-gating task that
+        # stopped dead five minutes ago has exactly the same fraction it had
+        # while healthy, because 5 minutes moves a 24h average by nothing — so
+        # the veto went on withholding and the task read `on_schedule`.
+        #
+        # This is the module's founding defect (#1790) for the third time, one
+        # field further right, and it is worth naming as such: an average over
+        # a long window cannot see a hole much shorter than the window. The
+        # rate arm was blind to it, the stamp arm fixed that for STARTS, and
+        # then the self-gate exemption re-opened it by keying the exemption on
+        # another long-window average. The graded row that caught it:
+        # `starts=2462, deliveries=2880` over equal 86400s windows, interval
+        # 30s, newest start 301s old — ratio 1.0, fraction 0.145, veto
+        # withheld, `on_schedule`, on a beat that had not fired in ten periods.
+        #
+        # So the exemption now needs a MOMENT, not just a history. The
+        # self-gate story is "the fire was delivered and the body declined" —
+        # that story has an observable consequence, which is a fresh DELIVERY
+        # alongside the stale start. When deliveries have stopped too, nothing
+        # is being declined, and there is no gate left to blame the silence on.
+        # Delivery recency is judged on the same `_stamp_tolerance_s` as the
+        # start stamp, deliberately reusing the helper rather than restating a
+        # threshold, so the two moments cannot drift apart on what "stale" is.
+        #
+        # UNKNOWN STILL FAILS CLOSED-MOUTHED (gotcha #53). A `None` delivery
+        # age is "no delivery has been stamped", which is NOT "no delivery has
+        # arrived": delivery counters carry a 24h TTL and survive a dyno
+        # restart, so for one interval after every deploy a perfectly healthy
+        # self-gating beat has a live counter and no stamp yet. Reading that
+        # gap as staleness would grade `poll_all_odds` `missing` after every
+        # release — CERT-1932's false positive, bought straight back. The
+        # withheld note names which of the two it is, so the row never claims
+        # more than it measured.
+        # NORMALISED TO ONE REPRESENTATION OF UNKNOWN, FIRST, and a guard test
+        # exists because the first draft of this repair got it wrong. A stamp
+        # in the FUTURE is ahead-drift (ruling 008 names two lane-lock
+        # incidents caused by it), and the draft let a negative age fall past
+        # the `delivery_fresh` test into the `missing` branch — so a
+        # clock-skewed delivery stamp would have graded a healthy self-gating
+        # beat dead, which is CERT-1932's false positive wearing a new stamp.
+        # Unknown and stale are treated OPPOSITELY here, so they must never be
+        # reachable through the same value: `_stamp_ages_s` collapses
+        # ahead-drift to `None` at the caller and this collapses it again for
+        # every other caller of a public function.
+        if newest_delivery_age_s is not None and newest_delivery_age_s < 0:
+            newest_delivery_age_s = None
+
+        delivery_fresh = (
+            newest_delivery_age_s is not None
+            and newest_delivery_age_s <= tolerance_s
+        )
+        if newest_delivery_age_s is not None:
+            out["delivery_age_s"] = round(newest_delivery_age_s, 1)
+
         if age > tolerance_s and gate_fraction is None:
             out["stamp_veto_withheld"] = (
                 f"newest {kind} stamp is {out['stamp_age_over_interval']:.2f}x "
@@ -616,12 +683,29 @@ def adherence(
                 "counter to compare against, so a self-gating body cannot be "
                 "told from a dead beat — not graded `missing` on a stamp alone"
             )
-        elif age > tolerance_s and gate_fraction > SELF_GATE_MATERIAL_RATIO:
+        elif (
+            age > tolerance_s
+            and gate_fraction > SELF_GATE_MATERIAL_RATIO
+            and newest_delivery_age_s is None
+        ):
+            out["stamp_veto_withheld"] = (
+                f"newest {kind} stamp is {out['stamp_age_over_interval']:.2f}x "
+                f"its {interval_s:.0f}s interval and {gate_fraction * 100:.0f}% "
+                "of delivered fires self-gate, but no delivery has been stamped "
+                "yet, so whether fires are STILL arriving is unknown — not "
+                "graded `missing` on a whole-window average alone"
+            )
+        elif (
+            age > tolerance_s
+            and gate_fraction > SELF_GATE_MATERIAL_RATIO
+            and delivery_fresh
+        ):
             out["stamp_veto_withheld"] = (
                 f"newest {kind} stamp is {out['stamp_age_over_interval']:.2f}x "
                 f"its {interval_s:.0f}s interval, but {gate_fraction * 100:.0f}% "
-                "of delivered fires self-gate, so the stamp measures the gate "
-                "and not the beat — the fires are arriving"
+                "of delivered fires self-gate and a delivery landed "
+                f"{newest_delivery_age_s:.0f}s ago, so the stamp measures the "
+                "gate and not the beat — the fires are arriving"
             )
         elif age > tolerance_s:
             out["verdict"] = "missing"
@@ -632,6 +716,22 @@ def adherence(
                 f"still reads {ratio:.2f} because it averages over "
                 f"{window_s / 3600.0:.1f}h and cannot see an outage this short"
             )
+            # CERT-1943: on a task that DOES self-gate materially, the reader's
+            # first objection to `missing` is the one the exemption above
+            # exists to answer — "it self-gates, so of course nothing started".
+            # The row has to pre-empt it with the fact that overrode it, or
+            # this verdict looks like the false positive rather than the catch.
+            if (
+                gate_fraction is not None
+                and gate_fraction > SELF_GATE_MATERIAL_RATIO
+                and out["delivery_age_s"] is not None
+            ):
+                out["reason"] += (
+                    f". {gate_fraction * 100:.0f}% of fires self-gate, which "
+                    "would normally excuse a stale start stamp — but the last "
+                    f"DELIVERY was also {out['delivery_age_s']:.0f}s ago, so "
+                    "there is nothing arriving for the gate to decline"
+                )
             return out
 
     # Runtime-over-interval is checked FIRST and reported even when the fire

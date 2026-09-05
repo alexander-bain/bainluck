@@ -190,6 +190,31 @@ def _stamp_ages_s(metric, now_epoch):
             _age(metric.get("last_started_at")))
 
 
+def _delivery_age_s(delivery, now_epoch):
+    """Seconds since this task was last DELIVERED, or ``None`` if unknown.
+
+    CERT-1943. The sibling of ``_stamp_ages_s`` for the delivery counter, and it
+    inherits that helper's ahead-drift rule verbatim: a stamp in the FUTURE
+    returns ``None`` rather than a negative age, because a negative age passes
+    every ``<= tolerance`` test as the freshest possible reading — and here that
+    would make a clock-skewed stamp withhold the veto on a genuinely dead beat,
+    which is the exact failure this repair exists to close.
+
+    ``None`` is UNKNOWN, not "long ago". The delivery counter has a 24h TTL and
+    survives a dyno restart while this stamp is written fresh, so an absent
+    stamp is the normal state of a healthy task for one interval after every
+    deploy — see ``get_all_task_deliveries``.
+    """
+    seen = (delivery or {}).get("last_delivered_at")
+    if seen is None:
+        return None
+    try:
+        age = now_epoch - float(seen)
+    except (TypeError, ValueError):
+        return None
+    return age if age >= 0 else None
+
+
 def build_schedule_adherence(
     beat_schedule, metrics, label_map, deliveries=None, now_epoch=None
 ):
@@ -264,6 +289,11 @@ def build_schedule_adherence(
             # grader computes can never drift from the TTL that creates it.
             newest_terminal_age_s=terminal_age,
             newest_start_age_s=start_age,
+            # CERT-1943: the delivery MOMENT. `None` when nothing has stamped a
+            # delivery yet — passed straight through rather than defaulted to a
+            # number, because the grader treats unknown and stale oppositely and
+            # a 0 here would read as epoch 1970, the deadest row on the board.
+            newest_delivery_age_s=_delivery_age_s(d, now_epoch),
             counter_ttl_s=float(WINDOW_COUNTER_TTL),
         )
 

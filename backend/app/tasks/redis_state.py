@@ -667,6 +667,28 @@ def record_task_started(task_name: str):
 #: be mistaken for one.
 TASK_DELIVERY_PREFIX = "bainluck:task_deliveries"
 
+#: When each task was LAST delivered — CERT-1943 repair, a moment beside the
+#: count above.
+#:
+#: NOT a second window stamp, and the distinction is the one LAT-P024 was
+#: written about. The `:since` key that died there was a window START under
+#: `NX`, and `NX` — the thing that stopped it being overwritten — was also what
+#: stopped it ever being corrected, so it could never resynchronise with the
+#: counter it described. This is the opposite object: a LAST-SEEN moment that
+#: every delivery overwrites, so it has no birthday to drift from and nothing
+#: to resynchronise. Written with `SET ... EX` in one command, never `SETEX`
+#: after the fact, because a stamp whose expiry is a separate write is immortal
+#: for exactly as long as the process that dies between them.
+#:
+#: The TTL matches `WINDOW_COUNTER_TTL` deliberately, and the reason is the
+#: whole point of the key: it must go STALE AND READABLE rather than vanish. A
+#: short TTL would delete precisely the evidence the veto needs — a task dead
+#: for ten minutes would present no stamp at all, which reads as "unknown" and
+#: withholds the veto, leaving the hole this key exists to close. At 24h it
+#: expires alongside the delivery counter, so the two go unknown together and
+#: the grader falls back to its no-counter branch instead of half-reading one.
+TASK_LAST_DELIVERY_PREFIX = "bainluck:task_last_delivery"
+
 
 def record_task_delivery(full_task_name: str):
     """Count one DELIVERY of a celery task — LAT-P039 (#1609, #1716).
@@ -738,19 +760,37 @@ def record_task_delivery(full_task_name: str):
         r = get_redis_client()
         pipe = r.pipeline()
         _bump_window_counter(pipe, f"{TASK_DELIVERY_PREFIX}:{full_task_name}")
+        # The moment, beside the count. No `nx`: this one is MEANT to be
+        # overwritten on every delivery — that is what makes it a recency
+        # signal rather than the window start LAT-P024 deleted. Expiry rides
+        # the same SET so the key can never outlive its own TTL.
+        pipe.set(
+            f"{TASK_LAST_DELIVERY_PREFIX}:{full_task_name}",
+            time.time(),
+            ex=WINDOW_COUNTER_TTL,
+        )
         pipe.execute()
     except Exception:
         pass
 
 
 def get_all_task_deliveries() -> dict:
-    """``{celery task name: {"fires": int, "window_s": float|None}}``.
+    """``{name: {"fires": int, "window_s": float|None, "last_delivered_at": float|None}}``.
 
     ``window_s`` comes from the counter's own TTL via ``_window_age_s``, so a
     fire count is never handed to a caller without the window that makes it a
     rate — the LAT-P024 lesson, applied at birth this time rather than retrofitted.
     ``None`` is passed through rather than flattened to 0; adherence refuses to
     grade on it, which is the correct reading of "not measurable".
+
+    ``last_delivered_at`` is the CERT-1943 repair's input: an epoch seconds
+    moment, or ``None`` when no delivery has been stamped since the key was
+    born. ``None`` means UNKNOWN and must not be read as "long ago" — a
+    freshly-released dyno has live delivery COUNTERS (24h TTL, they survive the
+    restart) and no stamp yet, so treating the gap as staleness would grade
+    every self-gating beat `missing` for one interval after every deploy. That
+    is the false positive CERT-1932 blocked, and it is the reason this is a
+    three-state field rather than a number with a sentinel.
     """
     try:
         r = get_redis_client()
@@ -765,7 +805,19 @@ def get_all_task_deliveries() -> dict:
                 fires = int(r.get(key_str) or 0)
             except (TypeError, ValueError):
                 continue
-            out[name] = {"fires": fires, "window_s": _window_age_s(r, key_str)}
+            # A malformed or absent stamp degrades to None (unknown), never to
+            # 0 — epoch 0 is 1970, which would present as the deadest task on
+            # the board and fire the very veto this field exists to gate.
+            try:
+                raw_seen = r.get(f"{TASK_LAST_DELIVERY_PREFIX}:{name}")
+                last_delivered_at = float(raw_seen) if raw_seen is not None else None
+            except (TypeError, ValueError):
+                last_delivered_at = None
+            out[name] = {
+                "fires": fires,
+                "window_s": _window_age_s(r, key_str),
+                "last_delivered_at": last_delivered_at,
+            }
         return out
     except Exception:
         return {}
