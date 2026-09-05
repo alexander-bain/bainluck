@@ -54,13 +54,6 @@ from app.utils.authority_agreement import (
 # Imported, never restated: the seven-day count has one owner.
 from app.utils.authority_streak import REQUIRED_STREAK_DAYS, compute_streak
 
-# lane1/132, CERT-1871: the gate's fourth input. Agreement is measured over the
-# games both sources see and is therefore silent about whether StatPal could
-# find a game ESPN missed — a different capability, and the one a flip actually
-# hands over. Imports nothing beyond `typing`, so it costs a config import
-# nothing.
-from app.utils.statpal_discovery_coverage import can_discover
-
 #: The two answers a sport's authority setting can hold.
 ESPN = "espn"
 STATPAL = "statpal"
@@ -129,17 +122,15 @@ def flip_permitted(
     `state`. The counting is `compute_streak`'s, not this module's.
 
     Returns `(permitted, why)`, and `why` is the point of the function. "No" has
-    SIX meanings here:
+    FIVE meanings here:
 
       * no dark id join for this sport at all, so there is nothing to flip TO;
-      * no scheduled StatPal DISCOVERY path, so StatPal could not find a game
-        ESPN missed however well the two agree about the games both can see;
       * no governing number ruled, so no day could ever have advanced (D63);
       * no ledger at all — not measured, which is not a streak of zero;
       * a streak that is real and not seven days long yet;
       * a streak broken by a day under the bar, or by a day nobody recorded.
 
-    Only the last is a problem. Returning a bare `False` for all six is how a
+    Only the last is a problem. Returning a bare `False` for all five is how a
     sport that needs a ruling gets waited on instead, which is the failure this
     lane spent 9/4 unwinding on MLB. The last two share a wording — both are
     reported with `compute_streak`'s own `stopped_by` detail, which names the day
@@ -153,20 +144,6 @@ def flip_permitted(
         return False, (
             f"{sport_key} has no shadow stamper, so there is no id join to flip "
             "onto — this is a build step, not a wait"
-        )
-    if not can_discover(sport_key):
-        # Agreement is not coverage (lane1/132, CERT-1871). The streak is scored
-        # on the INTERSECTION — the games both sources list — which is exactly
-        # where the two agree by construction. A livescore-only sport can post a
-        # flawless seven days and still be unable to enumerate its own fixtures,
-        # and flipping it would make StatPal the source of record for a sport
-        # StatPal cannot find games in. That breaks the first clause of the ship
-        # this switch serves rather than serving it.
-        return False, (
-            f"{sport_key} has no scheduled StatPal discovery path, so StatPal "
-            "cannot find a game ESPN missed — its agreement streak is measured "
-            "only over the games both sources already see. This is a build "
-            "step, not a wait"
         )
     if not GOVERNING_IDENTITY_NUMBERS.get(sport_key):
         return False, (
