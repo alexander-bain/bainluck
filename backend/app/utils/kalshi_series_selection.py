@@ -214,8 +214,181 @@ def select_discovered_series(
         "selected": [t for t, _ in selected],
         "selected_count": len(selected),
         "selected_open_events": sum(counts[t] for t, _ in selected),
+        # CERT-953: what the census said EACH selected series holds. The fetch
+        # needs it per series to say "KXATPDOUBLES was supposed to bring 32 and
+        # brought 0" rather than reporting one aggregate in which a dead series
+        # is invisible behind a live sibling.
+        "selected_expected": {t: counts[t] for t, _ in selected},
         "skipped": skipped,
         "skipped_detail": detail,
         "dormant_sample": sorted(dormant)[:_DORMANT_SAMPLE],
     }
     return selected, receipt
+
+
+#: Hard caps on the persisted copy of a discovery receipt. The live receipt is
+#: bounded by policy (see the module docstring); these bound it by arithmetic,
+#: because the scan report keeps 48 of them in a shared 100MB Redis and a
+#: catalog that grows must not turn telemetry into a memory problem.
+_PERSIST_MAX_LIST = 24
+_PERSIST_MAX_DETAIL = 24
+
+#: The receipt keys worth keeping across beats, in reading order. `source` and
+#: `events_added` are the two the reader is actually here for — everything else
+#: explains a number that surprised them.
+_PERSIST_SCALARS = (
+    "source",
+    "events_added",
+    "series_fetched",
+    "discovered",
+    "with_open_events",
+    "selected_count",
+    "selected_open_events",
+    "fetch_truncated_after",
+    "not_cached",
+    "error",
+)
+
+
+def summarize_discovery_receipt(receipt: Optional[Mapping]) -> dict:
+    """The part of a discovery receipt worth persisting on every beat.
+
+    The receipt as measured carries two nested sub-receipts (the catalog read
+    and the census walk) that answer "why is this number what it is" for the
+    beat that produced it. Across 48 ring entries they are noise, so this keeps
+    the counters and drops the sub-receipts — with one exception: `census` is
+    reduced to `exhausted`, because a census that did not exhaust is the one
+    condition under which a *small* `selected_count` is expected rather than
+    alarming, and a reader who cannot see it will misread the beat.
+
+    Never raises. A receipt is telemetry, and telemetry that can fail the report
+    it rides on is worse than no telemetry (the whole reason this function
+    exists is that the receipt was silently dropped instead).
+    """
+    if not receipt:
+        return {"source": "absent"}
+    try:
+        out: dict = {}
+        for key in _PERSIST_SCALARS:
+            if key in receipt:
+                out[key] = receipt[key]
+        out.setdefault("source", "unknown")
+
+        selected = receipt.get("selected")
+        if isinstance(selected, (list, tuple)):
+            out["selected"] = [str(s) for s in selected[:_PERSIST_MAX_LIST]]
+            if len(selected) > _PERSIST_MAX_LIST:
+                out["selected_truncated"] = len(selected) - _PERSIST_MAX_LIST
+
+        skipped = receipt.get("skipped")
+        if isinstance(skipped, Mapping):
+            out["skipped"] = {str(k): int(v) for k, v in skipped.items()}
+
+        detail = receipt.get("skipped_detail")
+        if isinstance(detail, Mapping):
+            items = sorted(detail.items())[:_PERSIST_MAX_DETAIL]
+            out["skipped_detail"] = {str(k): str(v) for k, v in items}
+            if len(detail) > _PERSIST_MAX_DETAIL:
+                out["skipped_detail_truncated"] = len(detail) - _PERSIST_MAX_DETAIL
+
+        census = receipt.get("census")
+        if isinstance(census, Mapping) and "exhausted" in census:
+            out["census_exhausted"] = bool(census["exhausted"])
+
+        # CERT-953: the per-series results, which are the only fields that can
+        # answer "did THIS draw arrive". Bounded like everything else here, but
+        # ordered so the ones a reader must not lose survive the cap: anything
+        # that returned nothing or errored sorts first.
+        results = receipt.get("series_results")
+        if isinstance(results, Mapping):
+            def _rank(item):
+                ticker, res = item
+                if not isinstance(res, Mapping):
+                    return (2, ticker)
+                bad = bool(res.get("error")) or int(res.get("returned") or 0) <= 0
+                return (0 if bad else 1, ticker)
+
+            kept = sorted(results.items(), key=_rank)[:_PERSIST_MAX_DETAIL]
+            out["series_results"] = {
+                str(t): {
+                    k: v for k, v in dict(r).items()
+                    if k in ("expected", "returned", "unique_added",
+                             "truncated", "parse_failed", "error")
+                }
+                for t, r in kept
+                if isinstance(r, Mapping)
+            }
+            if len(results) > _PERSIST_MAX_DETAIL:
+                out["series_results_truncated"] = len(results) - _PERSIST_MAX_DETAIL
+
+        return out
+    except Exception:  # noqa: BLE001 — see docstring
+        return {"source": "unsummarizable"}
+
+
+#: Receipt `source` values that mean the discovery stage actually resolved a
+#: series list this beat, so `events_added == 0` is a result and not a no-op.
+_DISCOVERY_RAN_SOURCES = frozenset({"live", "cache"})
+
+
+def discovery_dead_series(receipt: Optional[Mapping]) -> list[str]:
+    """Selected series the venue returned NOTHING for — named, one by one.
+
+    This is the gotcha #53 reading for this stage, and it has to be per series.
+    The aggregate `events_added` cannot carry it, in both directions (CERT-953):
+
+    * **It hides a real outage.** `events_added` sums every selected series, so
+      a dead `KXATPDOUBLES` returning zero is invisible behind a live
+      `KXWTADOUBLES` that added events. The alarm would stay quiet through
+      exactly the half-outage it exists to catch — the men's draw vanishing off
+      the site while the women's draw keeps it looking healthy.
+    * **It invents one that is not there.** `events_added` counts only events
+      the main and supplementary scans had not already mapped. A perfectly
+      healthy doubles fetch whose events the main scan already held contributes
+      zero UNIQUE additions, and an aggregate alarm would fire on a beat where
+      nothing whatsoever is wrong.
+
+    So the question is asked of the venue's own answer for each series:
+    `returned` — how many events came back for this ticker, counted before the
+    dedup — plus an outright fetch error. Neither depends on a sibling, and
+    neither depends on what we already held.
+
+    Deliberately NOT dead:
+
+    * a series the reserve never reached (`truncated` with nothing returned).
+      `fetch_truncated_after` already says that precisely, and alarming on it
+      would turn a budget signal into a coverage alarm.
+    * a beat that selected nothing at all. The `skipped` counters explain it,
+      and firing every night the tournament is dark is how an alarm gets
+      ignored on the night it matters.
+    * a stage that never ran (`not_wired`, `disabled`, `failed`) — those name
+      their own failure in `source`.
+
+    Returns the sorted tickers so the caller can print them; empty means clean.
+    """
+    if not receipt:
+        return []
+    try:
+        if str(receipt.get("source") or "") not in _DISCOVERY_RAN_SOURCES:
+            return []
+        results = receipt.get("series_results")
+        if not isinstance(results, Mapping):
+            return []
+        dead = []
+        for ticker, res in results.items():
+            if not isinstance(res, Mapping):
+                continue
+            if res.get("error"):
+                dead.append(str(ticker))
+                continue
+            if int(res.get("returned") or 0) > 0:
+                continue
+            # Zero returned. Only an alarm if we actually got to ask.
+            if res.get("truncated") or res.get("parse_failed"):
+                continue
+            if int(res.get("expected") or 0) <= 0:
+                continue
+            dead.append(str(ticker))
+        return sorted(dead)
+    except Exception:  # noqa: BLE001 — telemetry never raises
+        return []

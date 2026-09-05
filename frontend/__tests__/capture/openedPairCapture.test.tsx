@@ -102,6 +102,7 @@ jest.mock("@/hooks", () => ({
 
 import FeedCard from "@/components/FeedCard";
 import EventCard from "@/components/EventCard";
+import { PREMATCH_SAID } from "@/lib/prematchReading";
 import { renderedDuelPercents } from "@/lib/renderedPercent";
 import type { Event, FeedEventData, FeedItem } from "@/lib/types";
 
@@ -306,13 +307,15 @@ function printedOpened(html: string): [number, number] {
   // sentence, which names the team each number is about — the whole reason the
   // footer was replaced, and the only way to read [home, away] back out of a
   // layout whose visible order is away-first.
-  // BOTH phrasings. The sentence names its rung — "the market gave" for a
-  // prediction market, "sportsbooks opened" for the books rung — and every
-  // specimen here is an `opening_odds` (books) card, so matching only the first
-  // would read zero cells and throw on the whole census.
+  // ONE phrasing since D65 (Alex: "shouldn't reference sportsbooks"), and the
+  // pattern is BUILT FROM `PREMATCH_SAID` rather than retyped. This extractor
+  // used to spell out both halves of the old rung-dependent fork, and every
+  // specimen here is an `opening_odds` (books) card — so when the phrase moved,
+  // a hand-copied literal read zero cells and threw on the whole census. Derived
+  // from the constant, the census cannot be broken by rewording again.
   const perTeam = Array.from(
     text.matchAll(
-      /Before the game, (?:the market gave|sportsbooks opened) .+? (\d+)%/g,
+      new RegExp(`${PREMATCH_SAID.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} .+? (\\d+)%`, "g"),
     ),
   ).map((m) => Number(m[1]));
   if (perTeam.length === 2) return [perTeam[1], perTeam[0]];

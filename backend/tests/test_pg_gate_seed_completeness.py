@@ -59,6 +59,7 @@ COVERED = (
     "test_link_tennis_already_linked_pg.py",
     "test_link_tennis_statpal_real_postgres.py",
     "test_rekey_statpal_anchors_real_postgres.py",
+    "test_restore_3026_jsonb_roundtrip_pg.py",
 )
 
 INTEGRATION_DIR = Path(__file__).parent / "integration"

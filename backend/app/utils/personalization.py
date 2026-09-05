@@ -27,7 +27,7 @@ Multiplier sources (applied additively, then clamped):
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 from app.utils.feed_market_quality import _SPORTS_CATEGORIES
@@ -583,6 +583,206 @@ def _semantic_dismiss_token_set(tokens) -> set[str]:
         for token in tokens
         if token and not str(token).startswith(_SEMANTIC_DISMISS_IGNORED_PREFIXES)
     }
+
+
+def followed_sport_categories(
+    sport_affinities: dict[str, float] | None,
+    *,
+    threshold: float = HIGH_AFFINITY_THRESHOLD,
+) -> set[str]:
+    """The LLM sport CATEGORIES the viewer has positively opted into.
+
+    ux/1070 item 1. Everywhere else in this module an affinity is a dial — it
+    scales a score up or down and nothing is ever excluded by it. My Stuff is
+    the one surface where the question is not "how much" but "is this yours at
+    all", so it needs a boolean read of the same dial, in one place, rather than
+    each caller picking its own cut.
+
+    The cut is `HIGH_AFFINITY_THRESHOLD`, the value this module already calls a
+    positive signal: onboarding's four steps are 1.0 "love it", 0.3
+    "sometimes", 0.1 "if wild", 0.0 "nah", so this admits "love it" and nothing
+    else. A page that promises only what you follow may not fill itself with
+    what you said you'd watch if it got wild.
+
+    Keys are affinity keys as onboarding writes them (`mma_mixed_martial_arts`,
+    `golf_pga`, `tennis_atp_us_open`, `basketball_nba`, …) and are resolved to
+    categories through `SPORT_PREFIX_TO_LLM_CATEGORY` — the same map the rest of
+    the codebase reads a sport key's category from. Non-sport affinity keys
+    (`tech`, `politics`, `culture`, …) have no sport prefix and drop out, which
+    is correct: they are Discover interests, not sports you follow.
+    """
+    from app.utils.sport_keys import SPORT_PREFIX_TO_LLM_CATEGORY
+
+    followed: set[str] = set()
+    for affinity_key, value in (sport_affinities or {}).items():
+        try:
+            if float(value) < threshold:
+                continue
+        except (TypeError, ValueError):
+            continue
+        root = str(affinity_key).split("_")[0].lower()
+        category = SPORT_PREFIX_TO_LLM_CATEGORY.get(root)
+        if category:
+            followed.add(category)
+    return followed
+
+
+#: How far ahead a followed sport's markets count as "what is on" (ux/1070 item
+#: 5). Two weeks: long enough to hold the tournament that starts this week and
+#: the one after it, short enough that a golf follow is never the 2027 Ryder Cup.
+MY_STUFF_FOLLOW_WINDOW_DAYS = 14
+
+#: Tier 3 is the AWARDS tier. Kalshi files the PGA's FILM awards under
+#: `llm_sport_category = "golf"` ("PGA Award for Best Animated Theatrical Motion
+#: Picture?"), so a golf follow that admitted tier 3 would put the
+#: Oscars-adjacent ones on a golf fan's page.
+_MY_STUFF_AWARD_TIER = 3
+
+
+#: A field needs more entrants than a match has sides. Below this a "field" is
+#: either a two-sided matchup or — for six of the eighteen in-window golf markets
+#: measured on 2026-09-04 — an empty shell with no outcomes at all, which renders
+#: as a card with nothing on it.
+_MY_STUFF_MIN_FIELD_OUTCOMES = 3
+
+#: How old a PRICE POLL may be and still be "what is on this week".
+#:
+#: MEASURED, not chosen. On production 2026-09-04 the markets this section admits
+#: split into two populations with nothing between them: the live ones were
+#: polled 0.0h ago (the DataGolf Omega European Masters grid) and 5.3–5.7h ago
+#: (the Polymarket US Open Winner fields), and the dead ones 92.9h, 237.4–239.9h,
+#: 656.2h and 1023.3h ago. No market anywhere between 6h and 92h, so the cut is
+#: not knife-edge and a late poll cannot flap a card in and out.
+#:
+#: 48h sits in that gap with room on both sides: a source that refreshes at least
+#: every two days qualifies, and the 10-day-old US Open bracket does not.
+#:
+#: 🔴 WHAT THE AGE IS MEASURED **OF** IS PART OF THE CONSTANT (CERT-949). The
+#: caller must pass the newest PRICE-POLL stamp — `MAX(FuturesOutcome.
+#: last_updated)`, carried to the feed as `price_polled_at`. It first passed
+#: `FuturesMarket.updated_at`, which is `onupdate` on any write, and the
+#: six-hourly hook enricher bumps it while touching no price. The two columns
+#: agreeing to within 0.4h across that day's in-window population did NOT license
+#: the swap, and that is the lesson worth keeping: the enricher only rewrites
+#: markets whose hooks have gone stale, so a population sampled at one moment
+#: cannot show you the rows it is about to make look fresh.
+MY_STUFF_MAX_PRICE_AGE_HOURS = 48
+
+
+def my_stuff_admits_followed_sport(
+    *,
+    category: str | None,
+    market_tier: int | None,
+    resolution_date: datetime | None,
+    followed_categories: set[str],
+    now: datetime,
+    name: str | None = None,
+    outcome_count: int = 0,
+    priced_at: datetime | None = None,
+    window_days: int = MY_STUFF_FOLLOW_WINDOW_DAYS,
+    max_price_age_hours: int = MY_STUFF_MAX_PRICE_AGE_HOURS,
+) -> bool:
+    """Does a followed SPORT admit this futures market to My Stuff on its own?
+
+    ux/1070 item 5. My Stuff's futures half admits a market only when it touches
+    one of the viewer's TEAMS, so a sport played by individuals can never reach
+    it: golf and tennis have no team to match on. Alex follows PGA golf at 1.0
+    and this week the site holds a whole tournament grid — Winner, Top 5, Top
+    10, Top 20, Make the Cut — and his My Stuff could show none of it
+    (2026-09-04).
+
+    So a followed sport admits its own markets, bounded four ways, because
+    "everything in golf" is a different page:
+
+      * the sport must be FOLLOWED — `followed_categories` is the caller's,
+        already narrowed to the sports that have no team dimension, so this
+        never loosens the team-match rule for baseball or football;
+      * the market must resolve inside the window — this is "what is on this
+        week", not the 2027 Ryder Cup — and an undated market is NOT admitted,
+        because a missing date is not evidence of imminence;
+      * awards are excluded (`_MY_STUFF_AWARD_TIER`);
+      * the market must be a FIELD, not one match — see below;
+      * the price must be FRESH — see below.
+
+    ═══ WHY THE FIELD BOUND IS THE LOAD-BEARING ONE ═══
+
+    The first three bounds admit 4,039 markets to a page for someone who follows
+    golf and tennis (production, 2026-09-04), and 3,802 of them are two-sided
+    match props: "Set 1 Winner: Stolarik vs Januchowski", over and over, from the
+    ITF satellite circuit. That page is worse than the one this whole queue is
+    fixing. So a followed sport admits a FIELD — a question about who, out of
+    everyone, does a thing — and never a question about one match:
+
+      * `outcome_count` at least `_MY_STUFF_MIN_FIELD_OUTCOMES`, which also drops
+        the empty shells (the "DP World Tour: European Masters" grid duplicates
+        the Omega European Masters one and carries zero outcomes);
+      * the name must not name two participants. A market about one match IS the
+        game archetype — two participants, two numbers, a date — and belongs with
+        the games, which is ux/1070 item 2's ruling applied to the other half of
+        the page. The count alone does not settle it: a per-match correct-score
+        market carries 14 to 18 outcomes and is still one match.
+
+    Measured together on the in-window population: golf 18 → 12 (the Omega
+    European Masters and Simmons Bank Open grids entire — Winner, Top 5, Top 10,
+    Top 20, Make the Cut — which is exactly what Alex asked for), tennis 4,021 →
+    11 (both US Open singles winners and the four To-Reach rounds per draw).
+
+    ═══ AND THE PRICE HAS TO BE FROM THIS WEEK TOO ═══
+
+    Those 23 were measured again for FRESHNESS and 11 of them were not current.
+    Eight "US Open 2026: To Reach the Quarterfinals" style fields had not been
+    polled in ten days — during the tournament, so their brackets describe a draw
+    whose players have since been knocked out. "Scottie Scheffler: Next
+    Tournament Win" was 43 days old and had never moved. "Who will attend the US
+    Open Finals?" was 27 days old. A "First Round Leader" market, four days old,
+    on a tournament in its third round.
+
+    Nearly half the section would have been numbers that are no longer true, on a
+    page headed "what is on this week", which is a worse page than the one this
+    queue set out to fix and is the reliability bar rather than a nicety. So
+    `priced_at` — the newest outcome PRICE POLL on the market,
+    `MAX(FuturesOutcome.last_updated)` — must be inside `max_price_age_hours`,
+    and an unpriced market is not admitted.
+
+    `priced_at` IS NOT `FuturesMarket.updated_at`, and the difference is the
+    whole bound: see the note on `MY_STUFF_MAX_PRICE_AGE_HOURS` (CERT-949). A
+    caller with only a market-row timestamp to hand should pass `None` and show
+    nothing rather than pass the wrong clock — absent evidence excludes, which is
+    what every other bound in this function does too.
+
+    Freshness is checked LAST because it is the bound most likely to change
+    underneath us: lane1b's series-discovery ingest (#2927) is what makes the
+    stale Kalshi rows current, and when it lands these cards start appearing
+    without this function changing.
+
+    `now` and `resolution_date` must agree about tzinfo; callers normalise with
+    `_utc` before calling, because a naive/aware compare raises rather than
+    answering the question.
+    """
+    from app.utils.event_tennis import is_matchup_market
+
+    if not category:
+        return False
+    if category.strip().lower() not in followed_categories:
+        return False
+    if market_tier == _MY_STUFF_AWARD_TIER:
+        return False
+    if outcome_count < _MY_STUFF_MIN_FIELD_OUTCOMES:
+        return False
+    # Sport-agnostic despite where it lives: the regex is "vs / v. / def. /
+    # beats", which names two participants in any sport. Shared rather than
+    # copied so a widening lands on both callers at once.
+    if is_matchup_market(name):
+        return False
+    if resolution_date is None:
+        return False
+    if not (now <= resolution_date <= now + timedelta(days=window_days)):
+        return False
+    # A price we have never captured is not a fresh price. Same direction as
+    # every other bound here: absent evidence excludes.
+    if priced_at is None:
+        return False
+    return now - priced_at <= timedelta(hours=max_price_age_hours)
 
 
 def _lookup_sport_affinity(

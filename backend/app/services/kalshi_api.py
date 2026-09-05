@@ -1470,6 +1470,15 @@ class KalshiAPIService(BaseAPIClient):
                 }
                 logger.warning("Kalshi series discovery failed: %s", e)
 
+        # CERT-953: the census count per selected series, used below to say what
+        # each one was SUPPOSED to bring. A cached receipt carries it too, so a
+        # cache-served beat alarms on the same evidence as a live one.
+        _disc_expected: dict = {}
+        try:
+            _disc_expected = dict(_discovery_receipt.get("selected_expected") or {})
+        except Exception:  # noqa: BLE001 — telemetry never breaks the fetch
+            _disc_expected = {}
+
         # main scan → guaranteed floor → discovered → market backfill, each
         # stopping where the next one's floor begins. The arithmetic is a pure
         # function because #999 and #2214 were both the same off-by-one-stage
@@ -1744,19 +1753,37 @@ class KalshiAPIService(BaseAPIClient):
         # covered and is empty.
         _disc_added = 0
         _disc_series_fetched = 0
+        # CERT-953: per-SERIES results, because the aggregate cannot carry the
+        # ship. `events_added` sums every selected series AND counts only events
+        # the main/supplementary scan had not already mapped, so it fails in
+        # both directions: a dead KXATPDOUBLES hides behind a live sibling that
+        # added events, and a perfectly healthy doubles fetch whose events the
+        # main scan already held reports zero unique additions and would alarm.
+        # `returned` is the number the VENUE handed back for this series — the
+        # only one of the three that answers "did this draw arrive".
+        _disc_series: dict[str, dict] = {}
         for _dst, _dpages in _discovered_series:
             if _past_disc_fetch_deadline():
                 _discovery_receipt["fetch_truncated_after"] = _disc_series_fetched
+                # Series never attempted are NOT zero-return series; recording
+                # them as such would alarm on the reserve running out, which
+                # `fetch_truncated_after` already says precisely.
                 logger.warning(
                     "Kalshi discovery reserve spent after %d/%d series",
                     _disc_series_fetched, len(_discovered_series),
                 )
                 break
             _progress(f"fetch:disc:{_dst}")
+            _dsr = _disc_series.setdefault(
+                _dst,
+                {"expected": int(_disc_expected.get(_dst) or 0),
+                 "returned": 0, "unique_added": 0, "truncated": False},
+            )
             try:
                 _dcursor = None
                 for _dp in range(_dpages):
                     if _past_disc_fetch_deadline():
+                        _dsr["truncated"] = True
                         break
                     await asyncio.sleep(0.2)
                     _progress(f"fetch:disc:{_dst}:p{_dp}")
@@ -1778,13 +1805,19 @@ class KalshiAPIService(BaseAPIClient):
                         )
                     except Exception:
                         _progress(f"fetch:disc:{_dst}:p{_dp}:parse_timeout")
+                        _dsr["parse_failed"] = True
                         _dparsed = []
                     for parsed_event in _dparsed:
-                        if (
-                            parsed_event
-                            and parsed_event.event_ticker not in all_events
-                        ):
+                        if not parsed_event:
+                            continue
+                        # Counted BEFORE the dedup check: this is what the venue
+                        # listed for this series, which is the question the
+                        # alarm asks. Whether we already had the event is our
+                        # bookkeeping, not the draw's existence.
+                        _dsr["returned"] += 1
+                        if parsed_event.event_ticker not in all_events:
                             all_events[parsed_event.event_ticker] = parsed_event
+                            _dsr["unique_added"] += 1
                             _disc_added += 1
                             # Queue 355 / #1845: `supplementary_events` is one
                             # half of an identity the report CHECKS every beat
@@ -1798,10 +1831,12 @@ class KalshiAPIService(BaseAPIClient):
                         break
                 _disc_series_fetched += 1
             except Exception as e:
+                _dsr["error"] = f"{type(e).__name__}: {e}"
                 logger.debug("Discovered-series fetch for %s failed: %s", _dst, e)
 
         _discovery_receipt["series_fetched"] = _disc_series_fetched
         _discovery_receipt["events_added"] = _disc_added
+        _discovery_receipt["series_results"] = _disc_series
         _tel["series_discovery"] = _discovery_receipt
         if _disc_added:
             logger.info(

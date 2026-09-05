@@ -1177,6 +1177,18 @@ export interface FeedConceptData {
   // probability treatment rather than inventing a second one. Absent (not null)
   // when the backend found no usable field — presence IS the "has a leader" test.
   leader?: FeedConceptLeader | null;
+  // ux/1070 item 2: a fight card's MAIN EVENT, as a bout. Two participants, two
+  // numbers, one date — the game archetype, from the one two-sided market, so
+  // the pair is that market's own and cannot be assembled into a sum that is
+  // not 100. Absent (not null) when the card has no priced main event, which is
+  // what makes `leader` still the fallback rather than dead code.
+  headline_bout?: FeedConceptBout | null;
+}
+
+/** The two sides of one bout, favourite first. */
+export interface FeedConceptBout {
+  competitors: { name: string; probability: number | null }[];
+  commence_time?: string | null;
 }
 
 // #1939: web's half of #1882. The backend has served this since #1882 and iOS has
