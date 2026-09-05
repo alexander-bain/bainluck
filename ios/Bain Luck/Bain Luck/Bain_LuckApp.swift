@@ -127,6 +127,18 @@ struct Bain_LuckApp: App {
                         NotificationManager.shared.setUser(id: userId)
                         AnalyticsService.setCrashReportingUserId(String(userId))
                     }
+                    // The LOOK rig's one way to reach a screen that is not the
+                    // default tab (#3157). Routed through `handleURL`, so it can
+                    // only ever open something a real link could open, and only
+                    // when `-launch_route` was passed. Last in this task on
+                    // purpose: nothing above it is allowed to depend on the
+                    // rig's presence.
+                    if let route = LaunchRig.route() {
+                        try? await Task.sleep(
+                            nanoseconds: UInt64(LaunchRig.routeDelay * 1_000_000_000)
+                        )
+                        _ = navCoordinator.handleURL(route)
+                    }
                 }
                 #if os(iOS)
                 .onReceive(NotificationCenter.default.publisher(for: UIScene.didActivateNotification)) { _ in

@@ -46,18 +46,16 @@ with open(path,"wb") as f: plistlib.dump(d, f)
 print("  seeded %d cooled categories" % len(cooled))
 PY
 
-# -suppress_notification_prompt and -bainluck_telemetry_consent are honoured ON
-# MASTER (#3141): without the first, the permission alert lands 5s in and covers
-# the middle of every shot below, and no amount of `simctl privacy deny` or
-# erasing suppresses it. `-temp_screenshot_tab` / `-temp_screenshot_counts` were
-# passed here for weeks and read by NOTHING — they exist only in the hand-patched
-# scaffold (tools/native-look-scaffold-TempScreenshot.swift.txt), so the rig
-# looked like it was selecting a tab and was in fact inert. Discover is the
-# default tab, which is the only reason these shots were ever of the right
-# screen. Patch the scaffold in if you need a tab this rig cannot reach.
+# All four arguments are honoured ON MASTER and pinned by tests (#3141, #3157).
+# Without -suppress_notification_prompt the permission alert lands 5s in and
+# covers the middle of every shot, and no amount of `simctl privacy deny` or
+# erasing suppresses it. -launch_debug_counts is what makes THIS script's
+# question answerable: G1's bar is a number, and it draws SERVED vs DRAWN on the
+# page. The `-temp_screenshot_*` arguments this script passed for weeks were read
+# by nothing; they are gone, along with the scaffold that defined them.
 xcrun simctl launch "$SIM" "$BUNDLE" \
   -suppress_notification_prompt YES -bainluck_telemetry_consent none \
-  -discover_onboarded YES >/dev/null 2>&1
+  -discover_onboarded YES -launch_debug_counts YES >/dev/null 2>&1
 sleep 18
 xcrun simctl io "$SIM" screenshot "$OUT/G1-$LABEL-discover.png" >/dev/null 2>&1 \
   && echo "  shot G1-$LABEL-discover.png"

@@ -582,6 +582,35 @@ struct DiscoverView: View {
         }
     }
 
+    /// SHOWABLE-1 G1's own number, drawn for the camera (#3157).
+    ///
+    /// The gate is "Discover shows the feed the API sends (≥28 cards)", and a
+    /// screenshot of a page that looks populated does not settle a count — the
+    /// defect #1221 fixed was a page of 3 cards under a server page of 50, and
+    /// on a clean install it is invisible. So the rig photographs both halves:
+    /// SERVED is what the view model retained after decoding, DRAWN is what the
+    /// subtractive client filters left for the grid. G1 is green when DRAWN
+    /// clears the floor under a heavily cooled profile, and only that number
+    /// proves it.
+    ///
+    /// Nothing is drawn unless `-launch_debug_counts` was passed, so this is
+    /// invisible to every reader. `groupedItems` is the memo the grid itself
+    /// reads, not a second pipeline: a badge that computed its own answer could
+    /// agree with itself while the screen disagreed.
+    @ViewBuilder
+    private var debugCountsBadge: some View {
+        if LaunchRig.showsDebugCounts() {
+            Text("SERVED \(vm.items.count) · DRAWN \(groupedItems.count)")
+                .font(.system(size: 13, weight: .bold).monospacedDigit())
+                .foregroundStyle(.white)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .background(Capsule().fill(Color.black.opacity(0.82)))
+                .padding(.bottom, 10)
+                .accessibilityIdentifier("discover-debug-counts")
+        }
+    }
+
     /// Cheap signature of every input the presentation actually depends on. Any
     /// change here rebuilds `groupedItems` exactly once; anything NOT here (scroll
     /// position, impression set, daily-guess count, sheet flags…) reuses the memo.
@@ -1204,6 +1233,7 @@ struct DiscoverView: View {
             .frame(maxWidth: contentMaxWidth)
             .frame(maxWidth: .infinity)
         }
+        .overlay(alignment: .bottom) { debugCountsBadge }
         }
         .navigationTitle("Discover")
         #if os(iOS)

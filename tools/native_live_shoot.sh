@@ -8,17 +8,16 @@
 # Shoots Sports (Live Now) and Discover, plus the event page when an id is given.
 # Every shot is preceded by a terminate so the seed re-runs from a cold launch.
 #
-# WHICH LAUNCH ARGUMENTS ARE REAL (#3141 — read this before trusting a shot):
-#   ON MASTER, always honoured:
+# WHICH LAUNCH ARGUMENTS ARE REAL (#3141, #3157 — all four are honoured ON
+# MASTER and pinned by tests; there are no scaffold-only arguments any more):
 #     -suppress_notification_prompt YES   NotificationManager.suppressPromptKey
 #     -bainluck_telemetry_consent none    TelemetryConsent.storageKey
 #     -discover_onboarded YES             DiscoverView's onboarding seed
-#   SCAFFOLD-ONLY, INERT unless tools/native-look-scaffold-TempScreenshot.swift.txt
-#   has been hand-patched into the app first:
-#     -temp_screenshot_tab / _event / _hub / _scroll
-#   A scaffold-only argument does not fail — it is ignored, so the rig looks like
-#   it is driving the app while the app launches on its default tab. If you did
-#   not patch the scaffold in, believe the shot only for the default tab.
+#     -launch_route <url>                 LaunchRig.routeKey → the one router
+#     -launch_debug_counts YES            LaunchRig.debugCountsKey
+# The `-temp_screenshot_*` arguments this script used to pass were read by no
+# Swift file: the shots of Sports and of an event page were silently shots of
+# Discover, the default tab. See tools/native-shoot.sh for the general rig.
 #
 # ONE-TIME, on a simulator prompted before #3141 landed: the alert already on
 # screen belongs to SpringBoard and survives install/terminate, so the first shot
@@ -45,9 +44,13 @@ shoot () {   # shoot <name> <launch-args...>
 }
 
 echo "== pass $PASS  $(date -u +%H:%M:%SZ) =="
-shoot sports   -temp_screenshot_tab sports
-shoot discover -temp_screenshot_tab discover
+# `bainluck://ei` is the route that selects the Sports tab today. It reads odd
+# because it is named for the hall-of-fame link that happens to land there;
+# `bainluck://events` with no id is the obvious spelling and is currently
+# refused by the router (#3157 filed it, the fix is native/020 PR-B).
+shoot sports   -launch_route bainluck://ei
+shoot discover                                  # Discover is the default tab
 if [ -n "$EVENT" ]; then
-  shoot event-"$EVENT" -temp_screenshot_event "$EVENT"
+  shoot event-"$EVENT" -launch_route "bainluck://events/$EVENT"
 fi
 echo "== pass $PASS done  $(date -u +%H:%M:%SZ) =="
