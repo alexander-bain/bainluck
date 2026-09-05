@@ -1390,6 +1390,19 @@ async def _poll_kalshi_markets():
                     if _scan_tel.get("market_backfill_truncated_after") is None
                     else int(_scan_tel["market_backfill_truncated_after"])
                 ),
+                # #3149: what the series-batched shape cost, and whether it
+                # served every candidate it asked the venue for. Carried here
+                # in the same commit that computes them — the omission this
+                # module records three times over is not repeated a fourth.
+                market_backfill_series_worked=int(
+                    _scan_tel.get("market_backfill_series_worked") or 0
+                ),
+                market_backfill_requests=int(
+                    _scan_tel.get("market_backfill_requests") or 0
+                ),
+                market_backfill_unmatched=int(
+                    _scan_tel.get("market_backfill_unmatched") or 0
+                ),
                 # #2927: the discovery receipt, carried to the artifact. Same
                 # omission as the market_backfill_* block above and the same
                 # fix — the fetch measured it, nobody copied it, so it reached
