@@ -853,27 +853,50 @@ def reuse_scope(
 
 
 def _note_age(age_s: float) -> None:
-    """Record the age of ONE shared artifact this request consumed.
+    """Record ONE shared artifact this request consumed, as an ORIGIN.
 
-    A freshly-built artifact records `0.0` rather than nothing, deliberately: it
-    makes "this request touched a shared artifact and it was new" distinguishable
-    from "this request touched none at all". An empty sink then means the latter,
-    and a reader cannot mistake a silent instrument for a fresh payload.
+    A freshly-built artifact records its origin rather than nothing,
+    deliberately: it makes "this request touched a shared artifact and it was
+    new" distinguishable from "this request touched none at all". An empty sink
+    then means the latter, and a reader cannot mistake a silent instrument for a
+    fresh payload.
+
+    CERT-1862: what is stored is the monotonic instant the artifact was BORN
+    (`monotonic() - age`), not the age it happened to have when we looked at it.
+    An age is a measurement frozen at the moment of consumption; an origin keeps
+    aging by itself. The distinction is the whole defect: consumption happens
+    early in a request and the ceiling is applied late, so a stored age is
+    already wrong by however long the build took. Measured against the shipping
+    arithmetic: an artifact consumed at 50s with a 20s build still read 50s, and
+    a live payload was served at 79s true age against a 60s ceiling.
+
+    Monotonic, not wall-clock, because this is an elapsed-time question and must
+    not be moved by an NTP step mid-request.
     """
     sink = _age_sink_var.get()
     if sink is not None:
-        sink.append(max(0.0, float(age_s)))
+        sink.append(time.monotonic() - max(0.0, float(age_s)))
 
 
-def oldest_consumed_artifact_age_s(age_sink: Optional[Iterable[float]]) -> float:
-    """The age of the OLDEST shared artifact a request consumed. `0.0` if none.
+def oldest_consumed_artifact_age_s(origin_sink: Optional[Iterable[float]]) -> float:
+    """Age NOW of the OLDEST shared artifact a request consumed. `0.0` if none.
 
-    The MAX and not the mean: a payload is only as fresh as its stalest input,
-    and averaging would let one fresh artifact pay for an ancient one.
+    The oldest artifact is the one with the EARLIEST origin, hence `min` here
+    against the `max` this function used when the sink held ages — a payload is
+    only as fresh as its stalest input, and averaging would let one fresh
+    artifact pay for an ancient one.
+
+    Re-derived from `time.monotonic()` on every call (CERT-1862), so the answer
+    grows as the request does. Callers may therefore ask at any point — at TTL
+    selection, at publication, anywhere later — and get the age as of the asking
+    rather than as of the consumption.
     """
-    if not age_sink:
+    if not origin_sink:
         return 0.0
-    return max((max(0.0, float(a)) for a in age_sink), default=0.0)
+    origins = [float(o) for o in origin_sink]
+    if not origins:
+        return 0.0
+    return max(0.0, time.monotonic() - min(origins))
 
 
 def _note_reuse(

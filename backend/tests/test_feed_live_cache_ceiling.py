@@ -944,6 +944,28 @@ def test_the_fifth_writer_guard_refuses_unanalyzable_dispatch_and_splats():
 # and `concepts` can.
 
 
+def _seed_consumed_artifact(monkeypatch, feed_mod, *, age_s: float) -> None:
+    """Make the route consume one shared artifact that is `age_s` old.
+
+    Seeds a real ORIGIN into the route's own sink at the real binding seam, so
+    the route then runs the REAL `oldest_consumed_artifact_age_s` against it.
+
+    CERT-1862 blocked the first shape of these tests for patching that function
+    with a constant. The criticism was exact: a constant cannot age, so the test
+    could not see the consumption-to-publication gap — and that gap WAS the
+    residual defect (an artifact consumed at 50s with a 20s build still read
+    50s). Seeding an origin instead leaves the arithmetic under test in the
+    hands of the code under test.
+    """
+    real_bind = feed_mod._bind_shared_reuse_sink
+
+    def _bind_and_seed(reuse, tiers, origins):
+        origins.append(time_module.monotonic() - age_s)
+        return real_bind(reuse, tiers, origins)
+
+    monkeypatch.setattr(feed_mod, "_bind_shared_reuse_sink", _bind_and_seed)
+
+
 @pytest.mark.asyncio
 async def test_a_live_page_built_from_an_aged_artifact_gets_no_fresh_window(
     monkeypatch,
@@ -954,15 +976,12 @@ async def test_a_live_page_built_from_an_aged_artifact_gets_no_fresh_window(
     seconds later under the 60-second live ceiling. Pre-fix the route passed
     `time.time()` as the age origin, so last-good served it at 118 seconds.
     """
-    from app.utils import principal_independent_cache as pic
+    import app.routes.feed as feed_mod
 
     rc._reset_last_good_for_tests()
 
-    # The request consumed a shared artifact that was already 59s old. Patched
-    # at the accessor rather than faked deeper on purpose: this is the INPUT to
-    # the arithmetic under test, not the arithmetic itself, so the test still
-    # discriminates — pre-fix it passes `time.time()` regardless of this value.
-    monkeypatch.setattr(pic, "oldest_consumed_artifact_age_s", lambda _sink: 59.0)
+    # The request consumed a shared artifact that was already 59s old.
+    _seed_consumed_artifact(monkeypatch, feed_mod, age_s=59.0)
 
     # Empty Redis, so the route MISSES and takes the build path (the seam under
     # test). A seeded mirror would exercise a copy hop instead.
@@ -1015,10 +1034,10 @@ async def test_a_build_from_fresh_artifacts_keeps_the_full_window(monkeypatch):
     the test above while removing the fallback that keeps a Redis blip from
     becoming a stampede of cold builds.
     """
-    from app.utils import principal_independent_cache as pic
+    import app.routes.feed as feed_mod
 
     rc._reset_last_good_for_tests()
-    monkeypatch.setattr(pic, "oldest_consumed_artifact_age_s", lambda _sink: 0.0)
+    _seed_consumed_artifact(monkeypatch, feed_mod, age_s=0.0)
 
     redis = _SeededRedis()
     resp = await _drive_feed(redis=redis, monkeypatch=monkeypatch)
@@ -1056,10 +1075,7 @@ async def test_a_non_live_page_is_still_unbounded_after_the_backdate(monkeypatch
     so this pins that it did not quietly import the live ceiling into the
     futures path, where unbounded last-good is deliberate and correct.
     """
-    from app.utils import principal_independent_cache as pic
-
     rc._reset_last_good_for_tests()
-    monkeypatch.setattr(pic, "oldest_consumed_artifact_age_s", lambda _sink: 59.0)
 
     # A settled page: aged origin, but nothing live on it.
     rc.remember_last_good(

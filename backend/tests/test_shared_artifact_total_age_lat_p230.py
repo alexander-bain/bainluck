@@ -44,6 +44,8 @@ conflict, Half B wins and Half A gets smaller.
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from app.utils import feed_cache as fc
@@ -297,8 +299,47 @@ class TestTheAgeSinkActuallyCollects:
     above is worthless if nothing ever feeds it a non-zero age."""
 
     def test_the_oldest_of_several_artifacts_wins(self):
-        """MAX, not mean — a payload is only as fresh as its stalest input."""
-        assert pic.oldest_consumed_artifact_age_s([0.0, 55.0, 3.0]) == 55.0
+        """MAX, not mean — a payload is only as fresh as its stalest input.
+
+        The sink holds ORIGINS since CERT-1862, so "oldest" is the EARLIEST
+        origin; the ages are reconstructed from `monotonic()` at read time.
+        """
+        now = time.monotonic()
+        origins = [now - 0.0, now - 55.0, now - 3.0]
+        assert pic.oldest_consumed_artifact_age_s(origins) == pytest.approx(
+            55.0, abs=1.0
+        )
+
+    def test_the_recorded_age_keeps_growing_after_consumption(self, monkeypatch):
+        """CERT-1862's falsifier: consumption is early, the ceiling is applied late.
+
+        A sink that stored the age observed at consumption froze it there, so a
+        20-second build was invisible and the ceiling was applied to a number
+        that was already 20 seconds out of date. The exact figures the cert
+        reproduced: consumed at 50s, 20s of build, still read 50s, and a live
+        payload went out at 79s true age against a 60s ceiling.
+        """
+        fake = {"t": 1000.0}
+        monkeypatch.setattr(pic.time, "monotonic", lambda: fake["t"])
+
+        sink: list[float] = []
+        with pic.reuse_scope([], [], sink):
+            pic._note_age(50.0)  # consumed a 50s-old artifact, at t=1000
+
+        assert pic.oldest_consumed_artifact_age_s(sink) == pytest.approx(50.0)
+
+        fake["t"] = 1020.0  # ...and the build then took 20 seconds
+        assert pic.oldest_consumed_artifact_age_s(sink) == pytest.approx(70.0), (
+            "the artifact's age did not grow with the build — the sink froze "
+            "the age observed at consumption instead of storing an origin "
+            "(CERT-1862)"
+        )
+
+        # …and the consequence: at 70s there is no ceiling left to spend.
+        assert fc.feed_response_cache_ttls(live=True, oldest_artifact_age_s=70.0) == (
+            0,
+            0,
+        )
 
     def test_no_artifacts_consumed_reads_as_zero(self):
         assert pic.oldest_consumed_artifact_age_s([]) == 0.0
@@ -309,12 +350,16 @@ class TestTheAgeSinkActuallyCollects:
         """Recorded, not skipped — so an EMPTY sink means "consumed nothing" and
         not "the instrument was silent"."""
         pic.clear_shared_builds("lat_p230_probe")
-        ages: list[float] = []
-        with pic.reuse_scope([], [], ages):
+        origins: list[float] = []
+        with pic.reuse_scope([], [], origins):
             await pic.get_or_build(
                 "lat_p230_probe", ("k",), _builder({"v": 1}), ttl_s=60.0
             )
-        assert ages == [0.0]
+        # One entry recorded (not silence), and it reads as brand new.
+        assert len(origins) == 1
+        assert pic.oldest_consumed_artifact_age_s(origins) == pytest.approx(
+            0.0, abs=1.0
+        )
 
     @pytest.mark.asyncio
     async def test_a_local_hit_records_the_age_it_had_already_spent(self):
@@ -325,35 +370,47 @@ class TestTheAgeSinkActuallyCollects:
         )
         clock.advance(47.0)
 
-        ages: list[float] = []
-        with pic.reuse_scope([], [], ages):
+        origins: list[float] = []
+        with pic.reuse_scope([], [], origins):
             await pic.get_or_build(
                 "lat_p230_probe", ("k",), _builder({"v": 2}), ttl_s=120.0, clock=clock
             )
-        assert ages == [pytest.approx(47.0)]
+        assert pic.oldest_consumed_artifact_age_s(origins) == pytest.approx(
+            47.0, abs=1.0
+        )
 
     @pytest.mark.asyncio
-    async def test_the_collected_age_is_what_shortens_the_ttl(self):
+    async def test_the_collected_age_is_what_shortens_the_ttl(self, monkeypatch):
         """End to end across the seam: a real cache read produces the term, and
         the term reaches the ceiling arithmetic. Testing the two ends separately
         is how a ship dies green at both ends.
+
+        The monotonic clock is frozen because since CERT-1862 the age is
+        re-derived at READ time, so the few hundred microseconds between the
+        read and the assertion are now part of the answer — and 58.0s and
+        58.0003s land on opposite sides of an integer TTL boundary. A guard
+        whose result depends on how fast the box ran is a flake, not a bound
+        (gotcha #44: a test anchor must not branch on the clock).
         """
         pic.clear_shared_builds("lat_p230_probe")
+        frozen = {"t": 5_000.0}
+        monkeypatch.setattr(pic.time, "monotonic", lambda: frozen["t"])
+
         clock = _FakeClock()
         await pic.get_or_build(
             "lat_p230_probe", ("k",), _builder({"v": 1}), ttl_s=120.0, clock=clock
         )
         clock.advance(58.0)
 
-        ages: list[float] = []
-        with pic.reuse_scope([], [], ages):
+        origins: list[float] = []
+        with pic.reuse_scope([], [], origins):
             await pic.get_or_build(
                 "lat_p230_probe", ("k",), _builder({"v": 2}), ttl_s=120.0, clock=clock
             )
 
         fresh, stale = fc.feed_response_cache_ttls(
             live=True,
-            oldest_artifact_age_s=pic.oldest_consumed_artifact_age_s(ages),
+            oldest_artifact_age_s=pic.oldest_consumed_artifact_age_s(origins),
         )
         assert (fresh, stale) == (2, 2)
 
