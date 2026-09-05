@@ -28,6 +28,16 @@ nothing, changes no verdict, and does not retune :mod:`app.utils.kalshi_retentio
 a banded page reports ``exhausted_scope`` and ``population_exhausted`` rather than
 letting one boolean say a slice was the whole thing.
 
+CAL-P1018 (CERT-1935) — THE BAND'S WINDOW BELONGS TO THE WALK, NOT TO THE PAGE.
+Two ages become two dates only once you say WHEN FROM, and that "when" was
+``NOW()``, re-read on every request. A drain is many requests: the window slid
+forward between them while the keyset cursor stayed put, so the rows sharing the
+cursor's own timestamp came to sit after the cursor AND older than the moved old
+edge — selectable by no page of that walk, and silently counted as the band being
+exhausted. Page one now mints a ``band_as_of`` and returns it INSIDE
+``next_cursor``; a banded resume that omits it is refused by name rather than
+re-anchored to today. See :func:`band_anchor`.
+
 CAL-P1008 — THE CAPTURE IS PART OF THE RUNBOOK, not housekeeping after it. The
 durable plan slot (:data:`PLAN_IDENTITY`) holds ONE plan and a drain over
 :data:`APPLY_MARKET_CAP` markets per call runs many, so batch N+1's dry-run
@@ -166,7 +176,7 @@ from __future__ import annotations
 import logging
 import re
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import text
@@ -1100,14 +1110,25 @@ _WORK_SQL = f"""
         -- the MIN is the younger edge and an UPPER bound. Getting that backwards
         -- returns rows and looks like it worked, which is why the parser names
         -- the two numbers as ages and refuses an inverted pair.
+        --
+        -- CAL-P1018 (CERT-1935): the two edges are AGES, and an age is only a
+        -- date once you say WHEN from. That "when" is a property of the WALK,
+        -- not of the page, so it is BOUND, not recomputed. Read `band_anchor`
+        -- for the row this repairs; the short version is that a band whose
+        -- origin moved between two requests strands every row that shares the
+        -- cursor's timestamp — they are after the keyset AND before the new old
+        -- edge, so no page ever selects them again. COALESCE, not a bare bind:
+        -- a band arriving with a NULL anchor must degrade to today's window,
+        -- because a NULL comparison excludes every row and an empty page reads
+        -- as "nothing to repair" (gotcha #53).
         AND (
               CAST(:band_max_age AS double precision) IS NULL
-           OR fm.resolution_date >= NOW()
+           OR fm.resolution_date >= COALESCE(CAST(:band_as_of AS timestamptz), NOW())
               - (CAST(:band_max_age AS double precision) * INTERVAL '1 day')
             )
         AND (
               CAST(:band_min_age AS double precision) IS NULL
-           OR fm.resolution_date <= NOW()
+           OR fm.resolution_date <= COALESCE(CAST(:band_as_of AS timestamptz), NOW())
               - (CAST(:band_min_age AS double precision) * INTERVAL '1 day')
             )
         AND (
@@ -1137,6 +1158,55 @@ _WORK_SQL = f"""
     ORDER BY s.resolution_date ASC, s.id ASC
     LIMIT :lim
 """
+
+
+#: The instant the band's two ages are measured FROM. Read from the database
+#: rather than from the app's clock so it is the SAME clock ``_WORK_SQL``'s own
+#: ``NOW()`` would have used: Postgres' ``NOW()`` is ``transaction_timestamp()``,
+#: so inside one request's transaction this statement and the work selection
+#: agree to the microsecond, and the anchor a page hands back is provably the
+#: instant its own predicate ran on.
+_BAND_ANCHOR_SQL = "SELECT NOW() AS band_as_of"
+
+
+async def band_anchor(session) -> datetime:
+    """Page one's ``as_of`` — the origin the whole banded walk is measured from.
+
+    **CAL-P1018 (CERT-1935): a band's bounds are a property of the RUN, not of
+    the page.** ``?band=47-67`` is two ages, and the query turned each age into a
+    date with ``NOW()`` — evaluated afresh on every request. A drain is many
+    requests, so the window slid forward between them while the keyset stayed
+    where it was, and the two moved independently.
+
+    That strands rows, and it strands exactly the ones a keyset cannot recover:
+
+    * page one selects the band and stops on the row ``(T, 1)``, where ``T`` is
+      the oldest ``resolution_date`` in the band and ids ``2, 3, …`` share it;
+    * the cursor is now ``(T, 1)``, so ids 2+ are correctly AFTER it;
+    * page two, an hour later, recomputes the old edge as ``NOW() - 67 days``,
+      which is now LATER than ``T``. Ids 2+ fail ``resolution_date >= old_edge``.
+
+    They are after the cursor and before the edge, so no page of that walk can
+    select them again — the walk reports the band exhausted having never asked
+    the venue about them, and they fall back behind the measured dead head where
+    the next unbanded drain will not reach them before the venue purges them.
+    The exact predicate counterexample: ``at_page_1=True``, ``after_cursor=True``,
+    ``at_page_2=False``. Oldest-first (``parse_band``) makes the departures rare;
+    it does not make them impossible, because the cursor STARTS at the old edge.
+
+    So the anchor is computed once, handed back inside ``next_cursor``, and
+    required on every resume — a resume that has to be given the anchor cannot
+    silently take a different one.
+
+    **The retention floor deliberately keeps its own ``NOW()``.**
+    ``PROVABLY_PURGED_AGE_DAYS`` is not paging: it is where the population ends
+    because the venue no longer holds the data. Rows it sheds as the clock
+    advances are rows that have genuinely crossed into the purged zone, and
+    admitting them again would be pinning the rail to a stale measurement rather
+    than pinning a page to its own window. Its drift is the safe direction
+    (behind the cursor); the band's was not.
+    """
+    return (await session.execute(text(_BAND_ANCHOR_SQL))).scalar_one()
 
 
 async def _legs(session, market_id: int) -> list[Any]:
@@ -1962,6 +2032,7 @@ async def repair(
     after_date: str | None = None,
     sport: str | None = None,
     band: str | None = None,
+    band_as_of: str | None = None,
     plan_hash: str | None = None,
 ) -> dict[str, Any]:
     """Per-leg retraction/restoration against the venue's own declaration.
@@ -1998,6 +2069,24 @@ async def repair(
         }
 
     if apply:
+        if band_as_of is not None:
+            # CAL-P1018 (CERT-1935): the anchor is half of a ?band=, and the
+            # apply selects nothing, so it is refused for the same reason and
+            # BY ITS OWN NAME. Folding it into BAND_ON_APPLY would report a
+            # band the operator did not pass.
+            return {
+                "measured": False,
+                "refused": "BAND_ANCHOR_ON_APPLY",
+                "presented_band_as_of": band_as_of,
+                "reason": (
+                    "?band_as_of= pins the window a DRY RUN's ?band= selected "
+                    "in. An apply executes the reviewed plan by leg id and "
+                    "selects nothing, so an anchor here would narrow nothing "
+                    "while appearing to. The window the plan was built under is "
+                    "in its own context."
+                ),
+                "elapsed_s": round(time.monotonic() - started, 1),
+            }
         if band is not None:
             # #3257: the apply re-selects NOTHING — it writes the leg ids the
             # plan named. A band accepted here would be a silent no-op that
@@ -2019,7 +2108,14 @@ async def repair(
         return await _apply_reviewed_plan(session, plan_hash, started)
 
     return await _dry_run(
-        session, limit, after_id, after_date, sport, started, band=band
+        session,
+        limit,
+        after_id,
+        after_date,
+        sport,
+        started,
+        band=band,
+        band_as_of=band_as_of,
     )
 
 
@@ -2168,8 +2264,76 @@ def parse_band(band: str | None) -> tuple[int, int] | None:
     return low, high
 
 
+def parse_band_as_of(
+    band_as_of: str | None,
+    *,
+    banded: bool,
+    resuming: bool,
+) -> datetime | None:
+    """The band anchor as the operator pastes it back, validated against the walk.
+
+    CAL-P1018 (CERT-1935). :func:`band_anchor` says WHY the anchor exists; this
+    says what the rail will and will not run with, and every answer is a named
+    refusal rather than a silent default, because each of the three mistakes
+    below produces a page that looks exactly like a correct one.
+
+    * **A banded RESUME with no anchor is refused.** This is the defect itself.
+      Accepting it would recompute the window from today, which is the moving
+      old edge that strands the cursor's own timestamp group. Required, not
+      defaulted: a resume the rail quietly re-anchors reports a band it did not
+      walk.
+    * **An anchor with no band is refused.** It selects nothing on its own, so
+      honouring it would be a no-op that reads, in a scrollback, like a pinned
+      window. Same shape as ``BAND_ON_APPLY``.
+    * **An unreadable anchor is refused**, never dropped to ``None`` — a dropped
+      anchor is the first case wearing the second's clothes.
+
+    Page one of a banded walk passes ``None`` and gets ``None``: there is nothing
+    to pin to yet, and :func:`band_anchor` mints it. An anchor supplied WITH a
+    band and no cursor is accepted — that is an operator re-running a walk from
+    its head against the window it originally measured, which is the pinning
+    this repair is for.
+
+    Parsing is :func:`parse_cursor_date`'s, deliberately: the anchor travels in
+    the same ``next_cursor`` object, through the same query string, and would
+    otherwise arrive with the same ``+``-eaten-to-a-space wound (CERT-1892).
+    """
+    if band_as_of is None:
+        if banded and resuming:
+            raise BandRefused(
+                "BAND_ANCHOR_MISSING",
+                "A banded resume must carry the `band_as_of` this rail handed "
+                "back in `next_cursor`, alongside after_date and after_id. The "
+                "band's two numbers are AGES, and re-measuring them from today "
+                "moves the window forward while the cursor stays put: every row "
+                "sharing the cursor's timestamp is then after the cursor AND "
+                "older than the new edge, so no page selects it again "
+                "(CERT-1935). Paste the whole next_cursor, not two thirds of it.",
+            )
+        return None
+    if not banded:
+        raise BandRefused(
+            "BAND_ANCHOR_WITHOUT_BAND",
+            f"?band_as_of={band_as_of!r} was given with no ?band=. The anchor is "
+            "the instant a band's ages are measured from and it selects nothing "
+            "by itself, so honouring it here would be a no-op that reads like a "
+            "pinned window. Pass the band it belongs to, or drop it.",
+        )
+    try:
+        return parse_cursor_date(band_as_of)
+    except (TypeError, ValueError) as e:
+        raise BandRefused(
+            "BAND_ANCHOR_UNPARSEABLE",
+            f"?band_as_of={band_as_of!r} is not the ISO timestamp this rail "
+            f"returned in `next_cursor` (for example {_CURSOR_EXAMPLE}). It is "
+            "REFUSED rather than ignored: an anchor dropped to None re-measures "
+            "the band from today and strands the cursor's timestamp group, "
+            "which is the exact defect the anchor exists to close.",
+        ) from e
+
+
 async def _dry_run(
-    session, limit, after_id, after_date, sport, started, band=None
+    session, limit, after_id, after_date, sport, started, band=None, band_as_of=None
 ):
     """Select, ask the venue, judge, and emit the reviewed plan. No writes."""
     from app.services.kalshi_api import KalshiAPIService
@@ -2199,6 +2363,22 @@ async def _dry_run(
     band_min_age, band_max_age = parsed_band if parsed_band else (None, None)
 
     try:
+        anchor = parse_band_as_of(
+            band_as_of,
+            banded=parsed_band is not None,
+            resuming=after_id is not None,
+        )
+    except BandRefused as e:
+        return {
+            "measured": False,
+            "refused": e.refused,
+            "presented_band": band,
+            "presented_band_as_of": band_as_of,
+            "reason": e.reason,
+            "elapsed_s": round(time.monotonic() - started, 1),
+        }
+
+    try:
         cursor_date = parse_cursor_date(after_date)
     except (TypeError, ValueError):
         return {
@@ -2218,6 +2398,14 @@ async def _dry_run(
         await session.execute(
             text(f"SET LOCAL statement_timeout = {_SELECT_TIMEOUT_MS}")
         )
+        # CAL-P1018 (CERT-1935): page one of a banded walk MINTS the anchor, and
+        # every later page is handed the one it minted. Inside this request's
+        # transaction `NOW()` is `transaction_timestamp()`, so this read is the
+        # same instant the work selection below would have computed for itself —
+        # the anchor handed back is the window that actually ran, not a second
+        # measurement of the clock that happens to be close to it.
+        if parsed_band is not None and anchor is None:
+            anchor = await band_anchor(session)
         rows = (
             await session.execute(
                 text(_WORK_SQL),
@@ -2228,6 +2416,7 @@ async def _dry_run(
                     "after_id": after_id,
                     "band_min_age": band_min_age,
                     "band_max_age": band_max_age,
+                    "band_as_of": anchor,
                 },
             )
         ).all()
@@ -2376,14 +2565,27 @@ async def _dry_run(
         # answer to "does the position I advance to skip anything" is that there
         # is no such position.
         cursor = {"after_date": after_date, "after_id": int(after_id)}
+    # CAL-P1018 (CERT-1935): the anchor rides IN the cursor, because the cursor
+    # is the one object the rail's own instruction tells an operator to paste
+    # back whole. A resume is a position AND the window that position is a
+    # position within; handing back only the position is what let the window
+    # move underneath it. Absent with no band: there is no window to pin, and an
+    # anchor in that cursor would be refused on the way back in.
+    if cursor is not None and parsed_band is not None:
+        cursor = {**cursor, "band_as_of": url_safe_isoformat(anchor)}
     plan = build_plan(
         planned_legs,
         context={
             "rail": "kalshi-fabricated-loss",
             "sport": sport,
             "band": band if parsed_band else None,
+            "band_as_of": url_safe_isoformat(anchor) if parsed_band else None,
             "window": window,
-            "resumed_from": {"after_date": after_date, "after_id": after_id},
+            "resumed_from": {
+                "after_date": after_date,
+                "after_id": after_id,
+                "band_as_of": band_as_of,
+            },
             "next_cursor": cursor,
             "examined": examined,
         },
@@ -2417,11 +2619,26 @@ async def _dry_run(
                     "min_age_days": band_min_age,
                     "max_age_days": band_max_age,
                     "walks": "oldest-first inside the band, from the max edge",
+                    # CAL-P1018 (CERT-1935): the two AGES resolved to the two
+                    # DATES this page actually selected between. An age is not a
+                    # window until it is anchored, and the anchor is the thing
+                    # every later page of this walk must be handed back.
+                    "as_of": url_safe_isoformat(anchor),
+                    "older_edge": url_safe_isoformat(
+                        anchor - timedelta(days=band_max_age)
+                    ),
+                    "younger_edge": url_safe_isoformat(
+                        anchor - timedelta(days=band_min_age)
+                    ),
                 }
                 if parsed_band
                 else None
             ),
-            "resumed_from": {"after_date": after_date, "after_id": after_id},
+            "resumed_from": {
+                "after_date": after_date,
+                "after_id": after_id,
+                "band_as_of": band_as_of,
+            },
         },
         "examined": examined,
         "market_verdicts": market_verdicts,
@@ -2496,7 +2713,10 @@ async def _dry_run(
             "it EXCLUDED nothing from the population and changed no verdict. "
             "`exhausted` above is about this band only. Markets outside it are "
             "untouched and still need their own pass — re-run with no ?band= "
-            "(or a different one) to reach them."
+            "(or a different one) to reach them. Resume this band with the WHOLE "
+            "`next_cursor`: `band_as_of` is the instant its two ages were "
+            "measured from, and a resume without it is refused rather than "
+            "silently re-anchored to today (CERT-1935)."
             if parsed_band
             else None
         ),

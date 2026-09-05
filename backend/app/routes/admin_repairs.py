@@ -51,8 +51,9 @@ transactional session and RETURNS its own before/after census in the response bo
 
 Repairs whose signature declares ``limit`` / ``sport`` / ``newest_first`` /
 ``offset`` / ``after_id`` / ``after_date`` / ``plan_hash`` / ``expected_blank`` /
-``population`` / ``probe`` / ``undo_identity`` / ``band`` also accept those as query
-params; the dispatcher passes through only what a given repair's signature names.
+``population`` / ``probe`` / ``undo_identity`` / ``band`` / ``band_as_of`` also accept
+those as query params; the dispatcher passes through only what a given repair's
+signature names.
 
 ``undo_identity`` (lane1/084, D51) names ONE earlier apply's dated undo record
 and puts its rows back. It exists because Alex's D51 lets a lane apply a data
@@ -73,6 +74,15 @@ sort to walk first. It is deliberately not a filter and not a floor — it exclu
 no row, changes no verdict, and leaves the measured retention constants alone —
 so a rail that accepts it must report band exhaustion and population exhaustion
 as two different answers, or a banded drain reads as a finished one.
+
+``band_as_of`` (CERT-1935, CAL-P1018) is the other half of that selector, and the
+reason it is a parameter at all is that a band's bounds belong to the WALK while
+a page is one request. Two ages are two dates only once you say when from; left
+to ``NOW()`` they slide forward on every call while the keyset stays put, and the
+rows sharing the cursor's own timestamp end up after the cursor and older than
+the new edge — selectable by no page of that walk, and reported as the band being
+exhausted. Page one mints the anchor and returns it INSIDE ``next_cursor``; a
+banded resume that omits it is refused rather than re-anchored to today.
 
 ``after_id`` + ``after_date`` are a KEYSET cursor, added in CAL-P058 because a
 repair that removes rows from its own population cannot be paged with an offset
@@ -246,7 +256,13 @@ _REPAIRS = {
     # 552-market at-risk tail behind them. `?band=47-67` drains that tail — the
     # only cohort with a deadline — first. It EXCLUDES nothing: `exhausted` is
     # then scoped to the band and `population_exhausted` is reported separately.
-    # Accepts ?limit=&sport=&band=&after_id=&after_date=&plan_hash=.
+    # CAL-P1018 (CERT-1935): a band is two AGES, so its two dates move with the
+    # clock while the keyset cursor does not, and a page-two re-measure strands
+    # every row sharing the cursor's timestamp between the cursor and the edge
+    # that has just passed it. Page one now MINTS a `band_as_of` and hands it
+    # back inside `next_cursor`; a banded resume without it is REFUSED rather
+    # than silently re-anchored. Paste the whole next_cursor.
+    # Accepts ?limit=&sport=&band=&band_as_of=&after_id=&after_date=&plan_hash=.
     # ATTENDED ONLY: never wire this to a beat.
     "kalshi-fabricated-loss": (
         "app.tasks.repair_kalshi_fabricated_loss",
@@ -613,6 +629,18 @@ async def run_repair(
                     "population exhaustion. Refused on apply=true, which selects "
                     "nothing.",
     ),
+    band_as_of: str = Query(
+        None,
+        description="The instant a ?band='s two ages are measured FROM, as the "
+                    "ISO timestamp the rail returned inside next_cursor. A band "
+                    "is two AGES, so its two dates move with the clock while a "
+                    "keyset cursor does not; re-measuring them on page two "
+                    "strands every row sharing the cursor's timestamp behind an "
+                    "old edge that has passed them (CERT-1935). Page one mints "
+                    "it and hands it back; a banded resume without it is "
+                    "REFUSED, not re-anchored. Refused with no ?band= and on "
+                    "apply=true, both of which select nothing.",
+    ),
     population: str = Query(
         None,
         description="Which reviewed population a plan-bound repair acts on "
@@ -660,7 +688,7 @@ async def run_repair(
             ("newest_first", newest_first), ("offset", offset),
             ("after_id", after_id), ("after_date", after_date),
             ("since", since), ("until", until),
-            ("band", band),
+            ("band", band), ("band_as_of", band_as_of),
             ("plan_hash", plan_hash),
             ("expected_blank", expected_blank),
             ("population", population),

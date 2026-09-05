@@ -41,9 +41,9 @@ it.
 
 from __future__ import annotations
 
-import json
 import pathlib
 import time
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -160,18 +160,31 @@ def _work_row(order: int, ticker: str, age_days: float):
     )
 
 
-class _Session:
-    """Answers `_WORK_SQL` and `_legs`, and records the params it was given."""
+#: The instant the fake database's clock reads. A CONSTANT rather than "now",
+#: because CAL-P1018's whole subject is that the band's origin must not be
+#: whatever the clock said when the statement happened to run.
+_DB_NOW = datetime(2026, 9, 5, 18, 0, tzinfo=timezone.utc)
 
-    def __init__(self, rows, legs_by_market):
+
+class _Session:
+    """Answers `_WORK_SQL`, `_legs` and the band anchor, recording every param."""
+
+    def __init__(self, rows, legs_by_market, now=_DB_NOW):
         self._rows = rows
         self._legs = legs_by_market
+        self._now = now
         self.work_params: dict | None = None
+        self.anchor_reads = 0
 
     async def execute(self, statement, params=None):
         sql = str(statement)
         if "statement_timeout" in sql:
             return SimpleNamespace(all=lambda: [])
+        if sql == rail._BAND_ANCHOR_SQL:
+            # CAL-P1018: the DATABASE clock, which is the one the work SQL's own
+            # NOW() would read inside this transaction.
+            self.anchor_reads += 1
+            return SimpleNamespace(scalar_one=lambda: self._now)
         if "FROM futures_outcomes" in sql and "market_id = :mid" in sql:
             legs = self._legs.get(params["mid"], [])
             return SimpleNamespace(all=lambda: legs)
@@ -182,7 +195,16 @@ class _Session:
         pass
 
 
-async def _dry_run(monkeypatch, *, rows, band=None, limit=40, cursor=None):
+async def _dry_run(
+    monkeypatch,
+    *,
+    rows,
+    band=None,
+    limit=40,
+    cursor=None,
+    band_as_of=None,
+    now=_DB_NOW,
+):
     """Run the shipping `_dry_run` against a venue that answers nothing."""
     import app.services.kalshi_api as kalshi_api
 
@@ -200,10 +222,17 @@ async def _dry_run(monkeypatch, *, rows, band=None, limit=40, cursor=None):
 
     monkeypatch.setattr(rail, "_save_plan", _no_bank)
 
-    session = _Session(rows, {})
+    session = _Session(rows, {}, now=now)
     after_date, after_id = cursor if cursor else (None, None)
     result = await rail._dry_run(
-        session, limit, after_id, after_date, None, time.monotonic(), band=band
+        session,
+        limit,
+        after_id,
+        after_date,
+        None,
+        time.monotonic(),
+        band=band,
+        band_as_of=band_as_of,
     )
     return result, session
 
@@ -220,6 +249,12 @@ class TestTheBandReachesTheQuery:
             "min_age_days": 47,
             "max_age_days": 67,
             "walks": "oldest-first inside the band, from the max edge",
+            # CAL-P1018: the two ages RESOLVED, against the database clock the
+            # fake session answers with. 67 days before 18:00Z on 2026-09-05 is
+            # the older edge; 47 days before it is the younger one.
+            "as_of": "2026-09-05T18:00:00Z",
+            "older_edge": "2026-06-30T18:00:00Z",
+            "younger_edge": "2026-07-20T18:00:00Z",
         }
         assert session.work_params["band_min_age"] == 47
         assert session.work_params["band_max_age"] == 67
@@ -331,6 +366,228 @@ class TestABandedPageIsNeverAFinishedDrain:
         assert result["plan_artifact"]["context"]["band"] == "47-67"
 
 
+class TestTheBandsWindowIsPinnedToTheWalkNotTheRequest:
+    """CAL-P1018 (CERT-1935). The band's two numbers are AGES, and an age is a
+    date only once you say WHEN FROM. That origin was ``NOW()``, re-read on every
+    request, so across the many requests of one drain the window slid forward
+    while the keyset cursor stayed put — and the rows sharing the cursor's own
+    timestamp ended up after the cursor AND older than the moved old edge, where
+    no page of that walk can select them.
+
+    The row-level proof is ``test_band_resume_pins_the_page_one_as_of`` against
+    real Postgres. These are the mechanism: page one mints it, the page reports
+    it, the cursor carries it, and a resume without it is REFUSED rather than
+    quietly re-anchored to today.
+    """
+
+    @pytest.mark.asyncio
+    async def test_page_one_mints_the_anchor_from_the_database_clock(
+        self, monkeypatch
+    ):
+        """Not the app's clock, and not a second reading of it: `NOW()` inside
+        one transaction is `transaction_timestamp()`, so the anchor read and the
+        work selection are the same instant by construction."""
+        result, session = await _dry_run(
+            monkeypatch, rows=[_work_row(0, "KX-A", 60.0)], band="47-67"
+        )
+
+        assert session.anchor_reads == 1
+        assert session.work_params["band_as_of"] == _DB_NOW
+        assert result["window"]["band"]["as_of"] == "2026-09-05T18:00:00Z"
+
+    @pytest.mark.asyncio
+    async def test_an_unbanded_page_mints_nothing_and_binds_null(
+        self, monkeypatch
+    ):
+        """The no-band path is what every existing caller takes: no window, so
+        nothing to pin, and no extra statement on its way to the work SQL."""
+        result, session = await _dry_run(
+            monkeypatch, rows=[_work_row(0, "KX-A", 60.0)], band=None
+        )
+
+        assert session.anchor_reads == 0
+        assert session.work_params["band_as_of"] is None
+        assert result["next_cursor"] == {
+            "after_date": "2026-07-01T00:00:00Z",
+            "after_id": 9_600_000,
+        }, "an unbanded cursor carries no anchor — it would be refused on return"
+
+    @pytest.mark.asyncio
+    async def test_the_anchor_rides_inside_next_cursor(self, monkeypatch):
+        """The cursor is the ONE object this rail tells an operator to paste
+        back. An anchor beside it is an anchor two thirds of operators drop."""
+        result, _ = await _dry_run(
+            monkeypatch, rows=[_work_row(0, "KX-A", 60.0)], band="47-67"
+        )
+
+        assert result["next_cursor"] == {
+            "after_date": "2026-07-01T00:00:00Z",
+            "after_id": 9_600_000,
+            "band_as_of": "2026-09-05T18:00:00Z",
+        }
+
+    @pytest.mark.asyncio
+    async def test_a_resume_binds_the_anchor_it_was_given_not_a_fresh_one(
+        self, monkeypatch
+    ):
+        """THE REPAIR, at the bind. The clock has moved an hour; the window has
+        not, because the window belongs to the walk."""
+        moved = _DB_NOW + timedelta(hours=1)
+        result, session = await _dry_run(
+            monkeypatch,
+            rows=[_work_row(1, "KX-B", 60.0)],
+            band="47-67",
+            cursor=("2026-07-01T00:00:00Z", 9_600_000),
+            band_as_of="2026-09-05T18:00:00Z",
+            now=moved,
+        )
+
+        assert session.anchor_reads == 0, "a resume must not mint a second window"
+        assert session.work_params["band_as_of"] == _DB_NOW
+        assert result["window"]["band"]["as_of"] == "2026-09-05T18:00:00Z"
+        assert result["window"]["band"]["older_edge"] == "2026-06-30T18:00:00Z"
+
+    @pytest.mark.asyncio
+    async def test_a_banded_resume_without_the_anchor_is_refused_by_name(
+        self, monkeypatch
+    ):
+        """The defect itself, refused rather than defaulted. Re-anchoring to
+        today is precisely what strands the cursor's timestamp group."""
+        result, session = await _dry_run(
+            monkeypatch,
+            rows=[_work_row(1, "KX-B", 60.0)],
+            band="47-67",
+            cursor=("2026-07-01T00:00:00Z", 9_600_000),
+        )
+
+        assert result["measured"] is False
+        assert result["refused"] == "BAND_ANCHOR_MISSING"
+        assert session.work_params is None, "the work selection must not have run"
+        assert session.anchor_reads == 0, "a refusal must not mint a window either"
+
+    @pytest.mark.asyncio
+    async def test_an_unbanded_resume_still_needs_no_anchor(self, monkeypatch):
+        """The requirement is scoped to the thing that has a window. An unbanded
+        drain resumed the old way must keep working, or this repair breaks the
+        path CERT-1935 did not complain about."""
+        result, session = await _dry_run(
+            monkeypatch,
+            rows=[_work_row(1, "KX-B", 60.0)],
+            cursor=("2026-07-01T00:00:00Z", 9_600_000),
+        )
+
+        assert result.get("refused") is None
+        assert session.work_params["band_as_of"] is None
+
+    @pytest.mark.asyncio
+    async def test_an_anchor_with_no_band_is_refused_rather_than_ignored(
+        self, monkeypatch
+    ):
+        """It selects nothing on its own, so honouring it would be a no-op that
+        reads, in a scrollback, exactly like a pinned window."""
+        result, session = await _dry_run(
+            monkeypatch,
+            rows=[_work_row(0, "KX-A", 60.0)],
+            band_as_of="2026-09-05T18:00:00Z",
+        )
+
+        assert result["refused"] == "BAND_ANCHOR_WITHOUT_BAND"
+        assert session.work_params is None
+
+    @pytest.mark.asyncio
+    async def test_an_unreadable_anchor_is_refused_never_dropped_to_none(
+        self, monkeypatch
+    ):
+        """A dropped anchor is BAND_ANCHOR_MISSING wearing a resume's clothes:
+        the walk would carry on against a window measured from today."""
+        result, session = await _dry_run(
+            monkeypatch,
+            rows=[_work_row(1, "KX-B", 60.0)],
+            band="47-67",
+            cursor=("2026-07-01T00:00:00Z", 9_600_000),
+            band_as_of="last tuesday",
+        )
+
+        assert result["refused"] == "BAND_ANCHOR_UNPARSEABLE"
+        assert result["presented_band_as_of"] == "last tuesday"
+        assert session.work_params is None
+
+    @pytest.mark.asyncio
+    async def test_the_plus_a_query_string_ate_is_repaired_here_too(
+        self, monkeypatch
+    ):
+        """CERT-1892's wound, on the new half of the cursor. The anchor travels
+        in the same object through the same query string, so an operator
+        following the rail's own instruction must not be refused for it."""
+        result, session = await _dry_run(
+            monkeypatch,
+            rows=[_work_row(1, "KX-B", 60.0)],
+            band="47-67",
+            cursor=("2026-07-01T00:00:00Z", 9_600_000),
+            band_as_of="2026-09-05T18:00:00 00:00",
+        )
+
+        assert result.get("refused") is None
+        assert session.work_params["band_as_of"] == _DB_NOW
+
+    @pytest.mark.asyncio
+    async def test_the_anchor_travels_into_the_plan_context(self, monkeypatch):
+        """A plan that cannot say which WINDOW produced it cannot be audited
+        against the rows it names — the band alone is two numbers, not a slice."""
+        result, _ = await _dry_run(
+            monkeypatch, rows=[_work_row(0, "KX-A", 60.0)], band="47-67"
+        )
+
+        context = result["plan_artifact"]["context"]
+        assert context["band"] == "47-67"
+        assert context["band_as_of"] == "2026-09-05T18:00:00Z"
+
+    @pytest.mark.asyncio
+    async def test_a_rate_limited_first_lookup_echoes_the_anchor_it_came_in_on(
+        self, monkeypatch
+    ):
+        """CAL-P1014's standing-still cursor must stand still in BOTH dimensions.
+        Echoing the position while dropping the window would hand the operator a
+        cursor the rail then refuses."""
+        import app.services.kalshi_api as kalshi_api
+
+        class _TooManyRequests(Exception):
+            response = SimpleNamespace(status_code=429)
+
+        class _RateLimited:
+            async def get_markets(self, *, event_ticker=None, **_):
+                raise _TooManyRequests()
+
+            async def close(self):
+                pass
+
+        monkeypatch.setattr(kalshi_api, "KalshiAPIService", _RateLimited)
+
+        async def _no_bank(plan):
+            return True, "test: not banked"
+
+        monkeypatch.setattr(rail, "_save_plan", _no_bank)
+
+        session = _Session([_work_row(1, "KX-B", 60.0)], {})
+        result = await rail._dry_run(
+            session,
+            40,
+            9_600_000,
+            "2026-07-01T00:00:00Z",
+            None,
+            time.monotonic(),
+            band="47-67",
+            band_as_of="2026-09-05T18:00:00Z",
+        )
+
+        assert result["stopped_on_venue_rate_limit"] is True
+        assert result["next_cursor"] == {
+            "after_date": "2026-07-01T00:00:00Z",
+            "after_id": 9_600_000,
+            "band_as_of": "2026-09-05T18:00:00Z",
+        }
+
+
 class TestTheApplyRefusesABand:
     @pytest.mark.asyncio
     async def test_apply_with_a_band_is_refused_by_name(self):
@@ -364,6 +621,22 @@ class TestTheApplyRefusesABand:
 
         assert loaded == [], "the plan must not be read on a refused band"
 
+    @pytest.mark.asyncio
+    async def test_apply_with_only_the_anchor_is_refused_by_its_own_name(self):
+        """CAL-P1018: the anchor is half of a band, refused for the same reason.
+        By its OWN name, because BAND_ON_APPLY would report a band nobody sent.
+        """
+        result = await rail.repair(
+            None,
+            apply=True,
+            band_as_of="2026-09-05T18:00:00Z",
+            plan_hash="deadbeef",
+        )
+
+        assert result["measured"] is False
+        assert result["refused"] == "BAND_ANCHOR_ON_APPLY"
+        assert result["presented_band_as_of"] == "2026-09-05T18:00:00Z"
+
 
 class TestTheRouteForwardsIt:
     def test_the_dispatcher_offers_band_to_repairs_that_declare_it(self):
@@ -377,6 +650,21 @@ class TestTheRouteForwardsIt:
         assert '("band", band)' in inspect.getsource(admin_repairs.run_repair)
         assert "band" in inspect.signature(rail.repair).parameters
 
+    def test_the_dispatcher_offers_the_anchor_too(self):
+        """CAL-P1018: a resume the rail REQUIRES and the route cannot carry is a
+        band nobody can page twice."""
+        import inspect
+
+        from app.routes import admin_repairs
+
+        assert (
+            "band_as_of" in inspect.signature(admin_repairs.run_repair).parameters
+        )
+        assert '("band_as_of", band_as_of)' in inspect.getsource(
+            admin_repairs.run_repair
+        )
+        assert "band_as_of" in inspect.signature(rail.repair).parameters
+
     def test_the_catalog_entry_documents_the_parameter(self):
         """`Accepts ?…` is the operator-facing contract for this rail, and an
         undocumented selector on an ATTENDED-ONLY rail is one nobody will use."""
@@ -388,3 +676,4 @@ class TestTheRouteForwardsIt:
         entry = src[: src.index('"kalshi-fabricated-loss": (')]
         tail = entry[entry.rindex("CAL-P1014") :]
         assert "band=" in tail
+        assert "band_as_of=" in tail
