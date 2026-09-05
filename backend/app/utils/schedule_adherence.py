@@ -64,21 +64,31 @@ SELF_GATE_WINDOW_TOLERANCE = 0.1
 #: health surface that editorialises about noise is one people stop reading.
 SELF_GATE_MATERIAL_RATIO = 0.1
 
-#: The same noise floor as ``SELF_GATE_MATERIAL_RATIO``, under the name the
-#: emit-side comparison reads by — LAT-P238-EMIT-SIDE-COUNTER.
+#: Below this fraction of a bucket's publications, an undelivered gap is bucket-
+#: boundary spill, not broker loss — LAT-P238, resized under CERT-1966.
 #:
-#: Deliberately DERIVED rather than restated as a second literal. Both tests ask
-#: the same question of the same kind of evidence — "is this gap between two
-#: independently-born window counters real, or is it the boundary?" — and the
-#: 0.4% measurement that sized the original (``sync_statpal_livescores``, 2,186
-#: deliveries against 2,177 starts, two counters ~30s apart) is a property of
-#: that counter mechanism, not of the pair it happened to be measured on. Two
-#: literals would let the two drift apart on a fact that cannot differ.
+#: 🔴 IT IS NUMERICALLY EQUAL TO ``SELF_GATE_MATERIAL_RATIO`` AND NO LONGER
+#: DERIVED FROM IT. The first version of this field compared two independently
+#: born 24h window counters, so it inherited that constant's noise argument
+#: wholesale. The matched-bucket repair removed that noise source entirely —
+#: there are no longer two birthdays — and left a different one, so the value
+#: stays and the reasoning does not.
 #:
-#: It is a materiality floor and nothing more: the fraction itself is published
-#: on every row regardless. This only decides whether a ``behind`` verdict says
-#: a SENTENCE about which side of the broker the fires were lost on.
-UNDELIVERED_MATERIAL_RATIO = SELF_GATE_MATERIAL_RATIO
+#: The residual noise is SPILL: a message published at second 599 of a bucket is
+#: delivered in the next one, so a perfectly healthy task can under-report by up
+#: to one fire per bucket. That is 1-in-15 at the 40s rail this instrument was
+#: built for, which 0.10 covers — but it is 1-in-2 for a 300s beat, which no
+#: fraction threshold covers at all. Hence the SECOND term at the call site:
+#: material requires the gap to exceed one whole fire as well. A fraction alone
+#: would editorialise about a single boundary message on every slow beat in the
+#: schedule.
+#:
+#: That absolute term IS a subtraction, and it is the one place this module
+#: permits one: the two counts come from the SAME bucket, so they describe the
+#: same span and the cross-window arithmetic this module refuses is not in play.
+#: It is also never published — it decides whether a ``behind`` verdict says a
+#: SENTENCE, nothing more. The fraction itself is on every row regardless.
+UNDELIVERED_MATERIAL_RATIO = 0.10
 
 #: A task whose p95 runtime exceeds this fraction of its own interval is lapping
 #: (at 1.0 it has literally no gap between runs). Flagged below 1.0 because a
@@ -267,58 +277,52 @@ def _self_gate_fraction(deliveries, deliveries_window_s, starts, starts_window_s
     return max(0.0, min(1.0, 1.0 - (start_rate / delivery_rate)))
 
 
-def _undelivered_fraction(emitted, emitted_window_s, deliveries, deliveries_window_s):
-    """Fraction of PUBLISHED fires that never reached a worker, or ``None``.
+def _undelivered_fraction(matched_emitted, matched_delivered):
+    """Fraction of a bucket's PUBLICATIONS that never reached a worker, or ``None``.
 
-    LAT-P238-EMIT-SIDE-COUNTER. This is the number the module could not compute
-    at all until ``before_task_publish`` was wired: every other counter here is
-    written at-or-after delivery, so a fire that was never published and a fire
-    the broker expired before delivery were the same observation. Measured on
-    ``prewarm_live_feed_shapes`` 2026-09-05: 0.646 of its scheduled fires
-    delivered, with ``starts == deliveries`` exactly (+28/+28 over 28.9 minutes)
-    and ``self_gated_fires`` +0 — the loss was provably entirely before
-    delivery, and provably nowhere else, and that was the end of what could be
-    said. Emissions put a count above the boundary, so:
+    LAT-P238-EMIT-SIDE-COUNTER, as repaired under CERT-1966. Both arguments come
+    from ONE wall-clock bucket — ``get_matched_emit_delivery`` reads the emit and
+    delivery counters that share a bucket index — so this is a ratio within a
+    single matched cohort and not a comparison of two populations.
 
-    * a fraction near 0 says the messages that were published were delivered —
-      the shortfall is BEAT, which did not publish them;
-    * a fraction near the shortfall says beat published on cadence and the
-      BROKER dropped them, which on this rail means the one-period ``expires``.
+    THE FIRST VERSION OF THIS FUNCTION TOOK FOUR ARGUMENTS AND WAS BLOCKED, and
+    the reason is worth keeping in front of whoever edits it next. It divided a
+    new emission count by its own window and a 24h delivery count by its own
+    window, and compared the rates. Dividing by each counter's own age fixes the
+    UNIT mismatch and leaves the POPULATION mismatch untouched — the emission
+    counter is born at the deploy that ships it while the delivery counter
+    deliberately preserves up to a day of PRE-deploy behaviour. CERT-1966's
+    counterexample: 90 emitted in 3600s against 1080 delivered in 86400s is
+    produced BOTH by a healthy current hour (90 delivered, plus 990 older) and by
+    an hour losing half its fires (45 delivered, plus 1035 older). The old code
+    reported 50% for both, with a sentence naming the broker — on a rail whose
+    queue had just been moved, i.e. exactly when a change-point is the only thing
+    being looked for. An average over a long window cannot see a change-point;
+    that is #1790's founding defect, and it had been committed inside the field
+    built to escape it.
 
-    RATES, NOT A DIFFERENCE, AND THAT IS NOT A STYLE CHOICE. ``emitted -
-    delivered`` is cross-window arithmetic between two counters with independent
-    birthdays, and this module was founded on refusing it: ``self_gated_fires``
-    is ``None`` whenever its two windows drift more than
-    ``SELF_GATE_WINDOW_TOLERANCE``, and on production 2026-09-05 that meant
-    ``poll_all_odds`` — 23.9% drift — reported nothing at all. The emit counter
-    would hit that case *by construction*, not occasionally: it is born at the
-    deploy that ships it, against a delivery counter that may already be 24
-    hours old, so the difference would be `None` for the first day and a
-    plausible-looking lie for the seconds either side of it. Dividing each count
-    by its OWN window first is the same window-safe move
-    ``_self_gate_fraction`` makes, and it needs no tolerance because it never
-    subtracts across the two spans.
+    No tolerance can rescue that comparison, so there is none here. Two counts in
+    one 600s bucket cover the same span by construction.
 
-    ``None`` means UNKNOWN — no emission counter, no window, or nothing
-    published in the window — and the caller must not read it as zero. Reading
-    it as zero would report "beat is emitting fine" on a task with no emit
-    counter at all, which is the sharpest possible version of gotcha #53 here:
-    the absence of an emission observation is not an observation of emissions.
+    ``None`` means UNKNOWN and must not be read as zero:
 
-    Clamped into ``[0, 1]``. A delivery rate above the emit rate is the counter
-    boundary (deliveries counted in a window whose publications fell in the
-    previous one), not negative loss, and reporting -0.04 as a fact is the
-    over-reach the clamp on ``self_gated_fires`` exists to prevent.
+    * ``matched_delivered`` is ``None`` when the fleet-wide bucketed delivery
+      writer has not been seen — the state of the whole system for one bucket
+      after the release. Reading it as 0 would report 100% loss on every beat in
+      the schedule at the moment the instrument is first trusted.
+    * fewer than ``MIN_EXPECTED_FIRES`` publications in the bucket is the same
+      refusal the rate arm makes: at 1 expected, observing 0 says nothing, and a
+      detector that manufactures 100% from one sample gets muted.
+
+    Clamped into ``[0, 1]``. More deliveries than publications is the bucket
+    boundary — a message published at second 599 lands in the next bucket — not
+    negative loss.
     """
-    if emitted is None or not emitted_window_s or emitted_window_s <= 0:
+    if matched_emitted is None or matched_delivered is None:
         return None
-    if deliveries is None or not deliveries_window_s or deliveries_window_s <= 0:
+    if matched_emitted < MIN_EXPECTED_FIRES:
         return None
-    emit_rate = emitted / emitted_window_s
-    if emit_rate <= 0:
-        return None
-    delivery_rate = (deliveries or 0) / deliveries_window_s
-    return max(0.0, min(1.0, 1.0 - (delivery_rate / emit_rate)))
+    return max(0.0, min(1.0, 1.0 - (matched_delivered / matched_emitted)))
 
 
 def _grade_on_stamp(
@@ -401,8 +405,10 @@ def adherence(
     durations_ms=None,
     deliveries=None,
     deliveries_window_s=None,
-    emitted=None,
-    emitted_window_s=None,
+    matched_emitted=None,
+    matched_delivered=None,
+    matched_bucket_s=None,
+    matched_bucket_start=None,
     durations_window_s=None,
     durations_saturated=None,
     newest_terminal_age_s=None,
@@ -445,15 +451,21 @@ def adherence(
     large ``self_gated_fires`` on ``poll_all_odds`` is a finding again, not a
     footnote.
 
-    ``emitted`` is NOT a third numerator and must never become one. LAT-P238:
-    every other count here is taken at-or-after delivery, so the module could
-    localise a 35% shortfall to "before delivery" and then say nothing about
-    which side of the broker it happened on. The emit counter is taken at
-    ``before_task_publish``, in the scheduler's own process, purely so that
-    ``_undelivered_fraction`` can answer that — reported, never graded on.
-    Grading on it would swap one blind spot for another: an emission is a
-    message that was published, and a task the broker throws away has a perfect
-    emission rate and does no work at all.
+    ``matched_emitted`` / ``matched_delivered`` are NOT a third numerator and
+    must never become one. LAT-P238: every other count here is taken at-or-after
+    delivery, so the module could localise a 35% shortfall to "before delivery"
+    and then say nothing about which side of the broker it happened on. These
+    two are the same 600s wall-clock bucket counted at ``before_task_publish``
+    and at ``task_prerun``, purely so ``_undelivered_fraction`` can answer that —
+    reported, never graded on. Grading on them would swap one blind spot for
+    another: a task the broker throws away has a perfect emission count and does
+    no work at all.
+
+    They are a MATCHED COHORT and the pairing is not interchangeable with the
+    fields beside them. Pairing ``matched_emitted`` with ``deliveries`` — the 24h
+    counter one line up — is CERT-1966's defect exactly: that counter survives
+    deploys and holds pre-change history, so the quotient cannot distinguish a
+    healthy current hour from one losing half its fires.
 
     ``terminals`` is still reported rather than graded — whether adherence
     should own completion is an open product question (#1716) and inventing a
@@ -495,12 +507,22 @@ def adherence(
         # the emit count by its window has to divide the delivery count by the
         # RIGHT one, and "whichever this row happened to grade on" is not it.
         "deliveries_window_s": deliveries_window_s,
-        # LAT-P238-EMIT-SIDE-COUNTER: the first count in this payload taken
-        # ABOVE the delivery boundary. Never a numerator and never folded into
-        # `self_gated_fires` — see `_undelivered_fraction`, and the `numerator`
-        # field below, which still names only the two counters that can grade.
-        "emitted": emitted,
-        "emitted_window_s": emitted_window_s,
+        # LAT-P238-EMIT-SIDE-COUNTER, as repaired under CERT-1966: the first
+        # count in this payload taken ABOVE the delivery boundary, and the
+        # delivery count from the SAME wall-clock bucket beside it. The two are a
+        # matched cohort by construction, which is the only shape in which their
+        # quotient identifies anything — see `_undelivered_fraction`.
+        #
+        # `matched_delivered` is NOT `deliveries` and the names are kept apart on
+        # purpose: `deliveries` is the 24h counter the rate arm grades on and
+        # carries pre-deploy history, and pairing THAT with an emission count is
+        # the defect this field exists to not have. Never a numerator, never
+        # folded into `self_gated_fires`; the `numerator` field below still names
+        # only the two counters that can grade.
+        "matched_emitted": matched_emitted,
+        "matched_delivered": matched_delivered,
+        "matched_bucket_s": matched_bucket_s,
+        "matched_bucket_start": matched_bucket_start,
         "undelivered_fraction": None,
         "numerator": "deliveries" if use_deliveries else "starts",
         "self_gated_fires": None,
@@ -550,9 +572,7 @@ def adherence(
     # whose reader most needs to know whether anything is being published, and a
     # field that only appears on the branches that happened to fall through
     # makes `.get("undelivered_fraction")` mean two different things.
-    undelivered = _undelivered_fraction(
-        emitted, emitted_window_s, deliveries, deliveries_window_s
-    )
+    undelivered = _undelivered_fraction(matched_emitted, matched_delivered)
     out["undelivered_fraction"] = (
         round(undelivered, 3) if undelivered is not None else None
     )
@@ -878,19 +898,29 @@ def adherence(
         # floor, because a health surface that editorialises about counter noise
         # is one people stop reading — the fraction itself is on the row either
         # way, so nothing is hidden, only unsaid.
-        if undelivered is not None and undelivered >= UNDELIVERED_MATERIAL_RATIO:
+        material = (
+            undelivered is not None
+            and undelivered >= UNDELIVERED_MATERIAL_RATIO
+            # More than one whole fire's worth of gap. See the constant: a
+            # single message spilling over the bucket boundary is the expected
+            # reading of a healthy task, and on a slow beat it is a large
+            # FRACTION of a small bucket.
+            and (matched_emitted - matched_delivered) > 1
+        )
+        if material:
             out["reason"] += (
-                f". {undelivered * 100:.0f}% of published fires never reached a "
-                f"worker ({emitted} published in {emitted_window_s:.0f}s against "
-                f"{deliveries} delivered in {deliveries_window_s:.0f}s), so the "
-                "loss is between the broker and the worker, not at the scheduler"
+                f". In the last complete {matched_bucket_s:.0f}s bucket "
+                f"{matched_emitted} fires were published and {matched_delivered} "
+                f"were delivered — {undelivered * 100:.0f}% never reached a "
+                "worker, so the loss is between the broker and the worker, not "
+                "at the scheduler"
             )
         elif undelivered is not None:
             out["reason"] += (
-                f". Only {undelivered * 100:.0f}% of published fires went "
-                f"undelivered ({emitted} published in {emitted_window_s:.0f}s), "
-                "so the shortfall is at the SCHEDULER — the messages were never "
-                "published"
+                f". In the last complete {matched_bucket_s:.0f}s bucket "
+                f"{matched_emitted} fires were published and {matched_delivered} "
+                "were delivered, so the shortfall is at the SCHEDULER — the "
+                "messages were never published"
             )
         return out
 
