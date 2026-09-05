@@ -90,8 +90,9 @@ So the ceiling is replaced, not inherited, and the replacement is stated:
     window, because they are mostly duplicate rows rather than real rematches
     (1,170 of the close pairs sit under two different `sports.key`s). Duplicates
     are a matching symptom, filed under #2693, and a horizon is the wrong tool
-    for them. `_pair_with_tie_detection` settles the distinguishable ones by
-    nearest start and refuses only the ties.
+    for them. `_pair_with_tie_detection` settles the distinguishable ones —
+    largest pairing first, nearest start to choose among pairings of equal
+    size — and refuses only the ties.
 
 14 days holds 2,004 of our tennis rows, 252 of them doubles, across 8 sport keys
 (production 2026-09-05) — a denominator a ten-minute task can read.
@@ -99,6 +100,7 @@ So the ceiling is replaced, not inherited, and the replacement is stated:
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any, Callable, Optional, Sequence
 
@@ -148,6 +150,17 @@ AMBIGUOUS_REFUSAL = "ambiguous_identity"
 #: quantities and `excluded` is read as a census (CERT-1904).
 AMBIGUOUS_CANDIDATE_ROWS = "ambiguous_identity_candidate_rows"
 
+#: `Join.refusals` keys for a candidate component this module declined to solve
+#: because it was larger than `MAX_ASSIGNMENTS_PER_COMPONENT`.
+#:
+#: Kept apart from the two keys above, on both sides, because *the data does not
+#: choose* and *we did not finish asking* are different findings that happen to
+#: leave the denominator the same way. Folding the second into the first would
+#: publish our own bound as a property of the field, and would hide the one
+#: signal that says the bound needs raising. Zero is the expected reading.
+UNSOLVED_COMPONENT_FIXTURES = "unsolved_component"
+UNSOLVED_COMPONENT_ROWS = "unsolved_component_candidate_rows"
+
 #: What this strategy's denominator actually is, published on the row.
 #:
 #: The shared default describes an ordered normalised-pair key with kickoff as an
@@ -156,15 +169,23 @@ AMBIGUOUS_CANDIDATE_ROWS = "ambiguous_identity_candidate_rows"
 #: there are no keys to be inside of. A row that describes the wrong join is a
 #: measurement with the wrong source attached to it (CERT-1895's lesson, and
 #: CERT-1904 caught this file failing it).
+#:
+#: The tiebreak clause is worded as it is because of CERT-1917: "start time
+#: chooses which pairing is made" was true of one edge and false of the graph,
+#: and a walk that took the nearest edge first destroyed the only full pairing
+#: two Garcias and an untitled row admitted. Size is settled before the clock.
 TENNIS_DENOMINATOR_IS = (
     "distinct matches under the union of both sides, joined by "
     "`authority_tennis_names.resolve_tennis_name` on BOTH players in either "
     "orientation — not by a normalised pair key, because the identity relation "
-    "reads a missing given name as UNKNOWN and so is not transitive. Start time "
-    "chooses WHICH of two admissible pairings is made and never whether one is "
-    "made. Singles and doubles are separate denominators; a fixture whose player "
-    "our register holds under two identities, and any of our rows it could not "
-    "be told apart between, leave the denominator under `excluded` rather than "
+    "reads a missing given name as UNKNOWN and so is not transitive. Candidates "
+    "are resolved as ONE assignment over the whole candidate graph, largest "
+    "pairing first; start time then chooses WHICH of two equally large pairings "
+    "is made, and never whether one is made. Only joins that hold across every "
+    "such pairing are published. Singles and doubles are separate denominators; "
+    "a fixture whose player our register holds under two identities, any of our "
+    "rows it could not be told apart between, and any component too large to "
+    "resolve exactly, leave the denominator under `excluded` rather than "
     "counting as a disagreement."
 )
 
@@ -252,8 +273,8 @@ def _ambiguity(
     does not — there is a spare row and nothing to choose on — and that is the
     only shape that is genuinely a refusal.
 
-    See :func:`_resolve_components`, which owns that walk. This function is now
-    only the RECEIPT: it names which player the register holds twice, via
+    See :func:`_pair_with_tie_detection`, which owns that judgment. This function
+    is now only the RECEIPT: it names which player the register holds twice, via
     `resolve_tennis_name`, so a refusal says why rather than merely that.
     **Naming the reason and choosing the outcome are different jobs, and letting
     the first do the second is the shape of all three blocks on this branch.**
@@ -297,107 +318,267 @@ def _ambiguity(
     return receipt, candidates
 
 
-#: Sort key for one candidate edge. A timed edge always beats an untimed one, so
-#: `min()` over a mixed candidate set is meaningful without a special case: a
-#: fixture with any timed candidate is never decided by an untimed one.
+#: Cost of one candidate edge whose two sides cannot both be timed. A timed edge
+#: always beats an untimed one, so a fixture with any timed candidate is never
+#: decided by an untimed one — and a missing start is not weaker evidence than a
+#: tied one, it is no evidence.
 _UNTIMED = (1, timedelta(0))
 
 
 def _edge_key(fixture: Side, row: Side) -> tuple[int, timedelta]:
+    """`(untimed?, how far apart)` — the cost of joining this fixture to this row."""
     if fixture.start is None or row.start is None:
         return _UNTIMED
     return (0, abs(fixture.start - row.start))
 
 
-def _pair_with_tie_detection(
-    fixtures: Sequence[Side], rows: Sequence[Side]
-) -> tuple[list[tuple[Side, Side]], list[Side], list[Side], list[Side], list[Side]]:
-    """Pair only the assignments the graph FORCES; refuse every remaining contest.
+#: How many candidate assignments one component may contain before this module
+#: stops solving it and refuses it whole.
+#:
+#: The published edges are the ones EVERY optimal pairing agrees on, which is a
+#: question about all of them, and the search is exponential in the number of
+#: fixtures a component holds. Past this bound the component leaves the
+#: denominator as a tie. It is a bound on the SET of candidates rather than on
+#: elapsed work, so it is the same bound whatever order the rows arrived in — a
+#: budget spent by a walk would reintroduce exactly the CERT-1915 defect.
+#:
+#: 20,000 admits far more than a tennis day produces: the shape it has to hold is
+#: a handful of repeat meetings of one pair against a handful of our rows, and
+#: `test_the_bound_does_not_refuse_an_ordinary_days_component` pins the constant
+#: to that shape by relation rather than to this number.
+MAX_ASSIGNMENTS_PER_COMPONENT = 20_000
 
-    Returns `(paired, tied_fixtures, tied_rows, spare_fixtures, spare_rows)`.
 
-    **The published number may not depend on the order the rows arrived in**, and
-    that is CERT-1915. The previous version discovered equal-distance rivals while
-    it was already consuming availability, so on a chain like `f1→{r1,r2},
-    f2→{r2,r3}` it published one pair under one ordering and none under a
-    permutation. SQL arrival order is not identity evidence.
+def _components(
+    n_f: int,
+    n_r: int,
+    by_f: dict[int, list[int]],
+    by_r: dict[int, list[int]],
+) -> list[tuple[list[int], list[int]]]:
+    """The candidate graph split into the parts that cannot affect each other.
 
-    So nothing is decided by walking. Each round reads an IMMUTABLE snapshot of
-    the remaining graph and takes only the edges it forces:
+    Solved separately because an assignment is only ever contested inside its own
+    component, and because the search below is exponential in a component's size:
+    a tournament day is many tiny components, not one large one.
+    """
+    seen_f: set[int] = set()
+    seen_r: set[int] = set()
+    found: list[tuple[list[int], list[int]]] = []
+    for start in range(n_f):
+        if start in seen_f:
+            continue
+        seen_f.add(start)
+        comp_f, comp_r, stack = [], [], [(True, start)]
+        while stack:
+            is_fixture, idx = stack.pop()
+            if is_fixture:
+                comp_f.append(idx)
+                for ri in by_f[idx]:
+                    if ri not in seen_r:
+                        seen_r.add(ri)
+                        stack.append((False, ri))
+            else:
+                comp_r.append(idx)
+                for fi in by_r[idx]:
+                    if fi not in seen_f:
+                        seen_f.add(fi)
+                        stack.append((True, fi))
+        found.append((sorted(comp_f), sorted(comp_r)))
+    # Rows no fixture reaches are their own components, and they are the ordinary
+    # `ours_only` miss. Reached from the row side because the walk above starts
+    # at fixtures and would never visit them.
+    found.extend(([], [ri]) for ri in range(n_r) if ri not in seen_r)
+    return found
 
-        an edge (f, r) is FORCED when r is the unique nearest candidate of f
-        AND f is the unique nearest candidate of r.
 
-    Forced edges cannot conflict with each other — two of them sharing an endpoint
-    would contradict the uniqueness that made them forced — so the whole set is
-    applied at once and the result is a function of the graph, not of the loop.
+def _outcomes_of_every_optimum(
+    comp_f: Sequence[int],
+    comp_r: Sequence[int],
+    by_f: dict[int, list[int]],
+    edges: dict[tuple[int, int], tuple[int, timedelta]],
+) -> Optional[tuple[dict[int, set[Optional[int]]], dict[int, set[Optional[int]]]]]:
+    """What each side of this component does across ALL optimal pairings.
 
-    Rounds repeat to a fixpoint, because resolving one edge can force another and
-    that inference is real: if `r1` is provably `f1`'s, then an `f2` tied between
-    `r1` and `r2` must be `r2`. Iterating is still order-independent, since each
-    round is computed from the snapshot before any of it is applied.
+    Returns `(per fixture, per row)` sets of partners, where `None` means "left
+    unmatched in that pairing" — or `None` if the component is past
+    `MAX_ASSIGNMENTS_PER_COMPONENT` and was not searched.
 
-    Whatever still has an edge when no round can force anything is a genuine
-    contest — nothing in the data chooses — and is refused and reported rather
-    than assigned. A side with no edge at all was never a contest: it is an
-    ordinary `statpal_only` or `ours_only` miss.
+    A pairing is scored `(-size, untimed edges, total gap)` and the best one
+    wins, so **cardinality is settled before the clock is consulted**. That
+    ordering is CERT-1917 and it is the whole point: a locally exact edge may not
+    be bought at the price of a match. On the graph
 
-    The tiebreak is the start time (`_edge_key`), which is the module's declared
-    contract: it chooses WHICH pairing is made and never whether one is made. A
-    timed edge always outranks an untimed one, and a contest that is untimed on
-    both sides has nothing to break it — arrival order is not evidence.
+        fA → {Caroline Garcia, Garcia}      fD → {Garcia}
+
+    the exact-time edge `fA→Garcia` leaves `fD` and `Caroline Garcia` with
+    nothing, and the row publishes `1/1/1` over a denominator of 3 — two
+    manufactured misses in opposite directions, out of two matches that both
+    exist. There is exactly one pairing of maximum size and it is the answer.
+
+    The clock keeps its declared job: it chooses among pairings of EQUAL size,
+    which is "which of two admissible pairings is made" and never "whether one is
+    made". A timed edge outranks an untimed one for the same reason.
+
+    Every optimum is enumerated rather than one being returned, because what may
+    be published is what all of them agree on. A node whose partner varies across
+    optima — or which is matched in one and unmatched in another — has no answer
+    in the data, and picking one would be the arrival-order defect of CERT-1915
+    reached by a different route.
+    """
+    # Read off the adjacency rather than re-scanning the component: a component
+    # holding most of the day would cost |fixtures| x |rows| a second time.
+    reach = {fi: sorted(by_f[fi]) for fi in comp_f}
+    assignments = 1
+    for fi in comp_f:
+        assignments *= len(reach[fi]) + 1
+        if assignments > MAX_ASSIGNMENTS_PER_COMPONENT:
+            return None
+
+    order = list(comp_f)
+    chosen: list[Optional[int]] = [None] * len(order)
+    taken: set[int] = set()
+    f_out: dict[int, set[Optional[int]]] = {fi: set() for fi in comp_f}
+    r_out: dict[int, set[Optional[int]]] = {ri: set() for ri in comp_r}
+    best: Optional[tuple[int, int, timedelta]] = None
+
+    def _walk(i: int, size: int, untimed: int, gap: timedelta) -> None:
+        nonlocal best
+        if i == len(order):
+            score = (-size, untimed, gap)
+            if best is not None and score > best:
+                return
+            if best is None or score < best:
+                best = score
+                for partners in f_out.values():
+                    partners.clear()
+                for partners in r_out.values():
+                    partners.clear()
+            matched_by = {ri: order[j] for j, ri in enumerate(chosen) if ri is not None}
+            for j, ri in enumerate(chosen):
+                f_out[order[j]].add(ri)
+            for ri in comp_r:
+                r_out[ri].add(matched_by.get(ri))
+            return
+        _walk(i + 1, size, untimed, gap)  # this fixture goes unmatched
+        for ri in reach[order[i]]:
+            if ri in taken:
+                continue
+            edge_untimed, edge_gap = edges[(order[i], ri)]
+            taken.add(ri)
+            chosen[i] = ri
+            _walk(i + 1, size + 1, untimed + edge_untimed, gap + edge_gap)
+            chosen[i] = None
+            taken.discard(ri)
+
+    _walk(0, 0, 0, timedelta(0))
+    return f_out, r_out
+
+
+@dataclass(frozen=True)
+class _Resolution:
+    """What the join decided about one draw, before any of it is worded.
+
+    A record rather than a tuple because the two refusal reasons are different
+    quantities and must not arrive at the caller interchangeable: `tied_*` is
+    *the data does not choose*, `unsolved_*` is *we did not finish asking*. They
+    leave the denominator the same way and they are not the same finding, and
+    folding one into the other is the mistake five blocks on this branch were
+    about.
+    """
+
+    paired: list[tuple[Side, Side]]
+    tied_fixtures: list[Side]
+    tied_rows: list[Side]
+    unsolved_fixtures: list[Side]
+    unsolved_rows: list[Side]
+    spare_fixtures: list[Side]
+    spare_rows: list[Side]
+
+
+def _pair_with_tie_detection(fixtures: Sequence[Side], rows: Sequence[Side]) -> _Resolution:
+    """Publish the joins every optimal pairing agrees on; refuse the rest.
+
+    Two things this must be, and each of them cost a block:
+
+      * **CERT-1915 — the answer may not depend on arrival order.** The version
+        before last discovered equal-distance rivals while it was already
+        consuming availability, so a chain published one pair under one ordering
+        and none under a permutation. SQL arrival order is not identity evidence.
+      * **CERT-1917 — nor may it depend on the order the graph is walked in at
+        all.** Its replacement took every edge the graph locally FORCED, and a
+        locally forced edge can destroy the graph's only full pairing. Reading
+        the snapshot immutably made the wrong answer stable rather than making it
+        right; all four permutations of the specimen agreed on it.
+
+    So the answer is a property of the graph and is computed as one: solve each
+    component for its optimal pairings (`_outcomes_of_every_optimum` — largest
+    first, nearest kickoff second), and publish an edge only where EVERY optimum
+    contains it. A side left unmatched by every optimum was never contested and
+    is an ordinary `statpal_only` / `ours_only` miss. Anything else — a partner
+    that varies, or a side matched in one optimum and spare in another — is a
+    tie, and a tie is refused and reported rather than guessed.
     """
     edges: dict[tuple[int, int], tuple[int, timedelta]] = {}
-    for fi, f in enumerate(fixtures):
-        for ri, r in enumerate(rows):
-            if _sides_agree(f, r):
-                edges[(fi, ri)] = _edge_key(f, r)
+    by_f: dict[int, list[int]] = {fi: [] for fi in range(len(fixtures))}
+    by_r: dict[int, list[int]] = {ri: [] for ri in range(len(rows))}
+    for fi, fixture in enumerate(fixtures):
+        for ri, row in enumerate(rows):
+            if _sides_agree(fixture, row):
+                edges[(fi, ri)] = _edge_key(fixture, row)
+                by_f[fi].append(ri)
+                by_r[ri].append(fi)
 
-    live_f = set(range(len(fixtures)))
-    live_r = set(range(len(rows)))
     paired_idx: list[tuple[int, int]] = []
+    tied_f: list[int] = []
+    tied_r: list[int] = []
+    unsolved_f: list[int] = []
+    unsolved_r: list[int] = []
+    spare_f: list[int] = []
+    spare_r: list[int] = []
 
-    while True:
-        # Read the whole snapshot BEFORE deciding anything from it.
-        nearest_f: dict[int, list[int]] = {}
-        for fi in live_f:
-            cands = [(edges[(fi, ri)], ri) for ri in live_r if (fi, ri) in edges]
-            if cands:
-                best = min(k for k, _ in cands)
-                nearest_f[fi] = sorted(ri for k, ri in cands if k == best)
-        nearest_r: dict[int, list[int]] = {}
-        for ri in live_r:
-            cands = [(edges[(fi, ri)], fi) for fi in live_f if (fi, ri) in edges]
-            if cands:
-                best = min(k for k, _ in cands)
-                nearest_r[ri] = sorted(fi for k, fi in cands if k == best)
+    for comp_f, comp_r in _components(len(fixtures), len(rows), by_f, by_r):
+        solved = _outcomes_of_every_optimum(comp_f, comp_r, by_f, edges)
+        if solved is None:
+            # Past the bound, so refused whole and under its own name. There is
+            # deliberately no fallback: a walk that "does its best" here is the
+            # arrival-order defect above wearing a budget.
+            unsolved_f.extend(comp_f)
+            unsolved_r.extend(comp_r)
+            continue
+        f_out, r_out = solved
+        for fi in comp_f:
+            partners = f_out[fi]
+            if len(partners) != 1:
+                tied_f.append(fi)
+            elif (only := next(iter(partners))) is None:
+                spare_f.append(fi)
+            else:
+                paired_idx.append((fi, only))
+        for ri in comp_r:
+            # The matched case is already published from the fixture side: a row
+            # every optimum gives to one fixture is that fixture's unique partner.
+            partners = r_out[ri]
+            if len(partners) != 1:
+                tied_r.append(ri)
+            elif next(iter(partners)) is None:
+                spare_r.append(ri)
 
-        forced = sorted(
-            (fi, rs[0])
-            for fi, rs in nearest_f.items()
-            if len(rs) == 1 and nearest_r.get(rs[0]) == [fi]
-        )
-        if not forced:
-            break
-        for fi, ri in forced:
-            paired_idx.append((fi, ri))
-            live_f.discard(fi)
-            live_r.discard(ri)
+    # Ordered by id rather than by position, so that what a receipt SHOWS is as
+    # order-independent as what the row counts.
+    def _by_ref(indices, population):
+        return sorted((population[i] for i in indices), key=lambda side: side.ref)
 
-    contested_f = sorted(
-        fi for fi in live_f if any((fi, ri) in edges for ri in live_r)
-    )
-    contested_r = sorted(
-        ri for ri in live_r if any((fi, ri) in edges for fi in live_f)
-    )
-    contested_f_set, contested_r_set = set(contested_f), set(contested_r)
-
-    return (
-        [(fixtures[fi], rows[ri]) for fi, ri in sorted(paired_idx)],
-        [fixtures[i] for i in contested_f],
-        [rows[i] for i in contested_r],
-        [fixtures[i] for i in sorted(live_f) if i not in contested_f_set],
-        [rows[i] for i in sorted(live_r) if i not in contested_r_set],
+    return _Resolution(
+        paired=sorted(
+            ((fixtures[fi], rows[ri]) for fi, ri in paired_idx),
+            key=lambda pair: (pair[0].ref, pair[1].ref),
+        ),
+        tied_fixtures=_by_ref(tied_f, fixtures),
+        tied_rows=_by_ref(tied_r, rows),
+        unsolved_fixtures=_by_ref(unsolved_f, fixtures),
+        unsolved_rows=_by_ref(unsolved_r, rows),
+        spare_fixtures=_by_ref(spare_f, fixtures),
+        spare_rows=_by_ref(spare_r, rows),
     )
 
 
@@ -422,70 +603,101 @@ def pair_tennis_sides(
     usable_f = [f for f in fixtures if _readable(f)]
     usable_r = [r for r in rows if _readable(r)]
 
-    # Every decision is made per ASSIGNMENT, and a refusal is a TIE — not a
-    # large candidate set. See `_pair_with_tie_detection` and the progression of
-    # four blocks recorded on `_ambiguity`.
-    (
-        paired,
-        tied_fixtures,
-        tied_rows,
-        statpal_only,
-        ours_only,
-    ) = _pair_with_tie_detection(usable_f, usable_r)
+    # Every decision is made per ASSIGNMENT over the whole candidate graph, and a
+    # refusal is a TIE — never a shape, never a large candidate set, and never
+    # the edge some walk happened to reach first. See `_pair_with_tie_detection`
+    # and the progression of blocks recorded on `_ambiguity`.
+    resolved = _pair_with_tie_detection(usable_f, usable_r)
+
+    def _fixture_receipt(fx: Side, candidates: Sequence[Side], why: str) -> dict[str, Any]:
+        return {
+            "statpal_id": fx.ref,
+            "players": [fx.home, fx.away],
+            "statpal_start": fx.start.isoformat() if fx.start else None,
+            "label": fx.label,
+            "unresolved_name": None,
+            "our_candidates": [],
+            "our_event_ids": [r.ref for r in candidates],
+            "why": why,
+        }
+
+    def _row_receipt(row: Side, why: str) -> dict[str, Any]:
+        return {
+            "event_id": row.ref,
+            "players": [row.home, row.away],
+            "our_start": row.start.isoformat() if row.start else None,
+            "label": row.label,
+            "column_holds": row.held_id,
+            "why": why,
+        }
 
     refused: list[dict[str, Any]] = []
-    for fx in tied_fixtures:
-        found = _ambiguity(fx, tied_rows)
+    for fx in resolved.tied_fixtures:
+        found = _ambiguity(fx, resolved.tied_rows)
         refused.append(
             found[0]
             if found is not None
-            else {
-                "statpal_id": fx.ref,
-                "players": [fx.home, fx.away],
-                "statpal_start": fx.start.isoformat() if fx.start else None,
-                "label": fx.label,
-                "unresolved_name": None,
-                "our_candidates": [],
-                "our_event_ids": [r.ref for r in tied_rows],
-                "why": (
-                    "tied with another candidate at the same distance, so which "
-                    "match this is would be an arbitrary choice"
-                ),
-            }
+            else _fixture_receipt(
+                fx,
+                resolved.tied_rows,
+                "tied with another candidate at the same distance, so which "
+                "match this is would be an arbitrary choice",
+            )
         )
 
     refusals: dict[str, list[dict[str, Any]]] = {}
     if refused:
         refusals[AMBIGUOUS_REFUSAL] = refused
-    if tied_rows:
+    if resolved.tied_rows:
         # Counted under their OWN name rather than added to the fixture receipt's
         # count. One tied fixture and two rows held out of the denominator are
         # different quantities, and `excluded` is read as a census.
         refusals[AMBIGUOUS_CANDIDATE_ROWS] = [
-            {
-                "event_id": r.ref,
-                "players": [r.home, r.away],
-                "our_start": r.start.isoformat() if r.start else None,
-                "label": r.label,
-                "column_holds": r.held_id,
-                "why": (
-                    "tied with another of our rows for the same fixture at the "
-                    "same distance. Left in `ours_only` it would publish a "
-                    "duplicate of ours as a match StatPal is missing"
-                ),
-            }
-            for r in tied_rows
+            _row_receipt(
+                row,
+                "tied with another of our rows for the same fixture at the same "
+                "distance. Left in `ours_only` it would publish a duplicate of "
+                "ours as a match StatPal is missing",
+            )
+            for row in resolved.tied_rows
+        ]
+    if resolved.unsolved_fixtures:
+        refusals[UNSOLVED_COMPONENT_FIXTURES] = [
+            _fixture_receipt(
+                fx,
+                resolved.unsolved_rows,
+                f"this fixture sits in a candidate component larger than "
+                f"{MAX_ASSIGNMENTS_PER_COMPONENT} possible assignments, so which "
+                "pairings hold across all of them was not established. Not a "
+                "finding about the field — a bound of ours, and the signal that "
+                "it needs raising",
+            )
+            for fx in resolved.unsolved_fixtures
+        ]
+    if resolved.unsolved_rows:
+        refusals[UNSOLVED_COMPONENT_ROWS] = [
+            _row_receipt(
+                row,
+                "sits in the same unsolved candidate component. Left in "
+                "`ours_only` it would publish our own bound as a match StatPal "
+                "is missing",
+            )
+            for row in resolved.unsolved_rows
         ]
 
-    refused_f_refs = {fx.ref for fx in tied_fixtures}
-    held_refs = {r.ref for r in tied_rows}
+    left_out_f = {fx.ref for fx in resolved.tied_fixtures} | {
+        fx.ref for fx in resolved.unsolved_fixtures
+    }
+    left_out_r = {row.ref for row in resolved.tied_rows} | {
+        row.ref for row in resolved.unsolved_rows
+    }
 
     return Join(
-        fixtures=[f for f in usable_f if f.ref not in refused_f_refs],
-        rows=[r for r in usable_r if r.ref not in held_refs],
-        paired=paired,
-        statpal_only=statpal_only,
-        ours_only=ours_only,
+        fixtures=[f for f in usable_f if f.ref not in left_out_f],
+        rows=[r for r in usable_r if r.ref not in left_out_r],
+        paired=resolved.paired,
+        statpal_only=resolved.spare_fixtures,
+        ours_only=resolved.spare_rows,
         unusable_fixtures=[f for f in fixtures if not _readable(f)],
         unusable_rows=[r for r in rows if not _readable(r)],
         refusals=refusals,

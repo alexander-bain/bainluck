@@ -17,6 +17,7 @@ invariant_not_the_feature`).
 from __future__ import annotations
 
 import itertools
+from collections import namedtuple
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -35,11 +36,14 @@ from app.utils.authority_agreement import (
 from app.utils.authority_tennis_agreement import (
     AMBIGUOUS_CANDIDATE_ROWS,
     AMBIGUOUS_REFUSAL,
+    MAX_ASSIGNMENTS_PER_COMPONENT,
     TENNIS_DENOMINATOR_IS,
     DOUBLES,
     SINGLES,
     STATPAL_TENNIS_REACH,
     TENNIS_MEASUREMENT_HORIZON,
+    UNSOLVED_COMPONENT_FIXTURES,
+    UNSOLVED_COMPONENT_ROWS,
     TENNIS_TIGHTEST_GAP,
     build_tennis_agreements,
     pair_tennis_sides,
@@ -47,6 +51,16 @@ from app.utils.authority_tennis_agreement import (
 )
 
 NOW = datetime(2026, 9, 5, 15, 0, tzinfo=timezone.utc)
+
+#: Everything one draw's row published, counts AND identity. The identity half is
+#: not decoration: a mis-assignment that swaps two partners conserves `both`,
+#: `statpal_only` and `ours_only` exactly, so a signature made only of counts
+#: cannot see it (CERT-1917).
+Published = namedtuple(
+    "Published",
+    "both statpal_only ours_only denominator ambiguous ambiguous_rows "
+    "pairs spare_fixtures spare_rows",
+)
 
 
 def f(ref, home, away, start=NOW):
@@ -612,6 +626,11 @@ class TestThePublishedNumberDoesNotDependOnArrivalOrder:
     These sweep EVERY permutation rather than checking one alternative ordering:
     a single swap can miss the case, and the invariant is over the whole
     symmetric group, not over one sample of it.
+
+    The signature carries the pairing IDENTITY as well as the counts, because a
+    mis-assignment that swaps two partners conserves every total (CERT-1917) and
+    a census cannot see it. Which rows were refused and which were called misses
+    are in it for the same reason.
     """
 
     @staticmethod
@@ -620,13 +639,22 @@ class TestThePublishedNumberDoesNotDependOnArrivalOrder:
             fixtures=list(fixtures), rows=list(rows)
         )[SINGLES]
         identity = singles["identity"]
-        return (
-            identity["both"],
-            identity["statpal_only"],
-            identity["ours_only"],
-            singles["denominator"],
-            singles["excluded"].get(AMBIGUOUS_REFUSAL, 0),
-            singles["excluded"].get(AMBIGUOUS_CANDIDATE_ROWS, 0),
+        join = pair_tennis_sides(list(fixtures), list(rows))
+        return Published(
+            both=identity["both"],
+            statpal_only=identity["statpal_only"],
+            ours_only=identity["ours_only"],
+            denominator=singles["denominator"],
+            ambiguous=singles["excluded"].get(AMBIGUOUS_REFUSAL, 0),
+            ambiguous_rows=singles["excluded"].get(AMBIGUOUS_CANDIDATE_ROWS, 0),
+            # Deliberately NOT sorted here. Sorting in the harness would hide the
+            # thing the harness exists to catch: these lists feed capped
+            # receipts, so their ORDER decides which examples a reader is shown,
+            # and an order that follows the SQL row order is the same defect in
+            # the half of the row a human reads.
+            pairs=tuple((fx.ref, row.ref) for fx, row in join.paired),
+            spare_fixtures=tuple(fx.ref for fx in join.statpal_only),
+            spare_rows=tuple(row.ref for row in join.ours_only),
         )
 
     def _invariant(self, fixtures, rows):
@@ -636,25 +664,38 @@ class TestThePublishedNumberDoesNotDependOnArrivalOrder:
             for pr in itertools.permutations(rows)
         }
         assert len(seen) == 1, (
-            f"the published counts depend on arrival order: {sorted(seen)}"
+            f"what this row published depends on arrival order: {sorted(seen)}"
         )
-        return seen.pop()
+        published = seen.pop()
+        # A pairing is a one-to-one assignment or it is not a pairing. Asserted
+        # here rather than in one test so every case below carries it.
+        assert len({fx for fx, _ in published.pairs}) == len(published.pairs)
+        assert len({row for _, row in published.pairs}) == len(published.pairs)
+        return published
 
     def test_the_chain_graph_is_order_invariant(self):
         """CERT-1915's exact shape: two fixtures sharing a middle row."""
         alc = lambda ref: f(ref, "C. Alcaraz", "J. Sinner")  # noqa: E731
         ours = lambda ref: r(ref, "Carlos Alcaraz", "Jannik Sinner")  # noqa: E731
-        both, sp, ours_only, denom, amb, amb_rows = self._invariant(
+        pub = self._invariant(
             [alc("f1"), alc("f2")], [ours("r1"), ours("r2"), ours("r3")]
         )
         # Nothing in the data chooses, so nothing is published — and crucially
-        # the SAME nothing under all twelve orderings.
-        assert (both, sp, ours_only, denom) == (0, 0, 0, 0)
-        assert (amb, amb_rows) == (2, 3)
+        # the SAME nothing under all twelve orderings. Two fixtures CAN be paired
+        # here, so this is also the guard on "maximise the pairing" not becoming
+        # "publish any maximum pairing": every one of the six is equally good.
+        assert (pub.both, pub.statpal_only, pub.ours_only, pub.denominator) == (
+            0,
+            0,
+            0,
+            0,
+        )
+        assert (pub.ambiguous, pub.ambiguous_rows) == (2, 3)
+        assert pub.pairs == ()
 
     def test_a_forced_pair_beside_a_contest_is_order_invariant(self):
         early, late = NOW, NOW + timedelta(days=7)
-        both, sp, ours_only, denom, amb, amb_rows = self._invariant(
+        pub = self._invariant(
             [
                 f("1", "C. Alcaraz", "J. Sinner", start=early),
                 f("2", "C. Alcaraz", "J. Sinner", start=late),
@@ -665,11 +706,14 @@ class TestThePublishedNumberDoesNotDependOnArrivalOrder:
                 r("13", "Carlos Alcaraz", "Jannik Sinner", start=late),
             ],
         )
-        assert both == 1 and (amb, amb_rows) == (1, 2)
+        assert pub.both == 1 and (pub.ambiguous, pub.ambiguous_rows) == (1, 2)
+        # Both maximum pairings contain this edge and differ only in the other
+        # one, so it is published and the rest is refused.
+        assert pub.pairs == (("1", "11"),)
 
     def test_the_repeat_meeting_pairing_is_order_invariant(self):
         early, late = NOW, NOW + timedelta(days=7)
-        both, sp, ours_only, denom, amb, _ = self._invariant(
+        pub = self._invariant(
             [
                 f("1", "C. Alcaraz", "J. Sinner", start=early),
                 f("2", "C. Alcaraz", "J. Sinner", start=late),
@@ -679,7 +723,14 @@ class TestThePublishedNumberDoesNotDependOnArrivalOrder:
                 r("12", "Carlos Alcaraz", "Jannik Sinner", start=late),
             ],
         )
-        assert (both, sp, ours_only, denom, amb) == (2, 0, 0, 2, 0)
+        assert (
+            pub.both,
+            pub.statpal_only,
+            pub.ours_only,
+            pub.denominator,
+            pub.ambiguous,
+        ) == (2, 0, 0, 2, 0)
+        assert pub.pairs == (("1", "11"), ("2", "12"))
 
     def test_a_timed_candidate_outranks_an_untimed_one(self):
         """Which row paired, not how many — the counts cannot see this.
@@ -711,7 +762,7 @@ class TestThePublishedNumberDoesNotDependOnArrivalOrder:
         """
         early = NOW
         late = NOW + timedelta(days=2)
-        both, sp, ours_only, denom, amb, _ = self._invariant(
+        pub = self._invariant(
             [
                 f("1", "C. Alcaraz", "J. Sinner", start=early),
                 f("2", "C. Alcaraz", "J. Sinner", start=late),
@@ -721,7 +772,212 @@ class TestThePublishedNumberDoesNotDependOnArrivalOrder:
                 r("12", "Carlos Alcaraz", "Jannik Sinner", start=late + timedelta(days=2)),
             ],
         )
-        assert (both, amb) == (2, 0)
+        assert (pub.both, pub.ambiguous) == (2, 0)
+        assert pub.pairs == (("1", "11"), ("2", "12"))
+
+    def test_the_receipts_are_order_invariant_too_and_not_only_the_counts(self):
+        """A receipt is capped, so its ORDER decides which examples a reader sees.
+
+        The counts beside it were made order-invariant first and that is the
+        governing half, but a truncated list whose contents shuffle with the
+        SQL row order is the same defect in the half a human actually reads.
+        """
+        fixtures = [f("f1", "G. Garcia", "J. Sinner")]
+        rows = [
+            r("11", "Garcia", "Jannik Sinner"),
+            r("12", "Garcia Garcia", "Jannik Sinner"),
+        ]
+        seen = set()
+        for permuted in itertools.permutations(rows):
+            join = pair_tennis_sides(fixtures, list(permuted))
+            seen.add(
+                (
+                    tuple(
+                        tuple(receipt["our_event_ids"])
+                        for receipt in join.refusals[AMBIGUOUS_REFUSAL]
+                    ),
+                    tuple(
+                        receipt["event_id"]
+                        for receipt in join.refusals[AMBIGUOUS_CANDIDATE_ROWS]
+                    ),
+                )
+            )
+        assert seen == {((("11", "12"),), ("11", "12"))}
+
+    def test_a_locally_exact_edge_never_costs_the_graph_a_pairing(self):
+        """CERT-1917, and the exact asymmetric graph it was found on.
+
+        Two Garcias are in the draw and one of our rows carries no given name,
+        so the candidate graph is genuinely lopsided:
+
+            fA `Garcia`     → our `Caroline Garcia` AND our `Garcia`
+            fD `D. Garcia`  → our `Garcia` only  (a `D.` cannot be Caroline)
+
+        `fA` sits on our bare-`Garcia` row's kickoff EXACTLY, so a rule that
+        takes the locally nearest edge first takes `fA→Garcia` — and that single
+        choice destroys the only full pairing the graph has. `fD` is then left
+        with nothing and `Caroline Garcia` with nothing, and the row publishes
+        `1/1/1` over a denominator of 3: two manufactured misses, in opposite
+        directions, from two matches that both exist.
+
+        The graph has exactly ONE pairing of maximum size and every permutation
+        agrees on it, so there is nothing to refuse here. Cardinality is settled
+        before the clock is consulted; the clock chooses among pairings of equal
+        size and never buys a local minute with a whole match.
+        """
+        pub = self._invariant(
+            [
+                f("fA", "Garcia", "J. Sinner", start=NOW),
+                f("fD", "D. Garcia", "J. Sinner", start=NOW + timedelta(days=3)),
+            ],
+            [
+                r("rX", "Caroline Garcia", "Jannik Sinner", start=NOW + timedelta(days=5)),
+                r("rY", "Garcia", "Jannik Sinner", start=NOW),
+            ],
+        )
+        assert pub.pairs == (("fA", "rX"), ("fD", "rY")), (
+            "the unique maximum pairing is the answer; taking the exact-time "
+            "edge first publishes fA→rY and strands both fD and rX"
+        )
+        assert (
+            pub.both,
+            pub.statpal_only,
+            pub.ours_only,
+            pub.denominator,
+        ) == (2, 0, 0, 2)
+        assert (pub.ambiguous, pub.ambiguous_rows) == (0, 0)
+
+    def test_the_clock_still_chooses_between_pairings_of_the_same_size(self):
+        """The other half: maximising cardinality is not licence to ignore time.
+
+        The same lopsided graph, with our bare-`Garcia` row moved so that BOTH
+        full pairings exist — `fA` can take either row and `fD` the other is
+        impossible, so there is still one maximum pairing. This is the guard that
+        keeps the test above from passing under "always pair `fA` with whatever
+        `fD` cannot have", which is a rule about the graph's shape rather than a
+        maximisation.
+        """
+        join = pair_tennis_sides(
+            [
+                f("fA", "Garcia", "J. Sinner", start=NOW),
+                f("fD", "D. Garcia", "J. Sinner", start=NOW),
+            ],
+            [
+                r("rX", "Caroline Garcia", "Jannik Sinner", start=NOW),
+                r("rY", "Garcia", "Jannik Sinner", start=NOW),
+            ],
+        )
+        assert {(fx.ref, row.ref) for fx, row in join.paired} == {
+            ("fA", "rX"),
+            ("fD", "rY"),
+        }
+
+    def test_maximising_the_pairing_never_publishes_a_name_disagreement(self):
+        """A bigger pairing may only be built out of edges the matcher allows.
+
+        Two fixtures and two rows, and yet the largest honest pairing is ONE
+        edge: our `Garcia–Daniil Medvedev` row agrees with neither fixture,
+        because the opponent settles it (CERT-1909). A maximiser reaching for the
+        larger number by relaxing the relation would publish agreement about a
+        match against the wrong opponent, which is the failure this whole module
+        is an argument against — so the second fixture and that row stay honest
+        misses in opposite directions.
+        """
+        join = pair_tennis_sides(
+            [
+                f("fA", "Garcia", "J. Sinner", start=NOW),
+                f("fD", "D. Garcia", "J. Sinner", start=NOW + timedelta(days=3)),
+            ],
+            [
+                r("rY", "Garcia", "Jannik Sinner", start=NOW),
+                r("rMed", "Garcia", "Daniil Medvedev", start=NOW),
+            ],
+        )
+        assert [(fx.ref, row.ref) for fx, row in join.paired] == [("fA", "rY")]
+        assert [fx.ref for fx in join.statpal_only] == ["fD"]
+        assert [row.ref for row in join.ours_only] == ["rMed"]
+
+    def test_a_component_too_large_to_solve_exactly_is_refused_not_guessed(self):
+        """The bound is a refusal, and it is stated rather than discovered.
+
+        The published edges are the ones every optimal pairing agrees on, which
+        is a question about ALL of them. That search is bounded, and past the
+        bound this module says so: the whole component leaves the denominator.
+        It never falls back to a walk, because a walk is the arrival-order defect
+        of CERT-1915 wearing a budget.
+
+        And it says so under its OWN name. "The data does not choose" and "we did
+        not finish asking" leave the denominator the same way and are not the
+        same finding — one is about the field, the other is about our bound, and
+        only the second is a reason to change this constant.
+        """
+        fixtures = [f(f"f{i}", "C. Alcaraz", "J. Sinner") for i in range(20)]
+        rows = [r(f"r{i}", "Carlos Alcaraz", "Jannik Sinner") for i in range(20)]
+        join = pair_tennis_sides(fixtures, rows)
+        assert join.paired == []
+        assert join.statpal_only == [] and join.ours_only == []
+        assert len(join.refusals[UNSOLVED_COMPONENT_FIXTURES]) == 20
+        assert len(join.refusals[UNSOLVED_COMPONENT_ROWS]) == 20
+        assert AMBIGUOUS_REFUSAL not in join.refusals, (
+            "our own bound is not an ambiguity in the draw"
+        )
+        assert AMBIGUOUS_CANDIDATE_ROWS not in join.refusals
+
+        # And they LEAVE, rather than merely being receipted on the way past.
+        # Refusing a row in the receipt while keeping it in the population is
+        # CERT-1904's exact defect, reached from the bound instead of the draw.
+        # `Join.rows` is the span a StatPal-only fixture's horizon is measured
+        # against, so a component we could not solve must not widen the span we
+        # claim to have read — a refusal is a refusal whichever reason it has.
+        assert join.rows == [] and join.fixtures == []
+        singles = build_tennis_agreements(fixtures=fixtures, rows=rows)[SINGLES]
+        assert singles["denominator"] == 0
+        assert singles["identity"]["ours_only"] == 0
+        assert singles["excluded"][UNSOLVED_COMPONENT_ROWS] == 20
+        assert singles["excluded"][UNSOLVED_COMPONENT_FIXTURES] == 20
+
+    def test_a_real_tie_is_never_reported_as_our_bound_giving_up(self):
+        """The mutation guard for the test above, in the other direction.
+
+        Two of our rows for one fixture is squarely inside the bound and is a
+        genuine tie. Reporting it as an unsolved component would blame the field
+        on our own search and send a reader to raise a constant that is not the
+        problem.
+        """
+        join = pair_tennis_sides(
+            [f("1", "G. Garcia", "J. Sinner")],
+            [
+                r("11", "Garcia", "Jannik Sinner"),
+                r("12", "Garcia Garcia", "Jannik Sinner"),
+            ],
+        )
+        assert len(join.refusals[AMBIGUOUS_REFUSAL]) == 1
+        assert UNSOLVED_COMPONENT_FIXTURES not in join.refusals
+        assert UNSOLVED_COMPONENT_ROWS not in join.refusals
+
+    def test_the_bound_does_not_refuse_an_ordinary_days_component(self):
+        """The mutation guard for the test above: a bound of 1 would pass it.
+
+        Four repeat meetings of one pair against four of our rows is a real
+        shape and it must still resolve, so the bound cannot be set below what a
+        tennis day actually produces. The bound is asserted by RELATION to the
+        shape it has to admit, so lowering the constant reddens this test rather
+        than silently converting live matches into refusals.
+        """
+        assert 5**4 <= MAX_ASSIGNMENTS_PER_COMPONENT, (
+            "four fixtures each with four candidates must stay solvable exactly"
+        )
+        starts = [NOW + timedelta(days=2 * i) for i in range(4)]
+        join = pair_tennis_sides(
+            [f(f"f{i}", "C. Alcaraz", "J. Sinner", start=s) for i, s in enumerate(starts)],
+            [
+                r(f"r{i}", "Carlos Alcaraz", "Jannik Sinner", start=s)
+                for i, s in enumerate(starts)
+            ],
+        )
+        assert {(fx.ref, row.ref) for fx, row in join.paired} == {
+            (f"f{i}", f"r{i}") for i in range(4)
+        }
 
 
 class TestARowDescribesTheJoinItActuallyUsed:
