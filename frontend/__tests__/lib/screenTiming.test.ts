@@ -25,6 +25,8 @@ import {
   isRealCard,
   maskSurface,
   deviceClass,
+  networkClass,
+  EFFECTIVE_TYPES,
   NOT_MEASURED,
   CARD_SELECTOR,
 } from "@/lib/screenTiming";
@@ -352,6 +354,90 @@ describe("the packet survives the privacy boundary", () => {
 describe("deviceClass", () => {
   it("returns one of the five declared buckets", () => {
     expect(["phone", "tablet", "desktop", "watch", "unknown"]).toContain(deviceClass());
+  });
+});
+
+describe("networkClass", () => {
+  // #3276 sibling: the domain here was restated from the spec as `length <= 12`,
+  // which is a SHAPE test, not a domain test. `network_class` is a GA4
+  // dimension, so an unrecognised value does not just log oddly — it opens a
+  // new row and splits every cold-load comparison the rail exists to make.
+  // `navigator` is NOT a given here. CI runs this file under the `node` test
+  // environment, where the global does not exist at all — the first draft of
+  // these tests referenced it directly, passed locally under jsdom, and failed
+  // in CI with `ReferenceError: navigator is not defined`. So install the
+  // global when it is absent and remove it again afterwards, and the tests
+  // then assert the same rule under either environment.
+  const g = globalThis as unknown as { navigator?: { connection?: unknown } };
+
+  const withConnection = (effectiveType: unknown, run: () => void) => {
+    const hadNav = Object.prototype.hasOwnProperty.call(g, "navigator");
+    const prevNav = g.navigator;
+    if (!hadNav) {
+      Object.defineProperty(g, "navigator", { value: {}, configurable: true, writable: true });
+    }
+    const nav = g.navigator as { connection?: unknown };
+    const hadConn = Object.prototype.hasOwnProperty.call(nav, "connection");
+    const prevConn = nav.connection;
+    Object.defineProperty(nav, "connection", {
+      value: effectiveType === undefined ? undefined : { effectiveType },
+      configurable: true,
+      writable: true,
+    });
+    try {
+      run();
+    } finally {
+      if (hadConn) {
+        Object.defineProperty(nav, "connection", { value: prevConn, configurable: true, writable: true });
+      } else {
+        delete (nav as Record<string, unknown>).connection;
+      }
+      if (!hadNav) {
+        delete (g as Record<string, unknown>).navigator;
+      } else {
+        Object.defineProperty(g, "navigator", { value: prevNav, configurable: true, writable: true });
+      }
+    }
+  };
+
+  it.each([...EFFECTIVE_TYPES])("passes the spec value %s through", (t) => {
+    withConnection(t, () => expect(networkClass()).toBe(t));
+  });
+
+  it("maps an unrecognised SHORT value to unknown, not through", () => {
+    // The exact hole: every one of these is <= 12 chars and sailed through.
+    for (const bogus of ["5g", "wifi", "ethernet", "unknown-x", "lte", "", "4G"]) {
+      withConnection(bogus, () => expect(networkClass()).toBe("unknown"));
+    }
+  });
+
+  it("maps a missing or malformed connection to unknown", () => {
+    withConnection(undefined, () => expect(networkClass()).toBe("unknown"));
+    withConnection(null, () => expect(networkClass()).toBe("unknown"));
+    withConnection(42, () => expect(networkClass()).toBe("unknown"));
+  });
+
+  it("returns unknown when there is no navigator at all", () => {
+    // The CI path, asserted rather than assumed: Node 26 ships a `navigator`
+    // global and older Node does not, so this branch is the one that only ever
+    // runs on the build machine unless a test removes the global on purpose.
+    const had = Object.prototype.hasOwnProperty.call(g, "navigator");
+    const prev = g.navigator;
+    delete (g as Record<string, unknown>).navigator;
+    try {
+      expect(networkClass()).toBe("unknown");
+    } finally {
+      if (had) {
+        Object.defineProperty(g, "navigator", { value: prev, configurable: true, writable: true });
+      }
+    }
+  });
+
+  it("only ever emits a value from a closed set", () => {
+    const closed = new Set<string>([...EFFECTIVE_TYPES, "unknown"]);
+    for (const t of [...EFFECTIVE_TYPES, "5g", "wifi", undefined, null, 42]) {
+      withConnection(t, () => expect(closed.has(networkClass())).toBe(true));
+    }
   });
 });
 
