@@ -14,6 +14,9 @@ fields are stored MORE coarsely than GA gets them. A test that only checked
 so the load-bearing cases here are the hostile ones.
 """
 
+import pathlib
+import re
+
 import pytest
 
 from app.utils.client_timing_contract import (
@@ -399,11 +402,65 @@ def test_no_identifier_survives_in_app_build(hostile):
 
 
 @pytest.mark.parametrize(
-    "legal", ["web", "a1b2c3d", "0123456789abcdef01234567", "3.14.1", "2.0"]
+    "legal",
+    [
+        "web",  # screenTiming.ts default
+        "a1b2c3d",  # webAppBuild(): Vercel sha sliced to 7
+        "0123456789ab",  # frontend meta tag sliced to 12
+        "0123456789abcdef01234567",  # a longer sha
+        "1.4.2 (317)",  # iOS AnalyticsService.appBuild()
+        "2.0 (1)",
+        "? (?)",  # iOS missing-Info.plist fallback
+    ],
 )
-def test_app_build_still_admits_a_real_deploy_tag(legal):
+def test_app_build_still_admits_every_real_producer_format(legal):
+    """Each case is a form a REAL producer emits, cited in `_APP_BUILD_RE`.
+
+    `1.4.2 (317)` is here because the first grammar rejected the iOS form
+    outright — every native packet would have shipped an empty `app_build`,
+    which reads as "native does not report" rather than as a bug.
+    """
     _, clean = validate_packet("screen_timing", {"app_build": legal})
     assert clean["app_build"] == legal
+
+
+@pytest.mark.parametrize(
+    "abbreviated_ipv4",
+    ["127.0.1", "127.1", "10.1", "192.168.1", "192.168.1.44", "2130706433", "0.0.0.0"],
+)
+def test_no_abbreviated_ipv4_form_survives_in_app_build(abbreviated_ipv4):
+    """CERT-1873: bounding the COMPONENT COUNT cannot exclude an IP address.
+
+    Abbreviated IPv4 is valid and ubiquitous — BSD/Python resolve `127.0.1` and
+    `127.1` both to `127.0.0.1`. Every shorter form is still an address, so
+    there is no component count that is "too few to be an IP". What excludes
+    them is that no producer emits a bare version at all.
+    """
+    _, clean = validate_packet("screen_timing", {"app_build": abbreviated_ipv4})
+    assert "app_build" not in clean, f"{abbreviated_ipv4!r} stored"
+
+
+def test_cache_status_domain_matches_its_producer():
+    """The domain is derived from the WRITER, not restated beside it.
+
+    CERT-1873's follow-up: the first version took this domain from
+    `_CACHE_BUCKETS` in `middleware/latency.py`, which is a BUCKETING of the
+    header rather than the header's domain — so `last_good`, `coalesced` and
+    `unavailable` were real values silently dropped into an empty column.
+    Parsing the writer's own call sites is what makes that a red test rather
+    than a quiet data loss.
+    """
+    feed = pathlib.Path(__file__).resolve().parents[1] / "app" / "routes" / "feed.py"
+    text = feed.read_text()
+    produced = set(re.findall(r'cache_status\s*=\s*"([a-z_]+)"', text))
+    produced |= set(re.findall(r'_set_feed_cache_status\([^,]+,\s*"([a-z_]+)"\)', text))
+    assert produced, "could not parse any cache_status producer — the regex rotted"
+
+    missing = produced - _ENUM_DOMAINS["cache_status"]
+    assert not missing, (
+        f"feed.py writes X-Feed-Cache values the contract drops: {sorted(missing)} — "
+        "they would land as a permanently-empty column"
+    )
 
 
 @pytest.mark.parametrize(

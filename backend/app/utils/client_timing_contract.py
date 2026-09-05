@@ -132,10 +132,34 @@ _ENUM_DOMAINS: Dict[str, frozenset] = {
     "network_class": frozenset({"slow-2g", "2g", "3g", "4g", "unknown"}),
     # `FeedTelemetryParams.cohort` — a literal union.
     "cohort": frozenset({"authenticated", "session_anon", "shared_anon"}),
-    # `_CACHE_BUCKETS` in `app/middleware/latency.py`, plus the two labels that
-    # module itself adds for an unrecognised or absent header.
+    # Every value `app/routes/feed.py` actually writes to `X-Feed-Cache`, plus
+    # `other`/`none` from `app/middleware/latency.py` and `unknown` from
+    # `normalizeCacheStatus` in `lib/feedTelemetry.ts`.
+    #
+    # CERT-1873 FOLLOW-UP. This was first taken from `_CACHE_BUCKETS` in
+    # `middleware/latency.py` alone, which is a BUCKETING of the header, not the
+    # header's domain — so `last_good`, `coalesced` and `unavailable` were real
+    # values being silently dropped. That is precisely the "an over-tight domain
+    # ships a permanently-empty column that reads as no-data rather than as a
+    # bug" failure this module's own tests warn about, shipped anyway. The
+    # authority is the WRITER (`_set_feed_cache_status`'s call sites), and
+    # `test_cache_status_domain_matches_its_producer` now parses them.
     "cache_status": frozenset(
-        {"miss", "hit", "stale_hit", "error", "other", "none", "unknown"}
+        {
+            "miss",
+            "hit",
+            "stale_hit",
+            "error",
+            "coalesced",
+            "last_good",
+            "unavailable",
+            "disabled",
+            "disabled_debug",
+            "disabled_reviewed_filter",
+            "other",
+            "none",
+            "unknown",
+        }
     ),
     # web-vitals' own metric ids.
     "metric_name": frozenset({"LCP", "INP", "CLS", "TTFB", "FCP", "FID"}),
@@ -147,17 +171,49 @@ _ENUM_DOMAINS: Dict[str, frozenset] = {
     ),
 }
 
-#: `app_build` has no finite domain — it is a deploy tag — so it gets a closed
-#: GRAMMAR instead: the literal "web" (what `screenTiming.ts` defaults to), a
-#: commit sha, or a dotted version from the native surfaces. Anything else is
-#: dropped, so a free-text identifier cannot ride in here either.
+#: `app_build` has no finite domain — it is a deploy tag — so it is constrained
+#: to the EXACT FORMS ITS REAL PRODUCERS EMIT, and nothing else:
 #:
-#: At most THREE dotted components, deliberately. A four-component form is a
-#: dotted quad, and `192.168.1.44` is a valid IPv4 address that an unbounded
-#: `\d+(\.\d+){0,3}` happily accepts as a "version" — caught by this module's own
-#: adversarial-value battery, which is the entire reason that battery exists.
+#:   1. ``web``                       — `screenTiming.ts`'s default, and
+#:                                      `webAppBuild()`'s when no Vercel sha.
+#:   2. a hex commit sha              — the frontend meta tag sliced to 12, or
+#:                                      `NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA`
+#:                                      sliced to 7.
+#:   3. ``1.4.2 (317)``               — iOS `AnalyticsService.appBuild()`:
+#:                                      "\(CFBundleShortVersionString) (\(CFBundleVersion))".
+#:   4. ``? (?)``                     — that function's own missing-Info.plist
+#:                                      fallback.
+#:
+#: WHY A BARE DOTTED VERSION IS NOT ALLOWED, THOUGH IT LOOKS LIKE ONE (CERT-1873).
+#: The previous grammar admitted a bare `\d{1,5}(\.\d{1,5}){0,2}` and bounded it
+#: to three components, on the theory that only a four-component dotted quad is
+#: an IPv4 address. **That is false.** Abbreviated IPv4 is valid and ubiquitous:
+#: BSD/Python resolve ``127.0.1`` to ``127.0.0.1``, ``127.1`` to ``127.0.0.1``,
+#: and a bare integer to an address too. Bounding the component COUNT cannot
+#: exclude an IP, because every shorter form is also an IP.
+#:
+#: What excludes it is that **no producer emits a bare version at all** — iOS
+#: always parenthesises the build number. So the version form requires the
+#: parens, and every abbreviated IPv4 form falls outside the grammar rather than
+#: being enumerated against. Constrain to what the producers emit; do not try to
+#: out-guess what an attacker might send.
+#: The sha arm requires at least one hex LETTER, which is not cosmetic. A bare
+#: decimal integer is also a valid IPv4 encoding — `2130706433` is `127.0.0.1` —
+#: and every digit is a legal hex character, so an all-numeric sha pattern
+#: silently admits one. Caught by this module's own abbreviated-IPv4 battery.
+#:
+#: The cost, stated rather than hidden: a genuine commit sha that happens to be
+#: all digits is refused. At the 12-char frontend form that is ~0.35% of
+#: deploys, at the 7-char Vercel form ~3.7%. The failure is a missing
+#: `app_build` on those deploys — a dimension gap, never a wrong number — and
+#: that is the right direction to fail for a field on a public endpoint.
 _APP_BUILD_RE = re.compile(
-    r"^(web|[0-9a-f]{7,40}|\d{1,5}(\.\d{1,5}){0,2}(\+\d{1,6})?)$"
+    r"^("
+    r"web"
+    r"|(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}"
+    r"|\d{1,4}(\.\d{1,4}){0,3} \([0-9A-Za-z.\-]{1,12}\)"
+    r"|\? \(\?\)"
+    r")$"
 )
 
 _SCREEN_TIMING: Dict[str, str] = {
