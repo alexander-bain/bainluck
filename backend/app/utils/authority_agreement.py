@@ -757,56 +757,6 @@ def pair_by_normalized_key(
     )
 
 
-def pair_greedily(
-    fixtures: Sequence[Side],
-    rows: Sequence[Side],
-    agree: Callable[[Side, Side], bool],
-) -> tuple[list[tuple[Side, Side]], list[Side], list[Side]]:
-    """Pair on an arbitrary agreement relation, nearest kickoff first.
-
-    `_pair_within_key`'s algorithm over a relation instead of a bucket, for the
-    strategies whose relation is not an equality and therefore has no bucket.
-    The tie-break rule is the same and for the same reason: the kickoff decides
-    WHICH of two admissible pairings is made and never whether one is made at
-    all, so a disagreement about the clock is reported rather than lost.
-
-    Untimed pairs are settled last, in arrival order, after every timed pairing —
-    absence is not proximity.
-    """
-    timed: list[tuple[timedelta, int, int]] = []
-    untimed: list[tuple[int, int]] = []
-    for fi, f in enumerate(fixtures):
-        for ri, r in enumerate(rows):
-            if not agree(f, r):
-                continue
-            d = _delta(f, r)
-            if d is None:
-                untimed.append((fi, ri))
-            else:
-                timed.append((d, fi, ri))
-    timed.sort(key=lambda c: (c[0], c[1], c[2]))
-
-    used_f: set[int] = set()
-    used_r: set[int] = set()
-    paired: list[tuple[Side, Side]] = []
-    for _d, fi, ri in timed:
-        if fi in used_f or ri in used_r:
-            continue
-        used_f.add(fi)
-        used_r.add(ri)
-        paired.append((fixtures[fi], rows[ri]))
-    for fi, ri in untimed:
-        if fi in used_f or ri in used_r:
-            continue
-        used_f.add(fi)
-        used_r.add(ri)
-        paired.append((fixtures[fi], rows[ri]))
-
-    spare_f = [f for i, f in enumerate(fixtures) if i not in used_f]
-    spare_r = [r for i, r in enumerate(rows) if i not in used_r]
-    return paired, spare_f, spare_r
-
-
 def _schedule_bucket(fixture: Side, row: Side) -> str:
     d = _delta(fixture, row)
     if d is None:

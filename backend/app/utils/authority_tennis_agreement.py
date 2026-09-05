@@ -90,7 +90,8 @@ So the ceiling is replaced, not inherited, and the replacement is stated:
     window, because they are mostly duplicate rows rather than real rematches
     (1,170 of the close pairs sit under two different `sports.key`s). Duplicates
     are a matching symptom, filed under #2693, and a horizon is the wrong tool
-    for them. `pair_greedily` settles the admissible ones by nearest kickoff.
+    for them. `_pair_with_tie_detection` settles the distinguishable ones by
+    nearest start and refuses only the ties.
 
 14 days holds 2,004 of our tennis rows, 252 of them doubles, across 8 sport keys
 (production 2026-09-05) — a denominator a ten-minute task can read.
@@ -106,7 +107,6 @@ from app.utils.authority_agreement import (
     Side,
     build_agreement_row,
     measurement_bounds,
-    pair_greedily,
 )
 from app.utils.authority_tennis_names import (
     AMBIGUOUS,
@@ -297,102 +297,112 @@ def _ambiguity(
     return receipt, candidates
 
 
-def _components(
+def _pair_with_tie_detection(
     fixtures: Sequence[Side], rows: Sequence[Side]
-) -> list[tuple[list[int], list[int]]]:
-    """Connected components of the fixture-row agreement graph, as index lists.
+) -> tuple[list[tuple[Side, Side]], list[Side], list[Side], list[Side], list[Side]]:
+    """Pair by nearest start, refusing only the assignments that are TIED.
 
-    A fixture with no agreeing row, and a row with no agreeing fixture, are each
-    a component of one and are handled by the caller as an ordinary miss — they
-    are returned here too so that every side lands in exactly one component and
-    nothing can be dropped by falling between the cases.
+    Returns `(paired, tied_fixtures, tied_rows, spare_fixtures, spare_rows)`.
+
+    **A candidate set is not ambiguous because it is large; it is ambiguous when
+    the tiebreak cannot break it.** That is CERT-1913's correction and it is the
+    module's own declared contract finally implemented: the start time chooses
+    WHICH of two admissible pairings is made and never whether one is made. Two
+    Alcaraz-Sinner fixtures a week apart against one row sitting on the earlier
+    kickoff are not indistinguishable — the clock says which — so that row pairs
+    and the later fixture is an honest `statpal_only`.
+
+    A selection is TIED when, at the moment it is made, another still-available
+    candidate competing for the same fixture or the same row sits at the SAME
+    distance. Then the greedy choice would be arbitrary, and an arbitrary choice
+    is exactly what this module refuses to publish. Both endpoints and every
+    competitor are withdrawn and reported.
+
+    Untimed candidates are settled last and any contested untimed choice is a tie
+    by construction: with no clock there is nothing to break it, and arrival order
+    is not evidence.
+
+    Note the granularity — this is per ASSIGNMENT, not per component. A component
+    holding one clean pair and one genuine tie keeps the clean pair, because
+    discarding a match we can prove in order to refuse one we cannot is how a
+    repair for over-publishing becomes a defect of under-publishing (CERT-1913).
     """
-    edges: dict[int, list[int]] = {fi: [] for fi in range(len(fixtures))}
-    back: dict[int, list[int]] = {ri: [] for ri in range(len(rows))}
+    timed: list[tuple[timedelta, int, int]] = []
+    untimed: list[tuple[int, int]] = []
     for fi, f in enumerate(fixtures):
         for ri, r in enumerate(rows):
-            if _sides_agree(f, r):
-                edges[fi].append(ri)
-                back[ri].append(fi)
-
-    seen_f: set[int] = set()
-    seen_r: set[int] = set()
-    out: list[tuple[list[int], list[int]]] = []
-    for start in range(len(fixtures)):
-        if start in seen_f:
-            continue
-        comp_f: list[int] = []
-        comp_r: list[int] = []
-        stack: list[tuple[str, int]] = [("f", start)]
-        seen_f.add(start)
-        while stack:
-            side, idx = stack.pop()
-            if side == "f":
-                comp_f.append(idx)
-                for ri in edges[idx]:
-                    if ri not in seen_r:
-                        seen_r.add(ri)
-                        stack.append(("r", ri))
+            if not _sides_agree(f, r):
+                continue
+            gap = None if f.start is None or r.start is None else abs(f.start - r.start)
+            if gap is None:
+                untimed.append((fi, ri))
             else:
-                comp_r.append(idx)
-                for fi in back[idx]:
-                    if fi not in seen_f:
-                        seen_f.add(fi)
-                        stack.append(("f", fi))
-        out.append((sorted(comp_f), sorted(comp_r)))
-    for ri in range(len(rows)):
-        if ri not in seen_r:
-            out.append(([], [ri]))
-    return out
+                timed.append((gap, fi, ri))
+    timed.sort(key=lambda c: (c[0], c[1], c[2]))
 
-
-def _resolve_components(
-    fixtures: Sequence[Side], rows: Sequence[Side]
-) -> tuple[list[tuple[Side, Side]], list[Side], list[Side], list[list[int]], list[list[int]]]:
-    """Pair every component that resolves one-to-one; refuse the ones that cannot.
-
-    Returns `(paired, statpal_only, ours_only, refused_fixture_idx,
-    refused_row_idx)`.
-
-    A component resolves when the greedy nearest-kickoff pass inside it consumes
-    EVERY fixture and EVERY row it contains. That is the honest test, and it is
-    the one CERT-1910 asked for: two meetings of the same pair a week apart are
-    two fixtures and two rows, a perfect matching exists, and the kickoff decides
-    which is which — exactly what `pair_greedily` is for. One fixture against two
-    rows leaves a spare with nothing to choose on, and only that is a refusal.
-
-    Greedy is used rather than a maximum-matching algorithm because these
-    components are tiny — two or three a side at the very worst on real tennis
-    data — and because when greedy fails to find a perfect matching that a better
-    algorithm would have found, this refuses and reports. That is the LOUD
-    failure, and the population it could bite is the one #2693 is already about.
-    """
+    used_f: set[int] = set()
+    used_r: set[int] = set()
+    tied_f: set[int] = set()
+    tied_r: set[int] = set()
     paired: list[tuple[Side, Side]] = []
-    statpal_only: list[Side] = []
-    ours_only: list[Side] = []
-    refused_f: list[list[int]] = []
-    refused_r: list[list[int]] = []
 
-    for comp_f, comp_r in _components(fixtures, rows):
-        # A side with no counterpart at all is an ordinary miss, not an
-        # ambiguity: nobody had to choose anything.
-        if not comp_r:
-            statpal_only.extend(fixtures[i] for i in comp_f)
-            continue
-        if not comp_f:
-            ours_only.extend(rows[i] for i in comp_r)
-            continue
+    def _available(fi: int, ri: int) -> bool:
+        return fi not in used_f and ri not in used_r
 
-        sub_f = [fixtures[i] for i in comp_f]
-        sub_r = [rows[i] for i in comp_r]
-        sub_paired, spare_f, spare_r = pair_greedily(sub_f, sub_r, _sides_agree)
-        if not spare_f and not spare_r:
-            paired.extend(sub_paired)
+    for gap, fi, ri in timed:
+        if not _available(fi, ri):
             continue
-        refused_f.append(comp_f)
-        refused_r.append(comp_r)
+        rivals = [
+            (g2, fj, rj)
+            for g2, fj, rj in timed
+            if (fj, rj) != (fi, ri)
+            and g2 == gap
+            and (fj == fi or rj == ri)
+            and _available(fj, rj)
+        ]
+        if rivals:
+            for g2, fj, rj in [(gap, fi, ri), *rivals]:
+                used_f.add(fj)
+                used_r.add(rj)
+                tied_f.add(fj)
+                tied_r.add(rj)
+            continue
+        used_f.add(fi)
+        used_r.add(ri)
+        paired.append((fixtures[fi], rows[ri]))
 
-    return paired, statpal_only, ours_only, refused_f, refused_r
+    for fi, ri in untimed:
+        if not _available(fi, ri):
+            continue
+        rivals = [
+            (fj, rj)
+            for fj, rj in untimed
+            if (fj, rj) != (fi, ri)
+            and (fj == fi or rj == ri)
+            and _available(fj, rj)
+        ]
+        if rivals:
+            for fj, rj in [(fi, ri), *rivals]:
+                used_f.add(fj)
+                used_r.add(rj)
+                tied_f.add(fj)
+                tied_r.add(rj)
+            continue
+        used_f.add(fi)
+        used_r.add(ri)
+        paired.append((fixtures[fi], rows[ri]))
+
+    spare_f = [
+        f for i, f in enumerate(fixtures) if i not in used_f and i not in tied_f
+    ]
+    spare_r = [r for i, r in enumerate(rows) if i not in used_r and i not in tied_r]
+    return (
+        paired,
+        [fixtures[i] for i in sorted(tied_f)],
+        [rows[i] for i in sorted(tied_r)],
+        spare_f,
+        spare_r,
+    )
 
 
 def pair_tennis_sides(
@@ -416,34 +426,45 @@ def pair_tennis_sides(
     usable_f = [f for f in fixtures if _readable(f)]
     usable_r = [r for r in rows if _readable(r)]
 
-    # Every decision is made over COMPONENTS of the agreement graph, not over
-    # names, matches or fixtures. See `_resolve_components` and the progression
-    # of three blocks recorded on `_ambiguity`.
+    # Every decision is made per ASSIGNMENT, and a refusal is a TIE — not a
+    # large candidate set. See `_pair_with_tie_detection` and the progression of
+    # four blocks recorded on `_ambiguity`.
     (
         paired,
+        tied_fixtures,
+        tied_rows,
         statpal_only,
         ours_only,
-        refused_f_idx,
-        refused_r_idx,
-    ) = _resolve_components(usable_f, usable_r)
+    ) = _pair_with_tie_detection(usable_f, usable_r)
 
     refused: list[dict[str, Any]] = []
-    held_out: list[Side] = []
-    for comp_f, comp_r in zip(refused_f_idx, refused_r_idx):
-        comp_rows = [usable_r[i] for i in comp_r]
-        for fi in comp_f:
-            found = _ambiguity(usable_f[fi], comp_rows)
-            if found is not None:
-                refused.append(found[0])
-        held_out.extend(comp_rows)
+    for fx in tied_fixtures:
+        found = _ambiguity(fx, tied_rows)
+        refused.append(
+            found[0]
+            if found is not None
+            else {
+                "statpal_id": fx.ref,
+                "players": [fx.home, fx.away],
+                "statpal_start": fx.start.isoformat() if fx.start else None,
+                "label": fx.label,
+                "unresolved_name": None,
+                "our_candidates": [],
+                "our_event_ids": [r.ref for r in tied_rows],
+                "why": (
+                    "tied with another candidate at the same distance, so which "
+                    "match this is would be an arbitrary choice"
+                ),
+            }
+        )
 
     refusals: dict[str, list[dict[str, Any]]] = {}
     if refused:
         refusals[AMBIGUOUS_REFUSAL] = refused
-    if held_out:
+    if tied_rows:
         # Counted under their OWN name rather than added to the fixture receipt's
-        # count. One ambiguous fixture and two rows held out of the denominator
-        # are different quantities, and `excluded` is read as a census.
+        # count. One tied fixture and two rows held out of the denominator are
+        # different quantities, and `excluded` is read as a census.
         refusals[AMBIGUOUS_CANDIDATE_ROWS] = [
             {
                 "event_id": r.ref,
@@ -452,17 +473,16 @@ def pair_tennis_sides(
                 "label": r.label,
                 "column_holds": r.held_id,
                 "why": (
-                    "in a candidate component that does not resolve one-to-one, "
-                    "so we cannot say which match this row is. Left in "
-                    "`ours_only` it would publish a duplicate of ours as a match "
-                    "StatPal is missing"
+                    "tied with another of our rows for the same fixture at the "
+                    "same distance. Left in `ours_only` it would publish a "
+                    "duplicate of ours as a match StatPal is missing"
                 ),
             }
-            for r in held_out
+            for r in tied_rows
         ]
 
-    refused_f_refs = {usable_f[i].ref for comp in refused_f_idx for i in comp}
-    held_refs = {r.ref for r in held_out}
+    refused_f_refs = {fx.ref for fx in tied_fixtures}
+    held_refs = {r.ref for r in tied_rows}
 
     return Join(
         fixtures=[f for f in usable_f if f.ref not in refused_f_refs],

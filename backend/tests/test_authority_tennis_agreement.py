@@ -389,12 +389,14 @@ class TestAmbiguityIsPublishedNotAbsorbed:
         )
         assert {(fx.ref, row.ref) for fx, row in join.paired} == {("1", "11"), ("2", "12")}
 
-    def test_a_spare_row_in_the_component_still_refuses_the_whole_component(self):
-        """The boundary between CERT-1910's case and CERT-1904's.
+    def test_a_clean_pair_survives_a_tie_beside_it(self):
+        """CERT-1913's boundary case: a proven match is not collateral.
 
-        Two fixtures against THREE indistinguishable rows does not resolve
-        one-to-one: something is left over and there is nothing to choose on. It
-        refuses, as the one-fixture-two-rows case does.
+        One fixture pairs unambiguously on the exact kickoff; a second is tied
+        between two of our rows at the same distance. Refusing the whole
+        component discards the match we CAN prove in order to refuse the one we
+        cannot — turning a repair for over-publishing into a defect of
+        under-publishing.
         """
         early, late = NOW, NOW + timedelta(days=7)
         rows = build_tennis_agreements(
@@ -409,25 +411,23 @@ class TestAmbiguityIsPublishedNotAbsorbed:
             ],
         )
         singles = rows[SINGLES]
-        assert singles["excluded"][AMBIGUOUS_CANDIDATE_ROWS] == 3
-        assert singles["identity"]["both"] == 0
+        assert singles["identity"]["both"] == 1, "the provable pair must survive"
+        assert singles["excluded"][AMBIGUOUS_REFUSAL] == 1
+        assert singles["excluded"][AMBIGUOUS_CANDIDATE_ROWS] == 2
         assert singles["identity"]["ours_only"] == 0
 
-    def test_a_spare_fixture_refuses_the_component_too(self):
-        """The MIRROR of the spare-row case, and a mutation found it missing.
+    def test_a_spare_fixture_is_an_honest_miss_when_the_clock_distinguishes(self):
+        """CERT-1913, and the specimen it was found on.
 
-        StatPal has two meetings of one pair; we hold one row that could be
-        either. Tolerating a spare fixture pairs ours with whichever kickoff is
-        nearest and reports the other as `statpal_only` — asserting WHICH of the
-        two we have, which is the one thing this component cannot say.
+        StatPal has two meetings of one pair; we hold one row sitting on the
+        EARLIER kickoff exactly. That is not indistinguishable — the clock says
+        which one we have — so the row pairs and the later fixture is a genuine
+        `statpal_only`.
 
-        The refusal is deliberately SYMMETRIC even though the two spares are not
-        equally suspicious: a spare row of ours is most likely our own duplicate,
-        while a spare fixture of theirs is most likely a real match we lack. That
-        asymmetry is an argument for treating them differently and it rests on a
-        claim about which side's duplicate is more common — a judgment no
-        measurement here supports. Refusing both is the loud answer; guessing
-        either is the silent one.
+        I refused this case in the previous presentation on the grounds that the
+        two spares are not equally suspicious. That was the wrong instinct and
+        the contract already said so: the start time chooses WHICH pairing is
+        made and never whether one is made. A refusal is a TIE, not a shape.
         """
         early, late = NOW, NOW + timedelta(days=7)
         rows = build_tennis_agreements(
@@ -438,12 +438,61 @@ class TestAmbiguityIsPublishedNotAbsorbed:
             rows=[r("11", "Carlos Alcaraz", "Jannik Sinner", start=early)],
         )
         singles = rows[SINGLES]
-        assert singles["excluded"][AMBIGUOUS_REFUSAL] == 2
+        assert singles["identity"]["both"] == 1
+        assert singles["identity"]["statpal_only"] == 1
+        assert singles["denominator"] == 2
+        assert AMBIGUOUS_REFUSAL not in singles["excluded"]
+
+    def test_a_genuinely_tied_spare_fixture_still_refuses(self):
+        """The other half: when the clock CANNOT distinguish, it is still a tie.
+
+        Both StatPal fixtures sit at the same moment and our single row could be
+        either. Nothing breaks it, so nothing is published — the boundary that
+        keeps the test above from being an argument for guessing.
+        """
+        rows = build_tennis_agreements(
+            fixtures=[
+                f("1", "C. Alcaraz", "J. Sinner", start=NOW),
+                f("2", "C. Alcaraz", "J. Sinner", start=NOW),
+            ],
+            rows=[r("11", "Carlos Alcaraz", "Jannik Sinner", start=NOW)],
+        )
+        singles = rows[SINGLES]
         assert singles["identity"]["both"] == 0
         assert singles["identity"]["statpal_only"] == 0, (
-            "pairing one and reporting the other as statpal_only asserts which "
-            "of the two meetings we hold, which is exactly what is unknown"
+            "pairing one and calling the other statpal_only asserts which of two "
+            "simultaneous meetings we hold, which is exactly what is unknown"
         )
+        assert singles["excluded"][AMBIGUOUS_REFUSAL] == 2
+
+    def test_an_untimed_contest_is_a_tie_because_nothing_can_break_it(self):
+        """With no clock there is no tiebreak, and arrival order is not evidence.
+
+        Found by mutation: the untimed arm silently paired the first candidate it
+        reached. A fixture StatPal has not timed yet, against two of our rows, is
+        the same unknowable choice as two rows at an identical kickoff — the
+        absence of a clock cannot be weaker evidence than a tied one.
+        """
+        rows = build_tennis_agreements(
+            fixtures=[f("1", "C. Alcaraz", "J. Sinner", start=None)],
+            rows=[
+                r("11", "Carlos Alcaraz", "Jannik Sinner", start=None),
+                r("12", "Carlos Alcaraz", "Jannik Sinner", start=None),
+            ],
+        )
+        singles = rows[SINGLES]
+        assert singles["identity"]["both"] == 0
+        assert singles["identity"]["ours_only"] == 0
+        assert singles["excluded"][AMBIGUOUS_CANDIDATE_ROWS] == 2
+
+    def test_an_uncontested_untimed_pair_still_pairs(self):
+        """The mutation guard for the test above: refusing all untimed passes it."""
+        rows = build_tennis_agreements(
+            fixtures=[f("1", "C. Alcaraz", "J. Sinner", start=None)],
+            rows=[r("11", "Carlos Alcaraz", "Jannik Sinner", start=None)],
+        )
+        assert rows[SINGLES]["identity"]["both"] == 1
+        assert AMBIGUOUS_REFUSAL not in rows[SINGLES]["excluded"]
 
     def test_ambiguity_is_counted_over_matches_not_over_names(self):
         """The invariant behind both regressions, stated once.
