@@ -23,7 +23,9 @@ would write real identity claims on a guess.
   incomparable to yesterday's and the seven-day count meaningless;
 * a row this pass just stamped being reported as unanchored;
 * a failed read publishing a percentage;
-* the stamper's ±1h window leaking into the measurement.
+* the stamper's ±1h window leaking into the measurement — including the way it
+  leaked for real, as the bounds of the query that selects the population
+  (CERT-962).
 """
 
 from __future__ import annotations
@@ -89,11 +91,24 @@ class RecordingSession:
         self.commits = 0
         self.rollbacks = 0
         self.updates: list[dict] = []
+        #: The bounds of every CANDIDATES read, in order. The task now makes two
+        #: with DIFFERENT bounds — the narrow one it writes ids over and the wider
+        #: one it measures the agreement row over — and a fake that handed both
+        #: the same rows is what let CERT-962's defect pass a green suite.
+        self.candidate_windows: list[tuple[datetime, datetime]] = []
 
     async def execute(self, statement, params=None):
         sql = str(statement)
         if sql == task.CANDIDATES:
-            return FakeResult(self._candidates)
+            params = params or {}
+            start, end = params["window_start"], params["window_end"]
+            self.candidate_windows.append((start, end))
+            # Honour the bounds, exactly as `WHERE commence_time BETWEEN` does.
+            # A fake that ignores the window it was handed cannot tell a query
+            # that reads our whole horizon from one that reads a slice of it.
+            return FakeResult(
+                [r for r in self._candidates if r[3] is not None and start <= r[3] <= end]
+            )
         if sql == task.SET_FIXTURE_ID:
             self.updates.append(dict(params or {}))
             return FakeResult(rowcount=self._update_rowcount)
@@ -169,37 +184,53 @@ def drive(monkeypatch):
 
 
 async def test_a_five_hour_gap_is_a_stamper_miss_and_a_ledger_agreement(drive):
-    """The production Week-16 case: one game, two honest and opposite answers."""
+    """The production Week-16 case: one game, two honest and opposite answers.
+
+    TWO games, and the second is not decoration. Our kickoff is five hours from
+    StatPal's, so the disagreeing row is a stamping candidate at all only if the
+    write window is wider than five hours — which in production it always is (322
+    fixtures spanning August to February) and in a one-fixture miniature it never
+    is. A single-fixture version reaches the agreement row and never the stamper,
+    so it would stay green on a stamper that had stopped receipting entirely.
+    """
     statpal_kickoff = datetime(2026, 12, 27, 0, 0, tzinfo=timezone.utc)
     our_kickoff = datetime(2026, 12, 27, 5, 0, tzinfo=timezone.utc)
+    week17 = datetime(2026, 12, 28, 18, 0, tzinfo=timezone.utc)
 
     summary, session = await drive(
         [
+            _fixture(
+                "280760",
+                "Chicago Bears",
+                "Green Bay Packers",
+                week17,
+                "Regular Season / Week 17",
+            ),
             _fixture(
                 "280750",
                 "Tampa Bay Buccaneers",
                 "Atlanta Falcons",
                 statpal_kickoff,
                 "Regular Season / Week 16",
-            )
+            ),
         ],
         [
+            _candidate(15184670, "Chicago Bears", "Green Bay Packers", week17),
             _candidate(
                 15184664, "Tampa Bay Buccaneers", "Atlanta Falcons", our_kickoff
-            )
+            ),
         ],
     )
 
-    # The stamper refuses, in both directions, and writes nothing. Unchanged.
-    assert summary["stamped"] == 0
+    # The stamper takes Week 17 and refuses Week 16 in both directions.
+    assert summary["stamped"] == 1
     assert summary["unmatched_fixtures"] == 1
     assert summary["unmatched_rows"] == 1
-    assert session.updates == []
-    assert session.commits == 0
+    assert [u["event_id"] for u in session.updates] == [15184670]
 
     # The ledger row calls it what it is.
     agreement = summary["agreement"]
-    assert agreement["identity"]["both"] == 1
+    assert agreement["identity"]["both"] == 2
     assert agreement["identity"]["statpal_only"] == 0
     assert agreement["identity"]["ours_only"] == 0
     assert agreement["identity"]["pct"] == 100.0
