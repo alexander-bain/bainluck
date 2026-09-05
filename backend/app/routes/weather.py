@@ -8,7 +8,7 @@ rain forecasts, natural disaster events, climate dashboards, and wildcards.
 import json
 import logging
 import re
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional, Sequence
 
@@ -390,8 +390,51 @@ def _leader_outcome(market: FuturesMarket):
     return best
 
 
+def _card_outcome(market: FuturesMarket):
+    """The outcome a weather CARD is about — the one seam its number, its name
+    and its sparkline all read, so the three cannot disagree.
+
+    Normally the market's leader. The exception is the multi-city daily rain
+    event, where the leader is the wettest city in America and the card sits
+    directly beneath a headline a reader takes personally. `/weather`'s rain
+    section already answers that question with **New York's** leg (ux/1076,
+    ux/1078) — so on 2026-09-05 the hero would have printed Miami's 83% two
+    hundred pixels above a rain card printing NYC's 38% for the same day, the
+    same question and the same market. One question, one number: the hero reads
+    the leg the rain card reads, through the same rule.
+
+    When NYC carries no price the ordinary leader is returned and the card names
+    whichever city it is actually quoting. It is `_select_featured` that then
+    declines to LEAD with rain — a card may quote Miami as long as it says
+    Miami, but it may not do so under the reader's own question.
+
+    ``_is_daily_rain_market`` and ``_nyc_rain_outcome`` live down with the rest
+    of the rain helpers, whose rules they are; calling forward is fine at
+    runtime and keeps each rule in one family.
+    """
+    if _is_daily_rain_market(market):
+        nyc = _nyc_rain_outcome(market)
+        if nyc is not None and nyc.current_probability is not None:
+            return nyc
+    return _leader_outcome(market)
+
+
+def _card_prob(market: FuturesMarket) -> float:
+    """The probability a card prints, 0-100, for the outcome it is about.
+
+    Differs from ``_highest_prob`` only on the daily rain event — see
+    ``_card_outcome``. The 0.0 floor is kept: a market with nothing priced
+    cannot reach a card at all (``_open_weather_query``), so the floor is
+    unreachable defence rather than a displayed number.
+    """
+    outcome = _card_outcome(market)
+    if outcome is None or outcome.current_probability is None:
+        return _highest_prob(market)
+    return round(float(outcome.current_probability) * 100)
+
+
 def _leader_outcome_name(market: FuturesMarket) -> str | None:
-    """Name of the outcome whose probability ``_highest_prob`` prints, or None.
+    """Name of the outcome whose probability ``_card_prob`` prints, or None.
 
     A bare percentage is a complete answer only when the question already says
     what the number is about. Production, 2026-08-30: every one of the five
@@ -413,13 +456,13 @@ def _leader_outcome_name(market: FuturesMarket) -> str | None:
     Returns None when there is nothing worth naming, so the caller emits a null
     the reader never sees rather than noise under the number.
 
-    The scan deliberately mirrors ``_highest_prob``'s: same ``0.0`` floor, same
-    strict ``>`` so the FIRST of a tie wins. The two must not be able to
-    disagree about which outcome is the leader, or the card prints a number
+    The outcome is not chosen here: it comes from ``_card_outcome``, the single
+    seam the printed number and the sparkline read too. They must not be able to
+    disagree about which outcome the card is about, or it prints a number
     attached to the wrong name — strictly worse than printing no name at all.
     ``TestTheNamedLeaderIsThePrintedNumber`` holds them together.
     """
-    best = _leader_outcome(market)
+    best = _card_outcome(market)
     if best is None:
         return None
 
@@ -502,7 +545,7 @@ async def _leader_histories(
     """
     wanted: dict[int, tuple[int, str]] = {}
     for m in markets:
-        leader = _leader_outcome(m)
+        leader = _card_outcome(m)
         if leader is None or leader.id is None:
             continue
         wanted[leader.id] = (m.id, _market_source(m))
@@ -658,6 +701,87 @@ async def get_cross_source(db: AsyncSession):
 # 1. Featured markets
 # ============================================================================
 
+#: Slides the hero carousel rotates through.
+_FEATURED_SLOTS = 5
+#: How many of them one question-family (``_derive_tag``) may occupy.
+_FEATURED_MAX_PER_TAG = 2
+
+
+def _select_featured(
+    scored: Sequence[tuple[float, FuturesMarket]],
+    limit: int = _FEATURED_SLOTS,
+    max_per_tag: int = _FEATURED_MAX_PER_TAG,
+) -> list[FuturesMarket]:
+    """Pick the hero's slides from the scored pool, best first.
+
+    Score alone picked them until now, and production on 2026-09-05 shows what
+    that gets. The score is ``len(outcomes) / days_to_resolution``, so:
+
+        44.73  27 out  0.60d  Which cities face tornado risk on September 5?
+        18.22  11 out  0.60d  Highest temperature in Moscow on September 6?
+        18.22  11 out  0.60d  Highest temperature in Manila on September 6?
+        18.22  11 out  0.60d  … ELEVEN more, every one of them 18.22
+        ~15.1  22 out  1.46d  Where will it rain on Sep 6, 2026?
+
+    Two failures, one line of code apart. The carousel was one tornado market
+    plus four arbitrary members of a THIRTEEN-way tie — identical Polymarket
+    city-temperature ladders closing at the same instant, so the tie broke on
+    database row order and the opening slide was Manila on one load and Miami
+    on the next. And the daily rain market, the one question the page's
+    headline actually asks, scores below that tie and could never appear at
+    all. #3307, the unmet half of #3231.
+
+    So two rules, in this order:
+
+    1. **The headline's subject leads.** Slot 0 is the daily rain market when
+       one is eligible AND we hold New York's price for it (``_card_outcome``
+       explains why the second clause is not optional). The cap below would let
+       rain in around slot 4 on its own; the acceptance is EVERY load, so the
+       pin is explicit rather than emergent.
+    2. **No family owns the rotation.** At most ``max_per_tag`` slides share a
+       ``_derive_tag`` family.
+
+    A cap must never shrink the surface it caps (gotcha #43). When the corpus is
+    too narrow to fill five slides under the cap — thirteen temperature markets
+    and little else is exactly that corpus — the remainder is backfilled from
+    the capped families in score order. Five slides, always, whenever five
+    markets are eligible.
+    """
+    ordered = [market for _score, market in scored]
+
+    lead = next(
+        (
+            m
+            for m in ordered
+            if _is_daily_rain_market(m) and _nyc_rain_probability(m) is not None
+        ),
+        None,
+    )
+
+    chosen: list[FuturesMarket] = []
+    overflow: list[FuturesMarket] = []
+    per_tag: Counter = Counter()
+
+    if lead is not None:
+        chosen.append(lead)
+        per_tag[_derive_tag(lead.name or "")] += 1
+
+    for m in ordered:
+        if m is lead:
+            continue
+        tag = _derive_tag(m.name or "")
+        if per_tag[tag] >= max_per_tag:
+            overflow.append(m)
+            continue
+        per_tag[tag] += 1
+        chosen.append(m)
+
+    if len(chosen) < limit:
+        chosen.extend(overflow[: limit - len(chosen)])
+
+    return chosen[:limit]
+
+
 @router.get("/featured")
 async def get_featured_cached(db: AsyncSession = Depends(get_db)):
     """Return featured weather markets (Redis-cached, precomputed hourly)."""
@@ -701,16 +825,17 @@ async def get_featured(db: AsyncSession):
         scored.append((score, m))
 
     scored.sort(key=lambda x: x[0], reverse=True)
-    top = scored[:5]
+    top = _select_featured(scored)
 
-    histories = await _leader_histories(db, [m for _score, m in top])
+    histories = await _leader_histories(db, top)
 
     items = []
-    for _score, m in top:
+    for m in top:
         items.append({
             "q": m.name,
-            "prob": _highest_prob(m),
-            # Real captures for the leader outcome, oldest first — the ONLY
+            "prob": _card_prob(m),
+            # Real captures for the outcome the card is about (`_card_outcome`,
+            # the same one `prob` and `leader` read), oldest first — the ONLY
             # thing the hero sparkline may draw. Empty when the market has
             # fewer than MIN_HISTORY_POINTS of them, and the card then draws
             # no line rather than a made-up one (ux/1069, #2960).
@@ -1116,33 +1241,62 @@ _NYC_OUTCOME_SUFFIX = "-NYC"
 _NYC_OUTCOME_NAMES = {"new york city", "new york", "nyc"}
 
 
-def _nyc_rain_probability(market: FuturesMarket) -> Optional[int]:
-    """NYC's chance of rain from either stored shape, or None if we hold none.
+def _is_daily_rain_market(market: FuturesMarket) -> bool:
+    """Is this the question the page's headline asks — rain, on a named DAY?
 
-    Returning None rather than a number is the whole point. A daily KXRAIN
+    The same two shapes ``get_rain``'s daily query accepts and no others, so
+    "the daily rain question" has exactly one definition on this page. The
+    literal hyphen in ``KXRAIN-`` is load-bearing: it excludes the weekend
+    series (``KXRAINWKND-26SEP05``, "Where will it rain this weekend (Sep 5 -
+    Sep 6)?") and every monthly one (``KXRAINNYCM-26SEP``, "Rain in NYC in Sep
+    2026?"). Both are about rain; neither is about tomorrow.
+    """
+    return (
+        (market.external_id or "").startswith("KXRAIN-")
+        or (market.name or "").strip().lower().startswith("will it rain in nyc on")
+    )
+
+
+def _nyc_rain_outcome(market: FuturesMarket):
+    """The leg of a daily rain market that is New York's, or None.
+
+    Returning None rather than an outcome is the whole point. A daily KXRAIN
     event carries 22 cities, so there is always SOME probability to report —
     and reporting it under an NYC label is how "will it rain in New York?"
     came to be answered with Chicago's forecast. If NYC is not in the event,
-    or carries no price, the honest answer is no row at all.
+    the honest answer is no row at all.
+
+    An outcome carrying no price is still returned; callers decide what an
+    unpriced leg means for them (``_nyc_rain_probability`` drops the row,
+    ``_card_outcome`` falls back to the leader and lets the card name it).
     """
     is_multi_city = (market.external_id or "").startswith("KXRAIN-")
     if not is_multi_city:
         # Legacy binary market: the Yes leg is NYC's answer by construction.
         for o in market.outcomes:
             if o.name and o.name.lower() in ("yes", "y"):
-                if o.current_probability is None:
-                    return None
-                return round(float(o.current_probability) * 100)
+                return o
         return None
 
     for o in market.outcomes:
         ext = (o.external_id or "").upper()
         name = (o.name or "").strip().lower()
         if ext.endswith(_NYC_OUTCOME_SUFFIX) or name in _NYC_OUTCOME_NAMES:
-            if o.current_probability is None:
-                return None
-            return round(float(o.current_probability) * 100)
+            return o
     return None
+
+
+def _nyc_rain_probability(market: FuturesMarket) -> Optional[int]:
+    """NYC's chance of rain from either stored shape, or None if we hold none.
+
+    None means "we hold no NYC price for this day" and the caller drops the
+    row — an unpriced leg is an absence, never a zero, and never an excuse to
+    print another city's number under an NYC label (ux/1075, ux/1076).
+    """
+    outcome = _nyc_rain_outcome(market)
+    if outcome is None or outcome.current_probability is None:
+        return None
+    return round(float(outcome.current_probability) * 100)
 
 
 def _get_yes_probability(market: FuturesMarket) -> int:
@@ -1196,7 +1350,7 @@ async def get_events(db: AsyncSession):
     for m in markets:
         item = {
             "q": m.name,
-            "prob": _highest_prob(m),
+            "prob": _card_prob(m),
             # The sharpest instance of the defect on the whole page: "Hurricane
             # Marie category? — 95%" is 95% of "Category 4 or above", and
             # Category 4 and Category 5 are not the same forecast.
@@ -1286,7 +1440,7 @@ async def get_climate(db: AsyncSession):
         scale = _classify_scale(m)
         items.append({
             "q": m.name,
-            "prob": _highest_prob(m),
+            "prob": _card_prob(m),
             "src": _market_source(m),
             "closes": _format_closes(m.resolution_date),
             "scale": scale,
@@ -1353,7 +1507,7 @@ async def get_wildcards(db: AsyncSession):
             continue
         items.append({
             "q": m.name,
-            "prob": _highest_prob(m),
+            "prob": _card_prob(m),
             # See the hero's: real captures only, empty when there are too few.
             "history": histories.get(m.id, []),
             # Same defect as the hero's, on the same page: "Min Arctic sea ice
