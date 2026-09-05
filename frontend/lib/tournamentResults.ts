@@ -542,6 +542,33 @@ export function resultScoreLine(result: TournamentResult): {
 }
 
 /**
+ * A score line split into the pieces a line break may fall BETWEEN (live/071).
+ *
+ * The phone's score column is capped (`fit-content(72px)` — see `RESULT_GRID`),
+ * so a four-set score wraps, and the browser's default break opportunities put
+ * one of them AFTER A HYPHEN: `7-6, 6-` / `7, 6-3, 6-4`, measured in the
+ * capture rig. A set score broken across its own hyphen is not a shorter
+ * score, it is a different one — `6-` over `7` reads as neither 6–7 nor 6.
+ *
+ * No CSS property says "break at the spaces and nowhere else": breaking after a
+ * hyphen is UAX#14 line-break class BA and `word-break: keep-all` only governs
+ * CJK. So the pieces are marked in the markup — each chunk renders inside a
+ * `whitespace-nowrap` span — and this decides where they are.
+ *
+ * SPLIT ON THE COMMA, not on whitespace, so a tiebreak stays with its set:
+ * `7-6 (7-4), 3-6, 6-4` is three chunks and never `7-6` / `(7-4),`. The widest
+ * chunk any real score produces is `7-6 (7-4)` at ~60px, which is under the cap
+ * — a chunk WIDER than the cap is not truncated either, because `fit-content`
+ * floors at min-content; the column would simply grow for that list.
+ *
+ * The non-score lines (`walkover`, `no score`) come back as a single chunk,
+ * which is what they are: two short words that should not be split up.
+ */
+export function scoreWrapChunks(text: string): string[] {
+  return text.split(", ");
+}
+
+/**
  * The provenance clause about matches that did not run their course, or `null`
  * when every rendered row is an ordinary completed match (UX-P147).
  *
