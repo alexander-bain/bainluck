@@ -104,12 +104,30 @@ export function deviceClass(): ScreenTimingParams["device_class"] {
   return "desktop";
 }
 
+/**
+ * The complete `effectiveType` domain from the Network Information API spec.
+ * Exported so the guard test asserts the exact rule rather than a paraphrase
+ * of it — the same reason `isRealCard` is exported below.
+ */
+export const EFFECTIVE_TYPES = ["slow-2g", "2g", "3g", "4g"] as const;
+
 /** Coarse network label from the Network Information API, where it exists. */
 export function networkClass(): string {
   if (typeof navigator === "undefined") return "unknown";
   const conn = (navigator as unknown as { connection?: { effectiveType?: string } }).connection;
   const t = conn?.effectiveType;
-  return typeof t === "string" && t.length <= 12 ? t : "unknown";
+  // A LENGTH CHECK IS NOT A DOMAIN CHECK. This read `t.length <= 12`, which
+  // admits any short string the browser cares to hand over — the domain had
+  // been restated from the spec rather than read off the producer. That is a
+  // dimension, not a log line: every distinct value becomes a row in the GA4
+  // `network_class` breakdown, so one vendor extension or a future spec value
+  // silently splits every cold-load comparison this rail exists to make, and
+  // does it retroactively across a dimension nobody thinks to re-check.
+  //
+  // `unknown` is already the value for "the API is absent", and an unrecognised
+  // reading belongs with it: both mean "no usable network class", which is the
+  // honest reading and the one that keeps the breakdown closed.
+  return (EFFECTIVE_TYPES as readonly string[]).includes(t as string) ? (t as string) : "unknown";
 }
 
 interface WatchOptions {

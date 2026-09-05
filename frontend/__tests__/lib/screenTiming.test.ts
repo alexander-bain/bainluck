@@ -25,6 +25,8 @@ import {
   isRealCard,
   maskSurface,
   deviceClass,
+  networkClass,
+  EFFECTIVE_TYPES,
   NOT_MEASURED,
   CARD_SELECTOR,
 } from "@/lib/screenTiming";
@@ -352,6 +354,56 @@ describe("the packet survives the privacy boundary", () => {
 describe("deviceClass", () => {
   it("returns one of the five declared buckets", () => {
     expect(["phone", "tablet", "desktop", "watch", "unknown"]).toContain(deviceClass());
+  });
+});
+
+describe("networkClass", () => {
+  // #3276 sibling: the domain here was restated from the spec as `length <= 12`,
+  // which is a SHAPE test, not a domain test. `network_class` is a GA4
+  // dimension, so an unrecognised value does not just log oddly — it opens a
+  // new row and splits every cold-load comparison the rail exists to make.
+  const withConnection = (effectiveType: unknown, run: () => void) => {
+    const nav = navigator as unknown as { connection?: unknown };
+    const had = Object.prototype.hasOwnProperty.call(nav, "connection");
+    const prev = nav.connection;
+    Object.defineProperty(nav, "connection", {
+      value: effectiveType === undefined ? undefined : { effectiveType },
+      configurable: true,
+      writable: true,
+    });
+    try {
+      run();
+    } finally {
+      if (had) {
+        Object.defineProperty(nav, "connection", { value: prev, configurable: true, writable: true });
+      } else {
+        delete (nav as Record<string, unknown>).connection;
+      }
+    }
+  };
+
+  it.each([...EFFECTIVE_TYPES])("passes the spec value %s through", (t) => {
+    withConnection(t, () => expect(networkClass()).toBe(t));
+  });
+
+  it("maps an unrecognised SHORT value to unknown, not through", () => {
+    // The exact hole: every one of these is <= 12 chars and sailed through.
+    for (const bogus of ["5g", "wifi", "ethernet", "unknown-x", "lte", "", "4G"]) {
+      withConnection(bogus, () => expect(networkClass()).toBe("unknown"));
+    }
+  });
+
+  it("maps a missing or malformed connection to unknown", () => {
+    withConnection(undefined, () => expect(networkClass()).toBe("unknown"));
+    withConnection(null, () => expect(networkClass()).toBe("unknown"));
+    withConnection(42, () => expect(networkClass()).toBe("unknown"));
+  });
+
+  it("only ever emits a value from a closed set", () => {
+    const closed = new Set<string>([...EFFECTIVE_TYPES, "unknown"]);
+    for (const t of [...EFFECTIVE_TYPES, "5g", "wifi", undefined, null, 42]) {
+      withConnection(t, () => expect(closed.has(networkClass())).toBe(true));
+    }
   });
 });
 
