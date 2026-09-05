@@ -44,12 +44,42 @@ group, or touch ``event_id``. Discovery stays the polls' job. This separation is
 the actual fix: refresh coverage no longer depends on a discovery ordering, so
 the two can never starve each other again.
 
-TWO ARMS, BECAUSE THERE ARE TWO KINDS OF VALUABLE
---------------------------------------------------
-The sweep selects on **value** (tier 1 above a volume floor) and, since
-2026-08-27, also on **identity** (any market a committed tournament register
-renders — :func:`app.utils.tournament_register.registered_market_ids`).
+THREE ARMS, BECAUSE THERE ARE THREE KINDS OF WORTH REFRESHING
+--------------------------------------------------------------
+The sweep selects on **value** (volume above a floor at any tier, or tier 1
+where no volume was recorded), on **curation** (any market a committed
+tournament register renders —
+:func:`app.utils.tournament_register.registered_market_ids`), and since
+2026-09-05 on **what page one is actually showing**
+(:func:`app.utils.feed_served_markets.served_market_ids`).
 
+THE THIRD ARM, AND THE TIER FENCE IT REPLACED (#3315)
+------------------------------------------------------
+The value arm used to read ``market_tier = 1 AND volume >= 10000``. Measured on
+production 2026-09-05 and reproduced against Polymarket Gamma before any code
+was written: **all seven Polymarket cards on Discover page one were tier 2**, so
+the safety net could not reach one of them however stale it got. "Brazil
+Presidential Election" rendered Flávio Bolsonaro at **26.2%** against Gamma's
+**39.9%** — 13.7 points, off outcome rows last written **1,109 hours** earlier,
+on a market carrying **$114M** of volume. 11 of 73 matched page-one outcomes
+were 3+ points wrong; the other 62 agreed to 0.15 points, so the ordinary polls
+were fine and this net was the whole gap. Net reach across open tier 1-3
+markets: **905 of 15,007**.
+
+Nothing was red, and nothing should have been: the beat ran on time (ratio 1.04,
+19 deliveries against 18.34 expected), wrote everything it selected, and
+reported success — over a set that excluded the front page. A coverage gap is
+invisible to every scheduling instrument there is.
+
+:data:`HIGH_VALUE_SQL` fixes the two predicate holes (tier is no longer a fence;
+NULL volume no longer reads as "measured, and small"). The third arm fixes the
+premise: **a value floor is a proxy for "someone is looking at this", and the
+served arm is the thing itself.** Both were needed. The predicate alone would
+still have been a guess about which markets matter, re-made hourly, by a query
+that cannot see the ranker.
+
+THE SECOND ARM, AND THE US OPEN PROPS SECTION IT EMPTIED
+---------------------------------------------------------
 The second arm exists because the first one cannot express the US Open props
 section. Measured 2026-08-27: every one of the three markets behind that
 section was tier 5 — ``sinner-competes`` 215h stale, both ``*-second-major``
@@ -69,21 +99,23 @@ a sub-interval of the hourly beat, so they are re-priced hours before they could
 go dark. Do not collapse the two constants back into one: that lockstep IS the
 defect.
 
-Registered rows are selected first, sorted to the head of each source loop, and
-never truncated by ``budget`` — both loops stop on the wall clock, so head
-position is what makes "curated rows cannot be starved by the class" a
-guarantee rather than a tendency. The arm is bounded by what is committed on
-disk (81 markets, 5 Kalshi + 76 Polymarket over 72 Gamma events, ≈9 extra HTTP
-calls per beat), so no upstream can grow it.
+Identity rows (registered and served alike) are taken by
+:func:`_take_for_source` BEFORE the per-source budget is applied, and lead the
+list each source loop walks — both loops stop on the wall clock, so being taken
+first and placed first is what makes "an identity row cannot be starved by the
+class" a guarantee rather than a tendency. Neither arm can be grown by an
+upstream: the register is committed on disk (81 markets, ≈9 extra Gamma calls
+per beat) and the served set is bounded by the page (26 futures markets on
+Discover page one on 2026-09-05, capped at
+:data:`app.utils.feed_served_markets.MAX_SERVED_IDS_PER_SHAPE`).
 
 STARVATION GUARDS (gotcha #41 — an ordering needs both bounds)
 --------------------------------------------------------------
-* **Value floor and liveness floor**, not a bare "oldest first": tier 1, volume
-  at or above :data:`HIGH_VALUE_VOLUME_FLOOR`, plus every clause of
-  ``app.utils.futures_liveness.LIVE_MARKET_SQL``. The registered arm drops the
-  value floor and keeps the liveness bounds verbatim, so a curated row is not a
-  licence to re-animate the stale-open population.
-
+* **Value floor and liveness floor**, not a bare "oldest first":
+  :data:`HIGH_VALUE_SQL` plus every clause of
+  ``app.utils.futures_liveness.LIVE_MARKET_SQL``. Both identity arms drop the
+  value floor and keep the liveness bounds verbatim, so a curated or rendered
+  row is not a licence to re-animate the stale-open population.
   **#2222 corrected what "liveness" means here, and the correction is load
   bearing.** This module used to say the resolution-date bound "is what keeps
   the dead out of the queue". It is not: ``status='open'`` survives settlement
@@ -104,6 +136,12 @@ STARVATION GUARDS (gotcha #41 — an ordering needs both bounds)
   window, so one run cannot re-attempt what the previous run just tried and the
   tail rotates into view. An *attempt* is marked, not a success — otherwise the
   unpriceable market is back at the front on the very next run.
+* **A budget per source, not one shared cap** (#3315). Kalshi costs ~0.35 s per
+  market (it has no batch event endpoint) and Polymarket ~0.065 s (twenty event
+  ids per Gamma call). One 500-market cap over two populations priced 20x apart
+  did not bound cost; it decided, by whichever source happened to hold the top of
+  the volume ordering, which source got swept at all. See
+  :data:`KALSHI_MARKET_BUDGET`.
 
 VERDICT
 -------
@@ -152,10 +190,57 @@ class _VenueSettled:
 VENUE_SETTLED = _VenueSettled()
 
 #: Only markets at or above this traded volume are refreshed. The floor is what
-#: makes the sweep bounded; the guard in ``routes/admin_futures_freshness.py``
+#: makes the sweep bounded; the guard in ``routes/admin_source_health.py``
 #: asserts the invariant over exactly this same set, so fix and guard cannot
 #: disagree about what they cover.
 HIGH_VALUE_VOLUME_FLOOR = 10_000
+
+#: 🔴 THE VALUE TEST, AND IT IS NO LONGER A TIER TEST (#3315).
+#:
+#: This used to read ``fm.market_tier = 1 AND fm.volume >= :volume_floor``, and
+#: both halves of that conjunction were wrong in a way that only showed up on the
+#: front page.
+#:
+#: **The tier fence.** Measured on production 2026-09-05, all seven Polymarket
+#: cards on Discover page one were ``market_tier = 2``, so the safety net could
+#: not reach one of them however stale it got. "Brazil Presidential Election"
+#: rendered Flávio Bolsonaro at 26.2% against Gamma's 39.9% — **13.7 points** —
+#: off ``futures_outcomes`` rows last written **1,109 hours** earlier, on a market
+#: carrying **$114,137,967** of volume: four orders of magnitude over the floor
+#: below, refused for a reason that has nothing to do with value. Tier is a
+#: PRESENTATION grade. Using it as a value gate meant the sweep's reach was
+#: 909 of 15,007 open markets, and the 11,619 open tier-2 rows — where the front
+#: page lives — were outside it by construction.
+#:
+#: **The NULL-volume comparison.** ``fm.volume >= 10000`` is NULL-rejecting, so a
+#: market with no recorded volume failed the value test as if it had been
+#: measured and found small. 1,199 of 3,081 open tier-1 markets (39%) have NULL
+#: volume. "We have not measured this" and "this is worthless" are opposite
+#: facts and they were arriving as the same one.
+#:
+#: So the test is now a DISJUNCTION of two positive value statements, and neither
+#: mentions tier:
+#:
+#: * measured volume at or above the floor, at ANY tier — Brazil qualifies on the
+#:   only evidence that was ever relevant;
+#: * OR tier 1 with volume we simply do not have — tier 1 is our own positive
+#:   statement of importance, and it is the right authority precisely where the
+#:   venue's number is missing. It is a tier ADMISSION, never a tier fence: no
+#:   market is excluded for its tier by this predicate.
+#:
+#: The two halves are named separately because the selector has to plan them
+#: separately (see :data:`ELIGIBLE_POOL_SQL`) while every other reader wants the
+#: disjunction. Naming them once and composing both forms from the same two
+#: strings is what keeps "the pool" and "the predicate" from becoming two
+#: definitions of eligibility — the drift ``futures_liveness`` exists to prevent,
+#: one level down.
+VALUE_MEASURED_SQL = "fm.volume >= :volume_floor"
+VALUE_TIER1_UNPRICED_SQL = "(fm.market_tier = 1 AND fm.volume IS NULL)"
+
+#: One string, interpolated by every reader that wants the whole test, for the
+#: reason ``futures_liveness`` exists: six hand-copied WHERE blocks agree until
+#: the day one of them needs a sixth clause.
+HIGH_VALUE_SQL = f"({VALUE_MEASURED_SQL} OR {VALUE_TIER1_UNPRICED_SQL})"
 
 #: A high-value open market older than this is stale. Matches the 6h
 #: ``LIVE_PRICE_STALE`` contract that ``utils/tournament_register.py`` already
@@ -188,10 +273,90 @@ STALE_AFTER_HOURS = 6
 #: lockstep.
 REGISTERED_REFRESH_MINUTES = 45
 
-#: Markets refreshed per run. 900 was the whole standing backlog when this
-#: shipped; the budget exists so a bad day cannot turn one run into a wall-clock
-#: overrun, not because the full set is unaffordable.
-DEFAULT_MARKET_BUDGET = 500
+#: How stale a market PAGE ONE IS CURRENTLY RENDERING may get before the sweep
+#: re-prices it (#3315). Same reasoning and same value as the registered window
+#: above — a sub-interval of the hourly beat, so the previous run's own capture
+#: cannot still be inside the window when the next run evaluates it, and the
+#: attempt marker cannot outlive its next beat.
+#:
+#: A separate constant from :data:`REGISTERED_REFRESH_MINUTES` even though the
+#: two are equal today, because they answer to different things: that one tracks
+#: the tournament renderer's dark window, this one tracks the beat that serves
+#: Discover. Collapsing them would recreate the lockstep the registered constant
+#: was split out to break, one level up.
+SERVED_REFRESH_MINUTES = 45
+
+#: Markets refreshed per run, PER SOURCE, because the two sources cost 20x
+#: different amounts per market and one shared cap over two unequally-priced
+#: populations does not bound cost — it silently decides which source gets swept.
+#:
+#: Polymarket is addressed by Gamma ``/events?id=..&id=..``, twenty event ids per
+#: HTTP call. Kalshi has no batch event endpoint, so it is one call per market
+#: row. Measured against the live venues 2026-09-05: Kalshi ``get_event`` mean
+#: **193 ms** over five real event tickers, plus this loop's own 0.15 s spacing,
+#: so ~0.35 s per market; a Polymarket batch of twenty costs one call plus 0.3 s,
+#: so ~0.065 s per market.
+#:
+#: Under the single 500-market cap those numbers meant that whichever source
+#: happened to hold the top of the volume ordering consumed the whole budget and
+#: the other was simply not swept that hour. The cap read like a cost bound and
+#: behaved like a lottery.
+#:
+#: Sized against the measured standing backlog (production 2026-09-05, live and
+#: >6h without a capture under the widened predicate): **2,010 Kalshi** and
+#: **1,974 Polymarket**. The attempt marker's TTL is the staleness window, so a
+#: source's whole backlog must fit in ``budget x 6`` runs for the 6h invariant to
+#: be reachable:
+#:
+#:   Kalshi      500 x 6 = 3,000 >= 2,010   worst-case wall 500 x 0.35 s = 175 s
+#:   Polymarket 1200 x 6 = 7,200 >= 1,974   worst-case wall  60 calls   =  78 s
+#:
+#: 253 s against the 420 s loop budget, which leaves room for the scans (~12 s
+#: measured) and for a bad day at either venue.
+KALSHI_MARKET_BUDGET = 500
+POLYMARKET_MARKET_BUDGET = 1200
+
+#: The whole-run cap, kept as a name because the guard suite and the manual-run
+#: entry point both read it. It is the SUM of the per-source budgets, not a third
+#: independent bound: a total that could bind before either source budget did
+#: would be the shared cap again, wearing the per-source ones as decoration.
+DEFAULT_MARKET_BUDGET = KALSHI_MARKET_BUDGET + POLYMARKET_MARKET_BUDGET
+
+#: How many rows each value pool carries into the expensive staleness anti-join.
+#:
+#: THE POOLS EXIST BECAUSE OF A PLAN, NOT A PREFERENCE. With the tier fence gone
+#: the candidate query's ``ORDER BY fm.volume DESC LIMIT n`` stopped bounding any
+#: work: production's plan puts a Sort above the anti-join, so the LIMIT is
+#: applied AFTER every open market has been probed against the 179M-row snapshot
+#: table. Measured 2026-09-05 the widened one-statement form did not finish
+#: inside 10 s at any LIMIT, including 1,500 — the LIMIT was decoration. Selecting
+#: the pool first on the cheap predicates and filtering it second on the
+#: expensive one is the same rows in 2.8 s + 9.4 s.
+#:
+#: ``MATERIALIZED`` is load-bearing: PG12+ inlines a single-reference CTE by
+#: default, which would hand the planner back the query it just mis-planned. The
+#: obvious alternative — a derived table with an ``OFFSET 0`` fence — was tried
+#: and is WORSE: measured on production it did not finish inside 24 s where the
+#: materialised form returns in ~12 s.
+#:
+#: MEASURED COST, so nobody has to guess later. Production 2026-09-05: the value
+#: pool plus its anti-join 9.4 s, the unpriced pool plus its anti-join 2.8 s, so
+#: the combined statement is ~12 s. That is 12 s of a 420 s loop budget under a
+#: 60 s statement timeout, once an hour — comfortable, and NOT free. The whole
+#: cost is scanning ~45,000 ``status='open'`` heap rows because
+#: ``futures_markets`` has no index on ``volume``; a partial
+#: ``(volume DESC) WHERE status='open'`` index would remove most of it. That is a
+#: migration, so it is deliberately NOT in this change (gotcha #31: a big index
+#: goes via psql, attended, never through an Alembic release).
+#:
+#: Both limits are set ABOVE their live populations, measured under the FULL
+#: liveness predicate on 2026-09-05 (3,864 value-eligible, 1,155
+#: tier-1-unpriced), so today nothing is truncated at the pool at all — the
+#: headroom is ~16% and ~73%. If one day something is, the value pool truncates by volume
+#: ascending — the declared ordering — and the unpriced pool reports it
+#: (``unpriced_pool_hit``) rather than shrinking in silence.
+VALUE_POOL_LIMIT = 4_500
+UNPRICED_POOL_LIMIT = 2_000
 
 #: Polymarket ids per Gamma ``/events?id=..&id=..`` request. Verified against the
 #: live API 2026-08-25: repeated ``id`` params return the full nested markets
@@ -237,24 +402,65 @@ _POLY_EVENT_ID_SQL = """
              ) END AS poly_event_id
 """
 
+#: 🔴 THE ELIGIBLE POPULATION, AS A CTE, AND BOTH SIDES OF THE INVARIANT USE IT.
+#:
+#: TWO POOLS, ONE PER VALUE REASON, and they are separate because the two
+#: populations cannot be ordered by one key. A single ``ORDER BY fm.volume DESC
+#: NULLS LAST`` over both would sort every tier-1 row whose volume we do not have
+#: BELOW every row whose volume we do, so the arm added to admit them would be
+#: truncated out of existence by the arm it was added beside — a shared bound
+#: over two unequal populations, the same shape as the shared market budget the
+#: per-source budgets replaced.
+#:
+#: The unpriced pool orders by ``fm.id``: there is no value key to sort on, and
+#: an oldest-capture ordering is the fixed point the module docstring forbids. A
+#: stable ordering is safe here BECAUSE the pool limit exceeds the population, so
+#: the Redis attempt markers — not the SQL — do the rotating.
+#:
+#: It is one shared string rather than a shape each side re-types for exactly the
+#: reason ``LIVE_MARKET_SQL`` is: the task refreshes this set and
+#: ``/api/admin/source-health/futures-price-freshness`` asserts over it, and a
+#: guard covering a different population than the fix is how a breach reads
+#: green. Callers bind ``:volume_floor``, ``:value_pool_limit`` and
+#: ``:unpriced_pool_limit``, and JOIN ``pool`` on ``fm.id``.
+ELIGIBLE_POOL_SQL = f"""
+    WITH pool AS MATERIALIZED (
+        (
+          SELECT fm.id
+            FROM futures_markets fm
+           WHERE {LIVE_MARKET_SQL}
+             AND {VALUE_MEASURED_SQL}
+           ORDER BY fm.volume DESC
+           LIMIT :value_pool_limit
+        )
+        UNION
+        (
+          SELECT fm.id
+            FROM futures_markets fm
+           WHERE {LIVE_MARKET_SQL}
+             AND {VALUE_TIER1_UNPRICED_SQL}
+           ORDER BY fm.id
+           LIMIT :unpriced_pool_limit
+        )
+    )
+"""
+
 _CANDIDATE_SQL = text(
     f"""
+    {ELIGIBLE_POOL_SQL}
     SELECT fm.id, fm.source, fm.external_id, fm.volume,
            {_POLY_EVENT_ID_SQL},
            fm.market_metadata->>'{VENUE_SETTLED_KEY}' AS venue_settled_since
       FROM futures_markets fm
-     WHERE {LIVE_MARKET_SQL}
-       AND fm.market_tier = 1
-       AND fm.volume >= :volume_floor
-       AND NOT EXISTS (
+      JOIN pool ON pool.id = fm.id
+     WHERE NOT EXISTS (
              SELECT 1
                FROM futures_outcomes fo
                JOIN futures_odds_snapshots s ON s.outcome_id = fo.id
               WHERE fo.market_id = fm.id
                 AND s.captured_at > NOW() - make_interval(hours => :stale_hours)
            )
-     ORDER BY fm.volume DESC
-     LIMIT :scan_limit
+     ORDER BY fm.volume DESC NULLS LAST
     """
 )
 
@@ -269,8 +475,7 @@ _CANDIDATE_SQL = text(
 #:
 #: The set is bounded by what is committed on disk, not by anything a market can
 #: do to itself, so no upstream can grow it.
-_REGISTERED_CANDIDATE_SQL = text(
-    f"""
+_BY_ID_CANDIDATE_SQL = f"""
     SELECT fm.id, fm.source, fm.external_id, fm.volume,
            {_POLY_EVENT_ID_SQL},
            fm.market_metadata->>'{VENUE_SETTLED_KEY}' AS venue_settled_since
@@ -285,11 +490,45 @@ _REGISTERED_CANDIDATE_SQL = text(
                 AND s.captured_at > NOW() - make_interval(mins => :stale_minutes)
            )
      ORDER BY fm.id
-    """
-)
+"""
+
+_REGISTERED_CANDIDATE_SQL = text(_BY_ID_CANDIDATE_SQL)
+
+#: 🔴 THE ARM THAT ANSWERS THE READER'S QUESTION (#3315).
+#:
+#: The two arms above select on value and on curation. Neither asks the only
+#: question a wrong number on a card actually raises — *is anybody looking at
+#: this* — and that is why the front page could carry a 13.7-point error for
+#: 46 days behind a green sweep. This arm's membership is the set of futures
+#: markets the Discover and Sports first-paint payloads LAST RENDERED, read back
+#: from the pre-warmer that built them
+#: (:mod:`app.utils.feed_served_markets`).
+#:
+#: Same statement as the registered arm, deliberately: no tier bound, no volume
+#: floor, the liveness bounds kept verbatim, a short producer clock. It is
+#: literally the same string, so the two identity arms cannot drift into two
+#: different ideas of what "reachable by id" means; only the id list and the
+#: window differ.
+#:
+#: It is a SUPERSET-safe arm. A market that has since rotated off page one costs
+#: one re-price of a live market; a market that is on page one and outside every
+#: other arm is the whole defect.
+_SERVED_CANDIDATE_SQL = text(_BY_ID_CANDIDATE_SQL)
 
 
-def _rows_to_markets(rows, *, registered: bool) -> list[dict]:
+#: The arm a candidate came in on. ``class`` is the value sweep; the other two
+#: are identity arms. Kept as a NAME rather than as a pair of booleans because
+#: three of the run's decisions read it and each wants a different grouping:
+#: head-position and the attempt TTL want "identity, either kind"
+#: (``priority``), while the stats want the two apart — a served row counted as
+#: ``registered_priced`` would make the tournament arm's own coverage number
+#: unreadable.
+_ARM_CLASS = "class"
+_ARM_REGISTERED = "registered"
+_ARM_SERVED = "served"
+
+
+def _rows_to_markets(rows, *, arm: str) -> list[dict]:
     return [
         {
             "id": mid,
@@ -301,7 +540,12 @@ def _rows_to_markets(rows, *, registered: bool) -> list[dict]:
             # clear, and can skip the UPDATE for the ~900 markets that never had
             # one. Selected, not re-queried.
             "venue_settled_since": venue_settled_since,
-            "registered": registered,
+            "arm": arm,
+            "registered": arm == _ARM_REGISTERED,
+            "served": arm == _ARM_SERVED,
+            # Identity arms are never truncated by a budget and always sort to
+            # the head of their source loop.
+            "priority": arm != _ARM_CLASS,
         }
         for (
             mid,
@@ -371,14 +615,21 @@ async def _clear_if_stamped(session, market: dict, stats: dict) -> None:
 
 
 async def _scan_candidates(
-    session, *, volume_floor: int, stale_hours: int, scan_limit: int
+    session,
+    *,
+    volume_floor: int,
+    stale_hours: int,
+    value_pool_limit: int = VALUE_POOL_LIMIT,
+    unpriced_pool_limit: int = UNPRICED_POOL_LIMIT,
 ) -> list[dict]:
-    """Stale high-value markets, most valuable first.
+    """Stale valuable markets, most valuable first, at ANY tier.
 
     Scans wider than one run's budget on purpose: the caller then drops markets
     already attempted inside the staleness window, and without the headroom a run
     whose top-N were all just attempted would do nothing while the tail stayed
-    dark.
+    dark. Since #3315 the headroom is the POOL rather than a ``scan_limit`` on
+    the outer statement, because on this query an outer LIMIT bounded no work at
+    all — see :data:`ELIGIBLE_POOL_SQL`.
     """
     rows = (
         await session.execute(
@@ -386,11 +637,12 @@ async def _scan_candidates(
             {
                 "volume_floor": volume_floor,
                 "stale_hours": stale_hours,
-                "scan_limit": scan_limit,
+                "value_pool_limit": value_pool_limit,
+                "unpriced_pool_limit": unpriced_pool_limit,
             },
         )
     ).fetchall()
-    return _rows_to_markets(rows, registered=False)
+    return _rows_to_markets(rows, arm=_ARM_CLASS)
 
 
 async def _scan_registered_candidates(
@@ -405,7 +657,66 @@ async def _scan_registered_candidates(
             {"market_ids": market_ids, "stale_minutes": stale_minutes},
         )
     ).fetchall()
-    return _rows_to_markets(rows, registered=True)
+    return _rows_to_markets(rows, arm=_ARM_REGISTERED)
+
+
+async def _scan_served_candidates(
+    session, *, market_ids: list[int], stale_minutes: int
+) -> list[dict]:
+    """Stale markets page one is rendering right now, at any tier or volume."""
+    if not market_ids:
+        return []
+    rows = (
+        await session.execute(
+            _SERVED_CANDIDATE_SQL,
+            {"market_ids": market_ids, "stale_minutes": stale_minutes},
+        )
+    ).fetchall()
+    return _rows_to_markets(rows, arm=_ARM_SERVED)
+
+
+#: How many served ids this task CAN price. The unreachable count is derived
+#: from it by subtraction, and the subtraction is the point.
+#:
+#: A ``GROUP BY reason`` over the ids would omit every id that matches no row at
+#: all — the shape a bug in the payload walker produces — because a row that does
+#: not exist cannot appear in a grouping of rows. Counting what is reachable and
+#: subtracting from the list length catches both failure modes at once: an id
+#: that names no futures market, and one that names a market this task may not
+#: price (an ``odds_api`` row such as the tier-1 NFL Super Bowl Winner field on
+#: page one, or a market the liveness bounds retired). The second is a real gap
+#: in the page-one guarantee. It is just not one this task can close, and saying
+#: so with a number beats leaving a card wrong with no trace.
+_SERVED_REACHABLE_SQL = text(
+    f"""
+    SELECT COUNT(*)
+      FROM futures_markets fm
+     WHERE fm.id = ANY(:market_ids)
+       AND {LIVE_MARKET_SQL}
+    """
+)
+
+
+def _take_for_source(candidates: list[dict], source: str, budget: int) -> list[dict]:
+    """This source's markets: every identity row, then the class up to ``budget``.
+
+    Two properties, and the second is why this is a function rather than a slice:
+
+    * **Identity rows are taken before the cap**, so a priority row can only be
+      dropped by the wall clock. Under one shared budget, head position was
+      enough; under two, an interleaved ``[:budget]`` would silently make the
+      guarantee depend on how many class rows happened to sort in front.
+    * **Identity rows lead the returned list**, which is what the source loops
+      need — both stop on the wall clock, so position is the ordering guarantee.
+
+    A budget below the identity count does NOT drop identity rows. That is
+    deliberate: the budget bounds the discretionary sweep, and the whole point of
+    an identity arm is that its membership is not discretionary. It is bounded by
+    the page and by the register, not by this number.
+    """
+    priority = [m for m in candidates if m["source"] == source and m["priority"]]
+    klass = [m for m in candidates if m["source"] == source and not m["priority"]]
+    return priority + klass[: max(0, budget - len(priority))]
 
 
 def _load_attempt_skips(market_ids: list[int]) -> set[int]:
@@ -769,11 +1080,14 @@ async def _refresh_stale_futures_prices(
     *,
     volume_floor: int = HIGH_VALUE_VOLUME_FLOOR,
     stale_hours: int = STALE_AFTER_HOURS,
-    budget: int = DEFAULT_MARKET_BUDGET,
+    kalshi_budget: int = KALSHI_MARKET_BUDGET,
+    polymarket_budget: int = POLYMARKET_MARKET_BUDGET,
     registered_refresh_minutes: int = REGISTERED_REFRESH_MINUTES,
+    served_refresh_minutes: int = SERVED_REFRESH_MINUTES,
 ) -> dict:
     """Refresh prices for stale high-value open futures markets. See module docstring."""
     from app.tasks.base import get_task_session
+    from app.utils.feed_served_markets import served_market_ids
     from app.utils.tournament_register import registered_market_ids
 
     started = time.monotonic()
@@ -800,6 +1114,22 @@ async def _refresh_stale_futures_prices(
         "registered_candidates": 0,
         "registered_attempted": 0,
         "registered_priced": 0,
+        # #3315. `served_known` is how many market ids the pre-warm rail says
+        # page one is rendering; the other three are what this run did about
+        # them. `served_known` is reported even when it is zero, because "no
+        # shape has warmed since the last deploy" and "page one holds no futures
+        # cards" are opposite states that both arrive as an empty selection
+        # (gotcha #53) — and the first of the two silently restores the coverage
+        # this arm exists to end.
+        "served_known": 0,
+        "served_candidates": 0,
+        "served_attempted": 0,
+        "served_priced": 0,
+        # Served ids this task structurally cannot refresh: an `odds_api` row
+        # (LIVE_MARKET_SQL is Kalshi/Polymarket only) or a market the liveness
+        # bounds retired. Counted so a page-one card that stays wrong has a
+        # number pointing at the reason instead of an absence.
+        "served_unreachable": 0,
     }
 
     async with get_task_session() as session:
@@ -810,11 +1140,32 @@ async def _refresh_stale_futures_prices(
         await session.execute(text("SET statement_timeout = '60s'"))
         await session.execute(text("SET lock_timeout = '15s'"))
 
-        # Registered first, and on a shorter clock. Two arms rather than one
-        # loosened predicate: the class keeps its value floor (widening that
-        # would pull the whole low-value tail into an hourly sweep and starve
-        # exactly what it is meant to protect), while curated rows are selected
-        # by identity because curation is their value floor.
+        # THE IDENTITY ARMS FIRST, and on a shorter clock. Separate arms rather
+        # than one loosened predicate: the class arm answers "is this valuable",
+        # which is a question about the market, and the identity arms answer "is
+        # somebody looking at this", which is a question about the product. A
+        # single predicate would have to pick one of those to be, and #3315 is
+        # what happened while it picked the first.
+        served_ids = served_market_ids()
+        stats["served_known"] = len(served_ids)
+        served_scan = await _scan_served_candidates(
+            session,
+            market_ids=served_ids,
+            stale_minutes=served_refresh_minutes,
+        )
+        if served_ids:
+            try:
+                reachable = int(
+                    (
+                        await session.execute(
+                            _SERVED_REACHABLE_SQL, {"market_ids": served_ids}
+                        )
+                    ).scalar()
+                    or 0
+                )
+                stats["served_unreachable"] = max(0, len(served_ids) - reachable)
+            except Exception as exc:
+                stats["errors"].append(f"served reachability census: {exc}")
         registered_scan = await _scan_registered_candidates(
             session,
             market_ids=sorted(registered_market_ids()),
@@ -824,20 +1175,46 @@ async def _refresh_stale_futures_prices(
             session,
             volume_floor=volume_floor,
             stale_hours=stale_hours,
-            scan_limit=max(budget * 3, budget + 50),
         )
 
-        # A registered market that is ALSO tier-1 high-volume (every US Open
-        # winner field is) appears in both. It must keep the registered
-        # classification or it inherits the 6h attempt TTL and the shorter clock
-        # is undone.
-        registered_ids = {m["id"] for m in registered_scan}
-        scan = registered_scan + [m for m in class_scan if m["id"] not in registered_ids]
+        # A market can qualify on more than one arm — every US Open winner field
+        # is registered AND tier-1 high-volume, and a page-one card is routinely
+        # both served and valuable. It must keep the IDENTITY classification or
+        # it inherits the 6h attempt TTL and the shorter clock is undone.
+        #
+        # ATTRIBUTION, since a row can only be counted once: served wins over
+        # registered, which wins over class. So `registered_candidates` is the
+        # registered rows page one is NOT already covering, and reading it as
+        # "the register's coverage" would understate it. The register's actual
+        # coverage invariant is asserted by its own query in
+        # `/api/admin/source-health/futures-price-freshness`, which is
+        # independent of this run's bookkeeping — these counters describe the
+        # RUN, not the population.
+        served_scan_ids = {m["id"] for m in served_scan}
+        registered_scan = [m for m in registered_scan if m["id"] not in served_scan_ids]
+        priority_ids = served_scan_ids | {m["id"] for m in registered_scan}
+        scan = (
+            served_scan
+            + registered_scan
+            + [m for m in class_scan if m["id"] not in priority_ids]
+        )
 
         stats["candidates"] = len(scan)
         stats["registered_candidates"] = len(registered_scan)
+        stats["served_candidates"] = len(served_scan)
+
         skip_ids = _load_attempt_skips([m["id"] for m in scan])
-        selected = [m for m in scan if m["id"] not in skip_ids][:budget]
+        eligible = [m for m in scan if m["id"] not in skip_ids]
+
+        # PER-SOURCE BUDGETS, AND THE PRIORITY ROWS ARE TAKEN BEFORE THE CAP IS
+        # APPLIED, not merely sorted in front of it. Head position made "curated
+        # rows cannot be starved" true only while one shared truncation held both
+        # arms; with two caps a `[:budget]` over an interleaved list is a bound
+        # nobody can reason about. Taking them explicitly makes the guarantee
+        # structural — a priority row is dropped by the wall clock or not at all.
+        kalshi_markets = _take_for_source(eligible, "kalshi", kalshi_budget)
+        poly_markets = _take_for_source(eligible, "polymarket", polymarket_budget)
+        selected = kalshi_markets + poly_markets
 
         if not selected:
             # Gotcha #53: an empty result is a response SHAPE, not an absence.
@@ -845,27 +1222,24 @@ async def _refresh_stale_futures_prices(
             # opposite states, so they get different terminals.
             stats["terminal"] = "complete" if not scan else "no_work"
             stats["reason"] = (
-                "no stale high-value or registered markets"
+                "no stale valuable, registered or served markets"
                 if not scan
                 else "every stale market was attempted inside the current window"
             )
             stats["remaining_stale"] = len(scan)
             return stats
 
-        # Registered ahead of the class WITHIN each source: both source loops are
-        # truncated by the wall budget, so head position is what makes "curated
-        # rows cannot be starved by the class" true rather than merely likely.
-        selected.sort(key=lambda m: not m["registered"])
-        kalshi_markets = [m for m in selected if m["source"] == "kalshi"]
-        poly_markets = [m for m in selected if m["source"] == "polymarket"]
         attempted_ids: list[int] = []
-        registered_attempted_ids: list[int] = []
+        priority_attempted_ids: list[int] = []
 
         def _note_attempt(market: dict) -> None:
             stats["markets_attempted"] += 1
             if market["registered"]:
                 stats["registered_attempted"] += 1
-                registered_attempted_ids.append(market["id"])
+            if market["served"]:
+                stats["served_attempted"] += 1
+            if market["priority"]:
+                priority_attempted_ids.append(market["id"])
             else:
                 attempted_ids.append(market["id"])
 
@@ -944,6 +1318,8 @@ async def _refresh_stale_futures_prices(
                                 )
                                 if market["registered"]:
                                     stats["registered_priced"] += 1
+                                if market["served"]:
+                                    stats["served_priced"] += 1
                                 await _clear_if_stamped(session, market, stats)
                             else:
                                 stats["unpriceable"] += 1
@@ -1004,33 +1380,44 @@ async def _refresh_stale_futures_prices(
                         )
                         if market["registered"]:
                             stats["registered_priced"] += 1
+                        if market["served"]:
+                            stats["served_priced"] += 1
                         await _clear_if_stamped(session, market, stats)
                     else:
                         stats["unpriceable"] += 1
                     await asyncio.sleep(0.15)
 
-        # Two TTLs, because there are two clocks. A registered market marked for
+        # Two TTLs, because there are two clocks. An identity market marked for
         # 6h would be unreachable for five hours after every refresh, which is
         # the lockstep this change exists to break — the shorter select window
         # would simply re-find it and the marker would veto it.
+        #
+        # The SHORTER of the two identity windows, not each arm's own: a market
+        # on both arms holds one marker, and sizing it off the longer window
+        # would let the marker outlive the shorter arm's next beat. `min` fails
+        # in the direction of re-attempting a row an hour early, which costs one
+        # HTTP call; the other direction costs a page-one card a refresh cycle.
         _mark_attempted(attempted_ids, ttl_seconds=stale_hours * 3600)
         _mark_attempted(
-            registered_attempted_ids,
-            ttl_seconds=max(1, registered_refresh_minutes) * 60,
+            priority_attempted_ids,
+            ttl_seconds=max(1, min(registered_refresh_minutes, served_refresh_minutes))
+            * 60,
         )
 
         # Measure what is LEFT, so the run reports the invariant's state and not
-        # just its own throughput. This is the number the guard reads.
+        # just its own throughput. This is the number the guard reads, so it
+        # composes the SAME eligible pool the selector does — a census over a
+        # narrower set than the sweep is a `remaining_stale` about nobody, which
+        # is what it was while the tier fence was in it.
         try:
             remaining = (
                 await session.execute(
                     text(
                         f"""
+                        {ELIGIBLE_POOL_SQL}
                         SELECT COUNT(*) FROM futures_markets fm
-                         WHERE {LIVE_MARKET_SQL}
-                           AND fm.market_tier = 1
-                           AND fm.volume >= :volume_floor
-                           AND NOT EXISTS (
+                          JOIN pool ON pool.id = fm.id
+                         WHERE NOT EXISTS (
                                  SELECT 1 FROM futures_outcomes fo
                                    JOIN futures_odds_snapshots s
                                      ON s.outcome_id = fo.id
@@ -1040,7 +1427,12 @@ async def _refresh_stale_futures_prices(
                                )
                         """
                     ),
-                    {"volume_floor": volume_floor, "stale_hours": stale_hours},
+                    {
+                        "volume_floor": volume_floor,
+                        "stale_hours": stale_hours,
+                        "value_pool_limit": VALUE_POOL_LIMIT,
+                        "unpriced_pool_limit": UNPRICED_POOL_LIMIT,
+                    },
                 )
             ).scalar()
             stats["remaining_stale"] = int(remaining or 0)

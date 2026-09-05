@@ -37,12 +37,65 @@ class TestSelectionPredicate:
     def test_predicate_carries_every_floor(self):
         sql = fpr._CANDIDATE_SQL.text
         assert "fm.status = 'open'" in sql
-        assert "fm.market_tier = 1" in sql
         assert "fm.volume >= :volume_floor" in sql
         # Gotcha #33: settled Kalshi markets keep status='open', so `status`
         # alone is not a liveness test. The resolution-date bound is what keeps
         # the dead out of an ordering that would otherwise never release them.
         assert "resolution_date > NOW()" in sql
+
+    def test_tier_is_an_admission_and_never_a_fence(self):
+        """#3315. The clause that hid the entire front page for 46 days.
+
+        `market_tier` still appears in the predicate, so a substring test for it
+        proves nothing — the question is which DIRECTION it points. It may admit
+        a tier-1 row whose volume we never recorded; it may not exclude a row for
+        being tier 2. All seven Polymarket cards on Discover page one were tier
+        2 on 2026-09-05, one of them 13.7 points wrong on $114M of volume.
+
+        Asserted on the composed predicate rather than on a comment, and both
+        directions are asserted: dropping the `volume IS NULL` conjunct turns the
+        admission back into a fence and reddens the second half.
+        """
+        assert fpr.HIGH_VALUE_SQL.count("market_tier") == 1
+        assert "market_tier = 1 AND fm.volume IS NULL" in fpr.HIGH_VALUE_SQL
+        # The value arm names no tier at all: volume alone admits Brazil.
+        assert "market_tier" not in fpr.VALUE_MEASURED_SQL
+        # and the two halves are a disjunction, not a conjunction.
+        assert " OR " in fpr.HIGH_VALUE_SQL
+        assert " AND " not in fpr.HIGH_VALUE_SQL.replace(
+            fpr.VALUE_TIER1_UNPRICED_SQL, ""
+        )
+
+    def test_null_volume_is_not_read_as_a_measured_zero(self):
+        """The second hole: `volume >= 10000` is NULL-rejecting.
+
+        1,199 of 3,081 open tier-1 markets carry NULL volume — 39% of the very
+        population the sweep believed it covered. "We never measured this" and
+        "this is worthless" are opposite facts that were arriving as one.
+
+        Expressed as SQL semantics rather than as a string match, so a rewrite
+        that keeps the words and loses the meaning fails here.
+        """
+        import sqlite3
+
+        con = sqlite3.connect(":memory:")
+        con.execute(
+            "CREATE TABLE fm (id INT, market_tier INT, volume INT)"
+        )
+        con.executemany(
+            "INSERT INTO fm VALUES (?,?,?)",
+            [
+                (1, 1, None),      # tier 1, unmeasured -> admitted
+                (2, 2, 114_137_967),  # Brazil: tier 2, huge -> admitted
+                (3, 2, None),      # tier 2, unmeasured -> not admitted
+                (4, 5, 12),        # measured and small -> not admitted
+            ],
+        )
+        where = fpr.HIGH_VALUE_SQL.replace("fm.", "").replace(
+            ":volume_floor", "10000"
+        )
+        got = {r[0] for r in con.execute(f"SELECT id FROM fm WHERE {where}")}
+        assert got == {1, 2}
 
     def test_uses_exists_not_max_captured_at(self):
         """MAX(captured_at) over the 179M-row snapshot table times out at 10s.
@@ -58,12 +111,13 @@ class TestSelectionPredicate:
     def test_guard_endpoint_uses_the_same_predicate(self):
         """A guard over a different set than the fix cannot prove the fix worked."""
         task_sql = _normalise(fpr._CANDIDATE_SQL.text)
-        for name in ("_PRICE_DARK_SQL", "_PRICE_DARK_WORST_SQL"):
+        for name in ("_PRICE_DARK_SQL",):
             guard_sql = _normalise(_extract_sql_literal(_ADMIN_SRC, name))
             for clause in (
                 "fm.status = 'open'",
-                "fm.market_tier = 1",
+                # #3315: the value test, both halves, on both sides.
                 "fm.volume >= :volume_floor",
+                "fm.market_tier = 1 and fm.volume is null",
                 "fm.resolution_date > now()",
                 "not exists",
             ):
@@ -94,8 +148,14 @@ class TestSelectionPredicate:
         askers = {
             "task._CANDIDATE_SQL": fpr._CANDIDATE_SQL.text,
             "task._REGISTERED_CANDIDATE_SQL": fpr._REGISTERED_CANDIDATE_SQL.text,
+            # #3315: the served arm and the reachability census are askers too.
+            # The served arm decides whether a card on page one gets a price at
+            # all, so a liveness clause that reached everything except it would
+            # be the #2222 drift with the front page as its blast radius.
+            "task._SERVED_CANDIDATE_SQL": fpr._SERVED_CANDIDATE_SQL.text,
+            "task._SERVED_REACHABLE_SQL": fpr._SERVED_REACHABLE_SQL.text,
+            "task.ELIGIBLE_POOL_SQL": fpr.ELIGIBLE_POOL_SQL,
             "guard._PRICE_DARK_SQL": _health._PRICE_DARK_SQL,
-            "guard._PRICE_DARK_WORST_SQL": _health._PRICE_DARK_WORST_SQL,
             "guard._REGISTERED_DARK_SQL": _health._REGISTERED_DARK_SQL,
             "guard._REGISTERED_ELIGIBLE_SQL": _health._REGISTERED_ELIGIBLE_SQL,
             # CERT-452: the seventh. `tournament_price_refresh` runs every ten
@@ -126,9 +186,15 @@ class TestSelectionPredicate:
         import app.routes.admin_source_health as _health
         import app.tasks.tournament_price_refresh as _tpr
 
-        enrolled = 7
+        # #3315 made the composition two-level: five sites still interpolate
+        # LIVE_MARKET_SQL directly, and four compose it transitively through
+        # ELIGIBLE_POOL_SQL (which is itself one of the five). Counting only the
+        # direct token would let a new asker join through the pool without ever
+        # being enrolled, which is exactly the hole this census exists to close.
+        enrolled = 9
         found = sum(
             inspect.getsource(mod).count("{LIVE_MARKET_SQL}")
+            + inspect.getsource(mod).count("{ELIGIBLE_POOL_SQL}")
             for mod in (fpr, _health, _tpr)
         )
         assert found == enrolled + 1, (
@@ -151,8 +217,15 @@ class TestSelectionPredicate:
         # interpolation and the module carries the result. Assert on the source:
         # there is no module-level constant to read for this one.
         assert "{LIVE_MARKET_SQL}" in _MODULE_SRC
-        assert _MODULE_SRC.count("{LIVE_MARKET_SQL}") == 3, (
-            "two selectors plus the remaining_stale census"
+        assert _MODULE_SRC.count("{LIVE_MARKET_SQL}") == 4, (
+            "both pool branches, the by-id selector, the reachability census"
+        )
+        # #3315: the census now composes the whole ELIGIBLE POOL, not just the
+        # liveness clause. A census that kept the liveness bounds but not the
+        # widened value test would report the pre-#3315 number under the
+        # post-#3315 name — the worst of both, because it reads like coverage.
+        assert _MODULE_SRC.count("{ELIGIBLE_POOL_SQL}") == 2, (
+            "the class selector plus the remaining_stale census"
         )
         assert _normalise(LIVE_MARKET_SQL) in _normalise(fpr._CANDIDATE_SQL.text)
         assert "select count(*) from futures_markets fm" in source
@@ -165,7 +238,7 @@ class TestSelectionPredicate:
         month-dark market. Only `futures_odds_snapshots.captured_at` answers
         whether a price was actually captured.
         """
-        for name in ("_PRICE_DARK_SQL", "_PRICE_DARK_WORST_SQL"):
+        for name in ("_PRICE_DARK_SQL",):
             sql = _extract_sql_literal(_ADMIN_SRC, name)
             assert "futures_odds_snapshots" in sql
             assert "s.captured_at" in sql
@@ -204,10 +277,28 @@ class TestOrderingHasNoFixedPoint:
         )
 
     def test_scan_is_wider_than_one_budget(self):
-        """Without headroom, a run whose top-N were all just attempted does nothing."""
-        assert "scan_limit=max(budget * 3, budget + 50)" in _MODULE_SRC.replace(
-            "\n", ""
-        ).replace("  ", "")
+        """Without headroom, a run whose top-N were all just attempted does nothing.
+
+        #3315 moved the headroom from an outer `scan_limit` to the POOL, because
+        on the widened query an outer LIMIT bounded no work at all — production's
+        plan sorts above the anti-join, so every open market was probed against
+        the 179M-row snapshot table before the LIMIT applied. The property being
+        guarded is unchanged: the scan must see more than one run can take.
+        """
+        assert fpr.VALUE_POOL_LIMIT > fpr.DEFAULT_MARKET_BUDGET
+        assert fpr.UNPRICED_POOL_LIMIT > fpr.KALSHI_MARKET_BUDGET
+
+    def test_the_pool_is_materialised_so_the_planner_cannot_undo_it(self):
+        """PG12+ inlines a single-reference CTE, which restores the bad plan.
+
+        Not a style point and not cosmetic: measured on production 2026-09-05,
+        the inlined form did not finish inside 10s at ANY outer LIMIT including
+        1,500, while the materialised two-pool form returned the same rows in
+        2.8s + 9.4s. Dropping the keyword is a silent revert to a selector that
+        times out, and a selector that times out is a refresher that never runs.
+        """
+        assert "AS MATERIALIZED" in fpr.ELIGIBLE_POOL_SQL
+        assert "AS MATERIALIZED" in fpr._CANDIDATE_SQL.text
 
 
 class TestTerminalIsHonest:
@@ -569,21 +660,47 @@ class TestTheProducerClockLeadsTheRenderClock:
         assert 0 < fpr.REGISTERED_REFRESH_MINUTES < 60
         assert fpr.REGISTERED_REFRESH_MINUTES < fpr.STALE_AFTER_HOURS * 60
 
-    def test_registered_attempt_marker_cannot_outlive_its_next_beat(self):
-        """A 6h marker on a 45m window is the lockstep restored via Redis."""
-        assert "registered_refresh_minutes) * 60" in _MODULE_SRC.replace("\n", " ")
+    def test_identity_attempt_marker_cannot_outlive_its_next_beat(self):
+        """A 6h marker on a 45m window is the lockstep restored via Redis.
 
-    def test_registered_rows_sort_ahead_of_the_class(self):
-        """Both source loops are wall-budget truncated, so head position IS the guard."""
-        selected = [
-            {"id": 1, "registered": False},
-            {"id": 2, "registered": True},
-            {"id": 3, "registered": False},
-            {"id": 4, "registered": True},
+        #3315 put two identity arms behind one marker, so the TTL is the SHORTER
+        of the two windows. `max` there would let a row on both arms hold a
+        marker past the shorter arm's next beat, which is the lockstep again with
+        the served arm as its victim.
+        """
+        src = _MODULE_SRC.replace("\n", " ")
+        assert (
+            "min(registered_refresh_minutes, served_refresh_minutes)" in src
+        ), "the identity marker must be sized off the shorter window"
+        assert "max(registered_refresh_minutes" not in src
+
+    def test_identity_rows_lead_and_survive_the_budget(self):
+        """Both source loops are wall-budget truncated, so head position IS the guard.
+
+        Behavioural, and it asserts the two properties separately because
+        #3315's per-source budgets broke the old proof: under one shared cap,
+        being sorted to the head was enough to survive `[:budget]`. Under two,
+        an interleaved slice would make survival depend on how many class rows
+        happened to sort in front — a guarantee that holds by arithmetic
+        coincidence is not one.
+        """
+        rows = [
+            {"id": 1, "source": "kalshi", "priority": False},
+            {"id": 2, "source": "kalshi", "priority": True},
+            {"id": 3, "source": "polymarket", "priority": True},
+            {"id": 4, "source": "kalshi", "priority": False},
+            {"id": 5, "source": "kalshi", "priority": True},
         ]
-        selected.sort(key=lambda m: not m["registered"])
-        assert [m["id"] for m in selected] == [2, 4, 1, 3]
-        assert 'selected.sort(key=lambda m: not m["registered"])' in _MODULE_SRC
+        # Budget of 3 for Kalshi: both identity rows lead, and exactly one
+        # class row rides along in the remaining slot.
+        taken = fpr._take_for_source(rows, "kalshi", 3)
+        assert [m["id"] for m in taken] == [2, 5, 1]
+        # A budget SMALLER than the identity count spends nothing on the class.
+        assert [m["id"] for m in fpr._take_for_source(rows, "kalshi", 1)] == [2, 5]
+        # A budget of ZERO still cannot drop an identity row.
+        assert [m["id"] for m in fpr._take_for_source(rows, "kalshi", 0)] == [2, 5]
+        # Sources do not leak into each other.
+        assert [m["id"] for m in fpr._take_for_source(rows, "polymarket", 9)] == [3]
 
 
 class TestPolymarketAddressing:

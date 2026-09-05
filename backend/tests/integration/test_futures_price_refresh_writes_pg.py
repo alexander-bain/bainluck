@@ -419,3 +419,179 @@ class TestTheFalseGreenIsReproducible:
         assert stored is False, (
             "unsettled is stored as FALSE — a writer predicated on NULL is inert"
         )
+
+
+# --- #3315: the selector reaches the front page ------------------------------
+#
+# The class below is the named regression for "a served page-one outcome whose
+# venue price differs by >=3 points for more than an hour must be caught by the
+# job". It is here, against real Postgres, rather than in the source-text suite
+# for the reason this whole file exists: the pre-#3315 predicate was *readable*
+# and *shipped* and *green*, and the only instrument that could have contradicted
+# it is one that runs the real SELECT against real rows.
+#
+# THE SPECIMEN IS REAL AND IT IS SEEDED FROM ITS PRODUCTION VALUES. Market 112996,
+# "Brazil Presidential Election", Polymarket Gamma event 45915, `market_tier = 2`,
+# `volume = 114,137,967`, outcomes last written 1,109 hours before 2026-09-05.
+# On that day the card rendered Flávio Bolsonaro at 26.2% while Gamma quoted
+# 39.9% — 13.7 points, on Discover page one.
+
+
+_BRAZIL_VOLUME = 114_137_967
+_BRAZIL_EVENT_ID = "45915"
+
+
+async def _seed_brazil(session, *, market_tier=2, volume=_BRAZIL_VOLUME):
+    """The Brazil Presidential Election row, at its production shape."""
+    from app.models.models import FuturesMarket, FuturesOutcome
+
+    market = FuturesMarket(
+        source="polymarket",
+        external_id="0xbrazil",
+        name="Brazil Presidential Election",
+        category="futures",
+        market_tier=market_tier,
+        volume=volume,
+        status="open",
+        group_id=f"polymarket:{_BRAZIL_EVENT_ID}",
+        market_metadata={"polymarket_event_id": _BRAZIL_EVENT_ID},
+        resolution_date=datetime.now(timezone.utc) + timedelta(days=380),
+    )
+    session.add(market)
+    await session.flush()
+    # Priced 46 days ago and never since — the row the card renders.
+    session.add(
+        FuturesOutcome(
+            market_id=market.id,
+            external_id="0xbolsonaro",
+            name="Flávio Bolsonaro",
+            is_winner=False,
+            current_probability=0.262,
+        )
+    )
+    await session.flush()
+    return market
+
+
+#: The predicate as it stood before #3315, kept verbatim so the regression can
+#: prove its own necessity in one run instead of asking a reader to trust that
+#: the old code would have failed. Memory of this codebase: a new mechanism that
+#: never pins the incumbent's inadequacy cannot be shown to have been needed.
+_PRE_3315_VALUE_SQL = "fm.market_tier = 1 AND fm.volume >= :volume_floor"
+
+
+class TestTheSweepReachesTheFrontPage:
+    async def test_the_brazil_card_is_selected_and_the_old_predicate_refused_it(
+        self, db
+    ):
+        """THE #3315 regression. Both halves in one test, on purpose.
+
+        The assertion that matters is the second one: the widened predicate
+        selects Brazil. The first is the control — the *same row*, the *same
+        database*, the pre-#3315 predicate — because "the new selector works" is
+        compatible with "the old one did too", and that reading would make this
+        whole change decoration.
+        """
+        from sqlalchemy import text
+        from app.tasks.futures_price_refresh import (
+            HIGH_VALUE_SQL,
+            HIGH_VALUE_VOLUME_FLOOR,
+            _scan_candidates,
+        )
+
+        market = await _seed_brazil(db)
+        await db.commit()
+
+        def _count(value_sql):
+            return text(
+                f"SELECT COUNT(*) FROM futures_markets fm "
+                f"WHERE fm.id = :mid AND ({value_sql})"
+            )
+
+        params = {"mid": market.id, "volume_floor": HIGH_VALUE_VOLUME_FLOOR}
+        before = (await db.execute(_count(_PRE_3315_VALUE_SQL), params)).scalar()
+        after = (await db.execute(_count(HIGH_VALUE_SQL), params)).scalar()
+
+        assert before == 0, (
+            "the pre-#3315 predicate would have selected Brazil, so this "
+            "regression proves nothing — check the control, not the fix"
+        )
+        assert after == 1, "the widened value test still refuses a tier-2 card"
+
+        # ...and end to end, through the selector the beat actually calls.
+        selected = await _scan_candidates(
+            db, volume_floor=HIGH_VALUE_VOLUME_FLOOR, stale_hours=6
+        )
+        assert market.id in {m["id"] for m in selected}
+        row = next(m for m in selected if m["id"] == market.id)
+        assert row["poly_event_id"] == _BRAZIL_EVENT_ID, (
+            "selected but not addressable: /events?id=0x… does not resolve a "
+            "condition id, so the fetch would 422 and the card would stay wrong"
+        )
+
+    async def test_a_fresh_card_is_not_reselected(self, db):
+        """The staleness bound still bounds. Widening the value test must not
+
+        turn the sweep into "re-price everything every hour" — that is a cost
+        change dressed as a correctness one, and it would put the whole tier-2
+        population on an hourly third-party fetch.
+        """
+        from app.models.models import FuturesOddsSnapshot, FuturesOutcome
+        from sqlalchemy import select
+        from app.tasks.futures_price_refresh import (
+            HIGH_VALUE_VOLUME_FLOOR,
+            _scan_candidates,
+        )
+
+        market = await _seed_brazil(db)
+        outcome = (
+            await db.execute(
+                select(FuturesOutcome).where(FuturesOutcome.market_id == market.id)
+            )
+        ).scalars().first()
+        db.add(
+            FuturesOddsSnapshot(
+                outcome_id=outcome.id,
+                bookmaker="polymarket",
+                probability=0.399,
+                captured_at=datetime.now(timezone.utc),
+            )
+        )
+        await db.commit()
+
+        selected = await _scan_candidates(
+            db, volume_floor=HIGH_VALUE_VOLUME_FLOOR, stale_hours=6
+        )
+        assert market.id not in {m["id"] for m in selected}
+
+    async def test_a_page_one_card_with_no_volume_at_all_is_reached_by_the_served_arm(
+        self, db
+    ):
+        """The arm that does not care what the market is worth.
+
+        Seeded at tier 5 with NULL volume — outside every value test there is,
+        including the widened one — and selected anyway, because page one is
+        rendering it. This is the property the value predicate structurally
+        cannot express, and the reason #3315 needed two changes rather than one.
+        """
+        from app.tasks.futures_price_refresh import (
+            HIGH_VALUE_VOLUME_FLOOR,
+            _scan_candidates,
+            _scan_served_candidates,
+        )
+
+        market = await _seed_brazil(db, market_tier=5, volume=None)
+        await db.commit()
+
+        by_value = await _scan_candidates(
+            db, volume_floor=HIGH_VALUE_VOLUME_FLOOR, stale_hours=6
+        )
+        assert market.id not in {m["id"] for m in by_value}, (
+            "seeded outside every value test, or the control below proves nothing"
+        )
+
+        served = await _scan_served_candidates(
+            db, market_ids=[market.id], stale_minutes=45
+        )
+        assert [m["id"] for m in served] == [market.id]
+        assert served[0]["priority"] is True and served[0]["served"] is True
