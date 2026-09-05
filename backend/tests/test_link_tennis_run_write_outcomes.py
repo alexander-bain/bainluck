@@ -107,8 +107,16 @@ class RecordingSession:
     response shape, not an absence).
     """
 
-    def __init__(self, *, candidates, holders, update_rowcount=1):
+    def __init__(self, *, candidates, holders, update_rowcount=1, measured=None):
         self._candidates = candidates
+        # The agreement population, asked for separately from the write pool and
+        # answered separately here. Defaulting it to the write pool would have
+        # hidden the very thing the separate query exists for — `CANDIDATES`
+        # filters `statpal_fixture_id IS NULL`, the measurement must not — so a
+        # test that cares says so and every other test measures an empty
+        # population and asserts nothing about it.
+        self._measured = list(measured or [])
+        self.measurement_windows: list[dict] = []
         # A SEQUENCE of answers, because the task asks twice: once up front for
         # the batch, and again after a lost race, when the whole point is that
         # the world changed underneath (CERT-895 repair). A plain list is
@@ -132,6 +140,9 @@ class RecordingSession:
             answer = self._holders[min(self.holder_reads, len(self._holders) - 1)]
             self.holder_reads += 1
             return FakeResult(answer)
+        if sql == task.MEASUREMENT_ROWS:
+            self.measurement_windows.append(dict(params or {}))
+            return FakeResult(self._measured)
         if sql == task.SET_FIXTURE_ID:
             self.updates.append(dict(params or {}))
             return FakeResult(rowcount=self._update_rowcount)
@@ -161,6 +172,7 @@ def drive(monkeypatch):
         holders=(),
         update_rowcount=1,
         raises=None,
+        measured=None,
     ):
         if candidates is None:
             candidates = [
@@ -177,6 +189,7 @@ def drive(monkeypatch):
             candidates=candidates,
             holders=holders,
             update_rowcount=update_rowcount,
+            measured=measured,
         )
 
         @asynccontextmanager

@@ -1900,6 +1900,36 @@ SELECT COUNT(*) AS duplicate_ids
        ) d
 """
 
+#: The same census for a measurement population, whose rows are spread over MANY
+#: `sports.key`s (`authority_agreement.MEASUREMENT_POPULATIONS`).
+#:
+#: Not `_DUPLICATE_IDS` with a wildcard bound in, for two separate reasons and
+#: both of them bite:
+#:
+#:   * `s.key = :sport_key` matches nothing at all for `tennis_singles`, because
+#:     no row carries that key. The census would publish a confident 0.
+#:   * Binding `:sport_key` into a `LIKE` would make every real sport key a
+#:     PATTERN — `baseball_mlb` has an underscore, which `LIKE` reads as
+#:     "any one character" — so a scope named after one sport could silently
+#:     widen to another. The prefix is written literally here instead.
+#:
+#: Duplicates split ACROSS keys are the shape tennis actually has: 1,170 pairs
+#: appearing twice within five days sit under two different `sports.key`s
+#: (production 2026-09-05). A per-key census cannot see one — the partition key
+#: is inside the grouping key — which is why this one does not partition.
+_DUPLICATE_IDS_TENNIS = """
+SELECT COUNT(*) AS duplicate_ids
+  FROM (
+        SELECT e.statpal_fixture_id
+          FROM events e
+          JOIN sports s ON s.id = e.sport_id
+         WHERE s.key LIKE 'tennis%'
+           AND e.statpal_fixture_id IS NOT NULL
+         GROUP BY e.statpal_fixture_id
+        HAVING COUNT(*) > 1
+       ) d
+"""
+
 
 @router.get("/statpal/authority-agreement")
 async def statpal_authority_agreement(
@@ -1943,7 +1973,11 @@ async def statpal_authority_agreement(
 
     from app.config.authority_by_sport import STATPAL, authority_for
     from app.tasks.redis_state import get_task_metrics
-    from app.utils.authority_agreement import FLIP_GATE_SUMMARY, SHADOW_STAMPERS
+    from app.utils.authority_agreement import (
+        FLIP_GATE_SUMMARY,
+        MEASUREMENT_POPULATIONS,
+        SHADOW_STAMPERS,
+    )
     from app.utils.provider_anchor_keys import statpal_id_space
 
     now = datetime.now(timezone.utc)
@@ -1970,7 +2004,16 @@ async def statpal_authority_agreement(
 
         metrics = get_task_metrics(task_name) or {}
         summary = metrics.get("last_result_summary") or {}
-        agreement = summary.get("agreement") if isinstance(summary, dict) else None
+        # A task banks either ONE row under `agreement` or SEVERAL under
+        # `agreements`, keyed by population — the tennis linker measures two
+        # draws in one pass and neither may be published as "the" row. The plural
+        # is read first and by key, so a task that grows a second population
+        # cannot have one of them silently stand in for the other.
+        agreements = summary.get("agreements") if isinstance(summary, dict) else None
+        if isinstance(agreements, dict):
+            agreement = agreements.get(sport_key)
+        else:
+            agreement = summary.get("agreement") if isinstance(summary, dict) else None
         last_at = metrics.get("last_success_at")
 
         entry["last_pass_at"] = last_at
@@ -2001,6 +2044,19 @@ async def statpal_authority_agreement(
 
         prefix = statpal_id_space(sport_key)
         entry["live"] = {"anchor_prefix": prefix}
+        if sport_key in MEASUREMENT_POPULATIONS:
+            # The agreement numbers above ARE split by draw; the census below is
+            # not, and cannot be. StatPal numbers singles and doubles in one
+            # sequence, so an id-space census has no draw to filter on — the
+            # anchors it counts belong to both. Said on the row rather than left
+            # to be inferred, because the two halves of this entry are now
+            # scoped differently and nothing else on it would say so.
+            entry["live"]["scope_note"] = (
+                "counted over the whole `tennis:` id space — both draws. StatPal "
+                "numbers singles and doubles in one sequence, so this census "
+                "cannot be split the way the agreement numbers above are; it is "
+                "the same figure on both tennis rows."
+            )
         if prefix:
             census = (
                 await db.execute(
@@ -2008,9 +2064,12 @@ async def statpal_authority_agreement(
                     {"prefix": f"{prefix}:", "like_prefix": f"{prefix}:%"},
                 )
             ).first()
-            dupes = (
-                await db.execute(text(_DUPLICATE_IDS), {"sport_key": sport_key})
-            ).first()
+            if sport_key in MEASUREMENT_POPULATIONS:
+                dupes = (await db.execute(text(_DUPLICATE_IDS_TENNIS))).first()
+            else:
+                dupes = (
+                    await db.execute(text(_DUPLICATE_IDS), {"sport_key": sport_key})
+                ).first()
             anchors = int(census[0] or 0) if census else 0
             agrees = int(census[1] or 0) if census else 0
             entry["live"].update(

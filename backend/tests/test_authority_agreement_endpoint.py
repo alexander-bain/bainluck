@@ -27,6 +27,7 @@ import pytest
 
 from app.routes import admin_providers
 from app.utils.authority_agreement import READ_OK, SHADOW_STAMPERS
+from app.utils.provider_anchor_keys import statpal_id_space
 
 ROUTE_PATH = "/api/admin/statpal/authority-agreement"
 
@@ -43,17 +44,33 @@ class FakeSession:
     number, which is the one outcome a ledger cannot survive.
     """
 
-    def __init__(self, *, anchors=0, column_agrees=0, duplicate_ids=0):
+    def __init__(
+        self,
+        *,
+        anchors=0,
+        column_agrees=0,
+        duplicate_ids=0,
+        tennis_duplicate_ids=0,
+    ):
         self._anchors = anchors
         self._agrees = column_agrees
         self._dupes = duplicate_ids
+        # Answered SEPARATELY from `duplicate_ids`, not aliased to it. The two
+        # censuses ask different questions — one partitions by `sports.key` and
+        # the other deliberately does not — and a fake that returned one number
+        # for both could not tell a test that the endpoint picked the wrong one.
+        self._tennis_dupes = tennis_duplicate_ids
         self.params: list[dict] = []
+        self.statements: list[str] = []
 
     async def execute(self, statement, params=None):
         sql = str(statement)
         self.params.append(dict(params or {}))
+        self.statements.append(sql)
         if sql == admin_providers._ANCHOR_CENSUS:
             return _Result(_Row((self._anchors, self._agrees)))
+        if sql == admin_providers._DUPLICATE_IDS_TENNIS:
+            return _Result(_Row((self._tennis_dupes,)))
         if sql == admin_providers._DUPLICATE_IDS:
             return _Result(_Row((self._dupes,)))
         raise AssertionError(
@@ -271,8 +288,30 @@ async def test_the_census_is_scoped_to_this_sports_id_space(call):
     # bare `statpal:` — the whole point is that NBA's 1043639 and NHL's 649052
     # are neighbours in one provider's numbering and must not be counted
     # together (D55).
-    assert prefixes == [f"{k}:" for k in sorted(SHADOW_STAMPERS)]
-    assert likes == [f"{k}:%" for k in sorted(SHADOW_STAMPERS)]
+    #
+    # The scope is `statpal_id_space(key)` and NOT the key itself. Those were the
+    # same string for every sport until tennis arrived, and asserting the key
+    # here was a coincidence reading as an invariant: StatPal numbers all of
+    # tennis in one sequence, so `tennis_singles` and `tennis_doubles` correctly
+    # share the `tennis:` space rather than inventing two.
+    spaces = [statpal_id_space(k) for k in sorted(SHADOW_STAMPERS)]
+    assert prefixes == [f"{s}:" for s in spaces]
+    assert likes == [f"{s}:%" for s in spaces]
+
+
+async def test_the_two_tennis_draws_share_one_id_space_and_say_so(call):
+    """One provider sequence covers both draws, and the row must not hide it.
+
+    A reader who takes `tennis_singles.live.anchors` for a singles count is
+    reading a number that includes doubles. The census cannot be split — the id
+    space genuinely is not — so the row names the scope instead.
+    """
+    out = await call(metrics={"last_result_summary": {}}, session=FakeSession())
+    draws = [s for s in out["sports"] if s["sport_key"].startswith("tennis_")]
+    assert len(draws) == 2
+    for draw in draws:
+        assert draw["live"]["anchor_prefix"] == "tennis"
+        assert "both draws" in draw["live"]["scope_note"]
 
 
 # ---------------------------------------------------------------------------
