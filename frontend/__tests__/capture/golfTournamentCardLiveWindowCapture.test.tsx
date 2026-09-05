@@ -32,15 +32,15 @@
  *
  * `_isLive` was the outlier. It now agrees with them.
  *
- * ⚠️ A THIRD SIBLING EXISTS BUT IS NOT ON MASTER.
- * `components/golf/CurrentEventBanner.tsx` (UX-P179, same window, end +24h) is
- * stranded on the unmerged `program/ux-125` stack. This file was authored above
- * it and carried a fifth section asserting that the card and the banner retire
- * the tournament at the SAME instant, driven through both real components on one
- * payload. That section cannot run here, so it was removed rather than weakened
- * — and `theBannerAgreementIsOwed` below FAILS the moment the banner lands, so
- * the agreement is restored by whoever lands it instead of being lost. See
- * section 5.
+ * ✅ THE THIRD SIBLING IS NOW ON MASTER (UX-P1087, 2026-09-05).
+ * `components/golf/CurrentEventBanner.tsx` (UX-P179/P179b, same window,
+ * end +24h) was stranded on the unmerged `program/ux-124` stack for a week —
+ * long enough that production spent every Sunday calling the live tournament
+ * "Just Finished". It landed with this commit, so the fifth section that this
+ * file could not run — the card and the banner retiring the tournament at the
+ * SAME instant, driven through both real components on one payload — is
+ * RESTORED rather than lost. The `theBannerAgreementIsOwed` tripwire that stood
+ * in its place did its job and is gone. See section 5.
  *
  * ═══ THE READER COUNT ═══
  *
@@ -98,6 +98,7 @@ jest.mock("next/link", () => ({
 }));
 
 import TournamentCard from "@/components/TournamentCard";
+import CurrentEventBanner from "@/components/golf/CurrentEventBanner";
 import type {
   GolfCurrentEvent,
   GolfResponse,
@@ -354,14 +355,28 @@ describe("UX-P180 · the windowless population is untouched", () => {
 /* 5 · THE AGREEMENT — one payload, two real layers.                          */
 /* ═══════════════════════════════════════════════════════════════════════ */
 
-describe("UX-P180 · the card holds the window the banner will have to agree with", () => {
-  // The banner and the card read the SAME tournament out of the SAME
-  // `/api/golf` response — `current_event` and `tournaments[0]` — and each was
-  // free to decide its own boundary. The banner is not on master (see the
-  // header), so what is asserted here is the half that CAN be: that the two
-  // payload shapes describe one tournament, and that the card's boundary is
-  // exactly the one the banner already chose (end + 24h). When the banner
-  // lands, the cross-component agreement goes back — enforced below.
+describe("UX-P180 · the card and the banner agree about one tournament's window", () => {
+  // Redundancy is not coupling. The banner and the card read the SAME
+  // tournament out of the SAME `/api/golf` response — `current_event` and
+  // `tournaments[0]` — and each was free to decide its own boundary. They now
+  // agree because this asserts the agreement, on one payload driven through
+  // both real components, rather than on two fixtures that can drift apart.
+  //
+  // Restored by UX-P179/P179b landing the banner, which is what the
+  // `theBannerAgreementIsOwed` tripwire that stood here demanded. The tripwire
+  // is gone because the thing it was owed is now present — not because it was
+  // inconvenient.
+  function bannerSaysFinished(now: string): boolean {
+    const m = at(now, () =>
+      renderToStaticMarkup(
+        React.createElement(CurrentEventBanner as React.FC, {
+          event: CURRENT,
+          historyData: null,
+        } as never),
+      ),
+    );
+    return visibleText(m).includes("Just Finished");
+  }
 
   it("the two payload shapes describe the same tournament", () => {
     // Pure payload, no component: this is the premise the agreement rests on,
@@ -376,37 +391,14 @@ describe("UX-P180 · the card holds the window the banner will have to agree wit
     ["2026-08-30T00:01:00Z", "one minute into the final day"],
     ["2026-08-30T18:00:00Z", "the final round itself"],
     ["2026-08-30T23:59:00Z", "the last minute of the final day"],
-  ])("at %s (%s) the card is live", (now) => {
+  ])("at %s (%s) the card is live and the banner has not retired it", (now) => {
     expect(saysLive(TournamentCard, TOUR_CHAMPIONSHIP, now)).toBe(true);
+    expect(bannerSaysFinished(now)).toBe(false);
   });
 
-  it("the card retires it at the end of the final day, not the start", () => {
+  it("both retire it at the same instant — the end of the final day", () => {
     expect(saysLive(TournamentCard, TOUR_CHAMPIONSHIP, "2026-08-31T00:00:00Z")).toBe(false);
-  });
-
-  it("theBannerAgreementIsOwed — this FAILS the day CurrentEventBanner lands", () => {
-    // ⚠️ NOT a skip and NOT a try/catch that shrugs. A conditional test that
-    // quietly does nothing is the "present but not what runs" failure this
-    // lane has now hit in four costumes; the countermeasure is to make the
-    // omission LOUD at exactly the moment it stops being justified.
-    //
-    // WHEN THIS FAILS, DO NOT DELETE IT. Restore the cross-component agreement
-    // from `program/ux-125` @ daa0e617 — render CurrentEventBanner and
-    // TournamentCard on this one payload and require them to retire the
-    // tournament at the same instant — then remove this test.
-    let bannerExists = true;
-    try {
-      require.resolve("@/components/golf/CurrentEventBanner");
-    } catch {
-      bannerExists = false;
-    }
-    expect({
-      bannerOnMaster: bannerExists,
-      restore: "the card/banner agreement from ux-125 @ daa0e617",
-    }).toEqual({
-      bannerOnMaster: false,
-      restore: "the card/banner agreement from ux-125 @ daa0e617",
-    });
+    expect(bannerSaysFinished("2026-08-31T00:00:00Z")).toBe(true);
   });
 });
 
