@@ -1239,6 +1239,10 @@ async def _poll_kalshi_markets():
                 KalshiScanReport,
                 save_scan_report,
             )
+            from app.utils.kalshi_series_selection import (
+                discovery_is_silent_zero,
+                summarize_discovery_receipt,
+            )
 
             _n_new = int(stats.get("new_events_fetched") or 0)
             _n_existing = int(stats.get("existing_events_fetched") or 0)
@@ -1286,6 +1290,13 @@ async def _poll_kalshi_markets():
                 market_backfill_filled=int(
                     _scan_tel.get("market_backfill_filled") or 0
                 ),
+                # #2927: the discovery receipt, carried to the artifact. Same
+                # omission as the market_backfill_* block above and the same
+                # fix — the fetch measured it, nobody copied it, so it reached
+                # no reader. Bounded here because the ring keeps 48 of these.
+                series_discovery=summarize_discovery_receipt(
+                    _scan_tel.get("series_discovery")
+                ),
                 duration_s=round(time.monotonic() - _task_started, 1),
             )
             save_scan_report(_report)
@@ -1315,6 +1326,35 @@ async def _poll_kalshi_markets():
                     _recon["main_plus_supplementary"],
                     _recon["main_plus_supplementary_delta"],
                     _recon["events_fetched"],
+                )
+            # #2927 / gotcha #53: an empty discovery yield is a response shape,
+            # not an absence. A beat that resolved a live list, picked series
+            # off it, and still added nothing is what a poisoned cache, a spent
+            # reserve, or a venue that stopped listing the draw all look like —
+            # and all three present to a user as "the doubles matches stopped
+            # updating". Every other failure here names itself in `source`;
+            # this one only names itself if we say so.
+            _disc = _report.series_discovery or {}
+            stats["discovery_source"] = _disc.get("source")
+            stats["discovery_events_added"] = _disc.get("events_added")
+            if discovery_is_silent_zero(_disc):
+                logger.error(
+                    "poll_kalshi series discovery: SELECTED %s SERIES AND "
+                    "ADDED 0 EVENTS (source=%s, selected_open_events=%s, "
+                    "series_fetched=%s, census_exhausted=%s). The stage ran "
+                    "and yielded nothing — treat as a coverage outage, not a "
+                    "quiet night.",
+                    _disc.get("selected_count"), _disc.get("source"),
+                    _disc.get("selected_open_events"),
+                    _disc.get("series_fetched"),
+                    _disc.get("census_exhausted"),
+                )
+            elif _disc.get("source") in ("failed", "unsummarizable"):
+                logger.error(
+                    "poll_kalshi series discovery: stage did not resolve "
+                    "(source=%s, error=%s). The rescue list is the hand list "
+                    "alone this beat.",
+                    _disc.get("source"), _disc.get("error"),
                 )
         except Exception as exc:
             logger.warning("poll_kalshi: scan report failed: %s", exc)

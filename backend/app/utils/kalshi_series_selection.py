@@ -219,3 +219,108 @@ def select_discovered_series(
         "dormant_sample": sorted(dormant)[:_DORMANT_SAMPLE],
     }
     return selected, receipt
+
+
+#: Hard caps on the persisted copy of a discovery receipt. The live receipt is
+#: bounded by policy (see the module docstring); these bound it by arithmetic,
+#: because the scan report keeps 48 of them in a shared 100MB Redis and a
+#: catalog that grows must not turn telemetry into a memory problem.
+_PERSIST_MAX_LIST = 24
+_PERSIST_MAX_DETAIL = 24
+
+#: The receipt keys worth keeping across beats, in reading order. `source` and
+#: `events_added` are the two the reader is actually here for — everything else
+#: explains a number that surprised them.
+_PERSIST_SCALARS = (
+    "source",
+    "events_added",
+    "series_fetched",
+    "discovered",
+    "with_open_events",
+    "selected_count",
+    "selected_open_events",
+    "fetch_truncated_after",
+    "not_cached",
+    "error",
+)
+
+
+def summarize_discovery_receipt(receipt: Optional[Mapping]) -> dict:
+    """The part of a discovery receipt worth persisting on every beat.
+
+    The receipt as measured carries two nested sub-receipts (the catalog read
+    and the census walk) that answer "why is this number what it is" for the
+    beat that produced it. Across 48 ring entries they are noise, so this keeps
+    the counters and drops the sub-receipts — with one exception: `census` is
+    reduced to `exhausted`, because a census that did not exhaust is the one
+    condition under which a *small* `selected_count` is expected rather than
+    alarming, and a reader who cannot see it will misread the beat.
+
+    Never raises. A receipt is telemetry, and telemetry that can fail the report
+    it rides on is worse than no telemetry (the whole reason this function
+    exists is that the receipt was silently dropped instead).
+    """
+    if not receipt:
+        return {"source": "absent"}
+    try:
+        out: dict = {}
+        for key in _PERSIST_SCALARS:
+            if key in receipt:
+                out[key] = receipt[key]
+        out.setdefault("source", "unknown")
+
+        selected = receipt.get("selected")
+        if isinstance(selected, (list, tuple)):
+            out["selected"] = [str(s) for s in selected[:_PERSIST_MAX_LIST]]
+            if len(selected) > _PERSIST_MAX_LIST:
+                out["selected_truncated"] = len(selected) - _PERSIST_MAX_LIST
+
+        skipped = receipt.get("skipped")
+        if isinstance(skipped, Mapping):
+            out["skipped"] = {str(k): int(v) for k, v in skipped.items()}
+
+        detail = receipt.get("skipped_detail")
+        if isinstance(detail, Mapping):
+            items = sorted(detail.items())[:_PERSIST_MAX_DETAIL]
+            out["skipped_detail"] = {str(k): str(v) for k, v in items}
+            if len(detail) > _PERSIST_MAX_DETAIL:
+                out["skipped_detail_truncated"] = len(detail) - _PERSIST_MAX_DETAIL
+
+        census = receipt.get("census")
+        if isinstance(census, Mapping) and "exhausted" in census:
+            out["census_exhausted"] = bool(census["exhausted"])
+
+        return out
+    except Exception:  # noqa: BLE001 — see docstring
+        return {"source": "unsummarizable"}
+
+
+#: Receipt `source` values that mean the discovery stage actually resolved a
+#: series list this beat, so `events_added == 0` is a result and not a no-op.
+_DISCOVERY_RAN_SOURCES = frozenset({"live", "cache"})
+
+
+def discovery_is_silent_zero(receipt: Optional[Mapping]) -> bool:
+    """True when discovery ran, selected series, and still added nothing.
+
+    This is the gotcha #53 shape for this stage: `events_added: 0` from a beat
+    that resolved a live list and picked series off it is a response, not an
+    absence, and it is exactly what a poisoned cache, a spent reserve or a
+    venue that quietly stopped listing the draw all look like. It is the one
+    reading that must be loud, because every other failure mode here already
+    names itself in `source`.
+
+    A beat that selected nothing is NOT this: `selected_count == 0` is already
+    explained by the `skipped` counters, and calling it silent would fire the
+    alarm every night the tournament is dark.
+    """
+    if not receipt:
+        return False
+    try:
+        if str(receipt.get("source") or "") not in _DISCOVERY_RAN_SOURCES:
+            return False
+        if int(receipt.get("selected_count") or 0) <= 0:
+            return False
+        return int(receipt.get("events_added") or 0) <= 0
+    except Exception:  # noqa: BLE001 — telemetry never raises
+        return False
