@@ -275,6 +275,127 @@ def test_the_counter_window_is_not_extended_by_every_skip(rc):
 
 
 # ---------------------------------------------------------------------------
+# POSITIVE CONTROL: the cadence gate could not have done this job
+#
+# Every gate above stubs `should_poll_now()` to (True, "test"). That is correct
+# — they are testing the lease — but it means none of them would notice if the
+# cadence gate had been sufficient all along, and the whole repair were
+# redundant. This section pins the gate's INADEQUACY, so `poll_all_odds`'s
+# docstring claim ("it stamps its clock when a pass FINISHES, so while a pass is
+# running it says yes to every delivery") is enforced rather than asserted.
+#
+# Credit: latency/167 measured this and handed it over (#3251, 2026-09-05).
+# ---------------------------------------------------------------------------
+class _FakeStateRedis:
+    """Just the one verb `should_poll_now` turns on, with redis-py's byte keys."""
+
+    def __init__(self, last_poll_time: float, live: bool = True):
+        self.state = {
+            b"last_poll_time": str(last_poll_time).encode(),
+            b"unchanged_count": b"0",
+            b"has_live_games": b"true" if live else b"false",
+        }
+
+    def hgetall(self, _key):
+        return self.state
+
+
+def _gate_at(monkeypatch, now: float, last_poll_time: float, live: bool = True):
+    """Ask `should_poll_now()` what it says at wall-clock `now`."""
+    from app.tasks import redis_state
+
+    monkeypatch.setattr(
+        redis_state, "get_redis_client", lambda: _FakeStateRedis(last_poll_time, live)
+    )
+    monkeypatch.setattr(redis_state.time, "time", lambda: now)
+    return redis_state.should_poll_now()
+
+
+def test_the_cadence_gate_grows_more_permissive_during_a_long_pass(monkeypatch):
+    """Three deliveries 30 s apart while one 132 s pass runs. ALL THREE pass.
+
+    `update_poll_state` stamps `last_poll_time` when a pass FINISHES, so while a
+    pass is in flight the stamp is frozen and each delivery behind the running
+    copy reads an ever-LARGER `elapsed`. The gate is monotonically MORE
+    permissive the longer the pile-up lasts, which is the opposite of shedding.
+    """
+    from app.tasks.config import LIVE_POLL_INTERVAL
+
+    pass_started = 1_000_000.0
+    # The stamp is from the PREVIOUS pass's completion, i.e. when this one began.
+    elapsed_seen = []
+    for delivery in (30.0, 60.0, 90.0):
+        should_poll, reason = _gate_at(
+            monkeypatch, now=pass_started + delivery, last_poll_time=pass_started
+        )
+        assert should_poll is True, (
+            f"delivery at +{delivery}s was shed by the cadence gate; if this "
+            f"fails the gate now sheds pile-up and the lease may be redundant"
+        )
+        assert reason == "live_games"
+        elapsed_seen.append(delivery)
+
+    # Monotonically increasing `elapsed` against a FIXED threshold: no value of
+    # LIVE_POLL_INTERVAL rescues this, because the pass outlives any of them.
+    assert elapsed_seen == sorted(elapsed_seen)
+    assert elapsed_seen[0] >= LIVE_POLL_INTERVAL
+
+
+def test_no_threshold_value_lets_the_cadence_gate_shed_a_lapping_pass(monkeypatch):
+    """Even the SLOWEST adaptive interval admits every delivery behind a lap.
+
+    A pass that runs longer than its own gate interval means the next delivery
+    always reads `elapsed >= interval`. Tested at the most conservative setting
+    the adaptive ladder can reach, so the conclusion is not a property of the
+    live-games branch alone.
+    """
+    from app.tasks.config import SLOW_POLL_INTERVAL
+
+    pass_started = 2_000_000.0
+    # A pass one second longer than the slowest interval the ladder can choose.
+    for delivery in (SLOW_POLL_INTERVAL + 1, SLOW_POLL_INTERVAL * 2):
+        should_poll, _ = _gate_at(
+            monkeypatch,
+            now=pass_started + delivery,
+            last_poll_time=pass_started,
+            live=False,
+        )
+        assert should_poll is True
+
+
+def test_the_lease_sheds_exactly_what_the_cadence_gate_admits(monkeypatch, rc):
+    """The two gates in series: cadence says RUN, the lease still declines.
+
+    This is the join the repair rests on. With the cadence gate answering
+    honestly (not stubbed), a delivery arriving behind an in-flight copy is
+    admitted by the gate and refused by the lease.
+    """
+    import app.tasks as tasks_mod
+    import app.tasks.odds_polling as odds_polling
+
+    pass_started = 3_000_000.0
+    calls = []
+    monkeypatch.setattr(
+        odds_polling, "_poll_all_odds", lambda *a, **kw: calls.append(1) or {"ran": True}
+    )
+    monkeypatch.setattr(tasks_mod, "_tracked_run", lambda _label, result: result)
+
+    # The cadence gate, answering for real, admits this delivery.
+    should_poll, reason = _gate_at(
+        monkeypatch, now=pass_started + 90.0, last_poll_time=pass_started
+    )
+    assert (should_poll, reason) == (True, "live_games")
+
+    # The lease, held by the copy still in flight, refuses it.
+    held = sf.acquire(TASK)
+    assert held.acquired
+    declined = tasks_mod.poll_all_odds()
+    assert declined["skipped"] is True
+    assert declined["reason"] == "already_running"
+    assert calls == [], "the cadence gate admitted it; only the lease shed it"
+
+
+# ---------------------------------------------------------------------------
 # The TTL is the runtime's bound, not a transcribed p95
 # ---------------------------------------------------------------------------
 def test_the_lease_ttl_outlives_celerys_hard_kill_bound():

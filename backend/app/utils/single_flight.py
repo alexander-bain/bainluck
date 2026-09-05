@@ -4,8 +4,15 @@ A Celery beat entry publishes on a fixed period whether or not the previous
 delivery has finished. When a task's duration exceeds its own interval it
 **laps**: every tick adds a copy the worker will eventually have to run, and the
 queue grows without bound. Measured on production 2026-09-05, `realtime` was
-282 → 349 deep with **85 copies of `poll_all_odds`** queued (30 s beat, p95
-118.2 s → 3.94× its own interval), against `worker-realtime --concurrency=4`.
+282 → 349 deep with **85 copies of `poll_all_odds`** queued against
+`worker-realtime --concurrency=4`.
+
+(That filing quoted the lap ratio as p95 ÷ interval = 3.94×. That framing is
+wrong and is corrected under "WHY THIS IS ENOUGH" below: slot demand is
+**mean** ÷ interval = 2.37×. The defect was real either way, but p95 misranks
+the offenders — `warm_typeahead` looks like the second-worst lapper at 2.88×
+p95 while actually holding 0.30 slots, because it is a fast task with a long
+tail.)
 
 The casualty was not odds polling — it was everything else sharing the queue.
 `prewarm_live_feed_shapes`, the 40 s rail that is the only thing that can hold a
@@ -17,7 +24,13 @@ arrival** — no start, no failure, `health: healthy`, and a front page costing
 
 So: before a lapping task does its work it takes a lease. If a previous copy
 still holds it, this delivery logs one line and returns a `skipped` summary in
-microseconds. The queue cannot form a line, so the 40 s rail keeps its slot.
+microseconds, and the queue cannot form a line.
+
+**That stops the queue growing. It did NOT get the rail its slot back** — the
+capped slot demand still exceeds the worker pool once every leased task is
+counted, so no free slot appears inside the rail's 40 s `expires`. Measured, not
+predicted: see "THERE IS NO MARGIN" and the warm-rail note below. The remaining
+lever is capacity, and it is #3268, not this module.
 
 Four properties this has to have, and how each is obtained:
 
@@ -37,13 +50,126 @@ Four properties this has to have, and how each is obtained:
   us to today's behaviour; letting the guard become a second outage would be
   worse than the one it repairs.
 
+WHY THIS BOUNDS THE QUEUE BUT NOT THE WORK — and the arithmetic that says so
+-----------------------------------------------------------------------------
+
+A lease bounds the QUEUE, not the WORK. A pass longer than its own interval
+still holds ONE FULL worker slot continuously; the lease only stops the surplus
+deliveries from *piling up* behind it. The number to compute is
+``sum(min(1, mean / interval))`` — **mean**, not p95: a slot is occupied for the
+mean duration, and ranking by p95 misreads which task is actually the hog.
+(Credit: latency/167, #3251. Measured on production 2026-09-05, 50-run duration
+rings via `/api/admin/task-metrics`. Gotcha: that endpoint is keyed by the
+`_tracked_run` LABEL, not the task name — `?task=poll_all_odds` says `no_data`,
+`?task=poll_odds` returns the ring; `poll_live_prediction_markets` is
+`prediction_market_live`.)
+
+    label                      mean    interval   demand   capped
+    poll_odds                  71.0s     30s       2.37     1.00
+    prediction_market_live    191.3s    120s       1.59     1.00   ← leased
+    espn_sync                  77.0s     60s       1.28     1.00
+    datagolf_inplay            76.9s     90s       0.85     0.85
+    prewarm_live_feed_shapes   19.7s     40s       0.49     0.49
+    transition_statuses         7.7s     60s       0.13     0.13
+    statpal_livescores          2.2s     30s       0.07     0.07
+    statpal_plays / mlb_sync     —         —        0.01     0.01
+                                                  -----    -----
+                                                   6.80     4.56   vs concurrency=4
+
+⚠️ THERE IS NO MARGIN. An earlier revision of this table omitted
+`prediction_market_live` — the fourth leased task, and the second-largest single
+consumer — and concluded "capped 3.56, a margin of 0.44 slots (11%), which is
+thin". That was wrong in direction, not just magnitude: the correct capped sum is
+**4.56 against 4 workers, a DEFICIT of 0.56 slots**. (Caught as CERT-1944's named
+follow-up; the 4.56 independently reproduces latency/169's separately-measured
+4.56, by a different route.) Never quote the 3.56.
+
+Which makes the honest claim narrower than "this fixes the queue":
+
+* **The queue drains anyway, and that is not a contradiction.** A declined
+  delivery costs microseconds, so the backlog is *shed* cheaply even while all
+  four workers stay saturated with real passes. Depth falling is the lease
+  working; it is NOT evidence of spare capacity.
+* **Real work still laps.** At 4.56 capped demand the four leased tasks run
+  essentially back-to-back with no idle, which is why `poll_all_odds` accrues a
+  decline on very nearly every tick.
+* **So an unleased task can still starve.** `prewarm_live_feed_shapes` is not
+  leased: its message waits for a genuinely free slot, and at a 0.56-slot deficit
+  there is never one inside its 40 s `expires`. See the warm-rail note below —
+  this is measured, not inferred.
+
+The remaining lever is capacity (`--concurrency` on `worker-realtime`, against
+the SQLAlchemy pool `pool_size=3, max_overflow=2`), not another lease: the two
+unleased producers left, `warm_search_head` and `warm_typeahead`, are ~0.30 slots
+each and cannot close a 0.56 gap. That ask is with Alex via latency/169–170.
+Re-run this sum before adding anything to `realtime`, and include every leased
+task when you do.
+
+Observed after deploy (`a705abcc`, production 19:03Z): the pre-ship trend was
+**+1.7/min sustained for hours** (454 → 796); after the ship the derivative
+flipped sign and `realtime` fell 631 → 362 between 18:41Z and 19:48:40Z, a
+measured **−4.0/min**, still falling at the last read. The derivative flipping
+sign is the proof, not any single depth.
+
+⚠️ DO NOT QUOTE THE FIRST DRAIN RATE. The initial post-deploy read looked like
+**−11.9/min** and was briefly used to predict a ~70-minute clear. It is an
+artifact and was retracted by the measuring lane (latency/168): a worker restart
+dumps the messages already past their 40 s `expires` in one burst, so the first
+minutes measure *discard*, not *drain*. A rate taken across a restart boundary
+is not this guard's effect. The −4.0/min above is taken after that burst
+settled. (A later "plateau at ~625, publication and consumption balanced" read
+over a 25-minute window did not hold either — the queue kept draining to 362.
+Sample longer than the thing you are trying to see.)
+
+The instrument for this guard is NOT queue depth — depth moves for reasons that
+have nothing to do with us. It is the skip counters, which count declines
+directly: `bainluck:inflight:skipped:*`, read one key at a time via
+``/api/admin/redis-read?key=bainluck:inflight:skipped:app.tasks.<task>``. Live
+at 19:48:40Z: **266 / 52 / 31 / 17** for the four leased tasks (153 / 27 / 17 / 7
+at 19:17Z). `poll_all_odds` accrues ~2.0 declines/min against a 30 s beat —
+i.e. essentially every tick declines, which is what a 71 s mean pass on a 30 s
+interval must look like when the guard is working.
+
+Note `schedule-adherence` reports `self_gated_fires: null` for all four leased
+tasks and always will: that field is withheld unless two counters' windows agree
+within `SELF_GATE_WINDOW_TOLERANCE`, and it is *not* wired to this counter. Do
+not read its `null` as "the lease never fired" — read the Redis counters above.
+
+⚠️ A DRAINED QUEUE IS NOT A WARM FRONT PAGE — and this is now measured, not
+predicted. At 19:48:40Z, with the queue down to 362 and skips firing,
+`prewarm_live_feed_shapes` had **still not started once since 14:08:48Z** — 5h40m
+dead on a 40 s beat, 5h20m of that with a lease in place. Freeing slots did not
+revive it. Its messages carry `expires=40`, so it stays dark until service
+latency is under 40 s, which draining to 362 did not achieve; and even when it
+does run it spends mean 19.7s / p50 20.1 / max 20.2 against
+`FEED_LIVE_REPUBLISH_BUDGET_S = 20`, so 49 of 50 runs cut off AT the budget —
+a ceiling, not a measurement — and its last result was `0`. This ship does not
+fix the cold front page. That is #3268; never read one claim as the other.
+
 Trade-off, stated rather than hidden: the TTL is sized off the runtime's
-*guaranteed* bound (`task_time_limit`), not off a measured p95, because a
-measured number rots and an enforced one cannot. The cost is that a hard-killed
-holder can stall its own task for up to the TTL; the benefit is that two copies
-can never both call The Odds API and bill the 5M/month quota twice for the same
-tick. Duplicate spend on the most constrained resource in the system is the
-worse failure, so the bound that cannot be undershot is the one we use.
+*guaranteed* bound (`task_time_limit`), not off a measured p95 or max, because a
+measured number rots and an enforced one cannot. The two errors are NOT
+symmetric, which is the whole reason for the choice:
+
+* **Too short** — the lease lapses mid-pass and a second copy starts while the
+  first is still running. Both call The Odds API and bill the 5M/month quota
+  twice for the same tick. Duplicate spend on the most constrained resource in
+  the system, and it is silent.
+* **Too long** — a hard-killed holder stalls its own task until the TTL expires.
+  Bounded, self-correcting, and visible in the skip counter.
+
+So the bound that cannot be undershot is the one we use. Concretely: a
+198 s TTL (max-measured × 1.5, sized off latency/167's 131.8 s max) was
+considered and REJECTED — the very next 50-run ring showed a 234.8 s pass, which
+that TTL would have undershot, admitting exactly the double-billing above.
+
+The residual cost is real and worth knowing: a clean Celery warm shutdown
+unwinds the `with` and releases, so only a SIGKILL reaches the bad case — but
+Heroku cycles workers on every master merge, and a 71 s mean pass will not
+finish inside the 30 s grace, so it IS reachable. A kill at the 300 s limit
+leaves only 30 s of dark; a kill 30 s into a pass leaves ~300 s. Releasing held
+leases from a `worker_shutting_down` handler would close it; not done here
+because it is new scope on a merged ship (filed rather than smuggled in).
 """
 
 from __future__ import annotations
