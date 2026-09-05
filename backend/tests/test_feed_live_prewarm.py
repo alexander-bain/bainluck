@@ -205,6 +205,45 @@ def test_the_pass_runs_on_realtime_and_not_on_background():
 # --- The live set: what the pass selects on ----------------------------------
 
 
+class _FakePipe:
+    """MULTI/EXEC: buffer client-side, apply on `execute`, apply nothing on failure.
+
+    `_record_shape_liveness` writes only through this, so a test that wants to see
+    what the writer did reads `rc._txns` — the queued commands, in order — rather
+    than `rc.hset.call_args_list`. That is not bookkeeping: the whole CERT-1920
+    repair is that the three commands are ONE round trip, and a fake that let them
+    land individually would keep vouching for the writer that could not.
+    """
+
+    def __init__(self, rc):
+        self._rc = rc
+        self.queued = []
+
+    def hset(self, key, field, value):
+        self.queued.append(("hset", key, field, value))
+        return self
+
+    def hdel(self, key, field):
+        self.queued.append(("hdel", key, field))
+        return self
+
+    def expire(self, key, seconds):
+        self.queued.append(("expire", key, seconds))
+        return self
+
+    def execute(self):
+        self._rc._txns.append(list(self.queued))
+        if self._rc._exec_raises is not None:
+            raise self._rc._exec_raises
+        for op, key, *args in self.queued:
+            if op == "hset":
+                self._rc._state[args[0]] = args[1]
+            elif op == "hdel":
+                self._rc._state.pop(args[0], None)
+            elif op == "expire":
+                self._rc._ttl = args[0]
+
+
 def _fake_rc(hash_state=None):
     """A MagicMock Redis with a real dict behind the live-shape hash."""
     state = dict(hash_state or {})
@@ -214,6 +253,18 @@ def _fake_rc(hash_state=None):
     rc.hdel.side_effect = lambda key, field: state.pop(field, None)
     rc.get.return_value = None
     rc._state = state
+    rc._txns = []
+    rc._ttl = None
+    rc._exec_raises = None
+
+    def _pipeline(transaction=False):
+        assert transaction is True, (
+            "the writer opened a non-transactional pipeline — the dead-man's "
+            "heartbeat and its expiry can be applied apart again (CERT-1920)"
+        )
+        return _FakePipe(rc)
+
+    rc.pipeline.side_effect = _pipeline
     return rc
 
 
@@ -228,9 +279,7 @@ def test_a_live_warm_enters_the_set_and_a_not_live_warm_leaves_it():
 
     pcp._record_shape_liveness(rc, "sports_native", True)
     assert pcp._live_prewarm_labels(rc) == {"sports_native"}
-    rc.expire.assert_called_with(
-        pcp.FEED_PREWARM_LIVE_SHAPES_KEY, pcp.FEED_PREWARM_LIVE_SHAPES_TTL_S
-    )
+    assert rc._ttl == pcp.FEED_PREWARM_LIVE_SHAPES_TTL_S
 
     pcp._record_shape_liveness(rc, "sports_native", False)
     assert pcp._live_prewarm_labels(rc) == set()
@@ -261,12 +310,29 @@ def test_the_live_set_reader_fails_to_empty_not_to_everything():
 
 
 def test_a_marker_write_failure_never_breaks_the_warm():
-    """The marker is an optimisation input; the warm is the product."""
-    rc = MagicMock()
-    rc.hset.side_effect = RuntimeError("redis down")
-    rc.hdel.side_effect = RuntimeError("redis down")
-    pcp._record_shape_liveness(rc, "sports", True)
-    pcp._record_shape_liveness(rc, "sports", False)
+    """The marker is an optimisation input; the warm is the product.
+
+    Both failure points are exercised, because the writer now has two. Opening
+    the pipeline can fail (no connection at all) and `execute` can fail (the round
+    trip died). Only the second existed as a hazard before CERT-1920's repair
+    moved the writes into a transaction, and a test that still injected at
+    `rc.hset` would pass without touching either.
+    """
+    dead = MagicMock()
+    dead.pipeline.side_effect = RuntimeError("redis down")
+    pcp._record_shape_liveness(dead, "sports", True)
+    pcp._record_shape_liveness(dead, "sports", False)
+
+    for live in (True, False):
+        mid_flight = _fake_rc()
+        mid_flight._exec_raises = RuntimeError("connection reset before EXEC")
+        pcp._record_shape_liveness(mid_flight, "sports", live)
+        assert mid_flight._txns, "no transaction was attempted"
+        assert mid_flight._state == {}, (
+            "a failed transaction still landed a write — the heartbeat can be "
+            "published without the expiry that bounds it (CERT-1920)"
+        )
+        assert mid_flight._ttl is None
 
 
 # --- The pass itself ----------------------------------------------------------
@@ -998,19 +1064,26 @@ def test_the_heartbeat_is_written_on_every_successful_warm_live_or_not():
     )
 
     for live in (True, False):
-        rc = MagicMock()
+        rc = _fake_rc()
         _record_shape_liveness(rc, "sports", live=live)
+        assert len(rc._txns) == 1, "the write was not a single transaction"
+        queued = rc._txns[0]
         written = {
-            call.args[1]
-            for call in rc.hset.call_args_list
-            if call.args and call.args[0] == FEED_PREWARM_LIVE_SHAPES_KEY
+            field
+            for op, key, field, *_ in queued
+            if op == "hset" and key == FEED_PREWARM_LIVE_SHAPES_KEY
         }
         assert FEED_PREWARM_LIVE_HEARTBEAT_FIELD in written, (
             f"no heartbeat written on a live={live} warm — the dead-man's switch "
             "cannot tell a quiet rail from a dead one"
         )
-        rc.expire.assert_called_with(
-            FEED_PREWARM_LIVE_SHAPES_KEY, FEED_PREWARM_LIVE_SHAPES_TTL_S
+        assert (
+            "expire",
+            FEED_PREWARM_LIVE_SHAPES_KEY,
+            FEED_PREWARM_LIVE_SHAPES_TTL_S,
+        ) in queued, (
+            "the expiry is not in the same transaction as the heartbeat, so a "
+            "failed round trip can publish a heartbeat that never expires"
         )
 
 
@@ -1027,16 +1100,14 @@ def test_the_heartbeat_is_written_before_the_label_is_cleared():
         _record_shape_liveness,
     )
 
-    order = []
-    rc = MagicMock()
-    rc.hset.side_effect = lambda k, f, v: order.append(("hset", f))
-    rc.hdel.side_effect = lambda k, f: order.append(("hdel", f))
+    rc = _fake_rc()
     _record_shape_liveness(rc, "sports", live=False)
 
+    order = [(op, field) for op, _key, field, *_ in rc._txns[0] if op != "expire"]
     assert ("hdel", "sports") in order, "the label was never cleared"
     assert order.index(("hset", FEED_PREWARM_LIVE_HEARTBEAT_FIELD)) < order.index(
         ("hdel", "sports")
-    ), "the heartbeat is written after the hdel, leaving a window with no key"
+    ), "the heartbeat is queued after the hdel, so the expiry binds to no key"
 
 
 def test_the_heartbeat_is_not_selected_as_a_live_shape():

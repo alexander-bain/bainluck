@@ -236,23 +236,77 @@ def test_an_unset_switch_reads_as_ON_because_the_pass_only_stops_on_a_literal_ze
         assert out["switches"][name]["default_when_unset"] == "on"
 
 
-class _RedisHashFake:
-    """Redis hash semantics, in the one respect that broke CERT-1914.
+class _RedisPipeFake:
+    """A MULTI/EXEC pipeline: commands buffer client-side, `execute` applies them.
 
-    **Redis has no empty hash.** `HDEL` of the last remaining field deletes the
-    KEY, after which `HGETALL` returns `{}` and `TTL` returns -2 — the same pair
-    a genuinely expired key returns. The first version of this endpoint was
-    tested against a `MagicMock` scripted with `hash_state={}, ttl=180`, a state
-    the real store cannot produce, and it passed while production could only ever
-    show `{}` with `-2`. The fake is the fix: it is driven by the REAL writer, so
-    a fixture nobody could observe cannot be written by accident.
+    All-or-nothing is the property under test. Nothing touches the store until
+    `execute()`, and if the round trip fails the store is untouched — which is
+    what makes it impossible to publish a heartbeat without the expiry that
+    bounds it (CERT-1920).
+    """
+
+    def __init__(self, fake):
+        self._fake = fake
+        self.queued: list[tuple] = []
+
+    def hset(self, key, field, value):
+        self.queued.append(("hset", key, str(field), str(value)))
+        return self
+
+    def hdel(self, key, field):
+        self.queued.append(("hdel", key, str(field)))
+        return self
+
+    def expire(self, key, seconds):
+        self.queued.append(("expire", key, int(seconds)))
+        return self
+
+    def execute(self):
+        self._fake.transactions.append(list(self.queued))
+        if self._fake.exec_raises is not None:
+            # The connection died before the server ran EXEC. In real Redis the
+            # queued MULTI is discarded whole; nothing is applied.
+            raise self._fake.exec_raises
+        return [getattr(self._fake, op)(*args) for op, *args in self.queued]
+
+
+class _RedisHashFake:
+    """Redis hash + transaction semantics, in the respects that broke this ship.
+
+    **Redis has no empty hash** (CERT-1914). `HDEL` of the last remaining field
+    deletes the KEY, after which `HGETALL` returns `{}` and `TTL` returns -2 —
+    the same pair a genuinely expired key returns. The first version of this
+    endpoint was tested against a `MagicMock` scripted with `hash_state={},
+    ttl=180`, a state the real store cannot produce, and it passed while
+    production could only ever show `{}` with `-2`.
+
+    **A hash can outlive its TTL** (CERT-1920). A key written without a
+    surviving `EXPIRE` sits at TTL -1 and never expires, so `ttl()` returns -1
+    for a live key with no expiry — distinct from -2 for no key at all. The
+    writer reaches the store only through `pipeline(transaction=True)`, so a
+    failed round trip leaves the store exactly as it was.
+
+    The fake is driven by the REAL writer, so a fixture nobody could observe
+    cannot be written by accident.
     """
 
     def __init__(self):
         self.store: dict[str, dict[str, str]] = {}
         self.ttls: dict[str, int] = {}
+        #: Set to an exception to fail the next `execute()` round trip.
+        self.exec_raises: Exception | None = None
+        #: Every transaction's queued commands, in order, for ordering guards.
+        self.transactions: list[list[tuple]] = []
 
     # --- writer surface (what `_record_shape_liveness` calls) ---
+    def pipeline(self, transaction=False):
+        assert transaction is True, (
+            "the writer opened a pipeline WITHOUT transaction=True — the three "
+            "commands are batched but not atomic, so a partial apply can still "
+            "publish a heartbeat with no expiry (CERT-1920)"
+        )
+        return _RedisPipeFake(self)
+
     def hset(self, key, field, value):
         self.store.setdefault(key, {})[str(field)] = str(value)
 
@@ -308,6 +362,137 @@ def test_the_fake_deletes_a_hash_whose_last_field_is_removed():
         "the fake kept an empty hash alive — Redis does not, and a test built on "
         "it cannot see the CERT-1914 defect"
     )
+
+
+def test_the_fake_discards_a_transaction_whose_round_trip_fails():
+    """The second precondition, asserted before the regression below leans on it.
+
+    If the fake applied queued commands before raising, "nothing was written"
+    would be a property of the test rather than of the transaction, and the
+    regression would prove nothing.
+    """
+    fake = _RedisHashFake()
+    fake.exec_raises = RuntimeError("connection reset before EXEC")
+
+    pipe = fake.pipeline(transaction=True)
+    pipe.hset(FEED_PREWARM_LIVE_SHAPES_KEY, "sports", "1")
+    pipe.expire(FEED_PREWARM_LIVE_SHAPES_KEY, 300)
+    with pytest.raises(RuntimeError):
+        pipe.execute()
+
+    assert fake.hgetall(FEED_PREWARM_LIVE_SHAPES_KEY) == {}, (
+        "the fake applied part of a failed transaction — Redis discards the whole "
+        "MULTI, and a test built on it cannot see the CERT-1920 defect"
+    )
+
+
+def test_a_failed_deadman_refresh_cannot_leave_an_immortal_healthy_heartbeat():
+    """The CERT-1920 defect: a heartbeat that outlives the rail it vouches for.
+
+    The writer used to issue `HSET` heartbeat, the label mutation, and `EXPIRE`
+    as three round trips under one swallowing `except`. Let the heartbeat land
+    and the `EXPIRE` fail — an ordinary Redis or network interruption, which the
+    writer explicitly swallows — and the hash exists at TTL `-1`. Nothing ever
+    expires it, so the heartbeat proving "a warm succeeded inside 300s" survives
+    the rail's death indefinitely, and this endpoint reports `present: true` on a
+    rail that has been dead for a week. That is worse than the ambiguity the
+    heartbeat was added to remove, because it is unambiguous and wrong.
+
+    Both halves of the repair are asserted here, because either alone leaves the
+    false reading reachable: the WRITER cannot publish a heartbeat without its
+    expiry (the transaction), and the READER refuses to call an unexpiring key
+    healthy even if one reaches it by some other route.
+    """
+    # --- positive control: the same writer, same fake, succeeding ---
+    healthy = _RedisHashFake()
+    _record_shape_liveness(healthy, "sports", live=False)
+    with _with_conn(healthy):
+        armed = admin._live_prewarm_state()
+    assert armed["selection"]["present"] is True, (
+        "the positive control failed: this test cannot detect an immortal "
+        "heartbeat if the writer never publishes a live one"
+    )
+    assert armed["selection"]["deadman"] == "armed"
+    assert healthy.ttl(FEED_PREWARM_LIVE_SHAPES_KEY) == FEED_PREWARM_LIVE_SHAPES_TTL_S
+
+    # --- the injected fault: the round trip carrying the expiry dies ---
+    fake = _RedisHashFake()
+    fake.exec_raises = RuntimeError("Error 111 connecting to rediss://h:pw@ec2:6379")
+    _record_shape_liveness(fake, "sports", live=False)
+
+    assert fake.transactions, "the writer never opened a transaction at all"
+    assert fake.hgetall(FEED_PREWARM_LIVE_SHAPES_KEY) == {}, (
+        "a heartbeat was published by a write whose expiry failed — the key now "
+        "never expires and the dead-man's switch can never fire"
+    )
+    assert fake.ttl(FEED_PREWARM_LIVE_SHAPES_KEY) == -2
+
+    with _with_conn(fake):
+        out = admin._live_prewarm_state()
+    assert out["selection"]["present"] is False
+    assert out["selection"]["deadman"] == "expired"
+
+
+def test_an_immortal_heartbeat_reads_closed_rather_than_healthy():
+    """The reader's half, against a state the current writer can no longer make.
+
+    A key can still lose its TTL by routes this branch does not own — a heartbeat
+    written by the pre-repair build already in flight, a `PERSIST`, a hand-edit
+    during an incident. The endpoint exists to be trusted during exactly those
+    incidents, so it must not certify a heartbeat that nothing can expire, and it
+    must say WHY: `no_expiry` is repaired by deleting the key, `expired` by
+    restarting the host rail. Reporting the first as the second sends whoever is
+    reading this at 3am to the wrong rail.
+    """
+    fake = _RedisHashFake()
+    fake.hset(FEED_PREWARM_LIVE_SHAPES_KEY, FEED_PREWARM_LIVE_HEARTBEAT_FIELD, "1")
+    fake.hset(FEED_PREWARM_LIVE_SHAPES_KEY, "sports", "1")
+    assert fake.ttl(FEED_PREWARM_LIVE_SHAPES_KEY) == -1, "the fixture is not immortal"
+
+    with _with_conn(fake):
+        out = admin._live_prewarm_state()
+
+    assert out["selection"]["present"] is False, (
+        "a heartbeat on a never-expiring key was reported as an armed dead-man's "
+        "switch — it will report the rail healthy forever after the rail dies"
+    )
+    assert out["selection"]["deadman"] == "no_expiry"
+    assert out["selection"]["ttl_seconds"] == -1
+    # The live labels are still reported: the operator needs to see what the key
+    # holds in order to decide it is stale, and `count` is not the thing in doubt.
+    assert out["selection"]["live_labels"] == ["sports"]
+
+
+def test_the_four_deadman_states_are_distinct_and_only_one_reads_healthy():
+    """One symptom, four causes, four remedies — never folded into one boolean.
+
+    `count: 0` and a falsy `present` is where every version of this bug has hidden.
+    """
+    seen = {}
+
+    quiet = _RedisHashFake()
+    _record_shape_liveness(quiet, "sports", live=False)
+    seen["armed"] = quiet
+
+    dead = _RedisHashFake()
+    _record_shape_liveness(dead, "sports", live=False)
+    dead.evict(FEED_PREWARM_LIVE_SHAPES_KEY)
+    seen["expired"] = dead
+
+    immortal = _RedisHashFake()
+    immortal.hset(FEED_PREWARM_LIVE_SHAPES_KEY, FEED_PREWARM_LIVE_HEARTBEAT_FIELD, "1")
+    seen["no_expiry"] = immortal
+
+    unreadable = _RedisHashFake()
+    _record_shape_liveness(unreadable, "sports", live=False)
+    unreadable.ttl = lambda key: (_ for _ in ()).throw(RuntimeError("redis down"))
+    seen["unreadable_ttl"] = unreadable
+
+    for expected, fake in seen.items():
+        with _with_conn(fake):
+            sel = admin._live_prewarm_state()["selection"]
+        assert sel["deadman"] == expected, f"expected {expected}, got {sel['deadman']}"
+        assert sel["present"] is (expected == "armed")
 
 
 def test_a_quiet_night_and_a_dead_rail_stay_distinguishable_through_the_real_writer():

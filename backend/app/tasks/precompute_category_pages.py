@@ -622,15 +622,27 @@ def _record_shape_liveness(rc, label: str, live: bool) -> None:
     and which the 120s pass already covers — paying three times over for nothing.
     The set is therefore always written, in both directions, on every warm.
 
-    THE HEARTBEAT IS WRITTEN FIRST, and the order is load-bearing rather than
-    stylistic. Writing it after the `hdel` would leave a real window — short, but
-    a window — in which the last live label has gone, the hash has therefore
-    ceased to exist, and a concurrent reader sees the dead-man's switch as fired
-    on a rail that is warming perfectly. Writing it first means the hash always
-    holds at least one field, so `hdel` can never empty it and the deletion this
-    repair is about cannot occur at all.
+    ALL THREE WRITES ARE ONE MULTI/EXEC, and the transaction is the dead-man's
+    switch's whole guarantee (CERT-1920's BLOCK). As three separate round trips
+    under the swallowing `except` below, a Redis or network interruption between
+    them could land the heartbeat and lose the `expire` — leaving a hash with
+    TTL -1, which never expires, which means the heartbeat this function writes
+    to prove the rail is alive OUTLIVES THE RAIL. The admin surface would then
+    report `present: true` on a rail that had been dead for a week, and being
+    confidently wrong in that direction is worse than the ambiguity the heartbeat
+    was added to remove. `pipeline(transaction=True)` makes the three commands a
+    single buffered MULTI/EXEC: one round trip, applied by the server as a unit,
+    so there is no interruption point at which a heartbeat can be published
+    without the expiry that bounds it.
 
-    THE TTL IS NOW REFRESHED UNCONDITIONALLY. It used to be refreshed only on the
+    THE HEARTBEAT IS STILL QUEUED FIRST, and the order is load-bearing rather
+    than stylistic — inside the transaction as it was outside it. If the `hdel`
+    ran first, clearing the last live label would delete the hash, and the
+    `expire` behind it would then be a no-op against a missing key (CERT-1914).
+    Queueing the heartbeat first means the hash always holds at least one field,
+    so `hdel` can never empty it and the expiry always has a key to bind to.
+
+    THE TTL IS REFRESHED UNCONDITIONALLY. It used to be refreshed only on the
     `live` branch, so a run of quiet warms let a 300s dead-man's switch expire
     underneath a rail that was succeeding every time — the same false "the rail
     is dead" reading by a second route.
@@ -642,16 +654,23 @@ def _record_shape_liveness(rc, label: str, live: bool) -> None:
     import time as _clock
 
     try:
-        rc.hset(
+        # `transaction=True` is the load-bearing argument, not a default worth
+        # leaving implicit: with `transaction=False` redis-py pipelines the same
+        # three commands for one round trip but WITHOUT MULTI/EXEC, so a partial
+        # apply is back on the table and the immortal heartbeat with it. A guard
+        # asserts this exact keyword.
+        pipe = rc.pipeline(transaction=True)
+        pipe.hset(
             FEED_PREWARM_LIVE_SHAPES_KEY,
             FEED_PREWARM_LIVE_HEARTBEAT_FIELD,
             str(int(_clock.time())),
         )
         if live:
-            rc.hset(FEED_PREWARM_LIVE_SHAPES_KEY, label, "1")
+            pipe.hset(FEED_PREWARM_LIVE_SHAPES_KEY, label, "1")
         else:
-            rc.hdel(FEED_PREWARM_LIVE_SHAPES_KEY, label)
-        rc.expire(FEED_PREWARM_LIVE_SHAPES_KEY, FEED_PREWARM_LIVE_SHAPES_TTL_S)
+            pipe.hdel(FEED_PREWARM_LIVE_SHAPES_KEY, label)
+        pipe.expire(FEED_PREWARM_LIVE_SHAPES_KEY, FEED_PREWARM_LIVE_SHAPES_TTL_S)
+        pipe.execute()
     except Exception:
         logger.debug("live-shape marker write failed for %s", label, exc_info=True)
 
