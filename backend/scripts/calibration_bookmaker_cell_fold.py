@@ -209,9 +209,26 @@ outcomes AS (
 )
 """
 
+# The decile expression, written ONCE.
+#
+# CAL-P1002: it used to be typed into ``_TAIL_BUCKET`` and *not* into
+# ``_TAIL_GAME_BUCKET``, which selected a bare ``bucket_idx`` that no CTE
+# projects — ``outcomes`` carries ``event_id, bookmaker, commence_time,
+# captured_at, prob, won`` and nothing else. So ``--sigma`` (which implies
+# ``--grain game_bucket``) died on its FIRST chunk with ``undefined_column``,
+# every time, and had therefore never run on any of the six
+# ``odds_api_bookmaker`` board cells it was built for.
+#
+# One constant rather than two literals, because the property the cluster
+# bootstrap depends on is that the game×decile grain bins a row into exactly the
+# decile the published bucket grain folded it into. Two copies of an expression
+# can drift; one cannot. ``test_the_two_grains_bin_by_the_same_expression``
+# pins it.
+_BUCKET_EXPR = "LEAST(FLOOR(prob * 10)::int, 9)"
+
 # Producer-identical: this is the shape that is published.
-_TAIL_BUCKET = """
-SELECT LEAST(FLOOR(prob * 10)::int, 9) AS bucket_idx,
+_TAIL_BUCKET = f"""
+SELECT {_BUCKET_EXPR} AS bucket_idx,
        COUNT(*) AS n,
        SUM(CASE WHEN won THEN 1 ELSE 0 END) AS winners,
        SUM(prob::float) AS sum_prob
@@ -244,9 +261,9 @@ GROUP BY event_id
 # resampling from it would resample a cell this rail does not publish. Keyed by
 # the pair, the resample is EXACT: every book-row keeps the bin it was folded
 # into, and the games are the units.
-_TAIL_GAME_BUCKET = """
+_TAIL_GAME_BUCKET = f"""
 SELECT event_id,
-       bucket_idx,
+       {_BUCKET_EXPR} AS bucket_idx,
        COUNT(*) AS n,
        SUM(CASE WHEN won THEN 1 ELSE 0 END) AS winners,
        SUM(prob::float) AS sum_prob
