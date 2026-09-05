@@ -182,6 +182,7 @@ from app.utils.repair_apply_plan import (
     PlannedLeg,
     approved_leg_index,
     bind_apply,
+    applied_receipt_contains,
     build_applied_receipt,
     build_plan,
     decode_applied_receipt,
@@ -700,12 +701,45 @@ async def _stage_applied(session, plan_hash: str, written_legs) -> tuple[bool, s
         )
     except Exception as exc:  # noqa: BLE001
         return False, f"applied receipt stage raised: {type(exc).__name__}", 0
-    ok = result.get("status") in ("ok", "superseded")
-    return (
-        ok,
-        "ok" if ok else f"applied receipt stage rejected: {result.get('status')}",
-        payload["leg_count"],
+
+    # CAL-P1008-R4 (CERT-1863): the STATUS is a note, not the gate. The durable
+    # layer answers `superseded` when a newer generation already sits at the
+    # identity, and in that case it writes NOTHING — for a plan artifact that
+    # still means "a good copy exists", which is why `_save_plan` accepts it,
+    # but here it means somebody else's payload is there and mine never landed.
+    # Taking it as success committed rows whose undo record did not contain
+    # them. So the gate is CONTAINMENT, read back from the store: are the legs
+    # this call wrote there, at the versions it wrote?
+    status = result.get("status")
+    try:
+        back = await read_snapshot(
+            session,
+            identity,
+            expected_version=APPLIED_RECEIPT_SCHEMA,
+            max_age_s=_RECEIPT_MAX_AGE_S,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return False, f"applied receipt read-back raised: {type(exc).__name__}", 0
+    if back.status == "missing":
+        # Nothing at the identity at all after a stage that answered. This is a
+        # containment failure, not a store outage: this write did not land.
+        return (
+            False,
+            f"applied receipt absent after staging ({status}): this write did "
+            "not land",
+            0,
+        )
+    if not back.ok or back.envelope is None:
+        return False, f"applied receipt not readable after staging: {back.status}", 0
+
+    contained, why = applied_receipt_contains(
+        back.envelope.payload,
+        expected_source_plan_hash=plan_hash,
+        written_legs=written_legs,
     )
+    if not contained:
+        return False, f"applied receipt does not contain this write ({status}): {why}", 0
+    return True, f"ok ({status})", payload["leg_count"]
 
 
 async def _load_applied(plan_hash: str):

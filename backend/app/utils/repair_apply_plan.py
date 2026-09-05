@@ -532,6 +532,41 @@ def decode_applied_receipt(
     return sorted(legs, key=lambda r: r["leg_id"]), "ok"
 
 
+def applied_receipt_contains(
+    raw: Any,
+    *,
+    expected_source_plan_hash: str,
+    written_legs: Iterable[Mapping[str, Any]],
+) -> tuple[bool, str]:
+    """Is every leg this call wrote durably present, at the version it wrote?
+
+    CAL-P1008-R4 (CERT-1863). The staging call's STATUS is not the question. The
+    durable layer answers ``superseded`` when a newer generation already sits at
+    the identity — for a plan artifact that genuinely means "a good copy exists",
+    which is why the other two savers accept it, but for THIS record it means
+    somebody else's payload is there and mine was never written. Accepting it
+    committed rows whose undo record did not contain them.
+
+    So the gate is containment, re-read from the store, and the status is only
+    ever a note. ``ok``, ``superseded`` and a concurrent identical apply all
+    reduce to the same question: are my leg ids there with my versions?
+    """
+    legs, reason = decode_applied_receipt(
+        raw, expected_source_plan_hash=expected_source_plan_hash
+    )
+    if legs is None:
+        return False, reason
+    have = {leg["leg_id"]: leg["applied_version"] for leg in legs}
+    missing = [
+        int(row["leg_id"])
+        for row in written_legs
+        if have.get(int(row["leg_id"])) != str(row["applied_version"])
+    ]
+    if missing:
+        return False, f"APPLIED_RECEIPT_MISSING_LEGS:{sorted(missing)[:10]}"
+    return True, "ok"
+
+
 def mutations_outside_approved_keys(
     plan: Any, attempted_keys: Iterable[str]
 ) -> list[str]:

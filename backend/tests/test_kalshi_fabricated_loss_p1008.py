@@ -48,6 +48,7 @@ from app.utils.repair_apply_plan import (
     REASON_APPLIED_MISSING,
     REASON_APPLIED_SOURCE_MISMATCH,
     PlannedLeg,
+    applied_receipt_contains,
     build_applied_receipt,
     build_plan,
     decode_applied_receipt,
@@ -196,8 +197,15 @@ def _install_txn_durables(store, monkeypatch):
         )
 
     async def _publish_in_txn(db, envelope):
+        """Production semantics, including the one that bit CERT-1863.
+
+        `superseded` means a NEWER generation already sits at the identity, so
+        the real implementation writes NOTHING and answers `superseded`. A fake
+        that staged anyway would make the containment gate untestable — which is
+        exactly how the bug survived presentation four.
+        """
         status = store.forced_status.get(envelope.identity, "ok")
-        if status in ("ok", "superseded"):
+        if status == "ok":
             db.pending_durable.append(envelope)
         return {
             "status": status,
@@ -1114,3 +1122,168 @@ class TestTheAppliedReceiptIsPure:
         legs, reason = decode_applied_receipt(payload, expected_source_plan_hash="h")
         assert legs is None
         assert reason == REASON_APPLIED_CORRUPT
+
+
+# =============================================================================
+# CAL-P1008-R4 / CERT-1863 — a status is not a receipt
+# =============================================================================
+
+
+class TestSupersededIsNotBanked:
+    """`publish_snapshot_in_txn` answers `superseded` and writes NOTHING.
+
+    For a plan artifact that genuinely means "a good copy exists", which is why
+    `_save_plan` accepts it — and copying that judgment here committed rows
+    whose undo record did not contain them. The gate is now containment, read
+    back from the store, so the status is only ever a note.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_superseded_stage_rolls_the_apply_back(self, monkeypatch):
+        store = _txn_store(monkeypatch)
+        plan = _plan((1, 100, "restore_winner"), (2, 100, "retract_fabricated"))
+        session = _UndoSession([_row(1), _row(2)])
+        before = copy.deepcopy(session.rows)
+        store.forced_status[rail.applied_identity(plan.plan_hash)] = "superseded"
+
+        out = await _apply(monkeypatch, plan, session)
+
+        assert out["success"] is False
+        assert out["refused"] == ["UNDO_RECEIPT_NOT_STAGED"]
+        assert out["rolled_back"] is True
+        assert out["legs_written"] == 0
+        assert session.rows == before
+        assert session.commits == 0
+
+    @pytest.mark.asyncio
+    async def test_a_rival_receipt_at_the_identity_does_not_count_as_ours(
+        self, monkeypatch
+    ):
+        """The production shape of `superseded`: something IS there, and it is
+        not this write. Containment is what says so."""
+        store = _txn_store(monkeypatch)
+        plan = _plan((1, 100, "restore_winner"))
+        session = _UndoSession([_row(1)])
+        before = copy.deepcopy(session.rows)
+        identity = rail.applied_identity(plan.plan_hash)
+        store.forced_status[identity] = "superseded"
+        store.seed(
+            identity,
+            rail.APPLIED_RECEIPT_SCHEMA,
+            build_applied_receipt(
+                plan.plan_hash,
+                [
+                    {
+                        "leg_id": 99,
+                        "market_id": 100,
+                        "verdict": "restore_winner",
+                        "prior_is_winner": False,
+                        "prior_source": REPAIRABLE_SOURCE,
+                        "applied_version": "a-rivals-write",
+                    }
+                ],
+            ),
+        )
+
+        out = await _apply(monkeypatch, plan, session)
+
+        assert out["refused"] == ["UNDO_RECEIPT_NOT_STAGED"]
+        assert "does not contain this write" in out["applied_receipt_note"]
+        assert "superseded" in out["applied_receipt_note"]
+        assert session.rows == before
+        assert session.commits == 0
+
+    @pytest.mark.asyncio
+    async def test_a_superseded_stage_whose_row_ALREADY_holds_this_write_is_fine(
+        self, monkeypatch
+    ):
+        """The half that makes containment the right gate rather than a ban.
+
+        A concurrent identical apply banked the same legs at the same versions
+        first. Nothing of ours was written, the status is `superseded`, and the
+        durable record is nonetheless correct — so refusing on the status alone
+        would roll back a repair whose undo genuinely exists.
+        """
+        store = _txn_store(monkeypatch)
+        plan = _plan((1, 100, "restore_winner"))
+        session = _UndoSession([_row(1)])
+
+        # Learn the version this apply will stamp by watching the statement it
+        # issues, then seed the store as a rival that already banked it.
+        captured = {}
+        real_execute = session.execute
+
+        async def _spy(stmt, params=None):
+            if params and "applied_version" in params:
+                captured["v"] = params["applied_version"]
+            return await real_execute(stmt, params)
+
+        session.execute = _spy
+        store.forced_status[rail.applied_identity(plan.plan_hash)] = "superseded"
+
+        async def _publish_then_seed(db, envelope):
+            store.rows[envelope.identity] = envelope
+            return {
+                "status": "superseded",
+                "identity": envelope.identity,
+                "generation": envelope.generation,
+            }
+
+        import app.services.durable_snapshots as ds
+
+        monkeypatch.setattr(ds, "publish_snapshot_in_txn", _publish_then_seed)
+
+        out = await _apply(monkeypatch, plan, session)
+
+        assert captured, "the apply must have stamped a version"
+        assert out["legs_written"] == 1
+        assert out["undo"]["applied_receipt_banked"] is True
+        assert "superseded" in out["undo"]["applied_receipt_note"]
+        assert session.commits == 1
+
+
+class TestContainmentIsPure:
+    LEG = {
+        "leg_id": 1,
+        "market_id": 10,
+        "verdict": "restore_winner",
+        "prior_is_winner": False,
+        "prior_source": REPAIRABLE_SOURCE,
+        "applied_version": "v1",
+    }
+
+    def test_a_receipt_holding_the_write_contains_it(self):
+        ok, why = applied_receipt_contains(
+            build_applied_receipt("h", [self.LEG]),
+            expected_source_plan_hash="h",
+            written_legs=[self.LEG],
+        )
+        assert (ok, why) == (True, "ok")
+
+    def test_a_receipt_missing_the_leg_does_not(self):
+        ok, why = applied_receipt_contains(
+            build_applied_receipt("h", []),
+            expected_source_plan_hash="h",
+            written_legs=[self.LEG],
+        )
+        assert ok is False
+        assert why.startswith("APPLIED_RECEIPT_MISSING_LEGS")
+
+    def test_the_same_leg_at_a_DIFFERENT_version_does_not(self):
+        """Somebody else's write of the same row is not this call's undo."""
+        theirs = {**self.LEG, "applied_version": "someone-elses-write"}
+        ok, why = applied_receipt_contains(
+            build_applied_receipt("h", [theirs]),
+            expected_source_plan_hash="h",
+            written_legs=[self.LEG],
+        )
+        assert ok is False
+        assert why.startswith("APPLIED_RECEIPT_MISSING_LEGS")
+
+    def test_a_receipt_from_another_plan_does_not(self):
+        ok, why = applied_receipt_contains(
+            build_applied_receipt("other", [self.LEG]),
+            expected_source_plan_hash="h",
+            written_legs=[self.LEG],
+        )
+        assert (ok, why) == (False, REASON_APPLIED_SOURCE_MISMATCH)
