@@ -435,6 +435,45 @@ class TestWiring:
         task = celery_app.tasks["app.tasks.refresh_stale_futures_prices"]
         assert fpr._TIME_BUDGET_S < task.soft_time_limit < task.time_limit
 
+    def test_the_first_loop_cannot_spend_the_whole_wall(self):
+        """Per-source MARKET budgets do not bound per-source WALL time.
+
+        The two loops run in sequence against one clock with Polymarket first, so
+        a slow Gamma consumes the entire 420s and the Kalshi loop — the larger
+        backlog — never runs. Splitting the market budget without splitting the
+        clock leaves the starvation exactly where it was, one level up.
+
+        Both bounds are asserted, not just the existence of the constant: it must
+        leave the Kalshi loop more than its measured worst case (175s), and it
+        must be comfortably above Polymarket's own (78s) so it binds only on a
+        pathological run.
+        """
+        assert fpr._POLYMARKET_WALL_BUDGET_S < fpr._TIME_BUDGET_S
+        assert fpr._TIME_BUDGET_S - fpr._POLYMARKET_WALL_BUDGET_S > 175
+        assert fpr._POLYMARKET_WALL_BUDGET_S > 2 * 78
+        # And the loop reads the share, not the whole wall.
+        assert "poly_deadline = min(" in _MODULE_SRC
+        assert "started > poly_deadline" in _MODULE_SRC
+
+    def test_the_per_source_budgets_cover_their_backlogs_within_the_stale_window(self):
+        """The convergence claim, as arithmetic rather than as prose.
+
+        The attempt marker's TTL is the staleness window, so a source's whole
+        standing backlog has to fit in `budget x (window / beat period)` runs or
+        the 6h invariant is unreachable and `futures-price-freshness` stays red
+        forever — the #2222 shape, arrived at from the other side.
+
+        Backlogs measured on production 2026-09-05 under the widened predicate,
+        pinned here so a budget cut has to argue with the number it breaks.
+        """
+        runs_per_window = fpr.STALE_AFTER_HOURS  # hourly beat, 6h window
+        assert fpr.KALSHI_MARKET_BUDGET * runs_per_window >= 2_010
+        assert fpr.POLYMARKET_MARKET_BUDGET * runs_per_window >= 1_974
+        # ...and the two together must still fit the wall at their measured
+        # per-market costs, or the budgets are a promise the clock cannot keep.
+        wall = fpr.KALSHI_MARKET_BUDGET * 0.35 + fpr.POLYMARKET_MARKET_BUDGET * 0.065
+        assert wall < fpr._TIME_BUDGET_S
+
     def test_staleness_window_matches_the_render_contract(self):
         """The producer and the renderer must not hold two definitions of stale.
 

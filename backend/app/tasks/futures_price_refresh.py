@@ -367,6 +367,25 @@ POLYMARKET_ID_BATCH = 20
 #: individual HTTP call is separately bounded by the service clients' timeouts.
 _TIME_BUDGET_S = 420.0
 
+#: 🔴 THE POLYMARKET LOOP'S OWN SHARE OF THAT WALL, and it exists because
+#: splitting the market budget per source did not finish the job.
+#:
+#: The two loops run in sequence, Polymarket first, against ONE clock. So a
+#: per-source *market* budget bounds how many rows each source may take and
+#: bounds nothing about how much of the RUN each source may consume: a slow
+#: Gamma spends the whole 420s inside the first loop and the Kalshi loop — the
+#: larger backlog, 2,010 rows against 1,974 — never executes at all. That is the
+#: same starvation this module exists to end, reintroduced one level up from
+#: where it was fixed.
+#:
+#: 180s against a measured worst case of 78s (1,200 markets, 60 batched Gamma
+#: calls). It is deliberately more than twice the observed need, so it never
+#: binds in normal operation and is purely a bound on the pathological case; and
+#: it leaves the Kalshi loop at least 240s against its measured 175s. Both loops
+#: still honour the whole-run budget, so this only ever makes the first loop stop
+#: EARLIER — it can never let a run overrun.
+_POLYMARKET_WALL_BUDGET_S = 180.0
+
 _ATTEMPT_KEY_PREFIX = "bainluck:futures_price_refresh:attempted:"
 
 
@@ -1269,9 +1288,14 @@ async def _refresh_stale_futures_prices(
                     by_event.setdefault(str(event_id), []).append(market)
 
                 ids = list(by_event.keys())
+                poly_deadline = min(_POLYMARKET_WALL_BUDGET_S, _TIME_BUDGET_S)
                 for i in range(0, len(ids), POLYMARKET_ID_BATCH):
-                    if time.monotonic() - started > _TIME_BUDGET_S:
+                    if time.monotonic() - started > poly_deadline:
+                        # `budget_hit` either way: the run's coverage is not
+                        # proven, and which of the two clocks stopped it is not a
+                        # difference the terminal should hide.
                         stats["budget_hit"] = True
+                        stats["polymarket_wall_hit"] = True
                         break
                     chunk = ids[i : i + POLYMARKET_ID_BATCH]
                     try:
