@@ -1674,8 +1674,17 @@ struct OddsChartView: View {
     /// Candidate strides, coarsening. `seconds` is nominal (used only to estimate
     /// a tick count); the axis itself strides by the calendar component, so DST
     /// and month length stay the calendar's problem, not ours.
+    ///
+    /// The 20- and 45-minute rungs are there because the geometric fit needs
+    /// somewhere to land. Without them the ladder jumps 30 → 60 minutes, and a
+    /// 2½-hour game — the most common chart in the app — falls off the 30-minute
+    /// rung and lands on hours: MEASURED on 15302914 (Arizona @ Houston, 155
+    /// minutes), the axis went from six colliding labels to `9 PM · 10 PM`, two
+    /// labels for a whole game. 45-minute ticks put four back, with the minutes
+    /// they are actually read for.
     private static let xAxisStrides: [(component: Calendar.Component, count: Int, seconds: TimeInterval)] = [
-        (.minute, 5, 300), (.minute, 10, 600), (.minute, 15, 900), (.minute, 30, 1800),
+        (.minute, 5, 300), (.minute, 10, 600), (.minute, 15, 900), (.minute, 20, 1200),
+        (.minute, 30, 1800), (.minute, 45, 2700),
         (.hour, 1, 3600), (.hour, 2, 7200), (.hour, 3, 10800), (.hour, 4, 14400),
         (.hour, 6, 21600), (.hour, 8, 28800), (.hour, 12, 43200),
         (.day, 1, 86400), (.day, 2, 172800), (.day, 7, 604800),

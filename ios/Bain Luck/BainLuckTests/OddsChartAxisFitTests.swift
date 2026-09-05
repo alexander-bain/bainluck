@@ -101,6 +101,21 @@ final class OddsChartAxisFitTests: XCTestCase {
             "…and the geometric fit must reject it")
     }
 
+    /// The rung the fit needs to land on. A completed baseball game is 130-180
+    /// minutes, which is the single most common chart in the app, and it is
+    /// exactly the span that falls off the 30-minute rung once the end pairs are
+    /// charged properly. Without a 45-minute rung it lands on HOURS: measured on
+    /// 15302914 (Arizona @ Houston, 155 minutes) the axis read `9 PM · 10 PM`.
+    func testATwoAndAHalfHourGameKeepsAMinuteAxis() {
+        let range = date("2026-09-05T00:10:00Z")...date("2026-09-05T02:45:00Z")
+        let plan = OddsChartView.xAxisPlan(
+            for: range, plotWidth: phonePlotWidth, calendar: utc)
+
+        XCTAssertEqual(plan.labelStyle, .timeOfDay, "a 2½-hour game still reads in minutes")
+        let labels = range.upperBound.timeIntervalSince(range.lowerBound) / strideSeconds(plan)
+        XCTAssertGreaterThanOrEqual(labels, 3, "two labels is not an axis for a whole game")
+    }
+
     // MARK: - The rule
 
     /// Interior labels are centred and end labels are not, so the two pairs have
