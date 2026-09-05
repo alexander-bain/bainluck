@@ -31,6 +31,14 @@ the same three event names. It carries durations, counts, and bounded enums.
 It carries no user id, no session id, no cookie, no token, no query string, no
 entity id, no free text, and no IP address.
 
+**KEYS ARE NOT ENOUGH — VALUES ARE CLOSED TOO (CERT-1869).** The first version of
+this module allowlisted key NAMES and accepted any string as a VALUE. That is not
+a privacy boundary: it says where a value may go, never what it may be, so
+``outcome_class: "alice@example.com"`` was stored. Every enum-shaped field now
+declares its complete legal value set (``_ENUM_DOMAINS``), ``app_build`` declares
+a closed grammar, and path-shaped fields keep only KNOWN route segments
+(``mask_path``, fail-closed). A value outside its domain is dropped.
+
 Two fields are stored MORE COARSELY here than they are sent to Google:
 ``page_path`` and ``endpoint`` are shape-masked (see ``mask_path``) the way
 ``maskSurface`` in ``lib/screenTiming.ts`` already masks ``surface``. GA receives
@@ -92,7 +100,65 @@ NOT_MEASURED = -1
 #   "count" — a cardinal; int; 0..MAX_COUNT
 #   "score" — a unitless float kept to 3 decimals (CLS); 0..1000
 #   "enum"  — a short bounded string, stored verbatim after length capping
-#   "path"  — a route-shaped string, SHAPE-MASKED before storage
+#   "path"  — a route-shaped string, FAIL-CLOSED segment-masked before storage
+#   "build" — a deploy tag; a closed GRAMMAR, since there is no finite value set
+
+# ---------------------------------------------------------------------------
+# CLOSED VALUE DOMAINS (CERT-1869's repair)
+# ---------------------------------------------------------------------------
+#
+# THE DEFECT THIS FIXES. The first version allowlisted KEYS and let any string
+# through as a VALUE, capped only at 64 characters. So a hostile POST could put
+# `alice@example.com`, `user-12345` or `Bearer <token>` into `outcome_class` — a
+# perfectly allowlisted key — and it would be stored. A key allowlist is not a
+# privacy boundary; it only says WHERE a value may go, never WHAT it may be.
+#
+# My own tests could not see this: every hostile case attacked a hostile KEY
+# NAME (`user_id`, `email`) and none attacked a hostile VALUE inside a legitimate
+# key, so the suite discriminated against one defect while being structurally
+# blind to the other.
+#
+# So every enum-shaped field now names its complete set of legal values, taken
+# from the field's real producer rather than invented here. A value outside the
+# set is DROPPED (the key, not the packet).
+
+_ENUM_DOMAINS: Dict[str, frozenset] = {
+    # `ScreenTimingParams` in `lib/analytics/types.ts` — literal unions.
+    "entry": frozenset({"cold", "warm"}),
+    "device_class": frozenset({"phone", "tablet", "desktop", "watch", "unknown"}),
+    "outcome_class": frozenset({"ok", "empty", "no_card", "error"}),
+    # `networkClass()` in `lib/screenTiming.ts` returns the Network Information
+    # API's `effectiveType`, whose domain is fixed by the spec, or "unknown".
+    "network_class": frozenset({"slow-2g", "2g", "3g", "4g", "unknown"}),
+    # `FeedTelemetryParams.cohort` — a literal union.
+    "cohort": frozenset({"authenticated", "session_anon", "shared_anon"}),
+    # `_CACHE_BUCKETS` in `app/middleware/latency.py`, plus the two labels that
+    # module itself adds for an unrecognised or absent header.
+    "cache_status": frozenset(
+        {"miss", "hit", "stale_hit", "error", "other", "none", "unknown"}
+    ),
+    # web-vitals' own metric ids.
+    "metric_name": frozenset({"LCP", "INP", "CLS", "TTFB", "FCP", "FID"}),
+    # `RATINGS` in `lib/webVitals.ts`.
+    "rating": frozenset({"good", "needs-improvement", "poor"}),
+    # The Navigation Timing `type` domain, both spellings seen in the wild.
+    "navigation_type": frozenset(
+        {"navigate", "reload", "back-forward", "back_forward", "prerender", "restore"}
+    ),
+}
+
+#: `app_build` has no finite domain — it is a deploy tag — so it gets a closed
+#: GRAMMAR instead: the literal "web" (what `screenTiming.ts` defaults to), a
+#: commit sha, or a dotted version from the native surfaces. Anything else is
+#: dropped, so a free-text identifier cannot ride in here either.
+#:
+#: At most THREE dotted components, deliberately. A four-component form is a
+#: dotted quad, and `192.168.1.44` is a valid IPv4 address that an unbounded
+#: `\d+(\.\d+){0,3}` happily accepts as a "version" — caught by this module's own
+#: adversarial-value battery, which is the entire reason that battery exists.
+_APP_BUILD_RE = re.compile(
+    r"^(web|[0-9a-f]{7,40}|\d{1,5}(\.\d{1,5}){0,2}(\+\d{1,6})?)$"
+)
 
 _SCREEN_TIMING: Dict[str, str] = {
     "surface": "path",
@@ -104,7 +170,7 @@ _SCREEN_TIMING: Dict[str, str] = {
     "card_count": "count",
     "device_class": "enum",
     "network_class": "enum",
-    "app_build": "enum",
+    "app_build": "build",
     "outcome_class": "enum",
 }
 
@@ -160,19 +226,124 @@ PROMOTED_DIMENSIONS = (
 _NUMERIC_SEG = re.compile(r"^\d+$")
 _UUID_SEG = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}", re.IGNORECASE)
 
+#: Placeholders this function and `maskSurface` emit. Carry no information, and
+#: must survive a second pass so masking stays idempotent.
+_MASK_PLACEHOLDERS = frozenset({":id", ":seg", ":slug"})
+
+#: Every STATIC segment the app's own route table contains, plus the API path
+#: segments `feed_telemetry.endpoint` can name. Derived from `npm run build`'s
+#: route listing and `app/routes/*.py`'s router prefixes — not invented here.
+#:
+#: TO ADD A ROUTE: put its static segments in this set. A segment that is not
+#: here is reported as `:seg`, so the cost of forgetting is a surface that reads
+#: as `:seg` in the p50 table — a loss of resolution, never a leaked id.
+SAFE_ROUTE_SEGMENTS = frozenset(
+    {
+        # frontend pages
+        "about",
+        "admin",
+        "admin-proxy",
+        "analytics",
+        "bug-reports",
+        "calibration",
+        "categories",
+        "challenge",
+        "cohort-views",
+        "daily",
+        "discover",
+        "discover-quality",
+        "economics",
+        "entertainment",
+        "eval",
+        "event",
+        "events",
+        "feed-review",
+        "frontend-build",
+        "futures",
+        "golf",
+        "hub",
+        "kernels-preview",
+        "label-pass",
+        "labeling",
+        "labeling-coverage",
+        "matching",
+        "models",
+        "my-odds",
+        "my-stuff",
+        "og",
+        "onboarding",
+        "opengraph-image",
+        "play",
+        "playoffs",
+        "politics",
+        "preferences",
+        "privacy",
+        "robots",
+        "scorecard",
+        "search",
+        "share",
+        "sitemap",
+        "source-intelligence",
+        "sport",
+        "sports",
+        "stats",
+        "story",
+        "taxonomy",
+        "team",
+        "team-clusters",
+        "tournaments",
+        "weather",
+        "props",
+        "results",
+        "leaderboard",
+        # API prefixes (`endpoint`)
+        "api",
+        "feed",
+        "leagues",
+        "teams",
+        "telemetry",
+        "client-timing",
+        "summary",
+        "interactions",
+        "predictions",
+        "notifications",
+        "feedback",
+        "auth",
+        "user",
+        "challenges",
+        "oscars",
+        "market-moves",
+        "prop-families",
+        "unsubscribe",
+        "health",
+        "docs",
+        "march-madness",
+        "league-futures",
+        "event-stream",
+    }
+)
+
 
 def mask_path(raw: str) -> str:
-    """Collapse a route-shaped string into a bounded, id-free slug.
+    """Collapse a route-shaped string into a bounded, id-free slug — FAIL CLOSED.
 
-    A deliberate port of ``maskSurface`` in ``lib/screenTiming.ts``: mask by
-    SHAPE, not by a list of known routes, so a route added next month is masked
-    correctly without anyone remembering to update this. The failure direction of
-    an unknown route is an OVER-masked slug, never a leaked id.
+    CERT-1869's repair. The first version masked by SHAPE, keeping any segment
+    that was not numeric, uuid-shaped or very long. That is safe for OUR client
+    (which masks before sending) and unsafe for the public endpoint, because a
+    hostile POST is not our client: ``/user/alice@example.com`` and
+    ``/profile/alex-bain`` both survived shape-masking with the identifier intact.
 
-    Applied server-side to ``surface`` (already masked by the client — masking it
-    twice is idempotent and costs nothing) and to ``page_path``/``endpoint``
-    (which the client does NOT mask, and which therefore could otherwise carry an
-    event id into the table).
+    A grammar cannot fix this — ``alex-bain`` and ``probability-trend`` are the
+    same shape. So the rule is inverted: **a segment is kept only if it is a
+    known static route segment**; everything else becomes ``:seg``. Unknown now
+    fails CLOSED rather than open.
+
+    The honest client pays nothing for this: ``surface`` arrives already masked
+    by ``maskSurface``, and its output is drawn from the same route table. What
+    changes is only what a hostile caller can achieve, which is nothing.
+
+    Applied to ``surface``, ``page_path`` and ``endpoint``. The latter two are
+    NOT masked by the client at all, so this is their only defence.
     """
     clean = (raw or "/").split("?")[0].split("#")[0]
     parts = [p for p in clean.split("/") if p]
@@ -180,20 +351,26 @@ def mask_path(raw: str) -> str:
         return "discover"
 
     masked = []
-    for i, seg in enumerate(parts):
-        if i == 0:
-            masked.append(seg.lower()[:32])
-            continue
-        if _NUMERIC_SEG.match(seg):
+    for seg in parts[:3]:
+        low = seg.lower()
+        if low in _MASK_PLACEHOLDERS:
+            # Already masked — by this function, or by `maskSurface` on the
+            # client, which is where `surface` ALWAYS comes from. Re-masking a
+            # placeholder into `:seg` would silently downgrade every real
+            # client-masked surface (`event/:id` -> `event/:seg`) and blind the
+            # p50 table to the entity pages. Masking must be idempotent.
+            masked.append(low)
+        elif _NUMERIC_SEG.match(seg) or _UUID_SEG.match(seg):
             masked.append(":id")
-        elif _UUID_SEG.match(seg):
-            masked.append(":id")
-        elif len(seg) > 40:
-            masked.append(":slug")
+        elif low in SAFE_ROUTE_SEGMENTS:
+            masked.append(low)
         else:
-            masked.append(seg.lower()[:32])
+            # Unknown segment. It may be a legitimate new route, an entity slug,
+            # an email address or a token — and from here they are
+            # indistinguishable, so it is refused by name.
+            masked.append(":seg")
 
-    return "/".join(masked[:3])[:MAX_STRING_LEN]
+    return "/".join(masked)[:MAX_STRING_LEN]
 
 
 # ---------------------------------------------------------------------------
@@ -248,15 +425,33 @@ def _coerce(kind: str, value: Any) -> Optional[Any]:
             return None
         return mask_path(value)
 
-    if kind == "enum":
+    if kind == "build":
         if not isinstance(value, str):
             return None
         trimmed = value.strip()
-        if not trimmed:
-            return None
-        return trimmed[:MAX_STRING_LEN]
+        return trimmed if _APP_BUILD_RE.match(trimmed) else None
 
     return None
+
+
+def _coerce_enum(key: str, value: Any) -> Optional[str]:
+    """Admit a value only if it is in that FIELD's closed domain.
+
+    Keyed by field name, not by kind, because "is this a legal value" is a
+    question about `outcome_class` specifically — the previous version asked only
+    "is this a string", which every identifier also answers yes to.
+
+    A field with no declared domain is refused outright rather than waved
+    through: forgetting to add a domain must cost the column its data, never
+    cost the table its guarantee.
+    """
+    domain = _ENUM_DOMAINS.get(key)
+    if domain is None:
+        return None
+    if not isinstance(value, str):
+        return None
+    trimmed = value.strip()
+    return trimmed if trimmed in domain else None
 
 
 # ---------------------------------------------------------------------------
@@ -291,7 +486,10 @@ def validate_packet(
     for key, kind in spec.items():
         if key not in params:
             continue
-        coerced = _coerce(kind, params[key])
+        if kind == "enum":
+            coerced = _coerce_enum(key, params[key])
+        else:
+            coerced = _coerce(kind, params[key])
         if coerced is not None:
             clean[key] = coerced
 

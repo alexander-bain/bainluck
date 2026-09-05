@@ -18,7 +18,10 @@ from httpx import ASGITransport, AsyncClient
 
 from app.main import app
 from app.services import get_db, get_db_rw
-from app.utils.client_timing_contract import MAX_EVENTS_PER_REQUEST
+from app.utils.client_timing_contract import (
+    MAX_EVENTS_PER_REQUEST,
+    PROMOTED_DIMENSIONS,
+)
 
 INGEST = "/api/telemetry/client-timing"
 SUMMARY = "/api/telemetry/client-timing/summary"
@@ -296,3 +299,134 @@ async def test_the_summary_window_is_bounded(client_and_db, monkeypatch):
         headers={"Authorization": "Bearer secret-p232"},
     )
     assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# CERT-1869's repair: adversarial VALUES through the real ingest
+# ---------------------------------------------------------------------------
+
+
+ADVERSARIAL_PACKET = {
+    "name": "screen_timing",
+    "params": {
+        # legitimate keys, hostile values — the exact defect CERT-1869 found
+        "surface": "/user/alice@example.com",
+        "entry": "user-12345",
+        "device_class": "Bearer_secret-token-value",
+        "network_class": "sess_9f8e7d6c5b4a",
+        "app_build": "192.168.1.44",
+        "outcome_class": "alice@example.com",
+        # …alongside a real measurement, which must survive
+        "first_card_ms": 1480,
+        "card_count": 7,
+    },
+}
+
+FORBIDDEN_SUBSTRINGS = [
+    "alice",
+    "example.com",
+    "user-12345",
+    "Bearer",
+    "secret-token",
+    "sess_9f8e7d6c5b4a",
+    "192.168.1.44",
+]
+
+
+@pytest.mark.asyncio
+async def test_adversarial_values_reach_neither_jsonb_nor_promoted_columns(
+    client_and_db,
+):
+    """The repair CERT-1869 named, proved at the real HTTP boundary.
+
+    The prior suite attacked hostile KEY NAMES only, so a hostile VALUE inside an
+    allowlisted key passed a fully green run. This asserts on BOTH storage
+    surfaces — the JSONB blob and every promoted column — because the route
+    copies promoted columns out of the clean dict and a defect in either alone
+    would still put an identifier in the table.
+    """
+    ac, db = client_and_db
+    resp = await ac.post(INGEST, json={"events": [ADVERSARIAL_PACKET]})
+    assert resp.status_code == 202
+
+    assert len(db.added) == 1, "the packet's real measurement must still store"
+    row = db.added[0]
+
+    # 1. the JSONB blob
+    blob = str(row.params)
+    for forbidden in FORBIDDEN_SUBSTRINGS:
+        assert forbidden.lower() not in blob.lower(), f"{forbidden!r} in params {blob}"
+
+    # 2. every promoted column, read off the ORM object itself
+    for dim in PROMOTED_DIMENSIONS:
+        stored = getattr(row, dim, None)
+        if stored is None:
+            continue
+        for forbidden in FORBIDDEN_SUBSTRINGS:
+            assert (
+                forbidden.lower() not in str(stored).lower()
+            ), f"{forbidden!r} in promoted column {dim}={stored!r}"
+
+    # 3. the hostile fields are absent, not merely sanitised into something else
+    for hostile_field in (
+        "entry",
+        "device_class",
+        "network_class",
+        "app_build",
+        "outcome_class",
+    ):
+        assert hostile_field not in row.params
+
+    # 4. …and the identifier-bearing segment is refused BY NAME rather than kept.
+    #    Asserted as the invariant, not as a literal: `user` is a real API
+    #    segment, so `/user/alice@example.com` correctly masks to `user/:seg`.
+    #    What must hold is that the segment carrying the address is gone.
+    assert row.params["surface"].endswith(":seg")
+    assert "alice" not in row.params["surface"]
+
+    # 5. the real measurement is untouched — the repair must not cost the ship
+    assert row.params["first_card_ms"] == 1480
+    assert row.params["card_count"] == 7
+
+
+@pytest.mark.asyncio
+async def test_a_wholly_legitimate_packet_still_stores_every_field(client_and_db):
+    """The other half of the repair: closing the domains must not close the sink.
+
+    An over-tight domain produces permanently-empty columns that read as "no
+    data" rather than as a bug, which is the failure mode a privacy fix is most
+    likely to ship by accident.
+    """
+    ac, db = client_and_db
+    resp = await ac.post(
+        INGEST,
+        json={
+            "events": [
+                {
+                    "name": "screen_timing",
+                    "params": {
+                        "surface": "events/:id",
+                        "entry": "warm",
+                        "shell_ms": 180,
+                        "first_card_ms": 940,
+                        "fold_ms": 1200,
+                        "interactive_ms": 1500,
+                        "card_count": 6,
+                        "device_class": "phone",
+                        "network_class": "4g",
+                        "app_build": "a1b2c3d",
+                        "outcome_class": "ok",
+                    },
+                }
+            ]
+        },
+    )
+    assert resp.status_code == 202
+    assert resp.json() == {"accepted": 1, "rejected": 0, "stored": 1}
+
+    row = db.added[0]
+    assert len(row.params) == 11, f"a legal field was dropped: {row.params}"
+    assert row.params["surface"] == "events/:id"
+    assert row.params["first_card_ms"] == 940
+    for dim in PROMOTED_DIMENSIONS:
+        assert getattr(row, dim) is not None, f"promoted column {dim} came out empty"
