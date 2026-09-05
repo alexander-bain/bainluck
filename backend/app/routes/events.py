@@ -12590,12 +12590,18 @@ async def get_line_movement_analysis(
         for m in analysis.movements
     ]
 
-    # Generate AI explanation if significant movements found
+    # Generate AI explanation if significant movements found.
+    # EVERY name read by context_meta below must be bound HERE, not inside the
+    # `if analysis.movements:` block — an event with no detected movement skips
+    # that block entirely and still builds context_meta (gotcha #7: the Aug-17
+    # #871 refactor left `team_stats` bound only inside the block, so a
+    # no-movement event 500'd on UnboundLocalError; BAINLUCK-MS).
     explanation = None
     injuries_data = None
     news_headlines = None
     game_context = None
     scoring_plays_data = None
+    team_stats = None
 
     if analysis.movements:
         # Fetch real context from ESPN for grounded explanations
@@ -12703,7 +12709,6 @@ async def get_line_movement_analysis(
             }
 
         # Fetch team season stats for richer context
-        team_stats = None
         try:
             team_result = await db.execute(
                 select(Team).where(
@@ -12781,19 +12786,18 @@ async def get_line_movement_analysis(
                         "divergence": round(divergence, 4),
                     }
 
-                    try:
-                        from app.services.llm import generate_market_disagreement_explanation
-                        disagreement_explanation = generate_market_disagreement_explanation(
-                            home_team=event.home_team_name or "",
-                            away_team=event.away_team_name or "",
-                            sport_key=event.sport.key if event.sport else "",
-                            sportsbook_home_prob=sportsbook_prob,
-                            prediction_market_home_prob=pm_prob,
-                            prediction_market_source=pm_snap.source,
-                            divergence_pct=divergence,
-                        )
-                    except Exception as e:
-                        logger.warning(f"Disagreement explanation failed for event {event_id}: {e}")
+                    # NO LLM CALL HERE (latency/133). This used to call the
+                    # SYNCHRONOUS generate_market_disagreement_explanation()
+                    # from inside an async handler — a blocking OpenAI request
+                    # with a 30s client timeout, which parks the whole event
+                    # loop (and so both workers' worth of concurrency on the
+                    # dyno), not just this request. It fired on every cache
+                    # miss: disagreement_data is set on 264/264 rows ever
+                    # written to line_movement_analyses, and
+                    # disagreement_explanation on 0 of those 264. Measured
+                    # payout: zero, for an unbounded block. The numbers below
+                    # are deterministic and are the part clients render;
+                    # disagreement_explanation stays in the response as null.
     except Exception:
         pass  # win_prob_snapshots table may not exist or other DB issue
 
