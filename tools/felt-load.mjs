@@ -112,6 +112,44 @@ const RUNS = parseInt(runsArg || '5', 10);
 const PACE_MS = parseInt(process.env.FELT_PACE_MS || '3000', 10);
 const MODE = (process.env.FELT_MODE || 'cold').toLowerCase();
 
+// 🔴 EVERY FELT NUMBER EVER TAKEN IS A FIRST-EVER VISIT (latency/137).
+//
+// `chromium.launch()` below passes no `userDataDir` and every run gets a fresh `newPage()`, so
+// localStorage is empty on every single sample the board has ever contained. That is not a neutral
+// default: the parse-time boot rail (`lib/discover/feedBoot.ts`, LAT-P184) switches ITSELF OFF when
+// any key in `BOOT_BLOCKING_KEYS` is present, and `bainluck_session_id` — written unconditionally by
+// `getSessionId()` on the first visit and never expired — is one of them. So the rig has only ever
+// measured the one population for which the optimisation fires.
+//
+// `FELT_SEED_LS` is a JSON object of localStorage entries written BEFORE any page script runs, which
+// is the only place it can go: the boot script is inline in the document `<head>` and reads storage
+// synchronously at parse time, so a seed applied after navigation would arrive too late to be the
+// thing under test. Values are written verbatim — the caller decides what a returning reader looks
+// like, because "returning" is exactly the definition in question here.
+//
+//   arm A (first visit)    — unset. Today's board, the control.
+//   arm B (returning anon) — '{"bainluck_session_id":"sess_felt_b"}'
+//   arm C (auth key)       — '{"firebase:authUser:felt:[DEFAULT]":"{}"}'
+//
+// ⚠️ ARM C IS A PARSE-TIME PROXY, NOT A SIGNED-IN SESSION. The boot script tests only the KEY PREFIX,
+// so a synthetic value reproduces the suppression faithfully; Firebase will then fail to restore the
+// bogus user and the page settles as signed-out. It therefore measures what the suppression COSTS,
+// and it does NOT measure an authenticated feed fetch. Read it as such or not at all.
+let SEED_LS = null;
+if (process.env.FELT_SEED_LS) {
+  try {
+    SEED_LS = JSON.parse(process.env.FELT_SEED_LS);
+    if (!SEED_LS || typeof SEED_LS !== 'object' || Array.isArray(SEED_LS)) throw new Error('not an object');
+  } catch (e) {
+    // Fail LOUD. A silently-ignored seed makes arm B a second copy of arm A, and two identical arms
+    // reported as a comparison is the exact shape of a measurement that says nothing while looking
+    // like it says something.
+    console.error(`FELT_SEED_LS is not a JSON object: ${e.message}`);
+    process.exit(2);
+  }
+}
+const SEED_ARM = process.env.FELT_ARM || (SEED_LS ? 'seeded' : 'first-visit');
+
 const proxy = process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
 const baseArgs = ['--no-sandbox', '--single-process', '--disable-gpu', '--disable-crashpad', '--disable-dev-shm-usage'];
 if (proxy) baseArgs.push(`--proxy-server=${proxy}`, '--proxy-bypass-list=<-loopback>');
@@ -156,6 +194,14 @@ const HERO_SEL = [
   '[data-testid="event-hero-settled"]',
   '[data-testid="futures-hero-probability"]',
 ].join(',');
+
+// Writes the arm's localStorage BEFORE any page script runs. Registered ahead of INIT so the keys
+// are already in storage when the document's inline boot script reads them synchronously.
+const SEED_INIT = (seed) => `
+(() => {
+  const SEED = ${JSON.stringify(seed || {})};
+  try { for (const k in SEED) window.localStorage.setItem(k, SEED[k]); } catch (e) {}
+})()`;
 
 const INIT = (cardSel, heroSel) => `
 (() => {
@@ -333,6 +379,19 @@ const COLLECT = `(() => {
     lastScriptEnd: Math.round(scriptMs),
     api,
     apiCount: apiRes.length,
+    // When the first API request left, in ms from navigation start. Useful colour on a throttled run.
+    //
+    // ⚠️ THIS IS NOT A BOOT-RAIL SIGNAL, THOUGH IT LOOKS EXACTLY LIKE ONE (latency/137). It is tempting
+    // to read "firstApiStart < lastScriptEnd" as "the parse-time boot fired" — it is wrong, and it was
+    // measured wrong before it was caught. lastScriptEnd is when the last script finished DOWNLOADING,
+    // not executing, and on an unthrottled link the entry graph hydrates long before the final lazy
+    // chunk lands: a /sports run with the boot PROVABLY suppressed still put its feed request on the
+    // wire at 143 ms against a 532 ms lastScriptEnd, which the heuristic scores as "fired". Use
+    // tools/boot-rail-probe.mjs, which reads whether the boot slot was ever parked and whether the
+    // request carried an x-session-id header. Neither of those can be argued with.
+    firstApiStart: api.length ? api[0].start : null,
+    // Proof the arm's seed actually landed. An unapplied seed makes arm B a silent duplicate of arm A.
+    lsKeys: (() => { try { const o = []; for (let i = 0; i < localStorage.length; i++) o.push(localStorage.key(i)); return o.sort(); } catch (e) { return null; } })(),
     apiStatus: statusCounts,
     api429: statusCounts['429'] || 0,
     api5xx: Object.entries(statusCounts).filter(([s]) => /^5\\d\\d$/.test(s)).reduce((a, [, n]) => a + n, 0),
@@ -382,6 +441,7 @@ for (let i = 0; i < RUNS; i++) {
   const browser = await newBrowser();
   try {
     const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    if (SEED_LS) await page.addInitScript(SEED_INIT(SEED_LS));
     await page.addInitScript(INIT(surface.cardSel || DEFAULT_CARD_SEL, HERO_SEL));
 
     let m;
@@ -437,6 +497,17 @@ for (let i = 0; i < RUNS; i++) {
     m.run = i + 1;
     m.surface = surfaceKey;
     m.url = surface.url;
+    m.arm = SEED_ARM;
+    // 🔴 A SEED THAT DID NOT LAND IS NOT A CONTROL, IT IS A LIE (latency/137). Arm B differs from arm A
+    // by exactly one localStorage key; if that key is missing at collect time the two arms are the same
+    // arm and any difference between them is noise being read as a finding.
+    if (SEED_LS) {
+      const want = Object.keys(SEED_LS);
+      const got = Array.isArray(m.lsKeys) ? m.lsKeys : [];
+      const missing = want.filter(k => !got.includes(k));
+      m.seedApplied = missing.length === 0;
+      if (!m.seedApplied) console.error(`   🔴 run ${i + 1} SEED DID NOT APPLY — missing ${JSON.stringify(missing)}; run is INVALID for arm ${SEED_ARM}`);
+    }
     // 🔴 A page that rendered nothing still posts a plausible — and faster — FCP (LAT-P202). A run
     // with no first card is not a fast run, it is a failed run, and averaging it in reports the
     // failure as an improvement.
@@ -447,7 +518,7 @@ for (let i = 0; i < RUNS; i++) {
     // "this surface is not made of cards" into "this surface never rendered".
     // The LAT-P202 empty-render guard is unaffected: those runs had `first`
     // null, because nothing real ever appeared by any definition.
-    m.valid = m.first !== null;
+    m.valid = m.first !== null && m.seedApplied !== false;
     // 🔴 A SELF-THROTTLED RUN IS NEITHER A PASS NOR A BLANK (LAT-P218). It is the battery measuring its
     // own 60/min budget, and it has to be its own outcome: counted as valid it drags the medians with a
     // number nobody experiences, counted as invalid it becomes a false "reader saw nothing" — which is
