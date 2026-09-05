@@ -101,7 +101,6 @@ NOT_MEASURED = -1
 #   "score" — a unitless float kept to 3 decimals (CLS); 0..1000
 #   "enum"  — a short bounded string, stored verbatim after length capping
 #   "path"  — a route-shaped string, FAIL-CLOSED segment-masked before storage
-#   "build" — a deploy tag; a closed GRAMMAR, since there is no finite value set
 
 # ---------------------------------------------------------------------------
 # CLOSED VALUE DOMAINS (CERT-1869's repair)
@@ -171,50 +170,41 @@ _ENUM_DOMAINS: Dict[str, frozenset] = {
     ),
 }
 
-#: `app_build` has no finite domain — it is a deploy tag — so it is constrained
-#: to the EXACT FORMS ITS REAL PRODUCERS EMIT, and nothing else:
+#: WHY THERE IS NO `app_build` FIELD (CERT-1880, after three BLOCKs on it alone).
 #:
-#:   1. ``web``                       — `screenTiming.ts`'s default, and
-#:                                      `webAppBuild()`'s when no Vercel sha.
-#:   2. a hex commit sha              — the frontend meta tag sliced to 12, or
-#:                                      `NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA`
-#:                                      sliced to 7.
-#:   3. ``1.4.2 (317)``               — iOS `AnalyticsService.appBuild()`:
-#:                                      "\(CFBundleShortVersionString) (\(CFBundleVersion))".
-#:   4. ``? (?)``                     — that function's own missing-Info.plist
-#:                                      fallback.
+#: `app_build` was the ONLY free-form value in this contract, and it is the only
+#: field that ever leaked. Three repairs failed in the same way — each closed the
+#: shapes the last cert named and left a neighbouring one open:
 #:
-#: WHY A BARE DOTTED VERSION IS NOT ALLOWED, THOUGH IT LOOKS LIKE ONE (CERT-1873).
-#: The previous grammar admitted a bare `\d{1,5}(\.\d{1,5}){0,2}` and bounded it
-#: to three components, on the theory that only a four-component dotted quad is
-#: an IPv4 address. **That is false.** Abbreviated IPv4 is valid and ubiquitous:
-#: BSD/Python resolve ``127.0.1`` to ``127.0.0.1``, ``127.1`` to ``127.0.0.1``,
-#: and a bare integer to an address too. Bounding the component COUNT cannot
-#: exclude an IP, because every shorter form is also an IP.
+#:   CERT-1869  any string accepted             -> `alice@example.com`
+#:   CERT-1873  bounded the dotted-component count -> `127.0.1` (abbreviated IPv4)
+#:   CERT-1880  allowed the real iOS wrapper     -> `127.0.1 (317)`, `1.4.2 (alice-123)`
 #:
-#: What excludes it is that **no producer emits a bare version at all** — iOS
-#: always parenthesises the build number. So the version form requires the
-#: parens, and every abbreviated IPv4 form falls outside the grammar rather than
-#: being enumerated against. Constrain to what the producers emit; do not try to
-#: out-guess what an attacker might send.
-#: The sha arm requires at least one hex LETTER, which is not cosmetic. A bare
-#: decimal integer is also a valid IPv4 encoding — `2130706433` is `127.0.0.1` —
-#: and every digit is a legal hex character, so an all-numeric sha pattern
-#: silently admits one. Caught by this module's own abbreviated-IPv4 battery.
+#: The third failure proves it is not fixable by a better pattern. The real
+#: producer format IS an IP address: `socket.inet_aton` accepts `1.4.2` and
+#: `1.0` — genuine `CFBundleShortVersionString` values — as valid IPv4
+#: encodings. There is no rule that admits the producer and rejects the address,
+#: because they are the same strings. Every further attempt would be another
+#: round of enumerating against an attacker, which is what lost the last three.
 #:
-#: The cost, stated rather than hidden: a genuine commit sha that happens to be
-#: all digits is refused. At the 12-char frontend form that is ~0.35% of
-#: deploys, at the 7-char Vercel form ~3.7%. The failure is a missing
-#: `app_build` on those deploys — a dimension gap, never a wrong number — and
-#: that is the right direction to fail for a field on a public endpoint.
-_APP_BUILD_RE = re.compile(
-    r"^("
-    r"web"
-    r"|(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}"
-    r"|\d{1,4}(\.\d{1,4}){0,3} \([0-9A-Za-z.\-]{1,12}\)"
-    r"|\? \(\?\)"
-    r")$"
-)
+#: So the field is GONE, and the contract now has a structural guarantee instead
+#: of an enumerated one:
+#:
+#:     EVERY stored string is either a member of a declared finite domain, or a
+#:     path composed only of known route segments and fixed placeholders.
+#:
+#: There is no free-form value anywhere, so there is nothing left for a hostile
+#: caller to put an identifier into. `test_no_field_accepts_free_form_text`
+#: asserts exactly that over the whole contract, so re-adding a free-form field
+#: reds the suite rather than reopening this.
+#:
+#: WHAT IS LOST, AND HOW IT COMES BACK. Per-release attribution — "is 1.4.2
+#: slower than 1.4.1". That is worth having and it should never have been asked
+#: of the CLIENT: a build tag from a public, unauthenticated endpoint is
+#: untrustworthy by construction. The server already knows its own deploy
+#: (`HEROKU_SLUG_COMMIT`), so the honest version of this dimension is stamped
+#: server-side at ingest. Deliberately not done here: it is a new field with its
+#: own argument to make, and this change is a removal.
 
 _SCREEN_TIMING: Dict[str, str] = {
     "surface": "path",
@@ -226,7 +216,6 @@ _SCREEN_TIMING: Dict[str, str] = {
     "card_count": "count",
     "device_class": "enum",
     "network_class": "enum",
-    "app_build": "build",
     "outcome_class": "enum",
 }
 
@@ -267,7 +256,6 @@ ACCEPTED_EVENT_NAMES = frozenset(EVENT_KEY_SPECS)
 #: without a functional index. Every one is an "enum"/"path" key above.
 PROMOTED_DIMENSIONS = (
     "surface",
-    "app_build",
     "device_class",
     "network_class",
     "entry",
@@ -480,12 +468,6 @@ def _coerce(kind: str, value: Any) -> Optional[Any]:
         if not isinstance(value, str):
             return None
         return mask_path(value)
-
-    if kind == "build":
-        if not isinstance(value, str):
-            return None
-        trimmed = value.strip()
-        return trimmed if _APP_BUILD_RE.match(trimmed) else None
 
     return None
 

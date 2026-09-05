@@ -332,9 +332,7 @@ class GameMoment(Base):
     )
     # Wall-clock time of the moment, for chart placement. Nullable when only
     # game-state (inning/score) is known and no snapshot timestamp matched.
-    ts: Mapped[Optional[datetime]] = mapped_column(
-        DateTime(timezone=True), index=True
-    )
+    ts: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), index=True)
 
     # Real-world EVENT stream
     moment_type: Mapped[str] = mapped_column(String(30))  # score/home_run/goal/…
@@ -510,9 +508,7 @@ class User(Base):
     )
     # Push notification preferences — per-type opt-in, all default True
     # Shape: {"daily_challenge": true, "big_moves": true}
-    push_preferences: Mapped[Optional[dict]] = mapped_column(
-        JSONB, server_default="{}"
-    )
+    push_preferences: Mapped[Optional[dict]] = mapped_column(JSONB, server_default="{}")
 
     # HMAC-signed unsubscribe token — unique per user, generated on first email send
     unsubscribe_token: Mapped[Optional[str]] = mapped_column(
@@ -828,7 +824,9 @@ class FuturesMarket(Base):
     )
 
     # Curator score adjustment — accumulated from boost/demote signals
-    curation_score_adj: Mapped[Optional[int]] = mapped_column(Integer, server_default="0")
+    curation_score_adj: Mapped[Optional[int]] = mapped_column(
+        Integer, server_default="0"
+    )
 
     # Volume/liquidity from prediction markets (internal signal, never user-facing).
     # BigInteger: prod ALTER applied 2026-07-06 (#990) — World Cup volume exceeded
@@ -836,8 +834,12 @@ class FuturesMarket(Base):
     volume: Mapped[Optional[int]] = mapped_column(
         BigInteger
     )  # Lifetime volume in contracts/dollars
-    volume_24h: Mapped[Optional[int]] = mapped_column(BigInteger)  # 24-hour trading volume
-    max_movement_24h: Mapped[Optional[float]] = mapped_column(Numeric(7, 4))  # MAX(ABS(outcome.probability_change_24h))
+    volume_24h: Mapped[Optional[int]] = mapped_column(
+        BigInteger
+    )  # 24-hour trading volume
+    max_movement_24h: Mapped[Optional[float]] = mapped_column(
+        Numeric(7, 4)
+    )  # MAX(ABS(outcome.probability_change_24h))
     open_interest: Mapped[Optional[int]] = mapped_column(
         Integer
     )  # Currently open contracts (Kalshi)
@@ -1140,9 +1142,7 @@ class Entity(Base):
 
     # Competition/sport this entity belongs to (a team's league, a concept's
     # tour). sport_key is denormalized for fast grammar binding without a join.
-    sport_id: Mapped[Optional[int]] = mapped_column(
-        ForeignKey("sports.id"), index=True
-    )
+    sport_id: Mapped[Optional[int]] = mapped_column(ForeignKey("sports.id"), index=True)
     sport_key: Mapped[Optional[str]] = mapped_column(String(50), index=True)
 
     # Transition bridge for kind='team': points back to the folded-in teams row
@@ -1628,7 +1628,9 @@ class DiscoverCandidateSnapshot(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     run_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     market_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
-    item_type: Mapped[str] = mapped_column(String(20), nullable=False, default="futures")
+    item_type: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="futures"
+    )
     served_rank: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     name: Mapped[Optional[str]] = mapped_column(String(500))
     category: Mapped[Optional[str]] = mapped_column(String(100), index=True)
@@ -1848,7 +1850,9 @@ class FeaturedMarketCapture(Base):
 
     __table_args__ = (
         UniqueConstraint(
-            "source", "captured_date", "external_id",
+            "source",
+            "captured_date",
+            "external_id",
             name="uq_featured_capture_source_date_ext",
         ),
         Index(
@@ -1882,7 +1886,9 @@ class DiscoverPairwiseLabel(Base):
     choice: Mapped[str] = mapped_column(
         String(10), nullable=False
     )  # 'a', 'b', 'both', 'neither', 'skip'
-    pair_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, index=True)
+    pair_id: Mapped[Optional[str]] = mapped_column(
+        String(100), nullable=True, index=True
+    )
     pair_strategy: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
     surface: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     batch_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
@@ -1932,9 +1938,15 @@ class RankingJudgment(Base):
     worse_than: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     score_at_review: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    category_at_review: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
-    archetype_at_review: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
-    quality_class_at_review: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    category_at_review: Mapped[Optional[str]] = mapped_column(
+        String(100), nullable=True
+    )
+    archetype_at_review: Mapped[Optional[str]] = mapped_column(
+        String(100), nullable=True
+    )
+    quality_class_at_review: Mapped[Optional[str]] = mapped_column(
+        String(50), nullable=True
+    )
     headline_at_review: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     feed_request_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     label_metadata: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
@@ -1975,11 +1987,15 @@ class DiscoverLabelEvalRun(Base):
     __tablename__ = "discover_label_eval_runs"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    run_id: Mapped[str] = mapped_column(String(36), unique=True, nullable=False, index=True)
+    run_id: Mapped[str] = mapped_column(
+        String(36), unique=True, nullable=False, index=True
+    )
     eval_name: Mapped[str] = mapped_column(
         String(80), nullable=False, default="discover_label_gold_set"
     )
-    status: Mapped[str] = mapped_column(String(20), nullable=False, default="ok", index=True)
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="ok", index=True
+    )
     input_source: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     dataset_window_start: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
@@ -1993,16 +2009,26 @@ class DiscoverLabelEvalRun(Base):
     row_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     tapworthy_at_k: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     boring_rate_at_k: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    duplicate_family_rate_at_k: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    duplicate_family_rate_at_k: Mapped[Optional[float]] = mapped_column(
+        Float, nullable=True
+    )
     unclear_rate_at_k: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    bad_explanation_rate_at_k: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    bad_explanation_rate_at_k: Mapped[Optional[float]] = mapped_column(
+        Float, nullable=True
+    )
     bad_image_rate_at_k: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     broad_appeal_at_k: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    fixable_interest_rate_at_k: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    fixable_interest_rate_at_k: Mapped[Optional[float]] = mapped_column(
+        Float, nullable=True
+    )
     tapworthy_recall_at_k: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     metric_summary: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
-    category_breakdowns: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
-    notable_regressions: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    category_breakdowns: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict
+    )
+    notable_regressions: Mapped[list] = mapped_column(
+        JSONB, nullable=False, default=list
+    )
     eval_metadata: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     captured_at: Mapped[datetime] = mapped_column(
@@ -2033,14 +2059,18 @@ class DurableStateSnapshot(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     #: Stable artifact name, e.g. ``calibration:main`` / ``sentinel:flow``.
-    identity: Mapped[str] = mapped_column(String(120), unique=True, nullable=False, index=True)
+    identity: Mapped[str] = mapped_column(
+        String(120), unique=True, nullable=False, index=True
+    )
     #: The PAYLOAD's contract version (calibration's population_version, a
     #: sentinel's scorecard version) — not the envelope format version.
     schema_version: Mapped[str] = mapped_column(String(60), nullable=False)
     #: Monotonic build ordering; epoch-ms of ``generated_at`` (see
     #: ``durable_state.generation_for``). Guards the atomic replace.
     generation: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    generated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
     payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
     #: sha256 of the canonical payload — catches a torn write that still parses.
     checksum: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -2127,7 +2157,9 @@ class TypeaheadIndex(Base):
     #: cross-sport markets legitimately have none.
     sport_key: Mapped[Optional[str]] = mapped_column(String(60), nullable=True)
     #: Prominence nudge for ordering the candidate pool. REAL on purpose (4 B).
-    rank_hint: Mapped[float] = mapped_column(Float(precision=24), nullable=False, default=0.0)
+    rank_hint: Mapped[float] = mapped_column(
+        Float(precision=24), nullable=False, default=0.0
+    )
 
     #: 64-bit digest of the projected content (see ``project_*`` in the builder).
     #: Equal hash => the projection is unchanged => the row is not rewritten and
@@ -2349,9 +2381,7 @@ class EventProviderAnchor(Base):
         # Identity, and the duplicate detector. ``id_kind`` is IN the key so one
         # value may legitimately appear as both a ``market`` and a ``container``
         # without colliding. Name matches the migration exactly.
-        Index(
-            "uq_anchor_source_id", "source", "source_id", "id_kind", unique=True
-        ),
+        Index("uq_anchor_source_id", "source", "source_id", "id_kind", unique=True),
     )
 
 
@@ -2593,7 +2623,6 @@ class ClientTimingEvent(Base):
 
     #: Shape-masked surface slug, e.g. `discover`, `event/:id`. Never a raw path.
     surface: Mapped[Optional[str]] = mapped_column(String(64))
-    app_build: Mapped[Optional[str]] = mapped_column(String(64))
     device_class: Mapped[Optional[str]] = mapped_column(String(64))
     network_class: Mapped[Optional[str]] = mapped_column(String(64))
     entry: Mapped[Optional[str]] = mapped_column(String(64))
