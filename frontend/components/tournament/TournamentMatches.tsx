@@ -339,6 +339,30 @@ function MatchRow({
     liveLabel === null && entry.scheduledDate
       ? formatMatchTime(entry.scheduledDate, new Date(), entry.startIsTbd)
       : null;
+  /* #3243 item 3. THE CARD'S LIVE CHROME IS A CLAIM ABOUT THE MATCH, NOT ABOUT
+     THE NUMBER, and until now it read `entry.isLive` — which is
+     `probability_is_live`, the server's verdict that the PROBABILITY is a fresh
+     reading. Those are different facts and they disagree in the ordinary case:
+     measured on production at 18:42Z on 2026-09-05, 14 of 22 slate rows were
+     `live_state: "upcoming"` with a fresh price, so 17 of 22 cards wore the
+     live rail and 3 of them were being played. On a phone during the women's
+     final that is the same harm as #3243 item 1 arriving from the other side —
+     the one card that matters is indistinguishable from fourteen that are not
+     on court yet.
+
+     So the chrome is derived from the BADGE, which was already right:
+     `liveMatchLabel` returns non-null exactly when `liveState` is
+     `in_progress` and the match is not decided. One predicate means the rail
+     and the badge cannot drift apart — a card can no longer print a 2:50 PM
+     start time inside a live rail.
+
+     `data-live` below is deliberately left alone. It is the page-wide contract
+     for "this row presents a live NUMBER" (`rowIsPresentedAsLive`,
+     `propIsPresentedAsLive`, the playoff grid), the honesty certs are written
+     against that meaning, and the two number treatments in `MatchSide` are
+     freshness treatments that stay correct. The play-state claim gets its own
+     attribute rather than overloading that one. */
+  const inPlay = liveLabel !== null;
   const names = entry.sides.map((side) => side.displayName).join(" v ");
 
   /* #2452: ONE rounding for the pair, here, where both sides are in scope. */
@@ -353,12 +377,13 @@ function MatchRow({
       data-match={entry.id}
       data-round={entry.round}
       data-live={entry.isLive ? "true" : "false"}
+      data-in-play={inPlay ? "true" : "false"}
       data-decided={entry.decided ? "true" : "false"}
       data-coherent={entry.coherent ? "true" : "false"}
     >
       <EventCardShell
         href={matchHref}
-        live={entry.isLive && !entry.decided}
+        live={inPlay}
         finished={entry.decided}
         ariaLabel={`${names}${entry.decided ? " - Final" : ""}`}
         /* `cn` is tailwind-merge, so this REPLACES the shell's `p-3 sm:p-4`
