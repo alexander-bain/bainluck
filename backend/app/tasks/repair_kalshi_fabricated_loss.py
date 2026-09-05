@@ -861,10 +861,28 @@ OBLIGATION_OWNER_RESTORE = "repair:kalshi-fabricated-loss-restore"
 _OBLIGATION_MAX_AGE_S = 365 * 86400
 
 
-async def _load_obligation() -> tuple[dict[str, Any] | None, str]:
-    """``(record, note)``. ``note`` is ``missing`` (no debt) or ``ok``, and any
-    other value means UNKNOWN — which the caller must treat as a refusal, never
-    as "no obligation"."""
+#: The write lost the compare-and-set: the one ledger slot moved between this
+#: call's READ and its write, so a second repair call folded the debt first and
+#: this call's fold was built on a record that is no longer there. Distinct from
+#: every other staging failure because the operator's next move is different —
+#: not "the store is sick, retry", but "another call is mid-flight on this same
+#: ledger; let it finish, then re-run".
+OBLIGATION_SLOT_MOVED = "OBLIGATION_SLOT_MOVED"
+
+
+async def _load_obligation() -> tuple[dict[str, Any] | None, str, int | None]:
+    """``(record, note, generation)``. ``note`` is ``missing`` (no debt) or
+    ``ok``, and any other value means UNKNOWN — which the caller must treat as a
+    refusal, never as "no obligation".
+
+    ``generation`` is the version of the slot this call READ, and it is the
+    third return value rather than a detail of the record because every writer
+    downstream needs it: the fold this reader is about to build is only valid
+    against the exact row it was read from (#3191). ``None`` means there was
+    nothing to read — either the slot is empty (a creator, which must not
+    clobber a row somebody else creates meanwhile) or the read failed (a
+    refusal).
+    """
     from app.services.durable_snapshots import read_snapshot_standalone
 
     try:
@@ -874,40 +892,95 @@ async def _load_obligation() -> tuple[dict[str, Any] | None, str]:
             max_age_s=_OBLIGATION_MAX_AGE_S,
         )
     except Exception as exc:  # noqa: BLE001
-        return None, f"obligation read raised: {type(exc).__name__}"
+        return None, f"obligation read raised: {type(exc).__name__}", None
     if read.status == "missing":
-        return None, "missing"
+        return None, "missing", None
     if not read.ok or read.envelope is None:
-        return None, f"obligation unreadable: {read.status}"
+        return None, f"obligation unreadable: {read.status}", None
     payload = read.envelope.payload
     if not isinstance(payload, dict):
-        return None, "obligation malformed"
-    return payload, "ok"
+        return None, "obligation malformed", read.envelope.generation
+    return payload, "ok", read.envelope.generation
 
 
-async def _save_obligation(record: dict[str, Any]) -> tuple[bool, str]:
-    """Persist the debt (or its discharge). A failure is REPORTED, never assumed."""
-    from app.services.durable_snapshots import publish_snapshot_standalone
+def _obligation_envelope(record: dict[str, Any], *, expected_generation: int | None):
+    """The debt as an envelope whose generation STRICTLY advances past the one
+    the writer read.
+
+    The compare-and-set predicate is equality against the generation this call
+    read, so the slot's generation has to move on every successful write or the
+    predicate stops discriminating: two writers that both read ``g`` and both
+    propose ``g`` would both satisfy ``stored = g`` and the second would silently
+    overwrite the first — the same lost update in a shape that still reads like a
+    CAS. Generations here are epoch MILLISECONDS off the write clock
+    (:func:`~app.utils.durable_state.generation_for`), and two attended repair
+    calls landing inside one millisecond is precisely the collision this guard is
+    for. So when the clock does not separate them, the counter does.
+    """
     from app.utils.durable_state import DurableEnvelope
 
+    envelope = DurableEnvelope.build(
+        identity=OBLIGATION_IDENTITY,
+        schema_version=INVALIDATION_OBLIGATION_SCHEMA,
+        payload=record,
+        complete=True,
+        source="repair:kalshi-fabricated-loss",
+    )
+    if expected_generation is not None and envelope.generation <= expected_generation:
+        envelope = DurableEnvelope.build(
+            identity=OBLIGATION_IDENTITY,
+            schema_version=INVALIDATION_OBLIGATION_SCHEMA,
+            payload=record,
+            generated_at=envelope.generated_at,
+            complete=True,
+            source="repair:kalshi-fabricated-loss",
+            generation=int(expected_generation) + 1,
+        )
+    return envelope
+
+
+async def _save_obligation(
+    record: dict[str, Any], *, expected_generation: int | None
+) -> tuple[bool, str]:
+    """Persist the debt's DISCHARGE. A failure is REPORTED, never assumed.
+
+    #3191. This is a read-modify-write like the staging one door down — the
+    record being marked paid is the fold this call built from what it read — so
+    it lands under the same compare-and-set. A discharge is the more dangerous
+    of the two to get wrong: writing "paid" over a slot that has since collected
+    somebody ELSE'S unpaid ids retires a debt nobody has settled, and the curve
+    stays stale with nothing left naming it. On a miss the loser says so and
+    leaves the record OPEN; the call that moved the slot folded these ids into
+    its own union, and its invalidation is what pays them.
+    """
+    from app.services.durable_snapshots import (
+        STATUS_CAS_MISS,
+        publish_cas_snapshot_standalone,
+    )
+
     try:
-        result = await publish_snapshot_standalone(
-            DurableEnvelope.build(
-                identity=OBLIGATION_IDENTITY,
-                schema_version=INVALIDATION_OBLIGATION_SCHEMA,
-                payload=record,
-                complete=True,
-                source="repair:kalshi-fabricated-loss",
-            )
+        result = await publish_cas_snapshot_standalone(
+            _obligation_envelope(record, expected_generation=expected_generation),
+            expected_generation=expected_generation,
         )
     except Exception as exc:  # noqa: BLE001
         return False, f"obligation persist raised: {type(exc).__name__}"
-    ok = result.get("status") in ("ok", "superseded")
-    return ok, "ok" if ok else f"obligation persist rejected: {result.get('status')}"
+    status = result.get("status")
+    if status == STATUS_CAS_MISS:
+        return False, (
+            f"{OBLIGATION_SLOT_MOVED}: the ledger moved from generation "
+            f"{expected_generation} under this call, so the discharge was NOT "
+            "written and the debt stays OPEN. Another repair call folded these "
+            "ids into its own record; its invalidation is what pays them."
+        )
+    ok = status == "ok"
+    return ok, "ok" if ok else f"obligation persist rejected: {status}"
 
 
-async def _stage_obligation(session, record: dict[str, Any]) -> tuple[bool, str]:
-    """STAGE the debt in the caller's open transaction. ``(ok, note)``.
+async def _stage_obligation(
+    session, record: dict[str, Any], *, expected_generation: int | None
+) -> tuple[bool, str, int | None]:
+    """STAGE the debt in the caller's open transaction. ``(ok, note, generation)``.
 
     CAL-P1009-R (CERT-1872). Banking the OPEN debt on its own session *after*
     the rows were committed left a window with a name: the rows land, the record
@@ -927,25 +1000,46 @@ async def _stage_obligation(session, record: dict[str, Any]) -> tuple[bool, str]
 
     Read-back is the gate, never the status: see
     :func:`~app.utils.calibration_invalidation.obligation_contains`.
-    """
-    from app.services.durable_snapshots import publish_snapshot_in_txn, read_snapshot
-    from app.utils.durable_state import DurableEnvelope
 
+    #3191. The fold this record carries — this call's ids UNIONED with the ones
+    already in the slot — is a read-modify-write, and until now it was staged
+    with a read-THEN-write. Two attended calls overlapping in time could each
+    read the same prior record, each build its own union, and the second commit
+    would take the slot: the first call's ids survive only if the second happened
+    to include them, which two different plans do not. So the write is a
+    compare-and-set against ``expected_generation`` — the generation the caller
+    ACTUALLY READ, never the one it proposes — and the loser is told
+    :data:`OBLIGATION_SLOT_MOVED`, writes nothing, and rolls its rows back. The
+    containment gate would have caught the loser too, but only after it had
+    already destroyed the winner's record; the CAS means the destructive write
+    never happens.
+    """
+    from app.services.durable_snapshots import (
+        STATUS_CAS_MISS,
+        publish_cas_snapshot_in_txn,
+        read_snapshot,
+    )
+
+    envelope = _obligation_envelope(record, expected_generation=expected_generation)
     try:
-        result = await publish_snapshot_in_txn(
-            session,
-            DurableEnvelope.build(
-                identity=OBLIGATION_IDENTITY,
-                schema_version=INVALIDATION_OBLIGATION_SCHEMA,
-                payload=record,
-                complete=True,
-                source="repair:kalshi-fabricated-loss",
-            ),
+        result = await publish_cas_snapshot_in_txn(
+            session, envelope, expected_generation=expected_generation
         )
     except Exception as exc:  # noqa: BLE001 — reported, never swallowed
-        return False, f"obligation stage raised: {type(exc).__name__}"
+        return False, f"obligation stage raised: {type(exc).__name__}", None
 
     status = result.get("status")
+    if status == STATUS_CAS_MISS:
+        return (
+            False,
+            (
+                f"{OBLIGATION_SLOT_MOVED}: the ledger moved from generation "
+                f"{expected_generation} between this call's read and its write, "
+                "so a second repair call folded the debt first and NOTHING was "
+                "staged."
+            ),
+            None,
+        )
     try:
         back = await read_snapshot(
             session,
@@ -954,14 +1048,15 @@ async def _stage_obligation(session, record: dict[str, Any]) -> tuple[bool, str]
             max_age_s=_OBLIGATION_MAX_AGE_S,
         )
     except Exception as exc:  # noqa: BLE001
-        return False, f"obligation read-back raised: {type(exc).__name__}"
+        return False, f"obligation read-back raised: {type(exc).__name__}", None
     if back.status == "missing":
         return (
             False,
             f"obligation absent after staging ({status}): this write did not land",
+            None,
         )
     if not back.ok or back.envelope is None:
-        return False, f"obligation not readable after staging: {back.status}"
+        return False, f"obligation not readable after staging: {back.status}", None
 
     contained, why = obligation_contains(
         back.envelope.payload,
@@ -971,8 +1066,12 @@ async def _stage_obligation(session, record: dict[str, Any]) -> tuple[bool, str]
         leg_ids=record["leg_ids"],
     )
     if not contained:
-        return False, f"obligation does not carry this debt ({status}): {why}"
-    return True, f"ok ({status})"
+        return False, f"obligation does not carry this debt ({status}): {why}", None
+    # The generation the SLOT now holds, read back rather than the one proposed:
+    # it is what the discharge will compare-and-set against, and a value this
+    # call assumed rather than read would be the same read-then-write one layer
+    # up (#3191).
+    return True, f"ok ({status})", back.envelope.generation
 
 
 async def _main_checkpoint_after_read() -> tuple[bool, str, str]:
@@ -1593,7 +1692,10 @@ async def _apply_reviewed_plan(session, plan_hash, started):
         }
 
     # --- The outstanding debt, read BEFORE the first write -------------------
-    prior, prior_note = await _load_obligation()
+    # `prior_generation` is the version of the slot this read saw. Every write
+    # below compare-and-sets against it, so a second call that moves the ledger
+    # in between makes this one refuse rather than overwrite its union (#3191).
+    prior, prior_note, prior_generation = await _load_obligation()
     if prior_note not in ("ok", "missing"):
         # UNKNOWN is not "no debt". Writing more rows while unable to read what
         # the last call owes is how the retry specimen compounds.
@@ -1840,14 +1942,24 @@ async def _apply_reviewed_plan(session, plan_hash, started):
     )
 
     obligation_persisted, obligation_note = True, "nothing owed"
+    staged_generation = None
     if written:
-        obligation_persisted, obligation_note = await _stage_obligation(session, receipt)
+        obligation_persisted, obligation_note, staged_generation = (
+            await _stage_obligation(
+                session, receipt, expected_generation=prior_generation
+            )
+        )
         if not obligation_persisted:
             await session.rollback()
+            slot_moved = obligation_note.startswith(OBLIGATION_SLOT_MOVED)
             return {
                 "apply": True,
                 "measured": False,
-                "refused": ["INVALIDATION_DEBT_NOT_STAGED"],
+                "refused": (
+                    ["INVALIDATION_DEBT_NOT_STAGED", OBLIGATION_SLOT_MOVED]
+                    if slot_moved
+                    else ["INVALIDATION_DEBT_NOT_STAGED"]
+                ),
                 "plan_hash": plan.plan_hash,
                 "obligation_identity": OBLIGATION_IDENTITY,
                 "obligation_note": obligation_note,
@@ -1858,7 +1970,14 @@ async def _apply_reviewed_plan(session, plan_hash, started):
                     "could not be staged, so the whole transaction was rolled "
                     "back and NO row was changed. Rows committed with no durable "
                     "debt can leave the curve stale with nothing naming what "
-                    "would pay it. Retry the same plan_hash."
+                    "would pay it. "
+                    + (
+                        "Another repair call wrote this ledger between this "
+                        "call's read and its write; let that one finish, then "
+                        "retry the same plan_hash."
+                        if slot_moved
+                        else "Retry the same plan_hash."
+                    )
                 ),
                 "prices_touched": False,
                 "success": False,
@@ -1908,6 +2027,9 @@ async def _apply_reviewed_plan(session, plan_hash, started):
     clear_note = "nothing owed"
     if owed_market_ids:
         if discharged:
+            # The generation the discharge compare-and-sets against is the one
+            # THIS call last saw in the slot: what it staged if it wrote, and
+            # otherwise the record it read at the top and carried forward.
             obligation_cleared, clear_note = await _save_obligation(
                 discharge_obligation(
                     receipt,
@@ -1917,7 +2039,10 @@ async def _apply_reviewed_plan(session, plan_hash, started):
                             "main_checkpoint_after_read"
                         ),
                     },
-                )
+                ),
+                expected_generation=(
+                    staged_generation if written else prior_generation
+                ),
             )
         else:
             obligation_cleared = False
@@ -2174,7 +2299,7 @@ async def restore(
     # forward in its own record instead of overwriting it. UNKNOWN is not "no
     # debt": reversing rows while unable to read what is owed is how the union
     # loses an id.
-    prior, prior_note = await _load_obligation()
+    prior, prior_note, prior_generation = await _load_obligation()
     if prior_note not in ("ok", "missing"):
         return {
             "restore": True,
@@ -2326,15 +2451,25 @@ async def restore(
     )
 
     obligation_persisted, obligation_note = True, "nothing owed"
+    staged_generation = None
     if reversed_ids:
-        obligation_persisted, obligation_note = await _stage_obligation(session, receipt)
+        obligation_persisted, obligation_note, staged_generation = (
+            await _stage_obligation(
+                session, receipt, expected_generation=prior_generation
+            )
+        )
         if not obligation_persisted:
             await session.rollback()
+            slot_moved = obligation_note.startswith(OBLIGATION_SLOT_MOVED)
             return {
                 "restore": True,
                 "apply": True,
                 "measured": False,
-                "refused": ["INVALIDATION_DEBT_NOT_STAGED"],
+                "refused": (
+                    ["INVALIDATION_DEBT_NOT_STAGED", OBLIGATION_SLOT_MOVED]
+                    if slot_moved
+                    else ["INVALIDATION_DEBT_NOT_STAGED"]
+                ),
                 "plan_hash": plan_hash,
                 "obligation_identity": OBLIGATION_IDENTITY,
                 "obligation_note": obligation_note,
@@ -2346,8 +2481,14 @@ async def restore(
                     "rolled back and NO row was reversed. Reversed rows whose "
                     "debt is not durable can leave the curve stale with nothing "
                     "naming what would pay it, and reporting that state honestly "
-                    "is not a substitute for not creating it. Retry the same "
-                    "plan_hash."
+                    "is not a substitute for not creating it. "
+                    + (
+                        "Another repair call wrote this ledger between this "
+                        "call's read and its write; let that one finish, then "
+                        "retry the same plan_hash."
+                        if slot_moved
+                        else "Retry the same plan_hash."
+                    )
                 ),
                 "prices_touched": False,
                 "success": False,
@@ -2387,7 +2528,10 @@ async def restore(
                             "main_checkpoint_after_read"
                         ),
                     },
-                )
+                ),
+                expected_generation=(
+                    staged_generation if reversed_ids else prior_generation
+                ),
             )
         else:
             obligation_cleared = False

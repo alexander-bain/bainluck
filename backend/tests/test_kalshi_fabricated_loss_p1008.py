@@ -35,6 +35,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.services.durable_snapshots import STATUS_CAS_MISS
 from app.tasks import repair_kalshi_fabricated_loss as rail
 from app.tasks.calibration_main_build import CHECKPOINT_IDENTITY
 from app.utils.calibration_invalidation import (
@@ -223,8 +224,51 @@ def _install_txn_durables(store, monkeypatch):
             "generation": envelope.generation,
         }
 
+    async def _publish_cas_in_txn(db, envelope, *, expected_generation):
+        """The compare-and-set publisher, held on the SESSION like its sibling.
+
+        #3191. Two properties at once, and the test is only honest if the fake
+        has both: the fold lands in the caller's transaction (so a rollback takes
+        it with the rows), AND it lands only if the slot is still where the
+        caller read it. The generation compared is what the slot holds NOW,
+        including anything this same transaction already staged — a committed row
+        the loser never saw is exactly the state under test.
+        """
+        status = store.forced_status.get(envelope.identity, "ok")
+        if status != "ok":
+            return {
+                "status": status,
+                "identity": envelope.identity,
+                "generation": envelope.generation,
+            }
+        stored = None
+        for env in getattr(db, "pending_durable", []):
+            if env.identity == envelope.identity:
+                stored = env.generation
+        if stored is None:
+            existing = store.rows.get(envelope.identity)
+            stored = existing.generation if existing is not None else None
+        if stored != expected_generation:
+            return {
+                "status": STATUS_CAS_MISS,
+                "identity": envelope.identity,
+                "generation": envelope.generation,
+                "expected_generation": expected_generation,
+            }
+        # `no_op` is deliberately NOT honoured here, exactly as the sibling
+        # `_publish_in_txn` does not honour it: the tests fence the STANDALONE
+        # publisher with it so that the transaction is the only route to the
+        # slot, which is the property those tests are about.
+        db.pending_durable.append(envelope)
+        return {
+            "status": "ok",
+            "identity": envelope.identity,
+            "generation": envelope.generation,
+        }
+
     monkeypatch.setattr(ds, "read_snapshot", _read_in_txn)
     monkeypatch.setattr(ds, "publish_snapshot_in_txn", _publish_in_txn)
+    monkeypatch.setattr(ds, "publish_cas_snapshot_in_txn", _publish_cas_in_txn)
     global _CURRENT_STORE
     _CURRENT_STORE = store
     monkeypatch.setattr(sys.modules[__name__], "_CURRENT_STORE", store, raising=False)

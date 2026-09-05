@@ -540,6 +540,73 @@ async def publish_cas_snapshot(
     }
 
 
+async def publish_cas_snapshot_in_txn(
+    db: AsyncSession, envelope: DurableEnvelope, *, expected_generation: Optional[int]
+) -> dict:
+    """Compare-and-swap, staged in the CALLER'S open transaction. Never commits,
+    never rolls back.
+
+    :func:`publish_cas_snapshot` is to this what :func:`publish_snapshot` is to
+    :func:`publish_snapshot_in_txn` — same predicate, different owner of the
+    transaction. A read-modify-write caller whose fold has to land in the SAME
+    transaction as the rows the fold is ABOUT needs both properties at once: the
+    equality predicate on the generation it actually read, and a commit only it
+    can issue. The invalidation-debt ledger is that caller (CERT-1872 put the
+    debt inside the row transaction; #3191 is the fold that was still a
+    read-then-write).
+
+    On :data:`STATUS_CAS_MISS` nothing was written and the row is untouched, but
+    the caller's transaction is still open and may hold row mutations the fold
+    was the price of — so the ROLLBACK is the caller's, because only the caller
+    knows what else is in there.
+    """
+    params = {
+        "identity": envelope.identity,
+        "schema_version": envelope.schema_version,
+        "generation": envelope.generation,
+        "generated_at": envelope.generated_at,
+        "payload": canonical_json(envelope.payload),
+        "checksum": envelope.checksum,
+        "complete": envelope.complete,
+        "source": envelope.source,
+    }
+    sql = _CAS_CREATE_SQL if expected_generation is None else _CAS_UPSERT_SQL
+    if expected_generation is not None:
+        params["expected_generation"] = int(expected_generation)
+
+    try:
+        await db.execute(
+            text(f"SET LOCAL statement_timeout = {DURABLE_WRITE_TIMEOUT_MS}")
+        )
+        result = await db.execute(sql, params)
+        written = result.scalar_one_or_none()
+    except Exception as exc:  # noqa: BLE001 — classified for the caller
+        logger.warning(
+            "durable in-txn CAS publish failed for %s (expected %s): %s",
+            envelope.identity, expected_generation, exc,
+        )
+        return {
+            "status": "error",
+            "identity": envelope.identity,
+            "generation": envelope.generation,
+            "error_class": exc.__class__.__name__,
+            "error": str(exc)[:200],
+        }
+
+    if written is None:
+        return {
+            "status": STATUS_CAS_MISS,
+            "identity": envelope.identity,
+            "generation": envelope.generation,
+            "expected_generation": expected_generation,
+        }
+    return {
+        "status": "ok",
+        "identity": envelope.identity,
+        "generation": envelope.generation,
+    }
+
+
 async def publish_cas_snapshot_standalone(
     envelope: DurableEnvelope, *, expected_generation: Optional[int]
 ) -> dict:
