@@ -128,6 +128,7 @@ from app.services.anchor_channel import (
     WROTE,
     record_anchor,
 )
+from app.services.authority_ledger import record_agreement_day
 from app.services.statpal_api import StatPalFixture, get_statpal_service
 from app.utils.authority_agreement import Side, build_agreement_row
 from app.utils.nfl_team_matching import is_known_nfl_team, normalize_team, pair_matches
@@ -636,6 +637,12 @@ async def _run_stamp_nfl_statpal_fixtures(
         window=(window_start, window_end),
         is_anchor_id=is_statpal_contest_id,
     )
+
+    # D50's seven-day count, folded into the durable ledger and attached to the
+    # row as `agreement["streak"]`. Here rather than in the endpoint because
+    # this pass is the only moment the day exists: the Redis metrics key holds
+    # the LAST pass, so a day nobody folded is a day nobody can recover.
+    agreement = await record_agreement_day(agreement, at=now, apply=apply)
 
     summary = run.summary()
     logger.info("StatPal NFL stamper: %s", summary)

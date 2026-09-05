@@ -339,3 +339,41 @@ async def test_a_genuinely_empty_slate_is_a_row_and_not_zero_percent(drive):
     assert agreement["read_failures"] == []
     assert agreement["denominator"] == 0
     assert agreement["identity"]["pct"] is None
+
+
+async def test_the_nfl_pass_folds_its_own_day_into_the_durable_ledger(drive, monkeypatch):
+    """NFL's own chain link.
+
+    NFL runs a different stamper module from NBA/NHL/MLB, so its call to the
+    ledger is a second, independent wire. It is also the sport closest to the
+    gate — the first to read `MEETS` on production — which makes it the worst
+    one to discover was never recording its days.
+    """
+    import app.services.durable_snapshots as ds
+
+    published = []
+
+    async def _read(identity, **kwargs):
+        return SimpleNamespace(
+            status="missing", missing=True, ok=False, envelope=None, error=None
+        )
+
+    async def _publish(envelope):
+        published.append(envelope)
+        return {"status": "ok"}
+
+    monkeypatch.setattr(ds, "read_snapshot_standalone", _read)
+    monkeypatch.setattr(ds, "publish_snapshot_standalone", _publish)
+
+    summary, _session = await drive(
+        [_fixture("280445", "Arizona Cardinals", "Los Angeles Chargers", KICKOFF)],
+        [_candidate(1, "Arizona Cardinals", "Los Angeles Chargers", KICKOFF)],
+    )
+
+    streak = summary["agreement"]["streak"]
+    assert streak["days"] == 1
+    assert streak["recorded"] is True
+    assert published[0].identity == (
+        "authority-agreement-ledger:americanfootball_nfl"
+    )
+    assert published[0].payload["days"][0]["day"] == "2026-09-04"

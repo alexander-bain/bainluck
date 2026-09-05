@@ -503,3 +503,63 @@ async def test_the_summary_the_endpoint_publishes_names_its_own_sport(drive):
     nhl, _s, _a = await drive(fixtures, rows, spec=task.NHL)
     assert nhl["sport_key"] == "icehockey_nhl"
     assert nhl["agreement"]["sport_key"] == "icehockey_nhl"
+
+
+# ---------------------------------------------------------------------------
+# The seven-day count rides on the row the endpoint publishes (authority/021)
+# ---------------------------------------------------------------------------
+
+
+async def test_the_pass_folds_its_own_day_into_the_durable_ledger(drive, monkeypatch):
+    """The chain, not the two ends.
+
+    `authority_streak` is proved pure in `test_authority_streak.py` and the
+    durable substrate is proved in Queue 298's own guards — and both being green
+    says nothing about whether a real pass ever calls either. The seven-day count
+    D50 gates on only exists if THIS function attaches it to THIS row, because
+    the endpoint publishes the banked `agreement` block verbatim.
+    """
+    import app.services.durable_snapshots as ds
+
+    published = []
+
+    async def _read(identity, **kwargs):
+        return SimpleNamespace(
+            status="missing", missing=True, ok=False, envelope=None, error=None
+        )
+
+    async def _publish(envelope):
+        published.append(envelope)
+        return {"status": "ok"}
+
+    monkeypatch.setattr(ds, "read_snapshot_standalone", _read)
+    monkeypatch.setattr(ds, "publish_snapshot_standalone", _publish)
+
+    fixtures = [_fixture("1050110", "Boston Celtics", "Detroit Pistons", TIPOFF)]
+    rows = [_candidate(1, "Boston Celtics", "Detroit Pistons", TIPOFF)]
+    summary, _s, _a = await drive(fixtures, rows)
+
+    streak = summary["agreement"]["streak"]
+    assert streak["days"] == 1
+    assert streak["recorded"] is True
+    assert streak["meets_flip_gate"] is False
+    assert len(published) == 1
+    assert published[0].identity == "authority-agreement-ledger:basketball_nba"
+    assert published[0].payload["days"][0]["state"] == "MEETS"
+
+
+async def test_a_ledger_that_cannot_be_written_never_reads_as_a_streak_of_zero(drive):
+    """No durable substrate is stubbed here, so the read fails.
+
+    The pass must still succeed — a stamper that read both StatPal endpoints and
+    wrote its anchors has done its job — and the row must say the day was not
+    recorded rather than publishing a count that looks like a measurement.
+    """
+    fixtures = [_fixture("1050110", "Boston Celtics", "Detroit Pistons", TIPOFF)]
+    rows = [_candidate(1, "Boston Celtics", "Detroit Pistons", TIPOFF)]
+    summary, _s, _a = await drive(fixtures, rows)
+
+    streak = summary["agreement"]["streak"]
+    assert streak["state"] == "UNRECORDED"
+    assert "days" not in streak
+    assert summary["agreement"]["identity"]["governing"]["gate"] == "MEETS"
