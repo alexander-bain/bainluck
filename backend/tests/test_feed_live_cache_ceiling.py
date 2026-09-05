@@ -318,6 +318,7 @@ class _SeededRedis:
     def __init__(self, contents: dict[str, str] | None = None, *, fail: bool = False):
         self.contents = dict(contents or {})
         self.setex_calls: list[tuple[str, int, str]] = []
+        self.delete_calls: list[str] = []
         self.fail = fail
 
     async def get(self, key):
@@ -329,6 +330,14 @@ class _SeededRedis:
         self.setex_calls.append((key, ttl, value))
         self.contents[key] = value
         return True
+
+    async def delete(self, key):
+        # CERT-1885: the refusal path invalidates the cross-worker copy of an
+        # over-ceiling artifact, and this client IS the cross-worker tier in
+        # these tests (`pic._shared_redis_client` resolves to the same
+        # `get_shared_async_redis` the rig patches).
+        self.delete_calls.append(key)
+        return 1 if self.contents.pop(key, None) is not None else 0
 
 
 async def _drive_feed(*, redis, monkeypatch, headers=None, during_build=None, events=None):
@@ -1150,7 +1159,12 @@ class _ShimmedTime:
 
 
 def _seed_artifact_and_build_time(
-    monkeypatch, feed_mod, *, artifact_age_s: float, build_s: float
+    monkeypatch,
+    feed_mod,
+    *,
+    artifact_age_s: float,
+    build_s: float,
+    first_request_only: bool = False,
 ):
     """One request that consumed an `artifact_age_s`-old artifact and then spent
     `build_s` building. Returns the hook to hand `_drive_feed(during_build=…)`.
@@ -1169,18 +1183,25 @@ def _seed_artifact_and_build_time(
     real_bind = feed_mod._bind_shared_reuse_sink
 
     def _bind_and_seed(reuse, tiers, origins):
-        origins.append(shim.monotonic() - artifact_age_s)
+        bound["n"] += 1
+        # `first_request_only` is what makes a two-request test honest: request
+        # one consumed the stale artifact, request two must not — otherwise
+        # "request two rebuilds" would be asserted against a request still
+        # being handed the same 70-second-old input (CERT-1885).
+        if not first_request_only or bound["n"] == 1:
+            origins.append(shim.monotonic() - artifact_age_s)
         return real_bind(reuse, tiers, origins)
 
     monkeypatch.setattr(feed_mod, "_bind_shared_reuse_sink", _bind_and_seed)
 
     fired = {"n": 0}
+    bound = {"n": 0}
 
     def _spend_the_build():
         fired["n"] += 1
         offset["s"] = build_s
 
-    return _spend_the_build, fired, shim
+    return _spend_the_build, fired, shim, bound
 
 
 class _Row:
@@ -1269,7 +1290,7 @@ async def test_a_live_page_over_the_ceiling_is_not_served_even_once(monkeypatch)
     import app.routes.feed as feed_mod
 
     rc._reset_last_good_for_tests()
-    during_build, fired, _shim = _seed_artifact_and_build_time(
+    during_build, fired, _shim, _bound = _seed_artifact_and_build_time(
         monkeypatch, feed_mod, artifact_age_s=50.0, build_s=20.0
     )
 
@@ -1319,7 +1340,7 @@ async def test_a_build_inside_the_ceiling_still_serves_its_live_page(monkeypatch
     import app.routes.feed as feed_mod
 
     rc._reset_last_good_for_tests()
-    during_build, fired, _shim = _seed_artifact_and_build_time(
+    during_build, fired, _shim, _bound = _seed_artifact_and_build_time(
         monkeypatch, feed_mod, artifact_age_s=50.0, build_s=5.0
     )
 
@@ -1360,7 +1381,7 @@ async def test_a_still_valid_prior_payload_is_served_instead(monkeypatch):
         SHARED_KEY, LIVE_PAGE, built_at=time_module.time() - 5.0
     )
 
-    during_build, fired, _shim = _seed_artifact_and_build_time(
+    during_build, fired, _shim, _bound = _seed_artifact_and_build_time(
         monkeypatch, feed_mod, artifact_age_s=50.0, build_s=20.0
     )
     resp = await _drive_live_feed(
@@ -1402,7 +1423,7 @@ async def test_the_over_ceiling_artifacts_are_dropped_by_the_refusal(monkeypatch
     import app.routes.feed as feed_mod
 
     rc._reset_last_good_for_tests()
-    during_build, fired, shim = _seed_artifact_and_build_time(
+    during_build, fired, shim, _bound = _seed_artifact_and_build_time(
         monkeypatch, feed_mod, artifact_age_s=50.0, build_s=20.0
     )
 
@@ -1472,7 +1493,10 @@ async def test_dropping_an_over_age_entry_makes_the_next_read_rebuild():
     dropped = pic.drop_entries_older_than(
         FEED_RESPONSE_STALE_TTL_LIVE_SECONDS, clock=clock
     )
-    assert dropped == 1
+    assert dropped == [(ns, ("k",))], (
+        "the drop must report the IDENTITIES it evicted — a count cannot tell "
+        "`forget_stale_cross_worker` which Redis key to invalidate (CERT-1885)"
+    )
     assert await pic.get_or_build(
         ns, ("k",), lambda: _build_v(3), ttl_s=120.0, clock=clock
     ) == {"v": 3}, "the dropped entry was still served — the eviction is a no-op"
@@ -1490,3 +1514,140 @@ def test_the_ceiling_the_route_refuses_on_is_the_ceiling_last_good_is_bounded_by
     wearing the repair's clothes.
     """
     assert FEED_LAST_GOOD_MAX_AGE_LIVE_SECONDS == FEED_RESPONSE_STALE_TTL_LIVE_SECONDS
+
+
+@pytest.mark.asyncio
+async def test_the_stale_redis_artifact_is_invalidated_so_request_two_rebuilds(
+    monkeypatch,
+):
+    """CERT-1885's falsifier: half a repair reads like a whole one at one request.
+
+    Dropping the process-local copy of an over-ceiling artifact leaves the
+    cross-worker copy readable at its namespace TTL — 120s for `market_load`
+    against a 60s ceiling — so the next request promotes the identical
+    70-second-old artifact back into the identical worker, is refused in turn,
+    and the empty `unavailable` repeats until Redis lets go of it.
+
+    So: a stale artifact in BOTH tiers, one refused request, and then the two
+    things a second request depends on — the Redis entry is gone, and a real
+    `get_or_build` for that key REBUILDS instead of promoting v1.
+    """
+    import app.routes.feed as feed_mod
+
+    rc._reset_last_good_for_tests()
+    ns = "market_load"
+    key = ("cert1885-stale",)
+    pic.clear_shared_builds(ns)
+
+    during_build, fired, shim, bound = _seed_artifact_and_build_time(
+        monkeypatch,
+        feed_mod,
+        artifact_age_s=50.0,
+        build_s=20.0,
+        first_request_only=True,
+    )
+
+    # The artifact as a worker that promoted it actually holds it: a local entry
+    # backdated to its true age, and the Redis envelope it came from.
+    redis = _SeededRedis()
+    pic._store.setdefault(ns, {})[key] = (shim.monotonic() - 70.0, [{"v": 1}])
+    redis_key = pic.redis_key_for(ns, key)
+    redis.contents[redis_key] = pic.wire_encode(
+        json.dumps(
+            {
+                "v": 1,
+                "ns": ns,
+                "k": repr(key),
+                "stored_wall": time_module.time() - 70.0,
+                "payload": pic.encode_shared_payload([{"v": 1}]),
+            },
+            separators=(",", ":"),
+        )
+    )
+
+    try:
+        first = await _drive_live_feed(
+            monkeypatch, redis=redis, during_build=during_build
+        )
+        assert fired["n"] >= 1
+        assert first.json()["cache"]["status"] == "unavailable"
+
+        # Request two, at the seam that decides what it is built FROM. This is
+        # the behavioural claim; the two state assertions under it say how.
+        rebuilt = {"n": 0}
+
+        async def _build_v2():
+            rebuilt["n"] += 1
+            return [{"v": 2}]
+
+        served = await pic.get_or_build(ns, key, _build_v2)
+        assert rebuilt["n"] == 1, (
+            "request two was served the same 70-second-old artifact — the "
+            "process-local copy was evicted and the Redis copy was promoted "
+            "straight back into this worker (CERT-1885)"
+        )
+        assert served == [{"v": 2}]
+
+        assert redis_key in redis.delete_calls
+        assert redis_key not in redis.contents
+
+        # …and the whole page: a second real request serves a live feed rather
+        # than repeating the empty one.
+        second = await _drive_live_feed(monkeypatch, redis=redis)
+        assert bound["n"] >= 2, "the second request never reached the route"
+        body = second.json()
+        assert body["cache"]["status"] == "miss", body["cache"]
+        assert body["cache"]["live"] is True
+        assert body["items"], "the refusal repeated on request two"
+    finally:
+        pic.clear_shared_builds(ns)
+        rc._reset_last_good_for_tests()
+
+
+@pytest.mark.asyncio
+async def test_a_sibling_republication_is_not_invalidated():
+    """The read-before-delete, as a control.
+
+    Another worker may have republished a FRESH artifact under this key since
+    this worker read its own stale copy. Deleting that would cost every worker a
+    rebuild to fix a staleness that no longer exists — an invalidation must be
+    able to tell the two apart, and the envelope's own `stored_wall` is what
+    tells it.
+    """
+    from app.utils import request_cache as _rc
+
+    ns = "market_load"
+    key = ("cert1885-fresh",)
+    redis = _SeededRedis()
+    redis_key = pic.redis_key_for(ns, key)
+    redis.contents[redis_key] = pic.wire_encode(
+        json.dumps(
+            {
+                "v": 1,
+                "ns": ns,
+                "k": repr(key),
+                "stored_wall": time_module.time() - 3.0,
+                "payload": pic.encode_shared_payload([{"v": 9}]),
+            },
+            separators=(",", ":"),
+        )
+    )
+
+    real_client = _rc.get_shared_async_redis
+
+    async def _client():
+        return redis
+
+    _rc.get_shared_async_redis = _client
+    try:
+        deleted = await pic.forget_stale_cross_worker(
+            [(ns, key)], FEED_RESPONSE_STALE_TTL_LIVE_SECONDS
+        )
+    finally:
+        _rc.get_shared_async_redis = real_client
+
+    assert deleted == 0
+    assert redis_key in redis.contents, (
+        "a 3-second-old sibling republication was deleted by an invalidation "
+        "aimed at a 70-second-old artifact"
+    )

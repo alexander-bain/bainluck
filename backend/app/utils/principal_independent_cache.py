@@ -683,6 +683,10 @@ _stats: dict[str, int] = {
     # CERT-1864: entries evicted for being too old to feed a LIVE page, which is
     # a different (and stricter) bound than the namespace TTL they died inside.
     "dropped_over_age": 0,
+    # CERT-1885: the Redis half of that eviction. Split from `dropped_over_age`
+    # because a local drop with no matching invalidation is the defect CERT-1885
+    # found, and two counters are what make that visible from outside.
+    "cross_worker_invalidated": 0,
     # LAT-P103 cross-worker tier. Split from `hits` on purpose: `hits` answers
     # "did sharing work", these answer "did sharing survive a cold worker",
     # which is the whole claim #2143's residual turns on.
@@ -711,10 +715,15 @@ def clear_shared_builds(namespace: Optional[str] = None) -> None:
     _locks.pop(namespace, None)
 
 
-def drop_entries_older_than(max_age_s: float, *, clock=None) -> int:
+def drop_entries_older_than(
+    max_age_s: float, *, clock=None
+) -> list[tuple[str, tuple]]:
     """Evict every process-local artifact already older than `max_age_s`.
 
-    Returns how many entries were dropped, so a caller can say what it did.
+    Returns the `(namespace, key)` of each entry dropped — the IDENTITIES, not a
+    count, because the caller's next move is `forget_stale_cross_worker` on
+    exactly these (CERT-1885). A count cannot say WHICH artifact to invalidate,
+    and re-deriving the list would mean scanning a store the drop just emptied.
 
     CERT-1864. A shared artifact may legitimately live longer than a live feed
     payload may (`market_load`'s TTL is 120s against a 60s live ceiling), so an
@@ -732,24 +741,96 @@ def drop_entries_older_than(max_age_s: float, *, clock=None) -> int:
     passes the number, exactly as `get_or_build` takes its TTL rather than
     deriving one.
 
-    Process-local ONLY, and the same sentence `clear_shared_builds` carries
-    applies for the same reason: the Redis tier is bounded by its own namespace
-    TTL, so a sibling worker can still promote the same artifact. This bounds
-    the repeat within a worker; it does not abolish it across the fleet.
+    Process-local ONLY. **On its own this does not stop the repeat**
+    (CERT-1885): the cross-worker tier is default-ON, its bound is the namespace
+    TTL, and the next request re-promotes the identical artifact from Redis at
+    the identical age. The local drop is half a repair; `forget_stale_cross_worker`
+    over the returned identities is the other half.
     """
     _clock = clock or time.monotonic
     now = _clock()
-    dropped = 0
+    dropped: list[tuple[str, tuple]] = []
     for namespace, entries in list(_store.items()):
         for key, stored in list(entries.items()):
             stored_at = stored[0]
             if (now - stored_at) > max_age_s:
                 entries.pop(key, None)
-                dropped += 1
+                dropped.append((namespace, key))
         if not entries:
             _store.pop(namespace, None)
-    _stats["dropped_over_age"] += dropped
+    _stats["dropped_over_age"] += len(dropped)
     return dropped
+
+
+async def forget_stale_cross_worker(
+    entries: Iterable[tuple[str, tuple]], max_age_s: float
+) -> int:
+    """Delete the Redis copy of each `(namespace, key)` that is ALSO over `max_age_s`.
+
+    Returns how many keys were deleted. Never raises — an invalidation that
+    cannot reach Redis must not turn a degraded response into a 500.
+
+    CERT-1885 is why this exists, and the finding was exact: evicting the
+    process-local copy of an over-ceiling artifact leaves the Redis copy
+    readable at its namespace TTL, so the very next request promotes the same
+    70-second-old artifact back into the same worker, is refused in turn, and
+    the empty `unavailable` repeats. Half a repair reads exactly like a whole
+    one in a single-request test.
+
+    **It reads before it deletes**, and deletes only what is genuinely over the
+    bound. A sibling worker may have republished a FRESH artifact under this key
+    since this worker read its own copy; deleting that would cost every worker a
+    rebuild to fix a staleness that no longer exists. The read is the envelope's
+    own `stored_wall`, which is the same number `_read_cross_worker` bounds on,
+    so the two cannot disagree about what "too old" means.
+
+    Deliberately generic, like `drop_entries_older_than`: an age bound, not a
+    feed concept. The caller owns the policy and passes the number.
+    """
+    identities = [e for e in (entries or ())]
+    if not identities or not cross_worker_enabled():
+        return 0
+    from app.utils import request_cache as _rc
+
+    try:
+        client = await _shared_redis_client()
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.debug("shared build: no redis client for invalidation", exc_info=True)
+        return 0
+
+    deleted = 0
+    for namespace, key in identities:
+        redis_key = redis_key_for(namespace, key)
+        result = await _rc.bounded_redis_call(
+            lambda k=redis_key: client.get(k), deadline_ms=REDIS_READ_DEADLINE_MS
+        )
+        if result.is_failure or not result.is_ok:
+            continue
+        raw = wire_decode(result.value)
+        if raw is None:
+            continue
+        try:
+            envelope = json.loads(raw)
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(envelope, dict) or envelope.get("ns") != namespace:
+            continue
+        stored_wall = envelope.get("stored_wall")
+        if not isinstance(stored_wall, (int, float)) or isinstance(stored_wall, bool):
+            continue
+        if max(0.0, time.time() - float(stored_wall)) <= max_age_s:
+            # A sibling republished it since we read ours. Leave it alone.
+            continue
+        drop = await _rc.bounded_redis_call(
+            lambda k=redis_key: client.delete(k), deadline_ms=REDIS_READ_DEADLINE_MS
+        )
+        if not drop.is_failure:
+            deleted += 1
+    if deleted:
+        _stats["cross_worker_invalidated"] += deleted
+    return deleted
 
 
 def peek_shared_build(namespace: str) -> Any:

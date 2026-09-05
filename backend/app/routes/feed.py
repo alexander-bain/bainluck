@@ -3522,10 +3522,23 @@ async def get_feed(
             # payload would serve the over-ceiling page N times instead of once.
             if _is_build_leader and _sf_future is not None:
                 _rc.finish_build(_cache_key, _sf_future, result=None)
-            # (a) Drop what can no longer feed a live page. Process-local only —
-            # a sibling worker's Redis copy is still readable at its namespace
-            # TTL, so this bounds the repeat, it does not abolish it.
-            _pic.drop_entries_older_than(FEED_RESPONSE_STALE_TTL_LIVE_SECONDS)
+            # (a) Drop what can no longer feed a live page — from BOTH tiers.
+            # CERT-1885: the process-local drop alone is half a repair. The
+            # cross-worker tier is default-ON and bounded by the namespace TTL
+            # (120s for `market_load`), so the next request promotes the
+            # identical 70-second-old artifact back into this same worker and is
+            # refused in turn — the empty page repeats instead of self-healing.
+            # The Redis half is awaited, not detached: "the next request
+            # rebuilds" is the property being bought, and a background delete
+            # that lands after that request buys nothing. It re-reads before
+            # deleting, so a sibling's fresh republication survives.
+            _dropped_artifacts = _pic.drop_entries_older_than(
+                FEED_RESPONSE_STALE_TTL_LIVE_SECONDS
+            )
+            if _dropped_artifacts:
+                await _pic.forget_stale_cross_worker(
+                    _dropped_artifacts, FEED_RESPONSE_STALE_TTL_LIVE_SECONDS
+                )
             # (b) A prior payload, bounded by the live ceiling. Bounded for a
             # NON-live prior too, deliberately: this request has just proven the
             # world contains an in-progress game, so an older page that does not
