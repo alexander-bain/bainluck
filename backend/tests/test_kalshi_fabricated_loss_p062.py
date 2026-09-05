@@ -30,6 +30,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.services.durable_snapshots import STATUS_CAS_MISS
 from app.tasks import repair_kalshi_fabricated_loss as rail
 from app.tasks.calibration_main_build import (
     CHECKPOINT_IDENTITY,
@@ -90,6 +91,11 @@ class _DurableStore:
         # installs a session-aware version over the top of this one.
         monkeypatch.setattr(ds, "read_snapshot", self.read_in_txn)
         monkeypatch.setattr(ds, "publish_snapshot_in_txn", self.publish_in_txn)
+        # #3191: the obligation ledger's two writers are read-modify-writes, so
+        # they go through the COMPARE-AND-SET publishers. Unpatched, they reach a
+        # real database and every apply in this file refuses.
+        monkeypatch.setattr(ds, "publish_cas_snapshot_standalone", self.publish_cas)
+        monkeypatch.setattr(ds, "publish_cas_snapshot_in_txn", self.publish_cas_in_txn)
         return self
 
     async def read_in_txn(self, db, identity, **kwargs):
@@ -97,6 +103,44 @@ class _DurableStore:
 
     async def publish_in_txn(self, db, envelope):
         return await self.publish(envelope)
+
+    async def publish_cas_in_txn(self, db, envelope, *, expected_generation):
+        return await self.publish_cas(envelope, expected_generation=expected_generation)
+
+    async def publish_cas(self, envelope: DurableEnvelope, *, expected_generation):
+        """Compare-and-set, plus the same three levers.
+
+        The predicate is equality between the generation the caller SAYS it read
+        and the one in the slot NOW — never against the generation the caller
+        proposes. A fake that compared the proposed value would agree with the
+        very bug this models (#3191): two writers that both read `g` and both
+        propose `g+1` would both be told they won.
+        """
+        self.publishes.append(envelope.identity)
+        status = self.forced_status.get(envelope.identity, "ok")
+        if status != "ok":
+            # A forced status is a store that ANSWERED without doing the write.
+            return {
+                "status": status,
+                "identity": envelope.identity,
+                "generation": envelope.generation,
+            }
+        existing = self.rows.get(envelope.identity)
+        stored = existing.generation if existing is not None else None
+        if stored != expected_generation:
+            return {
+                "status": STATUS_CAS_MISS,
+                "identity": envelope.identity,
+                "generation": envelope.generation,
+                "expected_generation": expected_generation,
+            }
+        if envelope.identity not in self.no_op:
+            self.rows[envelope.identity] = envelope
+        return {
+            "status": "ok",
+            "identity": envelope.identity,
+            "generation": envelope.generation,
+        }
 
     # -- inspection --------------------------------------------------------
     def seed(self, identity: str, schema: str, payload) -> None:
@@ -557,7 +601,8 @@ class TestSpecimenTwoRetryCannotLaunderAFailure:
     @pytest.mark.asyncio
     async def test_drift_alone_defeats_nothing_written(self, monkeypatch):
         """No prior debt, but a leg that moved: 'never wrote' is UNPROVEN."""
-        store = _seeded_store(monkeypatch)
+        # The call installs the durable fakes; nothing here reads the store back.
+        _seeded_store(monkeypatch)
         plan = build_plan(self.LEGS)
 
         async def _load():
