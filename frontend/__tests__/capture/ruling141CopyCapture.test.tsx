@@ -151,7 +151,7 @@ const SWEEP = [
   },
   {
     id: "weather-rain",
-    surface: "/weather — the 7-day rain card",
+    surface: "/weather — the daily rain card",
     was: "Daily “Will it rain?” markets from Kalshi",
     now: "Daily “Will it rain?” questions, one per day",
     survives:

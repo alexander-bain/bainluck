@@ -5,6 +5,7 @@ import { probColor, nycToday } from "./data";
 import type { RainDay, MonthlyRain as MonthlyRainType } from "./data";
 import { SourceBadge } from "./SourceBadge";
 import { fetchRain } from "@/lib/weatherApi";
+import { rainCardHeading, rainGridStyle } from "@/lib/rainCardHeading";
 
 /* ── SectionHeader ───────────────────────────────────────────────────── */
 
@@ -125,7 +126,7 @@ export default function RainForecast() {
         <SectionHeader kicker="Precipitation" title="Rain & rainfall" />
 
         <div className="grid grid-cols-1 lg:grid-cols-[1.6fr_1fr] gap-3.5">
-          {/* Left card — 7-day rain */}
+          {/* Left card — the daily NYC rain questions the venue is listing */}
           <div className="bg-surface-card rounded-2xl border border-surface-border p-6">
             <div className="flex items-start justify-between mb-1">
               <div>
@@ -133,7 +134,10 @@ export default function RainForecast() {
                   className="text-text-primary"
                   style={{ fontSize: 20, fontWeight: 600 }}
                 >
-                  NYC · 7-day rain probability
+                  {/* Derived from the tiles below, never a literal: Kalshi lists
+                      two daily NYC questions today, and "7-day" over two tiles
+                      is a horizon the card cannot honour (#3230). */}
+                  {rainCardHeading(rain?.length ?? 0)}
                 </h3>
                 <p className="text-text-secondary text-sm mt-0.5">
                   Daily &ldquo;Will it rain?&rdquo; questions, one per day
@@ -157,7 +161,10 @@ export default function RainForecast() {
               <>
                 <div
                   className="grid gap-2 mt-5 overflow-x-auto"
-                  style={{ gridTemplateColumns: "repeat(7, minmax(70px, 1fr))" }}
+                  // Seven tracks holding two tiles shows five empty columns,
+                  // which is the "7-day" claim made in layout (#3230). The
+                  // tracks follow the rows; at seven this is the old literal.
+                  style={rainGridStyle(rain.length)}
                 >
                   {rain.map((d: RainDay) => {
                     // Was `i === 0` — the first row was ASSERTED to be today
@@ -172,6 +179,9 @@ export default function RainForecast() {
                     return (
                       <div
                         key={d.iso ?? d.date}
+                        // The heading counts these (#3230), so the guard has to
+                        // count the same things the reader does, not a class.
+                        data-testid="rain-day-tile"
                         className="flex flex-col items-center text-center border py-3 px-1"
                         style={{
                           borderColor: isToday ? "#BAE6FD" : "var(--surface-border)",
