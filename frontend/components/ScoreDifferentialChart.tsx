@@ -16,7 +16,8 @@ import {
 import { format, parseISO } from "date-fns";
 import { makeEnsurePoint, fillMinuteGaps } from "@/lib/chartTimeline";
 import { sourceLabel } from "@/lib/sourceColors";
-import { sportVocab, playedCountAbsence } from "@/lib/marketMapUtils";
+import { sportVocab, playedCountAbsence, playedUnits } from "@/lib/marketMapUtils";
+import type { PlayedLinescore } from "@/lib/marketMapUtils";
 import type {
   OddsHistoryPoint,
   BookmakerHistoryPoint,
@@ -69,6 +70,12 @@ interface ScoreDifferentialChartProps {
    * default runs the opposite way from `hasDerivedSpread`'s).
    */
   sportKey?: string;
+  /**
+   * The event's per-set games line (live/073). The chart does not draw it — a
+   * final line has no clock — but a page that HOLDS the games may not tell the
+   * reader it did not record them, so the note reads off this.
+   */
+  linescore?: PlayedLinescore | null;
   /** Prediction market spread/total data from binary contracts */
   pmSpreadData?: {
     implied_spreads?: Record<string, { spread: number; confidence: number; contracts: { threshold: number; probability: number }[] }>;
@@ -122,6 +129,7 @@ export default function ScoreDifferentialChart({
   externalTimeRange,
   onTimeRangeChange,
   sportKey,
+  linescore,
   pmSpreadData,
 }: ScoreDifferentialChartProps) {
   const isClosed = eventStatus === "closed" || eventStatus === "completed";
@@ -250,6 +258,17 @@ export default function ScoreDifferentialChart({
    * `espn_history` is EMPTY for tennis (0 of 798 snapshots on this event).
    * Capturing it is a backend change and is on the bus.
    *
+   * ⚠️ **THAT BACKEND CHANGE SHIPPED (live/073) AND THE PARAGRAPH ABOVE IS NOW
+   * HISTORY.** `/api/events/{id}` carries `linescore` — the per-set games in
+   * our home/away order — for every anchored tennis row. What it does NOT
+   * carry is those games AGAINST A CLOCK: the line is a final (or
+   * as-of-now) state, and `score_history`'s four stamps are set boundaries,
+   * so an actual line drawn here would have one point per set and not one per
+   * game. That is a chart-shape decision with its own design, deliberately not
+   * taken by the ship that made it possible. What live/073 changes here is only
+   * the SENTENCE — a page holding the games may not tell a reader it does not
+   * hold them.
+   *
    * What ships here is the half that does not need it: the widget keeps its
    * projection, and STOPS DRAWING A LINE IN THE WRONG UNIT. A number in the
    * wrong unit is worse than an absent one — it looks sourced.
@@ -278,6 +297,12 @@ export default function ScoreDifferentialChart({
     if (scoreboardCountsTheUnit) return null;
     const vocab = sportVocab(sportKey);
     if (!vocab.scoreboardUnit) return null;
+    // live/073: the page holds the games now. It may still not draw them here —
+    // a final line has no clock — but the claim has to change with the fact, and
+    // the reader is told where the number IS rather than that there is none.
+    if (playedUnits(vocab, { home: null, away: null }, linescore)) {
+      return `The scoreboard reports ${vocab.scoreboardUnit}, so the line below is the books' projected ${vocab.unitSingular} margin. The ${vocab.unit} played are on the ${vocab.totalTitle.toLowerCase()} below.`;
+    }
     return `The scoreboard reports ${vocab.scoreboardUnit}, so ${playedCountAbsence(vocab.unit, isClosed)}. The line below is the books' projected ${vocab.unitSingular} margin.`;
   })();
 

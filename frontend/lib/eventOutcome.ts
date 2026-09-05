@@ -41,6 +41,7 @@
  * the hero costs no extra request.
  */
 
+import { formatLinescore } from "./marketMapUtils";
 import {
   resultScoreLine,
   type ScoreLineKind,
@@ -171,6 +172,15 @@ export interface EventOutcomeInput {
   awayScore: number | null;
   /** The container's decided result, when the event sits in one. */
   tournamentResult?: TournamentResult | null;
+  /**
+   * The per-period line the event itself carries, in home/away order
+   * (`Event.linescore`, live/073).
+   *
+   * On a tennis match `homeScore`/`awayScore` are SETS, so rung 1's rule that
+   * the numbers are already on screen holds for the count and not for the
+   * result: `0` and `3` under the two players do not say `6-3, 6-4, 6-1`.
+   */
+  linescore?: { sets: [number, number][] } | null;
 }
 
 /**
@@ -192,12 +202,29 @@ export function resolveEventOutcome(
   if (homeScore !== null && awayScore !== null && homeScore !== awayScore) {
     const winnerSide = homeScore > awayScore ? "home" : "away";
     const team = winnerSide === "home" ? homeTeam : awayTeam;
+    // live/073: the line, WHERE THE TWO NUMBERS ON SCREEN ARE NOT THE RESULT.
+    //
+    // Rung 1 has always returned `resultLine: null` on the rule that a
+    // basketball hero already prints 112 and 108 and repeating them is
+    // duplication. A tennis hero prints `0` and `3` — the SETS — and
+    // `6-3, 6-4, 6-1` is not those numbers again, it is the answer to the
+    // question they raise. So the line is printed exactly when we hold one,
+    // and every sport that does not stays byte-for-byte as it was.
+    //
+    // Winner's games first, matching the tournament page's line and
+    // `espn_tennis.format_score`, and the winner comes from the SET score
+    // rather than from the games: the loser can finish with more games.
+    const sets = input.linescore?.sets;
+    const line =
+      sets && sets.length > 0
+        ? formatLinescore(sets, { reversed: winnerSide === "away" })
+        : null;
     return {
       winnerName: team.split(" ").pop() || team,
       winnerSide,
-      resultLine: null,
-      resultExplanation: null,
-      resultKind: null,
+      resultLine: line,
+      resultExplanation: line ? `${line}, winner's games first.` : null,
+      resultKind: line ? "score" : null,
       authority: "score",
     };
   }

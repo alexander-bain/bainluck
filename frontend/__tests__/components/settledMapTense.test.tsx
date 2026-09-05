@@ -34,6 +34,15 @@
  * line score. What ships is the two halves that need no new data: the page
  * stops making a promise nothing will keep, and stops miscounting itself.
  *
+ * ── AND THEN POINT 1 SHIPPED TOO (live/073) ─────────────────────────────────
+ *
+ * The backend the paragraph above is waiting on landed: the tennis authority
+ * pass writes ESPN's per-set line onto the event and `/api/events/{id}` serves
+ * it as `linescore`, so `6-3, 6-4, 6-1` — 26 games — is a number this page
+ * holds rather than one it would have to invent. The last describe block below
+ * is point 1, and it keeps the arm above as its control: with no line, the
+ * card says exactly what it says today, in the tense #3136 gave it.
+ *
  * ── THE CONTROLS ARE THE SUITE ───────────────────────────────────────────────
  *
  * Every assertion runs against a second arm that must NOT change:
@@ -106,12 +115,26 @@ function marketsWithHalf() {
   };
 }
 
+/**
+ * The line `/api/events/15301243` serves since live/073, verbatim: ESPN's
+ * competition 182723 in OUR home/away order, and our row has Wu at home.
+ *
+ * 8 games to 18 — 26 played, against the 29 the market quoted pre-game.
+ */
+const WU_ALCARAZ_LINE = {
+  sets: [[3, 6], [4, 6], [1, 6]] as [number, number][],
+  home_games: 8,
+  away_games: 18,
+  source: "espn",
+};
+
 function renderMaps(
   sportKey: string,
   eventStatus: string,
   // `object`, not `ReturnType<typeof markets>`: the base fixture's empty arrays
   // infer as `never[]`, so the two-card variant below cannot satisfy it.
   body: object = markets(),
+  linescore: typeof WU_ALCARAZ_LINE | null = null,
 ) {
   return renderToStaticMarkup(
     <MarketMapSection
@@ -126,6 +149,7 @@ function renderMaps(
       homeSpread={6.5}
       overUnder={29}
       sportKey={sportKey}
+      linescore={linescore}
     />
   );
 }
@@ -209,5 +233,92 @@ describe("#3136 — a column heading counts its cards", () => {
     expect(mapColumnHeading("Games map", 2)).toBe("Games maps");
     // A title with no " map" suffix is left alone rather than sliced.
     expect(mapColumnHeading("Scoring", 2)).toBe("Scoring maps");
+  });
+});
+
+/**
+ * live/073 — POINT 1: THE DIAL LANDS WHERE THE MATCH DID.
+ *
+ * `PRE-GAME 29` was the only reading on a match that finished the day before,
+ * because the two numbers on the scoreboard beside it are SETS and this rail is
+ * drawn in GAMES. It now has both readings, off the line the API serves.
+ *
+ * The specimen is Alex's own event, and the numbers asserted are its numbers:
+ * 26 games played against a 29 pre-game quote. A test that only proved "a
+ * marker appears when a linescore is present" would pass against a mechanism
+ * that never fires on the real payload, which is exactly how the previous
+ * attempt at this ship died.
+ */
+describe("live/073 — where it landed, not just what was expected", () => {
+  it("a FINISHED match shows the games it was actually played to", () => {
+    const text = visibleText(
+      renderMaps("tennis_atp_us_open", "completed", markets(), WU_ALCARAZ_LINE)
+    );
+
+    // Both readings, and the sentence that stood in for the missing one is gone.
+    expect(text).toContain("Final");
+    expect(text).toContain("26 games");
+    expect(text).toContain("Pre-game");
+    expect(text).not.toContain("we did not record the games played");
+    expect(text).not.toContain("The scoreboard reports sets");
+  });
+
+  it("and grades itself against the quote, like every scored sport", () => {
+    const text = visibleText(
+      renderMaps("tennis_atp_us_open", "completed", markets(), WU_ALCARAZ_LINE)
+    );
+
+    expect(text).toContain("Total: expected vs final");
+    expect(text).toContain("Where it landed vs what was expected");
+  });
+
+  it("an IN-PLAY match shows the games played SO FAR", () => {
+    const text = visibleText(
+      renderMaps("tennis_atp_us_open", "live", markets(), {
+        sets: [[3, 6], [1, 3]] as [number, number][],
+        home_games: 4,
+        away_games: 9,
+        source: "espn",
+      })
+    );
+
+    expect(text).toContain("13 games");
+    expect(text).not.toContain("we do not hold the games played yet");
+  });
+
+  it("THE CONTROL: with no line, the card is exactly what #3136 left", () => {
+    const text = visibleText(renderMaps("tennis_atp_us_open", "completed"));
+
+    expect(text).toContain("The scoreboard reports sets, this market quotes games");
+    expect(text).toContain("we did not record the games played");
+    expect(text).not.toContain("Final");
+  });
+
+  it("THE CONTROL: an empty line is an absence, not a 0 – 0", () => {
+    const text = visibleText(
+      renderMaps("tennis_atp_us_open", "completed", markets(), {
+        sets: [] as [number, number][],
+        home_games: 0,
+        away_games: 0,
+        source: "espn",
+      })
+    );
+
+    expect(text).toContain("we did not record the games played");
+    expect(text).not.toContain("0 games");
+  });
+
+  it("THE CONTROL: a point sport ignores the field entirely", () => {
+    /* An NBA page's scoreboard already counts the unit. If a linescore ever
+       appeared on one, the scoreboard still wins — `playedUnits` reads it
+       first, and this is the arm that stops a stray key rewriting a score. */
+    const nba = { ...markets(), home_score: 112, away_score: 108 };
+    const text = visibleText(
+      renderMaps("basketball_nba", "completed", nba, WU_ALCARAZ_LINE)
+    );
+
+    expect(text).toContain("220 points");
+    expect(text).not.toContain("26 points");
+    expect(text).not.toContain("games");
   });
 });
