@@ -551,6 +551,98 @@ def test_nfl_cannot_be_flipped_today_and_its_running_clock_does_not_change_that(
     assert "not a wait" in why
 
 
+def _nfl_pinned_parser_counts() -> tuple[int, int]:
+    """(authority, ingest) fixture counts, re-derived by importing the shipped code.
+
+    Never carried from a scratch script or from the prose it is checking. The
+    whole point of the guard below is that the refusal's number and the parser's
+    number come from two independent reads of the same bytes.
+    """
+    import json
+    from pathlib import Path
+
+    from app.services.statpal_api import StatPalAPIService
+    from app.tasks.config import STATPAL_SPORT_MAPPING
+
+    path = (
+        Path(__file__).parent / "fixtures" / "statpal_nfl_season_schedule_20260903.json"
+    )
+    assert path.exists(), f"no pinned NFL payload at {path}"
+    payload = json.loads(path.read_text())
+    service = StatPalAPIService.__new__(StatPalAPIService)
+
+    authority = StatPalAPIService._parse_nfl_season_schedule(service, payload)
+    ingest = StatPalAPIService._parse_fixtures(
+        service, payload, STATPAL_SPORT_MAPPING["americanfootball_nfl"]
+    )
+    return len(authority), len(ingest)
+
+
+def test_the_nfl_refusal_quotes_the_count_its_own_parsers_actually_read():
+    """CERT-1887's follow-up, `AUTHORITY-028-PIN-REFUSAL-DENOMINATOR`.
+
+    The refusal reason names a live defect to an operator, and the credibility
+    of a named defect is entirely in its numbers. CERT-1887 corrected this text
+    from the live season's **374** games to the **17** the reduced fixture
+    actually retains — a full-census number standing beside a reduced-fixture
+    measurement, which is how a figure gets attributed to a file that never held
+    it. Nothing then stopped the old wording coming back: the sibling tests
+    proved the ingest parser reads zero and that the reason names the defect,
+    but neither one read the denominator.
+
+    So this asserts the relation rather than the digits: **every count in the
+    refusal is a number this test measured by running the shipped parsers over
+    the pinned bytes.** A reversion to 374 fails not because 374 is blacklisted
+    but because no parser produces it. Regenerate the fixture with more games
+    and this fails too — correctly, because the sentence would then be stale.
+    """
+    authority_count, ingest_count = _nfl_pinned_parser_counts()
+
+    # The shape CERT-1875 found: two parsers over one payload, and the blind one
+    # is the only one that writes. If this ever stops holding, the refusal is
+    # describing a defect that no longer exists.
+    assert ingest_count == 0, (
+        "the ingest parser now reads the pinned NFL payload — the refusal text "
+        "is stale and NFL may belong in `DISCOVERY_SCHEDULED_SPORTS`"
+    )
+    assert authority_count > 0, (
+        "the authority parser reads nothing either, so this is not the "
+        "one-blind-parser defect the refusal describes"
+    )
+
+    # CERT-1887's measurement, pinned once. Re-derived above, not carried.
+    assert (authority_count, ingest_count) == (17, 0), (
+        f"the pinned NFL payload now parses {authority_count}/{ingest_count} "
+        "(authority/ingest), not 17/0. Update "
+        "`DISCOVERY_BEAT_WITHOUT_A_WORKING_PARSE['americanfootball_nfl']` and the "
+        "docstring above it in the same commit — the refusal quotes these counts"
+    )
+
+    _, why = flip_permitted(
+        "americanfootball_nfl", _run_of(REQUIRED_STREAK_DAYS, GATE_MEETS)
+    )
+
+    assert f"0 of the {authority_count} matches" in why, (
+        "the refusal must say how many matches the payload holds, in the "
+        f"payload's own terms; expected '0 of the {authority_count} matches' in: {why}"
+    )
+    assert f"reads all {authority_count}" in why, (
+        "the refusal must say the authority parser reads the whole payload — "
+        "that contrast IS the finding, and without the count it is an adjective"
+    )
+
+    # The general form: no invented number survives here. `CERT-1875` is a
+    # citation, not a count, so it is stripped before the sweep.
+    import re
+
+    quoted = {int(n) for n in re.findall(r"\d+", re.sub(r"CERT-\d+", "", why))}
+    assert quoted <= {authority_count, ingest_count}, (
+        f"the refusal quotes {sorted(quoted - {authority_count, ingest_count})}, "
+        "which no parser in this test produced. A count in an operator-facing "
+        "reason must be one that was measured on the bytes being described"
+    )
+
+
 def test_every_stamped_sport_is_accounted_for_as_discoverable_or_named_broken():
     """No stamped sport may be silently outside both lists.
 
