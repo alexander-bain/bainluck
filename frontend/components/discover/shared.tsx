@@ -15,11 +15,15 @@ import {
   type ConfidenceTier,
 } from "@/lib/confidence";
 import { movementPoints } from "@/lib/probabilityDisplay";
+import { animatedProbabilityReading } from "@/lib/animatedProbabilityReading";
 
 // ── Animated Counter ──
 
 export function AnimatedProbability({ value, className, resolved }: { value: number; className?: string; resolved?: boolean }) {
   const [displayed, setDisplayed] = useState(0);
+  // #3119: whether the count-up has BEGUN, as state rather than the `animated`
+  // ref below — a ref cannot re-render, and this decides what is on screen.
+  const [started, setStarted] = useState(false);
   const ref = useRef<HTMLSpanElement>(null);
   const animated = useRef(false);
 
@@ -28,6 +32,7 @@ export function AnimatedProbability({ value, className, resolved }: { value: num
     const observer = new IntersectionObserver(([entry]) => {
       if (entry.isIntersecting && !animated.current) {
         animated.current = true;
+        setStarted(true);
         const duration = 400; // L2-160 — handoff rule: "400ms probability", no bounce
         const start = performance.now();
         const animate = (now: number) => {
@@ -44,12 +49,18 @@ export function AnimatedProbability({ value, className, resolved }: { value: num
     return () => observer.disconnect();
   }, [value]);
 
-  // If value is 0 on a non-resolved market, the probability is missing/unknown
-  if (value === 0 && !resolved) {
+  // #3119: a counter that has not started counting has no reading to print.
+  // It used to print `0%` — a fully-styled, confident zero — for as long as the
+  // card was off screen, which on a live golf hero read "0%  ▲17%" beside a
+  // payload that said 25.2%. The em-dash below was ALREADY this component's
+  // word for "we have no probability"; it just was not applied to this zero.
+  // Full reasoning: `lib/animatedProbabilityReading.ts`.
+  const reading = animatedProbabilityReading({ value, resolved, started, displayed });
+  if (reading.kind === "unknown") {
     return <span ref={ref} className={className}>&mdash;</span>;
   }
 
-  return <span ref={ref} className={className}>{displayed}<span className="text-3xl">%</span></span>;
+  return <span ref={ref} className={className}>{reading.percent}<span className="text-3xl">%</span></span>;
 }
 
 // ── Movement Badge ──
