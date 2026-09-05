@@ -328,11 +328,12 @@ struct OddsChartView: View {
     @StateObject private var vm: OddsChartViewModel
     @State private var selectedDate: Date?
     @State private var isFullscreen = false
-    /// The drawn plot area's width, reported by the chart's own overlay. The
+    /// The drawn plot area's width, reported by each chart's own overlay. The
     /// x-axis needs it to know whether its labels clear each other (#3269); 0
     /// until the first layout pass, which is the documented fallback in
-    /// `xAxisPlan`.
-    @State private var plotWidth: CGFloat = 0
+    /// `xAxisPlan`. One per chart — see `chartView`.
+    @State private var inlinePlotWidth: CGFloat = 0
+    @State private var fullscreenPlotWidth: CGFloat = 0
     @Environment(\.horizontalSizeClass) private var sizeClass
 
     private var chartHeight: CGFloat {
@@ -502,7 +503,8 @@ struct OddsChartView: View {
                         .padding(.vertical, 8)
 
                         chartView(dataPoints: dataPoints, sources: history.winProbSources ?? [:],
-                                  periodMarkers: periodMarkers, moments: moments)
+                                  periodMarkers: periodMarkers, moments: moments,
+                                  plotWidth: $inlinePlotWidth)
                             .onChange(of: selectedDate) { _, newDate in
                                 updateSelectedPoint(date: newDate, dataPoints: dataPoints, history: history)
                             }
@@ -596,7 +598,8 @@ struct OddsChartView: View {
                                 .padding(.vertical, 12)
 
                                 chartView(dataPoints: dataPoints, sources: history.winProbSources ?? [:],
-                                          periodMarkers: periodMarkers, moments: moments)
+                                          periodMarkers: periodMarkers, moments: moments,
+                                          plotWidth: $fullscreenPlotWidth)
                             }
                             legendView(dataPoints: dataPoints, sources: history.winProbSources ?? [:])
                             momentCaption(moments)
@@ -1031,8 +1034,14 @@ struct OddsChartView: View {
         return d * d
     }
 
+    /// `plotWidth` is the caller's OWN measurement, not a shared one. The inline
+    /// chart and the fullscreen sheet are the same view at two widths, and a
+    /// single `@State` between them would let the sheet's 800pt plot decide the
+    /// inline chart's axis for as long as it takes the inline chart to re-report
+    /// its 293pt. Two bindings, no crosstalk.
     private func chartView(dataPoints: [ChartDataPoint], sources: [String: WinProbSourceInfo],
-                           periodMarkers: [PeriodMarker], moments: [ChartMoment]) -> some View {
+                           periodMarkers: [PeriodMarker], moments: [ChartMoment],
+                           plotWidth: Binding<CGFloat>) -> some View {
         // Filter period markers to visible data range
         let visibleMarkers: [PeriodMarker]
         if let minDate = dataPoints.map(\.date).min(),
@@ -1111,7 +1120,8 @@ struct OddsChartView: View {
             }
         }
         .chartXAxis {
-            let plan = Self.xAxisPlan(for: xAxisDomain(for: dataPoints), plotWidth: plotWidth)
+            let plan = Self.xAxisPlan(
+                for: xAxisDomain(for: dataPoints), plotWidth: plotWidth.wrappedValue)
             AxisMarks(values: .stride(by: plan.component, count: plan.count)) { value in
                 AxisGridLine(stroke: StrokeStyle(lineWidth: 0.15))
                     .foregroundStyle(.secondary.opacity(0.3))
@@ -1123,7 +1133,7 @@ struct OddsChartView: View {
             }
         }
         .onPreferenceChange(PlotWidthPreferenceKey.self) { width in
-            plotWidth = width
+            plotWidth.wrappedValue = width
         }
         .chartXSelection(value: $selectedDate)
     }
