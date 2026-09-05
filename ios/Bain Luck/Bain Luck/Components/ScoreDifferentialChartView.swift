@@ -25,6 +25,10 @@ struct ScoreDifferentialChartView: View {
     static let gutterWidth: CGFloat = 22
 
     @State private var selectedDate: Date?
+    /// #3269 — the plot area's width, needed for the same two reasons the MATCH
+    /// chart above needs it: to size the time axis, and to place the period chips
+    /// in chart space rather than plot space.
+    @State private var plotWidth: CGFloat = 0
 
     private var homeShort: String {
         homeTeamAbbrev ?? homeTeam.split(separator: " ").last.map(String.init) ?? "Home"
@@ -337,34 +341,65 @@ struct ScoreDifferentialChartView: View {
             }
         }
         .chartXAxis {
-            // Match OddsChartView's stride-based ticks for identical x-axis labels
-            let domain = chartXDomain(dataPoints: dataPoints)
-            let duration = domain.upperBound.timeIntervalSince(domain.lowerBound)
-            let strideMinutes = duration > 10800 ? 60 : duration > 5400 ? 30 : 15
-            AxisMarks(values: .stride(by: .minute, count: strideMinutes)) { _ in
+            // ONE axis, owned by the MATCH chart. This used to carry its own copy
+            // of a 15/30/60-minute stride rule under a comment claiming it
+            // matched `OddsChartView` — and it had not matched since the stride
+            // ladder landed (#3238). On the same 47-minute domain the two stacked
+            // charts, which are handed the SAME `forcedDomain` precisely so their
+            // times line up, drew 12:30 · 12:40 · 12:50 · 1:00 · 1:10 above and
+            // 12:30 · 12:45 · 1:00 below. Two clocks, one page. The font matches
+            // for the same reason: the plan's fit is measured at 9pt (#3269).
+            let plan = OddsChartView.xAxisPlan(
+                for: chartXDomain(dataPoints: dataPoints), plotWidth: plotWidth)
+            AxisMarks(values: .stride(by: plan.component, count: plan.count)) { value in
                 AxisGridLine(stroke: StrokeStyle(lineWidth: 0.15))
                     .foregroundStyle(.secondary.opacity(0.3))
-                AxisValueLabel(format: .dateTime.hour().minute(), anchor: .top)
-                    .font(.caption2)
+                AxisValueLabel(
+                    format: plan.format,
+                    anchor: OddsChartView.xAxisLabelAnchor(
+                        index: value.index, count: value.count)
+                )
+                .font(.system(size: 9))
             }
         }
         .chartXSelection(value: $selectedDate)
-        // Period marker labels as small floating chips inside the chart
+        // Period marker labels as small floating chips inside the chart.
+        //
+        // #3237's two corrections, which landed on the MATCH chart above and were
+        // left here: `proxy.position(forX:)` is measured from the PLOT AREA's
+        // origin while this GeometryReader spans the WHOLE chart, so every chip
+        // was drawn a gutter's width LEFT of the period it marks, and the first
+        // one sat on the y-axis label. `PeriodChipGeometry.place` also keeps a
+        // chip's own width inside the plot at both ends.
         .chartOverlay { proxy in
             GeometryReader { geo in
-                ForEach(periodMarkers) { marker in
-                    if let xPos = proxy.position(forX: marker.date) {
-                        Text(marker.label)
-                            .font(.system(size: 8, weight: .semibold))
-                            .foregroundStyle(.secondary.opacity(0.7))
-                            .padding(.horizontal, 3)
-                            .padding(.vertical, 1)
-                            .background(.ultraThinMaterial)
-                            .clipShape(RoundedRectangle(cornerRadius: 3))
-                            .position(x: xPos, y: 8)
-                    }
+                let plotFrame = geo[proxy.plotAreaFrame]
+                let placements = PeriodChipGeometry.place(
+                    periodMarkers.enumerated().compactMap { index, marker in
+                        proxy.position(forX: marker.date).map {
+                            PeriodChipGeometry.ChipRequest(
+                                key: index, label: marker.label, rawX: Double($0))
+                        }
+                    },
+                    plotWidth: plotFrame.width,
+                    metrics: .score
+                )
+                Color.clear.preference(
+                    key: PlotWidthPreferenceKey.self, value: plotFrame.width)
+                ForEach(placements, id: \.key) { placement in
+                    Text(periodMarkers[placement.key].label)
+                        .font(.system(size: 8, weight: .semibold))
+                        .foregroundStyle(.secondary.opacity(0.7))
+                        .padding(.horizontal, 3)
+                        .padding(.vertical, 1)
+                        .background(.ultraThinMaterial)
+                        .clipShape(RoundedRectangle(cornerRadius: 3))
+                        .position(x: plotFrame.minX + placement.centerX, y: 8)
                 }
             }
+        }
+        .onPreferenceChange(PlotWidthPreferenceKey.self) { width in
+            plotWidth = width
         }
     }
 
