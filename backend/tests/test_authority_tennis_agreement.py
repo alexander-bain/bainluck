@@ -614,6 +614,10 @@ class TestTheDefaultJoinDidNotMove:
             "statpal_placeholders": 0,
             "statpal_unusable_names": 0,
             "our_unusable_names": 0,
+            # #3226. Every default exclusion publishes at `0` when it did not
+            # fire; a row with nothing retired says so rather than staying
+            # silent. The join itself is unmoved — `both` is still 1.
+            "our_retired": 0,
         }
 
 

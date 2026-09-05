@@ -678,6 +678,9 @@ async def _run_stamp_nfl_statpal_fixtures(
                 away=r["away"],
                 start=r["commence_time"],
                 label=r.get("status"),
+                # The same string as `label`, and deliberately passed twice:
+                # `label` is receipts, `event_status` is consulted (#3226).
+                event_status=r.get("status"),
                 held_id=r.get("statpal_fixture_id"),
             )
             for r in all_rows
