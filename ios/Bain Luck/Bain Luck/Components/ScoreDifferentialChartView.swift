@@ -18,6 +18,12 @@ struct ScoreDifferentialChartView: View {
     var awayTeamAbbrev: String?
     var forcedDomain: ClosedRange<Date>?
 
+    /// The chart's height and its gutter's width, named because the gutter's
+    /// label run is derived from the height (#2903) — two literals that have to
+    /// agree cannot be two literals.
+    static let chartHeight: CGFloat = 160
+    static let gutterWidth: CGFloat = 22
+
     @State private var selectedDate: Date?
 
     private var homeShort: String {
@@ -79,28 +85,32 @@ struct ScoreDifferentialChartView: View {
                 }
 
                 HStack(spacing: 0) {
-                    // Vertical team labels: home on top (positive), away on bottom (negative)
+                    // Vertical team labels: home on top (positive), away on bottom
+                    // (negative). #2903 — the run is stated so a long name truncates
+                    // rather than clipping, and the gutter reserves the rotated
+                    // footprint rather than overdrawing the heading beside it.
                     VStack {
-                        Text(homeShort.uppercased())
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(homeTeamColor ?? .blue)
-                            .lineLimit(1)
-                            .fixedSize()
-                            .rotationEffect(.degrees(-90))
+                        let run = ChartGutter.run(chartHeight: Self.chartHeight, verticalPadding: 8)
+                        ChartGutterLabel(run: run, width: Self.gutterWidth) {
+                            Text(homeShort.uppercased())
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(homeTeamColor ?? .blue)
+                                .lineLimit(1)
+                        }
                         Spacer()
-                        Text(awayShort.uppercased())
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(awayTeamColor ?? .red)
-                            .lineLimit(1)
-                            .fixedSize()
-                            .rotationEffect(.degrees(-90))
+                        ChartGutterLabel(run: run, width: Self.gutterWidth) {
+                            Text(awayShort.uppercased())
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(awayTeamColor ?? .red)
+                                .lineLimit(1)
+                        }
                     }
-                    .frame(width: 22)
+                    .frame(width: Self.gutterWidth)
                     .padding(.vertical, 8)
 
                     chartView(dataPoints: dataPoints)
                 }
-                .frame(height: 160)
+                .frame(height: Self.chartHeight)
 
                 // Legend
                 HStack(spacing: 12) {

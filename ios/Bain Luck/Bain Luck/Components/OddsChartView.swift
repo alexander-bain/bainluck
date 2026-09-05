@@ -279,39 +279,43 @@ struct OddsChartView: View {
                 } else {
                     // Chart with vertical team labels alongside Y-axis
                     HStack(spacing: 0) {
-                        // Vertical team labels on left
+                        // Vertical team labels on left (#2903 — the run is stated so
+                        // a long name truncates instead of clipping, and the gutter
+                        // reserves the rotated footprint instead of overdrawing the
+                        // section heading beside it).
                         VStack {
+                            let run = ChartGutter.run(chartHeight: chartHeight, verticalPadding: 8)
                             // Home team (top)
-                            HStack(spacing: 3) {
-                                if let logo = homeTeamLogo, let url = URL(string: logo) {
-                                    AsyncImage(url: url) { img in
-                                        img.resizable().scaledToFit()
-                                    } placeholder: { EmptyView() }
-                                    .frame(width: 14, height: 14)
+                            ChartGutterLabel(run: run) {
+                                HStack(spacing: 3) {
+                                    if let logo = homeTeamLogo, let url = URL(string: logo) {
+                                        AsyncImage(url: url) { img in
+                                            img.resizable().scaledToFit()
+                                        } placeholder: { EmptyView() }
+                                        .frame(width: 14, height: 14)
+                                    }
+                                    Text(homeShort.uppercased())
+                                        .font(.system(size: 11, weight: .bold))
+                                        .foregroundStyle(teamColors?.home ?? .blue)
+                                        .lineLimit(1)
                                 }
-                                Text(homeShort.uppercased())
-                                    .font(.system(size: 11, weight: .bold))
-                                    .foregroundStyle(teamColors?.home ?? .blue)
-                                    .lineLimit(1)
                             }
-                            .fixedSize()
-                            .rotationEffect(.degrees(-90))
                             Spacer()
                             // Away team (bottom)
-                            HStack(spacing: 3) {
-                                if let logo = awayTeamLogo, let url = URL(string: logo) {
-                                    AsyncImage(url: url) { img in
-                                        img.resizable().scaledToFit()
-                                    } placeholder: { EmptyView() }
-                                    .frame(width: 14, height: 14)
+                            ChartGutterLabel(run: run) {
+                                HStack(spacing: 3) {
+                                    if let logo = awayTeamLogo, let url = URL(string: logo) {
+                                        AsyncImage(url: url) { img in
+                                            img.resizable().scaledToFit()
+                                        } placeholder: { EmptyView() }
+                                        .frame(width: 14, height: 14)
+                                    }
+                                    Text(awayShort.uppercased())
+                                        .font(.system(size: 11, weight: .bold))
+                                        .foregroundStyle(teamColors?.away ?? .red)
+                                        .lineLimit(1)
                                 }
-                                Text(awayShort.uppercased())
-                                    .font(.system(size: 11, weight: .bold))
-                                    .foregroundStyle(teamColors?.away ?? .red)
-                                    .lineLimit(1)
                             }
-                            .fixedSize()
-                            .rotationEffect(.degrees(-90))
                         }
                         .frame(width: chartTeamGutterWidth)
                         .padding(.vertical, 8)
@@ -377,24 +381,25 @@ struct OddsChartView: View {
                                 }
                             }
                             HStack(spacing: 0) {
-                                VStack {
-                                    HStack(spacing: 2) {
-                                        Text(homeShort.uppercased())
-                                            .font(.system(size: 10, weight: .bold))
-                                            .foregroundStyle(teamColors?.home ?? .blue)
-                                            .lineLimit(1)
+                                // #2903 — fullscreen has no fixed chart height, so the
+                                // run is measured rather than assumed.
+                                GeometryReader { geo in
+                                    let run = ChartGutter.run(chartHeight: geo.size.height, verticalPadding: 0)
+                                    VStack {
+                                        ChartGutterLabel(run: run) {
+                                            Text(homeShort.uppercased())
+                                                .font(.system(size: 10, weight: .bold))
+                                                .foregroundStyle(teamColors?.home ?? .blue)
+                                                .lineLimit(1)
+                                        }
+                                        Spacer()
+                                        ChartGutterLabel(run: run) {
+                                            Text(awayShort.uppercased())
+                                                .font(.system(size: 10, weight: .bold))
+                                                .foregroundStyle(teamColors?.away ?? .red)
+                                                .lineLimit(1)
+                                        }
                                     }
-                                    .fixedSize()
-                                    .rotationEffect(.degrees(-90))
-                                    Spacer()
-                                    HStack(spacing: 2) {
-                                        Text(awayShort.uppercased())
-                                            .font(.system(size: 10, weight: .bold))
-                                            .foregroundStyle(teamColors?.away ?? .red)
-                                            .lineLimit(1)
-                                    }
-                                    .fixedSize()
-                                    .rotationEffect(.degrees(-90))
                                 }
                                 .frame(width: chartTeamGutterWidth)
                                 .padding(.vertical, 12)
