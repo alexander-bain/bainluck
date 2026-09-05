@@ -65,28 +65,35 @@ export default function EventList({ title, sub, icon, items, accent }: EventList
                 <div style={{ fontSize: 13, color: "var(--text-primary)", marginBottom: 4 }}>
                   {item.q}
                 </div>
-                <div className="flex items-center" style={{ gap: 6 }}>
-                  <SourceBadge src={item.src} />
+                {/* Wraps rather than truncates. Three items on one line inside
+                    a column this narrow is a squeeze, not a layout: measured on
+                    production copy, even a leader as short as "50 - 74" was cut
+                    to "50 -…" at 390px AND at 1280px, and the close date broke
+                    mid-date across two lines. Each piece now stays whole and
+                    takes the next line when it must. ux/1083, #3147. */}
+                <div className="flex items-center flex-wrap" style={{ gap: 6 }}>
+                  <span style={{ display: "inline-flex", flexShrink: 0 }}>
+                    <SourceBadge src={item.src} />
+                  </span>
                   {/* Which outcome the row's percentage prices. "Hurricane
                       Marie category? — 95%" is 95% of "Category 4 or above",
                       and Category 4 is not Category 5. Omitted when the
                       question already answers itself. See EventMarket.leader. */}
                   {item.leader ? (
                     <span
-                      className="truncate"
+                      data-testid="event-leader"
                       style={{
                         fontSize: 11,
                         fontWeight: 600,
                         color: "var(--text-secondary)",
                       }}
-                      title={item.leader}
                     >
                       {item.leader}
                     </span>
                   ) : null}
                   <span
                     className="font-mono"
-                    style={{ fontSize: 11, color: "var(--text-muted)" }}
+                    style={{ fontSize: 11, color: "var(--text-muted)", flexShrink: 0 }}
                   >
                     {item.closes}
                   </span>

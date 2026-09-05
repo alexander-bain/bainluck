@@ -47,7 +47,9 @@ const flag = (name) => argv.includes(`--${name}`);
 const url = arg("url");
 const out = arg("out");
 if (!url || !out) {
-  console.error("usage: look-local.mjs --url URL --out FILE.png [--width 390] [--cache DIR] [--census SEL=NAME]...");
+  console.error(
+    "usage: look-local.mjs --url URL --out FILE.png [--width 390] [--cache DIR] [--census SEL=NAME]... [--clipped SEL=NAME]...",
+  );
   process.exit(2);
 }
 const width = parseInt(arg("width", "390"), 10);
@@ -56,19 +58,26 @@ const waitFor = arg("wait", null);
 const settleMs = parseInt(arg("settle", "2500"), 10);
 const fullPage = !flag("no-full-page");
 
+// Split on the LAST `=`, never the first: an attribute selector
+// (`[data-testid="x"]`) contains one, and splitting on it yields an invalid
+// selector plus a nonsense name — which still counts SOMETHING and so reads
+// like a real census.
+const specToPair = (spec) => {
+  const cut = spec.lastIndexOf("=");
+  return cut === -1 ? { sel: spec, name: spec } : { sel: spec.slice(0, cut), name: spec.slice(cut + 1) };
+};
+
 const censuses = [];
+// `--clipped SEL=NAME`: of the nodes matching SEL, how many are CUT OFF —
+// scrollWidth past clientWidth, i.e. the text the element exists to show is not
+// all on screen. A plain --census cannot see this defect at all: a row whose
+// answer reads "Categ…" counts exactly the same as one that reads "Category 4
+// or above", so a truncation before/after done with counts alone is two equal
+// numbers and no finding (ux/1083, #3147).
+const clipped = [];
 for (let i = 0; i < argv.length; i++) {
-  if (argv[i] === "--census") {
-    // Split on the LAST `=`, never the first: an attribute selector
-    // (`[data-testid="x"]`) contains one, and splitting on it yields an invalid
-    // selector plus a nonsense name — which still counts SOMETHING and so reads
-    // like a real census.
-    const spec = argv[i + 1];
-    const cut = spec.lastIndexOf("=");
-    const sel = cut === -1 ? spec : spec.slice(0, cut);
-    const name = cut === -1 ? spec : spec.slice(cut + 1);
-    censuses.push({ sel, name });
-  }
+  if (argv[i] === "--census") censuses.push(specToPair(argv[i + 1]));
+  if (argv[i] === "--clipped") clipped.push(specToPair(argv[i + 1]));
 }
 
 if (cacheDir) fs.mkdirSync(cacheDir, { recursive: true });
@@ -205,6 +214,43 @@ for (const { sel, name } of censuses) {
   }
   counts[name] = n;
 }
+
+const clips = {};
+for (const { sel, name } of clipped) {
+  // Same fail-loud contract as the census: a selector matching NOTHING is a
+  // broken probe, not a clean zero — "0 clipped" over an absent element is the
+  // most convincing wrong answer this rail can give.
+  const r = await page.evaluate((s) => {
+    let nodes;
+    try {
+      nodes = document.querySelectorAll(s);
+    } catch {
+      return null;
+    }
+    let cut = 0;
+    const samples = [];
+    for (const el of nodes) {
+      // +1: sub-pixel layout rounding makes an untruncated element report a
+      // scrollWidth a fraction past its clientWidth.
+      if (el.scrollWidth > el.clientWidth + 1) {
+        cut++;
+        if (samples.length < 5) samples.push((el.textContent || "").trim().slice(0, 40));
+      }
+    }
+    return { matched: nodes.length, cut, samples };
+  }, sel);
+  if (r === null) {
+    console.error(`FATAL: invalid clipped selector ${JSON.stringify(sel)}`);
+    await browser.close();
+    process.exit(4);
+  }
+  if (r.matched === 0) {
+    console.error(`FATAL: clipped selector ${JSON.stringify(sel)} matched no elements`);
+    await browser.close();
+    process.exit(4);
+  }
+  clips[name] = { matched: r.matched, cut: r.cut, samples: r.samples };
+}
 await browser.close();
 
 // Assert the artifact EXISTS and is non-empty — a wrapper whose last line is an
@@ -220,5 +266,6 @@ console.log(
     width,
     api: { servedFromCache: served, fetchedUpstream: fetched },
     census: counts,
+    ...(clipped.length ? { clipped: clips } : {}),
   }),
 );

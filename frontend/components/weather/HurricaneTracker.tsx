@@ -75,24 +75,45 @@ export default function HurricaneTracker({ items }: { items: EventMarket[] }) {
               borderTop: i > 0 ? "1px solid var(--surface-border)" : undefined,
             }}
           >
-            <div className="flex items-center" style={{ gap: 8, minWidth: 0 }}>
-              <span style={{ fontSize: 13, color: "var(--text-secondary)" }}>{item.q}</span>
+            {/* The question, then the outcome under it — NOT the three of them
+                competing for one column. They used to share a single `1fr`
+                flex row with the leader carrying `truncate`, and the leader
+                lost every time: measured 8/8 leaders cut at 390px AND at
+                1280px, down to "Bef…", "Categ…" and — for a market asking what
+                the first Atlantic hurricane will be NAMED — "E.".
+
+                It was never a phone-width bug, so there is no breakpoint here.
+                This card sits in NaturalEvents' `1.4fr 1fr 1fr` grid capped at
+                1280px, which makes its content box ~314px on a phone and only
+                ~346-452px on a desktop; the squeeze is universal and a `sm:`
+                rule would have left every desktop reader with "Categ…".
+                ux/1083, #3147. */}
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: 4 }}>
+                {item.q}
+              </div>
               {/* "Hurricane Marie category? — 95%" prices "Category 4 or
                   above", not the storm existing. See EventMarket.leader. */}
-              {item.leader ? (
-                <span
-                  className="truncate"
-                  style={{
-                    fontSize: 12,
-                    fontWeight: 600,
-                    color: "var(--text-primary)",
-                  }}
-                  title={item.leader}
-                >
-                  {item.leader}
+              <div className="flex items-center flex-wrap" style={{ gap: 8 }}>
+                {item.leader ? (
+                  <span
+                    data-testid="hurricane-leader"
+                    style={{
+                      fontSize: 12,
+                      fontWeight: 600,
+                      color: "var(--text-primary)",
+                    }}
+                  >
+                    {item.leader}
+                  </span>
+                ) : null}
+                {/* The badge cannot be squeezed into an ellipsis of its own:
+                    SourceBadge is an `inline-flex` with no `flex-shrink: 0` of
+                    its own, so as a bare flex child it compresses. */}
+                <span style={{ display: "inline-flex", flexShrink: 0 }}>
+                  <SourceBadge src={item.src} />
                 </span>
-              ) : null}
-              <SourceBadge src={item.src} />
+              </div>
             </div>
 
             <div
