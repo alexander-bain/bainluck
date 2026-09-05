@@ -491,6 +491,51 @@ async def _write_refreshed_prices(
 RESULTS_TTL_SECONDS = 900
 RESULTS_PREFIX = "bainluck:tournament-results:"
 
+#: THE LAST SCOREBOARD WE ARE SURE OF (#3304).
+#:
+#: The primary key above expiring does not degrade the slate gracefully — it
+#: inverts it.  `build_slate`'s only route to `DECIDED` needs the fixture to be
+#: NAMED by the scoreboard, so an absent map cannot retire anything, and the
+#: pinned-fixture clock exemption (CERT-544) then prints the entire decided main
+#: draw as "what is on".  Measured on production 2026-09-05 at 19:04Z during the
+#: US Open: 96 rows, 0 in progress, 0 results, 12.2h-old prices, recovering on
+#: its own by 19:25Z.  Reproduced exactly with `order_of_play={}`.
+#:
+#: So the map gets a second, longer-lived copy.  A blip in the fetch now costs
+#: an hour-old ANSWER TO "WHO IS ON" rather than the collapse of the question —
+#: and it costs nothing in price freshness, because prices come from our own
+#: database and never from this key.
+#:
+#: An hour, not a day, and the asymmetry is the point.  Serving a stale map is
+#: only the better error while it is plausibly still true; past that the honest
+#: outcome is the one the primary TTL already gives.  Long enough to ride out
+#: every outage we have measured, short enough that it can never become the
+#: reason a card is wrong for an afternoon.
+RESULTS_LAST_GOOD_TTL_SECONDS = 3600
+RESULTS_LAST_GOOD_PREFIX = "bainluck:tournament-results-last-good:"
+
+
+def _is_last_good(results: dict[str, Any]) -> bool:
+    """Whether this fetch is fit to become the fallback scoreboard.
+
+    ONLY A CLEAN, COMPLETE, NON-EMPTY READ.  `_sync_tournament_results` writes a
+    PARTIAL fetch to the primary key on purpose — half the tours beats none for
+    fifteen minutes, and the `errors` list travels with it so the section can
+    say so.  A partial read must not be preserved for an hour: the half it is
+    missing is a whole tour, and "the WTA draw is not on today" is exactly the
+    lie this would tell through a women's final.
+
+    `order_of_play_complete` is the flag `fetch_tournament_results` already
+    computes for this question (both tours fetched, the event seen, every
+    competition understood, no errors).  It is read here rather than restated —
+    and it is checked ALONGSIDE a non-empty map, not instead of it, because
+    completeness is a fact about the REQUEST and emptiness is a fact about the
+    ANSWER (CERT-548 draws that line for the slate; it holds here too).
+    """
+    return bool(results.get("order_of_play")) and results.get(
+        "order_of_play_complete"
+    ) is True
+
 
 async def _sync_tournament_results(
     tournaments: list[tuple[str, str]] | None = None,
@@ -538,12 +583,25 @@ async def _sync_tournament_results(
             stats["errors"].extend(f"{slug}: {e}" for e in results["errors"])
 
         try:
+            encoded = json.dumps(results, default=str)
             await get_async_redis_client().setex(
                 f"{RESULTS_PREFIX}{slug}",
                 RESULTS_TTL_SECONDS,
-                json.dumps(results, default=str),
+                encoded,
             )
             stats["written"] += 1
+            # The fallback copy is written from the SAME bytes, in the same
+            # try, and only for a read that earned it (`_is_last_good`).  A
+            # separate encode could drift the two apart; a separate try could
+            # leave the hour-long copy alive while the fifteen-minute one it is
+            # supposed to shadow was never written.
+            if _is_last_good(results):
+                await get_async_redis_client().setex(
+                    f"{RESULTS_LAST_GOOD_PREFIX}{slug}",
+                    RESULTS_LAST_GOOD_TTL_SECONDS,
+                    encoded,
+                )
+                stats["last_good_written"] = stats.get("last_good_written", 0) + 1
         except Exception as exc:  # noqa: BLE001
             stats["errors"].append(f"{slug} cache write: {exc}")
 

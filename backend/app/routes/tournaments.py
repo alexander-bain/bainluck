@@ -96,6 +96,12 @@ REGISTERED_TOURNAMENTS: dict[str, dict[str, Any]] = {
 RESULTS_TTL_SECONDS = 900
 RESULTS_PREFIX = "bainluck:tournament-results:"
 
+# And the hour-long shadow of that key (#3304). Written by the same task, only
+# for a clean complete read; the reasoning for its existence and its TTL is on
+# `RESULTS_LAST_GOOD_TTL_SECONDS` in `tasks/tournament_price_refresh.py`. Read
+# here ONLY when the primary is gone.
+RESULTS_LAST_GOOD_PREFIX = "bainluck:tournament-results-last-good:"
+
 # Short, and deliberately not a 24h mirror. #1767 shipped a league route that
 # rebuilt once per 24h and served the stale copy for the other 23h55m; a page
 # whose whole subject is freshness must not inherit that shape. Sixty seconds
@@ -237,16 +243,75 @@ async def _espn_results(slug: str) -> dict[str, Any]:
 
     A cold or empty cache yields an empty results section and the rest of the
     page.  Never a partial page, never a 503, and never a fabricated score.
-    """
-    try:
-        from app.tasks.redis_state import get_async_redis_client
 
-        raw = await get_async_redis_client().get(f"{RESULTS_PREFIX}{slug}")
-        if raw:
-            return json.loads(raw)
-    except Exception as exc:  # noqa: BLE001 — a results section is not a gate
-        logger.warning("tournament results cache read failed for %s: %s", slug, exc)
-    return {"draws": {}, "stats": {}, "errors": []}
+    ═══ #3304: AN ABSENT SCOREBOARD IS NOT A QUIET DAY ═══
+
+    That last paragraph describes what this function RETURNS.  It was not true
+    of what the page then DID with it, and the gap is gotcha #53 in its purest
+    form: the miss path below and a successful fetch on a day with no tennis
+    produced the same bytes, so no consumer could tell them apart.
+
+    `build_slate` is the consumer that cannot afford the confusion.  Its only
+    route to `DECIDED` requires the scoreboard to NAME the fixture, so an empty
+    map retires nothing, and the pinned-fixture clock exemption (CERT-544) then
+    prints the whole decided main draw as the day's card.  Measured on
+    production 2026-09-05 at 19:04Z, mid-tournament: **96 rows, 0 in progress, 0
+    results, 12.2h-old prices**, recovered by 19:25Z.  Reproduced exactly by
+    passing `order_of_play={}` to `build_slate` with the real register.
+
+    So a miss now reaches for the last scoreboard we were sure of before it
+    gives up.  Three states, and they are deliberately distinguishable:
+
+    * **primary hit** — `scoreboard: "live"`, as always.
+    * **last-good hit** — `scoreboard: "last_good"`.  The answer to "who is on"
+      is up to an hour old; every PRICE on the page is current, because prices
+      come from our own database and never from this key.  The cost is bounded
+      and named: a match that finished within the hour lingers on the card
+      instead of moving to results, which is the direction CERT-544 already
+      ruled is the right one to be wrong in.
+    * **neither** — `scoreboard: "unavailable"`, and the behaviour is exactly
+      what it has always been.  This is not a fix for a sustained outage and
+      does not pretend to be one; it removes the fifteen-minute cliff.
+
+    The stamp is set here, on the payload, rather than returned alongside it,
+    because `_espn_results` has two call sites and a flag that only one of them
+    threads is a flag the other one silently loses.
+    """
+    from app.tasks.redis_state import get_async_redis_client
+
+    for prefix, state in (
+        (RESULTS_PREFIX, "live"),
+        (RESULTS_LAST_GOOD_PREFIX, "last_good"),
+    ):
+        try:
+            raw = await get_async_redis_client().get(f"{prefix}{slug}")
+        except Exception as exc:  # noqa: BLE001 — a results section is not a gate
+            logger.warning("tournament results cache read failed for %s: %s", slug, exc)
+            continue
+        if not raw:
+            continue
+        try:
+            payload = json.loads(raw)
+        except Exception as exc:  # noqa: BLE001 — a corrupt slot is a miss
+            logger.warning("tournament results cache decode failed for %s: %s", slug, exc)
+            continue
+        if not isinstance(payload, dict):
+            continue
+        if state == "last_good":
+            logger.warning(
+                "tournament results primary cache missing for %s — "
+                "serving the last-good scoreboard (#3304)",
+                slug,
+            )
+        payload["scoreboard"] = state
+        return payload
+
+    logger.warning(
+        "tournament results unavailable for %s — no primary and no last-good "
+        "scoreboard; the slate falls back to the register (#3304)",
+        slug,
+    )
+    return {"draws": {}, "stats": {}, "errors": [], "scoreboard": "unavailable"}
 
 
 def _hours_since(stamp: datetime | None, at: datetime) -> float | None:
@@ -1108,6 +1173,15 @@ async def _build_sections(
             order_of_play_complete=espn.get("order_of_play_complete") is True,
             authority_links=authority_links,
         )
+        # WHICH SCOREBOARD THE CARD ABOVE WAS BUILT FROM (#3304). `live`,
+        # `last_good` or `unavailable` — set by `_espn_results`, stamped here so
+        # it travels on the same object as the counts it explains.
+        #
+        # `order_of_play_listed: 0` was already the empty-card alarm and it is
+        # still ambiguous by itself: it reads the same whether the scoreboard
+        # was silent or was never reached, and only the second one is anybody's
+        # emergency. This says which, on the payload, without a log.
+        first["slate"]["scoreboard"] = espn.get("scoreboard") or "unavailable"
         # THE FIXTURE SWAP (UX-P134). Empty until the draw ceremony latches
         # `draw_released`; populated by the same `ingest_tournament_draw.py` run,
         # so Thursday is a data change and not a deploy.
