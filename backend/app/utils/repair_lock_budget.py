@@ -60,6 +60,14 @@ from sqlalchemy import text
 #: localised and version-dependent, the code is contractual.
 LOCK_NOT_AVAILABLE_SQLSTATE = "55P03"
 
+#: Postgres raises this SQLSTATE — ``deadlock_detected`` — when it breaks a lock
+#: CYCLE by killing one of the parties. It is a different fact from ``55P03``:
+#: a lock timeout means "I gave up waiting", a deadlock means "waiting could
+#: never have worked". Postgres rolls the victim's whole transaction back, which
+#: is why retrying one is sound where retrying an arbitrary failure is not
+#: (#2782; consumed by ``app/utils/migration_lock_budget``).
+DEADLOCK_DETECTED_SQLSTATE = "40P01"
+
 #: Transaction-scoped ``lock_timeout``. See the module docstring for why this is
 #: ``set_config`` rather than ``SET LOCAL`` (bind params) and why it is issued
 #: per row rather than once (transaction scope).
@@ -99,28 +107,45 @@ def lock_timeout_value(ms: int) -> str:
     return f"{int(ms)}ms"
 
 
-def is_lock_timeout(exc: BaseException) -> bool:
-    """True iff ``exc`` is Postgres refusing to keep WAITING for a lock.
+def has_sqlstate(exc: BaseException, sqlstate: str) -> bool:
+    """True iff ``sqlstate`` appears anywhere in ``exc``'s driver chain.
 
-    Walks the driver-exception chain, because SQLAlchemy wraps asyncpg's
-    ``LockNotAvailableError`` in an ``OperationalError`` and the SQLSTATE lives
-    on the inner one. Anything that is not ``55P03`` returns False and must be
-    re-raised by the caller: a rail that swallowed every exception here would
-    turn a genuine write failure into a row that merely "timed out", which is
-    the gotcha-#36 shape one table over.
+    Walks the chain, because SQLAlchemy wraps asyncpg's and psycopg2's errors in
+    an ``OperationalError`` and the SQLSTATE lives on the inner one. The two
+    drivers spell the attribute differently (``sqlstate`` / ``pgcode``), so both
+    are read; classification is by code and never by message text, which is
+    localised and version-dependent.
     """
     seen: set[int] = set()
     cur: BaseException | None = exc
     while cur is not None and id(cur) not in seen:
         seen.add(id(cur))
         for attr in ("sqlstate", "pgcode"):
-            if getattr(cur, attr, None) == LOCK_NOT_AVAILABLE_SQLSTATE:
+            if getattr(cur, attr, None) == sqlstate:
                 return True
         nxt = getattr(cur, "orig", None)
         if nxt is None or nxt is cur:
             nxt = cur.__cause__
         cur = nxt
     return False
+
+
+def is_lock_timeout(exc: BaseException) -> bool:
+    """True iff ``exc`` is Postgres refusing to keep WAITING for a lock.
+
+    Anything that is not ``55P03`` returns False and must be re-raised by the
+    caller: a rail that swallowed every exception here would turn a genuine
+    write failure into a row that merely "timed out", which is the gotcha-#36
+    shape one table over. In particular a **deadlock** is not a lock timeout —
+    see :func:`is_deadlock`, and note that the attended repair rails
+    deliberately do NOT treat one as retryable.
+    """
+    return has_sqlstate(exc, LOCK_NOT_AVAILABLE_SQLSTATE)
+
+
+def is_deadlock(exc: BaseException) -> bool:
+    """True iff Postgres broke a lock cycle by aborting this transaction."""
+    return has_sqlstate(exc, DEADLOCK_DETECTED_SQLSTATE)
 
 
 class ApplyBudget:

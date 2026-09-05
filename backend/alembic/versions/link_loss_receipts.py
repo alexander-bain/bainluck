@@ -22,6 +22,18 @@ are over a table with days of rows at most. The third is on ``futures_markets``
 (~450k rows), a plain non-concurrent btree over one nullable timestamp: seconds,
 not minutes, and CONCURRENTLY is forbidden inside a migration here.
 
+LOCK ORDER (#2782). ``futures_markets`` is taken FIRST and ``market_match_receipts``
+second, because that is the order live code takes them
+(``match_receipts.verify_links_are_durable`` reads the market, then flushes the
+receipt — and the receipt's foreign key makes the market lock implicit anyway).
+As first written this file did the opposite, and the inversion deadlocked four
+Heroku releases (v4016-v4019, 2026-09-02) against ``match_prediction_markets``,
+leaving production on stale code for ~50 minutes. The reordering is inert for
+any database that already ran this revision — production is past it — and
+reaches the identical end state on a fresh one; what it buys is that
+``tests/test_migration_lock_order.py`` now has nothing to except. The rule and
+the reasoning: ``app/utils/migration_lock_order.py``.
+
 NOTHING IS BACKFILLED, AND THAT IS THE POINT. Every market resolved before this
 release keeps ``settled_at IS NULL``. Stamping them with the release clock would
 assert that hundreds of thousands of markets settled the moment the migration
@@ -45,6 +57,15 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # futures_markets first: see LOCK ORDER in the module docstring (#2782).
+    op.add_column(
+        "futures_markets",
+        sa.Column("settled_at", sa.DateTime(timezone=True), nullable=True),
+    )
+    op.create_index(
+        "ix_futures_markets_settled_at", "futures_markets", ["settled_at"]
+    )
+
     op.add_column(
         "market_match_receipts",
         sa.Column("previous_event_id", sa.Integer(), nullable=True),
@@ -72,16 +93,9 @@ def upgrade() -> None:
         ["previous_event_id"],
     )
 
-    op.add_column(
-        "futures_markets",
-        sa.Column("settled_at", sa.DateTime(timezone=True), nullable=True),
-    )
-    op.create_index(
-        "ix_futures_markets_settled_at", "futures_markets", ["settled_at"]
-    )
-
 
 def downgrade() -> None:
+    # futures_markets first here too — a downgrade deadlocks the same way.
     op.drop_index("ix_futures_markets_settled_at", table_name="futures_markets")
     op.drop_column("futures_markets", "settled_at")
     op.drop_index(

@@ -14,6 +14,7 @@ from app.services.database import Base
 from app.utils.migration_lock_budget import (
     MigrationLockSettings,
     batch_is_retryable,
+    contention_kind,
     lock_timeout_option,
     psycopg2_url,
     resolve_settings,
@@ -125,8 +126,12 @@ def run_migrations_online() -> None:
     Migrations run under a bounded ``lock_timeout`` so that an ``ALTER TABLE``
     which cannot get its lock aborts instead of queueing — a pending
     ``ACCESS EXCLUSIVE`` blocks every later reader of that table, which is how
-    one contended migration blanked Discover for seven minutes (#2724). Full
-    mechanism and the retry's safety argument: ``app/utils/migration_lock_budget``.
+    one contended migration blanked Discover for seven minutes (#2724). A
+    deadlock is retried on the same terms as a timeout — Postgres rolls the
+    victim's whole transaction back, so the same "nothing committed" proof
+    applies — but the cure for one is the ORDER, enforced by
+    ``app/utils/migration_lock_order`` (#2782). Full mechanism and the retry's
+    safety argument: ``app/utils/migration_lock_budget``.
     """
     settings = resolve_settings(os.environ)
     if not batch_is_retryable(_pending_migration_sources(_read_alembic_version())):
@@ -153,12 +158,16 @@ def run_migrations_online() -> None:
         finally:
             connectable.dispose()
 
-    def on_retry(attempt: int, version) -> None:
+    def on_retry(attempt: int, version, exc: BaseException) -> None:
+        # Naming the kind is the point: `lock_timeout` is a straggler and the
+        # next attempt may well win, `deadlock` is a lock-order inversion in the
+        # migration itself (#2782) and the retry is only buying time.
         logging.getLogger("alembic.runtime.migration").warning(
-            "#2724 migration attempt %s/%s hit lock_timeout=%sms with "
+            "#2724 migration attempt %s/%s hit %s (lock_timeout=%sms) with "
             "alembic_version unchanged at %s; retrying in %.1fs",
             attempt,
             settings.attempts,
+            contention_kind(exc),
             settings.lock_timeout_ms,
             version,
             settings.backoff_s,

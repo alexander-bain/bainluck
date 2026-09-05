@@ -28,6 +28,7 @@ import pytest
 from app.utils.migration_lock_budget import (
     DEFAULT_ATTEMPTS,
     batch_is_retryable,
+    contention_kind,
     psycopg2_url,
     DEFAULT_BACKOFF_MS,
     DEFAULT_LOCK_TIMEOUT_MS,
@@ -49,6 +50,32 @@ class _LockTimeout(Exception):
     """Stands in for psycopg2's error: classification is by ``pgcode`` (55P03)."""
 
     pgcode = "55P03"
+
+
+class _Deadlock(Exception):
+    """Postgres breaking a lock CYCLE by killing this transaction (#2782).
+
+    A different SQLSTATE from a lock timeout and a different fact: ``55P03``
+    means "I stopped waiting", ``40P01`` means "waiting could never have
+    worked". It is the shape ``link_loss_receipts`` produced against
+    ``match_prediction_markets`` once ``lock_timeout`` was long enough to enter
+    the cycle.
+    """
+
+    pgcode = "40P01"
+
+
+class _WrappedDeadlock(Exception):
+    """SQLAlchemy's wrapper, with the SQLSTATE only on the driver error inside.
+
+    The real production traceback has this shape, and a classifier that reads
+    only the outer exception would answer False on every deadlock that has ever
+    happened here.
+    """
+
+    def __init__(self):
+        super().__init__("(psycopg2.errors.DeadlockDetected) deadlock detected")
+        self.orig = _Deadlock()
 
 
 class _RealMigrationBug(Exception):
@@ -223,6 +250,85 @@ class TestShouldRetry:
 
     def test_a_version_appearing_where_there_was_none_blocks_the_retry(self):
         assert should_retry(_LockTimeout(), 1, _settings(), None, "abc") is False
+
+
+class TestADeadlockIsContentionToo:
+    """#2782 — the failure mode a bounded ``lock_timeout`` converts into.
+
+    The control arm matters as much as the treatment arm here: widening
+    ``should_retry`` to admit a second SQLSTATE is only safe if every OTHER
+    reason not to retry still holds against it. Each test below is the deadlock
+    twin of a lock-timeout test above.
+    """
+
+    def test_the_two_contention_sqlstates_are_named_and_nothing_else_is(self):
+        assert contention_kind(_LockTimeout()) == "lock_timeout"
+        assert contention_kind(_Deadlock()) == "deadlock"
+        assert contention_kind(_RealMigrationBug()) is None
+
+    def test_the_sqlstate_is_found_through_sqlalchemys_wrapper(self):
+        # The production traceback is an OperationalError wrapping
+        # psycopg2.errors.DeadlockDetected; only the inner one carries 40P01.
+        assert contention_kind(_WrappedDeadlock()) == "deadlock"
+        assert should_retry(_WrappedDeadlock(), 1, _settings(), "abc", "abc") is True
+
+    def test_a_deadlock_that_committed_nothing_is_retried(self):
+        # Before #2782 this was False, and four Heroku releases died on it with
+        # CI green: v4016-v4019, production stale for ~50 minutes.
+        assert should_retry(_Deadlock(), 1, _settings(), "abc", "abc") is True
+
+    def test_a_deadlock_on_the_last_attempt_is_not_retried(self):
+        assert should_retry(_Deadlock(), 4, _settings(attempts=4), "a", "a") is False
+
+    def test_a_deadlock_after_a_partial_commit_is_never_replayed(self):
+        # The version-unchanged proof is the whole safety argument, and it is
+        # not weakened by admitting a second SQLSTATE.
+        assert should_retry(_Deadlock(), 1, _settings(), "abc", "def") is False
+
+    def test_a_transient_deadlock_is_retried_and_then_succeeds(self):
+        attempts = {"n": 0}
+
+        def attempt_once():
+            attempts["n"] += 1
+            if attempts["n"] < 2:
+                raise _Deadlock()
+            return "landed"
+
+        result = run_with_lock_retry(
+            attempt_once,
+            _settings(attempts=4, backoff_ms=0),
+            read_version=lambda: "abc",
+            sleep=lambda _: None,
+        )
+        assert result == "landed"
+        assert attempts["n"] == 2
+
+    def test_the_retry_hook_is_told_which_contention_it_hit(self):
+        # A retry line that cannot distinguish "a straggler finished" from "the
+        # migration takes its locks in the wrong order" is a log nobody can act
+        # on — and the second is a bug that a retry only papers over.
+        seen = []
+
+        def attempt_once():
+            if len(seen) == 0:
+                raise _Deadlock()
+            return "landed"
+
+        run_with_lock_retry(
+            attempt_once,
+            _settings(attempts=2, backoff_ms=0),
+            read_version=lambda: "abc",
+            sleep=lambda _: None,
+            on_retry=lambda attempt, version, exc: seen.append(contention_kind(exc)),
+        )
+        assert seen == ["deadlock"]
+
+    def test_the_worst_case_budget_is_unchanged_by_admitting_deadlocks(self):
+        # A deadlock is detected in about a second — sooner than lock_timeout —
+        # so it can only cost LESS than the wait already accounted for. If this
+        # ever needed a new term, the release phase would have a new way to
+        # overrun that nothing measures.
+        assert max_total_wait_s(_settings()) < RELEASE_PHASE_BUDGET_S
 
 
 class TestRunWithLockRetry:
@@ -477,6 +583,40 @@ class TestEnvPyArmsTheLockTimeout:
         monkeypatch.setenv("ALEMBIC_LOCK_BACKOFF_MS", "0")
         self._run_env_py(monkeypatch, run_migrations=flaky)
         assert state["n"] == 2, "env.py did not retry a transient lock timeout"
+
+    def test_a_deadlock_during_migrations_is_retried(self, monkeypatch):
+        # The armed-on-the-real-path half of #2782. Every unit test above would
+        # stay green if env.py still passed a deadlock straight through.
+        state = {"n": 0}
+
+        def flaky():
+            state["n"] += 1
+            if state["n"] == 1:
+                raise _WrappedDeadlock()
+
+        monkeypatch.setenv("ALEMBIC_LOCK_BACKOFF_MS", "0")
+        self._run_env_py(monkeypatch, run_migrations=flaky)
+        assert state["n"] == 2, "env.py did not retry a deadlocked migration"
+
+    def test_a_deadlocking_batch_that_commits_mid_flight_loses_the_retry(
+        self, monkeypatch
+    ):
+        # The partial-commit defence is independent of the failure class, and
+        # widening the class must not route around it.
+        state = {"n": 0}
+
+        def always_deadlocks():
+            state["n"] += 1
+            raise _WrappedDeadlock()
+
+        monkeypatch.setenv("ALEMBIC_LOCK_BACKOFF_MS", "0")
+        with pytest.raises(_WrappedDeadlock):
+            self._run_env_py(
+                monkeypatch,
+                run_migrations=always_deadlocks,
+                pending_sources=['def upgrade():\n    op.execute("COMMIT")\n'],
+            )
+        assert state["n"] == 1, "a mid-flight-committing batch must not be replayed"
 
     @pytest.mark.parametrize(
         "source",

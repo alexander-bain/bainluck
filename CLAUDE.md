@@ -82,6 +82,7 @@ The core magic of Bain Luck is **perfect semantic understanding** of every event
 | `docs/gotchas-reference.md` | Full gotcha catalog and incident learnings — the canonical text behind the Hot List below | When new gotchas discovered |
 | `docs/claude-md-overflow-2026-08-24.md` | Verbatim text trimmed from this file (2026-08-24 and 2026-08-28): long gotcha prose, feed-ranking detail, CI table, freshness notes, rationale paragraphs | Only when trimming this file again; append a dated section, never rewrite an old one |
 | `docs/quality-audit.md` | Audit script usage, check catalog, CI guard-suite map | When checks added/removed |
+| `docs/release-phase-migration-runbook.md` | Migration lock order (`LOCK_ORDER`), release-failure signatures, the attended pause/release/scale-back sequence (#2782) | When the release phase or the contended-table set changes |
 | `docs/hill-climb-guide.md` | Matching accuracy hill-climb playbook | When layers/gotchas change |
 | `docs/feature-reference.md` / `docs/completed-features.md` | Feature docs / shipped log | When features ship |
 | `docs/design-system.md` | Visual design system: colors, type, motion, voice, components | When tokens or patterns change |
