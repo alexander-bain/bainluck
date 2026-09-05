@@ -1344,6 +1344,14 @@ async def _poll_kalshi_markets():
                 market_backfill_filled=int(
                     _scan_tel.get("market_backfill_filled") or 0
                 ),
+                # Nullable ON PURPOSE: `or 0` here would turn "worked the whole
+                # list" into "was cut off at candidate zero", which is the
+                # loudest possible reading of the healthiest possible beat.
+                market_backfill_truncated_after=(
+                    None
+                    if _scan_tel.get("market_backfill_truncated_after") is None
+                    else int(_scan_tel["market_backfill_truncated_after"])
+                ),
                 # #2927: the discovery receipt, carried to the artifact. Same
                 # omission as the market_backfill_* block above and the same
                 # fix — the fetch measured it, nobody copied it, so it reached

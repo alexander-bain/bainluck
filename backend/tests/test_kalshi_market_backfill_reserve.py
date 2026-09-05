@@ -365,6 +365,186 @@ def test_backfill_telemetry_reaches_the_scan_report():
 
 
 # ---------------------------------------------------------------------------
+# The cut the report could not describe (lane1b/041, #2927 sizing).
+#
+# `market_backfill_skipped_past_deadline` covers ONE deadline case: the step
+# never started. The loop's own mid-flight `break` wrote nothing, so a backfill
+# terminated by the deadline every beat reported False — which reads as "the
+# reserved floor is holding", i.e. as headroom.
+#
+# Production, the 24-beat ring read 2026-09-05 07:00Z:
+#   candidates 6,968 -> 10,901 over 46h while `filled` stayed flat at 367-496.
+#   corr(filled, candidates) = -0.869. Supply FALLING as demand rises is the
+#   signature of a time-bound step, and 10,901 candidates at the loop's
+#   mandatory 0.3s pre-request sleep is 3,270s of sleep inside beats that
+#   finish in 327s — it cannot have reached the end of the list on any of them.
+#   `skipped_past_deadline` was False on all 24.
+#
+# That is the number that decides whether a new heavy series class can be
+# admitted at all, so it has to be legible from the artifact.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_backfill_the_deadline_cuts_off_says_where_it_stopped(
+    monkeypatch,
+):
+    """RED-FIRST. Pre-fix, the only deadline field a reader can see stays False
+    and nothing anywhere records that most of the list was never attempted."""
+    import asyncio as _asyncio
+    import time as _time
+
+    clock = _FakeClock()
+    monkeypatch.setattr(_time, "monotonic", clock.monotonic)
+    monkeypatch.setattr(_asyncio, "sleep", clock.sleep)
+
+    svc = KalshiAPIService()
+    tickers = [f"KXMLBGAME-26AUG26BOSMI{i:02d}" for i in range(40)]
+
+    async def fake_get_events(
+        status=None, series_ticker=None, with_nested_markets=True,
+        limit=200, cursor=None, deadline=None, progress_cb=None, **kw,
+    ):
+        if series_ticker == "KXMLBGAME":
+            return ([{"event_ticker": t, "title": t, "category": "Sports",
+                      "markets": []} for t in tickers], None)
+        return ([], None)
+
+    calls: list[str] = []
+
+    async def fake_get_markets(status=None, event_ticker=None, limit=200, **kw):
+        calls.append(event_ticker)
+        # Each candidate costs 3s on top of the loop's own 0.3s sleep — 40 of
+        # them is 132s against an 80s budget, so the deadline lands partway
+        # down the list. That is the production shape, where the list is 10,901
+        # long at 0.3s of mandatory sleep each and the whole beat takes 327s.
+        clock.t += 3.0
+        return ([{"ticker": f"{event_ticker}-BOS", "yes_bid": 55}], None)
+
+    monkeypatch.setattr(svc, "get_events", fake_get_events)
+    monkeypatch.setattr(svc, "get_markets", fake_get_markets)
+
+    tel: dict = {}
+    await svc._fetch_all_events_unfiltered(
+        deadline=clock.t + 80.0, telemetry=tel
+    )
+
+    assert tel["market_backfill_candidates"] == 40
+    assert 0 < len(calls) < 40, (
+        "precondition: the deadline must cut the loop off PARTWAY, otherwise "
+        f"this test proves nothing. attempted={len(calls)}"
+    )
+    assert tel["market_backfill_skipped_past_deadline"] is False, (
+        "precondition: the step DID start — this is the case the existing "
+        "field cannot describe, and the reason a reader saw headroom"
+    )
+    assert tel["market_backfill_truncated_after"] == len(calls), (
+        "the beat must say how many candidates it got through before the "
+        "deadline; without it a starved backfill is indistinguishable from a "
+        "finished one"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_backfill_that_finishes_the_list_reports_no_cut(monkeypatch):
+    """The other half, and the reason the field is nullable rather than an int.
+
+    `or 0` on the carry would render the healthiest possible beat as "cut off
+    at candidate zero" — the loudest reading of the quietest fact.
+    """
+    import asyncio as _asyncio
+    import time as _time
+
+    clock = _FakeClock()
+    monkeypatch.setattr(_time, "monotonic", clock.monotonic)
+    monkeypatch.setattr(_asyncio, "sleep", clock.sleep)
+
+    svc = KalshiAPIService()
+
+    async def fake_get_events(
+        status=None, series_ticker=None, with_nested_markets=True,
+        limit=200, cursor=None, deadline=None, progress_cb=None, **kw,
+    ):
+        if series_ticker == "KXMLBGAME":
+            return ([{"event_ticker": RED_FIRST_TICKER,
+                      "title": "Red Sox at Marlins",
+                      "category": "Sports", "markets": []}], None)
+        return ([], None)
+
+    async def fake_get_markets(status=None, event_ticker=None, limit=200, **kw):
+        return ([{"ticker": f"{event_ticker}-BOS", "yes_bid": 55}], None)
+
+    monkeypatch.setattr(svc, "get_events", fake_get_events)
+    monkeypatch.setattr(svc, "get_markets", fake_get_markets)
+
+    tel: dict = {}
+    await svc._fetch_all_events_unfiltered(
+        deadline=clock.t + 240.0, telemetry=tel
+    )
+
+    assert tel["market_backfill_filled"] == 1
+    assert tel["market_backfill_truncated_after"] is None, (
+        "a completed backfill must not report a cut"
+    )
+
+
+def test_the_cut_is_carried_into_the_report_and_survives_json():
+    """The carry is the step this block was omitted from twice (#2214, #2927).
+
+    A field that exists only in `kalshi_api`'s local telemetry dict is not
+    instrumentation — it is the same defect wearing a third hat.
+    """
+    import ast
+    import json
+    from pathlib import Path
+
+    from app.utils.kalshi_scan_report import KalshiScanReport
+
+    data = KalshiScanReport(market_backfill_truncated_after=386).to_dict()
+    assert data["market_backfill_truncated_after"] == 386
+    assert json.loads(json.dumps(data))["market_backfill_truncated_after"] == 386
+    assert KalshiScanReport().to_dict()["market_backfill_truncated_after"] is None
+
+    # The call site, parsed rather than grepped: both fields above were correct
+    # in isolation and unreachable in production because the one call joining
+    # them omitted the keyword.
+    src = (Path(__file__).resolve().parents[1]
+           / "app" / "tasks" / "kalshi.py").read_text()
+    constructions = [
+        node for node in ast.walk(ast.parse(src))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "KalshiScanReport"
+    ]
+    assert constructions, "poll_kalshi no longer builds a KalshiScanReport"
+    for call in constructions:
+        kwargs = {kw.arg for kw in call.keywords if kw.arg}
+        assert "market_backfill_truncated_after" in kwargs, (
+            "the beat measures the cut and drops it on the floor — #2214 and "
+            "#2927 verbatim, for the third time"
+        )
+
+        # And it must carry None THROUGH. Every sibling field on this call is
+        # coerced with `int(... or 0)`, which is right for a count and wrong
+        # here: it renders "worked the whole list" as "cut off at candidate
+        # zero", the loudest reading of the healthiest beat. A mutation to the
+        # `or 0` shape passes every other assertion in this file, so the guard
+        # is on the call site's shape — the value expression has to mention
+        # `None` somewhere, which `int(x or 0)` cannot.
+        value = next(
+            kw.value for kw in call.keywords
+            if kw.arg == "market_backfill_truncated_after"
+        )
+        assert any(
+            isinstance(node, ast.Constant) and node.value is None
+            for node in ast.walk(value)
+        ), (
+            "the carry coerces the cut to an int, so a beat that finished its "
+            "list reports being cut off at candidate 0"
+        )
+
+
+# ---------------------------------------------------------------------------
 # G2 / G3 — the acceptance's must-not-regress controls.
 #
 # These pass before AND after. That is deliberate: they are the kill, not the

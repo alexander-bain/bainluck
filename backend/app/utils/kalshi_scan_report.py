@@ -187,6 +187,25 @@ class KalshiScanReport:
     market_backfill_skipped_past_deadline: bool = False
     #: Events the backfill actually put markets into.
     market_backfill_filled: int = 0
+    #: How many candidates the backfill had ATTEMPTED when the deadline cut the
+    #: loop off, or ``None`` when it worked the whole list.
+    #:
+    #: The field above is not this one and cannot stand in for it: it is True
+    #: only when the step never STARTED, and the loop's own mid-flight `break`
+    #: wrote nothing anywhere. So a backfill terminated by the deadline on every
+    #: single beat reported `skipped_past_deadline: False` — which reads as "the
+    #: reserved floor is holding", i.e. as headroom — and the report had no way
+    #: to say the opposite. Measured on the 24-beat ring 2026-09-05: candidates
+    #: grew 6,968 -> 10,901 while `filled` stayed flat at 367-496, a correlation
+    #: of **-0.869** — supply falling as demand rises, which is the signature of
+    #: a time-bound step, not a demand-driven one. The loop sleeps 0.3s per
+    #: candidate before its request, so 10,901 candidates is 3,270s of sleep
+    #: alone against beats that finish in 327s: it cannot have reached the end.
+    #:
+    #: This is the #2214 / #2927 shape a third time — a number the code knew and
+    #: no reader could get — and it is the one that decides whether a new series
+    #: class can be admitted at all, so it is the one that has to be legible.
+    market_backfill_truncated_after: Optional[int] = None
 
     # --- the discovered half of the rescue list (#2927) -------------------
     #: The series-discovery receipt for this beat, bounded for persistence by
