@@ -79,6 +79,98 @@ def test_no_raw_sql_tests_an_untyped_bind_for_null():
     )
 
 
+#: A `--` comment, to end of line. Inside a `text()` string it is a comment to
+#: POSTGRES and not to SQLAlchemy, which is the entire point of the guard below.
+_SQL_LINE_COMMENT = re.compile(r"--[^\n]*")
+
+def _binds(sql: str) -> set[str]:
+    """What SQLAlchemy itself would bind — asked, never re-derived.
+
+    A hand-rolled `:(\\w+)` disagrees with `text()` in ways that matter: on the
+    POSIX class `[[:space:]]` SQLAlchemy's own pattern backtracks past the
+    trailing colon and binds `spac`, while the naive one reads `space`. Two
+    scanners that disagree turn this guard into a false-positive generator
+    (it was one, on first run, over `ladder_coherence` and the calibration
+    sentinel). So both sides of every comparison below go through `text()`.
+    """
+    from sqlalchemy import text
+
+    return set(text(sql)._bindparams)
+
+
+def _sql_constants():
+    """Every module-level `*_SQL` string this app defines, by import.
+
+    Discovered rather than listed: a listed set of statements is a set somebody
+    forgets to add the next one to.
+    """
+    import importlib
+
+    for path in sorted(APP.rglob("*.py")):
+        rel = path.relative_to(APP.parent).with_suffix("")
+        module_name = ".".join(rel.parts)
+        try:
+            module = importlib.import_module(module_name)
+        except Exception:  # noqa: BLE001 — an unimportable module is another test's problem
+            continue
+        for attr in dir(module):
+            if not attr.endswith("_SQL"):
+                continue
+            value = getattr(module, attr, None)
+            if isinstance(value, str) and value.strip():
+                yield f"{module_name}.{attr}", value
+
+
+def test_no_sql_comment_smuggles_a_bind_parameter():
+    """A `:name` inside a `--` comment is a BIND, not a comment, to `text()`.
+
+    Found the hard way, on the very fix this file guards. The explanatory
+    comment added above `_WORK_SQL`'s cast cited its sibling rail as
+    `<colon>457-458, <colon>758`, and SQLAlchemy compiled those line numbers
+    into `$1` and `$2` — renumbering every real parameter behind them and
+    failing the statement with ``A value is required for bind parameter '457'``
+    before Postgres saw it. Prose about SQL is not outside the SQL.
+
+    The predicate is exact rather than a spelling rule: compare the binds
+    `text()` actually finds against the binds that survive stripping every
+    comment. A name that exists only inside a comment is smuggled.
+    """
+    offenders: list[str] = []
+    for name, sql in _sql_constants():
+        smuggled = sorted(_binds(sql) - _binds(_SQL_LINE_COMMENT.sub("", sql)))
+        if smuggled:
+            offenders.append(f"{name}: {smuggled}")
+
+    assert not offenders, (
+        "these bind parameters exist ONLY inside a `--` comment, so nothing "
+        "supplies them and the statement fails before Postgres runs it. Write "
+        "the reference without a leading colon:\n  " + "\n  ".join(offenders)
+    )
+
+
+def test_the_smuggled_bind_guard_catches_its_own_specimen():
+    """The over-reach control, with the exact text that failed in CI.
+
+    And the false-positive control beside it: a POSIX character class is not a
+    smuggled bind, however much a naive scanner wants it to be.
+    """
+    smuggling = """
+        SELECT 1
+        -- every sibling rail casts it (repair_polymarket_leg_label :457-458, :758)
+        WHERE col = :sport
+    """
+    assert sorted(_binds(smuggling) - _binds(_SQL_LINE_COMMENT.sub("", smuggling))) == [
+        "457",
+        "758",
+    ]
+
+    cleaned = smuggling.replace(":457-458, :758", "lines 457-458 and 758")
+    assert _binds(cleaned) == {"sport"}
+
+    posix = r"SELECT regexp_replace(name, '[[:space:]]+', ' ', 'g') WHERE id = :mid"
+    assert not _binds(posix) - _binds(_SQL_LINE_COMMENT.sub("", posix))
+
+
 def test_the_guard_catches_the_specimen_it_was_written_for():
     """The over-reach control: a pattern that matches nothing proves nothing.
 

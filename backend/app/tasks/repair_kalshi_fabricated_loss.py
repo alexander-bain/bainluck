@@ -512,14 +512,19 @@ _WORK_SQL = f"""
       AND fm.resolution_date >= NOW() - INTERVAL '{PROVABLY_PURGED_AGE_DAYS} days'
       -- CAST is NOT decoration. asyncpg prepares this statement with no
       -- parameter types, so Postgres must infer them from the text alone, and
-      -- the FIRST occurrence of a parameter fixes its type: `$1 IS NULL` fixes
-      -- `$1` as `unknown`, the later `= $1` can no longer resolve it, and the
-      -- prepare dies with `AmbiguousParameterError: could not determine data
-      -- type of parameter $1` — before a row is read, whatever value is bound.
-      -- That is why the keyset below casts both halves, and why every sibling
-      -- rail writes `:sport::text` on BOTH sides (`repair_polymarket_leg_label`
-      -- :457-458, :758). This line was the one that did not, so the drain's
-      -- endpoint has never completed a work selection.
+      -- the FIRST occurrence of a parameter fixes its type. Untyped, the
+      -- IS NULL test fixes it as `unknown`, the later equality can no longer
+      -- resolve it, and the prepare dies with AmbiguousParameterError before a
+      -- row is read, whatever value is bound. That is why the keyset below
+      -- casts both halves, and why every sibling rail casts this one on BOTH
+      -- sides (repair_polymarket_leg_label, lines 457-458 and 758). This line
+      -- was the one that did not, so the drain's endpoint had never completed
+      -- a work selection.
+      --
+      -- No colon-prefixed word may appear in this comment: SQLAlchemy's text()
+      -- parses one as a BIND, and a line reference written as a colon plus
+      -- digits compiled to a parameter nobody supplies. Caught by the real
+      -- Postgres gate on the first run of the fix for this very line.
       AND (CAST(:sport AS text) IS NULL OR fm.llm_sport_category = CAST(:sport AS text))
       AND (
             CAST(:after_date AS timestamptz) IS NULL
