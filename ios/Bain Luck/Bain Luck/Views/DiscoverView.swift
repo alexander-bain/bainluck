@@ -820,7 +820,11 @@ struct DiscoverView: View {
                     .padding(.horizontal)
                     .padding(.bottom, 8)
 
-                if vm.loading && vm.items.isEmpty {
+                // While the background recovery ladder runs (#3180) the failure card
+                // STAYS — its own retry attempts must not flicker the screen back to a
+                // full-page spinner every few seconds, and the card is where the
+                // "still trying" line lives.
+                if vm.loading && vm.items.isEmpty && !vm.isRecovering {
                     VStack(spacing: 12) {
                         ProgressView()
                         Text("Loading predictions…")
@@ -829,7 +833,7 @@ struct DiscoverView: View {
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 60)
-                } else if vm.error != nil, vm.items.isEmpty {
+                } else if vm.error != nil || vm.isRecovering, vm.items.isEmpty {
                     VStack(spacing: 16) {
                         Image(systemName: "arrow.clockwise")
                             .font(.title2)
@@ -837,7 +841,9 @@ struct DiscoverView: View {
                         Text("Couldn't load feed")
                             .font(.subheadline.weight(.medium))
                             .foregroundStyle(.primary)
-                        Text("Pull down to retry")
+                        // Honest about what the app is doing: it keeps trying by
+                        // itself, so the reader is not being asked to rescue it.
+                        Text(vm.isRecovering ? "Still trying…" : "Pull down to retry")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         Button("Retry") {
