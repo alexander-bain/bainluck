@@ -9,6 +9,8 @@ Two entry points, both on the repairs-as-endpoints rail (gotcha #48 — a repair
 an endpoint that returns its own census, never an incantation):
 
     POST /api/admin/repairs/kalshi-fabricated-loss-census        # never writes
+    ...a WALK (CAL-P1012, #3195): resume with ?after_id=<walk.next_after_id>
+    until it reports ``walk.complete: true``; that call carries the totals
     POST /api/admin/repairs/kalshi-fabricated-loss?apply=false   # dry-run plan
     ...returns ``plan_hash`` and persists the plan artifact
     POST /api/admin/repairs/kalshi-fabricated-loss?apply=true&plan_hash=<hash>
@@ -27,7 +29,8 @@ and the prior state the apply compares on. Save it before the next dry-run::
         apply=false  → save the WHOLE response as batchN-plan.json, read it
         apply=true&plan_hash=<hash from that response>
                      → save the whole response as batchN-applied.json
-    ...then re-census; finished is the addressed bands measuring 0.
+    ...then re-census; finished is the addressed bands measuring 0 on a walk
+       that reports ``complete: true`` — which, until CAL-P1012, no walk could.
 
 CAL-P1008-R (CERT-965) — AND THE UNDO IS A COMMAND, not a capture discipline.
 The block above makes the plan capturable, but capture is then an operator step,
@@ -241,8 +244,69 @@ _MAX_SECONDS = 25.0
 #: ``?sport=`` shard hint the operator needs — into a dead request that says
 #: nothing. The keyset did not cause this: it removed an OFFSET, which only ever
 #: made the sort more expensive. An attended drain should expect to shard.
-_CENSUS_TIMEOUT_MS = 22_000
+#:
+#: CAL-P1012 / #3195 — ``_CENSUS_TIMEOUT_MS`` WENT DOWN, not up, and it now bounds
+#: ONE CHUNK rather than the whole census. At 22,000 the census was measured dead
+#: twice warm against production (2026-09-05, `elapsed_s` 22.1 and 22.2,
+#: `QueryCanceledError`), so the standing population had no number at all. Raising
+#: it was refused on the issue's own terms: a bound raised until the query fits is
+#: not a bound, and this population only grows. A chunk that cannot finish inside
+#: 8s is too WIDE, and the walk halves it (see :func:`census`) instead of waiting
+#: — so the ceiling is now a signal the walk acts on, not a wall it dies at.
+_CENSUS_TIMEOUT_MS = 8_000
 _SELECT_TIMEOUT_MS = 18_000
+
+#: CAL-P1012 / #3195 — the census walk's own bounds.
+#:
+#: MEASURED against production 2026-09-05 through the read-only rail, and the
+#: numbers are why the walk is adaptive rather than fixed-width. ``market_id``
+#: on ``futures_outcomes`` runs 1 .. 60,261,730 over 3,968,932 legs, and the
+#: density is skewed ~6x toward the recent end:
+#:
+#:     (0, 3M]          238,345 legs      bare COUNT 2.8s   ·  full aggregate 4.6s
+#:     (3M, 30M]      1,193,066 legs      bare COUNT 9.7s
+#:     (30M, 57M]     ~1,060,000 legs     bare COUNT exceeded the rail's 10s bound
+#:     (57M, 60.3M]   1,476,795 legs      bare COUNT 9.2s  ·  full aggregate DIED
+#:
+#: So no single width is safe everywhere: the width that finishes in 4.6s at the
+#: bottom of the id space dies at the top. ``_CENSUS_CHUNK_IDS`` is the width the
+#: walk STARTS at; a chunk that trips :data:`_CENSUS_TIMEOUT_MS` halves it and
+#: retries the same range, and a chunk that lands well inside its budget grows
+#: back toward the default (never past it, so the two moves cannot oscillate).
+#: ``_CENSUS_MIN_CHUNK_IDS`` is the floor: below it the walk stops and reports
+#: ``measured: false`` rather than thrashing, because a width that small on this
+#: table means something other than width is wrong.
+#:
+#: THE DEFAULT WIDTH WAS MEASURED WITH THE EXACT SHIPPING STRING, not a sketch of
+#: it: :data:`_CENSUS_SQL` with only its two binds replaced by literals, run
+#: through the read-only rail against production on 2026-09-05 over
+#: ``(59,900,000, 60,300,000]`` — the densest 400k ids there are. **4.1s warm,
+#: 562 markets, 3,246 outcomes, 6 cells.** So the default sits at about half the
+#: chunk bound at the worst place in the table, which is the headroom a contended
+#: run needs; where it is not enough the walk halves, which is the point.
+_CENSUS_CHUNK_IDS = 400_000
+_CENSUS_MIN_CHUNK_IDS = 5_000
+
+#: Per-CALL wall clock, against the web dyno's 30s HTTP wall. A census that runs
+#: out of budget is a NORMAL outcome: it banks its progress and hands back a
+#: resume cursor. It is deliberately under the 25s :data:`_MAX_SECONDS` the write
+#: half uses, because the census must still have room to BANK what it measured —
+#: a walk that spends its whole budget reading and dies before it writes has done
+#: the work twice and kept neither half.
+#:
+#: 18.0 IS ARITHMETIC, NOT A ROUND NUMBER. The budget is checked at the TOP of the
+#: loop, so a call can overrun it by at most one chunk: 18.0s of walking, plus one
+#: chunk that starts just under the line and burns its whole 8s bound, plus the
+#: durable bank — about 27s against the web dyno's 30s HTTP wall. That is also why
+#: the budget cannot simply be raised to fill the wall: at 22.0 the same worst
+#: case is 31s, and a census that dies in transit banks nothing and hands back no
+#: cursor, which is the failure this whole change is undoing.
+#:
+#: The consequence is stated plainly rather than hidden: a full walk of today's
+#: table is several calls, not one. The dense tail alone measured ~4.1s per 400k
+#: chunk, and the drain's operator resumes with ``?after_id=`` until a call
+#: reports ``complete: true``. Several honest calls beat one dead one.
+_CENSUS_WALL_BUDGET_S = 18.0
 
 #: Legs fetched per venue page. Kalshi caps this at 1000; the biggest observed
 #: affected event (a PGA round-leader field) carried 152.
@@ -337,6 +401,31 @@ def declared_curve_movement(
 # without going anywhere near the write path.
 # ---------------------------------------------------------------------------
 
+#: CAL-P1012 / #3195 — THE BOUND IS INSIDE THE GROUPED SUBQUERY, and that is the
+#: whole fix. The predicate has to restrict the aggregate that is timing out, not
+#: the join above it.
+#:
+#: The issue's cheapest-first list opens with ``?sport=``, and it is the wrong
+#: shard here on two counts, both checked before this was written:
+#:
+#: 1. ``llm_sport_category`` is a ``futures_markets`` column, so it lives on the
+#:    OUTER side of the join. Postgres does not push a join qualifier through a
+#:    ``GROUP BY`` on the join key, so the inner pass over every leg in
+#:    ``futures_outcomes`` runs in full whatever sport is asked for. It would
+#:    have shipped a parameter that changes the ANSWER without changing the COST.
+#: 2. It is not a partition. ``llm_sport_category`` is nullable, so a census
+#:    summed over the distinct non-null sports omits every null-sport market and
+#:    reports an addressed band as empty when it is not — which is the one
+#:    failure this census exists to catch.
+#:
+#: ``market_id`` has neither problem. It is the grouping key itself, it is
+#: index-backed (``ix_futures_outcomes_market_id``), and a half-open range walk
+#: over it partitions the population exactly, so the chunk totals sum to the
+#: whole census by construction rather than by an operator's arithmetic.
+#:
+#: Both bounds are CAST. asyncpg prepares this with no parameter types and infers
+#: them from the text alone — the same trap that left the work selection's
+#: ``:sport`` unable to prepare at all (see ``_WORK_SQL``).
 _CENSUS_SQL = f"""
     SELECT fm.source AS source,
            fm.mutually_exclusive AS mutex,
@@ -347,6 +436,8 @@ _CENSUS_SQL = f"""
       SELECT fo.market_id,
              COUNT(*) AS n_out
       FROM futures_outcomes fo
+      WHERE fo.market_id > CAST(:lo AS bigint)
+        AND fo.market_id <= CAST(:hi AS bigint)
       GROUP BY fo.market_id
       HAVING {POPULATION_HAVING_SQL}
     ) mx
@@ -355,55 +446,155 @@ _CENSUS_SQL = f"""
     ORDER BY 4 DESC
 """
 
+#: The walk's upper bound. Index-only backward scan, so it is cheap, but it gets
+#: its own statement bound anyway: an unbounded read on this table is the defect
+#: being repaired, and exempting one because it "should be fast" is how the next
+#: one gets written.
+_CENSUS_MAX_ID_SQL = "SELECT MAX(market_id) AS hi FROM futures_outcomes"
 
-async def census(session, apply: bool = False) -> dict[str, Any]:
-    """The standing population, split by source x shape x retention band.
+#: One durable slot for the walk's accumulator. The walk spans several calls, and
+#: a total the OPERATOR has to assemble by adding up four HTTP responses is not a
+#: completion test — it is a place for arithmetic to go wrong unobserved. So the
+#: rail accumulates server-side and the last call returns the whole-population
+#: breakdown, the same shape the single-shot census used to return.
+CENSUS_IDENTITY = "calibration:repair:kalshi_fabricated_loss:census"
+CENSUS_SCHEMA = "kalshi_fabricated_loss_census_v1"
 
-    ``apply`` is accepted and IGNORED — this never writes.
+#: A banked walk older than this is not resumable. The population moves, and
+#: stitching today's chunks onto last week's is a fabricated total — precisely
+#: the class of number this rail refuses to invent.
+_CENSUS_MAX_AGE_S = 6 * 3600
 
-    The split is the point. On 2026-08-14 the Kalshi half of this population was
-    8,231 markets, of which 1,414 are provably past the retention bound: they
-    cannot be adjudicated by the venue at any budget, and ruling 054 says that
-    number is published rather than quietly dropped from a denominator.
+#: The refusal a mismatched resume gets. Named, because "your cursor is not the
+#: banked one" and "the walk is finished" are different operator actions and a
+#: shared message would collapse them.
+REASON_CENSUS_CURSOR_MOVED = "CENSUS_CURSOR_MOVED"
+REASON_CENSUS_ALREADY_COMPLETE = "CENSUS_ALREADY_COMPLETE"
+
+
+def _census_fold(acc: dict[tuple, dict[str, int]], rows) -> None:
+    """Add one chunk's grouped rows into the walk's accumulator.
+
+    Keyed by the same triple the SQL groups on, so folding N chunks and running
+    one unbounded query over the same population produce the same table. That
+    equality is the property the guard suite asserts directly.
     """
-    started = time.monotonic()
-    try:
-        await session.execute(
-            text(f"SET LOCAL statement_timeout = {_CENSUS_TIMEOUT_MS}")
-        )
-        rows = (await session.execute(text(_CENSUS_SQL))).all()
-    except Exception as e:  # noqa: BLE001 - the verdict IS the return value
-        await session.rollback()
-        return {
-            "measured": False,
-            "reason": f"census did not complete: {type(e).__name__}: {str(e)[:200]}",
-            "statement_timeout_ms": _CENSUS_TIMEOUT_MS,
-            "note": (
-                "NOT RUN, not zero. An unbounded query that dies is an absent "
-                "measurement; reporting 0 here would be inventing one."
-            ),
-            "elapsed_s": round(time.monotonic() - started, 1),
-        }
+    for r in rows:
+        key = (r.source, r.mutex, r.retention_band)
+        cell = acc.setdefault(key, {"markets": 0, "outcomes": 0})
+        cell["markets"] += int(r.markets or 0)
+        cell["outcomes"] += int(r.outcomes or 0)
 
-    breakdown = [
+
+def _census_breakdown(acc: dict[tuple, dict[str, int]]) -> list[dict[str, Any]]:
+    """The accumulator as the response's ``breakdown``, biggest cell first."""
+    rows = [
         {
-            "source": r.source,
-            "mutually_exclusive": r.mutex,
-            "retention_band": r.retention_band,
-            "markets": r.markets,
-            "outcomes": int(r.outcomes or 0),
+            "source": source,
+            "mutually_exclusive": mutex,
+            "retention_band": band,
+            "markets": cell["markets"],
+            "outcomes": cell["outcomes"],
         }
-        for r in rows
+        for (source, mutex, band), cell in acc.items()
     ]
+    rows.sort(key=lambda r: r["markets"], reverse=True)
+    return rows
+
+
+def _census_acc_from_payload(payload: Any) -> dict[tuple, dict[str, int]]:
+    """Rebuild the accumulator from a banked record."""
+    acc: dict[tuple, dict[str, int]] = {}
+    for cell in (payload or {}).get("breakdown", []) or []:
+        key = (
+            cell.get("source"),
+            cell.get("mutually_exclusive"),
+            cell.get("retention_band"),
+        )
+        acc[key] = {
+            "markets": int(cell.get("markets") or 0),
+            "outcomes": int(cell.get("outcomes") or 0),
+        }
+    return acc
+
+
+async def _load_census() -> tuple[dict[str, Any] | None, str]:
+    """``(record, reason)`` for the banked walk. A raise is never an absence."""
+    from app.services.durable_snapshots import read_snapshot_standalone
+
+    try:
+        read = await read_snapshot_standalone(
+            CENSUS_IDENTITY,
+            expected_version=CENSUS_SCHEMA,
+            max_age_s=_CENSUS_MAX_AGE_S,
+        )
+    except Exception as exc:  # noqa: BLE001 — gotcha #53: a raise is not a zero
+        logger.warning("census walk read raised: %s", type(exc).__name__)
+        return None, f"census record unreadable: {type(exc).__name__}"
+    if not read.ok or read.envelope is None:
+        return None, f"census record not readable: status={read.status}"
+    return read.envelope.payload, "ok"
+
+
+async def _save_census(record: dict[str, Any]) -> tuple[bool, str]:
+    """Bank the walk's progress. A failed bank is REPORTED, never swallowed.
+
+    An operator who is not told the progress was lost will resume from a cursor
+    the rail has forgotten, and the refusal they get then will look like a bug in
+    the resume rather than in the write that never happened.
+    """
+    from app.services.durable_snapshots import publish_snapshot_standalone
+    from app.utils.durable_state import DurableEnvelope
+
+    try:
+        result = await publish_snapshot_standalone(
+            DurableEnvelope.build(
+                identity=CENSUS_IDENTITY,
+                schema_version=CENSUS_SCHEMA,
+                payload=record,
+                complete=bool(record.get("complete")),
+                source="repair:kalshi-fabricated-loss-census",
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 — reported, never swallowed
+        return False, f"census progress persist raised: {type(exc).__name__}"
+    ok = result.get("status") in ("ok", "superseded")
+    return ok, "ok" if ok else f"census progress rejected: {result.get('status')}"
+
+
+def _census_record(
+    *,
+    acc: dict[tuple, dict[str, int]],
+    cursor: int,
+    max_market_id: int | None,
+    chunk_ids: int,
+    complete: bool,
+    started_walk_at: str,
+    chunks: int,
+    calls: int,
+) -> dict[str, Any]:
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "started_walk_at": started_walk_at,
+        "next_after_id": cursor,
+        "max_market_id": max_market_id,
+        "chunk_ids": chunk_ids,
+        "complete": complete,
+        "chunks_measured": chunks,
+        "calls": calls,
+        "breakdown": _census_breakdown(acc),
+    }
+
+
+def _census_summary(breakdown: list[dict[str, Any]]) -> dict[str, Any]:
+    """The published split. Unchanged in shape from the single-shot census —
+    what changed is that it can now be reached."""
     kalshi = [b for b in breakdown if b["source"] == "kalshi"]
 
     def _sum(rows_, key, **match):
-        return sum(
-            r[key] for r in rows_ if all(r[k] == v for k, v in match.items())
-        )
+        return sum(r[key] for r in rows_ if all(r[k] == v for k, v in match.items()))
 
     return {
-        "measured": True,
         "breakdown": breakdown,
         "totals": {
             "markets": _sum(breakdown, "markets"),
@@ -432,6 +623,266 @@ async def census(session, apply: bool = False) -> dict[str, Any]:
                 "is about to expire visible while it can still be saved."
             ),
         },
+    }
+
+
+#: What a multi-call walk can and cannot claim. Stated in the response rather
+#: than in a report nobody reads beside the number, because ruling 095's point —
+#: a census of a moving population is fiction, and it fails INVISIBLY — applies
+#: to this walk and the honest answer is a disclosure, not a denial.
+_CENSUS_WALK_LIMITS = {
+    "this_is_a_walk_not_an_instant": (
+        "The totals are measured over the interval from started_walk_at to "
+        "generated_at, chunk by chunk, not at one instant. Each chunk's own "
+        "range is measured exactly; the walk as a whole is an interval."
+    ),
+    "what_the_interval_can_miss": (
+        "A market that ENTERS the population during the walk is counted only if "
+        "its market_id is still above the cursor. A market that enters below the "
+        "cursor — by having its legs stamped api_settlement after the walk had "
+        "already passed its id — is missed by this walk and caught by the next."
+    ),
+    "band_clock": (
+        "retention_band is computed from NOW() inside each chunk, so a market "
+        "within minutes of the 66/86-day boundaries may be banded by whichever "
+        "chunk reads it. The bands are months wide; the walk is minutes."
+    ),
+    "the_completion_test": (
+        "finished = the addressed bands measure 0 on a walk that reports "
+        "complete: true, confirmed by a SECOND complete walk started fresh. One "
+        "complete walk proves the population was empty as it passed; two agree "
+        "that nothing is re-entering behind it."
+    ),
+}
+
+
+async def census(
+    session, apply: bool = False, after_id: int | None = None
+) -> dict[str, Any]:
+    """The standing population, split by source x shape x retention band.
+
+    ``apply`` is accepted and IGNORED — this never writes to the population.
+
+    The split is the point. On 2026-08-14 the Kalshi half of this population was
+    8,231 markets, of which 1,414 are provably past the retention bound: they
+    cannot be adjudicated by the venue at any budget, and ruling 054 says that
+    number is published rather than quietly dropped from a denominator.
+
+    CAL-P1012 / #3195 — AND UNTIL NOW IT COULD NOT BE READ. One whole-table
+    aggregate over ``futures_outcomes`` died at its own statement bound, twice
+    warm against production, so #2528's runbook — census, dry-run, apply,
+    re-census, *finished = the addressed bands measure 0* — had no completion
+    test at all. The drain could run; nothing could say it was done.
+
+    So the census is now a WALK: a half-open range over ``market_id``, one
+    bounded statement per chunk, adaptively narrowed, accumulated in a durable
+    slot across calls, and stopped by a wall clock rather than by a query dying.
+
+    Resume with ``?after_id=<next_after_id>``. The cursor must be the banked
+    one: a mismatch is REFUSED (:data:`REASON_CENSUS_CURSOR_MOVED`) rather than
+    folded in, because a resume from the wrong place double-counts a range and a
+    double-counted census is worse than an absent one. Omitting ``after_id``
+    starts a fresh walk and discards the banked one.
+
+    ``measured: false`` still means NOT RUN. A chunk that dies at the floor width
+    ends the call with the reason and the cursor; whatever the walk did measure
+    is returned under ``partial`` beside the id range it actually covers, never
+    as ``totals``.
+    """
+    started = time.monotonic()
+    started_walk_at = datetime.now(timezone.utc).isoformat()
+    acc: dict[tuple, dict[str, int]] = {}
+    chunk_ids = _CENSUS_CHUNK_IDS
+    chunks = 0
+    calls = 1
+    cursor = 0
+    resume_note = "fresh walk"
+
+    if after_id is not None:
+        banked, reason = await _load_census()
+        if banked is None:
+            return {
+                "measured": False,
+                "reason": REASON_CENSUS_CURSOR_MOVED,
+                "detail": (
+                    f"?after_id={after_id} asks to resume a banked walk, and the "
+                    f"record is not readable ({reason}). Re-run with no after_id "
+                    "to start a fresh walk."
+                ),
+                "elapsed_s": round(time.monotonic() - started, 1),
+            }
+        if banked.get("complete"):
+            return {
+                "measured": False,
+                "reason": REASON_CENSUS_ALREADY_COMPLETE,
+                "detail": (
+                    "the banked walk is already complete — its totals are below. "
+                    "Re-run with no after_id to start a fresh walk."
+                ),
+                "banked_walk": banked,
+                "elapsed_s": round(time.monotonic() - started, 1),
+            }
+        if int(banked.get("next_after_id") or 0) != int(after_id):
+            return {
+                "measured": False,
+                "reason": REASON_CENSUS_CURSOR_MOVED,
+                "detail": (
+                    f"?after_id={after_id} is not where the banked walk stopped "
+                    f"({banked.get('next_after_id')}). Resuming from the wrong "
+                    "cursor double-counts a range or skips one, and a census that "
+                    "is wrong in an unknown direction is worse than an absent one."
+                ),
+                "banked_next_after_id": banked.get("next_after_id"),
+                "elapsed_s": round(time.monotonic() - started, 1),
+            }
+        acc = _census_acc_from_payload(banked)
+        cursor = int(after_id)
+        chunk_ids = int(banked.get("chunk_ids") or _CENSUS_CHUNK_IDS)
+        chunks = int(banked.get("chunks_measured") or 0)
+        calls = int(banked.get("calls") or 0) + 1
+        started_walk_at = banked.get("started_walk_at") or started_walk_at
+        resume_note = f"resumed the banked walk at market_id > {cursor}"
+
+    # The walk's upper bound, read once per call rather than once per chunk.
+    try:
+        await session.execute(
+            text(f"SET LOCAL statement_timeout = {_CENSUS_TIMEOUT_MS}")
+        )
+        max_market_id = (await session.execute(text(_CENSUS_MAX_ID_SQL))).scalar()
+    except Exception as e:  # noqa: BLE001 - the verdict IS the return value
+        await session.rollback()
+        return {
+            "measured": False,
+            "reason": f"census bound not readable: {type(e).__name__}: {str(e)[:200]}",
+            "statement_timeout_ms": _CENSUS_TIMEOUT_MS,
+            "note": (
+                "NOT RUN, not zero. An unbounded query that dies is an absent "
+                "measurement; reporting 0 here would be inventing one."
+            ),
+            "elapsed_s": round(time.monotonic() - started, 1),
+        }
+
+    if max_market_id is None:
+        max_market_id = 0
+
+    failure: dict[str, Any] | None = None
+    stopped_on_budget = False
+
+    while cursor < max_market_id:
+        if time.monotonic() - started >= _CENSUS_WALL_BUDGET_S:
+            stopped_on_budget = True
+            break
+        hi = min(cursor + chunk_ids, max_market_id)
+        chunk_started = time.monotonic()
+        try:
+            await session.execute(
+                text(f"SET LOCAL statement_timeout = {_CENSUS_TIMEOUT_MS}")
+            )
+            rows = (
+                await session.execute(text(_CENSUS_SQL), {"lo": cursor, "hi": hi})
+            ).all()
+        except Exception as e:  # noqa: BLE001 - the verdict IS the return value
+            # The rollback resets SET LOCAL, so the next chunk re-issues it.
+            await session.rollback()
+            if chunk_ids > _CENSUS_MIN_CHUNK_IDS:
+                chunk_ids = max(_CENSUS_MIN_CHUNK_IDS, chunk_ids // 2)
+                continue
+            failure = {
+                "reason": (
+                    f"census chunk did not complete at the floor width: "
+                    f"{type(e).__name__}: {str(e)[:200]}"
+                ),
+                "failed_range": {"after_market_id": cursor, "to_market_id": hi},
+                "chunk_ids": chunk_ids,
+            }
+            break
+
+        _census_fold(acc, rows)
+        chunks += 1
+        cursor = hi
+        # Grow back toward the default after a narrowing, never past it — the two
+        # moves cannot oscillate because only one of them has a ceiling.
+        if (
+            chunk_ids < _CENSUS_CHUNK_IDS
+            and (time.monotonic() - chunk_started) * 1000 < _CENSUS_TIMEOUT_MS / 4
+        ):
+            chunk_ids = min(_CENSUS_CHUNK_IDS, chunk_ids * 2)
+
+    complete = failure is None and cursor >= max_market_id
+    record = _census_record(
+        acc=acc,
+        cursor=cursor,
+        max_market_id=max_market_id,
+        chunk_ids=chunk_ids,
+        complete=complete,
+        started_walk_at=started_walk_at,
+        chunks=chunks,
+        calls=calls,
+    )
+    banked_ok, bank_note = await _save_census(record)
+
+    walk = {
+        "complete": complete,
+        "next_after_id": None if complete else cursor,
+        "max_market_id": max_market_id,
+        "measured_id_range": {"after_market_id": 0, "to_market_id": cursor},
+        "chunks_measured": chunks,
+        "chunk_ids": chunk_ids,
+        "calls": calls,
+        "started_walk_at": started_walk_at,
+        "resume": resume_note,
+        "progress_banked": banked_ok,
+        "progress_bank_note": bank_note,
+        "wall_budget_s": _CENSUS_WALL_BUDGET_S,
+        "statement_timeout_ms": _CENSUS_TIMEOUT_MS,
+        "limits": _CENSUS_WALK_LIMITS,
+    }
+    if not complete:
+        walk["resume_with"] = (
+            f"POST /api/admin/repairs/kalshi-fabricated-loss-census?after_id={cursor}"
+        )
+    if stopped_on_budget:
+        walk["stopped_on"] = "wall budget — a normal outcome, not a failure"
+
+    summary = _census_summary(_census_breakdown(acc))
+
+    if failure is not None:
+        # NOT RUN, not zero. What was measured is returned, but it is never
+        # called `totals`: a partial named as a total is the fabricated number
+        # this whole rail exists to refuse.
+        return {
+            "measured": False,
+            "reason": failure["reason"],
+            "failed_range": failure["failed_range"],
+            "statement_timeout_ms": _CENSUS_TIMEOUT_MS,
+            "note": (
+                "NOT RUN, not zero. An unbounded query that dies is an absent "
+                "measurement; reporting 0 here would be inventing one. The walk "
+                "below covers only measured_id_range and is a PARTIAL."
+            ),
+            "partial": summary,
+            "walk": walk,
+            "elapsed_s": round(time.monotonic() - started, 1),
+        }
+
+    if not complete:
+        return {
+            "measured": False,
+            "reason": "census incomplete: the walk has not reached max_market_id",
+            "note": (
+                "NOT a zero and NOT a total. The walk below covers only "
+                "measured_id_range; resume it with ?after_id= and read the "
+                "totals from the call that reports complete: true."
+            ),
+            "partial": summary,
+            "walk": walk,
+            "elapsed_s": round(time.monotonic() - started, 1),
+        }
+
+    return {
+        "measured": True,
+        **summary,
+        "walk": walk,
         "elapsed_s": round(time.monotonic() - started, 1),
     }
 
