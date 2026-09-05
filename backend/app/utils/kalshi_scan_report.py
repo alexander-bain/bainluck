@@ -178,6 +178,17 @@ class KalshiScanReport:
     events_without_markets: int = 0
     #: How many of those the backfill was willing to try.
     market_backfill_candidates: int = 0
+    #: Empty events the backfill deliberately did NOT ask for, because Kalshi's
+    #: market data for them is provably purged (#3190, gotcha #35 — EVENT data
+    #: is permanent, MARKET data is not). On 2026-09-05 this was two thirds of
+    #: the list: 7,722 of 11,538 candidates came back `unmatched` every beat and
+    #: always would.
+    #:
+    #: It is reported beside `market_backfill_candidates` rather than folded
+    #: into it because the surviving number alone cannot distinguish relief from
+    #: an inventory outage — candidates falling from 11,538 to 3,816 reads the
+    #: same either way, and one of those is a P1.
+    market_backfill_dead_candidates: int = 0
     #: Of the candidates, how many belong to a series deliberately fetched
     #: WITHOUT nested markets. This is the population the backfill OWES; a beat
     #: that fills only the accidental remainder is not doing its job.

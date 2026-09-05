@@ -1373,6 +1373,13 @@ async def _poll_kalshi_markets():
                 market_backfill_candidates=int(
                     _scan_tel.get("market_backfill_candidates") or 0
                 ),
+                # #3190: carried in the same commit that computes it. The
+                # surviving candidate count drops by two thirds this beat, and a
+                # report that shows only the drop cannot say whether that is the
+                # relief we shipped or the inventory going dark.
+                market_backfill_dead_candidates=int(
+                    _scan_tel.get("market_backfill_dead_candidates") or 0
+                ),
                 market_backfill_stripped_candidates=int(
                     _scan_tel.get("market_backfill_stripped_candidates") or 0
                 ),
