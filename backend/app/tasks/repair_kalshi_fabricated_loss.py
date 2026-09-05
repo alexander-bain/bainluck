@@ -958,47 +958,110 @@ async def census(
 #: ``status='open'`` long after the venue settled them. Requiring our own status
 #: column to agree would rebuild the exact blind spot that issue named. The
 #: venue's answer is the authority here; our status column is not consulted.
+#: ⚠️ CAL-P1013 (#2528) REPLACED THE GROUPED SUBQUERY WITH A LATERAL PROBE, and
+#: the reason is the same one that killed the census in #3195: an unbounded
+#: ``GROUP BY fo.market_id`` over the WHOLE of ``futures_outcomes`` is not a
+#: query whose cost the rail controls. The docstring above records 10.8s for
+#: that form, measured 2026-08-14 when the table held ~821k outcome rows.
+#: On 2026-09-05 the table holds **3,957,119** rows and the same statement dies:
+#:
+#:     POST /api/admin/repairs/kalshi-fabricated-loss?apply=false&limit=5
+#:     ->  "work selection did not complete: QueryCanceledError"   elapsed 18.2s
+#:
+#: measured three times against production — unsharded, ``?sport=baseball`` and
+#: ``?sport=basketball``, all three 18.1-18.2s. **The old ``hint`` told the
+#: operator to shard by sport, and sharding by sport cannot help**: the sport
+#: predicate lives on the OUTER side, on ``fm``, while the cost is the INNER
+#: aggregate over ``fo``, which no ``fm`` predicate can reach. A refusal whose
+#: advice does not work is a second defect wearing the first one's clothes; the
+#: hint below now names what was measured.
+#:
+#: THE REWRITE IS ANSWER-IDENTICAL BY CONSTRUCTION, and that is the property that
+#: mattered, because the ordering here has already produced three separate
+#: ordering traps (CAL-P009, CAL-P057, C-CERT-1852) and this rail's whole
+#: correctness rests on it. Nothing about WHICH markets are selected, or in what
+#: ORDER, is touched:
+#:
+#: * the population predicate is still ``POPULATION_HAVING_SQL``, still the same
+#:   constant the census and the after-check read, evaluated per market over
+#:   exactly that market's outcomes;
+#: * the filters, the floor, the keyset and ``ORDER BY resolution_date, id`` are
+#:   character-for-character what they were;
+#: * a market with fewer than two outcomes fails ``COUNT(*) >= 2`` in the LATERAL
+#:   exactly as it failed to form a group before.
+#:
+#: What changes is only WHERE the aggregate runs. Driving from ``fm`` in sort
+#: order and probing ``fo`` per candidate through ``ix_futures_outcomes_market_id``
+#: lets the LIMIT stop the scan: measured against production 2026-09-05 in the
+#: shape shipped below, ``ORDER BY`` and all, ``LIMIT 40`` (the real
+#: ``APPLY_MARKET_CAP``) reads **1,774** candidate markets, finds its 40, and
+#: returns in **7.6s** where the old form had already been cancelled at 18.2s —
+#: EXPLAIN ANALYZE, plan ``Limit -> Nested Loop -> Gather Merge -> Sort ->
+#: Seq Scan`` with a 0.4 ms index probe per candidate. (Dropping the top-level
+#: ORDER BY measures 5.9s; the 1.7s is what the guarantee in that clause costs,
+#: and it is worth it.) The remaining cost is the one sort of the scoped set, not
+#: an aggregate over four million rows, so it grows with the Kalshi market count
+#: and not with every outcome row the platform has ever ingested.
 _WORK_SQL = f"""
-    SELECT fm.id AS market_id,
-           fm.external_id AS event_ticker,
-           fm.mutually_exclusive AS mutex,
-           fm.llm_sport_category AS sport,
-           fm.status AS our_status,
-           fm.resolution_date AS resolution_date,
-           EXTRACT(EPOCH FROM (NOW() - fm.resolution_date)) / 86400.0 AS age_days
+    SELECT s.id AS market_id,
+           s.external_id AS event_ticker,
+           s.mutually_exclusive AS mutex,
+           s.llm_sport_category AS sport,
+           s.status AS our_status,
+           s.resolution_date AS resolution_date,
+           EXTRACT(EPOCH FROM (NOW() - s.resolution_date)) / 86400.0 AS age_days
     FROM (
-      SELECT fo.market_id,
-             COUNT(*) AS n_out
+      SELECT fm.id,
+             fm.external_id,
+             fm.mutually_exclusive,
+             fm.llm_sport_category,
+             fm.status,
+             fm.resolution_date
+      FROM futures_markets fm
+      WHERE fm.source = 'kalshi'
+        AND fm.resolution_date IS NOT NULL
+        AND fm.resolution_date >= NOW() - INTERVAL '{PROVABLY_PURGED_AGE_DAYS} days'
+        -- CAST is NOT decoration. asyncpg prepares this statement with no
+        -- parameter types, so Postgres must infer them from the text alone, and
+        -- the FIRST occurrence of a parameter fixes its type. Untyped, the
+        -- IS NULL test fixes it as `unknown`, the later equality can no longer
+        -- resolve it, and the prepare dies with AmbiguousParameterError before a
+        -- row is read, whatever value is bound. That is why the keyset below
+        -- casts both halves, and why every sibling rail casts this one on BOTH
+        -- sides (repair_polymarket_leg_label, lines 457-458 and 758). This line
+        -- was the one that did not, so the drain's endpoint had never completed
+        -- a work selection.
+        --
+        -- No colon-prefixed word may appear in this comment: SQLAlchemy's text()
+        -- parses one as a BIND, and a line reference written as a colon plus
+        -- digits compiled to a parameter nobody supplies. Caught by the real
+        -- Postgres gate on the first run of the fix for this very line.
+        AND (CAST(:sport AS text) IS NULL OR fm.llm_sport_category = CAST(:sport AS text))
+        AND (
+              CAST(:after_date AS timestamptz) IS NULL
+           OR (fm.resolution_date, fm.id)
+                > (CAST(:after_date AS timestamptz), CAST(:after_id AS bigint))
+            )
+      ORDER BY fm.resolution_date ASC, fm.id ASC
+    ) s
+    CROSS JOIN LATERAL (
+      SELECT COUNT(*) AS n_out
       FROM futures_outcomes fo
-      GROUP BY fo.market_id
+      WHERE fo.market_id = s.id
       HAVING {POPULATION_HAVING_SQL}
     ) mx
-    JOIN futures_markets fm ON fm.id = mx.market_id
-    WHERE fm.source = 'kalshi'
-      AND fm.resolution_date IS NOT NULL
-      AND fm.resolution_date >= NOW() - INTERVAL '{PROVABLY_PURGED_AGE_DAYS} days'
-      -- CAST is NOT decoration. asyncpg prepares this statement with no
-      -- parameter types, so Postgres must infer them from the text alone, and
-      -- the FIRST occurrence of a parameter fixes its type. Untyped, the
-      -- IS NULL test fixes it as `unknown`, the later equality can no longer
-      -- resolve it, and the prepare dies with AmbiguousParameterError before a
-      -- row is read, whatever value is bound. That is why the keyset below
-      -- casts both halves, and why every sibling rail casts this one on BOTH
-      -- sides (repair_polymarket_leg_label, lines 457-458 and 758). This line
-      -- was the one that did not, so the drain's endpoint had never completed
-      -- a work selection.
-      --
-      -- No colon-prefixed word may appear in this comment: SQLAlchemy's text()
-      -- parses one as a BIND, and a line reference written as a colon plus
-      -- digits compiled to a parameter nobody supplies. Caught by the real
-      -- Postgres gate on the first run of the fix for this very line.
-      AND (CAST(:sport AS text) IS NULL OR fm.llm_sport_category = CAST(:sport AS text))
-      AND (
-            CAST(:after_date AS timestamptz) IS NULL
-         OR (fm.resolution_date, fm.id)
-              > (CAST(:after_date AS timestamptz), CAST(:after_id AS bigint))
-          )
-    ORDER BY fm.resolution_date ASC, fm.id ASC
+    -- The inner ORDER BY is the one the planner USES. THIS one is the one the
+    -- rail may RELY on. A subquery's ordering is not contractually preserved
+    -- through a join, and every guarantee this rail makes rests on the sort:
+    -- oldest-first-within-a-floor reaches the at-risk band before the cliff,
+    -- and the keyset resumes at a POSITION in this order. Without the clause
+    -- below, a planner that chose a hash join would hand back an arbitrary 40
+    -- markets and a cursor that skips everything it stepped over — silently,
+    -- because the rows returned would still all be genuine population members.
+    -- Measured against production 2026-09-05: with this clause present the plan
+    -- is Limit -> Nested Loop -> Gather Merge -> Sort, i.e. NO sort node above
+    -- the join, 1,774 candidates probed, 40 rows, 7.6s. The guarantee is free.
+    ORDER BY s.resolution_date ASC, s.id ASC
     LIMIT :lim
 """
 
@@ -1943,8 +2006,15 @@ async def _dry_run(session, limit, after_id, after_date, sport, started):
             "reason": f"work selection did not complete: {type(e).__name__}: {str(e)[:200]}",
             "statement_timeout_ms": _SELECT_TIMEOUT_MS,
             "hint": (
-                "Shard with ?sport=<llm_sport_category>. The global sort over the "
-                "filtered market set is the cost; a sharded sort is not."
+                "Do NOT reach for ?sport= — it was this refusal's advice until "
+                "CAL-P1013 measured it and it does not work: the sport predicate "
+                "is on futures_markets and the cost is the per-market probe of "
+                "futures_outcomes, so sharding by sport changes the ANSWER "
+                "without changing the COST (measured 2026-09-05: unsharded, "
+                "baseball and basketball all refused at 18.1-18.2s). Narrow the "
+                "WINDOW instead: a smaller ?limit= stops the scan sooner, and "
+                "?after_date=&after_id= from the previous call's next_cursor "
+                "starts it past everything already examined."
             ),
             "note": "NOT RUN, not zero.",
             "elapsed_s": round(time.monotonic() - started, 1),
