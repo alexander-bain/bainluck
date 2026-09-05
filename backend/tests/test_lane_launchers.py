@@ -41,6 +41,7 @@ START = REPO / "start-lanes.sh"
 SUPERVISOR = REPO / "lanes-supervisor.sh"
 RUNNER = REPO / "lane-runner.sh"
 LANE4 = REPO / "lane4-runner.sh"
+BUS = REPO / "bus-runner.sh"
 
 # The lane roster is a property of Alex's machine, not of the repo (worktrees and
 # `.claude/` are untracked). Tests that assert against the REAL conf are skipped
@@ -85,8 +86,12 @@ def real_lanes():
     return [tuple(line.split(None, 1)) for line in out.strip().splitlines()]
 
 
-def write_conf(tmp_path, lanes, graders=2, runner=None, lane4=None):
-    """A synthetic lanes.conf. `lanes` maps lane name -> worktree dir."""
+def write_conf(tmp_path, lanes, graders=2, runner=None, lane4=None, bus=None):
+    """A synthetic lanes.conf. `lanes` maps lane name -> worktree dir.
+
+    `bus` defaults to None = BUS_RUNNER unset, which is the older-checkout case:
+    the launchers must still bring up every lane and grader without it.
+    """
     conf = tmp_path / "lanes.conf"
     arms = "".join(f'    {n}) echo "{d}" ;;\n' for n, d in lanes.items())
     conf.write_text(
@@ -95,6 +100,7 @@ def write_conf(tmp_path, lanes, graders=2, runner=None, lane4=None):
         f'LANE_RUNNER="{runner or RUNNER}"\n'
         f"LANE4_GRADERS={graders}\n"
         f'LANE4_RUNNER="{lane4 or LANE4}"\n'
+        + (f'BUS_RUNNER="{bus}"\n' if bus else "")
     )
     return conf
 
@@ -102,7 +108,7 @@ def write_conf(tmp_path, lanes, graders=2, runner=None, lane4=None):
 # ---------------------------------------------------------------- syntax ----
 
 
-@pytest.mark.parametrize("script", [CONF, START, SUPERVISOR, RUNNER, LANE4])
+@pytest.mark.parametrize("script", [CONF, START, SUPERVISOR, RUNNER, LANE4, BUS])
 def test_launcher_scripts_parse(script):
     """A launcher with a syntax error fails at reboot, when nobody is watching."""
     p = subprocess.run(["bash", "-n", str(script)], capture_output=True, text=True)
@@ -200,8 +206,73 @@ def test_start_lanes_covers_the_real_roster_with_no_skips():
     lane4 = source_conf('printf %s "$LANE4_RUNNER"')
     expected = [f"{runner} {wt} {lane}" for lane, wt in real_lanes()]
     expected += [lane4] * int(source_conf('printf %s "$LANE4_GRADERS"'))
+    bus = source_conf('printf %s "${BUS_RUNNER:-}"')
+    if bus:
+        expected.append(bus)
     assert launched == expected
     assert "SKIPPED lane" not in out, out
+    assert "SKIPPED the measurement bus" not in out, out
+
+
+# ------------------------------------------------- the measurement bus ----
+#
+# integrator/135, 2026-09-04. The cert graders have been headless since
+# lane4-runner.sh; the MEASUREMENT bus never was — it ran only when Alex pasted a
+# prompt, and the recurring M-R set duly banked buckets 04, 13 and 17 on 9/4 with
+# nothing in between. `bus-runner.sh` is its runner. These tests pin the two
+# things that make it safe to leave running over a weekend: it opens exactly ONE
+# window, and a checkout without it still starts everything else.
+
+
+def test_start_lanes_opens_the_measurement_bus_when_the_conf_names_it(tmp_path):
+    conf = write_conf(tmp_path, {"a": str(tmp_path)}, graders=0, bus=BUS)
+    rc, out = run(START, "--dry-run", env={"LANES_CONF": str(conf)})
+    assert rc == 0, out
+    launched = re.findall(r"would open Terminal window: (.+)$", out, re.M)
+    assert launched.count(str(BUS)) == 1, (
+        "the measurement bus must open exactly one window — two would race on the "
+        "same bucket's artifacts, and unlike the two cert graders (D44) there is no "
+        f"tie-break rule for that.\ngot: {launched}"
+    )
+
+
+def test_start_lanes_survives_a_checkout_with_no_bus_runner(tmp_path):
+    """An older checkout must still bring up every lane and grader.
+
+    The bus is additive; a missing script is a skipped window with a reason, never
+    a launcher that dies before it reaches the lanes.
+    """
+    conf = write_conf(tmp_path, {"a": str(tmp_path), "b": str(tmp_path)}, graders=2,
+                      bus=tmp_path / "nope.sh")
+    rc, out = run(START, "--dry-run", env={"LANES_CONF": str(conf)})
+    assert rc == 0, out
+    launched = re.findall(r"would open Terminal window: (.+)$", out, re.M)
+    assert len(launched) == 4, f"lanes/graders did not all launch: {launched}"
+    assert "SKIPPED the measurement bus" in out, (
+        "a missing bus script must say so — a silently absent bus is exactly the "
+        "failure the M-R record already had"
+    )
+
+
+def test_supervisor_relaunches_a_dead_measurement_bus(tmp_path):
+    """It matters more over a weekend than on a weekday: nobody is watching.
+
+    A bus that dies on Saturday and is not relaunched is a hole in the record
+    until Monday, which is the whole thing integrator/135 was written to close.
+    """
+    conf = write_conf(tmp_path, {}, graders=0, bus=BUS)
+    rc, out = run(SUPERVISOR, "--dry-run", env={"LANES_CONF": str(conf)})
+    assert rc == 0, out
+    assert str(BUS) in re.findall(r"would relaunch: (.+)$", out, re.M), (
+        f"the supervisor does not keep the measurement bus alive:\n{out}"
+    )
+
+
+def test_supervisor_survives_a_checkout_with_no_bus_runner(tmp_path):
+    conf = write_conf(tmp_path, {}, graders=0, bus=tmp_path / "nope.sh")
+    rc, out = run(SUPERVISOR, "--dry-run", env={"LANES_CONF": str(conf)})
+    assert rc == 0, out
+    assert "nope.sh" not in out, "supervisor tries to relaunch a bus that does not exist"
 
 
 def test_start_lanes_dry_run_does_not_reap():
@@ -716,3 +787,151 @@ def test_resolve_ref_without_a_pr_number_still_gives_up(monkeypatch):
     mod = _load_sweep()
     monkeypatch.setattr(mod, "git", lambda *a, check=True: (1, "", "nope"))
     assert mod.resolve_ref("gone/branch", "b" * 40) is None
+
+
+# ----------------------------------------- the cross-root write grant ----
+#
+# integrator/135 item 2, 2026-09-04. A lane can only write handoff files in
+# ~/bainluck if its worktree carries `.claude/settings.json` naming ~/bainluck in
+# permissions.additionalDirectories. `--add-dir` grants READ but not WRITE, and
+# settings are read at LAUNCH only — so lane-runner.sh seeds the file before it
+# starts a session.
+#
+# THE BUG THIS GUARDS: `native` was stood up 9/3 without the file. It could not
+# file anything for its whole existence — every note went to a private
+# handoff-outbox/ that only a human copying by hand could deliver, and 8 had piled
+# up by 9/4 including three meant for Alex. Nothing announced it: the session just
+# gets EPERM and works around it. Worse, no other lane can repair it — the
+# writable set is own-worktree + ~/bainluck, so even the Integrator gets EPERM on
+# ~/bainluck-dev. The runner is the one process positioned to fix it.
+#
+# The seeding runs on the real session path only, so these drive the actual loop
+# with a short timeout rather than --dry-run (which must write nothing anywhere).
+
+
+def run_runner_briefly(workdir, handoff, seconds=6):
+    """Start lane-runner.sh for real, let it seed, then stop it. Returns output.
+
+    `start_new_session` is load-bearing, not tidiness: lane-runner.sh traps
+    INT/TERM/HUP with `kill 0` to take its session subtree down with it, and
+    `kill 0` signals the CALLER's process group. Without its own session, a
+    runner started here could signal pytest itself.
+
+    The runner never terminates on its own — seeding happens before the serve
+    loop, so the only way to observe it is to start the real thing and stop it.
+    --dry-run cannot stand in: it is specified to write nothing anywhere, which
+    is precisely the branch that does not seed.
+    """
+    full = dict(os.environ)
+    full["LANE_HANDOFF"] = str(handoff)
+    try:
+        p = subprocess.run(
+            ["bash", str(RUNNER), str(workdir), "testlane"],
+            capture_output=True, text=True, env=full, cwd=str(REPO),
+            timeout=seconds, start_new_session=True,
+        )
+        return p.stdout + p.stderr
+    except subprocess.TimeoutExpired as exc:
+        out = (exc.stdout or b"") + (exc.stderr or b"")
+        return out.decode() if isinstance(out, bytes) else str(out)
+
+
+def read_grant(workdir):
+    import json
+    f = Path(workdir) / ".claude" / "settings.json"
+    if not f.exists():
+        return None
+    return json.loads(f.read_text())
+
+
+def test_runner_creates_the_grant_for_a_worktree_that_has_none(tmp_path):
+    """Native's exact situation: no settings file at all."""
+    wt = tmp_path / "wt"; wt.mkdir()
+    handoff = tmp_path / "handoff"; (handoff / "runner-inbox" / "testlane").mkdir(parents=True)
+    run_runner_briefly(wt, handoff)
+    data = read_grant(wt)
+    assert data is not None, "lane-runner.sh did not create the grant file"
+    assert str(Path.home() / "bainluck") in data["permissions"]["additionalDirectories"]
+
+
+def test_runner_does_not_rewrite_a_grant_that_is_already_there(tmp_path):
+    """Byte-identical, mtime untouched — a lane's settings file is not the runner's
+    to reformat, and a needless rewrite invites a mid-session settings change that
+    (settings being read at launch) would do nothing but look like it did."""
+    wt = tmp_path / "wt"; (wt / ".claude").mkdir(parents=True)
+    f = wt / ".claude" / "settings.json"
+    original = '{ "permissions": { "additionalDirectories": ["%s"] } }' % (Path.home() / "bainluck")
+    f.write_text(original)
+    before = (f.read_text(), f.stat().st_mtime_ns)
+    handoff = tmp_path / "handoff"; (handoff / "runner-inbox" / "testlane").mkdir(parents=True)
+    time.sleep(1)
+    run_runner_briefly(wt, handoff)
+    assert (f.read_text(), f.stat().st_mtime_ns) == before, "the runner rewrote a correct grant"
+
+
+def test_runner_merges_rather_than_clobbering_other_settings(tmp_path):
+    """A lane may carry real settings; the grant is added beside them, never over."""
+    import json
+    wt = tmp_path / "wt"; (wt / ".claude").mkdir(parents=True)
+    f = wt / ".claude" / "settings.json"
+    f.write_text(json.dumps({"permissions": {"allow": ["Bash(ls)"]}, "model": "opus"}))
+    handoff = tmp_path / "handoff"; (handoff / "runner-inbox" / "testlane").mkdir(parents=True)
+    run_runner_briefly(wt, handoff)
+    data = read_grant(wt)
+    assert data["model"] == "opus", "clobbered an unrelated key"
+    assert data["permissions"]["allow"] == ["Bash(ls)"], "clobbered an existing permission"
+    assert str(Path.home() / "bainluck") in data["permissions"]["additionalDirectories"]
+
+
+def test_runner_leaves_an_unparseable_settings_file_alone(tmp_path):
+    """Never overwrite what we failed to read: it may be a lane's real settings
+    with one bad comma. Say so and let a human fix the JSON."""
+    wt = tmp_path / "wt"; (wt / ".claude").mkdir(parents=True)
+    f = wt / ".claude" / "settings.json"
+    f.write_text("{ this is not json")
+    handoff = tmp_path / "handoff"; (handoff / "runner-inbox" / "testlane").mkdir(parents=True)
+    out = run_runner_briefly(wt, handoff)
+    assert f.read_text() == "{ this is not json", "clobbered a file it could not parse"
+    assert "leaving it alone" in out, f"failed silently instead of saying so:\n{out}"
+
+
+@needs_machine
+def test_runner_does_not_write_settings_into_the_master_tree(tmp_path):
+    """The integrator's workdir IS ~/bainluck. It needs the REVERSE grant, which
+    lives in its own settings.local.json — seeding a settings.json there would be
+    noise at best, and must never disturb what is already there."""
+    handoff = tmp_path / "handoff"; (handoff / "runner-inbox" / "testlane").mkdir(parents=True)
+    target = HOME_REPO / ".claude" / "settings.json"
+    existed = target.exists()
+    before = target.read_text() if existed else None
+    run_runner_briefly(HOME_REPO, handoff)
+    assert target.exists() == existed, "the runner created/removed settings.json in the master tree"
+    if existed:
+        assert target.read_text() == before, "the runner edited the master tree's settings.json"
+
+
+@needs_machine
+def test_every_lane_worktree_can_write_the_handoff_tree():
+    """The end state, asserted directly against the machine: every lane the
+    launchers will start carries the grant. This is the check whose absence let
+    `native` run for a day unable to file a single note."""
+    import json
+    grant = str(HOME_REPO)
+    missing = []
+    for lane, wt in real_lanes():
+        if Path(wt).resolve() == HOME_REPO.resolve():
+            continue  # the integrator; see the test above
+        f = Path(wt) / ".claude" / "settings.json"
+        try:
+            dirs = json.loads(f.read_text())["permissions"]["additionalDirectories"]
+        except Exception:
+            missing.append(lane)
+            continue
+        if grant not in dirs:
+            missing.append(lane)
+    assert not missing, (
+        f"lanes that cannot write {grant}/.claude/handoff/: {missing}. Their notes will "
+        "land in a private handoff-outbox/ that only a human copying by hand can deliver. "
+        "lane-runner.sh seeds this at launch, so a lane listed here has not been "
+        "restarted since the grant landed."
+    )

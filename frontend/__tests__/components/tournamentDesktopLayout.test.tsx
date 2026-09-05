@@ -34,7 +34,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 import fs from "node:fs";
 import path from "node:path";
 
-import PlayoffGrid, { GRID_SIZING, gridTemplate } from "@/components/tournament/PlayoffGrid";
+import PlayoffGrid, {
+  GRID_COL_TRACK_FIXED,
+  GRID_COL_TRACK_FLEX,
+  GRID_SIZING,
+  gridTemplate,
+} from "@/components/tournament/PlayoffGrid";
 import { TOURNAMENT_COLUMNS, TOURNAMENT_SHELL } from "@/components/tournament/layout";
 import {
   GRID_COLUMN_WIDTH_DESKTOP_PX,
@@ -211,8 +216,14 @@ describe("UX-P145: the desktop layout exists", () => {
       // artifact would show the phone grid and prove nothing.
       const html = renderToStaticMarkup(<PlayoffGrid grid={loadGrid()} initialExpanded />);
       expect(html).toContain("var(--grid-name-w)");
-      expect(html).toContain("minmax(var(--grid-col-w), 1fr)");
+      // #3087 (third pass): the value track moved behind its own variable so a
+      // scrolling phone can pin it while `lg` keeps it flexible. Still a CSS
+      // variable, still no JS — which is what this test is about.
+      expect(html).toContain("var(--grid-col-track)");
       expect(html).toContain(GRID_SIZING);
+      // …and whichever variant this grid got, `lg` resolves the track to the
+      // flexible desktop measurement that shipped before #3087.
+      expect(html).toContain("lg:[--grid-col-track:minmax(84px,1fr)]");
     });
 
     /* ═══ UX-P147, ALEX'S ITEM 1: NAMES BEFORE BARS ═══
@@ -231,7 +242,7 @@ describe("UX-P145: the desktop layout exists", () => {
       const grid = loadGrid();
       const html = renderToStaticMarkup(<PlayoffGrid grid={grid} initialExpanded />);
       expect(html).toContain(
-        `minmax(var(--grid-name-w), max-content) repeat(${grid.columns.length}, minmax(var(--grid-col-w), 1fr))`
+        `minmax(var(--grid-name-w), max-content) repeat(${grid.columns.length}, var(--grid-col-track))`
       );
       // The old template, which must not come back: a bare `var()` name track
       // takes no free space at all.
@@ -239,8 +250,14 @@ describe("UX-P145: the desktop layout exists", () => {
         `columns:var(--grid-name-w) repeat(${grid.columns.length}`
       );
       expect(gridTemplate(4)).toBe(
-        "minmax(var(--grid-name-w), max-content) repeat(4, minmax(var(--grid-col-w), 1fr))"
+        "minmax(var(--grid-name-w), max-content) repeat(4, var(--grid-col-track))"
       );
+      // The growth-limit argument is unchanged, but half of it now lives in the
+      // track variable, so read it there too: at `lg` — the width this test is
+      // about — the bars are still the flexible half that compresses first,
+      // while the name track carries the `max-content` growth limit above.
+      expect(GRID_COL_TRACK_FIXED).toContain("lg:[--grid-col-track:minmax(84px,1fr)]");
+      expect(GRID_COL_TRACK_FLEX).toContain("lg:[--grid-col-track:minmax(84px,1fr)]");
     });
 
     it("draws the spark bars by default — Alex ruled Option A", () => {

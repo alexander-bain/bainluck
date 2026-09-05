@@ -1,0 +1,21 @@
+{
+  "derived": "2026-09-04, lane1/115 (#3070), from site.api.espn.com NFL summary?event=401873108 \u2014 HTTP 200, id 401873108, date 2026-12-08T01:15Z, season 2026 type 2 week 13, home 26 Seattle Seahawks / away 6 Dallas Cowboys",
+  "games": [
+    {
+      "commence": "2026-12-08T01:15:00+00:00",
+      "espn_id": "401873108",
+      "label": "Dallas Cowboys @ Seattle Seahawks 2026-12-08 01:15Z"
+    }
+  ],
+  "gate": "apply may proceed only when a re-derivation at apply time produces a MISSING id set whose intersection with THIS set is THIS set",
+  "id_count": 1,
+  "row_one": "401873108",
+  "schema": "event-create-truth-set/v1",
+  "scope": "NFL 2026-12-08 \u2014 the single Week 13 Monday-night game with NO row at all (#3070 row A)",
+  "sport_key": "americanfootball_nfl",
+  "truth_id_hash": "0c2dfd74b47aaa19f7b7cd36f74dc1c0",
+  "truth_id_hash_formula": "md5('\\n'.join(sorted(truth_ids)))",
+  "truth_ids": [
+    "401873108"
+  ]
+}

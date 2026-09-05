@@ -411,11 +411,21 @@ class TestTheGuards:
             assert len(found) == 1, f"{name} moved or multiplied"
             return ast.literal_eval(found[0].value)
 
+        # CAL-P1002F (D66): a THIRD tuple, read out of the frozen file the same
+        # way and asserted in its emission position. The reason this test derives
+        # rather than restates now applies three times over — a sum-arm-only cell
+        # added to the statement while this mirror stood still is the identical
+        # CAL-P162 failure (the first banked unit raises ``UndeclaredColumnError``
+        # and no generation can bank), just with a new constant in front of it.
         expected = (
             ("nxb_cell_esports",)
             + tuple(
                 f"nxb_cell_{idx}"
                 for idx, _ in enumerate(_frozen_tuple("NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS"))
+            )
+            + tuple(
+                f"nxb_sum_cell_{idx}"
+                for idx, _ in enumerate(_frozen_tuple("SUM_ARM_ONLY_EXCLUDED_CELLS"))
             )
             + tuple(
                 f"pp_cell_{idx}"

@@ -17,7 +17,7 @@ from sqlalchemy import select, or_, not_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models import FuturesMarket, FuturesOutcome
+from app.models import FuturesMarket, FuturesOddsSnapshot, FuturesOutcome
 from app.services import get_db
 from app.utils.cross_source_matching import group_markets_by_group_id
 from app.utils.market_staleness import should_exclude_from_featured, is_title_implied_stale
@@ -350,6 +350,25 @@ def _adds_to_the_question(name: str, question: str | None) -> bool:
     return re.search(rf"(?<!\w){re.escape(normalized)}(?!\w)", haystack) is None
 
 
+def _leader_outcome(market: FuturesMarket):
+    """The outcome whose probability ``_highest_prob`` prints, or None.
+
+    The scan deliberately mirrors ``_highest_prob``'s: same ``0.0`` floor, same
+    strict ``>`` so the FIRST of a tie wins. Three callers now read it — the
+    printed number, the name under it, and the sparkline's capture history —
+    and they must not be able to disagree about which outcome the card is
+    about, or the line would chart one outcome under another's percentage.
+    """
+    best = None
+    best_prob = 0.0
+    for outcome in market.outcomes or []:
+        probability = float(outcome.current_probability or 0)
+        if probability > best_prob:
+            best_prob = probability
+            best = outcome
+    return best
+
+
 def _leader_outcome_name(market: FuturesMarket) -> str | None:
     """Name of the outcome whose probability ``_highest_prob`` prints, or None.
 
@@ -379,13 +398,7 @@ def _leader_outcome_name(market: FuturesMarket) -> str | None:
     attached to the wrong name — strictly worse than printing no name at all.
     ``TestTheNamedLeaderIsThePrintedNumber`` holds them together.
     """
-    best = None
-    best_prob = 0.0
-    for outcome in market.outcomes or []:
-        probability = float(outcome.current_probability or 0)
-        if probability > best_prob:
-            best_prob = probability
-            best = outcome
+    best = _leader_outcome(market)
     if best is None:
         return None
 
@@ -397,6 +410,104 @@ def _leader_outcome_name(market: FuturesMarket) -> str | None:
     if not _adds_to_the_question(name, market.name):
         return None
     return name
+
+
+# ---------------------------------------------------------------------------
+# Leader capture history — the sparkline's ONLY data source (ux/1069, #2960)
+# ---------------------------------------------------------------------------
+#
+# What was here before: nothing. The weather hero and the wild cards each drew
+# a 14-point sparkline in which exactly ONE point — the last — was real. The
+# other thirteen came from `sparkFrom()`, a seeded LCG in the frontend that
+# walked a random-noise path from a random-offset start toward the current
+# price. On a site whose whole promise is "this is what the market thinks",
+# that line was an invented price history rendered in the same ink as a real
+# one, and a reader had no way to tell. Deleted, replaced by these captures.
+#
+# The rule the replacement obeys: every drawn point is a row in
+# `futures_odds_snapshots`, and when there are not enough of them the card
+# draws no line at all. There is no placeholder line, no flat line, no ghost.
+
+HISTORY_WINDOW_DAYS = 30
+
+# The old fabricated spark drew 14 points; a real series is downsampled to the
+# same budget so the card's geometry is unchanged.
+MAX_HISTORY_POINTS = 14
+
+# Below this many real captures the card renders NO sparkline. Two points is a
+# straight segment, and a straight segment reads as a trend — it is the same
+# lie as the seeded generator, just cheaper to draw. Three is the fewest that
+# can show a direction the data actually contains.
+MIN_HISTORY_POINTS = 3
+
+
+def _downsample(points: list[float], limit: int) -> list[float]:
+    """Thin ``points`` to about ``limit``, always keeping the first and last."""
+    if len(points) <= limit:
+        return points
+    step = len(points) / limit
+    keep = sorted({int(i * step) for i in range(limit)} | {len(points) - 1})
+    return [points[i] for i in keep]
+
+
+async def _leader_histories(
+    db: AsyncSession, markets: Sequence[FuturesMarket]
+) -> dict[int, list[float]]:
+    """Real capture history for each market's leader outcome, keyed by market id.
+
+    The series charts the SAME outcome whose probability the card prints
+    (``_leader_outcome``), because a line under a number has to be that
+    number's line. Markets with fewer than ``MIN_HISTORY_POINTS`` captures are
+    absent from the returned dict — the caller emits an empty list and the card
+    draws nothing.
+
+    Column select, not entity select: three fields are read and the rows are
+    immediately reduced to at most ``MAX_HISTORY_POINTS`` floats, so hydrating
+    ORM snapshot objects would buy nothing (same reasoning as politics'
+    presidential history, LAT-P023 / #1607).
+    """
+    wanted: dict[int, tuple[int, str]] = {}
+    for m in markets:
+        leader = _leader_outcome(m)
+        if leader is None or leader.id is None:
+            continue
+        wanted[leader.id] = (m.id, _market_source(m))
+    if not wanted:
+        return {}
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=HISTORY_WINDOW_DAYS)
+    result = await db.execute(
+        select(
+            FuturesOddsSnapshot.outcome_id,
+            FuturesOddsSnapshot.bookmaker,
+            FuturesOddsSnapshot.probability,
+        )
+        .where(
+            FuturesOddsSnapshot.outcome_id.in_(list(wanted.keys())),
+            FuturesOddsSnapshot.captured_at >= cutoff,
+        )
+        .order_by(FuturesOddsSnapshot.captured_at)
+    )
+
+    series: dict[int, list[float]] = defaultdict(list)
+    for outcome_id, bookmaker, probability in result.all():
+        market_id, source = wanted.get(outcome_id, (None, ""))
+        if market_id is None or probability is None:
+            continue
+        # ONE book per line. `FuturesOddsSnapshot.probability` is a raw,
+        # vig-inclusive reading from a single bookmaker, never a blend, so
+        # interleaving two books' captures by time would turn the gap between
+        # them into a sawtooth and render it as movement. The card names one
+        # source; the line shows that source's captures and nothing else.
+        if (bookmaker or "").lower() != source:
+            continue
+        series[market_id].append(round(float(probability) * 100, 1))
+
+    return {
+        market_id: _downsample(points, MAX_HISTORY_POINTS)
+        for market_id, points in series.items()
+        if len(points) >= MIN_HISTORY_POINTS
+    }
 
 
 def _is_resolved(market: FuturesMarket) -> bool:
@@ -558,11 +669,18 @@ async def get_featured(db: AsyncSession):
     scored.sort(key=lambda x: x[0], reverse=True)
     top = scored[:5]
 
+    histories = await _leader_histories(db, [m for _score, m in top])
+
     items = []
     for _score, m in top:
         items.append({
             "q": m.name,
             "prob": _highest_prob(m),
+            # Real captures for the leader outcome, oldest first — the ONLY
+            # thing the hero sparkline may draw. Empty when the market has
+            # fewer than MIN_HISTORY_POINTS of them, and the card then draws
+            # no line rather than a made-up one (ux/1069, #2960).
+            "history": histories.get(m.id, []),
             # Which outcome `prob` belongs to. Always present, explicitly null
             # when there is nothing worth naming — an absent key would be
             # indistinguishable from a payload served out of the pre-UX-P186
@@ -1021,6 +1139,8 @@ async def get_wildcards(db: AsyncSession):
     # Collapse Polymarket sub-markets sharing a group_id (BR62 / #487).
     markets = group_markets_by_group_id(markets)
 
+    histories = await _leader_histories(db, [m for m in markets if m.outcomes])
+
     items = []
     for m in markets:
         if not m.outcomes:
@@ -1028,6 +1148,8 @@ async def get_wildcards(db: AsyncSession):
         items.append({
             "q": m.name,
             "prob": _highest_prob(m),
+            # See the hero's: real captures only, empty when there are too few.
+            "history": histories.get(m.id, []),
             # Same defect as the hero's, on the same page: "Min Arctic sea ice
             # extent this summer?" led with a bare 16% off a seven-way ladder
             # whose top four sit within 1.2 points of each other.

@@ -236,8 +236,16 @@ def test_the_per_cell_labels_are_derived_from_the_allowlist():
     # because the column suffixes are positional (`nxb_cell_{idx}` /
     # `pp_cell_{idx}`): a cell inserted rather than appended would renumber the
     # columns under a banked cursor that still carries the old ones.
+    # CAL-P1002F (D66): a THIRD allowlist behind the same disclosure — the
+    # sum-arm-only cells — and it is asserted in its emission position, between
+    # the two that were already here. The positional argument above is why it
+    # got its own `nxb_sum_cell_{idx}` prefix rather than the next `nxb_cell_`
+    # index: sharing the prefix would mean adding a both-arms cell renumbers a
+    # sum-arm cell's column under a banked cursor still carrying the old one.
     assert [label for label, _ in labels[1:]] == [
         f"{src}/{cat}" for src, cat in pc.NONEXCLUSIVE_BUNDLE_EXCLUDED_CELLS
+    ] + [
+        f"{src}/{cat}" for src, cat in pc.SUM_ARM_ONLY_EXCLUDED_CELLS
     ] + [
         f"{src}/{cat}" for src, cat in pc.PLAYER_PROPS_PLACEHOLDER_EXCLUDED_CELLS
     ]

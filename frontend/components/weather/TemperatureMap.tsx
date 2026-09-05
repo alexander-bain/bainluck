@@ -38,11 +38,14 @@ function TemperatureMapSkeleton() {
             <div className="h-16 w-24 bg-gray-200 rounded animate-pulse mb-3" />
             <div className="h-4 w-20 bg-gray-200 rounded animate-pulse mb-4" />
             <div className="flex-1 flex items-end gap-1 mt-6" style={{ height: 140 }}>
+              {/* Uniform, not sinusoidal. This skeleton stands in for a real
+                  temperature DISTRIBUTION, so a curved grey bar row is a
+                  distribution drawn before the data arrives. ux/1069, #2960. */}
               {Array.from({ length: 11 }).map((_, i) => (
                 <div
                   key={i}
                   className="flex-1 bg-gray-200 rounded-t animate-pulse"
-                  style={{ height: `${15 + Math.sin(i * 0.8) * 50 + 40}%` }}
+                  style={{ height: "60%" }}
                 />
               ))}
             </div>

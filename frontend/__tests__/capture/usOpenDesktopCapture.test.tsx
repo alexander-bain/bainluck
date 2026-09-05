@@ -206,7 +206,12 @@ describe("US Open DESKTOP capture rig", () => {
   it("the desktop grid fills its width instead of scrolling", () => {
     const grid = readPlayoffGrid(payload.grids?.["mens-singles"]);
     const html = renderToStaticMarkup(<PlayoffGrid grid={grid!} initialExpanded />);
-    expect(html).toContain("minmax(var(--grid-col-w), 1fr)");
+    // #3087 (third pass): "fills its width" is now carried by the track
+    // variable's `lg` value rather than by the template literal — a phone that
+    // scrolls pins the track so the scroll floor is not absorbed into the
+    // columns, and `lg` keeps the flexible one that fills the desktop card.
+    expect(html).toContain("var(--grid-col-track)");
+    expect(html).toContain("lg:[--grid-col-track:minmax(84px,1fr)]");
     expect(html).toContain("lg:[--grid-name-w:236px]");
   });
 

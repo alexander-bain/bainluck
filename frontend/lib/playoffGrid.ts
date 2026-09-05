@@ -303,6 +303,56 @@ export function gridWidthPx(columnCount: number): number {
 }
 
 /**
+ * ═══ #3087: THE SCROLL END HAS TO BE A SNAP POINT, OR SNAPPING DOES NOTHING
+ * ═══ ABOUT THE POSITION THE READER ACTUALLY SWIPES TO.
+ *
+ * `PlayoffGrid` snaps its scroller (`scroll-padding-left: 138px`, every value
+ * cell a `snap-start` target), which puts the rest positions at multiples of one
+ * column plus its gap: 0, 52, 104… A browser will ALWAYS also let the scroll
+ * rest at the end of its content, snap point or not, and measured on production
+ * with a real wheel gesture that is exactly where a swipe lands:
+ *
+ *     wheel +20  → scrollLeft   0    (snapped back)
+ *     wheel +40  → scrollLeft  52    ✓ a snap point, whole columns
+ *     wheel +70  → scrollLeft  74    ✗ the END — QF half under the name box
+ *     wheel +120 → scrollLeft  74    ✗ same
+ *
+ * At 74 the men's grid printed `Carlos Alcaraz  5%  67%  62%  43%` with his real
+ * QF number (75%) behind the frozen name. Snapping fixed every position but the
+ * one a reader reaches by swiping as far as it goes.
+ *
+ * So the scroll floor rounds the OVERFLOW up to a whole number of column steps.
+ * Five columns overflow a 332px card by 74; 74 rounds to 104; the floor becomes
+ * 436 and the scroll range becomes 104 — which IS a snap point, so every resting
+ * position shows whole columns and the last one leaves a small gutter instead of
+ * half a number. Four columns overflow by 22, which rounds to 52 the same way.
+ *
+ * A grid that fits is untouched and returns its own width: there is no scroll,
+ * no snapping, and nothing to round.
+ *
+ * ⚠️ THIS ONLY HOLDS IF THE EXTRA PIXELS STAY OUT OF THE TRACKS. The first
+ * version of this shipped against value tracks that were `minmax(46px, 1fr)`,
+ * and a `min-width` above the natural width is FREE SPACE, which the grid
+ * algorithm hands to flexible tracks. Measured on production: the columns grew
+ * 46 -> 52, the step grew 52 -> 58, and 104 stopped being a multiple of the
+ * step — so the rounding fed the very thing it was meant to align, and a 6px
+ * sliver of the hidden column survived beside the sticky name. The phone's
+ * value tracks are therefore FIXED while the grid scrolls
+ * (`GRID_COL_TRACK_FIXED` in `PlayoffGrid.tsx`); this function is only correct
+ * beside that. A guard in `playoffGrid.test.tsx` pins the pair together.
+ */
+export function gridScrollFloorPx(
+  columnCount: number,
+  contentWidthPx = GRID_CARD_CONTENT_PX
+): number {
+  const width = gridWidthPx(columnCount);
+  const overflow = width - contentWidthPx;
+  if (overflow <= 0) return width;
+  const step = GRID_COLUMN_WIDTH_PX + GRID_GAP_PX;
+  return contentWidthPx + Math.ceil(overflow / step) * step;
+}
+
+/**
  * How many cells wear an illiquidity mark (UX-P157).
  *
  * Counted rather than assumed, and it is what gates the legend: a grid with no

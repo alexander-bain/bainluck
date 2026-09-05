@@ -160,7 +160,20 @@ while [ "$G" -lt "$LANE4_GRADERS" ]; do
   G=$((G + 1))
 done
 
-echo "$((N + LANE4_GRADERS)) Terminal windows opened — $N lanes plus $LANE4_GRADERS cert graders, streaming live."
+# The measurement bus: ONE window (see lanes.conf for why not two). Tolerated
+# missing rather than fatal — an older checkout without the script should still
+# bring up every lane and both graders, the same way a missing worktree only
+# skips its own lane.
+BUS=0
+if [ -n "${BUS_RUNNER:-}" ] && [ -f "$BUS_RUNNER" ]; then
+  launch "$BUS_RUNNER"
+  BUS=1
+else
+  echo "SKIPPED the measurement bus — no script at ${BUS_RUNNER:-<unset>}."
+  echo "  The recurring M-R set will only run when someone drives it by hand."
+fi
+
+echo "$((N + LANE4_GRADERS + BUS)) Terminal windows opened — $N lanes, $LANE4_GRADERS cert graders and $BUS measurement bus, streaming live."
 echo "Also run the supervisor once, in its own window, so a lane that dies comes back:"
 echo "  caffeinate -i ~/bainluck/lanes-supervisor.sh"
 echo "If a lane is already running in another window, close the duplicate:"

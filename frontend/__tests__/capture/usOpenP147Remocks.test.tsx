@@ -88,8 +88,15 @@ const PAYLOAD_PATH = path.join(REPO, "docs", "mocks", "us-open", "payload-2026-0
 const GRID_TEMPLATE_BEFORE = (columns: number) =>
   `var(--grid-name-w) repeat(${columns}, minmax(var(--grid-col-w), 1fr))`;
 
+/**
+ * Today's template. The value track moved behind `--grid-col-track` in #3087's
+ * third pass (a scrolling phone pins it so the scroll floor is not absorbed into
+ * the columns; `lg` still resolves it to `minmax(84px, 1fr)`), so the AFTER side
+ * of this rig follows it. The BEFORE side is a historical quote and does not
+ * move.
+ */
 const GRID_TEMPLATE_AFTER = (columns: number) =>
-  `minmax(var(--grid-name-w), max-content) repeat(${columns}, minmax(var(--grid-col-w), 1fr))`;
+  `minmax(var(--grid-name-w), max-content) repeat(${columns}, var(--grid-col-track))`;
 
 /** UX-P146's interior-tick rule, quoted so the BEFORE panel is the real one. */
 const INTERIOR_TICK_EDGE_MARGIN_BEFORE = 0.18;

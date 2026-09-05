@@ -181,6 +181,34 @@ GATE_PENDING = "PENDING-NO-GOVERNING-NUMBER"
 #: a streak is a spec decision, not a rendering detail.
 GATES_CARRY_STREAK = frozenset({GATE_NO_SCORE, GATE_PENDING})
 
+#: The one-paragraph summary the agreement endpoint prints above the sports, and
+#: the first thing anybody reading the payload reads.
+#:
+#: It is BUILT from the constants above rather than typed beside them, because
+#: the summary that ships is the summary that goes stale. The wording it
+#: replaces ("identity >= 99.5% on the governing bucket") predated D63 and was
+#: true of the buckets and wrong about the numbers: identity is indeed the
+#: governing bucket against `schedule` and `anchors`, but a reader who has just
+#: been told "identity >= 99.5%" reaches for `identity.pct`, which for NBA and
+#: NHL reads 3.40 and governs nothing. Scoring a sport on the wrong one of
+#: identity's two numbers is the exact mistake D63 exists to prevent, so it may
+#: not survive in the payload's opening sentence.
+#:
+#: So this says the three things a reader needs before they look at a number:
+#: which question decides is PER SPORT, the verdict is already computed on the
+#: row, and there are four gate states rather than pass/fail.
+FLIP_GATE_SUMMARY = (
+    f"D50: a flip needs 7 consecutive daily rows clearing {FLIP_BAR_PCT}%, plus "
+    "a YOUR-TURN entry Alex has seen. Identity governs; schedule and anchors "
+    "are reported and gate nothing. WHICH of identity's two numbers scores a "
+    "sport is per sport (D63), so do not compare a percentage to the bar "
+    "yourself — read the verdict off that sport's `identity.governing`, which "
+    "names the number(s), their values and the bar it used. Four gate states: "
+    f"`{GATE_MEETS}` advances the streak, `{GATE_BELOW}` resets it, and "
+    f"`{GATE_NO_SCORE}` (nothing to divide by) and `{GATE_PENDING}` (the sport "
+    "has not been told which number decides) both carry it unchanged."
+)
+
 
 def _identity_block(
     sport_key: str,

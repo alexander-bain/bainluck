@@ -195,15 +195,27 @@ class TestTheHandMapIsGoneAndTheArtifactIsAuthority:
 
         The ratchet was not loosened to absorb this: it is a pin, it fired, and
         every one of the nine is accounted for by name.
+
+        CAL-P1002F (2026-09-04, D66) takes this to **66**, and it is the
+        cheapest possible shape of a +1: ONE input, ``SUM_ARM_ONLY_EXCLUDED_CELLS``,
+        and it arrives **COVERED**. It is interpolated into the emitted SQL by
+        ``_calibration_population_ctes`` (so hashing the builder's source cannot
+        see its value) and it decides WHICH ROWS THE CURVE PUBLISHES, so it is
+        hashed by value in ``_main_input_fingerprint`` on the deploy that creates
+        it — the same discipline CAL-P168's six followed. ``covered_by_value``
+        therefore moves 11 -> 12 while ``uncovered_count`` **stands still at 54**,
+        which is the whole claim: the unguarded surface did not grow.
         """
-        assert artifact["input_count"] == 65
+        assert artifact["input_count"] == 66
         # CAL-P162: 4 -> 5. `MEX_NORMALIZE_THRESHOLD` joined the by-value set on
         # the deploy that made it decide PUBLICATION rather than only pricing.
         # CAL-P164 added no by-value input, so this stands still.
         # CAL-P168: 5 -> 11. Six of rank 1's seven population-shaping constants
         # closed on the deploy that created them; the seventh cannot be credited
         # here because it is cross-module (see the two tests below).
-        assert len(artifact["covered_by_value"]) == 11
+        # CAL-P1002F: 11 -> 12. D66's `SUM_ARM_ONLY_EXCLUDED_CELLS`, closed on
+        # the deploy that created it. `uncovered_count` does not move.
+        assert len(artifact["covered_by_value"]) == 12
         assert artifact["uncovered_count"] == 54
         assert artifact["uncovered_count"] == artifact["input_count"] - len(
             artifact["covered_by_value"]

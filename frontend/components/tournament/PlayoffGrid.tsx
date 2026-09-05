@@ -13,8 +13,8 @@ import {
   formatGridCell,
   gridCellExplanation,
   gridCellGlyph,
+  gridScrollFloorPx,
   gridScrolls,
-  gridWidthPx,
   markedCellCount,
   type GridCell,
   type GridColumn,
@@ -47,9 +47,13 @@ import {
  * rescales a column to make it add up.
  *
  * **Ruling 5 — wide rounds scroll.** `overflow-x-auto` with the header and the
- * rows inside the same scroller so they cannot drift apart. Today's grid is
- * 348px wide against a 358px content box, so it does not scroll; a draw with a
- * sixth column would, which is the point of the rule.
+ * rows inside the same scroller so they cannot drift apart. Since #3072 the
+ * arithmetic behind that verdict counts a row's padding and gaps as well as its
+ * tracks, so the men's five-column draw scrolls (406px against a measured 332px
+ * card) where it used to be clipped; a three-column first-week grid still does
+ * not. Since #3087 the name track sticks while it scrolls — see
+ * `GRID_STICKY_NAME`, because a number without the name beside it is half a
+ * sentence.
  *
  * ═══ WHAT THE READER SEES WHEN A ROW HAS NO MARKETS ═══
  *
@@ -89,6 +93,103 @@ const ALARM_STATES = new Set(["unlinked", "unregistered"]);
  */
 export const GRID_SIZING =
   "[--grid-name-w:118px] [--grid-col-w:46px] lg:[--grid-name-w:236px] lg:[--grid-col-w:84px]";
+
+/**
+ * ═══ #3087 (third pass): A FLEXIBLE VALUE TRACK EATS THE SCROLL FLOOR ═══
+ *
+ * `gridScrollFloorPx` rounds the scroll range up to a whole column step so the
+ * END of a swipe — where a browser always lets a scroller rest — lands on a snap
+ * point. That rounding only works if the extra pixels stay OUTSIDE the tracks.
+ *
+ * They did not. The value tracks were `minmax(var(--grid-col-w), 1fr)`, and the
+ * big comment on `gridTemplate` below rests on a property that was true right up
+ * until the floor shipped: *"THE PHONE IS UNTOUCHED — at 390px there is no free
+ * space, so step 2 distributes nothing."* A `min-width` of 436 on a 406px grid
+ * CREATES 30px of free space, and step 3 hands free space to the `1fr` tracks.
+ * Measured on production the night the floor shipped, phone 390px, at the end
+ * rest position:
+ *
+ *     column width  46 -> 52      (30px spread across 5 flexible tracks)
+ *     column step   52 -> 58
+ *     maxScroll     104           (not a multiple of 58 -> not a snap point)
+ *
+ * so a 6px sliver of the QF column survived beside the sticky name and the rows
+ * printed a clipped `%` next to the player. Better than the half-eaten digit it
+ * replaced, but not what the floor was for.
+ *
+ * So while the grid SCROLLS, the phone's value tracks are fixed at
+ * `--grid-col-w` and the rounding becomes real trailing gutter, which is what
+ * the floor always assumed. Two variants rather than one string with an
+ * override, so there is no specificity question: exactly one is ever applied.
+ *
+ * ⚠️ Both are LITERALS for the JIT reason `GRID_SIZING` documents above, and
+ * both spell `lg:` identically — a scrolling grid is a PHONE state (`lg:` gets
+ * `overflow-x-visible` and `lg:!min-w-0`), so above `lg` the two must agree, and
+ * they agree with what shipped before any of #3087.
+ */
+export const GRID_COL_TRACK_FLEX =
+  "[--grid-col-track:minmax(46px,1fr)] lg:[--grid-col-track:minmax(84px,1fr)]";
+export const GRID_COL_TRACK_FIXED =
+  "[--grid-col-track:46px] lg:[--grid-col-track:minmax(84px,1fr)]";
+
+/**
+ * ═══ THE NAME TRACK STAYS WHEN THE GRID SCROLLS (#3087) ═══
+ *
+ * #3072 made the Title column REACHABLE — 74px of scroll where there had been
+ * none. Reaching it cost the reader the other half of the sentence. Measured on
+ * production the morning after that shipped, phone viewport 390px, the men's
+ * grid pushed to `scrollLeft = 74`: the header reads `R16 QF SF FINAL TITLE`
+ * and the rows read **`s Alcaraz`**, **`nder Z…`**, **`Medve…`**. The number
+ * arrives exactly as the name it belongs to leaves, and a table where those two
+ * facts are never on screen together does not answer the question it was built
+ * for ("who wins the title, and how likely is it").
+ *
+ * So the name track is `position: sticky` at the scrollport's left edge. Three
+ * things this has to get right, none of them optional:
+ *
+ * - **It must not move anything at rest.** `-ml-3.5 pl-3.5 -mr-1.5 pr-1.5`
+ *   extends the sticky box's PAINT over the row's own `px-3.5` padding and into
+ *   the `gap-1.5` beside it while leaving its content box exactly where it was.
+ *   The margins cancel the paddings, so the track's `max-content` contribution
+ *   is unchanged and no name truncates one character earlier than yesterday.
+ * - **It must be opaque.** `bg-surface-card` is the card's own background — a
+ *   transparent sticky cell lets the percentages slide UNDER the name, which
+ *   reads as a rendering fault rather than as a frozen column.
+ * - **It expires where ruling 5 expires.** Applied only when `scrolls`, and
+ *   retired at `lg` (`lg:static`), where the tracks are `1fr`, the grid fills
+ *   its card, and there is nothing to scroll or to stick to.
+ */
+export const GRID_STICKY_NAME =
+  "sticky left-0 z-10 bg-surface-card -ml-3.5 pl-3.5 -mr-1.5 pr-1.5 " +
+  "lg:static lg:z-auto lg:ml-0 lg:mr-0 lg:pl-0 lg:pr-0";
+
+/**
+ * ═══ AND IT COMES TO REST ON WHOLE COLUMNS (#3087, second half) ═══
+ *
+ * A frozen name column and a free scroll produce a number that is WRONG on
+ * screen. Photographed on production at `scrollLeft = 74` with the sticky cell
+ * live and nothing else: the QF column sits half under the name box and Alcaraz's
+ * row reads `Carlos Alcaraz  5%  67%  62%  43%` — his real QF number is **75%**.
+ * A reader has no way to know the 7 is behind the name. "One number per
+ * question" cannot survive a resting position that eats a digit.
+ *
+ * So the scroller snaps, and the snap line is the sticky cell's right edge
+ * rather than the scrollport's: `scroll-padding-left` = the row's own padding
+ * plus the name track plus the gap = `14 + 118 + 6 = 138px`, which is exactly the
+ * measured width of the sticky box on production. Each value cell is a
+ * `snap-start` target, so the rest positions are `0` and `52`
+ * (`GRID_COLUMN_WIDTH_PX + GRID_GAP_PX`) — at 0 the grid reads R16→FINAL, at 52
+ * it reads QF→**TITLE**, and at neither is any column half-hidden.
+ *
+ * ⚠️ `138` IS WRITTEN OUT because Tailwind's JIT scans source text and cannot
+ * execute an expression — the same trap `GRID_SIZING` documents above. It is
+ * transcription, not judgement, and `playoffGrid.test.tsx` parses the number
+ * back out and asserts it equals the three constants added together, so the day
+ * one of them changes the guard fails instead of the layout.
+ *
+ * `lg:snap-none` because above the breakpoint the grid does not scroll at all.
+ */
+export const GRID_SCROLL_SNAP = "snap-x snap-mandatory scroll-pl-[138px] lg:snap-none";
 
 /**
  * ═══ THE SPARK BARS — RULED IN (UX-P147) ═══
@@ -283,9 +384,19 @@ function Cell({
  * table, not per row, because grid tracks are shared. That is the correct
  * reading of "names get priority": a column sized to its longest entry is a
  * column where no name is cut while another row has slack.
+ *
+ * ═══ AND WHY THE VALUE TRACK IS NOW A VARIABLE (#3087, third pass) ═══
+ *
+ * The value track used to be written out here as `minmax(var(--grid-col-w),
+ * 1fr)`. It is now `var(--grid-col-track)`, which resolves to exactly that
+ * everywhere it used to — EXCEPT on a phone whose grid scrolls, where it is
+ * fixed so the scroll floor cannot be absorbed into the columns. See
+ * `GRID_COL_TRACK_FLEX` / `GRID_COL_TRACK_FIXED` above. Every clause of the
+ * ordering argument below is unchanged: a fixed track is still non-flexible, so
+ * the name still grows before the bars do.
  */
 export function gridTemplate(columnCount: number): string {
-  return `minmax(var(--grid-name-w), max-content) repeat(${columnCount}, minmax(var(--grid-col-w), 1fr))`;
+  return `minmax(var(--grid-name-w), max-content) repeat(${columnCount}, var(--grid-col-track))`;
 }
 
 function SumCheck({ grid }: { grid: PlayoffGridModel }) {
@@ -432,8 +543,8 @@ export default function PlayoffGrid({
           over the wrong column. */}
       <div
         className={`overflow-hidden rounded-2xl border border-surface-border bg-surface-card ${GRID_SIZING} ${
-          scrolls ? "overflow-x-auto lg:overflow-x-visible" : ""
-        }`}
+          scrolls ? GRID_COL_TRACK_FIXED : GRID_COL_TRACK_FLEX
+        } ${scrolls ? `overflow-x-auto lg:overflow-x-visible ${GRID_SCROLL_SNAP}` : ""}`}
         data-testid="grid-scroller"
       >
         {/* The phone's scroll floor. `lg:min-w-0` retires it in a desktop
@@ -442,18 +553,20 @@ export default function PlayoffGrid({
             narrow. Ruling 5 applies where ruling 5 was measured. */}
         <div
           className={scrolls ? "lg:!min-w-0" : undefined}
-          style={scrolls ? { minWidth: `${gridWidthPx(grid.columns.length)}px` } : undefined}
+          style={scrolls ? { minWidth: `${gridScrollFloorPx(grid.columns.length)}px` } : undefined}
         >
           <div
             className="grid items-center gap-1.5 border-b border-surface-border px-3.5 py-2 text-[9.5px] font-bold uppercase tracking-[0.05em] text-text-muted lg:px-5 lg:py-2.5 lg:text-[10.5px]"
             style={{ gridTemplateColumns: template }}
             data-testid="grid-header"
           >
-            <span>Player</span>
+            <span className={scrolls ? GRID_STICKY_NAME : undefined}>Player</span>
             {grid.columns.map((column) => (
               <span
                 key={column.key}
-                className={`text-right ${column.kind === "title" ? "text-text-secondary" : ""}`}
+                className={`text-right${scrolls ? " snap-start" : ""} ${
+                  column.kind === "title" ? "text-text-secondary" : ""
+                }`}
                 title={column.long_label}
                 data-testid="grid-column"
                 data-column={column.key}
@@ -481,7 +594,10 @@ export default function PlayoffGrid({
                 data-rank={row.rank ?? undefined}
                 data-on-board={row.onBoard ? "true" : "false"}
               >
-                <span className="flex min-w-0 items-baseline">
+                <span
+                  className={`flex min-w-0 items-baseline${scrolls ? ` ${GRID_STICKY_NAME}` : ""}`}
+                  data-testid="grid-name"
+                >
                   {/* RULING 8, at 18px and NOT at the 26/28 the other two
                       surfaces use. The name box is GRID_NAME_WIDTH_PX = 118 by
                       measurement, and widening it by an avatar would push the
@@ -508,7 +624,11 @@ export default function PlayoffGrid({
                   )}
                 </span>
                 {grid.columns.map((column) => (
-                  <span key={column.key} className="text-right">
+                  <span
+                    key={column.key}
+                    className={`text-right${scrolls ? " snap-start" : ""}`}
+                    data-testid="grid-value-cell"
+                  >
                     <Cell
                       cell={row.cells[column.key]}
                       column={column}

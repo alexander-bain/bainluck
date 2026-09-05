@@ -26,21 +26,31 @@ class _MockScalars:
 
 
 class _MockResult:
-    def __init__(self, items):
+    """Serves both query shapes — see the twin in ``test_route_weather.py``.
+
+    `scalars()` is the entity query; `all()` is a COLUMN query, which since
+    ux/1069 (#2960) the weather route also issues (the capture history behind
+    the sparkline). Handing the entities back from `all()` gives a caller
+    unpacking tuples a TypeError, so the two are kept apart. Empty rows is the
+    honest default: no captures, no line.
+    """
+
+    def __init__(self, items, rows=None):
         self._scalars = _MockScalars(items)
+        self._rows = list(rows or [])
 
     def scalars(self):
         return self._scalars
 
     def all(self):
-        return self._scalars.all()
+        return self._rows
 
     def first(self):
         return self._scalars.first()
 
 
-def _query_result(items):
-    return _MockResult(items)
+def _query_result(items, rows=None):
+    return _MockResult(items, rows)
 
 
 def _outcome(name, probability, *, outcome_id=1, rank=1, change_24h=0):
@@ -695,6 +705,11 @@ class TestCategoryMockedDataContracts:
                 # field", which the hourly weather cache really does serve for
                 # up to an hour after a deploy.
                 "leader": None,
+                # ux/1069: the real captures behind the sparkline. Empty here
+                # because this fixture has no `futures_odds_snapshots` rows,
+                # and empty is what the card must be told — it then draws no
+                # line at all, where it used to draw a seeded random walk.
+                "history": [],
                 "src": "polymarket",
                 "tag": "Hurricane",
                 "closes": body[0]["closes"],
