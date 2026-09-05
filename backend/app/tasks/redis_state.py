@@ -902,18 +902,39 @@ EMIT_BUCKET_S = 600
 #: bucket design exists to exclude.
 EMIT_BUCKET_RETAINED = 3
 
-#: Proof-of-life for the bucketed DELIVERY writer, fleet-wide.
+#: Proof-of-life for the bucketed DELIVERY writer, fleet-wide AND PER BUCKET.
 #:
 #: This exists because zero and unknown are the same absence in Redis and are
-#: opposite facts here. A task with 15 emissions and no delivery bucket key is
+#: opposite facts here. A task with 15 publications and no delivery bucket key is
 #: either 100% broker loss — the sharpest reading this instrument can produce —
-#: or a worker dyno that has not restarted onto the release carrying the writer.
-#: A per-task marker cannot separate them (a totally-dead task has no per-task
-#: delivery key BY DEFINITION, which is the case we most need to report). A
-#: FLEET-wide marker can: the workers deliver hundreds of tasks per bucket, so if
-#: any bucketed delivery was recorded anywhere, the writer is live and a missing
-#: per-task key is a real zero.
-TASK_DELIVERY_BUCKET_ALIVE_KEY = "bainluck:task_deliv_bucket:__writer_alive__"
+#: or a worker fleet that has not yet restarted onto the release carrying the
+#: writer. A PER-TASK marker cannot separate them: a totally-dead task has no
+#: per-task delivery key BY DEFINITION, which is the case we most need to report.
+#: A fleet-wide one can, because the workers deliver hundreds of tasks per
+#: bucket, so a delivery recorded anywhere proves the writer was running.
+#:
+#: 🔴 SCOPED TO THE BUCKET, AND THAT IS CERT-1968's REPAIR. The first version was
+#: one global key refreshed with a 1,800s TTL, so a worker whose FIRST bucketed
+#: write landed in bucket N+1 vouched for bucket N as well. Reproduced at the
+#: blocked head: 15 publications in bucket N, no bucket-N delivery counter,
+#: liveness written only in N+1 — and the reader confidently returned
+#: `delivered: 0` and 100% broker loss, when the old worker code may have
+#: delivered all 15 without the new counter existing. A liveness proof that
+#: outlives the bucket it vouches for is not a proof; it is the same
+#: unknown-read-as-zero the marker was introduced to prevent, one bucket to the
+#: left.
+#:
+#: ITS OWN TOP-LEVEL PREFIX, not a sibling under the delivery prefix. Scoping it
+#: by bucket means appending `:bN`, and `bainluck:task_deliv_bucket:__x__:bN`
+#: matches the delivery scan's own `bainluck:task_deliv_bucket:*:bN` glob — the
+#: marker would be read back as a task called `__writer_alive__`. That is the
+#: phantom-task hazard `TASK_DELIVERY_PREFIX` was separated for, and it arrives
+#: here through a different door.
+TASK_DELIVERY_WRITER_ALIVE_PREFIX = "bainluck:task_deliv_writer_alive"
+
+
+def delivery_writer_alive_key(bucket: int) -> str:
+    return f"{TASK_DELIVERY_WRITER_ALIVE_PREFIX}:b{bucket}"
 
 
 def emit_bucket_index(now_s=None) -> int:
@@ -950,9 +971,13 @@ def _record_bucketed(prefix: str, task: str, also_mark_alive: bool = False):
         pipe.set(key, 0, ex=ttl, nx=True)
         pipe.incr(key)
         if also_mark_alive:
-            pipe.set(TASK_DELIVERY_BUCKET_ALIVE_KEY, 1, ex=ttl)
+            # The SAME bucket index the counter used, so the proof can never
+            # outlive what it vouches for (CERT-1968).
+            pipe.set(delivery_writer_alive_key(emit_bucket_index()), 1, ex=ttl)
         pipe.execute()
     except Exception:
+        # Best-effort by contract: this runs on the publish path and inside
+        # `task_prerun`, so a Redis fault must cost a count, never a fire.
         pass
 
 
@@ -1009,7 +1034,7 @@ def record_task_delivery_bucket(full_task_name: str):
 
     It also stamps the fleet-wide liveness marker, so a task with emissions and
     no delivery bucket can be reported as 100% loss rather than as unknown. See
-    ``TASK_DELIVERY_BUCKET_ALIVE_KEY``.
+    ``TASK_DELIVERY_WRITER_ALIVE_PREFIX``.
     """
     _record_bucketed(TASK_DELIVERY_BUCKET_PREFIX, full_task_name,
                      also_mark_alive=True)
@@ -1033,22 +1058,30 @@ def get_matched_emit_delivery(now_s=None) -> dict:
     permanent phantom loss on every healthy task. One bucket of latency is the
     price of that not happening.
 
-    ``delivered`` is ``None`` — UNKNOWN, never 0 — when the fleet-wide bucketed
-    delivery writer has not been seen at all, which is the state of the whole
-    system for one bucket after the release that ships it. Reading that as zero
-    would report 100% broker loss across every beat in the schedule at the exact
-    moment the instrument is being trusted for the first time. When the writer IS
-    alive, a missing per-task key is a real zero and is reported as one — that is
-    the reading this instrument most needs to be able to make.
+    ``delivered`` is ``None`` — UNKNOWN, never 0 — unless the bucketed delivery
+    writer is proven to have been running **in this very bucket**. That is the
+    state of the whole system for one bucket after the release that ships it, and
+    reading it as zero would report 100% broker loss across every beat in the
+    schedule at the exact moment the instrument is first trusted. When the writer
+    IS proven for this bucket, a missing per-task key is a real zero and is
+    reported as one — the reading this instrument most needs to make.
+
+    CERT-1968: the proof is read for bucket N and nothing else. A single global
+    marker with a multi-bucket TTL let a worker whose first write landed in N+1
+    vouch for N, which turns "we were not measuring yet" back into "we measured
+    nothing arriving".
     """
     try:
         r = get_redis_client()
         bucket = emit_bucket_index(now_s) - 1
         suffix = f":b{bucket}"
+        # CERT-1968: the EXACT completed bucket's proof, never a later one.
         writer_alive = False
         try:
-            writer_alive = r.get(TASK_DELIVERY_BUCKET_ALIVE_KEY) is not None
+            writer_alive = r.get(delivery_writer_alive_key(bucket)) is not None
         except Exception:
+            # Unreadable proof is NO proof — falls through to `delivered: None`,
+            # which is the direction that refuses rather than accuses.
             writer_alive = False
 
         def _scan(prefix):

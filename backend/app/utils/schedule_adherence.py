@@ -325,6 +325,75 @@ def _undelivered_fraction(matched_emitted, matched_delivered):
     return max(0.0, min(1.0, 1.0 - (matched_delivered / matched_emitted)))
 
 
+def bucket_attribution(matched_emitted, matched_delivered, matched_bucket_s,
+                       interval_s):
+    """Which end lost the fires, decided ON THE COMPLETED BUCKET — CERT-1969.
+
+    Returns one of ``None`` (nothing can be said), ``"current_bucket_healthy"``,
+    ``"scheduler"``, ``"broker_or_worker"``, ``"both"``.
+
+    🔴 THE ATTRIBUTION MUST COME FROM THE SAME COHORT AS THE NUMBERS, and the
+    first repair got that wrong. It fixed the QUOTIENT — matched buckets, no
+    pre-deploy history — and then still drove the SENTENCE off the 24h `behind`
+    verdict: any row that was behind over a day and had a non-material bucket
+    fraction printed "the shortfall is at the SCHEDULER — the messages were
+    never published". CERT-1969's reproduction: 15 emitted and 15 delivered in
+    the current bucket, against 15 expected, is a perfectly healthy cohort, and
+    that row accused the scheduler. The 24h shortfall is real and is simply not
+    something this bucket saw.
+
+    So the bucket answers with its OWN expectation, ``matched_bucket_s /
+    interval_s``, and there are two independent questions rather than one:
+
+    * did beat PUBLISH what the schedule asked for in this bucket?
+    * was what it published DELIVERED?
+
+    which gives the four honest answers, and the bus's own worked examples:
+
+    ==================  ==================  ==========================
+    published           delivered           attribution
+    ==================  ==================  ==========================
+    15 of 15 expected   15 of 15            ``current_bucket_healthy``
+    7 of 15 expected    7 of 7              ``scheduler``
+    15 of 15 expected   7 of 15             ``broker_or_worker``
+    7 of 15 expected    3 of 7              ``both``
+    ==================  ==================  ==========================
+
+    ``current_bucket_healthy`` is a first-class answer and not a shrug: it says
+    the shortfall the verdict is complaining about did not happen in the window
+    this instrument can see. Reporting that honestly is the difference between
+    an instrument and an alarm.
+
+    Both shortfalls are judged materially, on the same two-part test the
+    fraction uses — a fraction floor AND more than one whole fire — because one
+    fire spilling over a bucket boundary is the expected reading of a healthy
+    task, and on a slow beat it is a large fraction of a small bucket.
+    """
+    if matched_emitted is None or matched_delivered is None:
+        return None
+    if not matched_bucket_s or not interval_s or interval_s <= 0:
+        return None
+    if matched_emitted < MIN_EXPECTED_FIRES:
+        return None
+    expected = matched_bucket_s / float(interval_s)
+    if expected < MIN_EXPECTED_FIRES:
+        return None
+
+    def _short(actual, of):
+        gap = of - actual
+        return gap > 1 and (gap / of) >= UNDELIVERED_MATERIAL_RATIO
+
+    under_published = _short(matched_emitted, expected)
+    under_delivered = _short(matched_delivered, matched_emitted)
+    if under_published and under_delivered:
+        return "both"
+    if under_published:
+        return "scheduler"
+    if under_delivered:
+        return "broker_or_worker"
+    return "current_bucket_healthy"
+
+
 def _grade_on_stamp(
     out, interval_s, newest_terminal_age_s, newest_start_age_s, counter_ttl_s
 ):
@@ -524,6 +593,9 @@ def adherence(
         "matched_bucket_s": matched_bucket_s,
         "matched_bucket_start": matched_bucket_start,
         "undelivered_fraction": None,
+        # CERT-1969: which end, decided on the SAME bucket as the two
+        # counts above — never inherited from the 24h verdict.
+        "bucket_attribution": None,
         "numerator": "deliveries" if use_deliveries else "starts",
         "self_gated_fires": None,
         # Both default to None on EVERY row so the payload shape does not depend
@@ -576,6 +648,10 @@ def adherence(
     out["undelivered_fraction"] = (
         round(undelivered, 3) if undelivered is not None else None
     )
+    attribution = bucket_attribution(
+        matched_emitted, matched_delivered, matched_bucket_s, interval_s
+    )
+    out["bucket_attribution"] = attribution
 
     # A task that fires and never finishes is the sharpest failure there is, and
     # the surface used to call it healthy (#1716). Gated on having enough fires
@@ -886,42 +962,47 @@ def adherence(
             f"{fires or 0} {noun} against {exp:.1f} scheduled "
             f"in {window_s:.0f}s"
         )
-        # LAT-P238: WHICH END. A `behind` row used to say only how far behind,
-        # and the two ways a beat gets there need opposite fixes — a scheduler
-        # that is not publishing versus a broker discarding what it published.
-        # The emit counter can now separate them, so the row says so instead of
-        # leaving the reader to open a sampler for 25 minutes, which is what
-        # LAT-P238 actually had to do.
+        # LAT-P238: WHICH END, and CERT-1969: DECIDED ON THE BUCKET.
+        #
+        # A `behind` row used to say only how far behind, and the two ways a
+        # beat gets there need opposite fixes — a scheduler that is not
+        # publishing versus a broker discarding what it published.
+        #
+        # 🔴 THE SENTENCE MAY NOT BE INHERITED FROM THIS VERDICT. `ratio` is a
+        # 24h average and the bucket is 600 seconds; a beat behind over a day
+        # and perfectly healthy right now is an ordinary state, and the first
+        # repair printed "the shortfall is at the SCHEDULER" on exactly that
+        # row. `bucket_attribution` answers from the bucket's OWN expectation,
+        # so the row can say "not in this window" — which is a real answer, and
+        # the one that stops this being an alarm.
         #
         # Appended, never substituted: the count-against-schedule sentence is
-        # the verdict's evidence and stays first. Silent below the materiality
-        # floor, because a health surface that editorialises about counter noise
-        # is one people stop reading — the fraction itself is on the row either
-        # way, so nothing is hidden, only unsaid.
-        material = (
-            undelivered is not None
-            and undelivered >= UNDELIVERED_MATERIAL_RATIO
-            # More than one whole fire's worth of gap. See the constant: a
-            # single message spilling over the bucket boundary is the expected
-            # reading of a healthy task, and on a slow beat it is a large
-            # FRACTION of a small bucket.
-            and (matched_emitted - matched_delivered) > 1
-        )
-        if material:
-            out["reason"] += (
-                f". In the last complete {matched_bucket_s:.0f}s bucket "
-                f"{matched_emitted} fires were published and {matched_delivered} "
-                f"were delivered — {undelivered * 100:.0f}% never reached a "
-                "worker, so the loss is between the broker and the worker, not "
-                "at the scheduler"
-            )
-        elif undelivered is not None:
-            out["reason"] += (
-                f". In the last complete {matched_bucket_s:.0f}s bucket "
-                f"{matched_emitted} fires were published and {matched_delivered} "
-                "were delivered, so the shortfall is at the SCHEDULER — the "
-                "messages were never published"
-            )
+        # the verdict's evidence and stays first.
+        if out["bucket_attribution"]:
+            seen = (f". In the last complete {matched_bucket_s:.0f}s bucket "
+                    f"{matched_emitted} fires were published against "
+                    f"{matched_bucket_s / interval_s:.0f} scheduled, and "
+                    f"{matched_delivered} were delivered")
+            tail = {
+                "broker_or_worker": (
+                    f" — {undelivered * 100:.0f}% never reached a worker, so "
+                    "the loss is between the broker and the worker, not at the "
+                    "scheduler"
+                ),
+                "scheduler": (
+                    " — the messages were never published, so the shortfall is "
+                    "at the SCHEDULER"
+                ),
+                "both": (
+                    " — short at BOTH ends: fewer published than scheduled, and "
+                    "fewer delivered than published"
+                ),
+                "current_bucket_healthy": (
+                    ", so this window is healthy and the shortfall above "
+                    "predates it — this instrument cannot say which end lost it"
+                ),
+            }[out["bucket_attribution"]]
+            out["reason"] += seen + tail
         return out
 
     out["verdict"] = "on_schedule"

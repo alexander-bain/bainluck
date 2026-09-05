@@ -481,6 +481,9 @@ try:  # pragma: no cover - signal wiring exercised by the worker, not unit tests
             # a delivery is.
             record_task_delivery_bucket(name)
         except Exception:
+            # Observability must never be why a task fails to start. Swallowed
+            # deliberately and without a log: this runs before every task body
+            # in the system, so a noisy handler would be its own outage.
             pass
 except Exception:  # pragma: no cover - defensive
     pass
@@ -560,6 +563,9 @@ try:  # pragma: no cover - signal wiring needs a live publish, not a unit test
                 return
             record_task_emission(_published_task_name(sender, headers, body))
         except Exception:
+            # Swallowed for the same reason as the delivery handler above, and
+            # more sharply: the publisher here is celery beat, so a raise would
+            # take out the very scheduler this counter exists to grade.
             pass
 except Exception:  # pragma: no cover - defensive
     pass

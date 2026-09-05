@@ -1058,8 +1058,12 @@ class TestTheTwoHistoriesMustReadDifferently:
         for legacy_total in (0, 500, 990, 1035, 1080, 2160):
             g = adherence(**{**self.BROKEN, "deliveries": legacy_total})
             readings.add(g["undelivered_fraction"])
+        # NOT `assert readings.pop() == ...`: a mutating call inside an
+        # assert is stripped with the assert under `-O`, so the check quietly
+        # stops running (CodeQL py/side-effect-in-assert).
         assert len(readings) == 1, readings
-        assert readings.pop() == pytest.approx(8 / 15, abs=0.005)
+        only = next(iter(readings))
+        assert only == pytest.approx(8 / 15, abs=0.005)
 
     def test_the_legacy_window_cannot_move_it_either(self):
         readings = {
@@ -1145,11 +1149,13 @@ class TestTheMatchedFractionRefusesWhatItCannotSee:
         slow = adherence(**slow_base, matched_emitted=2, matched_delivered=1)
         assert slow["verdict"] == "behind"
         assert slow["undelivered_fraction"] == 0.5
+        assert slow["bucket_attribution"] == "current_bucket_healthy"
         assert "never reached a worker" not in slow["reason"]
-        assert "SCHEDULER" in slow["reason"]      # it DID speak, just not that
+        assert "this window is healthy" in slow["reason"]   # it DID speak
         # Two fires missing out of three is not spill.
         real = adherence(**slow_base, matched_emitted=3, matched_delivered=1)
         assert real["verdict"] == "behind"
+        assert real["bucket_attribution"] == "broker_or_worker"
         assert "never reached a worker" in real["reason"]
 
 
@@ -1220,3 +1226,125 @@ class TestTheMatchedPairIsReportedNeverGraded:
         forbidden = {"emitted", "emitted_window_s", "emitted_rate",
                      "undelivered_fires", "emitted_minus_delivered"}
         assert forbidden.isdisjoint(g)
+
+
+class TestTheAttributionComesFromTheBucketNotTheVerdict:
+    """CERT-1969: the causal SENTENCE must be matched too, not just the counts.
+
+    The first repair fixed the quotient — matched buckets, no pre-deploy history
+    — and then still drove the sentence off the 24h `behind` verdict. Any row
+    behind over a day whose bucket fraction was non-material printed *"the
+    shortfall is at the SCHEDULER — the messages were never published"*. The
+    block's reproduction: 15 published and 15 delivered against 15 expected is a
+    perfectly healthy cohort, and that row accused the scheduler.
+
+    A 24h shortfall beside a healthy 600s bucket is an ORDINARY state — it is
+    what a rail that was just fixed looks like — so "not in this window" has to
+    be an answer the instrument can give.
+    """
+
+    #: 40s interval, 600s bucket -> 15 fires expected per bucket. The 24h
+    #: counters are `behind` (1080 of 2160) on every row here, deliberately:
+    #: that is the verdict whose sentence used to leak into the attribution.
+    BEHIND_24H = dict(
+        starts=1080, starts_window_s=86400.0,
+        deliveries=1080, deliveries_window_s=86400.0,
+        interval_s=40.0, terminals=1079,
+        matched_bucket_s=600, matched_bucket_start=1_757_100_000.0,
+    )
+
+    def test_a_healthy_bucket_under_a_behind_verdict_accuses_nobody(self):
+        g = adherence(**self.BEHIND_24H, matched_emitted=15, matched_delivered=15)
+        assert g["verdict"] == "behind"          # the 24h shortfall is real
+        assert g["undelivered_fraction"] == 0.0
+        assert g["bucket_attribution"] == "current_bucket_healthy"
+        assert "SCHEDULER" not in g["reason"]
+        assert "never reached a worker" not in g["reason"]
+        assert "this window is healthy" in g["reason"]
+        assert "predates it" in g["reason"]
+
+    def test_short_publication_with_full_delivery_is_the_scheduler(self):
+        # The bus's second worked example: 7 of 15 expected published, 7 of 7
+        # delivered.
+        g = adherence(**self.BEHIND_24H, matched_emitted=7, matched_delivered=7)
+        assert g["bucket_attribution"] == "scheduler"
+        assert "never published" in g["reason"]
+
+    def test_full_publication_with_short_delivery_is_the_broker(self):
+        # The third: 15 of 15 published, 7 delivered.
+        g = adherence(**self.BEHIND_24H, matched_emitted=15, matched_delivered=7)
+        assert g["bucket_attribution"] == "broker_or_worker"
+        assert "never reached a worker" in g["reason"]
+
+    def test_short_at_both_ends_says_both(self):
+        g = adherence(**self.BEHIND_24H, matched_emitted=7, matched_delivered=3)
+        assert g["bucket_attribution"] == "both"
+        assert "BOTH ends" in g["reason"]
+
+    def test_the_three_shapes_are_distinguishable_from_each_other(self):
+        # The control. Every input outside the matched pair is identical, so
+        # nothing but the bucket can be producing three different attributions.
+        rows = {
+            adherence(**self.BEHIND_24H, matched_emitted=e, matched_delivered=d)[
+                "bucket_attribution"]
+            for e, d in ((15, 15), (7, 7), (15, 7), (7, 3))
+        }
+        assert rows == {"current_bucket_healthy", "scheduler",
+                        "broker_or_worker", "both"}
+
+    def test_the_24h_counters_cannot_move_the_attribution(self):
+        # The same requirement CERT-1966 imposed on the fraction, now on the
+        # sentence: sweep the aggregate history and the attribution must not
+        # move. This is the assertion that fails if the sentence is ever wired
+        # back to `ratio`.
+        seen = set()
+        for deliveries in (0, 500, 1080, 2160, 4000):
+            for window in (600.0, 86400.0):
+                g = adherence(**{**self.BEHIND_24H, "deliveries": deliveries,
+                                 "deliveries_window_s": window},
+                              matched_emitted=15, matched_delivered=15)
+                seen.add(g["bucket_attribution"])
+        assert seen == {"current_bucket_healthy"}
+
+    def test_an_on_schedule_row_still_carries_the_attribution(self):
+        # Reported on every row, not only where a verdict wanted a sentence. A
+        # healthy 24h ratio hiding a broken current bucket is #3276's shape
+        # exactly, and it is the one this field can see first.
+        g = adherence(
+            starts=2160, starts_window_s=86400.0,
+            deliveries=2160, deliveries_window_s=86400.0,
+            interval_s=40.0, terminals=2160,
+            matched_emitted=15, matched_delivered=7,
+            matched_bucket_s=600, matched_bucket_start=1.0,
+        )
+        assert g["verdict"] == "on_schedule"
+        assert g["bucket_attribution"] == "broker_or_worker"
+
+    def test_attribution_is_refused_when_the_bucket_cannot_grade(self):
+        from app.utils.schedule_adherence import MIN_EXPECTED_FIRES
+        # Unknown delivery half.
+        assert adherence(**self.BEHIND_24H, matched_emitted=15,
+                         matched_delivered=None)["bucket_attribution"] is None
+        # No bucket at all.
+        assert adherence(**self.BEHIND_24H)["bucket_attribution"] is None
+        # Too few publications to say anything.
+        assert adherence(**self.BEHIND_24H, matched_emitted=1,
+                         matched_delivered=0)["bucket_attribution"] is None
+        # A beat so slow the BUCKET cannot hold `MIN_EXPECTED_FIRES` of it. The
+        # bucket's own expectation is then under the refusal line, and grading
+        # "published 2 of 0.2 scheduled" would be arithmetic, not evidence.
+        slow = adherence(**{**self.BEHIND_24H, "interval_s": 3600.0},
+                         matched_emitted=2, matched_delivered=2)
+        assert 600 / 3600.0 < MIN_EXPECTED_FIRES
+        assert slow["bucket_attribution"] is None
+
+    def test_it_is_on_every_row_whatever_graded_it(self):
+        rows = [
+            adherence(starts=0, starts_window_s=None, interval_s=None),
+            adherence(starts=1, starts_window_s=10.0, interval_s=40.0),
+            adherence(starts=0, starts_window_s=None, interval_s=86400.0,
+                      newest_start_age_s=10.0, counter_ttl_s=86400.0),
+            adherence(**self.BEHIND_24H, matched_emitted=15, matched_delivered=7),
+        ]
+        for row in rows:
+            assert "bucket_attribution" in row
