@@ -377,6 +377,21 @@ class TestMarketLoadCannotItselfAgeALivePrice:
     sentence that rots. So it is a guard: the day a futures card can render
     ``status == "live"``, this file goes red and whoever did it has to re-derive
     the TTL instead of discovering the problem in production.
+
+    🔴 CERT-1856 — READ THIS BEFORE REUSING THIS ARGUMENT. Everything above is
+    still true, and it is still too narrow to have concluded what LAT-P230
+    concluded from it. This class answers "can `market_load` carry a live
+    price?"; it does NOT answer "can any shared artifact whose age we subtract
+    carry a live price?" — and `concepts` can, because `_score_event_concepts`
+    copies a concept's ``status`` onto the card, ``live`` included. LAT-P230
+    read the narrow answer as the broad one and declared the process-local
+    last-good residual unreachable. It was reachable, on a shipping path, at
+    118s against a 60s ceiling. The repair is in
+    ``routes/feed.py`` (``_age_origin``) and its guard is
+    ``test_feed_live_cache_ceiling.py::
+    test_a_live_page_built_from_an_aged_artifact_gets_no_fresh_window``.
+    The general lesson, which outlives this case: an exemption argued about ONE
+    input is not an exemption for the mechanism that input travels through.
     """
 
     @pytest.mark.parametrize("status", ["open", "closed", "resolved", "active"])

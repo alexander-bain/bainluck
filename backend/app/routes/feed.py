@@ -3462,10 +3462,32 @@ async def get_feed(
         # fresh key's expiry, and the :stale mirror's — takes these two numbers.
         _built_live = payload_contains_live_event(payload)
         _publish_fresh_ttl, _publish_stale_ttl = _live_ttls(payload)
-        # CERT-409 [P1]: this is the ONE site where "now" is honestly the
-        # payload's age, because this is the only site that computed it. Every
-        # other tier copies and must carry this number rather than mint one.
-        _built_at = time.time()
+        # CERT-409 [P1]: this is the ONE site that computed this payload, so it
+        # is the only site entitled to ORIGINATE its age. Every other tier
+        # copies and must carry this number rather than mint one.
+        #
+        # CERT-1856: "computed here" is NOT the same as "as fresh as now". A
+        # payload assembled from a shared artifact is only as young as its
+        # OLDEST input, and the ceiling this origin feeds is a bound on how old
+        # a SCORE may be — so the origin is backdated by that input's age.
+        #
+        # WHY THIS ONE LINE IS THE WHOLE REPAIR. `built_at` is already carried,
+        # deliberately and under CERT-409, through every hop that can re-serve
+        # this payload: the fresh Redis hit, the :stale mirror, the
+        # inert-principal copy, the page base, and process-local last-good.
+        # Each of those reads the stored number instead of minting one, so
+        # backdating it HERE bounds all of them at once — and a hop added later
+        # inherits the bound rather than having to remember it. The alternative
+        # (a second, parallel "oldest input age" field) would have to be
+        # threaded through each of those sites by hand, which is the same shape
+        # as the defect being repaired: a hop that forgets.
+        #
+        # It is safe in the only direction that matters: backdating can move the
+        # origin EARLIER and never later, so every window computed from it gets
+        # shorter, never longer. `oldest_consumed_artifact_age_s` returns 0.0
+        # when nothing shared was consumed, which leaves the previous behaviour
+        # byte-identical for a payload built entirely from scratch.
+        _age_origin = time.time() - _pic.oldest_consumed_artifact_age_s(_shared_ages)
         payload["cache"] = build_feed_cache_metadata(
             _cache_status,
             ttl_seconds=_publish_fresh_ttl if _cache_key else None,
@@ -3475,7 +3497,7 @@ async def get_feed(
                 else None
             ),
             live=_built_live,
-            built_at=_built_at,
+            built_at=_age_origin,
         )
 
         # Queue 283 (C80): mark the build completeness on the payload so the client
@@ -3493,7 +3515,7 @@ async def get_feed(
         # shared truth — skip process last-good AND both Redis publications so the
         # last COMPLETE payload is preserved and the next same-key request rebuilds.
         if _cache_key and not _is_degraded_build:
-            _rc.remember_last_good(_cache_key, payload, built_at=_built_at)
+            _rc.remember_last_good(_cache_key, payload, built_at=_age_origin)
         if _is_build_leader and _sf_future is not None:
             _rc.finish_build(_cache_key, _sf_future, result=payload)
 
@@ -3556,10 +3578,12 @@ async def get_feed(
                     # reader take one page's window for the base's own.
                     for _per_serve in ("cache", "limit", "offset", "has_more"):
                         _page_base_body.pop(_per_serve, None)
-                    # CERT-409: carry the build time the payload already
+                    # CERT-409: carry the age origin the payload already
                     # computed. Minting a new one at read time is the exact
-                    # clock-restart that ruling forbids.
-                    _page_base_body[FEED_PAGE_BASE_BUILT_AT_FIELD] = _built_at
+                    # clock-restart that ruling forbids. CERT-1856: that origin
+                    # is now backdated to the oldest consumed input, so a reader
+                    # served off this base inherits the same total-age bound.
+                    _page_base_body[FEED_PAGE_BASE_BUILT_AT_FIELD] = _age_origin
                     _base_fresh_ttl, _base_stale_ttl = feed_response_cache_ttls(
                         my_teams_only=False,
                         identified=False,

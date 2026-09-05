@@ -44,6 +44,7 @@ fails if a fifth one appears.
 
 import asyncio
 import json
+import time as time_module
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -913,4 +914,170 @@ def test_the_fifth_writer_guard_refuses_unanalyzable_dispatch_and_splats():
     )
     assert _setex_ttls_not_derived_from_live_helper(args_splat), (
         "a `setex(*args)` writer read as clean — its TTL is unreadable"
+    )
+
+
+# ---------------------------------------------------------------------------
+# CERT-1856 — a payload is only as young as its OLDEST INPUT
+# ---------------------------------------------------------------------------
+#
+# The fifth writer that was missed, and it is not a writer at all — it is the
+# BUILD. Every test above bounds a payload that was COPIED between tiers, and
+# `remember_last_good`'s `built_at` closes those. But a payload can arrive at
+# the publish seam already old without ever having been copied: LAT-P230 lets a
+# request reuse a shared artifact, and `_score_event_concepts` copies a
+# concept's `status` — including `live` — straight onto the card. So a page
+# freshly built HERE out of a 59-second-old shared `concepts` artifact carries a
+# 59-second-old score, and stamping it with the response-build time handed it a
+# brand-new 60-second window: 118 seconds of total input age under a branch
+# that declares 60 as the maximum.
+#
+# The branch got the Redis half right — `_live_ttls` already subtracts the
+# artifact age from both TTLs — which is exactly what made this hard to see:
+# the visible, externally-checkable half was correct while the process-local
+# fallback behind it silently restarted the clock.
+#
+# LAT-P230's own reasoning missed it by asking the wrong question. It asked
+# "can `market_load` carry a live price?" (no — futures markets are never
+# live) and concluded the residual was unreachable. The question that finds
+# this is "can ANY shared artifact whose age we subtract carry a live price?",
+# and `concepts` can.
+
+
+@pytest.mark.asyncio
+async def test_a_live_page_built_from_an_aged_artifact_gets_no_fresh_window(
+    monkeypatch,
+):
+    """CERT-1856's falsifier, kept as the regression test.
+
+    A fresh BUILD that consumed a 59-second-old shared artifact, recalled 59
+    seconds later under the 60-second live ceiling. Pre-fix the route passed
+    `time.time()` as the age origin, so last-good served it at 118 seconds.
+    """
+    from app.utils import principal_independent_cache as pic
+
+    rc._reset_last_good_for_tests()
+
+    # The request consumed a shared artifact that was already 59s old. Patched
+    # at the accessor rather than faked deeper on purpose: this is the INPUT to
+    # the arithmetic under test, not the arithmetic itself, so the test still
+    # discriminates — pre-fix it passes `time.time()` regardless of this value.
+    monkeypatch.setattr(pic, "oldest_consumed_artifact_age_s", lambda _sink: 59.0)
+
+    # Empty Redis, so the route MISSES and takes the build path (the seam under
+    # test). A seeded mirror would exercise a copy hop instead.
+    redis = _SeededRedis()
+    resp = await _drive_feed(redis=redis, monkeypatch=monkeypatch)
+    assert resp.status_code == 200
+
+    stored = rc._last_good.get(SHARED_KEY)
+    assert stored is not None, (
+        "the build published no process-local last-good, so this test is not "
+        "exercising the path CERT-1856 is about"
+    )
+    origin, _payload = stored
+
+    # The origin must be backdated to the oldest input, not stamped at response
+    # build time. Generous slack: the assertion is "roughly a minute ago", not
+    # a clock comparison that a slow CI box could flake on.
+    backdate = time_module.time() - origin
+    assert backdate >= 55.0, (
+        f"the age origin was backdated by only {backdate:.1f}s for a payload "
+        "built from a 59s-old shared artifact — the response-build time was "
+        "stamped instead, which restarts the very clock the ceiling measures "
+        "(CERT-1856)"
+    )
+
+    # …and the consequence that matters: 59s later, the ceiling refuses it.
+    # This is the exact call `_live_bounded_last_good` makes for a live page.
+    real_time = rc.time.time
+    rc.time.time = lambda: real_time() + 59.0
+    try:
+        recalled = rc.recall_last_good(
+            SHARED_KEY, max_age_s=FEED_LAST_GOOD_MAX_AGE_LIVE_SECONDS
+        )
+    finally:
+        rc.time.time = real_time
+        rc._reset_last_good_for_tests()
+
+    assert recalled is None, (
+        "a page built from a 59s-old shared artifact was served 59s later — "
+        f"118s of total input age against a {FEED_LAST_GOOD_MAX_AGE_LIVE_SECONDS}s "
+        "ceiling (CERT-1856)"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_build_from_fresh_artifacts_keeps_the_full_window(monkeypatch):
+    """THE FRESH CONTROL — the fix must not just disable last-good.
+
+    Without this, backdating by a constant (or refusing everything) would pass
+    the test above while removing the fallback that keeps a Redis blip from
+    becoming a stampede of cold builds.
+    """
+    from app.utils import principal_independent_cache as pic
+
+    rc._reset_last_good_for_tests()
+    monkeypatch.setattr(pic, "oldest_consumed_artifact_age_s", lambda _sink: 0.0)
+
+    redis = _SeededRedis()
+    resp = await _drive_feed(redis=redis, monkeypatch=monkeypatch)
+    assert resp.status_code == 200
+
+    stored = rc._last_good.get(SHARED_KEY)
+    assert stored is not None
+    origin, _payload = stored
+    assert time_module.time() - origin < 5.0, (
+        "a build that consumed nothing shared was backdated anyway — the "
+        "ceiling is now stricter than the rule it enforces"
+    )
+
+    real_time = rc.time.time
+    rc.time.time = lambda: real_time() + 59.0
+    try:
+        recalled = rc.recall_last_good(
+            SHARED_KEY, max_age_s=FEED_LAST_GOOD_MAX_AGE_LIVE_SECONDS
+        )
+    finally:
+        rc.time.time = real_time
+        rc._reset_last_good_for_tests()
+
+    assert recalled is not None, (
+        "a genuinely fresh build was refused 59s later under a 60s ceiling — "
+        "the live fallback no longer works at all"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_non_live_page_is_still_unbounded_after_the_backdate(monkeypatch):
+    """THE NON-LIVE CONTROL — the ceiling is a LIVE rule and stays one.
+
+    Backdating happens unconditionally (it is the honest origin either way),
+    so this pins that it did not quietly import the live ceiling into the
+    futures path, where unbounded last-good is deliberate and correct.
+    """
+    from app.utils import principal_independent_cache as pic
+
+    rc._reset_last_good_for_tests()
+    monkeypatch.setattr(pic, "oldest_consumed_artifact_age_s", lambda _sink: 59.0)
+
+    # A settled page: aged origin, but nothing live on it.
+    rc.remember_last_good(
+        SHARED_KEY, SETTLED_PAGE, built_at=time_module.time() - 59.0
+    )
+    assert payload_contains_live_event(SETTLED_PAGE) is False
+
+    real_time = rc.time.time
+    rc.time.time = lambda: real_time() + 59.0
+    try:
+        # No `max_age_s` — the branch `_live_bounded_last_good` takes for a
+        # page with no live card.
+        recalled = rc.recall_last_good(SHARED_KEY)
+    finally:
+        rc.time.time = real_time
+        rc._reset_last_good_for_tests()
+
+    assert recalled is not None, (
+        "a settled page was refused at 118s — the live ceiling leaked into "
+        "the futures path, where last-good is unbounded on purpose"
     )
