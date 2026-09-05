@@ -24,6 +24,32 @@ export interface WebVitalMetricLike {
 const RATINGS = new Set(["good", "needs-improvement", "poor"]);
 
 /**
+ * The complete `Metric.navigationType` domain of the web-vitals release we
+ * ship. Declared HERE, beside the writer, so anything downstream can derive
+ * the domain from the producer instead of restating it.
+ *
+ * LAT-P233: the Navigation Timing API's `type` enum is NOT the producer.
+ * web-vitals computes this itself — it checks the bfcache case FIRST, emits
+ * the hyphenated `back-forward-cache` that Navigation Timing has no value
+ * for, and reaches Navigation Timing only as a fallback, through
+ * `.replace(/_/g, "-")`. So `back_forward` (underscore) cannot be emitted by
+ * anything, and `back-forward-cache` is emitted on every back-button restore.
+ * A domain copied from the spec drops exactly the fastest navigations into a
+ * column that then reads as "no data" rather than as a bug.
+ *
+ * Guarded against the installed package by
+ * "NAVIGATION_TYPES matches the web-vitals release we actually ship".
+ */
+export const NAVIGATION_TYPES = new Set([
+  "navigate",
+  "reload",
+  "back-forward",
+  "back-forward-cache",
+  "prerender",
+  "restore",
+]);
+
+/**
  * Map a raw metric + route path to a `web_vital` event payload.
  *
  * Units follow web-vitals: time metrics (LCP/INP/TTFB/FCP/FID) are milliseconds
@@ -48,7 +74,7 @@ export function webVitalToEvent(
   if (metric.rating && RATINGS.has(metric.rating)) {
     event.rating = metric.rating as WebVitalParams["rating"];
   }
-  if (metric.navigationType) {
+  if (metric.navigationType && NAVIGATION_TYPES.has(metric.navigationType)) {
     event.navigation_type = metric.navigationType;
   }
   return event;
