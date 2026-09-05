@@ -61,6 +61,30 @@ export function describeLoadFailure(
     };
   }
 
+  // 410 — the thing WAS here and we took it down on purpose (lane1/132).
+  //
+  // `GET /api/events/{id}` answers 410 for a row marked retired: a duplicate
+  // whose markets moved to the row that keeps them, or a fixture that will not
+  // be played. Without this branch a 410 falls into the generic 4xx arm below
+  // and the reader is told "The server refused the request (410)" over a retry
+  // button — a machine's sentence for a decision we made, and a button that
+  // will return the same answer every time it is pressed.
+  //
+  // Distinct from 404 for the reason 404 is distinct from 500: not-found means
+  // "you may have the wrong address", gone means "the address was right and
+  // there is nothing to come back for".
+  if (status === 410) {
+    return {
+      title: `This ${subject} is no longer listed`,
+      message:
+        served ||
+        `This ${subject} was removed from the site and is not coming back.`,
+      // Not retryable, and for a stronger reason than 404's: this is a
+      // deliberate, recorded removal, not an absence we are unsure about.
+      retryable: false,
+    };
+  }
+
   if (status === 429) {
     return {
       title: "Too many requests",

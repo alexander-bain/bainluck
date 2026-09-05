@@ -250,6 +250,50 @@ RESUMABLE_STATUSES = frozenset({"scheduled", EVENT_SUSPENDED})
 #: over a card that states its own state is not the lie; an absent match is.
 RECENT_RAIL_STATUSES = ["completed", "closed", EVENT_SUSPENDED]
 
+#: RETIRED. The row is still in the table and is still addressable by anything
+#: that keys on its id — an admin page, a backfill, a foreign key — and it is
+#: NOT part of the schedule any reader should be shown.
+#:
+#: Both words are already written by shipped code and both already have rows:
+#:
+#:   ``merged``  ``routes/admin_backfill_linkage.py`` —
+#:               ``UPDATE events SET status = 'merged' WHERE id = :orphan_id``,
+#:               stamped on the loser of a duplicate pair once its markets have
+#:               been moved onto the row that keeps them.
+#:   ``voided``  the event never happened and never will.
+#:
+#: 🔴 WHY THIS SET EXISTS, lane1/132. Every LIST-shaped surface reaches events
+#: through a hand-written status ALLOWLIST — :data:`EVENT_LIST_DEFAULT_STATUSES`,
+#: ``_SEARCH_STATUSES``, ``_SEARCH_STARTED_STATUSES``, :data:`RECENT_RAIL_STATUSES`
+#: — so all four have excluded these two words since the day they were written,
+#: by omission rather than on purpose. The BY-ID read had no such gate at all:
+#: ``GET /api/events/{event_id}`` selected on the primary key and served whatever
+#: came back. So a row could be marked retired and its page kept rendering, fully
+#: dressed, with a price and a chart on it.
+#:
+#: That is the general clause, and it is the mirror image of the one
+#: :data:`EVENT_SUSPENDED` is written under. There, a new word in the vocabulary
+#: was not shipped until every consumer had been shown it. Here, a word means
+#: "stop showing this" and is not shipped until every consumer that can reach a
+#: row WITHOUT consulting the vocabulary has been taught to ask. An allowlist
+#: asks by construction; a primary-key lookup never asks at all.
+#:
+#: A frozenset because it is spent on membership, never on ``IN`` — the surfaces
+#: that emit SQL are allowlists and must stay allowlists. Widening this set is
+#: not how a status gets hidden from a list; a status is hidden from a list by
+#: not being in that list's allowlist, which is already true of anything new.
+RETIRED_STATUSES = frozenset({"merged", "voided"})
+
+
+def is_retired_event_status(status) -> bool:
+    """Has this row been taken off the schedule without being deleted?
+
+    The single question every user-facing BY-ID read of an event asks before it
+    serves the row. ``None`` and any unrecognised word are False: a row whose
+    state we do not recognise is a row we have no standing to hide.
+    """
+    return status in RETIRED_STATUSES
+
 
 def authority_may_settle(status) -> bool:
     """May a terminal verdict be written onto a row in this state? (live/048)

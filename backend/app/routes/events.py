@@ -33,7 +33,11 @@ from app.utils.lifecycle import served_event_status
 # ONE definition of the state vocabulary (live/048) — imported, not spelled, so
 # that widening it is a rename here rather than a literal this route quietly
 # stops matching. CERT-786 is what that quiet stop looks like from a user's side.
-from app.utils.event_completion import EVENT_SUSPENDED
+from app.utils.event_completion import (
+    EVENT_SUSPENDED,
+    SETTLED_STATUSES,
+    is_retired_event_status,
+)
 from app.utils.graded_card import rendered_duel_percents
 from app.utils import (
     moneyline_to_probability,
@@ -2278,6 +2282,23 @@ _SPORT_TEAM_TOTAL_RANGE: dict[str, tuple[float, float]] = {
 _event_detail_cache: dict[int, tuple[float, str, dict]] = {}  # event_id → (timestamp, status, response)
 _EVENT_DETAIL_LIVE_TTL = 30
 _EVENT_DETAIL_DEFAULT_TTL = 300
+#: The ceiling on the settled-row shortcut below — lane1/132.
+#:
+#: A `completed`/`closed` entry used to be served with NO expiry at all, on the
+#: reasoning that a settled row's content never changes again. That reasoning
+#: has exactly one exception and this ship is it: RETIREMENT changes a settled
+#: row. `admin_backfill_linkage` stamps `merged` on the loser of a duplicate
+#: pair long after both rows went Final, and `get_event` now refuses a retired
+#: row with a 410 — but a never-expiring entry cached BEFORE the stamp keeps
+#: answering 200 with the full page on it, which is the same "we marked it
+#: retired and the site kept showing it" defect wearing a cache.
+#:
+#: An hour rather than the 300s the unsettled rows get, because the settled
+#: shortcut is a measured latency decision and this must not undo it: one
+#: recompute per event per hour per dyno is ~0.03% of the requests the shortcut
+#: was absorbing, and the entry is capped at `_EVENT_DETAIL_MAX_SIZE` anyway.
+#: What it buys is that "forever" stops being a word this cache can mean.
+_EVENT_DETAIL_SETTLED_TTL = 3600
 _EVENT_DETAIL_MAX_SIZE = 50
 
 
@@ -7714,8 +7735,14 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
     requested_event_id = event_id
     if event_id in _event_detail_cache:
         _cached_at, _cached_status, _cached_resp = _event_detail_cache[event_id]
-        _ttl = _EVENT_DETAIL_LIVE_TTL if _cached_status == "live" else _EVENT_DETAIL_DEFAULT_TTL
-        if _cached_status in ("completed", "closed") or _now - _cached_at < _ttl:
+        if _cached_status == "live":
+            _ttl = _EVENT_DETAIL_LIVE_TTL
+        elif _cached_status in SETTLED_STATUSES:
+            # Was `or` with no expiry at all — see `_EVENT_DETAIL_SETTLED_TTL`.
+            _ttl = _EVENT_DETAIL_SETTLED_TTL
+        else:
+            _ttl = _EVENT_DETAIL_DEFAULT_TTL
+        if _now - _cached_at < _ttl:
             return _cached_resp
 
     result = await db.execute(
@@ -7769,6 +7796,36 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
             if canonical is not None:
                 event = canonical
                 event_id = canonical_id
+
+    # ── lane1/132: a row marked retired stops rendering ──────────────────────
+    #
+    # `RETIRED_STATUSES` is the whole argument; the short version is that every
+    # LIST-shaped surface reaches events through a status ALLOWLIST and has
+    # therefore excluded `merged` and `voided` since it was written, while this
+    # route — the only user-facing read that finds an event by primary key —
+    # asked the vocabulary nothing and served whatever the id returned. So the
+    # markers existed, shipped code wrote them, and marking a row retired did
+    # not take it off the site: `/events/14751059` rendered a Broncos–Cardinals
+    # fixture that will never be played, with a price, a countdown and a chart.
+    #
+    # AFTER the duplicate resolution above, deliberately. A retired row that can
+    # name the row it was merged INTO should serve that row — sending a reader to
+    # the real game is a better answer than telling them there is no game — and
+    # this refusal is only for the ones that cannot.
+    #
+    # 410, not 404. The distinction is load-bearing on the other side of the
+    # wire: `lib/loadFailure.ts` turns 404 into "does not exist" and everything
+    # else 4xx into "the server refused the request (N)" with a retry button.
+    # Neither is true here. The row existed, we took it down on purpose, and
+    # reloading will never change that.
+    if is_retired_event_status(event.status):
+        raise HTTPException(
+            status_code=410,
+            detail=(
+                "This fixture was removed from the schedule — it was either a "
+                "duplicate of another game or a game that will not be played."
+            ),
+        )
 
     # Load only the latest odds snapshot per bookmaker (not ALL snapshots).
     # This prevents R14 memory errors on events with thousands of snapshots.
