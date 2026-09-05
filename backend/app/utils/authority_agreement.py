@@ -711,6 +711,23 @@ class Join:
     #: declared would publish under its own key while the declared one sat at a
     #: permanent, lying `0`.
     refusal_names: tuple[str, ...] = ()
+    #: Tolerances this strategy applied that rest on JUDGEMENT rather than on
+    #: measurement, each as a self-describing record. Published on the row under
+    #: its own `allowances` key.
+    #:
+    #: **An allowance is the inverse of a refusal and must never be folded into
+    #: `excluded`.** A refusal takes rows OUT of the denominator and is counted
+    #: there; an allowance lets rows JOIN that a stricter reading would have kept
+    #: apart, so it moves the governing number in the generous direction and
+    #: leaves no trace in any count. That is exactly why it needs publishing:
+    #: a refusal is visible as a number going up, and an allowance is visible as
+    #: nothing at all.
+    #:
+    #: Keyed by allowance name (`order_aliases_reviewed` is the first), each
+    #: value a list of receipts stating what was allowed and on whose authority
+    #: (#3287). Empty for every strategy that tolerates nothing it cannot
+    #: measure — which is the expected reading, as with the refusals above.
+    allowances: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     #: What this strategy's denominator IS, in one sentence, published on the row
     #: as `denominator_is`.
     #:
@@ -749,6 +766,22 @@ class Join:
                 f"refusal name(s) {collides} collide with the default `excluded` "
                 f"keys {list(DEFAULT_EXCLUDED_KEYS)}. Seeding one at 0 would "
                 "overwrite a count the row already owes."
+            )
+        # An allowance published under a refusal's name would read as rows taken
+        # OUT when they were in fact let IN — the one misreading that inverts the
+        # sign of its own effect on the governing number (#3287).
+        both = sorted(set(self.allowances) & set(self.refusal_names))
+        if both:
+            raise ValueError(
+                f"name(s) {both} are declared as BOTH an allowance and a "
+                "refusal. An allowance lets rows join and a refusal takes them "
+                "out of the denominator; one name cannot mean both."
+            )
+        shadowed = sorted(set(self.allowances) & set(DEFAULT_EXCLUDED_KEYS))
+        if shadowed:
+            raise ValueError(
+                f"allowance name(s) {shadowed} collide with the default "
+                f"`excluded` keys {list(DEFAULT_EXCLUDED_KEYS)}."
             )
 
 
@@ -1154,6 +1187,17 @@ def build_agreement_row(
                 # promise — every row left out is named and counted in one place —
                 # survives a strategy adding a reason the default never had.
                 **{name: len(items) for name, items in join.refusals.items()},
+            },
+            # Beside `excluded`, never inside it. These are the tolerances this
+            # join applied that no measurement backs — they let rows JOIN, so
+            # unlike a refusal they move the governing number upward and leave
+            # no count behind to notice them by. Published in full, receipts and
+            # all, because the whole finding of #3287 is that an unmeasurable
+            # allowance can only be made safe by being read (an empty dict for
+            # every strategy that has none).
+            "allowances": {
+                name: {"count": len(items), "receipts": items}
+                for name, items in join.allowances.items()
             },
             "identity": _identity_block(
                 sport_key,

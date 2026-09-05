@@ -117,6 +117,17 @@ the register has only ever received one spelling of each, so the sweep cannot
 see them. They are :data:`_ORDER_ALIASES_REVIEWED`, and :data:`ORDER_ALIASES` is
 the union — **9 classes: 7 measured, 2 reviewed.**
 
+A reviewed class carries no measurement, so it carries its evidence instead.
+Each is a :class:`ReviewedAlias` — the spelling the register holds, the second
+spelling being asserted to be the same human, who asserted it, when, and on what
+basis — and :data:`_ORDER_ALIASES_REVIEWED` is DERIVED from those records rather
+than written out beside them. None of that makes an attestation true; nothing we
+hold can, and the sweep for a second ordering of either name came back empty.
+What it does is make the claim attributable and falsifiable, and put it on the
+agreement row under ``allowances`` where an operator reads it. Both currently
+say ``ratified_by_alex: false``: they are this lane's reading, not a ruling, and
+the row discloses that rather than implying a review that has not happened.
+
 The rule is therefore not "sort the tokens". It is: *an order difference is a
 DIFFERENCE until a human has read the pair and said otherwise.* A permutation
 class that shows up in a refreshed corpus and is not on the list fails the sweep
@@ -161,6 +172,29 @@ TennisKey = tuple[str, Optional[str]]
 DoublesKey = tuple[str, ...]
 
 _NON_NAME = re.compile(r"[^a-z0-9 ]+")
+
+#: `ReviewedAlias.reviewed_on`. A date is stored as a string so the records stay
+#: plain data, so the shape is checked rather than assumed.
+_ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+def fold_tennis_name(name: object) -> str:
+    """Lowercase, strip diacritics and punctuation, collapse whitespace.
+
+    Applied identically to both sides. ``Anna Bondár`` and ``Anna Bondar`` are
+    one player and the field holds both spellings; ``Daria KHOMUTSIANSKAYA`` and
+    ``Daria Khomutsianskaya`` likewise.
+
+    Defined here, above the re-ordering section, because :class:`ReviewedAlias`
+    folds its two orderings at construction time and the records are built at
+    import.
+    """
+    if not isinstance(name, str):
+        return ""
+    folded = unicodedata.normalize("NFKD", name)
+    folded = "".join(c for c in folded if not unicodedata.combining(c))
+    folded = _NON_NAME.sub(" ", folded.lower())
+    return " ".join(folded.split())
 
 #: **Generational suffixes are NOT stripped, and the corpus sweep is why.**
 #:
@@ -210,6 +244,101 @@ _ORDER_ALIASES_MEASURED: frozenset[tuple[str, ...]] = frozenset(
     }
 )
 
+@dataclass(frozen=True)
+class ReviewedAlias:
+    """One order allowance that rests on review rather than on measurement.
+
+    A measured alias carries its own evidence: the corpus holds both orders, and
+    :func:`_orders_by_multiset` can be re-run to show it. A REVIEWED alias cannot
+    — the corpus holds one order, so there is nothing to re-measure and the entry
+    is only as good as the claim behind it. Before #3287 that claim was a bare
+    tuple in a set with a trailing comment, and **a fabricated entry was
+    indistinguishable from a real one**: appending ``("carlos", "alcaraz")`` and
+    a line of prose to the header passed every test in this module's suite.
+
+    So the claim is made a record instead of a comment, and the record has to
+    state the things a fabrication cannot supply without lying on the face of it:
+    which spelling the register actually holds, which second spelling is being
+    asserted to be the same human, who asserted it, when, and on what basis.
+    None of that makes the assertion TRUE — no data we hold can, which is the
+    finding of #3287's option-1 sweep — but it makes the assertion *legible,
+    attributable and falsifiable*, and it puts it on the agreement row where an
+    operator reads it instead of in a source comment where nobody does.
+
+    The fields are deliberately NOT independent. ``tokens`` is derived from the
+    two orderings rather than declared beside them, so a record cannot claim one
+    permutation class and quietly admit another; ``__post_init__`` refuses a
+    record whose two orderings are not permutations of each other, or are the
+    same string, or whose provenance fields are blank.
+    """
+
+    #: The spelling the register actually holds today — the one a sweep can see.
+    corpus_order: str
+    #: The second spelling this record asserts is the SAME human. The register
+    #: has not received it; that is precisely why measurement cannot settle it.
+    claimed_order: str
+    #: Who made the assertion. Not decoration: an allowance nobody will own is
+    #: an allowance that should not be granted.
+    reviewer: str
+    #: ISO date the assertion was made, so a stale review is visible as stale.
+    reviewed_on: str
+    #: The basis. What makes these one player rather than two, in one sentence
+    #: an operator can disagree with.
+    attestation: str
+    #: Whether a human with authority over the product has ratified this. An
+    #: agent's reading is a proposal; only Alex can make it a ratified one
+    #: (D50). Published on the row so the residue is disclosed, not implied.
+    ratified_by_alex: bool = False
+
+    @property
+    def tokens(self) -> tuple[str, ...]:
+        """The permutation class, DERIVED from the two orderings, never declared."""
+        return tuple(sorted(fold_tennis_name(self.corpus_order).split()))
+
+    def __post_init__(self) -> None:
+        corpus = fold_tennis_name(self.corpus_order)
+        claimed = fold_tennis_name(self.claimed_order)
+        if not corpus or not claimed:
+            raise ValueError(
+                f"reviewed alias needs both orderings spelled out, got "
+                f"corpus_order={self.corpus_order!r} claimed_order={self.claimed_order!r}"
+            )
+        if corpus == claimed:
+            raise ValueError(
+                f"reviewed alias {corpus!r} claims no SECOND ordering — "
+                "corpus_order and claimed_order fold to the same string, so the "
+                "record asserts nothing and would admit a class it never named"
+            )
+        if sorted(corpus.split()) != sorted(claimed.split()):
+            raise ValueError(
+                f"reviewed alias {self.corpus_order!r} / {self.claimed_order!r} "
+                "is not a re-ordering — the two spellings are different token "
+                "multisets, so allowing it would admit a substitution, not a "
+                "permutation"
+            )
+        if not self.reviewer.strip():
+            raise ValueError(f"reviewed alias {corpus!r} names no reviewer")
+        if not _ISO_DATE.fullmatch(self.reviewed_on):
+            raise ValueError(
+                f"reviewed alias {corpus!r} has reviewed_on={self.reviewed_on!r}, "
+                "which is not an ISO date"
+            )
+        if not self.attestation.strip():
+            raise ValueError(f"reviewed alias {corpus!r} states no basis")
+
+    def receipt(self) -> dict[str, object]:
+        """What the agreement row publishes for this allowance."""
+        return {
+            "tokens": list(self.tokens),
+            "corpus_order": self.corpus_order,
+            "claimed_order": self.claimed_order,
+            "reviewer": self.reviewer,
+            "reviewed_on": self.reviewed_on,
+            "attestation": self.attestation,
+            "ratified_by_alex": self.ratified_by_alex,
+        }
+
+
 #: Reviewed aliases the field currently spells only ONE way.
 #:
 #: These are here because **a corpus sweep measures what our column happens to
@@ -218,11 +347,43 @@ _ORDER_ALIASES_MEASURED: frozenset[tuple[str, ...]] = frozenset(
 #: the register simply has not received the second spelling yet. Deriving the
 #: list from today's corpus alone would silently drop them and then refuse a pair
 #: we have already reviewed, the first day the other spelling arrives.
+#:
+#: **Neither is ratified.** Both readings were made by the authority lane while
+#: writing this module, not by a person with authority over the product, and
+#: saying so is the point of #3287: the row discloses two unratified allowances
+#: rather than presenting them as review that happened. Ratifying them is a
+#: minutes-long read for Alex (`alex-inbox`), and until he does, an operator can
+#: see exactly what rests on an agent's judgement.
+REVIEWED_ALIASES: tuple[ReviewedAlias, ...] = (
+    ReviewedAlias(
+        corpus_order="Juncheng Shang",
+        claimed_order="Shang Juncheng",
+        reviewer="authority lane (agent)",
+        reviewed_on="2026-09-05",
+        attestation=(
+            "Chinese convention: `Shang` is the family name and `Juncheng` the "
+            "given name, so both orders name the one player. No second player "
+            "in our register bears these tokens in the opposite order."
+        ),
+    ),
+    ReviewedAlias(
+        corpus_order="Qinwen Zheng",
+        claimed_order="Zheng Qinwen",
+        reviewer="authority lane (agent)",
+        reviewed_on="2026-09-05",
+        attestation=(
+            "Chinese convention: `Zheng` is the family name and `Qinwen` the "
+            "given name, so both orders name the one player. No second player "
+            "in our register bears these tokens in the opposite order."
+        ),
+    ),
+)
+
+#: Derived from :data:`REVIEWED_ALIASES`, never written out beside it — a second
+#: literal is a second thing to keep in step, and the day they drift the set is
+#: what the matcher obeys while the records are what a reader audits.
 _ORDER_ALIASES_REVIEWED: frozenset[tuple[str, ...]] = frozenset(
-    {
-        ("juncheng", "shang"),  # Shang Juncheng — corpus holds only `Juncheng Shang`
-        ("qinwen", "zheng"),  # Zheng Qinwen — corpus holds only `Qinwen Zheng`
-    }
+    alias.tokens for alias in REVIEWED_ALIASES
 )
 
 #: The token multisets our register spells in more than one order for ONE
@@ -232,21 +393,6 @@ _ORDER_ALIASES_REVIEWED: frozenset[tuple[str, ...]] = frozenset(
 ORDER_ALIASES: frozenset[tuple[str, ...]] = (
     _ORDER_ALIASES_MEASURED | _ORDER_ALIASES_REVIEWED
 )
-
-
-def fold_tennis_name(name: object) -> str:
-    """Lowercase, strip diacritics and punctuation, collapse whitespace.
-
-    Applied identically to both sides. ``Anna Bondár`` and ``Anna Bondar`` are
-    one player and the field holds both spellings; ``Daria KHOMUTSIANSKAYA`` and
-    ``Daria Khomutsianskaya`` likewise.
-    """
-    if not isinstance(name, str):
-        return ""
-    folded = unicodedata.normalize("NFKD", name)
-    folded = "".join(c for c in folded if not unicodedata.combining(c))
-    folded = _NON_NAME.sub(" ", folded.lower())
-    return " ".join(folded.split())
 
 
 def looks_like_a_player(name: object) -> bool:

@@ -102,6 +102,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import timedelta
+from functools import partial
 from typing import Any, Callable, Optional, Sequence
 
 from app.utils.authority_agreement import (
@@ -112,6 +113,7 @@ from app.utils.authority_agreement import (
 )
 from app.utils.authority_tennis_names import (
     AMBIGUOUS,
+    REVIEWED_ALIASES,
     is_doubles_name,
     looks_like_a_player,
     resolve_tennis_name,
@@ -169,6 +171,17 @@ UNSOLVED_COMPONENT_ROWS = "unsolved_component_candidate_rows"
 #: Collapsing the two — always writing empty lists into `refusals` — would make
 #: the seeding vacuous, so the mechanism every future strategy relies on would
 #: never run in the one place that uses it.
+#: `Join.allowances` key for the re-ordering classes this strategy folds on
+#: REVIEW rather than on measurement (`authority_tennis_names.REVIEWED_ALIASES`).
+#:
+#: Deliberately not a refusal name. Every other name this module publishes is a
+#: reason a row left the denominator; this one is a reason two names were allowed
+#: to MEET, and its effect on the governing number therefore points the other way
+#: — upward, generously, and with nothing in `excluded` to show for it. Zero is
+#: NOT the expected reading here: two entries are expected, and both are expected
+#: to say `ratified_by_alex: false` until he reads them (#3287).
+ORDER_ALIAS_ALLOWANCE = "order_aliases_reviewed"
+
 TENNIS_REFUSAL_NAMES = (
     AMBIGUOUS_REFUSAL,
     AMBIGUOUS_CANDIDATE_ROWS,
@@ -601,6 +614,8 @@ def pair_tennis_sides(
     fixtures: Sequence[Side],
     rows: Sequence[Side],
     normalize: Callable[[Optional[str]], str] | None = None,
+    *,
+    draw: Optional[str] = None,
 ) -> Join:
     """The tennis join: `resolve_tennis_name`'s relation, nearest start as tiebreak.
 
@@ -614,6 +629,18 @@ def pair_tennis_sides(
     (`split_by_draw`), and a function that silently handled both would let a
     caller ask for one number over both populations, which is the phantom gap
     this ship exists to prevent.
+
+    `draw` says WHICH draw, and it exists only so the row can be honest about
+    the reviewed order allowances (CERT-1948). Those two classes are singles
+    player names, and the doubles join keys on an unordered pair of surnames:
+    measured over the pinned corpus, **0 of 1,674 doubles names have a token
+    multiset in `ORDER_ALIASES`**, so the tolerance cannot move a doubles
+    number. Publishing it on the doubles row claimed a tolerance that row never
+    relied on — the row saying something untrue about its own pass, which is the
+    exact failure this ship exists to stop, committed by the ship itself.
+
+    Unstated `draw` publishes NO allowance. A caller that has not said which
+    draw it is building does not get a claim published on its behalf.
     """
     usable_f = [f for f in fixtures if _readable(f)]
     usable_r = [r for r in rows if _readable(r)]
@@ -717,6 +744,11 @@ def pair_tennis_sides(
         unusable_rows=[r for r in rows if not _readable(r)],
         refusals=refusals,
         refusal_names=TENNIS_REFUSAL_NAMES,
+        allowances=(
+            {ORDER_ALIAS_ALLOWANCE: [a.receipt() for a in REVIEWED_ALIASES]}
+            if draw == SINGLES
+            else {}
+        ),
         denominator_is=TENNIS_DENOMINATOR_IS,
     )
 
@@ -771,7 +803,9 @@ def build_tennis_agreements(
             sources_read=sources_read,
             window=window,
             measurement_window=measurement_window,
-            pair_sides=pair_tennis_sides,
+            # Bound to the draw being built, so the row's `allowances` describe
+            # THIS draw's pass and not the other one's (CERT-1948).
+            pair_sides=partial(pair_tennis_sides, draw=sport_key),
             time_authority=False,
         )
 
