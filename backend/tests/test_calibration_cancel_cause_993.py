@@ -172,11 +172,30 @@ def test_the_sampler_carries_the_cause_onto_the_observation():
 
 
 def test_the_sampler_did_not_lose_the_prefix_it_already_carried():
-    """Control for the widening: adding a second prefix must not drop the first."""
+    """Control for the widening: adding a second prefix must not drop the first.
+
+    AMENDED by CAL-P1002, and the amendment is the point of the test rather than
+    a concession to it. The original line was
+    ``len(CAPTURED_PREFIXES) == 2 and len(set(CAPTURED_PREFIXES)) == 2`` — a
+    COUNT pinned to a tuple whose own comment invites growth ("One tuple so a
+    third prefix is one line here and nowhere else"). So it went red on exactly
+    the change it exists to permit, while a prefix silently *swapped* for another
+    would have kept the count at 2 and passed.
+
+    The claim it was making is kept and made strictly harder: the earlier prefix
+    is still present BY NAME (not by arithmetic), the tuple still holds no
+    duplicates, and it has still only ever grown.
+    """
     stages = {"staged:convergence_reason:read_raised": 1}
     captured, _ = select_gauges(stages)
     assert captured == stages
-    assert len(CAPTURED_PREFIXES) == 2 and len(set(CAPTURED_PREFIXES)) == 2
+
+    from app.tasks.calibration_beat_gauge_sampler import CONVERGENCE_REASON_PREFIX
+
+    assert CONVERGENCE_REASON_PREFIX in CAPTURED_PREFIXES
+    assert SAMPLER_PREFIX in CAPTURED_PREFIXES
+    assert len(set(CAPTURED_PREFIXES)) == len(CAPTURED_PREFIXES)
+    assert len(CAPTURED_PREFIXES) >= 2
 
 
 def test_the_sampler_reads_the_producers_own_prefix_constant():

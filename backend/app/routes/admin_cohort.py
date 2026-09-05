@@ -648,6 +648,11 @@ async def calibration_beat_gauges(request: Request, limit: int = 24, full: bool 
     own status named, never an empty ``observations`` list: "the sampler has
     never run" and "the sampler ran and saw no beats" are different facts and
     gotcha #53 is the whole reason this instrument exists.
+
+    CAL-P1002 adds ``cursor_action`` / ``cursor_reason`` to the bounded rows —
+    what the beat did with its checkpoint and why. Both ``null`` means the row
+    carries no cursor key, which is a real state (refused, or died before the
+    write) and, on rows banked before CAL-P1002, means only "not a resume".
     """
     _check_admin_secret(request=request)
 
@@ -655,6 +660,7 @@ async def calibration_beat_gauges(request: Request, limit: int = 24, full: bool 
     from app.tasks.calibration_beat_gauge_sampler import (
         HISTORY_IDENTITY,
         HISTORY_SCHEMA,
+        cursor_decision,
         summarise,
     )
 
@@ -696,6 +702,15 @@ async def calibration_beat_gauges(request: Request, limit: int = 24, full: bool 
         return out
 
     bounded = rows[-max(1, min(int(limit or 24), len(rows) or 1)):] if rows else []
+    # CAL-P1002. What happened to the CHECKPOINT, projected into the DEFAULT view
+    # and not only under ``full=true``, because the question it answers — "was a
+    # finished bank thrown away, and why" — is the one a reader arrives with, and
+    # making them pull ~200 KB to reach it is how it went unasked for two nights.
+    # ``None``/``None`` means the row carries no cursor key at all: the beat
+    # refused (that arm returns before the ledger write) or died before reaching
+    # it, and on rows banked BEFORE CAL-P1002 it means only "not a resume". It is
+    # never rendered as a decision that was made.
+    cursors = [cursor_decision(r.get("gauges")) for r in bounded]
     out["observations"] = [
         {
             "generation": r.get("generation"),
@@ -713,8 +728,10 @@ async def calibration_beat_gauges(request: Request, limit: int = 24, full: bool 
                 "rebuild_units_this_beat"
             ),
             "gauges_missing_required": r.get("gauges_missing_required"),
+            "cursor_action": c["action"],
+            "cursor_reason": c["reason"],
         }
-        for r in bounded
+        for r, c in zip(bounded, cursors)
     ]
     out["observations_returned"] = len(out["observations"])
     out["observations_retained"] = len(rows)
