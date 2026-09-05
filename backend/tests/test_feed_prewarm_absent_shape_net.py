@@ -515,6 +515,22 @@ def test_the_net_rides_a_different_queue_from_the_rail_it_covers():
     it eventually ran. The measured difference across one 24h window: host beat
     p50 gap 138s / max 2,511s on `background`, net beat p50 gap 40s / max 202s
     on `realtime`.
+
+    🔄 AMENDED by D68-next (#3060, L1B-050): the net moved `realtime` -> `heavy`
+    and THE INVARIANT IS UNCHANGED — the host is on `background`, so the two
+    still do not share a queue. Only the net's literal moved, and the reason is
+    that `realtime` stopped being the uncontended lane the numbers above were
+    taken on: by 2026-09-05 all four of its co-tenants graded `overruns` and the
+    net itself was landing 7.0 % of its fires. The net had caught the host rail's
+    own disease on a different queue. The p50-40s / max-202s figures are kept as
+    the 2026-08-29 baseline the post-move re-measurement is compared against —
+    they are history now, not a current claim.
+
+    The assertion order below is deliberate: the queue is pinned BY NAME first,
+    so a silent drift to `background` (the default, and the one queue that would
+    make this net inert) fails loudly rather than sliding past a `!=` that any
+    two distinct wrong values would satisfy. The structural host != net invariant
+    is asserted last, as the thing that actually carries the claim.
     """
     from app.tasks import celery_app
 
@@ -522,11 +538,16 @@ def test_the_net_rides_a_different_queue_from_the_rail_it_covers():
     host = conf.beat_schedule["precompute-discover-candidate-base"]
     net = conf.beat_schedule["prewarm-live-feed-shapes"]
 
-    assert net["options"]["queue"] == "realtime"
+    assert net["options"]["queue"] == "heavy"
     assert conf.task_routes["app.tasks.prewarm_live_feed_shapes"] == {
-        "queue": "realtime"
+        "queue": "heavy"
     }
     host_queue = host.get("options", {}).get("queue", conf.task_default_queue)
+    assert host_queue == "background", (
+        "the HOST rail moved. Re-derive this test's causal claim from scratch "
+        "rather than adjusting the net around it — the claim is about which "
+        f"queue starves, not about the two being unequal (host is {host_queue!r})"
+    )
     assert host_queue != net["options"]["queue"], (
         "the warm rail and the net that covers it now share a queue — whatever "
         "starves one starves the other, and LAT-P112's fix is inert"
