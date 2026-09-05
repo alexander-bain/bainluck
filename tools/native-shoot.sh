@@ -20,10 +20,16 @@
 #              visible at all — on a clean install the defect does not appear
 #
 # Build first, and NEVER with -derivedDataPath: a fresh path forces SPM
-# resolution and the sandbox cannot reach dl.google.com.
+# resolution and the sandbox cannot reach dl.google.com. The OTHER_SWIFT_FLAGS
+# are NOT optional (gotcha #50): without them the build dies with three
+# "external macro implementation type 'PreviewsMacros.Common' could not be
+# found" errors in BainLuckWidget.swift — a #Preview macro the compiler sandbox
+# refuses to expand. It looks like a widget bug and is not one; native/021 lost
+# a build cycle to it because this header omitted the flag.
 #   xcodebuild -project "ios/Bain Luck/Bain Luck.xcodeproj" -scheme "Bain Luck" \
 #     -destination 'platform=iOS Simulator,name=iPhone 17' \
-#     -disableAutomaticPackageResolution build
+#     -disableAutomaticPackageResolution \
+#     OTHER_SWIFT_FLAGS='$(inherited) -Xfrontend -disable-sandbox' build
 #
 # IF A SHOT COMES BACK WITH THE NOTIFICATION ALERT, ERASE AND RE-SHOOT — do not
 # conclude the suppression failed. `-suppress_notification_prompt` is checked at
