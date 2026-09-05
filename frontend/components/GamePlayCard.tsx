@@ -2,6 +2,7 @@
 
 import { format, parseISO } from "date-fns";
 import { trustedLiveClock } from "@/lib/gameTimeLabel";
+import { renderedDuelPercents } from "@/lib/renderedPercent";
 import type { ActiveChartPoint } from "@/lib/types";
 
 interface GamePlayCardProps {
@@ -51,8 +52,29 @@ export default function GamePlayCard({
 
   const hasScore = point.homeScore != null && point.awayScore != null;
   const hasScoringPlay = !!point.scoringPlay;
-  const homeProb = Math.round(point.homeProb * 100);
-  const awayProb = Math.round(point.awayProb * 100);
+  /* #3295 — THE NINTH INSTANCE OF THE #2452 SHAPE, on the live event page.
+     Seen on production during US Open R32, event 15304209, while Fritz was in
+     his fourth set: the hero printed `62% – 38%` and this card, one scroll
+     below it, printed **`Fritz 62% — Cerundolo 39%`**. Same page, same instant,
+     two different numbers for the same player, and 101 between them.
+
+     `OddsChart`'s scrub handler emits `awayProb: 1 - homeProb`, so this is an
+     exact complement pair by construction. Rounding each side independently
+     with half-up sends BOTH up whenever `p * 100` lands on `.5`: a blend of
+     0.615 renders `Math.round(61.5) = 62` and `Math.round(38.5) = 39`. It
+     never prints 99; it prints 101 or it prints right.
+
+     `renderedDuelPercents` is the product's standing answer, contract-backed
+     across web, server and Swift (`contracts/rendered_percent.json`) and
+     already used by the hero directly above this card, the Discover card, the
+     feed card and the tournament match list. It rounds the favourite once and
+     derives the other as `100 -` that, and it leaves a pair that is genuinely
+     NOT complementary alone rather than normalising it into a fiction. This
+     card was simply the surface still calling a bare per-side `Math.round`,
+     which is why it was the one disagreeing with the hero. */
+  const [awayPct, homePct] = renderedDuelPercents(point.awayProb, point.homeProb);
+  const homeProb = homePct ?? Math.round(point.homeProb * 100);
+  const awayProb = awayPct ?? Math.round(point.awayProb * 100);
 
   // Short team names (last word of full name, e.g., "Boston Celtics" → "Celtics")
   const homeShort = homeTeam.split(" ").pop() || homeTeam;
