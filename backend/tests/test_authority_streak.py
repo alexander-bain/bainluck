@@ -247,11 +247,13 @@ def test_the_history_is_bounded_so_the_durable_payload_cannot_grow_forever():
 
 
 class FakeRead:
-    def __init__(self, status, payload=None, error=None):
+    def __init__(self, status, payload=None, error=None, generation=1000):
         self.status = status
         self.error = error
         self.envelope = (
-            SimpleNamespace(payload=payload) if payload is not None else None
+            SimpleNamespace(payload=payload, generation=generation)
+            if payload is not None
+            else None
         )
 
     @property
@@ -349,18 +351,6 @@ async def test_a_publish_that_did_not_land_is_reported_not_assumed(durable):
 
 
 @pytest.mark.asyncio
-async def test_a_superseded_publish_still_counts_as_recorded(durable):
-    """`superseded` means a NEWER generation is already there — the durability
-    requirement is satisfied, so this is success, reported distinctly."""
-    durable["publish"] = {"status": "superseded"}
-
-    out = await authority_ledger.record_agreement_day(row(), at=NOON)
-
-    assert out["streak"]["recorded"] is True
-    assert out["streak"]["publish_status"] == "superseded"
-
-
-@pytest.mark.asyncio
 async def test_the_ledger_read_is_not_age_bounded_the_way_a_cache_is(durable):
     """A ledger is SUPPOSED to be old.
 
@@ -371,3 +361,178 @@ async def test_the_ledger_read_is_not_age_bounded_the_way_a_cache_is(durable):
     """
     await authority_ledger.record_agreement_day(row(), at=NOON)
     assert durable["last_read_kwargs"]["max_age_s"] >= 365 * 24 * 3600
+
+
+# ---------------------------------------------------------------------------
+# CERT-952: losing the generation race (the repair, and its two named tests)
+# ---------------------------------------------------------------------------
+
+
+class FakeSubstrate:
+    """A durable store that enforces the REAL generation guard.
+
+    `durable_state_snapshots`' upsert applies `WHERE generation <= EXCLUDED.
+    generation`, so a writer carrying an older generation writes nothing and is
+    told `superseded`. The stub above cannot express that — it answers a fixed
+    status — and a fixed status is exactly what let the CERT-952 defect through:
+    the code read the word `superseded` and never asked what was actually stored.
+    """
+
+    def __init__(self):
+        self.payload = None
+        self.generation = 0
+        self.publishes = []
+        self.reads = 0
+        # "A rival writer keeps landing between our read and our write." Set
+        # explicitly rather than simulated with a huge generation, because a
+        # retry legitimately bumps past whatever it read — so a big number
+        # models "one old rival", not "a rival that keeps winning", and only
+        # the second one exercises the give-up path.
+        self.always_supersede = False
+
+    async def read(self, identity, **kwargs):
+        self.reads += 1
+        if self.payload is None:
+            return FakeRead("missing")
+        return FakeRead("ok", payload=self.payload, generation=self.generation)
+
+    async def publish(self, envelope):
+        self.publishes.append(envelope)
+        if self.always_supersede or envelope.generation < self.generation:
+            return {"status": "superseded", "identity": envelope.identity}
+        self.payload = envelope.payload
+        self.generation = envelope.generation
+        return {"status": "ok", "identity": envelope.identity}
+
+    def install(self, monkeypatch):
+        import app.services.durable_snapshots as ds
+
+        monkeypatch.setattr(ds, "read_snapshot_standalone", self.read)
+        monkeypatch.setattr(ds, "publish_snapshot_standalone", self.publish)
+        return self
+
+
+@pytest.fixture
+def substrate(monkeypatch):
+    return FakeSubstrate().install(monkeypatch)
+
+
+@pytest.mark.asyncio
+async def test_a_superseded_fold_never_publishes_its_own_clearing_count(substrate):
+    """CERT-952's catching test #1: superseded older MEETS vs newer BELOW.
+
+    A pass reads the ledger, and before it can write, a concurrent writer lands
+    a NEWER generation whose day scores `BELOW`. The losing pass must not return
+    its own stale fold — it computed `MEETS` on a copy the durable winner
+    already contradicts, and the endpoint publishes whatever it returns, so a
+    stale `meets_flip_gate: true` would be read as a real day towards a flip.
+    """
+    # Six clearing days already banked, then a BELOW day lands from elsewhere.
+    substrate.payload = ledger_of([GATE_MEETS] * 6 + [GATE_BELOW])
+    substrate.always_supersede = True
+
+    out = await authority_ledger.record_agreement_day(row(GATE_MEETS), at=NOON)
+
+    streak = out["streak"]
+    assert streak.get("meets_flip_gate") is not True, (
+        "the losing fold published a clearing count the durable winner "
+        "contradicts — this is CERT-952"
+    )
+    assert streak["days"] == 0, "the durable winner's day is BELOW, so today scores 0"
+    assert streak["publish_status"] == authority_ledger.SUPERSEDED
+    assert streak["attempts"] == authority_ledger.LEDGER_FOLD_ATTEMPTS
+    # It retried rather than giving up on the first loss, and it wrote nothing.
+    assert substrate.reads > 1
+    assert substrate.payload["days"][-1]["state"] == GATE_BELOW
+
+
+@pytest.mark.asyncio
+async def test_a_lost_race_on_a_day_the_winner_lacks_records_nothing(substrate):
+    """The other half of #1: no count at all rather than a wrong one.
+
+    Same loss, but the durable winner does not contain this pass's day. There is
+    no true number available, so the row says UNRECORDED — never a fold computed
+    on a copy that lost.
+    """
+    substrate.payload = ledger_of([GATE_MEETS] * 3, end=NOON - timedelta(days=2))
+    substrate.always_supersede = True
+
+    out = await authority_ledger.record_agreement_day(row(), at=NOON)
+
+    assert out["streak"]["state"] == authority_ledger.STREAK_UNRECORDED
+    assert out["streak"]["reason"] == "lost-every-generation-race"
+    assert "days" not in out["streak"]
+    assert utc_day(NOON) in out["streak"]["detail"]
+
+
+@pytest.mark.asyncio
+async def test_two_passes_across_midnight_keep_both_days(substrate):
+    """CERT-952's catching test #2: cross-midnight overlap retains both days.
+
+    The 23:59 pass reads an empty ledger. Before it writes, the 00:01 pass runs
+    to completion and banks the NEW day. The late writer must not lose its own
+    day to the newer generation, and must not overwrite the new day either:
+    re-read, re-fold onto the winner, and land BOTH.
+    """
+    late = NOON.replace(hour=23, minute=59)
+    early_next = late + timedelta(minutes=2)  # the following UTC day
+
+    # The 23:59 pass gets as far as reading an empty store...
+    first_read = await substrate.read("authority-agreement-ledger:x")
+    assert first_read.missing
+
+    # ...while the 00:01 pass completes.
+    await authority_ledger.record_agreement_day(row(), at=early_next)
+    assert [d["day"] for d in substrate.payload["days"]] == [utc_day(early_next)]
+
+    # Now the 23:59 pass writes. Its generation is older by two minutes.
+    out = await authority_ledger.record_agreement_day(row(), at=late)
+
+    days = [d["day"] for d in substrate.payload["days"]]
+    assert days == [
+        utc_day(late),
+        utc_day(early_next),
+    ], "the late writer lost a day to the midnight overlap"
+    assert out["streak"]["recorded"] is True
+    assert out["streak"]["attempts"] == 2, "it took exactly one refold"
+    # And the surviving ledger is a real two-day streak, not one day twice.
+    assert substrate.payload["streak"]["days"] == 2
+
+
+@pytest.mark.asyncio
+async def test_the_ordinary_uncontended_write_still_takes_one_attempt(substrate):
+    out = await authority_ledger.record_agreement_day(row(), at=NOON)
+    assert out["streak"]["recorded"] is True
+    assert out["streak"]["attempts"] == 1
+    assert len(substrate.publishes) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_recorded_count_always_equals_the_one_that_is_actually_stored(
+    substrate,
+):
+    """The general clause behind CERT-952, pinned on its own.
+
+    Every specific race is a way of breaking one invariant: **what this function
+    returns is what the endpoint publishes, so a `recorded` count must be the
+    count that is durably stored.** A returned number that no row backs is worse
+    than no number, because it is indistinguishable from a measurement.
+    """
+    outcomes = []
+    for offset in range(3):
+        at = NOON + timedelta(days=offset)
+        out = await authority_ledger.record_agreement_day(row(), at=at)
+        outcomes.append(out["streak"])
+        if out["streak"].get("recorded"):
+            assert out["streak"]["days"] == substrate.payload["streak"]["days"]
+            assert out["streak"]["through"] == substrate.payload["streak"]["through"]
+
+    assert [o["days"] for o in outcomes] == [1, 2, 3]
+
+    # And once a rival starts winning every race, nothing is claimed at all.
+    substrate.always_supersede = True
+    late = await authority_ledger.record_agreement_day(
+        row(), at=NOON + timedelta(days=4)
+    )
+    assert late["streak"]["state"] == authority_ledger.STREAK_UNRECORDED
+    assert substrate.payload["streak"]["days"] == 3, "the store is untouched"
