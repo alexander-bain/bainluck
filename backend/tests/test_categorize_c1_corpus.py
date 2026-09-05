@@ -283,3 +283,60 @@ def test_ambiguity_pairs_are_derived_from_the_patterns_not_restated():
     assert {"jazz", "kings", "browns"}.isdisjoint(paired)
     # "athletics" is ambiguous for baseball specifically -- the P1-3 pairing.
     assert ("baseball", "athletics") in _AMBIGUOUS_FOR
+
+
+# ---------------------------------------------------------------------------
+# CERT-1967's repair — the guard at the FULL CALLER, not at the unit
+# ---------------------------------------------------------------------------
+
+
+def test_a_t20_league_reaches_cricket_through_the_whole_cascade():
+    """CERT-1967 BLOCK: every assertion in this file could be green while the
+    fix was undone.
+
+    The grader's mutation: repair only ``('soccer', 'premier league')`` in
+    ``_AMBIGUOUS_FOR`` to the prior inert ``('darts', 'premier league')``. Every
+    C1 case above, all three P1 assertions and every structural assertion stay
+    GREEN -- and 98 of the 680 frozen movement titles go back to soccer. The
+    reason is that the assertions above stop at ``categorize_by_rules`` or at the
+    shape of the pair table, and neither notices which category "premier league"
+    is discounted FOR; the pairing only shows up once a real title makes soccer
+    and cricket compete over it.
+
+    So this test drives ``resolve_event_category`` -- the entry point the poller
+    actually calls, tags and all -- on a production title from the movement
+    class. It is the one assertion in this file that the grader's mutation
+    reddens.
+    """
+    from app.tasks.polymarket import _tags_to_category, resolve_event_category
+
+    title = "Kuwait Kerala Premier League T20: Arabian Eagles vs Blue Giants"
+    category, sport = _tags_to_category([])
+    resolved_category, resolved_sport, arm = resolve_event_category(
+        category, sport, title, [title]
+    )
+
+    assert resolved_sport == "cricket", (
+        f"a T20 league resolved as {resolved_sport!r} -- 'premier league' is "
+        f"being discounted for the wrong claimant, so soccer wins a word that "
+        f"only cricket's competing evidence should have beaten"
+    )
+    assert (resolved_category, arm) == ("championship", "fallback")
+
+
+def test_premier_league_is_discounted_for_soccer_and_no_one_else():
+    """Supplemental to the test above: the pairing itself, stated once.
+
+    Kept deliberately narrow. This pins WHICH claimant the word is doubtful for,
+    which is the single bit the mutation flips; the full-caller test above is
+    what proves that bit is load-bearing. A pair assertion alone would not --
+    it passes against a table that no caller consults.
+    """
+    from app.utils.futures_categorization import _AMBIGUOUS_FOR
+
+    claimants = {c for c, token in _AMBIGUOUS_FOR if token == "premier league"}
+    assert claimants == {"soccer"}, (
+        f"'premier league' is discounted for {sorted(claimants)}; it is only "
+        f"ambiguous when SOCCER claims it (Premier League Darts is the other "
+        f"reading, and darts has its own strong evidence)"
+    )
