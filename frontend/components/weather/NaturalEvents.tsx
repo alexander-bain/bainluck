@@ -72,7 +72,17 @@ function HurricaneTrackerSkeleton() {
       <div className="flex flex-col" style={{ gap: 0 }}>
         {Array.from({ length: 4 }).map((_, i) => (
           <div key={i} className="grid items-center" style={{ gridTemplateColumns: "1fr auto auto", gap: 10, padding: "10px 0", borderTop: i > 0 ? "1px solid var(--surface-border)" : undefined }}>
-            <div className="h-3.5 bg-gray-200 rounded animate-pulse" style={{ width: `${80 - i * 10}%` }} />
+            {/* Two lines, because the row it stands in for is two lines: the
+                question, then the outcome and the source under it. A one-line
+                skeleton here re-introduced the jump the stacked row exists to
+                remove — every row grew when the data landed. ux/1083, #3147. */}
+            <div style={{ minWidth: 0 }}>
+              <div className="h-3.5 bg-gray-200 rounded animate-pulse mb-2" style={{ width: `${80 - i * 10}%` }} />
+              <div className="flex items-center gap-2">
+                <div className="h-3 w-20 bg-gray-200 rounded animate-pulse" />
+                <div className="h-4 w-14 bg-gray-200 rounded-full animate-pulse" />
+              </div>
+            </div>
             <div className="h-1.5 w-[72px] bg-gray-200 rounded animate-pulse" />
             <div className="h-4 w-9 bg-gray-200 rounded animate-pulse" />
           </div>
