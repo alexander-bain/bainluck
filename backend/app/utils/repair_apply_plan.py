@@ -402,6 +402,136 @@ def mutations_outside_approved(
     return sorted({int(i) for i in attempted_leg_ids} - approved)
 
 
+# ---------------------------------------------------------------------------
+# The APPLIED receipt (CAL-P1008-R2, CERT-970)
+#
+# CERT-970's specimen, and it is a data-corruption bug rather than a gap:
+#
+#   1. a plan approves leg 7, read as (false, api_settlement);
+#   2. a concurrent grader legitimately moves it to (true, api_settlement) —
+#      the SAME state a successful apply would have produced;
+#   3. the apply's compare-and-set fails, rowcount 0, reported as drift, and
+#      leg 7 is NOT written;
+#   4. a restore driven off the PLAN still names leg 7, its post-apply predicate
+#      matches — because the concurrent grader put the row in exactly that
+#      state — and it sets is_winner back to false, destroying a real grade.
+#
+# The plan says what SHOULD have been written. Only the apply knows what WAS.
+# So a restore is bound to an APPLIED receipt: the legs whose rowcount was 1,
+# each stamped with the ``last_updated`` value that apply itself wrote. That
+# stamp is the per-row version — any later write to the row moves it, including
+# a same-VALUED regrade, which no state comparison could ever have caught.
+#
+# Banking MERGES rather than replaces. A retry of a partly-applied plan writes
+# the legs the first call drifted on, and an apply that wrote nothing must never
+# blank the record of one that wrote something.
+# ---------------------------------------------------------------------------
+
+#: Schema of the persisted applied receipt. Distinct from the plan's, because a
+#: reader that mistook one for the other would restore the wrong leg set.
+APPLIED_RECEIPT_SCHEMA = "calibration-repair-applied-receipt/v1"
+
+REASON_APPLIED_MISSING = "APPLIED_RECEIPT_MISSING"
+REASON_APPLIED_CORRUPT = "APPLIED_RECEIPT_CORRUPT"
+REASON_APPLIED_SOURCE_MISMATCH = "APPLIED_RECEIPT_SOURCE_PLAN_MISMATCH"
+
+_APPLIED_FIELDS = (
+    "leg_id",
+    "market_id",
+    "verdict",
+    "prior_is_winner",
+    "prior_source",
+    "applied_version",
+)
+
+
+def build_applied_receipt(
+    source_plan_hash: str,
+    written_legs: Iterable[Mapping[str, Any]],
+    *,
+    existing: Any = None,
+) -> dict[str, Any]:
+    """The rows an apply actually wrote, merged with anything already banked.
+
+    ``written_legs`` carries one mapping per leg with :data:`_APPLIED_FIELDS`.
+    ``applied_version`` is the ``last_updated`` value that apply wrote, as a
+    string — the per-row version a restore compares on.
+
+    Merge rule: **the earliest record of a leg wins.** A retry re-reads rows the
+    first call already moved, so anything it could bank for those legs would
+    describe a state it did not create. New legs are added; existing ones are
+    never rewritten, and an empty write set therefore leaves the receipt intact.
+    """
+    merged: dict[int, dict[str, Any]] = {}
+    prior = existing.get("legs") if isinstance(existing, Mapping) else None
+    for row in list(prior or []) + list(written_legs):
+        if not isinstance(row, Mapping):
+            continue
+        try:
+            leg_id = int(row["leg_id"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if leg_id in merged:
+            continue
+        merged[leg_id] = {
+            "leg_id": leg_id,
+            "market_id": int(row["market_id"]),
+            "verdict": str(row["verdict"]),
+            "prior_is_winner": bool(row["prior_is_winner"]),
+            "prior_source": row.get("prior_source"),
+            "applied_version": str(row["applied_version"]),
+        }
+    return {
+        "schema": APPLIED_RECEIPT_SCHEMA,
+        "source_plan_hash": source_plan_hash,
+        "leg_count": len(merged),
+        "legs": [merged[k] for k in sorted(merged)],
+    }
+
+
+def decode_applied_receipt(
+    raw: Any, *, expected_source_plan_hash: str
+) -> tuple[list[dict[str, Any]] | None, str]:
+    """``(legs, reason)`` — a receipt that cannot be trusted returns ``None``.
+
+    The source plan hash is checked rather than assumed: a receipt read from the
+    wrong address, or written by a different plan, must not license a write.
+    """
+    if not isinstance(raw, Mapping):
+        return None, REASON_APPLIED_MISSING
+    if raw.get("schema") != APPLIED_RECEIPT_SCHEMA:
+        return None, REASON_APPLIED_CORRUPT
+    if raw.get("source_plan_hash") != expected_source_plan_hash:
+        return None, REASON_APPLIED_SOURCE_MISMATCH
+    rows = raw.get("legs")
+    if not isinstance(rows, list):
+        return None, REASON_APPLIED_CORRUPT
+    legs: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, Mapping) or not all(
+            f in row for f in _APPLIED_FIELDS if f != "prior_source"
+        ):
+            return None, REASON_APPLIED_CORRUPT
+        try:
+            legs.append(
+                {
+                    "leg_id": int(row["leg_id"]),
+                    "market_id": int(row["market_id"]),
+                    "verdict": str(row["verdict"]),
+                    "prior_is_winner": bool(row["prior_is_winner"]),
+                    "prior_source": row.get("prior_source"),
+                    "applied_version": str(row["applied_version"]),
+                }
+            )
+        except (TypeError, ValueError):
+            return None, REASON_APPLIED_CORRUPT
+    if raw.get("leg_count") != len(legs):
+        # A count that disagrees with its own list is a truncated write, not a
+        # smaller receipt. Refuse rather than restore the part that survived.
+        return None, REASON_APPLIED_CORRUPT
+    return sorted(legs, key=lambda r: r["leg_id"]), "ok"
+
+
 def mutations_outside_approved_keys(
     plan: Any, attempted_keys: Iterable[str]
 ) -> list[str]:

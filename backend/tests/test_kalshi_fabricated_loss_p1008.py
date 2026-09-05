@@ -42,8 +42,13 @@ from app.utils.kalshi_fabricated_loss import (
 )
 from app.utils.repair_apply_plan import (
     APPLY_PLAN_SCHEMA,
+    REASON_APPLIED_CORRUPT,
+    REASON_APPLIED_MISSING,
+    REASON_APPLIED_SOURCE_MISMATCH,
     PlannedLeg,
+    build_applied_receipt,
     build_plan,
+    decode_applied_receipt,
     decode_plan,
 )
 from tests.test_kalshi_fabricated_loss_p062 import (
@@ -385,25 +390,20 @@ class TestTheRestoreArmLeavesNoMarker:
 
 
 class _UndoSession(_CASSession):
-    """`_CASSession` plus PostgreSQL's semantics for the two RESTORE shapes.
+    """PostgreSQL's UPDATE semantics for all FOUR statements this rail emits.
 
-    The p062 session models the two statements the APPLY emits and, by
-    construction, treats anything else as a non-match — which would have let
-    every restore assertion below pass for the wrong reason (0 rows, no error).
-    So the restore's own predicates are evaluated here, matched on the SET
-    clause, which is what distinguishes them from the apply's:
+    The p062 session models only the two the APPLY emits and treats anything
+    else as a non-match — which would have let every restore assertion pass for
+    the wrong reason (0 rows, no error). It also does not model ``last_updated``
+    at all, and that column is now the version CERT-970's fix turns on.
 
-        apply   restore_winner   SET is_winner = true          → restore: SET is_winner = :prior_winner
-        apply   retract          SET resolution_source = :retraction
-                                                              → restore: SET resolution_source = :prior_source
-
-    The WHERE clause is read OUT OF THE SQL, not reproduced from the params. A
-    first version of this class checked `params["repairable"]` whichever
-    predicate the statement actually carried, and deleting the source guard from
-    the shipping SQL left all 19 tests green — the test file had quietly grown a
-    second copy of the guard it was supposed to be certifying (C-CERT-1852
-    finding 5, one level down). Dropping a clause from the statement must drop
-    it here too, or these tests certify nothing.
+    **Both the SET list and the WHERE clause are read out of the SQL**, never
+    reproduced from the params. A first version of this class checked
+    ``params["repairable"]`` whichever predicate the statement actually carried,
+    and deleting the source guard from the shipping SQL left all 19 tests green
+    — the test file had quietly grown a second copy of the guard it was supposed
+    to be certifying (C-CERT-1852 finding 5, one level down). Deleting a clause
+    from a statement must delete it here too, or these tests certify nothing.
     """
 
     #: Each recognised WHERE clause, and the row predicate it means.
@@ -414,6 +414,10 @@ class _UndoSession(_CASSession):
             lambda row, p: row["is_winner"] == p["prior_winner"],
         ),
         (
+            "AND resolution_source IS NOT DISTINCT FROM :prior_source",
+            lambda row, p: row["resolution_source"] == p["prior_source"],
+        ),
+        (
             "AND resolution_source IS NOT DISTINCT FROM :repairable",
             lambda row, p: row["resolution_source"] == p["repairable"],
         ),
@@ -421,32 +425,68 @@ class _UndoSession(_CASSession):
             "AND resolution_source IS NOT DISTINCT FROM :retraction",
             lambda row, p: row["resolution_source"] == p["retraction"],
         ),
+        (
+            "AND last_updated = :applied_version",
+            lambda row, p: row.get("last_updated") == p["applied_version"],
+        ),
     )
 
-    def _where_holds(self, sql, row, params):
-        return all(pred(row, params) for clause, pred in self._CLAUSES if clause in sql)
+    #: Each recognised SET assignment, and the new value it writes.
+    _SETTERS = (
+        ("SET is_winner = true", "is_winner", lambda p: True),
+        ("SET is_winner = :prior_winner", "is_winner", lambda p: p["prior_winner"]),
+        (
+            "resolution_source = 'api_settlement'",
+            "resolution_source",
+            lambda p: REPAIRABLE_SOURCE,
+        ),
+        (
+            "SET resolution_source = :retraction",
+            "resolution_source",
+            lambda p: p["retraction"],
+        ),
+        (
+            "SET resolution_source = :prior_source",
+            "resolution_source",
+            lambda p: p["prior_source"],
+        ),
+        (
+            "last_updated = :applied_version",
+            "last_updated",
+            lambda p: p["applied_version"],
+        ),
+        (
+            "last_updated = :restored_version",
+            "last_updated",
+            lambda p: p["restored_version"],
+        ),
+    )
+
+    @staticmethod
+    def _halves(sql):
+        """(set_clause, where_clause). Split first, so neither half can read the
+        other's text — `SET last_updated = :applied_version` and
+        `AND last_updated = :applied_version` are the same substring."""
+        head, _, where = sql.partition("WHERE")
+        return head, where
 
     async def execute(self, stmt, params=None):
         sql = str(stmt)
-        if "UPDATE futures_outcomes" in sql:
-            setters = [
-                ("SET is_winner = :prior_winner", "is_winner", "prior_winner"),
-                (
-                    "SET resolution_source = :prior_source",
-                    "resolution_source",
-                    "prior_source",
-                ),
-            ]
-            for marker, column, param in setters:
-                if marker not in sql:
-                    continue
-                self.statements.append(sql)
-                row = self.rows.get(params["id"])
-                if row is None or not self._where_holds(sql, row, params):
-                    return _FakeResult(0)
-                row[column] = params[param]
-                return _FakeResult(1)
-        return await super().execute(stmt, params)
+        if "UPDATE futures_outcomes" not in sql:
+            return await super().execute(stmt, params)
+        self.statements.append(sql)
+        set_half, where_half = self._halves(sql)
+        row = self.rows.get(params["id"])
+        if row is None or not all(
+            pred(row, params)
+            for clause, pred in self._CLAUSES
+            if clause.removeprefix("AND ") in where_half
+        ):
+            return _FakeResult(0)
+        for marker, column, value in self._SETTERS:
+            if marker.removeprefix("SET ") in set_half:
+                row[column] = value(params)
+        return _FakeResult(1)
 
 
 def _plan(*legs):
@@ -468,6 +508,15 @@ def _plan(*legs):
 
 def _row(leg_id, *, is_winner=False, source=REPAIRABLE_SOURCE):
     return {"id": leg_id, "is_winner": is_winner, "resolution_source": source}
+
+
+def _graded(row):
+    """The row's GRADE, without the version column either side stamps.
+
+    `last_updated` moving is the point of the fix, not a regression, so the
+    assertions about what a restore put back must not read it.
+    """
+    return {k: v for k, v in row.items() if k != "last_updated"}
 
 
 async def _apply(monkeypatch, plan, session):
@@ -629,11 +678,11 @@ class TestTheCatchingTest:
         assert out["retractions_undone"] == 1
 
         # the reversed rows are back to the exact pre-apply state
-        assert session.rows[1] == _row(1)
-        assert session.rows[2] == _row(2)
+        assert _graded(session.rows[1]) == _row(1)
+        assert _graded(session.rows[2]) == _row(2)
 
         # the concurrently-changed row is PRESERVED, and named rather than silent
-        assert session.rows[3] == untouched
+        assert session.rows[3] == untouched  # including its version
         assert [d["leg_id"] for d in out["concurrent_drift"]] == [3]
         assert out["concurrent_drift"][0]["verdict"] == "restore_winner"
 
@@ -642,7 +691,7 @@ class TestTheCatchingTest:
 
         # batch two is untouched by batch one's restore, and still has its own
         # receipt to be undone from
-        assert session.rows[4] == {
+        assert _graded(session.rows[4]) == {
             "id": 4,
             "is_winner": True,
             "resolution_source": REPAIRABLE_SOURCE,
@@ -699,3 +748,250 @@ class TestTheRestoreIsRegisteredAndCannotReDerive:
             assert (
                 forbidden not in src
             ), f"the restore must re-derive nothing — found {forbidden}"
+
+
+# =============================================================================
+# CAL-P1008-R2 / CERT-970 — a same-valued concurrent grade survives, both ways
+#
+# CERT-970's specimen and its required catching tests. The two cases are
+# genuinely different and only one of them is a state comparison:
+#
+#   BEFORE a skipped apply — a concurrent writer puts the row in the post-apply
+#     state, so the apply's CAS skips it. A restore bound to the PLAN would find
+#     its predicate satisfied and reverse a write it never made.
+#   AFTER a successful apply — the apply writes the row, then a concurrent
+#     writer regrades it to the SAME values. No comparison of state can see the
+#     difference; only the version the apply stamped can.
+# =============================================================================
+
+
+class TestASameValuedConcurrentGradeSurvives:
+    @pytest.mark.asyncio
+    async def test_before_a_skipped_apply(self, monkeypatch):
+        """The exact CERT-970 reproduction."""
+        _seeded_store(monkeypatch)
+        plan = _plan((1, 100, "restore_winner"), (2, 100, "retract_fabricated"))
+        session = _UndoSession([_row(1), _row(2)])
+
+        # A grader legitimately declares leg 1 a winner between plan and apply,
+        # landing on exactly the values a successful apply would have produced.
+        session.rows[1] = {
+            "id": 1,
+            "is_winner": True,
+            "resolution_source": REPAIRABLE_SOURCE,
+            "last_updated": "a-real-graders-write",
+        }
+        theirs = dict(session.rows[1])
+
+        applied = await _apply(monkeypatch, plan, session)
+        assert applied["legs_written"] == 1, "leg 1 must be SKIPPED, not written"
+        assert [d["leg_id"] for d in applied["concurrent_drift"]] == [1]
+
+        out = await rail.restore(session, apply=True, plan_hash=plan.plan_hash)
+
+        # Leg 1 was never written by this apply, so the restore must not name it
+        # at all — not even as drift it considered.
+        assert out["reversed_leg_ids"] == [2]
+        assert session.rows[1] == theirs, "a real grade was destroyed"
+
+    @pytest.mark.asyncio
+    async def test_after_a_successful_apply(self, monkeypatch):
+        """The half no state comparison can reach.
+
+        The apply writes the row. A grader then writes the SAME values over it —
+        a legitimate re-affirmation that is now their grade, not ours. Values are
+        identical; only the version moved.
+        """
+        _seeded_store(monkeypatch)
+        plan = _plan((1, 100, "restore_winner"), (2, 100, "retract_fabricated"))
+        session = _UndoSession([_row(1), _row(2)])
+
+        applied = await _apply(monkeypatch, plan, session)
+        assert applied["legs_written"] == 2
+
+        # Same values, different write.
+        assert session.rows[1]["is_winner"] is True
+        assert session.rows[1]["resolution_source"] == REPAIRABLE_SOURCE
+        session.rows[1]["last_updated"] = "a-later-write-with-the-same-values"
+        theirs = dict(session.rows[1])
+
+        out = await rail.restore(session, apply=True, plan_hash=plan.plan_hash)
+
+        assert out["reversed_leg_ids"] == [2]
+        assert session.rows[1] == theirs
+        assert [d["leg_id"] for d in out["concurrent_drift"]] == [1]
+        # ...and it is ATTEMPTED, so the honesty contract still holds.
+        assert out["attempted_leg_ids_equal_receipt"] is True
+
+    @pytest.mark.asyncio
+    async def test_the_restore_is_bound_to_what_was_written_not_what_was_planned(
+        self, monkeypatch
+    ):
+        """The structural version of the two cases above."""
+        store = _seeded_store(monkeypatch)
+        plan = _plan((1, 100, "restore_winner"), (2, 100, "retract_fabricated"))
+        session = _UndoSession([_row(2)])  # leg 1's row does not exist at all
+
+        await _apply(monkeypatch, plan, session)
+
+        # The PLAN receipt still names both legs — it is the pre-image, and it
+        # is deliberately not what a restore reads.
+        planned, _ = decode_plan(store.payload(rail.receipt_identity(plan.plan_hash)))
+        assert list(planned.leg_ids) == [1, 2]
+
+        out = await rail.restore(session, apply=False, plan_hash=plan.plan_hash)
+        assert out["leg_ids"] == [2], "the applied receipt holds only what was written"
+
+    @pytest.mark.asyncio
+    async def test_a_retry_adds_its_legs_and_an_empty_apply_blanks_nothing(
+        self, monkeypatch
+    ):
+        """The merge rule, which is what makes a partly-applied plan recoverable.
+
+        Leg 1's row is missing on the first apply and appears before the retry.
+        The retry must ADD it; and a third apply that writes nothing must not
+        erase either.
+        """
+        _seeded_store(monkeypatch)
+        plan = _plan((1, 100, "restore_winner"), (2, 100, "retract_fabricated"))
+        session = _UndoSession([_row(2)])
+
+        first = await _apply(monkeypatch, plan, session)
+        assert first["legs_written"] == 1
+
+        session.rows[1] = _row(1)
+        second = await _apply(monkeypatch, plan, session)
+        assert second["legs_written"] == 1
+
+        third = await _apply(monkeypatch, plan, session)
+        assert third["legs_written"] == 0
+
+        out = await rail.restore(session, apply=False, plan_hash=plan.plan_hash)
+        assert out["leg_ids"] == [1, 2]
+
+    @pytest.mark.asyncio
+    async def test_committed_rows_with_no_applied_receipt_are_not_a_success(
+        self, monkeypatch
+    ):
+        """Rows nothing can reverse are a failure, reported, not left to be found."""
+        store = _seeded_store(monkeypatch)
+        plan = _plan((1, 100, "restore_winner"))
+        session = _UndoSession([_row(1)])
+        store.forced_status[rail.applied_identity(plan.plan_hash)] = "rejected"
+
+        out = await _apply(monkeypatch, plan, session)
+
+        assert out["legs_written"] == 1
+        assert out["undo"]["applied_receipt_banked"] is False
+        assert out["undo"]["reversible"] is False
+        assert out["success"] is False
+
+    @pytest.mark.asyncio
+    async def test_a_restore_refuses_when_only_the_plan_receipt_exists(
+        self, monkeypatch
+    ):
+        """The pre-write receipt is forensics, never a licence to write."""
+        store = _seeded_store(monkeypatch)
+        plan = _plan((1, 100, "restore_winner"))
+        session = _UndoSession([_row(1)])
+        store.forced_status[rail.applied_identity(plan.plan_hash)] = "rejected"
+        await _apply(monkeypatch, plan, session)
+        before = dict(session.rows[1])
+
+        out = await rail.restore(session, apply=True, plan_hash=plan.plan_hash)
+
+        assert out["success"] is False
+        assert out["measured"] is False
+        assert out["refused"] == [REASON_APPLIED_MISSING]
+        # ...and it points the operator at the forensic record rather than
+        # pretending there is nothing to look at.
+        assert out["plan_receipt_identity"] == rail.receipt_identity(plan.plan_hash)
+        assert session.rows[1] == before
+
+
+class TestTheAppliedReceiptIsPure:
+    """`build_applied_receipt` / `decode_applied_receipt` — no DB, no clock."""
+
+    def test_the_merge_keeps_the_earliest_record_of_a_leg(self):
+        first = build_applied_receipt(
+            "h",
+            [
+                {
+                    "leg_id": 1,
+                    "market_id": 10,
+                    "verdict": "restore_winner",
+                    "prior_is_winner": False,
+                    "prior_source": "api_settlement",
+                    "applied_version": "v1",
+                }
+            ],
+        )
+        second = build_applied_receipt(
+            "h",
+            [
+                {
+                    "leg_id": 1,
+                    "market_id": 10,
+                    "verdict": "restore_winner",
+                    "prior_is_winner": False,
+                    "prior_source": "api_settlement",
+                    "applied_version": "v2",
+                },
+                {
+                    "leg_id": 2,
+                    "market_id": 10,
+                    "verdict": "retract_fabricated",
+                    "prior_is_winner": False,
+                    "prior_source": "api_settlement",
+                    "applied_version": "v2",
+                },
+            ],
+            existing=first,
+        )
+        by_id = {leg["leg_id"]: leg for leg in second["legs"]}
+        assert by_id[1]["applied_version"] == "v1", "a retry cannot rewrite history"
+        assert by_id[2]["applied_version"] == "v2"
+        assert second["leg_count"] == 2
+
+    def test_an_empty_write_set_leaves_the_receipt_intact(self):
+        first = build_applied_receipt(
+            "h",
+            [
+                {
+                    "leg_id": 1,
+                    "market_id": 10,
+                    "verdict": "restore_winner",
+                    "prior_is_winner": False,
+                    "prior_source": "api_settlement",
+                    "applied_version": "v1",
+                }
+            ],
+        )
+        assert build_applied_receipt("h", [], existing=first) == first
+
+    def test_a_receipt_from_another_plan_is_refused_by_name(self):
+        payload = build_applied_receipt("h", [])
+        legs, reason = decode_applied_receipt(
+            payload, expected_source_plan_hash="other"
+        )
+        assert legs is None
+        assert reason == REASON_APPLIED_SOURCE_MISMATCH
+
+    def test_a_count_that_disagrees_with_its_list_is_corrupt_not_smaller(self):
+        payload = build_applied_receipt(
+            "h",
+            [
+                {
+                    "leg_id": 1,
+                    "market_id": 10,
+                    "verdict": "restore_winner",
+                    "prior_is_winner": False,
+                    "prior_source": "api_settlement",
+                    "applied_version": "v1",
+                }
+            ],
+        )
+        payload["leg_count"] = 5
+        legs, reason = decode_applied_receipt(payload, expected_source_plan_hash="h")
+        assert legs is None
+        assert reason == REASON_APPLIED_CORRUPT
