@@ -23,6 +23,7 @@ half of making that comparison mandatory.
 """
 
 import inspect
+import json
 import textwrap
 from importlib import import_module
 from unittest.mock import MagicMock, patch
@@ -460,24 +461,118 @@ def test_pass_budget_covers_every_target_at_the_declared_concurrency():
     )
 
 
-def test_concurrency_never_reaches_for_the_task_pool_overflow():
-    """Three is bounded by the database pool, not chosen.
+def test_a_build_gets_its_own_engine_so_the_pool_size_is_not_the_bound():
+    """🔴 A correction to the reasoning this guard shipped with (#3233).
 
-    `tasks/base.py` declares `pool_size=3, max_overflow=2`. Each concurrent build
-    takes its own session (`get_task_session()`), so a concurrency above the
-    POOLED size makes this beat borrow overflow that exists for the tasks sharing
-    the process. Read out of the source rather than restated here, because a
-    number copied into a test is the #2236 arrangement in miniature — two places
-    holding one fact, neither of them comparing.
+    The original assertion compared `FEED_LIVE_REPUBLISH_CONCURRENCY` against the
+    `pool_size=3` regexed out of `tasks/base.py`, on the stated reasoning that
+    three concurrent builds would "take overflow" from one shared pool. **They
+    cannot**: `get_task_session()` calls `_get_task_engine()` on every entry, so
+    each concurrent build brings its OWN engine, its own pool of three, and
+    disposes it on exit. Three builds are three engines holding one connection
+    each — never three checkouts of one pool.
+
+    The number 3 is still safe. The reason it was safe was wrong, and a guard that
+    passes for a mechanism that does not exist is the one that stays green while
+    the real bound moves (`r_guard_pinned_to_a_mechanism_contracts_its_bug`). So
+    the mechanism is asserted here, in the source, and the real bound —
+    **connections in flight** — is measured at runtime in the test below.
+
+    Asserted as structure rather than prose: the engine factory is called INSIDE
+    the session context manager. If someone hoists it to a module-level singleton
+    (a reasonable optimisation) the pooled bound becomes real again, this test
+    fails, and whoever does it is pointed at the test below rather than
+    discovering the interaction on production.
     """
-    import re
+    base = import_module("app.tasks.base")
+    session_src = textwrap.dedent(inspect.getsource(base.get_task_session))
+    assert "_get_task_engine()" in session_src, (
+        "get_task_session no longer builds its own engine. If the engine is now "
+        "shared, concurrent builds DO contend for one pool and "
+        "FEED_LIVE_REPUBLISH_CONCURRENCY must be re-derived against pool_size + "
+        "max_overflow — see the runtime guard below"
+    )
+    assert "engine.dispose()" in session_src, (
+        "a per-call engine that is not disposed leaks its pool once per build, "
+        "which at this concurrency is once per 40s beat (#1162)"
+    )
 
-    base_src = inspect.getsource(import_module("app.tasks.base"))
-    pool_size = int(re.search(r"pool_size\s*=\s*(\d+)", base_src).group(1))
-    assert FEED_LIVE_REPUBLISH_CONCURRENCY <= pool_size, (
-        f"concurrency {FEED_LIVE_REPUBLISH_CONCURRENCY} exceeds the task pool's "
-        f"{pool_size} pooled connections — this pass would be taking overflow "
-        "from whatever else runs in the worker process"
+
+def test_the_pass_never_holds_more_sessions_than_the_concurrency_it_declares():
+    """The connection budget, measured at runtime instead of inferred (#3233).
+
+    `FEED_LIVE_REPUBLISH_CONCURRENCY` is a semaphore bound in one function. What
+    the database feels is **sessions open at once**, and nothing had ever compared
+    the two — the shipped guard compared a constant against another constant read
+    out of a third file. Between the semaphore and a connection sit the target
+    list, `gather`, and the skip path, any of which could grow a second session
+    per build or leak one past the `async with`.
+
+    So this counts them: the real `_prewarm_feed_shape` runs, `get_task_session`
+    is instrumented, and the peak is asserted. Because each session carries its
+    own engine (test above), **peak sessions IS the connection count this beat
+    adds to Postgres.** That sentence is the whole reason this test replaced a
+    regex.
+
+    Run at the DECLARED constants — no patched budget — so the assertion is about
+    the configuration that ships.
+
+    The saturation precondition is asserted first and is not a formality: with a
+    build that returns instantly the peak is 1, the bound passes trivially, and the
+    guard would be green against any concurrency whatsoever.
+    """
+    import asyncio
+    from contextlib import asynccontextmanager
+
+    from app.utils.feed_cache import FEED_PREWARM_KEY_SCOPE_KEY
+
+    in_flight = 0
+    peak = 0
+    opened = 0
+
+    @asynccontextmanager
+    async def _counting_session():
+        nonlocal in_flight, peak, opened
+        in_flight += 1
+        opened += 1
+        peak = max(peak, in_flight)
+        try:
+            yield MagicMock()
+        finally:
+            in_flight -= 1
+
+    async def _fake_get_feed(**kwargs):
+        # The route is what resolves and records the cache key; stand in for it so
+        # the build reaches the publish path instead of bailing at `no_key`, and
+        # hold the session open long enough for the waves to actually overlap.
+        kwargs["request"].scope[FEED_PREWARM_KEY_SCOPE_KEY] = (
+            f"bainluck:feed:{kwargs.get('mode') or 'discover'}:{kwargs['limit']}"
+        )
+        await asyncio.sleep(0.02)
+        return {"build_quality": "complete", "items": [{"id": 1}, {"id": 2}]}
+
+    rc = _fake_rc({s["label"]: "1" for s in pcp.FEED_PREWARM_SHAPES})
+    with patch("app.tasks.base.get_task_session", _counting_session), patch(
+        "app.routes.feed.get_feed", _fake_get_feed
+    ), patch("app.tasks.redis_state.get_redis_client", lambda: rc):
+        published = asyncio.run(pcp._prewarm_live_feed_shapes())
+
+    n = len(pcp.FEED_PREWARM_SHAPES)
+    assert published == n, f"only {published} of {n} targets published"
+    assert opened == n, (
+        f"{opened} sessions were opened for {n} builds — a build that takes two "
+        "sessions doubles this beat's connection cost invisibly"
+    )
+    # PRECONDITION: the waves really overlapped, so the bound below is being tested.
+    assert peak == FEED_LIVE_REPUBLISH_CONCURRENCY, (
+        f"peak was {peak}, not the declared concurrency "
+        f"{FEED_LIVE_REPUBLISH_CONCURRENCY}. Below it the builds never overlapped "
+        "and this assertion proves nothing; above it the semaphore is not bounding "
+        "the pass at all"
+    )
+    assert in_flight == 0, (
+        f"{in_flight} session(s) still open after the pass returned — each one is a "
+        "leaked engine and its pool (#1162)"
     )
 
 
@@ -558,6 +653,120 @@ def test_a_slow_build_no_longer_starves_the_whole_pass():
         "0 here — that is the bug — so anything at or below the first wave means "
         "the pass is still dividing the wall instead of running waves in it"
     )
+
+
+def _live_prewarm_report(rc):
+    """The status payload a READER sees, parsed back off the `setex` that wrote it.
+
+    Deliberately not the return value. `_prewarm_live_feed_shapes` returns a COUNT,
+    and a count cannot answer "which shapes" — the question every assertion about
+    waves has to ask. The status key is also the only thing an operator can read on
+    production, so a guard that reads it is grading the same artifact they are.
+    """
+    calls = [
+        c
+        for c in rc.setex.call_args_list
+        if c.args and c.args[0] == pcp.FEED_LIVE_PREWARM_STATUS_KEY
+    ]
+    assert calls, "the pass wrote no status payload at all"
+    return json.loads(calls[-1].args[2])
+
+
+def _sports_tab_labels():
+    """Every warmed shape that a reader of the Sports tab waits on.
+
+    Derived from the declared shapes, not listed here. Three today — `sports`
+    (web), `sports_native`, and `sports_native_events` (the native tab's
+    events-only backfill, whose `mode` is None because the route's
+    Discover-default guard skips it; see `FEED_PREWARM_SHAPES`). A fourth added
+    tomorrow is covered without touching this file, which is the point:
+    `r_guards_are_named_after_the_invariant_not_the_feature`.
+    """
+    return [
+        s["label"] for s in pcp.FEED_PREWARM_SHAPES if s["label"].startswith("sports")
+    ]
+
+
+def test_a_target_in_a_later_wave_publishes_like_one_in_the_first():
+    """The half of #3233 its own first guard did not cover.
+
+    `test_a_slow_build_no_longer_starves_the_whole_pass` asserts
+    `published >= CONCURRENCY` — satisfied by wave 1 ALONE. A regression that
+    published the first three targets and dropped everything behind them would
+    leave that assertion green, and the shapes it would drop are the ones the
+    commit subject is about: at `CONCURRENCY = 3` over the declared shape order,
+    wave 1 is `discover, sports, discover_native` and **wave 2 is
+    `sports_native, sports_native_events` — the native Sports tab, entire.**
+
+    So the fix's headline ("the Sports tab stops paying") rested on a wave nothing
+    asserted. Raised by the review of the shipped change
+    (`CERT-1905-SECOND-WAVE-AND-CONNECTION-BUDGET-GUARD`).
+
+    The wave boundary is DERIVED — everything at or past index `CONCURRENCY` in
+    the target list cannot run in the first wave, whatever the order becomes — and
+    the precondition that a later wave exists at all is asserted before the
+    assertion that needs it, because a guard over an empty list is not a guard
+    (`r_fake_collapsing_two_hashes_makes_a_vacuous_guard`).
+    """
+    n = len(pcp.FEED_PREWARM_SHAPES)
+    budget_s = 0.20
+    build_cost_s = 0.06
+    assert build_cost_s > budget_s / n, "the fixture does not reproduce the defect"
+
+    rc = _fake_rc({s["label"]: "1" for s in pcp.FEED_PREWARM_SHAPES})
+    _published, started = _run_live_pass_with_costed_builds(
+        rc,
+        build_cost_s=build_cost_s,
+        budget_s=budget_s,
+        min_viable_s=build_cost_s,
+        concurrency=FEED_LIVE_REPUBLISH_CONCURRENCY,
+    )
+    report = _live_prewarm_report(rc)
+    shapes = report["shapes"]
+
+    # Wave membership comes from the targets the pass INTENDED to serve, not from
+    # the ones it managed to start. The first draft read `started`, and under the
+    # pre-repair mutation — where every target is skipped before the build is
+    # called — `started` is empty, so the precondition below tripped and reported
+    # "the shape set has shrunk" about a pass that was failing exactly as designed.
+    # A guard must not describe its own subject's failure as its own irrelevance.
+    target_order = [
+        s["label"] for s in pcp.FEED_PREWARM_SHAPES if s["label"] in rc._state
+    ]
+    assert set(started) <= set(target_order), (started, target_order)
+
+    # PRECONDITION 1: there IS a wave past the first. Without this the test is
+    # green on a shape set that never exercises the thing it is named after.
+    later_wave = target_order[FEED_LIVE_REPUBLISH_CONCURRENCY:]
+    assert later_wave, (
+        f"{n} shapes at concurrency {FEED_LIVE_REPUBLISH_CONCURRENCY} all fit in "
+        "one wave, so this guard is asserting nothing. It must be re-pointed (or "
+        "the shape set has shrunk below the case #3233 was about)"
+    )
+
+    # PRECONDITION 2: the Sports tab really is behind that boundary. This is the
+    # clause the review asked for, and it is the reason the wave matters at all.
+    sports = _sports_tab_labels()
+    assert len(sports) >= 2, f"expected the Sports tab to warm several shapes, got {sports}"
+    assert set(sports) & set(later_wave), (
+        f"no Sports shape sits in a later wave ({sports} vs wave-2 {later_wave}) — "
+        "the ordering has changed and this guard no longer covers the case the "
+        "commit subject claims"
+    )
+
+    for label in later_wave:
+        wave = 1 + target_order.index(label) // FEED_LIVE_REPUBLISH_CONCURRENCY
+        assert shapes.get(label, {}).get("outcome") == "ok", (
+            f"{label} is in wave {wave} and did not publish: {shapes.get(label)}. A "
+            "pass that serves only its first wave is the #3233 defect with a larger "
+            "constant"
+        )
+
+    for label in sports:
+        assert shapes.get(label, {}).get("outcome") == "ok", (
+            f"the Sports tab shape {label} did not publish: {shapes.get(label)}. "
+            "This is the shape a reader of /sports waits on"
+        )
 
 
 def _fake_rc_two_hashes(live_labels, absent_labels):
