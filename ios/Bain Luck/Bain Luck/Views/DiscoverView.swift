@@ -102,6 +102,7 @@ enum NativeDiscoverDebugState {
 struct DiscoverView: View {
     @StateObject private var vm = DiscoverViewModel()
     @EnvironmentObject private var authManager: AuthManager
+    @EnvironmentObject private var navCoordinator: NavigationCoordinator
     @State private var visibleCount = 20
 
     // First-render attribution (L2-206 Item 3 / L2-210 Item 2 / L2-212 Item 2):
@@ -1265,6 +1266,16 @@ struct DiscoverView: View {
             )
         }
         .navigationDestination(for: Route.self) { RouteDestination(route: $0) }
+        // #2998, second half. `bainluck://daily` and `bainluck://challenge/<code>`
+        // both route to this tab, and Discover never read `pendingRoute` either —
+        // so a shared challenge invite switched to Discover and showed the ordinary
+        // feed. The issue named Browse as the only unreachable tab; it was two.
+        .onChange(of: navCoordinator.pendingRoute) { _, _ in
+            if navCoordinator.selectedTab == .discover,
+               let route = navCoordinator.consumeRoute() {
+                navigationPath.append(route)
+            }
+        }
         }
     }
 
