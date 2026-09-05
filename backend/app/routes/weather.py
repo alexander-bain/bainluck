@@ -442,11 +442,24 @@ MIN_HISTORY_POINTS = 3
 
 
 def _downsample(points: list[float], limit: int) -> list[float]:
-    """Thin ``points`` to about ``limit``, always keeping the first and last."""
+    """Thin ``points`` to AT MOST ``limit``, always keeping the first and last.
+
+    ux/1074, UX-1069-DOWNSAMPLE-LIMIT-CONTRACT: the limit is a hard ceiling, not
+    an approximation. The first version spaced ``limit`` indices across the
+    series and then unioned in ``len - 1`` to pin the end, which adds a
+    ``limit + 1``-th point whenever that last spaced index falls short of the
+    end — 15 points out of a 14-point budget for a 15-capture market. The end is
+    now pinned by construction: the stride spans the last index, so ``i = 0``
+    lands on the first point and ``i = limit - 1`` lands on the last, and the
+    set can only shrink from ``limit``, never grow past it.
+    """
     if len(points) <= limit:
         return points
-    step = len(points) / limit
-    keep = sorted({int(i * step) for i in range(limit)} | {len(points) - 1})
+    if limit <= 1:
+        return points[:1]
+    last = len(points) - 1
+    step = last / (limit - 1)
+    keep = sorted({round(i * step) for i in range(limit)})
     return [points[i] for i in keep]
 
 
