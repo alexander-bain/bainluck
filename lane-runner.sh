@@ -95,9 +95,17 @@ for L in "${LANES[@]}"; do
   # Crash recovery: a .running file means a prior runner died mid-session
   # (reboot, closed laptop). Re-queue it — directives are self-gated, so
   # re-running is always safe.
-  # Skipped under --dry-run: this RENAMES files, and a rehearsal that re-queues
-  # a live lane's in-flight directive is not a rehearsal.
-  [ "$DRYRUN" -eq 1 ] && continue
+  #
+  # Skipped whenever this invocation will not start sessions. --dry-run was
+  # already excluded (a rehearsal that re-queues a live lane's in-flight
+  # directive is not a rehearsal); --restock-once was NOT, and it is the same
+  # hazard wearing a different flag: Fable runs it to nudge an idle lane, and on
+  # a lane that is actually busy it renamed the live session's marker back to
+  # `.md` for the real runner to take a second time. Only a runner that is about
+  # to serve the queue itself has any business re-queuing (integrator/205).
+  # A genuinely orphaned marker is not lost by this: reap_stale_running retires
+  # it on an age test that a live session's marker can never satisfy.
+  { [ "$DRYRUN" -eq 1 ] || [ "$RESTOCK_ONCE" -eq 1 ]; } && continue
   for R in "$HANDOFF/runner-inbox/$L"/*.md.running; do
     [ -e "$R" ] || continue
     mv "$R" "${R%.running}"
@@ -114,6 +122,11 @@ echo "[runner] inbox root: $HANDOFF/runner-inbox/  logs: $LOGDIR/"
 SESSION_TIMEOUT="${LANE_SESSION_TIMEOUT:-7200}"   # 2h hard cap per session
 MAX_FAILS="${LANE_MAX_FAILS:-3}"                  # strikes before a directive is quarantined
 RETRY_BACKOFF="${LANE_RETRY_BACKOFF:-60}"         # seconds between re-queue and retry
+# Overridable so a guard test can drive the IDLE LOOP itself rather than only the
+# --dry-run/--restock-once entry points. The idle loop is where the stale-marker
+# reaper actually runs in production; a mutation battery on integrator/205 showed
+# that call site surviving every test until the loop became drivable.
+IDLE_SLEEP="${LANE_IDLE_SLEEP:-60}"
 
 # ─── SELF-RESTOCK (integrator/106 Change A, 2026-09-03) ──────────────────────
 # A lane whose inbox emptied used to sit idle until a human staged the next
@@ -177,6 +190,96 @@ lane_program () {
 inbox_queued () { ls "$1"/*.md 2>/dev/null | grep -vc '\.consumed-' ; }
 inbox_running () { ls "$1"/*.md.running 2>/dev/null | wc -l | tr -d ' ' ; }
 inbox_restocks () { ls "$1"/RESTOCK-*.md "$1"/RESTOCK-*.md.running 2>/dev/null | wc -l | tr -d ' ' ; }
+
+# ─── STALE .running REAPER (integrator/205, 2026-09-05) ──────────────────────
+# THE BUG THIS EXISTS FOR. The runner takes `Q` -> `Q.running` and, when the
+# session ends, moves `$RUN` to `.consumed-`/back to `$Q`. But a session may
+# RENAME ITS OWN MARKER: a self-restock session marks its RESTOCK file
+# `…superseded-by-047` and writes `047-….md.running` in its place. If that
+# session then hits the 2h cap (rc 124) or just ends, `mv "$RUN" …` finds no
+# `$RUN`, the orphan `047-….md.running` stays forever, `inbox_running` reads 1,
+# guard 1 blocks every restock, and no queued `.md` exists to take. The lane
+# goes idle silently and nothing in the window says why. Measured 2026-09-05:
+# integrator idle ~4:00–4:10am on a marker left from Thursday, native idle
+# 8:59–10:10am, lane1b idle 7:33–10:10am — all three the same shape.
+#
+# The startup crash-recovery pass above cannot catch this: it runs ONCE, when
+# the runner starts, so a marker orphaned by a session under a long-lived runner
+# is never looked at again.
+#
+# WHY .stale- AND NOT BACK TO .md. Crash recovery re-queues because a runner
+# that died mid-session left work genuinely unstarted. Here the session RAN — it
+# usually merged, pushed and reported, and only the bookkeeping was lost.
+# Re-queuing would re-run finished work. A lane re-stages what it still owes;
+# the marker is kept under a name the queue glob cannot see so the evidence
+# survives.
+#
+# AGE, NOT GUESSWORK: only a marker older than a session could possibly be is
+# touched, so a live session's marker is never eligible. ctime (inode change
+# time) is the right clock — `mv` updates it, so it dates the take, not the
+# directive's authoring.
+STALE_RUNNING_GRACE="${LANE_STALE_RUNNING_GRACE:-300}"
+
+# macOS `stat -f`, GNU `stat -c`. Prints nothing if neither works, and every
+# caller treats "no reading" as "not eligible" — the safe direction.
+file_ctime () { stat -f %c "$1" 2>/dev/null || stat -c %Z "$1" 2>/dev/null ; }
+
+# Rename one marker out of the way and say so. One place, so the idle reaper and
+# the post-session sweep can never drift in what they leave behind.
+retire_running_marker () {
+  local R="$1" WHY="$2" L="$3" DEST
+  DEST="${R%.running}.stale-$(date +%Y%m%d-%H%M%S)"
+  if [ "$DRYRUN" -eq 1 ]; then
+    echo "[reap:$L] WOULD RETIRE $(basename "$R") -> $(basename "$DEST") ($WHY)"
+    return 0
+  fi
+  mv "$R" "$DEST" 2>/dev/null || return 1
+  echo "[reap:$L] retired orphaned marker $(basename "$R") ($WHY)"
+  echo "[reap:$L]   kept as $(basename "$DEST") — NOT re-queued; re-stage as *.md if the lane still owes this work"
+  return 0
+}
+
+# Idle-loop reaper: any marker older than a session can possibly be.
+reap_stale_running () {
+  local L="$1" INBOX R C NOW CUT
+  INBOX="$HANDOFF/runner-inbox/$L"
+  [ -d "$INBOX" ] || return 0
+  NOW=$(date +%s)
+  CUT=$(( SESSION_TIMEOUT + STALE_RUNNING_GRACE ))
+  for R in "$INBOX"/*.md.running; do
+    [ -e "$R" ] || continue
+    C=$(file_ctime "$R")
+    [ -n "${C:-}" ] || continue
+    [ $((NOW - C)) -ge "$CUT" ] || continue
+    retire_running_marker "$R" "$((NOW - C))s old, past the ${CUT}s session cap" "$L"
+  done
+  return 0
+}
+
+# Post-session sweep: the session just ended and its own `$RUN` is gone, which
+# means it renamed markers. Anything `.running` in this lane's inbox that did
+# not exist before the session started is that session's leftover.
+#
+# Residual, stated rather than hidden: a DUPLICATE runner on this same lane that
+# took a directive during our session would have a marker in the same age window
+# and would be retired under it. That window is one session long and the
+# condition is narrow (only reached when our own marker vanished). It is also
+# strictly safer than the startup crash-recovery pass directly above, which
+# renames every `.md.running` back to `.md` unconditionally and would hand a live
+# sibling's in-flight directive to a second session.
+sweep_session_running () {
+  local L="$1" SINCE="$2" INBOX R C
+  INBOX="$HANDOFF/runner-inbox/$L"
+  [ -d "$INBOX" ] || return 0
+  for R in "$INBOX"/*.md.running; do
+    [ -e "$R" ] || continue
+    C=$(file_ctime "$R")
+    [ -n "${C:-}" ] || continue
+    [ "$C" -ge "$SINCE" ] || continue
+    retire_running_marker "$R" "written by the session that just ended" "$L"
+  done
+  return 0
+}
 
 # Evaluate the restock rules for one lane. Writes the directive unless DRYRUN.
 # Says why it declined — but only when RESTOCK_QUIET is 0, because this runs on
@@ -251,7 +354,10 @@ restock_text () {
 if [ "$DRYRUN" -eq 1 ]; then
   echo "[runner] --dry-run: self-restock evaluation only, nothing will be written"
   echo "[runner] handoff root: $HANDOFF"
-  for L in "${LANES[@]}"; do maybe_restock "$L"; done
+  # The reaper runs BEFORE restock in the idle loop, so the rehearsal must show
+  # it in the same order — a marker it would retire is one guard 1 currently
+  # blocks on, and printing them the other way round would misdescribe the run.
+  for L in "${LANES[@]}"; do reap_stale_running "$L"; maybe_restock "$L"; done
   exit 0
 fi
 
@@ -262,7 +368,7 @@ fi
 if [ "$RESTOCK_ONCE" -eq 1 ]; then
   echo "[runner] --restock-once: one real restock pass, no session will be started"
   RC=1
-  for L in "${LANES[@]}"; do maybe_restock "$L" && RC=0; done
+  for L in "${LANES[@]}"; do reap_stale_running "$L"; maybe_restock "$L" && RC=0; done
   exit "$RC"
 fi
 
@@ -376,6 +482,9 @@ while true; do
     RUN="$Q.running"
     mv "$Q" "$RUN" 2>/dev/null || continue   # atomic take; lose the race → next loop
     LOG="$LOGDIR/$L-$TS.log"
+    # Read BEFORE the session so the post-session sweep can tell this session's
+    # own leftover markers from ones that were already sitting there.
+    SESSION_START=$(date +%s)
     echo "[runner:$L] $TS taking $(basename "$Q") → log $(basename "$LOG")"
     # Fresh headless session per queue. Timeout guards a hung session; state is
     # in handoff files, so a killed session resumes via its own report + re-stage.
@@ -394,6 +503,18 @@ while true; do
     # stays visible to the glob. mv preserves mtime, so a retry stays at the head
     # of this lane's queue rather than jumping the order.
     FAILS="$INBOX/.$(basename "$Q").fails"
+    # The session renamed our marker out from under us (integrator/205). There
+    # is nothing to consume or re-queue — `mv "$RUN" …` would only print an
+    # error and leave whatever the session wrote behind, which is precisely the
+    # orphan that wedges the lane. Say so plainly and sweep this session's
+    # leftovers instead of pretending the bookkeeping worked.
+    if [ ! -e "$RUN" ]; then
+      rm -f "$FAILS"
+      echo "[runner:$L] rc=$RC — $(basename "$RUN") was renamed by the session itself; nothing to consume"
+      sweep_session_running "$L" "$SESSION_START"
+      TOOK=1
+      continue
+    fi
     if [ "$RC" -eq 0 ]; then
       rm -f "$FAILS"
       mv "$RUN" "${Q%.md}.consumed-$TS"   # no .md suffix — must never re-match the queue glob
@@ -432,12 +553,19 @@ while true; do
     # a minute first — the whole point is that the lane does not wait.
     WROTE=0
     if [ $((IDLE % 5)) -eq 0 ]; then RESTOCK_QUIET=0; else RESTOCK_QUIET=1; fi
+    # Reap BEFORE restocking. An orphaned marker is exactly what makes
+    # `inbox_running` non-zero, so guard 1 refuses to restock while one is
+    # sitting there — retiring it first is what turns "idle forever" back into
+    # "empty inbox, write your own next directive". Not throttled by
+    # RESTOCK_QUIET: it only speaks when it actually retires something, which is
+    # rare and always worth a line in the window.
+    for L in "${LANES[@]}"; do reap_stale_running "$L"; done
     for L in "${LANES[@]}"; do maybe_restock "$L" && WROTE=1; done
     if [ "$WROTE" -eq 1 ]; then IDLE=0; continue; fi
     # Legible silence: say we're idle, immediately and then every ~5 minutes,
     # so an empty window always distinguishes "no work queued" from "stuck".
     [ $((IDLE % 5)) -eq 0 ] && echo "[runner] idle - no queued work in: ${LANES[*]}  ($(date '+%H:%M:%S'))"
     IDLE=$((IDLE + 1))
-    sleep 60
+    sleep "$IDLE_SLEEP"
   fi
 done
