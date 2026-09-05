@@ -977,8 +977,42 @@ def reuse_scope(
             _age_sink_var.reset(age_token)
 
 
-def _note_age(age_s: float) -> None:
+#: Namespaces whose artifacts CANNOT carry live state — measured, then guarded.
+#:
+#: LAT-P231 / CERT-1886 follow-up, and the number that forced it is a production
+#: one. Within an hour of the ceiling shipping, 5 of 40 anonymous `/api/feed`
+#: polls came back EMPTY (`X-Feed-Cache: unavailable`, `input_age_ceiling`), and
+#: every single refusal had `X-Feed-Shared: …,market_load` while the builds that
+#: reused only `canonical_counts,concepts` were served normally. So the artifact
+#: emptying Discover was the one that provably cannot make a page live.
+#:
+#: `market_load` carries `FuturesMarket` rows. `FuturesMarket.status` takes
+#: `open`/`closed`/`resolved`/`active`; every `status="live"` write in the tree
+#: targets `Event.status`; a futures card's `data["status"]` is `market.status`,
+#: and `payload_contains_live_event` reads exactly that key. Its prices are also
+#: not the thing the 60s ceiling bounds: the live-market poll is 2 minutes, and a
+#: page with no live card is already cacheable for 60s fresh + 300s stale.
+#:
+#: 🔴 The exemption is per-NAMESPACE and it is a GUARD, not an argument.
+#: CERT-1856's lesson stands verbatim — "an exemption argued about ONE input is
+#: not an exemption for the mechanism that input travels through" — which is why
+#: the clamp itself is unchanged and still counts every namespace NOT named here.
+#: `concepts` is not named here and must never be: `_score_event_concepts` copies
+#: a concept's `status`, `live` included. The day a futures card can render
+#: `status == "live"`,
+#: `test_shared_artifact_total_age_lat_p230.py::TestMarketLoadCannotItselfAgeALivePrice`
+#: goes red and this set has to shrink before that card can ship.
+LIVENESS_INERT_NAMESPACES = frozenset({"market_load"})
+
+
+def _note_age(namespace: str, age_s: float) -> None:
     """Record ONE shared artifact this request consumed, as an ORIGIN.
+
+    A `LIVENESS_INERT_NAMESPACES` artifact is NOT recorded: its age is real but
+    it is not an age the LIVE ceiling is about, and counting it refused live
+    pages that were carrying perfectly current scores (see that set's note).
+    The reuse sink still names it, so `X-Feed-Shared` is unchanged and nobody
+    loses the ability to see that it was consumed.
 
     A freshly-built artifact records its origin rather than nothing,
     deliberately: it makes "this request touched a shared artifact and it was
@@ -998,6 +1032,8 @@ def _note_age(age_s: float) -> None:
     Monotonic, not wall-clock, because this is an elapsed-time question and must
     not be moved by an NTP step mid-request.
     """
+    if namespace in LIVENESS_INERT_NAMESPACES:
+        return
     sink = _age_sink_var.get()
     if sink is not None:
         sink.append(time.monotonic() - max(0.0, float(age_s)))
@@ -1277,7 +1313,7 @@ async def get_or_build(
         # module docstring's "deliberately NOT Redis" sentence is about, and it
         # is byte-for-byte the path LAT-P084 shipped.
         _note_reuse(namespace, reuse_sink, SHARED_TIER_LOCAL)
-        _note_age(age_s)
+        _note_age(namespace, age_s)
         return copy.deepcopy(value)
 
     lock = _lock_for(namespace, key)
@@ -1303,7 +1339,7 @@ async def get_or_build(
         ok, value, age_s = _read_fresh(namespace, key, _ttl, _clock())
         if ok:
             _note_reuse(namespace, reuse_sink, SHARED_TIER_LOCAL)
-            _note_age(age_s)
+            _note_age(namespace, age_s)
             return copy.deepcopy(value)
 
         # LAT-P103: L1 missed, so the alternative is a 683-1249ms rebuild.
@@ -1329,7 +1365,7 @@ async def get_or_build(
             entries[key] = (_clock() - age_s, copy.deepcopy(value))
             _evict_if_needed(entries, namespace)
             _note_reuse(namespace, reuse_sink, SHARED_TIER_CROSS_WORKER)
-            _note_age(age_s)
+            _note_age(namespace, age_s)
             return value
 
         _stats["builds"] += 1
@@ -1353,7 +1389,7 @@ async def get_or_build(
         # Age zero — this request BUILT it. Recorded rather than skipped so an
         # empty age sink means "no shared artifact was consumed at all" and not
         # "the instrument was silent" (LAT-P230).
-        _note_age(0.0)
+        _note_age(namespace, 0.0)
         # Snapshot for the publisher too: the caller mutates its cards in place
         # (`_rank_score`, bundling, pin flags), and the publish runs after this
         # function has handed `built` back.
