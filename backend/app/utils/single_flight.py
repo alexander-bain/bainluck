@@ -24,7 +24,13 @@ arrival** — no start, no failure, `health: healthy`, and a front page costing
 
 So: before a lapping task does its work it takes a lease. If a previous copy
 still holds it, this delivery logs one line and returns a `skipped` summary in
-microseconds. The queue cannot form a line, so the 40 s rail keeps its slot.
+microseconds, and the queue cannot form a line.
+
+**That stops the queue growing. It did NOT get the rail its slot back** — the
+capped slot demand still exceeds the worker pool once every leased task is
+counted, so no free slot appears inside the rail's 40 s `expires`. Measured, not
+predicted: see "THERE IS NO MARGIN" and the warm-rail note below. The remaining
+lever is capacity, and it is #3268, not this module.
 
 Four properties this has to have, and how each is obtained:
 
@@ -44,21 +50,23 @@ Four properties this has to have, and how each is obtained:
   us to today's behaviour; letting the guard become a second outage would be
   worse than the one it repairs.
 
-WHY THIS IS ENOUGH — and the arithmetic that says so
-----------------------------------------------------
+WHY THIS BOUNDS THE QUEUE BUT NOT THE WORK — and the arithmetic that says so
+-----------------------------------------------------------------------------
 
-A lease bounds the WORK, not the QUEUE. A pass longer than its own interval
-still holds ONE FULL worker slot continuously, so the queue only drains if the
-*capped* demand fits the pool. The number to compute is
+A lease bounds the QUEUE, not the WORK. A pass longer than its own interval
+still holds ONE FULL worker slot continuously; the lease only stops the surplus
+deliveries from *piling up* behind it. The number to compute is
 ``sum(min(1, mean / interval))`` — **mean**, not p95: a slot is occupied for the
 mean duration, and ranking by p95 misreads which task is actually the hog.
-(Credit: latency/167, #3251. Measured on production 2026-09-05 19:0xZ, 50-run
-duration rings via `/api/admin/task-metrics`. Gotcha: that endpoint is keyed by
-the `_tracked_run` LABEL, not the task name — `?task=poll_all_odds` says
-`no_data`, `?task=poll_odds` returns the ring.)
+(Credit: latency/167, #3251. Measured on production 2026-09-05, 50-run duration
+rings via `/api/admin/task-metrics`. Gotcha: that endpoint is keyed by the
+`_tracked_run` LABEL, not the task name — `?task=poll_all_odds` says `no_data`,
+`?task=poll_odds` returns the ring; `poll_live_prediction_markets` is
+`prediction_market_live`.)
 
     label                      mean    interval   demand   capped
     poll_odds                  71.0s     30s       2.37     1.00
+    prediction_market_live    191.3s    120s       1.59     1.00   ← leased
     espn_sync                  77.0s     60s       1.28     1.00
     datagolf_inplay            76.9s     90s       0.85     0.85
     prewarm_live_feed_shapes   19.7s     40s       0.49     0.49
@@ -66,14 +74,36 @@ the `_tracked_run` LABEL, not the task name — `?task=poll_all_odds` says
     statpal_livescores          2.2s     30s       0.07     0.07
     statpal_plays / mlb_sync     —         —        0.01     0.01
                                                   -----    -----
-                                                   5.21     3.56   vs concurrency=4
+                                                   6.80     4.56   vs concurrency=4
 
-Uncapped 5.21 against 4 workers is why the queue grew without bound. Capped 3.56
-is why it now drains — and the margin is **0.44 slots (11%)**, which is thin.
-Two entries sit AT the cap, meaning `poll_all_odds` and `sync_espn_live_events`
-run back-to-back with no idle: any lengthening of the small tasks eats the
-headroom, and the queue tips back to growing. Re-run the sum before adding
-anything to `realtime`.
+⚠️ THERE IS NO MARGIN. An earlier revision of this table omitted
+`prediction_market_live` — the fourth leased task, and the second-largest single
+consumer — and concluded "capped 3.56, a margin of 0.44 slots (11%), which is
+thin". That was wrong in direction, not just magnitude: the correct capped sum is
+**4.56 against 4 workers, a DEFICIT of 0.56 slots**. (Caught as CERT-1944's named
+follow-up; the 4.56 independently reproduces latency/169's separately-measured
+4.56, by a different route.) Never quote the 3.56.
+
+Which makes the honest claim narrower than "this fixes the queue":
+
+* **The queue drains anyway, and that is not a contradiction.** A declined
+  delivery costs microseconds, so the backlog is *shed* cheaply even while all
+  four workers stay saturated with real passes. Depth falling is the lease
+  working; it is NOT evidence of spare capacity.
+* **Real work still laps.** At 4.56 capped demand the four leased tasks run
+  essentially back-to-back with no idle, which is why `poll_all_odds` accrues a
+  decline on very nearly every tick.
+* **So an unleased task can still starve.** `prewarm_live_feed_shapes` is not
+  leased: its message waits for a genuinely free slot, and at a 0.56-slot deficit
+  there is never one inside its 40 s `expires`. See the warm-rail note below —
+  this is measured, not inferred.
+
+The remaining lever is capacity (`--concurrency` on `worker-realtime`, against
+the SQLAlchemy pool `pool_size=3, max_overflow=2`), not another lease: the two
+unleased producers left, `warm_search_head` and `warm_typeahead`, are ~0.30 slots
+each and cannot close a 0.56 gap. That ask is with Alex via latency/169–170.
+Re-run this sum before adding anything to `realtime`, and include every leased
+task when you do.
 
 Observed after deploy (`a705abcc`, production 19:03Z): the pre-ship trend was
 **+1.7/min sustained for hours** (454 → 796); after the ship the derivative
