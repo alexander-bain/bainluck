@@ -69,6 +69,51 @@ enum PeriodChipGeometry {
     static var minSpacingFraction: Double { chipWidthPoints / plotWidthPoints }
 }
 
+// MARK: - Chart Moment
+
+/// One Moments-Engine annotation placed on the drawn line (#1168 consumer 3, #3196).
+///
+/// `probability` is NOT the moment's own number — the payload doesn't carry one. It
+/// is the y of the nearest REAL primary-line snapshot, so the marker sits on the
+/// curve the reader can see. Interpolating a y between two snapshots would invent a
+/// probability that was never captured, which is the same no-smoothing rule the line
+/// itself obeys (C43 P1, `interpolationMethod(.linear)` below).
+struct ChartMoment: Identifiable, Equatable {
+    let id = UUID()
+    let date: Date
+    let label: String
+    let probability: Double
+    /// Signed swing, 0.0–1.0. `nil` when the server didn't send one — such a moment
+    /// is still drawable, it just can never be the biggest.
+    let probDelta: Double?
+    let period: String?
+
+    static func == (a: ChartMoment, b: ChartMoment) -> Bool {
+        a.date == b.date && a.label == b.label && a.probability == b.probability
+            && a.probDelta == b.probDelta && a.period == b.period
+    }
+}
+
+/// The clutter bound on moment markers, derived the same way `PeriodChipGeometry` is
+/// rather than picked.
+///
+/// A blowout can in principle produce a moment per scoring play; nine is the most
+/// measured on an MLB game (2026-09-05 sample: 2, 9, 4). This is a ceiling on
+/// legibility, not a guard against a known defect — past it the markers touch and the
+/// strip stops being readable, so the SMALLEST swings are dropped and the survivors
+/// keep their chronological order. Dropping small swings is the right direction: the
+/// annotation exists to explain the line's big movements.
+enum MomentMarkerGeometry {
+    /// Outer diameter of the ringed dot, in points.
+    static let markerDiameterPoints: Double = 9
+    /// The most markers that fit without two of them touching: each needs its own
+    /// diameter plus one diameter of clear space. Derived from the SAME measured plot
+    /// width the period chips use, so the two strips cannot drift apart.
+    static var maxMarkers: Int {
+        Int(PeriodChipGeometry.plotWidthPoints / (markerDiameterPoints * 2))
+    }
+}
+
 /// UX-P090 — the width of the rotated home/away team gutter to the left of the
 /// plot area. Named because THREE things must agree on it: the inline chart row,
 /// the fullscreen chart row, and the legend's leading indent. When it was a bare
@@ -271,6 +316,7 @@ struct OddsChartView: View {
                 let enrichedPoints = enrichWithGameState(allPoints, history: history)
                 let dataPoints = filterPoints(enrichedPoints)
                 let periodMarkers = extractPeriodMarkers(history, filteredPoints: dataPoints)
+                let moments = Self.chartMoments(from: history.moments, points: dataPoints)
                 if dataPoints.isEmpty {
                     Text("No probability data available")
                         .font(.caption)
@@ -320,7 +366,8 @@ struct OddsChartView: View {
                         .frame(width: chartTeamGutterWidth)
                         .padding(.vertical, 8)
 
-                        chartView(dataPoints: dataPoints, sources: history.winProbSources ?? [:], periodMarkers: periodMarkers)
+                        chartView(dataPoints: dataPoints, sources: history.winProbSources ?? [:],
+                                  periodMarkers: periodMarkers, moments: moments)
                             .onChange(of: selectedDate) { _, newDate in
                                 updateSelectedPoint(date: newDate, dataPoints: dataPoints, history: history)
                             }
@@ -335,6 +382,14 @@ struct OddsChartView: View {
                     // it labels; the 2pt lifts it off the x-axis tick labels, which
                     // sit flush against the bottom of the chart's own frame.
                     legendView(dataPoints: dataPoints, sources: history.winProbSources ?? [:])
+                        .padding(.leading, chartTeamGutterWidth)
+                        .padding(.top, 2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    // Indented onto the SAME left margin as the plot area and the
+                    // legend, for the reason UX-P090 gives above: three rows that
+                    // belong to one chart do not get three different margins.
+                    momentCaption(moments)
                         .padding(.leading, chartTeamGutterWidth)
                         .padding(.top, 2)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -371,6 +426,7 @@ struct OddsChartView: View {
                     let enrichedPoints = enrichWithGameState(allPoints, history: history)
                     let dataPoints = filterPoints(enrichedPoints)
                     let periodMarkers = extractPeriodMarkers(history, filteredPoints: dataPoints)
+                    let moments = Self.chartMoments(from: history.moments, points: dataPoints)
                     if !dataPoints.isEmpty {
                         VStack(spacing: 8) {
                             if showPicker {
@@ -404,9 +460,11 @@ struct OddsChartView: View {
                                 .frame(width: chartTeamGutterWidth)
                                 .padding(.vertical, 12)
 
-                                chartView(dataPoints: dataPoints, sources: history.winProbSources ?? [:], periodMarkers: periodMarkers)
+                                chartView(dataPoints: dataPoints, sources: history.winProbSources ?? [:],
+                                          periodMarkers: periodMarkers, moments: moments)
                             }
                             legendView(dataPoints: dataPoints, sources: history.winProbSources ?? [:])
+                            momentCaption(moments)
                         }
                         .padding()
                     }
@@ -761,7 +819,8 @@ struct OddsChartView: View {
     private func chartContent(
         dataPoints: [ChartDataPoint],
         sources: [String: WinProbSourceInfo],
-        visibleMarkers: [PeriodMarker]
+        visibleMarkers: [PeriodMarker],
+        moments: [ChartMoment]
     ) -> some ChartContent {
         // 50% reference line (single 0–100 axis: even is 0.5)
         RuleMark(y: .value("Even", 0.5))
@@ -805,9 +864,40 @@ struct OddsChartView: View {
                 .lineStyle(StrokeStyle(lineWidth: 0.5, dash: [3, 3]))
                 .foregroundStyle(.secondary.opacity(0.25))
         }
+
+        // Moments (#3196) — drawn LAST so they sit on top of the line they annotate.
+        //
+        // In the PRIMARY LINE'S OWN COLOUR, ringed. A marker is a point on this curve
+        // that matters, not a second data series, and colouring it by actor team
+        // would put a third and fourth colour on a chart whose whole rule is that
+        // the blend is one number ("the blend is the product"). The ring is what
+        // separates it from the line without a new hue.
+        ForEach(moments) { moment in
+            PointMark(
+                x: .value("Moment", moment.date),
+                y: .value("Win probability", moment.probability)
+            )
+            .symbolSize(momentSymbolArea)
+            .foregroundStyle(colorForSource(Self.primarySource(in: dataPoints), sources: sources))
+            .annotation(position: .overlay, spacing: 0) {
+                Circle()
+                    .stroke(Color(.systemBackground), lineWidth: 1.5)
+                    .frame(width: MomentMarkerGeometry.markerDiameterPoints,
+                           height: MomentMarkerGeometry.markerDiameterPoints)
+            }
+            .accessibilityLabel(Text(moment.label))
+        }
     }
 
-    private func chartView(dataPoints: [ChartDataPoint], sources: [String: WinProbSourceInfo], periodMarkers: [PeriodMarker]) -> some View {
+    /// `symbolSize` is an AREA in square points, so the diameter has to be squared —
+    /// passing the diameter draws a dot roughly a third of the intended width.
+    private var momentSymbolArea: CGFloat {
+        let d = CGFloat(MomentMarkerGeometry.markerDiameterPoints)
+        return d * d
+    }
+
+    private func chartView(dataPoints: [ChartDataPoint], sources: [String: WinProbSourceInfo],
+                           periodMarkers: [PeriodMarker], moments: [ChartMoment]) -> some View {
         // Filter period markers to visible data range
         let visibleMarkers: [PeriodMarker]
         if let minDate = dataPoints.map(\.date).min(),
@@ -825,13 +915,14 @@ struct OddsChartView: View {
         let yMax = 1.0
 
         return Chart {
-            chartContent(dataPoints: dataPoints, sources: sources, visibleMarkers: visibleMarkers)
+            chartContent(dataPoints: dataPoints, sources: sources,
+                         visibleMarkers: visibleMarkers, moments: moments)
         }
         .chartYScale(domain: yMin...yMax)
         .accessibilityLabel(Text("Win probability over time"))
         .accessibilityValue(Text(Self.accessibilityValue(
             dataPoints: dataPoints, selectedDate: selectedDate,
-            homeShort: homeShort, awayShort: awayShort)))
+            homeShort: homeShort, awayShort: awayShort, moments: moments)))
         .chartXScale(domain: xAxisDomain(for: dataPoints))
         // Period marker labels positioned inside chart via overlay
         .chartOverlay { proxy in
@@ -873,6 +964,35 @@ struct OddsChartView: View {
             }
         }
         .chartXSelection(value: $selectedDate)
+    }
+
+    // MARK: - Moment Caption
+
+    /// The story of the chart in one line, with nothing tapped (#3196).
+    ///
+    /// Renders NOTHING when there are no drawable moments — no empty state, no "no
+    /// key moments yet". Alex's ruling on #871 is that an absent explanation beats an
+    /// unhelpful one, and the chart is already complete without this row.
+    @ViewBuilder
+    private func momentCaption(_ moments: [ChartMoment]) -> some View {
+        if let headline = Self.headlineMoment(in: moments),
+           let kicker = Self.momentCaptionKicker(count: moments.count) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Circle()
+                    .fill(.secondary)
+                    .frame(width: 5, height: 5)
+                    .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 1 }
+                Text(kicker)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Text(Self.momentCaptionText(for: headline))
+                    .font(.caption2)
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+            }
+            .accessibilityElement(children: .combine)
+        }
     }
 
     // MARK: - Legend
@@ -1018,6 +1138,105 @@ struct OddsChartView: View {
             .min { abs($0.date.timeIntervalSince(date)) < abs($1.date.timeIntervalSince(date)) }
     }
 
+    // MARK: - Moments (pure, unit-tested in OddsChartMomentsTests)
+
+    /// How close a scrub has to land to a moment before the read-out names it. The
+    /// same window `enrichWithGameState` already uses to attach a scoring play to a
+    /// snapshot — named here so the two cannot drift into disagreeing about what
+    /// "at this point in the game" means.
+    static let momentMatchWindowSeconds: TimeInterval = 60
+
+    /// Pure transform: decoded payload moments → drawable markers on the primary line.
+    ///
+    /// Four rules, each of which is a test in `OddsChartMomentsTests`:
+    ///
+    /// 1. **Unusable rows are dropped here and only here.** No timestamp we can parse,
+    ///    or no label to say, and the row cannot be drawn or read aloud. This is the
+    ///    single place that judgement is made; `GameMomentPoint` is all-optional
+    ///    precisely so a bad row lands here instead of failing the whole decode.
+    /// 2. **A moment outside the drawn range is dropped.** `filterPoints` narrows the
+    ///    line under "Since Start"; without this rule a pregame moment would be
+    ///    clamped onto the left edge and read as something that happened at first
+    ///    pitch. Same test `visibleMarkers` applies to period gridlines.
+    /// 3. **The y is a real snapshot, never an interpolation** (see `ChartMoment`).
+    /// 4. **There is no confidence gate here.** `routes/events.py` already selects
+    ///    `confidence >= 0.5` and honours the `moments:surface_enabled` kill switch.
+    ///    A second threshold on the client would silently narrow a decision the
+    ///    server owns and would need an App Store release to change; a 0.51 moment
+    ///    draws, and a test pins that so nobody adds one.
+    static func chartMoments(from moments: [GameMomentPoint]?,
+                             points: [ChartDataPoint]) -> [ChartMoment] {
+        guard let moments, !moments.isEmpty, !points.isEmpty else { return [] }
+        // THE RANGE IS THE PRIMARY LINE'S, not every source's. A marker anchors to a
+        // primary snapshot (`nearestSnapshot`), so bounding it by the union of all
+        // sources would admit a moment that ESPN saw after our blend stopped and then
+        // anchor it to the blend's last point — a clamp wearing an in-range check,
+        // which is exactly what rule 2 exists to prevent. (The period gridlines below
+        // legitimately use the full range: a RuleMark has no y to clamp.)
+        let primary = primarySource(in: points)
+        let primaryDates = points.filter { $0.source == primary }.map(\.date)
+        guard let minDate = primaryDates.min(), let maxDate = primaryDates.max() else { return [] }
+
+        let drawable: [ChartMoment] = moments.compactMap { raw in
+            guard let ts = raw.ts, let date = ts.asDate else { return nil }
+            guard let label = raw.label?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !label.isEmpty else { return nil }
+            guard date >= minDate, date <= maxDate else { return nil }
+            guard let anchor = nearestSnapshot(to: date, in: points) else { return nil }
+            return ChartMoment(
+                date: date,
+                label: label,
+                probability: anchor.probability,
+                probDelta: raw.probDelta,
+                period: raw.period?.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+        }
+
+        let sorted = drawable.sorted { $0.date < $1.date }
+        guard sorted.count > MomentMarkerGeometry.maxMarkers else { return sorted }
+        // Over the legibility ceiling: keep the biggest swings, then restore
+        // chronological order so the strip still reads left-to-right as the game.
+        let kept = sorted
+            .sorted { abs($0.probDelta ?? 0) > abs($1.probDelta ?? 0) }
+            .prefix(MomentMarkerGeometry.maxMarkers)
+        return kept.sorted { $0.date < $1.date }
+    }
+
+    /// The one moment worth printing under the chart: the largest absolute swing.
+    /// `nil` when nothing is drawable, which is the caption's cue to render no row at
+    /// all — on #871 Alex ruled that nothing beats unhelpful, and a caption that says
+    /// "no key moments" is the unhelpful thing.
+    static func headlineMoment(in moments: [ChartMoment]) -> ChartMoment? {
+        moments.max { abs($0.probDelta ?? 0) < abs($1.probDelta ?? 0) }
+    }
+
+    /// Kicker for the caption. One moment is not a comparison, so calling it the
+    /// "biggest" would be a small lie about how much the chart knows.
+    static func momentCaptionKicker(count: Int) -> String? {
+        switch count {
+        case 0: return nil
+        case 1: return "Key moment"
+        default: return "Biggest swing"
+        }
+    }
+
+    /// Caption body: the period, when the server sent one, then the label it wrote.
+    /// The label already carries the swing ("… — win prob +93.5 pts"), so nothing is
+    /// recomputed or reworded on the client.
+    static func momentCaptionText(for moment: ChartMoment) -> String {
+        guard let period = moment.period, !period.isEmpty else { return moment.label }
+        return "\(period) · \(moment.label)"
+    }
+
+    /// The moment a scrub is pointing at, or nil. Nearest wins, but only inside
+    /// `momentMatchWindowSeconds` — beyond that the reader is looking at ordinary
+    /// line, and naming a moment half a game away would be worse than silence.
+    static func nearestMoment(to date: Date, in moments: [ChartMoment]) -> ChartMoment? {
+        moments
+            .min { abs($0.date.timeIntervalSince(date)) < abs($1.date.timeIntervalSince(date)) }
+            .flatMap { abs($0.date.timeIntervalSince(date)) <= momentMatchWindowSeconds ? $0 : nil }
+    }
+
     /// Latest real snapshot on the primary line (used for the resting accessibility
     /// read-out when nothing is scrubbed).
     static func latestPrimaryPoint(in points: [ChartDataPoint]) -> ChartDataPoint? {
@@ -1027,28 +1246,37 @@ struct OddsChartView: View {
 
     /// Human/VoiceOver read-out for a snapshot, in the SAME probability basis as
     /// the plotted line and axis labels (home %, away %, plus real game state).
-    static func selectionReadout(for point: ChartDataPoint, homeShort: String, awayShort: String) -> String {
+    static func selectionReadout(for point: ChartDataPoint, homeShort: String, awayShort: String,
+                                 moment: ChartMoment? = nil) -> String {
         let homePct = Int((point.probability * 100).rounded())
         let awayPct = 100 - homePct
         var parts = ["\(homeShort) \(homePct)%", "\(awayShort) \(awayPct)%"]
         if let hs = point.homeScore, let a = point.awayScore { parts.append("score \(hs)–\(a)") }
         if let period = point.period, !period.isEmpty { parts.append(period) }
         if let clock = point.clock, !clock.isEmpty { parts.append(clock) }
+        // The cause goes LAST: a VoiceOver reader wants the number first and the
+        // story after it, the same order the sighted reader gets from the line and
+        // then the caption.
+        if let moment { parts.append(moment.label) }
         return parts.joined(separator: ", ")
     }
 
     /// Accessibility value for the chart: the scrubbed snapshot when one is
     /// selected, else the latest primary snapshot. Always the 0–100 basis.
     static func accessibilityValue(dataPoints: [ChartDataPoint], selectedDate: Date?,
-                                   homeShort: String, awayShort: String) -> String {
+                                   homeShort: String, awayShort: String,
+                                   moments: [ChartMoment] = []) -> String {
         let point: ChartDataPoint?
+        var moment: ChartMoment?
         if let selectedDate {
             point = nearestSnapshot(to: selectedDate, in: dataPoints)
+            moment = nearestMoment(to: selectedDate, in: moments)
         } else {
             point = latestPrimaryPoint(in: dataPoints)
         }
         guard let point else { return "No probability data" }
-        return selectionReadout(for: point, homeShort: homeShort, awayShort: awayShort)
+        return selectionReadout(for: point, homeShort: homeShort, awayShort: awayShort,
+                                moment: moment)
     }
 
     // MARK: - Game State Enrichment
