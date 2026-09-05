@@ -831,7 +831,48 @@ class TestTheRailsServeTheSharedCard:
         assert body["record_n"] == 0
         # But it IS content: a page whose whole fortnight is unreported matches
         # is not an empty page.
+        #
+        # ⚠️ #3245: this assertion is TRUE HERE FOR THE WRONG REASON and cannot
+        # guard the claim above it. This test seeds a market, so `sections` is
+        # non-empty and `availability` is `fresh` whether or not the unreported
+        # rail counts — reverting the rail from the availability expression
+        # leaves this green. The real guard is
+        # `test_a_league_of_only_unreported_matches_is_not_empty` below, which
+        # seeds NO markets so the rail is the only thing that can carry it.
         assert body["availability"] == "fresh"
+
+    async def test_a_league_of_only_unreported_matches_is_not_empty(
+        self, client, mock_db
+    ):
+        """#3245 — the non-vacuous availability guard for #3211's third rail.
+
+        NO markets, NO upcoming, NO results: the unreported rail is the only
+        content on the page, so `availability` can only be `fresh` if that rail
+        actually counts. Mutation-checked — dropping `unreported_games` from the
+        emptiness decision turns this red, while the assertion in the test above
+        stays green.
+        """
+        _league_db(
+            mock_db,
+            [],
+            games=[],
+            results=[],
+            unreported=[_mock_event(event_id=14, status="scheduled", hours_from_now=-72)],
+            teams=[],
+        )
+        body = (await client.get("/api/leagues/baseball_mlb")).json()
+
+        # The population this assertion needs, asserted before it: nothing else
+        # on the page may be carrying `fresh`.
+        assert body["sections"] == {} or not any(body["sections"].values())
+        assert body["upcoming_games"] == []
+        assert body["recent_results"] == []
+        assert len(body["unreported_games"]) == 1
+
+        assert body["availability"] == "fresh", (
+            "a league whose only content is unreported matches is not empty — "
+            "calling it empty also stops the mirror-write guard caching the page"
+        )
 
     async def test_no_team_media_still_serves_the_games(self, client, mock_db):
         """Chrome degrades, content does not. A league whose teams we have no

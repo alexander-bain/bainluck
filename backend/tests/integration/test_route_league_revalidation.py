@@ -24,6 +24,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app.routes.league_futures import (
+    GAMES_RAIL_KEYS,
     LEAGUE_CACHE_PREFIX,
     LEAGUE_PRIMARY_TTL,
     LEAGUE_STALE_TTL,
@@ -74,12 +75,17 @@ class FakeRedis:
         return 0
 
 
-def _payload(sections=None, games=(), results=(), availability="fresh"):
+def _payload(
+    sections=None, games=(), results=(), unreported=(), availability="fresh"
+):
     return {
         "sport_key": "basketball_nba",
         "sections": sections if sections is not None else {"awards": [{"id": 1}]},
         "upcoming_games": list(games),
         "recent_results": list(results),
+        # #3211's third rail. Absent from this helper until #3245, which is why
+        # the mirror guard's blindness to it had no failing test.
+        "unreported_games": list(unreported),
         "availability": availability,
         "tier": "standard",
     }
@@ -255,9 +261,45 @@ class TestWhatGetsMirrored:
         """Alex's amendment: a league mid-season with a schedule and no futures is
         not empty. `availability` already encodes this; the mirror guard must agree
         or it would refuse to cache a real page."""
-        assert is_empty_league(_payload(sections={}, games=[], results=[]))
+        assert is_empty_league(
+            _payload(sections={}, games=[], results=[], unreported=[])
+        )
         assert not is_empty_league(_payload(sections={}, games=[{"id": 1}]))
         assert not is_empty_league(_payload(sections={}, results=[{"id": 1}]))
+        # #3245 — the third rail. A league whose ONLY content is unreported
+        # matches (the tennis pages during the US Open) is not empty, and the
+        # mirror-write guard judging it empty is what pinned it to the 24h stale
+        # copy forever.
+        assert not is_empty_league(_payload(sections={}, unreported=[{"id": 1}]))
+
+    async def test_every_games_rail_makes_a_league_non_empty(self):
+        """The anti-repeat arm: derived from `GAMES_RAIL_KEYS`, not restated.
+
+        #3245 happened because the rail list was written out in two places and
+        only one was updated when #3211 added a third. Looping the tuple means a
+        FOURTH rail is covered the moment it is added to it — the failure mode
+        this test exists for cannot recur silently.
+        """
+        assert len(GAMES_RAIL_KEYS) >= 3, (
+            "population guard: this test is vacuous if the tuple is empty or "
+            "has lost the rails it is meant to cover"
+        )
+        empty = _payload(sections={}, games=[], results=[], unreported=[])
+        assert is_empty_league(empty), "the baseline must actually be empty"
+
+        for rail in GAMES_RAIL_KEYS:
+            populated = dict(empty, **{rail: [{"id": 1}]})
+            assert not is_empty_league(populated), (
+                f"a league carrying only `{rail}` has content, but the "
+                f"mirror-write guard called it empty"
+            )
+
+        # The `availability` half of #3245 is not restated here: `build_league`
+        # now stamps it by calling `is_empty_league` on its own payload, so the
+        # arms above ARE its coverage, and the route-level assertion that an
+        # unreported-only league serves `availability: fresh` already lives in
+        # `test_route_league_futures.py::…::test_availability == "fresh"` (#3211).
+        # A third test restating the same expression could not fail on its own.
 
 
 class TestNoRedisIsNotAnError:
