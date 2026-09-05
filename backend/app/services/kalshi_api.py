@@ -1155,10 +1155,24 @@ class KalshiAPIService(BaseAPIClient):
         by_tag: dict[str, list[str]] = {}
         requests = 0
         error: Optional[str] = None
+        # CERT-963's repair. Completeness is PER TAG because the failure is per
+        # tag: this loop swallows a tag's exception and carries on, so a catalog
+        # where Tennis raised and Football answered is indistinguishable, from
+        # the outside, from a catalog where Kalshi genuinely lists no tennis
+        # series. Cached under the second reading, that evicts the US Open
+        # doubles draw for the full three-hour TTL — the exact eviction the
+        # Football widening promised not to cause.
+        #
+        # A tag is complete only if its walk ended because the venue said there
+        # was no more. Three ways it does not: the request raised, the deadline
+        # cut the walk, or the 5-page cap was hit with a cursor still live.
+        complete: dict[str, bool] = {}
+        errors: dict[str, str] = {}
 
         for tag in tags:
             cursor: Optional[str] = None
             page = 0
+            tag_complete = False
             try:
                 while page < 5:
                     if deadline is not None and _time.monotonic() >= deadline:
@@ -1190,18 +1204,34 @@ class KalshiAPIService(BaseAPIClient):
                             per_tag[tag] = per_tag.get(tag, 0) + 1
                     page += 1
                     if not cursor:
+                        # The venue said that is all of them. The ONLY way a
+                        # tag's catalog is known to be whole.
+                        tag_complete = True
                         break
             except Exception as e:  # noqa: BLE001 — see docstring
+                errors[tag] = f"{type(e).__name__}: {e}"
                 error = f"{tag}: {type(e).__name__}: {e}"
                 logger.warning("Kalshi series discovery failed for tag %s: %s", tag, e)
-                continue
+            complete[tag] = tag_complete
 
+        incomplete = sorted(t for t, ok in complete.items() if not ok)
+        if incomplete:
+            logger.warning(
+                "Kalshi series discovery: catalog INCOMPLETE for %s — this "
+                "measurement must not be cached, or the tags that did answer "
+                "evict the ones that did not for the whole TTL.",
+                ", ".join(incomplete),
+            )
         receipt = {
             "tags": list(tags),
             "per_tag": per_tag,
             "by_tag": by_tag,
             "requests": requests,
+            "complete": complete,
+            "incomplete_tags": incomplete,
         }
+        if errors:
+            receipt["errors"] = errors
         if error:
             receipt["error"] = error
         return tickers, receipt
@@ -1273,7 +1303,23 @@ class KalshiAPIService(BaseAPIClient):
         receipt["catalog"] = disc_receipt
         receipt["census"] = census_receipt
 
-        if save is not None and census_receipt.get("exhausted") and selected:
+        # CERT-963's repair. The save gate used to ask only whether the CENSUS
+        # was whole. A partial census cannot evict anything — it undercounts
+        # open events, and selection still sees every series. A partial CATALOG
+        # can: a tag whose `/series` call raised contributes no tickers at all,
+        # so the saved entry is "these are the series that exist" for three
+        # hours, and every beat in that window skips the tag outright. Tennis
+        # failing beside a healthy Football is precisely that, and it takes the
+        # US Open doubles draw and Honey Deuce off the site until the TTL runs.
+        #
+        # Not caching costs the next beat ~20s to re-measure. Caching a partial
+        # catalog costs three hours of a missing draw. The trade is not close.
+        _incomplete = list(disc_receipt.get("incomplete_tags") or [])
+        if not census_receipt.get("exhausted"):
+            receipt["not_cached"] = "census_partial"
+        elif _incomplete:
+            receipt["not_cached"] = "catalog_partial:" + ",".join(_incomplete)
+        elif save is not None and selected:
             try:
                 save({"selected": [list(s) for s in selected], "receipt": receipt})
             except Exception:
@@ -1281,8 +1327,6 @@ class KalshiAPIService(BaseAPIClient):
                 # measurement costs the next beat ~20s to re-measure; raising
                 # here would cost it the whole fetch.
                 pass
-        elif not census_receipt.get("exhausted"):
-            receipt["not_cached"] = "census_partial"
 
         return selected, receipt
 
