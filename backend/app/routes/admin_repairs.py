@@ -18,6 +18,7 @@ transactional session and RETURNS its own before/after census in the response bo
              | winner-field-repair | event-team-binding
              | kalshi-settlement-status | statpal-blank-ids
              | kalshi-fabricated-loss-census | kalshi-fabricated-loss
+             | kalshi-fabricated-loss-restore
              | polymarket-evidence-census | polymarket-evidence
              | pm-never-graded-census | pm-never-graded
              | event-create-from-truth | team-identity-mapping-repair
@@ -221,6 +222,23 @@ _REPAIRS = {
     "kalshi-fabricated-loss": (
         "app.tasks.repair_kalshi_fabricated_loss",
         "repair",
+    ),
+    # CAL-P1008-R (CERT-965): the UNDO for one applied batch of the rail above,
+    # as a command rather than a prose SQL sketch. The apply banks the plan's
+    # pre-image at a per-plan durable address BEFORE its first UPDATE and
+    # refuses to write if it cannot; this reads that receipt back and reverses
+    # exactly the leg ids it names. Dry-run by default; ?plan_hash= is REQUIRED
+    # and nothing is re-derived — no venue call, no classification, no work SQL.
+    # Both arms compare-and-set on the POST-APPLY row state, so a leg something
+    # else has changed since (or that the apply itself skipped on drift) fails
+    # its predicate, is reported by id and is skipped — never clobbered. Ends by
+    # EXECUTING the calibration invalidation and reporting success: false if it
+    # cannot prove it. Writes no prices.
+    # Accepts ?apply=&plan_hash=.
+    # ATTENDED ONLY: never wire this to a beat.
+    "kalshi-fabricated-loss-restore": (
+        "app.tasks.repair_kalshi_fabricated_loss",
+        "restore",
     ),
     # CAL-P060 (#1870): the Polymarket trading-evidence hole. Read-only census
     # of FOUR states — not the three #1870 asked for, because the probe found a
