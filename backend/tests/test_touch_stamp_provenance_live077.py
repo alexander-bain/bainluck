@@ -120,9 +120,42 @@ _PRICE_COLUMNS = (
 )
 
 #: Columns whose presence makes the stamp a settlement write. These land on rows
-#: that have stopped being rendered live.
+#: that have stopped being rendered live — PROVIDED the statement has not said
+#: otherwise about its own scope. See `_OPEN_SCOPE`.
 _SETTLED_COLUMNS = (
     "is_winner", "resolution_source", "calibration_probability", "settled_at",
+)
+
+#: A statement that says IN ITS OWN PREDICATE that it lands on non-terminal rows.
+#:
+#: CERT-1936 BLOCKED round one of this guard for granting the settlement
+#: exemption on keyword presence alone. `_clear_premature_open_winners` sweeps
+#: premature winners off markets it explicitly restricts to
+#: `status NOT IN ('resolved','closed')`, changes winner metadata only, reads no
+#: venue price — and stamped the touch stamp every six hours. The scan read
+#: `is_winner` / `resolution_source` in the statement and called it `settled`,
+#: which is the whole class the register exists to catch: the exemption was
+#: granted by vocabulary, and the rows it was granted over were the OPEN ones
+#: the hub renders live.
+#:
+#: So the exemption now has to survive the statement's own scope claim. The
+#: settlement columns say what a write is ABOUT; this says what it lands ON, and
+#: a write that has declared its rows still open cannot be excused as a write to
+#: rows that have stopped being rendered.
+#:
+#: MEASURED over the 50 settlement-classified sites at the time of writing: this
+#: refuses exactly one, `_clear_premature_open_winners`, and none of the other
+#: 49. It is a discriminator, not a net. (The rejected alternative was to demand
+#: a POSITIVE `status IN ('resolved','closed')` clause: only 3 of the 50 carry
+#: one, because the ordinary settlement write is keyed by outcome id after a
+#: result is known and has no business naming a status. A rule 46 real writers
+#: fail is a rule that would be satisfied by 46 register entries, which is the
+#: shape a guard rots into rather than a guard.)
+_OPEN_SCOPE = re.compile(
+    r"status\s+NOT\s+IN\b"
+    r"|status\s*(!=|<>)\s*'(resolved|closed)'"
+    r"|status\s*(=|IN)\s*\(?\s*'(open|active)'",
+    re.I,
 )
 
 PRICE = "price"
@@ -199,7 +232,12 @@ class Site:
         if any(c in self.window for c in _PRICE_COLUMNS):
             return PRICE
         if any(c in self.window for c in _SETTLED_COLUMNS):
-            return SETTLED
+            # CERT-1936. A settlement write earns its exemption because it lands
+            # on rows that have stopped being rendered live. A statement whose
+            # own predicate restricts it to non-terminal rows has refuted that
+            # premise about itself, and no amount of settlement vocabulary
+            # buys it back.
+            return NON_PRICE if _OPEN_SCOPE.search(self.window) else SETTLED
         return NON_PRICE
 
 
@@ -669,3 +707,219 @@ def test_a_compare_and_set_predicate_is_not_counted_as_a_writer(tmp_path):
     ))
     sites = scan_touch_stamp_writes([path])
     assert len(sites) == 1 and sites[0].klass == SETTLED
+
+
+# ---------------------------------------------------------------------------
+# CERT-1936 — THE EXEMPTION HAS TO SURVIVE THE STATEMENT'S OWN SCOPE
+#
+# Round one of this file granted the settlement exemption on keyword presence.
+# CERT-1936 found what that lets through, and it was not hypothetical: it was
+# already running, every six hours, on exactly the rows that can least afford
+# it.
+#
+# `_clear_premature_open_winners` sweeps guess-family and source-less winners
+# off markets it restricts, in its own predicate, to
+# `fm.status NOT IN ('resolved','closed')`. It changes winner metadata only. It
+# reads no venue price. And it stamped `last_updated = NOW()`. The scan saw
+# `is_winner` and `resolution_source` in the statement and filed it `settled`,
+# whose whole justification is "these land on rows that have stopped being
+# rendered live" — a sentence the statement's own WHERE clause contradicts.
+#
+# The consequence is #3243's defect from the other direction. The hub grades a
+# rendered probability from the newer of the snapshot clock and this stamp, so a
+# six-hourly winner-metadata sweep could report an hours-old probability as
+# seconds old, on an OPEN market, during a tournament.
+#
+# The repair is in two halves and both are asserted below:
+#
+#   1. The sweep stops stamping the column. It corrects winner metadata; the
+#      price clock stays where the last real price reading left it.
+#   2. The classifier stops taking vocabulary as proof of scope. A statement
+#      that has declared its rows non-terminal cannot be excused as a write to
+#      rows that are no longer rendered — however many settlement columns it
+#      names.
+#
+# Half 2 has to be proven on the code that actually had the defect, not only on
+# a fixture built to fail: once half 1 lands, the real site stops writing the
+# column at all and would vanish from the scan whether or not half 2 works. So
+# the pre-fix statement is embedded verbatim and re-classified.
+# ---------------------------------------------------------------------------
+
+#: `_clear_premature_open_winners`'s statement AS IT SHIPPED, before CERT-1936.
+#: Copied from `backfill_winners.py` at cd48d0f6 — the sha the BLOCK graded.
+_PRE_FIX_OPEN_WINNER_SWEEP = (
+    "async def _clear_premature_open_winners(session):\n"
+    "    r = await session.execute(text(\n"
+    '        """\n'
+    "        UPDATE futures_outcomes fo\n"
+    "        SET is_winner = false,\n"
+    "            resolution_source = NULL,\n"
+    "            last_updated = NOW()\n"
+    "        FROM futures_markets fm\n"
+    "        WHERE fo.market_id = fm.id\n"
+    "          AND fm.status NOT IN ('resolved', 'closed')\n"
+    "          AND fo.is_winner = true\n"
+    "          AND (fo.resolution_source IS NULL\n"
+    "               OR fo.resolution_source IN ('pass2_guess'))\n"
+    '        """\n'
+    "    ))\n"
+)
+
+
+def test_the_real_open_winner_cleanup_does_not_touch_the_price_clock():
+    """Half 1, on the shipped function rather than a copy of it.
+
+    Read off the real source, so moving the statement, reformatting it or
+    reintroducing the stamp under a different clock value all fail here.
+    """
+    import inspect
+
+    from app.tasks.backfill_winners import _clear_premature_open_winners
+
+    source = inspect.getsource(_clear_premature_open_winners)
+    # Strip the DOCSTRING and nothing else. The function's SQL is itself a
+    # triple-quoted string, so "everything after the docstring closes" would
+    # skip the very statement under test — the first draft of this assertion
+    # did exactly that and passed against the stamp still in place.
+    parts = source.split('"""')
+    body = "".join(parts[:1] + parts[2:]) if len(parts) >= 3 else source
+    assert "SET is_winner = false" in body, (
+        "the SQL statement fell out of the extracted body; this assertion is "
+        "no longer reading the write it claims to read"
+    )
+    assert COLUMN not in body, (
+        f"{_clear_premature_open_winners.__name__} writes {COLUMN} again.\n"
+        f"It targets markets that are explicitly NOT resolved or closed — rows "
+        f"the tournament hub renders live — and it reads no venue price, so a "
+        f"stamp here tells the hub a stale probability was just observed "
+        f"(CERT-1936, #3243)."
+    )
+    # The sweep still does its own job; this is not a test that passes because
+    # the function was deleted.
+    assert "fm.status NOT IN ('resolved', 'closed')" in source
+    assert "is_winner = false" in source
+    assert "resolution_source = NULL" in source
+
+
+def test_the_pre_fix_sweep_is_refused_by_the_classifier(tmp_path):
+    """Half 2, against the code that actually had the defect.
+
+    A scan guard proven only against a fixture is a guard proven against its
+    author. This is the statement that shipped, verbatim, and the classifier
+    must refuse to exempt it.
+    """
+    path = _synthetic(tmp_path, "prefix_sweep.py", _PRE_FIX_OPEN_WINNER_SWEEP)
+    sites = scan_touch_stamp_writes([path])
+
+    assert len(sites) == 1, sites
+    assert sites[0].function == "_clear_premature_open_winners"
+    # It names two settlement columns; under the round-one rule that was enough.
+    assert any(c in sites[0].window for c in _SETTLED_COLUMNS)
+    assert sites[0].klass == NON_PRICE, (
+        "The pre-CERT-1936 sweep classified as a settlement write. That is the "
+        "defect the BLOCK found: the exemption was granted by vocabulary over "
+        "rows the statement itself holds open."
+    )
+    # And it would therefore have had to be registered by name, which is what
+    # `test_every_non_price_writer_is_registered` enforces on the real tree.
+    assert (sites[0].rel, sites[0].function) not in NON_PRICE_REGISTER
+
+
+def test_a_synthetic_open_market_winner_write_is_refused(tmp_path):
+    """The class, not the instance — a fresh writer of the same shape.
+
+    Different function, different columns, different way of saying "open". The
+    fix must not be a special case for one regex the one known site happens to
+    contain.
+    """
+    for name, predicate in (
+        ("not_in.py", "status NOT IN ('resolved', 'closed')"),
+        ("bang_eq.py", "status != 'resolved'"),
+        ("eq_open.py", "status = 'open'"),
+        ("in_active.py", "status IN ('active')"),
+    ):
+        path = _synthetic(tmp_path, name, (
+            "async def _retag_open_winners(session):\n"
+            "    await session.execute(\n"
+            '        """\n'
+            "        UPDATE futures_outcomes fo\n"
+            "        SET is_winner = true,\n"
+            "            resolution_source = 'pass2_guess',\n"
+            "            last_updated = NOW()\n"
+            "        FROM futures_markets fm\n"
+            "        WHERE fo.market_id = fm.id\n"
+            f"          AND fm.{predicate}\n"
+            '        """\n'
+            "    )\n"
+        ))
+        sites = scan_touch_stamp_writes([path])
+        assert [s.klass for s in sites] == [NON_PRICE], (
+            f"{name}: an open-market winner write was exempted as a settlement"
+        )
+        assert (sites[0].rel, sites[0].function) not in NON_PRICE_REGISTER
+
+
+def test_a_real_settlement_write_is_still_exempt(tmp_path):
+    """THE CONTROL, and the reason the rule is a scope rule and not a purge.
+
+    An ordinary settlement is keyed by outcome id after a result is known and
+    says nothing about status — 46 of the 50 settlement sites on the tree are
+    this shape. If the rule demanded a positive `status IN ('resolved','closed')`
+    clause it would flag all of them, and 46 register entries is not a guard.
+    """
+    settled = _synthetic(tmp_path, "settle.py", (
+        "async def _grade(session):\n"
+        "    await session.execute(\n"
+        '        """\n'
+        "        UPDATE futures_outcomes\n"
+        "        SET is_winner = :won,\n"
+        "            resolution_source = 'api_settlement',\n"
+        "            last_updated = NOW()\n"
+        "        WHERE id = :oid\n"
+        '        """\n'
+        "    )\n"
+    ))
+    assert [s.klass for s in scan_touch_stamp_writes([settled])] == [SETTLED]
+
+    # And a settlement that DOES name a terminal status keeps its exemption —
+    # the rule reads which scope was claimed, not whether one was.
+    terminal = _synthetic(tmp_path, "settle_terminal.py", (
+        "async def _grade_closed(session):\n"
+        "    await session.execute(\n"
+        '        """\n'
+        "        UPDATE futures_outcomes fo\n"
+        "        SET is_winner = :won,\n"
+        "            last_updated = NOW()\n"
+        "        FROM futures_markets fm\n"
+        "        WHERE fo.market_id = fm.id\n"
+        "          AND fm.status IN ('resolved', 'closed')\n"
+        '        """\n'
+        "    )\n"
+    ))
+    assert [s.klass for s in scan_touch_stamp_writes([terminal])] == [SETTLED]
+
+
+def test_the_scope_rule_refuses_exactly_one_site_on_the_real_tree():
+    """The population claim, so the rule is known to be a discriminator.
+
+    Measured when CERT-1936's repair was built: of the settlement-classified
+    writes on the tree, the open-scope predicate refused one — the sweep — and
+    none of the others. After the repair the sweep stamps nothing, so the live
+    tree has zero; the pre-fix statement above carries the positive case.
+    """
+    settled_or_refused = [
+        site for site in scan_touch_stamp_writes()
+        if any(c in site.window for c in _SETTLED_COLUMNS)
+        and not any(c in site.window for c in _PRICE_COLUMNS)
+    ]
+    refused = [s for s in settled_or_refused if s.klass == NON_PRICE]
+    assert refused == [], (
+        "A settlement-family write on the tree now claims non-terminal scope:\n"
+        + "\n".join(f"  {s.where}" for s in refused)
+        + "\nEither drop its touch stamp (it lands on rows still rendered live) "
+          "or narrow its predicate to the rows it actually settles."
+    )
+    assert len(settled_or_refused) >= 40, (
+        "The settlement population collapsed; the scan is no longer finding "
+        "the writers this rule is measured against."
+    )
