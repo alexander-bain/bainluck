@@ -1298,19 +1298,19 @@ def test_the_production_filter_cuts_the_old_game_and_keeps_the_live_future():
       premise is a property of the population, not of Kalshi.
     """
     from app.services.kalshi_api import (
-        _HEAVY_TOKENS,
-        _SPORTS_SERIES_TICKERS,
         drop_provably_purged_candidates,
+        stripped_market_series,
     )
     from app.utils.kalshi_retention import PROVABLY_PURGED_AGE_DAYS
 
-    # The production filter, derived exactly as `_fetch_all_events_unfiltered`
-    # derives it — so a change to either constant reaches this test.
-    stripped = {
-        st.upper()
-        for st in _SPORTS_SERIES_TICKERS
-        if any(tok in st.upper() for tok in _HEAVY_TOKENS)
-    }
+    # THE production filter — called, not reconstructed. CERT-1893's follow-up:
+    # this test used to rebuild the expression over `_SPORTS_SERIES_TICKERS`
+    # while the fetch built it over `_RESCUE_SERIES_TICKERS` (sports PLUS
+    # weather). Identical today, because neither weather ticker carries a heavy
+    # token; silently different the day one does, and the difference would be a
+    # WIDER cut than anything measured. A guard that rebuilds a production
+    # judgement is only accidentally testing production.
+    stripped = stripped_market_series()
     assert "KXMLBGAME" in stripped and "KXATPMATCH" not in stripped, (
         "the production filter no longer describes the measured population; "
         "re-measure the venue before trusting the cut"
@@ -1338,3 +1338,64 @@ def test_the_production_filter_cuts_the_old_game_and_keeps_the_live_future():
         live_future.event_ticker,
         old_unmeasured_but_alive.event_ticker,
     ]
+
+
+def test_the_fetch_and_the_guard_read_one_derivation_of_the_stripped_set():
+    """CERT-1893's follow-up, closed structurally rather than by agreement.
+
+    `stripped_market_series()` decides two things: which empty events the
+    backfill OWES (#2214) and which candidates the retention floor may CUT
+    (#3190). Two call sites reconstructing the same set expression is how the
+    second one silently widens past the population the first one measured.
+
+    So this asserts the fetch CALLS it rather than rebuilding it — a source-text
+    check, because a behavioural one passes for as long as the two expressions
+    happen to agree, which today they do.
+    """
+    import ast
+    from pathlib import Path
+
+    from app.services.kalshi_api import (
+        _HEAVY_TOKENS,
+        _RESCUE_SERIES_TICKERS,
+        stripped_market_series,
+    )
+
+    produced = stripped_market_series()
+    assert produced == {
+        st.upper()
+        for st in _RESCUE_SERIES_TICKERS
+        if any(tok in st.upper() for tok in _HEAVY_TOKENS)
+    }
+    # The weather half is the reason the source matters: it is IN the rescue
+    # list and OUT of the stripped set, and only because of the token test.
+    assert not any(w.startswith("KXRAIN") for w in produced)
+
+    src = Path(__file__).resolve().parents[1] / "app" / "services" / "kalshi_api.py"
+    tree = ast.parse(src.read_text())
+    fetch = next(
+        n for n in ast.walk(tree)
+        if isinstance(n, (ast.AsyncFunctionDef, ast.FunctionDef))
+        and n.name == "_fetch_all_events_unfiltered"
+    )
+    calls = {
+        n.func.id for n in ast.walk(fetch)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+    }
+    assert "stripped_market_series" in calls, (
+        "the fetch rebuilds the stripped set instead of calling the one "
+        "derivation; the retention cut can then widen past the measured "
+        "population without any test noticing"
+    )
+    comprehensions = [
+        n for n in ast.walk(fetch)
+        if isinstance(n, ast.SetComp)
+        and any(
+            isinstance(g.iter, ast.Name)
+            and g.iter.id in {"_RESCUE_SERIES_TICKERS", "_SPORTS_SERIES_TICKERS"}
+            for g in n.generators
+        )
+    ]
+    assert not comprehensions, (
+        "a second derivation of the stripped set reappeared inside the fetch"
+    )
