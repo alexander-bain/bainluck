@@ -397,6 +397,30 @@ _WEATHER_SERIES_TICKERS = [
 # apart on which series the net covers.
 _RESCUE_SERIES_TICKERS = _SPORTS_SERIES_TICKERS + _WEATHER_SERIES_TICKERS
 
+
+def stripped_market_series() -> set:
+    """The rescue series fetched WITHOUT nested markets — one derivation, one place.
+
+    CERT-1893's follow-up (`L1B-047-GUARD-DERIVES-THE-WHOLE-RESCUE-SET`). This
+    set decides two different things now: which empty events the backfill OWES
+    (#2214) and, since #3190, which candidates the retention floor is allowed to
+    CUT. The guard for the second was rebuilding the expression over
+    `_SPORTS_SERIES_TICKERS` while the fetch built it over
+    `_RESCUE_SERIES_TICKERS` — the same 34 series today, because neither weather
+    ticker carries a heavy token, and silently different the day one does. A
+    guard that reconstructs a production judgement instead of calling it is only
+    accidentally testing production.
+
+    So the expression lives here and both callers read it. Drift is not caught,
+    it is unrepresentable.
+    """
+    return {
+        st.upper()
+        for st in _RESCUE_SERIES_TICKERS
+        if any(tok in st.upper() for tok in _HEAVY_TOKENS)
+    }
+
+
 # Series whose supplementary fetch runs even when the main scan already
 # produced an event with the same prefix.
 #
@@ -2145,11 +2169,7 @@ class KalshiAPIService(BaseAPIClient):
         # markets. Derived from the same two constants the fetch branched on, so
         # the two decisions cannot drift — the population the backfill owes is
         # by definition the population `_HEAVY_TOKENS` emptied.
-        _stripped_series = {
-            st.upper()
-            for st in _RESCUE_SERIES_TICKERS
-            if any(tok in st.upper() for tok in _HEAVY_TOKENS)
-        }
+        _stripped_series = stripped_market_series()
         empty_events = [
             e for e in all_events.values()
             if not e.markets
