@@ -555,20 +555,40 @@ export default function TournamentResults({
             grid would reset the tracks below it and put the second round's
             score column somewhere else again. */}
         <ul className={RESULT_GRID}>
-          {shown.map((result) => (
-            <React.Fragment key={result.matchup_key}>
-              <li
-                className="col-span-3 border-t border-surface-border bg-surface-elevated px-3.5 py-1 text-[10px] font-bold uppercase tracking-[0.05em] text-text-muted first:border-t-0"
-                data-testid="result-round"
-              >
-                {roundHeading(result, roundCount)}
-              </li>
-              <ResultRow
-                result={result}
-                href={resultEventHref(result, eventIds, espnEventIds)}
-              />
-            </React.Fragment>
-          ))}
+          {shown.map((result, index) => {
+            /* #3163, found in a phone-width LOOK: the band was emitted once per
+               ROW, so five consecutive round-of-32 matches each got their own
+               `ROUND OF 32` header and the band grouped nothing. A group heading
+               belongs to the RUN, so it is drawn only where the run starts.
+
+               Compared against the previous SHOWN row, not the previous match,
+               because the collapsed list is a slice: its first row starts a run
+               whatever preceded it in the full array.
+
+               Dropping the band leaves no gap — `ResultRow` already draws
+               `border-t` on its own winner cell, so rows inside a run stay
+               separated. That is why this is a deletion and not a swap. */
+            const heading = roundHeading(result, roundCount);
+            const startsRun =
+              index === 0 || heading !== roundHeading(shown[index - 1], roundCount);
+
+            return (
+              <React.Fragment key={result.matchup_key}>
+                {startsRun && (
+                  <li
+                    className="col-span-3 border-t border-surface-border bg-surface-elevated px-3.5 py-1 text-[10px] font-bold uppercase tracking-[0.05em] text-text-muted first:border-t-0"
+                    data-testid="result-round"
+                  >
+                    {heading}
+                  </li>
+                )}
+                <ResultRow
+                  result={result}
+                  href={resultEventHref(result, eventIds, espnEventIds)}
+                />
+              </React.Fragment>
+            );
+          })}
         </ul>
         {matches.length > COLLAPSED_LIST_COUNT && (
           <ShowMore
