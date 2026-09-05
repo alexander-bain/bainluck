@@ -485,8 +485,9 @@ def _mock_team(name, *, sport_id=1, primary="#BD3039", logo="redsox.png"):
     )
 
 
-def _league_db(mock_db, markets, games=(), results=(), teams=()):
-    """Sequence the route's FOUR queries: markets, games, results, team media.
+def _league_db(mock_db, markets, games=(), results=(), unreported=(), teams=()):
+    """Sequence the route's FIVE queries: markets, games, results, unreported,
+    team media.
 
     The existing seeded tests set a single `return_value`, so every query — including
     the two rail queries this queue added — receives the MARKET rows. That silently
@@ -506,6 +507,20 @@ def _league_db(mock_db, markets, games=(), results=(), teams=()):
        the fourth call is consumed depends on which test warmed the cache first —
        the sequencing would be order-dependent, which is a flake that reads as a
        real failure. So the cache is reset here, every time.
+
+    🔴 #3211 ADDED THE FIFTH, and it did exactly what point 1 predicts: the
+    route grew `unreported_games_query` — matches whose kickoff has passed while
+    the row still says `scheduled`, which were on NO rail before — and the mock
+    ran out of answers one query early. The team lookup then raised
+    `StopIteration` inside the rails' exception guard, so both rails came back
+    stripped of their chrome and the failure surfaced as a missing
+    `home_team_data` rather than as "you added a query". Worth naming, because
+    the misleading symptom is the cost of sequencing by position: the guard that
+    stops one bad row from emptying a rail also swallows the reason.
+
+    `unreported` defaults to empty, so every existing caller keeps its meaning
+    — the new rail is simply empty for them, which is what it should be for a
+    league whose fixtures all settled.
     """
     import app.routes.events as _events_module
 
@@ -516,6 +531,7 @@ def _league_db(mock_db, markets, games=(), results=(), teams=()):
         _scalars_result(list(markets)),
         _scalars_result(list(games)),
         _scalars_result(list(results)),
+        _scalars_result(list(unreported)),
         _scalars_result(list(teams)),
     ]
 
@@ -753,12 +769,18 @@ class TestTheRailsServeTheSharedCard:
         # The census key survives beside the card's.
         assert game["home_win_probability"] == 0.55
 
-    async def test_one_lookup_serves_BOTH_rails(self, client, mock_db):
-        """The results rail gets the same chrome from the same query.
+    async def test_one_lookup_serves_ALL_THREE_rails(self, client, mock_db):
+        """Every rail gets the same chrome from the same query.
 
-        Sequencing exactly four results is the assertion: a second lookup would
-        exhaust the mock and fail, and no lookup would leave the results rail
-        bare while the upcoming rail was decorated.
+        Sequencing exactly five results is the assertion: a second lookup would
+        exhaust the mock and fail, and no lookup would leave the later rails
+        bare while the upcoming one was decorated.
+
+        #3211 added the third rail, and it is included here rather than tested
+        apart precisely because "one lookup, N rails" is the claim — a new rail
+        that quietly triggered its own team query would still render correctly
+        and would double the page's cost, which is the kind of regression only
+        a sequenced mock can see.
         """
         _league_db(
             mock_db,
@@ -766,6 +788,7 @@ class TestTheRailsServeTheSharedCard:
             games=[_mock_event(event_id=11)],
             results=[_mock_event(event_id=12, status="completed", hours_from_now=-48,
                                  home_score=5, away_score=3)],
+            unreported=[_mock_event(event_id=13, status="scheduled", hours_from_now=-48)],
             teams=[_mock_team("Boston Red Sox"), _mock_team("New York Yankees")],
         )
         body = (await client.get("/api/leagues/baseball_mlb")).json()
@@ -773,6 +796,42 @@ class TestTheRailsServeTheSharedCard:
         assert body["upcoming_games"][0]["home_team_data"]["primary_color"] == "#BD3039"
         assert body["recent_results"][0]["home_team_data"]["primary_color"] == "#BD3039"
         assert body["recent_results"][0]["home_score"] == 5
+        assert body["unreported_games"][0]["home_team_data"]["primary_color"] == "#BD3039"
+
+    async def test_the_unreported_rail_carries_no_score_and_its_own_cap_flag(
+        self, client, mock_db
+    ):
+        """#3211's rail, end to end through the route.
+
+        The row arrives with `status: scheduled` and NO score — that pairing is
+        what the shared card reads to print "No result reported" with nothing
+        after it, rather than half a scoreline. And the rail declares its cap
+        like the other two, so "showing 6" can never read as "there are 6".
+        """
+        _league_db(
+            mock_db,
+            [_mock_market(market_id=1, market_tier=3)],
+            games=[],
+            results=[],
+            unreported=[_mock_event(event_id=13, status="scheduled", hours_from_now=-72)],
+            teams=[],
+        )
+        body = (await client.get("/api/leagues/baseball_mlb")).json()
+
+        assert len(body["unreported_games"]) == 1
+        row = body["unreported_games"][0]
+        assert row["status"] == "scheduled"
+        assert row["home_score"] is None and row["away_score"] is None
+        assert body["unreported_games_has_more"] is False
+        # It is NOT also filed as a result — that would be the false Final
+        # live/048 removed, and it would print the match twice on one page.
+        assert body["recent_results"] == []
+        # …and it does not count toward the league's record. A match nobody
+        # reported is the absence of a receipt, not a receipt.
+        assert body["record_n"] == 0
+        # But it IS content: a page whose whole fortnight is unreported matches
+        # is not an empty page.
+        assert body["availability"] == "fresh"
 
     async def test_no_team_media_still_serves_the_games(self, client, mock_db):
         """Chrome degrades, content does not. A league whose teams we have no

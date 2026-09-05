@@ -724,24 +724,81 @@ class TestTheSharedVocabularyIsWhatBothRailsSpend:
     @pytest.mark.parametrize(
         "module", ["app.routes.teams", "app.routes.league_futures"]
     )
-    def test_both_entity_routes_spend_the_shared_constant(self, module):
+    def test_both_entity_routes_spend_the_shared_condition(self, module):
+        """🔴 AMENDED BY #3211 — the shared thing got BIGGER, not weaker.
+
+        This asserted the two routes name `RECENT_RAIL_STATUSES`. They no longer
+        do, and that is the repair rather than a regression: the status list was
+        only half of each rail, the other half was a hand-written time bound,
+        and the pair is only correct AS A PAIR. #3211 was the third state to
+        fall between the two rails (after `closed` and `suspended`) precisely
+        because a shared status list cannot say anything about a row that is in
+        the right status set and the wrong time window.
+
+        So both routes now spend `utils.event_rails`, which builds status AND
+        time together and is itself what spends `RECENT_RAIL_STATUSES` —
+        asserted below, so the indirection cannot become a place the vocabulary
+        gets dropped. The literal scans are kept and extended: `closed`,
+        `suspended` and now the pre-#3211 upcoming floor are all shapes that
+        must not reappear inline in a route.
+        """
         import importlib
         import inspect
 
         source = inspect.getsource(importlib.import_module(module))
-        assert "RECENT_RAIL_STATUSES" in source, (
-            f"{module} does not reference the shared recent-rail vocabulary"
+        # One of the two ways a surface can spend the shared past-rails: the
+        # league page SPLITS them (`settled_` + `unreported_`, because one cap
+        # over two unequal populations starved the Finals out of all eight
+        # slots) and the team page keeps ONE list
+        # (`recent_or_unreported_condition`, because its cap spans one team's
+        # own schedule and nothing starves). Either is fine; hand-writing the
+        # vocabulary is not, and that is what this asserts.
+        assert (
+            "settled_rail_condition" in source
+            or "recent_or_unreported_condition" in source
+        ), f"{module} does not spend a shared past-rail condition"
+        assert "upcoming_rail_condition" in source, (
+            f"{module} does not spend the shared upcoming-rail condition — the "
+            "two rails are only correct as a pair, and a route that shares one "
+            "and hand-writes the other can still leave a state between them"
         )
         assert 'status.in_(["completed", "closed"])' not in source, (
             f"{module} still carries a hand-written recent-rail literal — the "
             "next state added to the vocabulary will miss it exactly as "
             "`suspended` did"
         )
+        assert 'status.in_(["live", "scheduled"])' not in source, (
+            f"{module} still carries a hand-written UPCOMING-rail literal. That "
+            "list paired with a `now - 2h` floor is #3211 verbatim: it drops a "
+            "`scheduled` row past its kickoff onto no rail at all"
+        )
+
+    def test_the_shared_condition_is_what_holds_the_vocabulary(self):
+        """The indirection is only safe if the thing indirected TO still reads
+        the shared list. Otherwise this suite would pass over a module that
+        re-hardcoded the three states one level down."""
+        import inspect
+
+        from app.utils import event_rails
+
+        source = inspect.getsource(event_rails)
+        assert "RECENT_RAIL_STATUSES" in source
+        assert 'status.in_(["completed", "closed"])' not in source
 
     def test_the_scan_would_catch_a_reverted_route(self):
         """The scan's own control: a source scan that finds nothing passes for
-        free, so feed it the pre-fix line verbatim and prove the predicate bites.
+        free, so feed it the pre-fix lines verbatim and prove both predicates
+        bite. Two arms since #3211, because the guard now has two literals to
+        refuse and a control that only exercises one of them certifies half.
         """
-        reverted = 'Event.status.in_(["completed", "closed"]),'
-        assert 'status.in_(["completed", "closed"])' in reverted
-        assert "RECENT_RAIL_STATUSES" not in reverted
+        reverted_recent = 'Event.status.in_(["completed", "closed"]),'
+        assert 'status.in_(["completed", "closed"])' in reverted_recent
+        assert "settled_rail_condition" not in reverted_recent
+        assert "recent_or_unreported_condition" not in reverted_recent
+
+        reverted_upcoming = (
+            'Event.status.in_(["live", "scheduled"]),\n'
+            "Event.commence_time >= now - timedelta(hours=2),"
+        )
+        assert 'status.in_(["live", "scheduled"])' in reverted_upcoming
+        assert "upcoming_rail_condition" not in reverted_upcoming

@@ -105,7 +105,9 @@ STATPAL_LIVESCORE_TASK = "app.tasks.sync_statpal_livescores"
 
 # Source files that must stay clear of ESPN, because their whole value during an
 # outage is that they do not consult the authority that is dark.
-STATPAL_SYNC_SRC = Path(__file__).resolve().parents[1] / "app" / "tasks" / "statpal_sync.py"
+STATPAL_SYNC_SRC = (
+    Path(__file__).resolve().parents[1] / "app" / "tasks" / "statpal_sync.py"
+)
 
 
 FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures"
@@ -190,7 +192,9 @@ def _tiers() -> tuple[set[str], set[str], set[str]]:
     """
     espn = set(ESPN_SPORT_MAPPING)
     statpal = set(STATPAL_SPORT_MAPPING)
-    discovery = espn & statpal & _scheduled_discovery_sports() & _parser_capable_sports()
+    discovery = (
+        espn & statpal & _scheduled_discovery_sports() & _parser_capable_sports()
+    )
     livescore_only = (espn & statpal) - discovery
     none_at_all = espn - statpal
     return discovery, livescore_only, none_at_all

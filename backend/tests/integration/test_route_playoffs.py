@@ -818,6 +818,12 @@ class TestLeagueFuturesEndpoint:
             "upcoming_games_has_more": False,
             "recent_results": [],
             "recent_results_has_more": False,
+            # #3211's third rail — matches whose kickoff has passed while the
+            # row still says `scheduled`. It arrives here BECAUSE this test is
+            # an exact equality: the envelope grew and the alarm went off, which
+            # is the sentence above working rather than an inconvenience.
+            "unreported_games": [],
+            "unreported_games_has_more": False,
             "record_n": 0,
         }
 

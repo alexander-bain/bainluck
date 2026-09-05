@@ -44,22 +44,84 @@ MUTANTS: list[tuple[str, Path, str, str, str]] = [
     (
         "M1-fence-removed",
         ROUTE,
+        # Anchored on the settled rail's own condition since #3211 — both fenced
+        # rails carry these two lines verbatim, so the bare pair stopped being
+        # unique the moment the third rail landed. M1b covers the other one.
+        "            settled_rail_condition("
+        "now, lookback=timedelta(days=RESULTS_LOOKBACK_DAYS)),\n"
+        "        )\n"
         '        .offset(literal_column("0"))\n        .subquery()',
+        "            settled_rail_condition("
+        "now, lookback=timedelta(days=RESULTS_LOOKBACK_DAYS)),\n"
+        "        )\n"
         "        .subquery()",
         "the whole fix: without OFFSET 0 the planner walks ix_events_commence_time",
     ),
     (
+        "M1b-unreported-fence-removed",
+        ROUTE,
+        "            unreported_rail_condition(\n"
+        "                now, lookback=timedelta(days=RESULTS_LOOKBACK_DAYS)\n"
+        "            ),\n"
+        "        )\n"
+        '        .offset(literal_column("0"))\n        .subquery()',
+        "            unreported_rail_condition(\n"
+        "                now, lookback=timedelta(days=RESULTS_LOOKBACK_DAYS)\n"
+        "            ),\n"
+        "        )\n"
+        "        .subquery()",
+        "#3211's rail inherited the measurement, so it inherits the guard",
+    ),
+    (
         "M2-fence-is-a-bind",
         ROUTE,
-        '.offset(literal_column("0"))',
-        ".offset(0)",
+        # 🔴 ANCHORED ON THE SETTLED RAIL'S OWN CALL by #3211. The bare
+        # `.offset(literal_column("0"))` now appears TWICE in this route — the
+        # results rail and the new unreported one both carry the fence, because
+        # they are the same shape of question. The harness refused the ambiguous
+        # needle rather than mutating whichever came first, which is the
+        # needle-integrity pass doing its job: a mutant that could land in two
+        # places is not provably aimed at either.
+        "        settled_rail_condition("
+        "now, lookback=timedelta(days=RESULTS_LOOKBACK_DAYS)),\n"
+        "        )\n"
+        '        .offset(literal_column("0"))',
+        "        settled_rail_condition("
+        "now, lookback=timedelta(days=RESULTS_LOOKBACK_DAYS)),\n"
+        "        )\n"
+        "        .offset(0)",
         "fences identically but emits OFFSET $1 — not the statement measured",
+    ),
+    (
+        # #3211's rail gets the same mutant, because it inherited the same
+        # measurement and a fence nobody tests is a comment.
+        "M2b-unreported-fence-is-a-bind",
+        ROUTE,
+        "            unreported_rail_condition(\n"
+        "                now, lookback=timedelta(days=RESULTS_LOOKBACK_DAYS)\n"
+        "            ),\n"
+        "        )\n"
+        '        .offset(literal_column("0"))',
+        "            unreported_rail_condition(\n"
+        "                now, lookback=timedelta(days=RESULTS_LOOKBACK_DAYS)\n"
+        "            ),\n"
+        "        )\n"
+        "        .offset(0)",
+        "the third rail's fence is measured too — LAT-P110 transfers to it",
     ),
     (
         "M3-order-by-pushed-inside",
         ROUTE,
-        "    fenced_event = aliased(Event, inner)\n    return (\n        select(fenced_event)\n        .order_by(fenced_event.commence_time.desc())",
-        "    fenced_event = aliased(Event, inner)\n    return (\n        select(fenced_event)\n        .order_by(Event.commence_time.desc())",
+        # 🔴 EXTENDED THROUGH THE LIMIT by #3211: the four lines above it are
+        # now identical in both fenced rails, and `RESULTS_LIMIT` vs
+        # `UNREPORTED_LIMIT` is the first token that tells them apart. Their
+        # caps are DIFFERENT constants on purpose (one cap over two unequal
+        # populations is the trap the third rail exists to escape), which is
+        # what makes this anchor unique — and if someone ever collapses them
+        # back to one number, this needle goes ambiguous and the harness says so
+        # before the page silently starves a rail again.
+        "    fenced_event = aliased(Event, inner)\n    return (\n        select(fenced_event)\n        .order_by(fenced_event.commence_time.desc())\n        .limit(RESULTS_LIMIT + 1)",
+        "    fenced_event = aliased(Event, inner)\n    return (\n        select(fenced_event)\n        .order_by(Event.commence_time.desc())\n        .limit(RESULTS_LIMIT + 1)",
         "sorting on the base table instead of the subquery re-correlates the two",
     ),
     (
@@ -89,8 +151,32 @@ MUTANTS: list[tuple[str, Path, str, str, str]] = [
     (
         "M6-lookback-window-changed",
         ROUTE,
-        "Event.commence_time >= now - timedelta(days=RESULTS_LOOKBACK_DAYS),",
-        "Event.commence_time >= now - timedelta(days=7),",
+        # 🔴 RE-TARGETED BY #3211 (lane1/134), for the second time and for the
+        # same reason M7 was re-targeted by live/056 — read that note below, it
+        # is the same lesson and this file is now its second worked example.
+        #
+        # The needle was the bare comparison
+        # `Event.commence_time >= now - timedelta(days=RESULTS_LOOKBACK_DAYS),`.
+        # #3211 moved BOTH halves of the rail — the status vocabulary and the
+        # time bound — into `utils.event_rails.recent_rail_condition`, because a
+        # shared status list cannot say anything about a row that is in the
+        # right status set and the wrong time window, which is exactly how a
+        # `scheduled` row past its kickoff reached neither rail and took 171 US
+        # Open matches off the page with it.
+        #
+        # So the comparison no longer exists in this route and the scanner
+        # refused, correctly and loudly. The lookback is still the ROUTE's
+        # decision — it is passed, not assumed, because the team page's is 30
+        # days — so the mutant keeps its meaning exactly: narrow this page's
+        # window while the fence and the helper both stay right.
+        # And a THIRD time, hours later in the same session: the split into
+        # `settled_` + `unreported_` put a second
+        # `lookback=timedelta(days=RESULTS_LOOKBACK_DAYS)` in this file, so the
+        # bare keyword stopped being unique. The lookback the RESULTS rail
+        # spends is what this mutant narrows, so the call it belongs to is now
+        # part of the needle.
+        "settled_rail_condition(now, lookback=timedelta(days=RESULTS_LOOKBACK_DAYS))",
+        "settled_rail_condition(now, lookback=timedelta(days=7))",
         "the fence must not be cover for a quietly narrowed rail",
     ),
     (
@@ -119,8 +205,49 @@ MUTANTS: list[tuple[str, Path, str, str, str]] = [
         # back" is a different regression and is guarded where it belongs, in
         # `test_suspended_is_reachable_cert_786.py`, by a suite that has a
         # suspended row to notice its absence.
-        "Event.status.in_(RECENT_RAIL_STATUSES),",
-        'Event.status.in_(["live", "scheduled"]),',
+        #
+        # ── AND RE-TARGETED AGAIN BY #3211 (lane1/134) ──
+        #
+        # `RECENT_RAIL_STATUSES` moved one level down into
+        # `utils.event_rails.recent_rail_condition`, which now builds status AND
+        # time together. Third drift, third refusal, and the refusal is doing
+        # its job every time: the mutant string `["live", "scheduled"]` remained
+        # legitimately present in the upcoming rail, so a needle-blind harness
+        # would have read the drift as leftover residue.
+        #
+        # The mutation still means "copy-paste the sibling builder over this
+        # one" — it is simply written at the level the builders now live at,
+        # which makes it a STRONGER mutant than the literal swap was: it takes
+        # the whole rail, statuses and window together.
+        #
+        # Written in the form BLACK produces (one line, 86 chars), not the form
+        # that was typed. A needle spelled differently from what the formatter
+        # emits is a needle that drifts the next time anyone runs `black` on
+        # this route — which is the same class of drift this comment already
+        # documents twice, arriving through the toolchain instead of a ship.
+        # ── AND ONCE MORE, same session, after the three-rail split ──
+        #
+        # `recent_rail_condition` no longer exists: #3211 measured that its two
+        # arms could not share one cap (the result-less rows took all eight of
+        # the results rail's slots) and split it into `settled_` and
+        # `unreported_`. The mutation keeps its meaning exactly — copy-paste the
+        # sibling builder over this one — and is now aimed at the settled rail's
+        # call, which is the one whose vocabulary a careless edit would widen.
+        #
+        # The REPLACEMENT carries the two following lines as well, and that is
+        # not padding. Pass B of the residue scanner sweeps every changed file
+        # for a mutant's replacement text, and bare `upcoming_rail_condition(
+        # now),` is a genuine, shipped line of `routes/teams.py` — so the short
+        # form turned the residue gate red on real source. A mutant's
+        # replacement has to be unique to the site it mutates, or the scan
+        # cannot tell "left behind" from "legitimately written here too".
+        "            settled_rail_condition("
+        "now, lookback=timedelta(days=RESULTS_LOOKBACK_DAYS)),\n"
+        "        )\n"
+        '        .offset(literal_column("0"))',
+        "            upcoming_rail_condition(now),\n"
+        "        )\n"
+        '        .offset(literal_column("0"))',
         "a copy-paste between the two builders",
     ),
     (

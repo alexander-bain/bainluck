@@ -25,6 +25,22 @@
  *
  * ⚠️ The corpus has no live row (see `__tests__/lib/leagueSections.test.ts`), so
  * the live arm is synthetic and is labelled SYNTHETIC.
+ *
+ * ═══ 🔴 #3211 — THE CLOCK IS PINNED TO THE CAPTURE'S OWN INSTANT ═══
+ *
+ * `buildLeagueSections` now branches on the current time: a row that still says
+ * `scheduled` more than two hours after its own kickoff is bucketed as a match
+ * that should have been played and was never reported, rather than as one about
+ * to begin. (171 US Open matches were in exactly that state on production and
+ * reachable from no rail at all — the reason the rung exists.)
+ *
+ * This corpus is a snapshot taken on 2026-09-04, so read against a live clock
+ * its fifteen fixtures become fifteen unreported matches, and every count here
+ * would rot with the calendar rather than with the code. Gotcha #44's rule is
+ * *offset from a fixed anchor*, so the anchor is fixed: the whole file renders
+ * at the moment the endpoint was called. That also stabilises the CARD copy,
+ * which reads the clock for its "Today"/"Tomorrow" labels and was previously
+ * free to differ between two runs of the same suite.
  */
 
 import React from "react";
@@ -56,6 +72,21 @@ jest.mock("@/hooks", () => ({
   useEngagementTime: () => undefined,
   useAnalytics: () => ({ trackEventCardClick: () => undefined }),
 }));
+
+/** After the corpus's newest Final, before its soonest fixture — see the
+ *  #3211 section of the docblock, and the CONTROL that re-derives it in
+ *  `__tests__/lib/leagueSections.test.ts`. */
+const CAPTURED_AT = new Date("2026-09-04T14:00:00Z").getTime();
+
+// 🔴 MODULE SCOPE, NOT `beforeAll`, AND THAT IS LOAD-BEARING. Three of the
+// describes below call `render(...)` in their own body — collection-phase code,
+// which runs BEFORE any `beforeAll` hook. Pinning the clock in a hook left
+// exactly those renders on the real clock, and the suite reported eight of the
+// corpus's fifteen fixtures as unreported matches: green hook, wrong markup.
+jest.useFakeTimers({ now: CAPTURED_AT, doNotFake: ["nextTick"] });
+afterAll(() => {
+  jest.useRealTimers();
+});
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const SportPage = require("@/app/sports/[key]/page").default;

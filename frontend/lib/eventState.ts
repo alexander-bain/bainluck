@@ -35,6 +35,84 @@ export function isSuspendedStatus(status: string | null | undefined): boolean {
 }
 
 /**
+ * How long past its own kickoff a `scheduled` row is still plausibly about to
+ * start.
+ *
+ * 🔴 THIS NUMBER IS ALSO IN PYTHON and the two must not drift:
+ * `UPCOMING_GRACE` in `backend/app/utils/event_completion.py` is the bound the
+ * rails SELECT on, and this is the bound the card RENDERS on. If the backend's
+ * were larger, a row would reach a surface that then printed a start time for
+ * it — the exact fall-through this module exists to refuse — and if smaller, a
+ * card would say "No result reported" about a fixture the rail still calls
+ * upcoming. `__tests__/lib/railGraceMatchesTheBackend3211.test.ts` reads the
+ * Python source and fails on any disagreement, because a comment asking two
+ * languages to stay in step is not a mechanism.
+ */
+export const UPCOMING_GRACE_MS = 2 * 60 * 60 * 1000;
+
+/**
+ * A row that still calls itself `scheduled` well after its own kickoff.
+ *
+ * ── #3211, AND WHY IT IS NOT A NEW STATE ──
+ *
+ * `suspended` means a source watched the match and stopped reporting. This
+ * means nothing ever reported anything — the fixture's clock ran out while the
+ * row still said it had not begun. On production 2026-09-05 there were 171 of
+ * them across the two US Open tours, all `commence_time_source = kalshi_ticker`
+ * and all stamped exactly `00:00:00Z`, because a Kalshi row's commence is the
+ * ticker's CLOSE date rather than a start (gotcha #14) and tennis has no ESPN
+ * anchor to settle it afterwards (#2700).
+ *
+ * To the person reading a card those two states are ONE sentence — *this match
+ * should have happened and nobody has told us anything* — so they render as one
+ * (`SUSPENDED_LABEL`) and bucket as one. Inventing a second badge would ask a
+ * reader to care about which of our sources failed.
+ *
+ * ⚠️ It takes a TIME, so unlike every other predicate here it can change answer
+ * without the row changing. `now` is a parameter for that reason: a component
+ * that closes over `Date.now()` at render is correct, and a test that pins the
+ * clock is the only way to assert the boundary at all (gotcha #44 — offset from
+ * an injected anchor, never branch on the real clock).
+ *
+ * An absent or unparseable `commence_time` is FALSE. A row we cannot place on
+ * the clock is one we have no standing to move off the schedule, and `new
+ * Date("").getTime()` is `NaN`, which compares false against everything — so
+ * the guard is written out rather than left to that accident.
+ */
+export function startedWithoutResult(
+  status: string | null | undefined,
+  commenceTime: string | null | undefined,
+  now: number = Date.now(),
+): boolean {
+  if (status !== "scheduled") return false;
+  if (!commenceTime) return false;
+  const t = new Date(commenceTime).getTime();
+  if (!Number.isFinite(t)) return false;
+  return t < now - UPCOMING_GRACE_MS;
+}
+
+/**
+ * THE DISPLAY QUESTION every card and section actually asks: has this match
+ * passed the point of being upcoming without anyone reporting how it went?
+ *
+ * True for `suspended` and for {@link startedWithoutResult}. This — not
+ * `isSuspendedStatus` — is what a SURFACE should call, because a surface is
+ * choosing between "print a start time" and "say no result was reported", and
+ * that choice has the same right answer for both states.
+ *
+ * `isSuspendedStatus` stays, and stays narrow: it answers "is the status
+ * literally `suspended`", which is the right question for anything reasoning
+ * about the ladder's own vocabulary rather than about pixels.
+ */
+export function hasNoReportedResult(
+  status: string | null | undefined,
+  commenceTime: string | null | undefined,
+  now: number = Date.now(),
+): boolean {
+  return isSuspendedStatus(status) || startedWithoutResult(status, commenceTime, now);
+}
+
+/**
  * The short badge a suspended event wears.
  *
  * Deliberately NOT "Suspended" as a bare word: for a rain-delayed US Open match
@@ -127,12 +205,35 @@ export function suspendedSummary(
  * The section TITLE changes when the bucket holds one — see
  * `liveSectionTitle` — so the header does not claim "Live Now" over a match
  * nobody is watching.
+ *
+ * ── #3211: `commenceTime` IS OPTIONAL AND THAT IS A COMPROMISE, NOT A DEFAULT ──
+ *
+ * A `scheduled` row past its own kickoff belongs in the same bucket for exactly
+ * the reason `suspended` does: "upcoming" claims it has not started, and it
+ * has. But answering that needs the row's TIME, which the original signature
+ * did not take.
+ *
+ * Callers that omit it get the old behaviour — such a row falls through to
+ * "upcoming" — and that is deliberately not an error, because the surfaces
+ * whose backend window cannot yet return one of these rows (Discover and the
+ * feed sections, whose candidate window is unchanged by #3211) would otherwise
+ * be forced to pass a time in order to enable a branch nothing can reach. The
+ * three surfaces that CAN reach one pass it: `lib/sports/leagueSections`,
+ * `app/my-stuff` and this module's own guard.
+ *
+ * ⚠️ So the omission is a live edge: when the feed's window is widened, its
+ * `eventSectionKey` call is the second half of that change.
+ * `__tests__/lib/startedWithoutResultIsNotUpcoming3211.test.ts` pins BOTH arms
+ * so neither can be altered by accident.
  */
 export function eventSectionKey(
   status: string | null | undefined,
+  commenceTime?: string | null,
+  now: number = Date.now(),
 ): "live" | "finished" | "upcoming" {
   if (status === "live" || isSuspendedStatus(status)) return "live";
   if (isFinishedStatus(status)) return "finished";
+  if (startedWithoutResult(status, commenceTime, now)) return "live";
   return "upcoming";
 }
 
