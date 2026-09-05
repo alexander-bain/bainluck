@@ -54,8 +54,8 @@ from app.routes.events import (
     get_game_markets,
 )
 
-
 # ---------------------------------------------------------------- fixtures --
+
 
 def _make_result(scalar=None, rows=None, all_rows=None):
     rows = rows or []
@@ -66,7 +66,9 @@ def _make_result(scalar=None, rows=None, all_rows=None):
     return result
 
 
-def _make_tennis_event(*, id=15304847, status="scheduled", home_score=None, away_score=None):
+def _make_tennis_event(
+    *, id=15304847, status="scheduled", home_score=None, away_score=None
+):
     event = MagicMock()
     event.id = id
     event.home_team_name = "Tommy Paul"
@@ -115,13 +117,15 @@ def _make_outcome(*, id, market_id, name, probability):
 
 def _db_for(event, markets, outcomes):
     db = AsyncMock()
-    db.execute = AsyncMock(side_effect=[
-        _make_result(scalar=event),
-        _make_result(rows=markets),
-        _make_result(all_rows=[]),   # polymarket parent groups
-        _make_result(rows=[]),       # unlinked fallback
-        _make_result(rows=outcomes),
-    ])
+    db.execute = AsyncMock(
+        side_effect=[
+            _make_result(scalar=event),
+            _make_result(rows=markets),
+            _make_result(all_rows=[]),  # polymarket parent groups
+            _make_result(rows=[]),  # unlinked fallback
+            _make_result(rows=outcomes),
+        ]
+    )
     return db
 
 
@@ -134,22 +138,26 @@ def clear_game_markets_cache():
 
 # ------------------------------------------------------------------ parse --
 
+
 class TestTheLineIsTheNumberBesideTheOU:
     """Every name here is copied from production, 2026-09-05."""
 
-    @pytest.mark.parametrize("name,expected", [
-        ("Paul vs. Alcaraz: Set 1 Games O/U 9.5", 9.5),
-        ("Paul vs. Alcaraz: Set 4 Games O/U 9.5", 9.5),
-        ("Wu vs. Alcaraz: Set 1 Games O/U 10.5", 10.5),
-        ("Wu vs. Alcaraz: Set 1 Games O/U 8.5", 8.5),
-        ("Yibing Wu vs. Carlos Alcaraz: Total Sets O/U 3.5", 3.5),
-        ("US Open ATP: Yibing Wu vs Carlos Alcaraz Total Sets: O/U 4.5", 4.5),
-        ("US Open ATP: Yibing Wu vs Carlos Alcaraz Set 1 O/U 10.5", 10.5),
-    ])
+    @pytest.mark.parametrize(
+        "name,expected",
+        [
+            ("Paul vs. Alcaraz: Set 1 Games O/U 9.5", 9.5),
+            ("Paul vs. Alcaraz: Set 4 Games O/U 9.5", 9.5),
+            ("Wu vs. Alcaraz: Set 1 Games O/U 10.5", 10.5),
+            ("Wu vs. Alcaraz: Set 1 Games O/U 8.5", 8.5),
+            ("Yibing Wu vs. Carlos Alcaraz: Total Sets O/U 3.5", 3.5),
+            ("US Open ATP: Yibing Wu vs Carlos Alcaraz Total Sets: O/U 4.5", 4.5),
+            ("US Open ATP: Yibing Wu vs Carlos Alcaraz Set 1 O/U 10.5", 10.5),
+        ],
+    )
     def test_the_set_number_is_not_the_line(self, name, expected):
-        assert _extract_threshold(name) == expected, (
-            f"{name!r} parsed to the wrong number — this is the 'Projected 4' rung"
-        )
+        assert (
+            _extract_threshold(name) == expected
+        ), f"{name!r} parsed to the wrong number — this is the 'Projected 4' rung"
 
     def test_three_set_one_markets_stop_collapsing_into_one_rung(self):
         """The parse bug did not only mislabel rungs, it deleted them.
@@ -169,21 +177,24 @@ class TestTheLineIsTheNumberBesideTheOU:
 class TestEveryOtherNameParsesAsItDid:
     """The control arm: no other provider shape moves."""
 
-    @pytest.mark.parametrize("name,expected", [
-        # Kalshi puts the line in the OUTCOME and there is no O/U token there.
-        ("Over 224.5", 224.5),
-        ("Under 218.5", 218.5),
-        ("Over 220", 220.0),
-        ("Over 8.5 goals", 8.5),
-        # Polymarket totals whose line was already first.
-        ("Reds vs. Cardinals: O/U 10.5", 10.5),
-        ("Juan Soto: Home Runs O/U 1.5", 1.5),
-        # Threshold-style outcomes.
-        ("Joel Embiid: 1+", 1.0),
-        ("2+", 2.0),
-        # A spread is not a total, and its number must not move either.
-        ("Set Handicap: Alcaraz (-2.5) vs Wu (+2.5)", 2.5),
-    ])
+    @pytest.mark.parametrize(
+        "name,expected",
+        [
+            # Kalshi puts the line in the OUTCOME and there is no O/U token there.
+            ("Over 224.5", 224.5),
+            ("Under 218.5", 218.5),
+            ("Over 220", 220.0),
+            ("Over 8.5 goals", 8.5),
+            # Polymarket totals whose line was already first.
+            ("Reds vs. Cardinals: O/U 10.5", 10.5),
+            ("Juan Soto: Home Runs O/U 1.5", 1.5),
+            # Threshold-style outcomes.
+            ("Joel Embiid: 1+", 1.0),
+            ("2+", 2.0),
+            # A spread is not a total, and its number must not move either.
+            ("Set Handicap: Alcaraz (-2.5) vs Wu (+2.5)", 2.5),
+        ],
+    )
     def test_unchanged(self, name, expected):
         assert _extract_threshold(name) == expected
 
@@ -191,30 +202,37 @@ class TestEveryOtherNameParsesAsItDid:
         assert _extract_threshold("No threshold") is None
 
     def test_an_ou_token_with_no_number_falls_back(self):
-        """"O/U" with nothing after it must not swallow the name's own number."""
+        """ "O/U" with nothing after it must not swallow the name's own number."""
         assert _extract_threshold("Over 47.5 — O/U") == 47.5
 
 
 # ------------------------------------------------------------------ scope --
 
+
 class TestWhatCountsAsAMatchTotal:
-    @pytest.mark.parametrize("name", [
-        "Paul vs. Alcaraz: Set 1 Games O/U 9.5",
-        "Paul vs. Alcaraz: Set 4 Games O/U 9.5",
-        "Yibing Wu vs. Carlos Alcaraz: Total Sets O/U 3.5",
-        "US Open ATP: Yibing Wu vs Carlos Alcaraz Total Sets: O/U 4.5",
-    ])
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "Paul vs. Alcaraz: Set 1 Games O/U 9.5",
+            "Paul vs. Alcaraz: Set 4 Games O/U 9.5",
+            "Yibing Wu vs. Carlos Alcaraz: Total Sets O/U 3.5",
+            "US Open ATP: Yibing Wu vs Carlos Alcaraz Total Sets: O/U 4.5",
+        ],
+    )
     def test_set_scope_and_sets_unit_are_not_match_totals(self, name):
         assert _is_match_scope_tennis_total(name) is False
 
-    @pytest.mark.parametrize("name", [
-        "Paul vs. Alcaraz: Match O/U 36.5",
-        "Paul vs. Alcaraz: Match O/U 40.5",
-        "Reds vs. Cardinals: O/U 10.5",
-        "Thunder at Lakers: Total Points",
-        None,
-        "",
-    ])
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "Paul vs. Alcaraz: Match O/U 36.5",
+            "Paul vs. Alcaraz: Match O/U 40.5",
+            "Reds vs. Cardinals: O/U 10.5",
+            "Thunder at Lakers: Total Points",
+            None,
+            "",
+        ],
+    )
     def test_anything_that_does_not_name_a_set_is_match_scope(self, name):
         assert _is_match_scope_tennis_total(name) is True
 
@@ -244,16 +262,19 @@ class TestTheMatchMapIsDrawnFromMatchMarkets:
         markets, outcomes = [], []
         for i, (name, outcome_name, prob) in enumerate(PREGAME_MARKETS, start=1):
             markets.append(_make_market(id=100 + i, name=name, event_id=event.id))
-            outcomes.append(_make_outcome(
-                id=200 + i, market_id=100 + i, name=outcome_name, probability=prob
-            ))
+            outcomes.append(
+                _make_outcome(
+                    id=200 + i, market_id=100 + i, name=outcome_name, probability=prob
+                )
+            )
 
         response = await get_game_markets(event.id, _db_for(event, markets, outcomes))
 
         thresholds = sorted(t["threshold"] for t in response["totals"])
-        assert thresholds == [36.5, 40.5], (
-            "the set-scope rungs are still on the match games rail"
-        )
+        assert thresholds == [
+            36.5,
+            40.5,
+        ], "the set-scope rungs are still on the match games rail"
 
     @pytest.mark.asyncio
     async def test_the_headline_rung_is_a_match_line(self):
@@ -266,9 +287,11 @@ class TestTheMatchMapIsDrawnFromMatchMarkets:
         markets, outcomes = [], []
         for i, (name, outcome_name, prob) in enumerate(PREGAME_MARKETS, start=1):
             markets.append(_make_market(id=300 + i, name=name, event_id=event.id))
-            outcomes.append(_make_outcome(
-                id=400 + i, market_id=300 + i, name=outcome_name, probability=prob
-            ))
+            outcomes.append(
+                _make_outcome(
+                    id=400 + i, market_id=300 + i, name=outcome_name, probability=prob
+                )
+            )
 
         response = await get_game_markets(event.id, _db_for(event, markets, outcomes))
 
@@ -293,11 +316,14 @@ class TestTheMapIsNeverEmptiedToCleanIt:
         )
         markets = [
             _make_market(
-                id=501, name="Wu vs. Alcaraz: Set 1 Games O/U 10.5",
-                event_id=event.id, status="resolved",
+                id=501,
+                name="Wu vs. Alcaraz: Set 1 Games O/U 10.5",
+                event_id=event.id,
+                status="resolved",
             ),
             _make_market(
-                id=502, name="Yibing Wu vs. Carlos Alcaraz: Total Sets O/U 3.5",
+                id=502,
+                name="Yibing Wu vs. Carlos Alcaraz: Total Sets O/U 3.5",
                 event_id=event.id,
             ),
         ]
@@ -309,6 +335,7 @@ class TestTheMapIsNeverEmptiedToCleanIt:
         response = await get_game_markets(event.id, _db_for(event, markets, outcomes))
 
         thresholds = sorted(t["threshold"] for t in response["totals"])
-        assert thresholds == [3.5, 10.5], (
-            "the settled tennis map lost its rungs — and with them the card"
-        )
+        assert thresholds == [
+            3.5,
+            10.5,
+        ], "the settled tennis map lost its rungs — and with them the card"

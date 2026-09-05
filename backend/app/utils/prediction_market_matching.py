@@ -1652,9 +1652,45 @@ def extract_game_date_from_ticker(external_id: str) -> Optional[datetime]:
 # map), these are pure string extractions, so they work for college / esports /
 # tennis tickers whose team codes are unmapped — precisely the classes that
 # mislink onto a foreign event (the settled-page "foreign props" bug).
-_KALSHI_GAME_ID_RE = re.compile(r"(\d{2}[A-Za-z]{3}\d{1,2}(?:\d{4})?[A-Za-z][A-Za-z0-9]*)")
+#
+# 🔴 TWO THINGS MAKE THIS A KALSHI TICKER PARSER RATHER THAN A DIGIT SCANNER,
+# AND #3198 IS WHAT IT COSTS TO OMIT EITHER.
+#
+# Before this ship the token was `\d{2}[A-Za-z]{3}\d{1,2}...`, searched
+# UNANCHORED and with no month validation, so any three letters between digits
+# were a month. A Polymarket condition id is 64 hex characters, hex letters are
+# a-f, and `dec`/`feb`/`fac`-shaped runs turn up in them constantly: the id
+# `0xd9db…ffc69a58241` yielded the "team code" `A58241`. That is not a near
+# miss — it is a Kalshi answer manufactured out of a string from another venue.
+#
+# The cost lands in `filter_foreign_game_markets`, whose contract says
+# "markets with no parseable team-code (Polymarket / non-dated) are ALWAYS
+# kept". Four of the twelve Polymarket ids on the settled Wu v Alcaraz page
+# parsed, so that page carried five "team codes", the filter concluded there
+# were several games on it, and it deleted every market whose invented code was
+# not the real Kalshi one — the match total, a sets rung, a set-games rung and
+# the set-1 winner. Census over every event commencing in a 2-day window
+# (2026-09-05, 1,358 events / 7,869 linked markets): **79 event pages silently
+# lost 623 Polymarket markets, and all 623 were false positives** — the filter
+# caught zero genuine foreign markets in the window.
+#
+# So the token must (a) begin at a hyphen segment boundary, which is what makes
+# it a TICKER rather than a substring — Kalshi is `<SERIES>-<GAMEID>[-...]` and
+# a Polymarket condition id has no hyphen at all — and (b) carry a real month
+# abbreviation. This is the same discipline `_TICKER_DATE_RE` above already had,
+# which is exactly why `extract_game_date_from_ticker` never fell for these ids
+# and the team-code extractor did. Measured over the same 7,869 linked markets:
+# 1,904 bogus non-Kalshi parses removed, **0 Kalshi tickers parse differently**.
+_KALSHI_TICKER_MONTH = r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)"
+_KALSHI_GAME_ID_RE = re.compile(
+    rf"(?:^|-)(\d{{2}}{_KALSHI_TICKER_MONTH}\d{{1,2}}(?:\d{{4}})?[A-Za-z][A-Za-z0-9]*)",
+    re.IGNORECASE,
+)
 # Same token, capturing the TEAM-code portion only (date + optional HHMM stripped).
-_KALSHI_GAME_TEAMS_RE = re.compile(r"\d{2}[A-Za-z]{3}\d{1,2}(?:\d{4})?([A-Za-z][A-Za-z0-9]*)")
+_KALSHI_GAME_TEAMS_RE = re.compile(
+    rf"(?:^|-)\d{{2}}{_KALSHI_TICKER_MONTH}\d{{1,2}}(?:\d{{4}})?([A-Za-z][A-Za-z0-9]*)",
+    re.IGNORECASE,
+)
 
 
 def kalshi_game_id(external_id: Optional[str]) -> Optional[str]:
@@ -1813,6 +1849,12 @@ def filter_foreign_game_markets(markets, event_date):
     full date+teams game-id) so that legitimate same-matchup markets with a
     shifted resolution-date ticker (e.g. ``KXNBAMENTION`` dated +1 day) are kept.
     Markets with no parseable team-code (Polymarket / non-dated) are always kept.
+    That sentence is a CONTRACT WITH THE PARSER, not an observation about the
+    data, and until #3198 the parser did not honour it: a Polymarket 64-hex
+    condition id would yield an invented team-code, this filter would read it as
+    a second game on the page, and real markets were deleted. See
+    `_KALSHI_GAME_TEAMS_RE` — the token must now start at a hyphen segment and
+    carry a real month, which is what "Kalshi ticker" means here.
 
     Fail-open by design: if ``event_date`` is unknown, only one team-code is
     present, or NO linked team-code's ticker date matches the event date (e.g. a
