@@ -85,7 +85,17 @@ NULL_RATE = 0.25
 #: the `market_metadata` dicts — so unlike the byte constants this one does not
 #: move with text widths. Deterministic given the shape constants above, which is
 #: what makes a 1.5x alarm on it a real signal rather than a flaky one.
-MEASURED_NODES = 114_421
+#:
+#: Re-measured 2026-09-05 after rebasing onto master: 114,421 -> 115,133. The
+#: cause is the `price_polled_at` derived snapshot field that landed on master
+#: independently, i.e. the shape genuinely grew by one column's worth of nodes;
+#: this is the guard reporting real drift, not a flake. The 1.5x budget
+#: assertion below is UNCHANGED and still passes with room (115,133 against a
+#: 200,000 cap is 58%, and the alarm sits at 133,333) — re-measuring the
+#: baseline must never become a way of quietly absorbing growth, so the two are
+#: deliberately separate assertions: this one says "the shape moved", the other
+#: says "the shape is still safe". Flagged by CERT-1856 as a follow-up.
+MEASURED_NODES = 115_133
 
 #: The alarm fires BEFORE breakage, not at it. A guard that goes red at the
 #: moment the share stops working has told us nothing the latency would not
