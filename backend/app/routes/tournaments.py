@@ -265,9 +265,58 @@ def _hours_since(stamp: datetime | None, at: datetime) -> float | None:
     """
     if stamp is None:
         return None
-    if stamp.tzinfo is None:
-        stamp = stamp.replace(tzinfo=timezone.utc)
-    return (at - stamp).total_seconds() / 3600.0
+    return (at - _as_utc(stamp)).total_seconds() / 3600.0
+
+
+def _as_utc(stamp: datetime) -> datetime:
+    """A naive stamp read as UTC, an aware one untouched.
+
+    Shared by the two things here that compare timestamps, for the reason
+    ``_hours_since`` gives above: a naive value out of this database means the
+    driver dropped the tzinfo, never that somebody meant local time.  Two copies
+    of that rule is one copy too many — an age and a max must not be able to
+    disagree about what a naive stamp means.
+    """
+    return stamp if stamp.tzinfo is not None else stamp.replace(tzinfo=timezone.utc)
+
+
+def _price_observed_at(
+    *,
+    history_at: datetime | None,
+    touched_at: datetime | None,
+    probability: Any,
+) -> datetime | None:
+    """The newer of the two lower bounds on "when did we last see this price".
+
+    Split out of :func:`_load_prices` so the rule can be stated once and tested
+    without a database or a route.  The full reasoning, and the two production
+    measurements that make it a max rather than a choice, are in that function's
+    docstring — read them before changing this.
+
+    Three refusals, each of which has a row that needs it:
+
+    * **No price, no observation.**  ``last_updated`` is ``NOT NULL`` with
+      ``server_default=func.now()``, so an unpriced outcome minted a minute ago
+      would otherwise claim a fresh reading of nothing.  The history clock is
+      still honoured in that case — ``load_latest_observed_at`` only returns ids
+      that have a PRICED snapshot, so its presence is itself the evidence.
+    * **Naive stamps are made UTC before comparing.**  ``max()`` over a mixed
+      naive/aware pair raises ``TypeError``, and this runs inside the dict
+      comprehension that builds EVERY price, so the raise would empty the whole
+      hub rather than one cell — the Hot List's "one bad item must never wipe a
+      scoring pass".  Both columns are ``timezone=True`` in the model, so this
+      is belt-and-braces against a caller — a test fake, a SQLite gate — that
+      hands over naive datetimes.
+    * **``None`` is absence, never "now".**  Either clock may be missing; both
+      missing means no observation, which is what ``price_state`` reads as
+      ``dark``, and that is the correct reading.
+    """
+    stamps = []
+    if history_at is not None:
+        stamps.append(_as_utc(history_at))
+    if touched_at is not None and probability is not None:
+        stamps.append(_as_utc(touched_at))
+    return max(stamps) if stamps else None
 
 
 async def _load_prices(
@@ -275,10 +324,64 @@ async def _load_prices(
 ) -> dict[int, dict[str, Any]]:
     """Current price + the time it was last actually OBSERVED, per outcome.
 
-    Freshness comes from ``futures_odds_snapshots.captured_at`` and never from
-    ``futures_outcomes.last_updated``.  The Day-1 census measured the latter at
-    a month stale on the Polymarket men's field while its snapshots ran current
-    — a page that trusted it would report confidence it does not have.
+    🔴 **FRESHNESS IS THE NEWER OF TWO CLOCKS, AND BOTH HALVES ARE MEASURED
+    (#3243 / #2898).**  This loader used to read
+    ``futures_odds_snapshots.captured_at`` and say, in this docstring, "never
+    from ``futures_outcomes.last_updated``".  That sentence was not a
+    preference, it was the Day-1 census: ``last_updated`` measured a month stale
+    on the Polymarket men's field while its snapshots ran current.  It is still
+    true.  It is also only half the population.
+
+    Measured on production 2026-09-05 15:38-15:53Z, the 18 Kalshi ``duel``
+    markets behind the Round-of-32 slate, the exact inverse:
+
+        futures_outcomes.last_updated       15:53:00Z  (moving every ~30 s)
+        futures_odds_snapshots.captured_at  06:53:42Z  (8.9 h, and IDENTICAL
+                                                        to the microsecond on
+                                                        all 18 — one batch)
+
+    so the page rendered "⚠ Updates paused … these are the last probabilities we
+    saw, not live ones" over a number that had changed 40 seconds earlier, while
+    the sibling event page said "live · 42s ago" in the same minute.
+
+    Neither clock is wrong; each is a **lower bound** written by a writer that
+    had just read the venue, and each has a population the other covers:
+
+    * ``captured_at`` is the HISTORY clock.  Its writers are the polls and the
+      candlestick backfills.  ``kalshi_ws`` — which flushes every 2 s and is the
+      only thing pricing an in-play match — writes the price columns and *no
+      snapshot row at all*, by design (see its own comment: it "owes both stamps
+      the polls owe").  So this clock can never describe a WS-priced market,
+      however healthy ingest is.
+    * ``last_updated`` is the TOUCH stamp — "when did a poller last SEE this
+      row".  It carries no ``onupdate``; every price writer stamps it
+      explicitly, which is exactly the shape gotcha #155 prescribes and the
+      reason this is not an "any write" column.  It is also what the *sibling*
+      surfaces already answer this question with: the event page reads
+      ``win_probability_sources[*].updated_at`` and
+      Discover reads ``price_polled_at = MAX(last_updated)``
+      (``utils/futures_market_snapshot.py``).
+
+    Because both are lower bounds and neither can be stamped without a writer
+    having looked, **the newer of the two is the honest answer and taking it
+    cannot regress either measured case**: Day-1's month-stale ``last_updated``
+    loses to its current snapshot, today's 8.9 h snapshot loses to its live
+    ``last_updated``.  Do not collapse this back to one column in either
+    direction — each collapse has already shipped once and lied.
+
+    The price guard is what keeps the max honest.  ``last_updated`` carries
+    ``server_default=func.now()``, so an outcome created minutes ago and never
+    priced would otherwise report a fresh observation of a price that does not
+    exist.  A row with no ``current_probability`` contributes no touch stamp.
+
+    ⚠ **THIS DOES NOT CLOSE THE HISTORY HOLE, and that is a separate defect
+    (#3247), deliberately still visible in the data.**  Those 18 markets have no
+    observation row since 06:53:42Z because every snapshot-writing rail excludes
+    them — the committed register (v12, generated 2026-08-27) pins 462 market
+    ids and none of the 18, ``futures_price_refresh``'s class arm wants tier 1
+    and they are tier 5, and ``poll_kalshi_markets`` (2 h) is deadline-truncated.
+    Their charts have a nine-hour gap during play.  Fixing the banner must not
+    be read as fixing that.
 
     **AND THE BOOK THE PRICE CAME OFF**, since UX-P157.  This one loader feeds
     every surface on the hub — boards, grid, bracket, slate, props — so a fact
@@ -349,6 +452,17 @@ async def _load_prices(
                 # below — a number and the time it was taken travel together or
                 # they are not a measurement.
                 FuturesMarket.volume_updated_at,
+                # ── AND THE OTHER FRESHNESS CLOCK (#3243).
+                #
+                # The touch stamp, riding the SELECT that is already fetching
+                # this row rather than a second round trip. The same call was
+                # measured in `utils/futures_market_snapshot.py`: a separate
+                # `MAX(last_updated) … GROUP BY` over the same ids is a second
+                # bitmap heap scan of the same rows and cost 423 ms there, while
+                # one more column on a statement already reading them is inside
+                # its own run-to-run noise. See the docstring for why BOTH
+                # clocks are read and why the newer one wins.
+                FuturesOutcome.last_updated,
             )
             # OUTER, and it matters: an INNER join would drop the whole price
             # row if a market were ever missing, and a dropped price does not
@@ -382,7 +496,11 @@ async def _load_prices(
                 if row.opening_probability is not None
                 else None
             ),
-            "observed_at": observed_by_id.get(row.id),
+            "observed_at": _price_observed_at(
+                history_at=observed_by_id.get(row.id),
+                touched_at=row.last_updated,
+                probability=row.current_probability,
+            ),
             "source_name": row.name,
             # {"level": ..., "reasons": [...]}. Graded here, once, so no
             # builder downstream can hold a second opinion about the same book.
