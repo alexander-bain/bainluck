@@ -37,7 +37,7 @@ import { groupAwardRows, type AwardNominee } from "@/lib/myStuffAwards";
 import { MY_STUFF_FEED_PARAMS, followedSportFutures } from "@/lib/myStuffSections";
 import { feedItemHasRenderableContent } from "@/components/discover/utils";
 import EntityImage from "@/components/EntityImage";
-import { eventSectionKey, isSuspendedStatus, liveSectionTitle } from "@/lib/eventState";
+import { eventSectionKey, hasNoReportedResult, liveSectionTitle } from "@/lib/eventState";
 
 export default function MyStuffPage() {
   // Analytics hooks must be called before conditional returns
@@ -351,7 +351,14 @@ function MyTeamsFeed({ principal }: { principal: string }) {
       // depended on the list SQL), arrived with an unrecognised status, and was
       // filed under Upcoming — a match that had already been played, listed
       // among games that have not started.
-      const section = eventSectionKey(data.status);
+      //
+      // 🔴 #3211 passes the TIME as well, and this surface needs it more than
+      // any other for the reason the paragraph above already gives: My Stuff
+      // reaches pinned events BY ID, so it never depended on the list SQL and
+      // has always been able to hold a row no rail would return. A pinned
+      // `scheduled` row hours past its own kickoff is that same defect one
+      // status later — filed under Upcoming, among games that have not started.
+      const section = eventSectionKey(data.status, data.commence_time);
       if (section === "live") {
         liveNow.push(item);
       } else if (section === "finished") {
@@ -386,7 +393,10 @@ function MyTeamsFeed({ principal }: { principal: string }) {
         // three surfaces cannot describe one bucket three ways (live/048).
         title: liveSectionTitle(
           liveNow.some((item) =>
-            isSuspendedStatus((item.data as FeedEventData).status),
+            hasNoReportedResult(
+              (item.data as FeedEventData).status,
+              (item.data as FeedEventData).commence_time,
+            ),
           ),
         ),
         accent: "text-accent-live",

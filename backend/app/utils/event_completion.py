@@ -250,6 +250,81 @@ RESUMABLE_STATUSES = frozenset({"scheduled", EVENT_SUSPENDED})
 #: over a card that states its own state is not the lie; an absent match is.
 RECENT_RAIL_STATUSES = ["completed", "closed", EVENT_SUSPENDED]
 
+#: How long after its own ``commence_time`` a ``scheduled`` row is still
+#: plausibly about to start.
+#:
+#: It is the grace the upcoming rails already spend — ``now - 2h`` was written
+#: as a bare literal in ``league_futures.upcoming_games_query`` and again in
+#: ``teams``, and the number is the same claim in both: a row whose kickoff is
+#: within this of now may still be a fixture that has not quite begun, because
+#: nothing writes ``live`` the instant the first ball is bowled. Named so the
+#: two rails and the guard can spend ONE number, since the invariant below is
+#: stated in terms of it and a copy would let the two halves disagree about
+#: where the boundary is.
+UPCOMING_GRACE = timedelta(hours=2)
+
+
+def started_without_result(status, commence_time, now) -> bool:
+    """Has this row's kickoff passed while it still claims to be a fixture?
+
+    🔴 THE THIRD STATUS THROUGH THE SAME HOLE — #3211, lane1/134.
+
+    :data:`RECENT_RAIL_STATUSES`' note above records ``suspended`` falling
+    between a league page's two rails and appearing on it NOWHERE. The note
+    fixed ``suspended`` and left the structure that produced it, so the same
+    page had the same hole one status over, and much wider: **171 US Open
+    matches** (99 ATP, 72 WTA, measured on production 2026-09-05) were on
+    ``/sports/tennis_atp``, ``/sports/tennis_wta`` and the two ``/sport/tennis``
+    league pages on neither rail and in no list, for the whole fortnight.
+
+    The mechanism is the one live/056 named and did not close. Every surface
+    that splits events in two asks the pair:
+
+        upcoming  ``status IN (live, scheduled)`` AND ``commence >= now - 2h``
+        recent    ``status IN (completed, closed, suspended)`` AND a lookback
+
+    and a ``scheduled`` row more than two hours past its own kickoff answers
+    NEITHER: the upcoming rail drops it on the clock, the recent rail drops it
+    on the status. Nothing ages it into view — the lookback only ever moves
+    away from it — so the row is unreachable permanently rather than briefly.
+
+    ── WHY THE ROWS SIT IN THAT STATE, WHICH IS A DIFFERENT BUG ──
+
+    All 171 share one signature: 100% ``commence_time_source = kalshi_ticker``
+    and 100% ``commence_time`` at exactly ``00:00:00Z``. That is gotcha #14 — a
+    Kalshi row's ``commence_time`` is the ticker-derived CLOSE date, not the
+    start — so the row sits in Upcoming until 02:00Z of its own day and then
+    falls through. It stays ``scheduled`` because tennis has no ESPN anchor at
+    all (#2700), so 70% of past Kalshi-derived tennis rows never reach a settled
+    state. **Both of those are real and neither is this function.** They are
+    #2693 and #1946, and they would each leave the other's damage in place: fix
+    the settlement hole and the rail gap still swallows every row that has not
+    settled yet; fix the rail gap and the row is reachable and honest about
+    having no result. Reachable-and-honest is a page; absent is not.
+
+    ── WHAT THIS PREDICATE IS FOR ──
+
+    It is the RAIL question — "has this row's own clock run out?" — and it is
+    deliberately not a claim about the outcome, the score, or whether anybody
+    played. ``suspended`` says a source watched and stopped; this says nothing
+    watched at all. To a reader those are the same sentence, which is why the
+    surfaces render them identically (``eventState.SUSPENDED_LABEL``,
+    "No result reported") and why this rides the recent rail for the reason
+    :data:`RECENT_RAIL_STATUSES` gives verbatim: the upcoming rail's grace
+    excludes it by construction, and the recent rail's lookback ages it off
+    exactly where the Final it never got would have.
+
+    ``None`` for either time is False. A row we cannot place on the clock is a
+    row we have no standing to move off the schedule — the same rule
+    :func:`is_retired_event_status` applies to an unrecognised status.
+    """
+    if status != "scheduled":
+        return False
+    if commence_time is None or now is None:
+        return False
+    return commence_time < now - UPCOMING_GRACE
+
+
 #: RETIRED. The row is still in the table and is still addressable by anything
 #: that keys on its id — an admin page, a backfill, a foreign key — and it is
 #: NOT part of the schedule any reader should be shown.

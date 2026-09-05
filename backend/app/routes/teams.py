@@ -5,7 +5,7 @@ import re
 import time
 from datetime import datetime, timedelta, timezone
 
-from app.utils.event_completion import RECENT_RAIL_STATUSES
+from app.utils.event_rails import recent_rail_condition, upcoming_rail_condition
 from app.utils.lifecycle import served_event_status
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -78,8 +78,11 @@ async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession
         .options(selectinload(Event.sport))
         .where(
             base_event_filter,
-            Event.status.in_(["live", "scheduled"]),
-            Event.commence_time >= now - timedelta(hours=2),
+            # The status × time half is `utils.event_rails` (#3211) — it was
+            # these same two lines on the league page, and the pair of rails is
+            # only correct as a pair. See that module for why `live` no longer
+            # carries a `now - 2h` floor.
+            upcoming_rail_condition(now),
         )
         .order_by(
             case((Event.status == "live", 0), else_=1),
@@ -105,8 +108,17 @@ async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession
             # same change — without that it would have graded the PARTIAL score
             # as a result ("L 1–2"), which is the false Final live/048 removed,
             # printed by a different component.
-            Event.status.in_(RECENT_RAIL_STATUSES),
-            Event.commence_time >= now - timedelta(days=30),
+            #
+            # 🔴 AND a `scheduled` row past its own kickoff — #3211, the third
+            # state through the same hole and the one that cost 171 US Open
+            # matches on the league pages. `RecentGameCard` needs no further
+            # teaching: such a row has no score at all, so the state it renders
+            # is the score-less arm of the one live/056 already gave it.
+            #
+            # The 30-day lookback is PASSED, not assumed — a team plays less
+            # often than its league does, and that difference is this page's
+            # decision rather than the shared module's.
+            recent_rail_condition(now, lookback=timedelta(days=30)),
         )
         .order_by(Event.commence_time.desc())
         .limit(5)

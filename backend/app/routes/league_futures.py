@@ -25,7 +25,7 @@ from app.routes.events import (
 )
 from app.services import get_db
 from app.utils.aggregation import compute_aggregate_probability
-from app.utils.event_completion import RECENT_RAIL_STATUSES
+from app.utils.event_rails import recent_rail_condition, upcoming_rail_condition
 from app.utils.game_state import normalize_live_game_state
 from app.utils.entity_page_tiers import (
     AVAILABILITY_DEGRADED,
@@ -233,14 +233,19 @@ def upcoming_games_query(sport_key: str, now: datetime):
     pushdown to prevent, and adding the fence measured strictly WORSE:
     `basketball_ncaab` went 56 blocks to 5,130 when it was applied here.
     A fence is a claim about one plan, not a house style.
+
+    🔴 The status × time filter is `utils.event_rails.upcoming_rail_condition`
+    and is no longer written here (#3211). It was the same two lines on the team
+    page, and the pair of rails is only correct as a PAIR — the third state to
+    fall between them cost 171 US Open matches. The module carries the argument
+    for `live` losing this rail's `now - 2h` floor.
     """
     return (
         select(Event)
         .join(Sport, Sport.id == Event.sport_id)
         .where(
             Sport.key == sport_key,
-            Event.status.in_(["live", "scheduled"]),
-            Event.commence_time >= now - timedelta(hours=2),
+            upcoming_rail_condition(now),
         )
         .order_by(
             case((Event.status == "live", 0), else_=1),
@@ -312,14 +317,15 @@ def recent_results_query(sport_key: str, now: datetime):
             # doubleheader (and every source that closes rather than completes)
             # is orphaned from a recents rail that only looks for 'completed'.
             #
-            # 🔴 AND `suspended` — live/056. The other rail is live/scheduled
-            # gated on `now - 2h`, and a match is suspended precisely because
-            # hours have passed, so between the two lists it appeared on this
-            # league's page NOWHERE. Shared vocabulary rather than a fourth
-            # hand-written literal: a copy is how the omission survived
-            # CERT-786's sweep of the feed and `GET /api/events`.
-            Event.status.in_(RECENT_RAIL_STATUSES),
-            Event.commence_time >= now - timedelta(days=RESULTS_LOOKBACK_DAYS),
+            # 🔴 AND `suspended` (live/056) AND a `scheduled` row past its own
+            # kickoff (#3211) — the second and third states to fall between this
+            # rail and the upcoming one and appear on this league's page
+            # NOWHERE. Both arms now live in `utils.event_rails`, with this
+            # rail's lookback passed in rather than assumed, because the pair is
+            # only correct as a pair and it was written twice. A copy is how the
+            # omission survived CERT-786's sweep of the feed and
+            # `GET /api/events`, and then survived live/056's sweep of this file.
+            recent_rail_condition(now, lookback=timedelta(days=RESULTS_LOOKBACK_DAYS)),
         )
         .offset(literal_column("0"))
         .subquery()

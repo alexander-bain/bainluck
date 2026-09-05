@@ -47,20 +47,29 @@
  * `/sports` itself. The section is titled "Finished" to match ux/1053's wording
  * exactly, so the two surfaces cannot name one bucket two things.
  *
- * ═══ NO CLOCK, BY CONSTRUCTION ═══
+ * ═══ NO CLOCK, BY CONSTRUCTION — AMENDED BY #3211 ═══
  *
- * Nothing here branches on the current time, so there is no `now` to inject and
- * no anchor that can rot (gotcha #44). This module only ever answers "which
- * bucket, and in what order within it" — never "is this still fresh". Ageing a
- * result out is a different decision with a different owner
- * (`lib/sports/finishedCardGuard.ts`), and this module deliberately does not
- * make it: a league page is where you go to see what the league did.
+ * This module used to branch on nothing time-dependent, and said so. **It now
+ * does**, and pretending otherwise would be the worse of the two.
+ *
+ * `eventSectionKey`'s newest rung is "a row that still says `scheduled` more
+ * than two hours after its own kickoff is not upcoming", and that question has
+ * no answer without a clock. So `now` is a PARAMETER with a `Date.now()`
+ * default, never a read inside the loop: an injected anchor is what lets a test
+ * assert the boundary from both sides, and gotcha #44's rule is *offset from a
+ * fixed anchor*, not *never look at the time*.
+ *
+ * What has NOT changed is the scope: this module still only answers "which
+ * bucket, and in what order within it". Ageing a result out remains a different
+ * decision with a different owner (`lib/sports/finishedCardGuard.ts`), and this
+ * module deliberately does not make it: a league page is where you go to see
+ * what the league did.
  *
  * PURE and NON-MUTATING — the caller's array is never sorted in place.
  */
 
 import type { Event } from "@/lib/types";
-import { eventSectionKey, isSuspendedStatus, liveSectionTitle } from "@/lib/eventState";
+import { eventSectionKey, hasNoReportedResult, liveSectionTitle } from "@/lib/eventState";
 
 /** The three buckets, in the order they are rendered. */
 export type LeagueSectionKey = "live" | "upcoming" | "finished";
@@ -131,15 +140,22 @@ function compareNullsLast(
  *
  * An empty bucket emits no section, so a league with only scheduled games gets
  * exactly one heading rather than two empty ones.
+ *
+ * `now` is INJECTED — see the amended "no clock" note in the module docblock.
  */
-export function buildLeagueSections(events: Event[]): LeagueSection[] {
+export function buildLeagueSections(
+  events: Event[],
+  now: number = Date.now(),
+): LeagueSection[] {
   const live: Event[] = [];
   const upcoming: Event[] = [];
   const finished: Event[] = [];
 
   for (const event of events) {
-    // The shared ladder (live/048 + CERT-786), not a third copy of it.
-    const section = eventSectionKey(event.status);
+    // The shared ladder (live/048 + CERT-786 + #3211), not a third copy of it.
+    // The TIME is passed because the ladder's newest rung needs it: a row that
+    // still says `scheduled` hours after its own kickoff is not upcoming.
+    const section = eventSectionKey(event.status, event.commence_time, now);
     if (section === "live") live.push(event);
     else if (section === "finished") finished.push(event);
     else upcoming.push(event);
@@ -158,7 +174,11 @@ export function buildLeagueSections(events: Event[]): LeagueSection[] {
       key: "live",
       // The header reads the bucket rather than asserting "Live Now" over a
       // rain-delayed match — the same shared rule `/sports` and My Stuff use.
-      title: liveSectionTitle(live.some((e) => isSuspendedStatus(e.status))),
+      // #3211: and over a match nobody ever reported starting, which reaches
+      // this bucket for the same reason and must move the heading for it too.
+      title: liveSectionTitle(
+        live.some((e) => hasNoReportedResult(e.status, e.commence_time, now)),
+      ),
       events: live,
     });
   }

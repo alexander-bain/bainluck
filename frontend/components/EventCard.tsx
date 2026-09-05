@@ -19,8 +19,8 @@ import { renderedDuelPercents } from "@/lib/renderedPercent";
 import { teamShortNames } from "@/lib/teamShortName";
 import { formatFinishedGameLabel, formatLiveClockLabel } from "@/lib/gameTimeLabel";
 import {
+  hasNoReportedResult,
   isFinishedStatus,
-  isSuspendedStatus,
   suspendedSummary,
 } from "@/lib/eventState";
 
@@ -165,7 +165,14 @@ export default function EventCard({
   const hasStarted = new Date(event.commence_time).getTime() <= Date.now();
   const isLive = event.status === "live" && hasStarted;
   const isFinished = isFinishedStatus(event.status);
-  const isSuspended = isSuspendedStatus(event.status);
+  // #3211 — `hasNoReportedResult`, not `isSuspendedStatus`. The branch below is
+  // choosing between printing a START TIME and saying no result was reported,
+  // and that choice has the same right answer for a `scheduled` row hours past
+  // its own kickoff as it does for a suspended one. Before this, 171 US Open
+  // matches that reached no rail at all would, on reaching one, have rendered
+  // "Sep 1 5:00 PM" — the upcoming-branch fall-through `lib/eventState.ts`
+  // opens by naming as the quieter lie.
+  const isSuspended = hasNoReportedResult(event.status, event.commence_time);
   const homeFavorite = (homeProb ?? 0) >= (awayProb ?? 0);
 
   // Format time and date compactly

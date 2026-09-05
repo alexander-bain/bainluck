@@ -78,8 +78,8 @@ import { derivePeriodBoundaries } from "@/lib/periodMarkers";
 import { formatLiveClockLabel } from "@/lib/gameTimeLabel";
 import {
   SUSPENDED_DESCRIPTION,
+  hasNoReportedResult,
   isFinishedStatus,
-  isSuspendedStatus,
   suspendedSummary,
 } from "@/lib/eventState";
 import type { ActiveChartPoint } from "@/lib/types";
@@ -212,7 +212,15 @@ export default function EventPage({ params }: EventPageProps) {
   const isFinished = isFinishedStatus(event?.status);
   // live/048 — non-terminal, and it must not fall through to either branch:
   // not Final (nothing reported a result) and not upcoming (it already began).
-  const isSuspended = isSuspendedStatus(event?.status);
+  //
+  // #3211 widens it from the literal status to the DISPLAY question, and this
+  // page is where that matters most: it is the destination of every card the
+  // league and team rails newly surface, and until now a `scheduled` row hours
+  // past its own kickoff arrived here as "Pregame" **with a running countdown
+  // to a moment in the past**. The two consumers below (the countdown
+  // suppression and the hero badge) are the ones live/048 wrote for exactly
+  // this shape of lie; they need the widened predicate, not a second branch.
+  const isSuspended = hasNoReportedResult(event?.status, event?.commence_time);
   const refreshInterval = isLive ? LIVE_REFRESH_INTERVAL : SCHEDULED_REFRESH_INTERVAL;
 
   // Effectively live = event is live status

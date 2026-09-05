@@ -123,7 +123,8 @@ def event_list_window_condition(*, now, end_date, recent_start):
     this route twice:
 
     * live — regardless of when it started;
-    * scheduled — starting inside the requested range;
+    * scheduled — **anywhere inside the same span a Final gets**, which is the
+      recent floor at one end and the requested range at the other;
     * completed / closed / **suspended** — started yesterday or today.
 
     `suspended` rides the finished window for the same reason it rides
@@ -131,12 +132,36 @@ def event_list_window_condition(*, now, end_date, recent_start):
     replaced, and it should age off this list exactly where that Final would
     have. Giving it the live arm's open floor would have kept every
     went-dark fixture on the Sports feed indefinitely.
+
+    🔴 THE SCHEDULED ARM'S FLOOR WAS `>= now`, AND THAT WAS #3211 — one word,
+    and the same hole live/056 closed on the league page's rails, here on the
+    endpoint that draws `/sports/{key}`.
+
+    A row that still says `scheduled` after its own kickoff satisfied nothing:
+    not this arm (its commence is behind `now`), not the finished arm (its
+    status is not in that list), not the live arm. Measured on production
+    2026-09-05, `GET /api/events?sport=tennis_wta` returned **11 rows, every one
+    of them dated tomorrow** — the 72 WTA matches of the US Open fortnight then
+    in progress were not in the response at all, and `/sports/tennis_wta`
+    rendered "Upcoming 11" over an empty rest of the page. 171 across both tours
+    (99 ATP), 351 across all sports.
+
+    Moving the floor to `recent_start` is deliberately the SAME bound the
+    finished arm already spends rather than a new one: the honest reading of
+    such a row is "its clock ran out and nothing reported an ending", which is
+    what `suspended` means, so it ages off exactly where `suspended` does. The
+    upper bound is untouched, so a caller asking for a narrow future range still
+    gets one — the arm widened backwards only.
+
+    `Event.commence_time >= recent_start` also subsumes the old `>= now` for
+    every row the old arm admitted, so this is purely additive: nothing that
+    was reachable stopped being reachable.
     """
     return or_(
         Event.status == "live",
         and_(
             Event.status == "scheduled",
-            Event.commence_time >= now,
+            Event.commence_time >= recent_start,
             Event.commence_time <= end_date,
         ),
         and_(

@@ -13,7 +13,7 @@
  * both the client component and any future server render.
  */
 import type { TeamGameBrief } from "./api";
-import { isSuspendedStatus } from "./eventState";
+import { hasNoReportedResult } from "./eventState";
 
 type LiveInput = Pick<TeamGameBrief, "status" | "commence_time">;
 
@@ -46,9 +46,24 @@ export function isGameSettled(game: Pick<TeamGameBrief, "status">): boolean {
  * Delegates rather than re-testing the literal: `lib/eventState` is the one
  * place that knows the vocabulary, and a second `=== "suspended"` here is
  * exactly the per-surface chain CERT-786 blocked on.
+ *
+ * 🔴 AND #3211, THE SAME PARAGRAPH ONE STATUS LATER. `routes/teams.py`'s recent
+ * rail now also returns a row that still says `scheduled` more than two hours
+ * past its own kickoff — the third state to fall between that page's two rails
+ * and appear on neither. It reaches this predicate rather than a new one for
+ * the reason `lib/eventState.hasNoReportedResult` gives: a reader is being told
+ * either a start time or that no result was reported, and the right answer is
+ * the same for both states.
+ *
+ * Such a row carries NO score at all, where a suspended one carries a partial
+ * — so it lands on the score-less arm of the handling live/056 already built,
+ * and there is nothing further for `RecentGameCard` to learn.
  */
-export function isGameSuspended(game: Pick<TeamGameBrief, "status">): boolean {
-  return isSuspendedStatus(game.status);
+export function isGameSuspended(
+  game: Pick<TeamGameBrief, "status" | "commence_time">,
+  now: number = Date.now(),
+): boolean {
+  return hasNoReportedResult(game.status, game.commence_time, now);
 }
 
 /** Local calendar-day key (YYYY-M-D) used to group doubleheaders. */

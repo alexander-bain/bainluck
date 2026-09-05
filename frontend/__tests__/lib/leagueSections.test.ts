@@ -27,10 +27,39 @@
  */
 
 import realPayload from "../fixtures/leagueUsOpen.20260904.json";
-import { buildLeagueSections } from "@/lib/sports/leagueSections";
+import { buildLeagueSections as buildLeagueSectionsAt } from "@/lib/sports/leagueSections";
 import type { Event, EventStatus } from "@/lib/types";
 
 const REAL_EVENTS = realPayload.events as unknown as Event[];
+
+/**
+ * 🔴 #3211 — THE CORPUS IS A MOMENT, SO THE CLOCK MUST BE THAT MOMENT.
+ *
+ * `buildLeagueSections` used to branch on nothing time-dependent and said so in
+ * its docblock. It now does: a row that still says `scheduled` more than two
+ * hours after its own kickoff is not upcoming, it is a match that should have
+ * been played and was never reported — which is the state 171 US Open matches
+ * were in on production while being reachable from no rail at all.
+ *
+ * That makes this fixture's meaning depend on when you read it. The capture is
+ * `GET /api/events?sport=tennis_atp_us_open&days=14` taken on 2026-09-04, and
+ * against TODAY's wall clock all fifteen of its "scheduled" rows are now days
+ * past their kickoff — so the module correctly buckets them as result-less, and
+ * every count below would decay from "15 upcoming" to "15 unreported" purely by
+ * the passage of time. That is a rotting anchor (gotcha #44), not a defect, and
+ * the fix is the one that gotcha names: evaluate the snapshot at the snapshot's
+ * own instant.
+ *
+ * Derived from the corpus rather than transcribed — after its newest Final and
+ * before its soonest fixture is exactly the moment the endpoint was called —
+ * and asserted to be so by the CONTROL in section A, so it cannot silently
+ * stop being the capture's own time.
+ */
+const CAPTURED_AT = new Date("2026-09-04T14:00:00Z").getTime();
+
+/** Every call in this file reads the corpus's own clock unless it says otherwise. */
+const buildLeagueSections = (events: Event[], now: number = CAPTURED_AT) =>
+  buildLeagueSectionsAt(events, now);
 
 /** A minimal event. Nothing is defaulted that an arm needs to vary. */
 function ev(
@@ -82,6 +111,25 @@ describe("ux/1058 · the shipped payload is the defect", () => {
       (e) => !["completed", "closed", "scheduled"].includes(e.status),
     );
     expect(live).toEqual([]);
+  });
+
+  test("CONTROL: CAPTURED_AT really is the corpus's own instant (#3211)", () => {
+    // Every count in this file is read at this clock, so the clock has to be
+    // the one the endpoint was called at — after the newest result, before the
+    // soonest fixture. Derived from the corpus, so it cannot drift into a
+    // number that merely happens to make the suite green.
+    const newestFinished = Math.max(
+      ...REAL_EVENTS.filter((e) => e.status === "completed").map((e) =>
+        new Date(e.completed_at ?? e.commence_time).getTime(),
+      ),
+    );
+    const soonestScheduled = Math.min(
+      ...REAL_EVENTS.filter((e) => e.status === "scheduled").map((e) =>
+        new Date(e.commence_time).getTime(),
+      ),
+    );
+    expect(CAPTURED_AT).toBeGreaterThan(newestFinished);
+    expect(CAPTURED_AT).toBeLessThan(soonestScheduled);
   });
 });
 
@@ -147,6 +195,49 @@ describe("ux/1058 · the bucket comes from eventState, not from this module", ()
     expect(paused[0].title).toBe("Live & Paused");
     const playing = buildLeagueSections([ev(1, "live" as EventStatus, "2026-09-04T01:00:00Z")]);
     expect(playing[0].title).toBe("Live Now");
+  });
+
+  test("#3211: a scheduled row past its own kickoff is NOT upcoming", () => {
+    // The specimen's shape: a US Open row stamped midnight UTC by a Kalshi
+    // ticker, still `scheduled` two days later because nothing ever settled it.
+    // Filing it under "Upcoming" claims a match that should already have been
+    // played is about to begin — the fall-through `lib/eventState` opens by
+    // naming as the quieter lie.
+    const sections = buildLeagueSections([
+      ev(1, "scheduled", "2026-09-02T00:00:00Z"),
+      ev(2, "scheduled", "2026-09-05T00:00:00Z"),
+    ]);
+    expect(sections.map((s) => s.key)).toEqual(["live", "upcoming"]);
+    expect(ids(sections[0].events)).toEqual([1]);
+    expect(ids(sections[1].events)).toEqual([2]);
+    // …and the heading does not claim anyone is watching it.
+    expect(sections[0].title).toBe("Live & Paused");
+  });
+
+  test("#3211: the boundary is the grace, asserted from BOTH sides", () => {
+    // A test that only checks "two days ago" would pass over any floor at all.
+    const kickoff = new Date("2026-09-04T12:00:00Z").getTime();
+    const justInside = kickoff + 2 * 60 * 60 * 1000 - 60_000;
+    const justOutside = kickoff + 2 * 60 * 60 * 1000 + 60_000;
+    const row = [ev(1, "scheduled", "2026-09-04T12:00:00Z")];
+
+    expect(buildLeagueSections(row, justInside).map((s) => s.key)).toEqual([
+      "upcoming",
+    ]);
+    expect(buildLeagueSections(row, justOutside).map((s) => s.key)).toEqual([
+      "live",
+    ]);
+  });
+
+  test("#3211: a LIVE row is unaffected, however long it has been running", () => {
+    // The control that keeps the arm above from being a rule about elapsed time
+    // rather than about the `scheduled` word. A five-set match is still live.
+    const sections = buildLeagueSections(
+      [ev(1, "live" as EventStatus, "2026-09-04T06:00:00Z")],
+      new Date("2026-09-04T14:00:00Z").getTime(),
+    );
+    expect(sections.map((s) => s.key)).toEqual(["live"]);
+    expect(sections[0].title).toBe("Live Now");
   });
 
   test("an unrecognised status is UPCOMING, never Finished", () => {

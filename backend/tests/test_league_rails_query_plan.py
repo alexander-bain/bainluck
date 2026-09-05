@@ -50,6 +50,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from sqlalchemy.dialects import postgresql
 
+from app.utils.event_completion import UPCOMING_GRACE
 from app.routes.league_futures import (
     RESULTS_LIMIT,
     RESULTS_LOOKBACK_DAYS,
@@ -166,14 +167,46 @@ def test_upcoming_games_query_is_deliberately_not_fenced():
 
 def test_the_two_rails_ask_for_different_statuses():
     """A live/scheduled rail and a completed/closed rail. Cheap, but it is the
-    assertion that catches a copy-paste between the two builders."""
+    assertion that catches a copy-paste between the two builders.
+
+    🔴 AMENDED BY #3211, AND THE AMENDMENT IS THE INTERESTING PART. This used to
+    finish `assert "'scheduled'" not in results`, and that literal absence
+    stopped being true: the recent rail now admits a `scheduled` row whose
+    kickoff is more than `UPCOMING_GRACE` behind `now`, because such a row was
+    on NEITHER rail and 171 US Open matches were invisible for a fortnight.
+
+    The property the old line was reaching for — the two rails do not overlap
+    and do not leave a gap — is not a statement about which words appear in
+    which statement, and cannot be, now that both statements contain
+    `'scheduled'`. It is a statement about ROWS, so it is asserted over rows in
+    `test_the_two_rails_are_jointly_exhaustive_3211.py`, which executes both
+    conditions against a status × time matrix.
+
+    What survives here is what this file is actually for: the two builders have
+    not been copy-pasted into each other. The upcoming rail must never name a
+    settled state, and the recent rail must never name `live` — those two are
+    still true, still cheap, and still the shape a careless edit would break.
+    """
     upcoming = _sql(upcoming_games_query("soccer_epl", NOW), literal=True)
     results = _sql(recent_results_query("soccer_epl", NOW), literal=True)
 
     assert "'live'" in upcoming and "'scheduled'" in upcoming
     assert "'completed'" not in upcoming and "'closed'" not in upcoming
     assert "'completed'" in results and "'closed'" in results
-    assert "'live'" not in results and "'scheduled'" not in results
+    assert "'live'" not in results
+
+    # #3211 — `'scheduled'` is now in BOTH, and the grace boundary is what keeps
+    # them apart. Asserting it appears is not decoration: if a later edit drops
+    # the arm, this test would otherwise go quiet while the gap re-opened.
+    assert "'scheduled'" in results, (
+        "the recent rail stopped admitting a past-kickoff `scheduled` row — "
+        "that is #3211, and it puts every unsettled row back on no rail at all"
+    )
+    grace_edge = (NOW - UPCOMING_GRACE).strftime("%Y-%m-%d %H:%M:%S")
+    assert grace_edge in results and grace_edge in upcoming, (
+        "the two rails no longer split on the SAME grace boundary — one "
+        "constant, or they overlap or leave a sliver between them"
+    )
 
 
 def test_the_caps_are_the_declared_constants_plus_one():

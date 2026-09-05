@@ -89,8 +89,26 @@ MUTANTS: list[tuple[str, Path, str, str, str]] = [
     (
         "M6-lookback-window-changed",
         ROUTE,
-        "Event.commence_time >= now - timedelta(days=RESULTS_LOOKBACK_DAYS),",
-        "Event.commence_time >= now - timedelta(days=7),",
+        # 🔴 RE-TARGETED BY #3211 (lane1/134), for the second time and for the
+        # same reason M7 was re-targeted by live/056 — read that note below, it
+        # is the same lesson and this file is now its second worked example.
+        #
+        # The needle was the bare comparison
+        # `Event.commence_time >= now - timedelta(days=RESULTS_LOOKBACK_DAYS),`.
+        # #3211 moved BOTH halves of the rail — the status vocabulary and the
+        # time bound — into `utils.event_rails.recent_rail_condition`, because a
+        # shared status list cannot say anything about a row that is in the
+        # right status set and the wrong time window, which is exactly how a
+        # `scheduled` row past its kickoff reached neither rail and took 171 US
+        # Open matches off the page with it.
+        #
+        # So the comparison no longer exists in this route and the scanner
+        # refused, correctly and loudly. The lookback is still the ROUTE's
+        # decision — it is passed, not assumed, because the team page's is 30
+        # days — so the mutant keeps its meaning exactly: narrow this page's
+        # window while the fence and the helper both stay right.
+        "lookback=timedelta(days=RESULTS_LOOKBACK_DAYS)",
+        "lookback=timedelta(days=7)",
         "the fence must not be cover for a quietly narrowed rail",
     ),
     (
@@ -119,8 +137,28 @@ MUTANTS: list[tuple[str, Path, str, str, str]] = [
         # back" is a different regression and is guarded where it belongs, in
         # `test_suspended_is_reachable_cert_786.py`, by a suite that has a
         # suspended row to notice its absence.
-        "Event.status.in_(RECENT_RAIL_STATUSES),",
-        'Event.status.in_(["live", "scheduled"]),',
+        #
+        # ── AND RE-TARGETED AGAIN BY #3211 (lane1/134) ──
+        #
+        # `RECENT_RAIL_STATUSES` moved one level down into
+        # `utils.event_rails.recent_rail_condition`, which now builds status AND
+        # time together. Third drift, third refusal, and the refusal is doing
+        # its job every time: the mutant string `["live", "scheduled"]` remained
+        # legitimately present in the upcoming rail, so a needle-blind harness
+        # would have read the drift as leftover residue.
+        #
+        # The mutation still means "copy-paste the sibling builder over this
+        # one" — it is simply written at the level the builders now live at,
+        # which makes it a STRONGER mutant than the literal swap was: it takes
+        # the whole rail, statuses and window together.
+        #
+        # Written in the form BLACK produces (one line, 86 chars), not the form
+        # that was typed. A needle spelled differently from what the formatter
+        # emits is a needle that drifts the next time anyone runs `black` on
+        # this route — which is the same class of drift this comment already
+        # documents twice, arriving through the toolchain instead of a ship.
+        "recent_rail_condition(now, lookback=timedelta(days=RESULTS_LOOKBACK_DAYS)),",
+        "upcoming_rail_condition(now),",
         "a copy-paste between the two builders",
     ),
     (
