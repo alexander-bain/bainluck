@@ -789,6 +789,76 @@ export function defaultMatchRound(entries: MatchListEntry[]): MatchRoundKey | nu
   return (pills.find((pill) => pill.decided < pill.total) ?? pills[pills.length - 1]).round;
 }
 
+/**
+ * Which DRAW to open on: the one with a match on court right now.
+ *
+ * The sibling of `defaultMatchRound` above, and it exists for the same reason
+ * — "where the tournament is" — applied to the axis that rule never covered.
+ * The round default follows play; the draw default did not, and the gap was a
+ * hardcoded `useState("mens-singles")` that had never read the slate.
+ *
+ * ═══ WHAT IT COST, MEASURED (live/077 item 2) ═══
+ *
+ * Sampled on production 2026-09-05 at 15:04-15:22Z, with Potapova-Anisimova
+ * and Keys-Zheng both `STATUS_IN_PROGRESS` on ESPN and both priced and moving
+ * on our own slate: the phone-width Round of 32 list showed **neither**, and
+ * opened on the 11:30 men's match instead. Nothing was dropped and nothing was
+ * mis-sorted — the two live matches are WOMEN'S, the page opens on the men's
+ * draw, and the collapsed list shows five rows of the draw it opened on. The
+ * two in-progress rows were one untaken tap away and nothing on screen said
+ * so. A reader landing at 15:04Z was told the tournament's live matches did
+ * not exist.
+ *
+ * This is why the rule keys on `live_state` and NOT on `scheduled_date`
+ * against the clock: `live_state` is ESPN's own state (see `SlateMatch`), and
+ * a five-setter outlives any elapsed-time window we could invent. "Started
+ * three hours ago" is not evidence a match is over, and a default that guessed
+ * from a timestamp would swap the page onto a draw whose matches had all
+ * finished.
+ *
+ * ═══ WHY EARLIEST-STARTED, AND WHY NOT "THE MOST LIVE MATCHES" ═══
+ *
+ * Ties are the whole design question here, because a US Open afternoon runs
+ * both draws at once. Counting live matches per draw picks the busier
+ * scoreboard, which is a fact about the ORDER OF PLAY and not about what the
+ * reader came for. Earliest-started picks the match nearest a result, matches
+ * the word `defaultMatchRound` already uses for the same job one axis over,
+ * and is stable as later matches begin: a new start cannot move the answer,
+ * only a finish can. `draws` order breaks an exact tie so the result is
+ * deterministic on a payload where two matches share a start time — 6 of the
+ * 15 Round-of-32 rows did on the day this was written.
+ *
+ * Returns `null` for "nothing is on" — the caller keeps its own opening draw
+ * rather than this function inventing one. A tournament between sessions has
+ * no live draw, and that is not the same as a preference.
+ *
+ * THE CALLER RESOLVES THIS ONCE, at first payload, and never again: see
+ * `page.tsx`. A default that re-evaluated would swap the page out from under a
+ * reader the moment a match in the other draw started.
+ */
+export function defaultDraw(
+  matches: SlateMatch[],
+  draws: { id: string }[]
+): string | null {
+  let best: { draw: string; started: string; rank: number } | null = null;
+  for (const match of matches) {
+    if (match.live_state !== "in_progress") continue;
+    const rank = draws.findIndex((entry) => entry.id === match.draw);
+    // A draw the toggle does not offer cannot be opened on. Doubles and mixed
+    // ride the same slate and would otherwise select a tab that does not exist.
+    if (rank < 0) continue;
+    const started = match.scheduled_date;
+    if (
+      best === null ||
+      started < best.started ||
+      (started === best.started && rank < best.rank)
+    ) {
+      best = { draw: match.draw, started, rank };
+    }
+  }
+  return best?.draw ?? null;
+}
+
 export function matchesInRound(
   entries: MatchListEntry[],
   round: MatchRoundKey
