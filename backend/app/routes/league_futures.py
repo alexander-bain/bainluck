@@ -265,9 +265,11 @@ def upcoming_games_query(sport_key: str, now: datetime):
             Sport.key == sport_key,
             upcoming_rail_condition(now),
         )
+        # Q438: live-AND-started, not the raw column. A row that is live a month
+        # before kickoff held this rail's first slot for ten weeks. The comment
+        # sits ABOVE the clause because `league_rails_fence_mutations:M4` pins
+        # the ORDER BY block verbatim as its needle.
         .order_by(
-            # Q438: live-AND-started, not the raw column. A row that is live a
-            # month before kickoff held this rail's first slot for ten weeks.
             live_first_order(now),
             Event.commence_time.asc(),
         )
