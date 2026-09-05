@@ -229,13 +229,21 @@ def test_the_bar_is_inclusive_at_its_own_boundary():
 
     Written down because an off-by-one at the boundary of a seven-day gate is a
     week of lost progress that looks exactly like a real disagreement.
+
+    The counts are supplied because a governing number is now scored against the
+    denominator it was computed over: 199 agreed of 200 we list IS 99.5%, and
+    the same percentage over one game is `TOO-FEW-TO-SCORE` rather than a
+    boundary case at all.
     """
-    assert governing_identity("basketball_nba", {"ours_covered_pct": FLIP_BAR_PCT})[
-        "gate"
-    ] == GATE_MEETS
-    assert governing_identity("basketball_nba", {"ours_covered_pct": 99.49})[
-        "gate"
-    ] == GATE_BELOW
+    at_bar = {
+        "ours_covered_pct": FLIP_BAR_PCT,
+        "both": 199,
+        "statpal_only": 0,
+        "ours_only": 1,
+    }
+    under_bar = {**at_bar, "ours_covered_pct": 99.49}
+    assert governing_identity("basketball_nba", at_bar)["gate"] == GATE_MEETS
+    assert governing_identity("basketball_nba", under_bar)["gate"] == GATE_BELOW
 
 
 # ---------------------------------------------------------------------------
@@ -256,9 +264,10 @@ def test_the_ledger_line_carries_the_verdict_so_the_bus_never_picks_a_number():
     # Both numbers still printed — the pair is the finding.
     assert "identity=33.33%" in line
     assert "covers=100.0%" in line
-    # And the verdict, naming the number it was decided on, so the line cannot
-    # be read as scoring the 33.33.
-    assert "gate=MEETS(ours_covered_pct=100.0% vs 99.5%)" in line
+    # And the verdict, naming the number it was decided on AND the population it
+    # was decided over, so the line can be read neither as scoring the 33.33 nor
+    # as a cleared bar over a handful of games.
+    assert "gate=MEETS(ours_covered_pct=100.0%/2 vs 99.5%)" in line
 
 
 def test_pending_and_below_do_not_render_alike_in_the_ledger():

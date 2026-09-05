@@ -1941,6 +1941,7 @@ async def statpal_authority_agreement(
     """
     _check_admin_secret(secret, request=request)
 
+    from app.config.authority_by_sport import STATPAL, authority_for
     from app.tasks.redis_state import get_task_metrics
     from app.utils.authority_agreement import FLIP_GATE_SUMMARY, SHADOW_STAMPERS
     from app.utils.provider_anchor_keys import statpal_id_space
@@ -1950,6 +1951,22 @@ async def statpal_authority_agreement(
 
     for sport_key, task_name in sorted(SHADOW_STAMPERS.items()):
         entry: dict = {"sport_key": sport_key, "stamper": task_name}
+
+        # Read from `app/config/authority_by_sport`, never restated here. The
+        # whole value of a one-line switch is that there is one line; a second
+        # copy in a route is a second answer, and this endpoint is where a
+        # reader comes to ask whether anything has flipped yet.
+        entry["authority"] = {
+            "current": authority_for(sport_key),
+            "candidate": STATPAL,
+            "note": (
+                "the sport's source of record TODAY. The agreement row below "
+                "measures the candidate; it does not select it. Flipping needs "
+                "`config.authority_by_sport.flip_permitted` to say yes on seven "
+                "consecutive daily gate states AND a YOUR-TURN entry Alex has "
+                "seen (D50)."
+            ),
+        }
 
         metrics = get_task_metrics(task_name) or {}
         summary = metrics.get("last_result_summary") or {}

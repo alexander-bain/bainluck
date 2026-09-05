@@ -212,31 +212,78 @@ GOVERNING_IDENTITY_NUMBERS: dict[str, tuple[str, ...]] = {
     "icehockey_nhl": ("ours_covered_pct",),
 }
 
-#: The FOUR states of the flip gate. Only one of them advances a streak, and the
-#: other three are distinct facts that a three-state gate would have blurred:
+#: The FIVE states of the flip gate. Only one of them advances a streak, and the
+#: other four are distinct facts that a two-state gate would have blurred:
 #:
-#:   * ``MEETS``    — measured, at or above the bar. Advances the streak.
+#:   * ``MEETS``    — measured, over a real denominator, at or above the bar.
+#:     Advances the streak.
 #:   * ``BELOW``    — measured, under the bar. Resets it.
 #:   * ``NO-SCORE`` — the read succeeded but there was nothing to divide by, so
 #:     `_pct` returned `None`. Carries the streak unchanged, exactly as
 #:     `READ-FAILED` does (spec rule 6). Collapsing this into `BELOW` would
 #:     reset a streak on a day nobody disagreed about anything — gotcha #53's
 #:     class, and the reason `_pct` refuses to return `0.0` in the first place.
+#:   * ``TOO-FEW-TO-SCORE`` — there WAS something to divide by and it was not a
+#:     measurement. See `MINIMUM_SCORED_DENOMINATOR`. Carries the streak: a day
+#:     with one game on it is not a day anybody disagreed.
 #:   * ``PENDING-NO-GOVERNING-NUMBER`` — the sport has not been told which of
 #:     its two numbers decides. Nothing to advance, nothing to reset.
 #:
-#: The last two are both "not advancing" and are still not the same thing: one
-#: is a quiet day, the other is an unanswered question, and only one of them is
-#: fixed by a ruling.
+#: The last three are all "not advancing" and are still not the same thing: a
+#: quiet day, a day too small to read, and an unanswered question. Only one of
+#: them is fixed by a ruling.
 GATE_MEETS = "MEETS"
 GATE_BELOW = "BELOW"
 GATE_NO_SCORE = "NO-SCORE"
+GATE_TOO_FEW = "TOO-FEW-TO-SCORE"
 GATE_PENDING = "PENDING-NO-GOVERNING-NUMBER"
 
 #: The gate states that leave a seven-day streak exactly as it was. Published as
 #: a set rather than re-derived by each reader: whether a state pauses or resets
 #: a streak is a spec decision, not a rendering detail.
-GATES_CARRY_STREAK = frozenset({GATE_NO_SCORE, GATE_PENDING})
+GATES_CARRY_STREAK = frozenset({GATE_NO_SCORE, GATE_TOO_FEW, GATE_PENDING})
+
+#: The smallest denominator a percentage may be scored on and still reach
+#: `MEETS`.
+#:
+#: **This is not the answer to #3071.** Question A — what the minimum denominator
+#: for a flip should actually be — is Alex's and is unruled. This is the floor
+#: that EVERY candidate answer to it contains: a ratio over a single game is
+#: 100% or 0% and nothing else, so it cannot distinguish "we agree about every
+#: game" from "there was one game and we happened to have it". Refusing that one
+#: case commits to nothing Alex has not already implied by asking the question.
+#:
+#: What it deliberately does NOT do is guess the real floor. NBA reads 41/41 and
+#: NHL 32/32 today; both clear this and both may well be under whatever Alex
+#: rules. So the governing block publishes `minimum_denominator` beside the
+#: numbers AND `minimum_denominator_ruling`, which says the real one is open —
+#: D55's rule that a gap tags loudly rather than passing silently. A reader who
+#: sees `MEETS` on 41 games is told, on the row, that 41 has not been blessed.
+MINIMUM_SCORED_DENOMINATOR = 2
+
+#: Open question the floor above is standing in for, named on every row.
+MINIMUM_DENOMINATOR_RULING = (
+    "#3071 (Question A) is open: the minimum denominator for a flip is unruled. "
+    f"{MINIMUM_SCORED_DENOMINATOR} is not that answer — it is the floor every "
+    "candidate answer contains, because a ratio over one game can only be 100% "
+    "or 0%. Read `denominators` before reading a percentage."
+)
+
+#: How each governing identity number's denominator is rebuilt from the counts
+#: the row already publishes.
+#:
+#: Derived from `both`/`statpal_only`/`ours_only` rather than passed in, for the
+#: same reason `governing` is assembled from the row's own numbers: a denominator
+#: computed by a second path can disagree with the percentage printed beside it.
+#: A name with no entry here scores nothing rather than defaulting — see
+#: `governing_identity`, and `test_every_governing_number_can_say_its_denominator`
+#: which fails if a number is added to `GOVERNING_IDENTITY_NUMBERS` without one.
+IDENTITY_DENOMINATORS: dict[str, Callable[[dict[str, Any]], int]] = {
+    # The union of both sides.
+    "pct": lambda i: int(i["both"]) + int(i["statpal_only"]) + int(i["ours_only"]),
+    # The games WE list.
+    "ours_covered_pct": lambda i: int(i["both"]) + int(i["ours_only"]),
+}
 
 #: The one-paragraph summary the agreement endpoint prints above the sports, and
 #: the first thing anybody reading the payload reads.
@@ -251,19 +298,27 @@ GATES_CARRY_STREAK = frozenset({GATE_NO_SCORE, GATE_PENDING})
 #: identity's two numbers is the exact mistake D63 exists to prevent, so it may
 #: not survive in the payload's opening sentence.
 #:
-#: So this says the three things a reader needs before they look at a number:
+#: So this says the four things a reader needs before they look at a number:
 #: which question decides is PER SPORT, the verdict is already computed on the
-#: row, and there are four gate states rather than pass/fail.
+#: row, every percentage carries the denominator it was scored on, and there are
+#: five gate states rather than pass/fail.
 FLIP_GATE_SUMMARY = (
-    f"D50: a flip needs 7 consecutive daily rows clearing {FLIP_BAR_PCT}%, plus "
-    "a YOUR-TURN entry Alex has seen. Identity governs; schedule and anchors "
-    "are reported and gate nothing. WHICH of identity's two numbers scores a "
-    "sport is per sport (D63), so do not compare a percentage to the bar "
-    "yourself — read the verdict off that sport's `identity.governing`, which "
-    "names the number(s), their values and the bar it used. Four gate states: "
+    # The 7 is a literal here and `authority_streak.REQUIRED_STREAK_DAYS`
+    # elsewhere, because that module imports THIS one and the constant cannot
+    # live upstream of its own owner without a cycle. They are pinned together
+    # by `test_the_summary_and_the_streak_counter_agree_on_seven`.
+    f"D50: a flip needs 7 consecutive daily rows clearing "
+    f"{FLIP_BAR_PCT}%, plus a YOUR-TURN entry Alex has seen. Identity governs; "
+    "schedule and anchors are reported and gate nothing. WHICH of identity's "
+    "two numbers scores a sport is per sport (D63), so do not compare a "
+    "percentage to the bar yourself — read the verdict off that sport's "
+    "`identity.governing`, which names the number(s), their values, the "
+    "denominator each was scored on and the bar it used. Five gate states: "
     f"`{GATE_MEETS}` advances the streak, `{GATE_BELOW}` resets it, and "
-    f"`{GATE_NO_SCORE}` (nothing to divide by) and `{GATE_PENDING}` (the sport "
-    "has not been told which number decides) both carry it unchanged."
+    f"`{GATE_NO_SCORE}` (nothing to divide by), `{GATE_TOO_FEW}` (a denominator "
+    f"under {MINIMUM_SCORED_DENOMINATOR}, which is a floor and not #3071's "
+    f"unruled answer) and `{GATE_PENDING}` (the sport has not been told which "
+    "number decides) all carry it unchanged."
 )
 
 
@@ -326,13 +381,26 @@ def governing_identity(sport_key: str, identity: dict[str, Any]) -> dict[str, An
     let the bus read the number). Two readers comparing two percentages against
     a remembered bar is how a sport gets scored on the wrong question — which is
     the whole of what D63 fixes.
+
+    Every number is published WITH the denominator it was scored on, and a
+    denominator too small to be a measurement cannot reach `MEETS`. A percentage
+    with no denominator beside it is the failure this lane has now found three
+    times in three different shapes: 100% over 41 games and 100% over 1 game read
+    identically on the ledger line, and only one of them is seven days from
+    flipping a sport's source of record.
     """
+    base = {
+        "bar_pct": FLIP_BAR_PCT,
+        "minimum_denominator": MINIMUM_SCORED_DENOMINATOR,
+        "minimum_denominator_ruling": MINIMUM_DENOMINATOR_RULING,
+    }
     names = GOVERNING_IDENTITY_NUMBERS.get(sport_key)
     if not names:
         return {
+            **base,
             "numbers": [],
             "values": {},
-            "bar_pct": FLIP_BAR_PCT,
+            "denominators": {},
             "gate": GATE_PENDING,
             "why": (
                 f"{sport_key} has no governing identity number, so no daily row "
@@ -341,34 +409,74 @@ def governing_identity(sport_key: str, identity: dict[str, Any]) -> dict[str, An
             ),
         }
     values = {name: identity[name] for name in names}
+    denominators = {name: _denominator_of(name, identity) for name in names}
+    block = {
+        **base,
+        "numbers": list(names),
+        "values": values,
+        "denominators": denominators,
+    }
     # `None` is not a low score, it is the absence of one, and it must reach the
     # gate as its own state rather than being compared against the bar. A single
     # unscored number makes the whole verdict NO-SCORE: a sport does not half
-    # clear a bar.
-    unscored = sorted(name for name, value in values.items() if value is None)
+    # clear a bar. A number whose denominator cannot be named lands here too —
+    # "we cannot say what this was divided by" is not a score either, and
+    # defaulting it to a denominator would be the silent pass D55 forbids.
+    unscored = sorted(
+        name for name in names if values[name] is None or denominators[name] is None
+    )
     if unscored:
         return {
-            "numbers": list(names),
-            "values": values,
-            "bar_pct": FLIP_BAR_PCT,
+            **block,
             "gate": GATE_NO_SCORE,
             "why": (
                 f"{', '.join(unscored)} has no denominator to divide by, so this "
                 "day scores nothing and carries the streak unchanged (spec rule 6)"
             ),
         }
+    # Checked BEFORE the bar, not after: a 1-game day is at 100% and would
+    # otherwise be the strongest-looking row of the seven.
+    too_few = sorted(
+        name for name in names if denominators[name] < MINIMUM_SCORED_DENOMINATOR
+    )
+    if too_few:
+        return {
+            **block,
+            "gate": GATE_TOO_FEW,
+            "why": (
+                f"{', '.join(too_few)} scored over fewer than "
+                f"{MINIMUM_SCORED_DENOMINATOR} games, which is not a measurement "
+                f"of agreement; the streak carries unchanged. "
+                f"{MINIMUM_DENOMINATOR_RULING}"
+            ),
+        }
     below = sorted(name for name, value in values.items() if value < FLIP_BAR_PCT)
     return {
-        "numbers": list(names),
-        "values": values,
-        "bar_pct": FLIP_BAR_PCT,
+        **block,
         "gate": GATE_BELOW if below else GATE_MEETS,
         "why": (
             f"{', '.join(below)} below {FLIP_BAR_PCT}%"
             if below
-            else f"all governing numbers at or above {FLIP_BAR_PCT}%"
+            else f"all governing numbers at or above {FLIP_BAR_PCT}% over "
+            + ", ".join(f"{denominators[n]} games ({n})" for n in names)
         ),
     }
+
+
+def _denominator_of(name: str, identity: dict[str, Any]) -> Optional[int]:
+    """What `name` was divided by, rebuilt from the row's own counts.
+
+    `None` when the number has no entry in `IDENTITY_DENOMINATORS` — a governing
+    number added without saying what it divides by scores nothing rather than
+    being waved through on a guessed denominator.
+    """
+    build = IDENTITY_DENOMINATORS.get(name)
+    if build is None:
+        return None
+    try:
+        return build(identity)
+    except (KeyError, TypeError, ValueError):
+        return None
 
 
 @dataclass(frozen=True)
@@ -886,7 +994,14 @@ def _gate_text(identity: dict[str, Any]) -> str:
     gate = governing.get("gate", GATE_PENDING)
     if gate == GATE_PENDING:
         return GATE_PENDING
+    # `/n` is not decoration either. NBA's line has read `covers=100.0%` since
+    # step 3, and 100% over 41 games and 100% over 1 game are the same six
+    # characters on the ledger. The denominator is the difference between a
+    # streak worth banking and one that says nothing, so it travels with the
+    # number rather than three fields away in the JSON.
+    denominators = governing.get("denominators") or {}
     scored = ",".join(
-        f"{name}={governing['values'][name]}%" for name in governing["numbers"]
+        f"{name}={governing['values'][name]}%/{denominators.get(name, '?')}"
+        for name in governing["numbers"]
     )
     return f"{gate}({scored} vs {governing['bar_pct']}%)"

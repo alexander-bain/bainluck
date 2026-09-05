@@ -565,8 +565,18 @@ async def test_the_pass_folds_its_own_day_into_the_durable_ledger(drive, monkeyp
     monkeypatch.setattr(ds, "read_snapshot_standalone", _read)
     monkeypatch.setattr(ds, "publish_cas_snapshot_standalone", _publish)
 
-    fixtures = [_fixture("1050110", "Boston Celtics", "Detroit Pistons", TIPOFF)]
-    rows = [_candidate(1, "Boston Celtics", "Detroit Pistons", TIPOFF)]
+    # TWO games, not one. A single-fixture population scores `TOO-FEW-TO-SCORE`
+    # — 100% of one game is arithmetic, not agreement — and this test is about
+    # whether the pass FOLDS its day into the ledger, not about whether the day
+    # clears. A fixture too small to be measured cannot demonstrate a streak.
+    fixtures = [
+        _fixture("1050110", "Boston Celtics", "Detroit Pistons", TIPOFF),
+        _fixture("1050112", "Miami Heat", "Toronto Raptors", TIPOFF + timedelta(days=3)),
+    ]
+    rows = [
+        _candidate(1, "Boston Celtics", "Detroit Pistons", TIPOFF),
+        _candidate(2, "Miami Heat", "Toronto Raptors", TIPOFF + timedelta(days=3)),
+    ]
     summary, _s, _a = await drive(fixtures, rows)
 
     streak = summary["agreement"]["streak"]
@@ -585,8 +595,18 @@ async def test_a_ledger_that_cannot_be_written_never_reads_as_a_streak_of_zero(d
     wrote its anchors has done its job — and the row must say the day was not
     recorded rather than publishing a count that looks like a measurement.
     """
-    fixtures = [_fixture("1050110", "Boston Celtics", "Detroit Pistons", TIPOFF)]
-    rows = [_candidate(1, "Boston Celtics", "Detroit Pistons", TIPOFF)]
+    # TWO games, not one. A single-fixture population scores `TOO-FEW-TO-SCORE`
+    # — 100% of one game is arithmetic, not agreement — and this test is about
+    # whether the pass FOLDS its day into the ledger, not about whether the day
+    # clears. A fixture too small to be measured cannot demonstrate a streak.
+    fixtures = [
+        _fixture("1050110", "Boston Celtics", "Detroit Pistons", TIPOFF),
+        _fixture("1050112", "Miami Heat", "Toronto Raptors", TIPOFF + timedelta(days=3)),
+    ]
+    rows = [
+        _candidate(1, "Boston Celtics", "Detroit Pistons", TIPOFF),
+        _candidate(2, "Miami Heat", "Toronto Raptors", TIPOFF + timedelta(days=3)),
+    ]
     summary, _s, _a = await drive(fixtures, rows)
 
     streak = summary["agreement"]["streak"]
@@ -706,3 +726,46 @@ async def test_a_sport_whose_inventory_sits_inside_statpals_span_is_unmoved(driv
     assert summary["rows_in_window"] == summary["rows_measured"] == 2
     assert summary["agreement"]["identity"]["ours_covered_pct"] == 100.0
     assert summary["agreement"]["identity"]["ours_only"] == 0
+
+
+async def test_a_one_game_day_is_folded_as_carried_and_advances_no_streak(
+    drive, monkeypatch
+):
+    """authority/024, through the whole pass rather than at the unit.
+
+    Before the floor existed this exact fixture banked `MEETS` and a streak of
+    1 — a source-of-record flip seven quiet days from being proposed on a
+    population of one game a day. What must happen instead is the day still gets
+    RECORDED (it is real history, and a day we measured is not a day we missed)
+    and counts for nothing.
+    """
+    import app.services.durable_snapshots as ds
+
+    published = []
+
+    async def _read(identity, **kwargs):
+        return SimpleNamespace(
+            status="missing", missing=True, ok=False, envelope=None, error=None
+        )
+
+    async def _publish(envelope, *, expected_generation=None):
+        published.append(envelope)
+        return {"status": "ok"}
+
+    monkeypatch.setattr(ds, "read_snapshot_standalone", _read)
+    monkeypatch.setattr(ds, "publish_cas_snapshot_standalone", _publish)
+
+    fixtures = [_fixture("1050110", "Boston Celtics", "Detroit Pistons", TIPOFF)]
+    rows = [_candidate(1, "Boston Celtics", "Detroit Pistons", TIPOFF)]
+    summary, _s, _a = await drive(fixtures, rows)
+
+    governing = summary["agreement"]["identity"]["governing"]
+    assert governing["gate"] == "TOO-FEW-TO-SCORE"
+    assert governing["denominators"] == {"ours_covered_pct": 1}
+
+    streak = summary["agreement"]["streak"]
+    assert streak["recorded"] is True
+    assert streak["days"] == 0
+    assert streak["meets_flip_gate"] is False
+    # Recorded, and recorded as what it was — not dropped, and not a pass.
+    assert published[0].payload["days"][0]["state"] == "TOO-FEW-TO-SCORE"
