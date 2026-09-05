@@ -284,18 +284,91 @@ async def test_a_hand_typed_date_is_accepted_and_a_broken_one_is_refused(pg_sess
 async def test_the_census_executes_against_real_postgres(pg_session):
     """The other statement the runbook opens with, on the same rail.
 
-    It carries no parameters today, which is exactly why it belongs here: this
-    file is the rail's bind surface, so a parameter added to the census later
-    meets Postgres in CI rather than in an attended window.
+    THIS GATE ALREADY PAID FOR ITSELF. Its previous docstring said the census
+    "carries no parameters today, which is exactly why it belongs here: a
+    parameter added to the census later meets Postgres in CI rather than in an
+    attended window." CAL-P1012 (#3195) added two, and this test failed in CI on
+    the first push — before any attended run, exactly as written.
     """
     from sqlalchemy import text
 
     await _seed_one_fabricated_loss_market(pg_session)
 
-    rows = (await pg_session.execute(text(rail._CENSUS_SQL))).all()
+    rows = (
+        await pg_session.execute(
+            text(rail._CENSUS_SQL), {"lo": 0, "hi": 2_000_000_000}
+        )
+    ).all()
 
     assert [r.source for r in rows] == ["kalshi"]
     assert rows[0].markets == 1 and int(rows[0].outcomes) == 2
+
+
+async def test_the_census_range_bound_really_bounds(pg_session):
+    """The chunk bound EXCLUDES, against the real planner and the real driver.
+
+    A CAST that prepares proves the types resolve; it does not prove the
+    predicate selects. A range above the seeded market must come back empty —
+    otherwise every chunk returns the whole table and the walk sums the
+    population once per chunk.
+    """
+    from sqlalchemy import text
+
+    market_id, _ = await _seed_one_fabricated_loss_market(pg_session)
+
+    inside = (
+        await pg_session.execute(
+            text(rail._CENSUS_SQL), {"lo": market_id - 1, "hi": market_id}
+        )
+    ).all()
+    above = (
+        await pg_session.execute(
+            text(rail._CENSUS_SQL), {"lo": market_id, "hi": market_id + 1_000}
+        )
+    ).all()
+
+    assert [r.markets for r in inside] == [1], "half-open: lo is EXCLUSIVE"
+    assert above == [], "half-open: hi is INCLUSIVE, so the next range must be empty"
+
+
+async def test_the_census_entry_point_completes_against_real_postgres(
+    pg_session, monkeypatch
+):
+    """The whole walk, driven through its real entry point on real Postgres.
+
+    CAL-P076 banked the reason: a pure test suite cannot tell you a task RUNS.
+    37 tests, a green suite, and the task died in 73 ms on its first production
+    invocation, on the first line that touched a session. The census walk issues
+    ``SET LOCAL statement_timeout`` per chunk, reads ``MAX(market_id)``, and
+    executes the bound aggregate in a loop — a session protocol no double
+    exercises. Only the durable bank is faked here (it is standalone, so it would
+    reach the app's own database rather than this one); the unit suite covers it.
+    """
+    banked: dict[str, object] = {}
+
+    async def _fake_load():
+        return (banked.get("record"), "ok" if "record" in banked else "missing")
+
+    async def _fake_save(record):
+        banked["record"] = record
+        return True, "ok"
+
+    monkeypatch.setattr(rail, "_load_census", _fake_load)
+    monkeypatch.setattr(rail, "_save_census", _fake_save)
+
+    await _seed_one_fabricated_loss_market(pg_session)
+
+    out = await rail.census(pg_session)
+
+    assert out["measured"] is True, out.get("reason")
+    assert out["walk"]["complete"] is True
+    assert out["walk"]["chunks_measured"] >= 1
+    assert out["totals"]["markets"] == 1
+    assert out["totals"]["outcomes"] == 2
+    assert out["kalshi"]["markets"] == 1
+    # And the completion test the whole change exists for is expressible: the
+    # addressed bands are readable off a walk that reached the end.
+    assert banked["record"]["complete"] is True
 
 
 async def test_the_per_market_leg_read_executes(pg_session):
