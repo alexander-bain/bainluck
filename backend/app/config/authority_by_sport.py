@@ -129,12 +129,17 @@ DISCOVERY_SCHEDULED_SPORTS: frozenset[str] = frozenset(
 #: On the discovery beat, and discovering nothing. Each entry is a live defect,
 #: named rather than silently dropped from the set above.
 #:
-#: **NFL, found by CERT-1875 and reproduced on the pinned real payload.** The 374-game
+#: **NFL, found by CERT-1875 and reproduced on the pinned real payload.** The
 #: `season-schedule` response nests its games `scores.tournament.stage[] → week[] →
 #: matches → match`, two levels below where `_extract_match_items` looks (it knows
-#: `tournament.match` and `tournament.week`). So `get_fixtures("nfl")` returns
-#: **zero** rows on a payload with 374 games in it, and the hourly
-#: `sync-statpal-schedules-nfl` beat has been creating no NFL events at all.
+#: `tournament.match` and `tournament.week`). Measured on
+#: `statpal_nfl_season_schedule_20260903.json`, which retains **17** of the live
+#: season's matches: the authority parser reads 17 of 17, the ingest parser reads
+#: **0**. So the hourly `sync-statpal-schedules-nfl` beat has been creating no NFL
+#: events at all. (The count is the FIXTURE's, deliberately — it is a reduced
+#: sample, and quoting the live season's game count beside a reduced-fixture
+#: measurement is how a number gets attributed to a file that never held it. The
+#: live population, if you want one, is the agreement row's own denominator: 322.)
 #:
 #: The reason this was invisible: **the authority read path parses it fine.**
 #: `get_schedule_fixtures("nfl")` → `_parse_nfl_season_schedule` walks the stage
@@ -152,10 +157,11 @@ DISCOVERY_SCHEDULED_SPORTS: frozenset[str] = frozenset(
 DISCOVERY_BEAT_WITHOUT_A_WORKING_PARSE: dict[str, str] = {
     "americanfootball_nfl": (
         "sync-statpal-schedules-nfl runs hourly and creates nothing: "
-        "get_fixtures('nfl') parses 0 of 374 games because the payload nests them "
-        "under scores.tournament.stage[].week[].matches.match, which "
+        "get_fixtures('nfl') parses 0 of the 17 matches in the pinned real "
+        "payload because they nest under "
+        "scores.tournament.stage[].week[].matches.match, which "
         "_extract_match_items does not walk. The authority read path "
-        "(_parse_nfl_season_schedule) reads the same payload correctly, which is "
+        "(_parse_nfl_season_schedule) reads all 17 of the same payload, which is "
         "why the agreement row looks healthy. CERT-1875"
     ),
 }
