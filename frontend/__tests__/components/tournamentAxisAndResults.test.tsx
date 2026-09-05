@@ -79,6 +79,72 @@ function row(overrides: Partial<TournamentRow> = {}): TournamentRow {
   };
 }
 
+/**
+ * The OPENING TAG of the `n`th element carrying `data-testid`, attributes and
+ * all — the sibling of `innerHtmlOf` below, for guards that are about a cell's
+ * own classes rather than its contents (live/071). Windowing the raw string
+ * around the testid instead is how a class assertion silently starts reading
+ * the neighbouring cell's `className`.
+ */
+function openTagOf(html: string, testid: string, nth = 0): string {
+  const marker = `data-testid="${testid}"`;
+  let from = -1;
+  for (let i = 0; i <= nth; i += 1) from = html.indexOf(marker, from + 1);
+  if (from < 0) throw new Error(`no ${testid}[${nth}] in the markup`);
+  const open = html.lastIndexOf("<", from);
+  const close = html.indexOf(">", from);
+  return html.slice(open, close + 1);
+}
+
+/**
+ * The inner HTML of the `n`th element carrying `data-testid`, found by walking
+ * the tag depth from its opening tag to the matching close.
+ *
+ * 🔴 THIS EXISTS BECAUSE THE GUARD BELOW WAS VACUOUS AND **CERT-512 BLOCKED
+ * ON IT**. The version it replaces compared two string positions —
+ * `html.indexOf('result-player') < html.indexOf('player-avatar')` — and the
+ * cert's plant re-emitted every avatar just AFTER its name cell closed, which
+ * is exactly the fourth-grid-child regression the guard is named for. The
+ * avatar was still later in the string than the first cell, so the whole
+ * focused file stayed **GREEN at 52/52**.
+ *
+ * "Appears after" is not "is inside" — the same class as
+ * `reference_containment_check_cannot_see_early_exit`. Containment needs the
+ * element's own extent, so this walks it. `renderToStaticMarkup` emits
+ * well-formed markup, and every container in this subtree is a `span`, `div`
+ * or `li`, so a depth counter over the opening tag's own name is exact; `img`
+ * is self-closing and never opens depth.
+ *
+ * Reproduced on `827c5bd9`'s own checked-out bytes and re-run against this
+ * guard: `artifacts-ux-p207/battery-cert512-out.txt`.
+ */
+function innerHtmlOf(html: string, testid: string, nth = 0): string {
+  const marker = `data-testid="${testid}"`;
+  let from = -1;
+  for (let i = 0; i <= nth; i += 1) from = html.indexOf(marker, from + 1);
+  if (from < 0) throw new Error(`no ${testid}[${nth}] in the markup`);
+  const open = html.lastIndexOf("<", from);
+  const tag = /^<(\w+)/.exec(html.slice(open, open + 12))?.[1];
+  if (!tag) throw new Error(`could not read the tag of ${testid}[${nth}]`);
+  const start = html.indexOf(">", from) + 1;
+  let depth = 1;
+  let at = start;
+  while (depth > 0) {
+    const nextOpen = html.indexOf(`<${tag}`, at);
+    const nextClose = html.indexOf(`</${tag}>`, at);
+    if (nextClose < 0) throw new Error(`unbalanced <${tag}> in the markup`);
+    if (nextOpen >= 0 && nextOpen < nextClose) {
+      depth += 1;
+      at = nextOpen + 1;
+    } else {
+      depth -= 1;
+      if (depth === 0) return html.slice(start, nextClose);
+      at = nextClose + 1;
+    }
+  }
+  return "";
+}
+
 describe("item 6 — the chart's x-axis", () => {
   const rows = [
     row(),
@@ -583,7 +649,13 @@ describe("item 9 — decided matches carry their score", () => {
         draw="mens-singles"
       />
     );
-    expect(html).toContain("4-6, 7-5, 3-1 ret.");
+    // The visible score is drawn in per-set chunks since live/071, so the
+    // scoreline is asserted as the pieces it is drawn in — and the `ret.` rides
+    // with the set it belongs to, which is the property that matters: a mark
+    // that wraps onto a line of its own reads as a footnote about the match
+    // rather than as "this set was abandoned".
+    expect(html).toContain('<span class="whitespace-nowrap">3-1 ret.</span>');
+    expect(html).toContain("4-6, 7-5, 3-1, when the loser retired");
     expect(html).toContain('data-score-kind="retired"');
     expect(html).toContain("1 ended in a retirement");
   });
@@ -668,9 +740,11 @@ describe("item 9 — decided matches carry their score", () => {
     });
     const html = renderToStaticMarkup(<TournamentResults results={varied} draw="mens-singles" />);
 
-    // ONE grid, on the list, with the three tracks — not a grid per row.
+    // ONE grid, on the list, with the three tracks — not a grid per row. The
+    // third track is capped on a phone and `max-content` from `sm:` up
+    // (live/071); both halves are asserted below, in their own guard.
     expect(html).toContain(
-      'class="grid grid-cols-[minmax(0,1fr)_max-content_max-content] items-center gap-x-3 lg:gap-x-4"'
+      'class="grid grid-cols-[minmax(0,1fr)_max-content_fit-content(76px)] sm:grid-cols-[minmax(0,1fr)_max-content_max-content] items-center gap-x-3 lg:gap-x-4"'
     );
     // Rows are transparent to it, so their cells land in the parent's tracks.
     expect((html.match(/class="contents" data-testid="result-row"/g) ?? []).length).toBe(2);
@@ -692,6 +766,103 @@ describe("item 9 — decided matches carry their score", () => {
       <TournamentResults results={results({ unregistered_pairs: 117 })} draw="mens-singles" />
     );
     expect(html).toContain("117 other finished matches");
+  });
+
+  /* ═══ live/071: THE PHONE'S NAME COLUMN, AND THE TWO THINGS THAT ATE IT ═══
+   *
+   * Measured on production at 390px, where the list's `ul` is 332px wide: the
+   * `max-content` score track took 129.25px of it and the name track got
+   * 114.16. Inside that cell the avatar and the padding cost 42px and the
+   * winner's `won` badge another 33, so the winner's name span was 39px — four
+   * characters — and `Stefanos Tsitsipas` printed as `Ste…`. Ten of ten names
+   * on the served list were clipped, the winners' worse than the losers'.
+   *
+   * Neither half of the fix can be checked by rendering, because jsdom does not
+   * lay out — so this asserts the two class-level properties the browser
+   * measurement rests on, and each is a real revert-in-one-line failure mode:
+   *
+   *   1. The score track is capped BELOW `sm:` and uncapped above it. A tidy-up
+   *      that collapses the pair back to one `max-content` restores the 129px
+   *      column, and nothing else in the suite would notice.
+   *   2. The score cell may WRAP. `fit-content(76px)` floors at min-content, so
+   *      a `whitespace-nowrap` added to that cell raises its min-content to the
+   *      whole score and puts the wide column straight back — with the capped
+   *      track still sitting in the source looking like it works.
+   *
+   * The win marker is asserted the other way round: the word must survive for a
+   * screen reader (`sr-only`, never `hidden`) while the phone spends 10px on a
+   * tick instead of 33 on the word.
+   */
+  it("caps the score track on a phone and lets the score wrap into it", () => {
+    const html = renderToStaticMarkup(
+      <TournamentResults
+        results={results({
+          matches: [result({ matchup_key: "a", score: "7-6, 6-7, 6-3, 6-4" })],
+        })}
+        draw="mens-singles"
+      />
+    );
+    expect(html).toContain("grid-cols-[minmax(0,1fr)_max-content_fit-content(76px)]");
+    expect(html).toContain("sm:grid-cols-[minmax(0,1fr)_max-content_max-content]");
+
+    // THE CAP'S PRECONDITION. `fit-content()` degrades to the full-width column
+    // the moment the CELL cannot break, so its own opening tag is the thing to
+    // read — `nowrap` on the chunks inside it is the opposite thing and is
+    // asserted for, below.
+    expect(openTagOf(html, "result-score")).not.toMatch(/\b(whitespace|text)-nowrap\b/);
+    // The score is really in there, so the assertion above is about a cell that
+    // exists rather than about an empty match. (Via the sr-only sentence: the
+    // visible half is drawn in pieces.)
+    expect(innerHtmlOf(html, "result-score", 0)).toContain("7-6, 6-7, 6-3, 6-4");
+
+    // AND THE BREAK FALLS BETWEEN SETS. Measured in the capture rig before this
+    // existed: the wrapped column broke `7-6, 6-` / `7, 6-3, 6-4`, because a
+    // hyphen is a break opportunity and no CSS property takes it away. Each set
+    // is its own `nowrap` chunk, so the only breakable thing left is the space
+    // after a comma.
+    const cell = innerHtmlOf(html, "result-score", 0);
+    const chunks = [...cell.matchAll(/<span class="whitespace-nowrap">([^<]*)<\/span>/g)].map(
+      (m) => m[1]
+    );
+    expect(chunks).toEqual(["7-6,", "6-7,", "6-3,", "6-4"]);
+  });
+
+  it("keeps a tiebreak with the set it belongs to when the score wraps", () => {
+    // Splitting on whitespace would have been the obvious way to chunk this and
+    // would put `(7-4),` on a line of its own, orphaned from the set it
+    // qualifies. The comma is the boundary; the space inside a chunk is not.
+    const html = renderToStaticMarkup(
+      <TournamentResults
+        results={results({
+          matches: [result({ matchup_key: "a", score: "7-6 (7-4), 3-6, 6-4" })],
+        })}
+        draw="mens-singles"
+      />
+    );
+    const chunks = [
+      ...innerHtmlOf(html, "result-score", 0).matchAll(
+        /<span class="whitespace-nowrap">([^<]*)<\/span>/g
+      ),
+    ].map((m) => m[1]);
+    expect(chunks).toEqual(["7-6 (7-4),", "3-6,", "6-4"]);
+  });
+
+  it("keeps the word 'won' for a screen reader while the phone shows a tick", () => {
+    const html = renderToStaticMarkup(
+      <TournamentResults results={results()} draw="mens-singles" />
+    );
+    const marker = innerHtmlOf(html, "result-won-marker", 0);
+    // The word is present and merely UNPAINTED below `sm:` — `hidden` here
+    // would delete the only statement of the result an unsighted reader gets
+    // from this row, which is the opposite of the ship.
+    expect(marker).toContain("won");
+    expect(marker).toContain("sr-only sm:not-sr-only");
+    expect(marker).not.toContain('class="hidden');
+    // …and the tick is decoration, so it is not read out twice.
+    expect(marker).toContain('aria-hidden="true"');
+    expect(marker).toContain("sm:hidden");
+    // Exactly one marker per match: the loser never gets one.
+    expect((html.match(/data-testid="result-won-marker"/g) ?? []).length).toBe(1);
   });
 });
 
@@ -1054,54 +1225,6 @@ describe("UX-P206 — a finished match draws its players", () => {
     expect(html).toContain("7-6, 6-3");
   });
 
-  /**
-   * The inner HTML of the `n`th element carrying `data-testid`, found by walking
-   * the tag depth from its opening tag to the matching close.
-   *
-   * 🔴 THIS EXISTS BECAUSE THE GUARD BELOW WAS VACUOUS AND **CERT-512 BLOCKED
-   * ON IT**. The version it replaces compared two string positions —
-   * `html.indexOf('result-player') < html.indexOf('player-avatar')` — and the
-   * cert's plant re-emitted every avatar just AFTER its name cell closed, which
-   * is exactly the fourth-grid-child regression the guard is named for. The
-   * avatar was still later in the string than the first cell, so the whole
-   * focused file stayed **GREEN at 52/52**.
-   *
-   * "Appears after" is not "is inside" — the same class as
-   * `reference_containment_check_cannot_see_early_exit`. Containment needs the
-   * element's own extent, so this walks it. `renderToStaticMarkup` emits
-   * well-formed markup, and every container in this subtree is a `span`, `div`
-   * or `li`, so a depth counter over the opening tag's own name is exact; `img`
-   * is self-closing and never opens depth.
-   *
-   * Reproduced on `827c5bd9`'s own checked-out bytes and re-run against this
-   * guard: `artifacts-ux-p207/battery-cert512-out.txt`.
-   */
-  function innerHtmlOf(html: string, testid: string, nth = 0): string {
-    const marker = `data-testid="${testid}"`;
-    let from = -1;
-    for (let i = 0; i <= nth; i += 1) from = html.indexOf(marker, from + 1);
-    if (from < 0) throw new Error(`no ${testid}[${nth}] in the markup`);
-    const open = html.lastIndexOf("<", from);
-    const tag = /^<(\w+)/.exec(html.slice(open, open + 12))?.[1];
-    if (!tag) throw new Error(`could not read the tag of ${testid}[${nth}]`);
-    const start = html.indexOf(">", from) + 1;
-    let depth = 1;
-    let at = start;
-    while (depth > 0) {
-      const nextOpen = html.indexOf(`<${tag}`, at);
-      const nextClose = html.indexOf(`</${tag}>`, at);
-      if (nextClose < 0) throw new Error(`unbalanced <${tag}> in the markup`);
-      if (nextOpen >= 0 && nextOpen < nextClose) {
-        depth += 1;
-        at = nextOpen + 1;
-      } else {
-        depth -= 1;
-        if (depth === 0) return html.slice(start, nextClose);
-        at = nextClose + 1;
-      }
-    }
-    return "";
-  }
 
   it("keeps the three grid tracks — the avatar rides INSIDE the name cell", () => {
     // UX-P147's columns are the reason this section is legible. An avatar added
@@ -1110,7 +1233,7 @@ describe("UX-P206 — a finished match draws its players", () => {
     const html = renderToStaticMarkup(
       <TournamentResults results={withFaces()} draw="mens-singles" />
     );
-    expect(html).toContain("grid-cols-[minmax(0,1fr)_max-content_max-content]");
+    expect(html).toContain("sm:grid-cols-[minmax(0,1fr)_max-content_max-content]");
 
     // CONTAINMENT, WALKED — see `innerHtmlOf`. BOTH cells, because an avatar
     // that only escapes the loser's cell is the same defect on half the rows,

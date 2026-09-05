@@ -22,6 +22,7 @@ import {
   resultLinkCoverage,
   resultsPopulationNote,
   roundHeading,
+  scoreWrapChunks,
   sortedResults,
   type TournamentResult,
   type TournamentResults as ResultsModel,
@@ -153,9 +154,52 @@ import {
  * describes the match and not the winner — baseline-aligning it to the top line
  * (which is what the old markup did) reads as a property of the player it sits
  * beside.
+ *
+ * ═══ live/071: ON A PHONE THE SCORE TRACK WAS EATING THE NAMES ═══
+ *
+ * `max-content` is the right sizing on a screen with slack and the wrong one on
+ * a screen without any. Measured on production, 390px, the men's finished list
+ * (the `ul` is 332px wide there):
+ *
+ *     name 114.16   prior 64.59   score 129.25   (+ two 12px gaps)
+ *
+ * The score column — sized by `max-content` to the longest score in the WHOLE
+ * list, `7-6, 6-7, 6-3, 6-4` — took 39% of the card, and the name track took
+ * what was left. Inside it the avatar, its margin and the padding cost 42px, so
+ * the loser's name span was 72px and the winner's, which also carries the win
+ * marker, was 39px: FOUR CHARACTERS. Every one of the ten names on the served
+ * list was clipped, and the winner's worse than the loser's — `Stefanos
+ * Tsitsipas` beat `Jiri Lehecka` and the row read `Ste… won  Jiri Lehecka`. A
+ * finished-match list whose one job is to say who won printed the winner as the
+ * least readable thing on the row.
+ *
+ * `fit-content(76px)` is `max-content` capped: the track takes what the score
+ * needs up to 76px and then WRAPS, so a four-set score becomes two lines inside
+ * a cell that already spans two player rows, and the row does not grow. It is
+ * not a hard width and the comment above still holds: a score longer than the
+ * cap is not truncated, because `fit-content` floors at min-content, so the
+ * widest unbreakable chunk (`7-6 (7-4),`, ~66px) always fits and the column
+ * simply grows past the cap on a list that contains one.
+ *
+ * 76 AND NOT 72, AND THE 4px IS THE CELL'S OWN PADDING. The cap sizes the
+ * TRACK; the text gets the track minus the score cell's `pr-3.5`. At 72 the
+ * text area was 58px and a two-set line (`7-6, 6-7,` — 27.3 + 3.9 + 27.3 =
+ * 58.5px, measured in the capture rig) missed it by half a pixel, so every
+ * four-set score came out `7-6,` / `6-7,` / `6-3, 6-4`: three ragged lines in a
+ * column sized for two. 76 leaves 62px of text and the same score sets two
+ * balanced lines. A cap chosen against the text width alone is 14px wrong here.
+ *
+ * From `sm:` up the cap is gone and the track is `max-content` exactly as it
+ * was — at 640px the three columns fit with ~400px of name to spare, so a
+ * wrapped score there would be a wrap nothing asked for.
+ *
+ * ⚠️ THE CAP ONLY WORKS WHILE THE SCORE MAY WRAP. A `whitespace-nowrap` on the
+ * score cell would raise its min-content to the full score and put the 129px
+ * column straight back, with the classes here still reading as if they capped
+ * it. `tournamentAxisAndResults.test.tsx` guards the pair.
  */
 const RESULT_GRID =
-  "grid grid-cols-[minmax(0,1fr)_max-content_max-content] items-center gap-x-3 lg:gap-x-4";
+  "grid grid-cols-[minmax(0,1fr)_max-content_fit-content(76px)] sm:grid-cols-[minmax(0,1fr)_max-content_max-content] items-center gap-x-3 lg:gap-x-4";
 
 function ResultRow({
   result,
@@ -236,9 +280,27 @@ function ResultRow({
                   [{player.seed}]
                 </span>
               )}
+              {/* THE WIN MARKER, AND WHY IT IS A TICK ON A PHONE (live/071).
+                  It is `shrink-0` — correctly, a marker that truncates says
+                  nothing — so its width comes out of the name beside it, and
+                  the word cost 33px of a 114px cell: the winner's name got 39px
+                  and the loser's, which carries no marker, got 72. The one name
+                  the row exists to state was the one cut hardest.
+
+                  The tick is 14px with its margin, so the phone spends 19px
+                  fewer on saying the same thing, and the WORD is still there
+                  for anyone who cannot see the tick — `sr-only` is not
+                  `hidden`. From `sm:` up the word is visible again exactly as
+                  it was; there is room for it there. */}
               {player.is_winner && (
-                <span className="ml-1.5 shrink-0 text-[10px] font-bold uppercase tracking-[0.05em] text-accent-live">
-                  won
+                <span
+                  className="ml-1.5 shrink-0 text-[10px] font-bold uppercase tracking-[0.05em] text-accent-live"
+                  data-testid="result-won-marker"
+                >
+                  <span aria-hidden="true" className="sm:hidden">
+                    ✓
+                  </span>
+                  <span className="sr-only sm:not-sr-only">won</span>
                 </span>
               )}
             </span>
@@ -310,7 +372,23 @@ function ResultRow({
                 title={line.explanation}
               >
                 <span className="sr-only">{line.explanation}</span>
-                <span aria-hidden="true">{line.text}</span>
+                {/* live/071: the visible score is drawn CHUNK BY CHUNK so the
+                    phone's capped column can only break between sets — the
+                    default break opportunities include the hyphen inside one,
+                    and `7-6, 6-` / `7, 6-3, 6-4` is a different score. See
+                    `scoreWrapChunks`. The sentence above is untouched: a screen
+                    reader gets one plain string, not a pile of spans. */}
+                <span aria-hidden="true">
+                  {scoreWrapChunks(line.text).map((chunk, chunkIndex, all) => (
+                    <React.Fragment key={chunk + chunkIndex}>
+                      {chunkIndex > 0 ? " " : null}
+                      <span className="whitespace-nowrap">
+                        {chunk}
+                        {chunkIndex < all.length - 1 ? "," : ""}
+                      </span>
+                    </React.Fragment>
+                  ))}
+                </span>
               </span>
             )}
           </React.Fragment>
