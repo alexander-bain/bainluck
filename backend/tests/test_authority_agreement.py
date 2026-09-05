@@ -47,6 +47,8 @@ import pytest
 from app.services.statpal_api import StatPalAPIService
 from app.utils.authority_agreement import (
     MEASUREMENT_HORIZON,
+    MINIMUM_DENOMINATOR_RULING,
+    MINIMUM_SCORED_DENOMINATOR,
     READ_FAILED,
     READ_OK,
     RECEIPT_CAP,
@@ -147,13 +149,26 @@ def test_a_five_hour_kickoff_gap_is_one_game_not_two_misses():
         },
         # D63: NFL is scored on BOTH numbers, because both sides carry the same
         # population and where the two questions have the same answer asking
-        # both is free. Here they do, and the day advances the streak.
+        # both is free. Here they do — and the day still does not advance the
+        # streak, because the fixture is ONE game. 100% of one game is 100% by
+        # arithmetic and says nothing about agreement, so the gate is
+        # `TOO-FEW-TO-SCORE` and the streak carries unchanged. That is the point
+        # of this whole test: the clock finding is real and the population is
+        # too small to score, and those are two separate facts.
         "governing": {
             "numbers": ["pct", "ours_covered_pct"],
             "values": {"pct": 100.0, "ours_covered_pct": 100.0},
+            "denominators": {"pct": 1, "ours_covered_pct": 1},
             "bar_pct": 99.5,
-            "gate": "MEETS",
-            "why": "all governing numbers at or above 99.5%",
+            "minimum_denominator": MINIMUM_SCORED_DENOMINATOR,
+            "minimum_denominator_ruling": MINIMUM_DENOMINATOR_RULING,
+            "gate": "TOO-FEW-TO-SCORE",
+            "why": (
+                f"ours_covered_pct, pct scored over fewer than "
+                f"{MINIMUM_SCORED_DENOMINATOR} games, which is not a measurement "
+                f"of agreement; the streak carries unchanged. "
+                f"{MINIMUM_DENOMINATOR_RULING}"
+            ),
         },
     }
     assert row["schedule"]["off_by_hours"] == 1
@@ -350,7 +365,14 @@ def test_a_contest_we_hold_no_row_for_is_statpal_only():
         "governing": {
             "numbers": ["pct", "ours_covered_pct"],
             "values": {"pct": 0.0, "ours_covered_pct": None},
+            # Published even on the day it cannot be scored, and the zero is the
+            # reason: "of the nothing we list, StatPal has none" is a divide by
+            # zero, and printing the 0 beside the `None` is what makes that
+            # readable rather than a missing field to interpret.
+            "denominators": {"pct": 1, "ours_covered_pct": 0},
             "bar_pct": 99.5,
+            "minimum_denominator": MINIMUM_SCORED_DENOMINATOR,
+            "minimum_denominator_ruling": MINIMUM_DENOMINATOR_RULING,
             "gate": "NO-SCORE",
             "why": (
                 "ours_covered_pct has no denominator to divide by, so this day "

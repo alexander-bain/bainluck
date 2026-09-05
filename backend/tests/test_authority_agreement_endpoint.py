@@ -176,10 +176,25 @@ async def test_the_banked_row_is_published_verbatim(call):
 
 
 def test_the_summary_names_every_gate_state():
-    """A fifth state added without the copy is a state nobody reading is told about."""
+    """A sixth state added without the copy is a state nobody reading is told about.
+
+    The list of states is DISCOVERED from the module, not typed here. It used to
+    be a four-name literal, which meant this test could not detect the exact
+    thing its own docstring promised: `GATE_TOO_FEW` was added and the hardcoded
+    set went on passing. A guard whose subject is a growing list may not hold a
+    snapshot of that list.
+    """
     from app.utils import authority_agreement as aa
 
-    states = {aa.GATE_MEETS, aa.GATE_BELOW, aa.GATE_NO_SCORE, aa.GATE_PENDING}
+    states = {
+        getattr(aa, name)
+        for name in dir(aa)
+        if name.startswith("GATE_") and isinstance(getattr(aa, name), str)
+    }
+    assert len(states) >= 5, (
+        f"only found {sorted(states)} — this guard discovers gate states by "
+        "name prefix, and a renamed constant would silently empty it"
+    )
     missing = sorted(s for s in states if s not in aa.FLIP_GATE_SUMMARY)
     assert not missing, (
         f"the gate summary does not name {missing}; a reader who meets that "
