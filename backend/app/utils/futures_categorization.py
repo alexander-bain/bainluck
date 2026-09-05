@@ -183,8 +183,13 @@ SPORT_PATTERNS = [
     # Poker
     (re.compile(r"\b(wsop|poker|world.series.of.poker)\b", re.I), "poker"),
 
-    # Darts
-    (re.compile(r"\b(darts?|pdc|bdo|premier.league.darts|world.darts|lakeside|ally.pally|world.matchplay|grand.prix.darts|world.grand.prix.darts)\b", re.I), "darts"),
+    # Darts. `darts` is PLURAL on purpose, and the `?` that used to be here was a
+    # live mis-tag: "Dart" is the surname of NFL quarterback Jaxson Dart and tennis
+    # player Harriet Dart, so `\bdarts?\b` sent "Will Jaxson Dart be the first
+    # overall pick?" to darts. `_STRONG_EVIDENCE_PATTERNS` already spelled the rule
+    # out; this list had not learned it. The singular loses nothing — no market
+    # names the sport with one dart, and the compound forms are on the next line.
+    (re.compile(r"\b(darts|pdc|bdo|premier.league.darts|world.darts|lakeside|ally.pally|world.matchplay|grand.prix.darts|world.grand.prix.darts)\b", re.I), "darts"),
     (re.compile(r"\b(nine.dart|180s|checkout|bullseye|dartboard)\b", re.I), "darts"),
 
     # Generic sports awards (catch-all for awards not already matched above)
@@ -1022,10 +1027,17 @@ _AMBIGUOUS_WEIGHT = 1
 _DEFAULT_WEIGHT = 3
 _STRONG_WEIGHT = 5
 
-# Matched text that is a common English word or a name shared across domains.
-# Keyed on the text the pattern actually matched, normalized, NOT on the pattern
-# -- most of these live inside big team-name alternations where their siblings
-# ("celtics", "yankees") are perfectly unambiguous.
+# The ambiguity VOCABULARY: matched text that is a common English word or a name
+# shared across domains. Keyed on the text the pattern actually matched,
+# normalized, NOT on the pattern -- most of these live inside big team-name
+# alternations where their siblings ("celtics", "yankees") are unambiguous.
+#
+# This set says only WHICH WORDS are ordinary. Which CATEGORY each one is
+# ambiguous *for* is derived from the patterns themselves, in `_AMBIGUOUS_FOR`
+# below -- so a team name added to an alternation inherits its ambiguity with no
+# second edit here, and an entry naming a word no pattern matches cannot rot
+# unnoticed. (Three already had: "jazz", "kings" and "browns" appear in no
+# pattern in this file, so they have never weighted anything.)
 _AMBIGUOUS_EVIDENCE = frozenset({
     # Tournament words shared by golf / darts / snooker / esports / tennis.
     "masters", "the open", "open",
@@ -1055,6 +1067,17 @@ _STRONG_EVIDENCE_PATTERNS = [
     (re.compile(r"\b(mayoral|next\s+governor|ballot\s+measure)\b", re.I), "politics"),
     (re.compile(r"\bchess\b", re.I), "chess"),
     (re.compile(r"\bsnooker\b", re.I), "snooker"),
+    # Track and field. Deliberately does NOT match bare "athletics": that word is
+    # the Oakland A's far more often than it is the sport, and claiming it would
+    # trade this mis-tag class for a worse one. Only phrases that commit, plus
+    # field events whose names are not English words in any other domain. Note
+    # what is ALSO absent: bare race distances ("100m"). "$100M" is a live
+    # entertainment box-office market shape, so `\b100\s?m\b` would veto real
+    # rows -- the same "one ambiguous token decides" bug this file exists to fix.
+    (re.compile(
+        r"\b(world\s+athletics|track\s+and\s+field|diamond\s+league|"
+        r"heptathlon|decathlon|steeplechase|pole\s+vault|shot\s+put|"
+        r"javelin|triple\s+jump)\b", re.I), "athletics"),
 ]
 
 # Domains we can RECOGNISE but have no category for. Matching one is a veto: it
@@ -1064,13 +1087,47 @@ _STRONG_EVIDENCE_PATTERNS = [
 # sport corrupts the canonical key, a missing one just leaves it to the next
 # stage. (Directive 2026-08-24: "positive-evidence scoring plus the non-sport
 # veto".)
-_VETO_ONLY_CATEGORIES = frozenset({"snooker"})
+_VETO_ONLY_CATEGORIES = frozenset({"snooker", "athletics"})
 
 
-def _evidence_weight(matched_text: str) -> int:
-    """Weight a single pattern hit by how much its matched TEXT commits."""
-    normalized = re.sub(r"[^a-z0-9]+", " ", matched_text.lower()).strip()
-    if normalized in _AMBIGUOUS_EVIDENCE:
+# (category, normalized_text) pairs -- DERIVED, never restated. Ambiguity is a
+# relation between a word and a claimant, not a property of the word: the flat
+# set said "athletics is weak" and so weakened it for every category at once,
+# which is why "World Athletics Championship 100m Winner" came out BASEBALL --
+# the Oakland A's token scored 1, nothing outscored 1, and a lone ambiguous match
+# wins unopposed. Pairing it means a word is only discounted for the category
+# whose claim on it is actually doubtful.
+def _normalize_evidence(matched_text: str) -> str:
+    """Fold matched text to the key both the ambiguity table and the dedup use."""
+    return re.sub(r"[^a-z0-9]+", " ", matched_text.lower()).strip()
+
+
+def _derive_ambiguous_pairs() -> frozenset[tuple[str, str]]:
+    pairs: set[tuple[str, str]] = set()
+    for pattern, category in (*SPORT_PATTERNS, *_STRONG_EVIDENCE_PATTERNS):
+        for token in _AMBIGUOUS_EVIDENCE:
+            match = pattern.search(token)
+            if match and _normalize_evidence(match.group(0)) == token:
+                pairs.add((category, token))
+    return frozenset(pairs)
+
+
+_AMBIGUOUS_FOR = _derive_ambiguous_pairs()
+
+
+def _evidence_weight(matched_text: str, category: str) -> int:
+    """Weight a single pattern hit by how much its matched TEXT commits FOR THIS
+    CATEGORY.
+
+    Ambiguity is a relation between a word and a claimant, not a property of the
+    word. The flat set could only say "athletics is a weak word" -- so it also
+    weakened the categories for which that word is decisive. `_AMBIGUOUS_FOR`
+    keys on ``(category, text)``: "athletics" is ambiguous when BASEBALL claims it
+    (the Oakland A's) and unremarkable elsewhere; "open" is ambiguous for golf and
+    tennis and means nothing to hockey.
+    """
+    normalized = _normalize_evidence(matched_text)
+    if (category, normalized) in _AMBIGUOUS_FOR:
         return _AMBIGUOUS_WEIGHT
     return _DEFAULT_WEIGHT
 
@@ -1081,14 +1138,33 @@ def score_sport_evidence(search_text: str) -> dict[str, int]:
     Exposed (not underscore-private) because the C1 regression corpus and any
     future audit need to see the breakdown, not just the verdict.
     """
+    # Count DISTINCT evidence, not regex hits. `pattern.search()` stopped at the
+    # first hit, so a category scored once per PATTERN it happened to be split
+    # across -- which measures how the regexes were authored, not how much the
+    # text commits. Measured on the live lists: football owns 20 patterns and
+    # cricket owns 1, so "rajasthan royals to win ipl t20" scored cricket 3 (its
+    # three cricket terms all live in one alternation) against baseball 3 (the
+    # single incidental token "royals"), and the tie-break handed a cricket
+    # market to baseball. Deduping on the matched TEXT keeps the other direction
+    # honest too: one word matched by five of a category's patterns is still one
+    # piece of evidence, so a category cannot farm its own alternation count.
+    seen: dict[str, set[str]] = {}
     scores: dict[str, int] = {}
+
+    def _credit(category: str, matched_text: str, weight: int) -> None:
+        normalized = _normalize_evidence(matched_text)
+        if normalized in seen.setdefault(category, set()):
+            return
+        seen[category].add(normalized)
+        scores[category] = scores.get(category, 0) + weight
+
     for pattern, category in SPORT_PATTERNS:
-        match = pattern.search(search_text)
-        if match:
-            scores[category] = scores.get(category, 0) + _evidence_weight(match.group(0))
+        for match in pattern.finditer(search_text):
+            text = match.group(0)
+            _credit(category, text, _evidence_weight(text, category))
     for pattern, category in _STRONG_EVIDENCE_PATTERNS:
-        if pattern.search(search_text):
-            scores[category] = scores.get(category, 0) + _STRONG_WEIGHT
+        for match in pattern.finditer(search_text):
+            _credit(category, match.group(0), _STRONG_WEIGHT)
     return scores
 
 

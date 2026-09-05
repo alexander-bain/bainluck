@@ -24,7 +24,7 @@ reader can re-pull the row. See ``.claude/handoff/REPORT-Q-CONTAMINATION-2026-08
 
 import pytest
 
-from app.utils.futures_categorization import categorize_by_rules
+from app.utils.futures_categorization import categorize_by_rules, score_sport_evidence
 
 
 # ---------------------------------------------------------------------------
@@ -183,3 +183,93 @@ def test_c1_controls_do_not_regress(name, expected):
     assert categorize_by_rules(name) == expected, (
         f"{name!r} regressed -- the fix over-corrected"
     )
+
+
+# ---------------------------------------------------------------------------
+# C-F3-CATEGORIZE-3's three P1s (BLOCK on 38685f64), each with the test that
+# catches it (D53). All three were live on the branch head the BLOCK froze; each
+# assertion below was RED before the repair in this commit.
+#
+# Note why the existing controls above missed the first one: every Jaxson Dart
+# control carries a strong football token ("Pro Football", "NFL", "QB"), so
+# football outscored darts on evidence. The BLOCK's specimen carries none, so
+# the two tied 3-3 and SPORT_PATTERNS order handed it to darts. A control set
+# that only samples the easy half of a class does not cover the class.
+# ---------------------------------------------------------------------------
+
+def test_p1_singular_dart_is_a_surname_not_a_sport():
+    """P1-1: ``\\bdarts?\\b`` in SPORT_PATTERNS matched the NFL QB's surname.
+
+    `_STRONG_EVIDENCE_PATTERNS` already used the plural deliberately and said so
+    in a comment; SPORT_PATTERNS had never learned it.
+    """
+    assert categorize_by_rules("Will Jaxson Dart be the first overall pick?") == "football"
+    # The tennis half of the same surname collision, also with no strong token.
+    assert categorize_by_rules("Harriet Dart to reach the second round") != "darts"
+    # And the plural still commits, with no other evidence in the string at all.
+    assert categorize_by_rules("Darts: Luke Humphries vs Michael van Gerwen") == "darts"
+
+
+def test_p1_evidence_is_counted_per_distinct_term_not_per_regex():
+    """P1-2: one ``search()`` per pattern scored regex AUTHORING, not evidence.
+
+    Cricket owns a single alternation, so its three terms in "rajasthan royals to
+    win ipl t20" scored 3 -- tying the ONE incidental baseball token "royals",
+    which then won on SPORT_PATTERNS order. Counting distinct matched text makes
+    the cricket evidence add up.
+    """
+    scores = score_sport_evidence("rajasthan royals to win ipl t20")
+    assert scores["cricket"] > scores.get("baseball", 0), (
+        f"cricket evidence must outweigh one stray team token, got {scores}"
+    )
+    assert categorize_by_rules("Rajasthan Royals to win IPL T20") == "cricket"
+
+    # The other direction (gotcha #43): dedup on matched TEXT, so a category
+    # cannot farm a score by owning many patterns that match the SAME word.
+    repeated = score_sport_evidence("nba nba nba nba")
+    single = score_sport_evidence("nba")
+    assert repeated == single, (
+        f"repeating one token must not inflate its score: {repeated} vs {single}"
+    )
+
+
+def test_p1_ambiguity_is_relative_to_the_claiming_category():
+    """P1-3: a flat ambiguity set discounted a word for every category at once.
+
+    "athletics" is doubtful evidence for BASEBALL (the Oakland A's) and decisive
+    for track and field. Category-blind, it scored baseball 1, nothing outscored
+    1, and a lone ambiguous match wins unopposed -- so a track meet was filed as
+    baseball, which is what corrupts the canonical key.
+    """
+    assert categorize_by_rules("World Athletics Championship 100m Winner") != "baseball"
+    # Veto-only: we can recognise the domain without having a category for it, so
+    # the row goes to the LLM fallback rather than to a confident wrong answer.
+    assert categorize_by_rules("World Athletics Championship 100m Winner") is None
+
+    # The pairing must NOT cost the category whose claim is genuine.
+    assert categorize_by_rules("Will the Oakland Athletics win the World Series?") == "baseball"
+    # And the veto must not reach a box-office market: "$100M" is why bare race
+    # distances are absent from the athletics pattern.
+    assert categorize_by_rules("Will Avatar 3 gross over $100M opening weekend?") == "entertainment"
+
+
+def test_ambiguity_pairs_are_derived_from_the_patterns_not_restated():
+    """The table cannot drift from the patterns it describes.
+
+    Every derived pair names a real (category, word) the patterns can actually
+    produce -- so an entry for a word no pattern matches cannot sit in the set
+    silently weighting nothing, which is how "jazz", "kings" and "browns" got in.
+    """
+    from app.utils.futures_categorization import _AMBIGUOUS_EVIDENCE, _AMBIGUOUS_FOR
+
+    assert _AMBIGUOUS_FOR, "the derivation produced nothing -- it is not wired up"
+    for category, token in _AMBIGUOUS_FOR:
+        assert token in _AMBIGUOUS_EVIDENCE, (
+            f"{token!r} is paired but is not in the curated vocabulary"
+        )
+    # The three dead entries are still dead, and provably so: they pair with
+    # nothing, which is the derivation refusing to invent a claimant.
+    paired = {token for _c, token in _AMBIGUOUS_FOR}
+    assert {"jazz", "kings", "browns"}.isdisjoint(paired)
+    # "athletics" is ambiguous for baseball specifically -- the P1-3 pairing.
+    assert ("baseball", "athletics") in _AMBIGUOUS_FOR
