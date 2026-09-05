@@ -299,6 +299,34 @@ KALSHI_TICKER_TO_SPORT_KEY: dict[str, str] = {
     "kxnbafirstbasket": "basketball_nba",     # First basket scorer
     "kxnbamention": "basketball_nba",         # Announcer mention props
     # NFL game-level props (spread, total, halves, quarters, player props)
+    #
+    # Q453: Kalshi's live half/quarter series are the BARE tickers, not the
+    # `…winner` spellings below — `KXNFL1Q-26SEP13CLEJAC`, not `KXNFL1QWINNER-…`.
+    # The map missed by a suffix, so `_ticker_prefix` found nothing and each row
+    # fell through to the per-market `llm_sport_category` guess. MEASURED on
+    # production 2026-09-05, over the 10-day window: one NFL series scattered
+    # across FIVE sports —
+    #   kxnfl1q/2q/3q/4q  32 markets each -> americanfootball_nfl, _ncaaf,
+    #                     _other, baseball_other, basketball_other
+    #   kxnfl1h           -> basketball_other      kxnfl2h -> soccer_other
+    #   kxnflrace         80 markets, ALL 80 -> basketball_other
+    # Specimen: `KXNFL1Q-26SEP14DENKC` ("DEN Broncos vs KC Chiefs") minted event
+    # 15305127 **"Nuggets vs Chiefs"** — with no sport, `DEN` resolved to the
+    # Denver Nuggets. Nine such NBA/NFL hybrids were on the American Football
+    # page at the time of writing. The mapped siblings prove the fix: `kxnflgame`
+    # is 27/27 linked, one sport, zero invented rows.
+    #
+    # Mapping to `americanfootball_nfl` also puts these under the
+    # `_ODDS_API_COVERED_PREFIXES` refusal in the matching task, so they can only
+    # LINK to a real Odds-API game — they can never create one. That is why the
+    # ticker mapping is the fix and not merely a relabelling.
+    "kxnfl1q": "americanfootball_nfl",               # 1st quarter winner (bare)
+    "kxnfl2q": "americanfootball_nfl",               # 2nd quarter winner (bare)
+    "kxnfl3q": "americanfootball_nfl",               # 3rd quarter winner (bare)
+    "kxnfl4q": "americanfootball_nfl",               # 4th quarter winner (bare)
+    "kxnfl1h": "americanfootball_nfl",               # 1st half winner (bare)
+    "kxnfl2h": "americanfootball_nfl",               # 2nd half winner (bare)
+    "kxnflrace": "americanfootball_nfl",             # Race to N points
     "kxnflspread": "americanfootball_nfl",           # Game spread
     "kxnfltotal": "americanfootball_nfl",            # Game total points
     "kxnflteamtotal": "americanfootball_nfl",        # Team total points
@@ -561,19 +589,29 @@ KALSHI_TICKER_TO_SPORT_KEY: dict[str, str] = {
     "kxwcgame": "soccer_fifa_world_cup",      # WC 2026 match moneyline
     "kxfifagame": "soccer",                   # FIFA match ("Bolivia vs Suriname")
     "kxfifawgame": "soccer",                  # FIFA women's match ("Albania vs Montenegro")
-    # Q453: the same defense-in-depth as #207 above, for the three live soccer
-    # series MEASURED scattering across sports on 2026-08-30 because no ticker
-    # mapped them and the per-market `llm_sport_category` decided each row:
+    # Q453: the same defense-in-depth as #207 above, for the live soccer series
+    # MEASURED scattering across sports on 2026-08-30 because no ticker mapped
+    # them and the per-market `llm_sport_category` decided each row:
     #   kxncaamsoccergame  17 rows -> americanfootball_other, 3 -> basketball_other
     #   kxsvkcupadvance     4 -> americanfootball_other, 2 -> icehockey_other, 1 -> mma_other
     #   kxknvbcupadvance    4 -> americanfootball_other  (14 correctly soccer_other)
-    # One competition cannot be four sports. The `…advance` and `…game` legs of a
-    # cup tie are the same fixture, so both are mapped or the tie splits again.
+    # One competition cannot be four sports.
+    #
+    # HELD BACK, deliberately: the four Slovak/KNVB cup keys (`kxsvkcupgame`,
+    # `kxsvkcupadvance`, `kxknvbcupgame`, `kxknvbcupadvance`). Mapping them makes
+    # the matcher attach markets 59700960 and 59701032 to events 15297322 and
+    # 15297301 — which is the RIGHT answer (exact-name sole event for each tie,
+    # no rival row on production, and the scorer still rejects the five decoy
+    # `Trnava vs Košice` prop events) — but #2706's golden set adjudicated both
+    # pairs `correct_event_id: null` on 2026-09-02 under the note
+    # `non-sport-category;cup-ticker`, i.e. while the ticker was still unmapped.
+    # So the ratchet reads the improvement as a regression. The golden set is
+    # lane1b's under D39 and re-adjudication is theirs to make, so these four
+    # wait for it rather than being laundered past the gate by a re-record.
+    # The `…advance` and `…game` legs of a cup tie are one fixture: all four land
+    # together or the tie splits again. Evidence handed over in
+    # `runner-inbox/lane1b/`; do not re-add them here without that re-adjudication.
     "kxncaamsoccergame": "soccer_other",      # NCAA men's soccer
-    "kxsvkcupgame": "soccer_other",           # Slovak Cup
-    "kxsvkcupadvance": "soccer_other",        # Slovak Cup — who advances
-    "kxknvbcupgame": "soccer_other",          # KNVB Beker (Dutch cup)
-    "kxknvbcupadvance": "soccer_other",       # KNVB Beker — who advances
     # Asian basketball
     "kxcbagame": "basketball_other",          # Chinese CBA
     "kxjbleaguegame": "basketball_other",     # Japanese B.League
