@@ -144,7 +144,14 @@ async def _seed_one_fabricated_loss_market(
 async def _work(session, **params):
     from sqlalchemy import text
 
-    args = {"lim": 10, "sport": None, "after_date": None, "after_id": None}
+    args = {
+        "lim": 10,
+        "sport": None,
+        "after_date": None,
+        "after_id": None,
+        "band_min_age": None,
+        "band_max_age": None,
+    }
     args.update(params)
     return (await session.execute(text(rail._WORK_SQL), args)).all()
 
@@ -662,6 +669,125 @@ async def test_the_near_misses_stay_out_of_the_lateral_form(pg_session):
         ("KXWORK-PURGED", "past the purge bound the venue cannot answer"),
     ):
         assert excluded not in selected, why
+
+
+async def _band_population(session):
+    """Five members spread across the sort, one per decade of age.
+
+    Ages descend against the insertion order for the same reason
+    ``_mixed_population`` does: a band that reads the wrong edge still returns
+    rows, and a fixture whose id order agrees with its date order cannot tell a
+    correct band from a lucky one.
+    """
+    ids = {}
+    for age in (80, 65, 55, 40, 20):
+        ids[age] = await _seed_market(session, ext=f"KXBAND-{age}", days_ago=age)
+    return ids
+
+
+async def test_the_band_selects_the_ages_it_names_and_no_others(pg_session):
+    """``?band=47-67`` means ages 47..67 INCLUSIVE, and nothing outside it.
+
+    #3257 shape 3. The whole point of the band is that an operator can name the
+    stretch of the sort the venue still answers for, so the mapping from the two
+    numbers to the two date bounds is the contract — and it is the one thing a
+    fixture-only test cannot hold, because ``NOW() - :n * INTERVAL '1 day'`` is
+    evaluated by Postgres.
+    """
+    ids = await _band_population(pg_session)
+
+    selected = {
+        r.market_id
+        for r in await _work(pg_session, lim=50, band_min_age=47, band_max_age=67)
+    }
+
+    assert selected == {ids[65], ids[55]}, (
+        "the band must admit exactly the seeded ages inside 47..67 — got "
+        f"{selected}, expected the 65d and 55d markets"
+    )
+    assert ids[80] not in selected, "80d is older than the band's max edge"
+    assert ids[40] not in selected, "40d is younger than the band's min edge"
+    assert ids[20] not in selected, "20d is younger than the band's min edge"
+
+
+async def test_the_max_is_the_OLDER_edge_not_the_younger_one(pg_session):
+    """The direction, held on its own, because reversing it still returns rows.
+
+    ``band_max_age`` is a LOWER bound on ``resolution_date`` and ``band_min_age``
+    is an UPPER one. Swap the two binds in ``_WORK_SQL`` and this fixture still
+    yields a non-empty, plausible page — every row in it is a genuine population
+    member — so nothing but an assertion about WHICH rows can catch it. Under the
+    swap the band below selects the 20d and 40d markets instead of the 80d one.
+    """
+    ids = await _band_population(pg_session)
+
+    selected = {
+        r.market_id
+        for r in await _work(pg_session, lim=50, band_min_age=70, band_max_age=86)
+    }
+
+    assert selected == {ids[80]}, (
+        "band=70-86 is the OLD end of the sort (the measured dead head); it must "
+        f"select the 80-day market alone — got {selected}"
+    )
+
+
+async def test_a_band_keeps_the_oldest_first_sort_inside_itself(pg_session):
+    """Band-first paging is worthless if the band is not itself drained in order.
+
+    The at-risk cohort is drained oldest-first so the rows nearest the purge
+    cliff go first; and the keyset resumes at a POSITION in this order, so a band
+    that reordered its own page would hand back a cursor that skips.
+    """
+    await _band_population(pg_session)
+
+    rows = await _work(pg_session, lim=50, band_min_age=30, band_max_age=86)
+
+    dates = [r.resolution_date for r in rows]
+    assert dates == sorted(dates), "oldest first inside the band too"
+    assert len(rows) == 4, "30..86 covers every seeded age but the 20-day one"
+
+
+async def test_no_band_is_the_whole_population_unchanged(pg_session):
+    """The default path must be byte-identical to the pre-band behaviour.
+
+    Both binds NULL is the no-band case, and it is the one every existing caller
+    takes. A band predicate that failed open to "select nothing" would empty the
+    drain while every band test still passed.
+    """
+    ids = await _band_population(pg_session)
+
+    selected = {r.market_id for r in await _work(pg_session, lim=50)}
+
+    assert set(ids.values()) <= selected, (
+        "with no band the walk must still see every member of the population"
+    )
+
+
+async def test_a_band_narrower_than_the_population_still_pages_by_keyset(pg_session):
+    """The band COMPOSES with the cursor; it does not replace it.
+
+    Shape 3 was chosen over a floor partly because it stacks on the existing
+    keyset. If the cursor were ignored inside a band, a drain would re-read the
+    band's first page forever and report progress each time.
+    """
+    ids = await _band_population(pg_session)
+
+    first = await _work(pg_session, lim=1, band_min_age=30, band_max_age=86)
+    assert [r.market_id for r in first] == [ids[80]]
+
+    resumed = await _work(
+        pg_session,
+        lim=50,
+        band_min_age=30,
+        band_max_age=86,
+        after_date=first[0].resolution_date,
+        after_id=first[0].market_id,
+    )
+
+    assert [r.market_id for r in resumed] == [ids[65], ids[55], ids[40]], (
+        "the resume must continue inside the band, not restart it"
+    )
 
 
 async def test_the_per_market_leg_read_executes(pg_session):

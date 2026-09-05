@@ -16,6 +16,18 @@ an endpoint that returns its own census, never an incantation):
     POST /api/admin/repairs/kalshi-fabricated-loss?apply=true&plan_hash=<hash>
     ...then drain with ?after_date=<..>&after_id=<..> from ``next_cursor``
 
+CAL-P1015 (#3257) — START THE DRAIN WHERE THE VENUE STILL ANSWERS. The sort is
+oldest-first within the retention floor, and CAL-P1014 measured what that head is
+made of: the venue answers NOTHING between 70 and 86 days and everything by 54.
+So an unbanded drain spends ~15 pages and ~600 venue lookups on 597 markets that
+are already purged before it reaches the 552-market at-risk tail behind them —
+and that tail is the only cohort with a deadline. ``?band=47-67`` (ages in days,
+youngest first) pages that tail first. It is a SELECTOR, not a floor: it excludes
+nothing, changes no verdict, and does not retune :mod:`app.utils.kalshi_retention`
+— see :func:`parse_band` for why a second floor was the wrong instrument, and why
+a banded page reports ``exhausted_scope`` and ``population_exhausted`` rather than
+letting one boolean say a slice was the whole thing.
+
 CAL-P1008 — THE CAPTURE IS PART OF THE RUNBOOK, not housekeeping after it. The
 durable plan slot (:data:`PLAN_IDENTITY`) holds ONE plan and a drain over
 :data:`APPLY_MARKET_CAP` markets per call runs many, so batch N+1's dry-run
@@ -1037,6 +1049,25 @@ _WORK_SQL = f"""
         -- digits compiled to a parameter nobody supplies. Caught by the real
         -- Postgres gate on the first run of the fix for this very line.
         AND (CAST(:sport AS text) IS NULL OR fm.llm_sport_category = CAST(:sport AS text))
+        -- #3257 shape 3: band-first paging. Two ages in days, applied as bounds
+        -- on the SAME column the sort and the keyset already use, so the band
+        -- composes with the cursor instead of replacing it. Both halves cast for
+        -- the reason the floor above spells out.
+        --
+        -- The band's MAX is the OLDER edge, so it is a LOWER bound on the date;
+        -- the MIN is the younger edge and an UPPER bound. Getting that backwards
+        -- returns rows and looks like it worked, which is why the parser names
+        -- the two numbers as ages and refuses an inverted pair.
+        AND (
+              CAST(:band_max_age AS double precision) IS NULL
+           OR fm.resolution_date >= NOW()
+              - (CAST(:band_max_age AS double precision) * INTERVAL '1 day')
+            )
+        AND (
+              CAST(:band_min_age AS double precision) IS NULL
+           OR fm.resolution_date <= NOW()
+              - (CAST(:band_min_age AS double precision) * INTERVAL '1 day')
+            )
         AND (
               CAST(:after_date AS timestamptz) IS NULL
            OR (fm.resolution_date, fm.id)
@@ -1888,6 +1919,7 @@ async def repair(
     after_id: int | None = None,
     after_date: str | None = None,
     sport: str | None = None,
+    band: str | None = None,
     plan_hash: str | None = None,
 ) -> dict[str, Any]:
     """Per-leg retraction/restoration against the venue's own declaration.
@@ -1924,9 +1956,29 @@ async def repair(
         }
 
     if apply:
+        if band is not None:
+            # #3257: the apply re-selects NOTHING — it writes the leg ids the
+            # plan named. A band accepted here would be a silent no-op that
+            # reads, in an operator's scrollback, exactly like the scope of the
+            # write. The band that actually chose these rows is recorded in the
+            # plan's own context; this is refused so the two can never disagree.
+            return {
+                "measured": False,
+                "refused": "BAND_ON_APPLY",
+                "presented_band": band,
+                "reason": (
+                    "?band= is a selector for the DRY RUN. An apply executes the "
+                    "reviewed plan by leg id and selects nothing, so a band here "
+                    "would narrow nothing while appearing to. The band the plan "
+                    "was built under is in its own context."
+                ),
+                "elapsed_s": round(time.monotonic() - started, 1),
+            }
         return await _apply_reviewed_plan(session, plan_hash, started)
 
-    return await _dry_run(session, limit, after_id, after_date, sport, started)
+    return await _dry_run(
+        session, limit, after_id, after_date, sport, started, band=band
+    )
 
 
 #: A UTC offset whose ``+`` a query string has already eaten. Anchored to the
@@ -1992,7 +2044,91 @@ def parse_cursor_date(after_date: str | None) -> datetime | None:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
-async def _dry_run(session, limit, after_id, after_date, sport, started):
+#: ``?band=`` as the operator writes it: two ages in DAYS, youngest edge first,
+#: e.g. ``47-67``. Anchored, integers only. A float would read fine and then
+#: disagree with the ages this rail PRINTS (``age_days`` is rounded to one
+#: place), so the boundary an operator can name is the boundary they can see.
+_BAND_FORM = re.compile(r"^(\d+)\s*-\s*(\d+)$")
+
+
+class BandRefused(ValueError):
+    """A ``?band=`` this rail will not run, carrying its own refusal name."""
+
+    def __init__(self, refused: str, reason: str) -> None:
+        super().__init__(reason)
+        self.refused = refused
+        self.reason = reason
+
+
+def parse_band(band: str | None) -> tuple[int, int] | None:
+    """``"47-67"`` -> ``(47, 67)`` in days of age, or ``None`` for no band.
+
+    #3257, shape 3. This is a PAGING selector and nothing else: it changes which
+    part of the existing sort an operator asks for first. It excludes no market
+    from the population, it changes no verdict, and it cannot make the rail write
+    on a row the venue did not answer for — the fail-open guarantee lives in
+    :func:`classify_market`, which this never reaches.
+
+    **Why paging and not a second floor.** CAL-P1014 measured the venue's yield
+    across the sort: zero from 70 to 86 days, everything by 54, the transition
+    between 66 and 70. So the walk's first ~15 pages (597 markets, measured
+    2026-09-05) are spent on markets the venue has already purged, before the
+    first repairable row. A floor at 74 was the filed suggestion and it is the
+    wrong instrument twice over — 74 is still inside the dead zone, and
+    :mod:`app.utils.kalshi_retention` is explicit that its constants record a
+    measurement over a stated population and are not quietly retuned when a new
+    observation arrives. A band leaves that record intact.
+
+    **The upper edge may not exceed the floor.** ``PROVABLY_PURGED_AGE_DAYS`` is
+    where the population itself stops; a band that reached past it would be
+    asking for rows the work SQL never selects, and returning an empty page for
+    that is a lie by omission. It is refused BY NAME instead.
+
+    **Drift is safe in one direction only, which is why the sort stays
+    oldest-first.** The band is relative to ``NOW()`` at call time, so between
+    two calls of one drain every market ages: rows fall out of the OLD edge and
+    new rows arrive at the YOUNG edge. Walking oldest-first means the departures
+    are all BEHIND the cursor and the arrivals are all ahead of it, so nothing is
+    ever stepped over. Reverse the sort and the same drift silently skips rows —
+    gotcha #41, third payout in this one ``ORDER BY``.
+
+    Raises :class:`BandRefused` for anything it will not run. Never returns
+    ``None`` for a value that was supplied: a band silently dropped would page
+    the dead head while reporting the band the operator asked for.
+    """
+    if band is None:
+        return None
+    m = _BAND_FORM.match(str(band).strip())
+    if not m:
+        raise BandRefused(
+            "BAND_UNPARSEABLE",
+            f"?band={band!r} is not two whole ages in days. Write it "
+            "youngest-first as MIN-MAX, e.g. ?band=47-67 for the at-risk tail.",
+        )
+    low, high = int(m.group(1)), int(m.group(2))
+    if low >= high:
+        raise BandRefused(
+            "BAND_INVERTED",
+            f"?band={band!r} has MIN >= MAX ({low} >= {high}). The two numbers "
+            "are AGES IN DAYS and the walk runs oldest-first inside them, so "
+            "the second must be the older edge.",
+        )
+    if high > PROVABLY_PURGED_AGE_DAYS:
+        raise BandRefused(
+            "BAND_ABOVE_RETENTION_FLOOR",
+            f"?band={band!r} asks past {PROVABLY_PURGED_AGE_DAYS} days, which is "
+            "where this rail's population ends (PROVABLY_PURGED_AGE_DAYS, "
+            "measured). Rows older than that are not selected at all, so a band "
+            "reaching over the floor would return an empty page and read as "
+            "'nothing to repair'. Narrow the band; the floor is a measurement "
+            "and ?band= does not retune it.",
+        )
+    return low, high
+
+
+async def _dry_run(
+    session, limit, after_id, after_date, sport, started, band=None
+):
     """Select, ask the venue, judge, and emit the reviewed plan. No writes."""
     from app.services.kalshi_api import KalshiAPIService
 
@@ -2007,6 +2143,18 @@ async def _dry_run(session, limit, after_id, after_date, sport, started):
             ),
             "elapsed_s": round(time.monotonic() - started, 1),
         }
+
+    try:
+        parsed_band = parse_band(band)
+    except BandRefused as e:
+        return {
+            "measured": False,
+            "refused": e.refused,
+            "presented_band": band,
+            "reason": e.reason,
+            "elapsed_s": round(time.monotonic() - started, 1),
+        }
+    band_min_age, band_max_age = parsed_band if parsed_band else (None, None)
 
     try:
         cursor_date = parse_cursor_date(after_date)
@@ -2036,6 +2184,8 @@ async def _dry_run(session, limit, after_id, after_date, sport, started):
                     "sport": sport,
                     "after_date": cursor_date,
                     "after_id": after_id,
+                    "band_min_age": band_min_age,
+                    "band_max_age": band_max_age,
                 },
             )
         ).all()
@@ -2189,6 +2339,7 @@ async def _dry_run(session, limit, after_id, after_date, sport, started):
         context={
             "rail": "kalshi-fabricated-loss",
             "sport": sport,
+            "band": band if parsed_band else None,
             "window": window,
             "resumed_from": {"after_date": after_date, "after_id": after_id},
             "next_cursor": cursor,
@@ -2217,6 +2368,17 @@ async def _dry_run(session, limit, after_id, after_date, sport, started):
             "limit": window,
             "returned": len(rows),
             "sport": sport,
+            # #3257: echoed PARSED, not as presented. An operator reading their
+            # own string back learns nothing about whether it took effect.
+            "band": (
+                {
+                    "min_age_days": band_min_age,
+                    "max_age_days": band_max_age,
+                    "walks": "oldest-first inside the band, from the max edge",
+                }
+                if parsed_band
+                else None
+            ),
             "resumed_from": {"after_date": after_date, "after_id": after_id},
         },
         "examined": examined,
@@ -2274,6 +2436,28 @@ async def _dry_run(session, limit, after_id, after_date, sport, started):
         # rows it never asked about, which is gotcha #53's shape exactly ("it
         # returned" is not "it worked").
         "exhausted": (not timed_out) and (not rate_limited) and len(rows) < window,
+        # #3257: `exhausted` answers "did THIS selection run out", and with a
+        # band in force that selection is a slice. A drain reading one boolean
+        # would call the whole population finished having asked for 20 days of
+        # it — the same "it returned is not it worked" shape as the rate-limit
+        # clause above (gotcha #53), one level up. So the scope is stated and the
+        # population's own answer is a SEPARATE key that a band can only make
+        # false, never true.
+        "exhausted_scope": "band" if parsed_band else "population",
+        "population_exhausted": (
+            False
+            if parsed_band
+            else ((not timed_out) and (not rate_limited) and len(rows) < window)
+        ),
+        "band_note": (
+            f"?band={band_min_age}-{band_max_age} selected a slice of the sort; "
+            "it EXCLUDED nothing from the population and changed no verdict. "
+            "`exhausted` above is about this band only. Markets outside it are "
+            "untouched and still need their own pass — re-run with no ?band= "
+            "(or a different one) to reach them."
+            if parsed_band
+            else None
+        ),
         "stopped_on_time_budget": timed_out,
         "stopped_on_venue_rate_limit": rate_limited,
         "rate_limit_note": (

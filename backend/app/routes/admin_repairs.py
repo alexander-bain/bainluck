@@ -51,8 +51,8 @@ transactional session and RETURNS its own before/after census in the response bo
 
 Repairs whose signature declares ``limit`` / ``sport`` / ``newest_first`` /
 ``offset`` / ``after_id`` / ``after_date`` / ``plan_hash`` / ``expected_blank`` /
-``population`` / ``probe`` / ``undo_identity`` also accept those as query params;
-the dispatcher passes through only what a given repair's signature actually names.
+``population`` / ``probe`` / ``undo_identity`` / ``band`` also accept those as query
+params; the dispatcher passes through only what a given repair's signature names.
 
 ``undo_identity`` (lane1/084, D51) names ONE earlier apply's dated undo record
 and puts its rows back. It exists because Alex's D51 lets a lane apply a data
@@ -66,6 +66,13 @@ and returns, for rails that must PROVE stillness before they may census — ruli
 095, a census of a moving population is fiction, and it fails invisibly because
 such a census returns rows and digests stably. Separate from the derive because
 the proof needs reads spanning >300s, and a 300s request is a rail nobody can run.
+
+``band`` (#3257, CAL-P1015) is a PAGING selector for a rail whose population
+expires: two ages in days, youngest first, naming which slice of the existing
+sort to walk first. It is deliberately not a filter and not a floor — it excludes
+no row, changes no verdict, and leaves the measured retention constants alone —
+so a rail that accepts it must report band exhaustion and population exhaustion
+as two different answers, or a banded drain reads as a finished one.
 
 ``after_id`` + ``after_date`` are a KEYSET cursor, added in CAL-P058 because a
 repair that removes rows from its own population cannot be paged with an offset
@@ -232,7 +239,14 @@ _REPAIRS = {
     # every 40 markets were recorded `unknown` and stepped over for good. Read
     # `stopped_on_venue_rate_limit`; if it is true on every call, lower `?limit=`
     # (measured 2026-09-05: limit=10 drew no refusals, 20 drew 6, 40 drew 15).
-    # Accepts ?limit=&sport=&after_id=&after_date=&plan_hash=.
+    # CAL-P1015 (#3257): `?band=MIN-MAX` (ages in days, youngest first) pages one
+    # slice of the sort first. Measured 2026-09-05: the venue answers NOTHING
+    # from 70 to 86 days and everything by 54, so an unbanded drain spends its
+    # first ~15 pages on 597 markets that are already purged before reaching the
+    # 552-market at-risk tail behind them. `?band=47-67` drains that tail — the
+    # only cohort with a deadline — first. It EXCLUDES nothing: `exhausted` is
+    # then scoped to the band and `population_exhausted` is reported separately.
+    # Accepts ?limit=&sport=&band=&after_id=&after_date=&plan_hash=.
     # ATTENDED ONLY: never wire this to a beat.
     "kalshi-fabricated-loss": (
         "app.tasks.repair_kalshi_fabricated_loss",
@@ -589,6 +603,16 @@ async def run_repair(
                     "needs reads spanning >300s, and a 300s request is a rail nobody "
                     "can run.",
     ),
+    band: str = Query(
+        None,
+        description="Which AGE SLICE of a keyset walk to page first, as two ages "
+                    "in days written youngest-first (e.g. band=47-67), for repairs "
+                    "whose population expires. It is a paging selector, never a "
+                    "filter: it excludes nothing and changes no verdict, and the "
+                    "response says so and reports band exhaustion separately from "
+                    "population exhaustion. Refused on apply=true, which selects "
+                    "nothing.",
+    ),
     population: str = Query(
         None,
         description="Which reviewed population a plan-bound repair acts on "
@@ -636,6 +660,7 @@ async def run_repair(
             ("newest_first", newest_first), ("offset", offset),
             ("after_id", after_id), ("after_date", after_date),
             ("since", since), ("until", until),
+            ("band", band),
             ("plan_hash", plan_hash),
             ("expected_blank", expected_blank),
             ("population", population),
