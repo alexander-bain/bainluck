@@ -9,6 +9,9 @@ Rate limits:
   - Authenticated: 120 requests / minute  (keyed by user UID from JWT)
   - Admin:         300 requests / minute  (keyed by a HASH of the admin bearer
                    token) — a CEILING, never an exemption. See Queue 315 Item 1.
+  - Trusted addr:  600 requests / minute  (opt-in via ``RATE_LIMIT_TRUSTED_IPS``,
+                   matched against the address our ROUTER saw, not the one the
+                   caller claimed) — also a ceiling, never an exemption. D70.
   - Docs/health:   exempt
 
 Redis is shared with Celery (same REDIS_URL env var on Heroku).
@@ -45,6 +48,21 @@ AUTH_RATE_LIMIT = "120/minute"
 # ADMIN_TOKEN and therefore collide in it. The ceiling is sized against the SUM of
 # concurrent callers, not the max of any one; see the census in the queue report.
 ADMIN_RATE_LIMIT = "300/minute"
+# D70 = A (Alex's recorded default, 2026-09-05; issue #3297). Every working window
+# on our own Mac — plus the `look.sh` screenshot browser each of them drives — exits
+# through ONE public address and shares the single 60/min anonymous bucket. They
+# spend it continuously, so Alex's own browser asking for `/api/calibration` from
+# that machine is turned away and the page renders "Failed to load calibration
+# data". The site is healthy; we are throttling ourselves. Worse, every surface
+# shows the same generic failure text, so a window taking a LOOK screenshot cannot
+# tell "we throttled ourselves" from "the page is genuinely broken" — which is a
+# hole in the way we check our own work, not just an annoyance.
+#
+# CEILING, NEVER EXEMPTION — the same rule Queue 315 Item 1 wrote above for admin,
+# and for the same reason. An exemption would make this allowlist worth forging;
+# a ceiling bounds what forging it can buy. See `_router_peer_ip` for why a
+# forged header cannot claim it in the first place.
+TRUSTED_RATE_LIMIT = "600/minute"
 
 # #1197 (r259): hard wall-clock bound on the async rate-limit Redis check. Because
 # the check is awaited (not a sync blocking call), wait_for genuinely cancels the
@@ -57,6 +75,7 @@ _RL_WINDOW_SECONDS = 60
 _ANON_MAX = 60
 _AUTH_MAX = 120
 _ADMIN_MAX = 300
+_TRUSTED_MAX = 600
 
 # Admin paths get a ceiling instead of the old blanket exemption (Queue 315).
 _ADMIN_PATH_PREFIX = "/api/admin"
@@ -206,11 +225,12 @@ _auth_limit = None
 
 
 _admin_limit = None
+_trusted_limit = None
 
 
 def _get_limits():
     """Parse limit strings once and cache."""
-    global _anon_limit, _auth_limit, _admin_limit
+    global _anon_limit, _auth_limit, _admin_limit, _trusted_limit
     if _anon_limit is not None:
         return _anon_limit, _auth_limit
 
@@ -219,6 +239,7 @@ def _get_limits():
     _anon_limit = parse_limit(ANON_RATE_LIMIT)
     _auth_limit = parse_limit(AUTH_RATE_LIMIT)
     _admin_limit = parse_limit(ADMIN_RATE_LIMIT)
+    _trusted_limit = parse_limit(TRUSTED_RATE_LIMIT)
     return _anon_limit, _auth_limit
 
 
@@ -227,6 +248,13 @@ def _get_admin_limit():
     if _admin_limit is None:
         _get_limits()
     return _admin_limit
+
+
+def _get_trusted_limit():
+    """Parsed trusted-address limit for the dev/CI in-memory fallback path."""
+    if _trusted_limit is None:
+        _get_limits()
+    return _trusted_limit
 
 
 # ---------------------------------------------------------------------------
@@ -241,6 +269,65 @@ def _get_client_ip(request: Request) -> str:
     if request.client:
         return request.client.host
     return "unknown"
+
+
+def _router_peer_ip(request: Request) -> str:
+    """The address our own infrastructure observed, i.e. the LAST X-Forwarded-For
+    entry — NOT the first one ``_get_client_ip`` returns.
+
+    🔴 THE TWO ARE DIFFERENT ON PURPOSE AND ONLY THIS ONE MAY GATE A PRIVILEGE.
+    Heroku's router APPENDS the connecting peer to whatever ``X-Forwarded-For``
+    arrived, so on a request that ships its own header position 0 is the value the
+    CALLER chose and position -1 is the value our router wrote. ``_get_client_ip``
+    reads position 0, which is correct for the anonymous bucket (a bucket key is
+    not a privilege — the worst a forger does there is pick which bucket to spend)
+    and would be a total bypass here: an allowlist keyed on caller-supplied bytes
+    is an allowlist for the entire internet. Measured 2026-09-05 against
+    production: ``curl -H 'X-Forwarded-For: 203.0.113.77' $BAINLUCK_API/api/health``
+    answers 200 from an address that was being 429'd, so position 0 is definitely
+    caller-controlled and definitely honoured.
+
+    HOLDS EVEN IF THAT APPEND BEHAVIOUR IS WRONG. If some proxy ever forwards the
+    header untouched, first == last and a forged value could claim the ceiling —
+    which is exactly why the grant is a CEILING (600/min) and not an exemption.
+    The bounded downside of being wrong is a stranger getting 600/min instead of
+    60; the pre-existing bucket-rotation bypass in #3297 is already strictly worse
+    than that, and closing it is that issue's job, not this one's.
+    """
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        parts = [p.strip() for p in forwarded.split(",") if p.strip()]
+        if parts:
+            return parts[-1]
+    if request.client:
+        return request.client.host
+    return "unknown"
+
+
+#: Parsed ``RATE_LIMIT_TRUSTED_IPS``, cached against the raw env string so a
+#: changed value is picked up without a restart (and so tests can set it) while a
+#: steady one costs a single ``getenv`` on the hot path rather than a re-split.
+_trusted_ip_cache: tuple = ("", frozenset())
+
+
+def _trusted_ips() -> frozenset:
+    """Addresses granted the trusted CEILING, from ``RATE_LIMIT_TRUSTED_IPS``.
+
+    Config-driven and therefore reversible without a deploy: unset the var and the
+    ceiling is gone on the next dyno cycle. Empty/unset — the default, and the
+    state this ships in — means nothing changes for anyone.
+
+    Deliberately NOT checked into the repo: the value is a home IP address, and
+    tracked files carry no operator identifiers (the credential rule's reasoning
+    applies to anything that identifies Alex's network, not only to secrets).
+    """
+    global _trusted_ip_cache
+    raw = os.getenv("RATE_LIMIT_TRUSTED_IPS") or ""
+    cached_raw, cached = _trusted_ip_cache
+    if raw != cached_raw:
+        cached = frozenset(p.strip() for p in raw.split(",") if p.strip())
+        _trusted_ip_cache = (raw, cached)
+    return cached
 
 
 def _extract_uid_from_token(token: str) -> Optional[str]:
@@ -391,7 +478,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     - Anonymous requests: 60/minute keyed by client IP
     - Authenticated requests (Bearer JWT): 120/minute keyed by user UID
     - Admin paths with the admin token: 300/minute keyed by a hash of that token
+    - Addresses in ``RATE_LIMIT_TRUSTED_IPS``: 600/minute, keyed separately (D70)
     - Docs / health paths: exempt
+
+    Precedence is admin > trusted address > user > anonymous IP.
 
     Returns 429 with Retry-After header when limit is exceeded.
     """
@@ -431,9 +521,31 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             # limit — nor rotate uids to mint unlimited buckets.
             uid = _resolve_trusted_uid(bearer)
 
+        # D70: a trusted address outranks the per-user bucket deliberately. The
+        # thing being trusted is the MACHINE, and the whole defect is that many
+        # windows — signed in, signed out, and a headless screenshot browser that
+        # has no identity at all — share its one address. Bucketing them per-uid
+        # would leave the anonymous ones back in the 60/min bucket they exhausted.
+        # Admin still wins, so an admin call is metered by its own ceiling.
+        trusted_peer = None
+        if not admin_key:
+            allowlist = _trusted_ips()
+            if allowlist:
+                peer = _router_peer_ip(request)
+                if peer in allowlist:
+                    trusted_peer = peer
+
         if admin_key:
             key = admin_key
             max_requests = _ADMIN_MAX
+        elif trusted_peer:
+            # A DISTINCT key, not the anonymous one. If the append assumption in
+            # `_router_peer_ip` ever fails, a forger who claims this address lands
+            # in the anonymous `peer` bucket and cannot spend the trusted one — so
+            # the failure mode is a stranger with 600/min, never a denial of
+            # service against the machine we are trying to unblock.
+            key = f"trusted:{trusted_peer}"
+            max_requests = _TRUSTED_MAX
         elif uid:
             key = f"user:{uid}"
             max_requests = _AUTH_MAX
@@ -482,6 +594,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         anon_limit, auth_limit = _get_limits()
         if admin_key:
             limit = _get_admin_limit()
+        elif trusted_peer:
+            limit = _get_trusted_limit()
         elif uid:
             limit = auth_limit
         else:
