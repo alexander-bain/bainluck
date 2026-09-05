@@ -453,10 +453,18 @@ struct OddsChartView: View {
                 let dataPoints = filterPoints(enrichedPoints)
                 let periodMarkers = extractPeriodMarkers(history, filteredPoints: dataPoints)
                 let moments = Self.chartMoments(from: history.moments, points: dataPoints)
-                if dataPoints.isEmpty {
-                    Text("No probability data available")
+                // #3278 — "drawable", not "non-empty". See `hasDrawableLine`: one
+                // snapshot in the window rendered the whole frame around no line.
+                if !Self.hasDrawableLine(in: dataPoints) {
+                    Text(Self.emptyChartMessage(
+                        range: vm.selectedRange,
+                        hasAnyPointInRange: !dataPoints.isEmpty,
+                        allIsDrawable: Self.hasDrawableLine(in: enrichedPoints)
+                    ))
                         .font(.caption)
+                        .multilineTextAlignment(.center)
                         .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity)
                         .frame(height: chartHeight)
                 } else {
                     // Chart with vertical team labels alongside Y-axis
@@ -564,7 +572,32 @@ struct OddsChartView: View {
                     let dataPoints = filterPoints(enrichedPoints)
                     let periodMarkers = extractPeriodMarkers(history, filteredPoints: dataPoints)
                     let moments = Self.chartMoments(from: history.moments, points: dataPoints)
-                    if !dataPoints.isEmpty {
+                    // #3278 — the same drawability test the inline chart uses. This
+                    // branch used to render literally nothing (a blank sheet under a
+                    // nav bar) when there were no points, and the full frame around
+                    // no line when there was one. Both now say what is true, and the
+                    // picker stays so "All" is reachable from here too.
+                    if !Self.hasDrawableLine(in: dataPoints) {
+                        VStack(spacing: 12) {
+                            if showPicker {
+                                HStack {
+                                    Spacer()
+                                    timeRangePicker
+                                    Spacer()
+                                }
+                            }
+                            Text(Self.emptyChartMessage(
+                                range: vm.selectedRange,
+                                hasAnyPointInRange: !dataPoints.isEmpty,
+                                allIsDrawable: Self.hasDrawableLine(in: enrichedPoints)
+                            ))
+                                .font(.callout)
+                                .multilineTextAlignment(.center)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                        }
+                        .padding()
+                    } else {
                         VStack(spacing: 8) {
                             if showPicker {
                                 HStack {
@@ -1286,6 +1319,57 @@ struct OddsChartView: View {
     static func defaultVisibleSources(in points: [ChartDataPoint]) -> [String] {
         if points.contains(where: { $0.source == "aggregate" }) { return ["aggregate"] }
         return Array(Set(points.map(\.source))).sorted()
+    }
+
+    // MARK: - Drawability (#3278, pure, unit-tested in OddsChartEmptyStateTests)
+
+    /// Whether these points can actually produce a LINE.
+    ///
+    /// #3278 — the chart used to branch on `points.isEmpty`, but "not empty" and
+    /// "drawable" are different questions and the gap between them is what a reader
+    /// saw as a broken card: a live match five minutes after the first ball had ONE
+    /// snapshot in the "Since Start" window, so the frame rendered in full — both
+    /// rotated player labels, the gridlines, the legend — around no line at all,
+    /// because a `LineMark` needs two points to join.
+    ///
+    /// The rule is PER SERIES, not per point. `chartContent` draws one series per
+    /// visible source, so two sources holding one point each is two points and still
+    /// no line; a total-count test (`count >= 2`) would call that drawable and
+    /// reproduce the same empty frame. Only a source that has two of its own points
+    /// draws anything.
+    static func hasDrawableLine(in points: [ChartDataPoint]) -> Bool {
+        let visible = Set(defaultVisibleSources(in: points))
+        var perSource: [String: Int] = [:]
+        for point in points where visible.contains(point.source) {
+            perSource[point.source, default: 0] += 1
+            if perSource[point.source]! >= 2 { return true }
+        }
+        return false
+    }
+
+    /// What to say instead of an empty frame (#3278).
+    ///
+    /// D27's honest-empty rule: an empty screen is not an answer. This never invents
+    /// a range — the picker keeps saying what is selected and the chart keeps
+    /// obeying it. It points at "All" only when `allIsDrawable` says All genuinely
+    /// has a line to show, so the suggestion can never send a reader to a second
+    /// empty frame.
+    static func emptyChartMessage(
+        range: OddsTimeRange,
+        hasAnyPointInRange: Bool,
+        allIsDrawable: Bool
+    ) -> String {
+        guard range == .sinceStart else {
+            return hasAnyPointInRange
+                ? "Not enough readings yet to draw a line."
+                : "No probability data available"
+        }
+        let lead = hasAnyPointInRange
+            ? "Not enough readings since the start to draw a line yet."
+            : "No readings since the start yet."
+        // "Switch to", not "Tap": this view runs on macOS too (it branches on
+        // `os(iOS)` for the fullscreen presentation), where there is nothing to tap.
+        return allIsDrawable ? lead + " Switch to All for the pre-match market." : lead
     }
 
     /// Fixed 0–100 axis tick positions (probability basis, 0.0–1.0).
