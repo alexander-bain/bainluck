@@ -1259,3 +1259,106 @@ class TestCoverageProofNeedsBothSidesAndTheBucketBefore:
         ttl = redis_state.EMIT_BUCKET_S * redis_state.EMIT_BUCKET_RETAINED
         assert prefix_fake.ttls[redis_state.emit_writer_alive_key(2000)] == ttl
         assert prefix_fake.ttls[redis_state.delivery_writer_alive_key(2000)] == ttl
+
+
+class TestLeaseDeclineReaderMatchesTheWriter:
+    """LAT-P238 ITEM 3: the reader is new; the counter was already correct.
+
+    ``single_flight._record_skip`` has counted declines under
+    ``SKIP_COUNTER_PREFIX`` since it shipped, using ``_bump_window_counter``'s
+    exact ``SET … NX EX`` idiom. What was missing is the window: the only way to
+    read it was ``/api/admin/redis-read``, which returns the VALUE and no TTL,
+    so 346 declines could be 346 in eight minutes or 346 in a day.
+
+    These drive the REAL writer — ``single_flight.acquire``'s decline path, not
+    a hand-built key — because the failure this class exists to prevent is the
+    one where both halves are individually correct and disagree about the key.
+    """
+
+    TASK = "app.tasks.poll_all_odds"
+
+    def test_a_real_declined_lease_is_read_back_with_its_window(self, prefix_fake):
+        from app.utils.single_flight import (
+            SKIP_COUNTER_TTL_SECONDS, acquire, skip_counter_key,
+        )
+
+        first = acquire(self.TASK, rc=prefix_fake)
+        assert first.acquired          # nobody held it
+        second = acquire(self.TASK, rc=prefix_fake)
+        assert not second.acquired     # the decline that gets counted
+
+        prefix_fake.ttls[skip_counter_key(self.TASK)] = SKIP_COUNTER_TTL_SECONDS - 900
+        out = redis_state.get_all_lease_declines()
+        assert out[self.TASK]["declines"] == 1
+        assert out[self.TASK]["window_s"] == pytest.approx(900.0)
+
+    def test_the_lease_key_itself_is_not_read_as_a_decline_counter(self, prefix_fake):
+        # `SKIP_COUNTER_PREFIX` extends `LEASE_KEY_PREFIX`, so the two key
+        # families live in the same namespace and a prefix scan that used the
+        # shorter one would report every held lease as a decline count — with
+        # a uuid token where the integer belongs.
+        from app.utils.single_flight import acquire
+
+        acquire(self.TASK, rc=prefix_fake)   # writes the LEASE key only
+        assert redis_state.get_all_lease_declines() == {}
+
+    def test_a_counter_with_no_expiry_is_unmeasurable_not_fresh(self, prefix_fake):
+        from app.utils.single_flight import skip_counter_key
+
+        prefix_fake.strings[skip_counter_key(self.TASK)] = b"346"
+        out = redis_state.get_all_lease_declines()
+        assert out[self.TASK] == {"declines": 346, "window_s": None}
+
+    def test_a_dead_redis_reads_empty_rather_than_raising(self, monkeypatch):
+        def _boom():
+            raise RuntimeError("redis down")
+        monkeypatch.setattr(redis_state, "get_redis_client", _boom)
+        assert redis_state.get_all_lease_declines() == {}
+
+    def test_the_ttl_the_reader_ages_against_is_the_one_the_writer_stamps(self):
+        # `_window_age_s` derives `age = WINDOW_COUNTER_TTL - ttl` against a
+        # constant of its own. The skip counter is written under
+        # `SKIP_COUNTER_TTL_SECONDS`, a different constant in a different file.
+        # They are equal today and the reader is only correct while they are —
+        # if one moves, every decline window silently reads as an offset rather
+        # than an age, which looks like data rather than a bug.
+        from app.utils.single_flight import SKIP_COUNTER_TTL_SECONDS
+        assert SKIP_COUNTER_TTL_SECONDS == redis_state.WINDOW_COUNTER_TTL
+
+    def test_the_row_carries_the_count_and_the_window(self):
+        out = build_schedule_adherence(
+            {"b": {"task": "app.tasks.poll_all_odds", "schedule": 30.0}},
+            [_metrics("poll_odds", starts=1400, window_s=86400.0)],
+            {"app.tasks.poll_all_odds": "poll_odds"},
+            {"app.tasks.poll_all_odds": {"fires": 2880, "window_s": 86400.0}},
+            lease_declines={
+                "app.tasks.poll_all_odds": {"declines": 900, "window_s": 86400.0},
+            },
+        )
+        row = out["all"]["app.tasks.poll_all_odds"]
+        assert row["lease_declines"] == 900
+        assert row["lease_declines_window_s"] == 86400.0
+        # And the superset it splits is still whole and still published.
+        assert row["self_gated_fires"] == 1480
+
+    def test_declines_need_no_label_join_either(self):
+        # `single_flight` is called with the fully-qualified celery name, so a
+        # task invisible to the label map still gets its declines.
+        out = build_schedule_adherence(
+            {"b": {"task": "app.tasks.poll_all_odds", "schedule": 30.0}}, [], {},
+            {"app.tasks.poll_all_odds": {"fires": 2880, "window_s": 86400.0}},
+            lease_declines={
+                "app.tasks.poll_all_odds": {"declines": 900, "window_s": 86400.0},
+            },
+        )
+        assert out["all"]["app.tasks.poll_all_odds"]["lease_declines"] == 900
+
+    def test_no_lease_declines_argument_leaves_both_fields_unknown(self):
+        out = build_schedule_adherence(
+            {"b": {"task": "app.tasks.foo", "schedule": 30.0}},
+            [_metrics("foo", starts=2880, window_s=86400.0)],
+            {"app.tasks.foo": "foo"},
+        )
+        row = out["all"]["app.tasks.foo"]
+        assert row["lease_declines"] is None
+        assert row["lease_declines_window_s"] is None
