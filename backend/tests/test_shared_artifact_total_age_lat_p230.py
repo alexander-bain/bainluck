@@ -324,7 +324,9 @@ class TestTheAgeSinkActuallyCollects:
 
         sink: list[float] = []
         with pic.reuse_scope([], [], sink):
-            pic._note_age(50.0)  # consumed a 50s-old artifact, at t=1000
+            # A liveness-CAPABLE namespace: `concepts` copies a concept's
+            # `status`, `live` included, so its age is the ceiling's business.
+            pic._note_age("concepts", 50.0)  # consumed a 50s-old artifact, at t=1000
 
         assert pic.oldest_consumed_artifact_age_s(sink) == pytest.approx(50.0)
 
@@ -500,3 +502,45 @@ def _builder(value):
         return value
 
     return _build
+
+
+class TestTheCeilingCountsOnlyWhatCanBeLive:
+    """The exemption is one guarded set, and this is the guard.
+
+    Production, `70cabe63`, within the hour: 5 of 40 anonymous `/api/feed` polls
+    returned EMPTY under `input_age_ceiling` with `X-Feed-Shared` naming
+    `market_load` on every one of them. The age term counted an artifact that
+    cannot carry a live score, and an empty Discover is a worse answer than a
+    two-minute-old futures price by any reading.
+    """
+
+    def test_market_loads_age_is_not_counted(self):
+        sink: list[float] = []
+        with pic.reuse_scope([], [], sink):
+            pic._note_age("market_load", 70.0)
+        assert sink == []
+        assert pic.oldest_consumed_artifact_age_s(sink) == 0.0
+
+    def test_a_namespace_that_can_be_live_is_still_counted(self):
+        """`concepts` copies a concept's `status`, `live` included."""
+        sink: list[float] = []
+        with pic.reuse_scope([], [], sink):
+            pic._note_age("concepts", 70.0)
+        assert pic.oldest_consumed_artifact_age_s(sink) == pytest.approx(70.0, abs=1.0)
+
+    def test_the_exempt_set_is_exactly_the_one_proven_inert(self):
+        """A set with a second member is a set somebody widened without proving
+        it. `TestMarketLoadCannotItselfAgeALivePrice` above is the proof for the
+        only member; there is no proof standing for any other."""
+        assert pic.LIVENESS_INERT_NAMESPACES == frozenset({"market_load"})
+        assert "concepts" not in pic.LIVENESS_INERT_NAMESPACES
+        assert "canonical_counts" not in pic.LIVENESS_INERT_NAMESPACES
+
+    def test_the_exemption_and_its_proof_live_or_die_together(self):
+        """The day a futures card can render `status == "live"`, the class above
+        goes red — and this pins that the exemption is claimed for exactly the
+        namespace that class is about, so the red test is unmissable."""
+        for status in ("open", "closed", "resolved", "active"):
+            payload = {"items": [{"type": "futures", "data": {"status": status}}]}
+            assert fc.payload_contains_live_event(payload) is False
+        assert "market_load" in pic.LIVENESS_INERT_NAMESPACES
