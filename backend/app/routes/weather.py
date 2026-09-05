@@ -945,7 +945,9 @@ async def get_rain(db: AsyncSession):
         # with it printed every probability one day late: Sep 5's 8% appeared
         # under "Sep 6" (ux/1078, #3219). Gotcha #14 in its original form — the
         # true day is ticker-derived, so `_rain_day` reads the market's own key
-        # and only falls back to the settlement column when that fails.
+        # and falls back to the day named in the market's TITLE when that fails.
+        # It never reads `resolution_date`: that column is the bug, so it is not
+        # available as a fallback. A row we cannot date is dropped instead.
         if day_key is None:
             continue
         # A day can be answered by both shapes if the legacy series ever wakes
