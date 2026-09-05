@@ -5092,8 +5092,48 @@ celery_app.conf.beat_schedule = {
         # walk the 30,115-row tennis table: `statpal_fixture_id IS NULL` plus the
         # date window is the whole predicate, so an already-linked row is never
         # revisited and the cost does not grow with the tournament.
+        #
+        # 🔴 A CRONTAB, NOT `600.0`, AND #3316 IS WHY. A float schedule is
+        # RELATIVE: celery's `ScheduleEntry` sets `last_run_at = now` whenever
+        # beat starts, so every scheduler boot re-arms a fresh 600 s wait. The
+        # `celerybeat-schedule` shelve does not survive it — the dyno filesystem
+        # is ephemeral — so there is no state to carry the old deadline over.
+        # That is survivable at one deploy. It is not survivable at our deploy
+        # rate: MEASURED on 2026-09-05, thirty releases between 15:22Z and
+        # 21:15Z, i.e. a scheduler restart every ~12 min against a 10 min
+        # period. Five of them (20:54:30, 20:59:09, 21:02:27, 21:07:00,
+        # 21:15:47) landed closer together than the period and starved the entry
+        # completely: last fire 20:48:17Z, next fire 21:26:42Z — a 38-minute
+        # hole, and 21:26:42 is exactly 600 s after the 21:16:09Z dyno boot,
+        # which is the mechanism's fingerprint. Over 12.7 h the entry made 50 of
+        # a nominal 76 passes (66%) with 12 gaps past 1200 s, worst 42.8 min.
+        # A live US Open match carries the ESPN score line for that whole hole.
+        #
+        # A crontab is ABSOLUTE, so a restart cannot re-arm it — the next fire is
+        # the next matching minute whatever beat has just done. This does not
+        # make loss impossible (beat down across the whole minute still misses
+        # that slot) but it bounds it at one slot instead of compounding one
+        # full period per deploy, and it removes the interval drift as well.
+        #
+        # :04 WAS MEASURED, NOT PICKED (CERT-418's lesson, as the NFL stamper
+        # below). Census run over the ASSEMBLED schedule, all 155 entries, both
+        # ways. (1) StatPal co-fire — this file's standing rule is that no two
+        # StatPal readers share a minute. Offsets :4, :6 and :8 are the only ones
+        # of the ten whose six slots collide with NO StatPal reader; a naive
+        # `*/10` would have sat on :00, :20 and :30 with three of them.
+        # (2) Total crontab load — :00 is the single worst tick in the whole
+        # schedule (87.2 fires/h across its six slots), and `*/10` would have
+        # parked this there forever. :04 carries 6.00, the lowest of the three
+        # collision-free offsets, and its only co-fire is
+        # `precompute-discover-candidate-base` — background queue, a different
+        # worker dyno, not a StatPal reader.
+        #
+        # No placement can dodge `sync-statpal-livescores` (30 s) or
+        # `sync-statpal-live-plays` (60 s): they fire during every minute anyway,
+        # which is the `BACKGROUND_INTERVAL_FLOOR` argument the NFL stamper below
+        # spells out. They are absorbed, not avoided.
         "task": "app.tasks.link_tennis_statpal_fixtures",
-        "schedule": 600.0,
+        "schedule": crontab(minute="4,14,24,34,44,54"),
         "options": {"queue": "realtime"},
     },
     "stamp-nfl-statpal-fixtures-hourly": {
