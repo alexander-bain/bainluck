@@ -152,6 +152,45 @@ EXPECTED = {
     "lma_deleted": 21,
 }
 
+# Which way a bucket may move on its own before the run is still the run that
+# was reviewed.
+#
+# `EXPECTED` is a census of a population that drifts by itself — a market
+# arrives, a fixture gets named, and a row moves bucket with nobody touching
+# this script. An exact-match gate therefore refuses MORE the longer it sits,
+# and the only lever it offers is `--allow-drift`, which disarms it completely.
+# A gate whose sole escape hatch is "turn the gate off" gets turned off.
+#
+# The asymmetry that makes this safe: this repair's danger is DELETING, so only
+# drift toward deleting more needs to stop it. A row that moved from a delete
+# bucket into a hold bucket destroys strictly less than the reviewed plan did.
+#
+#: Buckets that mean MORE destruction when they rise: extra rows deleted, extra
+#: market links cut, extra league-match rows removed.
+_UNSAFE_WHEN_HIGHER = (
+    "delete_duplicate",
+    "delete_trace_survives",
+    "delete_no_fixture_named",
+    "markets_unlinked",
+    "lma_deleted",
+)
+#: Buckets that mean MORE destruction when they FALL: a row that was going to
+#: be preserved no longer is, so it has become a delete somewhere else.
+_UNSAFE_WHEN_LOWER = (
+    "hold_last_trace",
+    "hold_owns_real_markets",
+)
+
+# `population` is deliberately in NEITHER list. It is the sum of the buckets
+# above, so gating it separately would refuse the safe direction as well: ten
+# new rows that all classify as HOLD raise the population without destroying
+# anything, and refusing that is exactly the pressure toward `--allow-drift`.
+# Its drift is always printed; its safety is carried by its components.
+#
+# The one hole that leaves — a delete bucket this census never named, growing
+# unwatched — is closed by `unknown_destructive_buckets()`.
+_DESTRUCTIVE_BUCKET_PREFIXES = ("delete_",)
+
 # Tables that hold a NO ACTION FK to `events` and are NOT cleared by this
 # repair. Every one measured 0 on the delete set; a nonzero count means the
 # population has grown a shape this repair was never sized for, so it REFUSES
@@ -240,6 +279,39 @@ def disposition_drift(measured: dict) -> dict:
         k: (EXPECTED[k], v)
         for k, v in measured.items()
         if k in EXPECTED and EXPECTED[k] != v
+    }
+
+
+def unsafe_disposition_drift(measured: dict) -> dict:
+    """The subset of `disposition_drift` that would destroy MORE than reviewed.
+
+    Returns `{bucket: (expected, measured)}` for buckets that moved in the
+    destructive direction only. An empty dict with a non-empty
+    `disposition_drift` is the normal, permitted case: the population drifted
+    toward preservation since the census was taken.
+    """
+    unsafe = {}
+    for bucket, (expected, actual) in disposition_drift(measured).items():
+        if bucket in _UNSAFE_WHEN_HIGHER and actual > expected:
+            unsafe[bucket] = (expected, actual)
+        elif bucket in _UNSAFE_WHEN_LOWER and actual < expected:
+            unsafe[bucket] = (expected, actual)
+    return unsafe
+
+
+def unknown_destructive_buckets(measured: dict) -> dict:
+    """Delete buckets the pre-registered census never named.
+
+    Without this, a plan that grew an entirely new delete reason would pass the
+    direction gate — the named delete buckets would be unchanged and the growth
+    would show only in `population`, which is not gated.
+    """
+    return {
+        k: v
+        for k, v in measured.items()
+        if k not in EXPECTED
+        and v
+        and any(k.startswith(p) for p in _DESTRUCTIVE_BUCKET_PREFIXES)
     }
 
 
@@ -651,9 +723,22 @@ async def run(args):
             return 2
 
         drift = disposition_drift(measured)
-        if drift and not args.allow_drift:
-            print(f"REFUSING: disposition drift {drift}")
+        unsafe = unsafe_disposition_drift(measured)
+        unknown = unknown_destructive_buckets(measured)
+        if (unsafe or unknown) and not args.allow_drift:
+            print(
+                f"REFUSING: disposition drift toward DESTRUCTION {unsafe or unknown}"
+                + (f" (full drift {drift})" if drift != unsafe else "")
+            )
             return 3
+        if drift:
+            # Safe-direction drift is a note, not a refusal — but it is never
+            # silent, because "the plan is smaller than reviewed" is something
+            # the operator has to be able to read afterwards.
+            print(
+                f"NOTE: disposition drifted toward PRESERVATION since the "
+                f"census, which this gate permits: {drift}"
+            )
 
         unhandled = await unhandled_child_rows(session, delete_ids)
         if unhandled:

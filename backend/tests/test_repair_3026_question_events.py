@@ -501,6 +501,87 @@ def test_any_bucket_moving_is_drift(bucket):
     assert bucket in repair.disposition_drift(measured)
 
 
+def test_the_observed_production_drift_is_permitted():
+    """The exact drift the 2026-09-05 dry run refused itself on.
+
+    One row moved `delete_duplicate` 156→155 and `hold_last_trace` 34→35 — a
+    single row that stopped being deletable. The old exact-match gate returned
+    exit 3 on it, and the only way past was `--allow-drift`, which would have
+    run a 224-row production delete in a mode nobody reviewed.
+    """
+    measured = dict(repair.EXPECTED)
+    measured["delete_duplicate"] = 155
+    measured["hold_last_trace"] = 35
+    assert repair.disposition_drift(measured)  # it IS drift
+    assert repair.unsafe_disposition_drift(measured) == {}  # and it is safe
+
+
+@pytest.mark.parametrize("bucket", sorted(repair._UNSAFE_WHEN_HIGHER))
+def test_a_delete_bucket_growing_still_refuses(bucket):
+    measured = dict(repair.EXPECTED)
+    measured[bucket] += 1
+    assert bucket in repair.unsafe_disposition_drift(measured)
+
+
+@pytest.mark.parametrize("bucket", sorted(repair._UNSAFE_WHEN_HIGHER))
+def test_a_delete_bucket_shrinking_is_permitted(bucket):
+    measured = dict(repair.EXPECTED)
+    measured[bucket] -= 1
+    assert repair.unsafe_disposition_drift(measured) == {}
+
+
+@pytest.mark.parametrize("bucket", sorted(repair._UNSAFE_WHEN_LOWER))
+def test_a_hold_bucket_shrinking_refuses(bucket):
+    """A held row that stopped being held has become a delete somewhere."""
+    measured = dict(repair.EXPECTED)
+    measured[bucket] -= 1
+    assert bucket in repair.unsafe_disposition_drift(measured)
+
+
+@pytest.mark.parametrize("bucket", sorted(repair._UNSAFE_WHEN_LOWER))
+def test_a_hold_bucket_growing_is_permitted(bucket):
+    measured = dict(repair.EXPECTED)
+    measured[bucket] += 1
+    assert repair.unsafe_disposition_drift(measured) == {}
+
+
+def test_population_alone_never_refuses_in_either_direction():
+    """`population` is the sum of the gated buckets, so gating it as well would
+    refuse the safe direction too — which is the pressure toward
+    `--allow-drift` this change exists to remove."""
+    for delta in (+10, -10):
+        measured = dict(repair.EXPECTED)
+        measured["population"] += delta
+        assert repair.unsafe_disposition_drift(measured) == {}
+    assert "population" not in repair._UNSAFE_WHEN_HIGHER
+    assert "population" not in repair._UNSAFE_WHEN_LOWER
+
+
+def test_every_gated_bucket_has_a_direction():
+    """The hole this class of gate fails through: a bucket in the census that
+    nobody classified, so it drifts either way unwatched."""
+    classified = set(repair._UNSAFE_WHEN_HIGHER) | set(repair._UNSAFE_WHEN_LOWER)
+    unclassified = set(repair.EXPECTED) - classified - {"population"}
+    assert unclassified == set(), unclassified
+
+
+def test_a_delete_bucket_the_census_never_named_refuses():
+    """Population can grow through a NEW delete reason without moving any named
+    delete bucket. `population` is not gated, so this is the one way destructive
+    growth could slip past the direction gate."""
+    measured = dict(repair.EXPECTED)
+    measured["population"] += 40
+    measured["delete_some_new_reason"] = 40
+    assert repair.unsafe_disposition_drift(measured) == {}
+    assert "delete_some_new_reason" in repair.unknown_destructive_buckets(measured)
+
+
+def test_an_unknown_bucket_that_is_not_a_delete_is_not_a_refusal():
+    measured = dict(repair.EXPECTED)
+    measured["hold_some_new_reason"] = 40
+    assert repair.unknown_destructive_buckets(measured) == {}
+
+
 def test_the_uncomfortable_number_is_registered_too():
     """34 rows are the last record of a real fixture and are NOT deleted. That
     is the number the delete branch is justified by, so it gates like any
