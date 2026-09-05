@@ -268,6 +268,14 @@ class KalshiScanReport:
         * ``frozen``   — the scan reached no existing market this beat.
         * ``starved``  — it reached some, but the deadline cut off existing ones.
         * ``partial``  — pages were skipped or the walk did not wrap.
+        * ``backfill_starved`` — the walk itself was clean, but the empty-event
+          market backfill did not work its list: it was cut off mid-flight, or
+          it never started for want of budget. This sits directly above
+          ``healthy`` because that is the reading it exists to prevent: the
+          24-beat ring of 2026-09-05 was a clean exhaustive walk on every beat
+          with the backfill truncated on every beat, and the verdict said
+          ``healthy`` each time. Both halves are one disease — candidates the
+          beat owed markets to and did not reach — so both read the same word.
         * ``healthy``  — walked to exhaustion with nothing dropped.
         """
         if self.stop_reason in _NO_POPULATION_STOPS:
@@ -281,6 +289,11 @@ class KalshiScanReport:
             return "starved"
         if self.pages_skipped > 0 or not self.wrapped:
             return "partial"
+        if (
+            self.market_backfill_truncated_after is not None
+            or self.market_backfill_skipped_past_deadline
+        ):
+            return "backfill_starved"
         return "healthy"
 
     def to_dict(self) -> Dict[str, Any]:
@@ -352,6 +365,15 @@ def summarize_history(history: List[Dict[str, Any]]) -> Dict[str, Any]:
     * Does the cursor MOVE? (distinct start fingerprints)
     * Does the walk ever WRAP? (if never, the tail is never revisited)
     * Where does it stop, over and over? (stop_reason histogram)
+    * Does the market backfill ever REACH THE END of its list? (the cutoff
+      block below)
+
+    That last question is here because the raw per-beat cutoff, truthful since
+    #3148, was legible only to a reader who opened all 24 ring entries by hand
+    and noticed a number that is present rather than absent. It took a
+    correlation run to see it. A summary that omits it lets a step which drops
+    ~12,600 candidates a beat pass under a stop-reason histogram that says
+    ``exhausted`` 24 times.
     """
     if not history:
         return {"runs": 0}
@@ -388,6 +410,39 @@ def summarize_history(history: List[Dict[str, Any]]) -> Dict[str, Any]:
         else:
             unknown_reconciliation += 1
 
+    # The market backfill's own cutoff, aggregated. A beat written before
+    # #3148 carries no cutoff key at all, and that is NOT the same as a beat
+    # that worked its whole list — the same distinction `_history_
+    # reconciliation_state` draws, for the same reason: counting an unknowable
+    # beat as a clean one manufactures headroom that was never measured.
+    backfill_truncated = backfill_complete = backfill_unknown = 0
+    cutoffs: List[int] = []
+    for h in history:
+        cut, after = _history_backfill_cutoff(h)
+        if cut is True:
+            backfill_truncated += 1
+            if after is not None:
+                cutoffs.append(after)
+        elif cut is False:
+            backfill_complete += 1
+        else:
+            backfill_unknown += 1
+
+    latest_candidates = latest_unreached = None
+    for h in history:  # newest first
+        cut, after = _history_backfill_cutoff(h)
+        if cut is None:
+            continue
+        try:
+            latest_candidates = int(h.get("market_backfill_candidates") or 0)
+        except (TypeError, ValueError):
+            latest_candidates = None
+        if latest_candidates is not None:
+            # What the newest measured beat left on the floor. `after` is None
+            # on a beat that finished its list, and then nothing is unreached.
+            latest_unreached = max(0, latest_candidates - (after or latest_candidates))
+        break
+
     return {
         "runs": len(history),
         "distinct_start_cursors": distinct_starts,
@@ -404,6 +459,20 @@ def summarize_history(history: List[Dict[str, Any]]) -> Dict[str, Any]:
         "runs_unknown_reconciliation": unknown_reconciliation,
         "readable_beats": reconciling,
         "arithmetic_ok": not_reconciling == 0 and unknown_reconciliation == 0,
+        # --- did the empty-event market backfill reach the end of its list? ---
+        "runs_backfill_truncated": backfill_truncated,
+        "runs_backfill_complete": backfill_complete,
+        "runs_backfill_unknown": backfill_unknown,
+        #: True only when every beat that COULD say was cut off. A ring with no
+        #: measured beats reads False, not True — silence is not a verdict.
+        "backfill_truncated_every_measured_beat": (
+            backfill_truncated > 0 and backfill_complete == 0
+        ),
+        "backfill_truncated_after_max": max(cutoffs) if cutoffs else None,
+        "backfill_candidates_latest": latest_candidates,
+        #: Candidates the newest measured beat never attempted. This is the
+        #: number #3149 is about; it is ~12,600 today.
+        "backfill_unreached_latest": latest_unreached,
     }
 
 
@@ -421,6 +490,27 @@ def _history_reconciliation_state(h: Dict[str, Any]) -> Optional[bool]:
             return True
         return bool(rec.get("ok"))
     return None
+
+
+def _history_backfill_cutoff(
+    h: Dict[str, Any],
+) -> tuple[Optional[bool], Optional[int]]:
+    """``(was the backfill cut off?, after how many candidates)``.
+
+    ``(None, None)`` means the beat cannot say: it was written before the
+    cutoff field existed, so its silence is absence of measurement, not
+    evidence the loop finished. A stored ``None`` under a PRESENT key is the
+    opposite and is reported as ``False`` — that beat worked its whole list.
+    """
+    if "market_backfill_truncated_after" not in h:
+        return None, None
+    raw = h.get("market_backfill_truncated_after")
+    if raw is None:
+        return False, None
+    try:
+        return True, int(raw)
+    except (TypeError, ValueError):
+        return None, None
 
 
 def new_report() -> KalshiScanReport:
