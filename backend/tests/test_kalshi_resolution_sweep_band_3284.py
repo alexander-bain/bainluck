@@ -140,9 +140,14 @@ class TestTheBandNamesTheDaysTheVenueCanStillAnswerFor:
         An off-by-one in the year rolls the whole band onto tickers that do not
         exist, and the sweep would silently rank nothing — a band that matches
         no row is indistinguishable from no band at all.
+
+        17:00Z is midday in Eastern, so this instant is January 2nd on BOTH
+        calendars and the guard measures the year roll alone. Midnight UTC would
+        have measured the year roll and the timezone at once, and a failure
+        could not say which.
         """
         tokens = sweep.past_event_band_tokens(
-            datetime(2027, 1, 2, tzinfo=timezone.utc), days=3
+            datetime(2027, 1, 2, 17, 0, tzinfo=timezone.utc), days=3
         )
 
         assert tokens == ["%-27JAN01%", "%-26DEC31%", "%-26DEC30%"]
@@ -438,6 +443,156 @@ class TestTheRunSaysHowMuchOfItsBatchTheBandSupplied:
         assert report["stats"]["band_days"] == PROVABLY_PURGED_AGE_DAYS
 
 
+# --- the band's calendar is the venue's, not UTC's (CERT-1939 follow-up) ------
+#
+# The beat fires at 04:20Z. That instant reads as two different days depending
+# on the season:
+#
+#     EDT (summer)   04:20Z = 00:20 ET the SAME day   -> the two agree
+#     EST (winter)   04:20Z = 23:20 ET the day BEFORE -> UTC is one day ahead
+#
+# So a UTC reading of "strictly before today" admits the Eastern day that is
+# still being played, and it admits it at RANK 0. Measured on production
+# 2026-09-05, that day is the largest cohort in the band — 785 eligible rows on
+# `26SEP05` against 212 on the finished `26SEP04` — so it would fill the whole
+# 500-row batch with unfinished games and the batch would never reach a played
+# day. That is the starvation CAL-P992 measured, re-created by the ordering
+# built to end it, arriving on 2026-11-01 with no commit to blame.
+#
+# WINTER_NOW is the same beat, on the other side of the DST change.
+
+WINTER_NOW = datetime(2026, 11, 15, 4, 20, tzinfo=timezone.utc)  # = 23:20 EST 11-14
+
+
+class TestTheBandReadsTheVenuesDayAndNotUTCs:
+    def test_the_winter_beat_does_not_promote_the_day_still_being_played(self):
+        """23:20 ET on the 14th must not call the 14th a played day."""
+        tokens = sweep.past_event_band_tokens(WINTER_NOW)
+
+        assert tokens[0] == "%-26NOV13%"
+        assert "%-26NOV14%" not in tokens
+
+    def test_the_summer_beat_is_exactly_what_was_measured(self):
+        """The fix must be a NO-OP on the clock the 604-row cohort was sized on.
+
+        Both readings agree under EDT. If this moves, the production proof in
+        CAL-P1016's report no longer describes the code.
+        """
+        assert sweep.past_event_band_tokens(NOW)[0] == "%-26SEP04%"
+
+    @pytest.mark.parametrize(
+        "beat,expected_first",
+        [
+            (datetime(2026, 9, 5, 4, 20, tzinfo=timezone.utc), "%-26SEP04%"),
+            (datetime(2026, 10, 31, 4, 20, tzinfo=timezone.utc), "%-26OCT30%"),
+            (datetime(2026, 11, 1, 4, 20, tzinfo=timezone.utc), "%-26OCT31%"),
+            (datetime(2026, 11, 2, 4, 20, tzinfo=timezone.utc), "%-26OCT31%"),
+            (datetime(2026, 11, 15, 4, 20, tzinfo=timezone.utc), "%-26NOV13%"),
+        ],
+    )
+    def test_the_newest_token_is_always_eastern_yesterday(self, beat, expected_first):
+        """Five consecutive 04:20Z beats across the 2026-11-01 DST change.
+
+        The load-bearing pair is 11-01 and 11-02: the UTC date advances by a day
+        but the Eastern day does not, because the clock fell back an hour in
+        between, so the band correctly repeats. A conversion that subtracted a
+        FIXED four hours would read 11-02 as Eastern November 2nd and promote
+        the whole of November 1st's evening — every game of it still in play at
+        23:20 ET. Only a real timezone gets both rows right.
+        """
+        assert sweep.past_event_band_tokens(beat)[0] == expected_first
+
+    def test_a_naive_clock_is_read_as_utc_and_not_as_local(self):
+        """A naive datetime must not silently take the runner's own timezone.
+
+        The developer machines in this program run on EDT while production runs
+        on UTC, so a naive instant interpreted locally would give the guards one
+        band and the beat another.
+        """
+        naive = WINTER_NOW.replace(tzinfo=None)
+
+        assert sweep.past_event_band_tokens(naive) == sweep.past_event_band_tokens(
+            WINTER_NOW
+        )
+
+    @pytest.mark.parametrize("unreadable", [None, "last tuesday", 1763180400])
+    def test_it_refuses_a_clock_it_cannot_read_and_says_so(self, unreadable):
+        """An unreadable clock must not degrade into an empty band.
+
+        `band_rank_sql(0)` is `NULL`, i.e. the inherited ordering — so a caller
+        that passed the wrong thing would not fail, it would quietly un-ship the
+        band and nothing in the run's summary would look wrong. Raise instead.
+
+        The MESSAGE is asserted, not just the type. Letting the bad value fall
+        through to `today - timedelta(...)` also raises `TypeError`, so a guard
+        on the type alone passes either way — and the beat's operator would get
+        "unsupported operand type(s) for -" from inside a loop instead of a
+        sentence naming the clock. A mutant that removed the explicit raise
+        survived this file until this assertion was added.
+        """
+        with pytest.raises(TypeError, match="needs a datetime to read the venue's day"):
+            sweep.past_event_band_tokens(unreadable)
+
+    def test_an_iso_string_is_read_rather_than_refused(self):
+        """Pinning what the shared helper actually tolerates, so nobody re-adds it.
+
+        `eastern_game_date` parses ISO strings, and reusing it means this does
+        too. That is harmless — it is the same instant — but it means the
+        refusal above is about UNREADABLE input, not about type purity, and a
+        future reader must not "tighten" it into rejecting the string form.
+        """
+        assert sweep.past_event_band_tokens(
+            WINTER_NOW.isoformat()
+        ) == sweep.past_event_band_tokens(WINTER_NOW)
+
+
+class TestTheWinterBatchStillLeadsWithAPlayedGame:
+    def test_the_in_progress_eastern_day_never_outranks_the_finished_one(self):
+        """The ship, end to end, through the real SQL at the winter instant."""
+        engine = _seed(
+            [
+                # In progress at 23:20 ET on the 14th, and the freshest stamp,
+                # so under the inherited ordering alone it would sort LAST —
+                # only a band that wrongly contains it can promote it.
+                _row(1, "KXNFLGAME-26NOV14BUFMIA", updated_at=WINTER_NOW),
+                _row(2, "KXNFLGAME-26NOV13NYJNE", updated_at=WINTER_NOW),
+            ]
+        )
+
+        order = _select(engine, now=WINTER_NOW)
+
+        assert order[0] == "KXNFLGAME-26NOV13NYJNE"
+
+    @pytest.mark.asyncio
+    async def test_the_run_does_not_count_the_unfinished_day_as_band_supply(self):
+        """`candidates_in_band` is the number the post-deploy check reads.
+
+        If the in-progress day counted, a batch of unfinished games would report
+        as a fully-banded run and the yield collapse would look like a venue
+        problem rather than an ordering one.
+        """
+        report = await _run_against(
+            ["KXNFLGAME-26NOV14BUFMIA", "KXNFLGAME-26NOV13NYJNE"], now=WINTER_NOW
+        )
+
+        assert report["stats"]["candidates_in_band"] == 1
+
+    @pytest.mark.asyncio
+    async def test_the_retention_floor_stays_on_the_utc_clock(self):
+        """Only the CALENDAR moved. The floor is an age, not a date.
+
+        Pushing the Eastern reading into `purge_floor` too would shift the whole
+        eligibility window by up to five hours against a constant that was
+        measured in absolute time (`PROVABLY_PURGED_AGE_DAYS`).
+        """
+        report = await _run_against(["KXNFLGAME-26NOV13NYJNE"], now=WINTER_NOW)
+        _, params = report["_statements"][0]
+
+        assert params["purge_floor"] == WINTER_NOW - timedelta(
+            days=PROVABLY_PURGED_AGE_DAYS
+        )
+
+
 class TestTheCursorDoesNotSurviveTheReorder:
     def test_the_cursor_key_is_versioned(self):
         """An offset is a position in an order; the order changed.
@@ -496,7 +651,7 @@ class _FakeSession:
         return None
 
 
-async def _run_against(tickers, *, limit=100):
+async def _run_against(tickers, *, limit=100, now=NOW):
     """`run_backfill` over the given tickers with a venue that answers nothing.
 
     The venue is deliberately barren: this file measures SELECTION and the
@@ -520,7 +675,7 @@ async def _run_against(tickers, *, limit=100):
         limit=limit,
         offset=0,
         apply=False,
-        now=NOW,
+        now=now,
     )
     report["_statements"] = recorder
     return report
