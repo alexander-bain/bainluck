@@ -20,6 +20,7 @@ from sqlalchemy.orm import selectinload
 from app.models import Team, Event, Sport, FuturesMarket, FuturesOutcome, TeamIdentityMapping
 from app.services import get_db
 from app.utils import season_windows
+from app.utils.proven_duplicates import not_a_proven_duplicate
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +88,9 @@ async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession
             # only correct as a pair. See that module for why `live` no longer
             # carries a `now - 2h` floor.
             upcoming_rail_condition(now),
+            # #2263: one game, one card. A row the registry proved is a second
+            # copy of another row is not a second fixture on this team's schedule.
+            not_a_proven_duplicate(),
         )
         .order_by(
             # Q438: the same live-AND-started predicate the league rail uses —
@@ -134,6 +138,7 @@ async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession
             # populations, no starvation. `unreported_rail_condition` carries the
             # measurement and this call site is named in it.
             recent_or_unreported_condition(now, lookback=timedelta(days=30)),
+            not_a_proven_duplicate(),  # #2263, as above
         )
         .order_by(Event.commence_time.desc())
         .limit(5)
