@@ -60,7 +60,10 @@ def test_a_real_screen_timing_packet_survives_intact():
     assert clean["first_card_ms"] == 1480
     assert clean["surface"] == "discover"
     assert clean["card_count"] == 12
-    assert len(clean) == 11
+    # 10, not 11: `app_build` was removed under CERT-1880 (see the contract's
+    # own note). The browser still SENDS it — the server simply does not store it.
+    assert len(clean) == 10
+    assert "app_build" not in clean
 
 
 # ---------------------------------------------------------------------------
@@ -326,10 +329,25 @@ def test_server_allowlist_matches_the_frontend_perf_event_keys():
         )
         assert block, f"could not find PERF_EVENT_KEYS entry for {event_name}"
         frontend_keys = set(re.findall(r"'([a-z_]+)'", block.group(1)))
-        assert set(spec) == frontend_keys, (
-            f"{event_name} drifted: server-only={set(spec) - frontend_keys}, "
-            f"frontend-only={frontend_keys - set(spec)}"
+
+        # DIRECTION MATTERS, and it is not symmetric. The server may store LESS
+        # than the browser sends — that is the privacy claim's own escape hatch,
+        # and `app_build` uses it (CERT-1880). The server may never store MORE,
+        # because then it would hold a field GA does not receive and the claim
+        # "every field stored is already sent to Google" becomes false.
+        server_only = set(spec) - frontend_keys
+        assert not server_only, (
+            f"{event_name} stores keys the browser never sends: {sorted(server_only)} — "
+            "the privacy claim only permits the server to be NARROWER"
         )
+
+        # An intentional omission must be NAMED here, so a key silently dropped
+        # by a refactor still reds this test.
+        intentionally_dropped = {"screen_timing": {"app_build"}}.get(event_name, set())
+        unexplained = frontend_keys - set(spec) - intentionally_dropped
+        assert (
+            not unexplained
+        ), f"{event_name} drops keys with no reason on record: {sorted(unexplained)}"
 
 
 # ---------------------------------------------------------------------------
@@ -395,51 +413,6 @@ def test_every_enum_key_has_a_declared_domain():
                 assert key in _ENUM_DOMAINS, f"{event_name}.{key} has no closed domain"
 
 
-@pytest.mark.parametrize("hostile", IDENTIFIER_VALUES)
-def test_no_identifier_survives_in_app_build(hostile):
-    _, clean = validate_packet("screen_timing", {"app_build": hostile})
-    assert "app_build" not in clean
-
-
-@pytest.mark.parametrize(
-    "legal",
-    [
-        "web",  # screenTiming.ts default
-        "a1b2c3d",  # webAppBuild(): Vercel sha sliced to 7
-        "0123456789ab",  # frontend meta tag sliced to 12
-        "0123456789abcdef01234567",  # a longer sha
-        "1.4.2 (317)",  # iOS AnalyticsService.appBuild()
-        "2.0 (1)",
-        "? (?)",  # iOS missing-Info.plist fallback
-    ],
-)
-def test_app_build_still_admits_every_real_producer_format(legal):
-    """Each case is a form a REAL producer emits, cited in `_APP_BUILD_RE`.
-
-    `1.4.2 (317)` is here because the first grammar rejected the iOS form
-    outright — every native packet would have shipped an empty `app_build`,
-    which reads as "native does not report" rather than as a bug.
-    """
-    _, clean = validate_packet("screen_timing", {"app_build": legal})
-    assert clean["app_build"] == legal
-
-
-@pytest.mark.parametrize(
-    "abbreviated_ipv4",
-    ["127.0.1", "127.1", "10.1", "192.168.1", "192.168.1.44", "2130706433", "0.0.0.0"],
-)
-def test_no_abbreviated_ipv4_form_survives_in_app_build(abbreviated_ipv4):
-    """CERT-1873: bounding the COMPONENT COUNT cannot exclude an IP address.
-
-    Abbreviated IPv4 is valid and ubiquitous — BSD/Python resolve `127.0.1` and
-    `127.1` both to `127.0.0.1`. Every shorter form is still an address, so
-    there is no component count that is "too few to be an IP". What excludes
-    them is that no producer emits a bare version at all.
-    """
-    _, clean = validate_packet("screen_timing", {"app_build": abbreviated_ipv4})
-    assert "app_build" not in clean, f"{abbreviated_ipv4!r} stored"
-
-
 def test_cache_status_domain_matches_its_producer():
     """The domain is derived from the WRITER, not restated beside it.
 
@@ -498,3 +471,85 @@ def test_mask_path_fails_closed_on_unknown_segments(raw, must_not_contain):
 def test_mask_path_still_names_the_real_surfaces(raw, expected):
     """Fail-closed must not blind the p50 table to the app's actual routes."""
     assert mask_path(raw) == expected
+
+
+# ---------------------------------------------------------------------------
+# CERT-1880's repair: the guarantee is STRUCTURAL, not enumerated
+# ---------------------------------------------------------------------------
+
+
+def test_no_field_accepts_free_form_text():
+    """The invariant that replaces three rounds of pattern-guessing.
+
+    Every string-valued key in the contract must be either a closed `enum`
+    domain or a `path` (which `mask_path` composes from known route segments and
+    fixed placeholders). No third string kind may exist, because a free-form
+    field is a place to put an identifier, and `app_build` proved three times
+    running that no pattern can separate a legitimate value from a hostile one
+    once the field is free-form.
+
+    Re-adding a free-form kind reds THIS test, by name, instead of reopening a
+    hole for a fourth cert to find.
+    """
+    string_kinds = {"enum", "path"}
+    numeric_kinds = {"ms", "count", "score"}
+    for event_name, spec in EVENT_KEY_SPECS.items():
+        for key, kind in spec.items():
+            assert kind in string_kinds | numeric_kinds, (
+                f"{event_name}.{key} has kind {kind!r}, which is neither a closed "
+                "domain, a masked path, nor a bounded number"
+            )
+            if kind == "enum":
+                assert key in _ENUM_DOMAINS, f"{event_name}.{key} has no closed domain"
+
+
+def test_app_build_is_gone_and_cannot_be_stored():
+    """`1.4.2` and `1.0` — REAL iOS versions — are valid IPv4 encodings.
+
+    `socket.inet_aton` accepts both. So no rule could admit the producer format
+    and reject an address: they are the same strings. The field is removed
+    rather than patched a fourth time.
+    """
+    import socket
+
+    for genuine_ios_version in ("1.4.2", "1.0", "127.0.1"):
+        socket.inet_aton(genuine_ios_version)  # raises if this premise ever changes
+
+    for hostile in ("127.0.1 (317)", "192.168.1.44 (1)", "1.4.2 (alice-123)", "web"):
+        _, clean = validate_packet("screen_timing", {"app_build": hostile})
+        assert "app_build" not in clean, f"{hostile!r} stored"
+
+    assert "app_build" not in EVENT_KEY_SPECS["screen_timing"]
+    assert "app_build" not in PROMOTED_DIMENSIONS
+
+
+@pytest.mark.parametrize(
+    "hostile",
+    [
+        "127.0.1 (317)",
+        "192.168.1.44 (1)",
+        "1.4.2 (alice-123)",
+        "alice@example.com",
+        "1.0 (Bearer_token)",
+    ],
+)
+def test_cert_1880_reproductions_reach_nothing(hostile):
+    """The exact values CERT-1880 stored, now unable to reach any field.
+
+    Tried against EVERY key of every event, not just the one the cert named —
+    the previous three repairs each fixed the named field and left a neighbour
+    open, so this asserts across the whole surface.
+    """
+    for event_name, spec in EVENT_KEY_SPECS.items():
+        for key in spec:
+            _, clean = validate_packet(event_name, {key: hostile})
+            stored = clean.get(key)
+            if stored is None:
+                continue
+            # A path field may survive as a MASKED composition; it must not
+            # carry any of the hostile content through.
+            assert ":" in str(stored), f"{event_name}.{key} stored {stored!r}"
+            for fragment in ("127", "192", "alice", "Bearer", "example"):
+                assert fragment not in str(
+                    stored
+                ), f"{event_name}.{key} stored {stored!r} from {hostile!r}"

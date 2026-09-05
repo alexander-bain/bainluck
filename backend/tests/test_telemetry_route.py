@@ -414,7 +414,6 @@ async def test_a_wholly_legitimate_packet_still_stores_every_field(client_and_db
                         "card_count": 6,
                         "device_class": "phone",
                         "network_class": "4g",
-                        "app_build": "a1b2c3d",
                         "outcome_class": "ok",
                     },
                 }
@@ -425,7 +424,8 @@ async def test_a_wholly_legitimate_packet_still_stores_every_field(client_and_db
     assert resp.json() == {"accepted": 1, "rejected": 0, "stored": 1}
 
     row = db.added[0]
-    assert len(row.params) == 11, f"a legal field was dropped: {row.params}"
+    # 10, not 11: `app_build` was removed from the contract under CERT-1880.
+    assert len(row.params) == 10, f"a legal field was dropped: {row.params}"
     assert row.params["surface"] == "events/:id"
     assert row.params["first_card_ms"] == 940
     for dim in PROMOTED_DIMENSIONS:
@@ -433,18 +433,31 @@ async def test_a_wholly_legitimate_packet_still_stores_every_field(client_and_db
 
 
 @pytest.mark.parametrize(
-    "ip_form", ["127.0.1", "127.1", "192.168.1.44", "2130706433", "10.1"]
+    "hostile",
+    [
+        "127.0.1",
+        "127.0.1 (317)",
+        "192.168.1.44 (1)",
+        "1.4.2 (alice-123)",
+        "2130706433",
+        "1.0 (Bearer_token)",
+        "web",
+    ],
 )
 @pytest.mark.asyncio
-async def test_an_ip_address_cannot_reach_storage_through_app_build(ip_form):
-    """CERT-1873's named repair, at the real HTTP boundary.
+async def test_app_build_reaches_no_storage_surface_at_all(hostile):
+    """CERT-1880's repair, at the real HTTP boundary.
 
-    The BLOCK's reproduction stored `params["app_build"] == "127.0.1"` through a
-    real-ingest ASGI post. Bounding the dotted-component COUNT did not stop it,
-    because abbreviated IPv4 is valid: `127.0.1` resolves to `127.0.0.1`, and
-    `2130706433` is the same address as a bare integer that also matches a hex
-    sha. Asserts on BOTH storage surfaces, and proves the packet's real timing
-    measurement still lands.
+    `app_build` is GONE from the contract, so every one of these — including
+    the once-legitimate `web` — reaches neither JSONB nor a promoted column.
+
+    It is removed rather than patched a fourth time because it cannot be
+    patched: `socket.inet_aton` accepts `1.4.2` and `1.0`, which are genuine
+    `CFBundleShortVersionString` values, as valid IPv4 encodings. The producer
+    format and the address are the same strings.
+
+    The packet's real timing measurement must still store — a privacy fix that
+    also drops the ship is not a fix.
     """
     db = _RecordingSession()
 
@@ -465,9 +478,10 @@ async def test_an_ip_address_cannot_reach_storage_through_app_build(ip_form):
                             {
                                 "name": "screen_timing",
                                 "params": {
-                                    "app_build": ip_form,
+                                    "app_build": hostile,
                                     "first_card_ms": 1480,
                                     "surface": "discover",
+                                    "device_class": "phone",
                                 },
                             }
                         ]
@@ -475,54 +489,15 @@ async def test_an_ip_address_cannot_reach_storage_through_app_build(ip_form):
                 )
         assert resp.status_code == 202
         row = db.added[0]
-        assert "app_build" not in row.params, f"{ip_form!r} reached JSONB"
-        assert row.app_build is None, f"{ip_form!r} reached the promoted column"
-        # …and the repair must not cost the ship
+        assert "app_build" not in row.params, f"{hostile!r} reached JSONB"
+        assert not hasattr(row, "app_build") or getattr(row, "app_build", None) is None
+        blob = str(row.params)
+        for fragment in ("127", "192", "alice", "Bearer", "2130706433"):
+            assert fragment not in blob, f"{fragment} survived from {hostile!r}"
+        # …and the ship is intact
         assert row.params["first_card_ms"] == 1480
         assert row.params["surface"] == "discover"
-    finally:
-        app.dependency_overrides.clear()
-
-
-@pytest.mark.parametrize("producer_form", ["web", "a1b2c3d", "1.4.2 (317)", "? (?)"])
-@pytest.mark.asyncio
-async def test_every_real_app_build_producer_format_still_stores(producer_form):
-    """The control the BLOCK asked for beside the IP test.
-
-    Rejecting IPs is trivial if you also reject everything else — and the first
-    grammar did exactly that to the iOS form `1.4.2 (317)`, which would have
-    left every native packet with an empty `app_build` reading as "native does
-    not report".
-    """
-    db = _RecordingSession()
-
-    async def _mock_get_db():
-        yield db
-
-    app.dependency_overrides[get_db] = _mock_get_db
-    app.dependency_overrides[get_db_rw] = _mock_get_db
-    try:
-        with patch("app.main.init_db", new_callable=AsyncMock):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as ac:
-                resp = await ac.post(
-                    INGEST,
-                    json={
-                        "events": [
-                            {
-                                "name": "screen_timing",
-                                "params": {
-                                    "app_build": producer_form,
-                                    "first_card_ms": 900,
-                                },
-                            }
-                        ]
-                    },
-                )
-        assert resp.status_code == 202
-        row = db.added[0]
-        assert row.params["app_build"] == producer_form
-        assert row.app_build == producer_form
+        assert row.params["device_class"] == "phone"
+        assert row.device_class == "phone"
     finally:
         app.dependency_overrides.clear()

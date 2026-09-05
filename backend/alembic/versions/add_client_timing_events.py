@@ -32,7 +32,6 @@ def upgrade() -> None:
         sa.Column("id", sa.BigInteger(), autoincrement=True, nullable=False),
         sa.Column("event_name", sa.String(length=32), nullable=False),
         sa.Column("surface", sa.String(length=64), nullable=True),
-        sa.Column("app_build", sa.String(length=64), nullable=True),
         sa.Column("device_class", sa.String(length=64), nullable=True),
         sa.Column("network_class", sa.String(length=64), nullable=True),
         sa.Column("entry", sa.String(length=64), nullable=True),
