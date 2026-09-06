@@ -118,6 +118,44 @@ export function isNonDistinctiveTrailingWord(token: string): boolean {
 }
 
 /**
+ * The letters a crest square falls back to when no logo or flag exists.
+ *
+ * #2882's neighbour, found on the same LOOK. The card built this inline as
+ * `name.split(" ").map(w => w.charAt(0)).join("").slice(0, 2)`, which counts a
+ * spaced slash as a WORD: "Bondar / Kalinina" makes the initials "B", "/", "K"
+ * and the two-character cap then cuts the pair in half, so every doubles crest
+ * on `/sport/tennis/wta` read "B/", "S/", "H/", "P/" — a first initial and a
+ * dangling separator, naming one player and half a punctuation mark. The event
+ * hero two clicks away already drew "S/T" for the same fixture.
+ *
+ * A pair therefore gets ONE initial per side joined by the slash it arrived
+ * with ("S/T"), capped at two sides because `isDoublesPair`'s own corpus has no
+ * three-part name and a crest square has room for three glyphs, not five.
+ * Everything else keeps the two-initial rule exactly: "Osaka" -> "O", "Boston
+ * Celtics" -> "BC", "Bodo/Glimt" -> "B" (an UNSPACED slash is part of one
+ * entity's name, so it is not a pair here either — same test as everywhere
+ * else in this module).
+ */
+export function teamCrestInitials(name: string | null | undefined): string {
+  const full = (name ?? "").trim();
+  if (!full) return "";
+  if (isDoublesPair(full)) {
+    return full
+      .split(" / ")
+      .slice(0, 2)
+      .map(side => side.trim().charAt(0))
+      .join("/")
+      .toUpperCase();
+  }
+  return full
+    .split(/\s+/)
+    .map(word => word.charAt(0))
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
+}
+
+/**
  * One side's compact name. Prefer this only where the other side is genuinely
  * unavailable — `teamShortNames` below can additionally catch the case where
  * two teams shorten to the SAME word, which one side alone cannot see.

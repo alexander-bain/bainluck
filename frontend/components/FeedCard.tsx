@@ -35,6 +35,7 @@ import {
 } from "@/lib/eventState";
 import { PREMATCH_SAID, prematchReading } from "@/lib/prematchReading";
 import { probabilityBarPair, SEGMENT_OPACITY } from "@/lib/probabilityBarPair";
+import { teamCrestInitials } from "@/lib/teamShortName";
 import TeamNameLink from "./TeamNameLink";
 
 interface FeedCardProps {
@@ -301,7 +302,10 @@ function TeamLogo({ url, name, color, isFlag, sport }: { url: string | null | un
       />
     );
   }
-  const initials = name.split(" ").map(w => w.charAt(0)).join("").slice(0, 2).toUpperCase();
+  // #2882's neighbour: the same crest square as `EventCard`, and it had the
+  // same inline initialism, so a doubles side rendered "S/" here too. One rule,
+  // one place — see `teamCrestInitials`.
+  const initials = teamCrestInitials(name);
   return (
     <div
       className="w-5 h-5 rounded-sm flex-shrink-0 flex items-center justify-center text-[9px] font-bold text-white/90"

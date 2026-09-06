@@ -16,7 +16,7 @@ import { teamColorStyle } from "@/lib/teamColors";
 import TeamNameLink from "./TeamNameLink";
 import { shouldWithholdProbability } from "@/lib/probabilityEvidence";
 import { renderedDuelPercents } from "@/lib/renderedPercent";
-import { teamShortNames } from "@/lib/teamShortName";
+import { teamCrestInitials, teamShortNames } from "@/lib/teamShortName";
 import { formatFinishedGameLabel, formatLiveClockLabel } from "@/lib/gameTimeLabel";
 import {
   hasNoReportedResult,
@@ -173,7 +173,27 @@ export default function EventCard({
   // "Sep 1 5:00 PM" — the upcoming-branch fall-through `lib/eventState.ts`
   // opens by naming as the quieter lie.
   const isSuspended = hasNoReportedResult(event.status, event.commence_time);
+
+  // #2882 — NEITHER side has a number. This is #3459's rule reaching the league
+  // and tour rails: `AnimatedProbability` prints `-` per side and has no notion
+  // of both sides being absent, so a card with no price rendered as two dashes
+  // and an empty bar in the same chrome as its priced neighbours. Measured on
+  // production 2026-09-06 11:20Z, `/api/leagues/tennis_wta` returned FOUR
+  // upcoming games and all four had `home_win_probability` and
+  // `away_win_probability` null — the whole WTA rail was dashes, during the US
+  // Open. Say it in the same words the hero and the play card already use.
+  const noReading = homeProb === null && awayProb === null;
+
+  // With no reading there is no favourite, so nothing may be emphasised as one.
+  // `(homeProb ?? 0) >= (awayProb ?? 0)` is 0 >= 0 when both are absent, which
+  // drew the home side in `text-text-primary` and the away side in
+  // `text-text-secondary` — the card naming a favourite off a coin it never
+  // flipped. Equal weight is the only honest pair when the number is missing.
   const homeFavorite = (homeProb ?? 0) >= (awayProb ?? 0);
+  const homeNameClass =
+    noReading || homeFavorite ? "text-text-primary" : "text-text-secondary";
+  const awayNameClass =
+    noReading || !homeFavorite ? "text-text-primary" : "text-text-secondary";
 
   // Format time and date compactly
   const gameTime = new Date(event.commence_time);
@@ -385,7 +405,7 @@ export default function EventCard({
                     className="w-5 h-5 rounded-sm flex-shrink-0 flex items-center justify-center text-[9px] font-bold text-white/90"
                     style={{ backgroundColor: "rgb(var(--team-home-primary))" }}
                   >
-                    {event.home_team.split(" ").map(w => w.charAt(0)).join("").slice(0, 2).toUpperCase()}
+                    {teamCrestInitials(event.home_team)}
                   </div>
                 )}
                 <TeamNameLink
@@ -393,7 +413,7 @@ export default function EventCard({
                   sportKey={event.sport}
                   className={cn(
                     "text-sm font-medium truncate hover:underline",
-                    homeFavorite ? "text-text-primary" : "text-text-secondary",
+                    homeNameClass,
                   )}
                 />
                 {/* Inline live score */}
@@ -408,7 +428,7 @@ export default function EventCard({
                   and printed a confident 72%/28% two lines under "No result
                   reported" — the card contradicting itself in one glance. The
                   suspended summary above is the whole statement. */}
-              {!isLive && !isFinished && !isSuspended && (
+              {!isLive && !isFinished && !isSuspended && !noReading && (
                 <AnimatedProbability
                   percent={chipHomePct}
                   className={cn(
@@ -417,7 +437,7 @@ export default function EventCard({
                   )}
                 />
               )}
-              {isLive && (
+              {isLive && !noReading && (
                 <AnimatedProbability
                   percent={chipHomePct}
                   className="font-mono tabular-nums text-xs text-text-muted"
@@ -428,13 +448,29 @@ export default function EventCard({
             {/* Team-colored probability bar — hidden on FINAL (settled score
                 above) and on SUSPENDED (CERT-792): a filled bar is the loudest
                 claim on the card, and there is no live price behind it. */}
-            {!isFinished && !isSuspended && (
+            {!isFinished && !isSuspended && !noReading && (
               <ProbabilityBar
                 homeProbability={homeProb}
                 homeFavorite={homeFavorite}
                 useCSSVars
                 height={isLive ? 3 : 5}
               />
+            )}
+
+            {/* #2882 — the bar's slot, in words. It sits BETWEEN the two names,
+                where the bar was and where the hero puts the same sentence, so
+                the statement lands on the matchup rather than on one side of
+                it. A settled or unreported card is deliberately excluded: those
+                two already carry their own whole statement (the score block and
+                "no result reported"), and adding this under either would be the
+                card saying two things about one absence. */}
+            {!isFinished && !isSuspended && noReading && (
+              <p
+                className="text-xs text-text-muted py-0.5"
+                data-testid="event-card-no-probability"
+              >
+                No price yet
+              </p>
             )}
 
             {/* Away team */}
@@ -464,7 +500,7 @@ export default function EventCard({
                     className="w-5 h-5 rounded-sm flex-shrink-0 flex items-center justify-center text-[9px] font-bold text-white/90"
                     style={{ backgroundColor: "rgb(var(--team-away-primary))" }}
                   >
-                    {event.away_team.split(" ").map(w => w.charAt(0)).join("").slice(0, 2).toUpperCase()}
+                    {teamCrestInitials(event.away_team)}
                   </div>
                 )}
                 <TeamNameLink
@@ -472,7 +508,7 @@ export default function EventCard({
                   sportKey={event.sport}
                   className={cn(
                     "text-sm font-medium truncate hover:underline",
-                    !homeFavorite ? "text-text-primary" : "text-text-secondary",
+                    awayNameClass,
                   )}
                 />
                 {/* Inline live score */}
@@ -481,7 +517,7 @@ export default function EventCard({
                 )}
               </div>
               {/* Probability chip — scheduled/live only (see home team above). */}
-              {!isLive && !isFinished && !isSuspended && (
+              {!isLive && !isFinished && !isSuspended && !noReading && (
                 <AnimatedProbability
                   percent={chipAwayPct}
                   className={cn(
@@ -490,7 +526,7 @@ export default function EventCard({
                   )}
                 />
               )}
-              {isLive && (
+              {isLive && !noReading && (
                 <AnimatedProbability
                   percent={chipAwayPct}
                   className="font-mono tabular-nums text-xs text-text-muted"
