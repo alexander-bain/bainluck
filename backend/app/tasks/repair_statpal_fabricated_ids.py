@@ -29,7 +29,18 @@ StatPal id we already know — the ``polluted_column`` receipts carry it — sit
 unstamped behind a string we made up. Clearing the column is what lets the
 stamper put the real id in. The falsifiable prediction, banked before the apply:
 NFL ``anchors.polluted_column`` **48 → 0**, ``anchored`` **247 → ~295**,
-``pct_of_both`` **76.95 → ~100**.
+``pct_of_both`` **76.95 → 91.90** — not "~100", which is what this docstring said
+until the arithmetic was checked: 295 of the 321 games both sides list is 91.9%,
+because 26 of them have never had a StatPal id to stamp at all.
+
+**SCORED (2026-09-06 16:22Z apply, read back at 16:37Z).** ``polluted_column``
+**0** as predicted; ``anchored`` **293**, ``pct_of_both`` **91.28** — two rows
+short, and the two are the finding. Events ``15196980`` and ``15196982`` carry a
+midnight kickoff a full day before the real one, so they miss the stamper's
+one-hour ``MATCH_WINDOW`` by 24 and 25 hours. Filed as **#3601**
+(``matching-symptom``, linked #2693), owned by the matching lane. The NFL
+agreement row had been reporting ``schedule.wrong_day = 2`` for days and this
+lane had written that it gated nothing; it gates exactly these two.
 
 ONE PREDICATE, NOT TWO. The population is ``not is_statpal_contest_id(value)``,
 **imported** from ``stamp_nfl_statpal_fixtures`` rather than restated as a SQL

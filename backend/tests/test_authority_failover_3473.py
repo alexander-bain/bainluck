@@ -1950,3 +1950,249 @@ def test_the_sync_no_longer_defaults_espn_data_to_an_empty_list():
         if isinstance(node, ast.Name) and node.id == "espn_data"
     ]
     assert touches, "`_sync_espn_live_events` no longer mentions `espn_data`"
+
+
+# ── One live write per pass, however many sports went dark ──────────────────
+#
+# `STANDING-STATPAL-FAILOVER-COALESCING` (CERT-2052): *"before multiple sports
+# flip, call the global livescore writer once per pass or prove 300-second
+# runtime and concurrent-write idempotence against its 30-second beat."* The
+# first branch, taken. These are the tests that catch it coming back.
+#
+# The condition is not hypothetical. NFL, NBA and NHL are all at day 2 of D50's
+# seven as of 2026-09-06 and `flip_permitted` opens for all three on the same
+# days, so the first day any of them can flip is a day all three can — which is
+# why the multi-sport pass is tested with exactly those three keys.
+
+
+def _three_dark_sports_wiring(monkeypatch):
+    """A pass where NFL, NBA and NHL are all ESPN-dark and all servable.
+
+    Returns the `calls` list every writer appends to, in call order — one list
+    rather than two counters, because "one live write" is only the right answer
+    if it lands AFTER the schedule writes it should see the fixtures of.
+    """
+    import app.services.statpal_api as statpal_api
+    import app.tasks.espn_sync as espn_sync
+    import app.tasks.statpal_sync as statpal_sync
+
+    _no_ledger(monkeypatch, days=SEVEN_MEETS_DAYS, why="seven")
+    monkeypatch.setattr(statpal_api, "is_available", lambda: True)
+
+    async def _standby(sport_key):
+        return FIXTURES, FIXTURES
+
+    monkeypatch.setattr(espn_sync, "_statpal_standby_reading", _standby)
+
+    calls: list[str] = []
+
+    async def _schedules(sport_key):
+        calls.append(f"schedule:{sport_key}")
+        return {"ok": True}
+
+    async def _livescores():
+        calls.append("live")
+        return {"ok": True}
+
+    monkeypatch.setattr(statpal_sync, "_sync_statpal_schedules", _schedules)
+    monkeypatch.setattr(statpal_sync, "_sync_statpal_livescores", _livescores)
+    return calls
+
+
+THREE_DARK = {"americanfootball_nfl", "basketball_nba", "icehockey_nhl"}
+
+
+def test_the_control_all_three_of_those_sports_really_do_open_on_the_same_days():
+    """Without this, the multi-sport tests could pass by serving one sport.
+
+    If a future ruling closes NBA or NHL, these tests must fail loudly here —
+    at the premise — rather than quietly degrade into a single-sport pass that
+    a per-sport live write would also satisfy.
+    """
+    opened = [k for k in sorted(THREE_DARK) if flip_permitted(k, SEVEN_MEETS_DAYS)[0]]
+    assert opened == sorted(THREE_DARK), (
+        "the multi-sport coalescing tests are no longer testing multiple sports: "
+        f"only {opened} open on seven MEETS days"
+    )
+
+
+@pytest.mark.asyncio
+async def test_three_dark_sports_get_three_schedule_writes_and_one_live_write(
+    monkeypatch, dispatches
+):
+    """**The named repair.** N sports served, ONE global livescore call.
+
+    `_sync_statpal_livescores()` takes no sport key — it advances every sport
+    that has a live event in our database — so one call covers all three. The
+    first cut called it inside the per-sport loop, which was invisible while at
+    most one sport could be permitted and becomes three full passes over every
+    live sport the moment three can.
+
+    The schedule writer is the opposite and stays per sport: it takes a key, so
+    three dark sports are three genuinely different reads.
+    """
+    from app.tasks.espn_sync import _act_on_failovers, _decide_failovers
+
+    calls = _three_dark_sports_wiring(monkeypatch)
+
+    stats = {"errors": []}
+    await _act_on_failovers(await _decide_failovers({}, THREE_DARK, stats), stats)
+
+    assert calls.count("live") == 1, (
+        "the global livescore writer ran once per SPORT instead of once per "
+        f"PASS — {calls.count('live')} calls for 3 sports. Call order: {calls}"
+    )
+    assert sorted(c for c in calls if c.startswith("schedule:")) == [
+        "schedule:americanfootball_nfl",
+        "schedule:basketball_nba",
+        "schedule:icehockey_nhl",
+    ], calls
+    # And the one live write lands last, after every fixture this pass wrote.
+    assert calls[-1] == "live", calls
+
+    assert stats["failover_serving"] == 3
+    assert stats["failover_schedule_writes"] == 3
+    assert stats["failover_live_writes"] == 1
+    # The counter that stops "1 live write" reading as "two sports unserved".
+    assert stats["failover_live_sports_covered"] == 3
+    assert stats["errors"] == []
+    assert dispatches.calls == []
+
+
+@pytest.mark.asyncio
+async def test_a_sport_the_gate_refuses_gets_no_schedule_write_and_is_not_counted(
+    monkeypatch, dispatches
+):
+    """The pairing that stops the test above passing against "serve everything".
+
+    Baseball is ESPN-dark in the same pass and `flip_permitted` refuses it — no
+    governing identity number (D63). Three sports are served, four went dark,
+    and the single live write is still one call covering the three that were.
+    """
+    from app.tasks.espn_sync import _act_on_failovers, _decide_failovers
+
+    calls = _three_dark_sports_wiring(monkeypatch)
+    assert flip_permitted("baseball_mlb", SEVEN_MEETS_DAYS)[0] is False, (
+        "the control is broken: baseball now opens on seven days, so this test "
+        "is no longer about a refused sport"
+    )
+
+    stats = {"errors": []}
+    await _act_on_failovers(
+        await _decide_failovers({}, THREE_DARK | {"baseball_mlb"}, stats), stats
+    )
+
+    assert "schedule:baseball_mlb" not in calls, calls
+    assert calls.count("live") == 1, calls
+    assert stats["failover_serving"] == 3
+    assert stats["failover_live_sports_covered"] == 3, (
+        "the covered count must name the sports actually served, not every "
+        f"sport ESPN went dark on. {stats}"
+    )
+    assert len(stats["failover"]) == 4, "every dark sport still gets a receipt"
+
+
+@pytest.mark.asyncio
+async def test_no_sport_served_means_the_live_writer_is_never_called(
+    monkeypatch, dispatches
+):
+    """The other direction, and the one a coalesced call is easiest to break in.
+
+    "Call it once per pass" must mean once per pass **that served something**.
+    A pass where the gate refuses everything — today's production state — must
+    not touch StatPal at all, and an unconditional post-loop call would look
+    correct in every test above.
+    """
+    from app.tasks.espn_sync import _act_on_failovers, _decide_failovers
+
+    calls = _three_dark_sports_wiring(monkeypatch)
+    _no_ledger(monkeypatch, days=[], why="no days")  # shut the gate again
+
+    stats = {"errors": []}
+    await _act_on_failovers(await _decide_failovers({}, THREE_DARK, stats), stats)
+
+    assert calls == [], f"a pass that served nothing still wrote: {calls}"
+    assert stats.get("failover_serving", 0) == 0
+    assert "failover_live_writes" not in stats
+    assert "failover_live_sports_covered" not in stats
+
+
+@pytest.mark.asyncio
+async def test_a_failed_live_write_records_one_error_naming_every_sport_it_dropped(
+    monkeypatch, dispatches
+):
+    """One call means one failure — and it must say who lost coverage.
+
+    Per-sport calls used to produce a per-sport error each. Coalescing gives one
+    exception for three dropped sports, so the error string carries all three
+    names or an operator reads one sport's outage where there were three. The
+    schedule writes that DID work stay counted: a partial outcome is a real one.
+
+    `failover_live_sports_covered` must NOT advance — the sports were served a
+    schedule and nothing else.
+    """
+    import app.tasks.statpal_sync as statpal_sync
+
+    from app.tasks.espn_sync import _act_on_failovers, _decide_failovers
+
+    calls = _three_dark_sports_wiring(monkeypatch)
+
+    async def _boom():
+        calls.append("live")
+        raise RuntimeError("statpal livescores 503")
+
+    monkeypatch.setattr(statpal_sync, "_sync_statpal_livescores", _boom)
+
+    stats = {"errors": []}
+    await _act_on_failovers(await _decide_failovers({}, THREE_DARK, stats), stats)
+
+    assert calls.count("live") == 1, calls
+    assert len(stats["errors"]) == 1, stats["errors"]
+    error = stats["errors"][0]
+    for sport_key in sorted(THREE_DARK):
+        assert sport_key in error, (
+            f"{sport_key} lost live coverage and the error does not name it: "
+            f"{error}"
+        )
+    assert "503" in error
+    assert stats["failover_schedule_writes"] == 3, "the schedule half worked"
+    assert stats.get("failover_live_writes", 0) == 0
+    assert stats.get("failover_live_sports_covered", 0) == 0
+
+
+@pytest.mark.asyncio
+async def test_the_one_sport_case_reports_exactly_what_it_reported_before(
+    monkeypatch, dispatches
+):
+    """Coalescing must be invisible in the only case production can reach today.
+
+    At most one sport can be permitted at a time until a second clears seven
+    days, so the single-sport summary and the single-sport error string are a
+    live contract with anything already reading them. Both are unchanged: one
+    live write, one covered sport, and an error keyed on the bare sport name.
+    """
+    import app.tasks.statpal_sync as statpal_sync
+
+    from app.tasks.espn_sync import _act_on_failovers, _decide_failovers
+
+    calls = _three_dark_sports_wiring(monkeypatch)
+
+    stats = {"errors": []}
+    await _act_on_failovers(
+        await _decide_failovers({}, {"americanfootball_nfl"}, stats), stats
+    )
+    assert calls == ["schedule:americanfootball_nfl", "live"]
+    assert stats["failover_live_writes"] == 1
+    assert stats["failover_live_sports_covered"] == 1
+
+    async def _boom():
+        raise RuntimeError("statpal livescores 503")
+
+    monkeypatch.setattr(statpal_sync, "_sync_statpal_livescores", _boom)
+    stats = {"errors": []}
+    await _act_on_failovers(
+        await _decide_failovers({}, {"americanfootball_nfl"}, stats), stats
+    )
+    assert stats["errors"] == [
+        "failover_live_americanfootball_nfl: statpal livescores 503"
+    ], "the one-sport error string changed shape"
