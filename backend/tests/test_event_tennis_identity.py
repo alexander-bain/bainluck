@@ -724,13 +724,44 @@ class TestMergingNeverSubtractsTheDate:
         (card,) = await self._rail([rich])
         assert card["end_date"] is None and card["status"] == "unknown"
 
-    async def test_the_winners_own_date_wins_when_it_has_one(self):
-        """Identity's row is still preferred; the sibling is a fallback, not an
-        override."""
+    async def test_the_winners_own_date_no_longer_overrides_an_earlier_sibling(self):
+        """REVERSED BY #3673, on measurement. Read this before restoring it.
+
+        This asserted "identity's row is preferred; the sibling is a fallback,
+        not an override" — the conservative default when UX-P182 built the
+        borrow, chosen because nothing yet argued against it. The US Open
+        argued against it. Production, 2026-09-06, mid-tournament:
+
+            kalshi      US Open Men's Singles Winner        2026-09-28 02:00Z
+            polymarket  2026 Men's US Open Winner (Tennis)  2026-09-13 00:00Z
+
+        The final was Sep 13; Kalshi's row is the contract's expiration
+        backstop. Kalshi also has the fullest draw, so it is `winner` — and
+        "the winner's own date wins" is precisely what made the flagship page
+        print "Sep 27" while `/hub/tennis` printed "Ends Sun, Sep 13" for the
+        same tournament in the same session.
+
+        A venue's resolution date diverges from the sport in ONE direction: a
+        contract can stay open long after the trophy is lifted, never the
+        reverse. So the earliest date in the group is the rule, and identity
+        keeps deciding everything it ever decided — name, slug, key, draw — but
+        not this. Preference by row is replaced by preference by direction.
+        """
         rich, dated, ends = self._pair()
         rich.resolution_date = ends + timedelta(days=2)
         (card,) = await self._rail([rich, dated])
-        assert card["end_date"] == (ends + timedelta(days=2)).isoformat()
+        assert card["end_date"] == ends.isoformat()
+        # Identity is untouched by the reversal — still the fullest draw.
+        assert card["name"] == "ATP 1000 Montreal: Winner"
+
+    async def test_the_winners_own_date_is_still_read_when_it_is_the_earliest(self):
+        """The other direction: the winner's row is not DEMOTED, only outvoted
+        when a sibling knows an earlier date. A merge that started ignoring the
+        winner's own date would pass the test above and fail this one."""
+        rich, dated, ends = self._pair()
+        rich.resolution_date = ends - timedelta(days=2)
+        (card,) = await self._rail([rich, dated])
+        assert card["end_date"] == (ends - timedelta(days=2)).isoformat()
 
     async def test_the_earliest_sibling_date_is_the_one_borrowed(self):
         """`min`, not `max`, and the difference is user-visible: a tournament that

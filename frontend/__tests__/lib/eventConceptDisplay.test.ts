@@ -117,11 +117,24 @@ describe("competitorsToOutcomeHistory (L2-71)", () => {
 });
 
 describe("statusLabel", () => {
-  test("maps statuses", () => {
+  test("maps the three real phases", () => {
     expect(statusLabel("live")).toBe("Live");
     expect(statusLabel("settled")).toBe("Settled");
     expect(statusLabel("upcoming")).toBe("Upcoming");
-    expect(statusLabel("")).toBe("Upcoming");
+  });
+
+  // #3673, both directions (gotcha #43). The header announced an in-progress
+  // Grand Slam as UPCOMING because every unrecognised status fell through a
+  // `default:` arm into that word — the same claim CERT-519 blocked on the hub
+  // rail. A state we cannot read must print nothing; a state we CAN read must
+  // still print, or the fix has traded a false claim for a missing one.
+  test("no-evidence states make no phase claim", () => {
+    expect(statusLabel("unknown")).toBeNull();
+    expect(statusLabel("")).toBeNull();
+  });
+
+  test("and a genuinely upcoming event still says so", () => {
+    expect(statusLabel("upcoming")).toBe("Upcoming");
   });
 });
 

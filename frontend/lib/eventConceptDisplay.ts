@@ -11,14 +11,34 @@ import type {
   FuturesOutcomeHistory,
 } from "./types";
 
-export function statusLabel(status: string): string {
+/**
+ * The phase chip's text, or `null` when the payload makes no phase claim.
+ *
+ * #3673 — WHY THERE IS A NULL ARM. This was a three-case switch with a
+ * `default` that answered **Upcoming**, so every value that was not `live` or
+ * `settled` — including the deliberate `unknown` that `tennis_status` emits
+ * when it has no start signal, and including an empty string — printed a
+ * confident claim about a tournament's phase. That is CERT-519's finding, one
+ * level down: the hub rail had already been blocked for rendering a
+ * no-evidence state as UPCOMING, `HubStatusPill` was taught to withhold the
+ * label, and the concept header — the flagship page during a slam — never got
+ * the equivalent.
+ *
+ * Doctrine 1: could-not-check never renders as nothing-to-report. A caller that
+ * gets `null` renders no chip at all, which is the only honest rendering of
+ * "we do not know". The three real phases are unchanged, so a genuinely
+ * upcoming tournament still says Upcoming and a settled one still says Settled.
+ */
+export function statusLabel(status: string): string | null {
   switch (status) {
     case "live":
       return "Live";
     case "settled":
       return "Settled";
-    default:
+    case "upcoming":
       return "Upcoming";
+    default:
+      return null;
   }
 }
 
@@ -719,7 +739,31 @@ export function countdownLabel(
   return `Starts in ${days} day${days === 1 ? "" : "s"}`;
 }
 
-/** A readable event date range (either bound optional). */
+/**
+ * A readable event date range (either bound optional).
+ *
+ * #3673, TWO FIXES, both of them UX-P178's rule arriving on this surface:
+ *
+ * 1. **The zone is pinned to UTC.** These instants are midnight UTC, so
+ *    rendering them in the viewer's zone moves the DAY for everyone west of
+ *    Greenwich: `2026-09-13T00:00:00Z` reads "Sep 12" in Los Angeles and "Sep
+ *    13" in UTC. `/hub/tennis` pins (`HubUpcomingRail.formatDate`, and its
+ *    header says why in full); this header did not, so the two surfaces could
+ *    print different days for one timestamp even once they agreed on which
+ *    timestamp to read. `Intl.DateTimeFormat` rather than
+ *    `toLocaleDateString` for the same reason the rail gives: CI runs `TZ=UTC`,
+ *    where the buggy call and the pinned one produce the same string, so only
+ *    a guard that can substitute a non-UTC ambient default proves the pin bites
+ *    — and `Date.prototype.toLocaleDateString` reaches ICU without passing
+ *    through the JS-visible constructor, so it cannot be intercepted.
+ *
+ * 2. **An end-only date says so.** A bare date on an event header reads as
+ *    "when it starts". Tennis has no tournament start to give — `start_date` is
+ *    `null` by construction there — so its only date is the END, and printing
+ *    it bare told the reader the US Open began the day of its final. The rail
+ *    already labels this exact value "Ends Sun, Sep 13"; the same fact, stated.
+ *    A start, or a real range, still prints bare: those read correctly already.
+ */
 export function eventDateRange(
   start?: string | null,
   end?: string | null,
@@ -728,11 +772,15 @@ export function eventDateRange(
     const dt = new Date(d);
     return Number.isNaN(dt.getTime())
       ? d
-      : dt.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+      : new Intl.DateTimeFormat("en-US", {
+          month: "short",
+          day: "numeric",
+          timeZone: "UTC",
+        }).format(dt);
   };
   if (start && end) return `${fmt(start)} – ${fmt(end)}`;
   if (start) return fmt(start);
-  if (end) return fmt(end);
+  if (end) return `Ends ${fmt(end)}`;
   return null;
 }
 

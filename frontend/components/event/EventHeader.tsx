@@ -30,6 +30,10 @@ export default function EventHeader({
 }: EventHeaderProps) {
   const dateRange = eventDateRange(event.start_date, event.end_date);
   const meta = [dateRange, event.venue, event.location].filter(Boolean).join(" · ");
+  // #3673: null = the payload makes no phase claim, and neither does the chip.
+  // See `statusLabel` — a `default:` arm that answered "Upcoming" is how an
+  // in-progress Grand Slam came to be announced as forthcoming.
+  const phase = statusLabel(event.status);
 
   // L2-78: honest "Starts in N days" countdown for the pre-tournament header
   // (The Open, July 15). Computed after mount so the SSR/CSR clocks can't diverge
@@ -43,17 +47,19 @@ export default function EventHeader({
     <header className="border-b border-surface-border pb-4">
       <div className="flex items-center gap-2 mb-2 text-[11px] uppercase tracking-widest text-text-muted">
         <span>{event.domain}</span>
-        <span
-          className={`px-1.5 py-0.5 rounded font-semibold ${
-            event.status === "live"
-              ? "bg-accent-live/15 text-accent-live"
-              : event.status === "settled"
-                ? "bg-text-muted/15 text-text-secondary"
-                : "bg-accent-brand/10 text-accent-brand"
-          }`}
-        >
-          {statusLabel(event.status)}
-        </span>
+        {phase && (
+          <span
+            className={`px-1.5 py-0.5 rounded font-semibold ${
+              event.status === "live"
+                ? "bg-accent-live/15 text-accent-live"
+                : event.status === "settled"
+                  ? "bg-text-muted/15 text-text-secondary"
+                  : "bg-accent-brand/10 text-accent-brand"
+            }`}
+          >
+            {phase}
+          </span>
+        )}
         {event.is_major && (
           <span className="px-1.5 py-0.5 rounded font-semibold bg-accent-futures/10 text-accent-futures">
             Major
