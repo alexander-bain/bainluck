@@ -31,10 +31,12 @@ final class LaunchRigContractTests: XCTestCase {
     // MARK: - The product default is unchanged
 
     func testAbsentRouteOpensNothing() {
-        // A real launch passes neither key. Both affordances must be inert then,
-        // which is what keeps them test affordances rather than product settings.
+        // A real launch passes none of these keys. Every affordance must be
+        // inert then, which is what keeps them test affordances rather than
+        // product settings.
         XCTAssertNil(LaunchRig.route(defaults: defaults))
         XCTAssertFalse(LaunchRig.showsDebugCounts(defaults: defaults))
+        XCTAssertNil(LaunchRig.scrollOffset(defaults: defaults))
     }
 
     func testEmptyAndWhitespaceRouteOpensNothing() {
@@ -121,11 +123,77 @@ final class LaunchRigContractTests: XCTestCase {
 
     // MARK: - The key names ARE the interface
 
-    /// Rename either of these and every script in `tools/` goes back to
+    /// Rename any of these and every script in `tools/` goes back to
     /// photographing the default tab with no counter and no error.
     func testKeyNamesAreTheOnesTheShootScriptsPass() {
         XCTAssertEqual(LaunchRig.routeKey, "launch_route")
         XCTAssertEqual(LaunchRig.debugCountsKey, "launch_debug_counts")
+        XCTAssertEqual(LaunchRig.scrollKey, "launch_scroll")
+    }
+
+    // MARK: - Photographing below the fold (`--scroll`)
+
+    /// `simctl launch … -launch_scroll 1600` writes a STRING into the argument
+    /// domain, exactly as `-launch_debug_counts YES` does. Reading it with
+    /// `double(forKey:)` would also work today, but reading the string form is
+    /// what makes this a test of the command `tools/native-shoot.sh` runs.
+    func testScrollOffsetReadsTheLaunchArgumentStringForm() {
+        defaults.set("1600", forKey: LaunchRig.scrollKey)
+        XCTAssertEqual(LaunchRig.scrollOffset(defaults: defaults), 1600)
+    }
+
+    /// Nil, not zero. A zero offset produces a PNG identical to an un-scrolled
+    /// shot, so answering "the top" for a malformed request hands back evidence
+    /// that cannot be told apart from success — the rig would quietly stop
+    /// scrolling and every below-the-fold finding after that would be a shot of
+    /// the hero with a scrolled label on it.
+    func testAMalformedOrNonPositiveScrollIsRefusedRatherThanFlattenedToZero() {
+        for bad in ["", "   ", "0", "-100", "some", "1,600", "NaN"] {
+            defaults.set(bad, forKey: LaunchRig.scrollKey)
+            XCTAssertNil(
+                LaunchRig.scrollOffset(defaults: defaults),
+                "\(bad) is not a scroll distance; answering 0 would look like a successful top-of-page shot"
+            )
+        }
+    }
+
+    /// The clamp is the half a photograph cannot check. Scrolling past the end
+    /// of a page shows iOS's empty background, and empty background in a PNG is
+    /// indistinguishable from "the card we were hunting is missing" — the rig
+    /// would manufacture the finding it exists to test for.
+    func testOverAskingLandsOnTheBottomOfThePageNotPastIt() {
+        // A 3,000pt page in an 874pt viewport: the last full screen starts at 2,126.
+        XCTAssertEqual(
+            LaunchRig.clampedScrollOffset(requested: 9_000, contentHeight: 3_000, viewportHeight: 874),
+            2_126
+        )
+    }
+
+    func testAReachableOffsetIsPassedThroughUntouched() {
+        XCTAssertEqual(
+            LaunchRig.clampedScrollOffset(requested: 1_600, contentHeight: 3_000, viewportHeight: 874),
+            1_600
+        )
+    }
+
+    /// A page shorter than the screen has nowhere to go, and must report zero
+    /// rather than a negative offset — `UIScrollView` accepts a negative
+    /// `contentOffset` and rubber-bands, which photographs as a page slid down
+    /// the screen under a band of blank.
+    func testAPageShorterThanTheScreenCannotScrollAtAll() {
+        XCTAssertEqual(
+            LaunchRig.clampedScrollOffset(requested: 1_600, contentHeight: 400, viewportHeight: 874),
+            0
+        )
+    }
+
+    /// The two waits are additive and for different things: `routeDelay` waits
+    /// for the app to mount, `scrollDelay` waits for the routed screen's own
+    /// network loads. Scrolling into a page that is still spinners tall lands
+    /// wherever the real content later pushes that offset to.
+    func testScrollWaitsLongerThanTheRouteDoes() {
+        XCTAssertGreaterThan(LaunchRig.scrollDelay, LaunchRig.routeDelay)
+        XCTAssertLessThanOrEqual(LaunchRig.scrollDelay, 20.0)
     }
 
     /// The route is handed over after a beat, because the first frame is not a
