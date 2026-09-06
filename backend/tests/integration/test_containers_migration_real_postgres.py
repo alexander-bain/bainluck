@@ -457,6 +457,10 @@ def test_two_ids_that_match_across_different_types_are_fine(pg):
 
 
 def test_confidence_outside_zero_to_one_is_refused(pg):
+    # The out-of-range value is BOUND, not interpolated. An f-string here would
+    # be unreadable to `tests/test_pg_gate_seed_completeness.py`'s parser, and a
+    # seed that check cannot read is a seed it is not guarding — which is the
+    # whole reason that file exists.
     with pg.cursor() as cur:
         for bad in ("1.5", "-0.1"):
             pg.rollback()
@@ -465,8 +469,9 @@ def test_confidence_outside_zero_to_one_is_refused(pg):
                     "INSERT INTO event_edges "
                     "(parent_id, parent_type, child_id, child_type, kind, "
                     " class, source, confidence) "
-                    f"VALUES (1, 'container', 2, 'event', 'contains', "
-                    f" 'title', 'human', {bad})"
+                    "VALUES (1, 'container', 2, 'event', 'contains', "
+                    " 'title', 'human', %s)",
+                    (bad,),
                 )
 
 
@@ -672,8 +677,16 @@ def test_downgrade_restores_the_exact_prior_schema(round_trip):
         f"{sorted(set(after['constraints']) - set(before['constraints']))}"
     )
 
+    # LEADING NEWLINE, and it is load-bearing rather than cosmetic. Under
+    # `-v -s` pytest writes the test id and the captured output on the SAME
+    # line, so a summary printed without it lands mid-line as
+    # `test_downgrade_… CONTAINERS MIGRATION ROUND TRIP: …` — and the CI step's
+    # `grep -E "^CONTAINERS MIGRATION ROUND TRIP"` then fails on a run where all
+    # 18 tests passed. That happened: 18 passed, step red, "the undo line is
+    # unproved". A gate that goes red on success is worse than no gate, because
+    # the next person's fix is to delete the check.
     print(
-        f"CONTAINERS MIGRATION ROUND TRIP: {THIS_REVISION} up and back to "
+        f"\nCONTAINERS MIGRATION ROUND TRIP: {THIS_REVISION} up and back to "
         f"{PARENT_REVISION}; {len(before['tables'])} tables, "
         f"{len(before['columns'])} columns, {len(before['indexes'])} indexes, "
         f"{len(before['constraints'])} constraints identical before and after"

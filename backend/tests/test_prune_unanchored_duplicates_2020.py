@@ -639,13 +639,22 @@ class TestTheHostileSpecimens:
         # pin moved because the schema did, which is the case this test is for —
         # it turned CI red on the new model exactly as designed, and the number is
         # updated here together with the disposition rather than instead of it.
+        #
+        # UPDATED 2026-09-05 (#2927, container graph Phase 1): 11 -> 12.
+        # `event_participants` is the doubles table — a side that can hold two
+        # people, which `events`' two name columns cannot express. Same story as
+        # the 08-26 entry and the same proof that this test is pulling its
+        # weight: the rail refused to run and 37 tests went red on the new model
+        # before a line of it could ship unclassified. Classified SUBSTANCE with
+        # the argument written at its entry in `EVENT_CHILD_DISPOSITIONS`; the
+        # number moved here together with that disposition, never instead of it.
         assert set(derived) == {
-            "espn_snapshots", "event_provider_anchors", "futures_markets",
-            "game_moments", "line_movement_analyses", "odds_aggregated",
-            "odds_snapshots", "ranking_judgments", "score_snapshots",
-            "scoring_plays", "win_prob_snapshots",
+            "espn_snapshots", "event_participants", "event_provider_anchors",
+            "futures_markets", "game_moments", "line_movement_analyses",
+            "odds_aggregated", "odds_snapshots", "ranking_judgments",
+            "score_snapshots", "scoring_plays", "win_prob_snapshots",
         }
-        assert len(derived) == 11
+        assert len(derived) == 12
         assert unclassified_event_children() == ()
         assert set(EVENT_CHILD_DISPOSITIONS) == set(derived)
 
@@ -710,7 +719,12 @@ class TestTheHostileSpecimens:
         # removal would also remove the proof that the deletion was correct — so
         # it must appear by name, not merely be counted (#2213).
         assert "event_provider_anchors" in out["cascading_tables"]
-        assert len(out["substance_tables"]) == 11
+        # #2927: `event_participants` CASCADEs too, and for the same reason it
+        # must be NAMED rather than counted — a doubles side's second player
+        # exists in that table and nowhere else, so a deletion that removed it
+        # silently is exactly the unreviewed effect this assertion is for.
+        assert "event_participants" in out["cascading_tables"]
+        assert len(out["substance_tables"]) == 12
 
     # ── R5: the never-absorbs guard, read semantically ─────────────────────
 

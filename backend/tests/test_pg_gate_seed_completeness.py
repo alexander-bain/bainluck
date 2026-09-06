@@ -52,6 +52,13 @@ COVERED = (
     "test_calibration_mode_price_source_scope_pg.py",
     "test_calibration_mode_price_source_scope_peers_pg.py",
     "test_calibration_vm_variant_join_pg.py",
+    # #2927. Added the same night this check would have saved the trip: the
+    # containers gate seeded `INSERT INTO sports (key, name)` and died on
+    # `NotNullViolation: null value in column "active"` in CI, because
+    # `Sport.active` carries a CLIENT-SIDE ORM default and no server default —
+    # the exact class this file is named after. It is in COVERED so the next
+    # raw INSERT added to it is checked before a runner finds out.
+    "test_containers_migration_real_postgres.py",
     "test_create_wave_insert_bind_contract.py",
     "test_feed_static_tag_filter_pg.py",
     "test_futures_outcome_grade_schema_parity_pg.py",
