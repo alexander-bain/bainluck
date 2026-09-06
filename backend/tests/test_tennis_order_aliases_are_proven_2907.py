@@ -10,9 +10,11 @@ WHAT THESE TESTS ARE FOR. Before this change `Juncheng Shang` and `Qinwen Zheng`
 folded because a `ReviewedAlias` record said an agent had read them and believed
 it — two entries carrying `ratified_by_alex: false`. After it they fold because
 StatPal, in slots with dates and opponents, named the surname; the reviewed
-records are still in the file and are now *redundant*, which is what
-:meth:`TestTheHumanIsRetired.test_every_reviewed_class_is_now_proven_without_it`
-exists to pin. Deleting them is the follow-up, and it is purely subtractive.
+records are still in the file. CERT-2017 is why the claim is split rather than
+sweeping: `Qinwen Zheng` IS proven by the record and his human entry is now
+redundant; `Juncheng Shang` is NOT — StatPal served him only in doubles, and a
+team's surname proves a word, not a person — so his entry is still the only
+thing folding that class, and `TestTheHumanIsRetired` says so out loud.
 
 THE COUNTER-CASE IS THE POINT. A rule that folds every re-ordering it can reach
 is not a rule, it is a sort — and it fuses `Garcia Perez` with `Perez-Garcia`,
@@ -29,10 +31,8 @@ from app.utils.authority_tennis_names import (
     CAPTURED_SLOTS,
     ORDER_ALIASES,
     PROOF_SLOT,
-    PROOF_SURNAME_TOKEN,
     REVIEWED_ALIASES,
     SLOT_PROVEN_ALIASES,
-    SURNAME_TOKEN_CONFIDENCE,
     ProvenSlot,
     _ORDER_ALIASES_MEASURED,
     _ORDER_ALIASES_REVIEWED,
@@ -133,15 +133,23 @@ class TestTheTwoNamesAlexWasAskedAbout:
         assert michael, "the capture lost the second Zheng"
         assert all(fold_tennis_name(s.our_name) != "qinwen zheng" for s in michael)
 
-    def test_shang_folds_on_the_weaker_proof_and_says_so(self):
-        """StatPal served Shang only as `Bublik/ Shang` in the window — a doubles
-        pair, which names the surname without an initial. That is a real proof
-        and a weaker one, and the receipt has to disclose which it is."""
-        alias = _alias(SHANG)
-        assert alias is not None
-        assert alias.kind == PROOF_SURNAME_TOKEN
-        assert alias.confidence == SURNAME_TOKEN_CONFIDENCE == 0.9
-        assert alias.surname == "shang"
+    def test_shang_is_not_proven_and_the_module_declines_to_pretend(self):
+        """CERT-2017, and it was right.
+
+        The first cut folded Shang because a doubles TEAM elsewhere carried the
+        surname — no slot, no player id, and the same path independently
+        authorised `Alice Shang`, a different human. StatPal served Shang only
+        in doubles in the captured window, so the honest answer is that his
+        re-ordering is NOT proven, and D69's own words are "proves it that way,
+        or does not alias".
+
+        He still folds, on the unratified `ReviewedAlias` record alone — which is
+        exactly what `TestTheHumanIsRetired` now has to disclose rather than
+        claim away.
+        """
+        assert _alias(SHANG) is None, "a doubles surname is not a proof of a person"
+        assert SHANG not in _ORDER_ALIASES_SLOT_PROVEN
+        assert SHANG in _ORDER_ALIASES_REVIEWED
 
     def test_a_receipt_names_evidence_and_never_a_reviewer(self):
         receipt = _alias(ZHENG).receipt()
@@ -152,12 +160,62 @@ class TestTheTwoNamesAlexWasAskedAbout:
 
 class TestTheHumanIsRetired:
 
-    def test_every_reviewed_class_is_now_proven_without_it(self):
-        """The statement that discharges D69: nothing folds any more BECAUSE an
-        agent said so. Delete `REVIEWED_ALIASES` and the set is unchanged."""
-        assert _ORDER_ALIASES_REVIEWED <= _ORDER_ALIASES_SLOT_PROVEN
+    def test_exactly_one_reviewed_class_is_now_proven_and_the_other_is_not(self):
+        """What D69 actually bought, stated without rounding up.
+
+        `Qinwen Zheng` no longer rests on an agent's reading — the authority
+        record proves it, so the human record under it is redundant. `Juncheng
+        Shang` is NOT proven and still rests on that reading alone. Claiming the
+        containment for both is what CERT-2017 blocked, so this test asserts the
+        split and will start failing the day StatPal serves Shang in singles —
+        which is the moment to delete his record too.
+        """
+        assert ZHENG in _ORDER_ALIASES_SLOT_PROVEN
+        assert SHANG not in _ORDER_ALIASES_SLOT_PROVEN
+        assert not _ORDER_ALIASES_REVIEWED <= _ORDER_ALIASES_SLOT_PROVEN
+
+        # Dropping the reviewed source today would drop Shang with it. That is a
+        # real consequence and the reason his record stays for now.
         without_the_humans = _ORDER_ALIASES_MEASURED | _ORDER_ALIASES_SLOT_PROVEN
-        assert without_the_humans == ORDER_ALIASES
+        assert ORDER_ALIASES - without_the_humans == {SHANG}
+
+    def test_every_proven_alias_has_an_id_backed_slot(self):
+        """CERT-2017's first named test. Nothing in the proven set may rest on a
+        surname that appeared somewhere; every class carries at least one slot,
+        and every slot carries a stable authority player id."""
+        assert SLOT_PROVEN_ALIASES, "an empty set would pass this vacuously"
+        for alias in SLOT_PROVEN_ALIASES:
+            assert alias.kind == PROOF_SLOT, alias.tokens
+            assert alias.confidence == 1.0, alias.tokens
+            assert alias.slots, f"{alias.tokens} folds on no slot at all"
+            assert alias.authority_ids, f"{alias.tokens} folds with no authority id"
+            assert all(s.authority_id.strip() for s in alias.slots), alias.tokens
+            # One class, one person: the id is the identity, not the spelling.
+            assert len(set(alias.authority_ids)) == 1, alias.tokens
+
+    def test_a_doubles_team_surname_cannot_authorize_an_unrelated_singles_identity(self):
+        """CERT-2017's second named test, driven on the exact shape it found.
+
+        `Bublik/ Shang` is a doubles TEAM. Its surnames must not authorise ANY
+        singles re-ordering — not Shang's own, and least of all a different
+        human who merely shares the surname.
+        """
+        doubles = ProvenSlot(
+            authority="statpal", authority_id="352267",
+            authority_name="Bublik/ Shang", our_name="Bublik / Shang",
+            slot_date="2026-09-05", tour="tennis_atp",
+            authority_opponent="Baez/ Marozsan", our_opponent="Baez / Marozsan",
+            doubles=True,
+        )
+        spellings = {"juncheng shang", "alice shang", "bublik shang"}
+        produced = slot_proven_order_aliases([doubles], {"shang", "bublik"}, spellings)
+        assert produced == (), "a team surname authorised a person"
+
+        # And the capture agrees: neither singles class is in the shipped set,
+        # though the doubles slot that tempted the first cut really is captured.
+        assert ("juncheng", "shang") not in _ORDER_ALIASES_SLOT_PROVEN
+        assert ("alice", "shang") not in _ORDER_ALIASES_SLOT_PROVEN
+        assert any(s.doubles and "shang" in s.proven_surnames for s in CAPTURED_SLOTS)
 
     def test_the_reviewed_records_are_still_unratified_and_no_longer_load_bearing(self):
         """They are left in place for one change only — removing them is purely
@@ -218,32 +276,6 @@ class TestTheClassThatMustNotFold:
         )
         assert [a.tokens for a in aliases] == [GARCIA_PEREZ]
 
-    def test_the_weak_path_reads_the_whole_vocabulary_not_just_its_own_slots(self):
-        """The surname-token path fires on classes NO slot ever joined, so the
-        only surnames it would otherwise see are the ones its handful of slots
-        happened to prove. That is a sample, and guard 2 is a question about the
-        vocabulary: `garcia` being a family name in a match this capture never
-        touched still makes `Garcia Perez` a re-ordering we may not fold.
-
-        Driven with a slot for a DIFFERENT player, so the class under test has no
-        slot of its own and cannot be refused by the strong path instead.
-        """
-        elsewhere = ProvenSlot(
-            authority="statpal", authority_id="77777", authority_name="J. Perez",
-            our_name="Juan Perez", slot_date="2026-07-13", tour="tennis_atp",
-            authority_opponent="A. Nobody", our_opponent="Anna Nobody",
-        )
-        spellings = {"juan perez", "garcia perez"}
-        # `garcia` is a surname in the vocabulary but not in THIS slot's proof.
-        refused = slot_proven_order_aliases(
-            [elsewhere], {"perez", "garcia", "juan"}, spellings
-        )
-        assert GARCIA_PEREZ not in {a.tokens for a in refused}
-        # Control: drop `garcia` from the vocabulary and the same call folds it,
-        # so the refusal above is guard 2 and not the class being unreachable.
-        allowed = slot_proven_order_aliases([elsewhere], {"perez"}, spellings)
-        assert GARCIA_PEREZ in {a.tokens for a in allowed}
-
     def test_two_ids_under_one_spelling_are_two_people(self):
         """The id clause, driven directly: same tokens, two authority ids."""
         one = self._garcia_slot()
@@ -298,7 +330,7 @@ class TestWhatMakesItASlot:
 # =============================================================================
 
 class TestTheWideningChangesNothingToday:
-    """332 proven classes is a large tolerance next to nine reviewed ones, and
+    """156 proven classes is a large tolerance next to nine reviewed ones, and
     the honest question is what it fuses. Answer, over a year of the real field:
     nothing. Guard 3 makes every proven class one our register spells exactly one
     way, so the fold cannot change an identity — it can only pre-authorise the

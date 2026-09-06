@@ -102,25 +102,34 @@ class TestTheSetIsDerivedFromTheRecords:
     def test_the_union_and_the_disjointness_still_hold(self):
         """D69 = A added a third source — classes the AUTHORITY RECORD proves
         (`test_tennis_order_aliases_are_proven_2907.py`). The union is now over
-        three sets, and the reviewed one is a SUBSET of the proven one, which is
-        the statement that retires it."""
+        three sets, and the reviewed pair is PARTLY absorbed by the proven one:
+        Zheng yes, Shang not yet. CERT-2017 blocked the sweeping version of this
+        claim, so the count below is exact rather than a containment."""
         assert ORDER_ALIASES == (
             _ORDER_ALIASES_MEASURED | _ORDER_ALIASES_REVIEWED | _ORDER_ALIASES_SLOT_PROVEN
         )
         assert not (_ORDER_ALIASES_MEASURED & _ORDER_ALIASES_REVIEWED)
-        assert _ORDER_ALIASES_REVIEWED <= _ORDER_ALIASES_SLOT_PROVEN
+        # ONE of the two reviewed classes is now independently proven (Zheng);
+        # the other (Shang) is not, because StatPal served him only in doubles
+        # and a team's surname proves a word rather than a person (CERT-2017).
+        assert len(_ORDER_ALIASES_REVIEWED & _ORDER_ALIASES_SLOT_PROVEN) == 1
 
     def test_the_reviewed_records_still_number_two_and_carry_nothing_alone(self):
-        """7 measured / 2 reviewed was the whole set before D69; the reviewed
-        pair is still exactly two records, and now contributes exactly nothing
-        the authority record does not already prove. A refactor that quietly
-        added or dropped a REVIEWED class still shows here — the proven set is
-        pinned by its own suite, not by this count."""
+        """7 measured / 2 reviewed was the whole set before D69, and it still is
+        the whole REVIEW layer. What changed is how much of it is load-bearing:
+        one class of the two. A refactor that quietly added or dropped a REVIEWED
+        class still shows here — the proven set is pinned by its own suite, not
+        by this count."""
         assert (len(_ORDER_ALIASES_MEASURED), len(_ORDER_ALIASES_REVIEWED)) == (7, 2)
         assert len(_ORDER_ALIASES_MEASURED | _ORDER_ALIASES_REVIEWED) == 9
-        # Drop the reviewed SOURCE — not its classes, which the authority record
-        # also proves — and the set the matcher obeys does not move.
-        assert _ORDER_ALIASES_MEASURED | _ORDER_ALIASES_SLOT_PROVEN == ORDER_ALIASES
+        # Drop the reviewed SOURCE and exactly one class goes with it — the one
+        # the authority record does not yet prove. That single-element gap is
+        # the honest measure of what still rests on an agent's reading, and it
+        # closes itself the day the venue serves Shang in singles.
+        assert (
+            ORDER_ALIASES - (_ORDER_ALIASES_MEASURED | _ORDER_ALIASES_SLOT_PROVEN)
+            == {("juncheng", "shang")}
+        )
 
     def test_tokens_are_derived_from_the_orderings_not_declared_beside_them(self):
         """So a record cannot name one permutation class and admit another."""

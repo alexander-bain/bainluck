@@ -678,11 +678,11 @@ def resolve_tennis_name(
 # with `Perez-Garcia`, which in Spanish are two families and, in our register, two
 # people (both spellings in the field on 2026-07-13). So a class folds only when:
 #
-# 1. **The authority proved it.** Either a slot joined one of our spellings in the
-#    class to an authority id (`PROOF_SLOT`), or a slot proved the surname TOKEN
-#    without an initial, as doubles pairs do (`PROOF_SURNAME_TOKEN`, weaker, and
-#    carried at a lower confidence for that reason). No proof, no fold — this is
-#    the clause that makes `Garcia Perez` a non-candidate outright today.
+# 1. **A slot joined one of our spellings in the class to an authority id.** Not
+#    "the surname appears somewhere" — a slot, with a date, an opponent and a
+#    stable player id. No slot, no fold; this is the clause that makes
+#    `Garcia Perez` a non-candidate outright today, and the one CERT-2017 found
+#    a second tier quietly evading.
 # 2. **The class's OTHER tokens are not surnames.** `zheng` is in the authority's
 #    surname vocabulary and `qinwen` is not; `shang` is and `juncheng` is not.
 #    Where both tokens are surnames the re-ordering may well be two families, and
@@ -704,15 +704,9 @@ def resolve_tennis_name(
 #: we also recognised. The strong kind.
 PROOF_SLOT = "slot"
 
-#: A surname token proved by a slot that carried no initial — a doubles pair,
-#: which StatPal spells as surnames only (``Bublik/ Shang``). Weaker: it fixes
-#: which token is the family name without fixing whose family name it is.
-PROOF_SURNAME_TOKEN = "surname-token"
-
-#: What a `PROOF_SURNAME_TOKEN` alias is published at. Not a knob — it is the
-#: number Alex named for exactly this case, and it travels on the receipt so an
-#: operator can sort the weak proofs from the strong ones.
-SURNAME_TOKEN_CONFIDENCE = 0.9
+#: There is deliberately no second, weaker kind — see the end of
+#: :func:`slot_proven_order_aliases` for the one that was removed and what it
+#: authorised. Every alias here is `PROOF_SLOT` or does not exist.
 
 
 @dataclass(frozen=True)
@@ -851,21 +845,8 @@ def slot_proven_order_aliases(
             continue
         by_class.setdefault(slot.tokens, []).append(slot)
 
-    # Every surname the authority proved anywhere in the capture, including from
-    # doubles pairs — that is how `shang` becomes provable without Shang ever
-    # appearing in a singles slot.
-    proved_surnames: set[str] = set()
-    for slot in slots:
-        proved_surnames |= slot.proven_surnames
-
     aliases: list[SlotProvenAlias] = []
-    #: Classes the STRONG path looked at and declined. They are not then eligible
-    #: for the weak one: evidence that fails its own test does not pass a lesser
-    #: one, and without this a class refused for carrying two authority ids came
-    #: straight back through the surname-token door with no ids at all.
-    refused: set[tuple[str, ...]] = set()
     for tokens, class_slots in sorted(by_class.items()):
-        refused.add(tokens)
         keys = {s.proven_key for s in class_slots if s.proven_key}
         ids = {s.authority_id for s in class_slots}
         if len(keys) != 1 or len(ids) != 1:
@@ -881,38 +862,31 @@ def slot_proven_order_aliases(
         written = fold_tennis_name(class_slots[0].our_name)
         if _reversed_orders_in_field(tokens, written, spellings):
             continue  # guard 3: both orders are in the field — a review question
-        refused.discard(tokens)
         aliases.append(SlotProvenAlias(
             tokens=tokens, kind=PROOF_SLOT, confidence=1.0, surname=surname,
             authority_ids=tuple(sorted(ids)), slots=tuple(class_slots),
         ))
 
-    # The weak kind: a surname the authority proved (often from a doubles pair)
-    # attached to one of OUR spellings that no slot ever joined. `Juncheng Shang`
-    # is the case — StatPal served him only as `Bublik/ Shang` in the window.
-    folded_written = {a.tokens for a in aliases}
-    for spelling in sorted(spellings):
-        tokens = tuple(sorted(spelling.split()))
-        if len(tokens) != 2 or tokens in folded_written or tokens in refused:
-            continue
-        hits = [t for t in tokens if t in proved_surnames]
-        if len(hits) != 1:
-            continue  # zero: unproven. two: both are family names somewhere.
-        if len([t for t in tokens if t in surnames]) != 1:
-            # Guard 2 again, against the FULL captured vocabulary rather than
-            # only the surnames these slots happened to prove. The slots are a
-            # sample of the vocabulary, and a token that is a family name
-            # anywhere in it is one here.
-            continue
-        if _reversed_orders_in_field(tokens, spelling, spellings):
-            continue
-        aliases.append(SlotProvenAlias(
-            tokens=tokens, kind=PROOF_SURNAME_TOKEN,
-            confidence=SURNAME_TOKEN_CONFIDENCE, surname=hits[0],
-            authority_ids=(), slots=(),
-        ))
-        folded_written.add(tokens)
-
+    # THERE IS NO WEAKER PATH, and CERT-2017 is why. The first cut also emitted a
+    # class when a surname TOKEN had been proved somewhere — typically by a
+    # doubles pair, which StatPal spells as surnames only — even though no slot
+    # had ever joined that spelling and no player id stood behind it. It read as
+    # a reasonable second tier. It was not:
+    #
+    #   * `Bublik/ Shang` is a doubles TEAM (id 352267). A team id is not a
+    #     person, so the class it authorised was tied to nobody.
+    #   * The same path independently authorised `Alice Shang` — a different
+    #     human who merely shares the surname — which is the substitution this
+    #     whole module is biased against.
+    #   * 175 of 331 classes came out of it, so the majority of the tolerance
+    #     rested on evidence that named no person at all.
+    #
+    # D69's clause is "identity is the id… the lane proves it that way, or does
+    # not alias", and a surname token proves a WORD, never a PERSON. So a class
+    # folds only with a slot behind it and an authority id inside that slot.
+    # `Juncheng Shang` consequently does NOT fold: StatPal served him only in
+    # doubles in the captured window, and declining is the correct answer until
+    # it serves him in singles.
     return tuple(aliases)
 
 

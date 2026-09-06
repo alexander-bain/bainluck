@@ -28,7 +28,11 @@ date behind it. That is the evidence D69 asks for, and it is why the answer does
 not depend on anybody's knowledge of how Chinese names are written.
 
 Doubles are surnames only — `Bublik/ Shang` — so a doubles slot proves a surname
-TOKEN without an initial. Weaker, and carried as a weaker proof kind.
+TOKEN and no person. **It therefore authorises nothing**: CERT-2017 found the
+first cut folding `Juncheng Shang` on exactly that, and independently folding an
+unrelated `Alice Shang` beside him. Doubles slots are still captured, because
+their surnames belong in the contradiction vocabulary, but only an id-backed
+singles slot can fold a class.
 
 USAGE
 
@@ -87,9 +91,20 @@ def sweep_venue() -> list[dict]:
     for path in TENNIS_PATHS:
         try:
             body = _venue(path)
-        except Exception as exc:  # a dead day is not a dead sweep
-            print(f"# WARN {path}: {exc}", file=sys.stderr)
-            continue
+        except Exception as exc:
+            # FAIL CLOSED. This used to warn and carry on, and that is a
+            # fail-open in the one direction that fuses two people: the surname
+            # VOCABULARY is the contradiction guard's evidence, a short sweep
+            # makes it smaller, and a token missing from a smaller vocabulary
+            # reads as "not a family name anywhere" — which is precisely the
+            # licence to fold. A capture is only as safe as it is complete, so a
+            # path that does not answer ends the run instead of quietly
+            # shrinking what the guard can see.
+            raise SystemExit(
+                f"# {path} did not answer ({exc}); refusing to write a PARTIAL "
+                "capture — a short surname vocabulary silently WIDENS the alias "
+                "rule. Re-run when the venue is healthy."
+            ) from exc
         section = body.get("scores") or body.get("livescores") or {}
         tournaments = section.get("tournament") or []
         if isinstance(tournaments, dict):
@@ -296,6 +311,14 @@ def main() -> int:
     if not days:
         print("# the venue served no tennis fixtures — refusing to write an empty capture",
               file=sys.stderr)
+        return 1
+    #: A floor, not a target. The 2026-09-06 sweep saw 372 fixtures and 424
+    #: surnames mid-US-Open; a quiet week is smaller, but an order of magnitude
+    #: smaller is a broken sweep wearing a valid response, and it would ship a
+    #: vocabulary too thin for the contradiction guard to refuse anything with.
+    if len(fixtures) < 100:
+        print(f"# only {len(fixtures)} fixtures came back — too thin to base an "
+              "alias rule on; refusing to write", file=sys.stderr)
         return 1
     rows = our_register(days[0], days[-1])
     slots = pair_slots(fixtures, rows)
