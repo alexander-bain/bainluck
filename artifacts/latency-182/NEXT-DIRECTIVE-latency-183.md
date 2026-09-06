@@ -4,8 +4,14 @@ Written by latency/182 at 2026-09-06 ~01:30 PT (08:30Z — PT = local `date` min
 notice 24, verified with `TZ=America/Los_Angeles date`). Staged, not consumed.
 
 **PILLAR: DISCOVER.** **SHIP: typing a short prefix into the search box stops costing
-seven seconds on every keystroke.** Named, user-visible, and — unusually for this program
-— already **measured with a control** before the queue was written. See §1.
+seven seconds on every keystroke.** Named, user-visible, and already measured with a
+control. See §1.
+
+⚠️ **§1 is a REPRODUCTION of 180's baseline, not a new finding, and must not be presented
+as one.** 180 banked `sta` 8.35/6.95s, `red` 6.36/8.03/7.02s and `stanley cup`
+2.81 → 0.17 → 0.15s at `9dc0fd0e`. What 182 adds is that the same numbers still hold five
+hours later with the fix still unmerged, and that the warmer's own `no_writes` field names
+the two terms. The value is the *staleness*, not the discovery.
 
 ## Read first
 
@@ -91,14 +97,28 @@ model.
 `Query(...)` marker objects, **truthy outside FastAPI**. Pass every flag explicitly or you
 assert against the uncached path and prove nothing.
 
-**Before writing the guard, settle one thing §1 does not answer:** is `sta` failing to
-cache because the shed path skips the write, or because the *futures stage* times out and
-the whole answer is discarded? Those are different repairs and §1's data cannot separate
-them — `stanley cup` and `red sox` both complete and both cache, so the discriminator has
-to come from inside. `/api/admin/typeahead-warmer/last`'s `records[].terminal` reads
-`partial` on essentially every pass with `completed: 38, total: 40`, which says **two of
-the forty head terms never complete** — find out whether `sta` and `red` are those two
-before you decide which contract to pin.
+**The question §1 raises is already answered — by 180, and by the warmer's own instrument.
+Do not re-derive it.** `2b6e82ac`'s message states the cause: `typeahead_search` had ONE
+`_ta_degraded` flag set from two places that lose very different things — the bonus
+outcome-NAME arm shedding (the dropdown still answers) and the futures query timing out
+(the whole stage gone) — and `if not _ta_degraded` gated the cache write, so the first case
+made an entry permanently uncacheable. Confirmed still live at 08:40Z from
+`/api/admin/task-metrics?task=warm_typeahead` → `last_result_summary`:
+
+```
+terminal   partial        completed 38   total 40   rebuilt 38   seconds_max 8.022
+timeouts   []
+errors     []
+no_writes  ['sta', 'red']      <- the route ran and Redis still holds nothing
+```
+
+`no_write` is the warmer's own **defect** category, and it names the two terms exactly.
+`terminal: partial` on every single pass is these two and nothing else. So the repair is
+`2b6e82ac`'s, the failing state is the shed arm and not a futures timeout, and **the guard
+in this item pins the narrowed contract**: a SHED answer writes and the next request hits;
+a `futures_query_TIMED_OUT` still writes nothing and must keep writing nothing (that branch
+loses the whole futures stage and is the sticky-wrong-answer case LAT-P007 describes).
+`no_writes` is the field to assert against on the production side.
 
 ## 4. ITEM 2 — the second half of #3364, now that the coincidence is gone
 

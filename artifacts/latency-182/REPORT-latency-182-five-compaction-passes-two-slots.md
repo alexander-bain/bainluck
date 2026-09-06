@@ -208,6 +208,33 @@ That is a paired comparison about an hour apart on the same day, which is a bett
 than a day-over-day read. **Read the file before presenting this ship.** If it deploys
 after 13:40Z, the next clean AFTER is 15:30Z (`turbo-collapse-odds` alone), then 19:40Z.
 
+## 6b. A live reproduction of 180's baseline, taken as this ship's control
+
+Not a finding — 180 banked these numbers at `9dc0fd0e` and `2b6e82ac`'s message already
+names the mechanism. Recorded here because it is the **control** that keeps this ship's
+claim honest, and because it was still true five hours later.
+
+Production, 08:24Z, one second between calls, `time_connect` < 1ms on every line:
+
+```
+/api/health                          #1 0.135s   #2 0.369s    <- network is fine
+/api/events/typeahead?q=stanley cup  #1 2.027s   #2 0.152s    <- caching WORKS
+/api/events/typeahead?q=red sox      #1 4.320s   #2 0.146s    <- caching WORKS
+/api/events/typeahead?q=sta          #1 7.424s   #2 8.081s    <- never caches
+/api/events/typeahead?q=red          #1 7.868s   #2 6.690s    <- never caches
+```
+
+`/api/admin/task-metrics?task=warm_typeahead` at 08:40Z names the same two terms from the
+inside: `terminal: partial`, `completed: 38 / total: 40`, `timeouts: []`, `errors: []`,
+**`no_writes: ['sta', 'red']`** — the warmer's own DEFECT category, on every single pass.
+
+**Why this matters to #3480 specifically: it is the thing this ship does NOT fix, and a
+grader who checks `sta` will correctly find nothing changed.** Short prefixes are cold
+because the route never writes them (#3399, CERT-2037, GREEN with exact-sha CI since
+07:51Z, still unmerged at 08:40Z). #3480 is about the *warmer* being able to reach a worker
+slot at all. Two different halves of one symptom, on two different shas, and conflating
+them would let either one take credit for the other's evidence.
+
 ## 7. Carried over, not done
 
 - **#3399 / CERT-2037 has still not landed.** `9dc0fd0e63de5665235287206fc52297646c2396`,
