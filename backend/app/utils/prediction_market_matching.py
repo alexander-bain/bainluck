@@ -1629,6 +1629,11 @@ def _resolve_team_abbrev(abbrev: str, sport_suffix: str) -> Optional[str]:
     ("PHI Eagles vs TEN Titans"), whereas a wrong team silently searches for a
     game that does not exist and lands as ``name_mismatch``.
     """
+    if sport_suffix == _ABBREV_NAMESPACE_UNKNOWN:
+        # #3672. We hold no abbreviation vocabulary for this sport, so every
+        # answer this function could give would come from another sport's. See
+        # `_ABBREV_NAMESPACE_UNKNOWN`.
+        return None
     if sport_suffix:
         scoped = _KALSHI_TEAM_ABBREVS.get(abbrev + sport_suffix)
         if scoped:
@@ -1639,10 +1644,40 @@ def _resolve_team_abbrev(abbrev: str, sport_suffix: str) -> Optional[str]:
     return _KALSHI_TEAM_ABBREVS.get(abbrev)
 
 
-# Sport-specific abbreviation subsets (no suffix needed for primary sport)
-# The abbreviation lookup tries exact first, then sport-specific suffixed keys.
-# Derived from KALSHI_TICKER_TO_SPORT_KEY to cover ALL game/prop ticker prefixes.
+#: The namespace of a sport this module knows no abbreviations for — #3672.
+#:
+#: 🔴 IT IS NOT THE EMPTY STRING, AND THAT IS THE WHOLE BUG. The empty suffix
+#: means "the bare namespace", which `_BARE_ABBREV_OWNER` records as belonging
+#: to the NBA. `_SPORT_ABBREV_SUFFIX` was derived with `.get(sport_key, "")`, so
+#: every ticker prefix whose sport key was not spelled out below — 143 of them,
+#: measured, against ~30 that are actually NBA — asked the NBA's vocabulary what
+#: its two- and three-letter codes meant. Kalshi's WTA Challenger ticker
+#: `KXWTACHALLENGERMATCH-26SEP06DENLAC` ("Dencheva vs Lachinova") therefore
+#: minted an event called **Nuggets vs Clippers**, and it rendered on
+#: `/sport/tennis/wta` (live/080, #2878). 200 rows since 2026-06-01 carry NBA
+#: nicknames on a non-basketball sport: 89 on `baseball_other` (`76ers vs
+#: Celtics`), 39 on `americanfootball_other`, 17 across ATP and WTA, 8 on
+#: esports, and one World Cup fixture called `Avalanche vs Trail Blazers`.
+#:
+#: The default had to flip rather than the list grow: a missing entry then reads
+#: as "we do not know", which is true and harmless, instead of "ask the NBA",
+#: which is false and mints a card. `_resolve_team_abbrev`'s own docstring
+#: already says a miss is the better answer — "a miss falls through to the
+#: market-title parse", and for exactly these markets the title carries the
+#: right names ("Dencheva vs Lachinova") — so refusing costs nothing that the
+#: wrong team was not already costing more of.
+_ABBREV_NAMESPACE_UNKNOWN = "_unknown"
+
+# Sport-specific abbreviation subsets. The abbreviation lookup tries the
+# sport-scoped key first, then the bare one when no other sport owns it.
+# Derived from KALSHI_TICKER_TO_SPORT_KEY to cover ALL game/prop ticker prefixes;
+# anything not named here resolves nothing (`_ABBREV_NAMESPACE_UNKNOWN`).
 _SPORT_KEY_TO_ABBREV_SUFFIX: dict[str, str] = {
+    # The NBA owns the BARE namespace, and now says so out loud. It was relying
+    # on the old `""` default, which is exactly what made the default unsafe to
+    # change — and exactly why a namespace nobody claims in writing ends up
+    # answering for 143 ticker prefixes (#3672).
+    "basketball_nba": "",
     "americanfootball_nfl": "_nfl",
     # College football gets its OWN (empty) namespace rather than sharing the
     # NFL's. Sharing was harmless only while `_nfl` was empty; now that it holds
@@ -1669,7 +1704,7 @@ _SPORT_KEY_TO_ABBREV_SUFFIX: dict[str, str] = {
     "basketball_wncaab": "_wnba",
 }
 _SPORT_ABBREV_SUFFIX: dict[str, str] = {
-    prefix: _SPORT_KEY_TO_ABBREV_SUFFIX.get(sport_key, "")
+    prefix: _SPORT_KEY_TO_ABBREV_SUFFIX.get(sport_key, _ABBREV_NAMESPACE_UNKNOWN)
     for prefix, sport_key in _TICKER_TO_SPORT_PREFIX.items()
 }
 
