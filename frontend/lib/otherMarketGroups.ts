@@ -212,17 +212,52 @@ export function categorizeMarketName(name: string): { category: string; subtitle
   return { category: "Other Markets", subtitle: "additional markets" };
 }
 
+/** `Set 1 Winner: Swiatek vs Zheng` → scope `Set 1`, sides `Swiatek` / `Zheng`. */
+const SCOPED_WINNER_MARKET = /^(.+?)\s+winner\s*:\s*(.+?)\s+vs\.?\s+(.+?)\s*$/i;
+
+/** A scope that names ONE PERIOD of a match — `Set 1`, `1st Half`, `Map 2`. */
+const PERIOD_SCOPE = /^(?:\d+(?:st|nd|rd|th)?\s+)?(?:set|period|quarter|inning|frame|half|map|leg)(?:\s*\d+(?:st|nd|rd|th)?)?$/i;
+
 /**
- * A market asking who wins ONE NAMED PERIOD — `Set 1 Winner: Swiatek vs Zheng`,
- * `1st Half Winner`, `Period 2 Winner`.
+ * A market asking who wins ONE NAMED PERIOD, **and saying who the two sides
+ * are** — `Set 1 Winner: Swiatek vs Zheng`. Null for anything else.
  *
  * It is not the moneyline and it is in none of the maps above: the hero answers
  * the MATCH, the games map answers the TOTALS. Measured on `/events/15305580`
  * (2026-09-06 14:20Z) the payload carried `Set 1 Winner: Swiatek vs Zheng | Yes
  * = 0.735` and `Set 2 Winner: … | Yes = 0.72` — two real, properly sided
  * questions that appear nowhere else on the page.
+ *
+ * ── WHY THE TEST IS "CAN I NAME IT", NOT "IS IT PERIOD-SHAPED" ──────────────
+ *
+ * The first cut of this matched the WORDS `<period> winner` anywhere in the
+ * name, which spared markets it could not then name. Production has them:
+ *
+ *     Counter-Strike: G2 vs TYLOO - Map 1 Winner   Yes 0.500 / No 0.500
+ *
+ * `map 1 winner` matches, but the `vs` comes before the scope so there is no
+ * `Winner: A vs B` to read sides out of — the exemption would have un-hidden
+ * the market and left the rows reading `Yes 50%` / `No 50%`. That is the exact
+ * defect this change exists to remove, newly introduced on esports pages
+ * (measured: 186 esports and 84 football `vs` markets carry a bare `Yes`).
+ *
+ * So the exemption is granted by the SAME function that produces the label. A
+ * market we cannot name keeps falling through to the `winner` keyword and stays
+ * filtered, exactly as before.
+ *
+ * `Match Winner: A vs B` parses but its scope is not a period, so it is
+ * correctly refused: that one IS the hero.
  */
-const PERIOD_SCOPED_WINNER = /\b(set|period|quarter|inning|frame|half|map|leg)\s*\d*(?:st|nd|rd|th)?\s+winner\b/i;
+export function periodWinnerParts(
+  marketName: string | null | undefined,
+): { scope: string; first: string; second: string } | null {
+  const m = SCOPED_WINNER_MARKET.exec((marketName ?? "").trim());
+  if (!m) return null;
+  const [, scope, first, second] = m;
+  if (!PERIOD_SCOPE.test(scope.trim())) return null;
+  if (!first.trim() || !second.trim()) return null;
+  return { scope: scope.trim(), first: first.trim(), second: second.trim() };
+}
 
 /** Rows already covered by the market maps / hero above this section. */
 export function isRedundantWithMarketMaps(m: OtherMarketRow): boolean {
@@ -234,13 +269,10 @@ export function isRedundantWithMarketMaps(m: OtherMarketRow): boolean {
   // different question with a different answer, and swallowing it is how the
   // page came to render the parent's un-sided `Set 1 Winner 74%` while hiding
   // the sided row carrying the very same number (#3575).
-  if (PERIOD_SCOPED_WINNER.test(lower)) return false;
+  if (periodWinnerParts(m.market_name) !== null) return false;
   if (lower.includes("moneyline") || lower.includes("winner") || lower.includes("match result")) return true;
   return false;
 }
-
-/** `Set 1 Winner: Swiatek vs Zheng` → scope `Set 1`, first side `Swiatek`. */
-const SCOPED_WINNER_MARKET = /^(.+?)\s+winner\s*:\s*(.+?)\s+vs\.?\s+(.+?)\s*$/i;
 
 /**
  * The label a `Yes` row on a period-winner market should carry — `Swiatek wins
@@ -257,12 +289,10 @@ export function scopedWinnerLabel(
   marketName: string | null | undefined,
   outcomeName: string | null | undefined,
 ): string | null {
-  const match = SCOPED_WINNER_MARKET.exec((marketName ?? "").trim());
-  if (!match) return null;
-  const [, scope, first] = match;
+  const parts = periodWinnerParts(marketName);
+  if (!parts) return null;
   if (!/^yes$/i.test((outcomeName ?? "").trim())) return null;
-  if (!scope.trim() || !first.trim()) return null;
-  return `${first.trim()} wins ${scope.trim()}`;
+  return `${parts.first} wins ${parts.scope}`;
 }
 
 /**
@@ -301,7 +331,7 @@ export function findWinProbMarkets(markets: OtherMarketRow[] | undefined | null)
     // about a question the hero does not answer. It was being filtered here as
     // well as by `isRedundantWithMarketMaps`, which is why the page had no
     // sided row left to fall back on.
-    if (PERIOD_SCOPED_WINNER.test(name)) continue;
+    if (periodWinnerParts(name) !== null) continue;
 
     if (probs.length === 2 && Math.abs(probs[0] + probs[1] - 1.0) < 0.1) {
       winProb.add(name);
@@ -539,7 +569,7 @@ export function buildMarketSection(
     // `Set 1 Winner: Swiatek vs Zheng` + `Yes` → `Swiatek wins Set 1`. The
     // complementary `No` is dropped rather than renamed: see `scopedWinnerLabel`.
     const scopedWinner = parsed ? null : scopedWinnerLabel(row.market_name, row.outcome_name);
-    if (!parsed && !scopedWinner && SCOPED_WINNER_MARKET.test((row.market_name || "").trim())) continue;
+    if (!parsed && !scopedWinner && periodWinnerParts(row.market_name) !== null) continue;
 
     const title = parsed ? PLAYER_PROPS_CATEGORY : categorizeMarketName(row.market_name || "").category;
     const subtitle = parsed ? "by statistic" : categorizeMarketName(row.market_name || "").subtitle;
@@ -547,12 +577,8 @@ export function buildMarketSection(
     // the matchup. Left keyed on `market_name` they became a stack of one-row
     // cards each headed `Set 1 Winner: Swiatek vs Zheng` above a row reading
     // `Swiatek wins Set 1` — the repetition `stripCardPrefix` exists to prevent.
-    const scopedWinnerCard = scopedWinner
-      ? (() => {
-          const m = SCOPED_WINNER_MARKET.exec((row.market_name || "").trim());
-          return m ? `${m[2].trim()} vs ${m[3].trim()}` : null;
-        })()
-      : null;
+    const winnerParts = scopedWinner ? periodWinnerParts(row.market_name) : null;
+    const scopedWinnerCard = winnerParts ? `${winnerParts.first} vs ${winnerParts.second}` : null;
     const cardName = parsed
       ? parsed.statistic
       : scopedWinnerCard ?? (row.market_name || "Unknown");
@@ -564,9 +590,7 @@ export function buildMarketSection(
     // Read from the MARKET title, which still says `Set 1` after the label has
     // been rewritten to `Swiatek wins Set 1`. Null for every other row, which
     // keeps falling back to reading its own label.
-    const setNumber = scopedWinner
-      ? setNumberFromLabel(SCOPED_WINNER_MARKET.exec((row.market_name || "").trim())?.[1])
-      : null;
+    const setNumber = winnerParts ? setNumberFromLabel(winnerParts.scope) : null;
 
     let draft = drafts.get(title);
     if (!draft) {
