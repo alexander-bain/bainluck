@@ -14,6 +14,7 @@ import {
   matchRoundPills,
   matchRoundReconciliation,
   matchesInRound,
+  showsDisagreement,
   titleChipDescription,
   titleChipLabel,
   type MatchListEntry,
@@ -473,7 +474,11 @@ function MatchRow({
             So an unpriced row renders as a full row with no match number. The
             `SideLine` prints `—` for a null probability, which is what it has
             always done. */}
-        {!entry.coherent && entry.priced ? (
+        {/* UX-1089: this selector moved into `showsDisagreement`, and the
+            count below the list now asks the same function. It used to ask
+            `!entry.coherent` alone, so an unpriced fixture drew this honest
+            card AND a line claiming its numbers disagreed. */}
+        {showsDisagreement(entry) ? (
           <div data-testid="match-incoherent">
             <div className="text-[15px] font-semibold text-text-primary">
               {entry.sides.map((side) => side.displayName).join(" vs ")}
@@ -641,7 +646,11 @@ export default function TournamentMatches({
   const inRound = matchesInRound(entries, active);
   const visible = expanded ? inRound : inRound.slice(0, COLLAPSED_LIST_COUNT);
   const activePill = pills.find((pill) => pill.round === active);
-  const incoherent = inRound.filter((entry) => !entry.coherent).length;
+  // UX-1089. THE SAME PREDICATE THE CARD USES. Asking `!entry.coherent` here
+  // counted every unpriced fixture as a disagreement, which is how the US Open
+  // women's R16 came to say "2 matches have numbers that do not agree yet"
+  // directly under two cards that each said they had no probability at all.
+  const incoherent = inRound.filter(showsDisagreement).length;
   const reconciliation = matchRoundReconciliation(active, inRound.length);
 
   return (
