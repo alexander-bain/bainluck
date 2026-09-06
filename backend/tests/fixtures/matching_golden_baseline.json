@@ -10,7 +10,7 @@
  "anchor": "per-pair decision clock (see pair_as_of)",
  "fallback_as_of": "2026-09-02T20:00:00+00:00",
  "pair_count": 709,
- "passing_count": 651,
+ "passing_count": 652,
  "pairs": {
   "25926130": true,
   "59172944": true,
@@ -27,7 +27,7 @@
   "59173034": true,
   "59173074": true,
   "59173097": true,
-  "59173127": false,
+  "59173127": true,
   "59173128": true,
   "59173170": true,
   "59173174": true,
