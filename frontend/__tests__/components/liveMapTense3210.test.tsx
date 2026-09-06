@@ -15,9 +15,17 @@
  *
  * ── THREE TENSES, NOT TWO ────────────────────────────────────────────────────
  *
- *   pre   — "Final games distribution"          (where it may land; unchanged)
+ *   pre   — "Expected games distribution"       (#3593; see below)
  *   live  — "Where it's heading vs what was expected"
  *   done  — "Where it landed vs what was expected"   (#2442's wording; unchanged)
+ *
+ * ⚠️ THE PRE-GAME LINE ABOVE USED TO READ `"Final games distribution" …
+ * (unchanged)`, AND THE ASSERTIONS BELOW PINNED IT AS A CONTROL. It was not a
+ * control; it was the third tense, left unfixed. #3593 finished it after
+ * production read, on `/events/15305464` four hours before first pitch:
+ * "Projected 8" as the headline and "Final runs distribution" as the subtitle,
+ * on one card, about one unplayed game. The controls in this suite are now the
+ * live and settled arms, which are what a blanket rewrite would break.
  *
  * The live arm is gated on the same `scored` the ACTUAL marker is gated on, so
  * the sentence promises a comparison exactly when the rail actually draws one.
@@ -158,9 +166,12 @@ describe("#3210 — the games map speaks in the match's own tense", () => {
     expect(text).not.toContain("Where it's heading");
   });
 
-  it("a PRE-GAME match still says Final games distribution — the control", () => {
+  // #3593: was "still says Final games distribution — the control". An
+  // unstarted match is not told where its games landed either.
+  it("a PRE-GAME match is not told where its games landed", () => {
     const text = renderMaps("scheduled");
-    expect(text).toContain("Final games distribution");
+    expect(text).toContain("Expected games distribution");
+    expect(text).not.toContain("Final games distribution");
     expect(text).not.toContain("Where it's heading");
     expect(text).not.toContain("Where it landed");
   });
@@ -190,8 +201,12 @@ describe("#3210 — the games map speaks in the match's own tense", () => {
    */
   it("fixes the margin rail in the same tense, not just the totals rail", () => {
     expect(renderMaps("live")).not.toContain("Final margin distribution");
-    // ...and a pre-game card keeps it.
-    expect(renderMaps("scheduled")).toContain("margin distribution");
+    // ...and a pre-game card draws one too, in the pre-game tense (#3593).
+    // Asserting the whole phrase, not the bare noun: `toContain("margin
+    // distribution")` passed against BOTH tenses, so it could never have
+    // caught the word in front of it.
+    expect(renderMaps("scheduled")).toContain("Expected margin distribution");
+    expect(renderMaps("scheduled")).not.toContain("Final margin distribution");
   });
 
   /**
@@ -221,6 +236,8 @@ describe("#3210 — the games map speaks in the match's own tense", () => {
 
     expect(nba("live")).toContain("Where it's heading vs what was expected");
     expect(nba("completed")).toContain("Where it landed vs what was expected");
-    expect(nba("scheduled")).toContain("Final points distribution");
+    // #3593: the pre-game arm moved for every sport, not just the set-scored
+    // one — the tense is selected by status and must not read the sport.
+    expect(nba("scheduled")).toContain("Expected points distribution");
   });
 });

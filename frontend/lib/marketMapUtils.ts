@@ -178,6 +178,53 @@ export function quotedLinesPhrase(rungCount: number): string {
   return `${word} ${rungCount === 1 ? "line" : "lines"} quoted`;
 }
 
+/**
+ * The tense a band's own sentence is in — `"Final"` once the game is over,
+ * `"Expected"` while it still has not been played.
+ *
+ * ═══ #3210 NAMED THREE TENSES AND FIXED TWO ═══
+ *
+ * That issue's whole finding was that one sentence was serving every tense: a
+ * match in play was told where its games `"Final"`-ly landed while an ACTUAL
+ * rung sat on the rail beside it counting them as they were played. The fix
+ * added a settled arm ("Where it landed vs what was expected") and a live arm
+ * ("Where it's heading vs what was expected"), and both are gated on a
+ * scoreboard being present.
+ *
+ * The PRE-GAME arm was never given one. It is the fall-through, so it still
+ * reaches the literal `"Final"` — and so does a live or settled card with no
+ * score to show. Read on production 2026-09-06 on `/events/15305464`, Phillies
+ * vs Braves, status `scheduled`, four hours before first pitch:
+ *
+ *     RUNS MAP
+ *     Runs map                              Projected 8
+ *     Final runs distribution
+ *     0 ──────────── 6 ──────────── 12+          (8)
+ *
+ * "Projected 8" and "Final runs distribution" are one card making two claims
+ * about the same unplayed game. The margin map directly above it says
+ * "Final run-margin distribution" for the same reason and by the same
+ * fall-through.
+ *
+ * This is Alex's *settled means settled* ruling read from the other end: if a
+ * finished game must not be described in the future tense, an unstarted one
+ * must not be described in the past. Nothing here is a data problem — the band,
+ * the rail and the marker are all correct. Only the sentence over them is.
+ *
+ * `"Expected"` rather than `"Projected"` on purpose, even though the headline
+ * beside it reads "Projected 8": this file already established
+ * *expected → final* as its settled-language pair ("Total: expected vs final",
+ * "Where it landed vs what was expected"). Reusing that pair keeps one
+ * vocabulary on the card instead of introducing a third word for the same idea.
+ *
+ * Takes the map's own `status` so the two call sites cannot drift apart — the
+ * margin and totals bands sit on one card, and #3210's own note is that fixing
+ * one and leaving the other is *worse than the bug*.
+ */
+export function distributionTense(status: "pre" | "live" | "done"): "Final" | "Expected" {
+  return status === "done" ? "Final" : "Expected";
+}
+
 export interface ParsedSpread {
   team: string;
   threshold: number;

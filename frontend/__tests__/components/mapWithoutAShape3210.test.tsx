@@ -224,7 +224,7 @@ describe("#3210 · the card Alex photographed", () => {
   it("names the two lines instead of promising a distribution", () => {
     const text = visibleText(render(PAUL_ALCARAZ));
     expect(text).toContain("Two lines quoted");
-    expect(text).not.toContain("Final games distribution");
+    expect(text).not.toContain("Expected games distribution");
   });
 
   it("draws the rungs inside the card, with the prices Alex quoted", () => {
@@ -262,7 +262,7 @@ describe("#3210 · the three-rung card the row count would have missed", () => {
   it("is treated as the flat band it renders as", () => {
     const text = visibleText(render(THREE_EQUAL_RUNGS));
     expect(text).toContain("Three lines quoted");
-    expect(text).not.toContain("Final games distribution");
+    expect(text).not.toContain("Expected games distribution");
   });
 
   it("paints no totals band either", () => {
@@ -277,7 +277,7 @@ describe("#3210 · a card that earned its band keeps it — the controls", () =>
 
   it("still calls itself a distribution", () => {
     const text = visibleText(render(SHAPED));
-    expect(text).toContain("Final games distribution");
+    expect(text).toContain("Expected games distribution");
     expect(text).not.toContain("lines quoted");
   });
 
@@ -338,6 +338,6 @@ describe("#3210 · the rule is not a tennis rule", () => {
       />
     );
     expect(visibleText(html)).toContain("Two lines quoted");
-    expect(visibleText(html)).not.toContain("Final points distribution");
+    expect(visibleText(html)).not.toContain("Expected points distribution");
   });
 });
