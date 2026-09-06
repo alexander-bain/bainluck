@@ -318,30 +318,83 @@ final class ChampionshipRowLayoutTests: XCTestCase {
     /// A rule the view does not call is a description, not a decider — and every
     /// test above would stay green while the card kept its 2 pt bar.
     ///
-    /// The two shapes differ in height: a stacked row puts the label on its own
-    /// line. So render one card narrow and the same card wide, and require the
-    /// narrow one to be taller. Only a view that branches on its measured width
-    /// can produce that.
+    /// The instrument has to be the bar itself. Row *height* looked like a
+    /// discriminator and is not: bypassing the rule makes the row overflow, the
+    /// stage label wraps instead, and the card gets taller for entirely the
+    /// wrong reason. (Found by mutation — `stacked = false` left a height-based
+    /// test green.) So measure what #3580 is actually about: paint the bars a
+    /// colour nothing else in the card uses, render at the real phone width, and
+    /// read how long they came out.
     @MainActor
-    func testTheCardRendersTheShapeTheRuleChose() throws {
-        let card = ChampionshipPathView(progression: try brewersAtRedsProgression(
-            stageJSON: [
-                stageJSON("make_playoffs", "Make Playoffs", probability: 0.996, trend: 0.9133),
-                stageJSON("division", "Division", probability: 0.9615, trend: -0.0258),
-                stageJSON("championship", "World Series", probability: 0.134, trend: 0.0039),
-            ].joined(separator: ",")))
+    func testTheRenderedBarIsAsLongAsTheProbabilityItDraws() throws {
+        func barLength(probability: Double) throws -> CGFloat {
+            let card = ChampionshipPathView(
+                progression: try brewersAtRedsProgression(
+                    stageJSON: stageJSON("division", "Division", probability: probability)),
+                homeTeamColor: Self.barColor, awayTeamColor: Self.barColor)
+            return longestRun(of: Self.barColor, in: render(card, width: 402))
+        }
 
-        let phone = renderedHeight(of: card, width: 402)
-        let wide = renderedHeight(of: card, width: 1200)
+        let long = try barLength(probability: 0.96)
+        let short = try barLength(probability: 0.13)
 
-        XCTAssertGreaterThan(phone, 0, "precondition: the card must render at all")
+        XCTAssertGreaterThanOrEqual(
+            long, 100.0 / 3.0,
+            "a 96% bar rendered \(long) pt long at iPhone width. It measured "
+            + "2.00 pt in AFTER-mlb-15305463-s900.png, and anything under 33.4 pt "
+            + "cannot resolve one percentage point at 3x (#3580).")
         XCTAssertGreaterThan(
-            phone, wide,
-            "at 402 pt the rule says stack (166 pt of content, and a clinched row "
-            + "needs \(ChampionshipRowLayout.inlineRowMinimumWidth(badgeWidth: ChampionshipRowLayout.clinchedBadgeWidth)) "
-            + "pt to stay on one line); at 1200 pt it says keep the one line. Equal "
-            + "heights mean the view is drawing one shape regardless and never "
-            + "asks — which is the state that shipped a 2 pt bar (#3580).")
+            long, short * 3,
+            "96% drew \(long) pt and 13% drew \(short) pt. A bar whose length does "
+            + "not follow its probability is decoration: before this fix both "
+            + "measured exactly 2.00 pt, because the row had spent all 166 pt of "
+            + "the card before reaching them.")
+    }
+
+    /// Nothing else in the card is this colour, so any run of it is bar.
+    private static let barColor = Color(red: 1, green: 0, blue: 0)
+
+    /// The longest horizontal run of `color`, in points. Text drawn in the same
+    /// colour contributes only a few points; a bar contributes its whole length.
+    @MainActor
+    private func longestRun(of color: Color, in image: UIImage) -> CGFloat {
+        guard let cg = image.cgImage else { return 0 }
+        let width = cg.width, height = cg.height
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        guard let ctx = CGContext(
+            data: &pixels, width: width, height: height, bitsPerComponent: 8,
+            bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return 0 }
+        ctx.draw(cg, in: CGRect(x: 0, y: 0, width: width, height: height))
+
+        var best = 0
+        for y in 0..<height {
+            var run = 0
+            for x in 0..<width {
+                let i = (y * width + x) * 4
+                let isBar = pixels[i] > 180 && pixels[i + 1] < 90 && pixels[i + 2] < 90
+                run = isBar ? run + 1 : 0
+                best = max(best, run)
+            }
+        }
+        return CGFloat(best) / image.scale
+    }
+
+    @MainActor
+    private func render<V: View>(_ view: V, width: CGFloat) -> UIImage {
+        let host = UIHostingController(rootView: view.frame(width: width))
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: width, height: 1200))
+        window.rootViewController = host
+        window.isHidden = false
+        for _ in 0..<4 {
+            host.view.setNeedsLayout()
+            host.view.layoutIfNeeded()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.02))
+        }
+        let bounds = host.view.bounds
+        return UIGraphicsImageRenderer(bounds: bounds).image { _ in
+            host.view.drawHierarchy(in: bounds, afterScreenUpdates: true)
+        }
     }
 
     /// Lays the card out and lets the width measurement come back before asking.
