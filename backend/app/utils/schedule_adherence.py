@@ -1549,3 +1549,95 @@ def fire_isolation_violations(beat_schedule, soft_limits, queues, subjects, *,
                     "budget_s": budget,
                 })
     return violations, unenumerable
+
+
+def effective_hold_s(soft_limit, global_hard_limit):
+    """The longest a task may hold its slot, from what is DECLARED about it.
+
+    🔴 ``soft_time_limit`` UNSET DOES NOT MEAN ZERO, AND IT DOES NOT MEAN
+    UNBOUNDED EITHER. Nine of ``realtime``'s ten beats declare no soft limit, and
+    reading that as ``0`` scores the busiest lane in the fleet as the emptiest —
+    the arithmetic error that would send the warmer to the one queue measured
+    (#3060) to have zero standing headroom. What actually bounds those tasks is
+    celery's GLOBAL ``task_time_limit`` (300s here), a hard SIGKILL, so their
+    declared hold is 300s and not 0.
+
+    Returns ``None`` only when neither bound exists — genuinely unbounded, which
+    is worse than any finite hold and is reported as such rather than defaulted.
+    """
+    soft = soft_limit or 0
+    if soft > 0:
+        return float(soft)
+    hard = global_hard_limit or 0
+    return float(hard) if hard > 0 else None
+
+
+def unbudgeted_residents(beat_schedule, soft_limits, queues, *, queue,
+                         budget_s, global_hard_limit=None,
+                         warmer_beat="warm-typeahead"):
+    """Beats on ``queue`` that cannot be shown to release a slot inside ``budget_s``.
+
+    Two kinds, and they are reported apart because they argue differently:
+
+    *   ``over_budget`` — a declared hold (soft, else the global hard limit)
+        longer than the budget. It may legitimately keep the slot past the point
+        the warmer's message expires.
+    *   ``unbounded`` — no bound of either kind. Strictly worse, and never folded
+        into the first list, because "300s > 120s" and "no answer at all" are
+        different findings and a reader is entitled to tell them apart.
+
+    Returns ``(over_budget, unbounded)``, both sorted entry-name lists. The
+    warmer itself is excluded — it does not compete with itself for the slot it
+    is waiting for.
+    """
+    over_budget, unbounded = [], []
+    for name, entry in (beat_schedule or {}).items():
+        task = entry.get("task")
+        if not task or name == warmer_beat:
+            continue
+        if queue not in (queues.get(task) or []):
+            continue
+        hold = effective_hold_s(soft_limits.get(task), global_hard_limit)
+        if hold is None:
+            unbounded.append(name)
+        elif hold > budget_s:
+            over_budget.append(name)
+    return sorted(over_budget), sorted(unbounded)
+
+
+def queues_that_cannot_guarantee_a_slot(beat_schedule, soft_limits, queues, *,
+                                        budget_s, slots=None,
+                                        global_hard_limit=None,
+                                        warmer_beat="warm-typeahead"):
+    """Which existing worker queues fail to guarantee a slot inside ``budget_s``.
+
+    🔴 READ THE DIRECTION OF THIS CHECK BEFORE USING ITS ANSWER. It is a
+    DISQUALIFIER, not a failure detector. A queue is disqualified when it has at
+    least as many residents that cannot be shown to release inside the budget as
+    it has slots — i.e. when nothing in the declared schedule rules out every
+    slot being held past the budget. That is the condition for *"this queue
+    cannot be PROVEN to satisfy the invariant"*, which is the claim the
+    dedicated-worker ask rests on. It is deliberately NOT a claim that the queue
+    *does* starve the warmer: proving that needs measured occupancy, and this
+    module only ever reads declarations.
+
+    Why the weaker claim is the right one to automate: the strong one is
+    unfalsifiable from a schedule, and the decision it feeds — "is there anywhere
+    to put the warmer that we already pay for?" — is answered by the weak one. A
+    queue that survives this check has EARNED a measurement, not a move.
+
+    Returns ``{queue: {"slots": n, "over_budget": [...], "unbounded": [...]}}``
+    for the disqualified queues only, so an empty return is the good-news case
+    and says an existing lane may now be worth measuring as a home.
+    """
+    slots = QUEUE_SLOTS if slots is None else slots
+    out = {}
+    for queue, n_slots in slots.items():
+        over, unbounded = unbudgeted_residents(
+            beat_schedule, soft_limits, queues,
+            queue=queue, budget_s=budget_s,
+            global_hard_limit=global_hard_limit, warmer_beat=warmer_beat,
+        )
+        if len(over) + len(unbounded) >= n_slots:
+            out[queue] = {"slots": n_slots, "over_budget": over, "unbounded": unbounded}
+    return out

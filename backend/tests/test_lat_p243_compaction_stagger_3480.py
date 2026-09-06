@@ -42,11 +42,15 @@ from celery.schedules import crontab
 from app.tasks import celery_app
 from app.utils.schedule_adherence import (
     LONG_HOLD_SOFT_LIMIT_S,
+    QUEUE_SLOTS,
     beat_queues,
     crontab_fire_times,
+    effective_hold_s,
     fire_isolation_violations,
     long_hold_beats,
+    queues_that_cannot_guarantee_a_slot,
     residency_overlaps,
+    unbudgeted_residents,
     warmer_expiry_budget_s,
 )
 
@@ -611,3 +615,139 @@ class TestTheClaimThatIsolationIsTheOnlyRemainingPath:
             f"{budget:.0f}s budget, down from 59. If this has genuinely shrunk, "
             "re-measure before trusting the disclosure that says isolation is the only path."
         )
+
+
+class TestNoQueueWeAlreadyPayForIsAHomeForTheWarmer:
+    """CERT-2053's other half: *"or another topology"*.
+
+    CERT-2045 offered two ways out — schedule, or isolation. CERT-2053 accepted
+    that the schedule half is exhausted and asked for the second: satisfy the
+    full-window invariant "via real isolation/capacity or another topology".
+    Before anyone buys a fourth worker, the three we already run have to be ruled
+    out ON THE RECORD, and by a rule rather than by an opinion. That is this
+    class. `TestTheClaimThatIsolationIsTheOnlyRemainingPath` above examines
+    `background` alone and therefore could never have answered it.
+
+    THE RULE, one sentence: a queue cannot be shown to give the warmer a slot
+    inside its expiry budget if it has at least as many residents whose DECLARED
+    hold exceeds that budget as it has slots. Every queue fails it today.
+
+    ⚠️ THE ANSWER IS "CANNOT BE PROVEN TO WORK", NOT "IS PROVEN TO FAIL", and the
+    difference is load-bearing when the conclusion is a purchase. See
+    `queues_that_cannot_guarantee_a_slot`.
+
+    ⚠️ IF THIS CLASS FAILS, THAT IS GOOD NEWS. A queue leaving the disqualified
+    set means somewhere we already pay for might house the warmer, and the
+    dedicated-worker ask in `alex-inbox` should be re-priced against a
+    measurement of THAT queue before a dyno is bought.
+    """
+
+    def _inputs(self):
+        bs, softs, queues = _live()
+        return (bs, softs, queues, warmer_expiry_budget_s(bs),
+                celery_app.conf.task_time_limit)
+
+    def test_every_queue_that_exists_is_disqualified(self):
+        bs, softs, queues, budget, hard = self._inputs()
+        disqualified = queues_that_cannot_guarantee_a_slot(
+            bs, softs, queues, budget_s=budget, global_hard_limit=hard)
+        survivors = sorted(set(QUEUE_SLOTS) - set(disqualified))
+        assert not survivors, (
+            f"{survivors} can no longer be disqualified from housing `warm-typeahead` "
+            f"on declarations alone. That is the good-news failure: MEASURE the "
+            f"occupancy of {survivors} before spending on a fourth worker — a queue "
+            "surviving this check has earned a measurement, not a move."
+        )
+
+    def test_realtime_is_disqualified_by_the_global_hard_limit_not_by_soft_limits(self):
+        """The trap this ship nearly walked into, pinned so nobody walks into it.
+
+        Nine of `realtime`'s ten beats declare NO `soft_time_limit`. Read that as
+        `0` and realtime scores one over-budget resident against four slots — it
+        clears, and looks like the free home that makes the dyno ask unnecessary.
+        It is not: #3060 measured its four pollers at p95s of 111-260s against
+        30-120s periods, ~9 slots of demand on 4, and the last beat placed there
+        on exactly this reasoning completed 7.0% of its fires. The declarations
+        agree once the global hard `task_time_limit` is read as the bound that an
+        unset soft limit falls back to.
+        """
+        bs, softs, queues, budget, hard = self._inputs()
+        assert hard and hard > budget, (
+            f"the global task_time_limit is {hard!r}; this test's whole argument is "
+            f"that it is the fallback bound and that it exceeds the {budget:.0f}s "
+            "budget. If it changed, re-derive rather than adjust."
+        )
+
+        # The wrong reading, written out rather than described: `soft or 0`, so an
+        # unset limit scores as a task that returns the slot instantly.
+        naive = [
+            n for n, e in bs.items()
+            if e.get("task") and n != "warm-typeahead"
+            and "realtime" in (queues.get(e["task"]) or [])
+            and (softs.get(e["task"]) or 0) > budget
+        ]
+        assert len(naive) < QUEUE_SLOTS["realtime"], (
+            f"this test asserts that the NAIVE reading clears realtime ({naive}), which "
+            "is why the correct reading has to be spelled out. It no longer does, so "
+            "the trap is gone and this test should be retired rather than repaired."
+        )
+
+        over, unbounded = unbudgeted_residents(
+            bs, softs, queues, queue="realtime", budget_s=budget,
+            global_hard_limit=hard)
+        assert len(over) + len(unbounded) >= QUEUE_SLOTS["realtime"], (
+            f"realtime now has only {len(over) + len(unbounded)} residents that cannot "
+            f"be shown to release inside {budget:.0f}s, against "
+            f"{QUEUE_SLOTS['realtime']} slots — it may be a home. Measure it."
+        )
+
+    def test_unset_soft_limit_is_read_as_the_global_bound_and_never_as_zero(self):
+        assert effective_hold_s(None, 300) == 300.0
+        assert effective_hold_s(0, 300) == 300.0
+        assert effective_hold_s(90, 300) == 90.0, "a declared soft limit wins over the global"
+        assert effective_hold_s(None, None) is None, "no bound at all is None, not 0"
+        assert effective_hold_s(None, 0) is None
+
+    def test_the_rule_clears_a_queue_that_genuinely_has_room(self):
+        """Non-vacuity, and in the direction that matters: the disqualifier must
+        be capable of saying NO. A checker that disqualifies everything would pass
+        `test_every_queue_that_exists_is_disqualified` while meaning nothing."""
+        bs = {
+            "warm-typeahead": {"task": "app.tasks.warm_typeahead",
+                               "options": {"expires": 120}},
+            "short-a": {"task": "t.a"},
+            "short-b": {"task": "t.b"},
+            "grinder": {"task": "t.g"},
+        }
+        queues = {"app.tasks.warm_typeahead": ["spacious"], "t.a": ["spacious"],
+                  "t.b": ["spacious"], "t.g": ["spacious"]}
+        softs = {"t.a": 30, "t.b": 45, "t.g": 900}
+        slots = {"spacious": 4}
+
+        disqualified = queues_that_cannot_guarantee_a_slot(
+            bs, softs, queues, budget_s=120, slots=slots, global_hard_limit=300)
+        assert disqualified == {}, (
+            "one grinder against four slots leaves three that provably return inside "
+            f"the budget, so this queue must clear: {disqualified}")
+
+        # ...and it must still fire when the same queue is narrowed to one slot.
+        assert set(queues_that_cannot_guarantee_a_slot(
+            bs, softs, queues, budget_s=120, slots={"spacious": 1},
+            global_hard_limit=300)) == {"spacious"}
+
+    def test_the_warmer_is_never_counted_as_its_own_competitor(self):
+        """`warm-typeahead` declares soft 100s, under the budget, so it would not
+        land in `over_budget` today anyway — which is exactly why the exclusion
+        needs a test that does not depend on today's number."""
+        bs = {
+            "warm-typeahead": {"task": "app.tasks.warm_typeahead",
+                               "options": {"expires": 120}},
+            "other": {"task": "t.other"},
+        }
+        queues = {"app.tasks.warm_typeahead": ["q"], "t.other": ["q"]}
+        # The warmer given an over-budget hold: it must STILL not be counted.
+        over, unbounded = unbudgeted_residents(
+            bs, {"app.tasks.warm_typeahead": 9999, "t.other": 900},
+            queues, queue="q", budget_s=120, global_hard_limit=300)
+        assert over == ["other"], over
+        assert unbounded == []
