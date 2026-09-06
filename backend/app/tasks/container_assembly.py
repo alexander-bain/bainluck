@@ -503,6 +503,32 @@ WINDOW_IN = "in_window"
 WINDOW_OUTSIDE = "outside_window"
 WINDOW_UNDATED = "undated"
 
+#: An anchor may DECLARE that its id, coarse as its kind is, belongs wholly to
+#: one edition. Written into the anchor's own `claim_context` at claim time, so
+#: the exception travels with the claim and is auditable, rather than living in
+#: a list of trusted series inside this file.
+ANCHOR_SCOPE_EDITION = "edition"
+
+
+def anchor_scope(anchor) -> Optional[str]:
+    """The scope its claimer declared, if any. Tolerant of every row shape.
+
+    `claim_context` is nullable JSONB and arrives as a dict from the ORM, as a
+    string from a hand-written `text()` select, and as absent from a test
+    double. None of those is an error — an anchor with no declared scope is the
+    normal case and gets its kind's default.
+    """
+    context = getattr(anchor, "claim_context", None)
+    if isinstance(context, str):
+        try:
+            context = json.loads(context)
+        except (TypeError, ValueError):
+            return None
+    if isinstance(context, dict):
+        scope = context.get("scope")
+        return scope if isinstance(scope, str) else None
+    return None
+
 
 def member_window_verdict(
     external_id: Optional[str],
@@ -632,6 +658,16 @@ async def gather_venue_candidates(
             continue
 
         coarse = _ANCHOR_KIND_SPECIFICITY.get(anchor.id_kind) == "coarse"
+        if coarse and anchor_scope(anchor) == "edition":
+            # THE DECLARED EXCEPTION, and it has to exist: some series belong
+            # wholly to one tournament. `KXHONEYDEUCE` is the US Open's Honey
+            # Deuce prop and nothing else's, and its single market's only
+            # stored date is its 2027 expiry — so the window would refuse a
+            # genuine member forever. The claim says so explicitly, in the
+            # anchor row, rather than this file keeping a list of series it
+            # trusts.
+            coarse = False
+
         if coarse and window_start is None and window_end is None:
             harvest.refused_anchors.append(
                 {
@@ -928,10 +964,20 @@ class PlannedContainer:
     kind: str
     parent_slug: Optional[str] = None
     category: Optional[str] = None
+    #: The edition's own dates. NOT decoration: a coarse (tour-wide) anchor
+    #: collects nothing without them, so a tree bootstrapped with no window is
+    #: a tree whose venue members are all refused.
+    window_start: Optional[datetime] = None
+    window_end: Optional[datetime] = None
 
 
 def plan_container_tree(
-    tournament: str, season: str, display_name: str, draws=TENNIS_DRAWS
+    tournament: str,
+    season: str,
+    display_name: str,
+    draws=TENNIS_DRAWS,
+    window_start=None,
+    window_end=None,
 ) -> list[PlannedContainer]:
     """The parent container and one child per draw. Pure — returns a plan.
 
@@ -949,7 +995,13 @@ def plan_container_tree(
     """
     root = f"{tournament}-{season}"
     plan = [
-        PlannedContainer(slug=root, name=display_name, kind="tournament")
+        PlannedContainer(
+            slug=root,
+            name=display_name,
+            kind="tournament",
+            window_start=window_start,
+            window_end=window_end,
+        )
     ]
     for draw_slug, draw_name in draws:
         plan.append(
@@ -958,6 +1010,13 @@ def plan_container_tree(
                 name=f"{display_name} — {draw_name}",
                 kind="tournament",
                 parent_slug=root,
+                # Every draw inherits the edition's window. A draw's own dates
+                # are narrower (mixed doubles finishes before the singles start
+                # in 2026) but they are the AUTHORITY's to narrow later under
+                # D27; inheriting is what makes the parent's window the one
+                # thing that has to be right.
+                window_start=window_start,
+                window_end=window_end,
             )
         )
     return plan
@@ -1013,8 +1072,10 @@ async def apply_container_tree(session, plan: list[PlannedContainer]) -> dict:
             await session.execute(
                 text(
                     "INSERT INTO containers "
-                    "(kind, name, slug, category, parent_container_id) "
-                    "VALUES (:kind, :name, :slug, :category, :parent_id) "
+                    "(kind, name, slug, category, parent_container_id, "
+                    " window_start, window_end) "
+                    "VALUES (:kind, :name, :slug, :category, :parent_id, "
+                    "        :window_start, :window_end) "
                     "RETURNING id"
                 ),
                 {
@@ -1023,6 +1084,8 @@ async def apply_container_tree(session, plan: list[PlannedContainer]) -> dict:
                     "slug": planned.slug,
                     "category": planned.category,
                     "parent_id": parent_id,
+                    "window_start": planned.window_start,
+                    "window_end": planned.window_end,
                 },
             )
         ).fetchone()
@@ -1103,3 +1166,301 @@ def container_chain_has_cycle(parent_of: dict, start: int) -> bool:
             return False
         if slow == fast:
             return True
+
+
+# ---------------------------------------------------------------------------
+# The pass that runs itself (spec §6, program step 2)
+# ---------------------------------------------------------------------------
+
+#: The tables Phase 1 adds. Checked before a pass touches anything, because
+#: this code ships BEFORE its migration is applied (CERT-2006 is migration
+#: class under D45 and merges only when Alex says so), and a scheduled task
+#: that raises `UndefinedTable` every hour teaches its reader to ignore it.
+CONTAINER_TABLES = (
+    "containers",
+    "container_provider_anchors",
+    "event_edges",
+    "event_participants",
+)
+
+
+async def containers_tables_present(session) -> bool:
+    """Is Phase 1's migration applied on this database?
+
+    `to_regclass` returns NULL for a missing relation instead of raising, which
+    is what lets this be a question rather than an exception handler. An
+    exception here is NOT read as "absent": a connection failure and an
+    un-migrated database are different answers and only one of them means
+    "wait for Alex".
+    """
+    row = (
+        await session.execute(
+            text(
+                "SELECT "
+                + ", ".join(
+                    f"to_regclass('public.{t}') IS NOT NULL" for t in CONTAINER_TABLES
+                )
+            )
+        )
+    ).fetchone()
+    return bool(row) and all(bool(present) for present in row)
+
+
+async def _resolve_container(session, slug: str):
+    """The container row for a slug, or None. Read-only."""
+    return (
+        await session.execute(
+            text(
+                "SELECT id, slug, window_start, window_end "
+                "FROM containers WHERE slug = :slug"
+            ),
+            {"slug": slug},
+        )
+    ).fetchone()
+
+
+async def _container_anchors(session, container_id: int) -> list:
+    return list(
+        (
+            await session.execute(
+                text(
+                    "SELECT provider, sport, provider_id, id_kind, claim_context "
+                    "FROM container_provider_anchors WHERE container_id = :cid "
+                    "ORDER BY id"
+                ),
+                {"cid": container_id},
+            )
+        ).fetchall()
+    )
+
+
+@dataclass(frozen=True)
+class _Anchor:
+    """The shape `gather_venue_candidates` reads, from a plain row."""
+
+    provider: str
+    sport: Optional[str]
+    provider_id: str
+    id_kind: str
+    claim_context: Optional[Any] = None
+
+
+async def run_declared_assembly(session, declaration, *, apply: bool = True) -> dict:
+    """Bootstrap one declared edition's tree, claim its ids, assemble it.
+
+    Idempotent end to end: the bootstrap creates only what is missing, the
+    anchor claim returns False for a re-claim by the same owner, and the edge
+    write is an upsert on the edge's unique key. A pass that runs hourly
+    therefore converges instead of growing.
+
+    `apply=False` plans and writes NOTHING — no container, no anchor, no edge —
+    and still returns the counts, so the first run against a real database can
+    be read before it is trusted (D51's shape: say what it would do, then say
+    what it did, and carry the undo line either way).
+    """
+    report: dict = {
+        "slug": declaration.root_slug,
+        "apply": apply,
+        "tables": "present",
+        "bootstrap": {},
+        "anchors": {"claimed": 0, "already": 0, "collisions": []},
+        "containers": [],
+        "venue": {},
+        "errors": [],
+        "undo": {
+            "containers": BOOTSTRAP_UNDO_LINE,
+            "edges": UNDO_LINE,
+        },
+    }
+
+    plan = plan_container_tree(
+        declaration.tournament,
+        declaration.season,
+        declaration.display_name,
+        window_start=declaration.window_start,
+        window_end=declaration.window_end,
+    )
+    if not apply:
+        report["bootstrap"] = {
+            "would_create": [p.slug for p in plan],
+            "created": [],
+            "existing": [],
+        }
+    else:
+        report["bootstrap"] = await apply_container_tree(session, plan)
+
+    ids: dict = dict(report["bootstrap"].get("ids") or {})
+
+    for declared in declaration.anchors:
+        slug = declaration.slug_for(declared.draw)
+        if not apply:
+            # A dry run has nothing to anchor TO — the tree it printed was not
+            # written. Reporting six "no container" errors for that would make
+            # the dry run's output unreadable in exactly the case it exists for.
+            report["anchors"].setdefault("would_claim", []).append(
+                {"slug": slug, "provider_id": declared.provider_id}
+            )
+            continue
+
+        container_id = ids.get(slug)
+        if container_id is None:
+            row = await _resolve_container(session, slug)
+            if row is None:
+                # Somebody deleted a container between the bootstrap and here.
+                # Reported, never silently skipped.
+                report["errors"].append(f"{slug}: no container to anchor")
+                continue
+            container_id = int(row[0])
+            ids[slug] = container_id
+
+        try:
+            wrote = await claim_container_anchor(
+                session,
+                container_id=container_id,
+                provider=declared.provider,
+                provider_id=declared.provider_id,
+                id_kind=declared.id_kind,
+                sport=declared.sport,
+                claim_context={
+                    "declared_by": "container_tournaments",
+                    "scope": declared.scope,
+                    "evidence": declared.evidence,
+                },
+            )
+            report["anchors"]["claimed" if wrote else "already"] += 1
+        except AnchorCollision as exc:
+            # D55: a collision is reported, never swallowed. Another container
+            # owning this id is a real question about which edition it belongs
+            # to, and answering it by overwriting is how two draws become one.
+            report["anchors"]["collisions"].append(
+                {
+                    "slug": slug,
+                    "provider_id": declared.provider_id,
+                    "owner_container_id": exc.owner_container_id,
+                }
+            )
+
+    # Assemble every container in the tree, parent included: the root holds the
+    # edition-wide props, the children hold the draws.
+    for planned in plan:
+        slug = planned.slug
+        row = await _resolve_container(session, slug)
+        if row is None:
+            if apply:
+                report["errors"].append(f"{slug}: vanished before assembly")
+            continue
+        container = _ContainerRow(int(row[0]), row[1], row[2], row[3])
+
+        anchors = [
+            _Anchor(a[0], a[1], a[2], a[3], a[4])
+            for a in await _container_anchors(session, container.id)
+        ]
+        harvest = await gather_venue_candidates(
+            session,
+            anchors,
+            window_start=container.window_start,
+            window_end=container.window_end,
+        )
+        entry = {
+            "slug": slug,
+            "container_id": container.id,
+            "venue": harvest.summary(),
+            "by_anchor": harvest.by_anchor,
+        }
+        if apply and harvest.candidates:
+            result = await assemble_container(session, container, harvest.candidates)
+            entry["assembly"] = result.as_dict()
+        report["containers"].append(entry)
+
+    if apply:
+        await session.commit()
+
+    edges = sum(
+        (c.get("assembly") or {}).get("edges_written", 0) for c in report["containers"]
+    )
+    members = sum(c["venue"]["candidates"] for c in report["containers"])
+    report["edges_written"] = edges
+    report["members"] = members
+    # gotcha #53: a pass that returned is not a pass that worked. A zero-member
+    # run is `partial`, never `complete`, so the tracker cannot bank it green.
+    report["terminal"] = "complete" if members else "partial"
+    report["reason"] = None if members else "no_member_found"
+    return report
+
+
+@dataclass(frozen=True)
+class _ContainerRow:
+    id: int
+    slug: str
+    window_start: Optional[datetime]
+    window_end: Optional[datetime]
+
+
+async def _run_assemble_containers(apply: bool = True, only: Optional[str] = None) -> dict:
+    """Every declared edition, one session, one verdict. The Celery entry point.
+
+    THE UN-MIGRATED CASE IS THE NORMAL ONE TODAY and it is answered explicitly:
+    Phase 1's tables are migration-class under D45 and are not on production
+    until Alex says "merge 2006", so this returns `skipped` with
+    `reason: containers_tables_absent` rather than raising hourly. That is a
+    third state, not a success — `terminal: skipped` keeps it out of the green
+    counters (gotcha #53).
+    """
+    from app.tasks.base import get_task_session
+    from app.utils.container_tournaments import DECLARED_TOURNAMENTS
+
+    started = datetime.now(timezone.utc)
+    declarations = [
+        d
+        for d in DECLARED_TOURNAMENTS
+        if only is None or d.root_slug == only
+    ]
+
+    async with get_task_session() as session:
+        if not await containers_tables_present(session):
+            return {
+                "terminal": "skipped",
+                "reason": "containers_tables_absent",
+                "detail": (
+                    "containers Phase 1 (#2927) is not applied on this database; "
+                    "the assembly pass has nothing to write to and did not try"
+                ),
+                "declared": [d.root_slug for d in declarations],
+                "started_at": started.isoformat(),
+            }
+
+        runs = []
+        for declaration in declarations:
+            try:
+                runs.append(await run_declared_assembly(session, declaration, apply=apply))
+            except Exception as exc:  # noqa: BLE001 — gotcha #42, per EDITION
+                await session.rollback()
+                logger.exception("container assembly failed for %s", declaration.root_slug)
+                runs.append(
+                    {
+                        "slug": declaration.root_slug,
+                        "terminal": "failed",
+                        "reason": "assembly_error",
+                        "error": repr(exc),
+                    }
+                )
+
+    members = sum(r.get("members", 0) for r in runs)
+    failed = [r for r in runs if r.get("terminal") == "failed"]
+    if failed and len(failed) == len(runs):
+        terminal, reason = "failed", "every_edition_failed"
+    elif failed or not members:
+        terminal, reason = "partial", "some_edition_yielded_nothing"
+    else:
+        terminal, reason = "complete", None
+
+    return {
+        "terminal": terminal,
+        "reason": reason,
+        "editions": len(runs),
+        "members": members,
+        "edges_written": sum(r.get("edges_written", 0) for r in runs),
+        "runs": runs,
+        "started_at": started.isoformat(),
+        "duration_s": (datetime.now(timezone.utc) - started).total_seconds(),
+    }

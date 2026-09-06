@@ -372,6 +372,10 @@ class TestBeatScheduleCompleteness:
         "backfill-thin-event-charts",
         # live/059 — the outright chart's venue-history warmer.
         "fill-futures-chart-series",
+        # #2927 Phase 2 — the event container assembles itself hourly. Gotcha
+        # #12: this allowlist is the reason a new beat entry cannot land
+        # silently.
+        "assemble-containers-hourly",
     }
 
     def test_no_missing_entries(self):
