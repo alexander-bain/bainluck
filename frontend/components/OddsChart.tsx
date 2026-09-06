@@ -14,7 +14,12 @@ import {
 } from "recharts";
 import Link from "next/link";
 import { format, parseISO } from "date-fns";
-import { makeEnsurePoint, toMinuteKey, fillMinuteGaps } from "@/lib/chartTimeline";
+import {
+  makeEnsurePoint,
+  toMinuteKey,
+  fillMinuteGaps,
+  CATEGORY_LABEL_FORMAT,
+} from "@/lib/chartTimeline";
 // #1003 guard: the single 0–1 ⇄ 0–100 axis conversion (see eventKeyStats).
 import { homeProbToChartAxis, chartAxisToHomeProb } from "@/lib/eventKeyStats";
 import { sourceHex, sourceLabel } from "@/lib/sourceColors";
@@ -100,6 +105,9 @@ interface OddsChartProps {
   chartStartTime?: string;
   chartEndTime?: string;
   sharedTicks?: string[];
+  /** #3419: the format `sharedTicks` were built with. Categories and period
+   *  markers must use the SAME string or a tick lands on the wrong column. */
+  chartLabelFormat?: string;
   /** External time range from parent — when set, syncs both charts' All/Since Start toggle */
   externalTimeRange?: "all" | "live";
   onTimeRangeChange?: (range: "all" | "live") => void;
@@ -218,10 +226,15 @@ export default function OddsChart({
   chartStartTime,
   chartEndTime,
   sharedTicks,
+  chartLabelFormat,
   externalTimeRange,
   onTimeRangeChange,
   completedAt,
 }: OddsChartProps) {
+  // #3419: the axis is categorical on this label, so it must be spelled the
+  // same way the parent spelled its ticks. Absent a parent domain the window is
+  // this chart's own min..max, which is what the 12-hour default assumes.
+  const labelFormat = chartLabelFormat ?? CATEGORY_LABEL_FORMAT;
   const isClosed = eventStatus === "closed" || eventStatus === "completed";
   const { track } = useAnalyticsContext();
 
@@ -547,7 +560,8 @@ export default function OddsChart({
   }, [nonBettingSources, filteredBookmakerHistory]);
 
   // Transform data: convert probabilities to delta from 50%
-  // Bucket by minute so each "h:mm a" time label is unique — required for
+  // Bucket by minute so each category label is unique (see `labelFormat`,
+  // #3419) — required for
   // Recharts ReferenceLine (period markers) to match categorical XAxis values.
   const chartData: ChartDataPoint[] = useMemo(() => {
     const dataMap = new Map<string, ChartDataPoint>();
@@ -556,7 +570,7 @@ export default function OddsChart({
       homeDelta: null,
       espnDelta: null,
       bainLuckDelta: null,
-    }));
+    }), labelFormat);
 
     // Add aggregate data points (betting odds consensus). Values are the raw
     // home win probability on a 0–100 axis (single-axis, not ±50 delta).
@@ -830,19 +844,50 @@ export default function OddsChart({
 
 
 
+  /**
+   * The extent of the DRAWN LINE — the first and last category actually
+   * carrying a plotted value — as opposed to `chartData`'s extent, which also
+   * holds null-valued odds buckets, gap-filled minutes and marker timestamps
+   * this component inserts itself (CERT-1984).
+   */
+  const drawnExtent = useMemo(() => {
+    const isDrawn = (p: ChartDataPoint) =>
+      plottedProbKeys.some((key) => typeof p[key] === "number");
+    const first = chartData.findIndex(isDrawn);
+    if (first === -1) return null;
+    let last = chartData.length - 1;
+    while (last > first && !isDrawn(chartData[last])) last--;
+    return {
+      firstIdx: first,
+      lastIdx: last,
+      startMs: parseISO(chartData[first].timestamp).getTime(),
+      endMs: parseISO(chartData[last].timestamp).getTime(),
+    };
+  }, [chartData, plottedProbKeys]);
+
   // Compute "Game Start" reference line time (formatted to match chart categories)
   const gameStartTime = useMemo(() => {
-    if (!commenceTime || chartData.length === 0) return null;
+    if (!commenceTime || chartData.length === 0 || !drawnExtent) return null;
     const startMs = parseISO(commenceTime).getTime();
-    const chartStartMs = parseISO(chartData[0].timestamp).getTime();
-    const chartEndMs = parseISO(chartData[chartData.length - 1].timestamp).getTime();
-    // Only show if the start time falls within the chart's visible range
-    if (startMs < chartStartMs || startMs > chartEndMs) return null;
+    // Bound against the DRAWN LINE, not `chartData`'s extent (CERT-1984, and
+    // #3419 for this marker). The old test used chartData[0], which is the
+    // chart's own gap fill — and since #3419 made that fill inclusive of the
+    // shared domain's start, `commence_time` became chartData[0] BY
+    // CONSTRUCTION, so the test could no longer fail. That is the same
+    // circularity CERT-1984 removed from the period markers: a marker creates
+    // the very category it is then judged to be inside.
+    //
+    // It matters because `commence_time` is exactly the field that is wrong
+    // when a start was never reported. On /events/15300276 it is a
+    // ticker-derived midnight 15h56m before the first Kalshi point, so a
+    // "Start" flag pinned to it told the reader the match began on a night it
+    // had not yet begun. No ink at that instant, no claim about it.
+    if (startMs < drawnExtent.startMs || startMs > drawnExtent.endMs) return null;
     // Round to minute for categorical match
     const d = parseISO(commenceTime);
     d.setSeconds(0, 0);
-    return format(d, "h:mm a");
-  }, [commenceTime, chartData]);
+    return format(d, labelFormat);
+  }, [commenceTime, chartData, labelFormat, drawnExtent]);
 
   // Filter period boundaries to match chart time range, deduplicate close markers,
   // and alternate label positions to prevent overlapping text.
@@ -860,16 +905,11 @@ export default function OddsChart({
     //
     // So find the first and last point carrying a value we actually plot. The
     // server drops markers no chart can place, but it cannot know which of the
-    // two charts sharing this array is the blank one — only we do.
-    const isDrawn = (p: ChartDataPoint) =>
-      plottedProbKeys.some((key) => typeof p[key] === "number");
-    const firstDrawn = chartData.findIndex(isDrawn);
-    if (firstDrawn === -1) return [];
-    let lastDrawn = chartData.length - 1;
-    while (lastDrawn > firstDrawn && !isDrawn(chartData[lastDrawn])) lastDrawn--;
-
-    const chartStart = parseISO(chartData[firstDrawn].timestamp).getTime();
-    const chartEnd = parseISO(chartData[lastDrawn].timestamp).getTime();
+    // two charts sharing this array is the blank one — only we do. Shared with
+    // the "Start" marker via `drawnExtent` so the two bounds cannot drift.
+    if (!drawnExtent) return [];
+    const chartStart = drawnExtent.startMs;
+    const chartEnd = drawnExtent.endMs;
 
     // Label spacing below is a PIXEL problem, so it is measured on the x-axis —
     // the full data extent — and not on the drawn subset above. Narrowing it to
@@ -922,7 +962,7 @@ export default function OddsChart({
 
     return deduped.map((b) => ({
       ...b,
-      time: format(parseISO(b.timestamp), "h:mm a"),
+      time: format(parseISO(b.timestamp), labelFormat),
       // UX-P022: labels used to ALTERNATE insideTopLeft / insideTopRight. That
       // reads like it spreads them out, but it does the opposite — a left-anchored
       // label grows rightward and the next right-anchored one grows leftward, so
@@ -932,7 +972,7 @@ export default function OddsChart({
       // above assumes.
       labelPosition: "insideTopLeft",
     }));
-  }, [periodBoundaries, chartData, plottedProbKeys]);
+  }, [periodBoundaries, chartData, plottedProbKeys, labelFormat, drawnExtent]);
 
   // "Final" marker (settled games only): a single vertical line at the last
   // chart category — i.e. the final snapshot, which is now the chart's right

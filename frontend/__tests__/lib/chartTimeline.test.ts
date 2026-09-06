@@ -49,16 +49,20 @@ describe("makeEnsurePoint", () => {
 });
 
 describe("fillMinuteGaps", () => {
-  test("seeds every missing minute in (first, last]", () => {
+  test("seeds every minute in [first, last] — BOTH endpoints included", () => {
     const map = new Map<string, Pt>();
     const ensure = makeEnsurePoint<Pt>(map, () => ({ value: null }));
     const first = new Date("2026-07-20T18:00:00Z");
     const last = new Date("2026-07-20T18:05:00Z");
     fillMinuteGaps(first, last, ensure);
-    // Minutes :01, :02, :03, :04, :05 seeded (first itself excluded).
-    expect(map.size).toBe(5);
+    // Minutes :00 .. :05 seeded.
+    expect(map.size).toBe(6);
     expect(map.has("2026-07-20T18:05:00.000Z")).toBe(true);
-    expect(map.has("2026-07-20T18:00:00.000Z")).toBe(false);
+    // #3419: `first` is INCLUSIVE. These endpoints are a shared DOMAIN, not
+    // the data's own extent, and computeSharedChartDomain always emits a tick
+    // at exactly `first`. Excluding it left that tick with no category to land
+    // on, so Recharts dropped the axis's leading label.
+    expect(map.has("2026-07-20T18:00:00.000Z")).toBe(true);
   });
 
   test("is a no-op when the range is empty or inverted", () => {
