@@ -91,6 +91,36 @@ class TestMoveAttribution:
         r = assess_move_attribution(a, injuries=inj, home_team=self.HOME, away_team=self.AWAY)
         assert r.surfaced is False
 
+    def test_a_derby_injury_that_reads_as_both_clubs_names_neither(self):
+        """#2907. `_team_matches` accepts a shared last word — right for "Vasco"
+        vs "Vasco da Gama", wrong for "Real Madrid" vs "Atletico Madrid", where
+        BOTH sides match and the injury identifies neither.
+
+        This became reachable when StatPal's soccer injuries started arriving
+        (they had never once produced a row), and ESPN's have always had the
+        same exposure. Naming the wrong club on the page is worse than silence.
+        """
+        a = _analysis(_move(-0.08))  # home fell
+        inj = [{"player_name": "Jude Bellingham", "team_name": "Real Madrid",
+                "status": "Out", "injury_type": "Knee Injury"}]
+        r = assess_move_attribution(
+            a, injuries=inj, home_team="Atletico Madrid", away_team="Real Madrid"
+        )
+        assert r.surfaced is False, "an ambiguous club must not be offered as the cause"
+
+    def test_a_qualified_club_naming_still_attributes(self):
+        """The control for the clause above: StatPal calls them "Vasco", we call
+        them "Vasco da Gama", and that unambiguous case must keep working — 18 of
+        the 63 production attaches on 2026-09-06 were this shape."""
+        a = _analysis(_move(-0.08))  # home fell
+        inj = [{"player_name": "P. Lopes", "team_name": "Vasco",
+                "status": "Out", "injury_type": "Muscle Injury"}]
+        r = assess_move_attribution(
+            a, injuries=inj, home_team="Vasco da Gama", away_team="Fluminense"
+        )
+        assert r.surfaced is True
+        assert "P. Lopes" in r.primary_cause
+
     def test_news_alone_below_threshold(self):
         a = _analysis(_move(-0.10))
         r = assess_move_attribution(a, news_headlines=["Some headline"],
