@@ -178,6 +178,96 @@ The mutation battery found two real gaps and one of its own: `min(e_a, e_b) -> e
 survived because every fixture pair declared the *same* soft limit, so the two expressions
 agreed by construction — the r_guard_rederives shape. Both closed; see the second commit.
 
+## 4b. CERT-2045 BLOCKed the first presentation, and the finding was correct
+
+**Do not read past this section.** The first staggered schedule was blocked at 08:39Z, and
+the reason is the most useful thing this queue produced.
+
+`collapse-winprob-snapshots-daily` (declared 1700s) landed at 05:15Z **exactly** alongside
+`backfill-kalshi-trade-history` (600s) and `poll-polymarket-hourly` (540s). Three arrivals,
+two slots: two of them hold both slots for 9–10 minutes, `warm-typeahead`'s message expires
+at 120s behind them, and the search box goes cold by the very mechanism the ship claimed to
+remove. **The pairwise check could not see it because it required BOTH sides to exceed
+1200s, and 600 and 540 do not.** §3.1 above was written before the BLOCK and its reasoning —
+"a 300s beat queued behind a 300s beat drains" — is the exact error the grader caught: two
+*mediums* exhaust two slots just as thoroughly as two grinders do.
+
+### The repair, in the BLOCK's own words
+
+> derive the invariant from the user-facing expiry budget rather than both tasks exceeding
+> 1200s
+
+`fire_isolation_violations()` does that. No compaction beat may fire within
+`warm-typeahead`'s own message-expiry budget of any other `background` beat whose declared
+hold exceeds that budget. The budget is **read** from
+`_EXPIRING_WARMER_BEATS["warm-typeahead"]` via `warmer_expiry_budget_s()`, never typed, and
+a missing or zero budget **raises** rather than defaulting — a silent default makes the
+check vacuous, and a vacuous check on this exact property is what CERT-2045 caught.
+
+New times, **solved rather than picked** — every fire ≥120s clear of every competitor fire
+on all seven days, both invariants clean at five anchors, and the assignment chosen to
+maximise the minimum gap between long-hold windows (**43 minutes**, against the 2 minutes
+the blocked draft left):
+
+```
+00:55–01:25  precompute-bookmaker-calibration   (still not moved: D45)
+02:08–03:08  turbo-collapse-futures
+03:57–04:57  turbo-collapse-odds
+11:43–12:11  collapse-futures-snapshots-daily
+17:43–18:11  collapse-winprob-snapshots-daily
+23:43–00:11  collapse-odds-snapshots-daily
+```
+
+### 🔴 The part that is not schedulable, measured rather than deferred
+
+The BLOCK's literal scope — a slot opportunity inside the budget **throughout** every
+compaction window — **cannot be met by any schedule.** Measured on this beat schedule:
+
+| | |
+|---|---|
+| background beat entries declaring a hold > the 120s budget | **59** |
+| their fires per day | **1,222** |
+| median minute's declared-resident count, on a **2**-slot pool | **5** (max 14) |
+| minutes in a 1,440-minute day with **none** resident | **7** |
+| longest contiguous run with ≤1 resident | **2 minutes** |
+
+No 28-minute window exists anywhere on the clock that satisfies it, and none ever did. A
+competitor arriving **mid-window** can still pair with a compaction resident and hold both
+slots past the budget. Closing that needs **isolation** — a queue and a worker the warmer
+does not share — which is a dyno purchase and Alex's call. It is in `alex-inbox` in plain
+English with three options and a stated default, not decided here.
+
+What **is** schedulable is the arrival pattern the BLOCK actually reproduced — simultaneous
+arrival. 335 of 1,440 minutes are clear on every day of the week, so it is satisfiable with
+room, and it is now enforced.
+
+### Why the declared-limit model, given it over-states residency fivefold
+
+Because the measured one cannot be evaluated. Only **six** background tasks have a measured
+p95 over the budget — `turbo_collapse_futures` 1440.1s, `backfill_winners` 840.3s,
+`turbo_collapse_odds` 734.4s, `precompute_category_pages` 260.0s, `enrich_snippet_angles`
+194.3s, `warm_prop_families` 189.7s — but **78 of 110 background beat tasks have no recorded
+duration at all**, *including both beats the BLOCK named*. So the declared limit is the only
+number that exists for the population that matters.
+
+**LAT-P242, riding in this same PR, is the instrument that closes exactly that hole.** The
+ship makes its own successor decidable, which is a better argument for the rider than the
+one the first presentation made.
+
+### Gates after the repair
+
+| gate | result |
+|---|---|
+| suite on head | **50/50 pass** (was 29) |
+| against the BLOCKED schedule at `22bed49c` | **fails 5/50** — isolation only; that schedule is pairwise-clean, which is the point |
+| against the original parent at `e34a6ce8` | **fails 10/50** — both invariants |
+| mutation battery, both derivations | **22/22 killed** |
+| consumers of touched symbols | **607 green** |
+
+`test_the_pairwise_check_alone_would_have_passed_the_blocked_schedule` pins *why* a second
+invariant was needed rather than a tweak to the first, so the two rules cannot quietly
+collapse into one later.
+
 ## 5. Filed, not fixed
 
 **#3481 — `turbo_collapse_futures` reads all 195.6M rows of a 52 GB table to choose 5,000
@@ -305,6 +395,21 @@ full-table aggregate.** `LIMIT 5000` over 195.6M rows read as a bounded pass, an
 for the same query shape on a sibling table**, the only difference being a two-level
 `ORDER BY` that has to rank everything before it can know what the first 5,000 are. When a
 prioritisation is added to a limited scan, the limit stops being a bound.
+
+**(lll) A pair test asks the wrong question about a fixed-slot pool.** The first guard here
+asked "are two beats BOTH long?" and passed a schedule where a 1700s beat, a 600s beat and a
+540s beat arrived at the same instant on two slots. Slot exhaustion is not a property of a
+pair, it is a property of an ARRIVAL against a capacity: what matters is whether the second
+slot comes back inside the budget of whoever is waiting, and a 540s task denies that exactly
+as thoroughly as a 3600s one. Size the rule by the waiting party's budget, not by the size of
+the occupants.
+
+**(mmm) When an invariant a reviewer asks for turns out to be unsatisfiable, the number that
+proves it is the deliverable — not a weaker invariant quietly substituted.** "A slot inside
+120s throughout every compaction window" reads reasonable and cannot be met by any schedule:
+59 entries, 1,222 fires a day, 7 clean minutes in 1,440. Ship the part that IS schedulable,
+state the part that is not with its measurement, and route the decision it implies to whoever
+owns spend. Substituting silently would have passed the next grader and been a lie.
 
 **(kkk) When every fixture in a battery declares the same value for a parameter, an
 expression over that parameter is untested.** `min(e_a, e_b)` and `e_a` are the same
