@@ -173,13 +173,30 @@ def _gandra_event(*, priced: bool = True) -> PolymarketEvent:
 
 
 class _Row:
-    """One row of `_LINKED_POLY_BOOKS_SQL`'s result."""
+    """One row of `_LINKED_POLY_BOOKS_SQL`'s result.
 
-    def __init__(self, ident, external_id, name="a dark market", event_id=15305793):
+    `category` and `market_tier` default to the specimen's OWN production values
+    (`futures_markets` 60280227, read 2026-09-06): a Polymarket game moneyline
+    born labelled `championship` at tier 5. Defaulting them to something the
+    label correction would refuse would make every arm below pass for a reason
+    the production row does not share.
+    """
+
+    def __init__(
+        self,
+        ident,
+        external_id,
+        name="a dark market",
+        event_id=15305793,
+        category="championship",
+        market_tier=5,
+    ):
         self.id = ident
         self.external_id = external_id
         self.name = name
         self.event_id = event_id
+        self.category = category
+        self.market_tier = market_tier
 
 
 class _SelectorResult:
@@ -221,12 +238,18 @@ class _DarkSession(RecordingSession):
         self._answered_selector = False
         self._conflict = conflict_on_insert
         self._next_outcome_id = 5000
+        self.executions: list[tuple[object, object]] = []
 
     async def execute(self, stmt, *args, **kwargs):
         if not self._answered_selector:
             self._answered_selector = True
             self.selector_params = args[0] if args else kwargs.get("parameters")
             return _SelectorResult(self._selector_rows)
+        # Statement AND its bound parameters. The label correction is raw
+        # `text()`, so its target id lives in the params dict and nowhere in the
+        # statement object — a recorder that kept only the statement could show
+        # that an UPDATE ran and never which row it ran against.
+        self.executions.append((stmt, args[0] if args else kwargs.get("parameters")))
         await super().execute(stmt, *args, **kwargs)
         if getattr(getattr(stmt, "table", None), "name", None) == "futures_outcomes":
             if self._conflict:
@@ -431,16 +454,37 @@ class TestTheRefusals:
 
     @pytest.mark.asyncio
     async def test_it_never_touches_identity(self, monkeypatch):
-        """#3532's whole story is two writers on one column. This pass writes
-        prices and legs; it must not emit a single statement against
-        `futures_markets`, nor bind an `event_id` or a `commence_time`."""
+        """#3532's whole story is two writers on one column.
+
+        The pass writes prices and legs. Since CERT-2111 it also writes ONE
+        market-row column — `category`, a display label, on a row it has just
+        given its first legs — and that exception is named here rather than left
+        for a reader to discover: the assertion is that the only statement
+        touching `futures_markets` sets `category` and nothing else, and that no
+        statement anywhere binds an `event_id` or a `commence_time`.
+        """
         _, session, _ = await _execute(
             [_Row(60280227, "972409", TITLE)],
             {"972409": _gandra_event()},
             monkeypatch,
         )
-        assert _writes(session, "futures_markets") == []
+        market_sql = [
+            str(stmt) for stmt, _p in session.executions
+            if "futures_markets" in str(stmt)
+        ]
+        assert len(market_sql) == 1, (
+            f"expected exactly one futures_markets statement, got {market_sql}"
+        )
+        sql = market_sql[0]
+        assert "SET category = 'game_prop'" in sql, sql
+        for forbidden in ("event_id", "commence_time", "market_tier", "name"):
+            assert f"{forbidden} =" not in sql, (
+                f"the label correction is writing {forbidden} — it may write "
+                "`category` and nothing else"
+            )
         for stmt in session.statements:
+            if "futures_markets" in str(stmt):
+                continue
             params = _bound_params(stmt)
             assert "event_id" not in params
             assert "commence_time" not in params
@@ -669,6 +713,165 @@ class TestOnePricerForBothPaths:
         src = inspect.getsource(poly._parent_outcome_data)
         for forbidden in ("session", "await ", "get_events", "commit("):
             assert forbidden not in src, forbidden
+
+
+# ---------------------------------------------------------------------------
+# The half that makes the price READABLE (CERT-2111)
+# ---------------------------------------------------------------------------
+
+
+def _label_updates(session) -> list[dict]:
+    """Every `category = 'game_prop'` correction, with the id it targeted."""
+    return [
+        dict(params or {})
+        for stmt, params in session.executions
+        if "SET category = 'game_prop'" in str(stmt)
+    ]
+
+
+class TestTheLabelThatMakesItVisible:
+    """CERT-2111: the leg reaches `/related-futures` and the page still drops it.
+
+    `categorizeFutures()` (`frontend/components/RelatedFutures.tsx`) buckets on
+    `display_category`, and it has no bucket for `championship` — the value
+    `classify_market_category` returns verbatim for a Polymarket game moneyline,
+    which is what our specimen was born as. The working sibling names the right
+    label rather than leaving it to taste: event 15190803 renders GAME PROPS
+    from market 60285732, `category = 'game_prop'`.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_priced_dark_moneyline_is_relabelled_so_the_page_shows_it(
+        self, monkeypatch
+    ):
+        stats, session, _ = await _execute(
+            [_Row(60280227, "972409", TITLE)],
+            {"972409": _gandra_event()},
+            monkeypatch,
+        )
+        updates = _label_updates(session)
+        assert len(updates) == 1, (
+            "the specimen must be relabelled exactly once — without it the leg "
+            f"is written and no reader ever sees it. updates={updates}"
+        )
+        assert updates[0]["id"] == 60280227, (
+            f"the correction targeted {updates[0]}, not the market it priced"
+        )
+        assert stats["display_labels_corrected"] == 1
+
+    @pytest.mark.asyncio
+    async def test_a_market_that_got_no_legs_is_left_alone(self, monkeypatch):
+        """The control that stops this from being a blanket relabeller.
+
+        No price, no leg, no claim about what the row is — the pass has learnt
+        nothing about this market and must not restate its label.
+        """
+        monkeypatch.setattr(poly, "_parent_outcome_data", lambda event: [])
+        stats, session, _ = await _execute(
+            [_Row(60280227, "972409", TITLE)],
+            {"972409": _gandra_event()},
+            monkeypatch,
+        )
+        assert _label_updates(session) == []
+        assert stats["display_labels_corrected"] == 0
+
+    @pytest.mark.asyncio
+    async def test_every_leg_losing_the_race_leaves_the_label_alone(
+        self, monkeypatch
+    ):
+        """`ON CONFLICT DO NOTHING` fired on all of them: another writer owns
+        this market's legs, so this pass has added nothing and relabels nothing.
+        A counter read at the pass level rather than the market level would fire
+        here off a sibling market's insert."""
+        stats, session, _ = await _execute(
+            [_Row(60280227, "972409", TITLE)],
+            {"972409": _gandra_event()},
+            monkeypatch,
+            conflict_on_insert=True,
+        )
+        assert _writes(session, "futures_outcomes"), "the INSERT is still attempted"
+        assert _label_updates(session) == []
+        assert stats["display_labels_corrected"] == 0
+
+    @pytest.mark.asyncio
+    async def test_a_row_that_is_not_one_contest_keeps_its_label(self, monkeypatch):
+        """"Who will be UFC Middleweight champion at the end of 2026?" is a real
+        championship future that lives on the same page (production event
+        15190803 serves one). Relabelling it `game_prop` would file a season-long
+        question under Game Props, which is the mirror of the bug being fixed."""
+        _, session, _ = await _execute(
+            [
+                _Row(
+                    999001,
+                    "972409",
+                    "Who will be UFC Middleweight champion at the end of 2026?",
+                )
+            ],
+            {"972409": _gandra_event()},
+            monkeypatch,
+        )
+        assert _label_updates(session) == []
+
+    @pytest.mark.asyncio
+    async def test_a_row_already_labelled_game_prop_is_not_rewritten(
+        self, monkeypatch
+    ):
+        """A no-op UPDATE is still a write: it takes a row lock and stamps
+        nothing. The pass skips the statement rather than relying on
+        `IS DISTINCT FROM` to make it harmless."""
+        _, session, _ = await _execute(
+            [_Row(60280227, "972409", TITLE, category="game_prop")],
+            {"972409": _gandra_event()},
+            monkeypatch,
+        )
+        assert _label_updates(session) == []
+
+    @pytest.mark.asyncio
+    async def test_a_season_long_tier_is_out_of_scope(self, monkeypatch):
+        """Tier 5 is "this one game". A tier-1 row wearing a matchup-shaped name
+        is not a game prop however it reads, and the tier is the cheaper, harder
+        signal — so it gates the correction too."""
+        _, session, _ = await _execute(
+            [_Row(60280227, "972409", TITLE, market_tier=1)],
+            {"972409": _gandra_event()},
+            monkeypatch,
+        )
+        assert _label_updates(session) == []
+
+    def test_the_name_predicate_refuses_what_it_should(self):
+        """The predicate itself, stated as a table rather than inferred from the
+        arms above — a display rule must refuse the rows a permissive matcher
+        helper exists to accept."""
+        accepted = [
+            "UFC 331: Ozzy Diaz vs. Ryan Gandra (Middleweight, Early Prelims)",
+            "Bills at Jets",
+            "Alcaraz vs Sinner",
+        ]
+        refused = [
+            "Who will be UFC Middleweight champion at the end of 2026?",
+            "Will Sean O'Malley become UFC champion in 2026?",
+            "NBA Champion 2027",
+            "",
+            None,
+        ]
+        for name in accepted:
+            assert poly._is_one_game_matchup_name(name), name
+        for name in refused:
+            assert not poly._is_one_game_matchup_name(name), name
+
+    def test_the_predicate_is_the_routes_own_definition(self):
+        """The pass writes `game_prop`; `_build_related_futures` decides
+        separately whether a row is "game-specific" using its own
+        `_GAME_MATCHUP_RE`. If those two definitions drift, the database and the
+        page disagree about what a row is — so they are pinned equal here rather
+        than left to a comment. Change one and this names the other."""
+        from app.routes.events import _GAME_MATCHUP_RE
+
+        assert poly._GAME_MATCHUP_NAME_RE.pattern == _GAME_MATCHUP_RE.pattern, (
+            "the pass's matchup predicate has drifted from the route's. Update "
+            "both together, or the label written here stops meaning what the "
+            "page tests for."
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -550,3 +550,15 @@ class TestTheReaderCanActuallySeeIt:
             "the number on the page must be the number the venue is quoting — "
             "29.5%, not a normalised or invented one"
         )
+        # CERT-2111: being in the payload is not being on the page.
+        # `categorizeFutures()` buckets on this field and has NO bucket for
+        # `championship`, which is what the fixture is seeded with and what the
+        # specimen's production row carries. The round trip is what proves the
+        # pass's label correction survives to the reader — a unit test can only
+        # show the UPDATE was emitted.
+        assert priced[0]["display_category"] == "game_prop", (
+            f"the row is served as {priced[0]['display_category']!r}; the web "
+            "categorizer drops everything it has no bucket for, and it has none "
+            "for 'championship'. The fixture seeds 'championship' exactly as "
+            "production does, so this asserts the pass relabelled it."
+        )

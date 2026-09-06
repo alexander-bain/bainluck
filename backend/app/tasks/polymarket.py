@@ -7,6 +7,7 @@ with source="polymarket".
 """
 
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -1733,7 +1734,9 @@ _LINKED_POLY_BOOKS_SQL = text(
     SELECT fm.id,
            fm.external_id,
            fm.name,
-           fm.event_id
+           fm.event_id,
+           fm.category,
+           fm.market_tier
       FROM futures_markets fm
       JOIN events e ON e.id = fm.event_id
      WHERE fm.source = 'polymarket'
@@ -1759,6 +1762,34 @@ _LINKED_POLY_BOOKS_SQL = text(
      LIMIT :max_markets
     """
 )
+
+
+#: The repo's OWN definition of a single-game matchup name, character for
+#: character: `app/routes/events.py::_GAME_MATCHUP_RE`, the regex
+#: `_build_related_futures` uses to decide whether a market is tied to one game.
+#: Copied rather than imported because a task importing a route module at call
+#: time is an import cycle waiting to happen, and pinned equal by
+#: `test_the_predicate_is_the_routes_own_definition` so the two cannot drift:
+#: the label this pass writes and the route's own game-specific test have to
+#: mean the same thing or the page disagrees with the database about what a row
+#: is.
+#:
+#: NOT a matcher helper. `prediction_market_matching`'s matchup extractors are
+#: PERMISSIVE by design — a false accept there costs a candidate that later
+#: checks reject. This drives a DISPLAY label, where a false accept is a wrong
+#: label on a page with nothing downstream to catch it. The route's regex is the
+#: display-side definition and refuses the prose that trips a permissive one:
+#: "Who will be UFC Middleweight champion at the end of 2026?" contains the word
+#: "at" and is correctly rejected.
+_GAME_MATCHUP_NAME_RE = re.compile(
+    r"\bvs\.?\s|\s–\s|\bat\b.*:\s*\w|^[\w][\w\s.'\-()]+\bat\b\s+[\w][\w\s.'\-()]+$",
+    re.IGNORECASE,
+)
+
+
+def _is_one_game_matchup_name(name: str | None) -> bool:
+    """Does this market name describe ONE contest between two named sides?"""
+    return bool(name) and bool(_GAME_MATCHUP_NAME_RE.search(name))
 
 
 async def _refresh_linked_polymarket_books(deadline_s: float | None = None) -> dict:
@@ -1809,7 +1840,10 @@ async def _refresh_linked_polymarket_books(deadline_s: float | None = None) -> d
       cannot be in this population, because a graded row is a row.
     * **It never touches identity.** No ``event_id``, no ``commence_time``, no
       tier, no name on the market row. Two writers on one column is #3532's whole
-      story and this pass is not the second one.
+      story and this pass is not the second one. The ONE market-row column it
+      does write is ``category``, a display label, and only on a row it has just
+      given its first legs — see the block that does it for why a price nobody
+      can see is not a ship, and for the population it deliberately leaves alone.
     * **It refuses an incoherent field.** CAL-P006 (#1527), the same guard and
       the same reason as the poll: an impossible field is not a price.
 
@@ -1841,6 +1875,7 @@ async def _refresh_linked_polymarket_books(deadline_s: float | None = None) -> d
         "incoherent_fields_skipped": 0,
         "outcomes_created": 0,
         "snapshots_written": 0,
+        "display_labels_corrected": 0,
         "deadline_hit": False,
         "errors": [],
     }
@@ -1868,7 +1903,13 @@ async def _refresh_linked_polymarket_books(deadline_s: float | None = None) -> d
         # Copy to plain scalars: the per-market commit below expires ORM state,
         # and a row read after it is a row that may not answer (gotcha #6).
         work = [
-            {"id": r.id, "external_id": str(r.external_id), "name": r.name}
+            {
+                "id": r.id,
+                "external_id": str(r.external_id),
+                "name": r.name,
+                "category": r.category,
+                "market_tier": r.market_tier,
+            }
             for r in rows
         ]
         by_external_id = {w["external_id"]: w for w in work}
@@ -1932,6 +1973,11 @@ async def _refresh_linked_polymarket_books(deadline_s: float | None = None) -> d
                         continue
 
                     outcome_data.sort(key=lambda x: x["prob"], reverse=True)
+
+                    # Whether THIS market got a leg, not whether the pass did:
+                    # the label correction below must not fire on a market whose
+                    # every leg lost the `ON CONFLICT DO NOTHING` race.
+                    _created_before_this_market = stats["outcomes_created"]
 
                     for rank, od in enumerate(outcome_data, 1):
                         prob = od["prob"]
@@ -1998,6 +2044,58 @@ async def _refresh_linked_polymarket_books(deadline_s: float | None = None) -> d
                             )
                         )
                         stats["snapshots_written"] += 1
+
+                    # ── The half that makes the price READABLE (CERT-2111) ──
+                    #
+                    # A price nobody can see is not a ship. CERT-2111 measured
+                    # the rest of the path: the leg written above does reach
+                    # `/related-futures`, and the web `categorizeFutures()`
+                    # (`components/RelatedFutures.tsx`) then DROPS it — it has
+                    # buckets for `game_prop`, `award`, `season_stat`,
+                    # `playoff_path`, `conference`, `series`, `trade`,
+                    # `novelty` and `other`, and none at all for
+                    # `championship`. `display_category` is
+                    # `classify_market_category(...)`, which for a name like
+                    # this one returns the market's own `category` verbatim.
+                    #
+                    # So the row is invisible because a Polymarket game
+                    # moneyline was born labelled `championship`. The working
+                    # sibling proves what the right label is rather than my
+                    # guessing it: event 15190803, the same UFC card, renders
+                    # under Bigger Picture -> GAME PROPS from market 60285732,
+                    # whose `category` is `game_prop`; its parent row 60280233
+                    # carries `championship` and is dropped exactly like ours.
+                    #
+                    # This is a DISPLAY label, not identity — no `event_id`, no
+                    # `commence_time`, no tier, no name, no price — and it is
+                    # written ONLY on a row this pass has just given its first
+                    # legs, that is linked to an event (the selector's own
+                    # requirement), is tier 5, and whose name describes one
+                    # contest between two sides. `IS DISTINCT FROM` keeps it a
+                    # no-op on a row already labelled correctly.
+                    #
+                    # DELIBERATELY NOT WIDENED. The same mislabel sits on
+                    # **7,167 open tier-5 event-linked matchup markets**
+                    # (6,666 Polymarket + 501 Kalshi, production 2026-09-06),
+                    # every one of them invisible in Bigger Picture. Relabelling
+                    # that population is a product decision about what an event
+                    # page shows, not a rider on a price-capture fix; it is
+                    # filed as #3649 for the surface's owner.
+                    if (
+                        stats["outcomes_created"] > _created_before_this_market
+                        and (row.get("category") or "") != "game_prop"
+                        and row.get("market_tier") == 5
+                        and _is_one_game_matchup_name(row.get("name"))
+                    ):
+                        await session.execute(
+                            text(
+                                "UPDATE futures_markets SET category = 'game_prop' "
+                                "WHERE id = :id "
+                                "AND category IS DISTINCT FROM 'game_prop'"
+                            ),
+                            {"id": row["id"]},
+                        )
+                        stats["display_labels_corrected"] += 1
 
                     # Per-market commit: one bad market may not roll back a whole
                     # batch's worth of prices (gotcha #13 / #42).
