@@ -830,7 +830,9 @@ class TestTheDeclaredPass:
         assert doubles["venue"]["candidates"] == 0
 
         assert report["terminal"] == "complete"
-        assert report["members"] == 3
+        # Four in-window rows: both Swiatek-Zheng legs, the men's 9/7 leg, and
+        # the fan-week mixed row. The two 09-18 doubles rows are the refusal.
+        assert report["members"] == 4
 
     async def test_a_second_pass_converges_instead_of_doubling(self, pg_session):
         """Hourly means idempotent, or the hub grows without bound."""
