@@ -647,6 +647,58 @@ def test_the_refresh_ahead_window_actually_keeps_the_head_alive():
     assert SEARCH_RESPONSE_TTL_SECONDS - MIN_PASS_PERIOD_SECONDS <= REFRESH_AHEAD_SECONDS
 
 
+def test_the_message_expiry_is_derived_from_the_lock_ttl_not_the_beat_period():
+    """#3364: the bound that decides whether a fire is delivered at all.
+
+    The old value was the beat period, justified against the task's WALL. The
+    wall is the wrong quantity — it decides whether a *delivered* fire can start,
+    not whether the fire survives the broker queue. Production read
+    `matched_emitted` 30 / `matched_delivered` 0 in one 600 s bucket under the
+    old bound.
+
+    Asserted as a DERIVATION rather than as the number 180, so lowering
+    `_LOCK_TTL_SECONDS` moves the bound with it instead of silently leaving a
+    stale literal behind.
+    """
+    from app.tasks.search_head_warmer import (
+        _LOCK_TTL_SECONDS,
+        BEAT_PERIOD_SECONDS,
+        derive_message_expiry_s,
+    )
+
+    derived = derive_message_expiry_s()
+    assert derived == float(_LOCK_TTL_SECONDS)
+    # The whole point: strictly above the period, or the flat rule would apply
+    # and the delivery deficit would be back.
+    assert derived > BEAT_PERIOD_SECONDS
+
+
+def test_the_message_expiry_refuses_rather_than_clamping():
+    """Both refusals, because a quietly clamped bound is how this drifts back.
+
+    A bound that returns a smaller number when its inputs go out of range looks
+    like it worked. `derive_message_expiry_s` raises instead, and the wiring
+    guard propagates the raise.
+    """
+    import pytest
+
+    from app.tasks.search_head_warmer import derive_message_expiry_s
+
+    # A lock TTL at or under the beat period means this beat does not need a
+    # delivery bound at all — the flat #1609 rule covers it.
+    with pytest.raises(ValueError, match="beat period"):
+        derive_message_expiry_s(beat_s=20.0, lock_ttl_s=20.0)
+
+    # Too many messages alive at once is a real cost even at ~30 ms a skip, so
+    # the cap is enforced rather than documented.
+    with pytest.raises(ValueError, match="alive at once"):
+        derive_message_expiry_s(beat_s=1.0, lock_ttl_s=180.0)
+
+    for bad in ({"beat_s": 0}, {"lock_ttl_s": 0}, {"beat_s": -20.0}):
+        with pytest.raises(ValueError, match="must both be positive"):
+            derive_message_expiry_s(**bad)
+
+
 # ---------------------------------------------------------------------------
 # 16-18. HONEST INVALIDATION: what is never cached, and what says so out loud
 # ---------------------------------------------------------------------------

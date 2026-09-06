@@ -4941,14 +4941,22 @@ celery_app.conf.beat_schedule = {
         # floors on distinct sessions. See `search_head_warmer`'s docstring for
         # the census (the table is 99.66% session-less automation).
         #
-        # COST, RE-STATED FOR THE ENABLED STATE, and it is far below the estimate
-        # this comment used to carry. The bound is `min(8, terms two different
-        # sessions asked in 30 days)`, and at the 2026-08-27 census that is
-        # exactly ONE term. So a steady-state pass rebuilds 1 `/search` answer,
-        # not 8: ~1-2s of database time per 45s against `background`'s roughly
-        # one effective slot (#1609). The 8-at-~4-8s figure is the CEILING the
-        # head would have to grow into, and it can only get there by real people
-        # asking the same questions. Every knob is set below its
+        # COST, RE-MEASURED 2026-09-06 (#3364) — AND THE FIGURE THIS COMMENT USED
+        # TO CARRY WAS 3-20x LOW. It read: "at the 2026-08-27 census the head is
+        # exactly ONE term, so a steady-state pass rebuilds 1 `/search` answer,
+        # not 8: ~1-2s of database time per 45s". Both halves have moved. The head
+        # is now EIGHT attested terms (`chiefs`, `alcaraz`, `sabalenka`, ...) —
+        # real people did start asking the same questions, which is the mechanism
+        # `MIN_HEAD_SESSIONS` was built to wait for — and production pass walls
+        # measure **3.3-26.1 s, p50 ~7.9 s**, not 1-2 s.
+        #
+        # It is the number the enabled-state decision was justified on, so it is
+        # corrected here rather than left to be rediscovered. The load bound is
+        # unchanged and is what actually caps this: `MIN_PASS_PERIOD_SECONDS`
+        # admits at most one pass per 45 s whatever the beat does. The 8-at-4-8s
+        # figure was never the ceiling either; the ceiling is 8 terms at the
+        # measured wall against `background`'s roughly one effective slot
+        # (#1609). Every knob is set below its
         # `warm-typeahead` sibling's (8 terms not 40, width 2 not 4, floor 45s
         # not 30s) precisely because a `/search` call is the heavier one.
         #
@@ -6067,14 +6075,52 @@ _EXPIRING_WARMER_BEATS = {
     # ceiling: three numbers that must agree, and only one of them typed.
     "warm-futures-categories": _futures_categories_warm_minutes() * 60,
 
-    # LAT-P090/#2211. 20 s == the beat period, so the flat #1609 rule applies
-    # unamended: this task's WALL (~4-8 s steady state, ~10 ms on a floor skip)
-    # is shorter than its period, so a fire that could not start a pass IS a
-    # superseded message and must not outlive its replacement. That is the
-    # opposite of `warm-typeahead`, whose 39-61 s wall against a 10 s beat makes
-    # its held-off fires the only start opportunities that exist — which is why
-    # that one needs a derived bound and this one does not.
-    "warm-search-head": 20,
+    # 🔴 **20 -> 180, #3364.** The old value and its reasoning are kept below,
+    # because the reasoning is sound and it is the reasoning a reader will
+    # repeat — it is only aimed at the wrong quantity.
+    #
+    # It ran: "20 s == the beat period, so the flat #1609 rule applies unamended:
+    # this task's WALL (~4-8 s steady state, ~10 ms on a floor skip) is shorter
+    # than its period, so a fire that could not start a pass IS a superseded
+    # message and must not outlive its replacement."
+    #
+    # **An `expires` bound is not compared against the task's wall. It is
+    # compared against DELIVERY LATENCY** — how long the message waits in the
+    # broker for a free slot on `worker-background`'s `--concurrency=2` against
+    # 57+ beats (#1609). The wall decides whether a delivered fire can start. It
+    # says nothing about whether the fire is delivered. latency/182 wrote this on
+    # #3364 and did not claim it; this is that ship.
+    #
+    # 🔴 MEASURED, not argued (2026-09-06, production). `schedule-adherence` reads
+    # `matched_emitted` **30** in one 600 s bucket — exactly the 20 s cadence, so
+    # the beat is healthy — against `matched_delivered` **0**,
+    # `undelivered_fraction` 1.0, `matched_coverage_proven` true,
+    # `bucket_attribution` `broker_or_worker`, `self_gated_fires` 0. Over the long
+    # window: **102 starts against 2,949 expected fires, a ratio of 0.03.** Across
+    # the other background warmers the delivered ratio tracks `expires` and not
+    # the queue — 300 s -> 0.87, 120 s -> 0.37, 110 s -> 0.23, 20 s -> 0.03.
+    #
+    # 180 is `_LOCK_TTL_SECONDS`, a CONSTANT and deliberately not a sampled
+    # delivery latency (this program has read a sampled maximum as a bound and
+    # been wrong twice). It is where this task's own responsibility ends: the
+    # lock cannot be held past its own TTL, so a message older than that is
+    # provably not waiting on a pass of this warmer. The derivation, its refusals
+    # and the full cost statement live in
+    # `search_head_warmer.derive_message_expiry_s`, which the wiring guard
+    # asserts this value against.
+    #
+    # COST, stated and not rounded away: 9 messages alive at once, 8 of which
+    # take the floor-skip path measured at 11-89 ms — under a second per pass
+    # cycle. The part that is real is the passes that now run: at most one per
+    # 45 s (`MIN_PASS_PERIOD_SECONDS` is the load bound and it is unchanged), at
+    # 3.3-26.1 s wall each. Single-digit percent of a two-slot pool, on the queue
+    # #1609 and #3480 are both about. That is the budget this beat always
+    # declared — it is not a new appetite, it is the delivery of an old one.
+    #
+    # ⚠️ **This does not close #3539.** It makes the effective pass period the
+    # ~60 s the cadence arithmetic assumes instead of the ~576 s it is today.
+    # #3539 is that 60 s still not being sound against a 60 s TTL.
+    "warm-search-head": 180,
 }
 
 for _warmer_beat, _expires_s in _EXPIRING_WARMER_BEATS.items():

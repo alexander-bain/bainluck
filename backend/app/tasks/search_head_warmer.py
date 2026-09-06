@@ -98,11 +98,15 @@ contamination-proof by construction.
 THE COST, STATED, because this lane's own doctrine is that a warmer is not free.
 `/search` is a much heavier call than `/typeahead`, so every knob here is set
 below its sibling's: 8 terms rather than 40, concurrency 2 rather than 4, and a
-45 s floor rather than 30 s. ENABLED, a steady-state pass rebuilds 8 entries at
-concurrency 2; at the ~1-2 s per query this endpoint measures that is ~4-8 s of
-database time per 45 s, against `background`'s roughly one effective slot
-(#1609). DISABLED — the shipping state — a fire takes the `disabled` skip path
-at ~1 ms and the beat's draw is negligible.
+45 s floor rather than 30 s. A steady-state pass rebuilds 8 entries at
+concurrency 2, and production measures the pass wall at **3.3-26.1 s, p50
+~7.9 s** (2026-09-06) — the "~1-2 s per query, ~4-8 s per pass" this paragraph
+used to carry was 3-20x low, and it is corrected rather than quietly dropped
+because it is the number the ENABLED decision was justified on. The load bound
+is `MIN_PASS_PERIOD_SECONDS`: at most one pass per 45 s, whatever the beat does.
+
+⚠️ TWO OPEN DEFECTS LIVE IN THE ARITHMETIC BELOW. Neither is fixed here; both are
+named so nobody reads this docstring as a guarantee.
 
 THE THREE CONSTANTS ARE ONE DECISION, not three. An entry lives
 `SEARCH_RESPONSE_TTL_SECONDS`; a pass arrives at worst every
@@ -116,6 +120,25 @@ THE THREE CONSTANTS ARE ONE DECISION, not three. An entry lives
 how `/typeahead` sat at a 47% duty cycle for two cycles while reporting 40/40
 every pass, so the relation is asserted as a test rather than left as arithmetic
 in a comment.
+
+🔴 **#3539 — THAT RELATION IS UNSOUND, AND THE TEST ASSERTING IT PASSES ON A
+PERIOD THE SYSTEM NEVER ACHIEVES.** `MIN_PASS_PERIOD_SECONDS` is a floor, not the
+period: a 45 s floor against a 20 s beat quantizes up, so the smallest achievable
+gap between two real passes is **60 s**, and the first clause is really `60 < 60`
+= false. The relation also carries no rebuild-duration term at all, though the
+entry is written at the END of a pass, not at its start. The sound form needs
+`REFRESH_AHEAD - P_effective > D_max`; today that is `25 - 60 = -35`. Do not
+tune any of the three without reading #3539 — its three candidate repairs are
+each a product decision (rebuild load, a freshness ceiling, or #1866's DDL).
+
+🔴 **#3364 — AND UNTIL 2026-09-06 THE PERIOD WAS NOT 60 s EITHER, IT WAS ~576 s.**
+`_EXPIRING_WARMER_BEATS["warm-search-head"]` bounded the beat's messages at one
+beat period, so on a `--concurrency=2` pool serving 57+ beats they were discarded
+before a slot ever freed: 102 starts against 2,949 expected fires, and
+`matched_delivered` **0** of `matched_emitted` **30** in one 600 s bucket. That
+bound is now derived — see `derive_message_expiry_s` below — which makes the 60 s
+above the real period and therefore makes #3539 the binding constraint rather
+than a theoretical one.
 """
 
 from __future__ import annotations
@@ -222,6 +245,118 @@ _LOCK_KEY = "bainluck:search_head_warmer:running"
 _LOCK_TTL_SECONDS = 180
 _LAST_PASS_START_KEY = "bainluck:search_head_warmer:last_pass_start"
 _LAST_PASS_START_TTL_SECONDS = 3600
+
+#: The beat's publish period, mirrored here so `derive_message_expiry_s` can be
+#: read without the beat file open. `tests/test_tasks_wiring.py` asserts the two
+#: agree, so this is a mirror and never a second source of truth.
+BEAT_PERIOD_SECONDS = 20.0
+
+#: How many of this beat's messages may be alive in the broker at once.
+#: STRUCTURAL, not sampled: `expires / beat_period` of them coexist by
+#: construction, and all but one are destined for the floor-skip path. The cap
+#: exists so raising the bound stays a bounded act rather than an open one.
+MAX_LIVE_MESSAGES = 16
+
+
+def derive_message_expiry_s(
+    *,
+    beat_s: float = BEAT_PERIOD_SECONDS,
+    lock_ttl_s: float = _LOCK_TTL_SECONDS,
+    max_live: int = MAX_LIVE_MESSAGES,
+) -> float:
+    """How long a `warm-search-head` message must be allowed to live. Derived.
+
+    ## The defect this repairs, measured rather than argued (#3364)
+
+    `_EXPIRING_WARMER_BEATS["warm-search-head"]` was **20**, equal to the beat
+    period, under a comment justifying it against the task's own wall: "this
+    task's WALL (~4-8 s steady state) is shorter than its period, so a fire that
+    could not start a pass IS a superseded message".
+
+    **The reasoning is sound and its premise is the wrong quantity** — latency/182
+    wrote exactly that on #3364 and did not claim it. An `expires` bound is not
+    compared against the task's wall. It is compared against DELIVERY LATENCY:
+    the time a message spends in the broker waiting for a free slot on
+    `worker-background`, which runs `--concurrency=2` against 57+ beat entries
+    (#1609). The wall governs whether a *delivered* fire can start; it says
+    nothing about whether the fire is delivered at all.
+
+    **Measured on production 2026-09-06, three independent ways:**
+
+    * `task-metrics?task=warm_search_head`: **102 starts against 2,949 expected**
+      fires over a 58,987 s window — 3.5 % of schedule.
+    * `celery/schedule-adherence`: `matched_emitted` **30** in one 600 s bucket,
+      i.e. *exactly* the 20 s beat cadence, so the beat is healthy; against
+      `matched_delivered` **0**, `undelivered_fraction` **1.0**,
+      `matched_coverage_proven` true, `bucket_attribution` `broker_or_worker`,
+      and `self_gated_fires` **0**. Publishing is fine; nothing survives to a
+      slot, and the task's own floor is not what is stopping it.
+    * The same endpoint across the other `background` warmers, where the
+      delivered-fire ratio tracks `expires` and not the queue::
+
+          expires 300 -> 0.87   warm-event-concepts
+          expires 120 -> 0.37   warm-typeahead        (0.35 candidate-base)
+          expires 110 -> 0.23   flush-search-gin-pending-lists
+          expires  20 -> 0.03   warm-search-head
+
+      Messages routinely wait minutes for a slot. A 20 s bound discards
+      essentially all of them, and it discards them for a delay the bound was
+      never aimed at.
+
+    This is the same shape as LAT-P075's repair of the sibling beat, arrived at
+    from the other direction: there the messages were held off by the run lock,
+    here by the pool. In both cases the fires that could not start were **not
+    superseded messages — they were the only start opportunities there were.**
+
+    ## The derived value, and why it is not derived from the delay
+
+    There is no constant in this system that bounds delivery latency. That is
+    #1609, it is unbounded by design on a shared pool, and a bound read off a
+    sampled maximum has already been wrong twice in this program (42.6 s by
+    11.3 s, then 53.920 s by 7.36 s). So the bound is not derived from the delay.
+
+    It is derived from where this task's own responsibility ENDS.
+    `_LOCK_TTL_SECONDS` is the longest this task can withhold a slot from its own
+    message: the lock cannot be held past its own TTL. A message younger than
+    that may still be waiting on a pass of this task; a message older than that
+    is not being held off by this warmer at all, it is merely old. That is the
+    honest place to stop, and it is a CONSTANT, so the next latency measurement
+    cannot move it.
+
+    ## What it costs, stated
+
+    `expires / beat_s` messages are alive at once — 9 at these values — and all
+    but one take the floor-skip path under `MIN_PASS_PERIOD_SECONDS`. Production
+    measures that path at **11-89 ms**. So the surplus is ~8 skips per pass
+    cycle against a >= 45 s floor: well under a second of slot time per cycle.
+
+    The cost that is NOT negligible, and must not be reported as if it were: the
+    passes that now actually run. At a delivered-fire ratio in the sibling's
+    range the floor admits at most one pass per 45 s, and a real pass measures
+    3.3-26.1 s wall (p50 ~7.9 s). That is single-digit percent of a two-slot pool
+    and it lands on the queue #1609 and #3480 are both about. It is the load the
+    beat's own budget always declared; it is not a new appetite.
+
+    **This does not close #3539.** Restoring delivery makes the effective pass
+    period the 60 s the cadence arithmetic assumes instead of the ~576 s it is
+    today; #3539 is about that 60 s still not being sound against a 60 s TTL.
+    """
+    if beat_s <= 0 or lock_ttl_s <= 0:
+        raise ValueError("beat period and lock TTL must both be positive")
+    if lock_ttl_s <= beat_s:
+        # Below the period the flat #1609 rule applies and this task does not
+        # belong in the exempt set at all. A REFUSAL, not a quietly clamped value.
+        raise ValueError(
+            f"lock TTL {lock_ttl_s}s is not above the {beat_s}s beat period, so a "
+            f"delivery-latency bound is not what this beat needs"
+        )
+    live = lock_ttl_s / beat_s
+    if live > max_live:
+        raise ValueError(
+            f"expires {lock_ttl_s}s at a {beat_s}s beat leaves {live:.0f} messages "
+            f"alive at once, over the declared cap of {max_live}"
+        )
+    return float(lock_ttl_s)
 
 #: Redis `TTL` is THREE-VALUED and the two negatives mean opposite things, so
 #: they are never collapsed (gotcha #53 — an absent value and a zero value must
