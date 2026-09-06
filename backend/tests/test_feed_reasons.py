@@ -457,7 +457,12 @@ class TestHumanizeBinaryOutcomeName:
             "No",
             "Will Rory McIlroy finish Top 5 at the Truist Championship?",
         )
-        assert result.startswith("No: ") or result.startswith("Not")
+        # #3491: "finish" is outside Strategy 1's verb list, so this falls to
+        # Strategy 2, whose label does not fit the pair. The bare side is then
+        # the answer rather than a chopped echo. What this test has always been
+        # about is unchanged and asserted below: the No side must never reach
+        # the card wearing the AFFIRMATIVE reading of the question.
+        assert result == "No"
         assert not result.startswith("Rory McIlroy finish Top 5")
 
     def test_extracts_person_name(self):
@@ -484,12 +489,20 @@ class TestHumanizeBinaryOutcomeName:
         assert result != "there"
         assert "government shutdown" in result.lower()
 
-    def test_non_will_question_truncates(self):
+    def test_non_will_question_keeps_its_label_when_the_pair_fits(self):
+        # A question that does not open with "Will" still gets a Strategy 2
+        # label — refusal is about LENGTH, not about the auxiliary.
         result = humanize_binary_outcome_name(
-            "Yes", "Federal Reserve interest rate above 5%?"
+            "Yes", "Does Alcaraz reach the semifinals?"
         )
-        assert result != "Yes"
-        assert "Federal Reserve" in result
+        assert result == "Does Alcaraz reach the semifinals"
+
+    def test_non_will_question_returns_the_side_when_the_pair_does_not_fit(self):
+        # 38 characters, so the label itself would fit but `"Not: " + label`
+        # would not. #3491 gates on the PAIR, so neither side is chopped.
+        market = "Federal Reserve interest rate above 5%?"
+        assert humanize_binary_outcome_name("Yes", market) == "Yes"
+        assert humanize_binary_outcome_name("No", market) == "No"
 
     def test_passthrough_for_named_outcomes(self):
         assert (
@@ -505,17 +518,23 @@ class TestHumanizeBinaryOutcomeName:
     def test_passthrough_when_no_market_name(self):
         assert humanize_binary_outcome_name("Yes", None) == "Yes"
 
-    def test_long_market_name_truncated(self):
+    def test_long_market_name_returns_the_side_rather_than_a_fragment(self):
+        # 🔴 `len(result) <= 40` is what this used to assert, and #3491 makes
+        # that vacuous — "Yes" satisfies it however badly the function behaves.
+        # The contract is that an over-long label is REFUSED, not shortened, so
+        # assert the exact string and that no fragment of the question survives.
         long_name = "Will the extremely long and complicated market name that goes on forever resolve positively?"
         result = humanize_binary_outcome_name("Yes", long_name)
-        assert len(result) <= 40
+        assert result == "Yes"
+        assert "extremely long" not in result
+        assert not result.endswith("...")
 
-    def test_caps_at_40_chars(self):
-        # Verifies the 40-char cap on the truncation fallback
+    def test_over_length_label_is_refused_not_cut_down(self):
         result = humanize_binary_outcome_name(
             "Yes", "GDP growth rate for the United States exceeding expectations?"
         )
-        assert len(result) <= 40
+        assert result == "Yes"
+        assert "GDP" not in result
 
     def test_strips_year_suffix(self):
         result = humanize_binary_outcome_name(

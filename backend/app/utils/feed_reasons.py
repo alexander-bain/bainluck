@@ -67,6 +67,11 @@ _TRAILING_NOISE_RE = re.compile(
 # Remove trailing question mark
 _TRAILING_QM_RE = re.compile(r"\s*\?\s*$")
 
+# The widest label a feed card can show without wrapping past its hero. A
+# manufactured label that needs more room than this is refused outright (#3491),
+# never cut down to fit — see `humanize_binary_outcome_name` Strategy 2.
+_MAX_LABEL_CHARS = 40
+
 
 def humanize_binary_outcome_name(
     outcome_name: str,
@@ -82,9 +87,12 @@ def humanize_binary_outcome_name(
     Rules:
     1. If outcome_name is not 'Yes' or 'No', return it unchanged.
     2. Try to extract the subject from 'Will <subject> <verb> ...?' patterns.
-    3. Fall back to a truncated version of the market name (strip year
+    3. Fall back to a shortened version of the market name (strip year
        suffixes and question marks) so the card still reads naturally.
-    4. Cap at 40 chars to fit feed card layout.
+    4. If that fallback does not fit in `_MAX_LABEL_CHARS` for BOTH sides of
+       the pair, return the bare side word instead of cutting it down — a
+       label that has to be chopped is the question echoed back, and the card
+       already prints the question directly below it (#3491).
 
     Only used for feed card display — never mutates the underlying data.
     """
@@ -114,21 +122,60 @@ def humanize_binary_outcome_name(
                 return f"Not {subject}"
             return subject
 
-    # --- Strategy 2: Truncate market name into a label ---
+    # --- Strategy 2: Shorten the market name into a label ---
     label = _TRAILING_QM_RE.sub("", market_name)
     label = _TRAILING_NOISE_RE.sub("", label)
     # Strip leading "Will " for brevity
-    label = re.sub(r"^Will\s+", "", label, flags=re.IGNORECASE)
+    label = re.sub(r"^Will\s+", "", label, flags=re.IGNORECASE).strip()
 
-    if len(label) > 40:
-        label = label[:37] + "..."
+    neg_label = f"Not: {label}"
+
+    # #3491 — A LABEL THAT DOES NOT FIT IS NOT A LABEL, IT IS THE QUESTION
+    # ECHOED BACK. Strategy 2 used to force a fit by cutting at 40 characters,
+    # but the card prints `data.name` DIRECTLY BELOW this label, so the cut
+    # string was never a summary of the question — it was the question again,
+    # chopped mid-word, one line above itself:
+    #
+    #   40%
+    #   Canadian Team to Win the Stanley Cup®...     <- this label
+    #   Canadian Team to Win the Stanley Cup® Before the 2030-31 Season
+    #
+    # Measured on production 2026-09-06 over every 11th open `container_member`
+    # market (n=977): the Yes label was a chopped echo for 41.1% of them and the
+    # No label for 48.2%. Strategy 1's extractions are untouched — `Will
+    # Anthropic IPO first?` still labels its sides `Anthropic` / `Not Anthropic`.
+    #
+    # This extends UX-P239's ruling to its affirmative mirror. That ruling
+    # (see `_negates_market_question` below) already holds that once a label
+    # merely restates the question, "the bare side word is the ONLY honest
+    # subject" — and `_answering_side_label` already prints exactly that in the
+    # copy. It was never applied to the outcome NAMES, which is the string the
+    # card hero renders, so `context_summary` read `No leads at 75%` while the
+    # hero above it still read `No: SpaceX (SPCX) finish week of Sept...`.
+    #
+    # 🔴 THE TEST IS PAIR-WIDE, NOT PER-SIDE, and a per-side cap would be wrong
+    # in two ways. Both are about the two sides being rendered ADJACENTLY:
+    #   1. Labelling one side as a phrase and the other as a bare word is
+    #      incoherent in the outcome rows — `the Boston Red Sox win 100 or more`
+    #      sitting above `No`.
+    #   2. `frontend/lib/discover/heroOutcome.ts` (UX-P238) flips a card's hero
+    #      off a No-side leader only when it can see the pair as a negation. It
+    #      recognises the canonical `("No", "Yes")` pair explicitly, and
+    #      otherwise needs its `NEGATION_PREFIX` to match — a regex whose
+    #      trailing `\s+` is load-bearing ("Norway", "No. 1 seed") and which a
+    #      BARE "No" therefore cannot match. Collapsing one side only would
+    #      strand `("No", "<38-char affirmative>")`: not canonical, not
+    #      prefix-matchable, so the hero would silently stop flipping and the
+    #      card would print the negation of its own question as its headline —
+    #      the exact defect UX-P238 exists to prevent. 11.0% of Strategy-2
+    #      markets sit in that 36-40 char band, so this is not hypothetical.
+    # Gating both sides on the LONGER of the two keeps the pair canonical.
+    if len(neg_label) > _MAX_LABEL_CHARS:
+        return "Yes" if is_yes else "No"
 
     if not is_yes:
         # Preserve side semantics. Returning the bare topic makes "No" cards
         # read like the positive side for binary markets such as Top 5/Top 10.
-        neg_label = f"Not: {label}"
-        if len(neg_label) > 40:
-            neg_label = f"No: {label[:33]}..."
         return neg_label
 
     return label
