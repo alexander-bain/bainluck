@@ -1,11 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FuturesOutcomeHistory } from "@/lib/types";
 import { canZoomSeries, computeZoomBound, resolveYAxisMax } from "@/lib/chartZoom";
 import { anchorScrollLeft, edgeOverflowFor } from "@/lib/chartScroll";
 import { priceCadenceNote } from "@/lib/priceCadenceCopy";
 import { seriesFreshness } from "@/lib/seriesFreshness";
+import { chartSeriesPath } from "@/lib/chartSeriesPath";
 import {
   SERIES_COLORS,
   SERIES_COLORS_GOLD,
@@ -510,24 +511,23 @@ export function FuturesChart({
             {displayedOutcomes.map((outcome, idx) => {
               const points = outcome.history
                 .filter((p) => p.probability !== null)
-                .map((p) => ({
-                  x: xScale(new Date(p.timestamp).getTime()),
-                  y: yScale(p.probability!),
-                }));
+                .map((p) => {
+                  const t = new Date(p.timestamp).getTime();
+                  return { t, x: xScale(t), y: yScale(p.probability!) };
+                });
 
               if (points.length < 2) return null;
 
-              const pathD = stepInterpolation
-                ? points
-                    .map((p, i) =>
-                      i === 0
-                        ? `M ${p.x} ${p.y}`
-                        : `H ${p.x} V ${p.y}`
-                    )
-                    .join(" ")
-                : points
-                    .map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`)
-                    .join(" ");
+              // #3659: the solid stroke touches only real observations. Any gap
+              // wider than THIS outcome's own cadence is handed to a faint
+              // dotted bridge instead — same threshold that writes the note
+              // under the plot, so the line and the caption can never describe
+              // different intervals. A series with no hole yields exactly one
+              // run, byte-identical to what this expression produced inline
+              // before, and no bridges at all.
+              const { runs, bridges } = chartSeriesPath(points, {
+                step: !!stepInterpolation,
+              });
 
               // L2-149: highlight/eliminated line weighting. When one outcome is
               // highlighted (leaderboard or chart hover), it thickens and the rest
@@ -547,18 +547,45 @@ export function FuturesChart({
                       : 2;
               const strokeOpacity = isDimmed ? 0.2 : elim ? 0.4 : 1;
 
+              // A Fragment, not a <g>: with no hole this emits exactly the one
+              // <path> with exactly the attributes it emitted before, so the
+              // six surfaces that plot healthy series see no markup change at
+              // all. Bridges render first so the solid runs paint over them.
               return (
-                <path
-                  key={outcome.outcome_id}
-                  d={pathD}
-                  fill="none"
-                  stroke={colorFor(outcome, idx)}
-                  strokeWidth={strokeWidth}
-                  strokeOpacity={strokeOpacity}
-                  strokeDasharray={elim ? "4 3" : undefined}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
+                <Fragment key={outcome.outcome_id}>
+                  {bridges.map((d, b) => (
+                    <path
+                      key={`gap-${b}`}
+                      d={d}
+                      fill="none"
+                      stroke={colorFor(outcome, idx)}
+                      strokeWidth={strokeWidth}
+                      // A third of the line's own weight, whatever that is —
+                      // derived so highlight and eliminated dimming still carry
+                      // through, and a bridge is never louder than its line.
+                      strokeOpacity={strokeOpacity * 0.3}
+                      // Dotted, and deliberately not the "4 3" that already
+                      // means "eliminated" on this chart. Nothing here may be
+                      // confused with a line that IS data.
+                      strokeDasharray="1 5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  ))}
+                  {runs.map((d, r) => (
+                    <path
+                      key={`run-${r}`}
+                      d={d}
+                      fill="none"
+                      stroke={colorFor(outcome, idx)}
+                      strokeWidth={strokeWidth}
+                      strokeOpacity={strokeOpacity}
+                      strokeDasharray={elim ? "4 3" : undefined}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  ))}
+                </Fragment>
               );
             })}
 

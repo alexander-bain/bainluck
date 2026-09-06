@@ -291,3 +291,33 @@ export function seriesHasHole(freshness: SeriesFreshness): boolean {
   if (medianGapMs === null || largestGapMs === null) return false;
   return largestGapMs > Math.max(GAP_CADENCE_MULTIPLE * medianGapMs, GAP_FLOOR_MS);
 }
+
+/**
+ * The width at which a gap in THIS series stops being a skipped beat and starts
+ * being a hole — or `null` for "this series cannot be graded, never split it".
+ *
+ * `seriesHasHole` answers *does this line cross a hole?*; a renderer needs the
+ * stronger *which of my gaps are holes?*, and the only safe way to give it that
+ * is to hand over the threshold rather than let it re-derive one. #3659 exists
+ * because two places disagreeing about that number would be worse than either
+ * being wrong: the caption under a plot (`seriesFreshness.note`) and the break
+ * in the line above it have to be talking about the same interval.
+ *
+ * Clock-free on purpose, unlike its neighbours — geometry must not move when
+ * the page is left open, and a path that re-broke on a timer would be a
+ * different chart at 3am than at noon.
+ */
+export function seriesGapThresholdMs(
+  timestamps: readonly unknown[] | null | undefined,
+): number | null {
+  const points = (timestamps ?? [])
+    .map(asInstant)
+    .filter((t): t is number => t !== null)
+    .sort((a, b) => a - b);
+  if (points.length < MIN_POINTS_FOR_CADENCE) return null;
+
+  const gaps: number[] = [];
+  for (let i = 1; i < points.length; i += 1) gaps.push(points[i] - points[i - 1]);
+  const medianGapMs = median([...gaps].sort((a, b) => a - b));
+  return Math.max(GAP_CADENCE_MULTIPLE * medianGapMs, GAP_FLOOR_MS);
+}
