@@ -119,28 +119,49 @@ is `MIN_PASS_PERIOD_SECONDS`: at most one pass per 45 s, whatever the beat does.
 ⚠️ TWO OPEN DEFECTS LIVE IN THE ARITHMETIC BELOW. Neither is fixed here; both are
 named so nobody reads this docstring as a guarantee.
 
-THE THREE CONSTANTS ARE ONE DECISION, not three. An entry lives
-`SEARCH_RESPONSE_TTL_SECONDS`; a pass arrives at worst every
-`MIN_PASS_PERIOD_SECONDS` and rebuilds anything with under
-`REFRESH_AHEAD_SECONDS` left. For the head never to go cold both must hold:
+THE THREE CONSTANTS ARE ONE DECISION, not three — and the relation binding them
+is `residency_invariant()`, which is executable rather than prose. An entry lives
+`SEARCH_RESPONSE_TTL_SECONDS`; a real pass arrives every
+`effective_pass_period_s()`; a pass rebuilds anything with under
+`REFRESH_AHEAD_SECONDS` left, and that rebuild may take up to
+`full_rebuild_budget_s()`. For the head never to go cold, BOTH must hold:
 
-    MIN_PASS_PERIOD_SECONDS < TTL                       (a pass arrives in time)
-    TTL - MIN_PASS_PERIOD_SECONDS <= REFRESH_AHEAD       (and finds it eligible)
+    REFRESH_AHEAD > TTL - P_effective          (1) the first pass CATCHES it
+    TTL - P_effective > full_rebuild_budget    (2) and it SURVIVES the rebuild
 
-45 < 60, and 60 - 45 = 15 <= 25. Tuning one of these without the other two is
-how `/typeahead` sat at a 47% duty cycle for two cycles while reporting 40/40
-every pass, so the relation is asserted as a test rather than left as arithmetic
-in a comment.
+At 180 / 150 / 60 / 100: `150 > 120` ✓ and `120 > 100` ✓, 20 s of margin.
 
-🔴 **#3539 — THAT RELATION IS UNSOUND, AND THE TEST ASSERTING IT PASSES ON A
-PERIOD THE SYSTEM NEVER ACHIEVES.** `MIN_PASS_PERIOD_SECONDS` is a floor, not the
-period: a 45 s floor against a 20 s beat quantizes up, so the smallest achievable
-gap between two real passes is **60 s**, and the first clause is really `60 < 60`
-= false. The relation also carries no rebuild-duration term at all, though the
-entry is written at the END of a pass, not at its start. The sound form needs
-`REFRESH_AHEAD - P_effective > D_max`; today that is `25 - 60 = -35`. Do not
-tune any of the three without reading #3539 — its three candidate repairs are
-each a product decision (rebuild load, a freshness ceiling, or #1866's DDL).
+🔴 **THE RELATION THIS REPLACED WAS UNSOUND IN BOTH CLAUSES, AND ITS GUARD WAS
+GREEN THE WHOLE TIME (#3539, CERT-2068).** It read:
+
+    MIN_PASS_PERIOD_SECONDS < TTL                  ("45 < 60 ✓")
+    TTL - MIN_PASS_PERIOD_SECONDS <= REFRESH_AHEAD  ("60 - 45 = 15 <= 25 ✓")
+
+Two independent defects, and the second is the one that shipped a hole:
+
+* **It used the FLOOR where the invariant needs the PERIOD.**
+  `MIN_PASS_PERIOD_SECONDS` (45 s) is a lower bound on the gap between passes,
+  not the gap. Quantized up to the 20 s beat the real gap is **60 s**, so the
+  first clause is truly `60 < 60` — false. See `effective_pass_period_s()`.
+* **It had no rebuild-duration term at all**, though the entry is written at the
+  END of a pass. So it certified a configuration in which the replacement lands
+  after the entry it replaces has already expired. Measured consequence: real
+  passes 3.3-23.8 s, a short pass followed by a long one leaving ~20.5 s with no
+  cached answer, and on 2026-09-06 **77 % of inter-pass gaps exceeded the TTL**
+  with all three probed head terms returning `x-search-cache: miss`.
+
+Tuning one of these without the other three is how `/typeahead` sat at a 47 %
+duty cycle for two cycles while reporting 40/40 every pass. The relation is now
+asserted by a test that calls `residency_invariant()` rather than re-deriving it,
+because re-deriving a production expression inside its own guard makes the two
+agree by construction.
+
+⚠️ The freshness ceiling (`SEARCH_RESPONSE_TTL_SECONDS` 60 → 180) moved by
+**RULING D81 = A (Alex, 2026-09-06)**, not by this lane. Clause (2) cannot be
+satisfied at 60 s by any choice of the other three — it demands
+`TTL > P_effective + budget` = 160 s — so the ceiling was the binding term and it
+was a product question, not a tuning knob. Do not move it back without reading
+#3539 and D81.
 
 🔴 **#3364 — AND UNTIL 2026-09-06 THE PERIOD WAS NOT 60 s EITHER, IT WAS ~576 s.**
 `_EXPIRING_WARMER_BEATS["warm-search-head"]` bounded the beat's messages at one
@@ -156,6 +177,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
 import time
 from contextlib import AsyncExitStack
@@ -188,10 +210,17 @@ PER_QUERY_TIMEOUT_SECONDS = 25
 #: coroutine on the same session is a corruption bug rather than a slowdown.
 WARM_CONCURRENCY = 2
 
-#: Rebuild an entry with less than this much life left. See the arithmetic in
-#: the module docstring — this is what makes the duty cycle flat rather than a
-#: sawtooth.
-REFRESH_AHEAD_SECONDS = 25
+#: Rebuild an entry with less than this much life left. **DERIVED, not chosen**
+#: — `derive_refresh_ahead_s()` below, asserted by `residency_invariant()`.
+#:
+#: It was 25 s, and 25 s is the number CERT-2068 blocked #3526 over. The bound a
+#: refresh-ahead threshold has to clear is not "a bit less than the TTL"; it is
+#: `SEARCH_RESPONSE_TTL_SECONDS - effective_pass_period_s()`, because that is
+#: the most life an entry can still have when the first pass that could rebuild
+#: it arrives. Set below that, the pass calls the entry `fresh`, walks past it,
+#: and the entry dies before the pass after — which is the 20.5 s of cold path
+#: the grader measured.
+REFRESH_AHEAD_SECONDS = 150
 
 #: The floor between two real passes, checked UNDER the run lock so two beats
 #: cannot both pass it. This is the load bound: the beat may fire more often,
@@ -368,6 +397,140 @@ def derive_message_expiry_s(
             f"alive at once, over the declared cap of {max_live}"
         )
     return float(lock_ttl_s)
+
+
+def effective_pass_period_s(
+    *,
+    beat_s: float = BEAT_PERIOD_SECONDS,
+    floor_s: float = MIN_PASS_PERIOD_SECONDS,
+) -> float:
+    """The gap between two REAL passes. **Not the floor, and not the beat.**
+
+    A pass may start only when BOTH hold: a beat fire delivered, and the floor
+    elapsed since the last pass START (checked under the run lock). So the
+    achievable period is the floor **quantized up to the next beat multiple**:
+
+        beat * ceil(floor / beat)
+
+    At 20 s and 45 s that is **60 s, not 45 s** — fires at t=20 and t=40 are
+    both below the floor and skip; t=60 is the first that runs.
+
+    This function exists because 45 s was substituted for it in three places at
+    once, and every one of them read green:
+
+    * the module docstring's two-clause invariant ("45 < 60 ✓"),
+    * `test_the_refresh_ahead_window_actually_keeps_the_head_alive`, which
+      asserted that invariant against `MIN_PASS_PERIOD_SECONDS`,
+    * and the beat comment that cited the test as the reason 45/60/25 was safe.
+
+    Substituting the real 60 s turns the first clause into `60 < 60`, which is
+    false. The guard passed because it read the FLOOR — a lower bound on the
+    period — where the invariant needs the period itself.
+
+    The sibling `warm_typeahead` gets closer with `max(beat_s, floor_s)`, and
+    agrees only by luck: its floor (30 s) is an exact multiple of its beat
+    (10 s). Ours is not (45 is not a multiple of 20), and that is precisely
+    where `max()` and the true quantization diverge — 45 against 60.
+    """
+    if beat_s <= 0 or floor_s <= 0:
+        raise ValueError("beat period and pass floor must both be positive")
+    return float(beat_s * math.ceil(floor_s / beat_s))
+
+
+def full_rebuild_budget_s(
+    *,
+    head_size: int = DEFAULT_HEAD_SIZE,
+    concurrency: int = WARM_CONCURRENCY,
+    per_query_s: float = PER_QUERY_TIMEOUT_SECONDS,
+) -> float:
+    """The longest a pass may take to reach and write the LAST head entry.
+
+    `ceil(head_size / concurrency) * per_query_s` — the number of waves the
+    semaphore admits, each bounded by the per-query hard timeout. At 8 terms,
+    concurrency 2 and a 25 s bound that is **100 s**.
+
+    ⚠️ **This is the quantity #3539's option 4 got wrong, and it is why that
+    option does not work as written.** It priced the rebuild at
+    `PER_QUERY_TIMEOUT_SECONDS` = 25 s — the budget for **one** query — where
+    the entry that has to survive is the one written **last**. An entry in the
+    fourth wave waits out three full waves before its own rebuild begins, and
+    it is served from the old value the whole time (#3526's overwrite-not-delete
+    is what makes that true; before it, the value was simply absent).
+
+    DERIVED FROM THE DECLARED BUDGET, NEVER FROM A SAMPLE. Production walls
+    measure 3.3-26.1 s (p50 ~11 s), and sizing this at `measured_max * k` is the
+    error this program has already made twice — the next sample refutes it. The
+    budget is what the code PERMITS, and the code permits 100 s.
+    """
+    if head_size <= 0 or concurrency <= 0 or per_query_s <= 0:
+        raise ValueError("head size, concurrency and per-query bound must be positive")
+    return float(math.ceil(head_size / concurrency) * per_query_s)
+
+
+def derive_refresh_ahead_s(
+    *,
+    ttl_s: float = SEARCH_RESPONSE_TTL_SECONDS,
+    period_s: float | None = None,
+) -> float:
+    """The smallest refresh-ahead that catches an entry on its FIRST eligible pass.
+
+    An entry written at the end of pass *k* is looked at again at pass *k+1*,
+    `period_s` later, with `ttl_s - period_s` of life left. If the threshold is
+    below that, `_needs_rebuild` returns False, the pass reports it `fresh`, and
+    the entry gets one more period to live through — which it cannot.
+
+    So the bound is `> ttl_s - period_s`, and the value is that plus a margin of
+    one period so a single DROPPED fire does not immediately re-open the hole.
+    """
+    period = effective_pass_period_s() if period_s is None else float(period_s)
+    return float(ttl_s - period + period / 2.0)
+
+
+def residency_invariant(
+    *,
+    ttl_s: float = SEARCH_RESPONSE_TTL_SECONDS,
+    refresh_ahead_s: float = REFRESH_AHEAD_SECONDS,
+    period_s: float | None = None,
+    budget_s: float | None = None,
+) -> tuple[bool, str]:
+    """Is the head PROVABLY resident at these four numbers? `(ok, why)`.
+
+    THE THREE CONSTANTS ARE ONE DECISION (that much the old docstring had right).
+    What it got wrong was the relation. Both clauses must hold:
+
+        (1) CAUGHT     refresh_ahead > ttl - period
+        (2) SURVIVES   ttl - period  > budget
+
+    (1) says the first pass that sees the entry rebuilds it rather than walking
+    past it as `fresh`. (2) says that when it does, the life remaining exceeds
+    the time the rebuild can take — which is the grader's sentence in CERT-2068:
+    *"remaining TTL exceeds the full rebuild budget"*.
+
+    The old two-clause form had **no budget term at all**, so it certified a
+    configuration in which the rebuild finishes after the entry it is replacing
+    has already expired. That is the hole, and it is why the relation is checked
+    here rather than left as arithmetic in a comment.
+    """
+    period = effective_pass_period_s() if period_s is None else float(period_s)
+    budget = full_rebuild_budget_s() if budget_s is None else float(budget_s)
+    remaining = ttl_s - period
+    if refresh_ahead_s <= remaining:
+        return False, (
+            f"NOT CAUGHT: an entry has {remaining:g}s left at the first pass that "
+            f"could rebuild it, and refresh-ahead is {refresh_ahead_s:g}s — the pass "
+            f"calls it `fresh` and walks past. Needs > {remaining:g}s."
+        )
+    if remaining <= budget:
+        return False, (
+            f"DOES NOT SURVIVE: the rebuild starts with {remaining:g}s of life and may "
+            f"take {budget:g}s, so the entry expires mid-rebuild and the head goes cold. "
+            f"Needs ttl > period + budget = {period + budget:g}s."
+        )
+    return True, (
+        f"resident: caught at {remaining:g}s left (threshold {refresh_ahead_s:g}s), "
+        f"survives a {budget:g}s rebuild with {remaining - budget:g}s of margin"
+    )
+
 
 #: Redis `TTL` is THREE-VALUED and the two negatives mean opposite things, so
 #: they are never collapsed (gotcha #53 — an absent value and a zero value must

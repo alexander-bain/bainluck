@@ -171,6 +171,13 @@ class TestTheWarmerForcesTheRebuildThroughTheFlag:
 
         Setting the flag and *then* deciding not to rebuild would be harmless
         today and load-bearing the moment someone moves the skip.
+
+        The "fresh" TTL is DERIVED from `REFRESH_AHEAD_SECONDS`, not written as a
+        literal. It used to be `59` — a number that was fresh only while the
+        threshold was 25, and that silently became a REBUILD case when #3539
+        moved the threshold to 150. A fixture that hardcodes a value the
+        production constant derives stops testing what its name says the moment
+        that constant moves.
         """
         called = []
 
@@ -178,7 +185,9 @@ class TestTheWarmerForcesTheRebuildThroughTheFlag:
             called.append(kw)
             return {"events": []}
 
-        with patch.object(warmer, "_cache_ttl_seconds", return_value=59), \
+        fresh_ttl = warmer.REFRESH_AHEAD_SECONDS + 1
+
+        with patch.object(warmer, "_cache_ttl_seconds", return_value=fresh_ttl), \
              patch.object(events_route, "search_events", _fake_route):
             out = _run(warmer._warm_one(_FakeSession(), "red sox"))
 
@@ -478,3 +487,218 @@ class _FakeSessionCM:
 
 def _fake_session_cm(*a, **kw):
     return _FakeSessionCM()
+
+
+# ============================================================================
+# CERT-2068's NAMED REGRESSION — residency across two cycles, expiring Redis.
+#
+# The BLOCK on `f81fdfe45da777bd74f271bea2ac767e4b9e1b0f` said, in full:
+#
+#   "removing the eager DELETE does not keep the old /search entry alive through
+#    rebuild. A 20s beat plus a 45s minimum yields actual eligible starts 60s
+#    apart; at the next pass the 60s key has roughly the prior build duration
+#    left. The submitted measured 3.3s-to-23.8s sequence permits ~20.5s of
+#    absence during the second rebuild ... Required regression: fake-clock two
+#    cycles with expiring Redis and a short-then-long rebuild, continuously
+#    asserting the served key never disappears."
+#
+# That is exactly this section. It reproduces the grader's ~20.5 s on the blocked
+# constants and shows it closed on the shipped ones.
+#
+# WHY IT IS A SIMULATION AND WHAT IS REAL IN IT. Everything that decides the
+# outcome is production code: `_needs_rebuild` is imported and called, and the
+# cadence and thresholds come from `effective_pass_period_s()`,
+# `REFRESH_AHEAD_SECONDS` and `SEARCH_RESPONSE_TTL_SECONDS`. What is modelled is
+# only the environment — a clock that advances and a Redis that expires — because
+# a guard that re-implements the predicate it is guarding agrees with it by
+# construction and can never fail.
+# ============================================================================
+
+
+class _ExpiringWriteLog:
+    """Redis TTL semantics as an append-only log, so presence is answerable at ANY t.
+
+    A single mutable `expires_at` cannot answer "was the key present at t=63.3?"
+    once a later write has moved the expiry — the first draft of this harness had
+    exactly that bug and reported a clean run over a configuration that measurably
+    holes. Each `setex` appends `[written, written + ttl)`; presence at `t` is
+    membership in any interval.
+    """
+
+    def __init__(self, ttl_s: float):
+        self._ttl = ttl_s
+        self.writes: list[tuple[float, float]] = []
+
+    def setex(self, written_at: float) -> None:
+        self.writes.append((written_at, written_at + self._ttl))
+
+    def ttl_at(self, t: float) -> int:
+        """Redis's three-valued dialect: -2 no key, else whole seconds left."""
+        live = [exp for w, exp in self.writes if w <= t < exp]
+        if not live:
+            return -2
+        return int(max(live) - t)          # Redis floors; so must we.
+
+    def present_at(self, t: float) -> bool:
+        return self.ttl_at(t) != -2
+
+
+def _simulate_residency(*, ttl_s, refresh_ahead_s, period_s, rebuild_walls, horizon_s):
+    """Run pass cycles on a fake clock and report every interval the key was ABSENT.
+
+    Faithful to the post-#3526 mechanism: the warmer does NOT delete, so the old
+    value keeps serving for the whole rebuild and is replaced by `setex` at the
+    END of it.
+
+    🔴 The eligibility decision is production's `_needs_rebuild`. To exercise a
+    configuration other than the shipped one we patch the CONSTANT it reads
+    rather than reimplementing the predicate around it — the predicate under test
+    stays the real one.
+    """
+    from unittest.mock import patch
+
+    from app.tasks import search_head_warmer as warmer
+
+    log = _ExpiringWriteLog(ttl_s)
+
+    with patch.object(warmer, "REFRESH_AHEAD_SECONDS", refresh_ahead_s):
+        # Pass 0 finds nothing and builds the first entry — the cold start.
+        first_write = rebuild_walls[0]
+        log.setex(first_write)
+        timeline = [("write", first_write)]
+
+        pass_i = 1
+        while pass_i * period_s <= horizon_s:
+            start = pass_i * period_s
+            ttl_before = log.ttl_at(start)
+            if warmer._needs_rebuild(None if ttl_before == -2 else ttl_before):
+                wall = rebuild_walls[min(pass_i, len(rebuild_walls) - 1)]
+                log.setex(start + wall)
+                timeline.append(("write", start + wall))
+            else:
+                timeline.append(("fresh", start))
+            pass_i += 1
+
+    # Continuous check across the whole horizon.
+    absent, run_start = [], None
+    t = first_write
+    while t <= horizon_s:
+        present = log.present_at(t)
+        if not present and run_start is None:
+            run_start = t
+        elif present and run_start is not None:
+            absent.append((round(run_start, 1), round(t, 1)))
+            run_start = None
+        t = round(t + 0.1, 1)
+    if run_start is not None:
+        absent.append((round(run_start, 1), horizon_s))
+    return absent, timeline
+
+
+# The grader's own measured sequence: a short pass followed by a long one.
+_SHORT_THEN_LONG = [3.3, 23.8, 23.8, 23.8, 23.8, 23.8]
+
+
+def test_the_blocked_constants_leave_the_key_absent_for_the_graders_twenty_seconds():
+    """CERT-2068's finding, reproduced. This is the RED half of the regression.
+
+    On `f81fdfe4`'s constants (TTL 60, refresh-ahead 25) the entry written by the
+    3.3 s pass expires at t=63.3, and the 23.8 s pass that should have replaced it
+    does not write until t=83.8. The head is cold for the difference. If this test
+    ever stops finding a hole, the simulation has stopped modelling the defect and
+    the GREEN half below is worthless.
+    """
+    absent, _ = _simulate_residency(
+        ttl_s=60,
+        refresh_ahead_s=25,
+        period_s=60.0,
+        rebuild_walls=_SHORT_THEN_LONG,
+        horizon_s=180.0,
+    )
+    assert absent, "the blocked constants must reproduce a hole — they measured one"
+    widest = max(b - a for a, b in absent)
+    assert 20.0 <= widest <= 21.0, (
+        f"expected the grader's ~20.5 s of absence on the blocked constants, "
+        f"measured {widest:.1f} s across {absent}"
+    )
+
+
+def test_the_head_never_disappears_across_two_cycles_at_the_shipped_constants():
+    """The GREEN half. Same clock, same Redis, same short-then-long sequence.
+
+    Under D81 = A (TTL 180) with the derived refresh-ahead (150), the 3.3 s pass
+    writes an entry that lives to t=183.3, and the 23.8 s pass replaces it at
+    t=83.8 — a hundred seconds of margin rather than twenty seconds of hole.
+    """
+    from app.tasks.search_head_warmer import (
+        REFRESH_AHEAD_SECONDS,
+        effective_pass_period_s,
+    )
+    from app.utils.search_cache import SEARCH_RESPONSE_TTL_SECONDS
+
+    absent, timeline = _simulate_residency(
+        ttl_s=SEARCH_RESPONSE_TTL_SECONDS,
+        refresh_ahead_s=REFRESH_AHEAD_SECONDS,
+        period_s=effective_pass_period_s(),
+        rebuild_walls=_SHORT_THEN_LONG,
+        horizon_s=600.0,
+    )
+    assert absent == [], (
+        f"the served key disappeared at the shipped constants: {absent}\n"
+        f"timeline: {timeline}"
+    )
+    # ...and it was actually doing work, not passing by never rebuilding.
+    assert sum(1 for kind, _ in timeline if kind == "write") >= 5, (
+        "a run that never rebuilt would also report no absence — that is the "
+        "vacuous pass this assertion exists to refuse"
+    )
+
+
+def test_residency_holds_when_every_rebuild_takes_the_full_declared_budget():
+    """The bound, not the sample. Every pass pinned at `full_rebuild_budget_s()`.
+
+    Sizing against the measured 3.3-23.8 s is the error this program has made
+    twice; the invariant is written against what the code PERMITS. At 8 terms,
+    concurrency 2 and a 25 s per-query bound that is 100 s per pass, and the
+    entry must still never vanish.
+    """
+    from app.tasks.search_head_warmer import (
+        REFRESH_AHEAD_SECONDS,
+        effective_pass_period_s,
+        full_rebuild_budget_s,
+    )
+    from app.utils.search_cache import SEARCH_RESPONSE_TTL_SECONDS
+
+    budget = full_rebuild_budget_s()
+    absent, _ = _simulate_residency(
+        ttl_s=SEARCH_RESPONSE_TTL_SECONDS,
+        refresh_ahead_s=REFRESH_AHEAD_SECONDS,
+        period_s=effective_pass_period_s(),
+        rebuild_walls=[budget] * 12,
+        horizon_s=900.0,
+    )
+    assert absent == [], (
+        f"at the declared {budget:g}s rebuild budget the head still went cold: {absent}"
+    )
+
+
+def test_option_four_as_written_on_3539_would_have_shipped_a_hole():
+    """Why the ruling's letter needed the derivation and not the issue's numbers.
+
+    #3539's option 4 proposed TTL 180 with refresh-ahead 90. 90 is below
+    `TTL - period` (120), so the first pass that could rebuild the entry calls it
+    `fresh` and walks past; the entry is only caught a period later and by then
+    a full-budget rebuild overruns its life. Recorded as a test because the
+    number was recommended in writing and is the obvious thing to reach for.
+    """
+    absent, _ = _simulate_residency(
+        ttl_s=180,
+        refresh_ahead_s=90,
+        period_s=60.0,
+        rebuild_walls=[100.0] * 12,
+        horizon_s=900.0,
+    )
+    assert absent, (
+        "option 4 as written (180/90) must be shown to leave a hole — if it does "
+        "not, the derivation that rejected it is over-strict and should be revisited"
+    )
