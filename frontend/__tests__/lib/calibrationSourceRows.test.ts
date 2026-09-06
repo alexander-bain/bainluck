@@ -4,6 +4,7 @@ import {
   withheldSourcesNote,
   type SourceRowInput,
 } from "@/lib/calibrationSourceRows";
+import { providerLabel } from "@/lib/calibrationProviders";
 import { ece, mce } from "@/lib/calibrationMath";
 import { brierScore, cohortFilterFor, aggregateBuckets } from "@/lib/calibrationParity";
 
@@ -21,17 +22,30 @@ import { brierScore, cohortFilterFor, aggregateBuckets } from "@/lib/calibration
 // that produced the bug.
 // ---------------------------------------------------------------------------
 
+// CAL-P1024 (#1865): every `label` below is DERIVED by the same call the page
+// makes, never written out beside the row.
+//
+// It used to be written out, and that is why the `datagolf` bug lived here for
+// three weeks in plain sight. `withheldSourcesNote` has asserted
+// `toContain("DataGolf")` since UX-P128 and passed the whole time, because the
+// fixture handed it the capital letters. Production, deriving the label through
+// `providerLabel`, printed a sentence that began "datagolf has no outcomes in
+// this cohort". A fixture that supplies the value under test cannot refute the
+// code that computes it — the same defect shape as CAL-P1023's `retry_after`
+// fixture, one session earlier.
+const labelFor = (provider: string) => providerLabel(provider);
+
 const LIVE: SourceRowInput[] = [
-  { provider: "kalshi", label: "Kalshi", sources: ["kalshi"], n: 287922, ece: 1.25, mce: 1.25, brier: 0.1712 },
-  { provider: "polymarket", label: "Polymarket", sources: ["polymarket"], n: 112663, ece: 2.6, mce: 2.6, brier: 0.1904 },
+  { provider: "kalshi", label: labelFor("kalshi"), sources: ["kalshi"], n: 287922, ece: 1.25, mce: 1.25, brier: 0.1712 },
+  { provider: "polymarket", label: labelFor("polymarket"), sources: ["polymarket"], n: 112663, ece: 2.6, mce: 2.6, brier: 0.1904 },
   {
     provider: "odds_api_family",
-    label: "Sportsbooks (Odds API)",
+    label: labelFor("odds_api_family"),
     sources: ["odds_api", "odds_api_bookmaker", "odds_api_spreads", "odds_api_totals"],
     n: 136173, ece: 1.4, mce: 1.4, brier: 0.2011,
   },
   // The specimen. Every metric is the identity element of an empty reduction.
-  { provider: "datagolf", label: "DataGolf", sources: ["datagolf"], n: 0, ece: 0, mce: 0, brier: 0 },
+  { provider: "datagolf", label: labelFor("datagolf"), sources: ["datagolf"], n: 0, ece: 0, mce: 0, brier: 0 },
 ];
 
 describe("orderSourceRows — the n=0 render", () => {
