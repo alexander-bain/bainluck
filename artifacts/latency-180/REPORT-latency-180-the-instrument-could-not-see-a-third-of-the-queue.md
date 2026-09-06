@@ -469,13 +469,14 @@ Redis still holds nothing; those two terms were the entire reason every pass was
 
 | | before | after |
 |---|---|---|
-| `no_writes` | `['sta','red']` on every real pass | **`[]` on 12/12 real passes sampled** |
-| passes reaching `terminal: complete` | **0 of 11** ring records 09:46–10:02Z | **7 of 21** ring records 10:05–10:26Z |
+| `no_writes` | `['sta','red']` on every real pass | **`[]` on 44/44 real passes sampled** |
+| passes reaching `terminal: complete` | **0 of 11** ring records 09:46–10:02Z | **21 of 44** sampled real passes; the ring, once fully rolled past the deploy, reads **18 complete of 32** |
 
 ⚠️ READ ONLY THE REAL PASSES. Finding (yy) above is the reason: `last_result_summary` is overwritten
 by every pass INCLUDING the ~85,000 skips per real pass, so `no_writes: []` at a random moment is
-the no-op's reading and not a result. The 12 above are terminal-filtered from a 20s-cadence sampler
-run faster than the ~40s work path; 3 further reads were skips and are discarded, not counted.
+the no-op's reading and not a result. The 44 above are terminal-filtered from a 25-minute,
+20s-cadence sampler run faster than the ~40s work path; 31 of the 75 reads were skips and are
+discarded rather than counted as clean.
 
 **Signal 2 — the request timings, as corroboration.** Same protocol as the BEFORE above, five
 sampler passes 10:06–10:26Z, two requests per term per pass:
@@ -493,10 +494,11 @@ a warm term and a permanently cold one is closed.
 **NOT FIXED, and not caused by this ship.** Two residues, both named so neither is read as new:
 
 *   **Per-term `errors`, 1-6 a pass, on BOTH sides of the deploy** (before: 8 of 11 ring records
-    carry ≥1, including a 6; after: 12 of 21). They are why most passes still read `partial` rather
+    carry ≥1, including a 6; after: 13 of 32 on the fully-rolled ring). They are why most passes still read `partial` rather
     than `complete`. Filed separately — this ship's category was `no_write`, and `error` is a
     different one that happens to share a summary.
-*   **The period tail.** `period_s` p50 44.1s, p95 **189.0s**, max **316.4s** over the 32-deep ring.
+*   **The period tail.** `period_s` p50 42.5s, p95 **125.9s**, max **193.0s** over the 32-deep ring
+    once it had rolled fully past the deploy (p50 44.1 / p95 189.0 / max 316.4 on the straddling read).
     Inside the 65s TTL most of the time and far outside it in the tail — which is the mechanism
     CERT-2045/2053 are about and the dedicated-worker question in `alex-inbox`. Untouched by this
     ship, which fixed a cacheability defect, not a scheduling one.
