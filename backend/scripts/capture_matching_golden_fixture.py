@@ -163,6 +163,59 @@ def market_search_plan(market: dict):
     return matchup, patterns, cap_start, cap_end
 
 
+#: Corrections to the dated artifact's adjudications. See the file's own
+#: ``why_this_file_exists`` — the short version is that
+#: ``MATCHING-GOLDEN-2026-09-02.json`` is never rewritten, and hand-editing the
+#: captured fixture instead would survive exactly until the next re-capture,
+#: which re-derives ``correct_event_id`` from the artifact.
+AMENDMENTS_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "tests" / "fixtures" / "matching_golden_adjudication_amendments.json"
+)
+
+
+def apply_adjudication_amendments(golden: list[dict]) -> list[int]:
+    """Rewrite adjudicated answers in place, BEFORE any pair is built.
+
+    Before, not after, because two of the fixture's own guarantees are derived
+    from ``correct_event_id``: the adjudicated event is fetched even when the
+    matcher's search would not surface it, and ``search_surfaced_the_answer`` is
+    computed against the candidate list. An amendment applied afterwards would
+    leave both describing the OLD answer, which is the quiet kind of wrong.
+
+    ``was`` is checked, not assumed. If the artifact no longer says what the
+    amendment claims it said, this raises: an amendment is a correction to a
+    specific recorded answer, and applying it blind to a pair that has moved
+    underneath it would be laundering, not correcting.
+    """
+    if not AMENDMENTS_PATH.exists():
+        return []
+    doc = json.loads(AMENDMENTS_PATH.read_text())
+    by_market = {int(p["market_id"]): p for p in golden}
+    applied: list[int] = []
+    for a in doc.get("amendments", []):
+        mid = int(a["market_id"])
+        pair = by_market.get(mid)
+        if pair is None:
+            # Not an error: --limit truncates the set, and a market can leave
+            # the artifact. Silence would be, so it says so.
+            print(f"  amendment for market {mid}: not in this golden set, skipped")
+            continue
+        current = pair.get("correct_event_id")
+        current = int(current) if current is not None else None
+        was = a["was"]
+        was = int(was) if was is not None else None
+        if current != was:
+            raise SystemExit(
+                f"amendment for market {mid} says the artifact adjudicated "
+                f"{was!r}, but it adjudicates {current!r}. The pair moved under "
+                f"the amendment — re-check the evidence before re-capturing."
+            )
+        pair["correct_event_id"] = a["now"]
+        applied.append(mid)
+    return applied
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--golden", required=True)
@@ -174,6 +227,9 @@ def main() -> int:
     if args.limit:
         golden = golden[:args.limit]
     print(f"golden pairs: {len(golden)}")
+
+    amended = apply_adjudication_amendments(golden)
+    print(f"adjudication amendments applied: {len(amended)}")
 
     market_ids = sorted({int(p["market_id"]) for p in golden})
     markets: dict[int, dict] = {}
@@ -309,6 +365,9 @@ def main() -> int:
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps({
         "source_file": Path(args.golden).name,
+        # Recorded in the header so a reader of the fixture can see that its
+        # adjudications are not verbatim the artifact's, and which ones are not.
+        "amended_market_ids": sorted(amended),
         "golden_pairs": len(golden),
         "captured_pairs": len(pairs),
         "positive_pairs": sum(1 for p in pairs if p["correct_event_id"] is not None),
