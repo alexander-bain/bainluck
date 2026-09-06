@@ -320,8 +320,15 @@ def _insert_container(cur, slug="us-open-2026", kind="tournament", **kw) -> int:
 def test_one_provider_id_names_one_container(pg):
     """D55, and the single most load-bearing sentence in the spec.
 
-    A second claim on the same ``(provider, id_kind, provider_id)`` must RAISE.
-    A silent no-op here is how two draws quietly become one hub.
+    A second claim on the same namespaced key must RAISE. A silent no-op here
+    is how two draws quietly become one hub.
+
+    Both rows here leave ``sport`` NULL, so this is ALSO the third control
+    CERT-2001 named — duplicate-no-sport refusal — and it only passes because
+    the index is ``NULLS NOT DISTINCT``. Under a plain unique index Postgres
+    treats each NULL as distinct and accepts both rows, which would have made
+    ``sport``'s addition to the key silently undo the constraint for every
+    provider that does not namespace by sport.
     """
     with pg.cursor() as cur:
         first = _insert_container(cur, slug="us-open-2026-mens-doubles")
@@ -339,6 +346,110 @@ def test_one_provider_id_names_one_container(pg):
                 "VALUES (%s, 'espn', '1234', 'tournament')",
                 (second,),
             )
+
+
+def test_the_same_provider_id_in_two_sports_is_two_containers(pg):
+    """CERT-2001's finding, and the reason ``sport`` is in the key.
+
+    ESPN tournament id ``1234`` in tennis and ``1234`` in golf are different
+    tournaments. Under the first cut of this index — ``(provider, id_kind,
+    provider_id)``, omitting the stored ``sport`` — the second claim was
+    REFUSED, which is worse than a wrong answer: assembly can never resolve an
+    anchor that does not exist, so an entire hub goes missing silently.
+
+    This is the acceptance half; the refusal half is the test below. Both are
+    needed, because widening the key to fix acceptance is exactly the change
+    that can lose refusal.
+    """
+    with pg.cursor() as cur:
+        tennis = _insert_container(cur, slug="us-open-2026-tennis")
+        golf = _insert_container(cur, slug="us-open-2026-golf")
+        for container_id, sport in ((tennis, "tennis"), (golf, "golf")):
+            cur.execute(
+                "INSERT INTO container_provider_anchors "
+                "(container_id, provider, sport, provider_id, id_kind) "
+                "VALUES (%s, 'espn', %s, '1234', 'tournament')",
+                (container_id, sport),
+            )
+        cur.execute(
+            "SELECT count(*) FROM container_provider_anchors "
+            "WHERE provider = 'espn' AND provider_id = '1234'"
+        )
+        assert cur.fetchone()[0] == 2
+
+
+def test_the_same_provider_id_in_ONE_sport_is_still_refused(pg):
+    """The refusal half. Widening a key is how a constraint gets lost.
+
+    If this passed, `sport` would have turned the collision detector off rather
+    than namespaced it, and two containers in the same sport could both claim
+    one ESPN tournament — the original defect with extra steps.
+    """
+    with pg.cursor() as cur:
+        first = _insert_container(cur, slug="us-open-2026-a")
+        second = _insert_container(cur, slug="us-open-2026-b")
+        cur.execute(
+            "INSERT INTO container_provider_anchors "
+            "(container_id, provider, sport, provider_id, id_kind) "
+            "VALUES (%s, 'espn', 'tennis', '1234', 'tournament')",
+            (first,),
+        )
+        with pytest.raises(pg_errors.UniqueViolation):
+            cur.execute(
+                "INSERT INTO container_provider_anchors "
+                "(container_id, provider, sport, provider_id, id_kind) "
+                "VALUES (%s, 'espn', 'tennis', '1234', 'tournament')",
+                (second,),
+            )
+
+
+def test_a_sported_anchor_and_a_sportless_one_do_not_collide(pg):
+    """NULL is its own namespace, not a wildcard.
+
+    A provider that namespaces by sport and one that does not must be able to
+    hold the same id string. This is the boundary between the two tests above
+    and is the case a `COALESCE(sport, '')` expression index would also have
+    got right — recorded because that was the alternative, and the reason
+    `NULLS NOT DISTINCT` won is that it keeps plain column names available as
+    an `ON CONFLICT` target for the anchor writer that comes next.
+    """
+    with pg.cursor() as cur:
+        sported = _insert_container(cur, slug="us-open-2026-sported")
+        bare = _insert_container(cur, slug="us-open-2026-bare")
+        cur.execute(
+            "INSERT INTO container_provider_anchors "
+            "(container_id, provider, sport, provider_id, id_kind) "
+            "VALUES (%s, 'espn', 'tennis', '1234', 'tournament')",
+            (sported,),
+        )
+        cur.execute(
+            "INSERT INTO container_provider_anchors "
+            "(container_id, provider, provider_id, id_kind) "
+            "VALUES (%s, 'espn', '1234', 'tournament')",
+            (bare,),
+        )
+        cur.execute(
+            "SELECT count(*) FROM container_provider_anchors "
+            "WHERE provider = 'espn' AND provider_id = '1234'"
+        )
+        assert cur.fetchone()[0] == 2
+
+
+def test_the_index_really_is_nulls_not_distinct(pg):
+    """Read it off the catalogue, not off the migration source.
+
+    `test_one_provider_id_names_one_container` proves the BEHAVIOUR, which is
+    what matters. This proves the MECHANISM, so a future edit that drops the
+    flag and re-adds a `sport IS NOT NULL` partial index — which would pass the
+    behaviour test on those rows and silently re-open the NULL case — is caught
+    here by name.
+    """
+    with pg.cursor() as cur:
+        cur.execute(
+            "SELECT indnullsnotdistinct FROM pg_index "
+            "WHERE indexrelid = 'uq_container_anchor'::regclass"
+        )
+        assert cur.fetchone()[0] is True
 
 
 def test_the_same_string_may_be_two_different_id_kinds(pg):
