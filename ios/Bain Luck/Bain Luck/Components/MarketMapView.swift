@@ -346,7 +346,12 @@ struct MarketMapView: View {
         // The axis ends name the rail's own outer bound. They used to name
         // `vocab.marginRange` regardless, which is the same number on every map
         // drawn in the sport's unit and a games number on one that is not.
-        let axisEnd = formatThreshold(rangeMax)
+        //
+        // #3642 — EACH end names ITS OWN bound. One `formatThreshold(rangeMax)`
+        // on both ends claims a symmetric rail, and `marginBounds`' declared
+        // branch is asymmetric whenever the two teams are quoted to different
+        // depths. See `MarketMapRail.marginAxisEnds`.
+        let axisEnds = MarketMapRail.marginAxisEnds(bounds)
 
         // #3630 — ONE selector, both layouts. The column branch used to pin this
         // to the literal `"Full game margin map"`, so every unit-aware title the
@@ -371,9 +376,9 @@ struct MarketMapView: View {
             zeroPosition: zeroPos,
             leftRgb: awayRgb,
             rightRgb: homeRgb,
-            axisLeft: "\(aAbbr) by \(axisEnd)+",
+            axisLeft: "\(aAbbr) by \(formatThreshold(axisEnds.left))+",
             axisMid: "Tie",
-            axisRight: "\(hAbbr) by \(axisEnd)+",
+            axisRight: "\(hAbbr) by \(formatThreshold(axisEnds.right))+",
             markers: markers,
             ladder: ladder
         )
@@ -602,13 +607,16 @@ struct MarketMapView: View {
             markers.append(MapMarker(id: "pre", value: pv, type: .pre, label: "PRE-GAME", displayValue: "\(pv > 0 ? hAbbr : aAbbr) +\(String(format: "%.1f", abs(pv)))"))
         }
 
-        let axisEnd = formatThreshold(rangeMax)
+        // #3642 — each end names its own bound, as on the full-game card above.
+        let axisEnds = MarketMapRail.marginAxisEnds(bounds)
         return mapCard(
             title: label, subtitle: "Half margin distribution", headline: "",
             density: density, rangeMin: rangeMin, rangeMax: rangeMax,
             zeroPosition: zeroPos,
             leftRgb: resolveRGB(awayColor), rightRgb: resolveRGB(homeColor),
-            axisLeft: "\(aAbbr) by \(axisEnd)+", axisMid: "Tie", axisRight: "\(hAbbr) by \(axisEnd)+",
+            axisLeft: "\(aAbbr) by \(formatThreshold(axisEnds.left))+",
+            axisMid: "Tie",
+            axisRight: "\(hAbbr) by \(formatThreshold(axisEnds.right))+",
             markers: markers, ladder: []
         )
     }

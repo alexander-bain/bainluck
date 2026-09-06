@@ -133,6 +133,53 @@ enum MarketMapRail {
         return Bounds(min: -half, max: half)
     }
 
+    /// The magnitude each END of a margin axis names — its OWN outer bound.
+    ///
+    /// #3642. `marginBounds`' declared branch is asymmetric by construction:
+    /// `min` is driven by the away rungs and `max` by the home rungs, and the
+    /// two sides of a book are not quoted to the same depth. Both call sites in
+    /// `MarketMapView` nonetheless derived ONE `axisEnd` from `rangeMax` and
+    /// printed it on both ends, so the left label named a bound the rail does
+    /// not have.
+    ///
+    /// THE PHOTOGRAPH. Event 14780138 (Patriots at Seahawks, NFL, `scheduled`),
+    /// iPad Pro 11-inch simulator against production, 2026-09-06 —
+    /// `artifacts-native-042/ipad-nfl-14780138-top.png`. The axis read
+    /// **`NE by 23.5+ · Tie · SEA by 23.5+`**, a symmetric claim, over a rail
+    /// whose "Tie" sat at 43% of its width.
+    ///
+    /// THE MECHANISM, from the event's own `/api/events/14780138/game-markets`:
+    /// 31 spread rows, Seattle quoted out to `20.5` and New England only to
+    /// `15.0`. With football's `declared` span of 18 and `pad` 3 that is
+    /// `min(-15.0 - 3, -18) = -18.0` and `max(20.5 + 3, 18) = 23.5`. The right
+    /// label was right; the left overstated New England's end of the rail by
+    /// 5.5 points. Zero therefore falls at `18 / 41.5 = 43.4%`, which is where
+    /// the word "Tie" was photographed, and the PROJECTION marker (`SEA +1.0`)
+    /// at `19 / 41.5 = 45.8%` — 395.7 px along a rail measured at x 61–792,
+    /// against 395.5 px measured off the PNG.
+    ///
+    /// Why it survived #3566, which rewrote this very axis row. Two reasons,
+    /// and the second is the instructive one:
+    ///
+    /// 1. The label measurement behind ``endLabelBandPercent`` was taken off a
+    ///    SYMMETRIC card — `artifacts-native-038/nfl-14632820-s900.png`, whose
+    ///    axis reads `SF by 18+ … LAR by 18+` because that rail is `[-18, 18]`.
+    ///    On a symmetric rail one shared label is indistinguishable from two
+    ///    correct ones. That measurement is unaffected by this change.
+    /// 2. ``midAxisLabel``'s own documentation already records the asymmetry, in
+    ///    this same file: *"full game, margins `[-15.0, 20.5]` → rail
+    ///    `[-18.0, 23.5]` → zero at 43.4%"*. The rail was measured, the number
+    ///    was written down, and the axis went on printing `23.5` at both ends
+    ///    regardless — because #3566 was looking at where the MIDDLE label goes
+    ///    and the end labels were not the subject. A recorded measurement is not
+    ///    a checked one.
+    ///
+    /// Returned as magnitudes because that is what the labels print: the axis
+    /// says "NE by 18+", never "NE by -18+" — the side already carries the sign.
+    static func marginAxisEnds(_ bounds: Bounds) -> (left: Double, right: Double) {
+        (left: abs(bounds.min), right: abs(bounds.max))
+    }
+
     /// True when a totals map would draw no ladder, no density and no marker —
     /// a purple bar with an axis under it and nothing on it.
     ///
