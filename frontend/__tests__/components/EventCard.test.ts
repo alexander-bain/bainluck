@@ -186,17 +186,82 @@ describe("EventCard", () => {
     expect(pregame).toContain('aria-label="Win probability"');
     expect(pregame).toContain("62%");
 
-    // ⚠️ NOT asserted here, deliberately, and it is a live defect rather than
-    // an oversight: `text-prob-md` / `text-prob-sm` — the 20px and 16px chip
-    // sizes this card asks for at L515 and L618 — never reach the DOM. They go
-    // through `cn`, which is `twMerge(clsx(...))`, and tailwind-merge cannot
-    // tell the project's custom `text-prob-md` (a fontSize) from
-    // `text-text-primary` (a colour): it reads both as the same `text-*` group
-    // and keeps the last one. The pregame chip renders
-    // `font-mono tabular-nums text-text-primary` with no size class at all, so
-    // the favourite/underdog size hierarchy on this card is silently gone.
-    // Filed separately; it is not #2764's to fix, because fixing it changes
-    // the PREGAME card and #2764's acceptance requires leaving that untouched.
+    // The defect this comment used to record — `text-prob-md` / `text-prob-sm`
+    // never reaching the DOM, because tailwind-merge read the custom fontSize
+    // as a `text-*` colour and kept only `text-text-primary` — was filed as
+    // #3592 and is fixed in `lib/utils.ts`. It is asserted in its own block
+    // below ("the chips keep the size the design asks for"), not here, because
+    // this test's subject is the SETTLED card, which renders no chip at all.
+  });
+});
+
+// #3592 — the chip sizes have to survive `cn`.
+//
+// `cn` is `twMerge(clsx(...))`. `text-prob-md` is a custom fontSize; without
+// the scale registered, tailwind-merge filed it in the same group as
+// `text-text-primary` and dropped it, so the favourite and the underdog
+// rendered at the SAME inherited size on every league, team and search card —
+// the card's "this one is the favourite" signal carried only by the bar.
+//
+// These assert PRESENCE IN THE RENDERED MARKUP, deliberately. A test that
+// checked the class was passed to `cn` would have passed throughout the bug:
+// passing it is exactly what already happened.
+describe("EventCard — the chips keep the size the design asks for", () => {
+  it("renders the favourite at text-prob-md and the underdog at text-prob-sm", () => {
+    const html = renderToStaticMarkup(
+      React.createElement(EventCard, { event: makeEvent() })
+    );
+
+    // Non-vacuity: these are the chips those classes belong to.
+    expect(html).toContain("62%");
+    expect(html).toContain("38%");
+
+    expect(html).toContain("text-prob-md");
+    expect(html).toContain("text-prob-sm");
+    // and the colours they were losing to are still there.
+    expect(html).toContain("text-text-primary");
+    expect(html).toContain("text-text-secondary");
+  });
+
+  it("binds the sizes to favourite/underdog, not to home/away", () => {
+    // Away is the favourite here, so the md/sm pairing has to flip with it.
+    const awayFavourite = makeEvent({
+      current_odds: {
+        captured_at: "2030-01-01T11:00:00.000Z",
+        home_probability: 0.38,
+        away_probability: 0.62,
+        spread: null,
+        over_under: null,
+        projected_home_score: 104,
+        projected_away_score: 111,
+      },
+    } as Partial<Event>);
+    const html = renderToStaticMarkup(
+      React.createElement(EventCard, { event: awayFavourite })
+    );
+
+    // The home chip is now the underdog: its span carries prob-sm, and the
+    // away chip carries prob-md. Assert on the ORDER the two sizes appear in,
+    // which is the only thing that distinguishes this from the case above.
+    const md = html.indexOf("text-prob-md");
+    const sm = html.indexOf("text-prob-sm");
+    expect(md).toBeGreaterThan(-1);
+    expect(sm).toBeGreaterThan(-1);
+    expect(sm).toBeLessThan(md); // home (underdog, sm) renders before away (favourite, md)
+  });
+
+  it("still renders no chip at all on a settled card", () => {
+    const html = renderToStaticMarkup(
+      React.createElement(EventCard, {
+        event: makeEvent({
+          status: "completed",
+          home_score: 110,
+          away_score: 104,
+        }),
+      })
+    );
+    expect(html).not.toContain("text-prob-md");
+    expect(html).not.toContain("text-prob-sm");
   });
 });
 
