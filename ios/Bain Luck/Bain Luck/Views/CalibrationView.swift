@@ -455,6 +455,15 @@ struct CalibrationSurfaceView: View {
                 .background(Color.systemGray5.opacity(0.5))
             }
             .background(Color.systemGray6, in: RoundedRectangle(cornerRadius: 10))
+            // #3650: a source the cohort emptied is shown, states its own
+            // emptiness, and names the toggle that measures it — an absence a
+            // reader cannot act on is just a smaller mystery.
+            if let note = viewModel.withheldSourcesNote {
+                Text(note)
+                    .font(.caption2).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
     }
 
@@ -465,13 +474,27 @@ struct CalibrationSurfaceView: View {
                 Text(row.name).lineLimit(1)
             }.frame(maxWidth: .infinity, alignment: .leading)
             Text(fmtN(row.n)).frame(width: 54, alignment: .trailing).monospacedDigit()
-            Text(String(format: "%.1f", row.ece)).frame(width: 48, alignment: .trailing)
+            metricText(row.ece, "%.1f").frame(width: 48, alignment: .trailing)
                 .monospacedDigit().foregroundStyle(viewModel.eceColor(row.ece)).fontWeight(.semibold)
-            Text(String(format: "%.1f", row.mce)).frame(width: 46, alignment: .trailing)
+            metricText(row.mce, "%.1f").frame(width: 46, alignment: .trailing)
                 .monospacedDigit().foregroundStyle(.secondary)
-            Text(String(format: "%.3f", row.brier)).frame(width: 52, alignment: .trailing).monospacedDigit()
+            metricText(row.brier, "%.3f").frame(width: 52, alignment: .trailing).monospacedDigit()
         }
         .font(.caption).padding(.horizontal, 12).padding(.vertical, 10)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(row.state == .noCohortData
+            ? "\(row.name), no outcomes in this cohort, not ranked"
+            : "\(row.name), \(fmtN(row.n)) outcomes")
+    }
+
+    /// #3650: a withheld metric prints an em dash, never a zero.
+    ///
+    /// `String(format:)` on the empty reduction's `0` produced "0.0", which on a
+    /// table sorted "lower is better" read as a perfect score. There is no
+    /// number to print here, so none is printed.
+    private func metricText(_ value: Double?, _ format: String) -> Text {
+        guard let value else { return Text(verbatim: "\u{2014}") }
+        return Text(String(format: format, value))
     }
 
     // MARK: - Trading Activity
@@ -577,9 +600,9 @@ struct CalibrationSurfaceView: View {
                 .font(.caption.weight(.semibold))
                 .lineLimit(1)
             HStack(alignment: .firstTextBaseline, spacing: 3) {
-                Text(String(format: "%.1fpp", row.ece))
+                metricText(row.ece, "%.1fpp")
                     .font(.callout.weight(.bold).monospacedDigit())
-                    .foregroundStyle(color)
+                    .foregroundStyle(row.ece == nil ? Color.secondary : color)
                 Spacer()
                 Text(fmtN(row.n))
                     .font(.caption2.monospacedDigit())
@@ -602,11 +625,11 @@ struct CalibrationSurfaceView: View {
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
                 .frame(width: 72, alignment: .trailing)
-            Text(String(format: "%.1f", row.ece))
+            metricText(row.ece, "%.1f")
                 .font(.caption.weight(.semibold).monospacedDigit())
                 .foregroundStyle(viewModel.eceColor(row.ece))
                 .frame(width: 48, alignment: .trailing)
-            Text(String(format: "%.1f", row.mce))
+            metricText(row.mce, "%.1f")
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
                 .frame(width: 46, alignment: .trailing)

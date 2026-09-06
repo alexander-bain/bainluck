@@ -335,41 +335,71 @@ final class CalibrationViewModel: ObservableObject {
             .map { $0.key }
     }
 
+    /// #3650: metrics are withheld (`nil`) when the cohort holds no outcomes for
+    /// the source, and unmeasured rows are ordered out of the ranking rather
+    /// than into first place. `datagolf` publishes 36 outcomes, all
+    /// `price_moved: false`, so the default cohort empties it and every metric
+    /// it reported was an empty reduction's `0`. See `CalibrationRowOrdering`.
     var sourceRows: [CalSourceRow] {
         let bks = buckets
         let thin = includeThin
-        return sources.map { src in
+        let rows = sources.map { src -> CalSourceRow in
             let f: (CalibrationBucket) -> Bool = { $0.source == src && (thin || $0.priceMoved != false) }
             let agg = CalibrationMath.aggregate(bks, filter: f)
             let band = agg.filter { abs($0.error) <= 5 }.count
+            let n = CalibrationMath.totalN(bks, filter: f)
             return CalSourceRow(
-                source: src, name: Self.sourceDisplayName(src),
-                n: CalibrationMath.totalN(bks, filter: f),
-                ece: CalibrationMath.ece(agg), mce: CalibrationMath.mce(agg),
-                brier: CalibrationMath.brier(bks, filter: f),
+                source: src, name: Self.sourceDisplayName(src), n: n,
+                ece: CalibrationRowOrdering.metric(CalibrationMath.ece(agg), outcomes: n),
+                mce: CalibrationRowOrdering.metric(CalibrationMath.mce(agg), outcomes: n),
+                brier: CalibrationRowOrdering.metric(CalibrationMath.brier(bks, filter: f), outcomes: n),
                 bucketsInBand: band, totalBuckets: agg.count
             )
-        }.sorted { $0.ece < $1.ece }
+        }
+        return CalibrationRowOrdering.orderedByECE(rows)
     }
 
+    /// The sentence Source Comparison owes when the cohort empties a source it
+    /// still lists, naming the toggle that measures it. `nil` when every source
+    /// has cohort data — which is the case whenever the toggle is already on.
+    var withheldSourcesNote: String? {
+        CalibrationRowOrdering.withheldNote(
+            labels: CalibrationRowOrdering.withheld(sourceRows).map(\.name),
+            toggleLabel: cohortToggleLabel
+        )
+    }
+
+    /// #3650: the same guard as `sourceRows`, and it is load-bearing rather than
+    /// decorative. `categories` gates on outcomes counted across ALL buckets,
+    /// while the row's own `n` is counted over the ACTIVE COHORT — so a category
+    /// can clear `minCategoryOutcomes` on its total and still be empty here,
+    /// exactly as `datagolf` does among the sources. Measured 2026-09-06: no
+    /// category is currently in that state, which is a fact about today's data
+    /// and not a property of the code.
     var categoryRows: [CalCategoryRow] {
         let bks = buckets
         let thin = includeThin
-        return categories.map { cat in
+        let rows = categories.map { cat -> CalCategoryRow in
             let f: (CalibrationBucket) -> Bool = { Self.normalizedCategory($0.category) == cat && (thin || $0.priceMoved != false) }
             let agg = CalibrationMath.aggregate(bks, filter: f)
+            let n = CalibrationMath.totalN(bks, filter: f)
             return CalCategoryRow(
-                category: cat, name: Self.categoryDisplayName(cat),
-                n: CalibrationMath.totalN(bks, filter: f),
-                ece: CalibrationMath.ece(agg), mce: CalibrationMath.mce(agg),
-                brier: CalibrationMath.brier(bks, filter: f)
+                category: cat, name: Self.categoryDisplayName(cat), n: n,
+                ece: CalibrationRowOrdering.metric(CalibrationMath.ece(agg), outcomes: n),
+                mce: CalibrationRowOrdering.metric(CalibrationMath.mce(agg), outcomes: n),
+                brier: CalibrationRowOrdering.metric(CalibrationMath.brier(bks, filter: f), outcomes: n)
             )
-        }.sorted { $0.ece < $1.ece }
+        }
+        return CalibrationRowOrdering.orderedByECE(rows)
     }
 
     var topCategoryRows: [CalCategoryRow] { Array(categoryRows.prefix(10)) }
-    var bestCategoryRow: CalCategoryRow? { categoryRows.min { $0.ece < $1.ece } }
-    var worstCategoryRow: CalCategoryRow? { categoryRows.max { $0.ece < $1.ece } }
+
+    /// Best/worst consider MEASURED rows only. A "Best Calibrated" card naming a
+    /// category with no outcomes would be the headline version of #3650.
+    private var measuredCategoryRows: [CalCategoryRow] { categoryRows.filter { $0.ece != nil } }
+    var bestCategoryRow: CalCategoryRow? { measuredCategoryRows.first }
+    var worstCategoryRow: CalCategoryRow? { measuredCategoryRows.last }
 
     // MARK: - Trading-activity split (always the full moved/unchanged cohorts)
 
@@ -713,6 +743,13 @@ final class CalibrationViewModel: ObservableObject {
 
     func eceColor(_ ece: Double) -> Color { ece < 4 ? .green : (ece < 8 ? .blue : .orange) }
 
+    /// #3650: a withheld metric has no quality colour. Painting an unmeasured
+    /// row green is the same claim its fabricated `0.0` was making, in pixels.
+    func eceColor(_ ece: Double?) -> Color {
+        guard let ece else { return .secondary }
+        return eceColor(ece)
+    }
+
     /// "Jul 2026 – May 2026" style span, or nil if the payload omits the range.
     var dateRangeLabel: String? {
         guard let s = data?.dateRange?.start, let e = data?.dateRange?.end else { return nil }
@@ -801,24 +838,37 @@ final class CalibrationViewModel: ObservableObject {
 
 // MARK: - Presentation rows
 
-struct CalSourceRow: Identifiable {
+/// #3650: the metrics are OPTIONAL, and that is the fix rather than a detail of
+/// it. When the active cohort holds no outcomes for this row, every metric the
+/// math returns is an empty reduction's `0` — indistinguishable, once it is a
+/// plain `Double`, from a source measured and found perfect. Modelling the
+/// absence as `nil` moves the check from a reviewer's attention to the
+/// compiler's: a formatter cannot be handed one of these without saying what it
+/// means to print when there is nothing to print.
+struct CalSourceRow: Identifiable, CalibrationMetricRow {
     let id = UUID()
     let source: String
     let name: String
     let n: Int
-    let ece: Double
-    let mce: Double
-    let brier: Double
+    /// `nil` when `n == 0`. See `CalibrationRowOrdering`.
+    let ece: Double?
+    let mce: Double?
+    let brier: Double?
     let bucketsInBand: Int
     let totalBuckets: Int
+
+    var state: CalRowState { CalibrationRowOrdering.state(outcomes: n) }
 }
 
-struct CalCategoryRow: Identifiable {
+struct CalCategoryRow: Identifiable, CalibrationMetricRow {
     let id = UUID()
     let category: String
     let name: String
     let n: Int
-    let ece: Double
-    let mce: Double
-    let brier: Double
+    /// `nil` when `n == 0`. See `CalibrationRowOrdering`.
+    let ece: Double?
+    let mce: Double?
+    let brier: Double?
+
+    var state: CalRowState { CalibrationRowOrdering.state(outcomes: n) }
 }
