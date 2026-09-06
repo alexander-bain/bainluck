@@ -427,6 +427,30 @@ function unpricedDetailNote(entry: {
   return `${standing} with no probability against it. That is not a statement about whether a venue listed one.`;
 }
 
+/**
+ * Does this row have TWO NUMBERS THAT DISAGREE — the one state the page is
+ * allowed to describe that way (UX-1089)?
+ *
+ * The card and the count under the list both need this answer, and until now
+ * they each spelled it out: the card asked `!coherent && priced` (UX-P142's
+ * fix) and the count asked only `!coherent`. On 2026-09-06 the US Open women's
+ * Round of 16 held two fixtures Kalshi had listed hours earlier and nobody had
+ * quoted yet — `priced: false`, `coherent: false`, both probabilities `null` —
+ * so the cards read "no probability against it" and the line one screen below
+ * read "2 matches have numbers that do not agree yet", about the same two
+ * matches.
+ *
+ * `build_slate` emits `coherent: false` for every unpriced row, so this is not
+ * an exotic shape: it is what the released draw looks like before a venue
+ * quotes it, and the note was wrong for as long as one existed.
+ *
+ * Exported, and asked by BOTH call sites, so the next change to what counts as
+ * a disagreement cannot move one without the other.
+ */
+export function showsDisagreement(entry: { coherent: boolean; priced: boolean }): boolean {
+  return !entry.coherent && entry.priced;
+}
+
 export function matchDetailNote(entry: {
   coherent: boolean;
   decided: boolean;
