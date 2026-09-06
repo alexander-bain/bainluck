@@ -60,6 +60,7 @@ from app.utils import (
     should_highlight,
 )
 from app.utils.odds_filtering import filter_stale_bookmaker_snapshots as _filter_stale_bookmaker_snapshots
+from app.utils import period_markers as pm_source
 from app.utils.game_window import (
     filter_state_bearing_rows as _filter_state_bearing_rows,
     game_state_window as _game_state_window,
@@ -11932,7 +11933,11 @@ async def get_event_odds_history(
             .order_by(func.min(ScoringPlay.captured_at))
         )
         period_markers = [
-            {"timestamp": row.first_seen.isoformat(), "period": row.period}
+            {
+                "timestamp": row.first_seen.isoformat(),
+                "period": row.period,
+                "source": pm_source.SOURCE_STATPAL,
+            }
             for row in pm_result.all()
         ]
     except Exception:
@@ -11949,7 +11954,7 @@ async def get_event_odds_history(
             if period and ts and period not in first_seen:
                 first_seen[period] = ts
         period_markers = [
-            {"timestamp": ts, "period": period}
+            {"timestamp": ts, "period": period, "source": pm_source.SOURCE_ESPN_BOX}
             for period, ts in sorted(first_seen.items(), key=lambda x: x[1])
         ]
 
@@ -11982,7 +11987,7 @@ async def get_event_odds_history(
                         first_seen_wp[period_str] = point["timestamp"]
         if first_seen_wp:
             period_markers = [
-                {"timestamp": ts, "period": period}
+                {"timestamp": ts, "period": period, "source": pm_source.SOURCE_WIN_PROB}
                 for period, ts in sorted(first_seen_wp.items(), key=lambda x: x[1])
             ]
 
@@ -11990,52 +11995,19 @@ async def get_event_odds_history(
     # For completed events with no period data from any source, use
     # the sport's standard period structure + commence_time to place
     # approximate markers. Only for sports with fixed period durations.
+    # Nobody observed these — they are tagged `estimated` (#3348) so a client can
+    # decline to draw a guess, and the domain guard below throws out the ones that
+    # land off the drawn line entirely.
     if not period_markers and event.commence_time and event.status in ("completed", "closed"):
-        sport_key = event.sport.key if event.sport else ""
-        ct = event.commence_time
-        if sport_key.startswith("soccer"):
-            period_markers = [
-                {"timestamp": ct.isoformat(), "period": "1H"},
-                {"timestamp": (ct + timedelta(minutes=47)).isoformat(), "period": "2H"},
-            ]
-        elif sport_key.startswith("aussierules"):
-            # AFL: 4 quarters, ~20 min each + breaks (~6 min quarter, ~20 min half)
-            period_markers = [
-                {"timestamp": ct.isoformat(), "period": "1st Quarter"},
-                {"timestamp": (ct + timedelta(minutes=26)).isoformat(), "period": "2nd Quarter"},
-                {"timestamp": (ct + timedelta(minutes=72)).isoformat(), "period": "3rd Quarter"},
-                {"timestamp": (ct + timedelta(minutes=98)).isoformat(), "period": "4th Quarter"},
-            ]
-        elif sport_key.startswith("basketball"):
-            if "ncaab" in sport_key or "wncaab" in sport_key:
-                # NCAA basketball: 2 halves of 20 min each
-                period_markers = [
-                    {"timestamp": ct.isoformat(), "period": "1st Half"},
-                    {"timestamp": (ct + timedelta(minutes=55)).isoformat(), "period": "2nd Half"},
-                ]
-            else:
-                # NBA: 4 quarters of 12 min each (real-time ~30-35 min per quarter)
-                period_markers = [
-                    {"timestamp": ct.isoformat(), "period": "1st Quarter"},
-                    {"timestamp": (ct + timedelta(minutes=33)).isoformat(), "period": "2nd Quarter"},
-                    {"timestamp": (ct + timedelta(minutes=80)).isoformat(), "period": "3rd Quarter"},
-                    {"timestamp": (ct + timedelta(minutes=113)).isoformat(), "period": "4th Quarter"},
-                ]
-        elif sport_key.startswith("americanfootball"):
-            # NFL/NCAA football: 4 quarters of 15 min each (real-time ~45 min per quarter)
-            period_markers = [
-                {"timestamp": ct.isoformat(), "period": "1st Quarter"},
-                {"timestamp": (ct + timedelta(minutes=45)).isoformat(), "period": "2nd Quarter"},
-                {"timestamp": (ct + timedelta(minutes=110)).isoformat(), "period": "3rd Quarter"},
-                {"timestamp": (ct + timedelta(minutes=155)).isoformat(), "period": "4th Quarter"},
-            ]
-        elif sport_key.startswith("icehockey"):
-            # NHL: 3 periods of 20 min each (real-time ~40 min per period with intermissions)
-            period_markers = [
-                {"timestamp": ct.isoformat(), "period": "1st Period"},
-                {"timestamp": (ct + timedelta(minutes=40)).isoformat(), "period": "2nd Period"},
-                {"timestamp": (ct + timedelta(minutes=80)).isoformat(), "period": "3rd Period"},
-            ]
+        period_markers = pm_source.estimated_period_markers(
+            event.sport.key if event.sport else "",
+            event.commence_time,
+        )
+
+    # NB: the domain guard that prunes these lives further down, immediately
+    # before the time-domain block — it can only run once every series the chart
+    # draws is final (aggregate_line does not exist yet here, and the terminal
+    # point is appended to espn_history later still).
 
     # ── Prediction market spread/total binary contracts ──
     # Query FuturesMarkets linked to this event for spread/total data,
@@ -12332,6 +12304,33 @@ async def get_event_odds_history(
                         "timestamp": terminal_iso,
                         "home_probability": resolved_home_prob,
                     })
+
+    # ── The period-marker domain guard (#3348) ──
+    # Whatever tier answered above, a marker outside the span of the series the
+    # chart actually draws is a chip with no line under it — measured on
+    # production at up to 36 hours past the end of the line, and (more often) to
+    # the LEFT of the only point on the chart. Bound both ends against the drawn
+    # series; `app/utils/period_markers.py` carries the three production cases and
+    # the reason this cannot drop a marker on a healthy event.
+    #
+    # Placed here, not beside the fallback chain: every series it measures must be
+    # final first (aggregate_line is built below the chain, and the terminal point
+    # is appended to espn_history/aggregate_line later still). Applied ONCE to
+    # whatever tier answered rather than inside each tier, so an emptied tier does
+    # not fall through to a lower-confidence one — dropping a measured marker and
+    # replacing it with an estimate is a worse answer than drawing nothing.
+    _pm_lo, _pm_hi = pm_source.series_span(
+        history,
+        espn_history,
+        aggregate_line,
+        *(win_prob_history or {}).values(),
+    )
+    if _pm_hi is not None and not is_finished:
+        # A live chart is drawn out to the present, past the last banked point.
+        _pm_hi = max(_pm_hi, now)
+    period_markers = pm_source.drop_markers_outside_span(
+        period_markers, _pm_lo, _pm_hi
+    )
 
     # #240 Item 2a: emit an explicit server-side time domain so clients don't
     # derive a sliver x-axis from the data extent on a *young* live game. Anchor
