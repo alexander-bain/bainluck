@@ -81,6 +81,16 @@ SAFETY RAILS (each one earned):
     re-resolved through the EXISTING ``_apply_final_pm_win_prob`` helper (#1000
     shape-safe). This changes no weights and no blend math — it restamps a derived
     final that was computed from the wrong score.
+  * QUEUE 067 — the outcome grades that stood on the replaced score are RETRACTED
+    in the same transaction. ``game_score`` and its ``EVENTS_DERIVED_SOURCES``
+    siblings are tier 2 but NOT overwritable, so ``backfill_winners``' HAVING
+    clause permanently excludes any market carrying one: fixing the score under a
+    ``game_score`` grade changed nothing a user saw. Their ``is_winner`` goes to
+    NULL — UNKNOWN, never False, which is an affirmative graded loss — which
+    drops the market back into that clause for the real grader to re-decide from
+    the corrected score. Never re-graded here (this rail cannot parse a 1H spread
+    or a prop bound), never applied to a venue settlement, and never to an event
+    whose score this pass did not itself prove wrong and fix.
   * Commits per (sport, date) group, so a 30s HTTP timeout leaves consistent,
     resumable progress. Walk the population with ``offset``, advancing by the
     returned ``next_offset`` until ``groups_remaining`` is 0.
@@ -187,6 +197,14 @@ from app.utils.event_completion import (  # noqa: E402
     LAST_POST_COMMENCE_SNAPSHOT_SQL as _LAST_SNAPSHOT_SQL,
 )
 
+# Queue 067 — the grades computed from the very columns this rail overwrites.
+# Imported, never restated: the 038 suite scans `backfill_winners` for sources
+# that read `events` and asserts they are all declared in this one set, so a new
+# events-derived grader is covered by this retraction the day it is added.
+from app.utils.resolution_authority import EVENTS_DERIVED_SOURCES  # noqa: E402
+
+_EVENTS_DERIVED_LIST: list[str] = sorted(EVENTS_DERIVED_SOURCES)
+
 _FIX_SCORE_SQL = """
     UPDATE events SET home_score = :home_score, away_score = :away_score
     WHERE id = :event_id
@@ -194,6 +212,63 @@ _FIX_SCORE_SQL = """
 
 _FIX_COMPLETED_AT_SQL = """
     UPDATE events SET completed_at = :completed_at WHERE id = :event_id
+"""
+
+# ---------------------------------------------------------------------------
+# QUEUE 067 — THE GRADES THAT STOOD ON THE SCORE WE JUST REPLACED.
+#
+# Fixing `events.home_score`/`away_score` silently invalidates every outcome
+# graded FROM those columns, and until now this rail left them exactly as they
+# were. That is not a cosmetic gap: `game_score` and its siblings are tier 2 and
+# are NOT in OVERWRITABLE_WINNER_SOURCES, so `backfill_winners`' re-resolution
+# HAVING clause excludes any market carrying one (lines 1290 / 2000 — "SUM(CASE
+# WHEN fo.is_winner AND fo.resolution_source NOT IN <overwritable>) = 0"). A
+# grade minted from a wrong final is therefore permanent, and repairing the
+# score underneath it changes nothing a user sees.
+#
+# Measured on production 2026-09-01: 814 `game_score` + 248 `box_score` outcome
+# rows are graded on terminal events holding an equal score, on top of 371
+# `pass2_loser` and 208 `pass2_guess`. #2496 measures the draw-impossible slice
+# at 354 rows across 9 events.
+#
+# WHY RETRACT AND NOT RE-GRADE. This rail knows the corrected score; it does not
+# know how to parse "wins the 1H by over N" or a player-prop bound, and
+# re-implementing that here would be a second grader competing with the real
+# one. `repair_kalshi_fabricated_loss` is the precedent and its rule is the
+# right one: a repair removes a claim it has disproven, and hands the question
+# back to the authority that answers it. Setting `is_winner` NULL — UNKNOWN
+# truth, never False, which is an affirmative graded LOSS (see the FuturesOutcome
+# column comment) — drops the market back into that HAVING clause, and the next
+# `backfill_winners` pass re-grades it from the score we just corrected.
+#
+# So gotcha #21 ("never bulk-reset is_winner without an immediate re-resolve
+# source") is satisfied structurally, not by promise: this only ever runs on an
+# event whose ESPN final we hold, in the same transaction that writes it.
+#
+# SCOPED THREE WAYS, because a retraction is data-destructive:
+#   * only events this rail PROVED wrong and corrected in this same pass;
+#   * only EVENTS_DERIVED_SOURCES — the maintained set of grades computed from
+#     our own events columns. A venue's `api_settlement` said what it said and
+#     our score being wrong does not touch it (and it outranks these anyway);
+#   * only rows that carry one of those sources, so a NULL/ungraded row is not
+#     churned.
+_RETRACT_EVENTS_DERIVED_GRADES_SQL = """
+    UPDATE futures_outcomes fo
+       SET is_winner = NULL, resolution_source = NULL
+      FROM futures_markets fm
+     WHERE fm.id = fo.market_id
+       AND fm.event_id = :event_id
+       AND fo.resolution_source = ANY(CAST(:sources AS text[]))
+"""
+
+# The dry run has to show this, or an operator approves a score fix without
+# seeing that it also un-grades rows. Same predicate as the write.
+_COUNT_EVENTS_DERIVED_GRADES_SQL = """
+    SELECT COUNT(*) AS n
+      FROM futures_outcomes fo
+      JOIN futures_markets fm ON fm.id = fo.market_id
+     WHERE fm.event_id = :event_id
+       AND fo.resolution_source = ANY(CAST(:sources AS text[]))
 """
 
 # Default group budget per invocation. Each group is ONE ESPN scoreboard call and
@@ -644,6 +719,11 @@ async def repair(
         "completed_at_repaired": 0,
         "blend_repaired": 0,
         "winner_flips": 0,
+        # Queue 067. Two counters, not one: what the plan SAYS it will un-grade
+        # and what the database actually reported un-graded. A repair that
+        # cannot show those agreeing has not shown its write landed.
+        "grades_to_retract": 0,
+        "grades_retracted": 0,
     }
     ledger: list[dict] = []
     groups_scanned = 0
@@ -799,6 +879,17 @@ async def repair(
                 })
                 if old_res != new_res:
                     stats["winner_flips"] += 1
+
+                # Queue 067: name the collateral BEFORE the write, so the
+                # dry-run ledger an operator reads is the whole plan.
+                n_stale_grades = (await s.execute(
+                    text(_COUNT_EVENTS_DERIVED_GRADES_SQL),
+                    {"event_id": r.event_id, "sources": _EVENTS_DERIVED_LIST},
+                )).one().n
+                if n_stale_grades:
+                    entry["events_derived_grades"] = n_stale_grades
+                    entry["grade_action"] = "retract_for_regrade"
+                    stats["grades_to_retract"] += n_stale_grades
             else:
                 entry["action"] = "fix_completed_at_only"
 
@@ -839,6 +930,16 @@ async def repair(
                             )
                         )
                         stats["blend_repaired"] += 1
+
+                # Queue 067. Same transaction as the score write: the grades
+                # derived from the old value never outlive it.
+                if n_stale_grades:
+                    res = await s.execute(
+                        text(_RETRACT_EVENTS_DERIVED_GRADES_SQL),
+                        {"event_id": r.event_id, "sources": _EVENTS_DERIVED_LIST},
+                    )
+                    stats["grades_retracted"] += res.rowcount or 0
+                    group_writes += 1
 
             if new_completed_at is not None:
                 await s.execute(text(_FIX_COMPLETED_AT_SQL), {
