@@ -235,6 +235,24 @@ observed* is not *cannot happen*. So both shed states are now reported by name o
 silently answers "no" the day a label is renamed — and the shed remains a `logger.error` carrying
 the term.
 
+### The production BEFORE-measurement, with a working control
+
+Deployed build `324040d9` (master, without the fix). No debug flags, so this is the live cache path
+a real user gets. `/usr/bin/time -p`, sequential, 2s apart:
+
+| term | shed | 1st | 2nd | 3rd |
+|---|---|---|---|---|
+| **`stanley cup`** — the CONTROL | 0/5 | 2.81s | **0.17s** | **0.15s** |
+| `red` | 5/5 | 6.36s | 8.03s | 7.02s |
+| `sta` | 5/5 | 8.35s | 6.95s | — |
+
+**The control is what makes this a measurement.** `stanley cup` drops to 0.15s on its second
+request, so the probe can detect a cache hit and the endpoint does cache. `red` and `sta` never get
+below 6.36s however many times you ask, and `sta`'s repeated bodies are byte-identical — the same
+answer, recomputed from scratch every time. **~45x** between a warm term and a permanently cold one.
+
+That is the baseline for the post-deploy check.
+
 ### The guard
 
 `test_lat_p241_outcome_arm_shed_is_cacheable_3399.py`, 14 tests, **AST not substring**: a 1,000-line
