@@ -109,7 +109,20 @@ class TestTheLedgerCountsItsOwnObservations:
 
 
 class TestTheProjectionSurvivesTheThrowingTerminal:
-    """The numbers that were absent from 181 consecutive ledgers."""
+    """The numbers that were absent from 181 consecutive ledgers.
+
+    CAL-P1033 (#3536). Every scenario here is a RECONSTRUCTION of a named
+    production beat taken under a 128-way partition — "79 of 128 banked", "73",
+    "127" — so the partition is pinned rather than read off the live dial. When
+    the dial moved to 4 these tests did not become more general, they became
+    incoherent: "127 units banked" is not a state a 4-unit partition can be in,
+    and the remaining-work arithmetic silently produced 0, which is this
+    module's own definition of the producer lying about being finished.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _partition_as_measured(self, monkeypatch):
+        monkeypatch.setattr(cmb, "STAGED_FUTURES_BUCKETS", 128)
 
     def test_a_working_beat_reports_its_rate_and_a_finite_eta(self):
         """The 2026-08-17 production beat, reconstructed: ~9.6 units at ~112s

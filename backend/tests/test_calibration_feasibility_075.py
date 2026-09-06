@@ -352,7 +352,7 @@ def test_record_stage_still_works_and_counts_as_completed():
     assert ledger.stage_completed_mean_ms("serialize") == 400
 
 
-async def test_unit_costs_survive_the_durable_round_trip_and_reach_the_next_plan():
+async def test_unit_costs_survive_the_durable_round_trip_and_reach_the_next_plan(monkeypatch):
     """Without this the whole fix is inert: the cost is measured, dropped on the
     durable write, and the next beat plans from a floor again — which is the
     state that rendered ``infeasible_phases: []`` for sixteen beats.
@@ -401,6 +401,11 @@ async def test_unit_costs_survive_the_durable_round_trip_and_reach_the_next_plan
             generation=1,
             fingerprint="fp",
         )
+        # CAL-P1033 (#3536). PROD_UNITS_DONE is 82 banked units and the expected
+        # projection below is 5 beats — both readings off a production beat taken
+        # under a 128-way partition. Pinned rather than read off a dial that now
+        # ships 4, where "82 banked" is not a state that exists.
+        monkeypatch.setattr(build, "STAGED_FUTURES_BUCKETS", 128)
         # Nine units complete at ~116.7s; the tenth is cancelled 4s in.
         for _ in range(9):
             runner.ledger.record_stage_outcome(
@@ -520,7 +525,7 @@ def _rate_runner():
     )
 
 
-def test_beats_to_publish_is_computed_from_completed_units_not_truncated_ones():
+def test_beats_to_publish_is_computed_from_completed_units_not_truncated_ones(monkeypatch):
     """CAL-P067 fixed the feasibility VERDICT and left the PROJECTION reading the
     mixed mean — the same defect surviving in the number an operator reads.
 
@@ -531,6 +536,11 @@ def test_beats_to_publish_is_computed_from_completed_units_not_truncated_ones():
     import math
 
     from app.tasks import calibration_main_build as build
+
+    # CAL-P1033 (#3536). These are reconstructions of production beats taken
+    # under a 128-way partition — the expected values below say 128 out loud —
+    # so the partition is pinned rather than read off a dial that now ships 4.
+    monkeypatch.setattr(build, "STAGED_FUTURES_BUCKETS", 128)
 
     runner = _rate_runner()
     for _ in range(9):
@@ -558,11 +568,16 @@ def test_beats_to_publish_is_computed_from_completed_units_not_truncated_ones():
     assert stages["staged:beats_to_publish"] >= optimistic
 
 
-def test_a_beat_with_no_completed_unit_still_projects_but_declares_the_basis():
+def test_a_beat_with_no_completed_unit_still_projects_but_declares_the_basis(monkeypatch):
     """A projection is worth having even off truncated observations — but a
     number derived from a lower bound must not render identically to one derived
     from a duration."""
     from app.tasks import calibration_main_build as build
+
+    # CAL-P1033 (#3536). These are reconstructions of production beats taken
+    # under a 128-way partition — the expected values below say 128 out loud —
+    # so the partition is pinned rather than read off a dial that now ships 4.
+    monkeypatch.setattr(build, "STAGED_FUTURES_BUCKETS", 128)
 
     runner = _rate_runner()
     runner.ledger.record_stage_outcome(build.STAGED_UNIT_STAGE, 200_000, completed=False)

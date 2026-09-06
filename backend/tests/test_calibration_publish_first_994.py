@@ -37,9 +37,11 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.tasks import calibration_main_build as cmb
 from app.utils.calibration_staged_futures import (
     decode_staged_cursor_detailed,
     new_staged_cursor,
+    plan_units,
     stamp_served_at,
 )
 
@@ -335,7 +337,21 @@ class TestTheRebuildIsStillFunded:
         # rebuild finishes and ``promote_if_complete`` empties ``committed_units``
         # into the serving slot — which is the right behaviour and the wrong
         # instrument for "did it bank anything".
-        _merged, runner, db = await _publish_pass(pc, roster=roster, window_ms=1300)
+        #
+        # CAL-P1033 (#3536): DERIVED from the plan, not the 1300 ms that used to
+        # be written here. Each unit read costs the fake runner 100 ms, so 1300
+        # admitted ~13 of the 46 slots a 60-market roster filled under a 128-way
+        # partition. At the 5 the dial now ships the same 1300 ms admits the
+        # WHOLE plan, the bank promotes, ``committed_units`` empties, and this
+        # test failed reporting 0 banked units for a rebuild that in fact ran to
+        # completion. Half the plan keeps the instrument pointed at what it is
+        # for, whatever the partition.
+        plan = len(plan_units(roster, buckets=cmb.STAGED_FUTURES_BUCKETS))
+        assert plan >= 2, "a partial-window scenario needs a plan of at least 2"
+        # Room for the pass's own fixed stages plus all but one unit: at least
+        # one unit banks, at least one is left, so the bank cannot promote.
+        window_ms = 300 + 100 * (plan - 1)
+        _merged, runner, db = await _publish_pass(pc, roster=roster, window_ms=window_ms)
         assert db.unit_reads == 0
         banked_before = len(store["cursor"]["committed_units"])
 

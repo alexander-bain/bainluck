@@ -27,6 +27,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.tasks import calibration_main_build as cmb
 from app.utils.calibration_staged_futures import (
     advance,
     collect_unit_results,
@@ -710,9 +711,17 @@ class TestTheFrozenLoopActuallyReStages:
         assert len(store["cursor"]["served_units"]) == _plan_size(_roster(60))
 
     @pytest.mark.asyncio
-    async def test_a_full_multi_beat_cycle(self, wiring):
+    async def test_a_full_multi_beat_cycle(self, wiring, monkeypatch):
         """THE END-TO-END SHAPE, on a window too small to finish in one beat —
-        which is production's shape (128 units, ~25 per beat).
+        which was production's shape when this was written (128 units, ~25/beat).
+
+        CAL-P1033 (#3536) pinned the partition to 128 here. The traced numbers
+        below — 46 planned slots out of a 60-market roster, ~12 units a beat —
+        are a 128-way partition and nothing else; at the 4 the dial now ships,
+        60 markets fill all four slots and the whole census lands on beat one,
+        so the trace stops describing a multi-beat cycle at all. The THREE
+        PROPERTIES are partition-independent and are re-asserted against the
+        shipping dial by ``test_the_cycle_holds_at_the_shipping_partition``.
 
         Traced through the real frozen loop with a window that admits ~12 units:
 
@@ -731,6 +740,7 @@ class TestTheFrozenLoopActuallyReStages:
         * once serving, the curve keeps publishing through every subsequent
           partial rebuild. It never goes dark and it never serves a blend.
         """
+        monkeypatch.setattr(cmb, "STAGED_FUTURES_BUCKETS", 128)
         pc, store, _saves = wiring
         roster = _roster(60)
         plan = _plan_size(roster)

@@ -34,7 +34,6 @@ import math
 
 import pytest
 
-from app.tasks.calibration_main_build import STAGED_FUTURES_BUCKETS
 from app.tasks.precompute_calibration import (
     _main_input_fingerprint,
     _record_convergence_projection,
@@ -282,12 +281,20 @@ class TestTheBuildProjectsItsOwnConvergence:
     existed — but in two rows of two different snapshots, with nothing dividing
     one by the other. Both times someone did that division by hand it changed
     the plan, and both times it was a day late.
+
+    CAL-P1033 (#3536). Every scenario below is a RECONSTRUCTION of a specific
+    production beat taken under a 128-way partition, so ``planned`` is the
+    literal 128 rather than ``STAGED_FUTURES_BUCKETS``. Reading the live dial
+    here did not make these tests general — it made them silently change subject
+    when the dial moved to 4, where "127 units remain" is not a state that
+    exists and the ratio assertions collapse to vacuously true. The sibling
+    tests in this class already used the literal; these now agree with them.
     """
 
     def test_the_real_census_on_beat_projects_over_a_hundred_more_beats(self):
         """The 18:15Z beat, exactly. It should have said ~117 on the spot."""
         stages = _project(
-            done=1, planned=STAGED_FUTURES_BUCKETS, ran=1,
+            done=1, planned=128, ran=1,
             unit_ms_total=PROD_UNIT_MS_CENSUS_ON,
         )
         units_per_beat = PROD_USABLE_MS / PROD_UNIT_MS_CENSUS_ON
@@ -299,18 +306,18 @@ class TestTheBuildProjectsItsOwnConvergence:
         """The 16:15Z beat. Same code, same window, ~an order of magnitude fewer
         beats — which is the entire case for the switch being off."""
         stages = _project(
-            done=10, planned=STAGED_FUTURES_BUCKETS, ran=10,
+            done=10, planned=128, ran=10,
             unit_ms_total=PROD_UNIT_MS_CENSUS_OFF * 10,
         )
         assert stages["staged:beats_to_publish"] < 20
 
     def test_the_two_projections_differ_by_about_ten_times(self):
         on = _project(
-            done=1, planned=STAGED_FUTURES_BUCKETS, ran=1,
+            done=1, planned=128, ran=1,
             unit_ms_total=PROD_UNIT_MS_CENSUS_ON,
         )["staged:beats_to_publish"]
         off = _project(
-            done=10, planned=STAGED_FUTURES_BUCKETS, ran=10,
+            done=10, planned=128, ran=10,
             unit_ms_total=PROD_UNIT_MS_CENSUS_OFF * 10,
         )["staged:beats_to_publish"]
         assert on > off * 5

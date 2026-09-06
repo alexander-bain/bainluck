@@ -167,25 +167,91 @@ STAGED_FUTURES_ENABLED = True
 #: this from the population size would re-partition everything each time the
 #: population crossed a boundary — the exact thrash the fix exists to end.
 #:
-#: SIZING, and the one thing production has to settle. Convergence needs
-#: ``units completed per beat > units invalidated per beat``. Invalidation
-#: saturates at the number of markets that resolve during a beat (each can
-#: disturb at most its own unit), while completions scale UP with the bucket
-#: count, because a bucket's cost falls as it holds fewer markets. So a larger
-#: count is the safer direction, until per-unit fixed overhead starts to
-#: dominate. 128 puts roughly 860 of the ~110K roster markets in each unit —
-#: about a third of the 2,500-market chunks the positional planner produced,
-#: whose measured cost was 51s against a ~23 min beat.
+#: SIZING — 128 WAS A REASONED SIZE AND PRODUCTION REFUTED IT (CAL-P1033, #3536).
 #:
-#: That is a REASONED size, not a measured one: the arrival rate could not be
-#: measured from here (``resolution_date`` is a scheduled date, not a transition
-#: timestamp, and a bare ``COUNT(*)`` over the population exceeds the query
-#: timeout). The first beats after deploy settle it, and they say so out loud —
-#: ``_run_staged_futures`` records a ``staged:units_dropped`` stage. If that
-#: number rivals the units completed per beat, the build is thrashing rather
-#: than converging and this constant is the dial: raise it. Doing so re-keys
-#: every unit and costs exactly one generation of banked work — safe, not free.
-STAGED_FUTURES_BUCKETS = 128
+#: The reasoning this replaces is kept verbatim, because it is a good argument
+#: and it is wrong, and the next editor is owed both halves:
+#:
+#:   *"completions scale UP with the bucket count, because a bucket's cost falls
+#:   as it holds fewer markets. So a larger count is the safer direction, until
+#:   per-unit fixed overhead starts to dominate."*
+#:
+#: Per-unit fixed overhead does not merely dominate; it is nearly the whole cost.
+#: Two measured points, one per partition:
+#:
+#: ===========  ==================  ==========================================
+#: partition    markets per unit    measured cost per unit
+#: ===========  ==================  ==========================================
+#: 1 (monolith) ~110,000            ~1,350 s
+#: 128          ~860                724 s (10:15Z beat) / **857 s (12:15Z)**
+#: ===========  ==================  ==========================================
+#:
+#: 0.8% of the rows costs 54–63% of the price. Fitting ``cost(B) = P + s·N/B``
+#: on the WORSE of the two 128-way readings gives a fixed per-unit prefix
+#: **P ≈ 853 s** against a scalable part of only ≈497 s for the ENTIRE
+#: population, so a generation costs ``853·B + 497`` seconds — 30 hours at
+#: B=128. Both beats were watched to their terminal and neither was killed: the
+#: 10:15Z beat ran 964 s and banked its 1st unit, the 12:15Z beat ran 1,094 s
+#: inside a deliberately quiet merge window, **resumed its cursor cleanly**
+#: (``staged:cursor_reason:resumable``) and banked its 2nd. They recorded
+#: ``staged:beats_to_publish`` = 81 and then **95** — the estimate got WORSE on
+#: the beat that went perfectly. That is why ``/api/calibration`` served a
+#: 29-hour-old ``generated_at`` while the task ran every hour, and why quieting
+#: the deploys around the beat could never have been the fix.
+#:
+#: WHY 17, AND WHY THE FIRST TWO ANSWERS WERE WRONG. The binding constraint is
+#: not a fraction anybody gets to choose — it is the production admission gate,
+#: :func:`~app.tasks.precompute_calibration._unit_fits_in_window`:
+#:
+#:     ``remaining_ms >= max(worst_unit_ms, prior_unit_ms) * STAGED_UNIT_WINDOW_SAFETY``
+#:
+#: with ``STAGED_UNIT_WINDOW_SAFETY = 1.25``. At the START of a beat
+#: ``remaining_ms`` is the whole unit budget and the reference is last beat's
+#: measured mean, so a partition is only viable when
+#: ``cost(B) * 1.25 <= 1,144 s``, i.e. **cost(B) <= 915.4 s**. This constant was
+#: written 4, then 6, then 5 against a hand-picked "85% of the window" ceiling
+#: before CERT-2071 caught it: 5 costs 952 s, the gate refuses the NEXT beat's
+#: first unit, and progress alternates with self-blocked beats. The guard now
+#: IMPORTS ``STAGED_UNIT_WINDOW_SAFETY`` instead of restating it.
+#:
+#: 🔴 READ THIS BEFORE MOVING THE DIAL AGAIN — NO PARTITION IS COMFORTABLE.
+#: The fixed prefix ALONE, at 1.25x, is **1,066 s against a 1,144 s budget —
+#: 93.2%**. So the largest admission margin ANY partition can achieve, even at
+#: B → ∞, is **+7.30%**. Meanwhile the measured beat-to-beat variance of one
+#: unit at a FIXED partition is **+18.4%** (723.8 s then 857.0 s, both at 128).
+#: **The variance is 2.5x the best margin available.** Self-blocked beats are
+#: therefore STRUCTURAL at every partition including 128 today, and no value of
+#: this constant removes them. It only changes how often they cost something and
+#: how much each surviving beat is worth. Anyone reading a self-blocked beat as
+#: evidence against the partition should check it against this paragraph first.
+#:
+#: 17 is not a taste. The rule is stated in the guard and searched, not asserted:
+#: take the SMALLEST partition whose admission margin reaches **half the maximum
+#: any partition can reach** — a derived bar, not a picked one — subject to
+#: publishing inside the beat budget. That lands on 17: margin **+3.74%** against
+#: a 7.30% ceiling, unit cost 882 s, and **~13 productive beats to publish,
+#: against 95.9 today.** B=8 is the first that admits at all and its margin is
+#: **+0.01%**, which is not a margin.
+#:
+#: Deliberately NOT the theoretical optimum. Margin still rises past 17 (+6.8% at
+#: 128) but beats rise faster, and every number here below B=128 is EXTRAPOLATED
+#: from a two-point fit whose small-B anchor is a historical monolith reading on
+#: a different code path. 17 is a large, safe step that will produce the third
+#: measured point — a real cost at a small partition — which is what makes the
+#: NEXT step defensible with data instead of extrapolation. Re-measure at 17 and
+#: re-fit. Move the MEASUREMENT, never the ceiling.
+#:
+#: THIS IS THE DIAL, NOT THE REPAIR, and the margin arithmetic above is why the
+#: repair is now required rather than nice to have. Bringing the fixed prefix
+#: down is the only thing that buys real headroom: a unit's statement scanning
+#: only its own slot instead of paying the full-population prefix B times over.
+#: That lives in ``_main_futures_sql`` in ruling-D45-frozen
+#: ``precompute_calibration.py`` and needs Alex's words; this constant does not.
+#:
+#: Changing it re-keys every unit and costs exactly one generation of banked
+#: work — safe, not free. The bank held TWO units when this was changed, so the
+#: re-key was free on the day and will not be once the build converges.
+STAGED_FUTURES_BUCKETS = 17
 
 def _process_rss_mb() -> float | None:
     """This process's resident set size in MB, or ``None`` if unobtainable.
