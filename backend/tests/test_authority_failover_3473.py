@@ -31,6 +31,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
+from sqlalchemy.ext.compiler import compiles
 
 from app.config.authority_by_sport import (
     AUTHORITY_BY_SPORT,
@@ -49,6 +51,7 @@ from app.utils.authority_failover import (
     FAILOVER_ESPN_SILENT,
     FIXTURES,
     LIVE_PATH_DARK,
+    LIVE_PATH_SILENT_ON_THE_GAME,
     NOT_GATED,
     NOT_READ,
     NOTHING_TO_SERVE,
@@ -64,6 +67,19 @@ from app.utils.authority_failover import (
 )
 
 NFL = "americanfootball_nfl"
+
+
+# `Event` carries Postgres JSONB/ARRAY columns that sqlite cannot render as DDL.
+# The repo's standing shim (see `test_proven_duplicate_2263`), so the writer test
+# below can create the real tables from the real models.
+@compiles(JSONB, "sqlite")
+def _jsonb_on_sqlite(type_, compiler, **kw):  # pragma: no cover - DDL shim
+    return "JSON"
+
+
+@compiles(ARRAY, "sqlite")
+def _array_on_sqlite(type_, compiler, **kw):  # pragma: no cover - DDL shim
+    return "JSON"
 
 #: A ledger holding a genuine seven, in the shape `authority_streak.fold_day`
 #: writes. Used to open the REAL gate rather than to stub it — every "it refuses
@@ -154,6 +170,11 @@ def test_not_read_is_its_own_symbol_and_never_collapses_into_dark():
         # in it. The blank, not a failover away from one.
         (DARK, FIXTURES, DARK, LIVE_PATH_DARK, ESPN, False),
         (EMPTY, FIXTURES, DARK, LIVE_PATH_DARK, ESPN, False),
+        # CERT-2046: the live board ANSWERED and is not carrying the game its
+        # own schedule says is under way. StatPal contradicting itself, which
+        # is a different fact from StatPal being down.
+        (DARK, FIXTURES, EMPTY, LIVE_PATH_SILENT_ON_THE_GAME, ESPN, False),
+        (EMPTY, FIXTURES, EMPTY, LIVE_PATH_SILENT_ON_THE_GAME, ESPN, False),
         # A caller bug, reported rather than raised — either half unread.
         (DARK, NOT_READ, FIXTURES, STANDBY_NOT_READ, ESPN, False),
         (DARK, FIXTURES, NOT_READ, STANDBY_NOT_READ, ESPN, False),
@@ -652,10 +673,18 @@ async def test_a_dark_standby_stops_the_failover_even_with_the_gate_open(
 
 
 class _Fx:
-    """A standby fixture, reduced to the one field the window question needs."""
+    """A standby fixture: when it starts, who is playing, and its status.
 
-    def __init__(self, start_time):
+    The team names matter since CERT-2046 — readiness correlates the schedule
+    against the live board using the writer's own team-pair key, so a fixture
+    with no names would be a game neither side could match.
+    """
+
+    def __init__(self, start_time, home="Bears", away="Packers", status="live"):
         self.start_time = start_time
+        self.home_team = home
+        self.away_team = away
+        self.status = status
 
 
 def test_a_whole_season_of_future_fixtures_is_an_empty_reading():
@@ -756,7 +785,11 @@ async def test_only_future_statpal_fixtures_do_not_dispatch_but_a_started_one_do
             async def get_live_fixtures(self, sport):
                 if live_dark:
                     raise statpal_api.StatPalUpstreamError("livescores 503")
-                return []
+                # Carries whatever the schedule says is under way, so this
+                # stub is a HEALTHY StatPal. The contradiction case has its
+                # own test.
+                return [r for r in rows if r.status == "live"
+                        and r.start_time <= datetime.now(timezone.utc)]
 
             async def close(self):
                 pass
@@ -871,13 +904,21 @@ async def test_a_healthy_live_endpoint_dispatches_both_halves(
 
     class _Service:
         async def get_schedule_fixtures(self, sport, day_offset=None):
-            return [_Fx(now - timedelta(hours=1))]
+            return [_Fx(now - timedelta(hours=1), home="Montréal", away="Bears")]
 
         async def get_live_fixtures(self, sport):
-            # Answered, with no rows. A quiet `livescores` is HEALTHY — what
-            # readiness needs from this endpoint is that it replied, not that
-            # it had something to say.
-            return []
+            # Carries the game the schedule says is under way. Since CERT-2046
+            # an answer alone is not health — the live board has to be
+            # carrying the fixture at risk, because the writer keys on it.
+            #
+            # SPELLED DIFFERENTLY ON PURPOSE. StatPal's two endpoints do not
+            # agree on case or accents, and the writer's `_fixture_match_key`
+            # normalises both away. If readiness ever stopped using THAT key
+            # and grew its own, this pair would stop matching and the failover
+            # would refuse a sport StatPal was serving perfectly well — so this
+            # is what pins "readiness uses the writer's key" at the actor,
+            # rather than only where the key is passed in.
+            return [_Fx(now - timedelta(hours=1), home="MONTREAL", away="bears")]
 
         async def close(self):
             pass
@@ -895,6 +936,239 @@ async def test_a_healthy_live_endpoint_dispatches_both_halves(
     assert dispatches.calls == [NFL]
     assert dispatches.live.calls == ["<livescores>"]
     assert stats["failover"][0]["code"] == FAILOVER_ESPN_SILENT
+
+
+@pytest.mark.asyncio
+async def test_an_answering_but_empty_live_board_refuses_when_a_game_is_on(
+    monkeypatch, dispatches
+):
+    """**CERT-2046's named regression.** "Persisted active event + current
+    schedule + HTTP-200/empty livescores must not declare/dispatch failover."
+
+    The state presentation three got wrong: StatPal's schedule says a game
+    kicked off an hour ago, `livescores` answers 200 with `[]`. That is not a
+    healthy quiet board — it is StatPal contradicting itself, and the writer,
+    which keys live rows to events by team pair, would skip every event and
+    write no score, no period and no snapshot while the receipt said
+    `serving: statpal`.
+    """
+    import app.services.statpal_api as statpal_api
+
+    from app.tasks.espn_sync import _act_on_failovers, _decide_failovers
+
+    _no_ledger(monkeypatch, days=SEVEN_MEETS_DAYS, why="seven")
+    monkeypatch.setattr(statpal_api, "is_available", lambda: True)
+
+    now = datetime.now(timezone.utc)
+
+    class _Service:
+        async def get_schedule_fixtures(self, sport, day_offset=None):
+            return [_Fx(now - timedelta(hours=1))]
+
+        async def get_live_fixtures(self, sport):
+            return []  # HTTP 200, no rows.
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(statpal_api, "StatPalAPIService", _Service)
+
+    stats = {"errors": []}
+    await _act_on_failovers(
+        await _decide_failovers(
+            {"americanfootball_nfl": []}, {"americanfootball_nfl"}, stats
+        ),
+        stats,
+    )
+
+    assert dispatches.calls == []
+    assert dispatches.live.calls == []
+    assert stats.get("failover_activated", 0) == 0
+    assert stats["failover"][0]["code"] == LIVE_PATH_SILENT_ON_THE_GAME
+    assert stats["failover"][0]["failed_over"] is False
+    # Named apart from the transport failure: one is StatPal down, the other is
+    # StatPal wrong, and an operator needs to know which.
+    assert LIVE_PATH_SILENT_ON_THE_GAME != LIVE_PATH_DARK
+
+
+def test_a_finished_fixture_is_not_expected_on_the_live_board():
+    """The control that stops the repair from being "always refuse".
+
+    A game StatPal's own schedule calls `finished` has legitimately dropped off
+    the live board. Demanding it be there would make readiness permanently
+    false for the six hours after every game ends — the window is 6h back, so
+    every completed game sits in it.
+    """
+    from app.tasks.statpal_sync import _fixture_match_key
+    from app.utils.authority_failover import active_fixtures, live_reading_for
+
+    now = datetime.now(timezone.utc)
+    done = _Fx(now - timedelta(hours=3), status="finished")
+    playing = _Fx(now - timedelta(hours=1), home="Jets", away="Bills")
+
+    assert active_fixtures([done], now=now) == []
+    # An empty live board with only a finished fixture in window is healthy.
+    reading, _ = live_reading_for(
+        active_fixtures([done], now=now), [], key=_fixture_match_key
+    )
+    assert reading == FIXTURES
+
+    # And the live one still has to be carried.
+    reading, detail = live_reading_for(
+        active_fixtures([done, playing], now=now), [], key=_fixture_match_key
+    )
+    assert reading == EMPTY
+    assert detail["missing"] == 1
+
+
+def test_readiness_matches_on_the_writers_own_key():
+    """Readiness and the writer agree by construction, not by coincidence.
+
+    `live_reading_for` takes the key function rather than owning one, and the
+    caller passes `statpal_sync._fixture_match_key` — the same function the
+    writer uses to bind a live row to an event. Two implementations of "the
+    same game" is how readiness comes to count a fixture the writer will not
+    find, which is the whole class of defect CERT-2044 and CERT-2046 are in.
+    """
+    from app.tasks.statpal_sync import _fixture_match_key
+    from app.utils.authority_failover import live_reading_for
+
+    now = datetime.now(timezone.utc)
+    scheduled = _Fx(now - timedelta(hours=1), home="Montréal", away="Bears")
+    # The live board spells it without the accent and in a different case —
+    # the writer's key normalises both away, so readiness must too.
+    live = _Fx(now, home="MONTREAL", away="bears")
+
+    reading, detail = live_reading_for(
+        [scheduled], [live], key=_fixture_match_key
+    )
+    assert reading == FIXTURES, detail
+
+    # The control: a genuinely different game does NOT cover it.
+    other = _Fx(now, home="Jets", away="Bills")
+    reading, detail = live_reading_for([scheduled], [other], key=_fixture_match_key)
+    assert reading == EMPTY
+    assert detail["missing"] == 1
+
+
+@pytest.mark.asyncio
+async def test_the_matching_live_row_advances_score_and_period_through_the_real_writer(
+    monkeypatch,
+):
+    """**CERT-2046's second named regression, and CERT-2044's, now paid.**
+
+    "The paired matching live row must advance score and period/status through
+    the real writer."
+
+    Asked twice and argued with once, on the grounds that
+    `_sync_statpal_livescores` is pre-existing behaviour this ship only invokes.
+    The reviewer asked again, so it is built rather than re-argued — and it is a
+    better test than the argument was, because it is the only thing that closes
+    the loop the last three BLOCKs were all about: readiness says StatPal can
+    serve, and this shows the dispatched writer then actually writes.
+
+    Real ORM statements against a real engine (sqlite, no aiosqlite in this
+    sandbox, so the session is the repo's established async shim over a sync
+    one). Nothing about the writer is stubbed except its HTTP client.
+    """
+    from sqlalchemy import create_engine, select
+    from sqlalchemy.orm import Session
+
+    import app.services.statpal_api as statpal_api
+    import app.tasks.base as task_base
+    from app.models.models import Base, Event, ScoreSnapshot, Sport
+    from app.tasks.statpal_sync import _sync_statpal_livescores
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(
+        engine,
+        tables=[Event.__table__, Sport.__table__, ScoreSnapshot.__table__],
+    )
+    # `expire_on_commit=False`, matching the app's own task sessions (gotcha
+    # #6). Without it sqlite reloads `commence_time` as a NAIVE datetime after
+    # the commit — sqlite has no tz type — and the writer's premature-live guard
+    # raises comparing it with an aware `now`. That is a sqlite artifact, not a
+    # production shape; Postgres returns the value tz-aware.
+    sync_session = Session(engine, expire_on_commit=False)
+
+    now = datetime.now(timezone.utc)
+    sport = Sport(key=NFL, name="NFL")
+    sync_session.add(sport)
+    sync_session.flush()
+    event = Event(
+        sport_id=sport.id,
+        home_team_name="Bears",
+        away_team_name="Packers",
+        commence_time=now - timedelta(hours=1),
+        status="live",
+    )
+    sync_session.add(event)
+    sync_session.commit()
+    event_id = event.id
+
+    class _AsyncShim:
+        """Async surface over a real sync session. The statements executed are
+        the writer's own and the rows come back through the real result API."""
+
+        def __init__(self, session):
+            self._s = session
+
+        async def execute(self, statement):
+            return self._s.execute(statement)
+
+        def add(self, obj):
+            self._s.add(obj)
+
+        async def commit(self):
+            self._s.commit()
+
+        async def flush(self):
+            self._s.flush()
+
+    class _Ctx:
+        async def __aenter__(self_inner):
+            return _AsyncShim(sync_session)
+
+        async def __aexit__(self_inner, *exc):
+            sync_session.commit()
+            return False
+
+    monkeypatch.setattr(task_base, "get_task_session", lambda: _Ctx())
+    monkeypatch.setattr(
+        "app.tasks.statpal_sync.get_task_session", lambda: _Ctx(), raising=False
+    )
+    monkeypatch.setattr(statpal_api, "is_available", lambda: True)
+
+    live_row = _Fx(now - timedelta(hours=1))
+    live_row.home_score = 21
+    live_row.away_score = 17
+    live_row.raw_status = "Q3"
+    live_row.fixture_id = "sp-999"
+
+    class _Service:
+        async def get_live_scores(self, sport):
+            return [live_row]
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(statpal_api, "StatPalAPIService", _Service)
+
+    result = await _sync_statpal_livescores()
+
+    fresh = sync_session.execute(
+        select(Event).where(Event.id == event_id)
+    ).scalar_one()
+    assert fresh.home_score == 21, result
+    assert fresh.away_score == 17, result
+    assert fresh.period == "Q3", result
+
+    snaps = sync_session.execute(
+        select(ScoreSnapshot).where(ScoreSnapshot.event_id == event_id)
+    ).scalars().all()
+    assert len(snaps) == 1
+    assert (snaps[0].home_score, snaps[0].away_score) == (21, 17)
+    assert result["events_updated"] == 1
 
 
 def test_the_note_says_what_a_flip_does_NOT_do(monkeypatch):
@@ -1000,7 +1274,7 @@ async def test_the_standby_is_read_through_the_client_that_can_say_dark(monkeypa
 
         async def get_live_fixtures(self, sport):
             calls.append(f"live:{sport}")
-            return []
+            return [_Fx(datetime.now(timezone.utc) - timedelta(hours=1))]
 
         async def get_fixtures(self, *a, **k):  # pragma: no cover - must not run
             raise AssertionError(

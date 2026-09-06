@@ -212,7 +212,12 @@ async def _statpal_standby_reading(sport_key: str) -> tuple[str, str]:
         StatPalUpstreamError,
         is_available,
     )
-    from app.utils.authority_failover import DARK, FIXTURES, reading_in_window
+    from app.utils.authority_failover import (
+        DARK,
+        active_fixtures,
+        live_reading_for,
+        reading_in_window,
+    )
     from app.utils.sport_keys import STATPAL_SPORT_MAPPING
 
     statpal_sport = STATPAL_SPORT_MAPPING.get(sport_key)
@@ -237,27 +242,38 @@ async def _statpal_standby_reading(sport_key: str) -> tuple[str, str]:
         # `get_live_fixtures` is `livescores` through the authority door — it
         # raises where `get_live_scores` returns `[]`, which is the whole
         # reason it is the one called here.
-        #
-        # Note what is NOT required of it: rows. A healthy `livescores` with no
-        # live games is the normal state of a quiet afternoon. What is required
-        # is that it ANSWERED, because that is what proves StatPal could report
-        # the state of a game if there were one.
         try:
-            await service.get_live_fixtures(statpal_sport)
-            live = FIXTURES
+            live_rows = await service.get_live_fixtures(statpal_sport)
         except StatPalUpstreamError as exc:
             logger.warning("StatPal standby LIVE path dark for %s: %s", sport_key, exc)
-            live = DARK
+            live_rows = None
         except Exception as exc:  # noqa: BLE001 — classified, never swallowed
             logger.warning("StatPal standby live read failed for %s: %s", sport_key, exc)
-            live = DARK
+            live_rows = None
     finally:
         await service.close()
 
-    schedule, detail = reading_in_window(fixtures, now=datetime.now(timezone.utc))
+    now = datetime.now(timezone.utc)
+    schedule, detail = reading_in_window(fixtures, now=now)
+
+    # AND THE LIVE HALF IS ABOUT THE GAMES AT RISK, NOT THE ENDPOINT (CERT-2046).
+    # An answering `livescores` is not evidence on its own: a schedule saying a
+    # game kicked off an hour ago and a live board carrying nothing are two
+    # readings from one provider that contradict each other, and the writer —
+    # which keys live rows to events by team pair — would skip every one of
+    # them. So the check is coverage of the active fixtures, using the WRITER'S
+    # OWN key function, so readiness and the writer cannot disagree about what
+    # "the same game" means.
+    from app.tasks.statpal_sync import _fixture_match_key
+
+    live, live_detail = live_reading_for(
+        active_fixtures(fixtures, now=now),
+        live_rows,
+        key=_fixture_match_key,
+    )
     logger.info(
-        "StatPal standby for %s: schedule=%s live=%s %s",
-        sport_key, schedule, live, detail,
+        "StatPal standby for %s: schedule=%s %s | live=%s %s",
+        sport_key, schedule, detail, live, live_detail,
     )
     return schedule, live
 

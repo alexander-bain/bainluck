@@ -254,6 +254,108 @@ def reading_in_window(
     return (FIXTURES if in_window else EMPTY), detail
 
 
+#: Schedule statuses that mean a fixture is over or was never played, so
+#: `livescores` is under no obligation to carry it. `StatPalFixture.status` is
+#: already normalised to this vocabulary by the client's parsers.
+TERMINAL_FIXTURE_STATUSES = frozenset({"finished", "cancelled", "postponed"})
+
+
+def active_fixtures(
+    fixtures: Optional[Iterable[Any]],
+    *,
+    now: datetime,
+    back: timedelta = WINDOW_BACK,
+) -> list[Any]:
+    """The in-window fixtures `livescores` is expected to be carrying right now.
+
+    In-window (see :func:`reading_in_window`) AND not terminal. A game StatPal's
+    own schedule calls `finished` has legitimately dropped off the live board,
+    and demanding it be there would make readiness permanently false for the six
+    hours after every game ends.
+    """
+    rows = [] if fixtures is None else list(fixtures)
+    start = now - back
+    out = []
+    for row in rows:
+        when = getattr(row, "start_time", None)
+        if when is None:
+            continue
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        if not (start <= when <= now):
+            continue
+        if str(getattr(row, "status", "") or "").lower() in TERMINAL_FIXTURE_STATUSES:
+            continue
+        out.append(row)
+    return out
+
+
+def live_reading_for(
+    active: Iterable[Any],
+    live_rows: Optional[Iterable[Any]],
+    *,
+    key: Any,
+) -> tuple[str, dict[str, Any]]:
+    """Is StatPal reporting live on THE GAMES AT RISK — not merely answering?
+
+    **This is CERT-2046's repair, and it is the third and last tightening of the
+    same claim.** Readiness used to accept any successful `livescores` response,
+    including `[]`, as proof the live path worked. It is not: a schedule saying
+    a game kicked off an hour ago and a `livescores` carrying nothing are two
+    readings from the same provider that CONTRADICT each other, and the first
+    cut treated the contradiction as health. The dispatched writer then skipped
+    immediately on the empty list, so nothing was written while the receipt said
+    StatPal was serving.
+
+    So readiness is now evidence about the specific games at risk. Every active
+    fixture must appear on the live board; one missing is a refusal.
+
+    `key` is passed in — and the caller passes `statpal_sync._fixture_match_key`,
+    **the writer's own matching function**. That is the point: readiness and the
+    writer then agree by construction rather than by two implementations of
+    "same game" that can disagree. If the writer's matching changes, readiness
+    changes with it, and a game readiness counted as covered is exactly a game
+    the writer will find.
+
+    Returns `(reading, detail)`. `DARK` is not produced here — a transport
+    failure is the caller's to catch, because a raise and a gap are different
+    facts and this function only ever sees the second.
+    """
+    active = list(active)
+    if live_rows is None:
+        return DARK, {"read": "dark"}
+
+    live_keys = {
+        key(getattr(r, "home_team", "") or "", getattr(r, "away_team", "") or "")
+        for r in live_rows
+    }
+    missing = [
+        r
+        for r in active
+        if key(getattr(r, "home_team", "") or "", getattr(r, "away_team", "") or "")
+        not in live_keys
+    ]
+
+    detail = {
+        "read": "ok",
+        "active": len(active),
+        "live_rows": len(live_keys),
+        "missing": len(missing),
+        "missing_keys": sorted(
+            key(
+                getattr(r, "home_team", "") or "",
+                getattr(r, "away_team", "") or "",
+            )
+            for r in missing
+        )[:5],
+    }
+    # No active fixtures at all: nothing is at risk, and a quiet live board is
+    # then genuinely quiet. The schedule half has already reported EMPTY in that
+    # case, so `decide` never reaches this reading — but answering FIXTURES
+    # rather than EMPTY keeps "no games" from ever looking like "cannot serve".
+    return (EMPTY if missing else FIXTURES), detail
+
+
 # --- Decision codes ----------------------------------------------------------
 #
 # Eight, because "no failover" has six meanings here and only one of them is a
@@ -296,6 +398,21 @@ STANDBY_DARK = "NO-FAILOVER-STANDBY-DARK"
 #: live-dark StatPal reported `serving: statpal` while score and clock stayed
 #: frozen — the failover claiming to serve down a path it had never checked.
 LIVE_PATH_DARK = "NO-FAILOVER-LIVE-PATH-DARK"
+
+#: `livescores` answered, and is not carrying a game its own schedule says is
+#: under way. StatPal contradicting itself.
+#:
+#: **CERT-2046.** Distinct from :data:`LIVE_PATH_DARK` for the same reason DARK
+#: and EMPTY are distinct everywhere else in this module: one is a transport
+#: failure and the other is a provider that replied and had nothing to say about
+#: the game at risk. Both refuse, and an operator needs to know which — the
+#: first is StatPal being down, the second is StatPal being wrong.
+#:
+#: This is the state that made presentation three wrong: `[]` from a healthy
+#: endpoint was read as health, the failover declared, and the dispatched writer
+#: then skipped immediately on the empty list — writing no score, no period and
+#: no snapshot while the receipt said StatPal was serving.
+LIVE_PATH_SILENT_ON_THE_GAME = "NO-FAILOVER-LIVE-PATH-SILENT-ON-THE-GAME"
 
 #: The caller reached the standby question without reading the standby. A caller
 #: bug, reported rather than raised — a `KeyError` out of this path would be an
@@ -479,6 +596,27 @@ def decide(
                 f"ESPN did not answer for {sport_key} — a real, unexplained "
                 "silence — but StatPal has no fixtures for it either, so there "
                 "is nothing to keep showing. Recorded rather than failed over"
+            ),
+        )
+
+    if statpal_live == EMPTY:
+        # StatPal answered and is not carrying a game its own schedule says is
+        # under way. The writer keys live rows to events by team pair and would
+        # skip every one of them, so declaring a failover here banks a receipt
+        # saying "serving" over a pass that writes nothing (CERT-2046).
+        return FailoverDecision(
+            sport_key=sport_key,
+            code=LIVE_PATH_SILENT_ON_THE_GAME,
+            serving=ESPN,
+            failed_over=False,
+            why=(
+                f"ESPN is {espn} for {sport_key}, StatPal's schedule says a "
+                "game is under way, and StatPal's own live board is not "
+                "carrying it. The two halves of the standby contradict each "
+                "other, so it cannot serve this sport however healthy either "
+                "endpoint looks on its own — and the writer, which keys live "
+                "rows to events by the same team pair, would skip it and write "
+                "nothing"
             ),
         )
 
