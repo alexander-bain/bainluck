@@ -118,9 +118,29 @@ export function stripCardPrefix(
   marketName: string | null | undefined,
   outcomeName: string | null | undefined,
 ): string {
+  return childTitleRemainder(marketName, outcomeName) ?? (outcomeName ?? "").trim();
+}
+
+/**
+ * The child market's own title, when this "outcome" is really an undecomposed
+ * nested child — otherwise null.
+ *
+ * This is `stripCardPrefix`'s decision, exposed so a caller can act on the
+ * DISTINCTION rather than only on the shortened string. The two answers differ
+ * in kind and the section needs both:
+ *
+ * - non-null → the wire row is a child market's TITLE, so the text names a
+ *   QUESTION and no side of it. `Set 1 Winner` does not say for whom.
+ * - null → the wire row is a real outcome (`Yes`, `No`, `Iga Swiatek`, every
+ *   MLB/NFL prop label), and its text already names a side.
+ */
+export function childTitleRemainder(
+  marketName: string | null | undefined,
+  outcomeName: string | null | undefined,
+): string | null {
   const outcome = (outcomeName ?? "").trim();
   const market = (marketName ?? "").trim();
-  if (!outcome || !market) return outcome;
+  if (!outcome || !market) return null;
 
   // Built from the market's own tokens with `\s+` between them, so the match is
   // insensitive to case and to run-length of whitespace while still being
@@ -131,10 +151,13 @@ export function stripCardPrefix(
     "i",
   );
   const head = prefix.exec(outcome);
-  if (!head) return outcome;
+  if (!head) return null;
 
   const rest = outcome.slice(head[0].length).replace(PREFIX_JOINERS, "").trim();
-  if (!rest) return outcome;
+  // Nothing but the parent's own name is not a child title, it is a row whose
+  // name happens to equal its card's. It keeps its original string (a blank
+  // label is worse than a repetitive one) and is NOT treated as a question.
+  if (!rest) return null;
   return rest.replace(COLON_BEFORE_OU, " ");
 }
 
@@ -189,27 +212,104 @@ export function categorizeMarketName(name: string): { category: string; subtitle
   return { category: "Other Markets", subtitle: "additional markets" };
 }
 
+/**
+ * A market asking who wins ONE NAMED PERIOD — `Set 1 Winner: Swiatek vs Zheng`,
+ * `1st Half Winner`, `Period 2 Winner`.
+ *
+ * It is not the moneyline and it is in none of the maps above: the hero answers
+ * the MATCH, the games map answers the TOTALS. Measured on `/events/15305580`
+ * (2026-09-06 14:20Z) the payload carried `Set 1 Winner: Swiatek vs Zheng | Yes
+ * = 0.735` and `Set 2 Winner: … | Yes = 0.72` — two real, properly sided
+ * questions that appear nowhere else on the page.
+ */
+const PERIOD_SCOPED_WINNER = /\b(set|period|quarter|inning|frame|half|map|leg)\s*\d*(?:st|nd|rd|th)?\s+winner\b/i;
+
 /** Rows already covered by the market maps / hero above this section. */
 export function isRedundantWithMarketMaps(m: OtherMarketRow): boolean {
   const lower = (m.market_name || "").toLowerCase();
   const outLower = (m.outcome_name || "").toLowerCase();
   if (lower.includes("spread") || lower.includes("handicap")) return true;
   if (lower.includes("total") && (outLower.includes("over") || outLower.includes("under"))) return true;
+  // `winner` was written for the moneyline. A PERIOD-scoped winner is a
+  // different question with a different answer, and swallowing it is how the
+  // page came to render the parent's un-sided `Set 1 Winner 74%` while hiding
+  // the sided row carrying the very same number (#3575).
+  if (PERIOD_SCOPED_WINNER.test(lower)) return false;
   if (lower.includes("moneyline") || lower.includes("winner") || lower.includes("match result")) return true;
   return false;
 }
 
-/** Market names that are just the two-sided win probability shown in the hero. */
+/** `Set 1 Winner: Swiatek vs Zheng` → scope `Set 1`, first side `Swiatek`. */
+const SCOPED_WINNER_MARKET = /^(.+?)\s+winner\s*:\s*(.+?)\s+vs\.?\s+(.+?)\s*$/i;
+
+/**
+ * The label a `Yes` row on a period-winner market should carry — `Swiatek wins
+ * Set 1` — or null when this row is not that.
+ *
+ * **Only the `Yes` side is named.** `No` on `Set 1 Winner: A vs B` is the
+ * complement, and by the standing *"the blend is the product"* ruling one
+ * question gets one number; rendering `A wins Set 1 — 74%` beside `A does not
+ * win Set 1 — 26%` states the same fact twice. Naming `No` as `B wins Set 1`
+ * would instead be a GUESS: it is only true where the period cannot be drawn,
+ * which this module has no way to know. So `No` is dropped, never renamed.
+ */
+export function scopedWinnerLabel(
+  marketName: string | null | undefined,
+  outcomeName: string | null | undefined,
+): string | null {
+  const match = SCOPED_WINNER_MARKET.exec((marketName ?? "").trim());
+  if (!match) return null;
+  const [, scope, first] = match;
+  if (!/^yes$/i.test((outcomeName ?? "").trim())) return null;
+  if (!scope.trim() || !first.trim()) return null;
+  return `${first.trim()} wins ${scope.trim()}`;
+}
+
+/**
+ * Market names that are just the two-sided win probability shown in the hero.
+ *
+ * TWO ROWS, OR A BARE YES/NO PAIR. The row count alone was the whole test, and
+ * a NAME COLLISION defeats it: on `/events/15305580` (2026-09-06 14:20Z) two
+ * different `futures_markets` rows both answered to `US Open WTA: Iga Swiatek
+ * vs Qinwen Zheng` — an undecomposed parent with 12 outcomes, and the match
+ * market with a clean `Yes 0.795 / No 0.205`. Grouped by name that is 14
+ * probabilities, never 2, so the hero's own number escaped the filter and was
+ * reprinted in the rail as a bare `Yes 80%` (#3575).
+ *
+ * The added clause looks for the PAIR rather than counting the group, so it
+ * survives a collision. It stays narrow deliberately: exactly one `Yes` and one
+ * `No`, summing to one. "Some two rows here sum to 1.0" would nuke a 61-bar MLB
+ * prop card on a coincidence.
+ */
 export function findWinProbMarkets(markets: OtherMarketRow[] | undefined | null): Set<string> {
   const byName = new Map<string, number[]>();
+  const yesNo = new Map<string, { yes: number[]; no: number[] }>();
   for (const m of markets ?? []) {
     const name = m.market_name || "";
     if (!byName.has(name)) byName.set(name, []);
     if (m.probability != null) byName.get(name)!.push(m.probability);
+
+    if (!yesNo.has(name)) yesNo.set(name, { yes: [], no: [] });
+    const side = (m.outcome_name || "").trim().toLowerCase();
+    if (m.probability != null && side === "yes") yesNo.get(name)!.yes.push(m.probability);
+    if (m.probability != null && side === "no") yesNo.get(name)!.no.push(m.probability);
   }
   const winProb = new Set<string>();
   for (const [name, probs] of byName) {
+    // Two complementary rows make a market BINARY, not the hero. `Set 1 Winner:
+    // Swiatek vs Zheng` is `Yes 0.735 / No 0.265` — a perfect two-sided pair
+    // about a question the hero does not answer. It was being filtered here as
+    // well as by `isRedundantWithMarketMaps`, which is why the page had no
+    // sided row left to fall back on.
+    if (PERIOD_SCOPED_WINNER.test(name)) continue;
+
     if (probs.length === 2 && Math.abs(probs[0] + probs[1] - 1.0) < 0.1) {
+      winProb.add(name);
+      continue;
+    }
+    const pair = yesNo.get(name);
+    if (pair && pair.yes.length === 1 && pair.no.length === 1
+        && Math.abs(pair.yes[0] + pair.no[0] - 1.0) < 0.1) {
       winProb.add(name);
     }
   }
@@ -220,6 +320,15 @@ export interface LabeledRow {
   label: string;
   probability: number | null;
   source: string | null;
+  /**
+   * The set this row is about, when the LABEL can no longer say so.
+   *
+   * `setNumberFromLabel` reads the rendered string, which works only while the
+   * string still begins `Set 1 …`. A row renamed to `Swiatek wins Set 1` is the
+   * same question and must still freeze when set 1 ends, so the number is
+   * carried from the market title instead of re-derived from the label.
+   */
+  setNumber?: number | null;
 }
 
 export interface MergedOutcome {
@@ -234,6 +343,8 @@ export interface MergedOutcome {
    * exactly as it treats a row on a finished game (#2086): no bar.
    */
   decided?: boolean;
+  /** Carried from `LabeledRow`; see the note there. */
+  setNumber?: number | null;
 }
 
 export interface OutcomeMergeResult {
@@ -281,11 +392,15 @@ export function mergeOutcomes(rows: LabeledRow[]): OutcomeMergeResult {
       continue;
     }
 
+    // Set only when a row actually carries one, so an outcome's shape is
+    // unchanged for every population that never needed it.
+    const carried = group.find((r) => r.setNumber != null)?.setNumber;
     outcomes.push({
       label,
       prob: probs[0],
       source: group[0].source || "unknown",
       sourceCount: group.length,
+      ...(carried != null ? { setNumber: carried } : {}),
     });
   }
 
@@ -394,6 +509,25 @@ export function buildMarketSection(
   const draftOrder: string[] = [];
 
   for (const row of kept) {
+    // An undecomposed Polymarket parent (gotcha #18) lists its CHILD MARKETS in
+    // the outcome slot, so `named` here is a question — `Set 1 Winner`, `Match
+    // O/U 21.5` — with no side of it anywhere in the string. Printed against a
+    // number it reads as an answer and cannot be one: `Set 1 Winner 74%` never
+    // says for whom, `Match O/U 21.5 45%` never says over or under.
+    //
+    // De-prefixing (the previous ship) made those rows SHORTER; it could not
+    // make them readable, because the side is not in the wire text to recover.
+    // The sided rows exist — the same payload carried `Set 1 Winner: Swiatek vs
+    // Zheng | Yes = 0.735` beside the parent's `… Set 1 Winner = 0.735` — so
+    // the question is dropped here and answered by its real sibling below.
+    //
+    // Measured reach, production 2026-09-06 14:20Z, `status='open'` markets
+    // linked to an event: tennis 124 parents / 1,022 rows, table_tennis 35/107,
+    // basketball 5/5 (all ITF match parents), and soccer, football, baseball
+    // and hockey ZERO — the MLB and NFL payloads this module was built on
+    // cannot reach this branch.
+    if (childTitleRemainder(row.market_name, row.outcome_name) !== null) continue;
+
     // De-prefix BEFORE parsing, not after. `parsePropLabel` is non-greedy on
     // its first group, so `US Open WTA: … Total Sets: O/U 2.5` parsed to
     // player `US Open WTA` — a TOUR printed in a slot headed "Player Props ·
@@ -402,14 +536,37 @@ export function buildMarketSection(
     const named = stripCardPrefix(row.market_name, row.outcome_name);
     const parsed = parsePropLabel(named);
 
+    // `Set 1 Winner: Swiatek vs Zheng` + `Yes` → `Swiatek wins Set 1`. The
+    // complementary `No` is dropped rather than renamed: see `scopedWinnerLabel`.
+    const scopedWinner = parsed ? null : scopedWinnerLabel(row.market_name, row.outcome_name);
+    if (!parsed && !scopedWinner && SCOPED_WINNER_MARKET.test((row.market_name || "").trim())) continue;
+
     const title = parsed ? PLAYER_PROPS_CATEGORY : categorizeMarketName(row.market_name || "").category;
     const subtitle = parsed ? "by statistic" : categorizeMarketName(row.market_name || "").subtitle;
-    const cardName = parsed ? parsed.statistic : row.market_name || "Unknown";
+    // Every period-winner question in a match belongs on ONE card, headed with
+    // the matchup. Left keyed on `market_name` they became a stack of one-row
+    // cards each headed `Set 1 Winner: Swiatek vs Zheng` above a row reading
+    // `Swiatek wins Set 1` — the repetition `stripCardPrefix` exists to prevent.
+    const scopedWinnerCard = scopedWinner
+      ? (() => {
+          const m = SCOPED_WINNER_MARKET.exec((row.market_name || "").trim());
+          return m ? `${m[2].trim()} vs ${m[3].trim()}` : null;
+        })()
+      : null;
+    const cardName = parsed
+      ? parsed.statistic
+      : scopedWinnerCard ?? (row.market_name || "Unknown");
     // Inside a "Home Runs" card the statistic is redundant; the threshold is
     // not, because a statistic carries several (0.5 and 1.5 both occur live).
     const label = parsed
       ? `${parsed.player} O/U ${parsed.threshold}`
-      : named || "Unknown";
+      : scopedWinner ?? (named || "Unknown");
+    // Read from the MARKET title, which still says `Set 1` after the label has
+    // been rewritten to `Swiatek wins Set 1`. Null for every other row, which
+    // keeps falling back to reading its own label.
+    const setNumber = scopedWinner
+      ? setNumberFromLabel(SCOPED_WINNER_MARKET.exec((row.market_name || "").trim())?.[1])
+      : null;
 
     let draft = drafts.get(title);
     if (!draft) {
@@ -424,7 +581,7 @@ export function buildMarketSection(
       draft.cards.set(cardName, card);
       draft.cardOrder.push(cardName);
     }
-    card.push({ label, probability: row.probability ?? null, source: row.source ?? null });
+    card.push({ label, probability: row.probability ?? null, source: row.source ?? null, setNumber });
   }
 
   let renderedOutcomes = 0;
@@ -441,7 +598,9 @@ export function buildMarketSection(
           // "Settled means settled" applies inside a live match too: set 1 is
           // over the moment either player has banked a set, so its row stops
           // drawing a live bar at 0% and states a last quote instead.
-          const setNumber = setNumberFromLabel(o.label);
+          // The carried number wins where it exists; everything else still
+          // reads its own label, exactly as before.
+          const setNumber = o.setNumber ?? setNumberFromLabel(o.label);
           return setNumber !== null && setNumber <= completedSets
             ? { ...o, decided: true }
             : o;

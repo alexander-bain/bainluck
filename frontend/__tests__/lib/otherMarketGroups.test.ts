@@ -274,6 +274,42 @@ const USO_WIRE: OtherMarketRow[] = [
   { market_name: USO_MARKET, outcome_name: `${USO_MARKET} Match O/U 22.5`, probability: 0.5, source: PM },
 ];
 
+// ─────────────────────────────────────────────────────────────────────────────
+// #3575 — the SAME shape one match later, captured whole.
+//
+// `GET /api/events/15305580/game-markets` `other`, verbatim, 2026-09-06 14:20Z
+// (Iga Swiatek vs Qinwen Zheng, US Open women's semi-final). All 17 rows, in
+// wire order. What USO_WIRE above could not show is here: the parent's 10
+// un-sided child titles arrive ALONGSIDE the properly sided rows carrying the
+// very same numbers — `Set 1 Winner: Swiatek vs Zheng | Yes = 0.735` beside the
+// parent's `… Set 1 Winner = 0.735`. The page was rendering the un-sided copy
+// and filtering the sided one out.
+//
+// Two `futures_markets` rows also answer to the identical name here (an
+// undecomposed parent, and the match market with a clean Yes/No), which is what
+// defeated `findWinProbMarkets`'s row count and reprinted the hero as `Yes 80%`.
+// ─────────────────────────────────────────────────────────────────────────────
+const SWIATEK_MARKET = "US Open WTA: Iga Swiatek vs Qinwen Zheng";
+const SWIATEK_WIRE: OtherMarketRow[] = [
+  { market_name: SWIATEK_MARKET, outcome_name: "Iga Swiatek", probability: 0.795, source: PM },
+  { market_name: SWIATEK_MARKET, outcome_name: "Yes", probability: 0.795, source: PM },
+  { market_name: SWIATEK_MARKET, outcome_name: "No", probability: 0.205, source: PM },
+  { market_name: "Set 1 Winner: Swiatek vs Zheng", outcome_name: "Yes", probability: 0.735, source: PM },
+  { market_name: "Set 1 Winner: Swiatek vs Zheng", outcome_name: "No", probability: 0.265, source: PM },
+  { market_name: "Set 2 Winner: Swiatek vs Zheng", outcome_name: "Yes", probability: 0.72, source: PM },
+  { market_name: "Set 2 Winner: Swiatek vs Zheng", outcome_name: "No", probability: 0.28, source: PM },
+  { market_name: SWIATEK_MARKET, outcome_name: `${SWIATEK_MARKET} Set 1 Winner`, probability: 0.735, source: PM },
+  { market_name: SWIATEK_MARKET, outcome_name: `${SWIATEK_MARKET} Set Handicap +/-1.5`, probability: 0.585, source: PM },
+  { market_name: SWIATEK_MARKET, outcome_name: `${SWIATEK_MARKET} Set 2 Winner`, probability: 0.73, source: PM },
+  { market_name: SWIATEK_MARKET, outcome_name: `${SWIATEK_MARKET} Total Sets: O/U 2.5`, probability: 0.315, source: PM },
+  { market_name: SWIATEK_MARKET, outcome_name: `${SWIATEK_MARKET} Game Spread +/-5.5`, probability: 0.42, source: PM },
+  { market_name: SWIATEK_MARKET, outcome_name: `${SWIATEK_MARKET} Set 1 O/U 8.5`, probability: 0.63, source: PM },
+  { market_name: SWIATEK_MARKET, outcome_name: `${SWIATEK_MARKET} Set 1 O/U 9.5`, probability: 0.415, source: PM },
+  { market_name: SWIATEK_MARKET, outcome_name: `${SWIATEK_MARKET} Set 1 O/U 10.5`, probability: 0.23, source: PM },
+  { market_name: SWIATEK_MARKET, outcome_name: `${SWIATEK_MARKET} Match O/U 21.5`, probability: 0.445, source: PM },
+  { market_name: SWIATEK_MARKET, outcome_name: `${SWIATEK_MARKET} Match O/U 22.5`, probability: 0.445, source: PM },
+];
+
 function labelsOf(section: ReturnType<typeof buildMarketSection>): string[] {
   return section.categories.flatMap((c) => c.cards.flatMap((k) => k.outcomes.map((o) => o.label)));
 }
@@ -373,17 +409,32 @@ describe("buildMarketSection — the live US Open wire", () => {
     for (const label of labels) expect(label).not.toContain("Jessica Pegula vs Leylah Fernandez");
   });
 
-  test("the rows say what they are", () => {
+  // SUPERSEDED, #3575. This test used to assert that the rows read "Set 2
+  // Winner", "Set 1 Winner", "Total Sets O/U 2.5", "Game Spread +/-4.5" and
+  // "Match O/U 21.5", under the name "the rows say what they are". They do not
+  // say what they are. Every one of those strings is a QUESTION: `Set 1 Winner
+  // 74%` never says for whom and `Match O/U 21.5 45%` never says over or under.
+  // De-prefixing made them short enough to read and no more answerable, because
+  // the side is not in the wire text to recover. So the assertion is inverted:
+  // a question is not a row.
+  test("a question is never rendered as if it were an answer", () => {
     const labels = labelsOf(buildMarketSection(USO_WIRE, { completedSets: 1 }));
-    expect(labels).toEqual(
-      expect.arrayContaining([
-        "Set 2 Winner",
-        "Set 1 Winner",
-        "Total Sets O/U 2.5",
-        "Game Spread +/-4.5",
-        "Match O/U 21.5",
-      ]),
-    );
+    for (const question of [
+      "Set 2 Winner",
+      "Set 1 Winner",
+      "Total Sets O/U 2.5",
+      "Game Spread +/-4.5",
+      "Match O/U 21.5",
+      "Match O/U 22.5",
+      "Set Handicap +/-1.5",
+    ]) {
+      expect(labels).not.toContain(question);
+    }
+  });
+
+  test("the row that DOES name a side survives", () => {
+    // The parent's one real outcome. The rule drops child titles, not rows.
+    expect(labelsOf(buildMarketSection(USO_WIRE, { completedSets: 1 }))).toContain("Jessica Pegula");
   });
 
   test("a tour name is no longer parsed as a player", () => {
@@ -396,32 +447,49 @@ describe("buildMarketSection — the live US Open wire", () => {
   });
 
   test("a set already played is marked decided; the set being played is not", () => {
-    const outcomes = buildMarketSection(USO_WIRE, { completedSets: 1 }).categories
+    // Moved onto SWIATEK_WIRE (#3575): the freeze now rides the SIDED row, which
+    // is the only one left. The label no longer begins "Set 1", so this also
+    // proves the set number is carried from the market title rather than
+    // re-read from the rendered string.
+    const outcomes = buildMarketSection(SWIATEK_WIRE, { completedSets: 1 }).categories
       .flatMap((c) => c.cards.flatMap((k) => k.outcomes));
     const byLabel = new Map(outcomes.map((o) => [o.label, o]));
-    expect(byLabel.get("Set 1 Winner")?.decided).toBe(true);
-    expect(byLabel.get("Set 2 Winner")?.decided).toBeUndefined();
+    expect(byLabel.get("Swiatek wins Set 1")?.decided).toBe(true);
+    expect(byLabel.get("Swiatek wins Set 2")?.decided).toBeUndefined();
     // Neither is dropped: the reader still sees both rows.
-    expect(byLabel.get("Set 1 Winner")?.prob).toBe(0.0005);
+    expect(byLabel.get("Swiatek wins Set 1")?.prob).toBe(0.735);
   });
 
   test("before a set is finished nothing is decided", () => {
-    const outcomes = buildMarketSection(USO_WIRE, { completedSets: 0 }).categories
+    const outcomes = buildMarketSection(SWIATEK_WIRE, { completedSets: 0 }).categories
       .flatMap((c) => c.cards.flatMap((k) => k.outcomes));
     expect(outcomes.every((o) => o.decided === undefined)).toBe(true);
     // …and the default is the same as zero, so no caller can decide by accident.
-    const defaulted = buildMarketSection(USO_WIRE).categories
+    const defaulted = buildMarketSection(SWIATEK_WIRE).categories
       .flatMap((c) => c.cards.flatMap((k) => k.outcomes));
     expect(defaulted.every((o) => o.decided === undefined)).toBe(true);
   });
 
   test("a set-adjacent row is never frozen by a set finishing", () => {
-    const outcomes = buildMarketSection(USO_WIRE, { completedSets: 3 }).categories
+    // Repointed off USO_WIRE (#3575). Read against that fixture this test now
+    // passes for the WRONG reason: the rows it names are gone, and
+    // `undefined?.decided` is `undefined`, which is what it asserts. So it is
+    // given rows that really exist — and asserted to have found them first.
+    const rows: OtherMarketRow[] = [
+      // Market names deliberately free of the `handicap` / `total` / `winner`
+      // keywords, so this measures the SET-FREEZE rule and not the redundancy
+      // filter that would otherwise remove the rows before it runs.
+      { market_name: "Swiatek vs. Zheng: Sets Margin", outcome_name: "Set Handicap +/-1.5", probability: 0.585, source: PM },
+      { market_name: "Swiatek vs. Zheng: Sets Count", outcome_name: "Total Sets O/U 2.5", probability: 0.315, source: PM },
+      { market_name: "Swiatek vs. Zheng: Match Games", outcome_name: "Match O/U 21.5", probability: 0.445, source: PM },
+    ];
+    const outcomes = buildMarketSection(rows, { completedSets: 3 }).categories
       .flatMap((c) => c.cards.flatMap((k) => k.outcomes));
     const byLabel = new Map(outcomes.map((o) => [o.label, o]));
-    expect(byLabel.get("Set Handicap +/-1.5")?.decided).toBeUndefined();
-    expect(byLabel.get("Total Sets O/U 2.5")?.decided).toBeUndefined();
-    expect(byLabel.get("Match O/U 21.5")?.decided).toBeUndefined();
+    for (const label of ["Set Handicap +/-1.5", "Total Sets O/U 2.5", "Match O/U 21.5"]) {
+      expect(byLabel.has(label)).toBe(true);
+      expect(byLabel.get(label)?.decided).toBeUndefined();
+    }
   });
 
   test("the MLB population is untouched by both rules", () => {
@@ -430,5 +498,86 @@ describe("buildMarketSection — the live US Open wire", () => {
     const before = buildMarketSection(ACUNA);
     const after = buildMarketSection(ACUNA, { completedSets: 3 });
     expect(after).toEqual(before);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// #3575 — the whole card, not one label at a time.
+//
+// The defect was never a single bad string; it was that EVERY row on the card
+// was unreadable, in three different ways at once. So the guard asserts the
+// finished card, which is the only thing that can catch "fixed one, left two".
+// ─────────────────────────────────────────────────────────────────────────────
+describe("buildMarketSection — every row on the card names a side (#3575)", () => {
+  test("the un-sided questions are gone and the sided rows they duplicated are what renders", () => {
+    const section = buildMarketSection(SWIATEK_WIRE);
+    expect(labelsOf(section).sort()).toEqual(["Swiatek wins Set 1", "Swiatek wins Set 2"]);
+  });
+
+  test("the numbers survive the swap — the sided twin carries the same price", () => {
+    // The parent said `… Set 1 Winner = 0.735`; the sided row says
+    // `Set 1 Winner: Swiatek vs Zheng | Yes = 0.735`. Nothing is lost by
+    // dropping the question: its number is still on the page, now attached to
+    // someone's name.
+    const byLabel = new Map(
+      buildMarketSection(SWIATEK_WIRE).categories
+        .flatMap((c) => c.cards.flatMap((k) => k.outcomes))
+        .map((o) => [o.label, o.prob]),
+    );
+    expect(byLabel.get("Swiatek wins Set 1")).toBe(0.735);
+    expect(byLabel.get("Swiatek wins Set 2")).toBe(0.72);
+  });
+
+  test("the hero is not reprinted in the rail, despite two markets sharing one name", () => {
+    const labels = labelsOf(buildMarketSection(SWIATEK_WIRE));
+    // `Yes 80%` / `No 21%` / `Iga Swiatek 80%` are all the 78%-22% hero.
+    expect(labels).not.toContain("Yes");
+    expect(labels).not.toContain("No");
+    expect(labels).not.toContain("Iga Swiatek");
+  });
+
+  test("the period-winner rows sit on ONE card headed with the matchup", () => {
+    const cards = buildMarketSection(SWIATEK_WIRE).categories.flatMap((c) => c.cards);
+    expect(cards).toHaveLength(1);
+    expect(cards[0].name).toBe("Swiatek vs Zheng");
+  });
+
+  test("the complementary No is dropped, never renamed to the other player", () => {
+    // Naming `No` as `Zheng wins Set 1` is only true where the period cannot be
+    // drawn. The module has no way to know that, so it must not say it.
+    const labels = labelsOf(buildMarketSection(SWIATEK_WIRE));
+    expect(labels.some((l) => l.startsWith("Zheng"))).toBe(false);
+    expect(labels.some((l) => l.includes("does not"))).toBe(false);
+  });
+
+  test("the count in the header is the rows a reader can actually read", () => {
+    // It said "13 markets grouped by category" above thirteen unreadable rows.
+    expect(buildMarketSection(SWIATEK_WIRE).renderedOutcomes).toBe(2);
+  });
+
+  test("A MATCH winner is still filtered — only PERIOD-scoped winners are spared", () => {
+    const rows: OtherMarketRow[] = [
+      { market_name: "Match Winner: Swiatek vs Zheng", outcome_name: "Yes", probability: 0.78, source: PM },
+      { market_name: "Match Winner: Swiatek vs Zheng", outcome_name: "No", probability: 0.22, source: PM },
+      { market_name: "Coin Toss", outcome_name: "Heads", probability: 0.5, source: PM },
+      { market_name: "Gatorade Color", outcome_name: "Orange", probability: 0.3, source: PM },
+      { market_name: "Game MVP", outcome_name: "Judge", probability: 0.25, source: PM },
+    ];
+    const labels = labelsOf(buildMarketSection(rows));
+    expect(labels.some((l) => l.includes("wins Match"))).toBe(false);
+    // …and the rest of the card is undisturbed.
+    expect(labels).toEqual(expect.arrayContaining(["Heads", "Orange", "Judge"]));
+  });
+
+  test("a row whose name merely EQUALS its card's keeps rendering", () => {
+    // The drop is for a child TITLE — a real prefix with a remainder. An
+    // outcome that simply repeats its market name has no remainder, is not a
+    // question, and must not be swept up.
+    const rows: OtherMarketRow[] = [
+      { market_name: "Rain Delay", outcome_name: "Rain Delay", probability: 0.4, source: PM },
+      { market_name: "Coin Toss", outcome_name: "Heads", probability: 0.5, source: PM },
+      { market_name: "Game MVP", outcome_name: "Judge", probability: 0.25, source: PM },
+    ];
+    expect(labelsOf(buildMarketSection(rows))).toContain("Rain Delay");
   });
 });
