@@ -481,8 +481,21 @@ def test_the_gate_that_refused_browns_jaguars_really_does_refuse_it():
 
     assert not _fuzzy_team_match(_BROWNS_A, _BROWNS_AWAY)
     assert not _fuzzy_team_match(_BROWNS_B, _BROWNS_HOME)
-    # And the reason why: the gate cannot match a name of <=3 characters at all.
-    assert not _fuzzy_team_match("LSU", "LSU Tigers")
+    # And the reason why — RESTATED by #2331 (Q457), which is this file's own
+    # warning coming true in the half that was meant to. The blanket "the gate
+    # cannot match a name of <=3 characters AT ALL" is gone: a whole-word
+    # acronym written in capitals now reaches its own row, so "LSU" DOES match
+    # "LSU Tigers" and the line that asserted otherwise was pinning a bug.
+    #
+    # The Browns case is untouched, and it is worth saying why rather than just
+    # deleting the line: the surviving refusal is narrower. An abbreviation
+    # EMBEDDED in a multi-word name is not a whole word of the other side, so
+    # "CLE" never reaches "Cleveland Browns" and "CLE Browns" never reaches it
+    # either. Both boundaries are asserted, so if a later ship widens the
+    # acronym rule far enough to swallow this case, the premise fails loudly
+    # here exactly as this docstring promises.
+    assert _fuzzy_team_match("LSU", "LSU Tigers")        # the rule that changed
+    assert not _fuzzy_team_match("CLE", "Cleveland Browns")  # the one that did not
 
 
 def test_browns_jaguars_is_a_name_mismatch_end_to_end():
