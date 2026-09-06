@@ -123,32 +123,54 @@ def test_all_three_sites_share_one_definition():
 # The census — a NEW window scan must not be able to appear quietly
 # ---------------------------------------------------------------------------
 
-#: `/search-suggestions` keeps a `row_number()` window, surveyed and deliberately
-#: left by LAT-P107: it partitions by `event_id` alone under a fixed
-#: `bookmaker == "aggregate"`, so the helper — whose entire mechanism is
-#: enumerating the distinct bookmakers — does not fit and cannot be reused. It is a
-#: separate, smaller ship on a non-graded surface, and it needs its own equivalence
-#: proof. Bolting an unproven second rewrite onto a latency queue is the LAT-P010
-#: failure this module's history records.
-EXPECTED_REMAINING_ODDS_WINDOWS = 1
+#: 🔴 **ZERO SINCE #2286, AND THE SURVEYED WINDOW WAS REMOVED RATHER THAN REWRITTEN.**
+#:
+#: This constant was 1. LAT-P107 surveyed the `/search-suggestions` window and
+#: deliberately left it: it partitions by `event_id` alone under a fixed
+#: `bookmaker == "aggregate"`, so `latest_odds_per_bookmaker_query` — whose entire
+#: mechanism is enumerating the distinct bookmakers — did not fit and could not be
+#: reused. The note said it was "a separate, smaller ship … [that] needs its own
+#: equivalence proof", and this test's own failure message asks whoever changes it
+#: to cite one. THE EQUIVALENCE PROOF IS THAT THERE IS NOTHING TO BE EQUIVALENT TO:
+#:
+#: `bookmaker == "aggregate"` matches nothing and never did. Measured on production
+#: before the change: 18 real books wrote `odds_snapshots` in the preceding two
+#: hours and `aggregate` is not among them, and independently every `bookmaker=`
+#: write site in `app/` emits a real book key, `polymarket`, `kalshi` or
+#: `datagolf_model`. `EXPLAIN (ANALYZE, BUFFERS)` on the corrected query measured
+#: **799.8 ms and 46,012 shared buffer hits to return `Actual Rows: 0`** on every
+#: uncached build. So the window was not a slow way of getting the right answer; it
+#: was a slow way of getting no answer, and LAT-P107's caution was protecting a
+#: query with no output to preserve.
+#:
+#: A replacement is therefore not owed, and one is not there: section 1 now reads
+#: `compute_aggregate_probability` over `win_probability_sources`, already loaded on
+#: the `Event` rows it just fetched, at ZERO additional round trips — and coverage
+#: went 0/69 live events to 55/69 because of it. #2286.
+EXPECTED_REMAINING_ODDS_WINDOWS = 0
 
 
 def test_the_remaining_window_count_is_pinned_in_both_directions():
-    """Two-directional on purpose.
+    """Still two-directional, and at zero only one direction is reachable.
 
-    UP is the regression: a fourth site appears, or a converted one reverts, and
-    the per-site tests above miss it because the new code is in a helper or a route
-    nobody thought to list.
+    UP is the regression, and it is now the whole job: a fourth site appears, or a
+    converted one reverts, and the per-site tests above miss it because the new
+    code is in a helper or a route nobody thought to list. At a floor of zero this
+    guard has become a plain "no window scan in this file", which is stronger than
+    what it pinned before — there is no longer a surveyed exception for a new one
+    to hide behind.
 
-    DOWN is not "better" — it means the surveyed `/search-suggestions` window was
-    changed, and that one is load-bearing until something proves an equivalent
-    replacement. Either direction is a fact the next session must be told, so
-    either direction fails and the fix is to update this constant WITH the reason.
+    DOWN is unreachable at zero and the constant stays a constant anyway: the
+    equality is what makes UP fail, and rewriting it as `<= 0` would say the count
+    is a budget rather than a fact. If a window is ever legitimately re-added, this
+    goes back to 1 WITH the reason, exactly as it came down to 0 with one.
     """
     windows = len(re.findall(r"func\.row_number\(\)", MODULE_CODE))
     assert windows == EXPECTED_REMAINING_ODDS_WINDOWS, (
         f"routes/events.py has {windows} `row_number()` windows, expected "
-        f"{EXPECTED_REMAINING_ODDS_WINDOWS} (the surveyed /search-suggestions one). "
-        f"If you added a site, use `latest_odds_per_bookmaker_query`. If you fixed "
-        f"the surveyed one, say so here and cite its equivalence proof."
+        f"{EXPECTED_REMAINING_ODDS_WINDOWS} — the surveyed /search-suggestions one "
+        f"was REMOVED by #2286 (it filtered on a bookmaker nothing writes and cost "
+        f"799.8 ms to return 0 rows; see the constant's note). If you added a site, "
+        f"use `latest_odds_per_bookmaker_query`. If you re-added a window on "
+        f"purpose, update the constant here and say why."
     )
