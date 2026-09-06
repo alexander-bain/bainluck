@@ -5128,29 +5128,102 @@ celery_app.conf.beat_schedule = {
         "schedule": crontab(minute="*/10"),  # Every 10 minutes
         "options": {"queue": "background"},
     },
+    # =====================================================================
+    # LAT-P243 (#3480) — THE COMPACTION BEATS ARE STAGGERED, AND THE GUARD
+    # THAT KEEPS THEM STAGGERED IS DERIVED, NOT TRANSCRIBED.
+    #
+    # Six background beats declare a soft_time_limit of half an hour or more.
+    # Before this change, five of them could be resident at once against a
+    # `background` pool of TWO slots. Enumerated from celery's own parsed
+    # crontabs, not read off the cron strings by eye:
+    #
+    #   06:30  collapse-odds-snapshots-daily     soft 1700   } all five
+    #   06:30  turbo-collapse-futures            soft 3600   } resident
+    #   06:35  collapse-winprob-snapshots-daily  soft 1700   } at 06:45Z,
+    #   06:40  collapse-futures-snapshots-daily  soft 1700   } every day
+    #   06:45  turbo-collapse-odds               soft 3600   }
+    #   06:55  precompute-bookmaker-calibration  soft 1800   -> SIX at 06:55Z
+    #
+    # and 00:45 / 12:45 / 18:45 put the two `turbo` grinders on both slots
+    # three more times a day. The comment above `turbo_collapse_futures`
+    # already stated the consequence in the codebase's own words — "a
+    # scheduled, total background outage window with nothing else able to
+    # run" — but nothing enforced it, so it stayed true.
+    #
+    # WHAT THE USER SEES, which is why this is a ship and not housekeeping.
+    # `warm-typeahead` fires every 10s onto the same pool with `expires: 120`.
+    # A fire that cannot reach a slot inside 120s is DISCARDED, so through the
+    # outage window every fire dies, the 65s response TTL lapses, and the head
+    # of the search box goes cold. Measured on production 2026-09-06 07:35-08:02Z
+    # (a QUIET window — no compaction resident): whenever the warmer's period
+    # crosses ~90s the ring reports `expired: 40` of a 40-term head, i.e. the
+    # WHOLE head cold, four times in 26 minutes. A cold head term costs
+    # 1094.5ms with 710 shared read blocks against 27.1ms warm (the numbers in
+    # the `warm-typeahead` entry below). The compaction window is that same
+    # mechanism held open for the best part of an hour.
+    #
+    # WHY STAGGERING AND NOT A TOPOLOGY CHANGE. Relieving one contributor in an
+    # oversubscribed queue only reallocates the wait (LAT-P239's rule). This is
+    # not that move: it removes a scheduling COINCIDENCE, so it is better at any
+    # utilisation and does not depend on first knowing the total. A third slot
+    # is a dyno purchase — `background`'s two slots are a MEMORY bound
+    # (2 x 200MB + ~100MB ~= 512MB Standard-1X exactly) — and is Alex's call.
+    #
+    # HOW THE NEW TIMES WERE CHOSEN. `precompute-bookmaker-calibration` does
+    # NOT move: its :55 slot is load-bearing for the hourly
+    # `precompute-calibration-main` (:15) that consumes its key, and it is the
+    # calibration lane's. Everything else is scheduled AROUND it, leaving each
+    # beat's own cadence untouched:
+    #
+    #   00:55-01:25  precompute-bookmaker-calibration   (unchanged)
+    #   01:40-02:40  turbo-collapse-futures             (was :30 of 0,6,12,18)
+    #   03:30-04:30  turbo-collapse-odds                (was :45 of 0,6,12,18)
+    #   04:40-05:08  collapse-odds-snapshots-daily      (was 06:30)
+    #   05:15-05:43  collapse-winprob-snapshots-daily   (was 06:35)
+    #   05:50-06:18  collapse-futures-snapshots-daily   (was 06:40)
+    #   ...then the 6h cycle repeats at 06:55 / 07:40 / 09:30.
+    #
+    # Windows are the DECLARED soft_time_limit, not a sampled duration: the
+    # soft limit is the longest the system permits the task to hold the slot,
+    # and a bound taken from a measured maximum has already been wrong twice in
+    # this program. Nothing user-facing reads compaction output, so the cadence
+    # has the slack the price refreshes did not.
+    #
+    # THE GUARD: `tests/test_lat_p243_compaction_stagger_3480.py` re-derives
+    # this table from the LIVE beat schedule and each task's DECLARED
+    # soft_time_limit and asserts pairwise non-overlap over a 7-day
+    # enumeration. It transcribes no time, so editing a schedule here cannot
+    # rot it — and a NEW background beat that declares a long hold is covered
+    # the moment it is added. To satisfy it, a long-hold beat must either move
+    # clear of the others, route to `heavy`, or declare a shorter soft limit.
+    # =====================================================================
     "collapse-odds-snapshots-daily": {
         "task": "app.tasks.collapse_snapshots",
-        "schedule": crontab(minute=30, hour=6),  # Daily at 6:30 AM UTC
+        "schedule": crontab(minute=40, hour=4),  # Daily 04:40 UTC — see LAT-P243 above
         "kwargs": {"table": "odds", "limit": 500},
     },
     "collapse-winprob-snapshots-daily": {
         "task": "app.tasks.collapse_snapshots",
-        "schedule": crontab(minute=35, hour=6),  # Daily at 6:35 AM UTC
+        "schedule": crontab(minute=15, hour=5),  # Daily 05:15 UTC — 35 min after its sibling
         "kwargs": {"table": "winprob", "limit": 500},
     },
     "collapse-futures-snapshots-daily": {
         "task": "app.tasks.collapse_snapshots",
-        "schedule": crontab(minute=40, hour=6),  # Daily at 6:40 AM UTC
+        "schedule": crontab(minute=50, hour=5),  # Daily 05:50 UTC — 35 min after its sibling
         "kwargs": {"table": "futures", "limit": 500},
     },
     "turbo-collapse-futures": {
         "task": "app.tasks.turbo_collapse_futures",
-        "schedule": crontab(minute=30, hour="*/6"),  # Every 6 hours — catch up on backlog
+        # Every 6 hours — catch up on backlog. :40 of 1,7,13,19 clears
+        # `precompute-bookmaker-calibration`'s [x:55, x+1:25] hold by 15 min.
+        "schedule": crontab(minute=40, hour="1,7,13,19"),
         "kwargs": {"limit": 5000},
     },
     "turbo-collapse-odds": {
         "task": "app.tasks.turbo_collapse_odds",
-        "schedule": crontab(minute=45, hour="*/6"),  # Every 6 hours
+        # Every 6 hours, two hours behind its futures sibling so the two 3600s
+        # grinders can never hold both background slots at once.
+        "schedule": crontab(minute=30, hour="3,9,15,21"),
         "kwargs": {"limit": 5000},
     },
     "matching-metrics-daily": {

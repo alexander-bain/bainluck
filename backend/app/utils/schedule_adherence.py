@@ -1247,3 +1247,169 @@ def find_lapping(graded):
         for name, g in sorted(graded.items(), key=_key)
         if g["verdict"] != "on_schedule" or g.get("never_completes")
     ]
+
+
+# =============================================================================
+# LAT-P243 (#3480) — CO-RESIDENCY OF LONG-HOLD BEATS ON A FIXED-SLOT POOL
+#
+# `beat_intervals` and `beat_queues` answer "how often" and "where". The
+# question those two together still cannot answer, and the one that took the
+# search box cold every morning, is **"can two of these be resident at the same
+# time on a pool that only has two slots?"**
+#
+# The `background` worker is Standard-1X `--concurrency=2`. Six of its beats
+# declare a soft_time_limit of half an hour or more, and five of them could be
+# resident simultaneously — a scheduled outage during which every `warm-typeahead`
+# fire expired unstarted (`expires: 120`) and the head of the search box went
+# cold. Nothing detected it because adherence grades each task against its OWN
+# cadence, and every one of those tasks was individually on schedule.
+#
+# Two properties this must get right, both of which have already misled a reader
+# of this schedule:
+#
+# 1. **Enumerate, do not read the cron by eye.** `crontab(minute=30, hour="*/6")`
+#    and `crontab(minute=45, hour="*/6")` look fifteen minutes apart and are, but
+#    both tasks declare a 3600s hold, so "fifteen minutes apart" is the reason
+#    they collide rather than the reason they do not. The fire times here come
+#    from celery's OWN parsed field sets, which are already expanded from the
+#    "*/6" string, so a mis-read of the cron syntax cannot enter.
+#
+# 2. **The window is the DECLARED soft_time_limit, never a sampled duration.**
+#    The soft limit is the longest the system PERMITS the task to hold the slot.
+#    A bound taken from a measured maximum has been refuted twice in this
+#    program by the next sample; a declared limit cannot be, because exceeding
+#    it is what the limit prevents.
+# =============================================================================
+
+#: A background beat that can hold one of two slots for this long or more is a
+#: "long hold": the pool has effectively lost half its capacity for the
+#: duration, so two of them overlapping is a total outage rather than a slowdown.
+#: 1200s sits in a wide gap in the actual distribution — the long holds declare
+#: 1700/1800/3600 and the next beat below declares 900 — so it separates the two
+#: populations with margin on both sides rather than cutting through a cluster.
+LONG_HOLD_SOFT_LIMIT_S = 1200
+
+
+def crontab_fire_times(schedule, start, days=7):
+    """Every UTC fire instant of one beat ``schedule`` in ``[start, start+days)``.
+
+    Handles the two shapes a long-hold beat can carry: a ``crontab`` (read from
+    its OWN parsed field sets, so ``"*/6"`` is already expanded and cannot be
+    mis-read here) and a plain interval in seconds or a ``timedelta``.
+
+    Returns ``None`` — not an empty list — for a schedule shape it cannot
+    enumerate. An unenumerable schedule is a gap in the check and the caller
+    must report it; silently returning "no fires" would render such a beat
+    permanently non-overlapping, which is the one answer that is certainly
+    wrong.
+    """
+    from datetime import timedelta
+
+    if isinstance(schedule, bool) or schedule is None:
+        return None
+    if isinstance(schedule, (int, float)):
+        if schedule <= 0:
+            return None
+        step = timedelta(seconds=float(schedule))
+        out, t, end = [], start, start + timedelta(days=days)
+        while t < end:
+            out.append(t)
+            t += step
+        return out
+    total = getattr(schedule, "total_seconds", None)
+    if callable(total):  # timedelta
+        secs = total()
+        return crontab_fire_times(float(secs), start, days) if secs > 0 else None
+
+    try:
+        minutes = sorted(schedule.minute)
+        hours = sorted(schedule.hour)
+        dows = set(schedule.day_of_week)
+        doms = set(schedule.day_of_month)
+        moys = set(schedule.month_of_year)
+    except (AttributeError, TypeError):
+        return None
+    if not (minutes and hours and dows and doms and moys):
+        return None
+
+    out = []
+    day = start.replace(hour=0, minute=0, second=0, microsecond=0)
+    for offset in range(days + 1):
+        d = day + timedelta(days=offset)
+        # celery's day_of_week is 0=Sunday; python's weekday() is 0=Monday.
+        if ((d.weekday() + 1) % 7) not in dows:
+            continue
+        if d.day not in doms or d.month not in moys:
+            continue
+        for h in hours:
+            for m in minutes:
+                t = d + timedelta(hours=h, minutes=m)
+                if start <= t < start + timedelta(days=days):
+                    out.append(t)
+    return sorted(out)
+
+
+def long_hold_beats(beat_schedule, soft_limits, queues, *, queue="background",
+                    long_hold_s=LONG_HOLD_SOFT_LIMIT_S):
+    """Beat ENTRY names on ``queue`` whose task declares a long hold.
+
+    ``soft_limits`` and ``queues`` are plain ``task name -> value`` maps so this
+    stays importable without celery and testable without the app. ``queues``
+    is :func:`beat_queues`' output, i.e. a LIST per task, and a task whose
+    entries disagree about the queue is included if ANY of them lands on
+    ``queue`` — the pessimistic reading, because one entry on the pool is enough
+    to hold one of its slots.
+    """
+    out = []
+    for name, entry in (beat_schedule or {}).items():
+        task = entry.get("task")
+        if not task:
+            continue
+        if (soft_limits.get(task) or 0) < long_hold_s:
+            continue
+        if queue not in (queues.get(task) or []):
+            continue
+        out.append(name)
+    return sorted(out)
+
+
+def residency_overlaps(beat_schedule, soft_limits, queues, *, start, days=7,
+                       queue="background", long_hold_s=LONG_HOLD_SOFT_LIMIT_S):
+    """Every pair of long-hold ``queue`` beats whose declared windows overlap.
+
+    A "window" is ``[fire, fire + soft_time_limit]``: the span for which that
+    fire may hold one slot. Two overlapping windows mean both slots of a
+    two-slot pool can be held by grinders at once, with nothing else able to
+    run — which is what the user feels, not as a slow page but as a cold one.
+
+    Returns ``(overlaps, unenumerable)``. ``unenumerable`` carries the entries
+    whose schedule shape :func:`crontab_fire_times` could not read, so a gap in
+    the check is reported rather than passing as a clean result.
+    """
+    from datetime import timedelta
+
+    names = long_hold_beats(beat_schedule, soft_limits, queues,
+                            queue=queue, long_hold_s=long_hold_s)
+    windows, unenumerable = [], []
+    for name in names:
+        entry = beat_schedule[name]
+        fires = crontab_fire_times(entry.get("schedule"), start, days)
+        if fires is None:
+            unenumerable.append(name)
+            continue
+        hold = timedelta(seconds=float(soft_limits[entry["task"]]))
+        for f in fires:
+            windows.append((f, f + hold, name))
+    windows.sort()
+
+    overlaps = []
+    for i, (s_a, e_a, n_a) in enumerate(windows):
+        for (s_b, e_b, n_b) in windows[i + 1:]:
+            if s_b >= e_a:
+                break  # sorted by start: nothing later can overlap this window
+            overlaps.append({
+                "a": n_a, "a_fire": s_a.isoformat(), "a_until": e_a.isoformat(),
+                "b": n_b, "b_fire": s_b.isoformat(), "b_until": e_b.isoformat(),
+                "overlap_s": (min(e_a, e_b) - s_b).total_seconds(),
+            })
+    return overlaps, unenumerable
