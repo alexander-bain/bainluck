@@ -313,12 +313,36 @@ async def test_lost_sections_publish_degraded_not_full():
 @pytest.mark.asyncio
 async def test_healthy_build_publishes_full_with_no_reasons():
     cfg = hub_route.HUB_CONFIGS[SLUG]
+    # UX-P180 (#2167): `build_linked_matches` is patched here for the same reason
+    # `get_league_futures` is — `db=None` means every real query raises, and an
+    # unpatched source turns this "healthy build" into a degraded one. A fake
+    # that omits a source the builder actually reads certifies a build production
+    # never performs.
     with patch.object(hub_route, "get_league_futures", return_value={"sections": {"futures": []}}), \
+         patch.object(hub_route, "build_linked_matches", return_value=[]), \
          patch.dict(hub_route._UPCOMING_LISTERS, {}, clear=True):
         built = await hub_route.build_hub(cfg, db=None)
     quality, reasons = cache_mod.take_build_quality(built)
     assert quality == cache_mod.QUALITY_FULL
     assert reasons == []
+
+
+@pytest.mark.asyncio
+async def test_a_lost_matches_rail_is_declared_partial_not_full():
+    """UX-P180 (#2167): losing the linked-matches source costs the page its
+    matches, not its futures — so it is a PARTIAL loss, and it is declared.
+
+    The paired negative of the test above: that one proves a healthy build says
+    nothing, this one proves a build that lost this specific source does not get
+    to publish as `full`."""
+    cfg = hub_route.HUB_CONFIGS[SLUG]
+    with patch.object(hub_route, "get_league_futures", return_value={"sections": {"futures": []}}), \
+         patch.object(hub_route, "build_linked_matches", side_effect=RuntimeError("boom")), \
+         patch.dict(hub_route._UPCOMING_LISTERS, {}, clear=True):
+        built = await hub_route.build_hub(cfg, db=None)
+    quality, reasons = cache_mod.take_build_quality(built)
+    assert quality != cache_mod.QUALITY_FULL
+    assert "hub_linked_matches_failed" in reasons
 
 
 @pytest.mark.asyncio
