@@ -172,7 +172,7 @@ latency, and must not be bundled); matching symptoms (D35, file under #2693).
 
 168 (a)–(g), 170 (b)–(e), 171 (b)–(e), 173 (f)–(i), 174 (j)–(m), 175 (n)–(x), 176 (y)–(dd),
 177 (ee)–(kk), 178 (ll)–(oo), 179 (pp)–(uu), 180 (vv)–(aaa), 181 (bbb)–(ggg),
-**182 (hhh)–(kkk)** all hold.
+**182 (hhh)–(ppp)** all hold.
 
 **(hhh)** A comment that names a failure is not a guard against it. The outage fixed by
 #3480 was written out in full, in the codebase's own words, directly above the task that
@@ -202,6 +202,26 @@ decoration.
 `q=stanley cup` twice, is a *cache-write* story with its own control built in, and it
 points at a specific line of code. The second call costs one second and changes what the
 number means.
+
+**(nnn) A sha you merge may never itself deploy, because the next push overtakes it in the
+queue — so any post-deploy gate must test ANCESTRY, and an equality check is a hang, not a
+slow pass.** The failure mode is nasty because it is silent and indistinguishable from
+patience: a watcher polling for `commit == <my sha>` never errors, it just never fires, and
+everyone reads it as a slow deploy. Tonight `7cb6531d` will never be the deployed head —
+`138fc435` overtook it 31 minutes later — so an equality watcher would have run to its
+deadline and reported nothing. `git merge-base --is-ancestor <mine> <deployed>`.
+
+**(ooo) Before you conclude a red CI is yours, recompute the gate with your diff removed.**
+`10304a33`'s CI failed on a coverage gate at 1201/1337 = 89.83% against a 90% floor, and my
+one new test file was in the denominator. Without it: 1201/1336 = 89.90% — under either way.
+Two minutes of arithmetic separated "my change broke the build" from "the build was already
+broken and I am the fourth window to notice". Four lanes independently built the same fix
+inside twenty minutes tonight (#3497).
+
+**(ppp) A ratio's MARGIN and its DRIFT are different numbers, and only one of them
+predicts.** The same gate was "under by a tenth of a percent, about two test files" and
+"drifted by 135 unmeasured files". Both true. The first invites "two more files will red it
+again", which is false. When you report a threshold breach, report the drift, not the margin.
 
 ⚠️ Build on a FRESH branch off master. `program/latency-247-…` (in flight),
 `program/latency-182-artifacts` (docs, this file), `program/latency-181-artifacts` (docs +
