@@ -32,7 +32,7 @@ Written 2026-09-06 ~04:00am PT (11:00Z; PT = local `date` minus 3h, notice 24, v
    slots for minutes → `warm_typeahead` messages queue up (18 observed at once) → `expires: 120`
    discards them before a slot frees → the warmer's own skip counters sit **frozen for 201 seconds**
    while `matched_emitted` shows the beat publishing at its full 10s cadence → period stretches to
-   200–616s → the head is cold **38.5%** of the time.
+   200–616s → the head is cold **45.0%** of the time (longest window, 113 min).
 5. **`heavy` is refuted as the destination** — 0.91x on the same corrected basis, *more* loaded than
    the queue it would relieve.
 6. **Two live monitoring bugs filed** (#3444 label-map, #3440 settled concepts), and two published
@@ -143,8 +143,22 @@ Everything now agrees:
 5. Meanwhile `matched_emitted: 60` per 600s bucket — **the beat is publishing at exactly its 10s
    cadence** — against `matched_delivered: 20`. `warm_search_head`, on `expires: 20`, reads
    `matched_emitted: 30 / matched_delivered: 1`, `undelivered_fraction 0.967`, verdict `missing`.
-6. Period stretches to 191–616s, the 65s response TTL lapses, and the warmed head is cold **38.5%**
-   of the time.
+6. Period stretches to 191–616s, the 65s response TTL lapses, and the warmed head goes cold.
+
+**The dead share, on the longest window this session could build** — the ring unioned by each
+record's own `at` across the whole run, **79 passes over 112.8 minutes**:
+
+```
+period p50 40.1s   p95 230.4s   max 616.4s
+wall   p50 35.0s   max  61.8s
+DEAD (period beyond the 65s TTL): 3,042s of 6,767s = 45.0%, in 24 of 79 passes
+```
+
+⚠️ Rule (uu) applies to this number as much as it did to 179's. Intermediate windows of the SAME
+metric during this session read 41.5% (61 min), then 38.5% (81 min), then 45.0% (113 min). **Quote
+the longest window or quote the range; a single sub-hour window of this metric is not a
+measurement.** The p50 is ~40s throughout — the defect is entirely the tail, which is also why the
+window has to be long enough to catch several tails.
 
 ### (e) What this means for topology
 
