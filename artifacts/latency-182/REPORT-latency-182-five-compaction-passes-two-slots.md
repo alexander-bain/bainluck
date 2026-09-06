@@ -113,6 +113,36 @@ that file is the calibration lane's under D45.
 
 Zero overlaps over 7 days, swept across five fixed anchors spanning a year.
 
+### 3.1 "Did you just move the collision somewhere else?" — no, and here is the check
+
+The obvious attack on a reschedule is that it relocates the problem. It does not, and the
+reason is worth stating because it is *not* "the new slots are quiet". **There is no quiet
+hour.** Enumerating every other `background` beat with a soft limit of five minutes or more
+that fires inside each new window:
+
+| moved beat | new window | other background beats firing inside it |
+|---|---|---|
+| `turbo-collapse-futures` | 01:40–02:40 | 18 |
+| `turbo-collapse-futures` | 07:40–08:40 | 20 |
+| `turbo-collapse-odds` | 03:30–04:30 | 21 |
+| `turbo-collapse-odds` | 09:30–10:30 | 21 |
+| `collapse-odds-snapshots-daily` | 04:40–05:08 | 8 |
+| `collapse-winprob-snapshots-daily` | 05:15–05:43 | 13 |
+| `collapse-futures-snapshots-daily` | 05:50–06:18 | 11 |
+
+Roughly twenty medium beats fire in any given hour, everywhere on the clock. The old
+06:30 window was not unusually busy and the new ones are not unusually quiet.
+
+**That is the point, not a weakness.** What changes is not how many beats want the pool —
+it is that no two beats that can hold a slot for *half an hour or more* are ever resident
+together. A 300s beat queued behind a 300s beat drains; a 3600s beat queued behind a 3600s
+beat is an outage, and the difference is not degree, it is kind. `warm-typeahead`'s
+`expires: 120` is what makes it kind: two minutes of queueing is survivable, an hour is
+annihilation.
+
+The residual contention is real, is uniform across the clock, and is **not** claimed as
+fixed here. It is what LAT-P242's `queue_demand` — riding in the same PR — exists to size.
+
 ## 4. The guard, and why it cannot rot
 
 `backend/tests/test_lat_p243_compaction_stagger_3480.py` (29 tests) plus
