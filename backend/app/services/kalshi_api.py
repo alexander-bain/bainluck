@@ -54,6 +54,10 @@ class KalshiMarket(BaseModel):
     open_time: Optional[datetime] = None
     close_time: Optional[datetime] = None
     expiration_time: Optional[datetime] = None
+    # When the thing being traded actually happens. Distinct from close_time,
+    # which for a game market is a multi-day settlement backstop (+3d NFL,
+    # +14d UFC/tennis) — see gotcha #14 and _is_kalshi_game_ticker's callers.
+    occurrence_datetime: Optional[datetime] = None
 
     # Pricing (as decimals 0-1)
     yes_bid: Optional[float] = None
@@ -2577,6 +2581,9 @@ class KalshiAPIService(BaseAPIClient):
             open_time = self._parse_timestamp(market_data.get("open_time"))
             close_time = self._parse_timestamp(market_data.get("close_time"))
             expiration_time = self._parse_timestamp(market_data.get("expiration_time"))
+            occurrence_datetime = self._parse_timestamp(
+                market_data.get("occurrence_datetime")
+            )
 
             # Kalshi API v2 returns prices in two possible formats:
             # - Old format: yes_bid, yes_ask, last_price as integers in cents (0-100)
@@ -2643,6 +2650,7 @@ class KalshiAPIService(BaseAPIClient):
                 open_time=open_time,
                 close_time=close_time,
                 expiration_time=expiration_time,
+                occurrence_datetime=occurrence_datetime,
                 yes_bid=yes_bid,
                 yes_ask=yes_ask,
                 no_bid=no_bid,

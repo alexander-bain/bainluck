@@ -78,6 +78,50 @@ def _is_kalshi_game_ticker(event_ticker: str) -> Optional[str]:
     return best_label
 
 
+def _kalshi_commence_time(markets, *, is_game: bool):
+    """The start time to store for a Kalshi event's markets.
+
+    #3433. Gotcha #14 says a Kalshi market's ``commence_time`` is often its
+    CLOSE time, not the start — and for a game market that close time is a
+    multi-day settlement backstop, not an approximation of kick-off. Measured
+    at the venue 2026-09-06 (``/series?category=Sports`` -> every ticker, then
+    ``/markets?series_ticker=...``): NFL +3d, MLB +4d, UFC and tennis +14d.
+    ``KXUFCFIGHT-26SEP08LOUNAT`` — a fight on Sep 8 — closes 2026-09-22T23:00Z,
+    and that is what we stored on the market and, through the auto-create
+    fallback in ``prediction_market_matching``, on the event we minted for it.
+    A user searching the fighter saw "Sep 22 7:00 PM".
+
+    The same payload already carries ``occurrence_datetime`` (== the venue's
+    ``expected_expiration_time``): when the thing actually happens. It was read
+    by zero lines of our code.
+
+    Deliberately scoped to GAME tickers. ``occurrence_datetime`` is populated on
+    outrights too, where it means something else and is not always earlier than
+    close — ``KXHONEYDEUCE-01JAN27`` has occurrence 15:00Z against a 04:59Z
+    close — so preferring it everywhere would re-time markets that are not
+    broken. ``is_game`` is ``_is_kalshi_game_ticker``'s verdict, the repo's own
+    definition of a game, and the ``occ <= close`` check is the second bound:
+    an occurrence AFTER its own settlement backstop is not an occurrence we
+    understand, so we keep the close time rather than guess.
+
+    Note what this does NOT do: no ticker parsing. ``extract_game_date_from_ticker``
+    backtracks its 1-2 digit day (``KXATP1RANK-26DEC31`` -> Dec 3), which is why
+    #3403's tennis fix needed a series allowlist. A venue-supplied instant needs
+    no allowlist and carries an hour, not a midnight.
+
+    Pure: no DB, no clock. Returns the earliest start across ``markets``.
+    """
+    starts = []
+    for m in markets:
+        close = getattr(m, "close_time", None)
+        occ = getattr(m, "occurrence_datetime", None)
+        if is_game and occ is not None and (close is None or occ <= close):
+            starts.append(occ)
+        elif close is not None:
+            starts.append(close)
+    return min(starts) if starts else None
+
+
 def _build_game_market_name(
     event_title: str,
     event_ticker: str,
@@ -795,7 +839,9 @@ async def _poll_kalshi_markets():
 
                     if len(event.markets) == 1:
                         market = event.markets[0]
-                        commence_time = market.close_time  # When trading ends
+                        commence_time = _kalshi_commence_time(
+                            [market], is_game=bool(game_sport)
+                        )
 
                         # For game-level events, construct the best possible name
                         # from sub-titles (team names) since event title may be generic
@@ -813,11 +859,10 @@ async def _poll_kalshi_markets():
                             market_name = event.title
                     else:
                         market_name = event.title
-                        # Use earliest close time from all markets
-                        close_times = [
-                            m.close_time for m in event.markets if m.close_time
-                        ]
-                        commence_time = min(close_times) if close_times else None
+                        # Use the earliest start across the event's markets
+                        commence_time = _kalshi_commence_time(
+                            event.markets, is_game=bool(game_sport)
+                        )
 
                     # Compute market tier for relevance ranking
                     from app.utils.market_label_normalization import compute_market_tier
