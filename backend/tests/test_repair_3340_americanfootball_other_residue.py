@@ -107,6 +107,73 @@ def test_the_refusal_names_the_tickers_that_caused_it():
 
 
 # ---------------------------------------------------------------------------
+# The near miss: the producer test is NECESSARY BUT NOT SUFFICIENT
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("sport_key", ["tennis_other", "baseball_other"])
+def test_a_producerless_bucket_is_still_refused_without_an_evidence_package(sport_key):
+    """The regression test for the mistake this repair nearly shipped.
+
+    `tennis_other` passes the producer test — no Kalshi ticker maps to it — and on
+    2026-09-05 it measured 0 scores, 0 team_ids and 0 real external ids, i.e. every
+    safety signal the population gate reads came back identical to the target
+    bucket. It was at that moment carrying LIVE US OPEN DOUBLES, because tennis is
+    produced by StatPal, which the Kalshi maps know nothing about.
+
+    Only the population ceiling refused it, and only by 331 rows. That is a
+    plan-drift check catching a safety failure by luck, so the licence is now an
+    explicit per-bucket evidence package.
+    """
+    assert repair.producerless_refusal_reason(sport_key) is None, (
+        f"fixture assumption dead: {sport_key} gained a Kalshi producer, so it no "
+        f"longer demonstrates that the producer test is insufficient"
+    )
+    reason = repair.sweep_refusal_reason(sport_key)
+    assert reason is not None, f"{sport_key} would be swept on the producer test alone"
+    assert "EVIDENCED_SPORT_KEYS" in reason
+
+
+def test_the_refusal_explains_the_us_open_near_miss_rather_than_just_saying_no():
+    """A refusal whose reason is 'not in the list' teaches the next reader to add
+    themselves to the list. This one has to say why the list exists."""
+    reason = repair.sweep_refusal_reason("tennis_other")
+    assert "US OPEN" in reason.upper()
+    assert "census" in reason.lower()
+
+
+def test_the_target_bucket_still_passes_the_full_licence_check():
+    """The control. A gate that refuses everything ships nothing."""
+    assert repair.sweep_refusal_reason(repair.TARGET_SPORT_KEY) is None
+
+
+def test_every_evidenced_key_carries_its_evidence_and_passes_the_producer_test():
+    """The allowlist is a record of measurements, not a convenience list."""
+    assert repair.EVIDENCED_SPORT_KEYS, "the allowlist cannot be empty"
+    for sport_key, evidence in repair.EVIDENCED_SPORT_KEYS.items():
+        assert len(evidence) > 80, f"{sport_key} has no real evidence recorded"
+        assert repair.producerless_refusal_reason(sport_key) is None, (
+            f"{sport_key} is evidenced but now has a producer — the evidence is stale"
+        )
+
+
+def test_a_bucket_with_a_producer_is_refused_even_if_someone_evidences_it():
+    """Both gates are load-bearing, in both orders: adding a key to the allowlist
+    must not buy a pass on the producer test."""
+    reason = repair.sweep_refusal_reason("basketball_other")
+    assert reason is not None
+    patched = dict(repair.EVIDENCED_SPORT_KEYS, basketball_other="x" * 100)
+    original = repair.EVIDENCED_SPORT_KEYS
+    try:
+        repair.EVIDENCED_SPORT_KEYS = patched
+        still_refused = repair.sweep_refusal_reason("basketball_other")
+    finally:
+        repair.EVIDENCED_SPORT_KEYS = original
+    assert still_refused is not None, "the producer test stopped being consulted"
+    assert "legitimate producer" in still_refused
+
+
+# ---------------------------------------------------------------------------
 # The population gate — every clause is a reason a REAL fixture might be here
 # ---------------------------------------------------------------------------
 

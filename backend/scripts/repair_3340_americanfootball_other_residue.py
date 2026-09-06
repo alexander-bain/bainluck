@@ -178,6 +178,62 @@ MAX_EXPECTED_POPULATION = 8_000
 EXPECTED_ZEROS = ("with_score", "with_team_id", "with_real_external_id")
 
 
+#: The buckets this repair is EVIDENCED for, and why.
+#:
+#: This allowlist exists because the producer test below is NECESSARY BUT NOT
+#: SUFFICIENT, and finding that out was a near miss worth recording. `tennis_other`
+#: passes the producer test — no Kalshi ticker maps to it and it is absent from
+#: `SPORT_LEAGUE_MAP` — and on 2026-09-05 it measured 0 scores, 0 team_ids and 0
+#: real external ids, exactly like the target bucket. It is also, at that moment,
+#: carrying **live US Open doubles**: `Siniakova/Townsend vs Hunter/Krawczyk`,
+#: `Bolelli/Vavassori vs Gille/Verbeek`, `Krawietz/Puetz vs Rojer/Winegar`. Tennis
+#: is produced by StatPal, which the Kalshi maps know nothing about.
+#:
+#: Only the population CEILING refused that sweep, and only by 331 rows — a
+#: plan-drift check catching a safety failure by luck. So the licence to sweep a
+#: bucket is a per-bucket evidence package a human assembled, and it is named
+#: here rather than inferred from a map.
+EVIDENCED_SPORT_KEYS = {
+    "americanfootball_other": (
+        "0 Kalshi game/futures tickers, absent from SPORT_LEAGUE_MAP, and 4,656 "
+        "servable rows measured 2026-09-05 with 0 scores, 0 team_ids and 0 real "
+        "external ids — the one external_id present is pm_kalshi_KXNCAAMBGAME…, "
+        "a synthetic id for an NCAA basketball game. CFL and UFL hold their own "
+        "keys and NFL/NCAAF are ticker-mapped, so nothing that IS American "
+        "football has any reason to be here."
+    ),
+}
+
+
+def unevidenced_refusal_reason(sport_key: str) -> str | None:
+    """Why this key has no evidence package, or ``None`` if it has one.
+
+    Pure. The first and strongest gate: a bucket nobody has censused row by row
+    is not sweepable however clean it looks from the ticker maps.
+    """
+    if sport_key in EVIDENCED_SPORT_KEYS:
+        return None
+    return (
+        f"{sport_key} is not in EVIDENCED_SPORT_KEYS. A bucket sweep is licensed "
+        f"by a per-bucket evidence package, never by the ticker maps alone — "
+        f"`tennis_other` passes the producer test with 0 scores, 0 team_ids and 0 "
+        f"real external ids while carrying LIVE US OPEN DOUBLES. Census the bucket "
+        f"row by row, write the evidence into EVIDENCED_SPORT_KEYS, and have it "
+        f"reviewed before sweeping it."
+    )
+
+
+def sweep_refusal_reason(sport_key: str) -> str | None:
+    """The full licence check: evidence package first, then the producer test.
+
+    Both must pass. The evidence package is what a human signed off; the producer
+    test is what keeps that sign-off honest if the maps change underneath it.
+    """
+    return unevidenced_refusal_reason(sport_key) or producerless_refusal_reason(
+        sport_key
+    )
+
+
 def producerless_refusal_reason(sport_key: str) -> str | None:
     """Why this sport key must NOT be swept, or ``None`` if it is safe to sweep.
 
@@ -378,10 +434,12 @@ async def run(*, backup: bool, apply: bool, sport_key: str = TARGET_SPORT_KEY) -
     from app.tasks.base import get_task_session
     from sqlalchemy import text
 
-    refusal = producerless_refusal_reason(sport_key)
+    refusal = sweep_refusal_reason(sport_key)
     if refusal:
         print(f"REFUSING: {refusal}")
         sys.exit(1)
+    print(f"Evidence package on record for {sport_key}:")
+    print(f"  {EVIDENCED_SPORT_KEYS[sport_key]}")
     print(f"Producer check: no ticker and no league entry maps to {sport_key}. OK.")
 
     async with get_task_session() as session:
