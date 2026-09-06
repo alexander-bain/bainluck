@@ -1362,3 +1362,122 @@ class TestLeaseDeclineReaderMatchesTheWriter:
         row = out["all"]["app.tasks.foo"]
         assert row["lease_declines"] is None
         assert row["lease_declines_window_s"] is None
+
+
+def _adherence_request():
+    """A Request carrying the admin bearer token the route actually requires."""
+    from starlette.requests import Request
+
+    return Request({
+        "type": "http",
+        "method": "GET",
+        "path": "/api/admin/celery/schedule-adherence",
+        "headers": [(b"authorization", b"Bearer test-admin-token")],
+        "query_string": b"",
+    })
+
+
+class TestEndpointToReaderWiring:
+    """LAT-P238-LEASE-ENDPOINT-WIRING-GUARD — the handoff above the builder.
+
+    ``TestRouteJoin`` and the lease tests above prove the BUILDER places each
+    argument correctly, and the reader tests prove ``get_all_lease_declines``
+    reads Redis correctly. Neither covers the six lines that hand one to the
+    other, and that gap is the whole defect class: the route calls
+    ``build_schedule_adherence`` with four positional arguments and two keyword
+    arguments, every one of which defaults to ``None``/``{}``.
+
+    So dropping ``lease_declines=`` — or crossing it with ``matched=`` — raises
+    nothing, fails no existing test, and publishes ``lease_declines: null`` on
+    all 140 rows. That is indistinguishable from "no task has ever declined a
+    lease", which is the reading a healthy fleet produces. Both ends stay green
+    while the field is dead, so the assertion has to be made HERE, on the join,
+    with a value that could only have come from its own reader.
+
+    Every sentinel below is a distinct integer for that reason: a swap of any
+    two readers moves a number to a field that does not expect it, and the
+    equality assertions catch it. Values that merely looked plausible in every
+    slot would agree with a crossed wiring by construction.
+    """
+
+    TASK = "app.tasks.foo"
+
+    def _run(self, monkeypatch, *, lease_declines=None, matched=None):
+        import asyncio
+
+        from app.routes import admin_celery
+        from app.tasks import celery_app
+
+        monkeypatch.setenv("ADMIN_TOKEN", "test-admin-token")
+        monkeypatch.setattr(
+            celery_app.conf, "beat_schedule",
+            {"b": {"task": self.TASK, "schedule": 60.0}}, raising=False,
+        )
+        monkeypatch.setattr(
+            redis_state, "get_all_task_metrics",
+            lambda: [_metrics("foo", starts=10, window_s=3600)],
+        )
+        monkeypatch.setattr(
+            redis_state, "get_task_label_map", lambda: {self.TASK: "foo"},
+        )
+        monkeypatch.setattr(
+            redis_state, "get_all_task_deliveries",
+            lambda: {self.TASK: {"fires": 11, "window_s": 1100.0}},
+        )
+        monkeypatch.setattr(
+            redis_state, "get_matched_emit_delivery",
+            lambda: matched if matched is not None else {self.TASK: {
+                "emitted": 22, "delivered": 13, "bucket_s": 600,
+                "bucket_start": 1788000000.0, "coverage_proven": True,
+            }},
+        )
+        monkeypatch.setattr(
+            redis_state, "get_all_lease_declines",
+            lambda: lease_declines if lease_declines is not None else {
+                self.TASK: {"declines": 33, "window_s": 3300.0},
+            },
+        )
+        out = asyncio.run(
+            admin_celery.celery_schedule_adherence(_adherence_request())
+        )
+        return out["all"][self.TASK]
+
+    def test_every_reader_lands_in_its_own_field(self, monkeypatch):
+        row = self._run(monkeypatch)
+        assert row["deliveries"] == 11
+        assert row["deliveries_window_s"] == 1100.0
+        assert row["matched_emitted"] == 22
+        assert row["matched_delivered"] == 13
+        assert row["matched_bucket_s"] == 600
+        assert row["matched_coverage_proven"] is True
+        # The two the follow-up is actually about.
+        assert row["lease_declines"] == 33
+        assert row["lease_declines_window_s"] == 3300.0
+
+    def test_the_lease_reader_is_reached_at_all(self, monkeypatch):
+        """The narrow regression: an unpassed reader reads None, not 33.
+
+        Asserted against a reader that RETURNS data, because the failure being
+        guarded is silent — a dropped keyword argument and an empty fleet
+        produce the same payload.
+        """
+        assert self._run(monkeypatch)["lease_declines"] == 33
+        assert self._run(monkeypatch, lease_declines={})["lease_declines"] is None
+
+    def test_lease_declines_is_not_crossed_with_the_matched_pair(self, monkeypatch):
+        """The two keyword arguments sit adjacent and both key by celery name.
+
+        Nothing about their shapes stops one being passed where the other
+        belongs, so the join is pinned rather than assumed.
+        """
+        row = self._run(monkeypatch)
+        assert row["lease_declines"] != row["matched_emitted"]
+        assert row["lease_declines"] != row["matched_delivered"]
+        # A crossed wiring would read `declines`/`window_s` off the matched dict
+        # and find neither, i.e. silently None.
+        row = self._run(
+            monkeypatch,
+            matched={self.TASK: {"declines": 33, "window_s": 3300.0}},
+        )
+        assert row["matched_emitted"] is None
+        assert row["lease_declines"] == 33
