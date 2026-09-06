@@ -685,6 +685,56 @@ class TestTheTaskEmitsTheWriteItClaims:
         assert reasons["soccer"] == "empty"
 
 
+class TestTheCapCannotSilenceOneTeam:
+    """A shared cap over two unequal populations empties the smaller one first.
+
+    Ten per event, both teams in one list. In the 2026-09-06 payload 22 of 146
+    fixtures carried more than ten sidelined players and 4 of them would have
+    shown ONLY ONE SIDE in vendor order. The reader attributes a move to the
+    team that FELL, so such a game could never explain an away-side drop however
+    many away players were hurt — the data would be there and unusable.
+    """
+
+    @staticmethod
+    def _inj(name, home):
+        from app.services.statpal_api import StatPalInjury
+
+        return StatPalInjury(
+            player_id="1", player_name=name, team="H" if home else "A",
+            status="Out", is_home=home,
+        )
+
+    def test_a_lopsided_fixture_still_shows_both_teams_inside_the_cap(self):
+        from app.tasks.statpal_sync import _interleave_sides
+
+        rows = [self._inj(f"h{i}", True) for i in range(14)]
+        rows += [self._inj(f"a{i}", False) for i in range(3)]
+        capped = _interleave_sides(rows)[:10]
+        assert [r.player_name for r in capped[:6]] == ["h0", "a0", "h1", "a1", "h2", "a2"]
+        assert {r.is_home for r in capped} == {True, False}
+
+    def test_vendor_order_would_have_silenced_the_away_side(self):
+        """The control: without the interleave this is a one-sided list, which
+        is what makes the assertion above worth making."""
+        rows = [self._inj(f"h{i}", True) for i in range(14)]
+        rows += [self._inj(f"a{i}", False) for i in range(3)]
+        assert {r.is_home for r in rows[:10]} == {True}
+
+    def test_nothing_is_dropped_and_order_within_a_side_is_kept(self):
+        from app.tasks.statpal_sync import _interleave_sides
+
+        rows = [self._inj("h0", True), self._inj("a0", False), self._inj("h1", True)]
+        out = _interleave_sides(rows)
+        assert len(out) == len(rows)
+        assert [r.player_name for r in out if r.is_home] == ["h0", "h1"]
+
+    def test_a_one_sided_fixture_is_unchanged(self):
+        from app.tasks.statpal_sync import _interleave_sides
+
+        rows = [self._inj(f"h{i}", True) for i in range(4)]
+        assert [r.player_name for r in _interleave_sides(rows)] == ["h0", "h1", "h2", "h3"]
+
+
 def test_the_window_the_task_attaches_over_is_still_the_documented_one():
     """The one thing above that is genuinely a source fact rather than a
     behaviour: injuries are a 1h product and the attach window is -6h..+2d, and

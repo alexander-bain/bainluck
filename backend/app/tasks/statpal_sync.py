@@ -16,6 +16,7 @@ The sync task runs on three cadences:
 import asyncio
 import logging
 from datetime import datetime, timezone, timedelta
+from itertools import zip_longest
 from typing import Optional
 
 from sqlalchemy import select, update, and_, or_, func
@@ -458,6 +459,26 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
 _INJURY_EVENT_SPORT_PREFIX: dict[str, str] = {"soccer": "soccer"}
 
 
+def _interleave_sides(injuries: list) -> list:
+    """Home, away, home, away … so a 10-cap cannot silence one whole team.
+
+    A shared cap over two unequal populations empties the smaller one first. In
+    the 2026-09-06 payload, 22 of 146 fixtures carried more than ten sidelined
+    players and **4 of them would have shown only one side** in vendor order —
+    and the reader that consumes this list attributes a line move to the team
+    that FELL, so a game where only the home side survived the cap can never
+    explain an away-side drop, however many away players are hurt.
+
+    Order within a side is preserved; nothing is dropped here, only reordered.
+    """
+    home = [inj for inj in injuries if inj.is_home]
+    away = [inj for inj in injuries if not inj.is_home]
+    ordered = []
+    for pair in zip_longest(home, away):
+        ordered.extend(inj for inj in pair if inj is not None)
+    return ordered
+
+
 async def _sync_statpal_injuries(sport_key: Optional[str] = None) -> dict:
     """Sync injury reports from StatPal onto events for line-movement context.
 
@@ -628,7 +649,7 @@ async def _sync_statpal_injuries(sport_key: Optional[str] = None) -> dict:
                             "type": inj.injury_type,
                             "detail": inj.detail,
                         }
-                        for inj in by_fixture[chosen][:10]  # Cap at 10 per event
+                        for inj in _interleave_sides(by_fixture[chosen])[:10]
                     ]
                     sources["statpal_injuries_updated"] = now.isoformat()
 
