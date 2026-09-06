@@ -25,11 +25,14 @@ numbers, not a shape: a test that only proves "a line renders when a line is
 present" is the no-op this lane already died of once.
 """
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
 from app.services.espn_tennis import scoreboard_competitions
 from app.utils.espn_tennis_anchor import (
     BOX_SCORE_TENNIS_KEY,
+    LINE_OBSERVED_AT_KEY,
     LINE_RAGGED,
     SCORE_NOT_A_COMPLETED_RESULT,
     SCORE_NOT_PLAYED,
@@ -37,6 +40,7 @@ from app.utils.espn_tennis_anchor import (
     SCORE_ORIENTATION_UNRESOLVED,
     authority_games_line,
     games_line_write,
+    line_value,
 )
 
 
@@ -396,3 +400,214 @@ class TestTheBlastRadius:
 
         assert isinstance(column, dict)
         assert set(column) == {BOX_SCORE_TENNIS_KEY}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# #3242 — THE LINE SAYS HOW OLD IT IS
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+#: 182540 mid-first-set — the shape #3242 was measured on. `state="in"` is what
+#: `scoreboard_competitions` turns into `in_progress`.
+IN_PLAY = _competition("182540", [
+    _side("Carlos Alcaraz", [(4, False)]),
+    _side("Wu Yibing", [(2, False)]),
+], state="in", status_name="STATUS_IN_PROGRESS", period=1)
+
+#: A FIXED clock. Never `now()` — an anchor that reads the wall clock makes the
+#: assertion below depend on when the suite runs (gotcha #44).
+OBSERVED = datetime(2026, 9, 5, 15, 22, 42, tzinfo=timezone.utc)
+
+
+class TestTheInPlayLineIsStamped:
+    """THE SHIP: a reader can tell whether the games count is from this minute
+    or from ten minutes ago.
+
+    Measured on production 2026-09-05: ESPN published a match's first game at
+    15:12 and our page showed it at 15:22 — one full beat — under a badge
+    reading `LIVE · 1s ago`, which is the win-probability write's age and not
+    this number's. The page could not say better because nothing recorded when
+    this line was observed.
+    """
+
+    def test_an_in_play_line_carries_when_it_was_observed(self):
+        write = games_line_write(
+            ours=OURS,
+            our_box_score_data=None,
+            competition=_board(IN_PLAY),
+            observed_at=OBSERVED,
+        )
+
+        line = write["box_score_data"][BOX_SCORE_TENNIS_KEY]
+        assert line[LINE_OBSERVED_AT_KEY] == "2026-09-05T15:22:42+00:00"
+        # and the line itself is untouched by the stamping
+        assert line["sets"] == [[2, 4]]
+        assert line["home_games"] == 2
+
+    def test_a_decided_match_is_not_stamped(self):
+        """A finished line is final and has no freshness to report. Stamping it
+        every pass forever is the write storm this function already refuses —
+        and a `Stale` chip on a match that ended on Tuesday is a lie about a
+        number that is perfectly correct."""
+        write = games_line_write(
+            ours=OURS,
+            our_box_score_data=None,
+            competition=_board(WU_ALCARAZ),
+            observed_at=OBSERVED,
+        )
+
+        assert LINE_OBSERVED_AT_KEY not in write["box_score_data"][BOX_SCORE_TENNIS_KEY]
+
+    def test_no_clock_no_stamp(self):
+        """Every caller that is not the live pass omits `observed_at` and gets
+        exactly the payload it got before this existed."""
+        write = games_line_write(
+            ours=OURS, our_box_score_data=None, competition=_board(IN_PLAY)
+        )
+
+        assert LINE_OBSERVED_AT_KEY not in write["box_score_data"][BOX_SCORE_TENNIS_KEY]
+
+
+class TestTheStampIsAConfirmationNotAChange:
+    """`observed_at` answers "when did we last CHECK", not "when did this last
+    move". A change time would print `8m ago` for a score we re-confirmed
+    thirty seconds ago — the opposite of the reassurance the chip is for."""
+
+    def test_an_unchanged_in_play_line_is_re_stamped(self):
+        first = games_line_write(
+            ours=OURS,
+            our_box_score_data=None,
+            competition=_board(IN_PLAY),
+            observed_at=OBSERVED,
+        )
+        later = OBSERVED + timedelta(minutes=10)
+        again = games_line_write(
+            ours=OURS,
+            our_box_score_data=first["box_score_data"],
+            competition=_board(IN_PLAY),
+            observed_at=later,
+        )
+
+        assert again["box_score_data"] is not None, (
+            "an unchanged in-play line was not re-confirmed, so its age would "
+            "keep growing while we were reading it every 10 minutes"
+        )
+        line = again["box_score_data"][BOX_SCORE_TENNIS_KEY]
+        assert line[LINE_OBSERVED_AT_KEY] == later.isoformat()
+        assert line["sets"] == [[2, 4]], "the value must not have moved"
+
+    def test_a_re_stamp_is_not_counted_as_movement(self):
+        """`line_writes` has always meant "the line changed". The caller counts
+        on `moved` to keep it that way; folding re-stamps in would turn the
+        metric into a count of live rows."""
+        first = games_line_write(
+            ours=OURS,
+            our_box_score_data=None,
+            competition=_board(IN_PLAY),
+            observed_at=OBSERVED,
+        )
+        again = games_line_write(
+            ours=OURS,
+            our_box_score_data=first["box_score_data"],
+            competition=_board(IN_PLAY),
+            observed_at=OBSERVED + timedelta(minutes=10),
+        )
+
+        assert first["moved"] is True      # it did not exist before
+        assert again["moved"] is False     # same 2-4, re-confirmed
+
+    def test_a_line_that_actually_moved_still_reports_movement(self):
+        """The control. If `moved` were always False the metric would be dead in
+        the other direction."""
+        moved_on = _competition("182540", [
+            _side("Carlos Alcaraz", [(5, False)]),
+            _side("Wu Yibing", [(2, False)]),
+        ], state="in", status_name="STATUS_IN_PROGRESS", period=1)
+
+        first = games_line_write(
+            ours=OURS,
+            our_box_score_data=None,
+            competition=_board(IN_PLAY),
+            observed_at=OBSERVED,
+        )
+        second = games_line_write(
+            ours=OURS,
+            our_box_score_data=first["box_score_data"],
+            competition=_board(moved_on),
+            observed_at=OBSERVED + timedelta(minutes=10),
+        )
+
+        assert second["moved"] is True
+        assert second["box_score_data"][BOX_SCORE_TENNIS_KEY]["sets"] == [[2, 5]]
+
+    def test_a_decided_line_that_has_not_moved_is_still_not_rewritten(self):
+        """The invariant this function was built on, re-proved with the stamp in
+        play: a settled row must not be rewritten every cycle."""
+        first = games_line_write(
+            ours=OURS,
+            our_box_score_data=None,
+            competition=_board(WU_ALCARAZ),
+            observed_at=OBSERVED,
+        )
+        again = games_line_write(
+            ours=OURS,
+            our_box_score_data=first["box_score_data"],
+            competition=_board(WU_ALCARAZ),
+            observed_at=OBSERVED + timedelta(minutes=10),
+        )
+
+        assert again["box_score_data"] is None
+        assert again["moved"] is False
+
+    def test_a_stamp_is_not_part_of_what_moved(self):
+        """`line_value` is the one definition of "the value", used by the writer
+        and asserted here so the two cannot drift."""
+        stamped = {
+            "sets": [[2, 4]], "home_games": 2, "away_games": 4,
+            "source": "espn", LINE_OBSERVED_AT_KEY: OBSERVED.isoformat(),
+        }
+
+        assert line_value(stamped) == {
+            "sets": [[2, 4]], "home_games": 2, "away_games": 4, "source": "espn",
+        }
+        assert line_value(None) is None
+
+
+class TestTheStampCanGoStale:
+    """A freshness signal that cannot report bad news is decoration.
+
+    #3316 measured the tennis beat starved for 42.8 minutes by our own deploy
+    rate. Through a stamp, that hole is 42 minutes of visibly ageing chip; the
+    row is simply not re-confirmed, because nothing reached it.
+    """
+
+    def test_a_row_the_pass_never_reaches_keeps_its_old_stamp(self):
+        stored = games_line_write(
+            ours=OURS,
+            our_box_score_data=None,
+            competition=_board(IN_PLAY),
+            observed_at=OBSERVED,
+        )["box_score_data"]
+
+        # The pass does not run for 40 minutes: nothing calls this function, so
+        # the column still holds the 15:22 stamp and the page ages it honestly.
+        assert stored[BOX_SCORE_TENNIS_KEY][LINE_OBSERVED_AT_KEY] == OBSERVED.isoformat()
+
+    def test_a_refused_row_is_not_stamped_fresh(self):
+        """A refusal means we could not speak for this row. It must not come
+        back wearing a current timestamp — that would launder the refusal into
+        a freshness claim."""
+        upcoming = _competition("182998", [
+            _side("Carlos Alcaraz", []),
+            _side("Wu Yibing", []),
+        ], state="pre", status_name="STATUS_SCHEDULED", period=1)
+
+        write = games_line_write(
+            ours=OURS,
+            our_box_score_data=None,
+            competition=_board(upcoming),
+            observed_at=OBSERVED,
+        )
+
+        assert write["reason"] == SCORE_NOT_PLAYED
+        assert write["box_score_data"] is None

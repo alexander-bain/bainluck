@@ -8,14 +8,31 @@
 
 import { useEffect, useState } from "react";
 
-const STALE_MS = 5 * 60 * 1000; // >5 min during play = stale
+/**
+ * Past this, during play, the number is old enough that saying so matters more
+ * than looking current.
+ *
+ * Five minutes is not arbitrary against the two writers this chip now serves:
+ * the tennis games line is confirmed on a ~10-minute beat (#3242), so a stamp
+ * older than five minutes means we are at least halfway to the next read and
+ * may already be behind the reader's television. #3316 measured that beat
+ * starved for 42.8 minutes by our own deploy rate — the case the chip exists to
+ * make visible instead of confident.
+ */
+export const STALE_MS = 5 * 60 * 1000;
 
-function formatAge(ms: number): string {
+/** How long ago, in the coarsest unit that still says something. */
+export function formatAge(ms: number): string {
   const s = Math.max(0, Math.round(ms / 1000));
   if (s < 60) return `${s}s ago`;
   const m = Math.round(s / 60);
   if (m < 60) return `${m}m ago`;
   return `${Math.round(m / 60)}h ago`;
+}
+
+/** True once an age is old enough that the chip must stop reading as current. */
+export function isStale(ageMs: number | null): boolean {
+  return ageMs != null && ageMs > STALE_MS;
 }
 
 export default function FreshnessChip({ asOf }: { asOf?: string | null }) {
@@ -32,7 +49,7 @@ export default function FreshnessChip({ asOf }: { asOf?: string | null }) {
   }, [asOf]);
 
   if (!asOf) return null;
-  const stale = age != null && age > STALE_MS;
+  const stale = isStale(age);
 
   return (
     <span

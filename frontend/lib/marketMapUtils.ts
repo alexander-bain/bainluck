@@ -558,6 +558,8 @@ export interface PlayedLinescore {
   home_games: number;
   away_games: number;
   source?: string;
+  /** When we last confirmed this against ESPN, while in play (#3242). */
+  observed_at?: string;
 }
 
 /**

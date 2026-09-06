@@ -105,3 +105,38 @@ def test_the_response_holds_a_copy_and_not_the_row():
     data["linescore"]["sets"].append([9, 9])
 
     assert stored["tennis"]["sets"] == [[3, 6], [4, 6], [1, 6]]
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# #3242 — THE STAMP REACHES THE PAGE
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# The writer stamping `observed_at` and the hero rendering an age are both
+# worthless if the formatter between them drops the key. It is a `deepcopy` of
+# the stored line today, so this holds by construction — which is exactly the
+# kind of thing that stays true until somebody enumerates the keys.
+
+
+#: A match in play: two games into the first set, confirmed at 15:22:42.
+IN_PLAY_LINE = {
+    "sets": [[2, 4]],
+    "home_games": 2,
+    "away_games": 4,
+    "source": "espn",
+    "observed_at": "2026-09-05T15:22:42+00:00",
+}
+
+
+def test_the_freshness_stamp_is_served_to_the_page():
+    data = _format_event(_event(box_score_data={"tennis": IN_PLAY_LINE}))
+
+    assert data["linescore"]["observed_at"] == "2026-09-05T15:22:42+00:00"
+
+
+def test_a_settled_line_serves_no_stamp_and_that_is_not_an_error():
+    """A decided match is not stamped, so the key is simply absent. The hero
+    renders nothing for it rather than an age of `None`."""
+    data = _format_event(_event(box_score_data={"tennis": WU_ALCARAZ_LINE}))
+
+    assert "observed_at" not in data["linescore"]
+    assert data["linescore"]["sets"] == [[3, 6], [4, 6], [1, 6]]
