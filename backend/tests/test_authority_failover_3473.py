@@ -519,6 +519,44 @@ async def test_with_a_genuine_seven_the_outage_dispatches_statpal(
 
 
 @pytest.mark.asyncio
+async def test_an_espn_slate_statpal_contradicts_also_dispatches(
+    monkeypatch, dispatches
+):
+    """The empty-200 trap, all the way to the act.
+
+    Found by mutation: narrowing `FAILOVER_CODES` to the dark case alone left
+    every other test passing, because the actor was only ever exercised on an
+    ESPN that had gone silent at the transport. This is the harder and more
+    interesting case — ESPN answered 200 with an empty board while StatPal holds
+    fixtures for the same window — and it must act identically.
+    """
+    import app.tasks.espn_sync as espn_sync
+
+    from app.tasks.espn_sync import _act_on_failovers, _decide_failovers
+
+    _no_ledger(monkeypatch, days=SEVEN_MEETS_DAYS, why="seven")
+
+    async def _standby(sport_key):
+        return FIXTURES
+
+    monkeypatch.setattr(espn_sync, "_statpal_standby_reading", _standby)
+
+    stats = {"errors": []}
+    # ESPN ANSWERED — the key is present, the list is empty.
+    await _act_on_failovers(
+        await _decide_failovers(
+            {"americanfootball_nfl": []}, {"americanfootball_nfl"}, stats
+        ),
+        stats,
+    )
+
+    assert dispatches.calls == [NFL]
+    assert stats["failover_activated"] == 1
+    assert stats["failover"][0]["code"] == FAILOVER_ESPN_SILENT
+    assert stats["failover"][0]["code"] in FAILOVER_CODES
+
+
+@pytest.mark.asyncio
 async def test_a_failed_dispatch_is_not_counted_as_a_failover_that_served(
     monkeypatch, dispatches
 ):
