@@ -442,117 +442,212 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
     }
 
 
-async def _sync_statpal_injuries(sport_key: Optional[str] = None) -> dict:
-    """Sync injury reports from StatPal for line movement analysis.
+#: Which of OUR sport keys can receive a given StatPal sport's injuries.
+#:
+#: `STATPAL_SPORT_MAPPING` lists seven soccer keys because those are the ones we
+#: pull SCHEDULES for. StatPal's injury product is one call covering twenty
+#: leagues, and 105 of the 168 soccer events in the attach window on 2026-09-06
+#: sat under keys the map does not name (`soccer_brazil_campeonato`,
+#: `soccer_mexico_ligamx`, `soccer_other`, …). Restricting the attach to the
+#: schedule map would throw away most of the coverage for no reason: the pair
+#: rule decides what belongs to what, not the league key.
+#:
+#: Widening `STATPAL_SPORT_MAPPING` itself would change what the schedule sync
+#: creates, which is a different ship with a different blast radius. This is
+#: local to the injury attach and says so.
+_INJURY_EVENT_SPORT_PREFIX: dict[str, str] = {"soccer": "soccer"}
 
-    Injuries are stored in the LineMovementAnalysis table as structured context,
-    making them available for "Why Did the Line Move?" LLM explanations.
+
+async def _sync_statpal_injuries(sport_key: Optional[str] = None) -> dict:
+    """Sync injury reports from StatPal onto events for line-movement context.
+
+    Injuries land in `Event.win_probability_sources['statpal_injuries']`, which
+    `routes/events.py` merges with ESPN's (ESPN wins a name collision) to ground
+    the "Why did the line move?" explanation.
+
+    Three things here are load-bearing and each replaced something that made the
+    task incapable of producing a row:
+
+    * **One fetch per StatPal sport, not per Odds-API key.** Seven of our keys
+      map to `soccer`; the old loop asked for the same 224 KB payload seven times
+      an hour and attributed each copy to one league.
+    * **`get_injuries_result`, not `get_injuries`.** "The venue has no injury
+      product for this sport", "we asked and it broke" and "nobody is hurt" were
+      the same empty list (gotcha #53). Only the middle one is an alarm, and the
+      terminal below now says which happened.
+    * **A Core `update()` for the JSONB write.** Gotcha #4.
 
     Args:
-        sport_key: If provided, only sync this sport.
+        sport_key: If provided, only sync the StatPal sport this key maps to.
 
     Returns:
-        Summary dict with injury counts per sport.
+        Summary dict carrying a `terminal` — `statpal_injuries` is enrolled in
+        `task_verdict.ENFORCED_TASKS`, so a run that could not read the venue
+        reads NOT-GREEN instead of looking like a quiet day.
     """
     from app.services.statpal_api import StatPalAPIService, is_available
+    from app.utils.statpal_injury_attach import Fixture, choose_fixture
 
     if not is_available():
-        return {"skipped": True, "reason": "STATPAL_API_KEY not set"}
+        return {"skipped": True, "reason": "STATPAL_API_KEY not set", "terminal": "skipped"}
 
     if sport_key:
-        sport_keys = [sport_key] if sport_key in STATPAL_SPORT_MAPPING else []
+        statpal_sports = (
+            [STATPAL_SPORT_MAPPING[sport_key]] if sport_key in STATPAL_SPORT_MAPPING else []
+        )
     else:
-        sport_keys = list(STATPAL_SPORT_MAPPING.keys())
+        # dict.fromkeys: dedupe, order preserved — seven soccer keys, one fetch.
+        statpal_sports = list(dict.fromkeys(STATPAL_SPORT_MAPPING.values()))
 
-    if not sport_keys:
-        return {"skipped": True, "reason": f"sport_key {sport_key!r} not in STATPAL_SPORT_MAPPING"}
+    if not statpal_sports:
+        return {
+            "skipped": True,
+            "reason": f"sport_key {sport_key!r} not in STATPAL_SPORT_MAPPING",
+            "terminal": "skipped",
+        }
 
     service = StatPalAPIService()
     total_injuries = 0
     total_events_enriched = 0
     details = []
+    fetch_failures = []
 
     try:
         async with get_task_session() as session:
             from app.models import Event, Sport
 
-            for our_key in sport_keys:
-                statpal_sport = STATPAL_SPORT_MAPPING[our_key]
+            for statpal_sport in statpal_sports:
+                fetch = await service.get_injuries_result(statpal_sport)
 
-                # Find the Sport record
-                sport_result = await session.execute(
-                    select(Sport.id).where(Sport.key == our_key)
-                )
-                sport_row = sport_result.first()
-                if not sport_row:
-                    details.append({"sport": our_key, "status": "sport_not_found"})
+                if not fetch.asked:
+                    # Not a failure and not a quiet day: the venue publishes no
+                    # injury path for this sport at all (#2907). Recorded so the
+                    # absence is legible without re-probing.
+                    details.append({
+                        "statpal_sport": statpal_sport,
+                        "reason": fetch.reason,
+                        "injuries_fetched": 0,
+                        "events_enriched": 0,
+                    })
                     continue
 
-                sport_id = sport_row.id
-
-                injuries = await service.get_injuries(statpal_sport)
-                if not injuries:
-                    details.append({"sport": our_key, "injuries_fetched": 0, "events_enriched": 0})
+                if fetch.is_alarm:
+                    fetch_failures.append(
+                        {"statpal_sport": statpal_sport, "endpoint": fetch.endpoint}
+                    )
+                    details.append({
+                        "statpal_sport": statpal_sport,
+                        "reason": fetch.reason,
+                        "injuries_fetched": 0,
+                        "events_enriched": 0,
+                    })
                     await asyncio.sleep(0.3)
                     continue
 
-                # Group injuries by team name for efficient event lookup
-                injuries_by_team: dict[str, list] = {}
-                for inj in injuries:
-                    team_lower = inj.team.lower()
-                    if team_lower not in injuries_by_team:
-                        injuries_by_team[team_lower] = []
-                    injuries_by_team[team_lower].append(inj)
+                injuries = fetch.injuries
+                total_injuries += len(injuries)
 
-                # Find upcoming/live events for this sport to attach injuries to
+                # Group by the FIXTURE the player's team is playing, keeping both
+                # sides of it — the attach decision needs the pair, not the team.
+                by_fixture: dict[str, list] = {}
+                fixtures: dict[str, Fixture] = {}
+                for inj in injuries:
+                    home, away = (
+                        (inj.team, inj.opponent) if inj.is_home
+                        else (inj.opponent, inj.team)
+                    )
+                    # `main_id` is present on 1,002 of the 1,004 rows served on
+                    # 2026-09-06; one fixture published only a fallback. The
+                    # last-resort key is built from HOME|AWAY, never
+                    # team|opponent, or the two sides of one match key
+                    # differently and split it into two fixtures.
+                    key = (
+                        inj.fixture_main_id
+                        or (inj.fixture_fallback_ids[0] if inj.fixture_fallback_ids else None)
+                        or f"{home}|{away}|{inj.fixture_date}"
+                    )
+                    by_fixture.setdefault(key, []).append(inj)
+                    if key not in fixtures:
+                        fixtures[key] = Fixture(
+                            key=key,
+                            home=home,
+                            away=away,
+                            fixture_date=(
+                                inj.fixture_date.date() if inj.fixture_date else None
+                            ),
+                        )
+
+                prefix = _INJURY_EVENT_SPORT_PREFIX.get(statpal_sport)
+                if prefix:
+                    sport_filter = Sport.key.like(f"{prefix}%")
+                else:
+                    our_keys = [
+                        k for k, v in STATPAL_SPORT_MAPPING.items() if v == statpal_sport
+                    ]
+                    sport_filter = Sport.key.in_(our_keys)
+
                 now = datetime.now(timezone.utc)
                 window_start = now - timedelta(hours=6)
                 window_end = now + timedelta(days=2)
 
                 result = await session.execute(
-                    select(Event).where(
-                        Event.sport_id == sport_id,
+                    select(
+                        Event.id,
+                        Event.home_team_name,
+                        Event.away_team_name,
+                        Event.commence_time,
+                        Event.win_probability_sources,
+                    )
+                    .join(Sport, Sport.id == Event.sport_id)
+                    .where(
+                        sport_filter,
                         Event.commence_time.between(window_start, window_end),
                         Event.status.in_(["scheduled", "live"]),
                     )
                 )
-                events = result.scalars().all()
+                events = result.all()
 
-                sport_enriched = 0
+                enriched = 0
+                candidates = list(fixtures.values())
                 for event in events:
-                    event_injuries = []
+                    chosen = choose_fixture(
+                        event.home_team_name,
+                        event.away_team_name,
+                        event.commence_time.date() if event.commence_time else None,
+                        candidates,
+                    )
+                    if not chosen:
+                        continue
 
-                    # Match injuries to event by team name
-                    for team_name in [event.home_team_name, event.away_team_name]:
-                        team_lower = team_name.lower()
-                        # Check exact match and suffix match
-                        for key, team_injuries in injuries_by_team.items():
-                            if key == team_lower or key.endswith(team_lower.split()[-1]) or team_lower.endswith(key.split()[-1]):
-                                event_injuries.extend(team_injuries)
+                    sources = dict(event.win_probability_sources or {})
+                    sources["statpal_injuries"] = [
+                        {
+                            "player": inj.player_name,
+                            "team": inj.team,
+                            "status": inj.status,
+                            "type": inj.injury_type,
+                            "detail": inj.detail,
+                        }
+                        for inj in by_fixture[chosen][:10]  # Cap at 10 per event
+                    ]
+                    sources["statpal_injuries_updated"] = now.isoformat()
 
-                    if event_injuries:
-                        # Store injury context in win_probability_sources JSONB
-                        sources = event.win_probability_sources or {}
-                        sources["statpal_injuries"] = [
-                            {
-                                "player": inj.player_name,
-                                "team": inj.team,
-                                "status": inj.status,
-                                "type": inj.injury_type,
-                                "detail": inj.detail,
-                            }
-                            for inj in event_injuries[:10]  # Cap at 10 per event
-                        ]
-                        sources["statpal_injuries_updated"] = now.isoformat()
-                        event.win_probability_sources = sources
-                        sport_enriched += 1
+                    # Core update, not ORM attribute assignment (gotcha #4).
+                    await session.execute(
+                        update(Event)
+                        .where(Event.id == event.id)
+                        .values(win_probability_sources=sources)
+                    )
+                    enriched += 1
 
-                total_injuries += len(injuries)
-                total_events_enriched += sport_enriched
+                total_events_enriched += enriched
                 details.append({
-                    "sport": our_key,
+                    "statpal_sport": statpal_sport,
+                    "reason": fetch.reason,
                     "injuries_fetched": len(injuries),
-                    "events_enriched": sport_enriched,
+                    "fixtures_with_injuries": len(by_fixture),
+                    "events_considered": len(events),
+                    "events_enriched": enriched,
                 })
 
                 await asyncio.sleep(0.3)
@@ -560,9 +655,16 @@ async def _sync_statpal_injuries(sport_key: Optional[str] = None) -> dict:
     finally:
         await service.close()
 
+    # A run that could not read a supported venue path is FAILED, not a quiet
+    # day — that confusion is the whole reason this task wrote nothing for as
+    # long as it existed and nothing said so.
+    terminal = "failed" if fetch_failures else "complete"
+
     return {
+        "terminal": terminal,
         "total_injuries": total_injuries,
         "events_enriched": total_events_enriched,
+        "fetch_failures": fetch_failures,
         "sports": details,
     }
 

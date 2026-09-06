@@ -115,6 +115,83 @@ class StatPalInjury:
     detail: Optional[str] = None
     reported_at: Optional[datetime] = None
     expected_return: Optional[str] = None
+    # The OTHER side of the fixture this player's team is playing, and the
+    # fixture's own ids. Carried so a caller can attach an injury to an event by
+    # matching BOTH teams instead of one — a one-sided name match hangs another
+    # club's player on the wrong game. Ids are carried, never substituted (D55):
+    # `main_id` and the three fallbacks are four distinct id spaces, and which
+    # one anchors our soccer events is not yet answered (#2907).
+    opponent: str = ""
+    opponent_id: Optional[str] = None
+    is_home: Optional[bool] = None
+    fixture_main_id: Optional[str] = None
+    fixture_fallback_ids: tuple[str, ...] = ()
+    #: The fixture's own date. Deliberately NOT written to `reported_at`: the
+    #: payload carries no per-injury report time, and the day a match is played
+    #: is not the day a player got hurt. An invented `reported_at` would read as
+    #: freshness we do not have.
+    fixture_date: Optional[datetime] = None
+
+
+#: Availability, read off the BUCKET the vendor files a player under — never
+#: off its `status` field, which carries the REASON ("Knee Injury", "Red Card",
+#: "Coach's decision"; 49 distinct strings over the 1,004 players served at
+#: 2026-09-06 01:47Z). `routes/events.py` keeps only `("Out", "Doubtful")` on a
+#: completed game, so writing the vendor's word into our `status` would empty
+#: every completed-game injury list while looking like data.
+INJURY_BUCKET_STATUS: dict[str, str] = {
+    "to_miss": "Out",
+    "questionable": "Questionable",
+}
+
+#: StatPal sport -> the endpoint that serves injuries for it. Soccer is the
+#: whole map, and that is a measured fact about the venue, not a gap in ours.
+#:
+#: Established two ways on 2026-09-06 (#2907, notice 26a), because an absence
+#: needs a second signal (gotcha #53):
+#:  1. The venue's own compiled spec (`statpal.io/static/openapi/openapi-compiled.yaml`,
+#:     v2.0.0, read 01:44Z) publishes 53 sport paths. Injuries appear twice, both
+#:     soccer: `/soccer/injuries-suspensions` (v2) and `/soccer/injuries`
+#:     (v1, tagged "Legacy"). No roster or team path exists for any sport.
+#:  2. A 32-cell live probe — {nba, nfl, nhl, mlb} x {teams, injuries,
+#:     injuries-suspensions, rosters, roster, players, squads, team-list} on v1 —
+#:     returned 404 on all 32, while `season-schedule` answered 200 from the same
+#:     shell seconds apart. Path-level, not egress and not entitlement (notice 7).
+#:
+#: The endpoint is version-sensitive and the versions are CROSSED: on v2 the name
+#: is `injuries-suspensions` and `injuries` 404s; on v1 it is the other way round.
+#: `_base_url` sends soccer to v2, so v2's name is the one that belongs here.
+#: Both served the same `updated` stamp at 01:47Z; v2 carries the richer id set.
+INJURY_ENDPOINTS: dict[str, str] = {
+    "soccer": "injuries-suspensions",
+}
+
+
+@dataclass
+class StatPalInjuryFetch:
+    """What one injury fetch proves, not just what it returned.
+
+    `[]` is the same object for "the venue has no injury product for this
+    sport", "we asked and it broke" and "nobody is hurt today" (gotcha #53).
+    Those are three different operational facts and the middle one is an alarm,
+    so the reason travels with the list.
+    """
+
+    injuries: list[StatPalInjury]
+    #: One of `ok`, `no_venue_path`, `fetch_failed`, `empty`.
+    reason: str
+    sport: str
+    #: The path actually asked, or None when nothing was asked.
+    endpoint: Optional[str] = None
+
+    @property
+    def asked(self) -> bool:
+        return self.reason != "no_venue_path"
+
+    @property
+    def is_alarm(self) -> bool:
+        """A supported sport we could not read. `empty` is not an alarm."""
+        return self.reason == "fetch_failed"
 
 
 @dataclass
@@ -1208,52 +1285,41 @@ class StatPalAPIService(BaseAPIClient):
     async def get_injuries(self, sport: str) -> list[StatPalInjury]:
         """Fetch current injury reports for a sport.
 
+        Thin wrapper over `get_injuries_result` for callers that only want the
+        list. Anything that has to tell "nobody is hurt" from "we could not ask"
+        must use the result form — see `StatPalInjuryFetch`.
+        """
+        return (await self.get_injuries_result(sport)).injuries
+
+    async def get_injuries_result(self, sport: str) -> StatPalInjuryFetch:
+        """Fetch current injury reports, carrying WHY the list is the size it is.
+
         Args:
-            sport: Sport identifier
+            sport: StatPal sport identifier (`soccer`, `nfl`, …)
 
         Returns:
-            List of StatPalInjury objects with player status and details.
+            A `StatPalInjuryFetch`. Never raises: this is the ingestion path, and
+            a task that dies on a bad upstream day is worse than one that skips
+            a cycle. The alarm is carried in `reason`, not thrown.
         """
-        data = await self._get(sport, "injuries")
+        endpoint = INJURY_ENDPOINTS.get(sport)
+        if endpoint is None:
+            return StatPalInjuryFetch([], "no_venue_path", sport, None)
+
+        data = await self._get(sport, endpoint)
         if not data:
-            return []
+            # `_get` already logged the status code. Everything it turns into
+            # None — 404, 401, 429, timeout, an `invalid-request` 200 — is a
+            # failure to READ, and none of them mean "no injuries".
+            logger.error(
+                f"StatPal injuries: could not read {sport}/{endpoint} — "
+                "reporting fetch_failed, NOT an empty injury list"
+            )
+            return StatPalInjuryFetch([], "fetch_failed", sport, endpoint)
 
-        injuries = []
-        items = data.get("data", data.get("injuries", data))
-        if not isinstance(items, list):
-            return []
-
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            try:
-                player_name = item.get("player_name", item.get("player", {}).get("name", ""))
-                if not player_name and isinstance(item.get("player"), dict):
-                    player_name = item["player"].get("name", "")
-
-                team_name = item.get("team", item.get("team_name", ""))
-                if isinstance(team_name, dict):
-                    team_name = team_name.get("name", "")
-
-                if not player_name:
-                    continue
-
-                injuries.append(StatPalInjury(
-                    player_id=str(item.get("player_id", item.get("player", {}).get("id", ""))),
-                    player_name=player_name,
-                    team=team_name,
-                    team_id=str(item.get("team_id", "")) or None,
-                    injury_type=item.get("type", item.get("injury_type", "")),
-                    status=item.get("status", ""),
-                    detail=item.get("detail", item.get("description")),
-                    reported_at=_parse_datetime(item.get("reported_at", item.get("date"))),
-                    expected_return=item.get("expected_return"),
-                ))
-            except Exception as e:
-                logger.debug(f"StatPal: skipping injury parse error: {e}")
-                continue
-
-        return injuries
+        injuries = _parse_injuries_suspensions(data)
+        reason = "ok" if injuries else "empty"
+        return StatPalInjuryFetch(injuries, reason, sport, endpoint)
 
     # -------------------------------------------------------------------------
     # Play-by-Play
@@ -1438,6 +1504,86 @@ def _as_list(val) -> list:
     if val is None:
         return []
     return val if isinstance(val, list) else [val]
+
+
+def _parse_injuries_suspensions(data: dict) -> list[StatPalInjury]:
+    """Parse the soccer `injuries_suspensions` body into flat injury rows.
+
+    The shape, measured over the full 2026-09-06 01:47Z payload (pinned at
+    `tests/fixtures/statpal_soccer_injuries_20260906_fullcensus.json`):
+
+        {"injuries_suspensions": {"updated": ..., "league": [
+            {"name": ..., "id": ..., "match": [
+                {"main_id": ..., "fallback_id_1..3": ..., "date": ..., "time": ...,
+                 "home": {"id": ..., "name": ...,
+                          "sidelined": {"to_miss": {"player": [...] | {...} | null},
+                                        "questionable": {...}}},
+                 "away": {...}}]}]}}
+
+    Two things this parser exists to survive:
+
+    * **Single-element collapse, at two levels.** In that one payload `to_miss`
+      held a list 204 times and a bare dict 63 (`questionable`: 30 / 65), and
+      `league.match` collapses the same way. `_as_list` at every level or a third
+      of the players vanish without an error.
+    * **The vendor's `status` is a REASON, not availability** — `Knee Injury`,
+      `Red Card`, `Inactive`, `Coach's decision`; 49 distinct strings over 1,004
+      players. Availability comes from the bucket (`INJURY_BUCKET_STATUS`) and
+      the vendor's word goes to `injury_type`, where a reader can print it.
+
+    A row with no player name is skipped; nothing here raises.
+    """
+    section = data.get("injuries_suspensions")
+    if not isinstance(section, dict):
+        return []
+
+    injuries: list[StatPalInjury] = []
+    for league in _as_list(section.get("league")):
+        if not isinstance(league, dict):
+            continue
+        for match in _as_list(league.get("match")):
+            if not isinstance(match, dict):
+                continue
+            fallbacks = tuple(
+                str(match[key])
+                for key in ("fallback_id_1", "fallback_id_2", "fallback_id_3")
+                if match.get(key)
+            )
+            main_id = str(match.get("main_id") or "") or None
+            sides = {side: match.get(side) for side in ("home", "away")}
+            if not all(isinstance(s, dict) for s in sides.values()):
+                continue
+
+            for side, team in sides.items():
+                other = sides["away" if side == "home" else "home"]
+                sidelined = team.get("sidelined")
+                if not isinstance(sidelined, dict):
+                    continue
+                for bucket, status in INJURY_BUCKET_STATUS.items():
+                    entry = sidelined.get(bucket)
+                    if not isinstance(entry, dict):
+                        continue
+                    for player in _as_list(entry.get("player")):
+                        if not isinstance(player, dict):
+                            continue
+                        name = str(player.get("name") or "").strip()
+                        if not name:
+                            continue
+                        injuries.append(StatPalInjury(
+                            player_id=str(player.get("id") or ""),
+                            player_name=name,
+                            team=str(team.get("name") or ""),
+                            team_id=str(team.get("id") or "") or None,
+                            injury_type=str(player.get("status") or ""),
+                            status=status,
+                            fixture_date=_parse_datetime(match.get("date")),
+                            opponent=str(other.get("name") or ""),
+                            opponent_id=str(other.get("id") or "") or None,
+                            is_home=(side == "home"),
+                            fixture_main_id=main_id,
+                            fixture_fallback_ids=fallbacks,
+                        ))
+    return injuries
 
 
 def _safe_int(val) -> Optional[int]:
