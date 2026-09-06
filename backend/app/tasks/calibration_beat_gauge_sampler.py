@@ -533,6 +533,110 @@ def row_stop_and_drop(row: Any) -> dict:
     }
 
 
+#: The BUILDER's own progress, field name -> the gauge it is read from.
+#:
+#: Every one of these describes the bank being BUILT, never the census being
+#: SERVED, and that distinction is the whole reason this map exists separately
+#: from :func:`~app.utils.calibration_staged_disclosure.build_disclosure`'s
+#: output. In that function ``units_banked`` means the served census when a
+#: served census exists and the builder's count when it does not — two meanings
+#: on one name, which is correct there (it answers "how old is the curve?") and
+#: unusable here (this ring answers "did the rebuild move this hour?").
+#:
+#: Names carry the ``rebuild_`` prefix for that reason, matching the prefix
+#: ``build_disclosure`` already uses for exactly these two figures on a serving
+#: bank. Nothing here is ever published under a bare ``units_*`` name.
+REBUILD_PROGRESS_GAUGES: dict[str, str] = {
+    "rebuild_units_banked": "staged:units_banked",
+    "rebuild_units_this_beat": "staged:units_this_beat",
+    "rebuild_units_drifted": "staged:units_drifted",
+    "rebuild_units_drift_checkable": "staged:units_drift_checkable",
+    "rebuild_units_drift_uncheckable": "staged:units_drift_uncheckable",
+}
+
+#: Why a rebuild-progress field is absent. Two facts, never merged — the same
+#: separation :func:`bank_drop` draws for ``units_dropped``.
+PROGRESS_ABSENT_BEAT = "beat_did_not_record"
+PROGRESS_ABSENT_CAPTURE = "capture_did_not_retain"
+
+
+def row_rebuild_progress(row: Any) -> dict:
+    """How far the REBUILD had got at one banked beat, off the row's own gauges.
+
+    CAL-P1039 (#3536). ``{<field>: int|None, <field>_measured: bool, ...,
+    "rebuild_progress_measured": bool, "rebuild_progress_absent": {field: why}}``
+    for every field in :data:`REBUILD_PROGRESS_GAUGES`. Pure.
+
+    **The defect this repairs, measured before it was written.** The ring
+    published the rebuild's progress out of ``row["disclosure"]``, and
+    ``build_disclosure`` is a SERVING-bank instrument: it returns
+    ``unmeasured("served_at_absent")`` — a two-key dict, and nothing else —
+    whenever a bank is serving but has never been stamped. On 2026-09-06 that was
+    **124 of the 168 rows in the ring, every row since 2026-09-05T07:19Z**, so
+    ``units_banked``, ``units_drifted`` and ``units_drift_unknown`` answered
+    ``null`` for thirty-six hours *while the very same rows carried*
+    ``staged:units_banked = 5``, ``staged:units_drifted = 2`` and
+    ``staged:units_drift_checkable = 4`` **in their raw gauge map**. Eight of the
+    nine required gauges were present; a ninth belonging to a phase those beats
+    never reached nulled all eight.
+
+    That is not a disclosure bug — refusing to date a census it cannot date is
+    precisely what that function is for, and it is on the serving path for
+    ``/api/calibration``. It is a **reuse** bug, and the general shape is worth
+    the sentence: *a helper written to REFUSE is the wrong reader for a question
+    that is not asking it to certify anything.* The ring is not publishing a
+    curve; it is recording what a beat did.
+
+    **What it costs, plainly.** ``calibration:main:phase_ledger`` holds one row
+    and every beat overwrites it, which is the entire reason this ring exists.
+    While the ring recorded nulls, the only surviving record of an hour's
+    progress was a session that happened to be watching the clock — all five
+    completed unit costs in ``MEASURED_COMPLETIONS`` were caught that way, and
+    none of them could have been recovered afterwards.
+
+    **Absence stays two facts, never one** (gotcha #53, and :func:`bank_drop`'s
+    shape). A gauge listed in the row's own ``gauges_missing_required`` is one
+    the sampler LOOKED FOR and the beat did not write — a fact about the beat. A
+    gauge absent from both places is one this row's capture may never have
+    retained — a fact about the sampler. Both answer ``None`` with ``measured``
+    false, and both name which they are, because "the rebuild banked nothing" and
+    "nobody recorded what the rebuild banked" are the collapse this whole module
+    exists to refuse.
+
+    No capture-version gate, deliberately, and the row is what makes that safe:
+    every gauge above is in :data:`REQUIRED_DISCLOSURE_GAUGES`, so a capture that
+    dropped one records it in ``gauges_missing_required`` at the time. This reads
+    that list rather than assuming a floor — which is CERT-2051's lesson applied
+    without inheriting its constant.
+    """
+    row = row if isinstance(row, dict) else {}
+    gauges = row.get("gauges")
+    gauges = gauges if isinstance(gauges, dict) else {}
+    looked_for = {
+        name
+        for name in (row.get("gauges_missing_required") or [])
+        if isinstance(name, str)
+    }
+
+    out: dict = {}
+    absent: dict = {}
+    for field, gauge in REBUILD_PROGRESS_GAUGES.items():
+        raw = gauges.get(gauge)
+        if isinstance(raw, int) and not isinstance(raw, bool):
+            out[field] = raw
+            out[f"{field}_measured"] = True
+            continue
+        out[field] = None
+        out[f"{field}_measured"] = False
+        absent[field] = (
+            PROGRESS_ABSENT_BEAT if gauge in looked_for else PROGRESS_ABSENT_CAPTURE
+        )
+
+    out["rebuild_progress_measured"] = not absent
+    out["rebuild_progress_absent"] = absent
+    return out
+
+
 def _parse_stamp(value):
     """A UTC ``datetime`` from whatever the row carried, or ``None``."""
     if value is None:

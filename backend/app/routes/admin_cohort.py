@@ -669,6 +669,25 @@ async def calibration_beat_gauges(request: Request, limit: int = 24, full: bool 
     what ABSENCE means, and this ring holds seven days, so it spans the change.
     On a row below the capture floor all four fields answer ``null`` / ``false``,
     because ``0`` or ``[]`` there would be a measurement that row never made.
+
+    CAL-P1039 (#3536) adds the ``rebuild_units_*`` block — the BUILDER's own
+    progress, read off the row's gauge map by
+    :func:`~app.tasks.calibration_beat_gauge_sampler.row_rebuild_progress` rather
+    than out of ``disclosure``. It is here because this endpoint spent thirty-six
+    hours answering ``null`` for it: ``build_disclosure`` refuses a bank whose
+    served census cannot be dated, correctly, and the rebuild's progress was being
+    read out of that refusal. **124 of 168 banked rows** — every row from
+    2026-09-05T07:19Z — reported ``units_banked: null`` while carrying
+    ``staged:units_banked`` in the same row. Each figure is paired with its own
+    ``_measured`` flag and, when absent, a named reason in
+    ``rebuild_progress_absent``: whether the BEAT did not write it or this row's
+    CAPTURE did not retain it. Those are different facts (gotcha #53) and neither
+    is ever rendered as ``0``.
+
+    The three ``units_*`` columns beside it still answer ``null`` on such a row and
+    that is deliberate — they describe the SERVED census, whose age the beat
+    genuinely does not know. Filling them from the builder's gauges would be
+    CAL-P078's substitution arriving through the fix for its own symptom.
     """
     _check_admin_secret(request=request)
 
@@ -677,6 +696,7 @@ async def calibration_beat_gauges(request: Request, limit: int = 24, full: bool 
         HISTORY_IDENTITY,
         HISTORY_SCHEMA,
         cursor_decision,
+        row_rebuild_progress,
         row_stop_and_drop,
         summarise,
     )
@@ -736,6 +756,15 @@ async def calibration_beat_gauges(request: Request, limit: int = 24, full: bool 
     # the CAL-P1002 precedent — making a reader pull ~200 KB to reach the answer
     # is how the question went unasked for two nights.
     drops = [row_stop_and_drop(r) for r in bounded]
+    # CAL-P1039 (#3536). The BUILDER's progress, read off the row's own gauge map
+    # instead of out of ``disclosure``. The three ``units_*`` fields below still
+    # come from the disclosure and still answer ``null`` on a bank whose served
+    # census cannot be dated — correctly, because they describe that census. What
+    # was wrong is that the REBUILD's progress was read from the same refusal, so
+    # a beat that banked five units of 128 reported them as unknown. See
+    # :func:`row_rebuild_progress`: 124 of 168 rows in the ring were nulled that
+    # way, over the exact thirty-six hours the rebuild was being watched by hand.
+    progress = [row_rebuild_progress(r) for r in bounded]
     out["observations"] = [
         {
             "generation": r.get("generation"),
@@ -748,10 +777,6 @@ async def calibration_beat_gauges(request: Request, limit: int = 24, full: bool 
             "units_banked": (r.get("disclosure") or {}).get("units_banked"),
             "units_drifted": (r.get("disclosure") or {}).get("units_drifted"),
             "units_drift_unknown": (r.get("disclosure") or {}).get("units_drift_unknown"),
-            "rebuild_units_banked": (r.get("disclosure") or {}).get("rebuild_units_banked"),
-            "rebuild_units_this_beat": (r.get("disclosure") or {}).get(
-                "rebuild_units_this_beat"
-            ),
             "gauges_missing_required": r.get("gauges_missing_required"),
             "cursor_action": c["action"],
             "cursor_reason": c["reason"],
@@ -760,8 +785,9 @@ async def calibration_beat_gauges(request: Request, limit: int = 24, full: bool 
             "stop_reasons_measured": d["stop_reasons_measured"],
             "units_dropped": d["units_dropped"],
             "units_dropped_measured": d["units_dropped_measured"],
+            **p,
         }
-        for r, c, d in zip(bounded, cursors, drops)
+        for r, c, d, p in zip(bounded, cursors, drops, progress)
     ]
     out["observations_returned"] = len(out["observations"])
     out["observations_retained"] = len(rows)
