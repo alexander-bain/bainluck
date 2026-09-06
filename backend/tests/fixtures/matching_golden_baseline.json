@@ -2,6 +2,7 @@
  "note": "Which MATCHING-GOLDEN pairs the matcher gets right. A RATCHET floor, not a target: most pairs are the audit's open failure classes. Regenerate with scripts/matching_golden_baseline.py --write, and only ever upward.",
  "source_file": "MATCHING-GOLDEN-2026-09-02.json",
  "amended_market_ids": [
+  59700871,
   59700960,
   59701032
  ],

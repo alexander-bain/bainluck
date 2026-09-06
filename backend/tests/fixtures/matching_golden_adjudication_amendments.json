@@ -37,6 +37,24 @@
     "This pair is the harder of the two and it is the reason to be confident rather than the reason to hesitate: six candidates are on offer and five of them are decoy `FC Spartak Trnava vs FC Košice - <prop>` rows. The matcher picks 15297301, which is the restraint the fixture exists to test.",
     "Replayed with the four cup keys added: (15297301, 'matched'). Without them: (None, 'no_match')."
    ]
+  },
+  {
+   "market_id": 59700871,
+   "was": null,
+   "now": 15293431,
+   "on": "2026-09-06",
+   "by": "lane1b/059",
+   "raised_by": "lane1/145",
+   "artifact_note": "non-sport-category;cup-ticker",
+   "why": "Third of the class, same cause as 59700960 and 59701032: a `d-mislabel` pair whose `null` meant 'target left unresolved', not 'this market belongs on no event'. lane1/145 held it back because, unlike the first two, the ticker date and the chosen event's date DISAGREE by two days — KXLEAGUESCUPSPREAD-26SEP02TOLLEO says 26SEP02, event 15293431 says 2026-08-31 23:00Z — and that is exactly the discrepancy that separates an amendment from a mis-link. Read at the venue, the disagreement resolves the other way round from the way it was feared: THE TICKER DATE IS RIGHT AND OUR EVENT'S STORED DATE IS WRONG. Kalshi lists exactly one Toluca-Leon tie in Leagues Cup, on Sep 2; event 15293431 is a soccer_concacaf_leagues_cup Toluca vs Leon; so it is the same tie and the attachment is correct. The two-day gap is a date defect on OUR event row, not evidence that the prop is pointing at a different match. Amended.",
+   "evidence": [
+    "Venue-side read of Kalshi's own API 2026-09-06 10:45Z, by series discovery rather than a guessed ticker (standing notice 26): GET /trade-api/v2/events/KXLEAGUESCUPSPREAD-26SEP02TOLLEO returns series_ticker KXLEAGUESCUPSPREAD, product_metadata.competition 'Leagues Cup', title 'Toluca vs Leon: Regulation Time Spread' and sub_title 'TOL vs LEO (Sep 2)'. The market is unambiguously about the LEAGUES CUP tie, and Kalshi itself dates that tie Sep 2.",
+    "Scanned all three Leagues Cup prop series at the venue (KXLEAGUESCUPSPREAD / KXLEAGUESCUPTOTAL / KXLEAGUESCUPBTTS, 60 settled events each): EXACTLY ONE Toluca-Leon event in each, all *-26SEP02TOLLEO, all sub_title 'TOL vs LEO (Sep 2)'. There is no Aug 31 Toluca-Leon at the venue, so `null` cannot have meant 'it belongs on a rival tie' and the candidate is unambiguous.",
+    "Production 2026-09-06 10:44Z, every %Toluca% event between 2026-08-25 and 2026-09-10: event 15293431 is (Toluca, Leon, 2026-08-31 23:00Z, closed, soccer_concacaf_leagues_cup / 'Leagues Cup'). SAME COMPETITION as the market. The Liga MX reading that would have made this a genuine mis-link — both clubs are Liga MX, so an Aug 31 league fixture two days before a Sep 2 cup tie is entirely plausible — is refuted by the sport key: 15293431 is keyed to Leagues Cup, and Toluca's Liga MX rows in the same window are against Juarez, not Leon.",
+    "What fixes the true match time, and therefore which side of the two-day gap is wrong: the market's own early-close contract is 'This market will close and expire after a winner is declared', its status is `finalized`, and its close_time is 2026-09-03T03:36:31Z — late on Sep 2 in Mexico. A market that settles on winner-declaration cannot close on Sep 3 for a match played Aug 31. occurrence_datetime is 2026-09-03T05:00:00Z.",
+    "And the fixture's own market commence_time of 2026-09-05 07:00Z, which looks like a third date, is not one: it is EXACTLY the market's latest_expiration_time (2026-09-05T07:00:00Z) read off the venue. We stored Kalshi's settlement backstop where a start time belongs — the #3438 class — so that value is evidence about our ingest, not about the tie.",
+    "FOLLOW-ON, filed not fixed under D35 and belonging to lane1 under D39, NOT a condition of this amendment: (a) event 15293431's commence_time is wrong by ~2 days against the venue; (b) event 15294151 'Deportivo Toluca FC vs Club Leon FC' (soccer_other, 2026-08-28 16:15:23Z, closed) looks like a second row for this same tie — two rows for one game, the #2693 bar."
+   ]
   }
  ]
 }

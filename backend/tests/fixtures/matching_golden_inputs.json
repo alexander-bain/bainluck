@@ -1,5 +1,6 @@
 {
  "amended_market_ids": [
+  59700871,
   59700960,
   59701032
  ],
@@ -9,7 +10,7 @@
   "market_gone": 0
  },
  "golden_pairs": 709,
- "negative_pairs": 548,
+ "negative_pairs": 547,
  "pairs": [
   {
    "correct_event_id": 15300763,
@@ -21926,7 +21927,7 @@
    "venue": "kalshi"
   },
   {
-   "correct_event_id": null,
+   "correct_event_id": 15293431,
    "events": [
     {
      "away_team_name": "Maxwel Montes",
@@ -60899,6 +60900,6 @@
    "venue": "kalshi"
   }
  ],
- "positive_pairs": 161,
+ "positive_pairs": 162,
  "source_file": "MATCHING-GOLDEN-2026-09-02.json"
 }
