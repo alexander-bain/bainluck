@@ -15,6 +15,10 @@ import pytest
 
 from app.routes.admin_celery import build_schedule_adherence
 from app.tasks import redis_state
+# The whole module, bound once. Importing it is also what connects the
+# `before_task_publish` / `task_prerun` handlers the end-to-end tests drive.
+from app import tasks as tasks_mod
+from app.tasks import _published_retries, _published_task_name
 from app.utils.schedule_adherence import adherence
 from app.tasks.redis_state import TASK_LABEL_MAP_KEY, TASK_METRICS_PREFIX
 
@@ -524,9 +528,15 @@ class TestRouteJoin:
             {"b": {"task": "app.tasks.invisible", "schedule": 60.0}}, [], {},
         )
         assert out["graded"] == 0
+        # LAT-P238 added the emit pair to this entry, defaulted on every row so
+        # its absence stays readable. Still asserted by EQUALITY, deliberately:
+        # a subset assertion here would let a future field be dropped onto an
+        # unmapped entry unnoticed, and this row is the surface's only report of
+        # a beat it cannot grade.
         assert out["unmapped"] == [{
             "task": "app.tasks.invisible", "interval_s": 60.0,
             "reason": "no_metric_label_recorded",
+            "matched_emitted": None, "matched_delivered": None,
         }]
 
     def test_a_label_with_no_metrics_is_distinguished_from_no_label(self):
@@ -697,3 +707,555 @@ class TestStampArmWiring:
         )
         assert terminal is None
         assert start == pytest.approx(300.0)
+
+
+class _PrefixRedis(_Redis):
+    """``_Redis`` with a ``keys()`` that honours its GLOB, not just a prefix.
+
+    The parent's ``keys()`` synthesises a metrics-shaped answer and ignores what
+    it was asked for, which is fine for the reader it was written for and
+    useless for a second key family. A fake that cannot express the question
+    cannot answer it — LAT-P039's `M19` survived here for exactly that reason.
+
+    ``fnmatch`` rather than a ``startswith`` on the leading literal, because the
+    bucket readers ask for ``prefix:*:b1234`` — a glob with the wildcard in the
+    MIDDLE. A prefix-only fake would return every bucket of every age, the
+    reader would then filter them itself, and the test would be grading the
+    reader's filter against a fake that had already agreed with it.
+    """
+
+    def keys(self, pattern):
+        import fnmatch
+
+        return [k.encode() for k in self.strings if fnmatch.fnmatchcase(k, pattern)]
+
+
+@pytest.fixture
+def prefix_fake(monkeypatch):
+    r = _PrefixRedis()
+    monkeypatch.setattr(redis_state, "get_redis_client", lambda: r)
+    return r
+
+
+class TestMatchedBucketStorage:
+    """LAT-P238 / CERT-1966: both sides count into the SAME wall-clock bucket.
+
+    The first version put emissions in a 24h ``_bump_window_counter`` key and
+    compared its rate against the 24h delivery counter's. That was blocked: the
+    emission counter is born at the deploy while the delivery counter
+    deliberately holds up to a day of PRE-deploy history, so the quotient cannot
+    tell a healthy current hour from one losing half its fires. These check the
+    storage half of the repair — that the two counts really do land in one
+    shared, short-lived, clock-derived bucket.
+    """
+
+    TASK = "app.tasks.prewarm_live_feed_shapes"
+
+    def _ekey(self, bucket):
+        return f"{redis_state.TASK_EMISSION_BUCKET_PREFIX}:{self.TASK}:b{bucket}"
+
+    def _dkey(self, bucket):
+        return f"{redis_state.TASK_DELIVERY_BUCKET_PREFIX}:{self.TASK}:b{bucket}"
+
+    def test_the_bucket_index_is_a_pure_function_of_the_clock(self):
+        # This is what makes the two counts a matched cohort with no
+        # coordination between the beat dyno and the worker dynos: they are not
+        # agreeing on a window, they are both reading the same one off the
+        # clock. A bucket index derived from anything process-local — a first
+        # write, a boot time — would silently give each dyno its own window.
+        b = redis_state.EMIT_BUCKET_S
+        assert redis_state.emit_bucket_index(0) == 0
+        assert redis_state.emit_bucket_index(b - 1) == 0
+        assert redis_state.emit_bucket_index(b) == 1
+        assert redis_state.emit_bucket_index(3 * b + 5) == 3
+
+    def test_both_writers_land_in_the_same_bucket(self, prefix_fake):
+        redis_state.record_task_emission(self.TASK)
+        redis_state.record_task_delivery_bucket(self.TASK)
+        bucket = redis_state.emit_bucket_index()
+        assert prefix_fake.strings[self._ekey(bucket)] == b"1"
+        assert prefix_fake.strings[self._dkey(bucket)] == b"1"
+
+    def test_a_bucket_expires_long_before_it_could_hold_old_behaviour(self, prefix_fake):
+        # The TTL is the repair. A bucket that outlived its retention would
+        # start contributing exactly the history the design exists to exclude.
+        redis_state.record_task_emission(self.TASK)
+        ttl = prefix_fake.ttls[self._ekey(redis_state.emit_bucket_index())]
+        assert ttl == redis_state.EMIT_BUCKET_S * redis_state.EMIT_BUCKET_RETAINED
+        assert ttl < 3600, "a bucket must not be able to span a deploy boundary"
+
+    def test_later_writes_do_not_slide_the_bucket_expiry(self, prefix_fake):
+        redis_state.record_task_emission(self.TASK)
+        key = self._ekey(redis_state.emit_bucket_index())
+        prefix_fake.ttls[key] = 60
+        redis_state.record_task_emission(self.TASK)
+        assert prefix_fake.strings[key] == b"2"
+        assert prefix_fake.ttls[key] == 60
+
+    def test_an_empty_name_writes_nothing(self, prefix_fake):
+        redis_state.record_task_emission("")
+        redis_state.record_task_emission(None)
+        redis_state.record_task_delivery_bucket("")
+        assert prefix_fake.strings == {}
+
+    def test_the_writers_survive_a_dead_redis(self, monkeypatch):
+        def _boom():
+            raise RuntimeError("redis down")
+        monkeypatch.setattr(redis_state, "get_redis_client", _boom)
+        redis_state.record_task_emission("app.tasks.foo")       # must not raise
+        redis_state.record_task_delivery_bucket("app.tasks.foo")
+        assert redis_state.get_matched_emit_delivery() == {}
+
+    def test_bucket_keys_are_not_read_back_as_phantom_tasks(self, prefix_fake):
+        redis_state.record_task_emission(self.TASK)
+        redis_state.record_task_delivery_bucket(self.TASK)
+        for prefix in (redis_state.TASK_EMISSION_BUCKET_PREFIX,
+                       redis_state.TASK_DELIVERY_BUCKET_PREFIX):
+            assert not prefix.startswith(f"{TASK_METRICS_PREFIX}:")
+        assert [m.get("task") for m in redis_state.get_all_task_metrics()] == []
+
+
+class TestMatchedBucketReader:
+    """Only a COMPLETE bucket is read, and unknown never renders as zero."""
+
+    TASK = "app.tasks.prewarm_live_feed_shapes"
+    #: An arbitrary fixed clock. Bucket 2000 is complete; 2001 is filling.
+    NOW = 2001 * redis_state.EMIT_BUCKET_S + 42
+
+    def _seed(self, fake, bucket, emitted=None, delivered=None, alive=True):
+        if emitted is not None:
+            fake.strings[
+                f"{redis_state.TASK_EMISSION_BUCKET_PREFIX}:{self.TASK}:b{bucket}"
+            ] = str(emitted).encode()
+        if delivered is not None:
+            fake.strings[
+                f"{redis_state.TASK_DELIVERY_BUCKET_PREFIX}:{self.TASK}:b{bucket}"
+            ] = str(delivered).encode()
+        if alive:
+            fake.strings[redis_state.delivery_writer_alive_key(bucket)] = b"1"
+
+    def test_the_last_complete_bucket_is_the_one_returned(self, prefix_fake):
+        self._seed(prefix_fake, 2000, emitted=15, delivered=7)
+        self._seed(prefix_fake, 2001, emitted=3, delivered=0)   # still filling
+        out = redis_state.get_matched_emit_delivery(self.NOW)
+        assert out[self.TASK]["emitted"] == 15
+        assert out[self.TASK]["delivered"] == 7
+        assert out[self.TASK]["bucket_s"] == redis_state.EMIT_BUCKET_S
+        assert out[self.TASK]["bucket_start"] == 2000 * redis_state.EMIT_BUCKET_S
+
+    def test_the_filling_bucket_is_never_read(self, prefix_fake):
+        # It is not merely partial, it is ASYMMETRICALLY partial: a message
+        # published at second 599 is delivered in the next bucket, so the open
+        # bucket systematically understates deliveries and would report a
+        # permanent phantom loss on every healthy task in the schedule.
+        self._seed(prefix_fake, 2001, emitted=3, delivered=0)
+        assert redis_state.get_matched_emit_delivery(self.NOW) == {}
+
+    def test_an_older_bucket_is_not_read_either(self, prefix_fake):
+        self._seed(prefix_fake, 1999, emitted=99, delivered=1)
+        assert redis_state.get_matched_emit_delivery(self.NOW) == {}
+
+    def test_a_missing_delivery_key_is_zero_when_the_writer_is_alive(self, prefix_fake):
+        # The reading this instrument most needs to be able to make: 15 fires
+        # published, none delivered. A per-task liveness marker could never
+        # report it, because a totally-dead task has no per-task delivery key
+        # BY DEFINITION.
+        self._seed(prefix_fake, 2000, emitted=15, alive=True)
+        assert redis_state.get_matched_emit_delivery(self.NOW)[self.TASK][
+            "delivered"] == 0
+
+    def test_a_missing_delivery_key_is_unknown_when_the_writer_is_not(self, prefix_fake):
+        # The state of the whole fleet for one bucket after the release that
+        # ships the bucketed delivery writer. Reading it as 0 would report 100%
+        # broker loss on every beat in the schedule at the exact moment the
+        # instrument is first trusted.
+        self._seed(prefix_fake, 2000, emitted=15, alive=False)
+        assert redis_state.get_matched_emit_delivery(self.NOW)[self.TASK][
+            "delivered"] is None
+
+    def test_the_liveness_marker_is_written_by_the_real_delivery_writer(self, prefix_fake):
+        key = redis_state.delivery_writer_alive_key(redis_state.emit_bucket_index())
+        assert key not in prefix_fake.strings
+        redis_state.record_task_delivery_bucket("app.tasks.anything_at_all")
+        assert key in prefix_fake.strings
+        assert prefix_fake.ttls[key] == (
+            redis_state.EMIT_BUCKET_S * redis_state.EMIT_BUCKET_RETAINED)
+
+    def test_the_emit_writer_does_not_vouch_for_the_delivery_writer(self, prefix_fake):
+        # They run in different dynos and are released independently. If the
+        # publish signal could set the marker, a beat dyno on the new release
+        # would certify a worker fleet that is still on the old one — and every
+        # task would read 100% loss.
+        redis_state.record_task_emission("app.tasks.anything_at_all")
+        assert not [k for k in prefix_fake.strings
+                    if k.startswith(redis_state.TASK_DELIVERY_WRITER_ALIVE_PREFIX)]
+
+    # --- CERT-1968: the proof may not outlive the bucket it vouches for ------
+
+    def _writer_runs_in_bucket(self, monkeypatch, bucket, task="app.tasks.other"):
+        """Drive the REAL delivery writer with the clock inside ``bucket``.
+
+        Hand-seeding the marker would not reproduce anything: a mutant that
+        writes and reads the proof under a DIFFERENT key still returns "no
+        proof" against a hand-seeded correct-shaped key, so the test would pass
+        against the very defect it is named for. Faking the clock and letting
+        the writer choose its own key is what makes the writer's scoping — not
+        the test's idea of it — the thing under test.
+        """
+        # `monkeypatch.context()`, NOT `monkeypatch.undo()`: the two share one
+        # fixture instance with `prefix_fake`, so an undo here would also revert
+        # the fake Redis and the reader below would talk to a real client.
+        with monkeypatch.context() as m:
+            m.setattr(redis_state.time, "time",
+                      lambda: bucket * redis_state.EMIT_BUCKET_S + 1)
+            redis_state.record_task_delivery_bucket(task)
+
+    def test_liveness_in_a_LATER_bucket_leaves_this_one_unknown(
+            self, prefix_fake, monkeypatch):
+        # CERT-1968's exact reproduction. 15 publications in bucket N, no
+        # bucket-N delivery counter, and the delivery writer's first bucketed
+        # write landing in N+1. The blocked version's marker was one global key
+        # with a 1,800s TTL, so it was present when N was read: N returned
+        # `delivered: 0` and 100% broker loss, when the truth is that the old
+        # worker code may have delivered all 15 without the counter existing.
+        self._seed(prefix_fake, 2000, emitted=15, alive=False)
+        self._writer_runs_in_bucket(monkeypatch, 2001)
+        assert redis_state.get_matched_emit_delivery(self.NOW)[self.TASK][
+            "delivered"] is None
+
+    def test_liveness_in_THIS_bucket_makes_a_missing_key_a_real_zero(
+            self, prefix_fake, monkeypatch):
+        # The mirror, and the reading the instrument exists for: the writer WAS
+        # running in this bucket and this task still got nothing.
+        self._seed(prefix_fake, 2000, emitted=15, alive=False)
+        self._writer_runs_in_bucket(monkeypatch, 2000)
+        assert redis_state.get_matched_emit_delivery(self.NOW)[self.TASK][
+            "delivered"] == 0
+
+    def test_liveness_in_an_EARLIER_bucket_leaves_this_one_unknown_too(
+            self, prefix_fake, monkeypatch):
+        # The other direction: a writer that STOPPED. A proof scoped to N-1 says
+        # nothing about N, and treating it as one would accuse the broker of
+        # discarding messages a dead worker was never there to take.
+        self._seed(prefix_fake, 2000, emitted=15, alive=False)
+        self._writer_runs_in_bucket(monkeypatch, 1999)
+        assert redis_state.get_matched_emit_delivery(self.NOW)[self.TASK][
+            "delivered"] is None
+
+    def test_the_liveness_marker_is_not_read_back_as_a_task(self, prefix_fake):
+        # Scoping the marker by bucket means appending `:bN` — and
+        # `bainluck:task_deliv_bucket:__x__:bN` would match the delivery scan's
+        # own `bainluck:task_deliv_bucket:*:bN` glob, putting a task called
+        # `__writer_alive__` on the health surface. Hence its own top-level
+        # prefix; asserted rather than trusted.
+        redis_state.record_task_delivery_bucket(self.TASK)
+        now = (redis_state.emit_bucket_index() + 1) * redis_state.EMIT_BUCKET_S + 1
+        assert set(redis_state.get_matched_emit_delivery(now)) == {self.TASK}
+
+    def test_a_delivery_only_task_is_still_reported(self, prefix_fake):
+        self._seed(prefix_fake, 2000, delivered=7)
+        row = redis_state.get_matched_emit_delivery(self.NOW)[self.TASK]
+        assert row["emitted"] == 0 and row["delivered"] == 7
+
+    def test_a_non_numeric_value_is_skipped_not_zeroed(self, prefix_fake):
+        prefix_fake.strings[
+            f"{redis_state.TASK_EMISSION_BUCKET_PREFIX}:app.tasks.bad:b2000"] = b"x"
+        self._seed(prefix_fake, 2000, emitted=15, delivered=15)
+        out = redis_state.get_matched_emit_delivery(self.NOW)
+        assert "app.tasks.bad" not in out
+        assert out[self.TASK]["emitted"] == 15
+
+
+class TestPublishSignalPayloadShape:
+    """The message-shape half: what ``before_task_publish`` actually hands over.
+
+    Split out and made pure because the signal block itself needs a live celery
+    publish to exercise and is therefore `pragma: no cover`, while THIS is the
+    part that can silently be wrong. ``task_prerun`` passes the task OBJECT as
+    ``sender``; ``before_task_publish`` passes the task NAME as a string. Three
+    handlers in the same file read ``sender.name``, so copying that shape here
+    would have produced a counter that reads zero for every task — which does
+    not look like a bug, it looks like a finding.
+    """
+
+    def test_a_string_sender_is_the_name(self):
+        assert _published_task_name("app.tasks.foo", None, None) == "app.tasks.foo"
+
+    def test_protocol_2_headers_carry_the_name(self):
+        assert _published_task_name(
+            None, {"task": "app.tasks.foo"}, None) == "app.tasks.foo"
+
+    def test_protocol_1_body_carries_the_name(self):
+        assert _published_task_name(
+            None, None, {"task": "app.tasks.foo"}) == "app.tasks.foo"
+
+    def test_an_object_sender_still_yields_its_name(self):
+
+        class _Task:
+            name = "app.tasks.foo"
+        assert _published_task_name(_Task(), None, None) == "app.tasks.foo"
+
+    def test_an_unreadable_publication_is_none_not_a_blank_key(self):
+        assert _published_task_name(None, None, None) is None
+        assert _published_task_name(object(), {}, {}) is None
+        assert _published_task_name("", {}, {}) is None
+
+    def test_a_retry_is_filtered_exactly_as_it_is_on_the_delivery_side(self):
+        assert _published_retries({"retries": 2}, None) == 2
+        assert _published_retries(None, {"retries": 1}) == 1
+
+    def test_a_first_attempt_reads_zero(self):
+        assert _published_retries({"retries": 0}, None) == 0
+
+    def test_an_unreadable_retry_count_defaults_to_counting_it(self):
+        # The same call `_record_delivery` makes one signal up: losing the count
+        # is worse than an upper bound. And the two sides must default the SAME
+        # way — an unreadable message counted as published but not as delivered
+        # would present as broker loss that never happened.
+        assert _published_retries(None, None) == 0
+        assert _published_retries({"retries": "many"}, None) == 0
+        assert _published_retries({}, {}) == 0
+
+
+class TestMatchedPairReachesTheGrader:
+    SCHED = {"b": {"task": "app.tasks.foo", "schedule": 40.0}}
+
+    def _call(self, matched=None):
+        return build_schedule_adherence(
+            self.SCHED,
+            [_metrics("foo", starts=1080, window_s=86400.0)],
+            {"app.tasks.foo": "foo"},
+            {"app.tasks.foo": {"fires": 1080, "window_s": 86400.0}},
+            matched=matched,
+        )
+
+    def test_the_row_carries_the_pair_and_the_span_it_covers(self):
+        out = self._call({"app.tasks.foo": {
+            "emitted": 15, "delivered": 7, "bucket_s": 600,
+            "bucket_start": 1_757_100_000.0, "coverage_proven": True}})
+        row = out["all"]["app.tasks.foo"]
+        assert row["matched_emitted"] == 15
+        assert row["matched_delivered"] == 7
+        assert row["matched_bucket_s"] == 600
+        assert row["matched_bucket_start"] == 1_757_100_000.0
+        assert row["undelivered_fraction"] == pytest.approx(8 / 15, abs=0.005)
+        assert "never reached a worker" in row["reason"]
+
+    def test_the_24h_delivery_counter_is_not_the_matched_one(self):
+        # The join must not quietly reuse `deliveries` as the denominator's
+        # partner. Same 24h counters on both calls; only the bucket differs, and
+        # the diagnosis must follow the bucket.
+        broken = self._call({"app.tasks.foo": {
+            "emitted": 15, "delivered": 7, "bucket_s": 600, "bucket_start": 1.0, "coverage_proven": True}})
+        healthy = self._call({"app.tasks.foo": {
+            "emitted": 15, "delivered": 15, "bucket_s": 600, "bucket_start": 1.0, "coverage_proven": True}})
+        assert broken["all"]["app.tasks.foo"]["deliveries"] == \
+               healthy["all"]["app.tasks.foo"]["deliveries"] == 1080
+        assert broken["all"]["app.tasks.foo"]["undelivered_fraction"] != \
+               healthy["all"]["app.tasks.foo"]["undelivered_fraction"]
+
+    def test_no_matched_argument_leaves_the_fraction_unknown(self):
+        row = self._call()["all"]["app.tasks.foo"]
+        assert row["undelivered_fraction"] is None
+        assert row["matched_emitted"] is None and row["matched_delivered"] is None
+
+    def test_the_pair_needs_no_label_join(self):
+        out = build_schedule_adherence(
+            self.SCHED, [], {},
+            {"app.tasks.foo": {"fires": 1080, "window_s": 86400.0}},
+            matched={"app.tasks.foo": {
+                "emitted": 15, "delivered": 7, "bucket_s": 600,
+                "bucket_start": 1.0, "coverage_proven": True}},
+        )
+        assert out["graded"] == 1
+        assert out["all"]["app.tasks.foo"]["matched_emitted"] == 15
+
+    def test_publications_alone_stay_unmapped_but_carry_their_counts(self):
+        # "Beat is publishing into a void": nothing ran, nothing was delivered,
+        # and the bucket pair is the only witness. Not graded — a publication is
+        # not evidence anything ran — but not dropped either.
+        out = build_schedule_adherence(
+            self.SCHED, [], {}, {},
+            matched={"app.tasks.foo": {
+                "emitted": 15, "delivered": 0, "bucket_s": 600,
+                "bucket_start": 1.0, "coverage_proven": True}},
+        )
+        assert out["graded"] == 0
+        assert out["unmapped"] == [{
+            "task": "app.tasks.foo", "interval_s": 40.0,
+            "reason": "no_metric_label_recorded",
+            "matched_emitted": 15, "matched_delivered": 0,
+        }]
+
+    def test_a_matched_pair_for_an_unscheduled_task_is_ignored(self):
+        out = build_schedule_adherence(
+            {}, [], {}, {},
+            matched={"app.tasks.manual": {
+                "emitted": 3, "delivered": 3, "bucket_s": 600,
+                "bucket_start": 1.0, "coverage_proven": True}},
+        )
+        assert out["scheduled_tasks"] == 0
+        assert out["all"] == {} and out["unmapped"] == []
+
+
+class TestTheSignalsActuallyFire:
+    """End to end, against a real celery publish and a real prerun: are the
+    counters WRITTEN, and do they land in the SAME bucket?
+
+    Every test above proves the pieces are correct in isolation, and none of
+    them would fail if the signals never reached their handlers at all — a dead
+    instrument reads exactly like a healthy beat, because both produce a counter
+    that does not move.
+
+    ``memory://`` is kombu's in-process transport, so ``apply_async`` performs a
+    genuine publish through the same ``send_task_message`` path production uses.
+    The handlers under test are the module-level ones connected at
+    ``import app.tasks``; nothing here re-declares them.
+    """
+
+    @pytest.fixture
+    def probe_app(self):
+        from celery import Celery
+
+        app = Celery("lat_p238_probe", broker="memory://", backend=None)
+
+        @app.task(name="app.tasks.lat_p238_probe")
+        def _probe():  # pragma: no cover - never executed, only published
+            return 1
+
+        return app, _probe
+
+    def test_a_real_publish_increments_the_current_bucket(self, prefix_fake, probe_app):
+        # Importing the module is what connects the handler; `tasks_mod` is
+        # imported once at the top of this file so the same module object is
+        # used everywhere (CodeQL py/import-and-import-from).
+        _app, probe = probe_app
+        bucket = redis_state.emit_bucket_index()
+        key = (f"{redis_state.TASK_EMISSION_BUCKET_PREFIX}"
+               f":app.tasks.lat_p238_probe:b{bucket}")
+        assert key not in prefix_fake.strings
+        probe.apply_async()
+        assert prefix_fake.strings[key] == b"1"
+
+    def test_a_real_retry_publish_is_not_counted(self, prefix_fake, probe_app):
+        _app, probe = probe_app
+        bucket = redis_state.emit_bucket_index()
+        key = (f"{redis_state.TASK_EMISSION_BUCKET_PREFIX}"
+               f":app.tasks.lat_p238_probe:b{bucket}")
+        probe.apply_async()
+        probe.apply_async(retries=3)
+        assert prefix_fake.strings[key] == b"1"
+
+    def test_the_publish_survives_a_dead_redis(self, monkeypatch, probe_app):
+        # The instrument must never be the reason a publication fails — least
+        # of all here, where the publisher is celery beat and a raise would take
+        # out the scheduler this counter exists to grade.
+        def _boom(*_a, **_k):
+            raise RuntimeError("redis down")
+        monkeypatch.setattr(redis_state, "get_redis_client", _boom)
+        _app, probe = probe_app
+        probe.apply_async()  # must not raise
+
+    def test_a_publish_and_a_prerun_land_in_one_readable_cohort(self, prefix_fake):
+        # THE WHOLE REPAIR, end to end and through both real handlers: publish
+        # three, deliver two, and read back a matched pair that says so. If the
+        # two writers ever disagree about the bucket index — different clock,
+        # different rounding, a process-local epoch — this is what catches it,
+        # and nothing else would: each side would still look perfect alone.
+        for _ in range(3):
+            tasks_mod._record_emission(sender="app.tasks.probe_pair", headers={})
+        for _ in range(2):
+            redis_state.record_task_delivery_bucket("app.tasks.probe_pair")
+
+        # Read from inside the NEXT bucket, so the one just written is complete.
+        now = (redis_state.emit_bucket_index() + 1) * redis_state.EMIT_BUCKET_S + 1
+        row = redis_state.get_matched_emit_delivery(now)["app.tasks.probe_pair"]
+        assert row["emitted"] == 3 and row["delivered"] == 2
+        assert row["bucket_s"] == redis_state.EMIT_BUCKET_S
+
+
+class TestCoverageProofNeedsBothSidesAndTheBucketBefore:
+    """CERT-1972 storage half: what proves a bucket was fully observed.
+
+    ``writer_alive`` (CERT-1968) answers "was the delivery writer running during
+    N?", which is the zero-versus-unknown question. ``coverage_proven`` answers
+    the strictly harder one the EXPECTATION comparison needs: did both counters
+    cover the whole of N, or only a suffix of it? A publisher that activates at
+    second 300 of a 600s bucket publishes 7 fires at a perfect 40s cadence and
+    the bucket expects 15.
+    """
+
+    TASK = "app.tasks.prewarm_live_feed_shapes"
+    NOW = 2001 * redis_state.EMIT_BUCKET_S + 42
+
+    def _writer_runs_in(self, monkeypatch, bucket, deliveries=True, emissions=True):
+        with monkeypatch.context() as m:
+            m.setattr(redis_state.time, "time",
+                      lambda: bucket * redis_state.EMIT_BUCKET_S + 1)
+            if emissions:
+                redis_state.record_task_emission(self.TASK)
+            if deliveries:
+                redis_state.record_task_delivery_bucket(self.TASK)
+
+    def _row(self):
+        return redis_state.get_matched_emit_delivery(self.NOW)[self.TASK]
+
+    def test_both_writers_in_this_bucket_and_the_one_before_is_proof(self, prefix_fake, monkeypatch):
+        self._writer_runs_in(monkeypatch, 1999)
+        self._writer_runs_in(monkeypatch, 2000)
+        assert self._row()["coverage_proven"] is True
+
+    def test_a_publisher_that_activated_inside_this_bucket_is_not_proof(self, prefix_fake, monkeypatch):
+        # THE BLOCK'S CASE. Deliveries instrumented throughout; the publisher's
+        # first bucketed write is in N itself, so its count covers a suffix of
+        # the bucket and cannot be compared against the bucket's expectation.
+        self._writer_runs_in(monkeypatch, 1999, emissions=False)
+        self._writer_runs_in(monkeypatch, 2000)
+        row = self._row()
+        assert row["coverage_proven"] is False
+        # ...and the weaker flag still holds, so `delivered` is a real number.
+        assert row["delivered"] is not None
+
+    def test_a_delivery_writer_that_activated_inside_this_bucket_is_not_proof(self, prefix_fake, monkeypatch):
+        # The mirror, which produces a FALSE ACCUSATION rather than a false
+        # exoneration and is therefore the worse of the two.
+        self._writer_runs_in(monkeypatch, 1999, deliveries=False)
+        self._writer_runs_in(monkeypatch, 2000)
+        assert self._row()["coverage_proven"] is False
+
+    def test_a_writer_absent_from_this_bucket_is_not_proof_either(self, prefix_fake, monkeypatch):
+        # Present in N-1, gone in N: a dyno that died. Coverage of N is not
+        # established by having covered the bucket before it.
+        self._writer_runs_in(monkeypatch, 1999)
+        self._writer_runs_in(monkeypatch, 2000, emissions=False)
+        assert self._row()["coverage_proven"] is False
+
+    def test_coverage_is_false_when_nothing_is_instrumented(self, prefix_fake):
+        self._seed_bare(prefix_fake)
+        assert self._row()["coverage_proven"] is False
+
+    def _seed_bare(self, fake):
+        fake.strings[
+            f"{redis_state.TASK_EMISSION_BUCKET_PREFIX}:{self.TASK}:b2000"] = b"7"
+
+    def test_the_two_markers_have_different_prefixes(self, prefix_fake, monkeypatch):
+        # A single shared marker would be set by whichever writer ran first and
+        # would then vouch for the other — which is the CERT-1968 defect with
+        # the two sides swapped rather than the two buckets.
+        assert (redis_state.TASK_EMIT_WRITER_ALIVE_PREFIX
+                != redis_state.TASK_DELIVERY_WRITER_ALIVE_PREFIX)
+        self._writer_runs_in(monkeypatch, 2000, deliveries=False)
+        assert redis_state.emit_writer_alive_key(2000) in prefix_fake.strings
+        assert (redis_state.delivery_writer_alive_key(2000)
+                not in prefix_fake.strings)
+
+    def test_neither_marker_is_read_back_as_a_task(self, prefix_fake, monkeypatch):
+        self._writer_runs_in(monkeypatch, 1999)
+        self._writer_runs_in(monkeypatch, 2000)
+        assert set(redis_state.get_matched_emit_delivery(self.NOW)) == {self.TASK}
+
+    def test_the_markers_expire_with_the_buckets_they_vouch_for(self, prefix_fake, monkeypatch):
+        self._writer_runs_in(monkeypatch, 2000)
+        ttl = redis_state.EMIT_BUCKET_S * redis_state.EMIT_BUCKET_RETAINED
+        assert prefix_fake.ttls[redis_state.emit_writer_alive_key(2000)] == ttl
+        assert prefix_fake.ttls[redis_state.delivery_writer_alive_key(2000)] == ttl

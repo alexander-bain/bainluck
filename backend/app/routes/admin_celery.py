@@ -216,7 +216,8 @@ def _delivery_age_s(delivery, now_epoch):
 
 
 def build_schedule_adherence(
-    beat_schedule, metrics, label_map, deliveries=None, now_epoch=None
+    beat_schedule, metrics, label_map, deliveries=None, now_epoch=None,
+    matched=None,
 ):
     """Grade every beat entry's schedule adherence. Pure — no Redis, no celery.
 
@@ -233,6 +234,20 @@ def build_schedule_adherence(
     ``unmapped`` entries (#1716). A task with deliveries is now graded on them
     even when the label join finds nothing, so being invisible to the join no
     longer means being invisible to the surface.
+
+    ``matched`` (LAT-P238, repaired under CERT-1966) is keyed the same way and
+    joins the same way. It is ONE wall-clock bucket's publication count and
+    delivery count, read together from ``get_matched_emit_delivery`` — not the
+    24h ``deliveries`` counter beside it, which survives deploys and holds
+    pre-change history and therefore cannot be paired with a counter created at
+    the change.
+
+    It deliberately does NOT open the gate below. An emission is not evidence
+    that anything ran, so a task with publications and nothing else stays
+    ``unmapped`` — but the counts ride along on that entry rather than being
+    dropped, because "beat is publishing into a void" is the sharpest reading
+    that row can carry and it is invisible to every counter taken below the
+    delivery boundary.
     """
     import time as _time
 
@@ -243,6 +258,7 @@ def build_schedule_adherence(
     intervals = beat_intervals(beat_schedule)
     by_label = {m.get("task"): m for m in metrics if m.get("task")}
     deliveries = deliveries or {}
+    matched = matched or {}
 
     graded = {}
     unmapped = []
@@ -250,6 +266,7 @@ def build_schedule_adherence(
         label = label_map.get(full_name)
         m = by_label.get(label) if label else None
         d = deliveries.get(full_name) or {}
+        e = matched.get(full_name) or {}
         terminal_age, start_age = _stamp_ages_s(m, now_epoch) if m else (None, None)
         if not m and not d:
             # Honest third state. "No label recorded yet" is NOT "behind" and
@@ -261,6 +278,16 @@ def build_schedule_adherence(
                 "interval_s": round(interval_s, 1),
                 "reason": "no_metric_label_recorded" if not label
                           else "label_recorded_but_no_metrics",
+                # LAT-P238: on EVERY unmapped entry, not only the ones that
+                # have one. An entry whose `matched_emitted` is positive while
+                # `matched_delivered` is 0 is a beat publishing into a void — a
+                # much sharper fact than "unmapped" — and an entry where both
+                # are `None` says the bucket counters have not seen it either,
+                # which is a different and equally reportable state. A key that
+                # appears only when it is interesting makes its absence
+                # unreadable.
+                "matched_emitted": e.get("emitted"),
+                "matched_delivered": e.get("delivered"),
             })
             continue
         # No metrics row at all means completions are UNKNOWN, not zero. Passing
@@ -279,6 +306,20 @@ def build_schedule_adherence(
             durations_ms=(m or {}).get("recent_durations_ms") or [],
             deliveries=d.get("fires"),
             deliveries_window_s=d.get("window_s"),
+            # LAT-P238 / CERT-1966: the matched cohort — one wall-clock
+            # bucket's publications and that same bucket's deliveries. Passed as
+            # a pair, and NOT paired with `deliveries` above: that counter is
+            # deliberately deploy-durable and holds up to a day of pre-change
+            # history, which is what made the first version's quotient
+            # unidentifiable.
+            matched_emitted=e.get("emitted"),
+            matched_delivered=e.get("delivered"),
+            matched_bucket_s=e.get("bucket_s"),
+            matched_bucket_start=e.get("bucket_start"),
+            # CERT-1972: whether both counters covered the WHOLE bucket. False
+            # for the bucket in which either writer first activates, and every
+            # derived number is withheld until it is true.
+            matched_coverage_proven=e.get("coverage_proven", False),
             # LAT-P040 (#835): the duration sample's own span, so the p95 is not
             # read against `window_s` (which ages the starts counter and is up
             # to ~23x longer — measured on `poll_odds`, 2026-08-11).
@@ -368,6 +409,7 @@ async def celery_schedule_adherence(
     from app.tasks.redis_state import (
         get_all_task_deliveries,
         get_all_task_metrics,
+        get_matched_emit_delivery,
         get_task_label_map,
     )
 
@@ -376,6 +418,7 @@ async def celery_schedule_adherence(
         get_all_task_metrics(),
         get_task_label_map(),
         get_all_task_deliveries(),
+        matched=get_matched_emit_delivery(),
     )
 
 

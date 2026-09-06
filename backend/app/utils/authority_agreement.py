@@ -70,6 +70,20 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Callable, Optional, Sequence
 
+# The one place the product decides a row has been withdrawn (#3226). Imported
+# rather than restated — unlike `KICKOFF_TOLERANCE` above, which is deliberately
+# a second value because a write threshold and a report threshold are different
+# questions, "is this row retired" is the SAME question here as at every
+# user-facing by-id read, and two copies of it could answer differently. The
+# import costs this module nothing: `event_completion` is stdlib-only too, so
+# `authority_agreement` stays drivable by hand-built payloads with no DB.
+#
+# The function, not the frozenset: a caller that reads the set and compares for
+# itself has made a second copy of the rule, which is the thing this import
+# exists to prevent. Patching `event_completion.RETIRED_STATUSES` therefore
+# moves this module's behaviour, and a guard test relies on exactly that.
+from app.utils.event_completion import is_retired_event_status
+
 #: How far apart two kickoffs may be and still be called agreement. Same value
 #: the NFL stamper writes on, restated here rather than imported: the stamper's
 #: window is a *write* threshold and this one is a *report* threshold, and the
@@ -578,6 +592,23 @@ class Side:
     label: Optional[str] = None
     #: For our rows: what ``events.statpal_fixture_id`` currently holds.
     held_id: Optional[str] = None
+    #: For our rows: ``events.status``, verbatim, and CONSULTED — the one field
+    #: on this dataclass that changes a count (#3226).
+    #:
+    #: Deliberately not `label`, even though our two stampers happen to pass the
+    #: status string there as well. `label` is documented *"receipts only"*, and
+    #: a field whose docstring says it is never read is a field the next author
+    #: may reformat; the day someone writes `f"{status} · week {n}"` into it, a
+    #: retirement check keyed on `label` starts silently failing open. Tennis
+    #: already proves the hazard is real rather than theoretical: its `label` is
+    #: the SPORT KEY, not a status at all.
+    #:
+    #: `None` means *not stated*, which is not the same as *not retired* — but
+    #: the two are treated alike here, and that is the safe direction: an
+    #: unstated status leaves the row IN the denominator, so a caller that
+    #: forgets to pass it under-excludes and reports a worse number than the
+    #: truth. The opposite default would quietly inflate agreement.
+    event_status: Optional[str] = None
 
 
 def is_placeholder(name: Optional[str]) -> bool:
@@ -654,6 +685,7 @@ DEFAULT_EXCLUDED_KEYS = (
     "statpal_placeholders",
     "statpal_unusable_names",
     "our_unusable_names",
+    "our_retired",
 )
 
 
@@ -1120,7 +1152,28 @@ def build_agreement_row(
         f for f in fixtures if not (is_placeholder(f.home) or is_placeholder(f.away))
     ]
 
-    join = (pair_sides or pair_by_normalized_key)(real_fixtures, rows, normalize)
+    # #3226. A row the product has WITHDRAWN is not evidence either way, and
+    # until now it was counted as though it were still ours. It is excluded here
+    # — before the join, so the strategy never sees it — rather than by a status
+    # predicate on either stamper's `CANDIDATES` query, and the difference is the
+    # whole point: the comment at `stamp_nfl_statpal_fixtures.py:163-169` records
+    # that filtering in SQL is exactly what made #2963's polluted rows invisible.
+    # Classification decides what a row IS; the query's job is to leave nothing
+    # out. So the row still arrives, is still counted, and is counted where it
+    # went.
+    #
+    # This is directional in BOTH ways, and the second is the dangerous one:
+    #   * retired and unpaired  → `ours_only` inflated → a sport pinned BELOW its
+    #     bar with no way to clear it, because retiring the row — the sanctioned
+    #     repair — was invisible to the measurement that judges it;
+    #   * retired and pairable  → `both` inflated → a sport FLIPS on agreement it
+    #     does not have, credited by a row whose by-id read returns 410.
+    # D50 gates a user-visible flip on this number. It must not count rows the
+    # product has already taken down.
+    retired_rows = [r for r in rows if is_retired_event_status(r.event_status)]
+    live_rows = [r for r in rows if not is_retired_event_status(r.event_status)]
+
+    join = (pair_sides or pair_by_normalized_key)(real_fixtures, live_rows, normalize)
     unusable_fixtures = join.unusable_fixtures
     unusable_rows = join.unusable_rows
     real_fixtures = join.fixtures
@@ -1177,6 +1230,10 @@ def build_agreement_row(
                 "statpal_placeholders": len(placeholder_fixtures),
                 "statpal_unusable_names": len(unusable_fixtures),
                 "our_unusable_names": len(unusable_rows),
+                # Rows of ours the product has withdrawn (#3226). Reads
+                # measured-and-none at `0` like its three neighbours, which is
+                # the expected value for a sport with nothing retired in window.
+                "our_retired": len(retired_rows),
                 # Every refusal the strategy can ever make, seeded at zero, so a
                 # name that did not fire today still READS as measured-and-none
                 # like the three defaults above do. Keyed by the strategy's
@@ -1245,6 +1302,14 @@ def build_agreement_row(
                 "polluted_column": polluted[:RECEIPT_CAP],
                 "statpal_placeholders": [
                     _fixture_receipt(f) for f in placeholder_fixtures[:RECEIPT_CAP]
+                ],
+                # Named, not just counted: `our_retired: 3` invites the question
+                # "which three, and should they have been retired?", and #3070 is
+                # the case where the answer mattered — a row retired by another
+                # lane was the entire distance between NFL and a clean 100.
+                "our_retired": [
+                    _row_receipt(r, event_status=r.event_status)
+                    for r in retired_rows[:RECEIPT_CAP]
                 ],
                 # Seeded from the same vocabulary as `excluded`, for the same
                 # reason and so the two blocks cannot disagree about which names

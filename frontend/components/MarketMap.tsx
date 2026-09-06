@@ -34,6 +34,16 @@ interface MarketMapProps {
   markers: MarketMapMarker[];
   ladder: MarketMapLadderRow[];
   status: "pre" | "live" | "done";
+  /**
+   * #3210. Whether `density` describes a shape at all — `densityDrawsShape`,
+   * decided once by the section that built the density so the subtitle and the
+   * rail cannot come to different answers about the same band.
+   *
+   * When it is false the rail paints NO segments (an empty track under the
+   * markers, which is a number line and claims nothing) and the ladder this
+   * card already builds is drawn inline instead of hidden behind a hover.
+   */
+  bandDrawsShape: boolean;
 }
 
 const DOT_COLORS: Record<string, string> = {
@@ -64,6 +74,7 @@ export default function MarketMap({
   markers,
   ladder,
   status,
+  bandDrawsShape,
 }: MarketMapProps) {
   const cardRef = useRef<HTMLDivElement>(null);
   const [popOpen, setPopOpen] = useState(false);
@@ -224,18 +235,27 @@ export default function MarketMap({
             background: "#eef2f7",
           }}
         >
-          <div style={{ display: "flex", height: "100%" }}>
-            {density.map((d, i) => (
-              <div
-                key={i}
-                style={{
-                  height: "100%",
-                  width: `${100 / density.length}%`,
-                  background: rgbaFromIntensity(d, accentRgb),
-                }}
-              />
-            ))}
-          </div>
+          {/* #3210: a band with no shape is not painted. Every segment would
+              take the same colour, so what the reader gets is a solid block
+              under a subtitle promising a distribution — the whole complaint.
+              The bare `#eef2f7` track underneath is a number line, which is
+              exactly what the markers on it need and all this card can honestly
+              claim. The rungs go inline below instead. */}
+          {bandDrawsShape && (
+            <div style={{ display: "flex", height: "100%" }}>
+              {density.map((d, i) => (
+                <div
+                  key={i}
+                  data-density-segment={i}
+                  style={{
+                    height: "100%",
+                    width: `${100 / density.length}%`,
+                    background: rgbaFromIntensity(d, accentRgb),
+                  }}
+                />
+              ))}
+            </div>
+          )}
           <div
             style={{
               position: "absolute",
@@ -338,8 +358,29 @@ export default function MarketMap({
         )}
       </div>
 
+      {/* #3210: THE RUNGS, DRAWN — the card already held them.
+          A band with no shape is replaced by the lines it actually has, in the
+          card itself rather than behind a hover a phone cannot perform. The
+          popover below is suppressed in the same breath: one card must not
+          print the same ladder twice. */}
+      {!bandDrawsShape && ladder.length > 0 && (
+        // 18, and it is measured rather than chosen. The rail block above is
+        // `height: 76` when it has no tiles, but its axis labels are absolutely
+        // positioned at `top: 68` and stand ~15px tall, so they finish ~7px
+        // BELOW the block that contains them. At the popover's old `marginTop:
+        // 4` the first LOOK of this change photographed "32 38 44+" sitting on
+        // top of "CHANCE OF GOING OVER" on the pre-game card.
+        <div style={{ marginTop: 18, position: "relative", zIndex: 6 }} data-inline-ladder="1">
+          <LadderRows
+            ladder={ladder}
+            accentRgb={accentRgb}
+            heading={ladderHeading(status, variant)}
+          />
+        </div>
+      )}
+
       {/* Hover/tap popover — detail ladder, NOT constrained to card width */}
-      {ladder.length > 0 && (
+      {bandDrawsShape && ladder.length > 0 && (
         <div
           className={`transition-all duration-150 ${
             popOpen
@@ -360,67 +401,95 @@ export default function MarketMap({
             minWidth: 320,
           }}
         >
-          {/* L2-131 Item 4: name what the bars mean — the pregame chance of
-              reaching each margin (or clearing each total).
-
-              #2442: this said "covering", which is the betting verb — a side
-              covers THE SPREAD. The bars mean the same thing either way, and
-              "winning by" states it in the sport's own terms rather than the
-              slip's. */}
-          <div
-            style={{
-              fontSize: 10,
-              fontWeight: 950,
-              letterSpacing: "0.04em",
-              textTransform: "uppercase",
-              color: "#94a3b8",
-              margin: "0 0 6px 2px",
-            }}
-          >
-            {status === "done" ? "Pregame chance of " : "Chance of "}
-            {variant === "total" ? "going over" : "winning by"}
-          </div>
-          {ladder.map((row, i) => {
-            const barColor = `rgba(${accentRgb},0.65)`;
-            return (
-              <div
-                key={i}
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "94px 1fr 38px",
-                  alignItems: "center",
-                  gap: 8,
-                  margin: "5px 0",
-                }}
-              >
-                <div style={{ fontSize: 10, color: "var(--text-secondary)", fontWeight: 850 }}>{row.label}</div>
-                <div
-                  style={{
-                    height: 16,
-                    background: "#f1f5f9",
-                    border: "1px solid #e2e8f0",
-                    borderRadius: 999,
-                    overflow: "hidden",
-                  }}
-                >
-                  <div
-                    style={{
-                      height: "100%",
-                      borderRadius: 999,
-                      width: `${Math.max(2, row.probability)}%`,
-                      background: barColor,
-                      minWidth: 2,
-                    }}
-                  />
-                </div>
-                <div style={{ textAlign: "right", fontSize: 10, fontWeight: 950 }}>
-                  {row.probability}%
-                </div>
-              </div>
-            );
-          })}
+          <LadderRows
+            ladder={ladder}
+            accentRgb={accentRgb}
+            heading={ladderHeading(status, variant)}
+          />
         </div>
       )}
     </section>
+  );
+}
+
+/**
+ * L2-131 Item 4: name what the bars mean — the pregame chance of reaching each
+ * margin (or clearing each total).
+ *
+ * #2442: this said "covering", which is the betting verb — a side covers THE
+ * SPREAD. The bars mean the same thing either way, and "winning by" states it
+ * in the sport's own terms rather than the slip's.
+ */
+function ladderHeading(status: MarketMapProps["status"], variant: MarketMapProps["variant"]): string {
+  const when = status === "done" ? "Pregame chance of " : "Chance of ";
+  return when + (variant === "total" ? "going over" : "winning by");
+}
+
+/**
+ * The rungs and their bars. ONE renderer, because #3210 gave this ladder a
+ * second home inside the card and two copies of it is how the hover version
+ * and the inline version come to disagree about what a bar means.
+ */
+function LadderRows({
+  ladder,
+  accentRgb,
+  heading,
+}: {
+  ladder: MarketMapLadderRow[];
+  accentRgb: string;
+  heading: string;
+}) {
+  const barColor = `rgba(${accentRgb},0.65)`;
+  return (
+    <>
+      <div
+        style={{
+          fontSize: 10,
+          fontWeight: 950,
+          letterSpacing: "0.04em",
+          textTransform: "uppercase",
+          color: "#94a3b8",
+          margin: "0 0 6px 2px",
+        }}
+      >
+        {heading}
+      </div>
+      {ladder.map((row, i) => (
+        <div
+          key={i}
+          style={{
+            display: "grid",
+            gridTemplateColumns: "94px 1fr 38px",
+            alignItems: "center",
+            gap: 8,
+            margin: "5px 0",
+          }}
+        >
+          <div style={{ fontSize: 10, color: "var(--text-secondary)", fontWeight: 850 }}>{row.label}</div>
+          <div
+            style={{
+              height: 16,
+              background: "#f1f5f9",
+              border: "1px solid #e2e8f0",
+              borderRadius: 999,
+              overflow: "hidden",
+            }}
+          >
+            <div
+              style={{
+                height: "100%",
+                borderRadius: 999,
+                width: `${Math.max(2, row.probability)}%`,
+                background: barColor,
+                minWidth: 2,
+              }}
+            />
+          </div>
+          <div style={{ textAlign: "right", fontSize: 10, fontWeight: 950 }}>
+            {row.probability}%
+          </div>
+        </div>
+      ))}
+    </>
   );
 }

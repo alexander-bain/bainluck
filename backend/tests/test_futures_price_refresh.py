@@ -37,12 +37,65 @@ class TestSelectionPredicate:
     def test_predicate_carries_every_floor(self):
         sql = fpr._CANDIDATE_SQL.text
         assert "fm.status = 'open'" in sql
-        assert "fm.market_tier = 1" in sql
         assert "fm.volume >= :volume_floor" in sql
         # Gotcha #33: settled Kalshi markets keep status='open', so `status`
         # alone is not a liveness test. The resolution-date bound is what keeps
         # the dead out of an ordering that would otherwise never release them.
         assert "resolution_date > NOW()" in sql
+
+    def test_tier_is_an_admission_and_never_a_fence(self):
+        """#3315. The clause that hid the entire front page for 46 days.
+
+        `market_tier` still appears in the predicate, so a substring test for it
+        proves nothing — the question is which DIRECTION it points. It may admit
+        a tier-1 row whose volume we never recorded; it may not exclude a row for
+        being tier 2. All seven Polymarket cards on Discover page one were tier
+        2 on 2026-09-05, one of them 13.7 points wrong on $114M of volume.
+
+        Asserted on the composed predicate rather than on a comment, and both
+        directions are asserted: dropping the `volume IS NULL` conjunct turns the
+        admission back into a fence and reddens the second half.
+        """
+        assert fpr.HIGH_VALUE_SQL.count("market_tier") == 1
+        assert "market_tier = 1 AND fm.volume IS NULL" in fpr.HIGH_VALUE_SQL
+        # The value arm names no tier at all: volume alone admits Brazil.
+        assert "market_tier" not in fpr.VALUE_MEASURED_SQL
+        # and the two halves are a disjunction, not a conjunction.
+        assert " OR " in fpr.HIGH_VALUE_SQL
+        assert " AND " not in fpr.HIGH_VALUE_SQL.replace(
+            fpr.VALUE_TIER1_UNPRICED_SQL, ""
+        )
+
+    def test_null_volume_is_not_read_as_a_measured_zero(self):
+        """The second hole: `volume >= 10000` is NULL-rejecting.
+
+        1,199 of 3,081 open tier-1 markets carry NULL volume — 39% of the very
+        population the sweep believed it covered. "We never measured this" and
+        "this is worthless" are opposite facts that were arriving as one.
+
+        Expressed as SQL semantics rather than as a string match, so a rewrite
+        that keeps the words and loses the meaning fails here.
+        """
+        import sqlite3
+
+        con = sqlite3.connect(":memory:")
+        con.execute(
+            "CREATE TABLE fm (id INT, market_tier INT, volume INT)"
+        )
+        con.executemany(
+            "INSERT INTO fm VALUES (?,?,?)",
+            [
+                (1, 1, None),      # tier 1, unmeasured -> admitted
+                (2, 2, 114_137_967),  # Brazil: tier 2, huge -> admitted
+                (3, 2, None),      # tier 2, unmeasured -> not admitted
+                (4, 5, 12),        # measured and small -> not admitted
+            ],
+        )
+        where = fpr.HIGH_VALUE_SQL.replace("fm.", "").replace(
+            ":volume_floor", "10000"
+        )
+        got = {r[0] for r in con.execute(f"SELECT id FROM fm WHERE {where}")}
+        assert got == {1, 2}
 
     def test_uses_exists_not_max_captured_at(self):
         """MAX(captured_at) over the 179M-row snapshot table times out at 10s.
@@ -58,12 +111,13 @@ class TestSelectionPredicate:
     def test_guard_endpoint_uses_the_same_predicate(self):
         """A guard over a different set than the fix cannot prove the fix worked."""
         task_sql = _normalise(fpr._CANDIDATE_SQL.text)
-        for name in ("_PRICE_DARK_SQL", "_PRICE_DARK_WORST_SQL"):
+        for name in ("_PRICE_DARK_SQL",):
             guard_sql = _normalise(_extract_sql_literal(_ADMIN_SRC, name))
             for clause in (
                 "fm.status = 'open'",
-                "fm.market_tier = 1",
+                # #3315: the value test, both halves, on both sides.
                 "fm.volume >= :volume_floor",
+                "fm.market_tier = 1 and fm.volume is null",
                 "fm.resolution_date > now()",
                 "not exists",
             ):
@@ -94,8 +148,14 @@ class TestSelectionPredicate:
         askers = {
             "task._CANDIDATE_SQL": fpr._CANDIDATE_SQL.text,
             "task._REGISTERED_CANDIDATE_SQL": fpr._REGISTERED_CANDIDATE_SQL.text,
+            # #3315: the served arm and the reachability census are askers too.
+            # The served arm decides whether a card on page one gets a price at
+            # all, so a liveness clause that reached everything except it would
+            # be the #2222 drift with the front page as its blast radius.
+            "task._SERVED_CANDIDATE_SQL": fpr._SERVED_CANDIDATE_SQL.text,
+            "task._SERVED_REACHABLE_SQL": fpr._SERVED_REACHABLE_SQL.text,
+            "task.ELIGIBLE_POOL_SQL": fpr.ELIGIBLE_POOL_SQL,
             "guard._PRICE_DARK_SQL": _health._PRICE_DARK_SQL,
-            "guard._PRICE_DARK_WORST_SQL": _health._PRICE_DARK_WORST_SQL,
             "guard._REGISTERED_DARK_SQL": _health._REGISTERED_DARK_SQL,
             "guard._REGISTERED_ELIGIBLE_SQL": _health._REGISTERED_ELIGIBLE_SQL,
             # CERT-452: the seventh. `tournament_price_refresh` runs every ten
@@ -126,9 +186,15 @@ class TestSelectionPredicate:
         import app.routes.admin_source_health as _health
         import app.tasks.tournament_price_refresh as _tpr
 
-        enrolled = 7
+        # #3315 made the composition two-level: five sites still interpolate
+        # LIVE_MARKET_SQL directly, and four compose it transitively through
+        # ELIGIBLE_POOL_SQL (which is itself one of the five). Counting only the
+        # direct token would let a new asker join through the pool without ever
+        # being enrolled, which is exactly the hole this census exists to close.
+        enrolled = 9
         found = sum(
             inspect.getsource(mod).count("{LIVE_MARKET_SQL}")
+            + inspect.getsource(mod).count("{ELIGIBLE_POOL_SQL}")
             for mod in (fpr, _health, _tpr)
         )
         assert found == enrolled + 1, (
@@ -151,8 +217,15 @@ class TestSelectionPredicate:
         # interpolation and the module carries the result. Assert on the source:
         # there is no module-level constant to read for this one.
         assert "{LIVE_MARKET_SQL}" in _MODULE_SRC
-        assert _MODULE_SRC.count("{LIVE_MARKET_SQL}") == 3, (
-            "two selectors plus the remaining_stale census"
+        assert _MODULE_SRC.count("{LIVE_MARKET_SQL}") == 4, (
+            "both pool branches, the by-id selector, the reachability census"
+        )
+        # #3315: the census now composes the whole ELIGIBLE POOL, not just the
+        # liveness clause. A census that kept the liveness bounds but not the
+        # widened value test would report the pre-#3315 number under the
+        # post-#3315 name — the worst of both, because it reads like coverage.
+        assert _MODULE_SRC.count("{ELIGIBLE_POOL_SQL}") == 2, (
+            "the class selector plus the remaining_stale census"
         )
         assert _normalise(LIVE_MARKET_SQL) in _normalise(fpr._CANDIDATE_SQL.text)
         assert "select count(*) from futures_markets fm" in source
@@ -165,7 +238,7 @@ class TestSelectionPredicate:
         month-dark market. Only `futures_odds_snapshots.captured_at` answers
         whether a price was actually captured.
         """
-        for name in ("_PRICE_DARK_SQL", "_PRICE_DARK_WORST_SQL"):
+        for name in ("_PRICE_DARK_SQL",):
             sql = _extract_sql_literal(_ADMIN_SRC, name)
             assert "futures_odds_snapshots" in sql
             assert "s.captured_at" in sql
@@ -204,10 +277,28 @@ class TestOrderingHasNoFixedPoint:
         )
 
     def test_scan_is_wider_than_one_budget(self):
-        """Without headroom, a run whose top-N were all just attempted does nothing."""
-        assert "scan_limit=max(budget * 3, budget + 50)" in _MODULE_SRC.replace(
-            "\n", ""
-        ).replace("  ", "")
+        """Without headroom, a run whose top-N were all just attempted does nothing.
+
+        #3315 moved the headroom from an outer `scan_limit` to the POOL, because
+        on the widened query an outer LIMIT bounded no work at all — production's
+        plan sorts above the anti-join, so every open market was probed against
+        the 179M-row snapshot table before the LIMIT applied. The property being
+        guarded is unchanged: the scan must see more than one run can take.
+        """
+        assert fpr.VALUE_POOL_LIMIT > fpr.DEFAULT_MARKET_BUDGET
+        assert fpr.UNPRICED_POOL_LIMIT > fpr.KALSHI_MARKET_BUDGET
+
+    def test_the_pool_is_materialised_so_the_planner_cannot_undo_it(self):
+        """PG12+ inlines a single-reference CTE, which restores the bad plan.
+
+        Not a style point and not cosmetic: measured on production 2026-09-05,
+        the inlined form did not finish inside 10s at ANY outer LIMIT including
+        1,500, while the materialised two-pool form returned the same rows in
+        2.8s + 9.4s. Dropping the keyword is a silent revert to a selector that
+        times out, and a selector that times out is a refresher that never runs.
+        """
+        assert "AS MATERIALIZED" in fpr.ELIGIBLE_POOL_SQL
+        assert "AS MATERIALIZED" in fpr._CANDIDATE_SQL.text
 
 
 class TestTerminalIsHonest:
@@ -343,6 +434,45 @@ class TestWiring:
 
         task = celery_app.tasks["app.tasks.refresh_stale_futures_prices"]
         assert fpr._TIME_BUDGET_S < task.soft_time_limit < task.time_limit
+
+    def test_the_first_loop_cannot_spend_the_whole_wall(self):
+        """Per-source MARKET budgets do not bound per-source WALL time.
+
+        The two loops run in sequence against one clock with Polymarket first, so
+        a slow Gamma consumes the entire 420s and the Kalshi loop — the larger
+        backlog — never runs. Splitting the market budget without splitting the
+        clock leaves the starvation exactly where it was, one level up.
+
+        Both bounds are asserted, not just the existence of the constant: it must
+        leave the Kalshi loop more than its measured worst case (175s), and it
+        must be comfortably above Polymarket's own (78s) so it binds only on a
+        pathological run.
+        """
+        assert fpr._POLYMARKET_WALL_BUDGET_S < fpr._TIME_BUDGET_S
+        assert fpr._TIME_BUDGET_S - fpr._POLYMARKET_WALL_BUDGET_S > 175
+        assert fpr._POLYMARKET_WALL_BUDGET_S > 2 * 78
+        # And the loop reads the share, not the whole wall.
+        assert "poly_deadline = min(" in _MODULE_SRC
+        assert "started > poly_deadline" in _MODULE_SRC
+
+    def test_the_per_source_budgets_cover_their_backlogs_within_the_stale_window(self):
+        """The convergence claim, as arithmetic rather than as prose.
+
+        The attempt marker's TTL is the staleness window, so a source's whole
+        standing backlog has to fit in `budget x (window / beat period)` runs or
+        the 6h invariant is unreachable and `futures-price-freshness` stays red
+        forever — the #2222 shape, arrived at from the other side.
+
+        Backlogs measured on production 2026-09-05 under the widened predicate,
+        pinned here so a budget cut has to argue with the number it breaks.
+        """
+        runs_per_window = fpr.STALE_AFTER_HOURS  # hourly beat, 6h window
+        assert fpr.KALSHI_MARKET_BUDGET * runs_per_window >= 2_010
+        assert fpr.POLYMARKET_MARKET_BUDGET * runs_per_window >= 1_974
+        # ...and the two together must still fit the wall at their measured
+        # per-market costs, or the budgets are a promise the clock cannot keep.
+        wall = fpr.KALSHI_MARKET_BUDGET * 0.35 + fpr.POLYMARKET_MARKET_BUDGET * 0.065
+        assert wall < fpr._TIME_BUDGET_S
 
     def test_staleness_window_matches_the_render_contract(self):
         """The producer and the renderer must not hold two definitions of stale.
@@ -569,21 +699,47 @@ class TestTheProducerClockLeadsTheRenderClock:
         assert 0 < fpr.REGISTERED_REFRESH_MINUTES < 60
         assert fpr.REGISTERED_REFRESH_MINUTES < fpr.STALE_AFTER_HOURS * 60
 
-    def test_registered_attempt_marker_cannot_outlive_its_next_beat(self):
-        """A 6h marker on a 45m window is the lockstep restored via Redis."""
-        assert "registered_refresh_minutes) * 60" in _MODULE_SRC.replace("\n", " ")
+    def test_identity_attempt_marker_cannot_outlive_its_next_beat(self):
+        """A 6h marker on a 45m window is the lockstep restored via Redis.
 
-    def test_registered_rows_sort_ahead_of_the_class(self):
-        """Both source loops are wall-budget truncated, so head position IS the guard."""
-        selected = [
-            {"id": 1, "registered": False},
-            {"id": 2, "registered": True},
-            {"id": 3, "registered": False},
-            {"id": 4, "registered": True},
+        #3315 put two identity arms behind one marker, so the TTL is the SHORTER
+        of the two windows. `max` there would let a row on both arms hold a
+        marker past the shorter arm's next beat, which is the lockstep again with
+        the served arm as its victim.
+        """
+        src = _MODULE_SRC.replace("\n", " ")
+        assert (
+            "min(registered_refresh_minutes, served_refresh_minutes)" in src
+        ), "the identity marker must be sized off the shorter window"
+        assert "max(registered_refresh_minutes" not in src
+
+    def test_identity_rows_lead_and_survive_the_budget(self):
+        """Both source loops are wall-budget truncated, so head position IS the guard.
+
+        Behavioural, and it asserts the two properties separately because
+        #3315's per-source budgets broke the old proof: under one shared cap,
+        being sorted to the head was enough to survive `[:budget]`. Under two,
+        an interleaved slice would make survival depend on how many class rows
+        happened to sort in front — a guarantee that holds by arithmetic
+        coincidence is not one.
+        """
+        rows = [
+            {"id": 1, "source": "kalshi", "priority": False},
+            {"id": 2, "source": "kalshi", "priority": True},
+            {"id": 3, "source": "polymarket", "priority": True},
+            {"id": 4, "source": "kalshi", "priority": False},
+            {"id": 5, "source": "kalshi", "priority": True},
         ]
-        selected.sort(key=lambda m: not m["registered"])
-        assert [m["id"] for m in selected] == [2, 4, 1, 3]
-        assert 'selected.sort(key=lambda m: not m["registered"])' in _MODULE_SRC
+        # Budget of 3 for Kalshi: both identity rows lead, and exactly one
+        # class row rides along in the remaining slot.
+        taken = fpr._take_for_source(rows, "kalshi", 3)
+        assert [m["id"] for m in taken] == [2, 5, 1]
+        # A budget SMALLER than the identity count spends nothing on the class.
+        assert [m["id"] for m in fpr._take_for_source(rows, "kalshi", 1)] == [2, 5]
+        # A budget of ZERO still cannot drop an identity row.
+        assert [m["id"] for m in fpr._take_for_source(rows, "kalshi", 0)] == [2, 5]
+        # Sources do not leak into each other.
+        assert [m["id"] for m in fpr._take_for_source(rows, "polymarket", 9)] == [3]
 
 
 class TestPolymarketAddressing:
@@ -886,3 +1042,309 @@ def _extract_sql_literal(source: str, name: str) -> str:
 
 def _normalise(sql: str) -> str:
     return re.sub(r"\s+", " ", sql).strip().lower()
+
+
+# --- CERT-1970: an unavailable page-one signal must not read green ------------
+
+
+class _RunHarness:
+    """Drives `_refresh_stale_futures_prices` end to end without a database.
+
+    Deliberately NOT a stub of `_terminal`. The block's finding was that the
+    field existed and nothing consulted it, so a test that asserts `_terminal`
+    in isolation proves the honouring and not the WIRING — and the wiring is
+    where the defect lived. This runs the real entry point, so the summary it
+    classifies is the one production returns.
+    """
+
+    def __init__(self, *, signal, class_rows):
+        self.signal = signal
+        self.class_rows = class_rows
+        self.snapshot_probabilities: list[float] = []
+        self.marker_written = False
+
+    class _Result:
+        def __init__(self, rows=(), scalar=0):
+            self._rows = list(rows)
+            self._scalar = scalar
+
+        def fetchall(self):
+            return self._rows
+
+        def scalar(self):
+            return self._scalar
+
+    class _Session:
+        def __init__(self, outer):
+            self.outer = outer
+
+        async def execute(self, statement, params=None):
+            sql = str(statement)
+            if "WITH pool AS MATERIALIZED" in sql:
+                if "COUNT(*)" in sql:
+                    return _RunHarness._Result(scalar=0)
+                return _RunHarness._Result(self.outer.class_rows)
+            if "SELECT id, external_id FROM futures_outcomes" in sql:
+                return _RunHarness._Result([(11, "0xabc")])
+            if sql.lstrip().upper().startswith("INSERT INTO FUTURES_ODDS_SNAPSHOTS"):
+                self.outer.snapshot_probabilities.append(
+                    float(statement.compile().params["probability"])
+                )
+                return _RunHarness._Result()
+            if "fm.id = ANY(:market_ids)" in sql:
+                return _RunHarness._Result([], scalar=0)
+            return _RunHarness._Result()
+
+        async def commit(self):
+            return None
+
+        async def rollback(self):
+            return None
+
+    async def run(self, monkeypatch):
+        import contextlib
+
+        from app.tasks import futures_price_refresh as mod
+
+        session = self._Session(self)
+
+        @contextlib.asynccontextmanager
+        async def _fake_session():
+            yield session
+
+        monkeypatch.setattr("app.tasks.base.get_task_session", _fake_session)
+        monkeypatch.setattr(
+            "app.utils.tournament_register.registered_market_ids", lambda: set()
+        )
+        monkeypatch.setattr(
+            "app.utils.feed_served_markets.served_signal", lambda: self.signal
+        )
+
+        def _note(*a, **kw):
+            self.marker_written = True
+
+        monkeypatch.setattr(
+            "app.utils.feed_served_markets.note_served_signal_healthy", _note
+        )
+        monkeypatch.setattr(mod, "_load_attempt_skips", lambda ids: set())
+        monkeypatch.setattr(mod, "_mark_attempted", lambda ids, ttl_seconds: None)
+
+        class _Service:
+            async def close(self):
+                return None
+
+        monkeypatch.setattr(
+            "app.services.polymarket_api.PolymarketAPIService", lambda: _Service()
+        )
+
+        async def _priced(service, event_ids):
+            return {
+                eid: [
+                    {
+                        "external_id": "0xabc",
+                        "probability": 0.399,
+                        "yes_bid": 0.39,
+                        "yes_ask": 0.40,
+                        "last_price": 0.399,
+                    }
+                ]
+                for eid in event_ids
+            }
+
+        monkeypatch.setattr(mod, "_fetch_polymarket_prices", _priced)
+        return await mod._refresh_stale_futures_prices()
+
+
+def _brazil_class_row():
+    """One class-arm market that WILL price: tier-2 Brazil, addressable."""
+    return [(112996, "polymarket", "0xbrazil", 114_137_967, "45915", None)]
+
+
+class TestAnUnavailablePageOneSignalCannotReadGreen:
+    """🔴 THE CERT-1970 REGRESSION, in the exact shape the block required.
+
+    "Force the served-signal read unavailable while another class market prices
+    successfully and prove the task summary does not classify green; add a
+    sibling present-but-empty control that remains valid."
+
+    The failure it catches is not "the terminal is wrong". It is that the third
+    arm — the only thing that makes "front-page cards show the venue's quote"
+    true at ANY tier and volume — can go dark while the enforced verdict says
+    `complete`, so a low-value page-one card stays stale forever with nothing
+    anywhere disagreeing. That is the same class of silence #3315 itself was.
+    """
+
+    @pytest.mark.asyncio
+    async def test_unavailable_plus_successful_class_writes_is_not_green(
+        self, monkeypatch
+    ):
+        from app.utils.feed_served_markets import SERVED_UNAVAILABLE, ServedSignal
+
+        harness = _RunHarness(
+            signal=ServedSignal(state=SERVED_UNAVAILABLE, ids=[]),
+            class_rows=_brazil_class_row(),
+        )
+        stats = await harness.run(monkeypatch)
+
+        # The class arm really did work — otherwise this proves nothing about
+        # the served arm, only that a failing run fails.
+        assert stats["snapshots_written"] >= 1
+        assert stats["markets_priced"] >= 1
+
+        assert stats["served_state"] == SERVED_UNAVAILABLE
+        assert stats["served_signal_ok"] is False
+        assert stats["terminal"] == "partial"
+        assert not classify_summary(stats).is_green, (
+            "a run whose page-one arm is dark read GREEN off successful class "
+            "work — the exact false green CERT-1970 blocked"
+        )
+        assert not harness.marker_written, (
+            "the health marker was refreshed on an unhealthy observation, which "
+            "would let the grace renew itself forever"
+        )
+
+    @pytest.mark.asyncio
+    async def test_present_but_empty_is_valid_and_still_green(self, monkeypatch):
+        """THE CONTROL. Without it the test above is satisfied by "never green".
+
+        A page one that genuinely holds no futures cards is the arm WORKING. If
+        that also read not-green the repair would be a permanent alarm, and a
+        permanent alarm is not an instrument.
+        """
+        from app.utils.feed_served_markets import SERVED_EMPTY, ServedSignal
+
+        harness = _RunHarness(
+            signal=ServedSignal(state=SERVED_EMPTY, ids=[], shapes=2),
+            class_rows=_brazil_class_row(),
+        )
+        stats = await harness.run(monkeypatch)
+
+        assert stats["snapshots_written"] >= 1
+        assert stats["served_state"] == SERVED_EMPTY
+        assert stats["served_signal_ok"] is True
+        assert stats["terminal"] == "complete"
+        assert classify_summary(stats).is_green
+        assert harness.marker_written, (
+            "a healthy observation must refresh the marker the grace is measured "
+            "from, or the grace expires under a working rail"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_cold_start_is_not_treated_as_a_regression(self, monkeypatch):
+        """`never_seen` permits green: a first deploy must not alarm on bootstrap.
+
+        And it must NOT write the marker, or the very first run would forge the
+        history the `unavailable` branch is supposed to check for.
+        """
+        from app.utils.feed_served_markets import SERVED_NEVER_SEEN, ServedSignal
+
+        harness = _RunHarness(
+            signal=ServedSignal(state=SERVED_NEVER_SEEN, ids=[]),
+            class_rows=_brazil_class_row(),
+        )
+        stats = await harness.run(monkeypatch)
+        assert stats["terminal"] == "complete"
+        assert classify_summary(stats).is_green
+        assert not harness.marker_written
+
+    @pytest.mark.asyncio
+    async def test_the_short_return_path_cannot_read_green_either(self, monkeypatch):
+        """A false green does not become true by being reached through a branch.
+
+        With nothing stale the run returns early, long before `_terminal`. On
+        that path "nothing was stale" is a claim about a population we could not
+        enumerate, so it must not be `complete`.
+        """
+        from app.utils.feed_served_markets import SERVED_UNAVAILABLE, ServedSignal
+
+        harness = _RunHarness(
+            signal=ServedSignal(state=SERVED_UNAVAILABLE, ids=[]), class_rows=[]
+        )
+        stats = await harness.run(monkeypatch)
+        assert stats["markets_attempted"] == 0
+        assert stats["terminal"] == "no_work"
+        assert not classify_summary(stats).is_green
+        assert "unavailable" in stats["reason"]
+
+    @pytest.mark.asyncio
+    async def test_a_rail_that_never_started_stops_reading_green(self, monkeypatch):
+        """🔴 CERT-1974's regression, end to end, in the shape the block required.
+
+        "Drive the real `served_signal()` against the same empty healthy store at
+        t0 and t0 + grace + 1, then feed the latter through
+        `_refresh_stale_futures_prices()` with successful class writes and prove
+        the verdict is not green."
+
+        `never_seen` used to be ABSORBING: a healthy Redis holding nothing kept
+        the enforced task green at 0h, 4h, 24h and 744h, so a pre-warm hook that
+        never fired would have looked exactly like a working one forever. The
+        signal below is produced by the REAL state machine against a store that
+        PERSISTS what the first read wrote — a fresh fake per call passes against
+        the blocked code and proves nothing.
+        """
+        from app.utils import feed_served_markets as fsm
+        from tests.test_feed_served_markets import _FakeRedis
+
+        rc = _FakeRedis()
+        monkeypatch.setattr(
+            "app.tasks.redis_state.get_redis_client", lambda **kw: rc
+        )
+        anchor = 1_788_600_000.0
+
+        first = fsm.served_signal(now=anchor)
+        assert first.state == fsm.SERVED_NEVER_SEEN, "control: the cold start"
+
+        aged = fsm.served_signal(now=anchor + fsm.SERVED_SIGNAL_GRACE_S + 1)
+        assert aged.state == fsm.SERVED_UNAVAILABLE
+
+        harness = _RunHarness(signal=aged, class_rows=_brazil_class_row())
+        stats = await harness.run(monkeypatch)
+
+        assert stats["snapshots_written"] >= 1, (
+            "the class arm must succeed, or this proves only that a failing run "
+            "fails"
+        )
+        assert stats["served_state"] == fsm.SERVED_UNAVAILABLE
+        assert stats["terminal"] == "partial"
+        assert not classify_summary(stats).is_green
+
+    @pytest.mark.asyncio
+    async def test_the_cold_start_control_still_runs_green(self, monkeypatch):
+        """The other side of the same store: at t0 the run is green.
+
+        Without this, the test above is satisfied by a repair that simply never
+        permits green during bootstrap — which would alarm on every first deploy
+        and be switched off within a week.
+        """
+        from app.utils import feed_served_markets as fsm
+        from tests.test_feed_served_markets import _FakeRedis
+
+        rc = _FakeRedis()
+        monkeypatch.setattr(
+            "app.tasks.redis_state.get_redis_client", lambda **kw: rc
+        )
+        signal = fsm.served_signal(now=1_788_600_000.0)
+        assert signal.state == fsm.SERVED_NEVER_SEEN
+
+        harness = _RunHarness(signal=signal, class_rows=_brazil_class_row())
+        stats = await harness.run(monkeypatch)
+        assert stats["terminal"] == "complete"
+        assert classify_summary(stats).is_green
+
+    def test_the_terminal_guard_is_not_dead_code(self):
+        """It has to fire on the summary shape the run actually returns.
+
+        Pinned separately because the block's probe was exactly this: a plausible
+        summary dict fed to the classifier. It returned green.
+        """
+        base = {
+            "markets_attempted": 3,
+            "snapshots_written": 3,
+            "budget_hit": False,
+            "errors": [],
+        }
+        assert fpr._terminal({**base, "served_signal_ok": True}) == "complete"
+        assert fpr._terminal({**base, "served_signal_ok": False}) == "partial"
+        # A summary that predates the field keeps its old meaning rather than
+        # turning every legacy caller amber.
+        assert fpr._terminal(base) == "complete"

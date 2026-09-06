@@ -19,7 +19,23 @@ import {
   mapColumnHeading,
   posOnRail,
   collapseDuplicateRungs,
+  densityDrawsShape,
+  quotedLinesPhrase,
 } from "@/lib/marketMapUtils";
+
+/**
+ * The rail colours, named once (#3210).
+ *
+ * `densityDrawsShape` answers its question by comparing the colours the rail
+ * would actually paint, so it is handed the SAME accent the rail is handed.
+ * Today that is belt-and-braces — `rgbaFromIntensity` varies only the alpha,
+ * so the predicate's answer does not depend on the rgb and a mismatch would be
+ * harmless. It is written this way for the day the ramp becomes colour-aware,
+ * because on that day a repeated literal is a silent wrong answer rather than
+ * a compile error.
+ */
+const MARGIN_ACCENT = "37,99,235";
+const TOTAL_ACCENT = "124,58,237";
 
 interface MarketMapSectionProps {
   gameMarkets: GameMarketsResponse;
@@ -285,6 +301,7 @@ export default function MarketMapSection({
     const rangeMax = maxMargin;
 
     const density = buildDensityFromSpreads(parsed, rangeMin, rangeMax, 12);
+    const bandDrawsShape = densityDrawsShape(density, MARGIN_ACCENT);
 
     const homeFavored = (homeWinProb ?? 0) > 0.5;
     const favoredAbbr = homeFavored ? hAbbr : aAbbr;
@@ -434,12 +451,19 @@ export default function MarketMapSection({
         // on two rails of one live card, which is worse than the bug.
         : status === "live" && hasScoreboard
         ? "Where it's heading vs what was expected"
-        : `Final ${vocab.unit === "runs" ? "run-" : vocab.unit === "goals" ? "goal-" : ""}margin distribution`,
+        // #3210: and a card that draws no shape does not call itself a
+        // distribution. The two live/settled sentences above are about the
+        // MARKERS, which are drawn either way — only this one is a claim about
+        // the band, so only this one is answerable by the band.
+        : bandDrawsShape
+        ? `Final ${vocab.unit === "runs" ? "run-" : vocab.unit === "goals" ? "goal-" : ""}margin distribution`
+        : quotedLinesPhrase(ladder.length),
       headline,
       rangeMin,
       rangeMax,
       density,
-      accentRgb: "37,99,235",
+      bandDrawsShape,
+      accentRgb: MARGIN_ACCENT,
       axisLabels: {
         left: `${aAbbr} by ${maxMargin}+`,
         mid: "0",
@@ -515,6 +539,7 @@ export default function MarketMapSection({
       rangeMax,
       12
     );
+    const bandDrawsShape = densityDrawsShape(density, TOTAL_ACCENT);
 
     /* ux/1034 B5: `pace` is derived from the same scoreboard, so it inherits
        the same unit. Dropping it with the scores keeps "Projected 6" — a
@@ -619,12 +644,20 @@ export default function MarketMapSection({
         // sentence promises a comparison exactly when the rail draws one.
         : status === "live" && scored != null
         ? "Where it's heading vs what was expected"
-        : unitPhrase("Final", vocab, "distribution"),
+        // #3210's own body: two match-scope rungs 4 games apart, spread over 12
+        // segments, paint one solid purple block. `densityDrawsShape` asks the
+        // rail what colours it would use, so this arm fires on exactly the
+        // cards a reader sees as flat — including `/events/15304420`, whose
+        // THREE rungs were all quoted at 0.20 and are just as shapeless as two.
+        : bandDrawsShape
+        ? unitPhrase("Final", vocab, "distribution")
+        : quotedLinesPhrase(ladder.length),
       headline: headlineValue,
       rangeMin,
       rangeMax,
       density,
-      accentRgb: "124,58,237",
+      bandDrawsShape,
+      accentRgb: TOTAL_ACCENT,
       axisLabels: { left: String(rangeMin), mid: midLabel, right: `${rangeMax}+` },
       markers,
       ladder,
@@ -691,6 +724,7 @@ export default function MarketMapSection({
       // #2441: same declared reach as the full-game rail above.
       const maxM = vocab.marginRange;
       const density = buildDensityFromSpreads(parsed, -maxM, maxM, 12);
+      const bandDrawsShape = densityDrawsShape(density, MARGIN_ACCENT);
 
       // Ladder: sort sequentially along number line (away big → tie → home big)
       const allSorted = [...parsed].sort((a, b) => {
@@ -766,12 +800,15 @@ export default function MarketMapSection({
         data: {
           variant: "margin" as const,
           title: `${label} margin`,
-          subtitle: `${label} margin distribution`,
+          // #3210, same rule as the full-game rail above it: a period card with
+          // no shape in its band names its rungs instead of promising a curve.
+          subtitle: bandDrawsShape ? `${label} margin distribution` : quotedLinesPhrase(ladder.length),
           headline: "",
           rangeMin: -maxM,
           rangeMax: maxM,
           density,
-          accentRgb: "37,99,235",
+          bandDrawsShape,
+          accentRgb: MARGIN_ACCENT,
           axisLabels: { left: `${aAbbr} by ${maxM}+`, mid: "Tie", right: `${hAbbr} by ${maxM}+` },
           zeroPosition: 0,
           markers: halfMarkers,
@@ -896,6 +933,10 @@ export default function MarketMapSection({
       const effectiveMin = Math.max(0, Math.floor(Math.min(dataMin, ...allVals) - Math.max(span * 0.15, 3)));
       const effectiveMax = Math.ceil(Math.max(dataMax, ...allVals) + Math.max(span * 0.15, 3));
       const effectiveDensity = buildDensityFromThresholds(cleaned, effectiveMin, effectiveMax, 12);
+      // The band this card actually paints is `effectiveDensity`, not the
+      // `density` computed above off the un-widened range — ask the one that
+      // renders.
+      const bandDrawsShape = densityDrawsShape(effectiveDensity, TOTAL_ACCENT);
       const effectiveMid = String(Math.round((effectiveMin + effectiveMax) / 2));
 
       const headlineVal = isDone ? "" : `O/U ${Math.round(ouLine.threshold)}`;
@@ -905,12 +946,15 @@ export default function MarketMapSection({
         data: {
           variant: "total" as const,
           title: `${label} ${vocab.totalTitle.toLowerCase()}`,
-          subtitle: unitPhrase(label, vocab, "distribution"),
+          subtitle: bandDrawsShape
+            ? unitPhrase(label, vocab, "distribution")
+            : quotedLinesPhrase(ladder.length),
           headline: headlineVal,
           rangeMin: effectiveMin,
           rangeMax: effectiveMax,
           density: effectiveDensity,
-          accentRgb: "124,58,237",
+          bandDrawsShape,
+          accentRgb: TOTAL_ACCENT,
           axisLabels: { left: String(effectiveMin), mid: effectiveMid, right: `${effectiveMax}+` },
           markers: halfTotalMarkers,
           ladder,
