@@ -121,13 +121,82 @@ describe("EventCard", () => {
 
     // L2-112 settled treatment: a FINAL card drops the live-style probability
     // chips and the probability bar in favor of the centered score block. It
-    // shows "Final" + the final score (102-99), and no "NN%" probability chips
-    // (the opening-odds 55%/45% display was removed with the settled redesign).
+    // shows "Final" + the final score (102-99).
     expect(html).toContain("Final");
     expect(html).toContain("102");
     expect(html).toContain("99");
-    expect(html).not.toContain("55%");
-    expect(html).not.toContain("45%");
+
+    // The bar is what L2-112 removed, and it is still gone. `role="meter"` /
+    // `aria-label="Win probability"` is `ProbabilityBar`'s own wrapper and
+    // nothing else in this card emits it. Proven non-vacuous at the bottom of
+    // this test, which asserts a PREGAME card does contain it.
+    expect(html).not.toContain('aria-label="Win probability"');
+    expect(html).not.toContain('role="meter"');
+
+    // And the live-style chip is gone. Spelled as "every percent on this card
+    // belongs to a pre-match span" rather than as a class name: the chip's
+    // classes are `font-mono tabular-nums` plus a colour, which the pre-match
+    // span shares, so no single class distinguishes them. Deleting the
+    // `data-prematch` spans and then demanding no `%` survives is exact, and
+    // it fails if a chip ever returns to this branch.
+    const withoutPrematch = html.replace(
+      /<span [^>]*data-testid="event-card-prematch-(?:home|away)"[^>]*>[\s\S]*?%<\/span>/g,
+      "",
+    );
+    // Non-vacuous in both directions: the replace must actually have removed
+    // the two spans (otherwise a regex that matches nothing would make the
+    // assertion below a test of the raw markup and it would fail loudly), and
+    // what remains must carry no percent at all.
+    expect(html).toContain("55%");
+    expect(withoutPrematch).not.toContain("event-card-prematch-home");
+    expect(withoutPrematch).not.toContain("%");
+
+    // ── #2764 AMENDMENT ──────────────────────────────────────────────────
+    //
+    // This test used to assert `not.toContain("55%")` / `not.toContain("45%")`
+    // — the opening-odds pair — with the note "removed with the settled
+    // redesign". That was true of the redesign and is no longer the product's
+    // intent. Alex, on a column of FINAL cards: *"How come none of these show
+    // pre-event probability?"* (#2764, and ux/1036 before it on the other
+    // three surfaces).
+    //
+    // So 55/45 is back on a settled card, and it is NOT a regression of
+    // L2-112: it is a different element making a different claim. The chip was
+    // a live-weight number in the card's loudest slot; this is a grey
+    // `text-[11px]` prior beside the name it is about, under an explicit
+    // `Pre-match · books` label. L2-112 removed a number that read as current.
+    // #2764 adds one that says out loud that it is not.
+    //
+    // The assertion is kept — inverted — rather than deleted, so the pair is
+    // still pinned to a fixed expectation and a future change has to come
+    // through this comment.
+    expect(html).toContain("55%");
+    expect(html).toContain("45%");
+    expect(html).toContain('data-testid="event-card-prematch-home"');
+    expect(html).toContain("Pre-match · books");
+
+    // The absence assertions above are only worth anything if they name
+    // strings something actually emits. A PREGAME card renders the bar and the
+    // chips, so this pins both: a rename or a typo goes red here instead of
+    // making the `not.toContain` lines pass forever on a string nothing
+    // produces. (This caught a real one — see the note below.)
+    const pregame = renderToStaticMarkup(
+      React.createElement(EventCard, { event: makeEvent() })
+    );
+    expect(pregame).toContain('aria-label="Win probability"');
+    expect(pregame).toContain("62%");
+
+    // ⚠️ NOT asserted here, deliberately, and it is a live defect rather than
+    // an oversight: `text-prob-md` / `text-prob-sm` — the 20px and 16px chip
+    // sizes this card asks for at L515 and L618 — never reach the DOM. They go
+    // through `cn`, which is `twMerge(clsx(...))`, and tailwind-merge cannot
+    // tell the project's custom `text-prob-md` (a fontSize) from
+    // `text-text-primary` (a colour): it reads both as the same `text-*` group
+    // and keeps the last one. The pregame chip renders
+    // `font-mono tabular-nums text-text-primary` with no size class at all, so
+    // the favourite/underdog size hierarchy on this card is silently gone.
+    // Filed separately; it is not #2764's to fix, because fixing it changes
+    // the PREGAME card and #2764's acceptance requires leaving that untouched.
   });
 });
 
