@@ -28,9 +28,14 @@ diagnosis. Re-measured over production's 222 ``name_mismatch`` receipts
 (2026-09-03): **109 stay** ``name_mismatch`` and 113 defer to the probe. The
 109 are real gate failures with nameable causes, all of them ours:
 
-* the gate cannot match a name of three characters or fewer AT ALL — the
+* ~~the gate cannot match a name of three characters or fewer AT ALL — the
   containment branch needs 4+, the word-subset branch needs 2+ words — so
-  "LSU", "SMU", "BYU", "VMI", "USC" never match their own events;
+  "LSU", "SMU", "BYU", "VMI", "USC" never match their own events~~ **RETIRED
+  2026-09-06 by lane1's Q457 (``d514e47d``, #2331).** A whole-word acronym that
+  the long name WRITES in capitals now reaches its own row, so "LSU" does match
+  "LSU Tigers". The substring floor it was mistaken for survives: "LA" still
+  does not reach "Los Angeles Lakers", and neither does "CLE" reach "Cleveland
+  Browns" — an acronym embedded in a word is not a whole word of it;
 * Kalshi's abbreviated fronts ("CLE Browns", "JAC Jaguars") are 2-word names
   whose first token is not a subset of the event's;
 * leading articles ("The Citadel" / "Citadel Bulldogs"), parentheticals
@@ -39,6 +44,17 @@ diagnosis. Re-measured over production's 222 ``name_mismatch`` receipts
 
 Those are lane1's to fix under D35 (#2693); this file's job is that the receipt
 NAMES them instead of hiding them.
+
+**THE 109 IS A 2026-09-03 CENSUS AND ONE OF ITS THREE CAUSES HAS SINCE BEEN
+FIXED, SO THE NUMBER IS STALE HIGH AND IS DELIBERATELY NOT RESTATED HERE.**
+Q457 measured its own effect on a different population (43 unlinked Kalshi
+markets carrying a short team name with a live candidate event: 1 linked
+before, 23 after) — that is not this population and does not convert into it,
+so guessing a new figure from it would be arithmetic dressed as a measurement.
+The re-count belongs to the measurement lane and is parked in
+``.claude/handoff/PARKED-MEASUREMENTS.md``; it is not a build-lane census.
+Nothing in this file asserts the 109 — the tests below pin SHAPES, one per
+cause, which is why retiring a cause costs a docstring and not a rewrite.
 
 The 113 that defer are the real coincidences. The mechanism is the retrieval
 ILIKE, which fires on ONE token:
@@ -560,11 +576,24 @@ def test_coverage_survives_a_gate_that_refuses_everything():
 
 
 def test_a_three_letter_school_covers_its_own_event():
-    """The largest single cause among the 109, and invisible to the gate.
+    """The largest single cause among the 109 when they were counted, and — at
+    that time — invisible to the gate. Nine of the sampled production rows are
+    this exact shape.
 
-    ``_fuzzy_team_match`` skips its containment branch below 4 characters and
-    its word-subset branch below 2 words, so "LSU" cannot match "LSU Tigers".
-    Nine of the sampled production rows are this exact shape.
+    **The gate has since learned this shape** (Q457, ``d514e47d``, #2331): "LSU"
+    now matches "LSU Tigers", so these rows are no longer gate failures and the
+    cause is retired from the header's list.
+
+    What this test still guards is the thing the retirement did not touch, and
+    the reason it is kept rather than deleted: ``row_coverage`` reaches the same
+    verdict WITHOUT asking the gate. That independence is the whole finding
+    CERT-783 blocked the first patch over, and it has to hold whichever way the
+    gate happens to be tuned this week — a coverage measure that agreed with the
+    gate here only because the gate now agrees with it would be measuring the
+    predicate under diagnosis again, just with the sign flipped. The live
+    asymmetric case (coverage sees it, gate refuses it) is Browns/Jaguars in
+    Part 5 above; this one is now a case where they concur, and concurrence
+    reached independently is still evidence.
     """
     assert mr.row_coverage(
         "Clemson vs LSU", "Clemson", "LSU", "LSU Tigers", "Clemson Tigers",
