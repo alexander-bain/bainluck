@@ -279,6 +279,98 @@ def shares_tournament(name: str | None, tokens: set[str]) -> bool:
     return bool(tournament_tokens(name) & tokens)
 
 
+def winner_field_candidates(markets, slug: str, real_outcome_count) -> list:
+    """Every market that IS the tournament named by `slug` — one per rendering.
+
+    The identity filter of `select_winner_field`, lifted out whole so a caller
+    can see the WHOLE tournament and not only its richest draw. Nothing about
+    the filter changed; `select_winner_field` is now this plus the tie-break,
+    and its docstring carries the reasoning for both.
+
+    Why a caller wants the set (#3673): identity is one question and the
+    tournament's DATE is another, and the market that answers the first is not
+    reliably the one that answers the second. Kalshi's "US Open Men's Singles
+    Winner" — the fullest draw, so the winner of the tie-break — carries
+    `resolution_date 2026-09-28 02:00Z`, its contract expiration backstop.
+    Polymarket's row on the same tournament carries `2026-09-13 00:00Z`, the
+    day of the final. `/hub/tennis` read the second and printed "Ends Sun, Sep
+    13"; the concept page read the first and printed "Sep 27", in the same
+    session, about the same tournament, mid-tournament. See
+    `tournament_end_date` for the rule that ends that disagreement.
+    """
+    from app.utils.name_normalization import clean_slug
+
+    slug_gender = tennis_gender(slug)
+    slug_tokens = canonical_slug_tokens(slug)
+
+    candidates = []
+    for m in markets:
+        if not is_winner_market(m.name):
+            continue
+        exact = clean_slug(m.name or "") == slug
+        subset = bool(slug_tokens) and slug_tokens <= canonical_tokens(m.name)
+        if not (exact or subset):
+            continue
+        if not exact and not is_winner_field(m.name, real_outcome_count(m)):
+            continue
+        if slug_gender:
+            mg = tennis_gender(m.name)
+            if mg and mg != slug_gender:
+                continue
+        candidates.append(m)
+    return candidates
+
+
+def pick_richest_winner_field(candidates, slug: str, real_outcome_count):
+    """The tie-break half of `select_winner_field`: richest draw wins, or None."""
+    from app.utils.name_normalization import clean_slug
+
+    if not candidates:
+        return None
+
+    def _rank(m):
+        vol = float(getattr(m, "volume_24h", None) or getattr(m, "volume", None) or 0.0)
+        return (real_outcome_count(m), vol, clean_slug(m.name or "") == slug, -(m.id or 0))
+
+    return max(candidates, key=_rank)
+
+
+def tournament_end_date(group, *, default=None):
+    """When the tournament ENDS, read across every source that renders it.
+
+    THE EARLIEST `resolution_date` IN THE GROUP, never one source's. A venue's
+    resolution date is a CONTRACT lifecycle field, not a sporting fact, and the
+    two diverge in one direction: a contract may stay open long after the
+    trophy is lifted, never the reverse. Kalshi's US Open winner market expires
+    fifteen days after the final (measured 2026-09-06, mid-tournament: Kalshi
+    `2026-09-28 02:00Z` vs Polymarket `2026-09-13 00:00Z`, the day of the final
+    itself) — gotcha family "Kalshi's time fields are contract lifecycle, not
+    sport reality". So the earliest date any source states is the closest thing
+    to the tournament's own end that is reachable from here, and taking it is
+    not a guess: it is a value we hold, read off another rendering of the same
+    event.
+
+    A GROUP WITH NO DATE AT ALL RETURNS `default` (normally None), because a
+    date we do not have is absent and never invented — the UX-P178 rule.
+
+    ⚠️ WHY NOT "the earliest date still in the FUTURE", which looks safer: on
+    the afternoon of the final that rule reads Polymarket's midnight-of-finals-
+    day as spent and falls through to Kalshi's backstop, so the flagship page
+    would print "Sep 28" on exactly the day the tournament is decided — the
+    filed bug, surviving in the one hour that matters most. The premature
+    "settled" that plain-earliest can produce is already handled downstream and
+    was already reachable before this function existed: `build_event`'s L2-88
+    block demotes a settled-by-date event back to `live` when its winner market
+    is still open and nothing has been crowned.
+    """
+    dates = [
+        m.resolution_date
+        for m in group
+        if getattr(m, "resolution_date", None) is not None
+    ]
+    return min(dates) if dates else default
+
+
 def select_winner_field(markets, slug: str, real_outcome_count):
     """Pick the market that IS the tournament named by `slug`, or None.
 
@@ -312,74 +404,57 @@ def select_winner_field(markets, slug: str, real_outcome_count):
     never the diagnosis of it. Re-derive the mechanism from the running system
     before you fix anything here, however confidently the ticket states it, and
     whoever signed it.
+
+    ── The two halves, and where they now live ──────────────────────────────
+    The identity filter is `winner_field_candidates` and the tie-break is
+    `pick_richest_winner_field`; this function is their composition and its
+    behaviour is unchanged. Every note below still describes the code, one call
+    down. #3673 split them because the DATE has to be read across the whole
+    candidate set while identity keeps coming from the single richest draw.
+
+    #1793: the filter uses IDENTITY tokens, not `tournament_tokens` — the
+    child-association token space drops short words, which deleted the only
+    word identifying the US Open.
+
+    The field floor guards INFERENCE, not a direct request. An EXACT slug match
+    is the caller naming this market — search and typeahead both emit
+    `event:tennis:{clean_slug(name)}` for any winner market
+    (`routes/events.py:3307`, `:4033`, `utils/concept_links.py:235`), and
+    production really does return
+    `event:tennis:serena-williams-to-win-a-tournament-in-2026` for the query
+    "serena". Refusing those would turn a wrong page into a DEAD link — a broken
+    shelf, which is not an improvement. A SUBSET match is the resolver INFERRING
+    that this market represents the tournament the slug named, and that is where
+    the damage was: a one-outcome novelty prop stood in as Wimbledon's primary,
+    because `is_winner_market` only reads the words in a name. Inference has to
+    clear the higher bar.
+
+    Richest wins the tie-break: most real competitors, then higher 24h volume,
+    then an exact-slug match, then lowest id (stable / deterministic).
+
+    ⚠️ THAT IS A TIE-BREAK, NEVER AN IDENTITY MECHANISM (ruling 031 — assigned
+    identity beats inferred). It is only sound because the candidate set has
+    already been filtered to markets that ARE the tournament the slug names.
+    Among four renderings of one tournament, "most competitors" picks the
+    fullest draw and that is the L2-65 alias-convergence feature working as
+    designed. Weaken the identity filter and the tie-break silently becomes
+    resolution BY POPULARITY, which is the #1793 defect exactly: with the US
+    Open reduced to the token {"open"}, Cincinnati entered the candidate set and
+    won on a 78-player draw against the US Open's own 41. Nothing was broken in
+    the ranking — it faithfully ranked a set that should never have contained
+    Cincinnati. That is why the fix went upstream into the token space, and it
+    is why a bigger draw must never be allowed to answer the question "which
+    tournament is this".
+
+    Corollary, because it was the tempting wrong read on #1793: this does NOT
+    self-heal when the US Open's own draw fills out. Popularity that happens to
+    agree with identity is still not identity; it just stops being visibly wrong.
     """
-    from app.utils.name_normalization import clean_slug
-
-    slug_gender = tennis_gender(slug)
-    # #1793: IDENTITY tokens, not `tournament_tokens`. The child-association token
-    # space drops short words, which deleted the only word identifying the US Open.
-    slug_tokens = canonical_slug_tokens(slug)
-
-    candidates = []
-    for m in markets:
-        if not is_winner_market(m.name):
-            continue
-        exact = clean_slug(m.name or "") == slug
-        subset = bool(slug_tokens) and slug_tokens <= canonical_tokens(m.name)
-        if not (exact or subset):
-            continue
-        # #1793: the field floor guards INFERENCE, not a direct request.
-        #
-        # An EXACT slug match is the caller naming this market — search and
-        # typeahead both emit `event:tennis:{clean_slug(name)}` for any winner
-        # market (`routes/events.py:3307`, `:4033`, `utils/concept_links.py:235`),
-        # and production really does return
-        # `event:tennis:serena-williams-to-win-a-tournament-in-2026` for the query
-        # "serena". Refusing those would turn a wrong page into a DEAD link — a
-        # broken shelf, which is not an improvement.
-        #
-        # A SUBSET match is the resolver INFERRING that this market represents the
-        # tournament the slug named, and that is where the damage was: a
-        # one-outcome novelty prop stood in as Wimbledon's primary, because
-        # `is_winner_market` only reads the words in a name. Inference has to clear
-        # the higher bar.
-        if not exact and not is_winner_field(m.name, real_outcome_count(m)):
-            continue
-        if slug_gender:
-            mg = tennis_gender(m.name)
-            if mg and mg != slug_gender:
-                continue
-        candidates.append(m)
-
-    if not candidates:
-        return None
-
-    # Richest wins: most real competitors, then higher 24h volume, then an
-    # exact-slug match, then lowest id (stable / deterministic).
-    #
-    # ⚠️ THIS IS A TIE-BREAK, NEVER AN IDENTITY MECHANISM (ruling 031 — assigned
-    # identity beats inferred). It is only sound because `candidates` has already
-    # been filtered to markets that ARE the tournament the slug names. Among four
-    # renderings of one tournament, "most competitors" picks the fullest draw and
-    # that is the L2-65 alias-convergence feature working as designed.
-    #
-    # Weaken the identity filter above and this line silently becomes resolution
-    # BY POPULARITY, which is the #1793 defect exactly: with the US Open reduced to
-    # the token {"open"}, Cincinnati entered the candidate set and won here on a
-    # 78-player draw against the US Open's own 41. Nothing was broken at this
-    # line — it faithfully ranked a set that should never have contained
-    # Cincinnati. That is why the fix went upstream into the token space and not
-    # into `_rank`, and it is why a bigger draw must never be allowed to answer
-    # the question "which tournament is this".
-    #
-    # Corollary, because it was the tempting wrong read on #1793: this does NOT
-    # self-heal when the US Open's own draw fills out. Popularity that happens to
-    # agree with identity is still not identity; it just stops being visibly wrong.
-    def _rank(m):
-        vol = float(getattr(m, "volume_24h", None) or getattr(m, "volume", None) or 0.0)
-        return (real_outcome_count(m), vol, clean_slug(m.name or "") == slug, -(m.id or 0))
-
-    return max(candidates, key=_rank)
+    return pick_richest_winner_field(
+        winner_field_candidates(markets, slug, real_outcome_count),
+        slug,
+        real_outcome_count,
+    )
 
 
 def tennis_gender(text: str | None) -> str:
@@ -596,17 +671,19 @@ async def list_tennis_tournament_concepts(
         # `upcoming` with none — trading a visible duplicate for a silent
         # subtraction, which is a worse bug than the one being fixed.
         #
-        # So identity comes from the winner and the DATE comes from the group: the
-        # winner's own date when it has one, else the earliest a sibling knows.
+        # So identity comes from the winner and the DATE comes from the group.
         # This is not guessing a date we do not have — it is reading one we DO
         # have, off another rendering of the same tournament.
-        end_at = winner.resolution_date
-        if end_at is None:
-            sibling_dates = [
-                m.resolution_date for m in ms if m.resolution_date is not None
-            ]
-            if sibling_dates:
-                end_at = min(sibling_dates)
+        #
+        # #3673: and it is the EARLIEST the group states, not "the winner's own
+        # when it has one". The winner's own can be a venue's expiration
+        # backstop — Kalshi's US Open winner market expires fifteen days after
+        # the final — so preferring it re-opens exactly the disagreement this
+        # block exists to prevent, in the one case where the richest draw is
+        # also the latest-expiring one. `tournament_end_date` is the shared rule;
+        # `TennisEventAdapter.build_event` reads the same function, which is what
+        # makes the rail and the page agree by construction rather than by luck.
+        end_at = tournament_end_date(ms)
         # UX-P208: no `proximity_live` here, so the rail never claims a
         # tournament has begun — it has no evidence either way (see
         # `tennis_status`). UX-P209/CERT-519: and it does not claim the opposite
@@ -711,9 +788,16 @@ class TennisEventAdapter:
                 and not is_placeholder_outcome_name(o.name)
             )
 
-        winner = select_winner_field(markets, slug, _real_outcome_count)
+        # #3673: the candidate set is kept, not discarded. `winner` decides
+        # IDENTITY (the richest draw — L2-65 alias convergence); the set decides
+        # the tournament's DATE, because the richest draw is not reliably the
+        # one that knows when the tournament ends. On the US Open, mid-
+        # tournament, the two answers were fifteen days apart.
+        candidates = winner_field_candidates(markets, slug, _real_outcome_count)
+        winner = pick_richest_winner_field(candidates, slug, _real_outcome_count)
         if winner is None:
             return None
+        end_at = tournament_end_date(candidates)
 
         # Canonical key from the WINNER's name so every alias slug (bare or
         # differently-named-per-source) reports the same event key.
@@ -734,8 +818,18 @@ class TennisEventAdapter:
         # and a draw with played matches is a draw that started. That needs its
         # own measurement and guards, so it is parked (UX-P208-1) rather than
         # smuggled into a card fix.
+        #
+        # #3673: the phase reads `end_at`, the group's date, for the same reason
+        # the header prints it. This is not a cosmetic follow-on — it is the
+        # mechanism behind the filed bug. `proximity_live` calls a tournament
+        # live within 21 days of the date it is handed; Kalshi's US Open
+        # backstop is 22 days out on the Saturday of the second week, so the
+        # page took the ONE fall-through path this function has and announced an
+        # in-progress Grand Slam as UPCOMING. Reading the group's Sep 13 puts it
+        # 6 days out and the page says LIVE, which is what a reader watching the
+        # matches already knows.
         event_status = tennis_status(
-            winner.status, winner.resolution_date, now, proximity_live=True
+            winner.status, end_at, now, proximity_live=True
         )
 
         # Competitors = real players (drop the field-remainder "Other" + placeholders).
@@ -905,10 +999,11 @@ class TennisEventAdapter:
                 "name": winner.name,
                 "status": event_status,
                 "start_date": None,
-                "end_date": (
-                    winner.resolution_date.isoformat()
-                    if winner.resolution_date is not None else None
-                ),
+                # #3673: the GROUP's date (see `tournament_end_date`), which is
+                # the same value `/hub/tennis` prints on its card for this
+                # tournament. The two surfaces are one click apart and used to
+                # answer this differently.
+                "end_date": (end_at.isoformat() if end_at is not None else None),
                 "venue": None,
                 "location": None,
                 "is_major": tennis_is_major(winner.name),
