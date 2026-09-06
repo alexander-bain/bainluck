@@ -11,6 +11,7 @@ with sport-aware keyword classification for awards, series, and props.
 import asyncio
 import json
 import logging
+from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, Path
 from sqlalchemy import select, and_, or_, func, literal_column
@@ -989,7 +990,12 @@ def _sport_category_for(sport_key: str) -> str:
     return _SPORT_KEY_TO_LLM_CATEGORY.get(sport_category, sport_category)
 
 
-def _league_scope_filters(sport_key: str, now: datetime) -> list:
+def _league_scope_filters(
+    sport_key: str,
+    now: datetime,
+    *,
+    also_sport_keys: Sequence[str] = (),
+) -> list:
     """Everything that scopes a market to THIS league, and nothing else.
 
     UX-P180 (#2167). Extracted so `build_league` and the hub's linked-matches rail
@@ -1002,14 +1008,47 @@ def _league_scope_filters(sport_key: str, now: datetime) -> list:
     that made `/hub/tennis` head a rail "MATCHES · 56" over zero matches. Keeping
     it out of the shared helper is what stops the next caller inheriting it by
     accident.
+
+    ── UX-P182 (#3447): `also_sport_keys`, for a hub that spans two tours ──
+
+    A LEAGUE is one tour; a HUB is a sport. `/hub/tennis` is the site's only
+    tennis surface and it was declared `sport_key="tennis_atp"`, so the league OR
+    below resolved to `KXATP%` + `%ATP%`/`%US Open%Men%`/… and the women's draw
+    could not enter: measured on production 2026-09-06, the rail carried 126 cards
+    — 80 of them men's Challenger matches — and zero `KXWTA*` rows, while the
+    page's own starred MARQUEE card was the Women's US Open Winner.
+
+    The extra keys widen the LEAGUE clause only. Everything else — status, the
+    resolution-date floor, `llm_sport_category`, the `% at %` exclusion — is
+    unchanged and still applies to every row, so this can add rows from a sibling
+    tour and can never add a row the primary scope would have rejected for any
+    other reason. Callers that pass nothing get byte-identical filters.
+
+    Raises `ValueError` when an extra key belongs to a different sport category:
+    `llm_sport_category` is a single-valued equality above, so a mismatched key
+    would widen the OR while the AND above still rejected every row it added —
+    a filter that reads wider and returns nothing. Loud beats silent (D55).
     """
+    scope_keys = [sport_key, *also_sport_keys]
+    primary_category = _sport_category_for(sport_key)
+    mismatched = {
+        k: _sport_category_for(k)
+        for k in also_sport_keys
+        if _sport_category_for(k) != primary_category
+    }
+    if mismatched:
+        raise ValueError(
+            f"also_sport_keys must share {sport_key}'s sport category "
+            f"{primary_category!r}; got {mismatched!r}"
+        )
+
     filters = [
         FuturesMarket.status == "open",
         or_(
             FuturesMarket.resolution_date.is_(None),
             FuturesMarket.resolution_date >= now,
         ),
-        FuturesMarket.llm_sport_category == _sport_category_for(sport_key),
+        FuturesMarket.llm_sport_category == primary_category,
     ]
 
     if sport_key in _CATEGORY_WIDE_FUTURES_ONLY:
@@ -1022,17 +1061,16 @@ def _league_scope_filters(sport_key: str, now: datetime) -> list:
     else:
         # League-level filtering: use ticker prefix (Kalshi) + name patterns
         league_conditions = []
-        ticker_prefixes = LEAGUE_TICKER_PREFIXES.get(sport_key, [])
-        for prefix in ticker_prefixes:
-            league_conditions.append(FuturesMarket.external_id.ilike(f"{prefix}%"))
+        for key in scope_keys:
+            for prefix in LEAGUE_TICKER_PREFIXES.get(key, []):
+                league_conditions.append(FuturesMarket.external_id.ilike(f"{prefix}%"))
 
-        name_patterns = LEAGUE_NAME_PATTERNS.get(sport_key, [])
-        for pattern in name_patterns:
-            league_conditions.append(FuturesMarket.name.ilike(pattern))
+            for pattern in LEAGUE_NAME_PATTERNS.get(key, []):
+                league_conditions.append(FuturesMarket.name.ilike(pattern))
 
-        # Also match llm_league if set
-        league_short = sport_key.split("_", 1)[1] if "_" in sport_key else sport_key
-        league_conditions.append(FuturesMarket.llm_league.ilike(league_short))
+            # Also match llm_league if set
+            league_short = key.split("_", 1)[1] if "_" in key else key
+            league_conditions.append(FuturesMarket.llm_league.ilike(league_short))
 
         if league_conditions:
             filters.append(or_(*league_conditions))
@@ -1553,10 +1591,23 @@ LINKED_MATCH_LOOKBACK = timedelta(hours=12)
 #: remainder does not exist (the count travels in `section_counts`).
 LINKED_MATCH_LIMIT = 200
 
-#: Cap on the market pool read before the event read narrows it. Generous
-#: because it is a per-LEAGUE scope, not a per-sport one: measured on production
-#: 2026-09-05 the whole `tennis_atp` pool was 725 rows mid-US-Open.
-LINKED_MATCH_POOL_LIMIT = 1500
+#: Cap on the market pool read before the event read narrows it.
+#:
+#: UX-P182 (#3447) re-sized this. It was 1500 for a per-LEAGUE scope — "measured
+#: on production 2026-09-05 the whole `tennis_atp` pool was 725 rows mid-US-Open"
+#: — and `also_sport_keys` makes the tennis hub's scope per-SPORT, which is a
+#: different population: measured 2026-09-06, ATP side 686 rows, WTA side 418,
+#: 1,104 together. That is 74% of the old cap, and the pool query carries no
+#: ORDER BY, so the row that falls off the end is whichever one Postgres reached
+#: last. A shared cap over two unequal populations does not degrade evenly — it
+#: caps the smaller one out, and the smaller one here is the women's draw, which
+#: is the entire defect this ship exists to remove.
+#:
+#: So the cap is sized for the widened scope AND truncation is made loud below:
+#: the read asks for one row more than the cap and warns when it gets it. A
+#: number chosen from today's maximum is refuted by next season's; a log line
+#: that fires the first time it is wrong is not.
+LINKED_MATCH_POOL_LIMIT = 4000
 
 #: Tiers that can never produce a `matches` row — `_assign_section` sends 1, 2
 #: and 4 straight to "championship". Pruned in SQL so the event read below has
@@ -1608,6 +1659,7 @@ async def build_linked_matches(
     db: AsyncSession,
     *,
     now: datetime | None = None,
+    also_sport_keys: Sequence[str] = (),
 ) -> list[dict]:
     """The head-to-head markets for this league's CURRENTLY PLAYABLE events.
 
@@ -1615,6 +1667,12 @@ async def build_linked_matches(
     `event_id` predicate. Returns rows in the section shape every hub/league card
     already renders, ordered live-first then soonest-first, so a person opening
     the page during a tournament sees what is on now and next.
+
+    `also_sport_keys` widens the LEAGUE clause to sibling tours of the same sport
+    — UX-P182 (#3447), where `/hub/tennis` could show the men's draw and not the
+    women's. See `_league_scope_filters`. It reaches this rail and NOT
+    `build_league`, because `/api/leagues/tennis_atp` is a tour page and is
+    correct as it stands: a hub is a sport, a league is a tour.
 
     Only rows `_assign_section` calls `matches` survive: the same query also
     lands hundreds of markets ABOUT a match ("… : Total Sets O/U 3.5"), and a
@@ -1644,7 +1702,7 @@ async def build_linked_matches(
     """
     now = now or datetime.now(timezone.utc)
 
-    filters = _league_scope_filters(sport_key, now)
+    filters = _league_scope_filters(sport_key, now, also_sport_keys=also_sport_keys)
     # NB: no `event_id IS NOT NULL` here — see the docstring. Filtered in Python.
     filters.append(
         or_(
@@ -1657,7 +1715,9 @@ async def build_linked_matches(
         select(FuturesMarket)
         .options(selectinload(FuturesMarket.outcomes))
         .where(*filters)
-        .limit(LINKED_MATCH_POOL_LIMIT)
+        # One MORE than the cap, so the truncation test below can tell "exactly
+        # full" from "overflowed" — see LINKED_MATCH_POOL_LIMIT.
+        .limit(LINKED_MATCH_POOL_LIMIT + 1)
     )
 
     try:
@@ -1668,9 +1728,24 @@ async def build_linked_matches(
         logger.warning("linked matches timed out for %s", sport_key)
         raise
 
+    pool = list(result.scalars().unique().all())
+    if len(pool) > LINKED_MATCH_POOL_LIMIT:
+        # The pool outgrew its cap. Which rows survive is undefined — the query
+        # has no ORDER BY — so this can drop an entire tour from a hub that spans
+        # two, without changing anything a reader could point at. Say so.
+        logger.warning(
+            "linked match pool truncated for %s (+%s): read %s rows at cap %s; "
+            "rows beyond the cap are arbitrary and a whole league can vanish",
+            sport_key,
+            ",".join(also_sport_keys) or "-",
+            len(pool),
+            LINKED_MATCH_POOL_LIMIT,
+        )
+        pool = pool[:LINKED_MATCH_POOL_LIMIT]
+
     candidates = [
         m
-        for m in result.scalars().unique().all()
+        for m in pool
         if m.event_id is not None and _assign_section(m, sport_key) == "matches"
     ]
     if not candidates:

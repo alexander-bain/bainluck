@@ -74,6 +74,21 @@ class HubConfig:
     blurb: str
     # sport_key feeding the league-futures sections (futures/awards/props).
     sport_key: str
+    # ── UX-P182 (#3447): a hub is a SPORT, a league key is a TOUR ──
+    #
+    # Sibling league scopes whose matches also belong on this hub. `/hub/tennis`
+    # is the site's only tennis surface and was declared `tennis_atp`, so on US
+    # Open finals weekend its rail carried 126 cards — 80 of them men's
+    # Challenger matches — and not one women's match, while the page's own
+    # starred MARQUEE card was the Women's US Open Winner. Sabalenka, Swiatek,
+    # Gauff and Osaka rendered nowhere on it.
+    #
+    # This widens the MATCHES rail only, not `get_league_futures`: `/api/leagues/
+    # tennis_atp` is a tour page and is right to be one tour. Every key must
+    # share the primary's `llm_sport_category` — `_league_scope_filters` raises
+    # otherwise, and `test_route_hub.py` asserts it over every config so a bad
+    # pairing fails at test time rather than emptying a rail in production.
+    extra_match_sport_keys: tuple[str, ...] = field(default_factory=tuple)
     # domain of the event-concept lister used for the "upcoming" rail. None means
     # this competition has no grouped event pages yet (sections-only hub).
     concept_domain: str | None = None
@@ -213,6 +228,9 @@ HUB_CONFIGS: dict[str, HubConfig] = {
             "— every market translated into plain probabilities."
         ),
         sport_key="tennis_atp",
+        # UX-P182 (#3447): the women's draw. Both tours are `llm_sport_category
+        # = "tennis"`; only the league clause differs (KXWTA*/%WTA%/llm_league).
+        extra_match_sport_keys=("tennis_wta",),
         concept_domain="tennis",
         # UX-P180 (#2167): tennis earns the props split. Registered for ufc and
         # boxing only until now, which is why tennis ranking props had no route
@@ -465,7 +483,9 @@ async def build_hub(cfg: HubConfig, db: AsyncSession) -> dict:
     # live-first then soonest-first, and the unlinked remainder keeps its own
     # order behind them.
     try:
-        linked_matches = await build_linked_matches(cfg.sport_key, db)
+        linked_matches = await build_linked_matches(
+            cfg.sport_key, db, also_sport_keys=cfg.extra_match_sport_keys
+        )
     except Exception:
         logger.exception("hub linked matches failed for %s", cfg.slug)
         linked_matches = []
