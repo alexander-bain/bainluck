@@ -79,14 +79,79 @@ final class SportVocabTests: XCTestCase {
     /// A widget that just goes quiet reads as broken, so the note names both
     /// units. It exists ONLY where the mismatch does.
     func testUnitMismatchNoteIsTennisOnlyAndNamesBothUnits() {
-        let note = SportVocab.forSport("tennis_wta_us_open").unitMismatchNote
+        let note = SportVocab.forSport("tennis_wta_us_open").unitMismatchNote()
         XCTAssertNotNil(note)
         XCTAssertTrue(note!.contains("sets"), "must name what the scoreboard reports")
         XCTAssertTrue(note!.contains("games"), "must name what the market quotes")
 
         for key in ["baseball_mlb", "basketball_nba", "americanfootball_nfl", "cricket_ipl", ""] {
-            XCTAssertNil(SportVocab.forSport(key).unitMismatchNote,
+            XCTAssertNil(SportVocab.forSport(key).unitMismatchNote(),
                          "\(key) has no mismatch to explain")
+            XCTAssertNil(SportVocab.forSport(key).unitMismatchNote(settled: true),
+                         "\(key) has no mismatch to explain once it is over either")
+            XCTAssertNil(SportVocab.forSport(key).projectedMarginNote(),
+                         "\(key) has no line to explain away")
+            XCTAssertNil(SportVocab.forSport(key).projectedMarginNote(settled: true),
+                         "\(key) has no line to explain away once it is over either")
+        }
+    }
+
+    // MARK: - #3465: the sentence is tensed to whether the match is over
+
+    /// A settled US Open match (Tabilo 0-3 Zverev, event 15304537) read
+    /// *"Played games are not captured YET … The line below IS the books'
+    /// PROJECTED game margin"* under a hero reading `FINAL · Zverev Win`.
+    ///
+    /// 🔴 BOTH DIRECTIONS. The damaging regression is the mirror one —
+    /// past-tensing a match still being played, where "not captured yet" is
+    /// true and useful — so the live reading is pinned as hard as the settled
+    /// one. A test that only checked the settled string would go green on a
+    /// function that returned the past tense unconditionally.
+    func testTheChartsNoteIsTensedToWhetherTheMatchIsOver() {
+        let vocab = SportVocab.forSport("tennis_atp_us_open")
+
+        XCTAssertEqual(
+            vocab.projectedMarginNote(),
+            "Played games are not captured yet — the scoreboard reports sets. "
+                + "The line below is the books' projected game margin.")
+        XCTAssertEqual(
+            vocab.projectedMarginNote(settled: true),
+            "Played games were not captured — the scoreboard reported sets. "
+                + "The line below was the books' projected game margin.")
+    }
+
+    func testTheMapsNoteIsTensedToWhetherTheMatchIsOver() {
+        let vocab = SportVocab.forSport("tennis_atp_us_open")
+
+        XCTAssertEqual(
+            vocab.unitMismatchNote(),
+            "The scoreboard reports sets, this market quotes games — "
+                + "we do not hold the games played yet.")
+        XCTAssertEqual(
+            vocab.unitMismatchNote(settled: true),
+            "The scoreboard reported sets, this market quoted games — "
+                + "we did not hold the games played.")
+    }
+
+    /// The tense-carrying words, asserted as present/absent rather than through
+    /// a substring both strings satisfy (UX-P238-5). `"sets"` appears in both
+    /// tenses, so a `contains("sets")` check cannot tell them apart.
+    func testNoPresentTenseSurvivesTheFinalWhistleAndNoPastTensePrecedesIt() {
+        let vocab = SportVocab.forSport("tennis_wta_us_open")
+
+        for live in [vocab.projectedMarginNote()!, vocab.unitMismatchNote()!] {
+            XCTAssertTrue(live.contains("yet"), "a match still on IS still waiting: \(live)")
+            XCTAssertTrue(live.contains("reports"))
+            XCTAssertFalse(live.contains("reported"))
+            XCTAssertFalse(live.contains("was the books'"))
+        }
+
+        for done in [vocab.projectedMarginNote(settled: true)!,
+                     vocab.unitMismatchNote(settled: true)!] {
+            XCTAssertFalse(done.contains("yet"),
+                           "a finished match is not waiting for anything: \(done)")
+            XCTAssertTrue(done.contains("reported"))
+            XCTAssertFalse(done.contains("reports"))
         }
     }
 

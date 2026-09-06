@@ -42,8 +42,12 @@ struct ScoreDifferentialChartView: View {
     private var awayShort: String { sides.away }
 
     private var isGameStarted: Bool {
-        eventStatus == "live" || eventStatus == "completed" || eventStatus == "closed"
+        eventStatus == "live" || isFinished
     }
+
+    /// Read through `EventState` rather than open-coded, so this view cannot
+    /// drift from the one place native decides what "over" means (#3465).
+    private var isFinished: Bool { EventState.isFinished(eventStatus) }
 
     /// ux/1034 B5, ported from `ScoreDifferentialChart.tsx`: the actual line is
     /// only drawn where the scoreboard counts the unit the projection is in.
@@ -59,13 +63,22 @@ struct ScoreDifferentialChartView: View {
     private var scoreboardCountsTheUnit: Bool { vocab.scoreboardCountsTheUnit }
 
     /// The sentence the chart owes a reader whose actual line is missing.
+    ///
+    /// #3465 — IT IS TENSED, AND IT USED TO BE WRITTEN ONLY FOR A MATCH STILL
+    /// BEING PLAYED. Photographed on a settled US Open match (Tabilo 0-3
+    /// Zverev, event 15304537), under a hero reading `FINAL · Zverev Win` and a
+    /// win-probability chart that had correctly flipped to `● Final`, this
+    /// section still read:
+    ///
+    ///     Played games are not captured YET — the scoreboard reports sets.
+    ///     The line below IS the books' PROJECTED game margin.
+    ///
+    /// Two false tenses on a match that is over: "yet" promises a capture that
+    /// will never come, and a finished match's projection is history, not a
+    /// forecast. Alex's standing ruling — settled means settled — covers the
+    /// prose under a chart as much as the chart itself.
     private var unitMismatchNote: String? {
-        guard !scoreboardCountsTheUnit, !vocab.scoreboardUnit.isEmpty, !vocab.unit.isEmpty else {
-            return nil
-        }
-        return "Played \(vocab.unit) are not captured yet — the scoreboard reports "
-            + "\(vocab.scoreboardUnit). The line below is the books' projected "
-            + "\(vocab.unitSingular) margin."
+        vocab.projectedMarginNote(settled: isFinished)
     }
 
     private var gameStartDate: Date? {
@@ -163,7 +176,7 @@ struct ScoreDifferentialChartView: View {
         if let ca = history.completedAt, let d = ca.asDate {
             return d.addingTimeInterval(120)
         }
-        guard eventStatus == "completed" || eventStatus == "closed" else { return nil }
+        guard isFinished else { return nil }
         // Fallback: last ESPN point
         if let espn = history.espnHistory, let last = espn.last, let d = last.timestamp.asDate {
             return d.addingTimeInterval(120)

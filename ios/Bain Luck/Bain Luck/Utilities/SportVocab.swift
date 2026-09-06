@@ -118,8 +118,40 @@ extension SportVocab {
     /// A map that simply drops its Final tile reads as a map that failed to
     /// load; this says which two units it refuses to mix, in the sport's own
     /// words, so a second set-scored sport declared tomorrow gets it for free.
-    var unitMismatchNote: String? {
+    /// #3465 — THE SENTENCE IS TENSED, so it has to be told whether the match
+    /// is over. Written only for a match still being played, it told the reader
+    /// of a FINAL US Open match that we "do not hold the games played YET" — a
+    /// promise of a capture that will never arrive. Alex's standing ruling is
+    /// that settled means settled, and it binds the copy a suppressed widget
+    /// prints exactly as it binds a hero or a chart.
+    ///
+    /// `settled` defaults to false because the pre-match and live readings are
+    /// the ones this sentence was written for; a caller that can be looking at
+    /// a finished event has to say so.
+    func unitMismatchNote(settled: Bool = false) -> String? {
         guard !scoreboardCountsTheUnit, !scoreboardUnit.isEmpty, !unit.isEmpty else { return nil }
+        if settled {
+            return "The scoreboard reported \(scoreboardUnit), this market quoted \(unit) — we did not hold the \(unit) played."
+        }
         return "The scoreboard reports \(scoreboardUnit), this market quotes \(unit) — we do not hold the \(unit) played yet."
+    }
+
+    /// The differential chart's counterpart to `unitMismatchNote`, for the
+    /// surface that suppresses a LINE rather than a tile.
+    ///
+    /// It lives here, beside the sentence it is a sibling of, for two reasons:
+    /// the two must be tensed by one rule (#3465), and as a `private var` on a
+    /// SwiftUI view the chart's wording could only be reached by rasterising
+    /// the view — which cannot assert a tense.
+    func projectedMarginNote(settled: Bool = false) -> String? {
+        guard !scoreboardCountsTheUnit, !scoreboardUnit.isEmpty, !unit.isEmpty else { return nil }
+        if settled {
+            return "Played \(unit) were not captured — the scoreboard reported "
+                + "\(scoreboardUnit). The line below was the books' projected "
+                + "\(unitSingular) margin."
+        }
+        return "Played \(unit) are not captured yet — the scoreboard reports "
+            + "\(scoreboardUnit). The line below is the books' projected "
+            + "\(unitSingular) margin."
     }
 }
