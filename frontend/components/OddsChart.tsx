@@ -1544,18 +1544,38 @@ export default function OddsChart({
                 }}
               />
             ))}
-            {/* Final marker — exactly one, at the game-end snapshot (settled only) */}
+            {/* Final marker — exactly one, at the game-end snapshot (settled only).
+                THE LINE, AND DELIBERATELY NO LABEL (#3541).
+
+                It used to carry `value: "Final"` at `insideTopLeft`, and what
+                reached every settled event page was a bare `F`. `finalMarkerTime`
+                is the LAST chart category, which since the right-hand buffer was
+                removed is the plot's right rule — and `insideTopLeft` anchors the
+                text `start` there, so it grows out of the svg and is clipped to
+                its first glyph. That is structural, not a breakpoint: the same
+                orphan `F` is on the 1280px shot as on the 390px one, because the
+                svg ends 10px past the rule at every width.
+
+                Anchoring it inside instead is the expensive answer and buys
+                nothing. `insideTopRight` grows the text LEFT out of the right
+                rule, into the space UX-P022 above reserves for the last period
+                boundary — and `minSpacing` (7% of the chart) is sized for labels
+                that all grow the same way, while the Final marker is deduped only
+                against final-LIKE boundaries, so a `Q4` or `T9` can sit right
+                beside it. Making the spacing rule bidirectional would be real
+                work to restore a word the page already says twice: the hero
+                carries a FINAL chip, and the line's own position at the end of
+                the timeline is the part that carries information. So the marker
+                keeps its full stop and loses its caption.
+
+                Guarded by `chartTextStaysInsideThePlot.test.tsx`, which pins BOTH
+                halves — no text off the right edge, and this line still drawn. */}
             {finalMarkerTime && (
               <ReferenceLine
                 x={finalMarkerTime}
                 stroke="rgba(0,0,0,0.35)"
                 strokeWidth={1.5}
                 isFront
-                label={{
-                  value: "Final",
-                  position: "insideTopLeft",
-                  style: { fontSize: 11, fill: "rgba(0,0,0,0.7)", fontWeight: 700 },
-                }}
               />
             )}
             <Tooltip content={<CustomTooltip />} />
