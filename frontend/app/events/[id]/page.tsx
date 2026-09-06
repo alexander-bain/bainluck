@@ -63,7 +63,7 @@ import Tooltip from "@/components/Tooltip";
 import RelatedByTag from "@/components/RelatedByTag";
 import { getLeagueDisplay, getCategoryForLeague } from "@/lib/sportCategories";
 import { completedSetsForTennis } from "@/lib/otherMarketGroups";
-import { sportVocab } from "@/lib/marketMapUtils";
+import { sportVocab, marketMapSectionMounts, totalsMapRenders } from "@/lib/marketMapUtils";
 import { espnTeamLogoByName } from "@/lib/images";
 import { sourceLabel } from "@/lib/sourceColors";
 import { chartSourceChips } from "@/lib/chartSourceChips";
@@ -1429,6 +1429,12 @@ export default function EventPage({ params }: EventPageProps) {
                of them going stale is how the page tells a reader both that we
                hold the games and that we do not. */
             linescore={event.linescore}
+            /* #3240: whether there is a games map below to point at — answered
+               by the selectors MarketMapSection builds the card from, not by a
+               second reading of the same payload. `/events/15304382` held a
+               fresh 2-1 games line and no game-total market, so the note sent
+               the reader to a card that was not on the page. */
+            totalsMapPresent={totalsMapRenders(gameMarkets)}
             pmSpreadData={historyData?.pm_spread_data}
           />
         </div>
@@ -1436,7 +1442,9 @@ export default function EventPage({ params }: EventPageProps) {
       )}
 
       {/* Market Map cards — Margin Map + Total Map */}
-      {gameMarkets && ((gameMarkets.spreads?.length ?? 0) > 0 || gameMarkets.totals.length > 0) && (
+      {/* #3240: the mount condition is shared with `totalsMapRenders` above, so
+          the note's idea of what is on the page and the page cannot diverge. */}
+      {gameMarkets && marketMapSectionMounts(gameMarkets) && (
         <SectionErrorBoundary label="The market maps" resetKey={gameMarkets}>
         <MarketMapSection
           gameMarkets={gameMarkets}

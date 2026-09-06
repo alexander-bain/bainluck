@@ -228,6 +228,181 @@ export function isGameTotal(outcomeName: string): boolean {
   return !outcomeName.includes(":");
 }
 
+/* ── WILL A TOTALS MAP ACTUALLY RENDER? ─────────────────────────────────────
+ *
+ * #3240. `ScoreDifferentialChart` told a tennis reader "the games played are
+ * on the games map below" whenever the page HELD the games, while the games
+ * map renders only when a game-total market gave it a rail to draw. Those are
+ * two different facts and on 2026-09-05 they disagreed on three live US Open
+ * pages at once: `/events/15304382` (Keys–Zheng) carried `sets [[2,1]]` and no
+ * `quantity` row, so the sentence pointed at a card that was not on the page.
+ *
+ * The cure is NOT a second copy of the gate — a second copy is how the two
+ * came apart in the first place, and it is the same class `playedUnits` exists
+ * for. These selectors ARE the gate: `MarketMapSection`'s `totalData` and
+ * `halfTotalMaps` are built from them and bail on exactly the empty results,
+ * so a caller asking `totalsMapRenders()` gets the renderer's own answer
+ * rather than a reconstruction of it that can drift.
+ */
+
+/** A full-game totals row as `GameMarketsResponse.totals` serves it. */
+export interface GameTotalRow {
+  threshold: number;
+  over_probability: number;
+  market_type: string;
+  outcome_name: string;
+  bookmaker_count?: number;
+}
+
+/** A period totals row as `GameMarketsResponse.period_markets` serves it. */
+export interface PeriodTotalRow {
+  market_name: string;
+  outcome_name: string;
+  threshold: number | null;
+  probability: number | null;
+  market_type: string;
+  over_probability?: number;
+  period?: string | null;
+}
+
+/**
+ * The period a half market belongs to: the backend's own field where it has
+ * one, text otherwise. Lifted out of `MarketMapSection` for #3240 so the
+ * half-total selector below and the card that draws it read one definition.
+ */
+export function derivePeriod(item: {
+  period?: string | null;
+  outcome_name: string;
+  market_name: string;
+}): string {
+  if (item.period) return item.period;
+  const text = `${item.outcome_name} ${item.market_name || ""}`.toLowerCase();
+  if (text.includes("1h") || text.includes("1st") || text.includes("first")) return "1H";
+  if (text.includes("2h") || text.includes("2nd") || text.includes("second")) return "2H";
+  return "2H"; // default
+}
+
+/**
+ * The rungs a full-game totals map is drawn from — deduped by threshold
+ * (highest bookmaker count wins), resolved thresholds dropped, then forced
+ * monotonic. Empty means the card does not render.
+ */
+export function selectGameTotalRungs<T extends GameTotalRow>(
+  totals: T[] | null | undefined
+): T[] {
+  const rawTotals = (totals || [])
+    .filter((t) => t.market_type === "game_total" && isGameTotal(t.outcome_name))
+    .sort((a, b) => a.threshold - b.threshold);
+
+  if (rawTotals.length === 0) return [];
+
+  const byThresh = new Map<number, T>();
+  for (const t of rawTotals) {
+    const existing = byThresh.get(t.threshold);
+    if (!existing || (t.bookmaker_count ?? 0) > (existing.bookmaker_count ?? 0)) {
+      byThresh.set(t.threshold, t);
+    }
+  }
+  // Filter out resolved/stale thresholds (0% over probability)
+  const deduped = [...byThresh.values()]
+    .filter((t) => t.over_probability > 0)
+    .sort((a, b) => a.threshold - b.threshold);
+
+  // Over probability must decrease as threshold increases. Use a loop so each
+  // item is compared against the *corrected* previous value, not the original.
+  const gameTotals: T[] = [];
+  for (const t of deduped) {
+    if (gameTotals.length === 0) {
+      gameTotals.push(t);
+    } else {
+      const prevProb = gameTotals[gameTotals.length - 1].over_probability;
+      if (t.over_probability > prevProb) {
+        gameTotals.push({ ...t, over_probability: prevProb } as T);
+      } else {
+        gameTotals.push(t);
+      }
+    }
+  }
+  return gameTotals;
+}
+
+/**
+ * The rungs one half's totals map is drawn from. A rail needs two rungs to be
+ * a rail, so fewer than two — before or after the monotonicity pass — means
+ * that half's card does not render.
+ */
+export function selectHalfTotalRungs(
+  periodMarkets: PeriodTotalRow[] | null | undefined,
+  halfKey: string
+): Array<{ threshold: number; overProbability: number }> {
+  const halfItemsRaw = (periodMarkets || []).filter(
+    (p) =>
+      p.market_type === "half_total" &&
+      isGameTotal(p.outcome_name) &&
+      derivePeriod(p) === halfKey
+  );
+
+  // One rung per threshold, before the monotonicity pass and before the
+  // density/O-U reduce that duplicated points would skew.
+  const halfItems = collapseDuplicateRungs(
+    halfItemsRaw,
+    (t) => String(t.threshold ?? 0),
+    (t) => t.over_probability ?? t.probability ?? 0
+  ).rows;
+  if (halfItems.length < 2) return [];
+
+  const sorted = [...halfItems].sort((a, b) => (a.threshold ?? 0) - (b.threshold ?? 0));
+
+  const cleaned: Array<{ threshold: number; overProbability: number }> = [];
+  let lastProb = 1.0;
+  for (const t of sorted) {
+    const prob = t.over_probability ?? t.probability ?? 0;
+    if (prob <= lastProb) {
+      cleaned.push({ threshold: t.threshold ?? 0, overProbability: prob });
+      lastProb = prob;
+    }
+  }
+  if (cleaned.length < 2) return [];
+  return cleaned;
+}
+
+/** The halves a totals map is ever built for, in the order the section draws them. */
+export const TOTAL_MAP_HALVES = ["1H", "2H"] as const;
+
+/**
+ * Whether `MarketMapSection` mounts at all. The page gates the section on a
+ * spread or a total existing; a payload holding neither renders nothing, so
+ * no map below can be pointed at however good its period markets are.
+ */
+export function marketMapSectionMounts(gameMarkets: {
+  spreads?: unknown[] | null;
+  totals?: unknown[] | null;
+}): boolean {
+  return (gameMarkets.spreads?.length ?? 0) > 0 || (gameMarkets.totals?.length ?? 0) > 0;
+}
+
+/**
+ * **Is there a totals map on this page to point at?** The one question #3240's
+ * note has to ask, answered from the selectors the card itself is built on.
+ */
+export function totalsMapRenders(
+  gameMarkets:
+    | {
+        spreads?: unknown[] | null;
+        totals?: GameTotalRow[] | null;
+        period_markets?: PeriodTotalRow[] | null;
+      }
+    | null
+    | undefined
+): boolean {
+  if (!gameMarkets) return false;
+  if (!marketMapSectionMounts(gameMarkets)) return false;
+  if (selectGameTotalRungs(gameMarkets.totals).length > 0) return true;
+  return TOTAL_MAP_HALVES.some(
+    (half) => selectHalfTotalRungs(gameMarkets.period_markets, half).length > 0
+  );
+}
+
 export function buildDensityFromSpreads(
   spreads: ParsedSpread[],
   rangeMin: number,

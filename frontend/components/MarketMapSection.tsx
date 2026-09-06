@@ -21,6 +21,10 @@ import {
   collapseDuplicateRungs,
   densityDrawsShape,
   quotedLinesPhrase,
+  derivePeriod,
+  selectGameTotalRungs,
+  selectHalfTotalRungs,
+  TOTAL_MAP_HALVES,
 } from "@/lib/marketMapUtils";
 
 /**
@@ -477,40 +481,10 @@ export default function MarketMapSection({
 
   // ── Total Map ──
   const totalData = useMemo(() => {
-    const rawTotals = (gameMarkets.totals || [])
-      .filter((t) => t.market_type === "game_total" && isGameTotal(t.outcome_name))
-      .sort((a, b) => a.threshold - b.threshold);
-
-    if (rawTotals.length === 0) return null;
-
-    // Dedup by threshold (keep highest-volume source), then enforce monotonicity
-    const byThresh = new Map<number, typeof rawTotals[0]>();
-    for (const t of rawTotals) {
-      const existing = byThresh.get(t.threshold);
-      if (!existing || (t.bookmaker_count ?? 0) > (existing.bookmaker_count ?? 0)) {
-        byThresh.set(t.threshold, t);
-      }
-    }
-    // Filter out resolved/stale thresholds (0% over probability)
-    const deduped = [...byThresh.values()]
-      .filter((t) => t.over_probability > 0)
-      .sort((a, b) => a.threshold - b.threshold);
-    // Over probability must decrease as threshold increases.
-    // Use a loop so each item is compared against the *corrected* previous
-    // value, not the original.
-    const gameTotals: typeof deduped = [];
-    for (const t of deduped) {
-      if (gameTotals.length === 0) {
-        gameTotals.push(t);
-      } else {
-        const prevProb = gameTotals[gameTotals.length - 1].over_probability;
-        if (t.over_probability > prevProb) {
-          gameTotals.push({ ...t, over_probability: prevProb });
-        } else {
-          gameTotals.push(t);
-        }
-      }
-    }
+    // #3240: the selection lives in `marketMapUtils` so the Score Differential
+    // note can ask whether THIS card renders instead of guessing from whether
+    // the page happens to hold a played count.
+    const gameTotals = selectGameTotalRungs(gameMarkets.totals);
 
     if (gameTotals.length === 0) return null;
 
@@ -664,14 +638,8 @@ export default function MarketMapSection({
     };
   }, [gameMarkets.totals, gameMarkets.pace, status, homeScore, awayScore, overUnder, vocab, sportKey]);
 
-  // Helper: derive period from backend "period" field, falling back to text matching.
-  function derivePeriod(item: { period?: string | null; outcome_name: string; market_name: string }): string {
-    if (item.period) return item.period;
-    const text = `${item.outcome_name} ${item.market_name || ""}`.toLowerCase();
-    if (text.includes("1h") || text.includes("1st") || text.includes("first")) return "1H";
-    if (text.includes("2h") || text.includes("2nd") || text.includes("second")) return "2H";
-    return "2H"; // default
-  }
+  // #3240: `derivePeriod` now lives in `marketMapUtils` beside the half-total
+  // selector that also needs it.
 
   // ── Period Margin Maps (half spreads) ──
   const halfMarginMaps = useMemo(() => {
@@ -826,43 +794,12 @@ export default function MarketMapSection({
     type MapData = Parameters<typeof MarketMap>[0] & { status: "pre" | "live" | "done" };
     const maps: Array<{ key: string; data: MapData }> = [];
 
-    // Group half_total markets by period using backend-supplied "period"
-    // field (derived from ticker prefix).  Falls back to name-based
-    // matching via derivePeriod() for older data without the field.
-    const halfTotalAll = allPeriod.filter(
-      (p) => p.market_type === "half_total" && isGameTotal(p.outcome_name)
-    );
-    const halfTotalGroups: Record<string, typeof halfTotalAll> = {};
-    for (const item of halfTotalAll) {
-      const key = derivePeriod(item);
-      if (!halfTotalGroups[key]) halfTotalGroups[key] = [];
-      halfTotalGroups[key].push(item);
-    }
-
-    for (const halfKey of ["1H", "2H"] as const) {
-      const halfItemsRaw = halfTotalGroups[halfKey] || [];
-      // One rung per threshold, before the monotonicity pass and before the
-      // density/O-U reduce that duplicated points would skew.
-      const halfItems = collapseDuplicateRungs(
-        halfItemsRaw,
-        (t) => String(t.threshold ?? 0),
-        (t) => t.over_probability ?? t.probability ?? 0,
-      ).rows;
-      if (halfItems.length < 2) continue;
-
-      const sorted = [...halfItems].sort((a, b) => (a.threshold ?? 0) - (b.threshold ?? 0));
-
-      // Enforce monotonicity: over_probability should decrease as threshold increases
-      const cleaned: Array<{ threshold: number; overProbability: number }> = [];
-      let lastProb = 1.0;
-      for (const t of sorted) {
-        const prob = t.over_probability ?? t.probability ?? 0;
-        if (prob <= lastProb) {
-          cleaned.push({ threshold: t.threshold ?? 0, overProbability: prob });
-          lastProb = prob;
-        }
-      }
-      if (cleaned.length < 2) continue;
+    // #3240: grouping, collapse and the monotonicity pass moved to
+    // `selectHalfTotalRungs` so this card and the Score Differential note are
+    // gated on one selection rather than two that can drift apart.
+    for (const halfKey of TOTAL_MAP_HALVES) {
+      const cleaned = selectHalfTotalRungs(allPeriod, halfKey);
+      if (cleaned.length === 0) continue;
 
       const ouLine = cleaned.reduce((best, t) =>
         Math.abs(t.overProbability - 0.5) < Math.abs(best.overProbability - 0.5) ? t : best

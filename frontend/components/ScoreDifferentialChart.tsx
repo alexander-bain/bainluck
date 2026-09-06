@@ -16,7 +16,7 @@ import {
 import { format, parseISO } from "date-fns";
 import { makeEnsurePoint, fillMinuteGaps } from "@/lib/chartTimeline";
 import { sourceLabel } from "@/lib/sourceColors";
-import { sportVocab, playedCountAbsence, playedUnits } from "@/lib/marketMapUtils";
+import { sportVocab, playedCountAbsence, playedUnits, withUnit } from "@/lib/marketMapUtils";
 import type { PlayedLinescore } from "@/lib/marketMapUtils";
 import type {
   OddsHistoryPoint,
@@ -76,6 +76,22 @@ interface ScoreDifferentialChartProps {
    * reader it did not record them, so the note reads off this.
    */
   linescore?: PlayedLinescore | null;
+  /**
+   * Whether a totals map is actually rendered further down this page (#3240).
+   *
+   * The note used to send the reader to "the games map below" on the strength
+   * of HOLDING the games, which is a different fact from DRAWING them: the map
+   * needs a game-total market to build a rail from, and a tennis page can hold
+   * a fresh ESPN games line while its only linked markets are a duel and an
+   * exact-score field. Three live US Open pages read that way on 2026-09-05.
+   *
+   * The caller answers this with `totalsMapRenders(gameMarkets)` — the same
+   * selectors `MarketMapSection` builds the card from. It defaults to `false`
+   * because the failure is one-directional: a note that states the count where
+   * a map does exist is merely redundant, while a note pointing at a card that
+   * does not is the bug.
+   */
+  totalsMapPresent?: boolean;
   /** Prediction market spread/total data from binary contracts */
   pmSpreadData?: {
     implied_spreads?: Record<string, { spread: number; confidence: number; contracts: { threshold: number; probability: number }[] }>;
@@ -130,6 +146,7 @@ export default function ScoreDifferentialChart({
   onTimeRangeChange,
   sportKey,
   linescore,
+  totalsMapPresent = false,
   pmSpreadData,
 }: ScoreDifferentialChartProps) {
   const isClosed = eventStatus === "closed" || eventStatus === "completed";
@@ -293,6 +310,10 @@ export default function ScoreDifferentialChart({
    * told "not captured YET" here and "did not record" there learns to trust
    * neither. Only the wrapping sentence is this widget's own.
    */
+  // Short team names, for the axis labels and for the unit note below.
+  const homeShort = homeTeamAbbrev || homeTeam.split(" ").pop() || homeTeam;
+  const awayShort = awayTeamAbbrev || awayTeam.split(" ").pop() || awayTeam;
+
   const unitMismatchNote = (() => {
     if (scoreboardCountsTheUnit) return null;
     const vocab = sportVocab(sportKey);
@@ -300,8 +321,27 @@ export default function ScoreDifferentialChart({
     // live/073: the page holds the games now. It may still not draw them here —
     // a final line has no clock — but the claim has to change with the fact, and
     // the reader is told where the number IS rather than that there is none.
-    if (playedUnits(vocab, { home: null, away: null }, linescore)) {
-      return `The scoreboard reports ${vocab.scoreboardUnit}, so the line below is the books' projected ${vocab.unitSingular} margin. The ${vocab.unit} played are on the ${vocab.totalTitle.toLowerCase()} below.`;
+    const played = playedUnits(vocab, { home: null, away: null }, linescore);
+    if (played) {
+      const lead = `The scoreboard reports ${vocab.scoreboardUnit}, so the line below is the books' projected ${vocab.unitSingular} margin.`;
+      // #3240: holding the number and drawing the map are two facts, and the
+      // pointer may only be printed on the second. Where there is no card to
+      // point at, the note carries the count itself — that page knew the games
+      // and printed them nowhere.
+      //
+      // NAMED, not `17-15`. The settled hero prints the line WINNER-FIRST
+      // (`eventOutcome.ts`, reversed when the winner is away) while a games
+      // count is held in home/away order, so a bare pair sits under a line
+      // running the other way and half the readers will take it backwards —
+      // the hazard `formatLinescore`'s own note is about. Naming the sides
+      // makes the order unreadable-wrong instead of silently-wrong.
+      //
+      // Tense tracks the match, like the absence clause below it (#3136): a
+      // finished match did not go on winning games after it ended.
+      const won = isClosed ? "won" : "has won";
+      return totalsMapPresent
+        ? `${lead} The ${vocab.unit} played are on the ${vocab.totalTitle.toLowerCase()} below.`
+        : `${lead} ${homeShort} ${won} ${withUnit(played.home, vocab)} to ${awayShort}'s ${played.away}.`;
     }
     return `The scoreboard reports ${vocab.scoreboardUnit}, so ${playedCountAbsence(vocab.unit, isClosed)}. The line below is the books' projected ${vocab.unitSingular} margin.`;
   })();
@@ -546,9 +586,9 @@ export default function ScoreDifferentialChart({
   // Make symmetric around 0, rounding up to nearest 2 for a tighter fit
   const domainMax = Math.max(2, Math.ceil(maxAbs / 2) * 2);
 
-  // Short team names for axis labels
-  const homeShort = homeTeamAbbrev || homeTeam.split(" ").pop() || homeTeam;
-  const awayShort = awayTeamAbbrev || awayTeam.split(" ").pop() || awayTeam;
+  // #3240: `homeShort`/`awayShort` are derived above the unit note, which also
+  // names the two sides. One definition, so the axis and the sentence under it
+  // cannot end up calling the same player two different things.
 
   // Custom tooltip
   const CustomTooltip = ({
