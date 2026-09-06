@@ -185,6 +185,26 @@ describe("what the reader actually sees", () => {
     expect(html).toContain("Browse all sports");
   });
 
+  it("draws the escape as the primary action when there is no retry beside it", () => {
+    // Caught by the LOOK pass, not by a unit test: with the retry correctly
+    // withheld on a real 404, the muted "Browse all sports" was the ONLY thing
+    // a reader could do and it was drawn in the same grey as inert text.
+    const html = (retryable: boolean) =>
+      renderToStaticMarkup(
+        <PageLoadFailureScreen
+          failure={{ title: "t", message: "m", retryable }}
+          escape={{ href: "/sports", label: "Browse all sports" }}
+        />,
+      );
+
+    // Alone: accented, like the "Try again" it replaced.
+    expect(html(false)).toContain("text-accent-brand");
+    // Beside a retry: stays secondary, so the two do not compete.
+    const beside = html(true);
+    expect(beside).toContain("Try again");
+    expect(beside).toContain("text-text-muted");
+  });
+
   it("publishes the status as an attribute, never as copy", () => {
     // #3297's lesson: a screenshot of this screen looks identical whether the
     // cause is our own throttling or a real regression, so every lane running

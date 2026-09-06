@@ -60,9 +60,18 @@ export default function PageLoadFailureScreen({
               Try again
             </button>
           )}
+          {/* The escape is the SECONDARY action beside a retry, but the only
+              action without one — and a lone muted link reads as disabled.
+              Caught in the #3254 LOOK pass: with the retry correctly withheld
+              on a real 404, "Browse all sports" was the single thing a reader
+              could do and it was drawn in the same grey as inert text. */}
           <Link
             href={escape.href}
-            className="text-sm text-text-muted hover:text-text-primary transition-colors"
+            className={
+              failure.retryable
+                ? "text-sm text-text-muted hover:text-text-primary transition-colors"
+                : "text-sm text-accent-brand hover:underline transition-colors"
+            }
           >
             {escape.label}
           </Link>
