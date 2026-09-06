@@ -9,6 +9,11 @@ import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorMessage from "@/components/ErrorMessage";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { buildLeagueSections } from "@/lib/sports/leagueSections";
+import {
+  LEAGUE_WINDOW_DAYS,
+  LEAGUE_OFFSEASON_HORIZON_DAYS,
+  needsWiderHorizon,
+} from "@/lib/sports/leagueHorizon";
 
 interface SportPageProps {
   params: { key: string };
@@ -39,14 +44,67 @@ export default function SportPage({ params }: SportPageProps) {
     mutate: refreshEvents,
   } = useSWR(
     ["events", sportKey],
-    () => fetchEvents({ sport: sportKey, days: 14 }),
+    () => fetchEvents({ sport: sportKey, days: LEAGUE_WINDOW_DAYS }),
     { refreshInterval: 30000, keepPreviousData: true, revalidateOnFocus: false }
   );
 
   // Memoised on the SWR payload, not re-derived: `?? []` mints a new array
   // identity on every render, which would make the `sections` memo below
   // recompute every time (react-hooks/exhaustive-deps).
-  const events = useMemo(() => eventsData?.events ?? [], [eventsData]);
+  const nearTermEvents = useMemo(() => eventsData?.events ?? [], [eventsData]);
+
+  // #3028 — the 14-day window is shorter than an offseason. When the league is
+  // not playing (nothing live, next game more than a week out) that window is
+  // the reason the page looks empty, so ask again with a horizon that reaches
+  // the schedule we already hold. The condition and both constants live in
+  // `lib/sports/leagueHorizon.ts` with the measurements that chose them.
+  //
+  // Gated on `eventsData` rather than on the array: before the first response
+  // there is nothing to widen FROM, and an undefined payload would otherwise
+  // read as "no games in the near term" and fire a second request on every
+  // in-season page load.
+  const wantsWiderHorizon = useMemo(
+    () => Boolean(eventsData) && needsWiderHorizon(nearTermEvents),
+    [eventsData, nearTermEvents]
+  );
+
+  const {
+    data: widerData,
+    error: widerError,
+    isLoading: widerLoading,
+  } = useSWR(
+    wantsWiderHorizon ? ["events", sportKey, LEAGUE_OFFSEASON_HORIZON_DAYS] : null,
+    () => fetchEvents({ sport: sportKey, days: LEAGUE_OFFSEASON_HORIZON_DAYS }),
+    {
+      // A schedule three months out does not move every 30 seconds, and this
+      // request only exists on pages whose league is dormant — polling it at
+      // the live cadence would spend the fast interval on the one case that
+      // cannot use it.
+      refreshInterval: 300000,
+      keepPreviousData: true,
+      revalidateOnFocus: false,
+    }
+  );
+
+  // The widened payload is a superset of the near-term one (same endpoint,
+  // longer window), so it REPLACES rather than merges. If it fails, the page
+  // still renders whatever the near-term window found instead of inheriting
+  // the second request's error — a dormant league showing one card is worse
+  // than it should be, but it is not broken.
+  const events = useMemo(
+    () => (widerData?.events ?? nearTermEvents),
+    [widerData, nearTermEvents]
+  );
+
+  // Don't flash "No games" underneath a widened request that is about to
+  // answer with 36 of them. `keepPreviousData` covers the refresh case; this
+  // covers the first load.
+  const isLoading = eventsLoading || (wantsWiderHorizon && widerLoading);
+
+  // The widened window only announces itself once it has actually returned
+  // something the near-term window could not have shown.
+  const showingWiderHorizon =
+    wantsWiderHorizon && !widerError && (widerData?.events?.length ?? 0) > 0;
 
   // #2948 — `/api/events` is `commence_time` ASCENDING, so without this every
   // finished game precedes every live and upcoming one, by construction rather
@@ -91,6 +149,27 @@ export default function SportPage({ params }: SportPageProps) {
           {sport?.group && `${sport.group} • `}
           Win probabilities for live and upcoming games. Finished games below.
         </p>
+        {/* #3028 — the widened window says so. A reader who lands on an NBA
+            page in September and sees an October fixture at the top is owed
+            the reason; the alternative is a page that silently answers a
+            different question from the one every other league page answers.
+            Says only what was measured — nothing about seasons or breaks,
+            which this page cannot know.
+
+            It deliberately does NOT open with "No games": that is the dead
+            page's own first line, and a reader who saw it yesterday should not
+            meet the same three words at the top of a page that is now full of
+            fixtures. The empty state and this notice describe opposite
+            outcomes and must not share an opening. */}
+        {showingWiderHorizon && (
+          <p
+            className="text-sm text-text-secondary mt-2"
+            data-league-horizon="widened"
+          >
+            Nothing scheduled in the next week — showing every upcoming game we
+            hold.
+          </p>
+        )}
       </div>
 
       {/* Error State */}
@@ -102,14 +181,14 @@ export default function SportPage({ params }: SportPageProps) {
       )}
 
       {/* Loading State */}
-      {eventsLoading && (
+      {isLoading && (
         <div className="py-12">
           <LoadingSpinner text="Loading events..." />
         </div>
       )}
 
       {/* Events Grid */}
-      {!eventsLoading && !eventsError && (
+      {!isLoading && !eventsError && (
         <>
           {events.length === 0 ? (
             <div
