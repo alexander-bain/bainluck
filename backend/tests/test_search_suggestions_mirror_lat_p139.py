@@ -69,12 +69,22 @@ def _item(query, label, **kw):
     return {"query": query, "label": label, "type": "event", **kw}
 
 
-def _countdown_item(query, deadline):
+def _countdown_item(query, deadline, sport_key="basketball_nba"):
+    """A stored section-2 item, with the SPORT beside the deadline (#3718).
+
+    Both are build-time inputs to the one string `render` rebuilds, so both
+    travel. The default is basketball because that is the sport whose verb these
+    tests were written against, which keeps every "Tips off" assertion below
+    meaning what it meant before the verb became per-sport.
+    """
     return _item(
         query,
-        ssc.countdown_label(deadline, T0),
+        ssc.countdown_label(deadline, T0, sport_key),
         event_id=1,
-        **{ssc.COUNTDOWN_FIELD: deadline.isoformat()},
+        **{
+            ssc.COUNTDOWN_FIELD: deadline.isoformat(),
+            ssc.COUNTDOWN_SPORT_FIELD: sport_key,
+        },
     )
 
 
@@ -113,14 +123,25 @@ class _FakeRedis:
 
 class TestTheCountdownIsNoLongerBaked:
     async def test_the_minute_branch_prints_what_the_route_used_to_print(self):
-        assert ssc.countdown_label(T0 + timedelta(minutes=12), T0) == "Tips off in 12 min"
+        # #3718 gave this branch a per-sport verb; basketball is the sport the
+        # old constant was right for, so it is what pins "unchanged".
+        assert (
+            ssc.countdown_label(T0 + timedelta(minutes=12), T0, "basketball_nba")
+            == "Tips off in 12 min"
+        )
 
     async def test_the_hour_branch_prints_what_the_route_used_to_print(self):
         assert ssc.countdown_label(T0 + timedelta(minutes=150), T0) == "Starts in 2h"
 
     async def test_the_branch_boundary_is_exactly_sixty_minutes(self):
-        assert ssc.countdown_label(T0 + timedelta(minutes=59), T0) == "Tips off in 59 min"
-        assert ssc.countdown_label(T0 + timedelta(minutes=60), T0) == "Starts in 1h"
+        assert (
+            ssc.countdown_label(T0 + timedelta(minutes=59), T0, "basketball_nba")
+            == "Tips off in 59 min"
+        )
+        assert (
+            ssc.countdown_label(T0 + timedelta(minutes=60), T0, "basketball_nba")
+            == "Starts in 1h"
+        )
 
     async def test_a_game_that_has_started_has_no_label(self):
         assert ssc.countdown_label(T0 - timedelta(seconds=1), T0) is None
@@ -134,7 +155,7 @@ class TestTheCountdownIsNoLongerBaked:
         it is the single easiest way to reintroduce this ship's defect.
         """
         assert ssc.countdown_label(T0 - timedelta(seconds=59), T0) is None
-        assert ssc.countdown_label(T0, T0) == "Tips off in 0 min"
+        assert ssc.countdown_label(T0, T0, "basketball_nba") == "Tips off in 0 min"
 
     async def test_the_route_does_not_render_the_countdown_itself(self):
         """The literal must live in ONE place or the two can disagree.
@@ -447,14 +468,21 @@ class _DB:
         return self._results.pop(0)
 
 
-def _soon(n):
+def _soon(n, sport_key="basketball_wnba"):
+    """(Event, sport_key) TUPLES — section 2 is a two-column select since #3718."""
     from datetime import datetime as _dt
 
     base = _dt.now(timezone.utc) + timedelta(minutes=30)
     names = ["Aces", "Sky", "Storm", "Sun", "Fever", "Sparks", "Wolves", "Devils"]
     return [
-        SimpleNamespace(
-            id=i + 1, home_team_name=names[i], away_team_name="Opponents", commence_time=base
+        (
+            SimpleNamespace(
+                id=i + 1,
+                home_team_name=names[i],
+                away_team_name="Opponents",
+                commence_time=base,
+            ),
+            sport_key,
         )
         for i in range(n)
     ]

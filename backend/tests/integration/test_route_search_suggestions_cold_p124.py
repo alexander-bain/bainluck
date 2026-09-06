@@ -208,13 +208,22 @@ _PAIRS = [
 _EXPECTED_QUERIES = ["Aces", "Sky", "Storm", "Sun", "Fever", "Sparks", "Wolves", "Devils"]
 
 
-def _soon_events(n):
+def _soon_events(n, sport_key="basketball_wnba"):
+    """(Event, sport_key) TUPLES — section 2 is a two-column select since #3718.
+
+    The countdown's verb is chosen from the sport, and the sport comes from the
+    SELECT rather than `ev.sport.key` (a lazy load, which under async raises
+    inside this section's `try` and deletes the section). So its rows are pairs.
+    """
     return [
-        SimpleNamespace(
-            id=i + 1,
-            home_team_name=h,
-            away_team_name=a,
-            commence_time=_soon_commence(),
+        (
+            SimpleNamespace(
+                id=i + 1,
+                home_team_name=h,
+                away_team_name=a,
+                commence_time=_soon_commence(),
+            ),
+            sport_key,
         )
         for i, (h, a) in enumerate(_PAIRS[:n])
     ]

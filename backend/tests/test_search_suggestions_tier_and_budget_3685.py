@@ -172,11 +172,20 @@ def _live(pairs):
     ]
 
 
-def _soon(pairs):
+def _soon(pairs, sport_key="basketball_wnba"):
+    """Section 2's rows — (Event, sport_key) TUPLES, not bare events.
+
+    #3718 made section 2 a two-column select (`select(Event, Sport.key)`) so the
+    countdown's verb can be chosen from the sport without a lazy load, so its
+    result rows are pairs. The fixture teams here are WNBA, hence the default.
+    """
     at = datetime.now(timezone.utc) + timedelta(minutes=30)
     return [
-        SimpleNamespace(
-            id=50 + i, home_team_name=home, away_team_name=away, commence_time=at
+        (
+            SimpleNamespace(
+                id=50 + i, home_team_name=home, away_team_name=away, commence_time=at
+            ),
+            sport_key,
         )
         for i, (home, away) in enumerate(pairs)
     ]
@@ -366,13 +375,10 @@ class TestTheRowTheUserGets:
         statement is never issued on a busy evening. LAT-P124's ship, restored by
         the change that was supposed to spend it.
         """
-        soon_at = datetime.now(timezone.utc) + timedelta(minutes=30)
-        soon = [
-            SimpleNamespace(
-                id=50 + i, home_team_name=h, away_team_name=a, commence_time=soon_at
-            )
-            for i, (h, a) in enumerate([("Aces", "Liberty"), ("Sky", "Storm")])
-        ]
+        # Built through `_soon` rather than inline, so the section-2 row SHAPE is
+        # defined in exactly one place. The inline copy this replaced is why the
+        # #3718 two-column select turned up here as a silent dead section.
+        soon = _soon([("Aces", "Liberty"), ("Sky", "Storm")])
         db = _RecordingDB(
             [
                 _Rows(_live(_PRODUCTION_LIVE_PAIRS)),
