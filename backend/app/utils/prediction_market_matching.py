@@ -346,26 +346,19 @@ def _strip_category_prefix(market_name: str) -> str:
 # container label BEFORE matchup extraction so the recovered matchup_title (and
 # thus the resolution-engine participants) is the clean "A vs. B" (#1021).
 #
-# The five soccer labels below are the same family and were simply never added.
-# They are the LARGEST members of it — measured on production 2026-08-30 over
-# open Polymarket rows: Exact Score 1253, First Team to Score 1190, Second Half
-# Result 1190, Halftime Result 1189, Total Corners 966, against More Markets'
-# 1063. A linked market survives the contamination because `_fuzzy_team_match`
-# reads "Chichester City FC" inside "Chichester City FC - Exact Score", but
-# AUTO-CREATE stamps the raw parsed string, so whichever sub-market wins the
-# race names the event — live proof, events 15293085 and 15291704, whose away
-# teams are "Portishead Town FC - Exact Score" and "HFX Wanderers FC - Exact
-# Score" while their sibling 15293077 came out clean.
-#
-# This is a CLOSED, NAMED list on purpose. The other trailing "- X" suffixes on
-# these rows are tournament CONTEXT, not sub-market labels — "- LPL Playoffs",
-# "- BLAST Open Porto Group A", "- Map 1 Winner" — and stripping those as a
-# family would erase the only thing distinguishing two real markets.
+# This branch originally ALSO stripped the five big Polymarket sub-market
+# labels here — "- Exact Score", "- First Team to Score", "- Second Half
+# Result", "- Halftime Result", "- Total Corners" — to stop auto-create
+# stamping one of them as the away team's name. Master answers the same failure
+# the other way and got there first: #2871's `is_derivative_market_name` refuses
+# such a row as evidence of a game instead of sanitising it into one, and
+# deliberately LEAVES the suffix on the parsed name because
+# `_MATCHUP_NON_GAME_KEYWORDS` reads "winner" out of it to keep a period market
+# out of a full-game blend. Stripping it here would silently defeat that rule
+# and did regress golden pair 59683704 ("AEK vs. OFI - Total Corners").
+# Refusing a derivative beats cleaning one; the strip was dropped, not lost.
 _MORE_MARKETS_RE = re.compile(
-    r'\s*-\s*(?:More Markets|Player Props'
-    r'|Exact Score|First Team to Score|Second Half Result'
-    r'|Halftime Result|Total Corners)\s*$',
-    re.IGNORECASE,
+    r'\s*-\s*(?:More Markets|Player Props)\s*$', re.IGNORECASE
 )
 
 # Derivative-market suffix after a DASH (#2871). The colon form

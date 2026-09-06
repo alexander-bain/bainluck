@@ -19,14 +19,19 @@ makes admitting it SAFE, and each was found by measuring the first:
 * **The three-way refusal.** Once a side may contain ``&``, "Bitcoin vs. Gold
   vs. S&P 500 in 2026" parses as a two-team game. A side that is ITSELF a
   matchup means the name was never a game.
-* **The sub-market descriptor strip.** `_MORE_MARKETS_RE` already existed for
-  this exact failure (#1021, gotcha #18) and simply never got the rest of the
-  family. A LINKED market survives the contamination because
-  `_fuzzy_team_match` finds "Chichester City FC" inside "Chichester City FC -
-  Exact Score", but AUTO-CREATE stamps the raw string — live proof, events
+* **The sub-market descriptor never names an event.** Admitting ``&`` lets
+  "Cambridge City FC vs. Maldon & Tiptree FC - Exact Score" parse for the first
+  time, and AUTO-CREATE stamps whatever team_b holds — live proof, events
   15293085 and 15291704, whose away teams are "Portishead Town FC - Exact
   Score" and "HFX Wanderers FC - Exact Score" while sibling 15293077 came out
-  clean. Whichever sub-market wins the race names the event.
+  clean. This branch first answered that by STRIPPING the five big Polymarket
+  labels in `_MORE_MARKETS_RE`. Master answered it the other way and landed
+  first: #2871 REFUSES such a row as evidence of a game and deliberately leaves
+  the suffix on the parsed name, because `_MATCHUP_NON_GAME_KEYWORDS` reads
+  "winner" out of it to keep a period market out of a full-game blend. Both
+  close the hole; only one of them keeps that rule working, and stripping
+  regressed golden pair 59683704. So the strip was dropped and what is asserted
+  below is that admitting ``&`` does not open a route around #2871.
 * **The institutional-suffix mascot rule.** The candidate query is
   ``LIMIT 20 ORDER BY commence_time``, and `_expand_team_search_terms` was
   emitting "State" as the "mascot" of "Missouri State". ``%State%`` filled all
@@ -44,6 +49,7 @@ import pytest
 from app.tasks.prediction_market_matching import _expand_team_search_terms
 from app.utils.prediction_market_matching import (
     extract_matchup,
+    is_derivative_market_name,
     is_game_level_market,
 )
 
@@ -183,35 +189,61 @@ def test_doubles_tennis_slashes_are_not_separators():
 
 
 # ---------------------------------------------------------------------------
-# Substrate 3 — the Polymarket sub-market descriptor never reaches a team name
+# Substrate 3 — the Polymarket sub-market descriptor never names an event
 # ---------------------------------------------------------------------------
 
-SUB_MARKET_LABELS = [
+# The game's own container. These ARE stripped: the container market is the
+# fixture itself, so it may create it (#1021, gotcha #18).
+CONTAINER_LABELS = ["More Markets", "Player Props"]
+
+# A prop or period of the game. Under #2871 these are refused as evidence that
+# the game exists, and the suffix stays ON the parsed name on purpose.
+DERIVATIVE_LABELS = [
     "Exact Score",
     "First Team to Score",
     "Second Half Result",
     "Halftime Result",
     "Total Corners",
-    "More Markets",
-    "Player Props",
 ]
 
 
-@pytest.mark.parametrize("label", SUB_MARKET_LABELS)
-def test_sub_market_label_is_stripped_off_the_second_team(label):
+@pytest.mark.parametrize("label", CONTAINER_LABELS)
+def test_container_label_is_stripped_off_the_second_team(label):
     name = f"Cambridge City FC vs. Maldon & Tiptree FC - {label}"
     assert _teams(name) == ("Cambridge City FC", "Maldon & Tiptree FC")
 
 
-def test_every_sub_market_of_one_fixture_parses_to_the_same_matchup():
-    """This is the point: five rows, one game, therefore one event — not five
-    events named after whichever sub-market got there first."""
-    parses = {
-        _teams(f"Chippenham Town FC vs. Havant & Waterlooville FC - {label}")
-        for label in SUB_MARKET_LABELS
-    }
-    parses.add(_teams("Chippenham Town FC vs. Havant & Waterlooville FC"))
-    assert parses == {("Chippenham Town FC", "Havant & Waterlooville FC")}
+@pytest.mark.parametrize("label", DERIVATIVE_LABELS)
+def test_a_derivative_of_an_ampersand_game_is_refused_as_evidence_of_it(label):
+    """
+    The interaction this ship has to survive. Before ``&`` was admitted these
+    names did not parse at all, so #2871 was never asked about them; now they
+    do, and it must still answer no. Asserted as the refusal itself, not as the
+    parse, because the parse is exactly what #2871 wants left dirty.
+    """
+    name = f"Cambridge City FC vs. Maldon & Tiptree FC - {label}"
+    assert _teams(name) is not None, "the ampersand ship must make this parse"
+    assert is_derivative_market_name(name), (
+        f"'- {label}' must still read as a derivative once & is admitted — "
+        "otherwise auto-create mints a game named after a prop"
+    )
+
+
+def test_every_derivative_of_one_fixture_is_refused_so_one_game_stays_one_event():
+    """Five rows, one game: none of the five may mint an event, and the
+    container may. That is what keeps one fixture from becoming six rows in
+    /search — the failure the strip was reaching for, reached the other way."""
+    fixture = "Chippenham Town FC vs. Havant & Waterlooville FC"
+    assert all(
+        is_derivative_market_name(f"{fixture} - {label}")
+        for label in DERIVATIVE_LABELS
+    )
+    assert not is_derivative_market_name(fixture)
+    for label in CONTAINER_LABELS:
+        assert not is_derivative_market_name(f"{fixture} - {label}")
+        assert _teams(f"{fixture} - {label}") == (
+            "Chippenham Town FC", "Havant & Waterlooville FC"
+        )
 
 
 TOURNAMENT_CONTEXT_SUFFIXES = [
