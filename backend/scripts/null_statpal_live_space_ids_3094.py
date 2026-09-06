@@ -102,15 +102,37 @@ dyno's stdout: a non-detached `heroku run` does not execute at all in the sandbo
 REVERSIBILITY (D51)
 -------------------
 `--apply` creates `events_statpal_live_space_backup_3094` holding every row it is
-about to touch — `event_id`, the column value, and the JSONB value with a flag
-saying whether the key was present — in the same transaction as the writes, so
-there is no state in which rows have moved and the backup has not. The backup
-table is left in place afterwards on purpose: a backup deleted at the end of the
-run is a backup that exists only while nothing has gone wrong yet.
+about to touch — `event_id`, the column value, the JSONB value, a flag saying
+whether the key was present, and a second flag saying whether the whole JSONB
+column was NULL — in the same transaction as the writes, so there is no state in
+which rows have moved and the backup has not. The backup table is left in place
+afterwards on purpose: a backup deleted at the end of the run is a backup that
+exists only while nothing has gone wrong yet.
+
+**THE UNDO RUNS AGAINST THE STATE THE SCHEDULE PASS LEFT, NOT THE ONE THE APPLY
+LEFT** (CERT-2147). Re-anchoring is the whole point of NULLing, so by the time
+anyone rolls back, `_set_statpal_id` has probably written BOTH halves again with
+a correct six-digit id. That makes three states the JSONB column can be in —
+NULL, `{}`, or populated — and two facts that are easy to conflate: *the column
+was NULL* and *the column had no key*. The restore therefore re-adds the key
+only where the backup says there was one, SUBTRACTS it where there was not, and
+collapses to NULL only where the column was NULL and nothing else is left. The
+emptiness guard is what stops it destroying a key some other writer added in
+between; that key is deliberately kept, and that is not a failed restore.
+
+Every clause in the restore's predicate has a matching clause in
+`COUNT_UNRESTORED` and vice versa. A post-condition that can report a shortfall
+the predicate cannot act on is a restore that never converges, however often it
+is run — CERT-2147's actual finding, and the trap each later fix here has to
+avoid re-opening somewhere new.
 
 The undo is a genuine undo and the round trip is executed, not argued:
 `backend/tests/integration/test_null_statpal_live_space_3094_real_postgres.py`
-seeds all three shapes against a real PostgreSQL, applies, and rolls back.
+seeds every shape against a real PostgreSQL, applies, re-anchors as the schedule
+pass would, rolls back, and rolls back a second time to prove convergence. It is
+two-armed: `test_the_preserving_else_arm_cannot_pass_this` executes the BLOCKED
+statement and requires it to leave the row wrong, so a green run means the
+repair was proved necessary rather than merely unopposed.
 
 `--rollback` restores by `event_id`, which is a real primary key and is not
 reused, so this script has none of the reused-BIGSERIAL hazard that CERT-847
@@ -238,7 +260,7 @@ UPDATE events e
                 -- the apply and the undo is never destroyed by this arm.
                 WHEN b.sources_was_null
                      AND (e.win_probability_sources - 'statpal_fixture_id')
-                         = '{{}}'::jsonb
+                         IS NOT DISTINCT FROM '{{}}'::jsonb
                 THEN NULL
                 ELSE e.win_probability_sources - 'statpal_fixture_id'
            END
@@ -260,7 +282,8 @@ UPDATE events e
         -- restore declines and the empty object stays forever. Every predicate
         -- clause here must have a matching clause in `COUNT_UNRESTORED`, or the
         -- undo reports a shortfall it has no statement able to repair.
-        OR (b.sources_was_null AND e.win_probability_sources = '{{}}'::jsonb)
+        OR (b.sources_was_null
+            AND e.win_probability_sources IS NOT DISTINCT FROM '{{}}'::jsonb)
    )
 """
 
@@ -290,7 +313,10 @@ SELECT count(*) FROM {BACKUP_TABLE} b
           -- script's to undo, and demanding NULL there would be a shortfall no
           -- statement may repair — the non-convergence CERT-2147 found, in a
           -- new place.
-          AND NOT (b.sources_was_null AND e.win_probability_sources = '{{}}'::jsonb)
+          AND NOT (
+              b.sources_was_null
+              AND e.win_probability_sources IS NOT DISTINCT FROM '{{}}'::jsonb
+          )
    )
 """
 
