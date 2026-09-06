@@ -121,13 +121,25 @@ final class ChampionshipRowLayoutTests: XCTestCase {
         XCTAssertEqual(brewersBar, 166 - 8 - 96, accuracy: 0.01)   // 62
         XCTAssertEqual(redsBar, 166 - 8 - 70, accuracy: 0.01)      // 88
 
+        // Absolute, not `>= minBarWidth`: a bar compared against the same
+        // constant the layout used to place it agrees by construction and would
+        // survive that constant being set back to the 2 pt floor.
         for (name, bar) in [("Brewers", brewersBar), ("Reds", redsBar)] {
             XCTAssertGreaterThanOrEqual(
-                bar, ChampionshipRowLayout.minBarWidth,
-                "\(name): a bar below \(ChampionshipRowLayout.minBarWidth) pt cannot "
-                + "resolve one percentage point at 3x, which is the whole job of a "
-                + "progress bar. Measured 2.00 pt before this fix.")
+                bar, 100.0 / 3.0,
+                "\(name): measured 2.00 pt before this fix. A bar narrower than "
+                + "33.4 pt cannot render one percentage point in one device pixel "
+                + "at 3x, so it cannot resolve the quantity it is a picture of.")
         }
+    }
+
+    /// The floor itself, pinned to its reason rather than to itself.
+    func testTheMinimumBarWidthResolvesOnePercentagePoint() {
+        XCTAssertGreaterThanOrEqual(
+            ChampionshipRowLayout.minBarWidth, 100.0 / 3.0,
+            "one percentage point of a 0-100% bar is one device pixel at 3x only "
+            + "from 33.4 pt up. Below that the criterion stops protecting the bar "
+            + "and rows start qualifying for a one-line shape that starves it.")
     }
 
     /// The half that must not move: where there is room, the compact row survives.
