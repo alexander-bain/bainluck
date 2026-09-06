@@ -263,7 +263,7 @@ struct ShareableEventCardView: View {
                             .fill(awayColor)
                             .frame(width: 56, height: 56)
                             .overlay(
-                                Text(String(awayTeam.split(separator: " ").last ?? "").prefix(3).uppercased())
+                                Text(TeamShortName.abbreviation(awayTeam))
                                     .font(.system(size: 12, weight: .heavy))
                                     .foregroundStyle(.white)
                             )
@@ -298,7 +298,7 @@ struct ShareableEventCardView: View {
                             .fill(homeColor)
                             .frame(width: 56, height: 56)
                             .overlay(
-                                Text(String(homeTeam.split(separator: " ").last ?? "").prefix(3).uppercased())
+                                Text(TeamShortName.abbreviation(homeTeam))
                                     .font(.system(size: 12, weight: .heavy))
                                     .foregroundStyle(.white)
                             )

@@ -100,8 +100,8 @@ struct EventDetailView: View {
 
     private var dynamicTitle: String {
         guard let event = vm.event else { return "Game Details" }
-        let away = event.awayTeamData?.abbreviation ?? String(event.awayTeam.split(separator: " ").last ?? "")
-        let home = event.homeTeamData?.abbreviation ?? String(event.homeTeam.split(separator: " ").last ?? "")
+        let away = event.awayTeamData?.abbreviation ?? TeamShortName.short(event.awayTeam)
+        let home = event.homeTeamData?.abbreviation ?? TeamShortName.short(event.homeTeam)
         if let hs = event.homeScore, let as_ = event.awayScore {
             let parts = [event.espn?.period, event.espn?.gameClock].compactMap { $0 }.filter { !$0.isEmpty }
             let state = parts.joined(separator: " ")
@@ -515,8 +515,8 @@ struct EventDetailView: View {
                                 .foregroundStyle(.secondary)
                         } else {
                             let winnerName = homeWon
-                                ? String(event.homeTeam.split(separator: " ").last ?? "")
-                                : String(event.awayTeam.split(separator: " ").last ?? "")
+                                ? TeamShortName.short(event.homeTeam)
+                                : TeamShortName.short(event.awayTeam)
                             Text("\(winnerName) Win")
                                 .font(.title3.weight(.bold))
                                 .foregroundStyle(homeWon ? colors.home : colors.away)
@@ -585,8 +585,8 @@ struct EventDetailView: View {
                             let homeDelta = home - openingHome
                             let homeGained = homeDelta > 0
                             let subject = homeGained
-                                ? String(event.homeTeam.split(separator: " ").last ?? "")
-                                : String(event.awayTeam.split(separator: " ").last ?? "")
+                                ? TeamShortName.short(event.homeTeam)
+                                : TeamShortName.short(event.awayTeam)
                             let points = Int((abs(homeDelta) * 100).rounded())
                             Text("\(subject) +\(points)% since open")
                                 .font(.system(size: 10, weight: .medium))
@@ -1261,8 +1261,11 @@ private struct GameSegmentsView: View {
         if let abbreviation, !abbreviation.trimmingCharacters(in: .whitespaces).isEmpty {
             return abbreviation
         }
-        guard let nickname = teamName.split(separator: " ").last else { return fallback }
-        return String(nickname.prefix(3)).uppercased()
+        // #3374: taking the last word here made "Charlotte FC" read `FC`. The
+        // shared rule keeps the designator attached to the name it qualifies,
+        // so the three letters come from "Charlotte" and read `CHA`.
+        let abbrev = TeamShortName.abbreviation(teamName)
+        return abbrev.isEmpty ? fallback : abbrev
     }
 
     var body: some View {

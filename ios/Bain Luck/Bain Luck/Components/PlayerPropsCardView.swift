@@ -13,10 +13,10 @@ struct PlayerPropsCardView: View {
     @State private var expandedCards: Set<String> = []
 
     private var homeAbbr: String {
-        String(homeTeam.split(separator: " ").last ?? "Home")
+        homeTeam.isEmpty ? "Home" : TeamShortName.short(homeTeam)
     }
     private var awayAbbr: String {
-        String(awayTeam.split(separator: " ").last ?? "Away")
+        awayTeam.isEmpty ? "Away" : TeamShortName.short(awayTeam)
     }
     private var isDone: Bool { eventStatus == "completed" || eventStatus == "closed" }
     private var isLive: Bool { eventStatus == "live" }

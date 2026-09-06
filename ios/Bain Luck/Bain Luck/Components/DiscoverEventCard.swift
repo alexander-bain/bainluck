@@ -364,13 +364,13 @@ struct NativeEventDiscoverCard: View {
                     .frame(width: 52, height: 52)
                     .shadow(color: .black.opacity(0.3), radius: 6, x: 0, y: 2)
                     .overlay(
-                        Text(String(name.split(separator: " ").last ?? "").prefix(3).uppercased())
+                        Text(TeamShortName.abbreviation(name))
                             .font(.caption.weight(.heavy))
                             .foregroundStyle(.white)
                     )
             }
 
-            Text(name.split(separator: " ").last.map(String.init) ?? name)
+            Text(TeamShortName.short(name))
                 .font(.caption.weight(.bold))
                 .foregroundStyle(.white.opacity(0.92))
                 .lineLimit(1)

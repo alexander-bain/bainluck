@@ -55,7 +55,7 @@ nonisolated struct TournamentCompactRow: View {
 
             if let leader = tournament.golfers.first {
                 VStack(alignment: .trailing, spacing: 1) {
-                    Text(leader.name.components(separatedBy: " ").last ?? leader.name)
+                    Text(TeamShortName.short(leader.name))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Text(String(format: "%.1f%%", leader.probability * 100))

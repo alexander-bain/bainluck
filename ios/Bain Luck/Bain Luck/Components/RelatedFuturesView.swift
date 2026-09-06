@@ -562,7 +562,7 @@ struct RelatedFuturesView: View {
     }
 
     private func teamColorForFuture(_ future: RelatedFuture, homeColor: Color, awayColor: Color) -> Color {
-        let homeShort = homeTeam.split(separator: " ").last.map(String.init) ?? homeTeam
+        let homeShort = TeamShortName.short(homeTeam)
         return future.outcomeName.localizedCaseInsensitiveContains(homeShort) ? homeColor : awayColor
     }
 
@@ -583,7 +583,7 @@ struct RelatedFuturesView: View {
             .map { (name: $0, awards: playerMap[$0]!.sorted { $0.prob > $1.prob }) }
             .sorted { $0.awards.first?.prob ?? 0 > $1.awards.first?.prob ?? 0 }
 
-        let homeShort = homeTeam.split(separator: " ").last.map(String.init) ?? homeTeam
+        let homeShort = TeamShortName.short(homeTeam)
         let homePlayers = sorted.filter { $0.awards.first?.future.outcomeName.localizedCaseInsensitiveContains(homeShort) == true }
         let awayPlayers = sorted.filter { !($0.awards.first?.future.outcomeName.localizedCaseInsensitiveContains(homeShort) == true) }
 
@@ -829,7 +829,7 @@ struct RelatedFuturesView: View {
     }
 
     private func seasonStatsColumn(futures: [RelatedFuture], teamName: String, color: Color) -> some View {
-        let shortName = teamName.split(separator: " ").last.map(String.init) ?? teamName
+        let shortName = TeamShortName.short(teamName)
         var seen: Set<String> = []
         let deduped = futures
             .sorted { ($0.probability ?? 0) > ($1.probability ?? 0) }
@@ -992,7 +992,7 @@ private struct PlayoffPathPairView: View {
     }
 
     private func shortTeamName(_ name: String) -> String {
-        name.split(separator: " ").last.map(String.init) ?? name
+        TeamShortName.short(name)
     }
 }
 
@@ -1055,7 +1055,7 @@ private struct WinTotalsPairView: View {
     }
 
     private func statColumn(futures: [RelatedFuture], teamName: String, color: Color) -> some View {
-        let shortName = teamName.split(separator: " ").last.map(String.init) ?? teamName
+        let shortName = TeamShortName.short(teamName)
         // Dedup by cleanLabel — keep highest probability per label
         var seenLabels: Set<String> = []
         let sorted = futures
@@ -1187,7 +1187,7 @@ private struct TradeWatchPairView: View {
                 byPlayer[player, default: []].append(f)
             }
             var result: [RelatedFuture] = []
-            let shortTeam = teamName.split(separator: " ").last.map(String.init) ?? teamName
+            let shortTeam = TeamShortName.short(teamName)
             for (_, entries) in byPlayer {
                 let matching = entries.first { $0.outcomeName.localizedCaseInsensitiveContains(shortTeam) }
                 result.append(matching ?? entries.max(by: { ($0.probability ?? 0) < ($1.probability ?? 0) })!)
@@ -1196,7 +1196,7 @@ private struct TradeWatchPairView: View {
         }()
 
         return VStack(alignment: .leading, spacing: 4) {
-            Text(teamName.split(separator: " ").last.map(String.init) ?? teamName)
+            Text(TeamShortName.short(teamName))
                 .font(.caption2)
                 .fontWeight(.semibold)
                 .foregroundStyle(.secondary)
@@ -1371,7 +1371,7 @@ private struct ChampionshipCard: View {
     var teamName: String = ""
 
     private var shortTeam: String {
-        teamName.split(separator: " ").last.map(String.init) ?? teamName
+        TeamShortName.short(teamName)
     }
 
     var body: some View {

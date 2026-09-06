@@ -176,7 +176,7 @@ struct NativeTournamentDiscoverCard: View {
                                     Text("\(FeedProbabilityScale.wholePercent(fromFraction: golfer.probability))%")
                                         .font(.caption.bold())
                                         .foregroundStyle(.white.opacity(0.9))
-                                    Text(golfer.name.components(separatedBy: " ").last ?? golfer.name)
+                                    Text(TeamShortName.short(golfer.name))
                                         .font(.caption)
                                         .foregroundStyle(.white.opacity(0.7))
                                         .lineLimit(1)

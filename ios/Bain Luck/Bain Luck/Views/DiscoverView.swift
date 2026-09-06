@@ -2025,7 +2025,7 @@ private enum NativeGuessCardContent {
     }
 
     static func shortName(_ name: String) -> String {
-        name.split(separator: " ").last.map(String.init) ?? name
+        TeamShortName.short(name)
     }
 }
 

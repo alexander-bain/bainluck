@@ -44,8 +44,8 @@ struct MarketMapView: View {
 
     @Environment(\.horizontalSizeClass) private var sizeClass
 
-    private var hAbbr: String { homeAbbr ?? String(homeTeam.split(separator: " ").last ?? "") }
-    private var aAbbr: String { awayAbbr ?? String(awayTeam.split(separator: " ").last ?? "") }
+    private var hAbbr: String { homeAbbr ?? TeamShortName.short(homeTeam) }
+    private var aAbbr: String { awayAbbr ?? TeamShortName.short(awayTeam) }
     private var isDone: Bool { eventStatus == "completed" || eventStatus == "closed" }
     private var isLive: Bool { eventStatus == "live" }
     private var isPre: Bool { !isDone && !isLive }
