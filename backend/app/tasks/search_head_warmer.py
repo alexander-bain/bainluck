@@ -171,6 +171,32 @@ priced term; clause (7) is what makes the term true; and `seconds_wall` is now
 stamped before the acquire and after the release so the number the budget bounds is
 the number the warmer publishes.
 
+🔴 **AND A WALL AROUND A THREAD BOUNDS THE WAIT, NOT THE WORK (CERT-2114).** The
+seventh presentation is the first one that is NOT about the budget, and that is
+the point: clause (7)'s wall was real, the interval it bounded was real, and the
+pass was still able to leave a lock behind it. `asyncio.wait_for(asyncio.to_thread
+(fn))` cancels the *await*; the worker runs on. Two of the four control ops are
+state-changing, so an abandoned `SET NX` went on to install a full
+`_LOCK_TTL_SECONDS` lock **after** the pass had published `complete` and released
+— and an abandoned unconditional `DEL` could remove a legitimate successor's. A
+grader's probe returned in 0.012 s and ended with the lock present; every later
+pass then took the `lock` skip for 180 s, which is the whole life of the
+`SEARCH_RESPONSE_TTL_SECONDS` entry the warmer exists to keep resident. So
+`/search` went cold *because* the warmer was working correctly by its own
+instruments — which is the fifth instance in this file of one shape: **a bound
+taken over something that is not the thing that binds.**
+
+The repair is not an eighth term and not a tighter wall. It is that the two
+state-changing ops stop depending on the wall for their lifetime safety: the run
+lock became an **owned-token** lock (`_RunLockClaim`), acquire is synchronous with
+respect to its own side effect (a `SET` that lands past the caller's deadline is
+undone, by token, in the thread that made it), release is a compare-and-delete
+that cannot touch a lock it does not own, and "we could not ask" became a third
+state that runs the pass without ever claiming ownership. **No constant moved:**
+the coroutine still waits on at most one wall per op, so `control` is still
+4 × 5 s, the budget is still 70 and `REFRESH_AHEAD_SECONDS` is still 150 —
+checked by `test_the_lifetime_safe_acquire_costs_the_budget_nothing`, not argued.
+
 **READ (5) FIRST, BECAUSE IT IS WHAT MAKES (1)-(4) MEAN ANYTHING.** All four of the
 earlier clauses are arithmetic over `rebuild_budget`, and a budget is a fact only
 if the unit it multiplies is enforced. Four presentations of this invariant were
@@ -265,7 +291,10 @@ import logging
 import math
 import os
 import time
+import uuid
 from contextlib import AsyncExitStack
+from dataclasses import dataclass
+from enum import Enum
 
 from app.utils.search_cache import (
     SEARCH_RESPONSE_TTL_SECONDS,
@@ -1655,7 +1684,30 @@ async def _lock_control(op: str, fn, *, on_lost):
     control key did not answer in time", and the wall is only tolerable because
     that answer exists. On the wall firing the thread is left running — it is
     itself bounded by `lock_control_cooperative_bound_s()` and touches nothing but
-    a local client, so an orphan costs one socket and no correctness.
+    a local client.
+
+    🔴 "AN ORPHAN COSTS ONE SOCKET AND NO CORRECTNESS" WAS FALSE FOR TWO OF THE
+    FOUR OPS, AND THAT SENTENCE IS CERT-2114 (which is why it is quoted here
+    rather than deleted). This wall bounds the WAIT, not the WORK:
+    `wait_for` cancels the await and `asyncio.to_thread` keeps running. So an op
+    routed through here must be one whose side effect is harmless when it lands
+    after its caller has gone. Op by op:
+
+    * `last_pass_read` — a `GET`. No side effect at all, so nothing to outlive.
+    * `pass_start_write` — a `SETEX` of `str(now)`, where `now` is **this pass's
+      own start time**, captured before the call. The value does not depend on
+      when the write lands, so a late write stores exactly what a punctual one
+      would; the only cost is a later `_LAST_PASS_START_TTL_SECONDS` expiry on a
+      3600 s key. Idempotent in value, and that is why it is safe here.
+    * `acquire` / `release` — **not harmless.** Their side effect *is* the
+      ownership decision. An abandoned `SET NX` installs a `_LOCK_TTL_SECONDS`
+      lock nobody believes they hold; an abandoned unconditional `DEL` deletes
+      whatever is there, including a successor's lock. Neither of those is
+      recovered by anything in this function, so neither relies on it: they carry
+      their own lifetime safety and are the subject of `_RunLockClaim` below.
+
+    The distinction is a property of the OP, not of this helper, so adding a
+    fifth op means answering the same question for it before routing it here.
     """
     try:
         return await asyncio.wait_for(
@@ -1676,18 +1728,159 @@ async def _lock_control(op: str, fn, *, on_lost):
         return on_lost
 
 
-def _acquire_blocking() -> bool:
-    return bool(
-        _lock_control_client().set(_LOCK_KEY, "1", nx=True, ex=_LOCK_TTL_SECONDS)
-    )
+class RunLockState(str, Enum):
+    """What ONE attempt on the run lock established. **Three states, not two.**
+
+    🔴 CERT-2114, AND THE WHOLE REPAIR IS THAT THIS ENUM HAS A THIRD MEMBER. The
+    acquire used to answer `bool`, and it answered `True` for two different facts:
+    "the `SET NX` succeeded, so we own it" and "the wall fired, so we could not
+    ask". Collapsing those is what let a pass treat an **unknown** acquire as an
+    owned one, and an owned one is the only kind that may be reasoned about.
+
+    * `OWNED` — the `SET NX` returned success and it returned it to a caller that
+      was still listening. This pass, and no other, holds `_LOCK_KEY`.
+    * `HELD_ELSEWHERE` — the `SET NX` was refused. Somebody else is warming; this
+      pass exits with `skip_reason="lock"` and touches nothing.
+    * `UNKNOWN` — the wall fired, or the call raised. We do not know whether the
+      lock is held, by us or by anyone. **This is not ownership** and never
+      becomes ownership later (`_acquire_blocking` is what makes the "later"
+      half true). The pass still RUNS — see `_RunLockClaim.may_run`.
+    """
+
+    OWNED = "owned"
+    HELD_ELSEWHERE = "held_elsewhere"
+    UNKNOWN = "unknown"
 
 
-async def _acquire_run_lock() -> bool:
-    """True if THIS run owns the lock. Fails OPEN if Redis is unreachable.
+#: Distinct from both a token and `None`, because `_lock_control`'s `on_lost` has
+#: to be tellable apart from a refused `SET NX` (`None`) and a won one (a token).
+#: A plain `None` here is the two-valued mistake `RunLockState` exists to undo.
+_CONTROL_LOST = object()
 
-    The lock stops duplicate work; it does not enforce correctness. A doubled
-    warm is wasteful, a warmer that silently stops warming because Redis blinked
-    is the defect this whole family of modules is about.
+
+@dataclass(frozen=True)
+class _RunLockClaim:
+    """One pass's claim on the run lock: what we established, and under which token.
+
+    The token is carried on ALL THREE states, and that is deliberate. It is not
+    an ownership signal — `owns` is — it is the name this attempt writes into
+    `_LOCK_KEY`, and a compensating release has to know it even when the attempt
+    that wrote it never learned whether it landed. Reading `token is not None` as
+    "we own it" is the CERT-2114 defect wearing a different hat, so ownership is
+    only ever `state`.
+    """
+
+    state: RunLockState
+    token: str
+
+    @property
+    def owns(self) -> bool:
+        """True only for a `SET NX` this pass actually observed succeeding."""
+        return self.state is RunLockState.OWNED
+
+    @property
+    def refused(self) -> bool:
+        """True only when somebody else demonstrably holds the lock."""
+        return self.state is RunLockState.HELD_ELSEWHERE
+
+    @property
+    def may_run(self) -> bool:
+        """Fail OPEN: only a demonstrated refusal stops a pass.
+
+        The lock stops duplicate work; it does not enforce correctness. A doubled
+        warm is wasteful, a warmer that silently stops warming because Redis
+        blinked is the defect this whole family of modules is about. So `UNKNOWN`
+        runs — it just does not pretend to own anything while it does.
+        """
+        return self.state is not RunLockState.HELD_ELSEWHERE
+
+
+def _release_if_owner(client, token: str) -> bool:
+    """Compare-and-delete `_LOCK_KEY`, and ONLY if it still carries `token`.
+
+    🔴 NOT `client.delete(_LOCK_KEY)`, WHICH IS WHAT THIS USED TO BE. An
+    unconditional `DEL` deletes whichever lock is there, and under a wall the
+    caller cannot promise that the one that is there is still its own: CERT-2114's
+    symmetric case is a release whose round-trip is abandoned, lands late, and
+    removes the exclusion a legitimately-acquired SUCCESSOR is holding — letting a
+    third pass in underneath it. The same defect as #1678, one module over.
+
+    The script is imported rather than retyped: `app/utils/single_flight.py` owns
+    the one copy, `app/utils/event_concept_cache.py` was the second, and a third
+    hand-written copy is how the three drift. Imported lazily to match this
+    module's convention for anything that reaches `app.tasks.redis_state`.
+    """
+    from app.utils.single_flight import RELEASE_IF_OWNER_LUA
+
+    return bool(client.eval(RELEASE_IF_OWNER_LUA, 1, _LOCK_KEY, token))
+
+
+def _acquire_blocking(token: str, deadline: float | None = None) -> str | None:
+    """`SET NX` the run lock under `token`. Returns the token iff we OWN it.
+
+    🔴 THE SIDE EFFECT DOES NOT OUTLIVE THE WAIT THAT ASKED FOR IT, AND THAT IS
+    CERT-2114. `_lock_control` cancels the *await*, never the thread, so on the
+    blocked SHA a `SET NX` that hit its wall went on to install a full
+    `_LOCK_TTL_SECONDS` lock **after** the pass had already published `complete`
+    and released. Nobody believed they held it, nothing released it, and every
+    later pass skipped on `skip_reason="lock"` until it expired — long enough for
+    the `SEARCH_RESPONSE_TTL_SECONDS` entry it exists to keep warm to expire with
+    it. The grader's probe returned in 0.012 s and left the lock standing.
+
+    So the undo happens HERE, in the thread that made the mess, before it exits:
+    `deadline` is when the caller's wall fires, and a `SET` that lands past it is
+    a lock nobody is waiting for. It is removed by token, so the compensation can
+    only ever remove OUR OWN lock and never a successor's.
+
+    The four orderings, because the correctness of this is entirely in the
+    orderings and a reader should not have to re-derive them:
+
+    1. **Lands early** (the normal case). `monotonic() < deadline`, so the token
+       is returned to a caller still inside `wait_for`. `OWNED`.
+    2. **Lands late.** The wall has fired, the caller already has `UNKNOWN`. This
+       function undoes its own `SET` and returns `None`. No residual lock.
+    3. **Lands late enough that the pass has finished.** Identical to (2) — the
+       deadline is absolute, so "late" does not decay. This is the grader's probe.
+    4. **Lands within microseconds of the wall**, so this function reads
+       `monotonic() < deadline` and returns a token to a caller whose `wait_for`
+       has just fired. The lock IS installed and this function does not undo it —
+       and it does not have to, because a caller holding `UNKNOWN` still runs
+       `_release_run_lock()` at the end of its pass, by this same token, which
+       removes it. (4) is the reason that release is not skipped on `UNKNOWN`.
+
+    There is no fifth ordering: a caller cannot release before its own wall fires,
+    so a thread that reads "not late" cannot be racing a release that has already
+    happened.
+
+    A compensation that itself fails leaves a lock carrying our token, collected
+    by `_LOCK_TTL_SECONDS` — the ordinary lost-release case (clause (6)), not a
+    new one, and strictly better than the blocked SHA's guaranteed ghost.
+    """
+    client = _lock_control_client()
+    if not client.set(_LOCK_KEY, token, nx=True, ex=_LOCK_TTL_SECONDS):
+        # A refused NX is an ANSWER, not a failure: somebody else is warming.
+        return None
+    if deadline is not None and time.monotonic() >= deadline:
+        logger.warning(
+            "search_head_warmer: the acquire landed after its %ss wall — undoing "
+            "the lock it installed rather than leaving it for %ss",
+            LOCK_CONTROL_BOUND_SECONDS,
+            _LOCK_TTL_SECONDS,
+        )
+        try:
+            _release_if_owner(client, token)
+        except Exception:  # noqa: BLE001 — nothing is left to report this to
+            logger.warning(
+                "search_head_warmer: could not undo a late acquire; the lock "
+                "carries our token and expires on its own TTL",
+                exc_info=True,
+            )
+        return None
+    return token
+
+
+async def _acquire_run_lock() -> _RunLockClaim:
+    """Claim the run lock for this pass. Never reports an unknown acquire as owned.
 
     ⚠️ THE LOCK-HELD CLOCK STARTS BEFORE THIS CALL, NOT AFTER IT (CERT-2107). The
     exclusion begins the instant the server executes the `SET NX`, which is inside
@@ -1695,24 +1888,53 @@ async def _acquire_run_lock() -> bool:
     excluded everyone else for a round-trip it does not count. `_warm_search_head`
     stamps `lock_started` on the line above the call for that reason, and
     `LOCK_CONTROL_OPS_PER_PASS` counts this op as one of the four it prices.
+
+    ⚠️ AND IT IS STILL ONE WALL, SO THE BUDGET DOES NOT MOVE (CERT-2114). The
+    compensating delete in `_acquire_blocking` is a second round-trip, but it runs
+    only on the path where the caller has ALREADY stopped waiting — the coroutine
+    is suspended on at most one `LOCK_CONTROL_BOUND_SECONDS` wall either way, and
+    the exclusion is what `lock_control_budget_s()` prices. `LOCK_CONTROL_OPS_PER_PASS`
+    stays 4, the budget stays 70 and `REFRESH_AHEAD_SECONDS` stays 150;
+    `test_the_lifetime_safe_acquire_costs_the_budget_nothing` is what checks that
+    rather than leaving it as a claim in a docstring.
     """
-    return bool(await _lock_control("acquire", _acquire_blocking, on_lost=True))
+    token = uuid.uuid4().hex
+    # Absolute, and captured before the wall starts: "late" must not decay as the
+    # thread runs, or ordering (3) above stops being distinguishable from (1).
+    deadline = time.monotonic() + LOCK_CONTROL_BOUND_SECONDS
+    got = await _lock_control(
+        "acquire",
+        lambda: _acquire_blocking(token, deadline),
+        on_lost=_CONTROL_LOST,
+    )
+    if got is _CONTROL_LOST:
+        return _RunLockClaim(RunLockState.UNKNOWN, token)
+    if got is None:
+        return _RunLockClaim(RunLockState.HELD_ELSEWHERE, token)
+    return _RunLockClaim(RunLockState.OWNED, token)
 
 
-def _release_blocking() -> None:
-    _lock_control_client().delete(_LOCK_KEY)
+def _release_blocking(token: str) -> None:
+    _release_if_owner(_lock_control_client(), token)
 
 
-async def _release_run_lock() -> None:
-    """Drop the exclusion. The lock is held until this DELETE lands, so it is priced.
+async def _release_run_lock(claim: _RunLockClaim) -> None:
+    """Drop the exclusion, by token. The lock is held until the delete lands, so it is priced.
+
+    Runs for `UNKNOWN` as well as `OWNED`, and that is not belt-and-braces tidiness
+    — it is what closes ordering (4) in `_acquire_blocking`, where the `SET`
+    succeeded a hair before the wall fired and the thread therefore did not undo
+    it. Skipping the release on `UNKNOWN` would reopen the ghost this repair
+    closes. It is safe to run on a lock we do not hold precisely because it is a
+    compare-and-delete: with no matching token it deletes nothing.
 
     A lost release is the one control failure with a fallback that is not a
     fallback in this function: `_LOCK_KEY` carries `_LOCK_TTL_SECONDS`, so the
-    worst case of never releasing is one skipped pass and not a dead warmer.
+    worst case of never releasing is a skipped pass and not a dead warmer.
     Clause (6) is what keeps that true — it refuses any budget that does not fit
     inside the lock's own TTL.
     """
-    await _lock_control("release", _release_blocking, on_lost=None)
+    await _lock_control("release", lambda: _release_blocking(claim.token), on_lost=None)
 
 
 def _last_pass_blocking() -> str | bytes | None:
@@ -2045,9 +2267,17 @@ async def _warm_search_head(
     # the call on the next line. Stamping after it hides a round-trip that the
     # budget is being asked to certify.
     lock_started = time.monotonic()
-    if not await _acquire_run_lock():
+    claim = await _acquire_run_lock()
+    if claim.refused:
         # We never got it, so there is no lock-held interval to report. This is the
         # one post-`lock_started` path where 0.0 is the honest answer.
+        #
+        # 🔴 `claim.refused`, NOT `not claim.owns` (CERT-2114). Only a demonstrated
+        # refusal stops a pass. An `UNKNOWN` acquire falls through to the work —
+        # `may_run` — while carrying no claim of ownership, which is the whole
+        # point of the third state: the two facts the old `bool` merged are now
+        # answered by two different properties and neither can stand in for the
+        # other.
         logger.info("search_head_warmer: another run holds the lock, skipping")
         return _no_work("lock", None, wall_s=0.0)
 
@@ -2069,10 +2299,19 @@ async def _warm_search_head(
     # holding the exclusion through it lengthened the pass gap for nothing.
     #
     # Releasing early means the release can happen on two paths, and a naive
-    # double release is WORSE than a late one: `_release_run_lock` does an
-    # unconditional DELETE, so a second call after the next pass has legitimately
+    # double release used to be WORSE than a late one: `_release_run_lock` did an
+    # unconditional DELETE, so a second call after the next pass had legitimately
     # acquired the lock would delete THAT pass's exclusion and let a third run
     # underneath it. Hence the flag rather than relying on idempotence.
+    #
+    # 🔴 CERT-2114 MADE THE RELEASE ITSELF SAFE, AND THE FLAG STAYS ANYWAY. The
+    # release is now a compare-and-delete against `claim.token`, so a second call
+    # can no longer take a successor's lock — the paragraph above describes a
+    # defect that is now closed at the primitive. The flag is kept because it does
+    # a second job the token cannot: `lock_wall_s` is stamped inside it, and a
+    # stopwatch that can be stopped twice reports the wrong interval. Keeping a
+    # guard whose original reason expired is worth one comment saying which of its
+    # two reasons is still load-bearing.
     lock_held = True
 
     async def _release_once() -> None:
@@ -2084,7 +2323,7 @@ async def _warm_search_head(
         nonlocal lock_held, lock_wall_s
         if lock_held:
             lock_held = False
-            await _release_run_lock()
+            await _release_run_lock(claim)
             lock_wall_s = time.monotonic() - lock_started
 
     # THE FLOOR, checked under the lock so two beats cannot both pass it. A

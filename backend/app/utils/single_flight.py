@@ -212,12 +212,25 @@ DEFAULT_LEASE_TTL_SECONDS = (
 )
 
 #: Compare-and-delete. Releasing without proving ownership is the #1678 defect.
-_RELEASE_IF_OWNER_LUA = """
+#:
+#: 🔴 PUBLIC BECAUSE IT IS THE THIRD CALLER THAT MAKES A COPY A CLASS (CERT-2114).
+#: `app/utils/event_concept_cache.py` already carries a byte-identical copy, and
+#: `app/tasks/search_head_warmer.py` needed a third when its run lock became an
+#: owned-token lock. A release that proves ownership is the ONLY correct release
+#: in this repo — an unconditional `DEL` is how #1678 admitted a third concurrent
+#: builder and how CERT-2114 found a walled release able to delete a successor's
+#: lock — so the script is named once and imported, never retyped. Nothing about
+#: it is specific to in-flight leases.
+RELEASE_IF_OWNER_LUA = """
 if redis.call('get', KEYS[1]) == ARGV[1] then
     return redis.call('del', KEYS[1])
 end
 return 0
 """
+
+#: The historical private name, kept so this module's own call sites and their
+#: tests do not move in a commit that is about a different module.
+_RELEASE_IF_OWNER_LUA = RELEASE_IF_OWNER_LUA
 
 
 @dataclass(frozen=True)

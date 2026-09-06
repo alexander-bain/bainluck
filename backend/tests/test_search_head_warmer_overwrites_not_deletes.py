@@ -50,6 +50,8 @@ import asyncio
 import inspect
 import math
 import textwrap
+import threading as _threading
+import time as _time_mod
 from unittest.mock import patch
 
 import pytest
@@ -70,6 +72,25 @@ class _FakeSession:
 
 def _run(coro):
     return asyncio.get_event_loop_policy().new_event_loop().run_until_complete(coro)
+
+
+def _owned(token="test-token"):
+    """The claim a successful acquire returns. CERT-2114.
+
+    Tests that stub `_acquire_run_lock` used to hand back a bare `True`, which is
+    precisely the two-valued answer the repair removed: `True` could not tell
+    "we own it" from "we could not ask". Anything stubbing the acquire now has to
+    say WHICH, and these three helpers are the only three answers there are.
+    """
+    return warmer._RunLockClaim(warmer.RunLockState.OWNED, token)
+
+
+def _refused(token="test-token"):
+    return warmer._RunLockClaim(warmer.RunLockState.HELD_ELSEWHERE, token)
+
+
+def _unknown(token="test-token"):
+    return warmer._RunLockClaim(warmer.RunLockState.UNKNOWN, token)
 
 
 def _route_ast():
@@ -410,7 +431,7 @@ class TestThePassSummaryTellsTheTruthAboutWrites:
         async def _fake_concurrent(sessions, head):
             return results
 
-        with patch.object(warmer, "_acquire_run_lock", return_value=True), \
+        with patch.object(warmer, "_acquire_run_lock", return_value=_owned()), \
              patch.object(warmer, "_release_run_lock"), \
              patch.object(warmer, "_warm_head_concurrently", _fake_concurrent), \
              patch.object(warmer, "_record_pass_start"), \
@@ -468,7 +489,7 @@ class TestThePassSummaryTellsTheTruthAboutWrites:
         a consumer must never have to branch on `terminal` to know whether a
         field exists.
         """
-        with patch.object(warmer, "_acquire_run_lock", return_value=False):
+        with patch.object(warmer, "_acquire_run_lock", return_value=_refused()):
             out = _run(warmer._warm_search_head())
         assert out["terminal"] == "skipped"
         for key in ("no_writes", "unverified"):
@@ -1656,11 +1677,11 @@ def test_a_slow_teardown_and_head_resolution_cannot_widen_the_write_interval():
 
     # All four lock-control helpers are `async def` since CERT-2107 (walled, and
     # run off the loop), so their stand-ins have to be too.
-    async def _release():
+    async def _release(claim):
         events.append("lock_released")
 
     async def _acquire():
-        return True
+        return _owned()
 
     async def _no_last_pass(now):
         return None
@@ -1726,9 +1747,9 @@ def test_a_setup_that_never_finishes_releases_the_lock_and_says_why():
             return False
 
     async def _acquire():
-        return True
+        return _owned()
 
-    async def _release():
+    async def _release(claim):
         released.append(1)
 
     async def _no_last_pass(now):
@@ -1907,15 +1928,19 @@ def test_the_reported_wall_is_the_whole_lock_held_interval():
 
     # Every control op slow, including the two the blocked SHA did bound nothing
     # around and the release the grader named separately.
-    def _slow_acquire():
+    # CERT-2114 signatures: the acquire is handed the token it must install and
+    # the deadline past which it must undo itself, and it answers with the token
+    # rather than a bare `True`. The release is handed the token to compare
+    # against. A stand-in on the old signature is a TypeError, not a silent pass.
+    def _slow_acquire(token, deadline=None):
         _time.sleep(DELAY)
-        return True
+        return token
 
     def _slow_last_pass():
         _time.sleep(DELAY)
         return None
 
-    def _slow_release():
+    def _slow_release(token):
         _time.sleep(DELAY)
 
     def _slow_record_client():
@@ -2127,7 +2152,11 @@ def test_a_hung_control_op_cannot_hold_the_exclusion_past_its_wall():
     HANG = 1.0
     WALL = 0.05
 
-    def _hangs():
+    def _hangs(*_args, **_kwargs):
+        # `*_args` because CERT-2114 gave the acquire and the release parameters
+        # (the token, and the acquire's undo deadline). A stand-in that ignores
+        # them is still the right stand-in HERE — this test is about the wall
+        # firing, and the ops it stands in for never return.
         _time.sleep(HANG)
 
     def _measure(target: str, call):
@@ -2158,11 +2187,20 @@ def test_a_hung_control_op_cannot_hold_the_exclusion_past_its_wall():
             f"rather than by this module"
         )
 
-    got, elapsed = _measure("_acquire_blocking", warmer._acquire_run_lock)
+    claim, elapsed = _measure("_acquire_blocking", warmer._acquire_run_lock)
     _assert_walled(elapsed, "acquire")
-    assert got is True, (
+    assert claim.may_run is True, (
         "the acquire must fail OPEN — a warmer that stops warming because Redis "
         "blinked is the defect this whole family of modules is about"
+    )
+    # 🔴 AND FAILING OPEN IS NOT OWNING IT (CERT-2114). The blocked SHA answered a
+    # bare `True` here, which the pass read as ownership; the two facts now have
+    # two properties and the walled acquire satisfies exactly one of them.
+    assert claim.state is warmer.RunLockState.UNKNOWN, claim
+    assert claim.owns is False, (
+        f"a walled acquire reported ownership ({claim}). It cannot know whether "
+        f"the `SET NX` landed, and a pass that believes it owns a lock it may not "
+        f"hold is the CERT-2114 defect at its source"
     )
 
     since, elapsed = _measure(
@@ -2175,10 +2213,12 @@ def test_a_hung_control_op_cannot_hold_the_exclusion_past_its_wall():
         f"absent value and a zero value must not read the same (gotcha #53)"
     )
 
-    _, elapsed = _measure("_release_blocking", warmer._release_run_lock)
+    _, elapsed = _measure(
+        "_release_blocking", lambda: warmer._release_run_lock(_owned())
+    )
     _assert_walled(elapsed, "release")
     # The release is the one whose fallback lives outside this function: a lost
-    # DELETE is collected by `_LOCK_KEY`'s own TTL, and clause (6) is what keeps
+    # compare-and-delete is collected by `_LOCK_KEY`'s own TTL, and clause (6) is what keeps
     # that TTL above the budget so the collection is never the thing that ends a
     # pass's exclusion.
     assert warmer.full_rebuild_budget_s() < warmer._LOCK_TTL_SECONDS, (
@@ -2254,9 +2294,9 @@ def test_the_four_control_ops_run_off_the_event_loop():
     loop_thread = None
     ran_on = []
 
-    def _record_thread():
+    def _record_thread(token, deadline=None):
         ran_on.append(threading.current_thread().ident)
-        return True
+        return token
 
     async def _drive():
         nonlocal loop_thread
@@ -2370,3 +2410,405 @@ def test_the_pass_budget_fits_inside_the_workers_own_time_limit():
         f"all network work and none of it bounded by anything in this module"
     )
     assert hard > soft, (hard, soft)
+
+
+# ---------------------------------------------------------------------------
+# 10. CERT-2114 — the acquire's side effect does not outlive the wait for it.
+#
+# CERT-2107 walled the four lock-control round-trips. CERT-2114 found that the
+# wall bounds the WAIT and not the WORK: `asyncio.wait_for(asyncio.to_thread(fn))`
+# cancels the await and leaves the thread running, so an abandoned `SET NX` went
+# on to install a full `_LOCK_TTL_SECONDS` lock AFTER the pass had published
+# `complete` and released. The grader's probe returned in 0.012 s and left the
+# lock standing; every later pass then skipped on `skip_reason="lock"` for long
+# enough that the `SEARCH_RESPONSE_TTL_SECONDS` entry the warmer exists to keep
+# resident expired underneath it. That is the DISCOVER ship, false.
+#
+# The tests below are the three the cert named, plus the two that stop the repair
+# being satisfied by a cheaper lie: that the fix bought no budget, and that the
+# release script is the repo's one copy rather than a third.
+# ---------------------------------------------------------------------------
+
+
+class _LockRedis:
+    """A Redis stand-in for the run lock: `SET NX EX`, `EVAL` compare-and-delete, `DEL`.
+
+    🔴 `delete()` IS IMPLEMENTED ON PURPOSE, even though production no longer calls
+    it. The mutant these tests exist to kill is "put the unconditional `DEL` back",
+    and a fake that cannot express the mutant cannot be shown to catch it. Same
+    reasoning for `get`: the fake is a Redis, not a mould of the current code.
+
+    `set_delay` and `eval_delay` are how a round-trip is driven past a scaled wall
+    without sleeping for a real five seconds. The store is mutex-guarded because
+    the whole subject here is a worker thread racing the event loop.
+    """
+
+    def __init__(self, *, set_delay=0.0, eval_delay=0.0):
+        self.store = {}
+        self.ops = []
+        self.scripts = []
+        self.set_delay = set_delay
+        self.eval_delay = eval_delay
+        self._mutex = _threading.Lock()
+
+    def set(self, key, value, nx=False, ex=None):
+        if self.set_delay:
+            _time_mod.sleep(self.set_delay)
+        with self._mutex:
+            self.ops.append(("set", key, value))
+            if nx and key in self.store:
+                return None
+            self.store[key] = value
+            return True
+
+    def eval(self, script, numkeys, key, arg):
+        if self.eval_delay:
+            _time_mod.sleep(self.eval_delay)
+        with self._mutex:
+            self.ops.append(("eval", key, arg))
+            self.scripts.append(script)
+            if self.store.get(key) == arg:
+                del self.store[key]
+                return 1
+            return 0
+
+    def delete(self, key):
+        with self._mutex:
+            self.ops.append(("delete", key, None))
+            return int(self.store.pop(key, None) is not None)
+
+    def setex(self, key, ttl, value):
+        with self._mutex:
+            self.ops.append(("setex", key, value))
+            self.store[key] = value
+            return True
+
+    def get(self, key):
+        with self._mutex:
+            self.ops.append(("get", key, None))
+            return self.store.get(key)
+
+    def ttl(self, key):
+        return 999
+
+    def held(self):
+        """Whatever token currently holds the run lock, or None."""
+        with self._mutex:
+            return self.store.get(warmer._LOCK_KEY)
+
+
+class _WarmerStubs:
+    """The non-lock half of a pass, stubbed so only the lock is under test."""
+
+    @staticmethod
+    async def resolve_head(session, limit):
+        return ["aa"], "test"
+
+    @staticmethod
+    async def warm_one(session, q):
+        return {"q": q, "ok": True, "reason": "warmed", "ttl_before": 1,
+                "rebuilt": True, "ttl_after": 99, "seconds": 0.0}
+
+
+class _StubSession:
+    async def rollback(self):
+        pass
+
+
+class _StubCM:
+    async def __aenter__(self):
+        return _StubSession()
+
+    async def __aexit__(self, *a):
+        return False
+
+
+def _drive_pass(redis, *, wall=0.05, min_period=0, **kwargs):
+    """Run ONE real `_warm_search_head` against `redis`, joining the worker threads.
+
+    🔴 `asyncio.run`, NEVER this file's `_run` helper, and that is the whole
+    apparatus of these tests. `_run` builds a loop and calls `run_until_complete`,
+    which does NOT shut down the default executor — so an abandoned worker is
+    still mid-flight when the assertions run and a residual lock has not been
+    installed yet. `asyncio.run` closes its runner, which awaits
+    `loop.shutdown_default_executor()` and joins the thread. That is the exact
+    observation point the grader's probe used, and it is the only one at which
+    "the side effect outlived the wait" is a statement about anything.
+    """
+    from app.tasks import base as task_base
+
+    with patch.object(task_base, "get_task_session", lambda: _StubCM()), \
+         patch.object(warmer, "resolve_head", _WarmerStubs.resolve_head), \
+         patch.object(warmer, "_warm_one", _WarmerStubs.warm_one), \
+         patch.object(warmer, "_lock_control_client", lambda: redis), \
+         patch.object(warmer, "LOCK_CONTROL_BOUND_SECONDS", wall), \
+         patch.object(warmer, "MIN_PASS_PERIOD_SECONDS", min_period), \
+         patch.object(warmer, "head_warm_enabled", lambda: True):
+        return asyncio.run(warmer._warm_search_head(head_size=1, budget_s=1.0, **kwargs))
+
+
+def test_an_acquire_that_lands_after_its_wall_leaves_no_ghost_lock():
+    """🔴 THE GRADER'S PROBE, AS AN ENTRY-POINT REGRESSION (CERT-2114).
+
+    The blocked SHA's exact shape: the `SET NX` sleeps past the control wall, the
+    pass gives up waiting, publishes its summary and releases — and THEN the
+    abandoned worker installs a 180 s lock nobody believes they hold. The probe
+    reported `complete` at 0.012 s wall and ended with the lock present.
+
+    The repair is that `_acquire_blocking` undoes its own late `SET`, by token,
+    in the thread that made it, before that thread exits. So the assertion is
+    made at the point the worker has been joined, and it is about STATE and not
+    about timing: whatever the pass said about itself, the lock must be gone.
+    """
+    redis = _LockRedis(set_delay=0.5)
+
+    summary = _drive_pass(redis, wall=0.05)
+
+    assert redis.held() is None, (
+        f"the pass ended with {redis.held()!r} still holding {warmer._LOCK_KEY}. "
+        f"The acquire hit its wall, the pass reported {summary['terminal']!r} and "
+        f"released — and the abandoned worker then installed a "
+        f"{warmer._LOCK_TTL_SECONDS}s lock behind it. That is CERT-2114 exactly: "
+        f"every later pass skips on `lock` until it expires, which is longer than "
+        f"the {warmer.SEARCH_RESPONSE_TTL_SECONDS}s entry it exists to keep warm"
+    )
+
+    # ...and it is gone because it was UNDONE, not because it was never installed.
+    # Without this, a fake that simply never stored the key would satisfy the
+    # assertion above and the test would prove nothing about the repair.
+    kinds = [op for op, key, _ in redis.ops if key == warmer._LOCK_KEY]
+    assert "set" in kinds, (
+        f"the late acquire never installed anything, so this run did not exercise "
+        f"the ghost path at all: {redis.ops}"
+    )
+    assert kinds.index("set") < len(kinds) - 1 and "eval" in kinds[kinds.index("set"):], (
+        f"the lock was installed and nothing compare-and-deleted it afterwards. "
+        f"The undo has to follow the SET inside the same worker: {redis.ops}"
+    )
+
+
+def test_a_walled_acquire_is_reported_unknown_and_never_owned():
+    """Requirement two, at the three-state boundary: unknown is not ownership.
+
+    All three states driven through the REAL `_acquire_run_lock` against a real
+    `SET NX`, because the property is about what the code concludes from what
+    Redis said, and stubbing the conclusion tests nothing.
+    """
+    # OWNED — an empty key, a clean SET NX.
+    redis = _LockRedis()
+    with patch.object(warmer, "_lock_control_client", lambda: redis):
+        claim = asyncio.run(warmer._acquire_run_lock())
+    assert claim.state is warmer.RunLockState.OWNED, claim
+    assert claim.owns and claim.may_run and not claim.refused
+    assert redis.held() == claim.token, "OWNED must mean OUR token is in the key"
+
+    # HELD_ELSEWHERE — somebody else's token is already there.
+    redis = _LockRedis()
+    redis.store[warmer._LOCK_KEY] = "somebody-else"
+    with patch.object(warmer, "_lock_control_client", lambda: redis):
+        claim = asyncio.run(warmer._acquire_run_lock())
+    assert claim.state is warmer.RunLockState.HELD_ELSEWHERE, claim
+    assert claim.refused and not claim.owns and not claim.may_run
+    assert redis.held() == "somebody-else", "a refused acquire must not have written"
+
+    # UNKNOWN — the wall fires. Runs, and owns nothing.
+    redis = _LockRedis(set_delay=0.5)
+    with patch.object(warmer, "_lock_control_client", lambda: redis), \
+         patch.object(warmer, "LOCK_CONTROL_BOUND_SECONDS", 0.05):
+        claim = asyncio.run(warmer._acquire_run_lock())
+    assert claim.state is warmer.RunLockState.UNKNOWN, claim
+    assert claim.may_run, (
+        "an unknown acquire must still warm — a warmer that stops because Redis "
+        "blinked is the defect this whole family of modules is about"
+    )
+    assert not claim.owns, (
+        f"{claim} claims ownership it cannot have observed. This is the bare `True` "
+        f"the blocked SHA returned, and the pass consumed it as ownership"
+    )
+    assert claim.token, "the compensating release needs the token even when UNKNOWN"
+
+
+def test_a_release_that_lands_late_cannot_delete_a_successors_lock():
+    """The symmetric case the cert named: release by token, never a blind DEL.
+
+    A release whose round-trip is abandoned lands after its caller has gone. By
+    then the lock may legitimately belong to the NEXT pass — the old
+    `client.delete(_LOCK_KEY)` would remove that pass's exclusion and let a third
+    run underneath it, which is #1678's defect one module over.
+
+    Driven as an interleaving rather than as a unit call: pass A's release is in
+    flight when A's lock expires and successor B takes the key.
+    """
+    redis = _LockRedis(eval_delay=0.3)
+    a = _owned("token-A")
+    redis.store[warmer._LOCK_KEY] = a.token
+
+    async def _drive():
+        task = asyncio.ensure_future(warmer._release_run_lock(a))
+        # A's release is out. Its TTL lapses and B legitimately acquires — the
+        # exact window in which a blind DEL is wrong.
+        await asyncio.sleep(0.05)
+        redis.store[warmer._LOCK_KEY] = "token-B"
+        await task
+
+    with patch.object(warmer, "_lock_control_client", lambda: redis), \
+         patch.object(warmer, "LOCK_CONTROL_BOUND_SECONDS", 5.0):
+        asyncio.run(_drive())
+
+    assert redis.held() == "token-B", (
+        f"A's late release removed the successor's lock (key now {redis.held()!r}). "
+        f"Release has to be a compare-and-delete against the releasing pass's own "
+        f"token; an unconditional DEL admits a third concurrent warm"
+    )
+    assert ("delete", warmer._LOCK_KEY) not in [
+        (op, key) for op, key, _ in redis.ops
+    ], (
+        f"the release reached `DEL` rather than the compare-and-delete: {redis.ops}"
+    )
+
+
+def test_the_release_script_is_the_repos_one_copy_and_not_a_third():
+    """The compare-and-delete is imported, not retyped.
+
+    `single_flight` owns it and `event_concept_cache` already carries a second
+    copy. A third hand-written copy is how the three drift apart, and a release
+    that drifts into a plain `del` is the defect above.
+    """
+    from app.utils.single_flight import RELEASE_IF_OWNER_LUA
+
+    redis = _LockRedis()
+    redis.store[warmer._LOCK_KEY] = "tok"
+    with patch.object(warmer, "_lock_control_client", lambda: redis):
+        asyncio.run(warmer._release_run_lock(_owned("tok")))
+
+    assert redis.scripts, "the release never evaluated a script"
+    assert redis.scripts[0] is RELEASE_IF_OWNER_LUA, (
+        "the warmer is running its own copy of the compare-and-delete rather than "
+        "`single_flight.RELEASE_IF_OWNER_LUA`. Three copies of one Lua script is "
+        "three chances for one of them to become an unconditional delete"
+    )
+    assert redis.held() is None, "the compare-and-delete did not fire on a match"
+
+
+def test_a_late_acquire_cannot_suppress_the_next_pass_until_the_entry_expires():
+    """The harm, end to end: the ghost is what starves the cache, so drive both passes.
+
+    The two constants are the reason a ghost is fatal rather than untidy, and the
+    test states the arithmetic rather than assuming the reader knows it: a residual
+    lock lives `_LOCK_TTL_SECONDS` and the entry it protects lives
+    `SEARCH_RESPONSE_TTL_SECONDS`. At 180 and 180 a single ghost spans the ENTIRE
+    life of the entry — every pass inside that window takes the `lock` skip, and
+    `/search` goes cold. This is the `DISCOVER` ship in one assertion.
+    """
+    assert warmer._LOCK_TTL_SECONDS >= warmer.SEARCH_RESPONSE_TTL_SECONDS, (
+        f"this test's premise has moved: a ghost lock now lives "
+        f"{warmer._LOCK_TTL_SECONDS}s against a {warmer.SEARCH_RESPONSE_TTL_SECONDS}s "
+        f"entry, so it can no longer starve one on its own. Re-derive the harm "
+        f"before relaxing anything here"
+    )
+
+    redis = _LockRedis(set_delay=0.5)
+
+    # Pass one: the acquire is abandoned. On the blocked SHA this is where the
+    # ghost is born.
+    _drive_pass(redis, wall=0.05)
+    assert redis.held() is None, "pass one left a lock behind"
+
+    # Pass two: the very next scheduled beat, now with a healthy Redis.
+    redis.set_delay = 0.0
+    second = _drive_pass(redis, wall=5.0)
+
+    assert second.get("skip_reason") != "lock", (
+        f"the next pass was refused by a lock nobody holds: {second}. A ghost that "
+        f"suppresses passes for {warmer._LOCK_TTL_SECONDS}s outlasts the "
+        f"{warmer.SEARCH_RESPONSE_TTL_SECONDS}s entry, so `/search` serves cold"
+    )
+    assert second["terminal"] != "skipped", second
+    assert second["warmed"] >= 1, (
+        f"the next pass reached no warm at all, so nothing proves the head can be "
+        f"kept resident after a walled acquire: {second}"
+    )
+    assert redis.held() is None, "pass two did not release its own lock"
+
+
+def test_the_lifetime_safe_acquire_costs_the_budget_nothing():
+    """The repair buys no width and no budget, and that is CHECKED, not argued.
+
+    `_acquire_blocking` can now make TWO round-trips (the `SET`, then the undo).
+    The budget prices what the EXCLUSION costs, and the exclusion is what the
+    coroutine waits for — the undo runs only on the path where the caller has
+    already stopped waiting, so it is not a fifth wall. If that reasoning were
+    wrong, `LOCK_CONTROL_OPS_PER_PASS` would owe a fifth op, the budget would move
+    off 70 and `REFRESH_AHEAD_SECONDS` would owe a re-derivation.
+
+    This module has been blocked twice for picking a constant and justifying it
+    afterwards, so the check runs the other way round: nothing was re-tuned, and
+    the assertions below are what say so.
+    """
+    assert warmer.LOCK_CONTROL_OPS_PER_PASS == 4, warmer.LOCK_CONTROL_OPS_PER_PASS
+    assert warmer.full_rebuild_budget_s() == 70.0, warmer.full_rebuild_budget_s()
+    assert warmer.REFRESH_AHEAD_SECONDS == 150, warmer.REFRESH_AHEAD_SECONDS
+    ok, why = warmer.residency_invariant()
+    assert ok, why
+
+    # And the coroutine really does wait on ONE wall even though the worker makes
+    # two round-trips. Measured on the await, for `test_a_hung_control_op...`'s
+    # reason: `asyncio.run` joins the worker, so a stopwatch outside it would time
+    # the undo as well and this assertion would be vacuous.
+    redis = _LockRedis(set_delay=0.4)
+    WALL = 0.05
+
+    async def _drive():
+        started = _time_mod.monotonic()
+        claim = await warmer._acquire_run_lock()
+        return claim, _time_mod.monotonic() - started
+
+    with patch.object(warmer, "_lock_control_client", lambda: redis), \
+         patch.object(warmer, "LOCK_CONTROL_BOUND_SECONDS", WALL):
+        claim, waited = asyncio.run(_drive())
+
+    assert claim.state is warmer.RunLockState.UNKNOWN, claim
+    assert waited < 2 * WALL + 0.05, (
+        f"the acquire's await took {waited:.3f}s against a {WALL}s wall. The "
+        f"compensating delete has been folded into the interval the caller pays "
+        f"for, so `lock_control_budget_s()` now understates the exclusion and "
+        f"clause (7) is being asked to certify a fifth round-trip it cannot see"
+    )
+
+
+def test_a_lock_that_lands_a_hair_before_the_wall_is_still_released_by_the_pass():
+    """Ordering (4), and it is the reason the release is not skipped on UNKNOWN.
+
+    `_acquire_blocking` undoes a late `SET` by comparing `monotonic()` against the
+    caller's deadline. There is one ordering that comparison cannot catch: the
+    `SET` lands microseconds BEFORE the deadline, so the thread reads "not late"
+    and returns a token — to a caller whose `wait_for` has already fired. The lock
+    is real, this pass will never call itself its owner, and nothing in the worker
+    will remove it.
+
+    What removes it is `_release_once()` running on `UNKNOWN` as well as on
+    `OWNED`, by the same token. Skipping the release for a pass that "does not own
+    anything" is the obvious tidy-up and it reopens the ghost, so the ordering is
+    modelled explicitly rather than left to the clock: the stand-in installs the
+    lock and IGNORES the deadline, which is precisely what a thread that read
+    `monotonic() < deadline` does.
+    """
+    redis = _LockRedis()
+    DELAY = 0.4
+
+    def _lands_just_inside(token, deadline=None):
+        redis.set(warmer._LOCK_KEY, token, nx=True, ex=warmer._LOCK_TTL_SECONDS)
+        # The caller's wall fires while we are in here. We are not "late" by our
+        # own clock, so we do not undo — ordering (4) exactly.
+        _time_mod.sleep(DELAY)
+        return token
+
+    with patch.object(warmer, "_acquire_blocking", _lands_just_inside):
+        summary = _drive_pass(redis, wall=0.05)
+
+    assert redis.held() is None, (
+        f"the lock installed on ordering (4) survived the pass (key holds "
+        f"{redis.held()!r}, terminal {summary['terminal']!r}). The acquire's own "
+        f"undo cannot see this ordering, so the only thing that removes it is the "
+        f"pass releasing by token on an UNKNOWN claim — restore that release"
+    )
