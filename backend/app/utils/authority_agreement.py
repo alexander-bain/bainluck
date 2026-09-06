@@ -726,6 +726,34 @@ def _delta(a: Side, b: Side) -> Optional[timedelta]:
     return abs(a.start - b.start)
 
 
+#: A placeholder for a missing kickoff in `_canonical_key`, never compared
+#: against a real one: the tuple's first element already segregates the two, and
+#: tuple comparison short-circuits before it reaches this. Naive on purpose — it
+#: is only ever compared with itself, and a tz-aware constant here would invite
+#: the reader to think it takes part in the ordering of real times.
+_NO_START = datetime.min
+
+
+def _canonical_key(side: Side) -> tuple[bool, datetime, str]:
+    """A total order on `Side` that is a pure function of its VALUES (#3628).
+
+    Every arrival order in this module is an accident. Our candidate SQL has no
+    `ORDER BY`, and `pair_by_normalized_key` groups through a `dict` whose keys
+    are strings, so CPython's per-process hash randomisation reaches anything
+    that iterates them. Two dynos, one input, two published numbers.
+
+    So nothing here may break a tie on *where a row appeared in a list*. This is
+    the one key that gets to decide instead: kickoff first, `ref` second.
+    `start` is the field the join already reasons in, and `ref` settles the case
+    `start` cannot — two rows at the SAME kickoff, which is the standing shape of
+    a duplicate rather than a corner (14 of MLB's 79 pairs).
+
+    Rows with no kickoff sort last, together, ordered among themselves by `ref`:
+    absence is not proximity, and it is not a time either.
+    """
+    return (side.start is None, side.start or _NO_START, side.ref)
+
+
 def _pair_within_key(
     fixtures: list[Side], rows: list[Side]
 ) -> tuple[list[tuple[Side, Side]], list[Side], list[Side]]:
@@ -737,9 +765,20 @@ def _pair_within_key(
     however far apart the two kickoffs are, because the whole point is to be
     able to report that distance instead of losing the row to it.
 
-    Pairs with a missing kickoff on either side are made last, in arrival order,
-    once every timed pairing has been settled. Absence is not proximity.
+    Pairs with a missing kickoff on either side are made last, once every timed
+    pairing has been settled. Absence is not proximity.
+
+    **Both sides are put in `_canonical_key` order first, and that is the whole
+    of #3628's repair on this function.** Two things here break a tie on list
+    position, and neither may: the `(d, fi, ri)` sort falls back to the arrival
+    indices when a fixture sits equidistant between two of our rows (StatPal at
+    minute 25, ours at 0 and 50 — the pairing is a coin toss and the loser goes
+    on to be counted as a miss), and the untimed pairing below drains two lists
+    head-first. Sorting the inputs makes both a function of the rows themselves,
+    which is what lets the caller's own permutation guard mean anything.
     """
+    fixtures = sorted(fixtures, key=_canonical_key)
+    rows = sorted(rows, key=_canonical_key)
     candidates = []
     for fi, f in enumerate(fixtures):
         for ri, r in enumerate(rows):
@@ -1016,7 +1055,11 @@ def pair_by_normalized_key(
     paired: list[tuple[Side, Side]] = []
     statpal_only: list[Side] = []
     ours_only: list[Side] = []
-    for key in set(by_key_f) | set(by_key_r):
+    # `sorted`, not `set`, and it is the root of #3628 rather than a tidy-up:
+    # these keys are strings, so a bare set iterates in an order CPython
+    # randomises per process. Every list built in this loop — and so every
+    # receipt that names the first few of one — changed between dynos.
+    for key in sorted(set(by_key_f) | set(by_key_r)):
         p, spare_f, spare_r = _pair_within_key(
             by_key_f.get(key, []), by_key_r.get(key, [])
         )
@@ -1366,7 +1409,7 @@ def _ours_only_in_span_composition(
     # either way — but #3093's repair reads the receipt to decide which row to
     # keep, and a ref that changes between dynos is not evidence.
     for candidates in matched_by_bucket.values():
-        candidates.sort(key=lambda r: (r.start is None, r.start or first, r.ref))
+        candidates.sort(key=_canonical_key)
 
     counts = {
         "second_row_for_a_matched_game": 0,
@@ -1412,7 +1455,7 @@ def _ours_only_in_span_composition(
     #: either of the two orderings it replaces.
     in_span = sorted(
         (m for m in ours_only if m.start is not None and first <= m.start <= last),
-        key=lambda m: (m.start, m.ref),
+        key=_canonical_key,
     )
 
     for miss in in_span:

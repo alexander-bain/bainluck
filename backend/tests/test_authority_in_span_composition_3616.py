@@ -18,6 +18,7 @@ it readable, and the two ways it must refuse to answer rather than answer zero.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 from itertools import permutations
 
@@ -26,6 +27,7 @@ from app.utils.authority_agreement import (
     Join,
     Side,
     _ours_only_in_span_composition,
+    _pair_within_key,
     build_agreement_row,
     pair_by_normalized_key,
 )
@@ -650,3 +652,269 @@ def test_the_field_cannot_move_a_running_clock():
     }
     assert identity["ours_covered_in_span_pct"] == 66.67  # 2 / (2 + 1), undiscounted
     assert identity["governing"]["gate"] == "BELOW"
+
+
+# ---------------------------------------------------------------------------
+# #3628, second cut. The first canonicalised the CONSUMER and left the PRODUCER
+# choosing by arrival index — see `_pair_within_key`.
+# ---------------------------------------------------------------------------
+
+
+def _equidistant_specimen():
+    """A StatPal fixture sitting exactly between two of our rows for its game.
+
+    The shape the first cut missed. `_pair_within_key` pairs on the smallest gap
+    and breaks a tie on the arrival indices, so a fixture 25 minutes from BOTH
+    our 0-minute and our 50-minute row pairs with whichever the candidate SQL —
+    which has no `ORDER BY` — happened to emit first. The loser is then handed to
+    the composition as a miss, and *which* row that is changes the answer:
+
+        row@0 pairs   ->  ours_only = 50, 100.  50 is within the hour of the
+                          matched row@0 and is its second row; 100 is not, and
+                          is a game of our own.        -> matched 1, our_only 1
+        row@50 pairs  ->  ours_only = 0, 100.   BOTH are within the hour of the
+                          matched row@50.              -> matched 2, our_only 0
+
+    Canonicalising the composition's input cannot reach this: by then the row is
+    already in the wrong bucket. Refs sort opposite to kickoffs, as in
+    `_chain_of_three`, so a sort key that lost `start` still fails.
+    """
+    base = _SPAN + timedelta(days=1)
+    fixtures = [
+        _side("s1", "Athletics", "Rangers", _SPAN),
+        _side("s2", "Mets", "Rays", _SPAN + timedelta(days=2)),
+        _side("s3", "Cubs", "Brewers", base + timedelta(minutes=25)),
+    ]
+    rows = [
+        _side(1, "Athletics", "Rangers", _SPAN, label="closed"),
+        _side(2, "Mets", "Rays", _SPAN + timedelta(days=2), label="closed"),
+        _side(30, "Cubs", "Brewers", base, label="closed"),
+        _side(12, "Cubs", "Brewers", base + timedelta(minutes=50), label="completed"),
+        _side(7, "Cubs", "Brewers", base + timedelta(minutes=100), label="live"),
+    ]
+    return fixtures, rows
+
+
+def test_the_whole_row_is_identical_however_the_candidate_sql_ordered_its_rows():
+    """The named regression for #3628: `build_agreement_row`, all six orders.
+
+    End-to-end and on the WHOLE row, not on the composition alone — the horizon
+    splits, the composition and every receipt have to agree, because a receipt
+    that names a different event id on two dynos is not evidence and #3093's
+    repair reads it to decide which row to keep.
+
+    Driving this through `build_agreement_row` is only meaningful now that the
+    join is order-invariant end to end. Before the fix the set iteration order
+    dominated the insertion order, so permuting this argument did not reliably
+    permute what the join handed over — which is why the first cut tested the
+    sub-function directly and shipped with the entry point still varying.
+    """
+    fixtures, rows = _equidistant_specimen()
+    contested = [r for r in rows if r.away == "Cubs"]
+    settled = [r for r in rows if r.away != "Cubs"]
+
+    published = set()
+    for order in permutations(contested):
+        for fixture_order in (fixtures, list(reversed(fixtures))):
+            row = _build(fixture_order, settled + list(order))
+            published.add(
+                json.dumps(
+                    {
+                        "horizon": row["identity"]["ours_only_by_horizon"],
+                        "composition": row["identity"]["ours_only_in_span_composition"],
+                        "pct": row["identity"]["ours_covered_in_span_pct"],
+                        "receipts": row["receipts"]["ours_only_in_span_duplicates"],
+                    },
+                    sort_keys=True,
+                )
+            )
+
+    assert len(published) == 1, f"twelve orderings published {len(published)} rows"
+
+    # And the one answer is the intended one, not merely a stable one: a
+    # permutation guard on its own is satisfied by any constant, including a
+    # wrong constant. The EARLIEST of two equidistant rows takes the pairing, so
+    # the 50-minute row is the matched row's second copy and the 100-minute row —
+    # outside the hour of the row that actually paired — is a game of our own.
+    identity = _build(fixtures, rows)["identity"]
+    assert identity["ours_only_by_horizon"]["inside_statpal_span"] == 2
+    assert identity["ours_only_in_span_composition"] == {
+        "second_row_for_a_matched_game": 1,
+        "second_row_for_an_unmatched_game": 0,
+        "our_only_row_for_the_game": 1,
+    }
+    receipts = _build(fixtures, rows)["receipts"]["ours_only_in_span_duplicates"]
+    assert [(r["event_id"], r["matched_row"], r["duplicate_of"]) for r in receipts] == [
+        ("12", "30", "a_row_that_matched_statpal")
+    ]
+
+
+def test_a_fixture_equidistant_between_two_of_our_rows_pairs_the_earlier_one():
+    """The tie-break itself, at the join, stated as a rule rather than inferred.
+
+    The count above cannot move without this one moving first, and this is the
+    layer a future author would reach for: `_pair_within_key`'s `(d, fi, ri)`
+    sort reads like it already breaks ties deterministically, and it does — on
+    list position, which is exactly the thing that is not fixed.
+    """
+    fixtures, rows = _equidistant_specimen()
+    contested = [r for r in rows if r.away == "Cubs"]
+    settled = [r for r in rows if r.away != "Cubs"]
+
+    for order in permutations(contested):
+        join = pair_by_normalized_key(fixtures, settled + list(order), normalize_team)
+        cubs = [(f.ref, r.ref) for f, r in join.paired if r.away == "Cubs"]
+        assert cubs == [("s3", "30")], order
+        assert sorted(r.ref for r in join.ours_only) == ["12", "7"]
+
+
+def test_the_default_join_is_the_same_join_it_always_was():
+    """The pin `pair_by_normalized_key`'s own docstring has always claimed.
+
+    It cited this test by name and the test did not exist, which is worse than
+    citing none: NFL, NBA and NHL have seven-day agreement clocks running on the
+    numbers this function produces, and #3628 is the second change to it in a
+    day. A refactor that moves one pairing by a game restarts three clocks, and
+    the ledger cannot tell that from a real disagreement.
+
+    A golden slate, deliberately awkward: a two-meeting series under one key,
+    a row we hold that StatPal does not, a fixture StatPal holds that we do not,
+    a kickoff missing on each side, and a row with no usable name at all.
+    """
+    fixtures = [
+        _side("s1", "Athletics", "Rangers", _SPAN),
+        _side("s2", "Athletics", "Rangers", _SPAN + timedelta(days=1)),
+        _side("s3", "Mets", "Rays", _SPAN + timedelta(days=2)),
+        _side("s4", "Cubs", "Brewers", None),
+        _side("s5", "Padres", "Reds", _SPAN + timedelta(days=3)),
+    ]
+    rows = [
+        _side(1, "Athletics", "Rangers", _SPAN + timedelta(days=1), label="closed"),
+        _side(2, "Athletics", "Rangers", _SPAN, label="closed"),
+        _side(3, "Mets", "Rays", _SPAN + timedelta(days=2), label="closed"),
+        _side(4, "Cubs", "Brewers", None, label="closed"),
+        _side(5, "Giants", "Dodgers", _SPAN + timedelta(days=1), label="closed"),
+        _side(6, None, None, _SPAN, label="closed"),
+    ]
+    join = pair_by_normalized_key(fixtures, rows, normalize_team)
+
+    # The series pairs meeting-for-meeting rather than by arrival, the untimed
+    # pair still pairs, and neither side loses a row to the other's absence.
+    assert sorted((f.ref, r.ref) for f, r in join.paired) == [
+        ("s1", "2"),
+        ("s2", "1"),
+        ("s3", "3"),
+        ("s4", "4"),
+    ]
+    assert [f.ref for f in join.statpal_only] == ["s5"]
+    assert [r.ref for r in join.ours_only] == ["5"]
+    assert [r.ref for r in join.unusable_rows] == ["6"]
+    assert join.unusable_fixtures == []
+
+
+def test_which_forty_misses_get_receipted_does_not_depend_on_the_key_order():
+    """`ours_only[:RECEIPT_CAP]` truncates, so list ORDER decides who is named.
+
+    This is what the `sorted()` on the key iteration is for, and it is live
+    rather than defensive: MLB's in-span bucket is 79 rows against a cap of 40,
+    so on every pass more than half the misses are dropped from the receipts —
+    and *which* half was decided by CPython's per-process string hashing. An
+    operator reading the receipts to work #3093 got a different 40 on each dyno,
+    and no count moved to tell them.
+
+    Fifty games, each its own key, each held once by us and listed by nobody.
+    """
+    fixtures = [_side("s0", "Athletics", "Rangers", _SPAN)]
+    rows = [_side(0, "Athletics", "Rangers", _SPAN, label="closed")]
+    for i in range(1, 51):
+        rows.append(
+            _side(
+                100 + i,
+                f"Away{i:02d}",
+                f"Home{i:02d}",
+                _SPAN + timedelta(minutes=i),
+                label="closed",
+            )
+        )
+
+    named = set()
+    for seed in range(6):
+        shuffled = rows[1:]
+        shuffled = shuffled[seed * 7 :] + shuffled[: seed * 7]
+        row = _build(fixtures, [rows[0]] + shuffled)
+        receipts = row["receipts"]["ours_only"]
+        assert len(receipts) == 40
+        named.add(json.dumps(receipts, sort_keys=True))
+
+    assert len(named) == 1, f"six orderings receipted {len(named)} different sets"
+
+    # The earliest forty, because the canonical order is kickoff-first — a stable
+    # rule a reader can predict, not merely a stable accident.
+    ids = [r["event_id"] for r in json.loads(named.pop())]
+    assert ids == [str(100 + i) for i in range(1, 41)]
+
+
+def test_the_pairing_primitive_is_invariant_under_both_its_arguments():
+    """`_pair_within_key` at its own boundary, because it owns the tie-break.
+
+    The canonicalisation lives HERE rather than at the join's entry, and this is
+    the test that makes that a decision instead of an accident: the sort at the
+    entry was removed as dead code once this one existed, because everything the
+    join publishes is derived from this function's three return values and it
+    re-sorts what it is handed anyway.
+
+    Both arguments, because both break ties on list position. Two fixtures
+    equidistant from one row of ours decide by fixture index which one is
+    reported as StatPal-only; two rows equidistant from one fixture decide by
+    row index which one is reported as a miss.
+    """
+    base = _SPAN + timedelta(days=1)
+    two_fixtures = [
+        _side("sA", "Cubs", "Brewers", base),
+        _side("sB", "Cubs", "Brewers", base + timedelta(minutes=50)),
+    ]
+    one_row = [
+        _side(5, "Cubs", "Brewers", base + timedelta(minutes=25), label="closed")
+    ]
+
+    for order in permutations(two_fixtures):
+        paired, spare_f, spare_r = _pair_within_key(list(order), list(one_row))
+        assert [(f.ref, r.ref) for f, r in paired] == [("sA", "5")], order
+        assert [f.ref for f in spare_f] == ["sB"]
+        assert spare_r == []
+
+    one_fixture = [_side("sA", "Cubs", "Brewers", base + timedelta(minutes=25))]
+    two_rows = [
+        _side(30, "Cubs", "Brewers", base, label="closed"),
+        _side(12, "Cubs", "Brewers", base + timedelta(minutes=50), label="completed"),
+    ]
+    for order in permutations(two_rows):
+        paired, spare_f, spare_r = _pair_within_key(list(one_fixture), list(order))
+        assert [(f.ref, r.ref) for f, r in paired] == [("sA", "30")], order
+        assert [r.ref for r in spare_r] == ["12"]
+        assert spare_f == []
+
+    # The untimed pairing drains two lists head-first, so it needs the same
+    # order to be stable — "in arrival order" was the docstring's own wording
+    # for the defect until #3628.
+    #
+    # Deliberately UNEQUAL: with the same count on both sides, draining from the
+    # heads and draining from the tails produce the same set of pairs and the
+    # bug hides. Three fixtures against two rows is where it shows — head-first
+    # leaves the LAST fixture spare, tail-first leaves the first — and "which
+    # fixture is StatPal-only" is a published count.
+    untimed_f = [
+        _side("sY", "Cubs", "Brewers", None),
+        _side("sX", "Cubs", "Brewers", None),
+        _side("sZ", "Cubs", "Brewers", None),
+    ]
+    untimed_r = [_side(8, "Cubs", "Brewers", None), _side(3, "Cubs", "Brewers", None)]
+    for fo in permutations(untimed_f):
+        for ro in permutations(untimed_r):
+            paired, spare_f, spare_r = _pair_within_key(list(fo), list(ro))
+            assert [(f.ref, r.ref) for f, r in paired] == [
+                ("sX", "3"),
+                ("sY", "8"),
+            ], (fo, ro)
+            assert [f.ref for f in spare_f] == ["sZ"]
+            assert spare_r == []
