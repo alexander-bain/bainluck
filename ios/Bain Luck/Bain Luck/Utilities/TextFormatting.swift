@@ -19,6 +19,12 @@ nonisolated private let knownAcronyms: Set<String> = [
 /// Mixed-case brand tokens that must be preserved exactly when matched
 /// case-insensitively. Title casing or upper casing would otherwise garble them.
 nonisolated private let brandCasing: [String: String] = [
+    // #3657 — the calibration payload's source key is the bare lowercase
+    // `datagolf`, and `.capitalized` rendered it "Datagolf". It lives here rather
+    // than in `CalibrationViewModel.sourceDisplayNames` because it is a brand, not
+    // a calibration label: every surface that title-cases a raw key now spells it
+    // the way DataGolf does.
+    "datagolf": "DataGolf",
     "att": "AT&T",
     "at&t": "AT&T",
     "fedex": "FedEx",
