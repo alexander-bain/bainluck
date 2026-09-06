@@ -477,7 +477,26 @@ _SOCCER_CUP_PROP_TICKER_TO_SPORT_KEY: dict[str, str] = {
 # would silently reject its own competition, which is the `soccer_other`
 # failure again wearing a better name.
 #
-# Guards: `tests/test_soccer_cup_game_legs_reach_their_cup_3478.py`.
+# THE COST THIS ACCEPTS, because it is real and it is not zero. Twenty existing
+# links fail the new `startswith` gate. FOURTEEN are the bug (soccer moneylines
+# on `baseball_other` / `americanfootball_other` events) and detaching them is
+# the point. SIX are correct links that break, all the same shape: we file a
+# cup's QUALIFYING rounds under `soccer_other` and only its main draw under the
+# competition key. `soccer_uefa_europa_conference_league` holds 0 events before
+# Oct 15 while every UECL market we hold is a July qualifier; `…europa_league`
+# starts Sep 16; Ossett United v Pontefract is an FA Cup qualifying tie filed
+# `soccer_other`. All six are resolved past ties, so no page a reader can open
+# changes today, and the forward case is near and large — the UEL league phase
+# is 2026-09-16 and UECL's is 2026-10-15, with 18 events each already ingested,
+# and an unmapped ticker sends those back into the `llm_sport_category` fallback
+# that produced the 14 baseball attachments. Bare `soccer` was measured as the
+# alternative that keeps all six: 650/709 on the golden set against 652 for
+# precise keys, and it starts a new wrong link. So it is worse, not kinder.
+# The real repair is on the event side — file cup qualifying rounds under their
+# competition key — and is the follow-up on #3478, not a reason to hold this.
+#
+# Guards: `tests/test_soccer_cup_game_legs_reach_their_cup_3478.py`, which pins
+# the cost as numbers so the follow-up has a population and nobody re-derives it.
 # =============================================================================
 
 _SOCCER_CUP_GAME_TICKER_TO_SPORT_KEY: dict[str, str] = {

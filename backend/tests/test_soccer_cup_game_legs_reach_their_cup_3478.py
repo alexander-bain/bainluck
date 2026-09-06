@@ -63,6 +63,55 @@ ARMED = [
 ]
 
 # ─────────────────────────────────────────────────────────────────────────────
+# THE COST THIS CHANGE ACCEPTS, pinned so it is a decision and not a surprise.
+#
+# Arming a precise key REJECTS candidates that fail `startswith`, and 20 links
+# that exist in production today fail it. Fourteen of those twenty are the bug
+# being fixed — `baseball_other` and `americanfootball_other` events that a
+# soccer moneyline should never have reached. **Six are correct links that this
+# change breaks**, and they are all the same shape:
+#
+#   KXFACUPGAME-26SEP04OSSPON  -> Ossett United v Pontefract      [soccer_other]
+#   KXUECLGAME-26JUL09PENFCC   -> Pen-y-Bont v FC Coloma          [soccer_other]
+#   KXUECLGAME-26JUL09MLBTBI   -> Mondorf-Les-Bains v Dinamo Tb.  [soccer_other]
+#   KXUECLGAME-26JUL09ALAYEL   -> Alashkert Yerevan v FC Yelimai  [soccer_other]
+#   KXUELGAME-26JUL09DYKUCL    -> Dynamo Kyiv v Uni Cluj          [soccer_other]
+#   (+1 more UECL July qualifier)
+#
+# THE CAUSE IS ON OUR EVENT SIDE, NOT IN THIS MAP: we file a cup's QUALIFYING
+# rounds under `soccer_other` and only its main draw under the competition key.
+# Measured 2026-09-06 — `soccer_uefa_europa_conference_league` holds 0 events in
+# July/August/September and 18 on Oct 15 (the league phase), while every UECL
+# market we hold is a July qualifier; `soccer_uefa_europa_league` starts Sep 16;
+# `soccer_fa_cup` holds the main draw while Ossett United v Pontefract, a
+# qualifying tie, is `soccer_other`.
+#
+# WHY IT IS STILL RIGHT TO ARM THEM. The six are resolved past ties, so nothing
+# a reader can open changes. The forward case is near and large: UEL's league
+# phase is 2026-09-16 (18 events already ingested) and UECL's is 2026-10-15 (18
+# events), and an unmapped ticker sends those straight back into the
+# `llm_sport_category` fallback that produced the 14 baseball attachments in the
+# first place. Bare `soccer` was measured as the alternative that keeps all six
+# — it scores 650/709 against the golden set versus 652 for precise keys, and
+# starts a new wrong link — so it is worse on the instrument, not better.
+#
+# The real repair is to file cup qualifying rounds under their competition key.
+# Filed as the follow-up on #3478; this list is here so that work can find its
+# own population, and so nobody re-derives this measurement.
+# ─────────────────────────────────────────────────────────────────────────────
+LINKS_THIS_CHANGE_KNOWINGLY_BREAKS = 6
+LINKS_THIS_CHANGE_DETACHES_AS_WRONG = 14
+QUALIFYING_ROUNDS_MISFILED_AS = "soccer_other"
+
+# The two competitions whose key holds NO event in the window their markets
+# actually fall in. Armed deliberately, for the league phase — see above.
+ARMED_AHEAD_OF_THEIR_LEAGUE_PHASE = {
+    "KXUELGAME": "2026-09-16",
+    "KXUECLGAME": "2026-10-15",
+}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # BUCKET 2 — NO KEY TO NAME. Six competitions with no row in `sports` at all
 # (verified 2026-09-06). `soccer_greece_super_league` is the Greek LEAGUE, not
 # the Greek Cup; there is no Taça de Portugal, no Coppa Italia Serie C, no Copa
@@ -229,6 +278,41 @@ def test_the_held_leagues_cup_prefix_lands_with_its_amendment_or_not_at_all():
 # =============================================================================
 # The whole partition, so nothing falls between the buckets
 # =============================================================================
+
+
+@pytest.mark.parametrize("prefix", sorted(ARMED_AHEAD_OF_THEIR_LEAGUE_PHASE))
+def test_a_competition_armed_ahead_of_its_league_phase_is_still_armed(prefix):
+    """These two are the ones the cost above is mostly about.
+
+    Their competition key holds no event in the window their current markets
+    fall in, so arming them breaks four correct links to `soccer_other`
+    qualifying ties and creates none until the league phase. That was measured
+    and accepted, not overlooked — the alternative (bare `soccer`) scores worse
+    on the golden set AND starts a new wrong link.
+
+    This test exists so the decision cannot be quietly reversed by someone who
+    rediscovers the four broken links and reads them as a plain regression.
+    Reversing it is fine; doing it without reading this is not.
+    """
+    assert prefix in {p for p, _k, _e in ARMED}
+    assert prefix.lower() in KALSHI_GAME_TICKER_PREFIXES
+
+
+def test_the_accepted_link_cost_is_stated_as_a_number_not_a_shrug():
+    """A disclosed cost that nobody wrote down is an undisclosed cost.
+
+    CERT-2087's lesson on #3562 was that disclosing a limitation is not removing
+    it. This does not remove the six broken links either — it pins them, so the
+    follow-up that fixes the cause (cup qualifying rounds filed under
+    `soccer_other` instead of their competition key) has a population to work
+    from and does not have to re-measure.
+    """
+    assert LINKS_THIS_CHANGE_KNOWINGLY_BREAKS == 6
+    assert LINKS_THIS_CHANGE_DETACHES_AS_WRONG == 14
+    assert QUALIFYING_ROUNDS_MISFILED_AS == "soccer_other"
+    # The wrong links removed outnumber the right ones broken. If a future
+    # measurement inverts that, this change stops paying for itself.
+    assert LINKS_THIS_CHANGE_DETACHES_AS_WRONG > LINKS_THIS_CHANGE_KNOWINGLY_BREAKS
 
 
 def test_every_one_of_the_fifteen_game_legs_is_in_exactly_one_bucket():
