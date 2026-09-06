@@ -533,6 +533,15 @@ class TestTheClaimThatIsolationIsTheOnlyRemainingPath:
     ship says so rather than substituting a weaker invariant quietly. Prose
     claims rot; this asserts it.
 
+    ⚠️ **THIS IS THE DECLARED UPPER BOUND, NOT MEASURED OCCUPANCY.** A declared
+    soft limit is what a task says it MAY take; p95 is what it does take, and the
+    two differ by a lot here — only six background tasks have a measured p95 over
+    the budget, against 59 that declare one. The declared model is used because 78
+    of 110 background tasks have no recorded duration at all, so it is the only
+    number that covers the whole population. Anyone costing the dedicated worker
+    should read measured pool occupancy instead; the declared bound overstates the
+    case in the expensive direction.
+
     ⚠️ **IF THIS TEST FAILS, THAT IS GOOD NEWS AND THE SHIP SHOULD ACT ON IT.**
     It fails when a schedulable window HAS appeared — because beats were retired,
     moved to `heavy`, or given shorter soft limits — which would mean the
