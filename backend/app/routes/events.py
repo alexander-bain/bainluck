@@ -8633,6 +8633,36 @@ _TENNIS_SETS_UNIT_TOTAL_RE = re.compile(
     r"\b(?:total\s+sets|sets\s*:?\s*o\s*/\s*u)\b", re.IGNORECASE
 )
 
+# #3161's defect, recurring in a second sport. Polymarket lists per-map ROUNDS
+# lines on a Counter-Strike match ("Map 1 Total Rounds: Over/Under 21.5") beside
+# the match MAPS line ("Games Total: O/U 2.5"), and both classify `game_total`.
+# The map they land on is drawn in match MAPS, so a per-map line is the wrong
+# SCOPE and a rounds line is the wrong UNIT.
+#
+# Measured on production 2026-09-06, `GET /api/events/15305595/game-markets` and
+# `/15305693/game-markets` each served exactly two rungs — 2.5 and 21.5 — and the
+# card rendered `Projected 3` on a rail running past 25 with
+# `Over 21.5 -> 47%` against a best-of-THREE. P(a BO3 goes past 21.5 maps) is 0,
+# not the 47% the per-map ROUNDS market quotes for one map of it.
+#
+# ⚠️ DELIBERATELY NOT GENERALISED BEYOND ESPORTS. "Total Rounds" is the CORRECT
+# match total for MMA and boxing, so a sport-blind version of this rule would
+# delete the one real rung those pages have. Same polarity as #2441: a sport
+# gets a scope rule only by being NAMED.
+_ESPORTS_MAP_SCOPED_TOTAL_RE = re.compile(r"\bmap\s*\d+\b", re.IGNORECASE)
+_ESPORTS_ROUNDS_UNIT_TOTAL_RE = re.compile(
+    r"\b(?:total\s+rounds|rounds\s*:?\s*o\s*/\s*u)\b", re.IGNORECASE
+)
+
+# The declared sports, and what "not scoped to the whole contest" means in each.
+# A registry rather than a second `if` for the reason `SPORT_SCORING` is one:
+# the next sport that lists sub-contest totals is a line here, and an undeclared
+# sport keeps every rung it has.
+_NON_MATCH_SCOPE_TOTAL_RES: dict[str, tuple[re.Pattern[str], ...]] = {
+    "tennis": (_TENNIS_SET_SCOPED_TOTAL_RE, _TENNIS_SETS_UNIT_TOTAL_RE),
+    "esports": (_ESPORTS_MAP_SCOPED_TOTAL_RE, _ESPORTS_ROUNDS_UNIT_TOTAL_RE),
+}
+
 # Polymarket names a player prop "<Player>: <Stat> O/U <line>" — the line is on the
 # MARKET, and the outcomes are a bare "Over"/"Under". That shape has to be told apart
 # from a genuine total that also carries "O/U" ("Cardinals vs. Reds: O/U 10.5") and
@@ -8888,25 +8918,31 @@ def _extract_threshold(outcome_name: str) -> Optional[float]:
     return float(m.group(1)) if m else None
 
 
-def _is_match_scope_tennis_total(market_name: Optional[str]) -> bool:
-    """False for a tennis totals market that is not scoped to the whole match.
+def _is_match_scope_total(market_name: Optional[str], sport_prefix: Optional[str]) -> bool:
+    """False for a totals market that is not scoped to the whole contest.
 
-    See `_TENNIS_SET_SCOPED_TOTAL_RE`. The question this answers is "may this
-    market be a rung on the match games rail", so a name that says nothing about
-    sets is match-scope by default — a refusal here deletes real rungs, which is
-    the quieter regression of the two.
+    See `_NON_MATCH_SCOPE_TOTAL_RES`. The question this answers is "may this
+    market be a rung on the match rail", so a name that says nothing about a
+    sub-contest scope is match-scope by default, and an UNDECLARED sport keeps
+    every rung it has — a refusal here deletes real rungs, which is the quieter
+    regression of the two.
     """
+    patterns = _NON_MATCH_SCOPE_TOTAL_RES.get(sport_prefix or "")
+    if not patterns:
+        return True
     name = market_name or ""
-    return not (
-        _TENNIS_SET_SCOPED_TOTAL_RE.search(name)
-        or _TENNIS_SETS_UNIT_TOTAL_RE.search(name)
-    )
+    return not any(p.search(name) for p in patterns)
 
 
-def _match_scope_tennis_totals(
+def _is_match_scope_tennis_total(market_name: Optional[str]) -> bool:
+    """Tennis's entry point to `_is_match_scope_total`. See `#3161`'s guard."""
+    return _is_match_scope_total(market_name, "tennis")
+
+
+def _match_scope_totals(
     game_totals: list[dict], sport_prefix: Optional[str]
 ) -> list[dict]:
-    """Keep only match-scope rungs on a tennis games map. FAIL-OPEN.
+    """Keep only match-scope rungs on a declared sport's totals map. FAIL-OPEN.
 
     The drop happens ONLY when a match-scope rung survives it. On the finished
     Wu v Alcaraz page (measured 2026-09-05) the whole totals list is one set
@@ -8915,13 +8951,25 @@ def _match_scope_tennis_totals(
     marker, the one thing on that card that says how the match actually went.
     A map with two wrong-scope rungs is worse than one without them; a map that
     is gone is worse than both.
+
+    The same protection is what keeps the esports arm honest: an event whose
+    ONLY totals are per-map rounds lines keeps them rather than losing its card.
     """
-    if sport_prefix != "tennis":
+    if sport_prefix not in _NON_MATCH_SCOPE_TOTAL_RES:
         return game_totals
     match_scope = [
-        t for t in game_totals if _is_match_scope_tennis_total(t.get("market_name"))
+        t
+        for t in game_totals
+        if _is_match_scope_total(t.get("market_name"), sport_prefix)
     ]
     return match_scope or game_totals
+
+
+def _match_scope_tennis_totals(
+    game_totals: list[dict], sport_prefix: Optional[str]
+) -> list[dict]:
+    """Back-compat entry point for #3161's guard. Delegates to the registry."""
+    return _match_scope_totals(game_totals, sport_prefix)
 
 
 # ---- Queue #190 Item 3: settled player-prop grading ------------------------
@@ -9976,12 +10024,12 @@ async def _build_game_markets(
         lo, hi = team_range
         team_total_items = [t for t in team_total_items if lo <= t["threshold"] <= hi]
 
-    # 7a-ii. A tennis games map is a MATCH map (#3161). This runs BEFORE the
-    # monotonicity pass on purpose: mixing scopes corrupts the prices as well as
-    # the labels — on the finished page the sets rung (0.05%) sorts below the
-    # match total and caps its 0.45% down to its own, so the match line would be
-    # served a price no venue quoted.
-    game_totals = _match_scope_tennis_totals(game_totals, sport_prefix)
+    # 7a-ii. A match totals map is a MATCH map — tennis games (#3161), esports
+    # maps (#3608). This runs BEFORE the monotonicity pass on purpose: mixing
+    # scopes corrupts the prices as well as the labels — on the finished tennis
+    # page the sets rung (0.05%) sorts below the match total and caps its 0.45%
+    # down to its own, so the match line would be served a price no venue quoted.
+    game_totals = _match_scope_totals(game_totals, sport_prefix)
 
     # 7b. Enforce monotonicity on totals — P(Over X) must decrease as X increases.
     # Thinly traded Kalshi half-period markets often have non-monotonic prices
