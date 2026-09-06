@@ -239,3 +239,136 @@ describe("ScoreDifferentialChart period chips need a score line under them", () 
     expect(html).toBe("");
   });
 });
+
+/**
+ * THE TENNIS BRANCH, WHICH IS THE ONE THIS QUEUE IS ABOUT (CERT-1995).
+ *
+ * The repair above counted every numeric score value in the data. On tennis that
+ * includes `actualDiff`, which is written from `score_history` and then
+ * DELIBERATELY NOT DRAWN: `home_score` counts SETS while the projection is
+ * quoted in GAMES, so ux/1034 B5 suppresses the line rather than plot a
+ * wrong-unit series. Counting hidden values put a chip over blank visible space
+ * on exactly the sport in question — the same mistake as bounding by timestamps,
+ * one level in. A value in the data is not a line on the screen.
+ *
+ * The second finding was ordering: the span was taken before the shared-domain
+ * prune, so a point that is deleted before anything renders could still bound it.
+ */
+describe("ScoreDifferentialChart counts only the series it actually draws", () => {
+  const count = (html: string): number => {
+    const m = html.match(/data-period-boundaries="(\d+)"/);
+    if (!m) throw new Error("wrapper lost its data-period-boundaries attribute");
+    return Number(m[1]);
+  };
+  const attr = (html: string, name: string): string | null => {
+    const m = html.match(new RegExp(`${name}="([^"]*)"`));
+    return m ? m[1] : null;
+  };
+
+  /** Tennis: sets in `score_history` (hidden), games in the projection (drawn). */
+  const tennis = (props: Record<string, unknown>) =>
+    draw(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      React.createElement(ScoreDifferentialChart as any, {
+        homeTeam: "Potapova",
+        awayTeam: "Anisimova",
+        commenceTime: new Date(KICKOFF).toISOString(),
+        eventStatus: "live",
+        isLive: true,
+        sportKey: "tennis_wta_us_open",
+        // SETS — written to `actualDiff` and then not drawn.
+        scoreHistory: [
+          { timestamp: iso(0), home_score: 0, away_score: 0 },
+          { timestamp: iso(30), home_score: 0, away_score: 1 },
+        ],
+        ...props,
+      }),
+    );
+
+  /** GAMES — the only series tennis actually renders, starting at +60. */
+  const projectedFrom60 = [
+    { timestamp: iso(60), projected_home_score: 15.1, projected_away_score: 19.7 },
+    { timestamp: iso(120), projected_home_score: 16.0, projected_away_score: 19.0 },
+  ];
+
+  test("a kickoff chip over HIDDEN set data does not draw", () => {
+    // The blocking case, reproduced: the hidden `actualDiff` rows sit at kickoff
+    // and +30, the visible projected line starts at +60, and the chip is at
+    // kickoff. Counting the hidden rows admits it over blank visible space.
+    const html = tennis({
+      history: projectedFrom60,
+      periodBoundaries: [{ timestamp: iso(0), label: "1st Set" }],
+    });
+
+    expect(attr(html, "data-actual-series")).toBe("false");
+    expect(attr(html, "data-projected-series")).toBe("true");
+    expect(count(html)).toBe(0);
+  });
+
+  test("the control — a chip on the VISIBLE projected line still draws", () => {
+    // Same suppressed-actual tennis fixture, chip moved onto the drawn stretch.
+    // Without this, the test above would pass on a chart that had stopped
+    // drawing chips for tennis at all.
+    const html = tennis({
+      history: projectedFrom60,
+      periodBoundaries: [{ timestamp: iso(90), label: "2nd Set" }],
+    });
+
+    expect(attr(html, "data-actual-series")).toBe("false");
+    expect(count(html)).toBe(1);
+  });
+
+  test("and the same set data on a sport that DRAWS it still bounds the span", () => {
+    // The other control, and the one that proves the gate reads the render
+    // rather than the sport: identical rows under basketball, where the
+    // scoreboard counts the unit the market quotes, so the actual line IS drawn
+    // and a kickoff chip is legitimately on it.
+    const html = draw(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      React.createElement(ScoreDifferentialChart as any, {
+        homeTeam: "Celtics",
+        awayTeam: "Knicks",
+        commenceTime: new Date(KICKOFF).toISOString(),
+        eventStatus: "live",
+        isLive: true,
+        sportKey: "basketball_nba",
+        scoreHistory: [
+          { timestamp: iso(0), home_score: 0, away_score: 0 },
+          { timestamp: iso(30), home_score: 12, away_score: 10 },
+        ],
+        history: projectedFrom60,
+        periodBoundaries: [{ timestamp: iso(0), label: "1st Quarter" }],
+      }),
+    );
+
+    expect(attr(html, "data-actual-series")).toBe("true");
+    expect(count(html)).toBe(1);
+  });
+
+  test("a point pruned out of the shared domain cannot bound the span", () => {
+    // CERT-1995's second finding. The shared domain starts at +60, so the score
+    // point at +10 is DELETED before anything renders — a span taken before that
+    // prune would still be bounded by it and would admit the +20 chip.
+    const html = draw(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      React.createElement(ScoreDifferentialChart as any, {
+        homeTeam: "Celtics",
+        awayTeam: "Knicks",
+        commenceTime: new Date(KICKOFF).toISOString(),
+        eventStatus: "live",
+        isLive: true,
+        sportKey: "basketball_nba",
+        scoreHistory: [
+          { timestamp: iso(10), home_score: 4, away_score: 2 },   // pruned away
+          { timestamp: iso(90), home_score: 30, away_score: 28 },
+        ],
+        history: [],
+        chartStartTime: iso(60),
+        chartEndTime: iso(120),
+        periodBoundaries: [{ timestamp: iso(20), label: "1st Quarter" }],
+      }),
+    );
+
+    expect(count(html)).toBe(0);
+  });
+});

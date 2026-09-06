@@ -406,40 +406,6 @@ export default function ScoreDifferentialChart({
       }
     }
 
-    // ── THE SPAN OF ACTUAL INK, TAKEN HERE AND NOT LATER (CERT-1989) ──
-    //
-    // Every score series this chart draws has now been written, and NOTHING
-    // synthetic has been added yet. That ordering is the whole point, because
-    // each of the next three steps would widen this span into a lie:
-    //
-    //   * `fillMinuteGaps` adds empty minutes across the whole domain;
-    //   * the period boundaries below insert their OWN timestamps as chart
-    //     categories, so a marker over blank axis would create the category it
-    //     is then judged to be inside — circular, and exactly the defect;
-    //   * `pm_*_spread` is painted onto EVERY point (its own comment says it is
-    //     "a snapshot, not a time series"), after which every category carries a
-    //     number and a "does this point draw anything" test answers yes always.
-    //
-    // Measured from the other side: the server keeps a marker supported by
-    // EITHER the probability line or the score line, because one `period_markers`
-    // array feeds two charts and it cannot know which of them is the blank one.
-    // So a probability-only kickoff marker legitimately survives to here, and
-    // this chart has to decline it on its own behalf.
-    const drawnScoreKeys = [
-      "projectedDiff",
-      "actualDiff",
-      ...allBookmakers.map((b) => `${b}_diff`),
-    ];
-    let scoreFrom: number | null = null;
-    let scoreTo: number | null = null;
-    for (const pt of dataMap.values()) {
-      if (!drawnScoreKeys.some((k) => typeof pt[k] === "number")) continue;
-      const t = parseISO(pt.timestamp).getTime();
-      if (scoreFrom === null || t < scoreFrom) scoreFrom = t;
-      if (scoreTo === null || t > scoreTo) scoreTo = t;
-    }
-    const scoreSpan = scoreFrom === null ? null : { from: scoreFrom, to: scoreTo as number };
-
     // Fill missing minutes for uniform x-axis spacing.
     // Both charts use categorical XAxis where each category gets equal pixel width.
     // Without filling gaps, this chart has fewer categories than OddsChart,
@@ -510,8 +476,46 @@ export default function ScoreDifferentialChart({
       (a, b) =>
         parseISO(a.timestamp).getTime() - parseISO(b.timestamp).getTime()
     );
+
+    // ── WHERE THIS CHART ACTUALLY HAS INK (CERT-1989, corrected by CERT-1995) ──
+    //
+    // Computed HERE — last, after the shared-domain prune above — because a
+    // point outside the domain is deleted and never drawn, so a span taken
+    // earlier could be bounded by a category that does not exist by the time
+    // anything renders. That was CERT-1995's second finding.
+    //
+    // And only over the series THIS RENDER ENABLES, which was its first and
+    // sharper one. `actualDiff` is written for tennis and then deliberately not
+    // drawn: `home_score` counts SETS while the projection is quoted in GAMES,
+    // so ux/1034 B5 suppresses the line rather than plot a wrong-unit series.
+    // Counting those values put a chip over blank visible space on exactly the
+    // sport this whole queue is about. A value in the data is not a line on the
+    // screen — the same mistake as bounding by timestamps, one level in.
+    //
+    // The remaining keys are safe against the synthesis above without needing to
+    // run before it: `fillMinuteGaps` and the marker categories both insert
+    // points whose score values stay null (this chart has no forward-fill), and
+    // `pm_*_spread` — painted onto every point, "a snapshot, not a time series"
+    // by its own comment — is excluded by name. Bookmaker lines are always
+    // rendered, so they always count.
+    const drawnScoreKeys = [
+      ...(hasProjectedScoreData ? ["projectedDiff"] : []),
+      ...(hasActualScoreData ? ["actualDiff"] : []),
+      ...allBookmakers.map((b) => `${b}_diff`),
+    ];
+    let scoreFrom: number | null = null;
+    let scoreTo: number | null = null;
+    for (const pt of points) {
+      if (!drawnScoreKeys.some((k) => typeof pt[k] === "number")) continue;
+      const t = parseISO(pt.timestamp).getTime();
+      if (scoreFrom === null || t < scoreFrom) scoreFrom = t;
+      if (scoreTo === null || t > scoreTo) scoreTo = t;
+    }
+    const scoreSpan =
+      scoreFrom === null ? null : { from: scoreFrom, to: scoreTo as number };
+
     return { points, scoreSpan };
-  }, [filteredHistory, filteredBookmakerHistory, filteredScoreHistory, filteredEspnHistory, chartStartTime, chartEndTime, pmSpreadData, periodBoundaries]);
+  }, [filteredHistory, filteredBookmakerHistory, filteredScoreHistory, filteredEspnHistory, chartStartTime, chartEndTime, pmSpreadData, periodBoundaries, hasProjectedScoreData, hasActualScoreData]);
 
   const chartData = chartBuild.points;
   /** Where this chart's score lines actually start and end — see the build. */
