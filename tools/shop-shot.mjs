@@ -48,7 +48,15 @@ try {
       await page.waitForTimeout(6000);
     } catch { console.error(`CLICKFAIL ${clickText}`); }
   }
-  await page.screenshot({ path: out, fullPage: true });
+  // `fullPage` defaults ON — unchanged, so every existing caller keeps its
+  // behaviour. Opt OUT with SHOT_FULLPAGE=0 for a tall page: /hub/tennis is a
+  // 33,244px PNG that downsamples to unreadable, so a full-page shot of it is a
+  // LOOK that cannot see anything, which reads as a pass. A viewport-only shot
+  // of the top of the page is the readable one — and for a copy contradiction
+  // you want the DOM text beside it anyway, because that is a string, not a
+  // pixel.
+  const fullPage = process.env.SHOT_FULLPAGE !== '0';
+  await page.screenshot({ path: out, fullPage });
   ok = true;
   console.log(out);
 } catch (e) {
