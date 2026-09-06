@@ -218,6 +218,32 @@ class TestTheClassThatMustNotFold:
         )
         assert [a.tokens for a in aliases] == [GARCIA_PEREZ]
 
+    def test_the_weak_path_reads_the_whole_vocabulary_not_just_its_own_slots(self):
+        """The surname-token path fires on classes NO slot ever joined, so the
+        only surnames it would otherwise see are the ones its handful of slots
+        happened to prove. That is a sample, and guard 2 is a question about the
+        vocabulary: `garcia` being a family name in a match this capture never
+        touched still makes `Garcia Perez` a re-ordering we may not fold.
+
+        Driven with a slot for a DIFFERENT player, so the class under test has no
+        slot of its own and cannot be refused by the strong path instead.
+        """
+        elsewhere = ProvenSlot(
+            authority="statpal", authority_id="77777", authority_name="J. Perez",
+            our_name="Juan Perez", slot_date="2026-07-13", tour="tennis_atp",
+            authority_opponent="A. Nobody", our_opponent="Anna Nobody",
+        )
+        spellings = {"juan perez", "garcia perez"}
+        # `garcia` is a surname in the vocabulary but not in THIS slot's proof.
+        refused = slot_proven_order_aliases(
+            [elsewhere], {"perez", "garcia", "juan"}, spellings
+        )
+        assert GARCIA_PEREZ not in {a.tokens for a in refused}
+        # Control: drop `garcia` from the vocabulary and the same call folds it,
+        # so the refusal above is guard 2 and not the class being unreachable.
+        allowed = slot_proven_order_aliases([elsewhere], {"perez"}, spellings)
+        assert GARCIA_PEREZ in {a.tokens for a in allowed}
+
     def test_two_ids_under_one_spelling_are_two_people(self):
         """The id clause, driven directly: same tokens, two authority ids."""
         one = self._garcia_slot()
