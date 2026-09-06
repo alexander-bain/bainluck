@@ -212,7 +212,8 @@ _DDL = (
         outcome TEXT, reject_reason TEXT,
         linked_event_id INTEGER, previous_event_id INTEGER, actor TEXT,
         candidates TEXT, detail TEXT,
-        first_attempted_at TEXT, last_attempted_at TEXT, attempt_count INTEGER
+        first_attempted_at TEXT, last_attempted_at TEXT, attempt_count INTEGER,
+        container_id INTEGER
     )
     """,
     """
@@ -291,6 +292,53 @@ def db():
         conn.execute(ddl)
     yield conn
     conn.close()
+
+
+def test_the_hand_written_schema_still_covers_the_model(db):
+    """The DDL above is hand-written, so it DRIFTS — and the drift is silent
+    until the day it isn't.
+
+    ``_flush_into`` runs the statements the real writer emits, which name every
+    column the ORM model declares. The table those statements land on is the
+    string literal above, maintained by hand. Add a column to
+    ``MarketMatchReceipt`` and the two come apart; nothing in this file notices
+    until five unrelated end-to-end tests go red at once with
+    ``sqlite3.OperationalError: table market_match_receipts has no column named
+    <x>`` — an error that points at the harness and says nothing about the
+    column, the change that added it, or which of the two sides is wrong.
+
+    MEASURED, 2026-09-06 (#2927 Phase 1): that is exactly what happened.
+    ``container_id`` was added to the model and the migration; this file's DDL
+    was not touched, and CI backend shard 1 went red on five tests whose subject
+    is link-loss history and which have nothing to do with containers. The
+    repair is one word in the DDL. THIS test is the part that makes the next one
+    cost one word too, and name itself.
+
+    It asserts COVERAGE, not equality: the harness is free to carry a scratch
+    column the model does not have (none does today), but every column the
+    writer can name must exist, or the statement it appears in cannot run.
+    """
+    from app.models.models import MarketLinkChange, MarketMatchReceipt
+
+    for model in (MarketMatchReceipt, MarketLinkChange):
+        declared = {c.name for c in model.__table__.columns}
+        rows = db.execute(f"PRAGMA table_info({model.__tablename__})").fetchall()
+        assert rows, (
+            f"{model.__tablename__} is not in `_DDL` at all — the fixture above "
+            f"creates the tables this suite writes to, so a model with no table "
+            f"here has no end-to-end coverage."
+        )
+        present = {row[1] for row in rows}
+        missing = declared - present
+        assert not missing, (
+            f"`_DDL` has drifted from {model.__name__}: the model declares "
+            f"{sorted(missing)}, which the hand-written {model.__tablename__} "
+            f"does not have. Every statement the real writer emits names these "
+            f"columns, so each one is an OperationalError in every test that "
+            f"flushes. Add them to `_DDL` above (the type only has to be one "
+            f"sqlite affinity can store — this harness rewrites form, not "
+            f"meaning)."
+        )
 
 
 def test_an_unlink_survives_the_next_failed_rematch(db):
