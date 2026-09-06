@@ -27,6 +27,16 @@ a candidate carrying an id we already hold — the register's own `market_id`,
 a provider id from an anchor — and names are used only to CLASSIFY a candidate
 that some id already admitted, never to find one.
 
+AN ID IS NOT AN EDITION. The second half of that constraint, learned the hard
+way against production: a provider id can be *too coarse* to name one
+tournament. A Kalshi series ticker is a whole tour, so "US Open 2026 › Men's
+Doubles" anchored to `KXATPDOUBLES` would have collected the 42 open rows we
+hold under it — every one of them for 2026-09-18 → 09-20, the week AFTER the US
+Open. The container's own window is what separates the editions, and the date
+it tests is the market's TICKER date, never the stored `commence_time`, which
+on all 29 open Kalshi tennis match markets sat exactly 14 days late (gotcha
+#14; see `member_window_verdict`).
+
 EVERY CANDIDATE NOT EDGED GETS A RECEIPT. Membership is never a curated list,
 and the receipt is how that is proved rather than asserted. A market rejected
 from a container is `market_match_receipts` with `container_id` set,
@@ -59,6 +69,7 @@ from typing import Any, Iterable, Optional
 from sqlalchemy import text
 
 from app.utils.container_class import MemberEvidence, classify_member
+from app.utils.market_identity import ticker_game_date
 from app.utils.container_graph import (
     ASSEMBLY_WRITABLE_KINDS,
     EDGE_NODE_TABLES,
@@ -458,13 +469,151 @@ _ANCHOR_KIND_TO_PREDICATE = {
     "tag": "fm.group_id = :exact",
 }
 
+#: How much an anchor of this kind PROVES about membership of ONE EDITION.
+#:
+#: `exact` — the venue's own grouping is per-edition. A Polymarket event slug
+#: names one tournament, so everything grouped under it is a member and the
+#: container's window adds nothing.
+#:
+#: `coarse` — the grouping spans editions. **A Kalshi series ticker is a whole
+#: tour**: `KXATPDOUBLES` holds every ATP doubles market there is, not the US
+#: Open's. Measured on production 2026-09-06: the 42 open `KXATPDOUBLES` rows
+#: we hold are all for 2026-09-18 → 09-20, i.e. the week AFTER the US Open. An
+#: unbounded series anchor would therefore have filled "US Open 2026 › Men's
+#: Doubles" with next week's tour, and it would have looked like the container
+#: working unusually well. The container's window is what separates the
+#: editions, so for a coarse anchor the window is REQUIRED, not optional.
+_ANCHOR_KIND_SPECIFICITY = {
+    "series": "coarse",
+    "event_slug": "exact",
+    "tag": "exact",
+}
 
-async def gather_venue_candidates(session, anchors: Iterable) -> list[Candidate]:
+#: Row cap per anchor. `limit + 1` is fetched so saturation is DETECTED rather
+#: than silently truncating a draw (a cap that quietly fills is the recorded
+#: `candidate probe LIMIT 5 saturates` trap), and the fetch is ordered by id so
+#: which rows survive a truncation is deterministic and re-runnable.
+VENUE_FETCH_LIMIT = 5000
+
+#: Window verdicts. `undated` is its own answer and never folded into
+#: `outside`: "this market is for another tournament" and "this market does not
+#: say when it is" are different findings with different fixes, and a single
+#: bucket would hide the second behind the first.
+WINDOW_IN = "in_window"
+WINDOW_OUTSIDE = "outside_window"
+WINDOW_UNDATED = "undated"
+
+
+def member_window_verdict(
+    external_id: Optional[str],
+    commence_time,
+    resolution_date,
+    window_start,
+    window_end,
+) -> str:
+    """Is this market inside the container's window? Pure; no database.
+
+    **THE TICKER OUTRANKS THE STORED TIME, and this is the whole reason this
+    function exists rather than a SQL `BETWEEN`.** Gotcha #14 says a Kalshi
+    `commence_time` is frequently the CLOSE time, and production says it every
+    time: on 2026-09-06 all 29 open Kalshi tennis match markets carried a
+    `commence_time` exactly 14 days after their own ticker date —
+    `KXWTAMATCH-26SEP06SWIZHE` (Swiatek–Zheng, played 9/6, the match standing
+    notice 27 names) is stored as `2026-09-20 15:00`. A window test that
+    trusted the column would have thrown tomorrow's final out of the US Open
+    and filed it under the tournament after. The market's own id knows better
+    than the column, so the id is asked first.
+
+    Falling back to the stored times is an INTERVAL overlap, not a point test:
+    an outright priced in June and resolving in September belongs to the
+    September tournament, and `commence <= window_end AND resolution >=
+    window_start` is what says so. `LEAST`/`GREATEST` semantics are done here
+    in Python rather than in SQL so this rule is gradeable by a table of
+    examples and cannot differ between Postgres and a test's SQLite.
+    """
+    ticker_date = ticker_game_date(external_id)
+    if ticker_date is not None:
+        # Compared on the calendar the ticker uses. A window is a timestamp
+        # pair; a ticker is a date. Widening the window to whole days at each
+        # end is deliberate — a 15:00Z close on the window's last day must not
+        # exclude a match played that morning.
+        if window_start is not None and ticker_date < window_start.date():
+            return WINDOW_OUTSIDE
+        if window_end is not None and ticker_date > window_end.date():
+            return WINDOW_OUTSIDE
+        return WINDOW_IN
+
+    times = [t for t in (commence_time, resolution_date) if t is not None]
+    if not times:
+        # Cannot be placed in ANY edition. Not silently admitted: a coarse
+        # anchor plus an undated row is exactly how another tournament's market
+        # gets into this hub with nothing to argue against it.
+        return WINDOW_UNDATED
+
+    earliest, latest = min(times), max(times)
+    if window_end is not None and earliest > window_end:
+        return WINDOW_OUTSIDE
+    if window_start is not None and latest < window_start:
+        return WINDOW_OUTSIDE
+    return WINDOW_IN
+
+
+@dataclass
+class VenueHarvest:
+    """What the venue gatherer collected AND what it refused, per anchor.
+
+    The refusals are returned rather than logged because a container that
+    collected nothing must never be indistinguishable from a tournament with
+    nothing on (gotcha #53) — `by_anchor` makes "the anchor matched 42 rows and
+    the window kept 0" a sentence the run report can say out loud.
+
+    NO `market_match_receipts` ROW IS WRITTEN FOR A WINDOW EXCLUSION, and that
+    is a deliberate departure from "every candidate not edged gets a receipt".
+    That table is keyed ON CONFLICT (market_id) — one row per market, not one
+    per (market, container) — so writing "not a member of the US Open" for next
+    week's Chengdu market would OVERWRITE the receipt that records how that
+    market actually matched. The exclusion is counted here instead.
+    """
+
+    candidates: list = field(default_factory=list)
+    #: One row per anchor: what it matched, kept, and refused.
+    by_anchor: list = field(default_factory=list)
+    #: Coarse anchors on a container with no window. Collected nothing.
+    refused_anchors: list = field(default_factory=list)
+
+    @property
+    def truncated(self) -> bool:
+        return any(a.get("truncated") for a in self.by_anchor)
+
+    def summary(self) -> dict:
+        return {
+            "candidates": len(self.candidates),
+            "anchors": len(self.by_anchor),
+            "refused_anchors": self.refused_anchors,
+            "outside_window": sum(a.get("outside_window", 0) for a in self.by_anchor),
+            "undated": sum(a.get("undated", 0) for a in self.by_anchor),
+            "truncated": self.truncated,
+        }
+
+
+async def gather_venue_candidates(
+    session,
+    anchors: Iterable,
+    *,
+    window_start=None,
+    window_end=None,
+    limit: int = VENUE_FETCH_LIMIT,
+) -> VenueHarvest:
     """Markets the venue itself groups under one of the container's anchors.
 
     Id-keyed by construction: the anchor holds the venue's own series ticker or
     event slug, and this asks the venue's own grouping column for its members.
     No name is read to FIND anything here.
+
+    A COARSE ANCHOR WITHOUT A WINDOW COLLECTS NOTHING. It is recorded in
+    ``refused_anchors`` and skipped, because the alternative is a hub holding a
+    whole tour — and #2215's lesson is that fail-closed is the only safe
+    direction when the two outcomes look identical from outside.
 
     NOTE ON `LIKE`. The pattern is built with an explicit trailing `-%` and the
     literal is escaped, because an unescaped `_` in a ticker is a single-char
@@ -472,7 +621,7 @@ async def gather_venue_candidates(session, anchors: Iterable) -> list[Candidate]
     six-letter prefix. Binding it as a parameter is also what keeps it out of
     gotcha #45's trap, where a `LIKE '%:x'` inside `text()` parses as a bind.
     """
-    candidates: list[Candidate] = []
+    harvest = VenueHarvest()
     seen: set[int] = set()
 
     for anchor in anchors:
@@ -482,6 +631,18 @@ async def gather_venue_candidates(session, anchors: Iterable) -> list[Candidate]
             # a `tournament` or `league` anchor is for the authority gatherer.
             continue
 
+        coarse = _ANCHOR_KIND_SPECIFICITY.get(anchor.id_kind) == "coarse"
+        if coarse and window_start is None and window_end is None:
+            harvest.refused_anchors.append(
+                {
+                    "provider": anchor.provider,
+                    "id_kind": anchor.id_kind,
+                    "provider_id": anchor.provider_id,
+                    "reason": "coarse_anchor_needs_window",
+                }
+            )
+            continue
+
         escaped = (
             anchor.provider_id.replace("\\", "\\\\")
             .replace("%", "\\%")
@@ -489,21 +650,59 @@ async def gather_venue_candidates(session, anchors: Iterable) -> list[Candidate]
         )
         params = {"pattern": f"{escaped}-%", "exact": anchor.provider_id}
         sql = text(
-            "SELECT fm.id, fm.name, fm.external_id, fm.source, fm.market_type "
+            "SELECT fm.id, fm.name, fm.external_id, fm.source, fm.market_type, "
+            "       fm.commence_time, fm.resolution_date "
             "FROM futures_markets fm "
             f"WHERE {predicate} "
             "  AND fm.status <> 'resolved' "
-            "LIMIT 5000"
+            "ORDER BY fm.id "
+            "LIMIT :limit"
         )
         # No explicit ESCAPE clause: backslash is PostgreSQL's default LIKE
         # escape character, which is what the escaping above relies on.
+        params["limit"] = limit + 1
         result = await session.execute(sql, params)
-        for row in result.fetchall():
+        rows = result.fetchall()
+
+        account = {
+            "provider": anchor.provider,
+            "id_kind": anchor.id_kind,
+            "provider_id": anchor.provider_id,
+            "bounded_by_window": coarse,
+            "matched": min(len(rows), limit),
+            "selected": 0,
+            "outside_window": 0,
+            "undated": 0,
+            "truncated": len(rows) > limit,
+        }
+        if account["truncated"]:
+            logger.error(
+                "container venue gather truncated at %s rows for anchor %s/%s — "
+                "members beyond the cap are invisible to this pass",
+                limit,
+                anchor.provider,
+                anchor.provider_id,
+            )
+            rows = rows[:limit]
+
+        for row in rows:
             market_id = int(row[0])
             if market_id in seen:
                 continue
+
+            if coarse:
+                verdict = member_window_verdict(
+                    row[2], row[5], row[6], window_start, window_end
+                )
+                if verdict != WINDOW_IN:
+                    account[
+                        "outside_window" if verdict == WINDOW_OUTSIDE else "undated"
+                    ] += 1
+                    continue
+
             seen.add(market_id)
-            candidates.append(
+            account["selected"] += 1
+            harvest.candidates.append(
                 Candidate(
                     child_type="market",
                     child_id=market_id,
@@ -518,7 +717,10 @@ async def gather_venue_candidates(session, anchors: Iterable) -> list[Candidate]
                     market_source=row[3],
                 )
             )
-    return candidates
+
+        harvest.by_anchor.append(account)
+
+    return harvest
 
 
 # ---------------------------------------------------------------------------
