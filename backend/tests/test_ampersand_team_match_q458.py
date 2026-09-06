@@ -303,21 +303,31 @@ def test_a_real_mascot_is_still_expanded(team, mascot):
 # ---------------------------------------------------------------------------
 
 def test_american_football_is_the_only_comprehensively_covered_family():
-    """Pinned as a VALUE, not a behaviour, because the whole point is that this
-    list is a judgement about Odds API coverage and not derivable from
-    `_ODDS_API_COVERED_PREFIXES`. Soccer must stay out: MLS is one league out of
-    hundreds, and refusing every soccer auto-create on its account would strand
-    the non-league fixtures Polymarket lists and nobody else does.
-    """
-    import inspect
+    """American football's category fallback is refused; soccer's is not.
 
-    from app.tasks.prediction_market_matching import (
-        _create_event_from_prediction_market,
+    Soccer must stay out: MLS is one league out of hundreds, and refusing every
+    soccer auto-create on its account would strand the non-league fixtures
+    Polymarket lists and nobody else does.
+
+    RE-POINTED by the integrator/224 D52 rescue (2026-09-06). This branch was cut
+    2026-08-30 and asserted the refusal by scanning
+    `_create_event_from_prediction_market` for its own
+    `_COMPREHENSIVELY_COVERED_FAMILIES` frozenset. Master reached the same refusal
+    first, under Q453: `auto_create_sport_key_from_category` returns None for the
+    `football` category, so the sport key is never built and the caller's "no sport
+    key determinable" branch refuses the auto-create. The branch's own guard was
+    dropped as superseded by content, so the source scan could only assert the
+    absence of code that no longer needs to exist. The intent is unchanged and now
+    pinned as BEHAVIOUR on the surviving mechanism, which a later refactor of that
+    helper cannot silently defeat the way a substring scan can.
+    """
+    from app.utils.prediction_market_matching import (
+        auto_create_sport_key_from_category,
     )
 
-    source = inspect.getsource(_create_event_from_prediction_market)
-    assert "_COMPREHENSIVELY_COVERED_FAMILIES" in source
-    marker = source.split("_COMPREHENSIVELY_COVERED_FAMILIES = frozenset(")[1]
-    declared = marker.split(")")[0]
-    assert '"americanfootball"' in declared
-    assert '"soccer"' not in declared
+    # American football: refused, so no event is auto-created beside the real
+    # americanfootball_ncaaf_fcs row ("Missouri State vs. Texas A&M").
+    assert auto_create_sport_key_from_category("football") is None
+
+    # Soccer: still allowed to create, and it must stay that way.
+    assert auto_create_sport_key_from_category("soccer") == "soccer_other"
