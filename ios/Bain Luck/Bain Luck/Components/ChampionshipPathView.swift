@@ -1,9 +1,23 @@
 import SwiftUI
 
+/// Reports the width the two team cards were actually given, so the row layout
+/// can be chosen from a measured number instead of a hoped-for one (#3574/#3580).
+private struct ChampionshipCardsWidthKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
 struct ChampionshipPathView: View {
     let progression: TeamProgressionResponse
     var homeTeamColor: Color = .blue
     var awayTeamColor: Color = .red
+
+    /// The width of the row of team cards, once laid out. Zero until then, which
+    /// `ChampionshipRowLayout.stacksBelowLabel` reads as "stack" — the shape that
+    /// is safe when the width is not known.
+    @State private var cardsWidth: CGFloat = 0
 
     /// Whether both teams share the same conference/league
     private var sameConference: Bool {
@@ -65,13 +79,28 @@ struct ChampionshipPathView: View {
                     .font(.headline)
                     .fontWeight(.semibold)
 
-                HStack(alignment: .top, spacing: 16) {
+                let cardCount = (away == nil ? 0 : 1) + (home == nil ? 0 : 1)
+                let contentWidth = ChampionshipRowLayout.teamCardContentWidth(
+                    totalWidth: cardsWidth, cardCount: cardCount)
+
+                HStack(alignment: .top, spacing: ChampionshipRowLayout.cardSpacing) {
                     if let away {
-                        teamCard(team: away, stages: filteredStages(for: away), color: awayTeamColor)
+                        teamCard(team: away, stages: filteredStages(for: away),
+                                 color: awayTeamColor, contentWidth: contentWidth)
                     }
                     if let home {
-                        teamCard(team: home, stages: filteredStages(for: home), color: homeTeamColor)
+                        teamCard(team: home, stages: filteredStages(for: home),
+                                 color: homeTeamColor, contentWidth: contentWidth)
                     }
+                }
+                .background(
+                    GeometryReader { geo in
+                        Color.clear.preference(
+                            key: ChampionshipCardsWidthKey.self, value: geo.size.width)
+                    }
+                )
+                .onPreferenceChange(ChampionshipCardsWidthKey.self) { width in
+                    cardsWidth = width
                 }
             }
             .padding()
@@ -80,7 +109,12 @@ struct ChampionshipPathView: View {
         }
     }
 
-    private func teamCard(team: TeamProgressionData, stages: [ProgressionStageData]? = nil, color: Color) -> some View {
+    private func teamCard(
+        team: TeamProgressionData,
+        stages: [ProgressionStageData]? = nil,
+        color: Color,
+        contentWidth: CGFloat = 0
+    ) -> some View {
         let displayStages = stages ?? team.stages
         return VStack(alignment: .leading, spacing: 12) {
             // Team header with logo, name, record, conference
@@ -137,13 +171,18 @@ struct ChampionshipPathView: View {
                 .foregroundStyle(.tertiary)
                 .tracking(0.5)
 
-            // Stages
+            // Stages. One decision for the whole card, so its bars stay the same
+            // length as each other and remain comparable (#3574/#3580).
+            let badgeWidth = ChampionshipRowLayout.badgeWidth(for: displayStages)
+            let stacked = ChampionshipRowLayout.stacksBelowLabel(
+                contentWidth: contentWidth, stages: displayStages)
+
             ForEach(displayStages, id: \.key) { stage in
-                stageRow(stage: stage, color: color)
+                stageRow(stage: stage, color: color, badgeWidth: badgeWidth, stacked: stacked)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(12)
+        .padding(ChampionshipRowLayout.cardPadding)
         .background(Color.secondary.opacity(0.03))
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay(
@@ -152,55 +191,99 @@ struct ChampionshipPathView: View {
         )
     }
 
-    private func stageRow(stage: ProgressionStageData, color: Color) -> some View {
+    /// One stage, in whichever of the two shapes its card has room for.
+    ///
+    /// `stacked` is not a style choice — it is `ChampionshipRowLayout`'s answer
+    /// to whether the one-line shape fits. See that type for the arithmetic and
+    /// for what the row was doing before (#3574, #3580).
+    @ViewBuilder
+    private func stageRow(
+        stage: ProgressionStageData, color: Color, badgeWidth: CGFloat, stacked: Bool
+    ) -> some View {
+        if stacked {
+            VStack(alignment: .leading, spacing: 4) {
+                stageLabel(stage)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                HStack(spacing: ChampionshipRowLayout.spacing) {
+                    stageBar(stage: stage, color: color)
+                    stageBadges(stage: stage, color: color)
+                        .frame(width: badgeWidth, alignment: .trailing)
+                }
+            }
+        } else {
+            HStack(spacing: ChampionshipRowLayout.spacing) {
+                stageLabel(stage)
+                    .frame(width: ChampionshipRowLayout.labelWidth, alignment: .leading)
+                stageBar(stage: stage, color: color)
+                stageBadges(stage: stage, color: color)
+                    .frame(width: badgeWidth, alignment: .trailing)
+            }
+        }
+    }
+
+    private func stageLabel(_ stage: ProgressionStageData) -> some View {
+        Text(stage.label)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+    }
+
+    private func stageBar(stage: ProgressionStageData, color: Color) -> some View {
         let prob = stage.probability ?? 0
-        let isClinched = prob > 0.99
-
-        return HStack(spacing: 8) {
-            Text(stage.label)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .frame(width: 80, alignment: .leading)
-
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Capsule()
-                        .fill(Color.secondary.opacity(0.08))
-                    Capsule()
-                        .fill(isClinched ? Color.green : color)
-                        .frame(width: max(2, geo.size.width * min(1.0, prob)))
-                }
+        return GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(Color.secondary.opacity(0.08))
+                Capsule()
+                    .fill(ChampionshipRowLayout.isClinched(probability: stage.probability)
+                          ? Color.green : color)
+                    .frame(width: max(2, geo.size.width * min(1.0, prob)))
             }
-            .frame(height: 10)
+        }
+        // Deliberately no `minWidth`. The minimum is the *criterion* the layout
+        // rule applies before choosing the one-line shape, not a floor the bar
+        // enforces on its own: a floor it cannot satisfy would push the badge
+        // column out of the card and re-open #3574 from the other side.
+        .frame(height: 10)
+    }
 
-            HStack(spacing: 4) {
-                if let trend = stage.trend24h, abs(trend) >= 0.005 {
-                    HStack(spacing: 1) {
-                        Image(systemName: trend > 0 ? "arrow.up" : "arrow.down")
-                            .font(.system(size: 7, weight: .bold))
-                        Text(String(format: "%.1f%%", abs(trend * 100)))
-                            .font(.system(size: 9, weight: .medium))
-                    }
-                    .foregroundStyle(trend > 0 ? .green : .red)
-                }
+    private func stageBadges(stage: ProgressionStageData, color: Color) -> some View {
+        let prob = stage.probability ?? 0
+        let isClinched = ChampionshipRowLayout.isClinched(probability: stage.probability)
 
-                if isClinched {
-                    HStack(spacing: 2) {
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 8, weight: .bold))
-                        Text("clinched")
-                            .font(.system(size: 10, weight: .medium))
-                    }
-                    .foregroundStyle(.green)
-                } else {
-                    Text(formatProb(prob))
-                        .font(.caption)
-                        .fontWeight(.bold)
-                        .monospacedDigit()
-                        .foregroundStyle(color)
+        // `lineLimit(1)` is a backstop, not the fix: the column is sized to hold
+        // this content, so it should never fire. It is here so that if it ever
+        // does — a larger Dynamic Type setting, a longer future string — the
+        // failure is a legible ellipsis rather than `clinc` / `hed` (#3574).
+        return HStack(spacing: 4) {
+            if let trend = stage.trend24h,
+               ChampionshipRowLayout.showsTrendBadge(trend: trend) {
+                HStack(spacing: 1) {
+                    Image(systemName: trend > 0 ? "arrow.up" : "arrow.down")
+                        .font(.system(size: 7, weight: .bold))
+                    Text(String(format: "%.1f%%", abs(trend * 100)))
+                        .font(.system(size: 9, weight: .medium))
+                        .lineLimit(1)
                 }
+                .foregroundStyle(trend > 0 ? .green : .red)
             }
-            .frame(width: 70, alignment: .trailing)
+
+            if isClinched {
+                HStack(spacing: 2) {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 8, weight: .bold))
+                    Text("clinched")
+                        .font(.system(size: 10, weight: .medium))
+                        .lineLimit(1)
+                }
+                .foregroundStyle(.green)
+            } else {
+                Text(formatProb(prob))
+                    .font(.caption)
+                    .fontWeight(.bold)
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .foregroundStyle(color)
+            }
         }
     }
 
