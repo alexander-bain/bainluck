@@ -2895,6 +2895,75 @@ _TYPEAHEAD_OUTCOME_PROBE_CAP = int(
     os.getenv("TYPEAHEAD_OUTCOME_PROBE_CAP", "5000")
 )
 
+# LAT-P239/#3394: the headline-contender lane's OWN bound, the sibling of
+# `_TYPEAHEAD_OUTCOME_ARM_TIMEOUT_MS` above. Until this existed the lane was the
+# only bonus lane in this route with no budget of its own — it was handed
+# whatever was left of the whole 10s request deadline, and it spent it.
+#
+# 🔴 WHAT THIS COSTS, STATED FIRST, because a bound on a recall lane is a recall
+# change and the file's rule is that those are argued, not slipped in. The lane
+# promotes ONE tier-1 market whose outcome names the person typed (`Boston Red
+# Sox` -> `MLB World Series Champion 2026`). A shed loses that one suggestion.
+#
+# THE MEASUREMENT THAT MAKES THE TRADE OBVIOUS. Production, 2026-09-06, the exact
+# statement this lane issues, `EXPLAIN (ANALYZE, BUFFERS)` per pattern:
+#
+#     pattern        duration     GIN candidate rows    buffers
+#     \mred\M        11,660 ms         1,006,223        116,342
+#     \msox\M            39.6 ms           2,204          1,649
+#     \malcaraz\M       169.4 ms           8,208          3,749
+#     \myankees\M        52.1 ms             806          1,045
+#
+# The healthy terms finish in 40-170 ms and come nowhere near a 2,000 ms bound,
+# so THE BOUND ONLY BITES TERMS THE LANE CANNOT SERVE AT ANY BUDGET. And what it
+# replaces for those terms is not a working lane: `q=red sox` on the miss path
+# measured **2 of 3 requests HTTP 500 at ~10.3s** and the third a 200 at 8.9s
+# (`headline_contenders` 6,814 ms of it). Shedding at 2,000 ms trades a bonus
+# suggestion that arrived one time in three for a dropdown that always answers.
+#
+# 🔴 AND THE CAUSE IS NOT THE ONE THIS FILE ALREADY KNOWS ABOUT. LAT-P013 above
+# established that pg_trgm servability is decided by the longest ALNUM RUN, not
+# by length — `_has_extractable_trigram` is that rule. `red` PASSES that rule (a
+# clean 3-run) and still costs 11.6 s, because its trigrams are EXTRACTABLE but
+# not SELECTIVE: `ed ` and ` re` are everywhere in a 1M-row outcome corpus, so
+# the GIN returns essentially the whole table and the bitmap recheck reads
+# 116,342 buffers to throw 99.7% of it away. Extractability is necessary and NOT
+# sufficient, and no static term rule can see this one — the selectivity lives in
+# the data, not in the string. That is why this is a TIMEOUT and not a predicate.
+#
+# 2,000 ms, the same as the outcome arm, and for the same reason: it is the
+# largest bound that still leaves the rest of a 10s request its own budget when
+# this lane spends all of its own.
+_TYPEAHEAD_HEADLINE_ARM_TIMEOUT_MS = int(
+    os.getenv("TYPEAHEAD_HEADLINE_ARM_TIMEOUT_MS", "2000")
+)
+
+
+def _typeahead_headline_bound_ms(deadline: float | None) -> int | None:
+    """The headline lane's statement bound, or ``None`` to shed it untouched.
+
+    🔴 `statement_timeout = 0` MEANS NO TIMEOUT IN POSTGRES, which is why this
+    returns a shed rather than clamping to whatever is left. The naive form —
+    `min(budget, int(remaining_ms))` — evaluates to `0` for any request entering
+    this lane with under a millisecond to spare, and `SET LOCAL statement_timeout
+    = 0` would then hand the most degenerate case in the system an UNBOUNDED
+    query. A bound that inverts to "no bound" precisely at the deadline is worse
+    than no bound at all, because the deadline arithmetic upstream keeps trusting
+    it — the clause `_resolve_typeahead_outcome_arm` states for its sibling.
+
+    Below the stage floor there is no query worth starting, so the lane sheds
+    without touching the database — an honest "we ran out of time" rather than a
+    statement issued in order to be cancelled. Same rule, same floor, and the
+    same `None`-means-shed contract as the outcome arm.
+    """
+    remaining_ms = (
+        _SEARCH_DEADLINE_MS
+        if deadline is None
+        else int((deadline - time.monotonic()) * 1000)
+    )
+    bound_ms = min(_TYPEAHEAD_HEADLINE_ARM_TIMEOUT_MS, remaining_ms)
+    return None if bound_ms < _SEARCH_MIN_STAGE_TIMEOUT_MS else bound_ms
+
 # The futures pool the dropdown ranks from. ONE constant, used by both the final
 # `LIMIT` and the outcome arm's own `LIMIT`, because the two being equal is what
 # makes the split set-identical rather than approximately so — see
@@ -6115,15 +6184,68 @@ async def typeahead_search(
     # decision made here is honoured.
     _ta_headline_ids: set = set()
     _ta_headline_patterns = contender_patterns(ta_expanded)
+    # Resolved ONCE and reused. Calling the helper in the condition and again for
+    # the value would read the clock twice, and the two reads can disagree across
+    # the stage floor — the gate passes, the value comes back `None`, and the
+    # arming line raises `TypeError` on the rarest request in the system.
+    _ta_headline_bound_ms = _typeahead_headline_bound_ms(_ta_deadline)
     if (
         _ta_headline_patterns
         and ta_futures_ranked
         and all(
             _query_name_match(m, ta_expanded) for m in ta_futures_ranked[:5]
         )
-        and time.monotonic() < _ta_deadline
+        and _ta_headline_bound_ms is not None
     ):
-        await _apply_search_statement_timeout(db, _ta_deadline)
+        # THE LANE'S OWN BOUND, not the request's remainder — see
+        # `_TYPEAHEAD_HEADLINE_ARM_TIMEOUT_MS` for the production plan that made
+        # this necessary. Armed BEFORE the savepoint on purpose: `SET LOCAL`
+        # issued inside a subtransaction is reverted by its rollback, so arming
+        # it inside would leave the recovery path re-arming a timeout that had
+        # already vanished.
+        try:
+            await db.execute(
+                text(f"SET LOCAL statement_timeout = {int(_ta_headline_bound_ms)}")
+            )
+        except Exception as exc:  # noqa: BLE001 — never fail the dropdown on the guard
+            logger.warning("typeahead headline bound not applied: %s", exc)
+        # 🔴 A SAVEPOINT, AND THE SAVEPOINT IS THE FIX (LAT-P239/#3394).
+        #
+        # This lane is the only rollback-capable stage in this route that runs
+        # while LIVE ORM ROWS are held: `ta_futures_ranked` was materialised
+        # above and is read again below, at the `futures_pool` loop. Every other
+        # stage assembles its rows into plain dicts before the next stage can
+        # fail, which is why none of them hit this.
+        #
+        # The old recovery here was `_recover_search_session`, i.e. a session
+        # `rollback()`. That call is correct for the stages that hold nothing and
+        # CATASTROPHIC here: an async rollback EXPIRES every ORM object in the
+        # session (gotcha #6 — `expire_on_commit=False` does not prevent it), so
+        # the very next attribute read below — `_normalize_futures_dedup_key`
+        # reading `market.name` — tried to lazy-refresh an expired row from
+        # inside a sync greenlet context and raised `MissingGreenlet`. The user
+        # got an HTTP 500.
+        #
+        # MEASURED, production 2026-09-06: `q=red sox` on the miss path, 2 of 3
+        # requests 500 at ~10.3s; Sentry BAINLUCK-15H, frames
+        # `events.py:typeahead_search` -> `_normalize_futures_dedup_key`. The
+        # degradation path — the code whose whole comment says "the dropdown must
+        # never be slower BECAUSE of a bonus lane" — was the outage.
+        #
+        # A SAVEPOINT rolls back only this statement. Nothing outside it was
+        # modified (this lane is read-only), so SQLAlchemy expires nothing and
+        # `ta_futures_ranked` survives intact. Same idiom, same reason, as
+        # `calibration_main_build`'s soft stage: one failure must not poison the
+        # transaction the remaining stages still have to run in.
+        #
+        # AWAITED, not `async with`. `AsyncSession.begin_nested()` supports both,
+        # and only this form survives contact with the route's own test doubles:
+        # a session mocked as `AsyncMock` returns a COROUTINE from every method,
+        # and a coroutine is not an async context manager. Choosing `async with`
+        # here broke 56 existing tests across the typeahead and search suites
+        # while the production path stayed correct — the failure would have been
+        # read as "the fix is wrong" rather than "the mock cannot spell it".
+        _ta_savepoint = await db.begin_nested()
         try:
             _ta_headline_result = await db.execute(
                 select(FuturesMarket)
@@ -6155,6 +6277,10 @@ async def typeahead_search(
                 if not _query_name_match(m, ta_expanded)
             ]
         except Exception as exc:  # noqa: BLE001
+            # THE SAVEPOINT ROLLBACK, and it comes before the re-raise decision
+            # on purpose: an unclassified exception leaves the request to fail,
+            # but it must not also leave an open savepoint behind it.
+            await _ta_savepoint.rollback()
             if not _is_query_timeout(exc):
                 raise
             # The dropdown must never be slower BECAUSE of a bonus lane.
@@ -6163,8 +6289,20 @@ async def typeahead_search(
                 "typeahead headline-contender lane timed out for %r — shipping "
                 "the dropdown unchanged", q
             )
-            await _recover_search_session(db, _ta_deadline)
+            # NO `_recover_search_session` HERE — that is the 500 (see the block
+            # comment above). The savepoint's own rollback has already restored
+            # the transaction, so the session needs no rollback and the ORM rows
+            # the loop below reads are still live. What DOES need restoring is
+            # the statement timeout: the lane's bound was armed for this lane
+            # only, and the stages after it must run against the request
+            # deadline, not against a 2s budget left lying around.
+            await _apply_search_statement_timeout(db, _ta_deadline)
             _ta_headline_rows = []
+        else:
+            # RELEASE the savepoint on the happy path. Not cosmetic: an
+            # unreleased savepoint is held for the rest of the transaction, and
+            # this lane runs on every eligible keystroke.
+            await _ta_savepoint.commit()
         ta_futures_ranked, _ta_headline_promoted = promote_headline_contenders(
             ta_futures_ranked,
             _ta_headline_rows,
