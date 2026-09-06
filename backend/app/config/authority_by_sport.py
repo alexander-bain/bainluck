@@ -86,6 +86,88 @@ AUTHORITY_BY_SPORT: dict[str, str] = {
     "baseball_mlb": ESPN,
 }
 
+#: Every module under `app/` that reads the switch. **Today: one, and it is the
+#: page that reports the switch's own value.**
+#:
+#: So the honest statement about a flip right now is that CHANGING A LINE ABOVE
+#: WOULD CHANGE ONE STRING ON AN ADMIN PAGE AND NOTHING ELSE. No ingest task, no
+#: registry path, no route that serves a surface asks `authority_for` anything.
+#:
+#: This is not a defect in step 6 — a dark switch is what step 6 was for, and
+#: `test_a_genuine_seven_now_reaches_the_gate_but_flips_nothing_by_itself`
+#: already pins that opening the gate does not move the switch. It is written
+#: down because of WHEN it stops being harmless. NFL, NBA and NHL are all at
+#: gate `MEETS`, day 2 of 7 (production, 2026-09-06 05:44Z), so the earliest a
+#: genuine seven exists is around 2026-09-11. On that day someone reads a
+#: YOUR-TURN entry, edits one line here, watches the admin row change from
+#: `espn` to `statpal`, and reasonably concludes the site now runs on StatPal
+#: for that sport. It would not. That is the failure this constant exists to
+#: make impossible to walk into, and it is program step 7's job to end — a
+#: switch nothing reads cannot fail over when ESPN goes dark, which is this
+#: lane's whole ship.
+#:
+#: Kept as a declared set with an AST guard over `app/` rather than as prose,
+#: because prose about what reads a symbol is exactly the claim that rots the
+#: day someone wires the first real consumer.
+#: `test_authority_switch_is_wired_3442` walks the tree, so wiring one fails CI
+#: until this set and the sentence above are brought back into line with it.
+#: A grep would not do: the one real consumer writes its import inside a
+#: function AND across four lines, and either alone defeats a substring scan.
+SWITCH_CONSUMERS: frozenset[str] = frozenset(
+    {
+        # Reports `authority_for(sport_key)` as the row's `authority.current`.
+        # A reader, not an actor: it changes nothing about what the site serves.
+        "app.routes.admin_providers",
+    }
+)
+
+#: The one consumer that reads the switch WITHOUT acting on it: the admin page
+#: whose whole job is to report the switch's value back. Named rather than
+#: inlined into the test below it, because "reports it" and "acts on it" is the
+#: distinction the whole disclosure turns on.
+SWITCH_REPORTERS: frozenset[str] = frozenset({"app.routes.admin_providers"})
+
+
+def switch_is_wired(consumers: Iterable[str]) -> bool:
+    """Does anything ACT on the switch, as opposed to reporting its value?
+
+    Takes the consumer set rather than reading the module global, so a test can
+    ask it about a tree that does not exist yet — a predicate that can only ever
+    be asked about today's answer is a restatement of today's answer.
+    """
+    return bool(frozenset(consumers) - SWITCH_REPORTERS)
+
+
+def switch_wiring_note(wired: bool) -> str:
+    """What the agreement row says about the switch, in an operator's words.
+
+    A function of the derived fact, so the `INERT` sentence cannot outlive the
+    condition it describes: nobody has to remember to delete it.
+    """
+    if wired:
+        return (
+            "wired: flipping a sport changes what the site serves for it, so "
+            "read the gate below before changing a line."
+        )
+    return (
+        "INERT: flipping a sport changes this page's `authority.current` and "
+        "nothing else — no ingest task, registry path or serving route reads "
+        "`config.authority_by_sport`. The gate below measures whether StatPal "
+        "COULD be trusted as the source of record; wiring anything to ACT on "
+        'the answer is program step 7 ("nothing goes blank when ESPN does") and '
+        "is not built. Do not read a flip as a change to what the site serves."
+    )
+
+
+#: Whether reading the switch changes anything the site does. Derived, never
+#: declared, so it cannot disagree with the set above.
+#:
+#: Published on the agreement row beside the gate, because an operator deciding
+#: whether to flip is exactly the person who must not have to read this file.
+SWITCH_IS_WIRED: bool = switch_is_wired(SWITCH_CONSUMERS)
+
+SWITCH_WIRING_NOTE: str = switch_wiring_note(SWITCH_IS_WIRED)
+
 #: The sports StatPal can DISCOVER a game in — not merely agree about one.
 #:
 #: **Agreement is not coverage** (lane1, 2026-09-05, reviewing this lane's step-7
