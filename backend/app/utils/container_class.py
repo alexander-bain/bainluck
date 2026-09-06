@@ -109,9 +109,20 @@ _ADVANCEMENT_RE = re.compile(
     re.I,
 )
 
-#: "winner of the US Open", "to win the title", "champion". Outrights.
+#: "winner of the US Open", "to win the title", "champion", and — the shape
+#: production actually uses — a BARE "Winner": `2026 Men's US Open Winner
+#: (Tennis)`.
+#:
+#: The bare form was missing in the first cut and it cost the biggest market on
+#: the page: measured against 60 real US Open market names on 2026-09-05, that
+#: string was the one miss in ten, landing the outright in `unclassified`. It is
+#: only safe because `prop` runs BEFORE `title` — "Set 1 Winner: Sinner vs
+#: Shelton" is a prop and matches `_PROP_RE` first — so a bare `\bwinner\b`
+#: here cannot swallow a set-winner or a match-winner leg. Moving the prop
+#: branch below the title branch would break that silently, which is why the
+#: ordering has its own tests.
 _TITLE_RE = re.compile(
-    r"\b(?:to\s+win(?:ner)?\b|\bwinner\s+of\b|\bchampion(?:ship)?\b|\btitle\b|"
+    r"\b(?:to\s+win(?:ner)?\b|\bwinner\b|\bchampion(?:ship)?\b|\btitle\b|"
     r"\boutright\b)",
     re.I,
 )

@@ -313,6 +313,66 @@ class TestOrderingIsNotAccidental:
         )
 
 
+class TestRealProductionStrings:
+    """Every string here was read off production on 2026-09-05, not invented.
+
+    Pulled with `SELECT DISTINCT name FROM futures_markets WHERE name ILIKE
+    '%US Open%' AND status <> 'resolved'` — 60 names, the ten below spanning
+    every class the tournament actually produces.
+
+    THIS TABLE ALREADY EARNED ITS PLACE. On its first run it scored 9/10, and
+    the miss was the biggest market on the page: `2026 Men's US Open Winner
+    (Tennis)` classed as `unclassified`, because `_TITLE_RE` required
+    "winner OF" and production writes a bare trailing "Winner". A hand-written
+    fixture would have said "Winner of the US Open 2026" and agreed with the
+    regex by construction — which is the whole reason these are copied rather
+    than composed.
+
+    The doubles rows also refute this program's own spec: §0 says we hold zero
+    US Open doubles and that no venue lists one. Measured the same evening:
+    167 open Polymarket doubles markets, 154 attached, over 93 distinct events.
+    """
+
+    REAL = [
+        # Doubles, from the 167 Polymarket rows. Slash pair BOTH sides.
+        ("US Open ATP (Doubles): Bublik/Shang vs Andreozzi/Guinard", "doubles"),
+        ("US Open ATP (Doubles): Bolelli/Vavassori vs Gille/Verbeek", "doubles"),
+        ("US Open ATP (Doubles): Arends/Pel vs Balaji/King", "doubles"),
+        # Singles fixtures. Note "J.J. Wolf" — dots, no slash.
+        ("US Open ATP: Alexander Bublik vs J.J. Wolf", "match_winner"),
+        ("US Open ATP: Adolfo Vallejo vs Gael Monfils", "match_winner"),
+        # Ladders.
+        ("US Open 2026: To Reach Quarterfinals (Men's Singles)", "advancement"),
+        ("US Open 2026: To Reach the Final (Women's Singles)", "advancement"),
+        # The outright — a CURLY apostrophe (U+2019) and a bare "Winner".
+        ("2026 Men’s US Open Winner (Tennis)", "title"),
+        # Genuinely unclassifiable, and they must stay visible rather than be
+        # forced into a section. Both are real Kalshi markets.
+        ("Number of Honey Deuces sold at the US Open", CLASS_UNCLASSIFIED),
+        (
+            "How many Chipotle BOGOs will be given out during the 2026 US Open?",
+            CLASS_UNCLASSIFIED,
+        ),
+    ]
+
+    @pytest.mark.parametrize("name,expected", REAL)
+    def test_production_string_classifies(self, name, expected):
+        assert classify_member(ev(node_type="market", name=name)) == expected
+
+    def test_a_bare_trailing_winner_does_not_swallow_a_set_winner(self):
+        """The risk the `title` widening created, closed in the same commit.
+
+        `_TITLE_RE` now matches a bare `\\bwinner\\b`, which is only safe
+        because the `prop` branch runs FIRST. If the two branches were
+        reordered, every "Set N Winner" leg would be filed as an outright and
+        the `title` section would fill with props — and the previous test would
+        still pass. This is the assertion that notices.
+        """
+        assert classify_member(ev(name="Set 1 Winner: Sinner vs Shelton")) == "prop"
+        assert classify_member(ev(name="Set 2 Winner: Swiatek vs Zheng")) == "prop"
+        assert classify_member(ev(name="2026 Men’s US Open Winner")) == "title"
+
+
 class TestItStaysPure:
     """No DB, no clock, no network — so it is gradeable by a table."""
 
