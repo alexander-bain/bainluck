@@ -592,6 +592,37 @@ def _bump_window_counter(pipe, key: str):
     pipe.incr(key)
 
 
+def _bump_window_counter_by(pipe, key: str, amount: int):
+    """``_bump_window_counter`` for an accumulator rather than a tally.
+
+    Identical window semantics — ``SET ... EX ... NX`` stamps the 24h window
+    once at the first write and ``INCRBY`` never refreshes it — so a sum written
+    here is readable by ``_window_age_s`` exactly like a count, and every
+    paragraph of the docstring above applies to this function unchanged.
+
+    ⚠️ **A separate function, and ``_bump_window_counter`` deliberately still
+    calls ``INCR`` rather than delegating here with ``amount=1``.** That
+    delegation was written first and it is the more obviously correct design,
+    which is why it is worth recording why it was backed out: it changes the
+    Redis VERB under every counter in this module, and every writer here
+    swallows exceptions by contract because it runs before or after each task in
+    the system. Seven test doubles implement ``incr`` and not ``incrby``, so the
+    refactor turned 14 guard tests red with counters reading ``0`` — a
+    ``SET NX`` that landed followed by a bump that raised into an
+    ``except: pass``. Real redis-py has both verbs, so production would have
+    been fine; that is exactly what makes it the wrong risk to take. The blast
+    radius of the shared helper is every counter on the health surface, the
+    benefit was one fewer function, and the failure mode is silent zeros.
+
+    The distinction is also real and worth keeping in the signature: a key
+    bumped by 1 is a COUNT of events, a key bumped by a measurement is a SUM
+    over them, and only the second divided by its window has a unit
+    (LAT-P242: worker-milliseconds per second of wall clock).
+    """
+    pipe.set(key, 0, ex=WINDOW_COUNTER_TTL, nx=True)
+    pipe.incrby(key, int(amount))
+
+
 #: How many recent run durations to keep per task. A p95 needs a tail, and one
 #: sample has none: `last_duration_ms` recorded `refresh_open_commentary` at 8ms
 #: — a real number, from the run that took the cheap off-tournament skip — while
@@ -1377,6 +1408,123 @@ def record_task_terminal(full_task_name: str):
         pipe.execute()
     except Exception:
         pass
+
+
+def record_task_wall_ms(full_task_name: str, duration_ms: float):
+    """Add one execution's WALL TIME to this task's 24h accumulator (LAT-P242).
+
+    The third member of the ``task_prerun`` / ``task_postrun`` family, written
+    from the same two signals as ``attempts`` and ``terminals`` and keyed the
+    same way — by the celery task name — so it is independent of
+    ``_tracked_run`` end to end. That independence is the entire point of this
+    counter and not a side benefit: **32 of the 110 ``background`` beat entries
+    never call ``_tracked_run``**, so they have no duration under any label, and
+    every capacity model built on the label-keyed metrics scored them at ZERO.
+    latency/180 measured the consequence — the single largest occupant of the
+    queue in a live ``inspect`` census (``collapse_snapshots``, 45.5% of
+    samples) is one of the 32, and the occupancy timeline reconstructed from
+    per-task instrumentation therefore reported the queue IDLE during the very
+    holes it was built to explain.
+
+    Why a SUM and not a mean of ``recent_durations_ms``. Worker-seconds consumed
+    is a total, and every previous attempt to reach it multiplied a rate by an
+    average — two estimates from two different windows, joined through a lossy
+    map. That product has four independent failure modes, all of them measured
+    in production by latency/179 and /180: the label join (only 53 of 148 labels
+    equal the task's short name), the denominator (``starts_24h`` names 24 hours
+    and holds anywhere from 0 to 24 of them), the straddle (50 samples span 8.1h
+    for a 6/hr task, so a mean over them blends across a deploy), and bimodality
+    (a lock-gated task has two populations and every percentile of their union
+    is a fiction). A sum over a window whose age is carried in the same key has
+    none of the four: it is not joined, not averaged, and not sampled.
+
+    ⚠️ **This total is a LOWER BOUND, in two named ways. Neither is a rounding
+    error and a reader that treats the number as exact will under-size a gap.**
+
+    * **A hard kill leaves no terminal, so it contributes no wall time**, having
+      consumed real worker-seconds right up to the SIGKILL. The size of that
+      population is not a mystery — it is ``attempts - terminals``, which
+      :func:`get_hard_kill_census` already reports per task from these same
+      keys — so the undercount is bounded by a number the caller can read
+      beside this one.
+    * **Work in flight is not counted until it finishes.** A 16-minute task
+      contributes nothing for 16 minutes and then all of it at once. Against a
+      24h window that is small; against a short window it is not, and a
+      differenced pair of reads taken minutes apart is exactly where it bites.
+
+    A RETRY is counted, deliberately, unlike ``deliveries`` beside it. The two
+    answer different questions and must not share a predicate: ``deliveries``
+    grades a SCHEDULE, so a re-published attempt is not a fire; this counter
+    measures CONSUMPTION, and a retry occupies a slot exactly like a first
+    attempt. Filtering it here would understate the demand that a retrying task
+    actually places on its queue, which is the one thing this counter exists to
+    price.
+
+    Best-effort and silent for the same reason as every other writer in this
+    family: it runs after every task in the system.
+    """
+    if not full_task_name:
+        return
+    try:
+        ms = int(round(float(duration_ms)))
+    except (TypeError, ValueError):
+        return
+    if ms < 0:
+        # A monotonic clock cannot go backwards, so this is not a slow run —
+        # it is a bad reading, and adding it would corrupt a total that has no
+        # other way of being sanity-checked.
+        return
+    try:
+        r = get_redis_client()
+        pipe = r.pipeline()
+        _bump_window_counter_by(
+            pipe, f"{TASK_LIFECYCLE_PREFIX}:{full_task_name}:wall_ms", ms
+        )
+        pipe.execute()
+    except Exception:
+        pass
+
+
+def get_task_wall_ms() -> dict:
+    """``{celery task name: {"wall_ms", "window_s"}}`` (LAT-P242).
+
+    Keyed by the celery name, so a caller joins it straight onto the beat
+    schedule with no label map — the same property that let ``deliveries`` grade
+    the 30 tasks the label join could never reach (#1716), applied to the
+    quantity that actually sizes a queue.
+
+    ``window_s`` is read from the ``wall_ms`` key's OWN TTL and never borrowed
+    from the ``attempts`` sibling. The two keys are created independently and
+    expire independently, and LAT-P024 measured both directions of the error
+    that borrowing produces (a stamp 2.47x younger than its counter, and the
+    mirror image after a roll). ``None`` means the window is unmeasurable, which
+    a caller must treat as "cannot compute a rate" and never as zero.
+
+    Returns ``{}`` when nothing has been recorded yet — which here is honest
+    rather than gotcha #53, because the caller renders per-task rows and an
+    absent row is rendered as ``None``, not as 0. See
+    :func:`get_hard_kill_census` for the opposite case, where an empty dict was
+    indistinguishable from a clean bill of health and the function was made to
+    raise instead.
+    """
+    try:
+        r = get_redis_client()
+        prefix = f"{TASK_LIFECYCLE_PREFIX}:"
+        suffix = ":wall_ms"
+        rows: dict = {}
+        for key in r.keys(f"{prefix}*{suffix}"):
+            key_str = key.decode() if isinstance(key, bytes) else key
+            name = key_str[len(prefix):-len(suffix)]
+            if not name:
+                continue
+            try:
+                value = int(r.get(key_str) or 0)
+            except (TypeError, ValueError):
+                continue
+            rows[name] = {"wall_ms": value, "window_s": _window_age_s(r, key_str)}
+        return rows
+    except Exception:
+        return {}
 
 
 class HardKillCensusUnavailable(RuntimeError):

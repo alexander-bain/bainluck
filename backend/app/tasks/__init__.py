@@ -435,11 +435,44 @@ except Exception:  # pragma: no cover - defensive
 # from a beat publication at this signal, because celery beat stamps nothing on
 # the message that says so. Deliveries are therefore "broker publications this
 # process consumed, first attempt only", which is an upper bound on beat fires.
+# LAT-P242 (#3466): the start instants of the executions currently in flight in
+# THIS worker child, keyed by celery task id, so `task_postrun` can turn the
+# prerun/postrun pair into a DURATION for every task in the system — including
+# the 32 background beats that never call `_tracked_run` and therefore have no
+# duration under any label at all.
+#
+# A module-level dict rather than an attribute on `task.request`: celery reuses
+# one task INSTANCE per name and pushes a request stack onto it, so an attribute
+# written in prerun is written onto a shared object, and the task id is the only
+# thing in scope at both signals that identifies one execution. Prefork means
+# prerun and postrun for a given execution always run in the same child, so this
+# never has to cross a process boundary.
+#
+# BOUNDED, because the pop is not guaranteed: an execution SIGKILLed between the
+# two signals leaves its entry behind forever. That population is exactly the
+# hard-kill residual (`attempts - terminals`), it is small, and each entry is a
+# short string and a float — but "small and leaks" is still a leak, and this
+# runs in a worker with a 200MB child budget. The cap discards OLDEST-first
+# (dict insertion order), so the entries dropped under pressure are the ones
+# least likely to still have a postrun coming.
+_INFLIGHT_STARTS: dict = {}
+_INFLIGHT_STARTS_CAP = 1024
+
+
+def _forget_oldest_inflight():
+    """Drop the oldest quarter of the in-flight map once it exceeds its cap."""
+    excess = len(_INFLIGHT_STARTS) - _INFLIGHT_STARTS_CAP
+    if excess < 0:
+        return
+    for task_id in list(_INFLIGHT_STARTS)[: excess + _INFLIGHT_STARTS_CAP // 4]:
+        _INFLIGHT_STARTS.pop(task_id, None)
+
+
 try:  # pragma: no cover - signal wiring exercised by the worker, not unit tests
     from celery.signals import task_prerun as _task_prerun
 
     @_task_prerun.connect
-    def _record_delivery(sender=None, task=None, **_kwargs):
+    def _record_delivery(sender=None, task=None, task_id=None, **_kwargs):
         try:
             from app.tasks.redis_state import (
                 record_task_attempt,
@@ -459,6 +492,18 @@ try:  # pragma: no cover - signal wiring exercised by the worker, not unit tests
             # Filtering it here would leave a terminal with no attempt and drive
             # the difference negative — which floors to zero and reads healthy.
             record_task_attempt(name)
+            # LAT-P242: the clock starts HERE — beside `attempts`, above both
+            # filters, and for the same reason. `wall_ms` is closed by
+            # `task_postrun`, which applies no filter of its own, so stashing
+            # below either `return` would leave executions that terminate
+            # without ever having started and make the accumulator's population
+            # differ from the pair that BOUNDS it. The undercount this counter
+            # discloses is `attempts - terminals`; that bound is only exact
+            # while all three counters see the same executions.
+            if task_id:
+                _INFLIGHT_STARTS[task_id] = _time.monotonic()
+                if len(_INFLIGHT_STARTS) > _INFLIGHT_STARTS_CAP:
+                    _forget_oldest_inflight()
             # An unreadable request must not silently zero the counter: the
             # count is the point, and losing it is worse than an upper bound.
             if request is not None:
@@ -584,12 +629,29 @@ try:  # pragma: no cover - signal wiring exercised by the worker, not unit tests
     from celery.signals import task_postrun as _task_postrun
 
     @_task_postrun.connect
-    def _record_terminal(sender=None, task=None, **_kwargs):
+    def _record_terminal(sender=None, task=None, task_id=None, **_kwargs):
         try:
-            from app.tasks.redis_state import record_task_terminal
+            from app.tasks.redis_state import record_task_terminal, record_task_wall_ms
 
             name = getattr(sender, "name", None) or getattr(task, "name", None)
             record_task_terminal(name)
+            # LAT-P242 (#3466): close the clock opened in `task_prerun` and add
+            # this execution's wall time to the task's 24h accumulator.
+            #
+            # `pop`, not `get`: the entry must go whether or not the write
+            # succeeds, or a worker that loses Redis for an hour comes back with
+            # an in-flight map full of dead ids.
+            #
+            # A MISSING start is not zero and is not recorded. It means this
+            # child never saw the prerun for this execution — the signal was
+            # connected mid-flight by a deploy, or the cap above discarded the
+            # entry — and writing 0 would silently deflate the very total this
+            # counter exists to compute. Absent stays absent; the gap shows up
+            # as `terminals` exceeding the number of durations summed, which is
+            # readable, whereas a 0 is not.
+            started = _INFLIGHT_STARTS.pop(task_id, None) if task_id else None
+            if started is not None:
+                record_task_wall_ms(name, (_time.monotonic() - started) * 1000)
         except Exception:
             pass
 except Exception:  # pragma: no cover - defensive
