@@ -40,6 +40,8 @@
 
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import fs from "node:fs";
+import path from "node:path";
 
 import TournamentMatches from "@/components/tournament/TournamentMatches";
 import { matchListFromSlate, showsDisagreement } from "@/lib/matchList";
@@ -208,6 +210,76 @@ describe("UX-1089 — a fixture with no numbers is not a disagreement", () => {
     expect(html).toContain(`${cards} match has`);
     expect(html).not.toContain("2 matches have");
     expect(html).not.toContain("3 matches have");
+  });
+});
+
+/**
+ * THE SHIP, replayed through the unedited bytes that produced the screenshot.
+ *
+ * The arms above prove the MECHANISM on hand-built rows, and a hand-built row
+ * can be built to pass. This one is `GET /api/tournaments/us-open` as served
+ * at 2026-09-06 04:55Z, captured and never edited — the same response the
+ * browser was handed for the shot in the report. Follows the pattern
+ * `tournamentMatchesLivePayload2550.test.tsx` set for the same reason: if a
+ * future payload stops emitting `coherent: false` on an unpriced row, this
+ * suite goes red on the real shape while the synthetic arms stay green, and
+ * that is the signal worth having.
+ *
+ * It does not claim the browser rendered it. Only a production LOOK does that,
+ * and it is owed after the deploy.
+ */
+const CAPTURE = JSON.parse(
+  fs.readFileSync(
+    path.join(__dirname, "..", "fixtures", "tournamentSlateUsOpenUnpriced.20260906.json"),
+    "utf8"
+  )
+) as { slate: { count: number; incoherent: number }; matches: SlateMatch[] };
+
+describe("UX-1089 — the captured US Open payload", () => {
+  const womensR16 = CAPTURE.matches.filter(
+    (m) => m.draw === "womens-singles" && m.round === "R16"
+  );
+
+  it("still contains the cohort this guard is about", () => {
+    // If this fails the fixture was edited or replaced and every assertion
+    // below is measuring a population it was not written for.
+    expect(CAPTURE.slate.count).toBe(15);
+    expect(CAPTURE.slate.incoherent).toBe(2);
+    expect(womensR16).toHaveLength(8);
+    // The two Alex would have seen: no numbers at all, and flagged incoherent
+    // by the builder anyway. That conflation IS the bug.
+    expect(womensR16.filter((m) => m.priced === false)).toHaveLength(2);
+    expect(womensR16.filter((m) => !m.coherent)).toHaveLength(2);
+    expect(womensR16.filter((m) => !m.coherent && m.priced !== false)).toHaveLength(0);
+    for (const m of womensR16.filter((n) => n.priced === false)) {
+      expect(m.sides.map((s) => s.probability)).toEqual([null, null]);
+    }
+  });
+
+  it("renders the women's Round of 16 with no disagreement note at all", () => {
+    // Expanded, because the list collapses at five and both unpriced fixtures
+    // must be ON SCREEN for "the cards and the note agree" to mean anything.
+    // The note itself counts the whole round either way.
+    const html = renderToStaticMarkup(
+      <TournamentMatches entries={matchListFromSlate(womensR16)} initialExpanded />
+    );
+
+    // The sentence off the production screen, and the node that carries it.
+    expect(html).not.toContain("do not agree");
+    expect(html).not.toContain('data-testid="match-incoherent-count"');
+    expect(html).not.toContain('data-testid="match-incoherent"');
+
+    // Both fixtures still drawn, in full, each saying the true thing.
+    expect(html).toContain("Naomi Osaka");
+    expect(html).toContain("Elena Rybakina");
+    expect(html).toContain("Coco Gauff");
+    expect(html).toContain("Iva Jovic");
+    expect(countOf(html, "no probability against it")).toBe(2);
+
+    // And the six priced siblings kept their numbers — the fix must not have
+    // reached them.
+    expect(html).toContain("81%");
+    expect(html).toContain("Aryna Sabalenka");
   });
 });
 
