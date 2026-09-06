@@ -779,8 +779,14 @@ final class CalibrationViewModel: ObservableObject {
         categoryDisplayNames[category] ?? toTitleCaseAcronymSafe(category)
     }
 
+    /// #3657 — the SOURCE path had the #1938 defect the CATEGORY path above was
+    /// fixed for: `.capitalized` lowercases an interior capital, so the payload's
+    /// `datagolf` rendered as "Datagolf". The two paths were disagreeing about the
+    /// same problem, which is why this is a shared formatter and not a seventh map
+    /// entry — `sourceDisplayNames` deliberately still has no `datagolf` key, so
+    /// this fallback is what produces "DataGolf" and a test proves it.
     static func sourceDisplayName(_ source: String) -> String {
-        sourceDisplayNames[source] ?? source.replacingOccurrences(of: "_", with: " ").capitalized
+        sourceDisplayNames[source] ?? toTitleCaseAcronymSafe(source)
     }
 
     /// Display label for a raw (un-normalized) small-sample category token.
