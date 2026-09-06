@@ -1432,6 +1432,96 @@ class TestTheGuardAnswersInsideTheRoutersWall:
             "is still serial"
         )
 
+    def test_the_total_deadline_is_below_the_routers_and_above_the_statement_wall(
+        self,
+    ):
+        """CERT-1981 follow-up L1B-051B-POOL-CHECKOUT-WALL. Both inequalities
+        are load-bearing and they bound it from opposite sides.
+
+        ABOVE the statement wall, so the ordinary slow-query path still trips
+        the wall that can NAME the query and report `census_timeout`; a total
+        deadline that fired first would turn every slow query into an
+        undiagnosable `census_deadline`. BELOW the router's 30s, because the
+        whole point is to answer in JSON rather than let Heroku answer in HTML.
+        """
+        import app.routes.admin_source_health as _health
+
+        assert (
+            _health._CENSUS_STATEMENT_TIMEOUT_MS / 1000
+            < _health._CENSUS_TOTAL_DEADLINE_S
+            < 30
+        )
+
+    def test_the_census_is_bounded_as_a_WHOLE_not_only_per_statement(self):
+        """`statement_timeout` bounds a statement the server is RUNNING. It
+        cannot see the wait for a connection, and this engine's `pool_timeout`
+        default is 30s — the router's own limit. So under pool pressure the
+        endpoint could H12 in checkout without Postgres being asked anything:
+        the exact failure CERT-1981 removed, through the one door it left."""
+        import ast
+
+        node = self._endpoint_ast()
+        waits = [
+            c
+            for c in ast.walk(node)
+            if isinstance(c, ast.Call)
+            and isinstance(c.func, ast.Attribute)
+            and c.func.attr == "wait_for"
+        ]
+        assert len(waits) == 1, "the census gather is not under a total deadline"
+        # …and the thing it wraps is the gather, not something cheaper beside it.
+        assert any(
+            isinstance(a, ast.Call)
+            and isinstance(a.func, ast.Attribute)
+            and a.func.attr == "gather"
+            for a in waits[0].args
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "exc,expected_reason",
+        [
+            ("pool", "census_pool_exhausted"),
+            ("deadline", "census_deadline"),
+        ],
+    )
+    async def test_the_other_two_walls_also_report_unknown_and_say_which(
+        self, monkeypatch, exc, expected_reason
+    ):
+        """THREE causes, three reasons, one verdict.
+
+        A pool that cannot hand out a connection and a deadline that expired
+        are not `DBAPIError`, so before this they escaped as a 500 — which a
+        reader distinguishes from a green verdict no better than an H12. And
+        they must not collapse into one reason: a reader acting on an `unknown`
+        needs to know whether to look at the query, the pool, or the endpoint.
+        """
+        import asyncio as _asyncio
+
+        from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
+
+        import app.routes.admin_source_health as _health
+
+        raised = (
+            SQLAlchemyTimeoutError("QueuePool limit of size 10 overflow 10 reached")
+            if exc == "pool"
+            else _asyncio.TimeoutError()
+        )
+
+        async def _boom(sql, params):
+            raise raised
+
+        monkeypatch.setattr(_health, "_census_rows", _boom)
+        monkeypatch.setattr(_health, "_check_admin_secret", lambda *a, **kw: None)
+
+        out = await _health.futures_price_freshness(
+            request=object(), secret="x", max_age_hours=24
+        )
+        assert out["status"] == "unknown"
+        assert out["status_all"] == "unknown"
+        assert out["reason"] == expected_reason
+        assert "price_dark" not in out
+
     @pytest.mark.asyncio
     async def test_a_census_that_cannot_finish_does_not_read_green(
         self, monkeypatch
