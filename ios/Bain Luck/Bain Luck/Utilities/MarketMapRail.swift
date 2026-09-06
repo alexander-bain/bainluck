@@ -238,9 +238,16 @@ enum MarketMapRail {
     /// keeps its FINAL tile and its correctly-labelled axis, and only stops
     /// claiming a shape it does not have.
     ///
-    /// - Parameter thresholds: every line that parsed, in any order.
+    /// Both of the builder's flat exits fall out of ONE expression, which is
+    /// why there is no `count >= 2` guard in front of it: with fewer than two
+    /// lines the pairwise zip is empty and `contains` is vacuously false, and
+    /// with two or more it applies exactly the `dt > 0` test that the builder's
+    /// `rawPdf` loop applies. A guard would restate the first case in a second
+    /// place, where it could later disagree with this one.
+    ///
+    /// - Parameter thresholds: every line that parsed, in any order — this
+    ///   sorts for itself rather than trusting the caller to have done it.
     static func totalRailHasDistribution(thresholds: [Double]) -> Bool {
-        guard thresholds.count >= 2 else { return false }
         let sorted = thresholds.sorted()
         return zip(sorted, sorted.dropFirst()).contains { $1 - $0 > 0 }
     }
