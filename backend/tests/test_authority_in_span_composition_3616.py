@@ -19,11 +19,13 @@ it readable, and the two ways it must refuse to answer rather than answer zero.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from itertools import permutations
 
 from app.utils.authority_agreement import (
     GOVERNING_IDENTITY_NUMBERS,
     Join,
     Side,
+    _ours_only_in_span_composition,
     build_agreement_row,
     pair_by_normalized_key,
 )
@@ -148,6 +150,172 @@ def test_two_duplicate_rows_for_a_game_statpal_never_listed_are_one_miss():
         "second_row_for_an_unmatched_game": 2,
         "our_only_row_for_the_game": 1,
     }
+
+
+def _chain_of_three():
+    """A 0/50/100-minute chain of our rows for a game StatPal never lists.
+
+    The shape that makes the clustering order matter, and it is only reachable
+    because `same_game` is a TOLERANCE: 0↔50 and 50↔100 are both inside the
+    hour, 0↔100 is not. Nothing pairs, so all three land in `ours_only`.
+
+    The refs sort in the OPPOSITE order to the kickoffs on purpose (`"30"`,
+    `"12"`, `"7"` sort as `"12" < "30" < "7"`). Event ids in the real table are
+    allocated roughly in time order, so a fixture that let the two agree would
+    pass against a sort key that had quietly lost `start` and kept only `ref` —
+    a guard that cannot tell the intended key from an accident of numbering.
+    """
+    fixtures = [
+        _side("s1", "Athletics", "Rangers", _SPAN),
+        _side("s2", "Mets", "Rays", _SPAN + timedelta(days=2)),
+    ]
+    base = _SPAN + timedelta(days=1)
+    chain = [
+        _side(30, "Cubs", "Brewers", base, label="closed"),
+        _side(12, "Cubs", "Brewers", base + timedelta(minutes=50), label="completed"),
+        _side(7, "Cubs", "Brewers", base + timedelta(minutes=100), label="live"),
+    ]
+    return fixtures, chain
+
+
+def test_a_chain_of_three_reads_the_same_however_the_rows_arrive():
+    """#3628 — the published number may not depend on the order of a `set`.
+
+    Greedy clustering under a tolerance is order-dependent, and the order this
+    function was handed is not fixed: `pair_by_normalized_key` iterates
+    `set(by_key_f) | set(by_key_r)`, and CPython randomises string hashing per
+    process. Rows at 0, 50 and 100 minutes read TWO ways, both defensible:
+
+        earliest first  ->  0 is rep; 50 joins 0; 100 joins nobody  ->  2 games, 1 extra
+        middle first    ->  50 is rep; 0 joins 50; 100 joins 50     ->  1 game,  2 extras
+
+    Publishing either one *non-deterministically* is the defect. The guard
+    drives the permutation directly rather than through `build_agreement_row`,
+    because permuting that function's `rows` argument does NOT reliably permute
+    what the join hands over — set iteration order is dominated by the hashes,
+    not by insertion — so an end-to-end permutation would pass against the bug
+    it is supposed to catch.
+    """
+    fixtures, chain = _chain_of_three()
+    join = pair_by_normalized_key(fixtures, chain, normalize_team)
+    assert len(join.ours_only) == 3 and not join.paired
+
+    seen = set()
+    for order in permutations(chain):
+        counts, receipts = _ours_only_in_span_composition(
+            list(order),
+            [],
+            fixtures,
+            join.same_game_on_our_side,
+            join.our_side_bucket_key,
+        )
+        seen.add(tuple(sorted(counts.items())))
+        # The EARLIEST row represents its game, so the 100-minute row — which is
+        # outside tolerance of it — is a second game rather than a third copy.
+        # Documented on purpose, not decided by whichever row arrived first.
+        assert counts == {
+            "second_row_for_a_matched_game": 0,
+            "second_row_for_an_unmatched_game": 1,
+            "our_only_row_for_the_game": 2,
+        }
+        # The receipt is a PAIR of ids and #3093's repair reads it to decide
+        # which row to keep, so it has to be stable too: the 50-minute row is
+        # the extra, and the 0-minute row is what it duplicates.
+        assert [(r["event_id"], r["matched_row"]) for r in receipts] == [("12", "30")]
+
+    assert len(seen) == 1, f"six orderings produced {len(seen)} different answers"
+
+
+def test_two_rows_at_the_same_kickoff_break_their_tie_the_same_way():
+    """`start` alone is not a canonical order, and this is where it shows.
+
+    The standing shape of a duplicate is two rows at the SAME kickoff — 14 of
+    MLB's 79 pairs are a `scheduled`/schedule-id row beside a `scheduled`/blank
+    one, written minutes apart at identical times. Sort on `start` only and
+    Python's stable sort falls back to the order it was handed, which is the set
+    iteration order this whole fix exists to stop depending on. The counts
+    cannot move here — both rows are the same game either way — so the receipt
+    is the only thing that can catch it, and the receipt is what #3093's repair
+    acts on. `ref` breaks the tie: `"40" < "9"` as strings, so `40` represents
+    the game and `9` is the extra, whichever order they arrive in.
+    """
+    fixtures = [
+        _side("s1", "Athletics", "Rangers", _SPAN),
+        _side("s2", "Mets", "Rays", _SPAN + timedelta(days=2)),
+    ]
+    at = _SPAN + timedelta(days=1)
+    tie = [
+        _side(9, "Cubs", "Brewers", at, label="scheduled"),
+        _side(40, "Cubs", "Brewers", at, label="scheduled"),
+    ]
+    join = pair_by_normalized_key(fixtures, tie, normalize_team)
+
+    for order in permutations(tie):
+        counts, receipts = _ours_only_in_span_composition(
+            list(order),
+            [],
+            fixtures,
+            join.same_game_on_our_side,
+            join.our_side_bucket_key,
+        )
+        assert counts["second_row_for_an_unmatched_game"] == 1
+        assert counts["our_only_row_for_the_game"] == 1
+        assert [(r["event_id"], r["matched_row"]) for r in receipts] == [("9", "40")]
+
+
+def test_the_clustering_is_not_a_transitive_closure():
+    """The fix for #3628 is an ORDER, and it must not become a closure.
+
+    A closure would reach the 100-minute row from the 0-minute one across the
+    50-minute bridge and call all three one game — an identity `same_game` never
+    asserted about that pair, and a worse answer than either ordering it
+    replaces. This pins the difference: 2 distinct games, not 1.
+    """
+    fixtures, chain = _chain_of_three()
+    join = pair_by_normalized_key(fixtures, chain, normalize_team)
+
+    counts, _ = _ours_only_in_span_composition(
+        chain, [], fixtures, join.same_game_on_our_side, join.our_side_bucket_key
+    )
+    assert counts["our_only_row_for_the_game"] == 2
+    assert counts["second_row_for_an_unmatched_game"] == 1
+
+
+def test_the_receipt_names_the_same_matched_twin_whatever_order_they_arrive():
+    """The count cannot move here, but the evidence can — so it is pinned too.
+
+    A miss with two matched twins in its bucket is one
+    `second_row_for_a_matched_game` whichever twin is found first. The receipt
+    is not indifferent: it names one id, #3093's repair acts on that id, and a
+    ref that changes between dynos is not evidence. Earliest wins, as above.
+    """
+    # Two fixtures, because one gives a zero-width span and the miss below sits
+    # 15 minutes inside it — `_ours_only_in_span_composition` would skip it as
+    # out of span and the guard would pass by measuring nothing.
+    fixtures = [
+        _side("s1", "Cubs", "Brewers", _SPAN),
+        _side("s2", "Mets", "Rays", _SPAN + timedelta(days=2)),
+    ]
+    early = _side(20, "Cubs", "Brewers", _SPAN, label="closed")
+    late = _side(
+        21, "Cubs", "Brewers", _SPAN + timedelta(minutes=30), label="completed"
+    )
+    miss = _side(22, "Cubs", "Brewers", _SPAN + timedelta(minutes=15), label="live")
+    join = pair_by_normalized_key(fixtures, [early], normalize_team)
+
+    for paired in (
+        [(fixtures[0], early), (fixtures[0], late)],
+        [(fixtures[0], late), (fixtures[0], early)],
+    ):
+        counts, receipts = _ours_only_in_span_composition(
+            [miss],
+            paired,
+            fixtures,
+            join.same_game_on_our_side,
+            join.our_side_bucket_key,
+        )
+        assert counts["second_row_for_a_matched_game"] == 1
+        assert receipts[0]["matched_row"] == "20"
 
 
 def test_the_matched_and_unmatched_duplicate_buckets_are_not_interchangeable():

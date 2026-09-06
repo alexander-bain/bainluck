@@ -1359,6 +1359,14 @@ def _ours_only_in_span_composition(
         key = bucket_key(matched)
         if key is not None:
             matched_by_bucket.setdefault(key, []).append(matched)
+    # Ordered for the same reason the misses are (#3628): `paired` arrives in
+    # the join's iteration order, and the first matched row satisfying
+    # `same_game` is the one whose ref goes on the receipt. The COUNT does not
+    # move — a miss with two matched twins is one `second_row_for_a_matched_game`
+    # either way — but #3093's repair reads the receipt to decide which row to
+    # keep, and a ref that changes between dynos is not evidence.
+    for candidates in matched_by_bucket.values():
+        candidates.sort(key=lambda r: (r.start is None, r.start or first, r.ref))
 
     counts = {
         "second_row_for_a_matched_game": 0,
@@ -1384,9 +1392,30 @@ def _ours_only_in_span_composition(
     #: and a closure would silently make them one.
     unmatched_reps: dict[str, list[Side]] = {}
 
-    for miss in ours_only:
-        if miss.start is None or miss.start < first or miss.start > last:
-            continue
+    #: CANONICAL ORDER, and it is load-bearing rather than tidy (#3628). Greedy
+    #: clustering under a tolerance is order-dependent, and the order this
+    #: function is handed is not fixed: `pair_by_normalized_key` iterates
+    #: `set(by_key_f) | set(by_key_r)` and CPython randomises string hashing per
+    #: process, so the same input could publish different numbers on two dynos.
+    #:
+    #: `(start, ref)` makes the EARLIEST row the representative of its game, and
+    #: that is the reading this row publishes on purpose rather than by accident:
+    #: a later row is only ever an extra if it is itself inside tolerance of the
+    #: representative, so rows at 0/50/100 minutes read as TWO games and ONE
+    #: extra. `ref` breaks ties between two rows sharing a kickoff, which is the
+    #: standing shape of a duplicate and so the case that most needs settling.
+    #:
+    #: This is deliberately NOT a transitive closure. A closure would merge the
+    #: 0-minute row with the 100-minute one through the 50-minute bridge — one
+    #: game, two extras — which claims an identity neither `same_game` nor
+    #: anything else on this row ever asserted, and is a worse answer than
+    #: either of the two orderings it replaces.
+    in_span = sorted(
+        (m for m in ours_only if m.start is not None and first <= m.start <= last),
+        key=lambda m: (m.start, m.ref),
+    )
+
+    for miss in in_span:
         key = bucket_key(miss) or ""
 
         matched_twin = next(
