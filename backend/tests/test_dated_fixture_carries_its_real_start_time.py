@@ -360,6 +360,38 @@ class TestTheVenueSpecimensGetTheirRealStart:
         assert timedelta(hours=30) <= _STAND_IN_REFINEMENT_MAX
         assert timedelta(hours=9) > timedelta(0)
 
+    #: The same 2,348 venue rows, measured on `close_time` instead: the
+    #: SMALLEST settlement close sits **+60.00h** past its own ticker midnight
+    #: (max +4,098h). Nothing near the +0.5h..+36h band the event-side repair
+    #: writes in.
+    MEASURED_MIN_CLOSE_OFFSET = timedelta(hours=60)
+
+    def test_a_market_still_on_its_close_can_never_be_copied_onto_an_event(self):
+        """The deploy-ordering hazard, measured for the widened population.
+
+        Between a deploy and the poll that re-times a series, a market still
+        holds Kalshi's settlement close. If that close could land inside the
+        refinement window the repair would copy a settlement date onto an event
+        — strictly worse than the midnight it replaced, and the exact failure
+        `_STAND_IN_REFINEMENT_MAX` exists to prevent.
+
+        It cannot: 0 of the 2,348 venue rows have a close inside the band, and
+        the closest is +60h against a 36h bound. So the repair is safe to run
+        against a market the poll has not reached yet — which it does, on every
+        poll, for every series the run did not get to.
+        """
+        assert self.MEASURED_MIN_CLOSE_OFFSET > _STAND_IN_REFINEMENT_MAX
+
+        ticker, occ, close = self.SPECIMENS[0]
+        stand_in = datetime(2026, 9, 20, 0, 0, tzinfo=UTC)
+        assert close - stand_in > _STAND_IN_REFINEMENT_MAX
+        assert _stand_in_refinement_target(
+            external_id=ticker,
+            event_commence=stand_in,
+            event_commence_source="kalshi_ticker",
+            market_commence=close,          # not yet re-timed
+        ) is None
+
     def test_an_occurrence_after_its_own_close_is_still_refused(self):
         """The bound that does the safety work is `occ <= close`, not the
         sport and not the vocabulary. Zero of the 2,348 venue rows violate it —
