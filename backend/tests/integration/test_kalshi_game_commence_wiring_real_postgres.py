@@ -68,14 +68,28 @@ sentinel matching neither): if a later edit collapses them, these arms would
 pass without discriminating anything, which is the failure mode a guard cannot
 report about itself.
 
-## deliberately NOT covered here
+## the third writer, added #3511
 
-`_create_settled_market` (the gap-create backfill) is a THIRD commence writer and
-still computes `min(close_times)` — the pre-#3433 shape. It is out of this
-guard's named scope (the follow-up says "both active poll branches") and its harm
-is much smaller, because a settled market's close_time has already collapsed to
-its real settlement instant. Filed against #3433 rather than widened into a
-test-only diff.
+`_create_settled_market` (the gap-create backfill) was the THIRD commence writer
+and the last one still computing `min(close_times)`, the pre-#3433 shape. This
+file said so, out of scope, and filed it as #3511; the arms under
+"THE GAP-CREATE BRANCH" below are that issue's repair, wired the same way.
+
+Its harm was smaller than the poll's and not zero. A settled market's close_time
+HAS collapsed to its settlement instant, so the error is settlement lag rather
+than a +14d backstop — but lag crosses midnight. Measured at the venue
+2026-09-06 (notice 26a) over a random 24-row sample of this path's own recent
+output: **8 move earlier, by 9 minutes to 32.7 hours, none later**, and
+`KXATPEXACTMATCH-26AUG24NARCIN` sat at Aug 26 01:40Z for a match the venue times
+at Aug 24 17:00Z. 260 of the 1,488 linked gap-created rows have an Event holding
+that same instant as its own commence_time, which is how it reaches a reader.
+
+`test_gap_create_keeps_the_close_when_the_occurrence_is_later` is the control
+that only a SETTLED fixture can motivate: on a settled event the close has
+collapsed and the occurrence has not, so an occurrence can land AFTER its own
+close (`KXLOLGAME-26AUG231900FLYDIG`: occ 03:00Z, close 00:19Z). The helper's
+`occ <= close` bound is what keeps those on the close, and here it is load-
+bearing rather than an outright-only nicety.
 """
 
 from __future__ import annotations
@@ -429,4 +443,214 @@ async def test_a_non_game_outright_keeps_its_close_time(pg_session):
         f"a non-game outright stored {stored}, expected its close {CLOSE} — the "
         "is_game scope has been dropped and every outright is now being re-timed "
         "onto a field that does not mean kick-off for them"
+    )
+
+
+# --------------------------------------------------------------------------
+# THE GAP-CREATE BRANCH (#3511) — the third writer, same wiring claim.
+# --------------------------------------------------------------------------
+
+
+async def _run_gap_create(session, event, *, commence_patch=None):
+    """Drive the REAL `_create_settled_market` and commit what it wrote.
+
+    One seam, the same one `test_gap_create_grade_real_postgres.py` uses:
+    `service._parse_event` returns our `KalshiEvent`, so the raw payload is
+    irrelevant and everything downstream of it is the production path.
+
+    The return value is asserted because this function has THREE non-exception
+    exits — `"created"`, `"pre_gap"` (settled before the freeze window) and
+    `"skip"` (crypto, no markets, or a lost race) — and two of them write no row
+    at all. A caller that only read the table afterwards would report a skipped
+    fixture as a failed assertion about commence_time, or worse, read a row left
+    by a previous arm. Gotcha #53's class.
+    """
+    svc = MagicMock()
+    svc._parse_event = MagicMock(return_value=event)
+    stats = {"markets_created": 0, "outcomes_created": 0}
+
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    from app.models.models import FuturesMarket, FuturesOutcome
+    from app.utils.market_label_normalization import compute_market_tier
+
+    stack = []
+    if commence_patch is not None:
+        stack.append(patch("app.tasks.kalshi._kalshi_commence_time", commence_patch))
+
+    from contextlib import ExitStack
+
+    with ExitStack() as es:
+        for cm in stack:
+            es.enter_context(cm)
+        from app.tasks.kalshi import _create_settled_market
+
+        outcome = await _create_settled_market(
+            session, svc, {}, pg_insert,
+            FuturesMarket, FuturesOutcome, compute_market_tier, stats,
+        )
+
+    assert outcome == "created", (
+        f"gap-create returned {outcome!r}, not 'created' — no row was written, so "
+        "nothing below is a round trip"
+    )
+    assert stats["markets_created"] == 1
+    await session.commit()
+    return stats
+
+
+def _settled_market(event_ticker, suffix, name, price, *, occurrence, close=CLOSE):
+    """One SETTLED Kalshi market, the shape gap-create is fed.
+
+    `status="finalized"` with a real `result` is what the settled-events scan
+    returns; the grade columns are another file's subject and are set here only
+    so the outcome insert takes its ordinary path.
+    """
+    return KalshiMarket(
+        ticker=f"{event_ticker}-{suffix}",
+        event_ticker=event_ticker,
+        title=name,
+        yes_sub_title=name,
+        status="finalized",
+        result="yes",
+        close_time=close,
+        occurrence_datetime=occurrence,
+        last_price=price,
+        volume=1500,
+    )
+
+
+async def test_gap_create_stores_the_occurrence_not_the_settlement_close(pg_session):
+    """A settled game recovered by the backfill is dated when it was PLAYED."""
+    ticker = "KXNFLGAME-26SEP13GAPBUF"
+    event = KalshiEvent(
+        event_ticker=ticker,
+        title="Bills at Jets",
+        category="Football",
+        mutually_exclusive=True,
+        markets=[_settled_market(ticker, "BUF", "Bills", 0.62, occurrence=KICKOFF)],
+    )
+    await _run_gap_create(pg_session, event)
+
+    stored = _utc(await _stored_commence(pg_session, ticker))
+    assert stored == KICKOFF, (
+        f"gap-create stored {stored}, expected the occurrence {KICKOFF}. Stored "
+        f"{CLOSE} means the third writer is back on `min(close_times)` and every "
+        "settled row this backfill mints is dated by when Kalshi paid out — #3511."
+    )
+
+
+async def test_gap_create_prefers_the_occurrence_for_a_dated_fixture_too(pg_session):
+    """The `is_dated_fixture` gate is wired here as well, not just `is_game`.
+
+    `KXLIGUE1GAME` is not a game ticker by the repo's own definition
+    (`_is_kalshi_game_ticker` returns None) and IS a dated fixture (#3562). A
+    call site that passed only `is_game` — the obvious half-repair — would store
+    the close here and pass every other arm in this section.
+    """
+    ticker = "KXLIGUE1GAME-26SEP20OLMPSG"
+    event = KalshiEvent(
+        event_ticker=ticker,
+        title="Marseille vs PSG",
+        category="Soccer",
+        mutually_exclusive=True,
+        markets=[_settled_market(ticker, "OLM", "Marseille", 0.41, occurrence=KICKOFF)],
+    )
+    await _run_gap_create(pg_session, event)
+
+    stored = _utc(await _stored_commence(pg_session, ticker))
+    assert stored == KICKOFF, (
+        f"a dated fixture stored {stored}, expected the occurrence {KICKOFF} — "
+        "gap-create is passing is_game only, so the 80 series #3562 measured are "
+        "still dated by their settlement"
+    )
+
+
+async def test_gap_create_feeds_the_helpers_result_to_the_upsert(pg_session):
+    """The wiring claim: whatever the helper returns is what the row gets."""
+    spy = MagicMock(return_value=SENTINEL)
+    ticker = "KXNFLGAME-26SEP13GAPWIRE"
+    event = KalshiEvent(
+        event_ticker=ticker,
+        title="Bills at Jets",
+        category="Football",
+        mutually_exclusive=True,
+        markets=[_settled_market(ticker, "BUF", "Bills", 0.62, occurrence=KICKOFF)],
+    )
+    await _run_gap_create(pg_session, event, commence_patch=spy)
+
+    stored = _utc(await _stored_commence(pg_session, ticker))
+    assert stored == SENTINEL, (
+        f"gap-create stored {stored}, not the helper's return {SENTINEL} — it is "
+        "calling `_kalshi_commence_time` and discarding the result, or computing "
+        "the date itself again"
+    )
+
+    assert spy.call_count == 1, f"expected one helper call, got {spy.call_count}"
+    markets, kwargs = spy.call_args.args[0], spy.call_args.kwargs
+    assert len(markets) == 1, (
+        f"gap-create passed {len(markets)} markets, expected the event's own "
+        "market list — the earliest-start rule must see the whole event"
+    )
+    assert kwargs.get("is_game") is True, (
+        f"gap-create called the helper with is_game={kwargs.get('is_game')!r} for "
+        "a KXNFLGAME ticker — the game scope has been lost"
+    )
+    assert kwargs.get("is_dated_fixture") is True, (
+        "gap-create did not pass is_dated_fixture — the second gate is what "
+        "reaches the fixtures that are not game tickers"
+    )
+
+
+async def test_gap_create_keeps_the_close_when_the_occurrence_is_later(pg_session):
+    """The settled-only control: a collapsed close beats a stale occurrence.
+
+    On a settled event the close_time has collapsed to the settlement instant
+    while `occurrence_datetime` has not, so the occurrence can be LATER than the
+    close — `KXLOLGAME-26AUG231900FLYDIG` at the venue: occ 03:00Z against a
+    00:19Z close. The helper's `occ <= close` bound keeps those on the close, and
+    without this arm the section would pass just as well against "on a settled
+    event, always take the occurrence", which would move that row 2h41m the
+    WRONG way.
+    """
+    ticker = "KXLOLGAME-26AUG231900GAPFLY"
+    late = CLOSE + timedelta(hours=2, minutes=41)
+    event = KalshiEvent(
+        event_ticker=ticker,
+        title="FlyQuest vs. Dignitas",
+        category="Esports",
+        mutually_exclusive=True,
+        markets=[_settled_market(ticker, "FLY", "FlyQuest", 0.55, occurrence=late)],
+    )
+    await _run_gap_create(pg_session, event)
+
+    stored = _utc(await _stored_commence(pg_session, ticker))
+    assert stored == CLOSE, (
+        f"an occurrence AFTER its own close stored {stored}, expected the close "
+        f"{CLOSE} — the `occ <= close` bound is gone and a settled row can now be "
+        "dated after it settled"
+    )
+
+
+async def test_gap_create_non_game_outright_keeps_its_close_time(pg_session):
+    """The same scope control the poll has, at the third site.
+
+    Without it this section passes against "always prefer the occurrence", which
+    would re-time every settled outright onto a field that does not mean kick-off
+    for them.
+    """
+    ticker = "KXECONGDP-26SEPGAP"
+    event = KalshiEvent(
+        event_ticker=ticker,
+        title="US GDP growth above 3% in Q3",
+        category="Economics",
+        mutually_exclusive=True,
+        markets=[_settled_market(ticker, "YES", "Above 3%", 0.44, occurrence=KICKOFF)],
+    )
+    await _run_gap_create(pg_session, event)
+
+    stored = _utc(await _stored_commence(pg_session, ticker))
+    assert stored == CLOSE, (
+        f"a settled outright stored {stored}, expected its close {CLOSE} — the "
+        "is_game/is_dated_fixture scope has been dropped at the gap-create site"
     )
