@@ -89,6 +89,14 @@ struct MarketMapView: View {
     private func sportUnitLineApplies(_ mapUnit: String) -> Bool {
         mapUnit == vocab.unit
     }
+    /// The noun a subtitle prints. `totalsUnit` returns `""` where no unit is
+    /// true of every rung, and `"Projected total \("")"` is a sentence with a
+    /// trailing space — so the maps say "scoring" there, the same word
+    /// `TotalPointsSpectrumView` uses for the same absence. Display only: the
+    /// gates above compare the RAW value against `vocab.unit`.
+    private func displayUnit(_ mapUnit: String) -> String {
+        mapUnit.isEmpty ? "scoring" : mapUnit
+    }
 
     /// The scoreboard's two numbers, ONLY where they count the thing this
     /// map's rail is drawn in (ux/1034 B5, ported from `MarketMapSection.tsx`).
@@ -371,7 +379,7 @@ struct MarketMapView: View {
                let homeScoreValue = scoredHomeScore,
                let awayScoreValue = scoredAwayScore {
                 let totalScore = homeScoreValue + awayScoreValue
-                markers.append(MapMarker(id: "final", value: Double(totalScore), type: .final_, label: "FINAL", displayValue: "\(totalScore) \(mapUnit)"))
+                markers.append(MapMarker(id: "final", value: Double(totalScore), type: .final_, label: "FINAL", displayValue: vocab.withUnit("\(totalScore)")))
             }
             if let ou = ouLine {
                 markers.append(MapMarker(id: "pre", value: ou, type: .pre, label: "PRE-GAME", displayValue: formatThreshold(ou)))
@@ -419,7 +427,9 @@ struct MarketMapView: View {
             title: useColumns
                 ? "Full game total map"
                 : vocab.totalTitle(quotedBy: fullGameTotals.map(\.marketName)),
-            subtitle: isDone ? "Final \(mapUnit) distribution" : "Projected total \(mapUnit)",
+            subtitle: isDone
+                ? "Final \(displayUnit(mapUnit)) distribution"
+                : "Projected total \(displayUnit(mapUnit))",
             headline: "",
             density: density,
             rangeMin: rangeMin,
@@ -556,7 +566,7 @@ struct MarketMapView: View {
         let purpleRgb = (r: 124.0, g: 58.0, b: 237.0)
 
         return mapCard(
-            title: label, subtitle: "Half \(mapUnit) distribution", headline: "",
+            title: label, subtitle: "Half \(displayUnit(mapUnit)) distribution", headline: "",
             density: density, rangeMin: rangeMin, rangeMax: rangeMax,
             zeroPosition: nil,
             leftRgb: purpleRgb, rightRgb: purpleRgb,
