@@ -228,6 +228,72 @@ describe("#3508: a hub match card says which tournament it belongs to", () => {
     expect(eyebrow![1]).toMatch(/(^|\s)min-w-0(\s|$)/);
   });
 
+  // ── The cross-hub redundancy arm (CERT-2062's named repair) ──────────────
+  //
+  // `_market_competition` sits on the SHARED hub match-card path, so /hub/mma
+  // and /hub/boxing get the field too — and there Kalshi's competition is the
+  // card's own name or its prefix. These are the verbatim production pairs.
+  //
+  // The suppression itself lives in ONE place, the backend, deliberately: it is
+  // an information-redundancy judgement, and two copies of that rule in two
+  // languages drift apart, which is the failure #3491's pair-wide gate note
+  // warned about. So these arms assert the CONTRACT and the rendered OUTCOME
+  // rather than re-implementing the rule here.
+  const PRODUCTION_ECHO_ROWS: [string, string][] = [
+    ["MMA: Loud vs Natividad", "MMA"],
+    ["331: Chikadze vs Brito", "331"],
+    ["Canelo Alvarez vs Christian Mbilli", "Alvarez vs Mbilli"],
+  ];
+
+  it("an MMA or boxing card draws no eyebrow at all, as the fixed API serves it", () => {
+    // What the repaired backend actually emits for these rows: no competition.
+    currentPayload = payloadWith(
+      PRODUCTION_ECHO_ROWS.map(([name], i) => market(i + 1, name, null)),
+    );
+    const markup = render();
+
+    for (const [name] of PRODUCTION_ECHO_ROWS) {
+      const card = cardFor(markup, name);
+      expect(card).toContain(name);
+      // The eyebrow is the only 11px span on this card; there must be none.
+      expect(card).not.toMatch(/text-\[11px\]/);
+    }
+  });
+
+  it("no rendered card shows a tournament line that merely restates its name", () => {
+    // The invariant, over a MIXED rail — the shape production actually has.
+    // Tennis rows keep their labels; the echo rows must contribute none. This
+    // is what fires if the backend suppression is ever removed.
+    currentPayload = payloadWith([
+      market(1, SLAM_NAME, SLAM_COMPETITION),
+      market(2, CHALLENGER_NAME, CHALLENGER_COMPETITION),
+      ...PRODUCTION_ECHO_ROWS.map(([name], i) => market(i + 3, name, null)),
+    ]);
+    const markup = render();
+
+    const tokens = (s: string) =>
+      new Set(s.toLowerCase().match(/[a-z0-9]+/g) ?? []);
+
+    let eyebrows = 0;
+    for (const [name] of [
+      [SLAM_NAME],
+      [CHALLENGER_NAME],
+      ...PRODUCTION_ECHO_ROWS,
+    ] as [string][]) {
+      const card = cardFor(markup, name);
+      const found = /<span class="[^"]*text-\[11px\][^"]*">([^<]*)<\/span>/.exec(card);
+      if (!found) continue;
+      eyebrows += 1;
+      const label = found[1];
+      const nameTokens = tokens(name);
+      const redundant = [...tokens(label)].every((t) => nameTokens.has(t));
+      expect({ name, label, redundant }).toEqual({ name, label, redundant: false });
+    }
+    // Guard the guard: if nothing rendered an eyebrow the loop above is
+    // vacuous, and the two tennis rows must have produced one each.
+    expect(eyebrows).toBe(2);
+  });
+
   it("control: the card still prints its two probabilities", () => {
     // Passes on both sides of this change by design — it asserts nothing about
     // the tournament, so it proves the suite runs rather than that the diff
