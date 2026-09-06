@@ -143,11 +143,20 @@ POPULATION = """
     AND s.key = 'baseball_mlb'
 """
 
+#: 🔴 `jsonb ? key` yields **NULL, not false**, when the column itself is NULL,
+#: and `win_probability_sources` is nullable. Without the COALESCE,
+#: `jsonb_had_key` is NULL for exactly those rows, and every later comparison
+#: against it — `= b.jsonb_had_key` in the post-condition, `CASE WHEN
+#: b.jsonb_had_key` in the restore — goes three-valued. The post-condition would
+#: then report those rows as permanently unrestored after a restore that in fact
+#: put them back perfectly, which is the specific way this script would lie
+#: about its own undo. Store a real boolean.
 CREATE_BACKUP = f"""
 CREATE TABLE IF NOT EXISTS {BACKUP_TABLE} AS
 SELECT e.id AS event_id,
        e.statpal_fixture_id,
-       (e.win_probability_sources ? 'statpal_fixture_id') AS jsonb_had_key,
+       COALESCE(e.win_probability_sources ? 'statpal_fixture_id', false)
+           AS jsonb_had_key,
        e.win_probability_sources->>'statpal_fixture_id' AS jsonb_value
   FROM events e
   JOIN sports s ON s.id = e.sport_id
@@ -198,21 +207,29 @@ UPDATE events e
  WHERE e.id = b.event_id
    AND (
         e.statpal_fixture_id IS DISTINCT FROM b.statpal_fixture_id
-        OR (e.win_probability_sources ? 'statpal_fixture_id') IS DISTINCT FROM
-           b.jsonb_had_key
+        OR COALESCE(e.win_probability_sources ? 'statpal_fixture_id', false)
+           IS DISTINCT FROM b.jsonb_had_key
    )
 """
 
 #: The POST-CONDITION, not a rowcount: how many backed-up rows are still not
 #: present verbatim once the restore has run — column AND JSONB, including the
 #: "key was absent and must stay absent" case.
+#:
+#: Every comparison is NULL-safe on purpose. `statpal_fixture_id` is NULL for
+#: every row this script has just cleared, `jsonb_value` is NULL for the 343
+#: column-only rows, and `win_probability_sources` is itself nullable — so a `=`
+#: anywhere here yields NULL rather than true, the EXISTS finds nothing, and the
+#: script reports a total failure to restore immediately after a perfect one.
+#: `IS NOT DISTINCT FROM` for the two nullable values, COALESCE for the boolean.
 COUNT_UNRESTORED = f"""
 SELECT count(*) FROM {BACKUP_TABLE} b
  WHERE NOT EXISTS (
        SELECT 1 FROM events e
         WHERE e.id = b.event_id
           AND e.statpal_fixture_id IS NOT DISTINCT FROM b.statpal_fixture_id
-          AND (e.win_probability_sources ? 'statpal_fixture_id') = b.jsonb_had_key
+          AND COALESCE(e.win_probability_sources ? 'statpal_fixture_id', false)
+              = b.jsonb_had_key
           AND e.win_probability_sources->>'statpal_fixture_id'
               IS NOT DISTINCT FROM b.jsonb_value
    )

@@ -43,8 +43,14 @@ armed" step is what stops a skipped gate reading as a passing one.
 
 ## the corpus, and what each row can fail on
 
-* **`col_only`** — MLB, ten-digit column, no JSONB key. The 343-row majority.
-  Apply must clear it; rollback must NOT invent a JSONB key for it.
+* **`col_only`** — MLB, ten-digit column, and `win_probability_sources` left
+  **NULL outright**, not merely keyless. The 343-row majority. Apply must clear
+  it; rollback must NOT invent a JSONB key for it. The NULL is load-bearing:
+  `jsonb ? key` yields NULL rather than false on a NULL column, so a
+  `jsonb_had_key` stored without a COALESCE is NULL, and the post-condition's
+  `= b.jsonb_had_key` then goes three-valued and reports this row as
+  permanently unrestored straight after a perfect restore. A corpus whose rows
+  all carried a JSONB object would miss that entirely.
 * **`col_and_jsonb`** — MLB, ten-digit column AND the JSONB key, *alongside two
   sibling keys*. The 21-row case that hides. Apply must clear both halves and
   leave the siblings untouched; a `win_probability_sources = NULL` shortcut
