@@ -379,6 +379,96 @@ def test_the_decision_module_has_an_actor():
     )
 
 
+# ── A real DB rail, shared by every test that must watch a WRITE land ────────
+
+
+class _AsyncShim:
+    """Async surface over a real sync session.
+
+    No aiosqlite in this sandbox, so this is the repo's established shape: the
+    statements executed are production's own and the rows come back through the
+    real result API. Nothing about the writers is reimplemented.
+    """
+
+    def __init__(self, session):
+        self._s = session
+
+    async def execute(self, statement):
+        return self._s.execute(statement)
+
+    def add(self, obj):
+        self._s.add(obj)
+
+    async def commit(self):
+        self._s.commit()
+
+    async def flush(self):
+        self._s.flush()
+
+
+def _wire_sqlite(monkeypatch):
+    """A live NFL Event on a real engine, wired in as every task's session.
+
+    Returns `(session, event_id)`. `expire_on_commit=False` matches the app's
+    own task sessions (gotcha #6); without it sqlite reloads `commence_time`
+    NAIVE — it has no tz type — and the writer's premature-live guard raises on
+    a comparison Postgres never makes.
+    """
+    from sqlalchemy import create_engine
+    from sqlalchemy import event as sa_event
+    from sqlalchemy.orm import Session
+
+    import app.tasks.base as task_base
+    from app.models.models import Base, Event, ScoreSnapshot, Sport
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(
+        engine,
+        tables=[Event.__table__, Sport.__table__, ScoreSnapshot.__table__],
+    )
+    session = Session(engine, expire_on_commit=False)
+
+    now = datetime.now(timezone.utc)
+    sport = Sport(key=NFL, name="NFL")
+    session.add(sport)
+    session.flush()
+    event = Event(
+        sport_id=sport.id,
+        home_team_name="Bears",
+        away_team_name="Packers",
+        commence_time=now - timedelta(hours=1),
+        status="live",
+    )
+    session.add(event)
+    session.commit()
+
+    # sqlite has no timezone-aware timestamp type, so every datetime RELOADED
+    # from it comes back naive — and production compares `commence_time` with an
+    # aware `now` (the writer's premature-live guard). Postgres returns these
+    # aware, so a naive reload is a fidelity gap in the rail, not a shape the
+    # code must handle. Reattached on load, in the same family as the
+    # `@compiles(JSONB, "sqlite")` DDL shim above: written into `__dict__` so it
+    # does not mark the attribute dirty and cause a spurious UPDATE.
+    @sa_event.listens_for(session, "loaded_as_persistent")
+    def _reattach_utc(_sess, instance):  # pragma: no cover - test rail
+        for attr, value in list(instance.__dict__.items()):
+            if isinstance(value, datetime) and value.tzinfo is None:
+                instance.__dict__[attr] = value.replace(tzinfo=timezone.utc)
+
+    class _Ctx:
+        async def __aenter__(self_inner):
+            return _AsyncShim(session)
+
+        async def __aexit__(self_inner, *exc):
+            session.commit()
+            return False
+
+    monkeypatch.setattr(task_base, "get_task_session", lambda: _Ctx())
+    for module in ("app.tasks.statpal_sync", "app.tasks.espn_sync"):
+        monkeypatch.setattr(f"{module}.get_task_session", lambda: _Ctx(), raising=False)
+    return session, event.id
+
+
 # ── The consumer: what the ESPN sync actually does with a decision ──────────
 
 
@@ -607,38 +697,55 @@ async def test_an_espn_slate_statpal_contradicts_also_dispatches(
 
 
 @pytest.mark.asyncio
-async def test_a_failover_dispatches_absolutely_nothing(monkeypatch, dispatches):
-    """The failover recognises that StatPal is serving; it does not cause it.
+async def test_a_failover_serves_in_line_and_dispatches_nothing(
+    monkeypatch, dispatches
+):
+    """The act: StatPal's writers run INSIDE this pass, and no task is queued.
 
-    An earlier cut dispatched `sync_statpal_schedules` and
-    `sync_statpal_livescores` here. Two independent reasons that was wrong, and
-    this test exists so the idea does not come back through the behaviour after
-    the CI guard has been satisfied by the code:
+    Two things at once, because they are two halves of one decision:
 
-      1. `test_celery_result_retention.test_no_task_dispatches_another_task`
-         bans intra-task dispatch across `app/tasks/` with no allowlist.
-      2. lane1/130 measured that it bought nothing: StatPal already serves every
-         sport a failover can fire on, through beats that do not depend on ESPN.
-
-    So a full, gated, both-halves-healthy failover fires — `failover_serving` is
-    incremented and the receipt says `serving: statpal` — and the queue stays
-    empty.
+      * it SERVES — `_sync_statpal_schedules` and `_sync_statpal_livescores`
+        both run and both report a write;
+      * it DISPATCHES NOTHING —
+        `test_celery_result_retention.test_no_task_dispatches_another_task`
+        bans intra-task dispatch across `app/tasks/` with no allowlist, and
+        calling the coroutines directly has none of that hazard. This pins the
+        behaviour so the idea cannot come back after the code guard is satisfied.
     """
     import app.services.statpal_api as statpal_api
 
     from app.tasks.espn_sync import _act_on_failovers, _decide_failovers
 
+    session, event_id = _wire_sqlite(monkeypatch)
     _no_ledger(monkeypatch, days=SEVEN_MEETS_DAYS, why="seven")
     monkeypatch.setattr(statpal_api, "is_available", lambda: True)
 
     now = datetime.now(timezone.utc)
+    live_row = _live(now - timedelta(hours=1))
+    live_row.fixture_id = "sp-1"
+
+    # Which service methods the WRITERS reach, recorded — because a counter
+    # that increments beside a writer proves only that the line ran. Mutation
+    # found this: stubbing `_sync_statpal_schedules` out entirely still left
+    # `failover_schedule_writes == 1` and every assertion green.
+    reached: list[str] = []
 
     class _Service:
         async def get_schedule_fixtures(self, sport, day_offset=None):
+            reached.append("readiness:schedule")
             return [_Fx(now - timedelta(hours=1))]
 
         async def get_live_fixtures(self, sport):
-            return [_live(now - timedelta(hours=1))]
+            reached.append("readiness:live")
+            return [live_row]
+
+        async def get_live_scores(self, sport):
+            reached.append("writer:livescores")
+            return [live_row]
+
+        async def get_fixtures(self, *a, **k):
+            reached.append("writer:schedules")
+            return []
 
         async def close(self):
             pass
@@ -653,16 +760,174 @@ async def test_a_failover_dispatches_absolutely_nothing(monkeypatch, dispatches)
         stats,
     )
 
-    # It DID fail over — the control, so this is not passing because nothing
-    # happened at all.
     assert stats["failover_serving"] == 1
+    assert stats["failover_schedule_writes"] == 1
+    assert stats["failover_live_writes"] == 1
     assert stats["failover"][0]["serving"] == STATPAL
-    assert stats["failover"][0]["failed_over"] is True
+    assert stats["errors"] == []
 
-    # And it dispatched nothing.
+    # BOTH writers actually reached StatPal — not just their counters.
+    assert "writer:schedules" in reached, (
+        "`_sync_statpal_schedules` never called the service, so the schedule "
+        f"half did not run. Reached: {reached}"
+    )
+    assert "writer:livescores" in reached, (
+        f"`_sync_statpal_livescores` never called the service. Reached: {reached}"
+    )
+    # And readiness asked both questions before any of it.
+    assert reached[:2] == ["readiness:schedule", "readiness:live"]
+
+    # And nothing went to a queue.
     assert dispatches.calls == []
     assert dispatches.live.calls == []
-    assert stats["errors"] == []
+
+
+@pytest.mark.asyncio
+async def test_the_full_espn_pass_serves_a_dark_sport_and_the_score_advances(
+    monkeypatch, dispatches
+):
+    """**CERT-2050's named regression.** The whole task, and a persisted advance.
+
+    "Route a permitted ESPN-dark decision through an allowed non-task StatPal
+    writer seam, with a full-task regression proving persisted status/score/
+    period and a snapshot advance during `_sync_espn_live_events`."
+
+    So this drives `_sync_espn_live_events` itself — not the helpers — with
+    ESPN DARK for NFL (`get_scoreboard` returns `None`, which is the shape that
+    means "the authority did not answer") and a healthy StatPal behind an open
+    gate. The Event's score and period move and a ScoreSnapshot lands, from a
+    pass in which ESPN contributed nothing at all.
+    """
+    from sqlalchemy import select
+
+    import app.services.espn_api as espn_api
+    import app.services.statpal_api as statpal_api
+    from app.models.models import Event, ScoreSnapshot
+    from app.tasks.espn_sync import _sync_espn_live_events
+
+    session, event_id = _wire_sqlite(monkeypatch)
+    _no_ledger(monkeypatch, days=SEVEN_MEETS_DAYS, why="seven")
+    monkeypatch.setattr(statpal_api, "is_available", lambda: True)
+
+    now = datetime.now(timezone.utc)
+    live_row = _live(now - timedelta(hours=1))
+    live_row.home_score, live_row.away_score = 28, 24
+    live_row.raw_status = "Q4"
+    live_row.fixture_id = "sp-42"
+
+    class _ESPN:
+        async def get_scoreboard(self, sport_key, date=None):
+            return None  # AUTHORITY DARK — ESPN did not answer.
+
+        async def close(self):
+            pass
+
+    class _StatPal:
+        async def get_schedule_fixtures(self, sport, day_offset=None):
+            return [_Fx(now - timedelta(hours=1))]
+
+        async def get_live_fixtures(self, sport):
+            return [live_row]
+
+        async def get_live_scores(self, sport):
+            return [live_row]
+
+        async def get_fixtures(self, *a, **k):
+            return []
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(espn_api, "ESPNAPIService", _ESPN)
+    monkeypatch.setattr(statpal_api, "StatPalAPIService", _StatPal)
+
+    result = await _sync_espn_live_events()
+
+    assert result["authority_dark_sports"] >= 1, result
+    assert result["failover_serving"] == 1, result
+    assert result["failover_live_writes"] == 1, result
+
+    fresh = session.execute(select(Event).where(Event.id == event_id)).scalar_one()
+    assert fresh.home_score == 28, "the site would still be showing the old score"
+    assert fresh.away_score == 24
+    assert fresh.period == "Q4"
+
+    snaps = session.execute(
+        select(ScoreSnapshot).where(ScoreSnapshot.event_id == event_id)
+    ).scalars().all()
+    assert len(snaps) == 1
+    assert (snaps[0].home_score, snaps[0].away_score) == (28, 24)
+
+    # The whole point: no task was queued to make that happen.
+    assert dispatches.calls == []
+    assert dispatches.live.calls == []
+
+
+@pytest.mark.asyncio
+async def test_a_quiet_day_writes_nothing_through_the_full_pass(
+    monkeypatch, dispatches
+):
+    """**CERT-2050's named control.** ESPN empty and StatPal empty must not write.
+
+    The other half of the regression, and the one that stops the test above
+    from passing against a pass that serves unconditionally. ESPN ANSWERS with
+    an empty board and StatPal has no started fixture: a quiet day, not an
+    outage. The Event must be exactly as it was.
+    """
+    from sqlalchemy import select
+
+    import app.services.espn_api as espn_api
+    import app.services.statpal_api as statpal_api
+    from app.models.models import Event, ScoreSnapshot
+    from app.tasks.espn_sync import _sync_espn_live_events
+
+    session, event_id = _wire_sqlite(monkeypatch)
+    _no_ledger(monkeypatch, days=SEVEN_MEETS_DAYS, why="seven")
+    monkeypatch.setattr(statpal_api, "is_available", lambda: True)
+
+    now = datetime.now(timezone.utc)
+
+    class _ESPN:
+        async def get_scoreboard(self, sport_key, date=None):
+            return []  # ANSWERED, and has nothing.
+
+        async def close(self):
+            pass
+
+    class _StatPal:
+        async def get_schedule_fixtures(self, sport, day_offset=None):
+            # A season of games, none of them started.
+            return [_Fx(now + timedelta(days=d)) for d in range(1, 30)]
+
+        async def get_live_fixtures(self, sport):
+            return []
+
+        async def get_live_scores(self, sport):
+            return [_live(now - timedelta(hours=1))]
+
+        async def get_fixtures(self, *a, **k):
+            return []
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(espn_api, "ESPNAPIService", _ESPN)
+    monkeypatch.setattr(statpal_api, "StatPalAPIService", _StatPal)
+
+    result = await _sync_espn_live_events()
+
+    assert result.get("failover_serving", 0) == 0, result
+    assert result.get("failover_schedule_writes", 0) == 0
+    assert result.get("failover_live_writes", 0) == 0
+    assert result["failover"][0]["code"] == BOTH_QUIET
+
+    fresh = session.execute(select(Event).where(Event.id == event_id)).scalar_one()
+    assert fresh.home_score is None, "a quiet day wrote a score"
+    assert fresh.away_score is None
+    assert fresh.period is None
+    assert session.execute(
+        select(ScoreSnapshot).where(ScoreSnapshot.event_id == event_id)
+    ).scalars().all() == []
 
 
 @pytest.mark.asyncio

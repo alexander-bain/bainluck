@@ -339,42 +339,45 @@ async def _decide_failovers(espn_data: dict, fetch_keys, stats: dict) -> dict:
 
 
 async def _act_on_failovers(decisions: dict, stats: dict) -> None:
-    """Record who is serving each silent sport, and say so loudly when nobody is.
+    """Serve the sports ESPN went dark on, and say loudly when nobody can.
 
-    **THERE IS NO DISPATCH HERE, AND THAT IS DELIBERATE — TWICE OVER.**
+    THE ACT: for a sport whose failover is permitted and whose standby is proven
+    able to cover it, this **runs StatPal's schedule and livescore writers
+    in-line, now** — `_sync_statpal_schedules(sport_key)` and
+    `_sync_statpal_livescores()`, the async implementations behind the beats.
+    Fixtures land, and score, period and status advance on the games ESPN has
+    stopped reporting. That is the ship: the site keeps showing that sport's
+    games instead of freezing on last-known state.
 
-    The first cut of this function called `sync_statpal_schedules.delay()` and
-    `sync_statpal_livescores.delay()` when a sport failed over. Two independent
-    reasons that was wrong, and both are worth writing down because the idea is
-    an obvious one to have again:
+    **WHY THE IMPLEMENTATIONS AND NOT THE TASKS.** An earlier cut called
+    `.delay()` on the two Celery tasks and went straight through
+    `test_celery_result_retention.test_no_task_dispatches_another_task`, which
+    bans intra-task dispatch across `app/tasks/` with no allowlist: a dispatch
+    could grow a result consumer the route scan would never see. Calling the
+    coroutines directly has none of that hazard — no message, no result backend,
+    no second worker — and it is strictly better for the ship anyway, because
+    the work happens inside this pass instead of whenever a queue gets to it.
+    An outage is the wrong moment to add a hop.
 
-      1. **A standing CI guard forbids it.**
-         `test_celery_result_retention.test_no_task_dispatches_another_task`
-         scans every module under `app/tasks/` for `.delay(`/`.apply_async(`/
-         `send_task(` and has no allowlist: an intra-task dispatch could grow a
-         result consumer the route scan would never see.
-      2. **It bought nothing.** lane1/130 measured the outage coverage per sport
-         (`test_espn_dark_fallback_coverage_2867`): for every sport a failover
-         can fire on, StatPal already serves it through beats that do not depend
-         on ESPN — `transition-event-statuses` (60s, no API client),
-         `sync-statpal-livescores` (30s), `sync-statpal-schedules-*` (1h). The
-         dispatch pulled an hourly beat forward and nothing more.
+    Called AFTER `_sync_espn_live_events` closes its session, because each
+    writer opens its own (gotchas #5, #6).
 
-    So the failover is a RECOGNITION that StatPal is serving, not a CAUSE of it,
-    and that is the honest shape: the beats do the serving, and this decides
-    whether they can be trusted to be doing it. Which makes the refusals the
-    valuable half — `LIVE_PATH_DARK` and `LIVE_PATH_SILENT_ON_THE_GAME` are the
-    states where ESPN is silent and StatPal cannot cover for it, so the site
-    genuinely goes blank, and every beat lane1 counted keeps running greenly
-    through them.
+    **AND IT IS BOUNDED.** Each writer is wrapped: a StatPal failure during an
+    ESPN outage must degrade to "nobody served this sport", recorded, and must
+    never take down the ESPN pass that is still working for every other sport.
+
+    THE REFUSALS ARE THE OTHER HALF, and they are not consolation.
+    `BLANK_CODES` — ESPN silent AND the standby unable to cover — is the state
+    where nothing can say what is happening in a game that is on. Logged at
+    ERROR and counted apart, because every other refusal is a fact about the day
+    and this one is a fault.
 
     **The receipts.** Every decision that is not the ordinary `ESPN_ANSWERED` is
-    published on the task summary, whether or not anyone is serving — an outage
-    the site rode out is otherwise indistinguishable from one that never
-    happened. They are a per-pass series rather than edge-triggered records, so
-    an activation and a deactivation are both recoverable by differencing
-    consecutive passes, and no stored "currently failed over" flag can be
-    stranded in the wrong state by a lost write.
+    published on the task summary, served or not — an outage the site rode out
+    is otherwise indistinguishable from one that never happened. A per-pass
+    series rather than edge-triggered records, so activation and deactivation
+    are both recoverable by differencing consecutive passes and no stored flag
+    can be stranded by a lost write.
     """
     from app.utils.authority_failover import BLANK_CODES, FAILOVER_CODES
 
@@ -389,11 +392,8 @@ async def _act_on_failovers(decisions: dict, stats: dict) -> None:
                 "AUTHORITY FAILOVER for %s (%s): %s",
                 sport_key, decision.code, decision.why,
             )
+            await _serve_from_statpal(sport_key, stats)
         elif decision.code in BLANK_CODES:
-            # ESPN silent and the standby unable to cover: nobody can say what
-            # is happening in a game that is on. Counted apart from the ordinary
-            # refusals because it is the only one that is a fault rather than a
-            # fact about the day.
             stats["failover_uncovered"] = stats.get("failover_uncovered", 0) + 1
             logger.error(
                 "AUTHORITY UNCOVERED for %s (%s): %s",
@@ -407,6 +407,43 @@ async def _act_on_failovers(decisions: dict, stats: dict) -> None:
 
     if receipts:
         stats["failover"] = receipts
+
+
+async def _serve_from_statpal(sport_key: str, stats: dict) -> None:
+    """Run StatPal's own writers for one sport, now, inside this pass.
+
+    Both halves, matching what readiness proved: the schedule writer so the
+    sport's fixtures keep landing, and the livescore writer so score, period and
+    status keep moving on the ones already under way. Readiness checked both
+    endpoints; serving only one would have made half that check a question
+    nothing acted on.
+
+    Each is separately guarded and separately counted. A schedule write that
+    worked and a live write that failed is a real, partial outcome and must not
+    be reported as either a clean serve or a total failure.
+    """
+    from app.tasks.statpal_sync import (
+        _sync_statpal_livescores,
+        _sync_statpal_schedules,
+    )
+
+    try:
+        result = await _sync_statpal_schedules(sport_key)
+        stats["failover_schedule_writes"] = (
+            stats.get("failover_schedule_writes", 0) + 1
+        )
+        logger.info("failover schedule write for %s: %s", sport_key, result)
+    except Exception as exc:  # noqa: BLE001 — counted, never swallowed
+        stats["errors"].append(f"failover_schedule_{sport_key}: {exc}")
+        logger.warning("failover schedule write failed for %s: %s", sport_key, exc)
+
+    try:
+        result = await _sync_statpal_livescores()
+        stats["failover_live_writes"] = stats.get("failover_live_writes", 0) + 1
+        logger.info("failover live write (for %s): %s", sport_key, result)
+    except Exception as exc:  # noqa: BLE001 — counted, never swallowed
+        stats["errors"].append(f"failover_live_{sport_key}: {exc}")
+        logger.warning("failover live write failed for %s: %s", sport_key, exc)
 
 
 async def _sync_espn_live_events():
@@ -450,10 +487,16 @@ async def _sync_espn_live_events():
         # which is the state in which the site actually goes blank.
         "failover_serving": 0,
         "failover_uncovered": 0,
+        # What the serving actually managed. Separate from `failover_serving`
+        # because a decision to serve and a write that landed are different
+        # facts, and the gap between them is the interesting number.
+        "failover_schedule_writes": 0,
+        "failover_live_writes": 0,
         "errors": [],
     }
 
     espn_names_match = espn_team_matches
+    failover_decisions: dict = {}
 
     try:
         async with get_task_session() as session:
@@ -509,7 +552,6 @@ async def _sync_espn_live_events():
             failover_decisions = await _decide_failovers(
                 espn_data, all_fetch_keys, stats
             )
-            await _act_on_failovers(failover_decisions, stats)
 
             # ── First pass: live + recently-completed events ─────
             recently_completed_cutoff = datetime.now(timezone.utc) - timedelta(hours=6)
@@ -576,6 +618,15 @@ async def _sync_espn_live_events():
                 await backfill_missing_scores(session, stats)
             except Exception as e:
                 stats["errors"].append(f"score_backfill_pass: {str(e)}")
+
+        # OUTSIDE the `async with` on purpose. `_act_on_failovers` runs the
+        # StatPal writers, and each opens its OWN `get_task_session()`; calling
+        # them while this task still holds one would nest two sessions on the
+        # same task, which is a connection-pool and flush-ordering hazard this
+        # repo has paid for (gotchas #5, #6). The decision was taken inside,
+        # where `espn_data` lives; the serving happens once this session is
+        # closed and nothing of ours is still in flight.
+        await _act_on_failovers(failover_decisions, stats)
 
     except Exception as e:
         stats["errors"].append(f"Task error: {str(e)}")
