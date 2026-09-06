@@ -13,7 +13,7 @@
  * test target is not reachable from CI.
  */
 
-import { readFileSync, existsSync } from "fs";
+import { readFileSync, existsSync, readdirSync } from "fs";
 import { join } from "path";
 
 const IOS_ROOT = join(__dirname, "../../../ios/Bain Luck/Bain Luck");
@@ -22,6 +22,62 @@ const CONSUMERS = [
   join(IOS_ROOT, "Components/OddsChartView.swift"),
   join(IOS_ROOT, "Components/ScoreDifferentialChartView.swift"),
 ];
+
+/**
+ * #3273 — the list above is why this ratchet failed.
+ *
+ * It named its consumers, so it only ever watched the two files that were
+ * already broken in #1832. Two MORE copies grew where it was not looking:
+ * `Views/EventDetailView.swift` (Game Segments) read ESPN's clock PREFIX as the
+ * period number and headed a four-quarter football game
+ * `Q14 · Q8 · Q5 · Q1 … Q4`; `Components/GamePlayCardView.swift` returned the
+ * raw string and printed the clock twice. An allowlist cannot catch the file
+ * nobody thought to add — so the check below DISCOVERS instead.
+ *
+ * Comments are stripped before scanning: the fixed files legitimately discuss
+ * quarters and overtime at length in their doc comments, and a substring match
+ * over raw source would call that a reimplementation.
+ */
+function swiftFiles(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) return swiftFiles(path);
+    return entry.isFile() && entry.name.endsWith(".swift") ? [path] : [];
+  });
+}
+
+function stripComments(source: string): string {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^[ \t]*\/\/.*$/gm, "")
+    .replace(/(?<!:)\/\/.*$/gm, "");
+}
+
+/**
+ * Tells that a file is BUILDING a period label rather than asking for one:
+ * interpolating a period prefix, or matching a period noun in code.
+ */
+const REIMPLEMENTATION_TELLS: Array<[string, RegExp]> = [
+  ["interpolates a quarter label", /"Q\\\(/],
+  ["interpolates a period label", /"P\\\(/],
+  ["interpolates an overtime label", /"OT\\\(/],
+  ["interpolates a half label", /\)H"/],
+  ["matches the word 'quarter'", /quarter/i],
+  ["matches the word 'halftime'", /halftime/i],
+  ["matches the word 'overtime'", /overtime/i],
+  ["matches baseball half-innings", /top\|bottom/],
+];
+
+/**
+ * Files allowed to mention this vocabulary in code for a reason that is not
+ * period labelling. Each needs a stated reason, so adding one is a decision.
+ */
+const NOT_PERIOD_PARSERS = new Map([
+  [
+    join(IOS_ROOT, "Components/SpecialEventMarketsView.swift"),
+    "classifies MARKET NAMES ('halftime result', 'overtime') into prop groups — never labels a period",
+  ],
+]);
 
 // The whole suite is meaningless if it is pointed at nothing — a path typo
 // would otherwise read as a clean pass (the unrunnable-check failure mode).
@@ -63,6 +119,54 @@ d("iOS period labels have exactly one implementation", () => {
     expect(canonical).toMatch(/guard let n = Int\(digits\), n > 0 else \{ return "" \}/);
     // The bare-integer arm must no longer sit inside the pass-through regex.
     expect(canonical).not.toMatch(/\^\(Q\\d\|P\\d\|\\d\+H\|OT\\d\?\|HT\|\\d\+\)\$/);
+  });
+
+  it("no OTHER Swift file reimplements period labelling — discovered, not listed", () => {
+    const offenders: string[] = [];
+
+    for (const path of swiftFiles(IOS_ROOT)) {
+      if (path === CANONICAL) continue;
+      if (NOT_PERIOD_PARSERS.has(path)) continue;
+
+      const code = stripComments(readFileSync(path, "utf8"));
+      const hits = REIMPLEMENTATION_TELLS.filter(([, re]) => re.test(code)).map(([why]) => why);
+      if (hits.length > 0) {
+        offenders.push(`${path.slice(IOS_ROOT.length + 1)} — ${hits.join("; ")}`);
+      }
+    }
+
+    expect(offenders).toEqual([]);
+  });
+
+  it("the discovery check can actually fail", () => {
+    // A scan that cannot fail is the failure mode this whole file exists to
+    // stop. Feed it the exact defect from #3273 and require it to fire.
+    const drifted = stripComments(`
+      private static func formatPeriodLabel(_ raw: String) -> String {
+        if raw.lowercased().contains("quarter"), let n = firstNumber(in: raw) { return "Q\\(n)" }
+        return raw
+      }
+    `);
+    const hits = REIMPLEMENTATION_TELLS.filter(([, re]) => re.test(drifted));
+    expect(hits.length).toBeGreaterThan(0);
+  });
+
+  it("the two files fixed by #3273 delegate to the shared parser", () => {
+    // Named explicitly so a revert is loud rather than merely un-discovered.
+    for (const [file, call] of [
+      ["Views/EventDetailView.swift", "PeriodLabel.columnLabel("],
+      ["Components/GamePlayCardView.swift", "PeriodLabel.normalize("],
+    ]) {
+      expect(readFileSync(join(IOS_ROOT, file), "utf8")).toContain(call);
+    }
+  });
+
+  it("the scoreboard column vocabulary is defined once, beside normalize", () => {
+    // #3273: the column label differs from the chart chip in exactly two ways
+    // (innings as digits, non-periods dropped). It lives on PeriodLabel so it
+    // cannot drift back into a view.
+    expect(canonical).toMatch(/static func columnLabel\(/);
+    expect(canonical).toMatch(/normalize\(raw\)/);
   });
 
   it("ordinal suffixes follow English, including the 11-13 exception", () => {

@@ -159,12 +159,21 @@ struct GamePlayPoint {
         return parts.joined(separator: " · ")
     }
 
+    /// #3273. This was a private fourth copy of period formatting, and on real
+    /// data every branch of it was wrong or dead:
+    ///
+    /// - `p.count > 2` returned the string UNTOUCHED, and ESPN's period embeds the
+    ///   clock (`"14:54 - 1st Quarter"`). Joined to `clock` by `timeDisplay`, the
+    ///   card read **"14:54 - 1st Quarter · 14:54"** — the clock printed twice.
+    ///   Measured 2026-09-05: 144,376 of 175,274 `espn_snapshots` rows carrying
+    ///   both (82.4%) have `period` starting with the exact `game_clock`.
+    /// - The `Int(p)` arm below it was unreachable: all 175,274 of those rows are
+    ///   longer than two characters, so it has never run in production.
+    ///
+    /// Delegates to the one parser, which yields `"Q1 · 14:54"`.
     private func formatPeriod(_ period: String?) -> String? {
         guard let p = period, !p.isEmpty else { return nil }
-        if p.count > 2 { return p }
-        if let num = Int(p) {
-            return "Q\(num)"
-        }
-        return p
+        let normalized = PeriodLabel.normalize(p)
+        return normalized.isEmpty ? nil : normalized
     }
 }
