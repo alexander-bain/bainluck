@@ -37,10 +37,15 @@ it tests is the market's TICKER date, never the stored `commence_time`, which
 on all 29 open Kalshi tennis match markets sat exactly 14 days late (gotcha
 #14; see `member_window_verdict`).
 
-EVERY CANDIDATE NOT EDGED GETS A RECEIPT. Membership is never a curated list,
-and the receipt is how that is proved rather than asserted. A market rejected
-from a container is `market_match_receipts` with `container_id` set,
-`outcome='rejected'` and a `reject_reason` naming the test it failed.
+EVERY CANDIDATE NOT EDGED IS ACCOUNTED FOR — by a receipt where one can be
+written, and in the run report where one cannot. Membership is never a curated
+list, and this is how that is proved rather than asserted. A live market
+rejected from a container is `market_match_receipts` with `container_id` set,
+`outcome='rejected'` and a `reject_reason` naming the test it failed. A
+candidate whose id does NOT resolve gets no receipt at all, whatever its type:
+`market_match_receipts.market_id` has a real FK, so a receipt for an id with no
+row is refused by the database and — receipts flushing as one batched
+statement — takes the whole pass down with it. Those land in `unresolved`.
 
 ONE BAD CANDIDATE NEVER WIPES A PASS (gotcha #42). Per-item try/except around
 every candidate, and the failure is recorded as
@@ -52,9 +57,10 @@ WHAT IT DELIBERATELY DOES NOT DO.
   active, no event of ours) is lane1's under #2693 and this job reports it as a
   receipt rather than papering over it.
 * It does not resolve twins, merge rows, or write `same_as`.
-* It does not write receipts for non-market candidates. `market_match_receipts`
-  is keyed on `market_id` with a real FK, so an event candidate that fails has
-  nowhere to go in that table; those land in the run report's `unresolved` list
+* It does not write receipts for non-market candidates, nor for any candidate
+  whose id does not resolve. `market_match_receipts` is keyed on `market_id`
+  with a real FK, so neither an event candidate nor a ghost market id has
+  anywhere to go in that table; both land in the run report's `unresolved` list
   instead, and that asymmetry is stated here rather than discovered later.
 """
 
@@ -833,22 +839,31 @@ async def assemble_container(session, container, candidates: list[Candidate]) ->
             if candidate.child_id not in live.get(candidate.child_type, ()):
                 # The id does not resolve. A container cannot contain a row
                 # that does not exist — report it, never paper over it.
-                if receipt is not None:
-                    receipt.reject(
-                        REJECT_CONTAINER_CHILD_MISSING,
-                        child_type=candidate.child_type,
-                        child_id=candidate.child_id,
-                    )
-                    receipts.append(receipt)
-                else:
-                    report.unresolved.append(
-                        {
-                            "child_type": candidate.child_type,
-                            "child_id": candidate.child_id,
-                            "name": candidate.name,
-                            "source": candidate.source,
-                        }
-                    )
+                #
+                # AND IT CANNOT BE RECEIPTED EITHER, market or not.
+                # `market_match_receipts.market_id` carries a real FK to
+                # `futures_markets`, so a receipt for an id with no row is
+                # refused by the database — and because receipts flush as one
+                # batched statement, that single refusal takes the WHOLE pass
+                # down with it. Real Postgres said so:
+                # `ForeignKeyViolationError … Key (market_id)=(999999999) is
+                # not present in table "futures_markets"`, which failed both
+                # the missing-child test and the "one bad candidate does not
+                # wipe the pass" test that exists to prevent exactly this. The
+                # unresolved list is where a missing id goes, whatever its
+                # type; it is reported, never faked into a table that would
+                # refuse it.
+                receipt = None
+                report.unresolved.append(
+                    {
+                        "child_type": candidate.child_type,
+                        "child_id": candidate.child_id,
+                        "name": candidate.name,
+                        "source": candidate.source,
+                        "external_id": candidate.external_id,
+                        "reject_reason": REJECT_CONTAINER_CHILD_MISSING,
+                    }
+                )
                 report.rejected[REJECT_CONTAINER_CHILD_MISSING] = (
                     report.rejected.get(REJECT_CONTAINER_CHILD_MISSING, 0) + 1
                 )

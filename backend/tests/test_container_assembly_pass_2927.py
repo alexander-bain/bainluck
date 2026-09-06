@@ -232,3 +232,54 @@ def test_a_declared_anchor_defaults_to_no_scope():
     """The default is the fail-closed one: a series is tour-wide until declared."""
     anchor = DeclaredAnchor(provider="kalshi", provider_id="KXWHATEVER", id_kind="series")
     assert anchor.scope is None
+
+
+# ---------------------------------------------------------------------------
+# The receipt a foreign key refuses (found by real Postgres, guarded here)
+# ---------------------------------------------------------------------------
+
+
+class NoLiveRowsSession:
+    """Every existence probe comes back empty; nothing else is ever asked."""
+
+    def __init__(self):
+        self.statements = []
+
+    async def execute(self, sql, params=None):
+        self.statements.append(str(sql))
+        return FakeResult([])
+
+
+@pytest.mark.asyncio
+async def test_a_ghost_market_id_is_reported_and_never_receipted():
+    """`market_match_receipts.market_id` has a real FK to `futures_markets`.
+
+    A receipt for an id with no row is refused by the database, and because
+    receipts flush as ONE batched statement, that refusal takes the whole pass
+    with it — one bad candidate wiping the pass, in defiance of gotcha #42.
+    Real Postgres caught it (`Key (market_id)=(999999999) is not present`);
+    this is the cheap guard that keeps it caught.
+    """
+    from app.tasks.container_assembly import Candidate, assemble_container
+    from app.utils.container_class import MemberEvidence
+
+    class Container:
+        id = 1
+        slug = "us-open-2026"
+
+    ghost = Candidate(
+        child_type="market",
+        child_id=999_999_999,
+        source="register",
+        evidence=MemberEvidence(node_type="market", name="Ghost vs Nobody"),
+        external_id="KXATPMATCH-26SEP02AUGKHA",
+        market_source="kalshi",
+    )
+
+    report = await assemble_container(NoLiveRowsSession(), Container(), [ghost])
+
+    assert report.edges_written == 0
+    assert report.receipts_written == 0
+    assert report.rejected["container_child_missing"] == 1
+    assert [u["child_id"] for u in report.unresolved] == [999_999_999]
+    assert report.unresolved[0]["external_id"] == "KXATPMATCH-26SEP02AUGKHA"

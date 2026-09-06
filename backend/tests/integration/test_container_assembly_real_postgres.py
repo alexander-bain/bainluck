@@ -283,6 +283,19 @@ class TestAMissingChildIsReceiptedNotEdged:
         assert report.edges_written == 0
         assert (await _edge_rows(pg_session, container.id)) == []
         assert report.rejected.get("container_child_missing") == 1
+        # AND NO RECEIPT, because the FK would refuse one. This assertion is
+        # here because the first version of this file asserted the opposite and
+        # real Postgres refused it: `ForeignKeyViolationError … Key
+        # (market_id)=(999999999) is not present in table "futures_markets"`.
+        # A ghost market id is reported in `unresolved`, exactly like a ghost
+        # event id.
+        assert report.receipts_written == 0
+        assert [u["child_id"] for u in report.unresolved] == [999_999_999]
+        assert report.unresolved[0]["reject_reason"] == "container_child_missing"
+        left = (
+            await pg_session.execute(text("SELECT count(*) FROM market_match_receipts"))
+        ).scalar()
+        assert left == 0
 
     async def test_the_missing_child_leaves_no_receipt_it_cannot_key(
         self, pg_session
@@ -327,6 +340,12 @@ class TestAMissingChildIsReceiptedNotEdged:
 
         assert report.edges_written == 3
         assert len(await _edge_rows(pg_session, container.id)) == 3
+        # The three healthy siblings keep their receipts; the ghost has none to
+        # keep. Before the fix this whole pass died on the ghost's FK violation
+        # — one bad candidate wiping the pass, in the very test that exists to
+        # forbid it.
+        assert report.receipts_written == 3
+        assert len(report.unresolved) == 1
 
 
 class TestTheBootstrap:
