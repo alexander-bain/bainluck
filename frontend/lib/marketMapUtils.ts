@@ -682,7 +682,15 @@ export function sportVocab(sportKey: string | undefined): SportScoringVocab {
  * the double space.
  */
 export function withUnit(value: string | number, vocab: SportScoringVocab): string {
-  return vocab.unit ? `${value} ${vocab.unit}` : String(value);
+  if (!vocab.unit) return String(value);
+  // #2555 item 3: `1 games`. The vocab has carried `unitSingular` since #2441 —
+  // this helper simply never read it, so every card that reached exactly one
+  // printed the plural. `Number()` rather than `=== 1` because callers pass
+  // both numbers and pre-formatted strings; a non-numeric string yields NaN and
+  // falls through to the plural, which is the right default for a label this
+  // file did not compute.
+  const unit = Number(value) === 1 && vocab.unitSingular ? vocab.unitSingular : vocab.unit;
+  return `${value} ${unit}`;
 }
 
 /** `"Final games distribution"` / `"Final distribution"`. Same reason. */
