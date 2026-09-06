@@ -66,7 +66,7 @@ Both of the obvious alternatives are traps this repo has already paid for:
     needs.
 
 Ending a failover is therefore strictly cheaper than starting one: starting
-needs a gate, a standby read and a dispatch; ending needs nothing to happen.
+needs a gate, a standby read and a served pass; ending needs nothing to happen.
 
 THE GATE IS `flip_permitted`, UNCHANGED — SO THIS SHIPS DARK
 ════════════════════════════════════════════════════════════
@@ -79,7 +79,7 @@ and an outage is the *worst* moment to be running on a provider that had not
 cleared the bar.
 
 `flip_permitted` refuses every sport today, so every path through :func:`decide`
-that could dispatch anything is unreachable in production right now. That is the
+that could serve anything is unreachable in production right now. That is the
 point of building it before 2026-09-11 rather than after: the mechanism can be
 written, reviewed and proven in every state while it is incapable of acting.
 
@@ -94,9 +94,18 @@ no API client, which is what keeps `status='live'` reachable during an outage),
 rejected the original sketch for this step — routing StatPal fixtures through
 the ESPN passes — as a twin factory, correctly.
 
-So the dispatch below is the SMALLEST part of this module's value, and it is
-cadence rather than coverage: it pulls an hourly schedule sync forward when
-ESPN has stopped answering. What is actually new is the other three things:
+That coverage is why the serving act was nearly argued away, and CERT-2050 was
+right to refuse the argument. Earlier presentations dispatched the StatPal tasks
+and described the act as cadence rather than coverage — pulling an hourly
+schedule sync forward — which made it sound like the smallest part of this
+module's value and left what remained as observability. It is not, on either
+count. A caller that DECIDES a sport is unserved and then serves nothing has
+shipped a receipt; *"a measurement is not progress"* (CLAUDE.md). And the act is
+no longer a dispatch: `espn_sync._act_on_failovers` awaits the StatPal writers
+in-line, inside the pass, so the work does not wait on a queue at the one moment
+a queue is the wrong thing to be waiting on.
+
+So the act is first. What the surrounding machinery adds is three more things:
 
   1. **The distinction the consumer had lost** — `espn_data.get(sport_key, [])`
      (see above), which lane1/045 fixed at the producer and which died at the
@@ -656,7 +665,7 @@ def decide(
         # The half readiness used to skip. StatPal can name the game and cannot
         # say what is happening in it, so declaring it the server would freeze
         # score, clock and status behind a row that reads `serving: statpal`.
-        # Refused loudly rather than dispatched: this is the state in which the
+        # Refused loudly rather than served: this is the state in which the
         # site genuinely does go blank, so it is the one worth an alarm.
         return FailoverDecision(
             sport_key=sport_key,
