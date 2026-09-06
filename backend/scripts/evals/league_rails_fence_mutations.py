@@ -143,7 +143,25 @@ MUTANTS: list[tuple[str, Path, str, str, str]] = [
     (
         "M5-route-keeps-an-inline-copy",
         ROUTE,
-        "        _results_q = recent_results_query(sport_key, now)",
+        # 🔴 RE-TARGETED BY #3677 (live/082) — the third worked example of the
+        # lesson in M6 and M7 below, and the scanner caught it the same way:
+        # loudly, before the battery could quote a kill count it had not made.
+        #
+        # The needle was `_results_q = recent_results_query(sport_key, now)`.
+        # #3677 gave all three rails an `also_sport_keys` keyword, because a
+        # tour's TOURNAMENTS are registered as their own sport keys and
+        # `Sport.key == 'tennis_atp'` — correct, present and indexed — could not
+        # see a single US Open match for the whole tournament. The call site
+        # grew an argument, so the needle no longer existed.
+        #
+        # The MUTATION is unchanged in meaning: put the exact pre-fix statement
+        # back in the route while the helper stays right. What it proves is
+        # unchanged too — that the route CALLS the helper — and the added
+        # keyword makes it prove slightly more, since an inline copy would now
+        # also have to re-implement the widened scope. The mutant's inline
+        # statement is deliberately left at the pre-fix `Sport.key == sport_key`
+        # form: it is the regression being guarded against, not a template.
+        "        _results_q = recent_results_query(sport_key, now, also_sport_keys=_also_keys)",
         "        _results_q = (\n"
         "            select(Event)\n"
         "            .join(Sport, Sport.id == Event.sport_id)\n"

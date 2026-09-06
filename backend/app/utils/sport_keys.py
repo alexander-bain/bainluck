@@ -9,7 +9,7 @@ This module imports nothing from the rest of the codebase, so it cannot create
 circular-import problems.
 """
 
-from typing import Optional
+from typing import Iterable, Optional
 
 
 # =============================================================================
@@ -1993,6 +1993,71 @@ def get_sport_hierarchy(sport_slug: str) -> Optional[dict]:
 def get_all_sport_slugs() -> list[str]:
     """Get all sport slugs that have hierarchy data."""
     return list(SPORT_HIERARCHY.keys())
+
+
+#: Leagues whose CALENDAR IS ITS TOURNAMENTS — every registered sport key of the
+#: form ``<key>_<tournament>`` is that tour's own play and belongs on its page.
+#:
+#: ── Why this is an explicit opt-in and not a prefix rule (#3677) ──
+#:
+#: Measured on production 2026-09-06, ten sport keys with events in the last 14
+#: days are the sport-key CHILD of a league declared in ``SPORT_HIERARCHY`` and
+#: appear on no league page at all. Four of them belong to their parent's page:
+#:
+#:     tennis_atp_us_open            123 events   -> /sport/tennis/atp
+#:     tennis_wta_us_open            122          -> /sport/tennis/wta
+#:     tennis_wta_monterrey_open      33          -> /sport/tennis/wta
+#:     tennis_atp_cincinnati_open      1          -> /sport/tennis/atp
+#:
+#: and the rest emphatically do NOT:
+#:
+#:     soccer_germany_bundesliga_women     -> is not the men's Bundesliga
+#:     soccer_uefa_champs_league_women     -> is not the men's UCL
+#:     soccer_uefa_champs_league_qualification
+#:     americanfootball_ncaaf_fcs          -> FCS is not FBS
+#:     americanfootball_nfl_preseason
+#:
+#: So "a child key belongs to its parent league" is true of a TOUR and false of a
+#: competition, and inferring it from the string would have merged the women's
+#: Bundesliga into the men's page — the read-side twin of gotcha #32's absorption.
+#: D55: membership is declared, never inferred. The declaration is at the LEAGUE
+#: level and the enumeration at the tournament level, which is the only split that
+#: does not go stale: a tour's tournament keys are minted from Kalshi tickers as
+#: new events appear, so a hand-listed set of tournaments is wrong by the next
+#: Slam. That staleness is exactly this bug — the US Open ran its whole fortnight
+#: with all 245 of its matches on neither tour page.
+TOUR_LEAGUES_INCLUDING_TOURNAMENTS: frozenset[str] = frozenset(
+    {
+        "tennis_atp",
+        "tennis_wta",
+    }
+)
+
+
+def tour_scope_sport_keys(
+    sport_key: str, registered_sport_keys: Iterable[str]
+) -> list[str]:
+    """The sport keys a league page's own play is spread across.
+
+    Returns ``[sport_key]`` unchanged for every league that has not opted into
+    :data:`TOUR_LEAGUES_INCLUDING_TOURNAMENTS` — the 27 of 29 declared leagues
+    whose child keys are separate competitions. For a tour that HAS opted in,
+    returns the tour key first, then its registered tournament keys sorted, so
+    the result is deterministic and the caller's cache key stays stable.
+
+    ``registered_sport_keys`` is passed in rather than read here: this module
+    imports nothing (gotcha #3) and the set of minted keys lives in the database,
+    not in config. Membership is a plain ``<parent>_`` prefix test over keys the
+    caller has already confirmed exist, so a tournament that has never been
+    ingested can never widen a scope.
+    """
+    if sport_key not in TOUR_LEAGUES_INCLUDING_TOURNAMENTS:
+        return [sport_key]
+    prefix = f"{sport_key}_"
+    children = sorted(
+        k for k in registered_sport_keys if k != sport_key and k.startswith(prefix)
+    )
+    return [sport_key, *children]
 
 
 # =============================================================================
