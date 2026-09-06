@@ -1,0 +1,49 @@
+The scenario CERT-2053 named, confirmed against the LIVE schedule:
+  02:08:00  turbo-collapse-futures        declared hold 3600s
+  02:10:00  run-freshness-watchdog                       300s
+  02:10:00  sync-tennis-from-espn                        300s
+  02:10:00  refresh-registered-tournament-prices         240s
+  02:10:00  warm-event-concepts                          240s
+  02:10:00  link-tournament-matchups                     180s
+  (five over-budget arrivals, not four -- the block undercounted by one)
+
+shared 2-slot background pool : {'fires': 180, 'started': 0, 'expired': 180, 'worst_wait_s': 0.0, 'p50_wait_s': 0.0, 'unenumerable': []}
+dedicated 1-slot warmer pool  : {'fires': 180, 'started': 20, 'expired': 160, 'worst_wait_s': 120.0, 'p50_wait_s': 120.0, 'unenumerable': []}
+
+RESULT — WHY THIS IS AN ARTIFACT AND NOT A GUARD.
+
+    shared 2-slot pool      180 fires, 0 started, 180 expired   (100% loss)
+    dedicated 1-slot pool   180 fires, 20 started, 160 expired  (89% loss)
+
+Production, measured over the same warmer's own 32-deep ring on 2026-09-06:
+period p50 44.1s, p95 189.0s, and passes completing 40/40. A model that says the
+warmer never starts, and that BUYING THE DEDICATED WORKER still loses 89% of
+fires, is not describing this system.
+
+Two model errors, and neither is fixable from declarations:
+
+1.  SELF-GATING IS NOT MODELLED. The beat fires every 10s; the task declines to
+    start within `MIN_PASS_PERIOD_SECONDS` (30) of its own last start and while a
+    previous pass holds the lock. Those declines are NORMAL -- 85,293 of them
+    against a handful of real passes -- and this simulator scores every one as a
+    starved fire. That alone accounts for the dedicated-pool number: a 100s task
+    fired every 10s onto one slot backs up, which is exactly what the self-gate
+    exists to prevent.
+
+2.  DECLARED HOLDS OVERSTATE RESIDENCY ~5x. Only six background tasks have a
+    measured p95 over the 120s budget; 59 DECLARE one, and 78 of 110 have no
+    recorded duration at all. The declared model is sound for a yes/no about a
+    GUARANTEE and useless for a QUANTITY, and this simulator asks for a quantity.
+
+So the named regression cannot be calibrated today, and shipping it as a guard
+would bank a number that contradicts the production ring. What CAN be answered
+from declarations is the yes/no the purchase actually turns on -- "is there any
+queue we already pay for where a slot is guaranteed inside the budget?" -- and
+that is shipped, as
+`TestNoQueueWeAlreadyPayForIsAHomeForTheWarmer`.
+
+WHAT WOULD MAKE THIS SHIPPABLE. LAT-P242 (#3466, merged) is the instrument that
+gives the 78 unlabelled beats a duration. Once it has a week of data, re-run this
+against MEASURED p95s instead of declared soft limits, and model the self-gate.
+Then the quantity becomes real and this becomes the guard CERT-2053 asked for.
+
