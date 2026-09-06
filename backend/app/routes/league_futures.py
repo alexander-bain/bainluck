@@ -32,7 +32,7 @@ from app.utils.event_rails import (
     upcoming_rail_condition,
 )
 from app.utils.game_state import normalize_live_game_state
-from app.utils.lifecycle import served_event_status
+from app.utils.lifecycle import event_is_playable, served_event_status
 from app.utils.entity_page_tiers import (
     AVAILABILITY_DEGRADED,
     AVAILABILITY_EMPTY,
@@ -1514,8 +1514,20 @@ async def build_linked_matches(
     )
     playable: dict[int, tuple] = {}
     floor = now - LINKED_MATCH_LOOKBACK
-    for event_id, commence_time, status in event_rows.all():
-        if status == "completed":
+    for event_id, commence_time, raw_status in event_rows.all():
+        # Repairing CERT-1987. This was `raw_status != "completed"` — a DENYLIST,
+        # which admitted every status nobody had thought of. `closed` is the
+        # dominant terminal state on production (212,289 rows against 15,731
+        # `completed`) and is what a definitive StatPal completion writes, so the
+        # rail was rejecting the rare ending and admitting the common one. The
+        # retirement markers `voided` and `merged` walked through too.
+        #
+        # `served_event_status` first, so a row claiming `live` before its own
+        # start time is read as `scheduled` and has to clear the floor like any
+        # other future match (the #1779 class this module exists for) instead of
+        # bypassing it and leading the rail.
+        status = served_event_status(raw_status, commence_time, now)
+        if not event_is_playable(status):
             continue
         if status != "live" and (commence_time is None or commence_time < floor):
             continue

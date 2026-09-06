@@ -68,6 +68,44 @@ def enforce_live_requires_start(
 EVENT_NOT_STARTED = "scheduled"
 
 
+#: The event statuses a row may hold and still be a match someone could be
+#: watching. An ALLOWLIST, deliberately, and it lives here beside the vocabulary
+#: it is drawn from rather than in the one surface that first needed it.
+#:
+#: UX-P180 (#2167), repairing CERT-1987. That rail shipped the complement —
+#: ``status != "completed"`` — which is the same shape of mistake as every
+#: retirement-marker bug in this codebase: it enumerates what to reject, so every
+#: status nobody thought of is admitted by default. Measured on production
+#: 2026-09-05, that default was not a rounding error:
+#:
+#:     closed      212,289      <- the dominant terminal state, all admitted
+#:     completed    15,731      <- the only one the denylist caught
+#:     scheduled     2,252
+#:     suspended     1,608
+#:     live             98
+#:     voided            66     <- a retirement marker, admitted
+#:     merged            22     <- a retirement marker, admitted
+#:
+#: ``closed`` is what a definitive StatPal completion writes, so the rail was
+#: excluding the RARE terminal state and admitting the common one.
+#:
+#: ``suspended`` IS playable and is included: it is a rain delay, not an ending,
+#: and the row makes no claim about being over (see the note above). It is not
+#: exempt from a caller's clock floor, though — a match suspended three days ago
+#: is not on now, and only ``live`` should ever bypass a freshness test.
+EVENT_PLAYABLE_STATUSES = frozenset({"live", "scheduled", "suspended"})
+
+
+def event_is_playable(status: str | None) -> bool:
+    """Could this event row be a match someone is watching or waiting for?
+
+    Allowlist semantics: an unrecognised status is NOT playable. A new terminal
+    state added upstream must fail closed here rather than silently start
+    rendering as a fixture.
+    """
+    return status in EVENT_PLAYABLE_STATUSES
+
+
 def served_event_status(status: str | None, commence_time, now: datetime) -> str | None:
     """The status a PUBLIC surface may show for an event row. Pure.
 

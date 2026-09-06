@@ -11,6 +11,12 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+# UX-P180 (repairing CERT-1987): `import pytest` is BACK, and used. UX-P209
+# removed it as genuinely unused (see its note below); the status-allowlist
+# guards are parametrised, so it earns its place again rather than returning by
+# accident.
+import pytest
+
 # UX-P209: `import pytest` was here and unused — zero `pytest.` references in the
 # file. It predates this branch (proved by re-running ruff on the parent's own
 # bytes), and it was invisible because changed-file Ruff only sees a file
@@ -786,18 +792,86 @@ class TestHubLinkedMatchesRail:
             "end of year rankings" in m["name"] for m in sections.get("props", [])
         )
 
-    async def test_a_completed_event_is_not_on_the_rail(self, client):
-        """A `completed` event's markets can still be `open` (gotcha #33), and the
-        hub card renders a name and prices with NO date or status — so a finished
-        match is indistinguishable from tonight's."""
+    @pytest.mark.parametrize("terminal", ["completed", "closed", "voided", "merged"])
+    async def test_a_finished_event_is_not_on_the_rail(self, client, terminal):
+        """Repairing CERT-1987: the rail admitted every status but `completed`.
+
+        A finished event's markets can still be `open` (gotcha #33), and the hub
+        card renders a name and prices with NO date or status — so a finished
+        match is indistinguishable from tonight's.
+
+        `closed` is the one that mattered: 212,289 rows on production against
+        15,731 `completed`, and it is what a definitive StatPal completion
+        writes. `voided`/`merged` are retirement markers. Parametrised so this
+        asserts the ALLOWLIST rather than four hand-picked rejections — the
+        original denylist would pass a test naming only `completed`.
+
+        Driven through `build_hub`, the real composition, per the BLOCK.
+        """
+        from app.routes.hub import HUB_CONFIGS, build_hub
+
+        db = _sql_dispatching_db(
+            unlinked=[],
+            linked=[_linked_market(market_id=1, name="Alcaraz vs Sinner")],
+            event_status=terminal,
+        )
+        body = await build_hub(HUB_CONFIGS["tennis"], db)
+        assert "Alcaraz vs Sinner" not in {
+            m["name"] for m in body["sections"].get("matches", [])
+        }, f"an event with status {terminal!r} rendered as a playable match"
+
+    @pytest.mark.parametrize("playable", ["live", "scheduled", "suspended"])
+    async def test_a_playable_event_IS_on_the_rail(self, client, playable):
+        """The paired positive the BLOCK asked for. Without it, the rejections
+        above all pass on a rail that is simply broken.
+
+        `suspended` is included on purpose: a rain delay is not an ending.
+        """
+        from app.routes.hub import HUB_CONFIGS, build_hub
+
+        db = _sql_dispatching_db(
+            unlinked=[],
+            linked=[_linked_market(market_id=1, name="Alcaraz vs Sinner")],
+            event_status=playable,
+            event_time=datetime.now(timezone.utc) + timedelta(hours=2),
+        )
+        body = await build_hub(HUB_CONFIGS["tennis"], db)
+        assert "Alcaraz vs Sinner" in {
+            m["name"] for m in body["sections"].get("matches", [])
+        }, f"a {playable!r} match is missing from the rail"
+
+    async def test_an_unknown_status_fails_closed(self, client):
+        """The allowlist's whole point: a terminal state added upstream must NOT
+        start rendering as a fixture just because nobody added it to a denylist."""
         from app.routes.league_futures import build_linked_matches
 
         db = _sql_dispatching_db(
             unlinked=[],
             linked=[_linked_market(market_id=1, name="Alcaraz vs Sinner")],
-            event_status="completed",
+            event_status="abandoned_by_organiser",
         )
         assert await build_linked_matches("tennis_atp", db) == []
+
+    async def test_a_live_claim_before_its_own_start_does_not_bypass_the_floor(
+        self, client
+    ):
+        """`live` is the one status exempt from the clock floor, which makes a
+        premature `live` row a way to lead the rail from the future — the #1779
+        class (`served_event_status` exists because four MLB rows served `live`
+        with scores 40+ hours before their own start)."""
+        from app.routes.league_futures import build_linked_matches
+
+        now = datetime.now(timezone.utc)
+        db = _sql_dispatching_db(
+            unlinked=[],
+            linked=[_linked_market(market_id=1, name="Alcaraz vs Sinner")],
+            event_status="live",
+            event_time=now + timedelta(days=2),
+        )
+        rows = await build_linked_matches("tennis_atp", db, now=now)
+        # It is read as `scheduled` (not `live`), so it is a future match rather
+        # than one being played — present, but never leading as live.
+        assert len(rows) == 1
 
     async def test_a_stale_scheduled_row_is_not_on_the_rail(self, client):
         """Status alone is not enough. Measured on production 2026-09-05: 18
@@ -828,11 +902,22 @@ class TestHubLinkedMatchesRail:
         assert len(await build_linked_matches("tennis_atp", fresh_db, now=now)) == 1
 
     async def test_a_live_match_leads_the_rail(self, client):
-        """Live first, then soonest — the order a person watching reads it in."""
+        """Live first, then soonest — the order a person watching reads it in.
+
+        The live match here started ONE MINUTE ago and the other two hours ago,
+        so sorting by start time alone would put the other one first: the
+        assertion can only pass if live-first is doing the work.
+
+        Its `commence_time` is deliberately in the PAST. The first draft of this
+        test gave the live row a start six hours in the FUTURE, and the
+        premature-`live` guard added when repairing CERT-1987 correctly reduced
+        it to `scheduled` — a fixture asserting an ordering for a state that
+        cannot exist.
+        """
         from app.routes.league_futures import build_linked_matches
 
         now = datetime.now(timezone.utc)
-        soon = _linked_market(market_id=1, name="Fritz vs Shelton")
+        earlier = _linked_market(market_id=1, name="Fritz vs Shelton")
         live = _linked_market(market_id=2, name="Alcaraz vs Sinner")
 
         from unittest.mock import AsyncMock
@@ -843,17 +928,17 @@ class TestHubLinkedMatchesRail:
             sql = str(stmt)
             if "FROM events" in sql and "futures_markets" not in sql:
                 return _row_result([
-                    (soon.event_id, now + timedelta(hours=1), "scheduled"),
-                    (live.event_id, now + timedelta(hours=6), "live"),
+                    (earlier.event_id, now - timedelta(hours=2), "scheduled"),
+                    (live.event_id, now - timedelta(minutes=1), "live"),
                 ])
             if "futures_markets" in sql:
-                return _scalars_result([soon, live])
+                return _scalars_result([earlier, live])
             return _scalars_result([])
 
         db.execute = _execute
         rows = await build_linked_matches("tennis_atp", db, now=now)
         assert [r["name"] for r in rows] == ["Alcaraz vs Sinner", "Fritz vs Shelton"], (
-            "the live match must lead even though it starts later"
+            "the live match must lead even though it started later"
         )
 
     async def test_the_pool_read_does_not_pay_for_an_event_id_predicate(self, client):
