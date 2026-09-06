@@ -63,6 +63,57 @@ class TestFailsClosed:
             cg.validate_container_kind("Tournament")
 
 
+class TestAnchorSportIsFoldedToOneSpelling:
+    """CERT-2006's follow-up: `NULLS NOT DISTINCT` only holds if "no sport" is
+    written exactly one way.
+
+    The index is `(provider, sport, id_kind, provider_id) NULLS NOT DISTINCT`,
+    which collapses NULL to a single namespace. An empty string is not NULL, so
+    `''` would be a THIRD namespace beside NULL and the real sports — two
+    anchors could claim one provider id without colliding, which is the silent
+    no-op D55 forbids rebuilt out of whitespace. Case is the same bug.
+    """
+
+    @pytest.mark.parametrize("blank", [None, "", "   ", "\t", "\n  "])
+    def test_every_spelling_of_no_sport_becomes_none(self, blank):
+        assert cg.normalize_anchor_sport(blank) is None
+
+    @pytest.mark.parametrize(
+        "value,expected",
+        [
+            ("tennis", "tennis"),
+            ("Tennis", "tennis"),
+            ("  TENNIS  ", "tennis"),
+            ("golf", "golf"),
+            ("tennis_atp", "tennis_atp"),
+        ],
+    )
+    def test_a_real_sport_folds_to_one_spelling(self, value, expected):
+        assert cg.normalize_anchor_sport(value) == expected
+
+    def test_case_variants_cannot_become_two_namespaces(self):
+        assert cg.normalize_anchor_sport("Tennis") == cg.normalize_anchor_sport(
+            "tennis"
+        )
+
+    def test_a_non_string_still_raises(self):
+        """Canonicalising is not the same as tolerating anything.
+
+        `sport` is an open namespace so a variant SPELLING is folded, but an
+        integer is a caller bug and gets the same fail-closed treatment every
+        other validator here gives.
+        """
+        for bad in (7, [], {}, object()):
+            with pytest.raises(cg.ContainerVocabularyError):
+                cg.normalize_anchor_sport(bad)
+
+    def test_it_is_idempotent(self):
+        """Applied twice — once by a caller, once by a writer — must not drift."""
+        for value in (None, "", "  Tennis  ", "golf"):
+            once = cg.normalize_anchor_sport(value)
+            assert cg.normalize_anchor_sport(once) == once
+
+
 class TestContainsRequiresAClass:
     """The pair rule, tested as a pair — because that is what it is."""
 

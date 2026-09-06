@@ -50,6 +50,7 @@ WHAT IT DELIBERATELY DOES NOT DO.
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -62,6 +63,9 @@ from app.utils.container_graph import (
     ASSEMBLY_WRITABLE_KINDS,
     EDGE_NODE_TABLES,
     ContainerVocabularyError,
+    normalize_anchor_sport,
+    validate_anchor_id_kind,
+    validate_anchor_provider,
     validate_confidence,
     validate_edge_kind_and_class,
     validate_edge_source,
@@ -338,6 +342,103 @@ def gather_register_candidates(register: dict) -> RegisterHarvest:
             note_unpriced("prop", prop.get("key"), prop.get("draw"))
 
     return harvest
+
+
+# ---------------------------------------------------------------------------
+# The sanctioned anchor writer (CERT-2006's follow-up)
+# ---------------------------------------------------------------------------
+
+
+class AnchorCollision(Exception):
+    """Another container already owns this provider id in this namespace.
+
+    D55: a collision **raises or tags — it never silently no-ops.** Raising is
+    the whole value of the unique index; swallowing the conflict would turn the
+    detector into a no-op and let two draws quietly become one hub.
+    """
+
+    def __init__(self, provider: str, sport, id_kind: str, provider_id: str, owner: int):
+        self.owner_container_id = owner
+        super().__init__(
+            f"{provider}/{sport}/{id_kind}/{provider_id} is already claimed by "
+            f"container {owner}"
+        )
+
+
+async def claim_container_anchor(
+    session,
+    *,
+    container_id: int,
+    provider: str,
+    provider_id: str,
+    id_kind: str,
+    sport=None,
+    claim_context: Optional[dict] = None,
+) -> bool:
+    """Bind one provider id to one container. THE sanctioned write path.
+
+    Exists so that CERT-2006's follow-up cannot be forgotten by the next
+    caller: ``sport`` is folded through
+    :func:`~app.utils.container_graph.normalize_anchor_sport` HERE, once, on
+    the only path that inserts. The index is ``NULLS NOT DISTINCT``, which
+    makes NULL one namespace — but ``''`` is not NULL and ``'Tennis'`` is not
+    ``'tennis'``, so a caller spelling "no sport" its own way would open a
+    second namespace and defeat the constraint. A validator nobody is obliged
+    to call is a validator that gets skipped; this is the obligation.
+
+    Returns ``True`` when a row was written, ``False`` when this exact
+    ``(container, provider, sport, id_kind, provider_id)`` was already bound —
+    an idempotent re-claim by the same owner, which is what a nightly
+    re-discovery does and is not a collision.
+
+    Raises :class:`AnchorCollision` when a DIFFERENT container owns the key.
+    """
+    from app.models.models import ContainerProviderAnchor  # noqa: F401
+
+    sport = normalize_anchor_sport(sport)
+    validate_anchor_provider(provider)
+    validate_anchor_id_kind(id_kind)
+
+    existing = (
+        await session.execute(
+            text(
+                "SELECT container_id FROM container_provider_anchors "
+                "WHERE provider = :provider AND id_kind = :id_kind "
+                "  AND provider_id = :provider_id "
+                "  AND sport IS NOT DISTINCT FROM :sport"
+            ),
+            {
+                "provider": provider,
+                "id_kind": id_kind,
+                "provider_id": provider_id,
+                "sport": sport,
+            },
+        )
+    ).fetchone()
+
+    if existing is not None:
+        owner = int(existing[0])
+        if owner == container_id:
+            return False
+        raise AnchorCollision(provider, sport, id_kind, provider_id, owner)
+
+    await session.execute(
+        text(
+            "INSERT INTO container_provider_anchors "
+            "(container_id, provider, sport, provider_id, id_kind, claim_context) "
+            "VALUES (:container_id, :provider, :sport, :provider_id, :id_kind, "
+            "        CAST(:claim_context AS jsonb))"
+        ),
+        {
+            "container_id": container_id,
+            "provider": provider,
+            "sport": sport,
+            "provider_id": provider_id,
+            "id_kind": id_kind,
+            "claim_context": json.dumps(claim_context) if claim_context else None,
+        },
+    )
+    return True
 
 
 # ---------------------------------------------------------------------------

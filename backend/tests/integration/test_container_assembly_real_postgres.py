@@ -329,6 +329,181 @@ class TestAMissingChildIsReceiptedNotEdged:
         assert len(await _edge_rows(pg_session, container.id)) == 3
 
 
+class TestTheSanctionedAnchorWriter:
+    """CERT-2006's follow-up, and the reason it is a WRITER not a validator.
+
+    The unique index is `(provider, sport, id_kind, provider_id) NULLS NOT
+    DISTINCT`, which makes NULL one namespace — but `''` is not NULL and
+    `'Tennis'` is not `'tennis'`, so a caller spelling "no sport" its own way
+    reopens the hole the index was widened to close. A validator nobody is
+    obliged to call is a validator that gets skipped; `claim_container_anchor`
+    is the obligation, and these are the tests that say it folds.
+    """
+
+    async def test_an_empty_sport_string_is_stored_as_null(self, pg_session):
+        """`''` must not become a THIRD namespace beside NULL and real sports."""
+        from app.tasks.container_assembly import claim_container_anchor
+
+        container, _ = await _seed(pg_session)
+        assert await claim_container_anchor(
+            pg_session,
+            container_id=container.id,
+            provider="espn",
+            provider_id="1234",
+            id_kind="tournament",
+            sport="   ",
+        )
+        await pg_session.commit()
+
+        result = await pg_session.execute(
+            text("SELECT sport FROM container_provider_anchors")
+        )
+        assert result.scalar() is None
+
+    async def test_two_spellings_of_no_sport_collide_rather_than_coexist(
+        self, pg_session
+    ):
+        """The defect this writer exists to prevent, end to end.
+
+        Without the fold, `sport=None` and `sport=''` would be two namespaces
+        and BOTH claims would succeed — two containers owning one ESPN id, with
+        the unique index reporting no problem at all.
+        """
+        from app.tasks.container_assembly import (
+            AnchorCollision,
+            claim_container_anchor,
+        )
+
+        container, _ = await _seed(pg_session)
+        from app.models.models import Container
+
+        other = Container(kind="tournament", name="Other", slug="other-2026")
+        pg_session.add(other)
+        await pg_session.flush()
+
+        await claim_container_anchor(
+            pg_session,
+            container_id=container.id,
+            provider="espn",
+            provider_id="1234",
+            id_kind="tournament",
+            sport=None,
+        )
+        with pytest.raises(AnchorCollision):
+            await claim_container_anchor(
+                pg_session,
+                container_id=other.id,
+                provider="espn",
+                provider_id="1234",
+                id_kind="tournament",
+                sport="",
+            )
+
+    async def test_case_variants_collide_rather_than_coexist(self, pg_session):
+        from app.tasks.container_assembly import (
+            AnchorCollision,
+            claim_container_anchor,
+        )
+        from app.models.models import Container
+
+        container, _ = await _seed(pg_session)
+        other = Container(kind="tournament", name="Other", slug="other-2026")
+        pg_session.add(other)
+        await pg_session.flush()
+
+        await claim_container_anchor(
+            pg_session,
+            container_id=container.id,
+            provider="espn",
+            provider_id="1234",
+            id_kind="tournament",
+            sport="tennis",
+        )
+        with pytest.raises(AnchorCollision):
+            await claim_container_anchor(
+                pg_session,
+                container_id=other.id,
+                provider="espn",
+                provider_id="1234",
+                id_kind="tournament",
+                sport="  TENNIS  ",
+            )
+
+    async def test_two_sports_still_coexist(self, pg_session):
+        """The writer must not over-collapse — CERT-2001's finding still holds."""
+        from app.tasks.container_assembly import claim_container_anchor
+        from app.models.models import Container
+
+        container, _ = await _seed(pg_session)
+        other = Container(kind="tournament", name="Golf", slug="golf-2026")
+        pg_session.add(other)
+        await pg_session.flush()
+
+        assert await claim_container_anchor(
+            pg_session,
+            container_id=container.id,
+            provider="espn",
+            provider_id="1234",
+            id_kind="tournament",
+            sport="tennis",
+        )
+        assert await claim_container_anchor(
+            pg_session,
+            container_id=other.id,
+            provider="espn",
+            provider_id="1234",
+            id_kind="tournament",
+            sport="Golf",
+        )
+        await pg_session.commit()
+        result = await pg_session.execute(
+            text("SELECT count(*) FROM container_provider_anchors")
+        )
+        assert result.scalar() == 2
+
+    async def test_the_same_owner_reclaiming_is_idempotent_not_a_collision(
+        self, pg_session
+    ):
+        """A nightly re-discovery re-claims its own anchors. That is not a clash.
+
+        Returns False (nothing written) rather than raising, so a re-run does
+        not have to distinguish "already mine" from "someone else's" at every
+        call site — which is where a caller would be tempted to swallow the
+        exception and lose the real collision with it.
+        """
+        from app.tasks.container_assembly import claim_container_anchor
+
+        container, _ = await _seed(pg_session)
+        kwargs = dict(
+            container_id=container.id,
+            provider="espn",
+            provider_id="1234",
+            id_kind="tournament",
+            sport="tennis",
+        )
+        assert await claim_container_anchor(pg_session, **kwargs) is True
+        assert await claim_container_anchor(pg_session, **kwargs) is False
+        await pg_session.commit()
+        result = await pg_session.execute(
+            text("SELECT count(*) FROM container_provider_anchors")
+        )
+        assert result.scalar() == 1
+
+    async def test_an_unknown_provider_is_refused_before_the_insert(self, pg_session):
+        from app.utils.container_graph import ContainerVocabularyError
+        from app.tasks.container_assembly import claim_container_anchor
+
+        container, _ = await _seed(pg_session)
+        with pytest.raises(ContainerVocabularyError):
+            await claim_container_anchor(
+                pg_session,
+                container_id=container.id,
+                provider="espn_api",
+                provider_id="1234",
+                id_kind="tournament",
+            )
+
+
 class TestTheDanglingEdgeCheck:
     """Spec §2: part of the ship, because `child_id` carries no foreign key."""
 
