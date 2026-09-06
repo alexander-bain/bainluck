@@ -60,6 +60,13 @@ SPECIMEN_EXTERNAL_ID = "972409"
 SPECIMEN_TITLE = "UFC 331: Ozzy Diaz vs. Ryan Gandra (Middleweight, Early Prelims)"
 MONEYLINE_CID = "0xf5200af34f486ef08072a3759b351021d4895123ed6a6ab338fbc5458147a365"
 MONEYLINE_PRICE, MONEYLINE_BID, MONEYLINE_ASK = 0.295, 0.21, 0.38
+#: The label the API SERVES for that leg — not the stored one and not the
+#: venue's. Two production hops make it: `_parent_outcome_data` names a
+#: single-market event's leg "Yes", and `_build_related_futures` relabels a
+#: "Yes" on a matchup-named market to "<first side> Win". Named here rather than
+#: inlined because the arm below and its failure message must not be able to
+#: disagree about what is expected.
+SERVED_OUTCOME_LABEL = "UFC 331: Ozzy Diaz Win"
 
 
 @pytest.fixture
@@ -555,9 +562,30 @@ class TestTheReaderCanActuallySeeIt:
         # appears somewhere" is satisfied by the market_name on every row here.
         priced = [
             r for r in mine
-            if (r.get("outcome_name") or "") == "UFC 331: Ozzy Diaz Win"
+            if (r.get("outcome_name") or "") == SERVED_OUTCOME_LABEL
         ]
-        assert priced, f"no Ozzy Diaz row in {blob}"
+        # Say WHY the filter rejected what it saw, not just that it matched
+        # nothing. The previous message was `f"no Ozzy Diaz row in {blob}"`, and
+        # when this arm failed in CI it printed "no Ozzy Diaz row" above a blob
+        # that plainly CONTAINED the Ozzy Diaz row, priced. Two different
+        # failures — the selector surfaced nothing, versus it surfaced a row
+        # under a label this filter did not expect — produced the same sentence,
+        # and the integrator reading it reasonably concluded the selector had
+        # returned nothing and went looking one layer too deep.
+        #
+        # `mine` is non-empty by the assertion above, so reaching here means the
+        # rows exist and the LABEL is the mismatch. Print the labels actually
+        # served, which is the one fact that distinguishes the two cases.
+        assert priced, (
+            f"no row whose outcome_name is exactly {SERVED_OUTCOME_LABEL!r}. "
+            f"{len(mine)} row(s) WERE surfaced for this market, carrying "
+            f"outcome_name(s): {sorted((r.get('outcome_name') or '') for r in mine)!r}. "
+            "If a label above names the fighter but is spelled differently, the "
+            "selector is fine and this expectation is stale — the served label "
+            "comes from `_parent_outcome_data` naming a single-market event's leg "
+            "'Yes' and `_build_related_futures` relabelling it '<first side> Win'. "
+            f"Full payload: {blob}"
+        )
         assert priced[0]["probability"] == pytest.approx(MONEYLINE_PRICE), (
             "the number on the page must be the number the venue is quoting — "
             "29.5%, not a normalised or invented one"
