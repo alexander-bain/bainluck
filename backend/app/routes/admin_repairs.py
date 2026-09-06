@@ -17,6 +17,7 @@ transactional session and RETURNS its own before/after census in the response bo
              | prop-threshold-cliff-census | overlap-trading-census
              | winner-field-repair | event-team-binding
              | kalshi-settlement-status | statpal-blank-ids
+             | statpal-fabricated-ids
              | kalshi-fabricated-loss-census | kalshi-fabricated-loss
              | kalshi-fabricated-loss-restore
              | polymarket-evidence-census | polymarket-evidence
@@ -60,8 +61,8 @@ and puts its rows back. It exists because Alex's D51 lets a lane apply a data
 repair unattended *provided* it backs up first and ships a one-command restore:
 the restore has to be a real, runnable thing, so it is a parameter on the same
 rail with the same auth rather than a paragraph in a handoff note. Dry-run
-unless ``apply=true``. ``authority-id-collisions`` and ``statpal-blank-ids``
-declare it today.
+unless ``apply=true``. ``authority-id-collisions``, ``statpal-blank-ids`` and
+``statpal-fabricated-ids`` declare it today.
 
 ``probe`` (queue 375) records ONE identity observation of a reviewed population
 and returns, for rails that must PROVE stillness before they may census — ruling
@@ -209,6 +210,24 @@ _REPAIRS = {
     # is exactly reversible; the restore refuses any row that has since been
     # given a real StatPal id, which is the outcome NULLing it was for.
     "statpal-blank-ids": ("scripts.repair_statpal_fixture_id_blanks", "repair"),
+    # #2963, the OTHER half of the same column. `statpal-blank-ids` drains the
+    # rows that hold `''`; this one drains the 48 that hold a string we
+    # INVENTED — `statpal_live_<home>_<away>`, written by a live-score fallback
+    # that CERT-2081 has since closed. A SIBLING and not a parameter on the
+    # blanks rail, and the reason is the UNDO, not the predicate: every blank
+    # row held the same value, so that restore writes back one constant; these
+    # 48 each hold a different string, so this record carries (event_id,
+    # prior_value) pairs and its restore writes per row.
+    # Membership is `not is_statpal_contest_id(value)`, IMPORTED from
+    # `stamp_nfl_statpal_fixtures` — the same predicate that makes the stamper
+    # call a row POLLUTED and refuse to write it. One rule, one copy: the rows
+    # this clears are exactly the rows that stamper is stuck behind, and
+    # clearing them is what lets it write the REAL StatPal id.
+    # Gated on ``plan_hash``, not a count: the rows are not interchangeable, so
+    # a cardinality gate cannot tell 48 rows from 48 DIFFERENT rows.
+    # D51: declares ``undo_identity``; the receipt is written empty before the
+    # first write and CO-COMMITTED per row.
+    "statpal-fabricated-ids": ("app.tasks.repair_statpal_fabricated_ids", "repair"),
     # CAL-P056 (#1852): the BACKWARD half of CAL-P053. Dry-run-ONLY census of the
     # standing all-loser population — Kalshi markets (2+ legs) where every
     # outcome carries `api_settlement` and NONE is a winner — split by source x
