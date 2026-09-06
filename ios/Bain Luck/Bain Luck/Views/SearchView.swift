@@ -78,7 +78,12 @@ struct SearchView: View {
     @FocusState private var isSearchFocused: Bool
     @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var path = NavigationPath()
-    @State private var landscapeColumns = false
+
+    /// Width available to the iPad card grids, in points. 0 until the first
+    /// geometry pass resolves, which `DiscoverMasonry` reads as one column
+    /// (#3723). Shared by both grids because they are two sections of the same
+    /// `List` and are therefore always the same width.
+    @State private var gridWidth: CGFloat = 0
 
     private let quickSearches: [QuickSearchItem] = [
         .init(icon: "basketball.fill", label: "NBA", query: "NBA"),
@@ -153,7 +158,6 @@ struct SearchView: View {
         }
         .onAppear {
             AnalyticsService.trackScreen(name: "search", type: "search")
-            updateLandscapeColumns()
         }
         .onDisappear {
             // Navigating away invalidates any in-flight typeahead/search so a
@@ -170,11 +174,12 @@ struct SearchView: View {
         .onChange(of: navCoordinator.pendingRoute) { _, _ in
             // Search tab doesn't handle route pushes — handled by feed/myStuff
         }
-        #if os(iOS)
-        .onReceive(NotificationCenter.default.publisher(for: UIDevice.orientationDidChangeNotification)) { _ in
-            updateLandscapeColumns()
-        }
-        #endif
+        // The orientation observer that used to live here drove
+        // `landscapeColumns`, which nothing read (#3723). Its only real effect
+        // was a `UIScreen.main.bounds` read — gotcha #27, the Stage Manager
+        // trap, which measures the SCREEN and not the window. Column count now
+        // comes from a `GeometryReader` on the grid itself, which IS the window
+        // and updates on rotation without an observer.
     }
 
     /// Drains a deep-link query (`bainluck://search?q=…`) onto the field.
@@ -564,18 +569,92 @@ struct SearchView: View {
 
     // MARK: - iPad Grid
 
-    private var iPadGridColumns: [GridItem] {
-        [GridItem(.adaptive(minimum: 340), spacing: 12)]
-    }
-
-    private func updateLandscapeColumns() {
-        guard sizeClass == .regular else { return }
-        #if os(iOS)
-        let bounds = UIScreen.main.bounds
-        landscapeColumns = bounds.width > bounds.height
-        #else
-        landscapeColumns = true
-        #endif
+    /// Both iPad card grids on this screen — Events and More markets — rendered
+    /// as a masonry deal rather than a `LazyVGrid` (#3723).
+    ///
+    /// `LazyVGrid` lays out in ROWS and pads every cell to the tallest cell in
+    /// its row; see `DiscoverMasonry` for the whole story. #3709 fixed three
+    /// other `List`-backed surfaces and deliberately excused this file, on the
+    /// grounds that each of its two grids is built by a single row function and
+    /// so has no tall/short pairing. **One row builder is not one shape.**
+    /// `searchFuturesRow` has a `lineLimit(2)` title, a badge row that is empty
+    /// when the market has neither a category nor a source, and a top-outcome
+    /// row that is absent when there are no outcomes — at least four heights,
+    /// and any width.
+    ///
+    /// MEASURED on `bainluck://search?q=US%20Open`, iPad Pro 11-inch, "More
+    /// markets" (`artifacts-native-046/MEASUREMENT.md`). "US Open Winner" is a
+    /// one-line title with no outcome row; every other card in the grid has a
+    /// two-line title and an outcome row:
+    ///
+    ///     card               width    height
+    ///     US Open Winner     291 px   164 px
+    ///     all the others    ~721 px   204 px
+    ///
+    /// Two separate defects, and the grid is only one of them:
+    ///
+    /// 1. **The row padding**, 20 px above the short card and 20 px below it.
+    ///    The left column's inter-row gap read 44 px against the right column's
+    ///    24 px, and 24 px *is* the 12 pt design spacing — so the right column
+    ///    is the control and it does not move. Fixed by the deal: a `VStack`
+    ///    packs its children at exactly its spacing, so no cell can be padded
+    ///    to a neighbour at any column count.
+    ///
+    /// 2. **The card does not fill its column** — 291 px of a ~721 px column,
+    ///    centred, with 261 px of empty page to its left and 269 px to its
+    ///    right, lining up with nothing. `searchFuturesRow` is a
+    ///    `VStack(alignment: .leading)` whose intrinsic width is its longest
+    ///    line, and nothing asked it to fill the cell. A grid is not what was
+    ///    wrong here and the deal alone would not have fixed it: the
+    ///    `.frame(maxWidth: .infinity, alignment: .leading)` below is what does,
+    ///    and it sits INSIDE the `.padding(12)` so the card grows to the column
+    ///    rather than to the column plus 24 px.
+    ///
+    /// The three surfaces #3709 converted do not have the second defect —
+    /// measured at 750 px in both columns on
+    /// `artifacts-native-045/AFTER-ipad-category-tennis.png` — because their
+    /// cards' content fills on its own. This is why the fix is scoped here.
+    ///
+    /// The scaffolding below is now the fifth inline copy of the deal
+    /// (`FeedView` has two, `SportCategoryView` and `MyStuffView` one each).
+    /// Lifting it into one shared view is the right end state and is filed
+    /// rather than done here: it would touch `MyStuffView`, which cannot be
+    /// photographed behind its sign-in wall, on top of a #3709 that has not yet
+    /// reached production.
+    @ViewBuilder
+    private func iPadCardGrid<Item: Identifiable, Card: View>(
+        _ items: [Item],
+        @ViewBuilder card: @escaping (Item) -> Card
+    ) -> some View {
+        let columnCount = DiscoverMasonry.listColumnCount(availableWidth: gridWidth)
+        let masonryColumns = DiscoverMasonry.columns(
+            cardCount: items.count,
+            columnCount: columnCount
+        )
+        HStack(alignment: .top, spacing: DiscoverMasonry.listCardSpacing) {
+            ForEach(Array(masonryColumns.enumerated()), id: \.offset) { _, indices in
+                VStack(spacing: DiscoverMasonry.listCardSpacing) {
+                    ForEach(indices, id: \.self) { idx in
+                        card(items[idx])
+                            .buttonStyle(.plain)
+                            .padding(12)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.cardBackgroundDark)
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                    }
+                }
+                .frame(maxWidth: .infinity)
+            }
+        }
+        .background(
+            GeometryReader { geo in
+                Color.clear
+                    .onAppear { gridWidth = geo.size.width }
+                    .onChange(of: geo.size.width) { _, newValue in
+                        gridWidth = newValue
+                    }
+            }
+        )
     }
 
     // MARK: - Search Results
@@ -650,17 +729,17 @@ struct SearchView: View {
             if !results.results.isEmpty {
                 Section {
                     if sizeClass == .regular {
-                        LazyVGrid(columns: iPadGridColumns, spacing: 12) {
-                            ForEach(results.results) { event in
-                                Button {
-                                    path.append(Route.eventDetail(id: event.id))
-                                } label: {
-                                    searchEventRow(event)
-                                }
-                                .buttonStyle(.plain)
-                                .padding(12)
-                                .background(Color.cardBackgroundDark)
-                                .clipShape(RoundedRectangle(cornerRadius: 12))
+                        // #3723. `searchEventRow` is an `HStack` with a
+                        // `Spacer()` and a `lineLimit(1)` title, so this grid
+                        // really was close to uniform and it is not the one the
+                        // measurement caught. It is converted anyway: it held
+                        // the same idiom, and "close to uniform" is the excuse
+                        // that left the futures grid broken for two sessions.
+                        iPadCardGrid(results.results) { event in
+                            Button {
+                                path.append(Route.eventDetail(id: event.id))
+                            } label: {
+                                searchEventRow(event)
                             }
                         }
                         .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
@@ -765,17 +844,15 @@ struct SearchView: View {
             if !flatFutures.isEmpty {
                 Section {
                     if sizeClass == .regular {
-                        LazyVGrid(columns: iPadGridColumns, spacing: 12) {
-                            ForEach(flatFutures) { market in
-                                Button {
-                                    path.append(Route.futuresDetail(id: market.id))
-                                } label: {
-                                    searchFuturesRow(market)
-                                }
-                                .buttonStyle(.plain)
-                                .padding(12)
-                                .background(Color.cardBackgroundDark)
-                                .clipShape(RoundedRectangle(cornerRadius: 12))
+                        // #3723 — the grid that was measured. This is where
+                        // "US Open Winner" was drawn 291 px wide in a 721 px
+                        // column, centred, with 20 px of dead space above and
+                        // below it.
+                        iPadCardGrid(flatFutures) { market in
+                            Button {
+                                path.append(Route.futuresDetail(id: market.id))
+                            } label: {
+                                searchFuturesRow(market)
                             }
                         }
                         .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
