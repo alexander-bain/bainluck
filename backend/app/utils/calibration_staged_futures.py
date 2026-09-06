@@ -175,6 +175,56 @@ REASON_UNIT_KEY = "unit_key_mismatch"
 REASON_POPULATION_VERSION = "population_version_changed"
 #: A deploy touching any SQL function hashed by ``_main_input_fingerprint``.
 REASON_INPUT_FINGERPRINT = "input_fingerprint_changed"
+
+# --- CAL-P1032 (#3522): ``_changed`` used to mean three different things -----
+#
+# 🔴 THE RECEIPT ACCUSED A COMPILE-TIME CONSTANT OF CHANGING. Both predicates
+# below were ``raw.get(field) != expected``, and ``.get`` folds **absent** into
+# **different**. So a stored cursor that never carried the field at all reported
+# as "the field changed" — and for ``population_version`` that reading is not
+# merely imprecise, it is impossible: ``CALIBRATION_POPULATION_VERSION`` is a
+# module constant, so it cannot differ between two beats of one release.
+#
+# Measured on the live ring 2026-09-06 11:56Z: three of the last eight beats
+# recorded ``cursor_reason: population_version_changed`` while the constant sat
+# at ``q269`` throughout. That token is the whole diagnosis of a curve that had
+# then been 29 hours stale, it is what #3437's "lapped by re-versioning" account
+# rests on, and it named the one thing that provably did not happen.
+#
+# THE SPLIT IS THE SAME DOCTRINE THIS MODULE ALREADY APPLIES THREE TIMES ABOVE —
+# ``unencoded_units`` vs ``unfolded_units`` vs ``malformed_units`` are separate
+# tokens because "a reset that cannot be told from a different reset is not an
+# observation". Absent and changed are further apart than any of those pairs:
+# they accuse different halves of the system. Changed accuses a deploy; absent
+# accuses the writer that produced the cursor.
+#
+# BEHAVIOUR IS UNCHANGED. All six tokens still INVALIDATE, and they should: a
+# cursor that cannot say which population it was computed over is exactly as
+# unvouchable as one computed over the wrong population. This queue makes the
+# wipe legible, it does not weaken it — and weakening it is a decision that
+# needs the legible receipt first, not instead.
+#
+# TOKEN CARDINALITY IS FIXED AT SIX. The observed VALUE is deliberately not
+# interpolated into the token: ``input_fingerprint`` is a digest, so embedding it
+# would mint a new gauge name per deploy, and the sampler banks these by name
+# (``CURSOR_PREFIX``). Three-way classification is the most information that
+# fits in a bounded name, and the emitter that would have to carry an operand
+# alongside it lives in ruling-009-frozen ``precompute_calibration.py``.
+#: The field is missing from a cursor that otherwise passed schema, task and
+#: unit-key. Nothing changed; the writer never said. This is the branch that
+#: was reporting as ``population_version_changed``.
+REASON_POPULATION_VERSION_ABSENT = "population_version_absent"
+#: Present and unusable — not a string, or an empty one. ``new_staged_cursor``
+#: cannot produce either (it stamps a non-empty constant), so this is corruption
+#: on the wire, not a version bump, and must not read as one.
+REASON_POPULATION_VERSION_MALFORMED = "population_version_malformed"
+#: See :data:`REASON_POPULATION_VERSION_ABSENT`. Split for the same reason and
+#: kept separate from it because the two fields fail for different causes: a
+#: missing fingerprint is a pre-CAL-P205 cursor, a missing population version is
+#: not a shape this codebase has ever written.
+REASON_INPUT_FINGERPRINT_ABSENT = "input_fingerprint_absent"
+#: See :data:`REASON_POPULATION_VERSION_MALFORMED`.
+REASON_INPUT_FINGERPRINT_MALFORMED = "input_fingerprint_malformed"
 #: CAL-P205 (#2052), layer 1. A cursor stamped with the LEGACY wide digest,
 #: resumed against the narrow ``staged_unit_fingerprint``. Its own token, and it
 #: is the ONE expected non-``resumable`` reason for one generation after layer 1
@@ -1533,6 +1583,38 @@ def new_staged_cursor(
     )
 
 
+def classify_field_mismatch(
+    stored: Any, *, changed: str, absent: str, malformed: str
+) -> str:
+    """Which of three mismatch tokens a stored cursor field earns. Pure.
+
+    CAL-P1032 (#3522). Called only once the field has ALREADY been found not to
+    equal what was expected — this function does not re-test that, it explains
+    it. Three outcomes, and the boundaries are the point:
+
+    * ``absent`` — the key is not in the payload, or is explicitly ``null``.
+      After a JSON round-trip those are one fact: the writer never said. Nothing
+      changed. This is the one that used to report as ``*_changed``.
+    * ``malformed`` — present and unusable: a non-string, or an empty string. An
+      empty identifier is not a value :func:`new_staged_cursor` can write, so it
+      is corruption rather than a bump, and reading it as a bump would send the
+      next reader hunting a deploy that never happened.
+    * ``changed`` — a real, non-empty, different value. NOW a deploy or a
+      version bump is the right thing to go looking for.
+
+    Taken as ONE helper rather than inlined at both call sites deliberately: the
+    two sites are eleven lines apart and would drift, and this module's own C14
+    rule already refuses a second copy of a predicate for exactly that reason.
+    ``bool`` is excluded from the string test by ``isinstance(stored, str)``
+    naturally, so no special case is needed for it.
+    """
+    if stored is None:
+        return absent
+    if not isinstance(stored, str) or not stored:
+        return malformed
+    return changed
+
+
 def decode_staged_cursor(
     raw: Any,
     *,
@@ -1655,7 +1737,15 @@ def decode_staged_cursor_detailed(
         # plan; its unit keys mean something else entirely.
         return blank, INVALIDATE, REASON_UNIT_KEY
     if raw.get("population_version") != expected_population_version:
-        return blank, INVALIDATE, REASON_POPULATION_VERSION
+        # CAL-P1032 (#3522). Which of the three it is decides who the operator
+        # goes looking at, and the fold made every one of them read as the only
+        # one that is impossible — the expected value is a module constant.
+        return blank, INVALIDATE, classify_field_mismatch(
+            raw.get("population_version"),
+            changed=REASON_POPULATION_VERSION,
+            absent=REASON_POPULATION_VERSION_ABSENT,
+            malformed=REASON_POPULATION_VERSION_MALFORMED,
+        )
     legacy_accepted = False
     if raw.get("input_fingerprint") != expected_input_fingerprint:
         if (
@@ -1676,8 +1766,15 @@ def decode_staged_cursor_detailed(
         else:
             # THE one that fires in practice. A deploy touching any SQL function
             # in ``_main_input_fingerprint`` lands here and costs every banked
-            # unit.
-            return blank, INVALIDATE, REASON_INPUT_FINGERPRINT
+            # unit — but only when the stored digest is a real, different digest.
+            # CAL-P1032 (#3522): a cursor carrying no digest at all was reporting
+            # as this, i.e. as a deploy, which is the wrong half of the system.
+            return blank, INVALIDATE, classify_field_mismatch(
+                raw.get("input_fingerprint"),
+                changed=REASON_INPUT_FINGERPRINT,
+                absent=REASON_INPUT_FINGERPRINT_ABSENT,
+                malformed=REASON_INPUT_FINGERPRINT_MALFORMED,
+            )
     # NOTE: generation_fingerprint is deliberately NOT checked here (CAL-P016).
     # It is still carried and still written, because it names which roster a
     # cursor was last advanced against and that is worth having in the payload —
