@@ -904,6 +904,24 @@ def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
     the census below on the rebased tree, which printed `explicit 69 implicit 45
     total 114`, never by adding one (#1910). The cost declaration is on
     `BACKGROUND_BEAT_COUNT`.
+
+    🔴 **RE-DERIVED at lane1b/053 (2026-09-06, #2927 Phase 2): 118 → 119,
+    explicit 73 → 74.** `assemble-containers-hourly` (`crontab(minute=47)`, the
+    event-container assembly pass) names `background` explicitly, so the
+    fall-through half is UNMOVED at **45**. Obtained by RUNNING the census below
+    over the assembled schedule, which printed `explicit 74 implicit 45 total
+    119`, never by adding one (#1910). The cost declaration is on
+    `BACKGROUND_BEAT_COUNT`.
+
+    **This guard did its job again, and the MLB stamper's note above called the
+    shot.** That note says the census "lives nowhere near the words a StatPal
+    change would think to select". Substitute containers and it is the same
+    sentence: the lane's focused run (D40) selected on `receipt or container`,
+    this file is named after `typeahead`, and the beat shipped without the
+    re-derivation. It went red in CI backend shard 1 on `74 != 73` — the second
+    time in three days, and the second time the `-k` band was named after the
+    feature rather than after what the change touches. **A change that adds a
+    `beat_schedule` entry runs THIS file, whatever the change is about.**
     """
     from app.tasks import celery_app
     from app.utils.typeahead_beat_budget import BACKGROUND_BEAT_COUNT
@@ -920,9 +938,9 @@ def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
         elif named is None and conf.task_default_queue == "background":
             implicit += 1
 
-    assert explicit == 73, f"explicitly-routed background beats moved: {explicit}"
+    assert explicit == 74, f"explicitly-routed background beats moved: {explicit}"
     assert implicit == 45, f"default-queue fall-through moved: {implicit}"
-    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 118
+    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 119
 
     # ruling 110's two movers are OFF this queue and ON heavy — asserted here
     # too, so a silent revert cannot restore the count without being noticed.
