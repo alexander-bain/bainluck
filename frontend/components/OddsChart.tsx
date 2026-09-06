@@ -527,6 +527,25 @@ export default function OddsChart({
     [filteredBookmakerHistory]
   );
 
+  /**
+   * Every ChartDataPoint key this chart can draw as a line.
+   *
+   * One list, two readers: the forward-fill below carries these keys across
+   * gap-filled minutes, and `filteredPeriodBoundaries` uses them to find where
+   * the ink actually starts. Those two must agree — a key the chart plots but
+   * the boundary guard does not know about would let a chip sit left of the
+   * line, and a key the guard counts but nothing plots would put one over blank
+   * axis (CERT-1984). Keeping them one definition is the guarantee.
+   */
+  const plottedProbKeys = useMemo(() => {
+    const keys = ["homeDelta", "bainLuckDelta", "espnDelta"];
+    for (const source of nonBettingSources) keys.push(source.dataKey);
+    for (const bookmaker of Object.keys(filteredBookmakerHistory)) {
+      keys.push(`${bookmaker}_delta`);
+    }
+    return keys;
+  }, [nonBettingSources, filteredBookmakerHistory]);
+
   // Transform data: convert probabilities to delta from 50%
   // Bucket by minute so each "h:mm a" time label is unique — required for
   // Recharts ReferenceLine (period markers) to match categorical XAxis values.
@@ -752,14 +771,8 @@ export default function OddsChart({
       (a, b) => parseISO(a.timestamp).getTime() - parseISO(b.timestamp).getTime()
     );
 
-    // Collect all probability delta keys to forward-fill
-    const probKeys: string[] = ["homeDelta", "bainLuckDelta", "espnDelta"];
-    for (const source of nonBettingSources) {
-      probKeys.push(source.dataKey);
-    }
-    for (const bookmaker of Object.keys(filteredBookmakerHistory)) {
-      probKeys.push(`${bookmaker}_delta`);
-    }
+    // Every key this chart draws (see `plottedProbKeys`) gets forward-filled.
+    const probKeys = plottedProbKeys;
 
     const lastKnown: Record<string, number | null> = {};
     for (const key of probKeys) {
@@ -804,7 +817,7 @@ export default function OddsChart({
   // by the naive-mean fallback that no longer exists. `showBlendLine` added: it
   // now decides whether `bainLuckDelta` is written at all. (`timeRange` is also
   // unread here, but it predates this change and is left alone.)
-  }, [filteredHistory, filteredBookmakerHistory, filteredWinProbHistory, filteredEspnHistory, useNewWinProbData, nonBettingSources, showBlendLine, filteredAggregateLine, scoringPlays, timeRange, periodBoundaries]);
+  }, [filteredHistory, filteredBookmakerHistory, filteredWinProbHistory, filteredEspnHistory, useNewWinProbData, nonBettingSources, showBlendLine, filteredAggregateLine, scoringPlays, timeRange, periodBoundaries, plottedProbKeys]);
 
   // Report the chart's actual rendered time domain to parent so
   // ScoreDifferentialChart can match its x-axis exactly.
@@ -835,9 +848,35 @@ export default function OddsChart({
   // and alternate label positions to prevent overlapping text.
   const filteredPeriodBoundaries = useMemo(() => {
     if (!periodBoundaries || periodBoundaries.length === 0 || chartData.length === 0) return [];
-    const chartStart = parseISO(chartData[0].timestamp).getTime();
-    const chartEnd = parseISO(chartData[chartData.length - 1].timestamp).getTime();
-    const chartDuration = chartEnd - chartStart;
+
+    // Bound against the DRAWN LINE, not the chart's data extent (CERT-1984).
+    //
+    // `chartData` is not the line. It holds a row per odds bucket even when the
+    // aggregate probability came back null, plus gap-filled minutes, plus the
+    // boundary timestamps this component itself inserts so Recharts can match a
+    // categorical ReferenceLine. Measuring the extent of THAT is circular: a
+    // boundary over an empty plot creates the very category it is then judged to
+    // be inside, which is how a "1H" chip came to hang over a blank chart.
+    //
+    // So find the first and last point carrying a value we actually plot. The
+    // server drops markers no chart can place, but it cannot know which of the
+    // two charts sharing this array is the blank one — only we do.
+    const isDrawn = (p: ChartDataPoint) =>
+      plottedProbKeys.some((key) => typeof p[key] === "number");
+    const firstDrawn = chartData.findIndex(isDrawn);
+    if (firstDrawn === -1) return [];
+    let lastDrawn = chartData.length - 1;
+    while (lastDrawn > firstDrawn && !isDrawn(chartData[lastDrawn])) lastDrawn--;
+
+    const chartStart = parseISO(chartData[firstDrawn].timestamp).getTime();
+    const chartEnd = parseISO(chartData[lastDrawn].timestamp).getTime();
+
+    // Label spacing below is a PIXEL problem, so it is measured on the x-axis —
+    // the full data extent — and not on the drawn subset above. Narrowing it to
+    // the ink would shrink `minSpacing` and let back the label smear UX-P022 fixed.
+    const chartDuration =
+      parseISO(chartData[chartData.length - 1].timestamp).getTime() -
+      parseISO(chartData[0].timestamp).getTime();
 
     // Minimum spacing before two markers are collapsed into one.
     //
@@ -893,7 +932,7 @@ export default function OddsChart({
       // above assumes.
       labelPosition: "insideTopLeft",
     }));
-  }, [periodBoundaries, chartData]);
+  }, [periodBoundaries, chartData, plottedProbKeys]);
 
   // "Final" marker (settled games only): a single vertical line at the last
   // chart category — i.e. the final snapshot, which is now the chart's right
@@ -1186,7 +1225,17 @@ export default function OddsChart({
   };
 
   return (
-    <div className={fillContainer ? "flex flex-col h-full gap-1" : "space-y-3"}>
+    <div
+      className={fillContainer ? "flex flex-col h-full gap-1" : "space-y-3"}
+      /* HOW MANY PERIOD CHIPS THIS CHART WILL DRAW, on the wrapper (CERT-1984).
+         Same reason as ScoreDifferentialChart's `data-*-series`: recharts renders
+         nothing inside `ResponsiveContainer` without a viewport, so a server
+         render — all a guard or the capture rig can see — cannot observe a
+         `<ReferenceLine>`. A guard that looked for the missing "1H" label would
+         pass on both arms and be worth nothing. This is the count actually
+         rendered below, after the drawn-line bound. */
+      data-period-boundaries={filteredPeriodBoundaries.length}
+    >
       {/* Time range selector */}
       <div className="flex flex-wrap items-center gap-1 shrink-0">
         {TIME_RANGE_OPTIONS.map((option) => {

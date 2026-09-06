@@ -383,7 +383,14 @@ export interface EventHistoryResponse {
   win_prob_history?: Record<string, WinProbHistoryPoint[]>;
   win_prob_sources?: Record<string, WinProbSourceMeta>;
   scoring_plays?: ScoringPlay[];
-  period_markers?: Array<{ timestamp: string; period: string }>;
+  /**
+   * Chart period boundaries. `source` (#3348) names the instrument that saw the
+   * period: `statpal` | `espn_box` | `win_prob` are measured, `estimated` means
+   * nobody observed it and the backend did arithmetic on the scheduled kickoff.
+   * Optional because a client may be reading an older payload. Markers that fall
+   * off the drawn line are no longer served at all — the server drops them.
+   */
+  period_markers?: Array<{ timestamp: string; period: string; source?: string }>;
   aggregate_line?: Array<{ timestamp: string; home_probability: number }>;
   points: number;
   espn_snapshot_count?: number;
