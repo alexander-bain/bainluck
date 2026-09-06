@@ -964,6 +964,85 @@ jobs:
             exit 1
           fi
 
+      - name: "#3518 A listed Kalshi leg is never left with zero outcomes (real Postgres)"
+        # `_poll_kalshi_markets` used to `continue` — writing NOTHING — when
+        # `_kalshi_yes_probability` could not read a leg's book. That is only
+        # survivable if something returns later, and nothing does: the main scan
+        # reaches no existing event on any beat (scan-report verdict `frozen`,
+        # 24/24, `unreached_existing == events_existing`), `futures_price_refresh`
+        # says in its own docstring it does not create outcomes, and the
+        # 2-minute poller can only UPDATE a row that already exists. 240 open
+        # linked markets held zero rows; 63 future event pages read "No price
+        # yet" while the venue traded them.
+        #
+        # Why the server: only a round trip separates "the poll built a dict"
+        # from "the row is in the table", and three things can undo this while a
+        # naive "a row appeared" assertion stays green — `is_winner` defaulting
+        # to an affirmative LOSS (`boolean NULL DEFAULT false`, the CAL-P1004R
+        # trap, on a brand-new write site), a name computed at the call site
+        # instead of by the hoisted helper (an arm patches it to a sentinel and
+        # requires it back out of the server), and `do_update` silently
+        # clobbering a row the null-out block owns.
+        #
+        # Controls: a fully-priced event must record ZERO placeholders, or the
+        # counter cannot testify; and a price arriving on a later beat must be
+        # accepted, which is the round trip proving these rows are reachable and
+        # not merely present. Runs after the #3433 step because its fixture also
+        # drops and recreates the schema. Same skip-detection as every gate here.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_kalshi_unpriced_outcome_is_recorded_real_postgres.py \
+            -v -s -rs 2>&1 | tee /tmp/unpricedoutcome3518.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/unpricedoutcome3518.txt; then
+            echo "::error::#3518 unpriced-outcome gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
+      - name: "#3569 The live poll speaks the venue's current price dialect (real Postgres)"
+        # `get_markets` returns the venue's RAW JSON and the 2-minute poll read
+        # `yes_bid`/`yes_ask`/`last_price` off it. The venue emits none of those
+        # keys — only `*_dollars`/`*_fp` (measured 2026-09-06; the fixture is that
+        # response verbatim) — so every Kalshi market hit `else: continue`, on
+        # every beat, while `kalshi_fetched` counted the request. Same window,
+        # same function, same session: Polymarket 4,910 snapshots across 54
+        # distinct minutes, Kalshi 0 rows, against 34 live Kalshi markets.
+        #
+        # Why the server: the failure is NUMERIC and legal. A `*_dollars` string
+        # divided by 100 a second time is 0.0022 for a 22% team — inside
+        # 0 < p < 1, inside Numeric(5,4), charted without an exception anywhere.
+        # An arm has to read the stored value back and judge its SCALE.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_live_poll_kalshi_prices_real_postgres.py \
+            -v -s -rs 2>&1 | tee /tmp/livepricedialect3569.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/livepricedialect3569.txt; then
+            echo "::error::#3569 live-price dialect gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
+      - name: "#3518+#3569 A low-value future game ends up showing a price (real Postgres)"
+        # CERT-2082's required composition. Creating a row is not showing a
+        # price: the hero reads the event's blended probability, not outcome
+        # existence, so two NULL legs render the same "No price yet" as none.
+        # One specimen walks the whole chain — unreadable ingest, the controls
+        # proving no other path can fill it, the per-series re-read, the
+        # matcher's own `win_probability_sources` writer — and ends on
+        # `compute_aggregate_probability`, the function behind the hero's
+        # `homeProb === null && awayProb === null`.
+        #
+        # The specimen is deliberately the least-covered event there is (two days
+        # out, no volume, unregistered, unserved) and each of those is EXECUTED
+        # as a control, because "nothing else covers this" is the load-bearing
+        # claim. Same skip-detection as every gate here.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_linked_game_price_chain_real_postgres.py \
+            -v -s -rs 2>&1 | tee /tmp/linkedgamechain3569.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/linkedgamechain3569.txt; then
+            echo "::error::#3518+#3569 price-chain gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
   frontend-build:
     runs-on: ubuntu-latest
     defaults:

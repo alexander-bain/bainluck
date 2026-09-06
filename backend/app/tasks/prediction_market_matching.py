@@ -4775,7 +4775,13 @@ async def _poll_live_prediction_market_prices():
     2-minute polling frequency without hitting rate limits.
 
     For Kalshi: Fetches market data via the /markets endpoint filtered by
-    event_ticker to get fresh yes_bid/yes_ask.
+    event_ticker, parses it through ``KalshiAPIService.parse_markets`` and
+    prices it with the 2-hour poll's own ``_kalshi_yes_probability`` policy.
+    Both of those are load-bearing (#3569): ``get_markets`` hands back the
+    venue's RAW JSON, and this branch used to read the cent-based
+    ``yes_bid``/``yes_ask``/``last_price`` keys off it, which the venue no
+    longer emits at all — so it skipped every Kalshi market on every beat
+    while still counting the fetch.
 
     For Polymarket: Fetches event data from the Gamma API to get current
     outcomePrices (one call per event).
@@ -4800,6 +4806,16 @@ async def _poll_live_prediction_market_prices():
         "kalshi_fetched": 0,
         "polymarket_fetched": 0,
         "outcomes_updated": 0,
+        # #3569: Kalshi-only counters. `kalshi_fetched` counts REQUESTS and
+        # incremented happily throughout the outage, and `outcomes_updated` is
+        # shared with Polymarket — which writes thousands of rows a beat — so
+        # neither could distinguish "Kalshi had nothing to say" from "the
+        # Kalshi branch never wrote anything at all". These two can: an
+        # updated:0 / unreadable:0 beat that fetched N markets is the dead
+        # branch's exact signature.
+        "kalshi_outcomes_updated": 0,
+        "kalshi_books_unreadable": 0,
+        "kalshi_outcome_unmatched": 0,
         "futures_snapshots_written": 0,
         "snapshots_written": 0,
         "snapshots_deduped": 0,
@@ -4869,6 +4885,12 @@ async def _poll_live_prediction_market_prices():
         # ── Fetch Kalshi prices ────────────────────────────────────────
         if kalshi_markets:
             from app.services.kalshi_api import KalshiAPIService
+
+            # #3569: the 2-hour poll's price policy, imported rather than
+            # restated. A second dialect for reading one venue's book is how
+            # this branch drifted out of the venue's schema unnoticed.
+            from app.tasks.kalshi import _kalshi_yes_probability
+
             service = KalshiAPIService()
             try:
                 for market, event in kalshi_markets:
@@ -4881,37 +4903,38 @@ async def _poll_live_prediction_market_prices():
                         )
                         stats["kalshi_fetched"] += 1
 
-                        # Update outcomes with fresh prices
-                        for mkt_data in markets_data:
-                            yes_bid = mkt_data.get("yes_bid")
-                            yes_ask = mkt_data.get("yes_ask")
-                            last_price = mkt_data.get("last_price")
+                        # Update outcomes with fresh prices.
+                        #
+                        # #3569: parse through the service. `get_markets`
+                        # returns the venue's RAW JSON, and this loop used to
+                        # read `yes_bid`/`yes_ask`/`last_price` off it and
+                        # divide by 100 — keys the venue stopped emitting
+                        # entirely (only `*_dollars`/`*_fp` now, measured
+                        # 2026-09-06), so every market fell through to the
+                        # `else: continue` while `kalshi_fetched` still
+                        # counted the request. `parse_markets` already owns
+                        # the dollars-then-cents cascade, and the parsed
+                        # values are DECIMAL probabilities — do not scale them.
+                        for km in service.parse_markets(markets_data):
+                            yes_bid = km.yes_bid
+                            yes_ask = km.yes_ask
+                            last_price = km.last_price
 
-                            # Kalshi prices are in cents (0-100)
-                            if yes_bid is not None:
-                                yes_bid = yes_bid / 100.0
-                            if yes_ask is not None:
-                                yes_ask = yes_ask / 100.0
-                            if last_price is not None:
-                                last_price = last_price / 100.0
-
-                            # Prefer last_price (actual traded price) over
-                            # bid/ask midpoint. The midpoint oscillates wildly
-                            # when the spread widens/narrows on illiquid markets,
-                            # creating a jagged chart line that doesn't reflect
-                            # real probability changes.
-                            if last_price is not None and 0 < last_price < 1:
-                                prob = last_price
-                            elif yes_bid is not None and yes_ask is not None:
-                                prob = (yes_bid + yes_ask) / 2
-                            else:
+                            # One price policy per venue: the same spread guard
+                            # the 2-hour poll uses (gotcha #19 / #181), so a
+                            # wide one-sided book cannot fabricate a ~0.50
+                            # quote here that the full poll would have refused.
+                            prob = _kalshi_yes_probability(yes_bid, yes_ask, last_price)
+                            if prob is None:
+                                stats["kalshi_books_unreadable"] += 1
                                 continue
 
                             if prob <= 0 or prob >= 1:
+                                stats["kalshi_books_unreadable"] += 1
                                 continue
 
                             # Find matching outcome by ticker (batch-loaded)
-                            ticker = mkt_data.get("ticker", "")
+                            ticker = km.ticker or ""
                             outcome = outcome_lookup.get((market.id, ticker))
 
                             if not outcome:
@@ -4919,6 +4942,12 @@ async def _poll_live_prediction_market_prices():
                                 if len(market_outcomes) == 1:
                                     outcome = market_outcomes[0]
                                 else:
+                                    # A price with nowhere to land: this poll
+                                    # is UPDATE-only and cannot create the row
+                                    # (#3518's population, counted separately
+                                    # from an unreadable book so the two
+                                    # failures never share one number).
+                                    stats["kalshi_outcome_unmatched"] += 1
                                     continue
 
                             # Update outcome probability
@@ -4929,6 +4958,7 @@ async def _poll_live_prediction_market_prices():
                             outcome.current_american_odds = american
                             outcome.last_updated = now
                             stats["outcomes_updated"] += 1
+                            stats["kalshi_outcomes_updated"] += 1
 
                             # Write FuturesOddsSnapshot for chart history
                             await session.execute(

@@ -959,7 +959,11 @@ class KalshiAPIService(BaseAPIClient):
                 the same data.
 
         Returns:
-            Tuple of (markets list, next cursor or None)
+            Tuple of (RAW markets list, next cursor or None). 🔴 The dicts are
+            the venue's own JSON, **unparsed** — a caller that reads prices off
+            them must go through :meth:`parse_markets`, because the live
+            endpoint no longer emits the cent-based `yes_bid`/`yes_ask`/
+            `last_price` keys AT ALL (measured 2026-09-06; see #3569).
         """
         params = {
             "limit": min(limit, 1000),
@@ -984,6 +988,37 @@ class KalshiAPIService(BaseAPIClient):
         next_cursor = data.get("cursor")
 
         return markets, next_cursor
+
+    def parse_markets(self, raw_markets: list[dict]) -> list[KalshiMarket]:
+        """Parse raw :meth:`get_markets` dicts into :class:`KalshiMarket` objects.
+
+        The public face of ``_parse_market`` (#3569). Every other Kalshi
+        surface reaches the venue through ``get_events``/``get_event``, which
+        parse on the way out; ``get_markets`` alone hands back the venue's raw
+        JSON, and the one caller that read prices off it
+        (``_poll_live_prediction_market_prices``, the 2-minute live poll) read
+        ``yes_bid``/``yes_ask``/``last_price`` — keys the venue **no longer
+        returns at all**. Measured against the live endpoint 2026-09-06: an
+        open ATP match market carries `yes_bid_dollars` `'0.6100'`,
+        `yes_ask_dollars` `'0.6200'`, `last_price_dollars` `'0.6200'`,
+        `volume_fp`, and no cent-based key of any name. So the branch skipped
+        every market, silently, on every beat.
+
+        Prices come back as DECIMAL probabilities (0-1) — ``'0.6200'`` is
+        ``0.62``, not ``62``. A caller that "converts cents" by dividing the
+        result by 100 gets 0.0062, which is still inside ``0 < p < 1`` and so
+        is stored and charted without ever raising.
+
+        A dict the parser cannot read is dropped (it logs), so the returned
+        list may be shorter than the input — key results by each object's own
+        ``ticker``, never by position.
+        """
+        parsed: list[KalshiMarket] = []
+        for market_data in raw_markets or []:
+            market = self._parse_market(market_data)
+            if market:
+                parsed.append(market)
+        return parsed
 
     async def get_markets_candlesticks_raw(
         self,

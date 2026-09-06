@@ -90,7 +90,24 @@ _STAMP = re.compile(
 #: A census rather than a boolean, so the tripwire moves when a stamp is added
 #: OR removed — "is there at least one" would sit green through half a fix.
 POLL_STAMP_COUNTS = {
-    "app/tasks/kalshi.py": 5,
+    # 5 -> 6 (#3518/#3569). `_refresh_linked_game_books` re-prices the games we
+    # have already LINKED to a live or imminent event — the population no other
+    # path can reach, because the main scan never revisits an existing event
+    # (`frozen` on 24 of 24 runs, 2026-09-06), `futures_price_refresh` refuses to
+    # create outcomes, and the 2-minute poll is UPDATE-only and scoped to the
+    # next three hours.
+    #
+    # THE CONSUMER RE-CHECKED RATHER THAN THE COUNT BUMPED, which is what this
+    # census asks for by name: the severe consumer is `routes/playoffs.py`,
+    # which drops an outcome from the playoff grid on a stale
+    # `FuturesOutcome.last_updated`. The new site writes exactly that column —
+    # so it can only make that gate LESS likely to drop a row, never more, and
+    # only for markets linked to a game event (a playoff grid renders
+    # championship fields, which carry no `event_id` and are therefore outside
+    # this pass's selector entirely). It carries the conditional
+    # `price_changed_at` beside the unconditional touch stamp, so a
+    # refreshed-but-unmoved price still does not read as a move.
+    "app/tasks/kalshi.py": 6,
     # 7 -> 9 (UX-P157, #2256). The per-condition sub-market upsert began writing
     # `volume_24h`, and its `volume_updated_at` stamp comes with it on both the
     # insert and the conflict-update path — the same pair the PARENT event
@@ -454,7 +471,11 @@ def test_futures_outcome_timestamp_columns() -> None:
 #: a new price writer that forgets the stamp is a provider whose column quietly
 #: goes stale while the other two look healthy.
 PRICE_CHANGE_STAMPERS = {
-    "app/tasks/kalshi.py": 2,
+    # 2 -> 3 (#3518/#3569): `_refresh_linked_game_books`' re-price of a linked
+    # game's leg. Written through the same `price_changed_at_value` helper as
+    # every other writer of this column, so the two Kalshi price paths cannot
+    # leave "the price moved" meaning two different things.
+    "app/tasks/kalshi.py": 3,
     "app/tasks/polymarket.py": 3,
     "app/tasks/futures.py": 1,
     # #2199. Its one price write carries the conditional change-stamp beside the

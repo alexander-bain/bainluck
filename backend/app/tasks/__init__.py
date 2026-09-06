@@ -1204,6 +1204,34 @@ def poll_kalshi_markets(self):
     return _tracked_run("poll_kalshi", _poll_kalshi_markets())
 
 
+@celery_app.task(
+    bind=True,
+    name="app.tasks.refresh_linked_game_books",
+    soft_time_limit=300,
+    time_limit=360,
+)
+def refresh_linked_game_books(self):
+    """#3518/#3569: re-read the book of every Kalshi game already LINKED to a
+    live or imminent event, one request per SERIES.
+
+    The poll above ingests almost nothing that already exists — measured
+    2026-09-06, its scan verdict was `frozen` on 24 of 24 runs with
+    `unreached_existing == events_existing` — and the two paths built for that
+    freeze cannot close this gap: `refresh_stale_futures_prices` refuses to
+    create an outcome by design, and the 2-minute live poll is UPDATE-only and
+    scoped to live-or-within-3h events. So a linked game more than three hours
+    out with a missing or stale outcome row had no path back: 415 open linked
+    markets on 2026-09-06, 66 of them holding ZERO outcome rows and 255 with no
+    snapshot in six hours.
+
+    Cost scales with LEAGUES (62 series), not games (415), because
+    `get_markets` takes `series_ticker`. Mechanism: `app/tasks/kalshi.py`.
+    """
+    from app.tasks.kalshi import _refresh_linked_game_books
+
+    return _tracked_run("refresh_linked_game_books", _refresh_linked_game_books())
+
+
 @celery_app.task(name="app.tasks.run_freshness_watchdog")
 def run_freshness_watchdog():
     """#995 NEVER-AGAIN: alert the moment market CREATION stalls per source, or a
@@ -4410,6 +4438,19 @@ celery_app.conf.beat_schedule = {
         # precompute there fires at :15 and cannot collide with :50.
         "task": "app.tasks.refresh_stale_futures_prices",
         "schedule": crontab(minute=50),
+        "options": {"queue": "heavy"},
+    },
+    # #3518/#3569. Hourly at :20, deliberately between the Kalshi poll (:45 every
+    # 2h) and the price refresh (:50), so a run never shares a slot with either.
+    #
+    # `heavy` and not `background` for the standing reason: its wall budget is
+    # 240s and background has ~one effective slot for ~40 beats. It is far
+    # cheaper than the :50 resident it sits beside — one request per SERIES (62
+    # on 2026-09-06) rather than one per market (415) — and the two cannot
+    # collide at :20 vs :50.
+    "refresh-linked-game-books-hourly": {
+        "task": "app.tasks.refresh_linked_game_books",
+        "schedule": crontab(minute=20),
         "options": {"queue": "heavy"},
     },
     # UX-P139. Every 10 minutes, and it is cheap because the register bounds

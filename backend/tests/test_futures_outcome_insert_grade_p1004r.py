@@ -10,10 +10,22 @@ is exactly right on an UPDATE, means ``false`` on an INSERT — the row being bo
 recorded as a declared LOSS. ``ON CONFLICT DO NOTHING`` protects rows that already
 exist and does nothing at all for that one.
 
-Two INSERT sites reach ``futures_outcomes`` in that file — ``_create_settled_market``
-(the one CERT-948 named) and the live futures poll's per-outcome upsert, which is the
-file's bulk CREATOR of outcome rows and whose ``graded_cols`` reached only the
-conflict arm. Both must name the pair explicitly.
+THREE INSERT sites reach ``futures_outcomes`` in that file, and all three must name
+the pair explicitly:
+
+1. ``_create_settled_market`` — the one CERT-948 named;
+2. the live futures poll's per-outcome upsert — the file's bulk CREATOR of outcome
+   rows, whose ``graded_cols`` reached only the conflict arm;
+3. **the poll's unpriced-outcome placeholder write (#3518)** — added 2026-09-06.
+   When the venue lists a leg whose book cannot be read, the poll now records that
+   the outcome EXISTS with ``current_probability = NULL`` instead of skipping it
+   entirely (a skip was permanent: the main scan reaches no existing event on any
+   beat, and every other channel is UPDATE-only). A placeholder is the
+   LEAST-graded row in the system, so it is precisely where an inherited ``false``
+   would be most wrong — it would declare a loss on a market nobody has priced,
+   let alone settled. This guard's count tripwire is what caught it: the site was
+   written naming the pair, and the count still had to be reviewed rather than
+   bumped, which is the whole point of asserting on the number.
 
 Test 1 is the ANCHOR: it proves the default really does land ``false``, in a real
 database, so the rest of the file is guarding a measured mechanism and not a belief
@@ -205,7 +217,7 @@ async def test_scalar_result_is_not_a_loss():
 
 
 def test_every_futures_outcome_insert_names_the_grade_pair():
-    """Structural, so a THIRD insert site cannot reopen this defect silently.
+    """Structural, so a NEW insert site cannot reopen this defect silently.
 
     CAL-P1004's own lesson: its guard matched the NAME SHAPE rather than the one
     spelling already fixed, and that is how sites 3-5 were found. This is the same
@@ -232,8 +244,20 @@ def test_every_futures_outcome_insert_names_the_grade_pair():
         named = {kw.arg for kw in node.keywords if kw.arg}
         sites.append((node.lineno, named, any(kw.arg is None for kw in node.keywords)))
 
-    assert len(sites) == 2, (
-        f"expected 2 futures_outcomes INSERT sites in kalshi.py, found {len(sites)} "
+    # The count is a TRIPWIRE, not bookkeeping: it forces a human to look at any
+    # new INSERT site rather than letting the per-site loop below quietly bless
+    # one. Four sites today — `_create_settled_market`, the poll's per-outcome
+    # upsert, (#3518) the poll's unpriced-outcome placeholder write, and (#3569)
+    # `_refresh_linked_game_books`, the bounded per-series pass that reaches
+    # linked games the frozen main scan never revisits. The fourth was READ
+    # before this number moved: it names `is_winner=None` and
+    # `resolution_source=None` for the same reason the third does — a placeholder
+    # for a leg nobody has called must be born ungraded, and the column's
+    # `DEFAULT false` would make an omission an affirmative loss. Raise it only
+    # after reading the new site; the assertions below are necessary and the
+    # count is what makes them get read.
+    assert len(sites) == 4, (
+        f"expected 4 futures_outcomes INSERT sites in kalshi.py, found {len(sites)} "
         f"at lines {[s[0] for s in sites]} — a new one must name is_winner and "
         "resolution_source explicitly, or it inherits the false default"
     )
