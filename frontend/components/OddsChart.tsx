@@ -534,6 +534,31 @@ export default function OddsChart({
         ? nonBettingSources[0].dataKey
         : "homeDelta";
 
+  /**
+   * The primary series' value at one chart point, or null where it has none
+   * (#3425).
+   *
+   * The three readers below each used to test the raw property against `null`,
+   * which is not the same question. `ensurePoint` seeds only `homeDelta`,
+   * `espnDelta` and `bainLuckDelta`, so when `primarySeriesKey` is a per-source
+   * key — every single-source chart, since that branch picks
+   * `nonBettingSources[0].dataKey` — a gap-filled minute carries no such
+   * property at all and reads `undefined`. Forward-fill does not cover it
+   * either: minutes BEFORE the first real point have no `lastKnown` to carry,
+   * and a shared domain routinely opens before the data (a ticker-derived
+   * `commence_time` put 15h56m of them in front of /events/15300276).
+   *
+   * `undefined !== null` is true, so the old guards admitted it and a
+   * `(v): v is number` annotation asserted it was a number. `Math.max` of that
+   * is NaN, which is how every event page emitted
+   * `<stop offset="NaN">` — eight-plus console errors a load, and a fill the
+   * browser then declined to paint.
+   */
+  const primaryValueAt = (pt: ChartDataPoint): number | null => {
+    const v = pt[primarySeriesKey];
+    return typeof v === "number" && Number.isFinite(v) ? v : null;
+  };
+
   const useNewWinProbData = Object.keys(filteredWinProbHistory).length > 0;
   const bookmakers = useMemo(
     () => Object.keys(filteredBookmakerHistory),
@@ -1001,7 +1026,7 @@ export default function OddsChart({
     let count = 0;
     let prevDelta: number | null = null;
     for (const pt of chartData) {
-      const delta = pt[key] as number | null;
+      const delta = primaryValueAt(pt);
       if (delta === null) continue;
       if (prevDelta !== null) {
         // A lead change is a crossing of the 50% line (0–100 axis).
@@ -1026,7 +1051,7 @@ export default function OddsChart({
     }
     // Walk backwards to find last non-null value
     for (let i = chartData.length - 1; i >= 0; i--) {
-      const delta = chartData[i][key] as number | null;
+      const delta = primaryValueAt(chartData[i]);
       if (delta !== null) {
         const homeProb = delta; // 0–100 axis: the value IS the home probability
         chartData[i].calloutDelta = delta; // Stamp onto chartData point
@@ -1078,18 +1103,6 @@ export default function OddsChart({
   // to `homeDelta`. One definition now, so the fill, the callout, the
   // lead-change count and the live hero cannot disagree about which line the
   // chart is actually about.
-  const gradientOffset = (() => {
-    const deltas = chartData
-      .map((d) => d[primarySeriesKey] as number | null)
-      .filter((v): v is number => v !== null);
-    if (deltas.length === 0) return 0.5;
-    const dataMax = Math.max(...deltas);
-    const dataMin = Math.min(...deltas);
-    if (dataMax <= 0) return 0;
-    if (dataMin >= 0) return 1;
-    return dataMax / (dataMax - dataMin);
-  })();
-
   // Short team names
   const homeShort = homeTeamAbbrev || homeTeam.split(" ").pop() || homeTeam;
   const awayShort = awayTeamAbbrev || awayTeam.split(" ").pop() || awayTeam;
@@ -1443,20 +1456,22 @@ export default function OddsChart({
               if (onActivePointChange) onActivePointChange(null);
             }}
           >
-            <defs>
-              <linearGradient id={`probFillGradient-${eventId ?? 0}`} x1="0" y1="0" x2="0" y2="1">
-                <stop
-                  offset={gradientOffset}
-                  stopColor={homeTeamColor || "#22c55e"}
-                  stopOpacity={0.3}
-                />
-                <stop
-                  offset={gradientOffset}
-                  stopColor={awayTeamColor || "#3b82f6"}
-                  stopOpacity={0.3}
-                />
-              </linearGradient>
-            </defs>
+            {/*
+              #3425: the `probFillGradient-<id>` <defs> block that stood here is
+              gone. It was DEAD — one definition, and not a single
+              `fill="url(#probFillGradient-…)"` anywhere in the frontend, no
+              <Area>, nothing. It painted nothing and never had, but it emitted
+              its two <stop offset="NaN"> on every event page (8+ console errors
+              a load), because its offset came from a `dataMax / (dataMax -
+              dataMin)` written for the old mirrored ±50 delta axis and read
+              through a guard that let `undefined` through.
+
+              Deleted rather than repaired: computing a correct split for a
+              gradient nothing references would be inventing a visual nobody
+              asked for and changing every event page's fill to do it. If the
+              two-tone fill is wanted back, it is a design decision with a fresh
+              offset — the midpoint on today's 0–100 axis is 50, not 0.
+            */}
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" />
             <XAxis
               dataKey="time"
