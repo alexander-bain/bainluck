@@ -964,6 +964,40 @@ jobs:
             exit 1
           fi
 
+      - name: "#3518 A listed Kalshi leg is never left with zero outcomes (real Postgres)"
+        # `_poll_kalshi_markets` used to `continue` — writing NOTHING — when
+        # `_kalshi_yes_probability` could not read a leg's book. That is only
+        # survivable if something returns later, and nothing does: the main scan
+        # reaches no existing event on any beat (scan-report verdict `frozen`,
+        # 24/24, `unreached_existing == events_existing`), `futures_price_refresh`
+        # says in its own docstring it does not create outcomes, and the
+        # 2-minute poller can only UPDATE a row that already exists. 240 open
+        # linked markets held zero rows; 63 future event pages read "No price
+        # yet" while the venue traded them.
+        #
+        # Why the server: only a round trip separates "the poll built a dict"
+        # from "the row is in the table", and three things can undo this while a
+        # naive "a row appeared" assertion stays green — `is_winner` defaulting
+        # to an affirmative LOSS (`boolean NULL DEFAULT false`, the CAL-P1004R
+        # trap, on a brand-new write site), a name computed at the call site
+        # instead of by the hoisted helper (an arm patches it to a sentinel and
+        # requires it back out of the server), and `do_update` silently
+        # clobbering a row the null-out block owns.
+        #
+        # Controls: a fully-priced event must record ZERO placeholders, or the
+        # counter cannot testify; and a price arriving on a later beat must be
+        # accepted, which is the round trip proving these rows are reachable and
+        # not merely present. Runs after the #3433 step because its fixture also
+        # drops and recreates the schema. Same skip-detection as every gate here.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_kalshi_unpriced_outcome_is_recorded_real_postgres.py \
+            -v -s -rs 2>&1 | tee /tmp/unpricedoutcome3518.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/unpricedoutcome3518.txt; then
+            echo "::error::#3518 unpriced-outcome gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
   frontend-build:
     runs-on: ubuntu-latest
     defaults:

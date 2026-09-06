@@ -247,6 +247,35 @@ def _is_generic_outcome_name(name: str) -> bool:
     return bool(_GENERIC_OUTCOME_PATTERNS.match(name.strip()))
 
 
+def _kalshi_outcome_name(event_title, market, market_count: int) -> str:
+    """Display name for one Kalshi market as an outcome of its event.
+
+    Hoisted out of ``_poll_kalshi_markets``' first pass (#3518) because the
+    UNPRICED branch now needs it too. It used to be computed only after the
+    ``prob is None`` skip, so a market with an unreadable book never got a name
+    — which was fine when such a market produced no row at all, and is exactly
+    what has to change: ``name`` is NOT NULL, so a placeholder row cannot be
+    written without this.
+
+    Priority (unchanged, this is a pure move):
+      1. single-market event -> "Yes"
+      2. ``yes_sub_title`` (the player/team name) if not generic/obfuscated
+      3. ``subtitle`` if not generic
+      4. ``title`` when it differs from the event title
+      5. the parsed ticker, as a last resort
+    """
+    if market_count == 1:
+        return "Yes"
+    sub = market.yes_sub_title
+    if sub and not _is_generic_outcome_name(sub):
+        return sub
+    if market.subtitle and not _is_generic_outcome_name(market.subtitle):
+        return market.subtitle
+    if market.title and market.title != event_title:
+        return market.title
+    return _parse_kalshi_ticker_name(market.ticker)
+
+
 # Spread threshold (decimal probability) below which a two-sided Kalshi book is
 # considered TIGHT enough for its midpoint to be real price discovery. Mirrors
 # the Polymarket has_real_trading rule (gotcha #19) and the has_real_trading
@@ -547,6 +576,13 @@ async def _poll_kalshi_markets():
         "markets_processed": 0,
         "outcomes_updated": 0,
         "snapshots_created": 0,
+        # #3518. Deliberately its OWN counter and not folded into
+        # `outcomes_updated`: the steady state is a market whose book reads fine
+        # and needs none of these, so a shared counter could never distinguish
+        # "the placeholder write ran and found nothing to do" from "the
+        # placeholder write is not reached at all". Its first non-zero read in
+        # production is the honest proof this shipped.
+        "unpriced_outcomes_recorded": 0,
         "errors": [],
         "by_category": {},
         "crypto_skipped": 0,
@@ -1132,7 +1168,15 @@ async def _poll_kalshi_markets():
 
                     # First pass: compute probabilities and names for all outcomes
                     outcome_data = []
+                    # #3518: markets the venue listed but whose book we could not
+                    # read THIS pass. They used to be dropped on the floor here;
+                    # they are now carried to the placeholder write below.
+                    unpriced_data = []
                     for market in event.markets:
+                        outcome_name = _kalshi_outcome_name(
+                            event.title, market, len(event.markets)
+                        )
+
                         # Calculate probability from bid/ask midpoint or last price.
                         # The spread guard lives in _kalshi_yes_probability so it is
                         # unit-testable (Queue #182 capture-rule guard test).
@@ -1140,31 +1184,23 @@ async def _poll_kalshi_markets():
                             market.yes_bid, market.yes_ask, market.last_price
                         )
                         if prob is None:
-                            continue  # wide/one-sided book, no trade — don't fabricate
+                            # Still don't fabricate a PRICE — but do record that the
+                            # outcome EXISTS (#3518). Those are different claims, and
+                            # conflating them is what stranded 240 linked markets with
+                            # zero rows: the main scan reaches no existing event on any
+                            # beat (scan-report verdict `frozen`, 24/24), and every
+                            # other channel is UPDATE-only — `futures_price_refresh`
+                            # says so in its own docstring, and the 2-minute poller
+                            # looks up an outcome it cannot create. So a row skipped
+                            # here is not retried later; it is skipped forever.
+                            unpriced_data.append(
+                                {"market": market, "outcome_name": outcome_name}
+                            )
+                            continue
 
                         american = (
                             probability_to_american(prob) if prob and prob > 0 else None
                         )
-
-                        # For single-market events, use "Yes" as outcome name
-                        # For multi-market events, prefer yes_sub_title (player/team name),
-                        # then subtitle, then title if it differs from event title,
-                        # then parsed ticker as last resort.
-                        # Skip yes_sub_title if it looks generic/obfuscated.
-                        if len(event.markets) == 1:
-                            outcome_name = "Yes"
-                        else:
-                            sub = market.yes_sub_title
-                            if sub and not _is_generic_outcome_name(sub):
-                                outcome_name = sub
-                            elif market.subtitle and not _is_generic_outcome_name(
-                                market.subtitle
-                            ):
-                                outcome_name = market.subtitle
-                            elif market.title and market.title != event.title:
-                                outcome_name = market.title
-                            else:
-                                outcome_name = _parse_kalshi_ticker_name(market.ticker)
 
                         outcome_data.append(
                             {
@@ -1359,6 +1395,52 @@ async def _poll_kalshi_markets():
                         )
                         await session.execute(snapshot_stmt)
                         stats["snapshots_created"] += 1
+
+                    # Third pass (#3518): record that the UNPRICED outcomes exist.
+                    #
+                    # An outcome row with `current_probability = NULL` is already a
+                    # first-class state in this file — the null-out block above
+                    # writes exactly that whenever a previously-priced market goes
+                    # quiet. This writes the same state at BIRTH instead of only on
+                    # the way down, so "the venue lists this leg" stops depending on
+                    # whether its book happened to be readable the one time we
+                    # looked.
+                    #
+                    # `on_conflict_do_nothing` and NOT `do_update`: if the row
+                    # already exists, its price is the null-out block's business
+                    # (which correctly protects a settled/graded row from being
+                    # wiped, gotcha #21). This write must only ever ADD.
+                    #
+                    # `is_winner=None` is explicit and load-bearing. The column is
+                    # `boolean NULL DEFAULT false`, so an INSERT that merely OMITS it
+                    # stores an affirmative graded LOSS — the CAL-P1004R defect the
+                    # priced INSERT above was repaired for. A placeholder is the
+                    # least-graded row in the system; it must be born UNKNOWN.
+                    #
+                    # Ranks continue after the priced ones so an unpriced leg never
+                    # outranks a priced one on a page that sorts by rank.
+                    if unpriced_data:
+                        _rank_base = len(outcome_data)
+                        for _offset, _ud in enumerate(unpriced_data, 1):
+                            await session.execute(
+                                pg_insert(FuturesOutcome)
+                                .values(
+                                    market_id=futures_market_id,
+                                    external_id=_ud["market"].ticker,
+                                    name=_ud["outcome_name"],
+                                    current_probability=None,
+                                    current_american_odds=None,
+                                    current_yes_bid=None,
+                                    current_yes_ask=None,
+                                    rank=_rank_base + _offset,
+                                    is_winner=None,
+                                    resolution_source=None,
+                                )
+                                .on_conflict_do_nothing(
+                                    index_elements=["market_id", "external_id"]
+                                )
+                            )
+                        stats["unpriced_outcomes_recorded"] += len(unpriced_data)
 
                 except SoftTimeLimitExceeded:
                     # #150: the soft limit fired DURING this event's processing.
