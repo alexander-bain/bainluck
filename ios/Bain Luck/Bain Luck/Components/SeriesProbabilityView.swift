@@ -22,7 +22,7 @@ struct SeriesProbabilityView: View {
     private var awaySeriesProb: Double { 1.0 - homeSeriesProb }
 
     private var stateLabel: String {
-        let name = homeTeam.split(separator: " ").last.map(String.init) ?? homeTeam
+        let name = TeamShortName.short(homeTeam)
         if homeSeriesWins >= gamesToWin { return "\(name) win series \(homeSeriesWins)-\(awaySeriesWins)" }
         if awaySeriesWins >= gamesToWin { return "\(name) lose series \(homeSeriesWins)-\(awaySeriesWins)" }
         if homeSeriesWins == awaySeriesWins { return "Series tied \(homeSeriesWins)-\(awaySeriesWins)" }
@@ -55,7 +55,7 @@ struct SeriesProbabilityView: View {
                 // Win dots
                 HStack {
                     HStack(spacing: 4) {
-                        Text(homeTeam.split(separator: " ").last.map(String.init) ?? homeTeam)
+                        Text(TeamShortName.short(homeTeam))
                             .font(.caption2)
                             .foregroundStyle(homeTeamColor)
                         ForEach(0..<gamesToWin, id: \.self) { i in
@@ -73,7 +73,7 @@ struct SeriesProbabilityView: View {
                                 .background(Circle().fill(i < awaySeriesWins ? awayTeamColor : .clear))
                                 .frame(width: 12, height: 12)
                         }
-                        Text(awayTeam.split(separator: " ").last.map(String.init) ?? awayTeam)
+                        Text(TeamShortName.short(awayTeam))
                             .font(.caption2)
                             .foregroundStyle(awayTeamColor)
                     }

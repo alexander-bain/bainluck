@@ -148,8 +148,8 @@ struct MenuBarView: View {
                 guard let awayPct = duel[0], let homePct = duel[1] else { return nil }
                 return MenuBarGame(
                     id: event.id,
-                    homeAbbrev: event.homeTeamData?.abbreviation ?? String(event.homeTeam.split(separator: " ").last ?? ""),
-                    awayAbbrev: event.awayTeamData?.abbreviation ?? String(event.awayTeam.split(separator: " ").last ?? ""),
+                    homeAbbrev: event.homeTeamData?.abbreviation ?? TeamShortName.short(event.homeTeam),
+                    awayAbbrev: event.awayTeamData?.abbreviation ?? TeamShortName.short(event.awayTeam),
                     homeScore: event.homeScore,
                     awayScore: event.awayScore,
                     homeProb: homePct,

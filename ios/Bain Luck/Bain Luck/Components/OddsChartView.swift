@@ -371,10 +371,10 @@ struct OddsChartView: View {
 
     /// Short team name: prefer ESPN abbreviation (e.g. "BOS"), fall back to last word
     private var homeShort: String {
-        homeTeamAbbrev ?? homeTeamName?.split(separator: " ").last.map(String.init) ?? "Home"
+        homeTeamAbbrev ?? homeTeamName.map(TeamShortName.short) ?? "Home"
     }
     private var awayShort: String {
-        awayTeamAbbrev ?? awayTeamName?.split(separator: " ").last.map(String.init) ?? "Away"
+        awayTeamAbbrev ?? awayTeamName.map(TeamShortName.short) ?? "Away"
     }
 
     init(eventId: Int, teamColors: (away: Color, home: Color)? = nil,

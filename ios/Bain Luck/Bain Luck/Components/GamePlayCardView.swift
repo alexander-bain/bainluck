@@ -128,11 +128,11 @@ struct GamePlayCardView: View {
     }
 
     private var homeShort: String {
-        homeTeam.split(separator: " ").last.map(String.init) ?? homeTeam
+        TeamShortName.short(homeTeam)
     }
 
     private var awayShort: String {
-        awayTeam.split(separator: " ").last.map(String.init) ?? awayTeam
+        TeamShortName.short(awayTeam)
     }
 }
 

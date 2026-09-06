@@ -31,10 +31,10 @@ struct ScoreDifferentialChartView: View {
     @State private var plotWidth: CGFloat = 0
 
     private var homeShort: String {
-        homeTeamAbbrev ?? homeTeam.split(separator: " ").last.map(String.init) ?? "Home"
+        homeTeamAbbrev ?? TeamShortName.short(homeTeam)
     }
     private var awayShort: String {
-        awayTeamAbbrev ?? awayTeam.split(separator: " ").last.map(String.init) ?? "Away"
+        awayTeamAbbrev ?? TeamShortName.short(awayTeam)
     }
 
     private var isGameStarted: Bool {
