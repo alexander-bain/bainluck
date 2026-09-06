@@ -213,6 +213,12 @@ struct ShareableFuturesCardView: View {
 struct ShareableEventCardView: View {
     let homeTeam: String
     let awayTeam: String
+
+    /// #3430 — the share card draws two crests side by side. Two crests reading
+    /// `TIG` is a card that travels off the app saying nothing.
+    private var crests: (away: String, home: String) {
+        TeamShortName.abbreviationPair(away: awayTeam, home: homeTeam)
+    }
     let homeProbability: Double
     let awayProbability: Double
     let sportName: String
@@ -263,7 +269,7 @@ struct ShareableEventCardView: View {
                             .fill(awayColor)
                             .frame(width: 56, height: 56)
                             .overlay(
-                                Text(TeamShortName.abbreviation(awayTeam))
+                                Text(crests.away)
                                     .font(.system(size: 12, weight: .heavy))
                                     .foregroundStyle(.white)
                             )
@@ -298,7 +304,7 @@ struct ShareableEventCardView: View {
                             .fill(homeColor)
                             .frame(width: 56, height: 56)
                             .overlay(
-                                Text(TeamShortName.abbreviation(homeTeam))
+                                Text(crests.home)
                                     .font(.system(size: 12, weight: .heavy))
                                     .foregroundStyle(.white)
                             )

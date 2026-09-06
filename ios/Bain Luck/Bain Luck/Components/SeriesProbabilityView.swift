@@ -21,8 +21,15 @@ struct SeriesProbabilityView: View {
 
     private var awaySeriesProb: Double { 1.0 - homeSeriesProb }
 
+    /// #3430 — both competitors of one series, so the pair rule decides. Every
+    /// sentence below names ONE of them and reports the other's position in the
+    /// same breath; a shared label makes "Sox lead 3-2" unreadable.
+    private var sides: (away: String, home: String) {
+        TeamShortName.shortPair(away: awayTeam, home: homeTeam)
+    }
+
     private var stateLabel: String {
-        let name = TeamShortName.short(homeTeam)
+        let name = sides.home
         if homeSeriesWins >= gamesToWin { return "\(name) win series \(homeSeriesWins)-\(awaySeriesWins)" }
         if awaySeriesWins >= gamesToWin { return "\(name) lose series \(homeSeriesWins)-\(awaySeriesWins)" }
         if homeSeriesWins == awaySeriesWins { return "Series tied \(homeSeriesWins)-\(awaySeriesWins)" }
@@ -55,7 +62,7 @@ struct SeriesProbabilityView: View {
                 // Win dots
                 HStack {
                     HStack(spacing: 4) {
-                        Text(TeamShortName.short(homeTeam))
+                        Text(sides.home)
                             .font(.caption2)
                             .foregroundStyle(homeTeamColor)
                         ForEach(0..<gamesToWin, id: \.self) { i in
@@ -73,7 +80,7 @@ struct SeriesProbabilityView: View {
                                 .background(Circle().fill(i < awaySeriesWins ? awayTeamColor : .clear))
                                 .frame(width: 12, height: 12)
                         }
-                        Text(TeamShortName.short(awayTeam))
+                        Text(sides.away)
                             .font(.caption2)
                             .foregroundStyle(awayTeamColor)
                     }

@@ -100,8 +100,14 @@ struct EventDetailView: View {
 
     private var dynamicTitle: String {
         guard let event = vm.event else { return "Game Details" }
-        let away = event.awayTeamData?.abbreviation ?? TeamShortName.short(event.awayTeam)
-        let home = event.homeTeamData?.abbreviation ?? TeamShortName.short(event.homeTeam)
+        // #3430 — the two sides of ONE matchup, so the pair rule decides. Read
+        // alone, "Tigers" names Clemson perfectly well; this title read
+        // "Tigers 10 - Tigers 51" because LSU are the Tigers too.
+        let (away, home) = TeamShortName.shortPair(
+            away: event.awayTeam, home: event.homeTeam,
+            awayServed: event.awayTeamData?.abbreviation,
+            homeServed: event.homeTeamData?.abbreviation
+        )
         if let hs = event.homeScore, let as_ = event.awayScore {
             let parts = [event.espn?.period, event.espn?.gameClock].compactMap { $0 }.filter { !$0.isEmpty }
             let state = parts.joined(separator: " ")
@@ -514,9 +520,15 @@ struct EventDetailView: View {
                                 .font(.title2.weight(.bold))
                                 .foregroundStyle(.secondary)
                         } else {
-                            let winnerName = homeWon
-                                ? TeamShortName.short(event.homeTeam)
-                                : TeamShortName.short(event.awayTeam)
+                            // #3430 — "Tigers Win" answered nothing on Clemson
+                            // 10 – LSU 51, because both sides shorten to
+                            // "Tigers". A winner's name is only a name if the
+                            // LOSER could not have been called it too, so the
+                            // pair decides even though one side is shown.
+                            let duel = TeamShortName.shortPair(
+                                away: event.awayTeam, home: event.homeTeam
+                            )
+                            let winnerName = homeWon ? duel.home : duel.away
                             Text("\(winnerName) Win")
                                 .font(.title3.weight(.bold))
                                 .foregroundStyle(homeWon ? colors.home : colors.away)
@@ -584,9 +596,13 @@ struct EventDetailView: View {
                            abs(home - openingHome) > 0.02 {
                             let homeDelta = home - openingHome
                             let homeGained = homeDelta > 0
-                            let subject = homeGained
-                                ? TeamShortName.short(event.homeTeam)
-                                : TeamShortName.short(event.awayTeam)
+                            // #3430 — #1830's whole fix was naming the team the
+                            // delta belongs to. A label the other side shares
+                            // un-names it again, so take the pair.
+                            let movers = TeamShortName.shortPair(
+                                away: event.awayTeam, home: event.homeTeam
+                            )
+                            let subject = homeGained ? movers.home : movers.away
                             let points = Int((abs(homeDelta) * 100).rounded())
                             Text("\(subject) +\(points)% since open")
                                 .font(.system(size: 10, weight: .medium))
@@ -1238,14 +1254,6 @@ private struct GameSegmentsView: View {
     var finalHomeScore: Int?
     var finalAwayScore: Int?
 
-    private var homeShort: String {
-        Self.shortLabel(abbreviation: homeTeamAbbrev, teamName: homeTeam, fallback: "Home")
-    }
-
-    private var awayShort: String {
-        Self.shortLabel(abbreviation: awayTeamAbbrev, teamName: awayTeam, fallback: "Away")
-    }
-
     /// #3273. The team column is 44pt by the UX-P090 geometry — that width is what
     /// keeps the TOTAL column on screen, so it cannot simply grow. The old fallback
     /// handed it a whole nickname ("Buckeyes"), which SwiftUI then truncated to
@@ -1256,17 +1264,27 @@ private struct GameSegmentsView: View {
     ///
     /// A real abbreviation is always preferred. Failing that, emit three uppercase
     /// letters, which fits the column: an intentional short form reads as an
-    /// abbreviation where `Bu…` reads as a rendering fault.
-    private static func shortLabel(abbreviation: String?, teamName: String, fallback: String) -> String {
-        if let abbreviation, !abbreviation.trimmingCharacters(in: .whitespaces).isEmpty {
-            return abbreviation
-        }
-        // #3374: taking the last word here made "Charlotte FC" read `FC`. The
-        // shared rule keeps the designator attached to the name it qualifies,
-        // so the three letters come from "Charlotte" and read `CHA`.
-        let abbrev = TeamShortName.abbreviation(teamName)
-        return abbrev.isEmpty ? fallback : abbrev
+    /// abbreviation where `Bu…` reads as a rendering fault. Both properties are
+    /// `abbreviationPair`'s, so this card keeps them by delegating.
+    ///
+    /// #3430 — the two rows of this table are the two competitors, stacked, and
+    /// the reader tells them apart by these labels alone. Clemson–LSU drew `TIG`
+    /// above `TIG`, so the badges come from the pair rule, which widens both
+    /// names until they separate before taking three glyphs. The served
+    /// abbreviations still win — unless they collide with each other, which
+    /// `teams.abbreviation` being wrong for hundreds of rows (#3353) makes real.
+    private var badges: (away: String, home: String) {
+        let pair = TeamShortName.abbreviationPair(
+            away: awayTeam, home: homeTeam,
+            awayServed: awayTeamAbbrev, homeServed: homeTeamAbbrev
+        )
+        return (pair.away.isEmpty ? "Away" : pair.away,
+                pair.home.isEmpty ? "Home" : pair.home)
     }
+
+    private var homeShort: String { badges.home }
+
+    private var awayShort: String { badges.away }
 
     var body: some View {
         if let breakdown = SegmentBreakdown(

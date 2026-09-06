@@ -369,13 +369,24 @@ struct OddsChartView: View {
         isGameStarted && gameStartDate != nil
     }
 
-    /// Short team name: prefer ESPN abbreviation (e.g. "BOS"), fall back to last word
-    private var homeShort: String {
-        homeTeamAbbrev ?? homeTeamName.map(TeamShortName.short) ?? "Home"
+    /// Short team name: prefer ESPN abbreviation (e.g. "BOS"), fall back to the
+    /// shared rule.
+    ///
+    /// #3430 — these two are the chart's two y-axis labels, one at each end of
+    /// the same axis, and they are the only thing saying which way is which. On
+    /// Clemson–LSU both read `TIGERS`, so a 100%-green curve told the reader
+    /// nothing at all. The pair rule widens both until they separate.
+    private var axisLabels: (away: String, home: String) {
+        guard let away = awayTeamName, let home = homeTeamName else {
+            return (awayTeamAbbrev ?? "Away", homeTeamAbbrev ?? "Home")
+        }
+        return TeamShortName.shortPair(
+            away: away, home: home,
+            awayServed: awayTeamAbbrev, homeServed: homeTeamAbbrev
+        )
     }
-    private var awayShort: String {
-        awayTeamAbbrev ?? awayTeamName.map(TeamShortName.short) ?? "Away"
-    }
+    private var homeShort: String { axisLabels.home }
+    private var awayShort: String { axisLabels.away }
 
     init(eventId: Int, teamColors: (away: Color, home: Color)? = nil,
          commenceTime: String? = nil, status: String? = nil,

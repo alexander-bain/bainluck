@@ -1953,7 +1953,10 @@ private enum NativeGuessCardContent {
         case .futures:
             return "Is the current probability higher or lower than"
         case .event(let event):
-            return "Is \(Self.shortName(event.homeTeam)) to win higher or lower than"
+            // #3430 — the card shows both chips under this sentence, so the
+            // team it asks about must be named in a way the OTHER chip cannot
+            // also be called.
+            return "Is \(Self.pair(event).home) to win higher or lower than"
         }
     }
 
@@ -2026,6 +2029,11 @@ private enum NativeGuessCardContent {
 
     static func shortName(_ name: String) -> String {
         TeamShortName.short(name)
+    }
+
+    /// #3430 — labels for both competitors of one matchup.
+    static func pair(_ event: FeedEventData) -> (away: String, home: String) {
+        TeamShortName.shortPair(away: event.awayTeam, home: event.homeTeam)
     }
 }
 
@@ -2213,9 +2221,11 @@ struct NativeGuessCard: View {
     private func matchupPanel(event: FeedEventData) -> some View {
         let homeColor = Color(hex: event.homeTeamData?.primaryColor ?? "#2563eb")
         let awayColor = Color(hex: event.awayTeamData?.primaryColor ?? "#64748b")
+        // #3430 — two chips, one matchup: resolve the labels together.
+        let sides = NativeGuessCardContent.pair(event)
 
         return HStack(spacing: 10) {
-            teamBadge(name: event.awayTeam, avatar: event.avatar(home: false), color: awayColor)
+            teamBadge(label: sides.away, avatar: event.avatar(home: false), color: awayColor)
 
             VStack(spacing: 4) {
                 Text(event.status == "live" ? (event.espn?.period ?? "LIVE") : (event.status == "completed" || event.status == "closed" ? "FINAL" : "VS"))
@@ -2229,11 +2239,11 @@ struct NativeGuessCard: View {
             }
             .frame(width: 42)
 
-            teamBadge(name: event.homeTeam, avatar: event.avatar(home: true), color: homeColor)
+            teamBadge(label: sides.home, avatar: event.avatar(home: true), color: homeColor)
         }
     }
 
-    private func teamBadge(name: String, avatar: ParticipantAvatar, color: Color) -> some View {
+    private func teamBadge(label: String, avatar: ParticipantAvatar, color: Color) -> some View {
         VStack(spacing: 6) {
             if let logo = avatar.url, let url = URL(string: logo) {
                 AsyncImage(url: url) { img in
@@ -2252,7 +2262,7 @@ struct NativeGuessCard: View {
                     .fill(color)
                     .frame(width: 36, height: 36)
             }
-            Text(NativeGuessCardContent.shortName(name))
+            Text(label)
                 .font(.caption.weight(.semibold))
                 .lineLimit(1)
         }

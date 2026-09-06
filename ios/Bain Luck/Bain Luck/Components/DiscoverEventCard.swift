@@ -179,7 +179,7 @@ struct NativeEventDiscoverCard: View {
                     // Matchup row
                     HStack(alignment: .center, spacing: 0) {
                         heroTeam(
-                            name: event.awayTeam,
+                            label: cardSides.away, badge: cardBadges.away,
                             avatar: event.avatar(home: false),
                             color: awayColor,
                             score: event.awayScore,
@@ -194,7 +194,7 @@ struct NativeEventDiscoverCard: View {
                         .frame(width: 50)
 
                         heroTeam(
-                            name: event.homeTeam,
+                            label: cardSides.home, badge: cardBadges.home,
                             avatar: event.avatar(home: true),
                             color: homeColor,
                             score: event.homeScore,
@@ -336,8 +336,20 @@ struct NativeEventDiscoverCard: View {
         }
     }
 
+    /// #3430 — the card draws BOTH competitors side by side, so their labels
+    /// are resolved together and handed in. Deriving each from its own name
+    /// inside this function is what let the two sides print the same word.
+    private var cardSides: (away: String, home: String) {
+        TeamShortName.shortPair(away: event.awayTeam, home: event.homeTeam)
+    }
+
+    private var cardBadges: (away: String, home: String) {
+        TeamShortName.abbreviationPair(away: event.awayTeam, home: event.homeTeam)
+    }
+
     private func heroTeam(
-        name: String,
+        label: String,
+        badge: String,
         avatar: ParticipantAvatar,
         color: Color,
         score: Int?,
@@ -364,13 +376,13 @@ struct NativeEventDiscoverCard: View {
                     .frame(width: 52, height: 52)
                     .shadow(color: .black.opacity(0.3), radius: 6, x: 0, y: 2)
                     .overlay(
-                        Text(TeamShortName.abbreviation(name))
+                        Text(badge)
                             .font(.caption.weight(.heavy))
                             .foregroundStyle(.white)
                     )
             }
 
-            Text(TeamShortName.short(name))
+            Text(label)
                 .font(.caption.weight(.bold))
                 .foregroundStyle(.white.opacity(0.92))
                 .lineLimit(1)
