@@ -66,6 +66,51 @@ LEAGUE_PRIMARY_TTL = 300
 #: the missing revalidation — the actual defect — in place.
 LEAGUE_STALE_TTL = 86400
 
+#: How old a mirror carrying GAME ROWS may be and still be served (#3389).
+#:
+#: #1767 restored revalidation but left it entirely reader-driven, and the 24h
+#: mirror is unbounded in the one dimension that matters for a game: a snapshot
+#: describes a moving object. Measured on production `0247b0ed`, Sat 2026-09-05
+#: 02:26Z, with eight MLS matches in play: the league payload had last been built
+#: at ~00:36Z — 1h50m earlier — because nobody had opened the page since. It
+#: served Charlotte–Houston as `live`, 0–0, ESPN clock `66'`; `GET
+#: /api/events/15291063` said `completed` at 01:40Z, 0–0, FT. Same row, same
+#: producer, two hours apart. It also carried Inter Miami's kickoff as 23:30Z
+#: against the event row's 01:05Z, because the mirror predated the re-key.
+#:
+#: So a mirror with games on it gets an age bound and the reader waits for a real
+#: build past it. A page with NO game rows — a futures-only league, an off-season
+#: board — keeps the full 24h outage mirror, which is what that mirror is for.
+#: The bound sits above `LEAGUE_PRIMARY_TTL` plus the measured revalidation
+#: delivery latency (167s that night: the rebuild queues on `background` behind
+#: the typeahead warmers), so a page under continuous traffic never trips it —
+#: only a genuine quiet gap does, and then exactly one reader pays the build.
+LEAGUE_GAMES_MIRROR_MAX_AGE = 600
+
+#: Revalidate a games payload while its primary slot is STILL VALID (#3389).
+#:
+#: The rebuild is only *started* once the primary has expired, and delivery
+#: measured 167s against a 300s TTL — so a continuously-read league page spends
+#: roughly a third of its life serving the mirror. Timeline from the same night,
+#: `soccer_usa_mls`, one read every ten seconds: `fresh` 02:35:52 → 02:40:49
+#: (300s exactly), `stale` 02:41:00 → 02:43:39, `fresh` again 02:43:47.
+#:
+#: 120 leaves 180s of headroom against that measured 167s, which is the whole
+#: constraint: a replacement dispatched with less headroom than the delivery takes
+#: arrives after the slot it replaces has already expired, and the early dispatch
+#: buys nothing at all. `test_the_headroom_covers_the_measured_delivery_latency`
+#: pins it — an earlier draft of this said "half the TTL" and shipped 150, which
+#: is 17s short of the number in the sentence justifying it.
+#:
+#: What it costs, stated plainly: the cycle is `LEAGUE_EARLY_REVALIDATE_AFTER +
+#: delivery`, so a league whose rebuild is delivered promptly rebuilds every ~130s
+#: rather than every ~300s — roughly 2.3x the builds, at ~4s of database each, and
+#: only for leagues that BOTH carry games and are being read right now. A congested
+#: queue converges back on the old rate (120 + 167 = 287s). That is the right side
+#: to be wrong on for a page showing a match in progress, and the ceiling on how
+#: far behind that page can be drops with it.
+LEAGUE_EARLY_REVALIDATE_AFTER = 120
+
 router = APIRouter()
 
 # Sport key → league name patterns for filtering (case-insensitive SQL ILIKE).
@@ -777,6 +822,59 @@ def is_empty_league(payload: dict) -> bool:
     )
 
 
+def has_games(payload: dict) -> bool:
+    """Does this payload describe any GAMES?
+
+    The age policy applies to games and only to games (#3389). A futures board is
+    a standing answer and a 24-hour-old copy of it is very nearly right; a match
+    has a clock, a score and a status that move under the snapshot. Derived from
+    `GAMES_RAIL_KEYS` for the reason that tuple exists — the fourth rail must not
+    have to teach a third call site about itself.
+    """
+    return any(payload.get(rail) for rail in GAMES_RAIL_KEYS)
+
+
+def payload_age_seconds(payload: dict, now: datetime) -> float | None:
+    """How long ago this payload was BUILT, or None if it cannot say.
+
+    None is returned for a payload with no `built_at` and for one whose stamp
+    does not parse. Both callers treat None as *too old* rather than as young
+    (#3389): every mirror written before this stamp shipped is unstamped, and
+    reading "no stamp" as "fresh" would pin those payloads in place for their
+    full 24 hours — the exact failure being fixed, preserved by its own fix. Fail
+    closed and the first reader after the deploy rebuilds.
+
+    A stamp from the FUTURE (clock skew between web dynos) reads as age 0, not as
+    a negative age: it is a reason to distrust the clock, never a licence to serve
+    a payload for longer than the bound.
+    """
+    stamp = payload.get("built_at")
+    if not isinstance(stamp, str):
+        return None
+    try:
+        built = datetime.fromisoformat(stamp)
+    except ValueError:
+        return None
+    if built.tzinfo is None:
+        built = built.replace(tzinfo=timezone.utc)
+    return max(0.0, (now - built).total_seconds())
+
+
+def mirror_is_too_old(payload: dict, now: datetime) -> bool:
+    """May this mirror still be served, or must the reader wait for a build?
+
+    Keyed on the payload having GAMES, never on it having LIVE games. A mirror
+    built before tonight's kickoffs has no live rows in it at all and is exactly
+    the copy that prints "scheduled" over a match already in its second half —
+    the symptom this queue was opened on. Its own contents cannot be the test of
+    whether it is out of date.
+    """
+    if not has_games(payload):
+        return False
+    age = payload_age_seconds(payload, now)
+    return age is None or age > LEAGUE_GAMES_MIRROR_MAX_AGE
+
+
 async def build_and_cache_league(sport_key: str, db: AsyncSession, rc=None) -> dict:
     """Build one league, write both slots, return the payload.
 
@@ -824,13 +922,23 @@ async def get_league_futures(
     """Get all open futures markets for a league, grouped by section."""
     rc = _redis_or_none()
     keys = league_cache_keys(sport_key)
+    now = datetime.now(timezone.utc)
 
     cached = _read_league_slot(rc, keys.primary)
     if cached is not None:
+        # #3389: revalidate BEFORE the slot expires, not after. #1767 put the
+        # rebuild behind the expiry, and the rebuild is delivered over the
+        # `background` queue — 167s, measured, against a 300s TTL — so every
+        # cycle ended in a stale window a third as long as the fresh one. The
+        # dispatch is single-flight and idempotent, so an early one costs the
+        # same single rebuild it always did, just soon enough to land in time.
+        age = payload_age_seconds(cached, now)
+        if has_games(cached) and (age is None or age >= LEAGUE_EARLY_REVALIDATE_AFTER):
+            _schedule_league_refresh(rc, keys, sport_key)
         return cached
 
     stale = _read_league_slot(rc, keys.stale)
-    if stale is not None:
+    if stale is not None and not mirror_is_too_old(stale, now):
         # UX-P062 (#1743), register E6: this served a 24h-old snapshot with no
         # declaration at all, so a substituted answer was indistinguishable from
         # a current one — ruling 025 clause 4, the named violation. The payload
@@ -839,11 +947,34 @@ async def get_league_futures(
         # #1767: and the declaration is what made the REAL defect visible — the
         # mirror was being served almost always, because nothing ever rebuilt it.
         # Serve it (a fast answer beats a correct wait) and revalidate behind it.
+        #
+        # #3389: "a fast answer beats a correct wait" is true of a futures board
+        # and false of a match in progress, and `mirror_is_too_old` is where the
+        # two part company. Declaring the age as well as the substitution is the
+        # rest of ruling 025 clause 4 — "stale" alone does not distinguish the
+        # forty-second-old copy from the two-hour-old one, and on the night this
+        # was found only the second was a lie.
         _schedule_league_refresh(rc, keys, sport_key)
         stale["availability"] = AVAILABILITY_STALE
+        stale["stale_age_seconds"] = payload_age_seconds(stale, now)
         return stale
 
-    return await build_and_cache_league(sport_key, db, rc)
+    built = await build_and_cache_league(sport_key, db, rc)
+
+    # #3389. The age bound must cost the mirror's ORIGINAL job, which is outages.
+    # A build that could not read the database returns the `degraded` envelope —
+    # no games, no sections, `tier: None` — and preferring that to a ten-minute-old
+    # page would be a worse answer than the one the bound was added to prevent.
+    # The bound decides which of two REAL answers is better; it does not license
+    # replacing an answer with an admission of failure. The mirror is still
+    # declared stale, and now declares its age too, so nothing here is passed off
+    # as current.
+    if built.get("availability") == AVAILABILITY_DEGRADED and stale is not None:
+        stale["availability"] = AVAILABILITY_STALE
+        stale["stale_age_seconds"] = payload_age_seconds(stale, now)
+        return stale
+
+    return built
 
 
 async def build_league(sport_key: str, db: AsyncSession) -> dict:
@@ -1310,6 +1441,13 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
         "tier": tiering["tier"],
         "pool_counts": pool_counts,
         "section_counts": section_counts,
+        # #3389. `now` is the build's own logical clock — the instant every rail
+        # above was read as of — so this dates the CONTENT, not the moment the
+        # dict was assembled or the moment it was served. A banked payload that
+        # stamps serve time answers a different question than the one the reader
+        # is asking (memory: banked_pass_endpoint_stamps_serve_time), and the
+        # question here is "how far behind the game is this copy".
+        "built_at": now.isoformat(),
     }
 
     # Ruling 025's vocabulary, never live/stale_ok/unavailable (register E10).
