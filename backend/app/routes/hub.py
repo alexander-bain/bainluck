@@ -482,9 +482,27 @@ async def build_hub(cfg: HubConfig, db: AsyncSession) -> dict:
     # Linked rows lead: they are the matches actually being played, ordered
     # live-first then soonest-first, and the unlinked remainder keeps its own
     # order behind them.
+    #
+    # ── #3640: the rail elects its card KNOWING what the prop split will take ──
+    #
+    # `build_linked_matches` returns exactly one card per event, and the split
+    # below moves every prop out of `matches`. Composed without this argument the
+    # two disagree: the rail elected a Kalshi "<A> vs <B>: Exact Match Score" for
+    # nine US Open singles on 2026-09-06 — it has six outcomes where the
+    # head-to-head has two — and the split then took the event's ONLY row away,
+    # so Alcaraz–Paul was absent from `/hub/tennis` while it was on court.
+    # Passing the SAME predicate both steps use is what makes them one decision.
+    classifier = (
+        _PROP_CLASSIFIERS.get(cfg.prop_classifier_domain)
+        if cfg.prop_classifier_domain
+        else None
+    )
     try:
         linked_matches = await build_linked_matches(
-            cfg.sport_key, db, also_sport_keys=cfg.extra_match_sport_keys
+            cfg.sport_key,
+            db,
+            also_sport_keys=cfg.extra_match_sport_keys,
+            is_prop=classifier,
         )
     except Exception:
         logger.exception("hub linked matches failed for %s", cfg.slug)
@@ -501,11 +519,8 @@ async def build_hub(cfg: HubConfig, db: AsyncSession) -> dict:
 
     # Recover a real props section: league_futures lumps combat-sport game_props
     # into "matches" alongside fights. Pull the classifier-tagged ones out.
-    classifier = (
-        _PROP_CLASSIFIERS.get(cfg.prop_classifier_domain)
-        if cfg.prop_classifier_domain
-        else None
-    )
+    # (`classifier` is resolved above, because the linked-matches rail needs it
+    # too — see #3640.)
     if classifier is not None and sections.get("matches"):
         fights: list = []
         moved_props: list = []
