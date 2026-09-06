@@ -113,9 +113,12 @@ from app.utils.authority_agreement import (
 )
 from app.utils.authority_tennis_names import (
     AMBIGUOUS,
+    ORDER_ALIASES,
     REVIEWED_ALIASES,
+    SLOT_PROVEN_ALIASES,
     is_doubles_name,
     looks_like_a_player,
+    measured_order_aliases,
     resolve_tennis_name,
     tennis_names_agree,
 )
@@ -182,6 +185,64 @@ UNSOLVED_COMPONENT_ROWS = "unsolved_component_candidate_rows"
 #: to say `ratified_by_alex: false` until he reads them (#3287).
 ORDER_ALIAS_ALLOWANCE = "order_aliases_reviewed"
 
+#: `Join.allowances` key for the classes the AUTHORITY RECORD proves —
+#: `authority_tennis_names.SLOT_PROVEN_ALIASES`, derived by running the pure
+#: prover over the pinned capture (D69).
+#:
+#: This key exists because of #3432, and the shape of that bug is worth keeping
+#: in front of whoever edits this next. `ORDER_ALIASES` grew from 9 classes to
+#: 164 and the disclosure did not move: the row went on publishing the 2 that
+#: rest on review and said nothing about the 162 that do not, so production
+#: reported `count: 2` for a pass that had applied 164. An operator comparing
+#: the tolerance he believes is in force against the number on the row would
+#: have been reassured by it — the worst way for a disclosure to be wrong.
+#:
+#: The rule this key encodes, and the one to apply to the NEXT provenance: a row
+#: discloses every tolerance it APPLIED. What the provenance decides is not
+#: whether to disclose but how much has to be READ — see
+#: `Join.uncapped_allowances`.
+PROVEN_ALIAS_ALLOWANCE = "order_aliases_proven"
+
+#: `Join.allowances` key for the classes a sweep of our own corpus found spelled
+#: BOTH ways (`authority_tennis_names._ORDER_ALIASES_MEASURED`).
+#:
+#: Seven classes, and the eighth the sweep found — `('garcia', 'perez')` — is
+#: deliberately absent from the set and therefore from this receipt, because a
+#: Spanish compound surname reordered names a different family. A reader who
+#: wants that argument gets it from the module header; what the row owes him is
+#: the count and the basis.
+#:
+#: Its receipts carry no per-class evidence for the same reason `ProvenSlot`
+#: carries a great deal: a measured class IS its evidence, re-derivable from the
+#: field by `_orders_by_multiset` at any time. Writing the two spellings out
+#: here would be a second literal to keep in step with the sweep, and the day
+#: they drift the set is what the matcher obeys while the receipt is what an
+#: operator audits.
+MEASURED_ALIAS_ALLOWANCE = "order_aliases_measured"
+
+#: Every allowance key this strategy can publish, in the order a reader should
+#: meet them: what rests on nothing but judgement first.
+#:
+#: Declared as a tuple so the guard for #3432 has something to partition
+#: `ORDER_ALIASES` against. A fourth provenance added to that set and not to a
+#: key here fails `test_every_order_alias_class_is_disclosed`, which is the
+#: whole mechanism: the next person to widen the tolerance cannot leave the row
+#: describing the old one.
+TENNIS_ALLOWANCE_NAMES = (
+    ORDER_ALIAS_ALLOWANCE,
+    PROVEN_ALIAS_ALLOWANCE,
+    MEASURED_ALIAS_ALLOWANCE,
+)
+
+#: The one allowance whose receipts are published IN FULL, never sampled.
+#:
+#: `order_aliases_reviewed` and no other. Its receipts are the only thing
+#: standing behind that tolerance — there is nothing to re-run — so an operator
+#: who reads a sample of them has audited nothing (#3287). The other two are
+#: backed by a re-runnable measurement, so the row owes their count and enough
+#: examples to recognise the kind; the full list is derivable.
+TENNIS_UNCAPPED_ALLOWANCES = frozenset({ORDER_ALIAS_ALLOWANCE})
+
 TENNIS_REFUSAL_NAMES = (
     AMBIGUOUS_REFUSAL,
     AMBIGUOUS_CANDIDATE_ROWS,
@@ -234,6 +295,35 @@ def split_by_draw(sides: Sequence[Side]) -> tuple[list[Side], list[Side]]:
     doubles = [s for s in sides if is_doubles_side(s)]
     singles = [s for s in sides if not is_doubles_side(s)]
     return singles, doubles
+
+
+def singles_order_allowances() -> dict[str, list[dict[str, Any]]]:
+    """Every order tolerance the singles join applies, partitioned by provenance.
+
+    The row's answer to "what let two differently-written names meet in this
+    pass?", and it has to be the WHOLE answer: this function reads the same
+    three sets that compose `authority_tennis_names.ORDER_ALIASES`, which is
+    what `resolve_tennis_name` actually obeys, so the disclosure cannot drift
+    from the tolerance the way it did in #3432.
+
+    That it reads the same three sets is not an assertion made here — it is
+    `test_every_order_alias_class_is_disclosed`, which partitions the live
+    `ORDER_ALIASES` against what this returns and fails on any class in one and
+    not the other. A fourth provenance is therefore a test failure before it is
+    a silent under-disclosure.
+
+    Singles only, and the caller enforces that. CERT-1948: the doubles join keys
+    on an unordered pair of surnames, so no re-ordering tolerance can move a
+    doubles number, and publishing one there claimed a reliance that row never
+    had.
+    """
+    return {
+        # Judgement first: the reader who has time for one entry should spend it
+        # on the tolerance that rests on nobody's measurement.
+        ORDER_ALIAS_ALLOWANCE: [a.receipt() for a in REVIEWED_ALIASES],
+        PROVEN_ALIAS_ALLOWANCE: [a.receipt() for a in SLOT_PROVEN_ALIASES],
+        MEASURED_ALIAS_ALLOWANCE: list(measured_order_aliases()),
+    }
 
 
 def _readable(side: Side) -> bool:
@@ -744,11 +834,8 @@ def pair_tennis_sides(
         unusable_rows=[r for r in rows if not _readable(r)],
         refusals=refusals,
         refusal_names=TENNIS_REFUSAL_NAMES,
-        allowances=(
-            {ORDER_ALIAS_ALLOWANCE: [a.receipt() for a in REVIEWED_ALIASES]}
-            if draw == SINGLES
-            else {}
-        ),
+        allowances=singles_order_allowances() if draw == SINGLES else {},
+        uncapped_allowances=TENNIS_UNCAPPED_ALLOWANCES,
         denominator_is=TENNIS_DENOMINATOR_IS,
     )
 

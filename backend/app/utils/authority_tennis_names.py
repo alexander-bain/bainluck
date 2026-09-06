@@ -253,6 +253,46 @@ _ORDER_ALIASES_MEASURED: frozenset[tuple[str, ...]] = frozenset(
     }
 )
 
+
+#: The `kind` a measured class publishes, beside :data:`PROOF_SLOT` further down.
+#: Two constants rather than an enum because they are read off a JSON row by a
+#: bus window and by a person, and the string IS the interface.
+PROOF_MEASURED = "measured"
+
+#: How a measured class is re-derived, published on its receipt so the claim
+#: "this rests on a measurement" names the measurement instead of asserting it.
+#:
+#: One short line, repeated on every receipt rather than stated once above them,
+#: because the shared row publishes an allowance as `{count, receipts}` and has
+#: nowhere else to put it — and a sentence a reader has to scroll away from to
+#: interpret the entry in front of him is not disclosure. It is kept SHORT for
+#: the same reason: seven copies of a paragraph is 3kB of one row saying one
+#: thing. The paragraph it compresses is the argument above `_ORDER_ALIASES_MEASURED`
+#: and the `ReviewedAlias` docstring — a measured class carries no attestation
+#: and names no reviewer because there is no judgement in it to attribute.
+MEASURED_BASIS = (
+    "corpus sweep: our own register holds this class written in more than one "
+    "order; `_orders_by_multiset` over the tennis name column re-derives it"
+)
+
+
+def measured_order_aliases() -> tuple[dict[str, object], ...]:
+    """Receipts for the classes the corpus sweep found, for the agreement row.
+
+    Sorted so the row is stable between passes: an allowance list that reordered
+    itself every time a set iterated differently would show as a diff on a row
+    whose tolerance had not moved, and the operator this disclosure exists for
+    would learn to ignore it.
+
+    Derived from :data:`_ORDER_ALIASES_MEASURED` rather than written out, for the
+    reason the sweep's own docstring gives about second literals (#3432).
+    """
+    return tuple(
+        {"tokens": list(tokens), "kind": PROOF_MEASURED, "basis": MEASURED_BASIS}
+        for tokens in sorted(_ORDER_ALIASES_MEASURED)
+    )
+
+
 @dataclass(frozen=True)
 class ReviewedAlias:
     """One order allowance that rests on review rather than on measurement.
@@ -899,7 +939,19 @@ def _captured_slots() -> tuple[ProvenSlot, ...]:
         except ValueError:
             # A capture is a measurement, and a measurement can hold a row that
             # does not survive the definition. Dropping it is right; dropping it
-            # SILENTLY is not, so the count is published on the agreement row.
+            # SILENTLY is not — and the non-silence is a BUILD-TIME guard, not a
+            # published number. `test_every_captured_side_survives_the_definition
+            # _of_a_slot` asserts `len(CAPTURED_SLOTS) == len(PROVEN_SIDES)`, so a
+            # refused record fails the suite rather than shrinking a set nobody
+            # counted.
+            #
+            # This comment said "the count is published on the agreement row"
+            # until #3432, and no such publication existed. A daily row is the
+            # wrong home for it anyway: the drop happens once, at import, over a
+            # capture pinned in the tree — republishing a constant `0` on every
+            # pass would be a number that cannot move pretending to be one that
+            # can. The guard is the stronger statement: it does not report the
+            # drop, it refuses it.
             continue
     return tuple(built)
 
