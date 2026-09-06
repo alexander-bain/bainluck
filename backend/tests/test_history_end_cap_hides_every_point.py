@@ -307,6 +307,59 @@ async def test_a_trustworthy_completed_at_still_bounds_the_window():
     assert session.win_prob_upper_bounds == [completed + timedelta(minutes=30)]
 
 
+async def test_a_trustworthy_completion_with_TAIL_ONLY_points_stays_empty():
+    """CERT-2002's BLOCK. The repair, and the reason the relaxation is scoped.
+
+    `completed_at` is authoritative here — a statement that the match ended at
+    15:00Z — and every stored point falls after the 15:30Z cap. Those points are
+    post-settlement drift, so the empty chart is the CORRECT answer and the cap
+    must hold. Relaxing on "the cap hides every point" ALONE served all of them
+    and widened the axis by two days, manufacturing a journey out of a stale tail
+    — the exact thing the cap exists to prevent.
+
+    The distinguishing fact is the cap's PROVENANCE, not its arithmetic: only a
+    commence-derived cap can be a midnight placeholder artefact (gotcha #14).
+    """
+    commence = COMMENCE + timedelta(hours=13)
+    completed = commence + timedelta(hours=2)  # authoritative: after commence
+    cap = completed + timedelta(minutes=30)
+    event = _specimen_event(commence_time=commence, completed_at=completed)
+    tail_only = _curve(cap + timedelta(hours=1), cap + timedelta(days=2), count=10)
+
+    payload, session = await _history(event, tail_only)
+    served = payload["win_prob_history"].get("kalshi", [])
+
+    assert served == [], (
+        "post-settlement drift was served as the match journey on an event whose "
+        "completion time is trustworthy"
+    )
+    assert session.win_prob_upper_bounds == [cap], (
+        "an authoritative completed_at cap was relaxed; only the commence "
+        "fallback may be widened"
+    )
+    domain_end = datetime.fromisoformat(payload["time_domain"]["end"])
+    assert domain_end <= cap, "the axis was widened onto post-settlement drift"
+
+
+async def test_an_INVERTED_completed_at_still_relaxes_like_the_specimen():
+    """The other half of the provenance split, so the scope is not over-tight.
+
+    An inverted `completed_at` (< commence) is corrupt (gotcha #32 family), so
+    `_finished_event_end_cap` already ignores it and falls back to the commence
+    cap. That fallback is the untrustworthy one, so this row must still be
+    rescued — gating on `completed_at is not None` instead of on its
+    authoritativeness would strand it.
+    """
+    event = _specimen_event(completed_at=COMMENCE - timedelta(hours=41))
+    rows = _curve(FIRST_POINT, LAST_POINT)
+
+    payload, session = await _history(event, rows)
+    served = payload["win_prob_history"].get("kalshi", [])
+
+    assert len(served) == len(rows)
+    assert session.win_prob_upper_bounds == [None]
+
+
 async def test_the_axis_contains_the_curve_it_is_the_axis_for():
     """A relaxed cap was also the axis end; leaving it there hides the new line.
 

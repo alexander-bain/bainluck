@@ -11370,6 +11370,21 @@ async def get_team_progression(
     return _response
 
 
+def _completed_at_is_authoritative(completed_at, commence_time) -> bool:
+    """Whether ``completed_at`` may be trusted to say when this event ended.
+
+    An inverted completed_at (< commence) is corrupt — a different, earlier
+    game's data merged onto this event (gotcha #32 family) — so it speaks for
+    nothing. Lifted out of `_finished_event_end_cap` (CERT-2002) so the cap and
+    the question "where did this cap come from?" cannot drift apart: a second,
+    replicated copy of this predicate is exactly how the relaxation below would
+    quietly start applying to a cap it must never touch.
+    """
+    return completed_at is not None and (
+        commence_time is None or completed_at > commence_time
+    )
+
+
 def _finished_event_end_cap(completed_at, commence_time, commence_cap):
     """End cap for a finished event's history window.
 
@@ -11380,9 +11395,7 @@ def _finished_event_end_cap(completed_at, commence_time, commence_cap):
     completed_at is missing) fall back to the commence-based cap so the real
     journey renders (gotcha #22).
     """
-    if completed_at is not None and (
-        commence_time is None or completed_at > commence_time
-    ):
+    if _completed_at_is_authoritative(completed_at, commence_time):
         return completed_at + timedelta(minutes=30)
     return commence_cap
 
@@ -11662,8 +11675,22 @@ async def get_event_odds_history(
         # odds query is already empty, and only ever answered yes when EVERY
         # point the event has lies beyond the cap — so this cannot narrow a
         # window or change an event that draws a line today.
+        #
+        # Scoped to the commence-FALLBACK cap (CERT-2002). An authoritative
+        # `completed_at` is a statement that the event ended, so points lying
+        # entirely after it are post-settlement drift and the empty chart is the
+        # CORRECT answer — relaxing there would manufacture a journey out of a
+        # stale tail, which is the very thing the cap exists to prevent. Only the
+        # commence-derived cap can be a placeholder artefact (gotcha #14), and
+        # only it may be widened.
         snapshots_override = result.scalars().all()
-        if end_cap is not None and not snapshots_override:
+        if (
+            end_cap is not None
+            and not snapshots_override
+            and not _completed_at_is_authoritative(
+                event.completed_at, event.commence_time
+            )
+        ):
             if await _end_cap_hides_every_point(db, event_id, end_cap):
                 end_cap = None
                 end_cap_relaxed = True
