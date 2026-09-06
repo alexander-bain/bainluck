@@ -393,6 +393,14 @@ export interface MergedOutcome {
    * `decidedSetResult`.
    */
   result?: string;
+  /**
+   * The score this row names can no longer be reached — a `Medvedev 3-0` on a
+   * match Medvedev is two sets down in. It carries a `result` like every other
+   * answered row, and this flag on top, because the two states read differently:
+   * `Tiafoe won Set 2` is news, `Medvedev 3-0 — no longer possible` is a row
+   * being struck off, and a struck row must not be the loudest thing on a card.
+   */
+  unreachable?: boolean;
 }
 
 export interface OutcomeMergeResult {
@@ -574,6 +582,111 @@ export function decidedSetsWinnerFor(
   return { side: home > 0 ? "home" : "away", homeTeam, awayTeam };
 }
 
+/** Sets each side has already banked, plus the names to pair a market side to. */
+export interface TennisSetsWon {
+  home: number;
+  away: number;
+  homeTeam: string;
+  awayTeam: string;
+}
+
+/**
+ * The per-side set tally, when the payload can state one.
+ *
+ * `decidedSetsWinnerFor` answers "who took the sets that are over", which needs
+ * `min === 0` and so goes quiet at 1–1. This answers the strictly weaker
+ * question "how many has each banked", which the two numbers always say — and
+ * 1–1 is exactly the state where it earns its keep, because a match at one set
+ * all has already ruled out BOTH 3–0 finishes.
+ *
+ * Null below one completed set: nothing is unreachable at 0–0, so a caller that
+ * gets null has nothing to do.
+ */
+export function tennisSetsWonFor(
+  sport: string | null | undefined,
+  scores:
+    | {
+        home_score?: number | null;
+        away_score?: number | null;
+        home_team?: string | null;
+        away_team?: string | null;
+      }
+    | null
+    | undefined,
+): TennisSetsWon | null {
+  if (completedSetsForTennis(sport, scores) < 1) return null;
+  const homeTeam = (scores?.home_team ?? "").trim();
+  const awayTeam = (scores?.away_team ?? "").trim();
+  if (!homeTeam || !awayTeam) return null;
+  return {
+    home: Math.floor(scores?.home_score as number),
+    away: Math.floor(scores?.away_score as number),
+    homeTeam,
+    awayTeam,
+  };
+}
+
+/**
+ * `Frances Tiafoe wins 3-0` / `Frances Tiafoe 3-0` → the side named and the two
+ * final set counts, or null for every label that is not a match score.
+ *
+ * Both dialects are live in ONE payload — measured on `15304939` at 22:05Z
+ * 2026-09-06, Kalshi wrote `Frances Tiafoe wins 3-0` and Polymarket wrote
+ * `Daniil Medvedev 3-0` for the same six results — so the `wins` is optional.
+ *
+ * The numeric guards are what keep this off every other ladder: a winner's
+ * tally is 2 or 3 in tennis and nothing else, it must exceed the loser's, and
+ * the two together cannot exceed a five-set match. `Set 1 Score 6-4` fails on
+ * the first, `Match O/U 21.5` never reaches the regex, and every non-tennis
+ * sport is already excluded upstream by `tennisSetsWonFor`.
+ */
+export function parseMatchScoreOutcome(
+  label: string | null | undefined,
+): { side: string; won: number; lost: number } | null {
+  const match = /^(.+?)\s+(?:wins\s+)?(\d)\s*[-–—]\s*(\d)$/i.exec((label ?? "").trim());
+  if (!match) return null;
+  const side = match[1].trim();
+  const won = Number(match[2]);
+  const lost = Number(match[3]);
+  if (!side) return null;
+  if (won !== 2 && won !== 3) return null;
+  if (lost >= won || lost < 0) return null;
+  if (won + lost > MAX_SETS_IN_A_MATCH) return null;
+  return { side, won, lost };
+}
+
+/**
+ * Can this match score still happen, given the sets already on the board?
+ *
+ * `false` ONLY when the label parses, its side pairs one-to-one with exactly
+ * one of the two competitors, and the finish it names gives a player FEWER sets
+ * than that player has already won. Everything else is `true`, because the cost
+ * of the two errors is not symmetric: leaving a dead row priced is today's bug,
+ * but striking a live one off is worse — it tells a reader a result cannot
+ * happen while they are watching it happen.
+ *
+ * So it fails open at every door `decidedSetResult` fails closed at, and for
+ * the same reasons: an unparseable label, a side that matches both competitors
+ * or neither, or a name collision all leave the row exactly as it is today.
+ */
+export function matchScoreStillReachable(
+  label: string | null | undefined,
+  sets: TennisSetsWon | null | undefined,
+): boolean {
+  if (!sets) return true;
+  const parsed = parseMatchScoreOutcome(label);
+  if (!parsed) return true;
+
+  const isHome = sideMatchesTeam(parsed.side, sets.homeTeam);
+  const isAway = sideMatchesTeam(parsed.side, sets.awayTeam);
+  // Exactly one, or this view cannot say whose finish this is.
+  if (isHome === isAway) return true;
+
+  const finalHome = isHome ? parsed.won : parsed.lost;
+  const finalAway = isHome ? parsed.lost : parsed.won;
+  return finalHome >= sets.home && finalAway >= sets.away;
+}
+
 /** Comparable name tokens — accent-folded, case-folded, punctuation dropped. */
 function nameTokens(value: string): string[] {
   return value
@@ -653,6 +766,12 @@ export interface MarketSectionOptions {
    * but tennis it always is — a decided row keeps stating a last quote.
    */
   decidedSetsWinner?: DecidedSetsWinner | null;
+  /**
+   * The per-side set tally, which strikes exact-match-score rows the board has
+   * already ruled out. Absent and no row is ever struck; see
+   * `matchScoreStillReachable`, which fails open at every door.
+   */
+  setsWon?: TennisSetsWon | null;
 }
 
 /**
@@ -772,6 +891,22 @@ export function buildMarketSection(
       const merged = mergeOutcomes(draft.cards.get(name) as LabeledRow[]);
       const outcomes = [...merged.outcomes]
         .map((o) => {
+          // A score the board has already ruled out is not a long shot, it is
+          // not a result: it is a row that must stop carrying a price. Measured
+          // on `15304939` at 22:05Z 2026-09-06, with Tiafoe two sets up, the
+          // Polymarket ladder still made `Daniil Medvedev 3-0` its LEADING
+          // outcome at 39% — bold, bar filled, directly beneath a card on the
+          // same page reading `Tiafoe won Set 2`. Struck here rather than
+          // dropped, because a reader who came looking for that score is owed
+          // the answer, and a silently missing row is not one.
+          if (!matchScoreStillReachable(o.label, options.setsWon)) {
+            return {
+              ...o,
+              decided: true,
+              unreachable: true,
+              result: `${o.label} — no longer possible`,
+            };
+          }
           // "Settled means settled" applies inside a live match too: set 1 is
           // over the moment either player has banked a set, so its row stops
           // drawing a live bar at 0% and states a last quote instead.
@@ -787,7 +922,16 @@ export function buildMarketSection(
           const result = decidedSetResult(o.winnerParts, options.decidedSetsWinner);
           return result ? { ...o, decided: true, result } : { ...o, decided: true };
         })
-        .sort((a, b) => b.prob - a.prob);
+        // Struck rows sink, and only struck rows do. Rank 0 is the card's
+        // emphasised row — bold, and the only violet bar — so leaving a 39%
+        // corpse at the top would keep the exact lie this change exists to
+        // remove, merely without a percentage beside it. Set-winner rows are
+        // deliberately NOT sunk: they are the story of the match so far and
+        // belong where their price puts them.
+        .sort((a, b) => {
+          const strike = Number(a.unreachable === true) - Number(b.unreachable === true);
+          return strike !== 0 ? strike : b.prob - a.prob;
+        });
       renderedOutcomes += outcomes.length;
       categoryWithheld += merged.withheld;
       return { name, outcomes, withheld: merged.withheld };
