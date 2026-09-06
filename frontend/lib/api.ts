@@ -2354,6 +2354,14 @@ export interface CalibrationData {
   // render the same story. All optional (older cached payloads omit them).
   date_range?: { start: string; end: string } | null;
   by_source?: CalibrationSourceMetric[];
+  /**
+   * Reader-facing names for the keys in `by_source` (#3357, CAL-P1025).
+   *
+   * Optional because a dated fallback tier can serve a payload banked before
+   * the block existed; `makeSourceLabeller` treats its absence as "guess",
+   * which is the state every surface was permanently in until now.
+   */
+  source_labels?: Record<string, CalibrationSourceLabel>;
   by_category?: CalibrationCategoryMetric[];
   corrections?: CalibrationCorrection[];
   // L2-103 Item 4: read-side exclusion counts (raw → published reconciliation).
@@ -2399,6 +2407,18 @@ export interface CalibrationSourceMetric {
   mce?: number | null;  // equal-weighted worst-bucket sensitivity (secondary)
   n: number;
   gated?: boolean;
+}
+
+/**
+ * The server's reader-facing name for one source key (#3357, CAL-P1025).
+ *
+ * `declared` is false when the name was GENERATED from the key because nobody
+ * has named that source yet — a floor, not a fix, and kept visible so a client
+ * or a probe can tell the two apart.
+ */
+export interface CalibrationSourceLabel {
+  label: string;
+  declared: boolean;
 }
 
 export interface CalibrationCategoryMetric {
