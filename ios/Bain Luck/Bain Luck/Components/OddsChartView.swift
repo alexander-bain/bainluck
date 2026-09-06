@@ -418,8 +418,85 @@ struct OddsChartView: View {
         _vm = StateObject(wrappedValue: OddsChartViewModel(eventId: eventId, preloaded: preloadedHistory))
     }
 
+    /// #3410 — whether the payload holds a single reading, anywhere.
+    ///
+    /// Distinct from `hasDrawableLine`, which asks whether the SELECTED range can
+    /// join two points of one source. This asks the prior question: is there
+    /// anything in this payload at all, in any range, from any source? When the
+    /// answer is no, no picker, no source toggle and no amount of waiting on this
+    /// payload can put a line on the screen.
+    static func hasNoReadings(in allPoints: [ChartDataPoint]) -> Bool {
+        allPoints.isEmpty
+    }
+
+    /// True once the payload has LOADED and holds nothing. Deliberately false
+    /// while loading and on error, so a slow network never reads as an empty
+    /// game — those two states have their own answers below.
+    private var noReadings: Bool {
+        guard !vm.loading, vm.error == nil, let history = vm.history else { return false }
+        return Self.hasNoReadings(in: buildDataPoints(history))
+    }
+
+    /// #3410 — what the section says when it has nothing to say.
+    ///
+    /// Photographed 2026-09-06 on a live esports match and the Chimaev–Whittaker
+    /// fight (`artifacts-native-033/esports-15305748.png`,
+    /// `mma-chimaev-15305758.png`): both drew a "Win Probability ● Live" heading,
+    /// a live dot, an All / Since Start picker, a fullscreen button and a "View
+    /// Probability Models" link — roughly 260pt of the phone — around a payload
+    /// with `points: 0` and every one of `history`, `espn_history`,
+    /// `win_prob_history`, `bookmaker_history` and `win_prob_sources` empty.
+    ///
+    /// #3278 made the middle of that frame say something true. It did not stop the
+    /// frame being built, and chrome is a promise: a range picker says there is a
+    /// range worth picking, a live dot says a number is moving. Ruling 027 — a
+    /// surface earns its chrome — and the precedent is one line further down THIS
+    /// page, where a game with no markets says so in a single sentence and draws
+    /// nothing else.
+    private var noReadingsNote: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "chart.xyaxis.line")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text("No win probability readings for this game yet.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     var body: some View {
         VStack(spacing: 8) {
+            if noReadings {
+                noReadingsNote
+            } else {
+                chartSection
+            }
+        }
+        .padding()
+        .task {
+            // Default to "Since Start" for started games with a known commence time
+            if isGameStarted && gameStartDate != nil {
+                vm.selectedRange = .sinceStart
+            }
+            await vm.load()
+        }
+        #if os(iOS)
+        .fullScreenCover(isPresented: $isFullscreen) {
+            fullscreenChart
+        }
+        #else
+        .sheet(isPresented: $isFullscreen) {
+            fullscreenChart
+                .frame(minWidth: 800, minHeight: 500)
+        }
+        #endif
+    }
+
+    @ViewBuilder
+    private var chartSection: some View {
+        Group {
             // Chart title + status + time range picker.
             //
             // UX-P090 — THIS ROW WAS EXACTLY AT ITS LIMIT AND HAD NOWHERE TO GO.
@@ -563,24 +640,6 @@ struct OddsChartView: View {
                 }
             }
         }
-        .padding()
-        .task {
-            // Default to "Since Start" for started games with a known commence time
-            if isGameStarted && gameStartDate != nil {
-                vm.selectedRange = .sinceStart
-            }
-            await vm.load()
-        }
-        #if os(iOS)
-        .fullScreenCover(isPresented: $isFullscreen) {
-            fullscreenChart
-        }
-        #else
-        .sheet(isPresented: $isFullscreen) {
-            fullscreenChart
-                .frame(minWidth: 800, minHeight: 500)
-        }
-        #endif
     }
 
     // MARK: - Fullscreen Chart
