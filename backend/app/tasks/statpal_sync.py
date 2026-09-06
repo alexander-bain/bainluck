@@ -530,6 +530,7 @@ async def _sync_statpal_injuries(sport_key: Optional[str] = None) -> dict:
     service = StatPalAPIService()
     total_injuries = 0
     total_events_enriched = 0
+    total_events_cleared = 0
     details = []
     fetch_failures = []
 
@@ -629,6 +630,7 @@ async def _sync_statpal_injuries(sport_key: Optional[str] = None) -> dict:
                 events = result.all()
 
                 enriched = 0
+                cleared = 0
                 candidates = list(fixtures.values())
                 for event in events:
                     chosen = choose_fixture(
@@ -637,21 +639,37 @@ async def _sync_statpal_injuries(sport_key: Optional[str] = None) -> dict:
                         event.commence_time.date() if event.commence_time else None,
                         candidates,
                     )
-                    if not chosen:
-                        continue
 
                     sources = dict(event.win_probability_sources or {})
-                    sources["statpal_injuries"] = [
-                        {
-                            "player": inj.player_name,
-                            "team": inj.team,
-                            "status": inj.status,
-                            "type": inj.injury_type,
-                            "detail": inj.detail,
-                        }
-                        for inj in _interleave_sides(by_fixture[chosen])[:10]
-                    ]
-                    sources["statpal_injuries_updated"] = now.isoformat()
+
+                    if not chosen:
+                        # A SUCCESSFUL snapshot that does not list this fixture is
+                        # current information: there is nobody sidelined for it
+                        # now. Writing only additively would leave yesterday's
+                        # list in place forever, and `routes/events.py` reads it
+                        # with no freshness check — so a recovered player would
+                        # keep being printed as the cause of a line move. This
+                        # branch is reachable ONLY on `ok`/`empty`; a
+                        # `fetch_failed` sport returned long before here, so a
+                        # bad upstream day never deletes what we already know.
+                        if "statpal_injuries" not in sources:
+                            continue
+                        sources.pop("statpal_injuries", None)
+                        sources.pop("statpal_injuries_updated", None)
+                        cleared += 1
+                    else:
+                        sources["statpal_injuries"] = [
+                            {
+                                "player": inj.player_name,
+                                "team": inj.team,
+                                "status": inj.status,
+                                "type": inj.injury_type,
+                                "detail": inj.detail,
+                            }
+                            for inj in _interleave_sides(by_fixture[chosen])[:10]
+                        ]
+                        sources["statpal_injuries_updated"] = now.isoformat()
+                        enriched += 1
 
                     # Core update, not ORM attribute assignment (gotcha #4).
                     await session.execute(
@@ -659,9 +677,9 @@ async def _sync_statpal_injuries(sport_key: Optional[str] = None) -> dict:
                         .where(Event.id == event.id)
                         .values(win_probability_sources=sources)
                     )
-                    enriched += 1
 
                 total_events_enriched += enriched
+                total_events_cleared += cleared
                 details.append({
                     "statpal_sport": statpal_sport,
                     "reason": fetch.reason,
@@ -669,6 +687,7 @@ async def _sync_statpal_injuries(sport_key: Optional[str] = None) -> dict:
                     "fixtures_with_injuries": len(by_fixture),
                     "events_considered": len(events),
                     "events_enriched": enriched,
+                    "events_cleared": cleared,
                 })
 
                 await asyncio.sleep(0.3)
@@ -685,6 +704,7 @@ async def _sync_statpal_injuries(sport_key: Optional[str] = None) -> dict:
         "terminal": terminal,
         "total_injuries": total_injuries,
         "events_enriched": total_events_enriched,
+        "events_cleared": total_events_cleared,
         "fetch_failures": fetch_failures,
         "sports": details,
     }

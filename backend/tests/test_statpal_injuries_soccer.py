@@ -685,6 +685,186 @@ class TestTheTaskEmitsTheWriteItClaims:
         assert reasons["soccer"] == "empty"
 
 
+class TestASuccessfulSnapshotReplacesTheOldOne:
+    """CERT-1999's BLOCK, and it was right.
+
+    The first cut wrote only additively. A later SUCCESSFUL pass that no longer
+    listed a fixture emitted no update at all, so the old JSONB stayed — and
+    `routes/events.py` reads it with no freshness check. A player who had
+    recovered would go on being printed as the cause of a line move, for as long
+    as the event stayed in the window, with the task returning `complete` every
+    hour.
+
+    A successful snapshot is CURRENT information, including about who is no
+    longer hurt. A failed one is not information at all, and must never delete.
+    """
+
+    HOME, AWAY = "Fluminense", "Vasco da Gama"
+
+    def _event(self, sources):
+        return _Row(
+            101, self.HOME, self.AWAY,
+            datetime(2026, 9, 6, 0, tzinfo=timezone.utc), sources,
+        )
+
+    @staticmethod
+    def _written(executed):
+        """The JSONB the last update would put in the row."""
+        updates = [s for s in executed if s.__visit_name__ == "update"]
+        assert updates, "no update was emitted"
+        return list(dict(updates[-1]._values).values())[0].value
+
+    @staticmethod
+    def _route_reads(sources):
+        """The event route's own expression, `routes/events.py:12693`.
+
+        Replicated rather than imported because it is inline in a 400-line
+        handler; the guard below pins that the route still spells it this way.
+        """
+        return (sources or {}).get("statpal_injuries", [])
+
+    def test_the_route_still_reads_the_key_this_test_replicates(self):
+        import inspect
+
+        from app.routes import events as events_route
+
+        source = inspect.getsource(events_route)
+        assert '(event.win_probability_sources or {}).get("statpal_injuries", [])' in source
+
+    def test_two_successful_cycles_remove_a_recovered_player(self, monkeypatch, census):
+        """Cycle 1 populates from the real payload. Cycle 2 is a valid, empty,
+        SUCCESSFUL snapshot. The player must be gone from what the route reads."""
+        from app.services.statpal_api import StatPalInjuryFetch, _parse_injuries_suspensions
+
+        rows = _parse_injuries_suspensions(census)
+        _, executed_one, _ = TestTheTaskEmitsTheWriteItClaims._run(
+            monkeypatch,
+            events=[self._event(None)],
+            fetch_by_sport=_all_sports_fetch(
+                soccer=StatPalInjuryFetch(rows, "ok", "soccer", "injuries-suspensions")
+            ),
+        )
+        after_one = self._written(executed_one)
+        assert self._route_reads(after_one), "cycle 1 must actually populate"
+        assert any(p["team"] == "Fluminense" for p in self._route_reads(after_one))
+
+        summary, executed_two, _ = TestTheTaskEmitsTheWriteItClaims._run(
+            monkeypatch,
+            events=[self._event(after_one)],
+            fetch_by_sport=_all_sports_fetch(
+                soccer=StatPalInjuryFetch([], "empty", "soccer", "injuries-suspensions")
+            ),
+        )
+        after_two = self._written(executed_two)
+        assert self._route_reads(after_two) == [], "the recovered players are still there"
+        assert "statpal_injuries_updated" not in after_two, "a stamp with no data"
+        assert summary["events_cleared"] == 1
+        assert summary["terminal"] == "complete"
+
+    def test_a_fixture_that_drops_out_of_a_populated_snapshot_is_cleared(
+        self, monkeypatch, census
+    ):
+        """The commoner shape: the snapshot is full of OTHER games, and ours is
+        simply no longer in it. That is still current information about ours."""
+        from app.services.statpal_api import StatPalInjuryFetch, _parse_injuries_suspensions
+
+        rows = _parse_injuries_suspensions(census)
+        stale = {
+            "statpal_injuries": [
+                {"player": "Recovered Player", "team": "Nowhere", "status": "Out",
+                 "type": "Knee Injury", "detail": None}
+            ],
+            "statpal_injuries_updated": "2026-09-05T01:00:00+00:00",
+            "espn": {"probability": 0.5},
+        }
+        event = _Row(
+            202, "Nowhere United", "Nobody City",
+            datetime(2026, 9, 6, 0, tzinfo=timezone.utc), stale,
+        )
+        summary, executed, _ = TestTheTaskEmitsTheWriteItClaims._run(
+            monkeypatch,
+            events=[event],
+            fetch_by_sport=_all_sports_fetch(
+                soccer=StatPalInjuryFetch(rows, "ok", "soccer", "injuries-suspensions")
+            ),
+        )
+        after = self._written(executed)
+        assert self._route_reads(after) == []
+        assert summary["events_cleared"] == 1
+        assert summary["events_enriched"] == 0
+        # everything else in the JSONB is untouched — this clears one source,
+        # not the column.
+        assert after["espn"] == {"probability": 0.5}
+
+    def test_a_fetch_failure_never_deletes_what_we_already_know(self, monkeypatch):
+        """The control that keeps the clear safe. A 404 hour must not wipe every
+        injury list on the site — that is the destructive twin of the bug this
+        repair fixes, and it is one bad upstream day away."""
+        from app.services.statpal_api import StatPalInjuryFetch
+
+        stale = {
+            "statpal_injuries": [
+                {"player": "Still Injured", "team": "Fluminense", "status": "Out",
+                 "type": "Hip Injury", "detail": None}
+            ],
+            "statpal_injuries_updated": "2026-09-05T01:00:00+00:00",
+        }
+        summary, executed, _ = TestTheTaskEmitsTheWriteItClaims._run(
+            monkeypatch,
+            events=[self._event(stale)],
+            fetch_by_sport=_all_sports_fetch(
+                soccer=StatPalInjuryFetch([], "fetch_failed", "soccer", "injuries-suspensions")
+            ),
+        )
+        assert not [s for s in executed if s.__visit_name__ == "update"], (
+            "a failed read deleted data"
+        )
+        assert summary["events_cleared"] == 0
+        assert summary["terminal"] == "failed"
+
+    def test_an_event_that_never_had_injuries_is_not_rewritten(self, monkeypatch, census):
+        """105 of the 168 soccer events in the window match no fixture at all.
+        Clearing must not turn into 105 pointless writes an hour."""
+        from app.services.statpal_api import StatPalInjuryFetch, _parse_injuries_suspensions
+
+        rows = _parse_injuries_suspensions(census)
+        summary, executed, _ = TestTheTaskEmitsTheWriteItClaims._run(
+            monkeypatch,
+            events=[_Row(303, "Nowhere United", "Nobody City",
+                         datetime(2026, 9, 6, 0, tzinfo=timezone.utc), {"espn": {}})],
+            fetch_by_sport=_all_sports_fetch(
+                soccer=StatPalInjuryFetch(rows, "ok", "soccer", "injuries-suspensions")
+            ),
+        )
+        assert not [s for s in executed if s.__visit_name__ == "update"]
+        assert summary["events_cleared"] == 0
+
+    def test_a_still_injured_player_survives_a_second_cycle(self, monkeypatch, census):
+        """The other control: the repair must not clear a fixture that is STILL
+        in the snapshot, or it would delete and rewrite the same list hourly and
+        an intervening read would see nothing."""
+        from app.services.statpal_api import StatPalInjuryFetch, _parse_injuries_suspensions
+
+        rows = _parse_injuries_suspensions(census)
+        fetch = _all_sports_fetch(
+            soccer=StatPalInjuryFetch(rows, "ok", "soccer", "injuries-suspensions")
+        )
+        _, first, _ = TestTheTaskEmitsTheWriteItClaims._run(
+            monkeypatch, events=[self._event(None)], fetch_by_sport=fetch
+        )
+        after_one = self._written(first)
+        summary, second, _ = TestTheTaskEmitsTheWriteItClaims._run(
+            monkeypatch, events=[self._event(after_one)], fetch_by_sport=fetch
+        )
+        after_two = self._written(second)
+        assert self._route_reads(after_two)
+        assert [p["player"] for p in self._route_reads(after_two)] == [
+            p["player"] for p in self._route_reads(after_one)
+        ]
+        assert summary["events_cleared"] == 0
+        assert summary["events_enriched"] == 1
+
+
 class TestTheCapCannotSilenceOneTeam:
     """A shared cap over two unequal populations empties the smaller one first.
 
