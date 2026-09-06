@@ -7167,6 +7167,34 @@ async def _rebuild_search_suggestions() -> None:
         _publish_search_suggestions(await _build_search_suggestions(session))
 
 
+def _log_dead_suggestion_section(number: int, name: str) -> None:
+    """A chip source failed. Say so — #2286's class, and its whole cost.
+
+    🔴 THE DEFECT THIS EXISTS FOR IS NOT THE TYPO, IT IS THE SILENCE. Two of the
+    five sections named a model attribute that does not exist, and because each
+    section wrapped its statement BUILD as well as its execution in
+    `except Exception: pass`, the `AttributeError` fired before any round trip and
+    nothing anywhere recorded it. Both sections were dead for as long as the code
+    existed and the route went on returning 200 with a short list; the defect was
+    eventually found by someone measuring the endpoint for an unrelated reason, not
+    by anything in the system noticing.
+
+    Still non-critical, and deliberately: one broken chip source must not take the
+    search box down, and the caller's `try` per section is what guarantees that.
+    But non-critical is not the same as invisible. `exc_info=True` because the
+    class that hid here is an exception whose TYPE is the whole finding —
+    `AttributeError` says "this section can never have worked", where an
+    `OperationalError` says "the database is having a bad minute", and a bare
+    counter cannot tell an operator which one they have.
+    """
+    logger.warning(
+        "search_suggestions: section %d (%s) failed and contributed nothing",
+        number,
+        name,
+        exc_info=True,
+    )
+
+
 async def _build_search_suggestions(db: AsyncSession) -> dict:
     """Build the chips from scratch. Everything below is the pre-LAT-P139 route
     body, moved unchanged except for section 2's label and the removed cache
@@ -7230,45 +7258,45 @@ async def _build_search_suggestions(db: AsyncSession) -> dict:
         live_result = await db.execute(live_events_q)
         live_events = live_result.scalars().all()
 
-        # Get latest odds for live events via subquery
         if live_events:
-            live_ids = [e.id for e in live_events]
-            # LAT-P107/#1605 SURVEYED AND DELIBERATELY LEFT: this is the third and
-            # last `row_number()` odds window in this module, and it is a RELATED
-            # shape, not the same one. It partitions by `event_id` alone under a
-            # fixed `bookmaker == "aggregate"`, so `latest_odds_per_bookmaker_query`
-            # — whose whole mechanism is enumerating the distinct bookmakers — does
-            # not fit it and cannot be reused here.
+            # 🔴 #2286. THE ODDS SUBQUERY IS GONE, AND REMOVING IT IS THE FIX —
+            # NOT REPAIRING IT.
             #
-            # It has the same underlying cost (reads every `aggregate` snapshot of
-            # up to 50 live events to keep 50 rows), but fixing it needs its own
-            # top-1-per-event helper and its own real-Postgres equivalence proof.
-            # Bolting an unproven second rewrite onto this queue is exactly the
-            # LAT-P010 failure this route's history records. Recorded in #1605's
-            # survey; it is a separate, smaller ship on a non-graded surface.
-            ranked = (
-                select(
-                    OddsSnapshot.event_id,
-                    OddsSnapshot.home_probability,
-                    func.row_number().over(
-                        partition_by=OddsSnapshot.event_id,
-                        order_by=OddsSnapshot.captured_at.desc()
-                    ).label("rn")
-                )
-                .where(
-                    OddsSnapshot.event_id.in_(live_ids),
-                    OddsSnapshot.bookmaker == "aggregate",
-                )
-                .subquery()
-            )
-            odds_q = select(ranked.c.event_id, ranked.c.home_probability).where(ranked.c.rn == 1)
-            odds_result = await db.execute(odds_q)
-            odds_map = {row[0]: row[1] for row in odds_result.all()}
+            # #2286 named one defect here, `OddsSnapshot.home_probability` for
+            # `home_win_probability`, and scoped the repair as "rename it and
+            # re-measure, because it adds a round trip". Measured on production
+            # 2026-09-06 before writing any of this, the rename would have shipped
+            # something worse than the typo:
+            #
+            #   * the subquery also filtered `bookmaker == "aggregate"`, and
+            #     **nothing writes that bookmaker.** 18 real books wrote snapshots
+            #     in the last two hours (bovada, betonlineag, lowvig, betmgm,
+            #     fanduel, ...) and `aggregate` is not among them; a second,
+            #     independent check — every `bookmaker=` write site in `app/` —
+            #     agrees: every writer emits a real book key, `polymarket`,
+            #     `kalshi` or `datagolf_model`. Nobody has ever written this one.
+            #   * so with the name corrected the query is still `Actual Rows: 0`.
+            #     `EXPLAIN (ANALYZE, BUFFERS)` on production: **799.8 ms and 46,012
+            #     shared buffer hits to return nothing**, on every uncached build.
+            #
+            # Fixing only what the issue named would therefore have bought an 800 ms
+            # query for the same zero chips. The blend is what this section actually
+            # wants and it is ALREADY LOADED — `compute_aggregate_probability` reads
+            # `win_probability_sources` off the `Event` rows `live_events_q` just
+            # fetched, so section 1 now costs ZERO additional round trips where it
+            # used to cost one. Coverage went the same way: 55 of 69 live events
+            # carry a blend, against 0 of 69 carrying an `aggregate` snapshot.
+            #
+            # It is also the app-wide ruling rather than a local choice — *the blend
+            # is the product; one number per question* — and it is the same number
+            # the event page's hero shows, so a chip can no longer disagree with the
+            # page it links to.
+            from app.utils.aggregation import compute_aggregate_probability
 
             for ev in live_events:
                 if len(suggestions) >= _MAX_SUGGESTIONS:
                     break
-                hp = odds_map.get(ev.id)
+                hp = compute_aggregate_probability(ev, ev.status)
                 if hp is None:
                     continue
 
@@ -7298,7 +7326,14 @@ async def _build_search_suggestions(db: AsyncSession) -> dict:
                             event_id=ev.id,
                         )
     except Exception:
-        pass  # Non-critical — continue to other sources
+        # 🔴 #2286's CLASS, AND THE REASON IT HID FOR AS LONG AS THE CODE EXISTED.
+        # `except Exception: pass` around a block that BUILDS a statement as well as
+        # running it turns a typo into a permanently missing feature with no log
+        # line — the `AttributeError` fired before any round trip and nothing ever
+        # said so. The section stays non-critical (a broken chip source must not
+        # take the search box down), but it is no longer SILENT. Same treatment on
+        # every section below.
+        _log_dead_suggestion_section(1, "live close games")
 
     # --- 2. Starting soon (tier 1-2, within 3 hours) ---
     try:
@@ -7363,7 +7398,7 @@ async def _build_search_suggestions(db: AsyncSession) -> dict:
                 **{ssc.COUNTDOWN_FIELD: ev.commence_time},
             )
     except Exception:
-        pass
+        _log_dead_suggestion_section(2, "starting soon")
 
     # --- 3. Futures big movers (|probability_change_24h| > 0.02) ---
     try:
@@ -7406,7 +7441,7 @@ async def _build_search_suggestions(db: AsyncSession) -> dict:
                 market_id=outcome.market_id,
             )
     except Exception:
-        pass
+        _log_dead_suggestion_section(3, "futures movers")
 
     # --- 4. Recent upsets (completed last 24h, opening underdog won) ---
     try:
@@ -7442,27 +7477,38 @@ async def _build_search_suggestions(db: AsyncSession) -> dict:
                 loser = ev.home_team_name
                 _add(ev.away_team_name, f"Pulled the upset vs {loser}", "event", event_id=ev.id)
     except Exception:
-        pass
+        _log_dead_suggestion_section(4, "recent upsets")
 
     # --- 5. Popular championship markets (tier 1, open) ---
     #
-    # 🔴 LAT-P124/#2286 FINDING, REPORTED AND DELIBERATELY NOT FIXED HERE: THIS
-    # SECTION HAS NEVER PRODUCED A SUGGESTION. `FuturesMarket.outcome_count`
-    # does not exist — there is no such column on the model and no such name
-    # anywhere in `app/` — so the `.order_by(...)` below raises `AttributeError`
-    # while the statement is still being BUILT, before any round trip, and the
-    # bare `except Exception: pass` swallows it. Every request has taken that
-    # path for as long as the code has existed.
+    # 🔴 #2286, AND "POPULAR" IS NOW A NUMBER THE DATABASE HAS. This section had
+    # never produced a suggestion: it ordered by `FuturesMarket.outcome_count`,
+    # which exists nowhere in `app/`, so the `.order_by(...)` raised
+    # `AttributeError` while the statement was still being BUILT and the bare
+    # `except Exception: pass` above swallowed it. Every request took that path for
+    # as long as the code existed.
     #
-    # It is left alone on purpose. Making a section that has never run start
-    # running CHANGES THE RESPONSE — new suggestions appear on a user-facing
-    # surface — and choosing what "popular" should order by is a product call,
-    # not a latency one. This queue ships a cost change, so the finding is filed
-    # (#2286) and pinned by a guard test that goes RED the day the attribute
-    # appears, rather than repaired inside a queue that cannot grade it.
+    # ⚠️ THE DEAD NAME'S LITERAL INTENT IS REJECTED RATHER THAN IMPLEMENTED.
+    # `outcome_count` would be a correlated COUNT of `FuturesOutcome`, i.e. "most
+    # runners" — and most runners is not most popular. A 30-runner novelty market
+    # would outrank the Super Bowl, and the section's own label says
+    # "Championship odds".
     #
-    # It costs no round trip, so it is not part of the latency defect. The skip
-    # below is still applied for uniformity with sections 2-4.
+    # `volume_24h` is what popular means here, with lifetime `volume` as the
+    # tiebreak so a market that is big but quiet today still ranks above one nobody
+    # has ever traded. Both columns exist and both are populated: of 3,126 tier-1
+    # open markets on production (2026-09-06), 1,024 carry a positive `volume_24h`
+    # and 1,989 a positive `volume`. The top of that ordering, read before choosing
+    # it, is the list this section exists to print:
+    #
+    #     Presidential Election Winner 2028          1,946,240
+    #     US Open Men's Singles Winner               1,615,228
+    #     College Football National Championship       909,571
+    #     2027 Pro Football Champion                   474,393
+    #     US Open Women's Singles Winner               448,894
+    #
+    # `NULLS LAST` on both, so the ~1,100 markets with no volume at all sort to the
+    # bottom instead of winning on a NULL.
     try:
         champ_q = (
             select(FuturesMarket)
@@ -7470,7 +7516,10 @@ async def _build_search_suggestions(db: AsyncSession) -> dict:
                 FuturesMarket.status == "open",
                 FuturesMarket.market_tier == 1,
             )
-            .order_by(FuturesMarket.outcome_count.desc().nulls_last())
+            .order_by(
+                FuturesMarket.volume_24h.desc().nulls_last(),
+                FuturesMarket.volume.desc().nulls_last(),
+            )
             .limit(5)
         )
         champ_rows = []
@@ -7485,7 +7534,7 @@ async def _build_search_suggestions(db: AsyncSession) -> dict:
             # Try to get just the league championship part
             _add(name, "Championship odds", "futures", market_id=market.id)
     except Exception:
-        pass
+        _log_dead_suggestion_section(5, "popular championship markets")
 
     # LAT-P139: the write that used to be here is the caller's job now
     # (`_publish_search_suggestions`), so that a build reached through the

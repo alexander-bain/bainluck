@@ -48,7 +48,11 @@ import pytest
 
 from app.models.models import FuturesMarket
 from app.routes import events as events_routes
-from app.routes.events import _MAX_SUGGESTIONS, search_suggestions
+from app.routes.events import (
+    _MAX_SUGGESTIONS,
+    _build_search_suggestions,
+    search_suggestions,
+)
 
 pytestmark = pytest.mark.asyncio
 
@@ -216,17 +220,51 @@ def _soon_events(n):
     ]
 
 
+def _code_of(fn) -> str:
+    """A function's source with comments and docstrings stripped.
+
+    🔴 A SOURCE-SCANNING ASSERTION MUST NOT READ ITS OWN EXPLANATION. The first
+    draft of `test_section_1_reads_the_blend_not_an_odds_snapshot` asserted that
+    `bookmaker == "aggregate"` is absent from section 1 — and it failed, because
+    the comment ABOVE the repair quotes that exact string while explaining why the
+    filter was removed. A guard that a comment can turn red is a guard that pushes
+    the next author to delete the explanation, which is the opposite of what these
+    files are for.
+    """
+    import inspect
+    import io
+    import tokenize
+
+    src = inspect.getsource(fn)
+    out = []
+    prev_type = tokenize.INDENT
+    for tok in tokenize.generate_tokens(io.StringIO(src).readline):
+        if tok.type == tokenize.COMMENT:
+            continue
+        # A STRING that is the whole statement is a docstring.
+        if tok.type == tokenize.STRING and prev_type in (
+            tokenize.INDENT, tokenize.NEWLINE, tokenize.NL, tokenize.DEDENT,
+        ):
+            continue
+        out.append(tok.string if tok.type != tokenize.NL else "\n")
+        if tok.type not in (tokenize.NL,):
+            prev_type = tok.type
+    return " ".join(out)
+
+
 def _db_with_soon(n, *, extra_sections):
     """Section 1 finds no live events; section 2 returns `n`.
 
-    🔴 SECTION 1 IS DELIBERATELY GIVEN AN EMPTY RESULT, AND THAT IS NOT A
-    CONVENIENCE — IT IS THE ONLY WAY TO EXERCISE IT WITHOUT TRIPPING #2286.
-    `OddsSnapshot.home_probability` does not exist (the column is
-    `home_win_probability`), so the moment `live_events` is non-empty the route
-    raises `AttributeError` while BUILDING `odds_q` and section 1 dies into its
-    bare `except`. That is production's behaviour today, pinned separately by
-    `TestSectionsThatHaveNeverRun`. Here the empty result keeps section 1 to a
-    single statement and lets section 2 own the window.
+    Section 1 is given an empty result so that section 2 owns the window and the
+    statement count below reads as a statement about the SKIP rather than about
+    section 1's contribution.
+
+    🔴 THIS DOCSTRING USED TO SAY THE EMPTY RESULT WAS THE ONLY WAY TO EXERCISE
+    SECTION 1 "WITHOUT TRIPPING #2286" — because a non-empty result made the route
+    raise `AttributeError` while BUILDING `odds_q`. #2286 is repaired: section 1
+    reads the blend off the rows this fixture returns and issues no second
+    statement, so a non-empty result is now perfectly safe here. It is kept empty
+    only to isolate the skip.
     """
     return _RecordingDB(
         [_Rows([]), _Rows(_soon_events(n))] + [_Rows([]) for _ in range(extra_sections)]
@@ -239,8 +277,8 @@ def _full_window_db():
 
 
 def _open_window_db():
-    """Section 2 fills two slots; sections 3 and 4 must both still run."""
-    return _db_with_soon(2, extra_sections=2)
+    """Section 2 fills two slots; sections 3, 4 and 5 must all still run."""
+    return _db_with_soon(2, extra_sections=3)
 
 
 # ---------------------------------------------------------------------------
@@ -281,8 +319,8 @@ class TestTheWindowFullSkip:
 
         resp = await search_suggestions(db=db)
 
-        assert len(db.executed) == 4, (
-            f"expected sections 1, 2, 3 and 4 to run on a two-slot window, got "
+        assert len(db.executed) == 5, (
+            f"expected all five sections to run on a two-slot window, got "
             f"{len(db.executed)}. A section was skipped while it could still "
             "have contributed."
         )
@@ -298,11 +336,14 @@ class TestTheWindowFullSkip:
         row that fills it is a real suggestion a reader would otherwise not see.
         """
         redis_double(_FakeRedis())
-        db = _db_with_soon(filled, extra_sections=2)
+        db = _db_with_soon(filled, extra_sections=3)
 
         await search_suggestions(db=db)
 
-        assert len(db.executed) == 4
+        # FIVE, not four. #2286 brought section 5 back from the dead, so the
+        # ceiling this test walks up to moved by exactly one statement — see
+        # `TestSectionsThatHaveNeverRun`.
+        assert len(db.executed) == 5
 
     async def test_at_exactly_the_window_the_later_sections_stop(self, redis_double):
         """8 filled is the first value at which the skip is allowed to fire."""
@@ -592,71 +633,123 @@ class TestNoCacheWriteReferencesAnUnboundName:
 
 
 class TestSectionsThatHaveNeverRun:
-    """🔴 LAT-P124 finding #2286, recorded as a fact rather than a suspicion,
-    and deliberately NOT repaired in this queue.
+    """🔴 #2286, REPAIRED — AND THESE PINS ARE INVERTED RATHER THAN DELETED.
 
-    Two of the route's five sections name a model attribute that does not exist,
-    so they raise `AttributeError` while their statement is still being BUILT —
-    before any round trip — and each section's bare `except Exception: pass`
-    swallows it. Neither has ever produced a suggestion:
+    LAT-P124 found two of the five sections naming a model attribute that does not
+    exist, so each raised `AttributeError` while its statement was still being
+    BUILT — before any round trip — and each section's bare `except Exception:
+    pass` swallowed it. Neither had ever produced a suggestion, which is why every
+    production read returned nothing but "Starts in Nh" chips: section 2 was the
+    first section that worked, so it filled the window and the rest was decoration.
 
-      * section 1 (live close games) reads `OddsSnapshot.home_probability`; the
-        column is `home_win_probability` (#2286);
-      * section 5 (popular championship markets) orders by
-        `FuturesMarket.outcome_count`, which exists nowhere in `app/` (#2286).
+    That queue pinned both as facts and said: *"WHEN EITHER OF THESE GOES RED the
+    attribute exists, the section has started issuing a real query, and somebody
+    owes `/search` a fresh cost measurement."* This is that day. The cost
+    measurement is in the class docstring of `TestSectionOneCostsNothingNow` below
+    and in the commit body.
 
-    That is why every production read of this endpoint returns nothing but
-    "Starts in Nh" chips: section 2 is the first section that works, so it fills
-    the window and the rest of the route is decoration.
+    **Inverted, not deleted, because the pin's SUBJECT is still live.** The old
+    assertions said "this attribute is absent". The new ones say "the section runs
+    and contributes", which is the same claim about the same code with the sign
+    flipped — and deleting them would have retired the only tests that can tell
+    anyone whether these two sections are alive. They were dead for as long as the
+    code existed precisely because nothing asserted they were not.
 
-    THEY ARE NOT REPAIRED HERE ON PURPOSE. Making a never-executing section start
-    executing CHANGES WHAT A USER SEES on `/search` — new chips appear — and it
-    adds a round trip this queue then has not measured. Deciding what a "tight
-    game" or a "popular championship market" should be is a product call. This
-    queue ships a cost change; the findings are filed and pinned.
-
-    WHEN EITHER OF THESE GOES RED the attribute exists, the section has started
-    issuing a real query, and somebody owes `/search` a fresh cost measurement.
-    That is the entire point of pinning them.
+    The repairs are NOT what #2286's scope proposed, and the difference is
+    measured rather than argued — see `test_section_1_reads_the_blend_not_an_odds_snapshot`.
     """
 
-    def test_section_1_is_dead_because_the_odds_column_is_named_differently(self):
-        from app.models.models import OddsSnapshot
+    def test_section_1_reads_the_blend_not_an_odds_snapshot(self):
+        """The rename #2286 asked for would have shipped an 800 ms no-op.
 
-        assert not hasattr(OddsSnapshot, "home_probability"), (
-            "OddsSnapshot.home_probability now exists, so search_suggestions "
-            "section 1 has started issuing its odds query. Re-measure the route "
-            "and close #2286."
+        The issue scoped section 1 as "rename `home_probability` to
+        `home_win_probability` and re-measure". Measured on production before
+        writing the repair, that rename alone fixes nothing: the same subquery also
+        filters `bookmaker == "aggregate"`, and **nothing writes that bookmaker.**
+
+          * 18 real books wrote `odds_snapshots` rows in the last two hours;
+            `aggregate` was not among them.
+          * Independently: every `bookmaker=` write site in `app/` emits a real book
+            key, `polymarket`, `kalshi` or `datagolf_model`. No writer, ever.
+          * So with the name corrected the query still returns `Actual Rows: 0` —
+            `EXPLAIN (ANALYZE, BUFFERS)` measured 799.8 ms and 46,012 shared buffer
+            hits to return nothing, on every uncached build.
+
+        So the odds subquery is GONE rather than renamed, and the probability comes
+        from the blend already loaded on the `Event` rows. This test pins the
+        negative half — that neither dead reference can come back — because a future
+        editor reaching for "the latest odds snapshot" here would reintroduce both
+        the cost and the emptiness.
+        """
+        section_1 = _code_of(_build_search_suggestions).split(
+            "# --- 2. Starting soon"
+        )[0]
+
+        assert "compute_aggregate_probability" in section_1, (
+            "section 1 no longer reads the blend. It is the app-wide ruling for "
+            "this number (one number per question) and it is the only source with "
+            "coverage: 55 of 69 live events carry a blend, 0 carry an `aggregate` "
+            "odds snapshot"
         )
-        assert hasattr(OddsSnapshot, "home_win_probability"), (
-            "the real column has been renamed too — re-derive #2286 before "
-            "trusting anything above"
+        # ⚠️ `OddsSnapshot`, not `"home_probability"`. The narrower string is a
+        # SUBSTRING of `ev.opening_home_probability`, which section 1 legitimately
+        # reads for its upset check — an assertion on it fails on correct code.
+        # The real claim is bigger and simpler anyway: section 1 does not touch the
+        # odds-snapshot table at all any more, which is what makes it free.
+        assert "OddsSnapshot" not in section_1, (
+            "section 1 references `OddsSnapshot` again. Both of its dead names lived "
+            "there — `home_probability` (no such column) and `bookmaker == "
+            '"aggregate"` (no such writer) — and the query they formed measured '
+            "799.8 ms and 46,012 shared buffers to return zero rows (#2286). The "
+            "blend needs no round trip; this would be a paid one."
         )
 
-    def test_section_5_is_dead_because_the_column_does_not_exist(self):
+    def test_section_5_orders_by_volume_and_not_by_a_column_that_never_existed(self):
+        """`outcome_count` is dead, and its literal intent is refused."""
         assert not hasattr(FuturesMarket, "outcome_count"), (
-            "FuturesMarket.outcome_count now exists, so search_suggestions "
-            "section 5 has started issuing a real query. Re-measure the route "
-            "and close #2286."
+            "FuturesMarket.outcome_count now exists. #2286 rejected this quantity "
+            "on the merits — a correlated COUNT of outcomes is 'most runners', not "
+            "'most popular', and a 30-runner novelty market would outrank the Super "
+            "Bowl. If it has been added for another purpose, section 5 must still "
+            "not order by it."
+        )
+        assert hasattr(FuturesMarket, "volume_24h") and hasattr(FuturesMarket, "volume"), (
+            "section 5's ordering columns are gone; re-derive #2286 before trusting "
+            "anything here"
         )
 
-    async def test_a_live_event_kills_section_1_after_exactly_one_statement(
+        section_5 = _code_of(_build_search_suggestions).split(
+            "# --- 5. Popular championship markets"
+        )[-1]
+        assert "volume_24h" in section_5 and "nulls_last" in section_5, (
+            "section 5 stopped ordering by volume with NULLS LAST — ~1,100 of the "
+            "3,126 tier-1 open markets have no volume at all and would win on a NULL"
+        )
+
+    async def test_a_live_event_now_produces_a_chip_and_costs_no_extra_statement(
         self, redis_double
     ):
-        """The behavioural half of #2286, so it is not just a `hasattr`.
+        """The behavioural half, inverted. **One statement, not two.**
 
-        With live events present the route pays for `live_events_q` and then dies
-        building `odds_q`. Section 2 owns the window regardless. 94 blocks, so it
-        is noise against section 3 — but it is a round trip bought for nothing on
-        every uncached request, and that belongs in the issue.
+        Before: the route paid for `live_events_q` and then died building `odds_q`
+        — a round trip bought for nothing on every uncached request. After: the
+        blend is read off the rows `live_events_q` already returned, so section 1
+        issues exactly ONE statement and produces a chip from it.
+
+        The count is the assertion that matters. A repair that added the odds query
+        back and merely made it work would still pass a chip-shaped assertion.
         """
         redis_double(_FakeRedis())
         live = [
             SimpleNamespace(
                 id=1,
+                status="live",
                 home_team_name="Aces",
                 away_team_name="Liberty",
                 opening_home_probability=0.5,
+                # A tight game, in the blend's own shape.
+                win_probability_sources={"betting": {"home": 0.52}},
+                espn_win_prob_home=None,
             )
         ]
         db = _RecordingDB([_Rows(live), _Rows(_soon_events(8))])
@@ -664,20 +757,132 @@ class TestSectionsThatHaveNeverRun:
         resp = await search_suggestions(db=db)
 
         assert len(db.executed) == 2, (
-            "section 1 executed its live-event probe and then must have raised "
-            "while building odds_q; a third statement means #2286 is fixed"
+            f"section 1 must issue exactly one statement (the live-event probe) and "
+            f"read the blend off its rows; section 2 issues the other. "
+            f"{len(db.executed)} means the odds round trip is back"
         )
-        assert [s["label"] for s in resp["suggestions"]] != [], "window still filled"
-        assert all("Live" not in s["label"] for s in resp["suggestions"]), (
-            "a section-1 chip appeared — #2286 is fixed and this pin is stale"
+        labels = [s["label"] for s in resp["suggestions"]]
+        assert any("Live" in lbl for lbl in labels), (
+            f"section 1 ran but contributed nothing — a 0.52 blend is inside the "
+            f"0.35-0.65 tight-game band and must produce a chip: {labels}"
         )
 
-    async def test_section_five_never_reaches_the_database(self, redis_double):
-        """Four statements is the ceiling: sections 1, 2, 3, 4. Section 5 dies
-        before a fifth."""
+    async def test_a_failing_section_says_so_instead_of_vanishing(
+        self, redis_double, caplog
+    ):
+        """🔴 THE CLASS, AND THE ONLY REASON #2286 LASTED. A surviving mutant.
+
+        Replacing any section's `_log_dead_suggestion_section(...)` with `pass`
+        left the whole suite green — which is exactly the state the route shipped
+        in for as long as it existed. Two sections were dead, the endpoint returned
+        200 with a short list, and nothing anywhere said a word; the defect was
+        found by someone measuring the endpoint for an unrelated reason.
+
+        Two claims, and both matter:
+
+          * the route SURVIVES a broken section (non-critical is still the rule —
+            one dead chip source must not take the search box down), and
+          * it is no longer SILENT about it, and the log names WHICH section, so an
+            operator reading it does not have to bisect five try blocks.
+
+        Driven by making section 3's query raise, because a raise from `execute` and
+        a raise while BUILDING a statement land in the same `except` — and the
+        second is the one that hid here.
+        """
+        import logging
+
+        redis_double(_FakeRedis())
+
+        class _BoomOnThird:
+            def __init__(self):
+                self.executed = []
+                self._results = [_Rows([]), _Rows(_soon_events(2)), None, _Rows([]), _Rows([])]
+
+            async def execute(self, q):
+                self.executed.append(q)
+                nxt = self._results.pop(0)
+                if nxt is None:
+                    raise RuntimeError("movers query exploded")
+                return nxt
+
+        db = _BoomOnThird()
+        with caplog.at_level(logging.WARNING, logger="app.routes.events"):
+            resp = await search_suggestions(db=db)
+
+        assert resp["suggestions"], (
+            "a single broken section emptied the whole response — the per-section "
+            "`try` is what keeps one dead chip source from taking search down"
+        )
+        dead = [r for r in caplog.records if "contributed nothing" in r.getMessage()]
+        assert dead, (
+            "section 3 raised and NOTHING was logged. That is #2286's class exactly: "
+            "a swallowed exception turns a defect into a permanently missing feature "
+            f"with no trace. Records seen: {[r.getMessage() for r in caplog.records]}"
+        )
+        assert any("section 3" in r.getMessage() for r in dead), (
+            f"the log fired but does not name the section that died: "
+            f"{[r.getMessage() for r in dead]}"
+        )
+        assert any(r.exc_info for r in dead), (
+            "the log carries no traceback. The exception TYPE is the finding — "
+            "`AttributeError` means this section can never have worked, an "
+            "`OperationalError` means the database had a bad minute, and an "
+            "operator cannot act on a message that cannot tell them which"
+        )
+        # ...and the sections after the broken one still ran.
+        assert len(db.executed) == 5, (
+            f"a raise in section 3 stopped later sections: {len(db.executed)}"
+        )
+
+    def test_no_section_swallows_its_failure_in_silence(self):
+        """The behavioural test above covers ONE section. There are five.
+
+        🔴 A SURVIVING MUTANT SAID SO. Replacing section 5's
+        `_log_dead_suggestion_section(...)` with `pass` left the suite green even
+        after the behavioural guard was added, because that guard breaks section 3.
+        Five independent call sites need five-site coverage, and the honest way to
+        get it is structurally rather than by writing the same test five times.
+
+        This is the assertion that would have caught #2286 on the day it was
+        written: every one of these `except` blocks was `pass`, and the two dead
+        sections were therefore indistinguishable from working ones.
+        """
+        import ast
+        import inspect
+        import textwrap
+
+        from app.routes import events as events_module
+
+        tree = ast.parse(
+            textwrap.dedent(inspect.getsource(events_module._build_search_suggestions))
+        )
+        handlers = [n for n in ast.walk(tree) if isinstance(n, ast.ExceptHandler)]
+        assert len(handlers) == 5, (
+            f"expected one `except` per chip section, found {len(handlers)}. If a "
+            f"section was added or removed, this test's premise moved with it."
+        )
+        silent = [
+            h.lineno
+            for h in handlers
+            if all(isinstance(stmt, ast.Pass) for stmt in h.body)
+        ]
+        assert not silent, (
+            f"{len(silent)} chip section(s) still swallow their failure with a bare "
+            f"`pass` (handler line(s) {silent}, relative to the function). That is "
+            f"#2286's class: the `except` wraps the statement BUILD as well as its "
+            f"execution, so a typo becomes a permanently missing feature with no log "
+            f"line. Call `_log_dead_suggestion_section(...)` instead."
+        )
+
+    async def test_section_five_now_reaches_the_database(self, redis_double):
+        """Five statements where four was the ceiling. Section 5 is alive."""
         redis_double(_FakeRedis())
         db = _open_window_db()
 
         await search_suggestions(db=db)
 
-        assert len(db.executed) == 4
+        assert len(db.executed) == 5, (
+            f"section 5 issued no statement ({len(db.executed)} total). It ordered "
+            f"by a column that never existed and died while BUILDING its query for "
+            f"as long as the code existed (#2286)"
+        )
