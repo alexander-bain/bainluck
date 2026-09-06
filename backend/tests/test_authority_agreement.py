@@ -161,6 +161,19 @@ def test_a_five_hour_kickoff_gap_is_one_game_not_two_misses():
             "second_row_for_an_unmatched_game": 0,
             "our_only_row_for_the_game": 0,
         },
+        # #3644. The span the two in-span numbers were actually compared over,
+        # now stated rather than left for a reader to infer. One fixture, so
+        # first and last are the same instant — a real span of zero width, not
+        # a missing one, and the distinction is why this is a pair of stamps
+        # and not a boolean. No `statpal_read_span` was passed (the team sports
+        # do not), so this is the unclipped span.
+        #
+        # It is StatPal's `00:00`, NOT our row's `05:00` — the span is of THEIR
+        # side, which is the whole reason a miss of ours can be placed against
+        # it. A value of `05:00` here would mean the span had been taken from
+        # the wrong list, and this test is the five-hour-gap case precisely
+        # because the two sides differ by five hours.
+        "statpal_span": ["2026-12-27T00:00:00+00:00", "2026-12-27T00:00:00+00:00"],
         # D63: NFL is scored on BOTH numbers, because both sides carry the same
         # population and where the two questions have the same answer asking
         # both is free. Here they do — and the day still does not advance the
@@ -383,6 +396,14 @@ def test_a_contest_we_hold_no_row_for_is_statpal_only():
             "second_row_for_an_unmatched_game": 0,
             "our_only_row_for_the_game": 0,
         },
+        # #3644. The span the two in-span numbers were actually compared over,
+        # now stated rather than left for a reader to infer. One fixture, so
+        # first and last are the same instant — a real span of zero width, not
+        # a missing one, and the distinction is why this is a pair of stamps
+        # and not a boolean. No `statpal_read_span` was passed (the team sports
+        # do not), so this is the unclipped span and equals the fixture's own
+        # kickoff.
+        "statpal_span": ["2026-08-14T00:00:00+00:00", "2026-08-14T00:00:00+00:00"],
         # D63 + spec rule 6. `pct` IS scored here (0.0 — StatPal lists a game
         # and we list none), but the other governing number has no denominator,
         # and a sport does not half clear a bar. So the day is NO-SCORE: it

@@ -861,6 +861,7 @@ def build_tennis_agreements(
     sources_read: Sequence[str] = (),
     window: Optional[tuple] = None,
     measurement_window: Optional[tuple] = None,
+    statpal_read_span: Optional[tuple] = None,
 ) -> dict[str, dict[str, Any]]:
     """One agreement row per draw, keyed by its `SHADOW_STAMPERS` key.
 
@@ -890,6 +891,13 @@ def build_tennis_agreements(
             sources_read=sources_read,
             window=window,
             measurement_window=measurement_window,
+            # BOTH draws, one span. `_collect` reads `livescores` and each
+            # `daily/dN` once and splits the result by draw afterwards, so the
+            # days requested are identical for singles and doubles — a
+            # per-draw span here would be two names for one fact and a place
+            # for them to drift (CERT-1948's lesson, applied to the window
+            # rather than to `allowances`).
+            statpal_read_span=statpal_read_span,
             # Bound to the draw being built, so the row's `allowances` describe
             # THIS draw's pass and not the other one's (CERT-1948).
             pair_sides=partial(pair_tennis_sides, draw=sport_key),

@@ -467,7 +467,7 @@ def _identity_block(
     denominator: int,
     horizon: dict[str, int],
     ours_horizon: dict[str, int],
-    statpal_has_span: bool,
+    statpal_span: Optional[tuple[datetime, datetime]],
     in_span_composition: Optional[dict[str, int]] = None,
 ) -> dict[str, Any]:
     """The identity bucket, with its numbers and the ruling on which decides.
@@ -533,7 +533,28 @@ def _identity_block(
         # there was nothing to agree with (gotcha #53).
         "ours_covered_in_span_pct": (
             _pct(both, both + ours_horizon["inside_statpal_span"])
-            if statpal_has_span
+            if statpal_span is not None
+            else None
+        ),
+        # THE SPAN THE TWO NUMBERS ABOVE WERE ACTUALLY COMPARED OVER (#3644).
+        #
+        # Published because it was the missing half of the sentence. The row
+        # already stated `measurement_window` — the span of OUR inventory — and
+        # said nothing about theirs, so `ours_covered_in_span_pct` named a span
+        # a reader could not see and could not check. Tennis published 13.91%
+        # over a span whose start had been dragged two days back by `livescores`
+        # residue, into days no request covers; the figure read as a coverage
+        # verdict and was an artifact of the two sides being loaded over
+        # different windows.
+        #
+        # Post-clip this is guaranteed to sit inside the row's
+        # `statpal_read_span` whenever one was supplied, which is the property
+        # `test_the_compared_span_never_exceeds_the_span_that_was_read` asserts.
+        # `None` — never a pair of equal timestamps — when StatPal published no
+        # timed fixture, for the same reason the percentage above is (gotcha #53).
+        "statpal_span": (
+            [statpal_span[0].isoformat(), statpal_span[1].isoformat()]
+            if statpal_span is not None
             else None
         ),
         # What the bucket above DIVIDES BY is made of: a hole on their side, or
@@ -1184,7 +1205,11 @@ def measurement_bounds(
     return (min(start, now - horizon), max(end, now + horizon))
 
 
-def timed_span(side: Sequence[Side]) -> Optional[tuple[datetime, datetime]]:
+def timed_span(
+    side: Sequence[Side],
+    *,
+    bound: Optional[tuple[datetime, datetime]] = None,
+) -> Optional[tuple[datetime, datetime]]:
     """The first and last kickoff a side actually publishes, or `None`.
 
     One definition, because two readers ask this question for opposite reasons
@@ -1194,11 +1219,41 @@ def timed_span(side: Sequence[Side]) -> Optional[tuple[datetime, datetime]]:
     fixture has no span — NOT an empty one — and the distinction is the whole
     point: "nothing falls inside a window that does not exist" and "nothing
     falls inside this window" are different facts (gotcha #53).
+
+    ``bound`` CLIPS THE SPAN TO THE DAYS THAT WERE ACTUALLY REQUESTED (#3644).
+    Without it, the span is whatever the fixtures happen to contain — which is
+    only the same thing when every fixture came from a day we asked about. It
+    does not for tennis: `livescores` is a state query that returns finished
+    matches for several days back, so the span's *start* was dragged into two
+    days whose schedule is never requested (`SCHEDULE_DAY_OFFSETS`), and every
+    row of ours in that unrequested stretch was then counted as an in-span miss
+    — a disagreement with a list nobody asked for. The published percentage read
+    as a coverage verdict (13.91%) when it was an artifact of loading the two
+    sides over different windows.
+
+    So the clip is not a filter for tidiness; it is what makes the span a window
+    BOTH sides were read over, which is the only span a comparison may be
+    divided by. Fixtures outside it still pair normally — this narrows where a
+    MISS may be placed, never which fixtures exist.
+
+    ``None`` (the default) leaves every existing caller exactly as it was: the
+    team sports load their StatPal side from one `season-schedule` call whose
+    contents ARE the days requested, so for them the bound would be a no-op with
+    a chance of being wrong. They do not pass one.
+
+    A bound that excludes every fixture yields ``None``, not an empty span, for
+    the same reason an untimed side does.
     """
     starts = [s.start for s in side if s.start is not None]
     if not starts:
         return None
-    return min(starts), max(starts)
+    first, last = min(starts), max(starts)
+    if bound is not None:
+        low, high = bound
+        first, last = max(first, low), min(last, high)
+        if first > last:
+            return None
+    return first, last
 
 
 def _split_against_span(
@@ -1208,6 +1263,7 @@ def _split_against_span(
     before: str,
     inside: str,
     beyond: str,
+    bound: Optional[tuple[datetime, datetime]] = None,
 ) -> dict[str, int]:
     """Place each miss against the timed span of the OTHER side's list.
 
@@ -1220,8 +1276,14 @@ def _split_against_span(
     there is no window to be inside or outside of, and reporting zeros would
     claim every miss falls within it. Those rows go to ``unplaceable``, as does
     any miss with no kickoff of its own.
+
+    ``bound`` is `timed_span`'s — the days the other side was actually requested
+    over (#3644). It reaches this function because the `inside` bucket is the
+    one that governs, and a miss placed inside a stretch nobody read is the
+    exact defect. A bound that empties the span sends every miss to
+    ``unplaceable``, which is right: we did not ask, so we do not know.
     """
-    span = timed_span(span_source)
+    span = timed_span(span_source, bound=bound)
     split = {before: 0, inside: 0, beyond: 0, "unplaceable": 0}
     if span is None:
         split["unplaceable"] = len(misses)
@@ -1275,7 +1337,10 @@ def _statpal_only_by_horizon(
 
 
 def _ours_only_by_horizon(
-    ours_only: Sequence[Side], fixtures: Sequence[Side]
+    ours_only: Sequence[Side],
+    fixtures: Sequence[Side],
+    *,
+    bound: Optional[tuple[datetime, datetime]] = None,
 ) -> dict[str, int]:
     """Split "we have it, StatPal doesn't" by where it falls against THEIR span.
 
@@ -1313,6 +1378,12 @@ def _ours_only_by_horizon(
     subtracted by SQL before this function could report it (CERT-962). The
     denominator is bounded by `MEASUREMENT_HORIZON` and by nothing else, and that
     bound is published on the row as ``measurement_window``.
+
+    ``bound`` (#3644) is what makes ``inside_statpal_span`` mean what its name
+    says. It is THEIR span, so it may only be as wide as the days THEY were read
+    over; tennis loads its StatPal side forward-only and `livescores` returns
+    several days of finished matches on top, so without the clip this bucket
+    absorbed every row of ours in a stretch no request ever covered.
     """
     return _split_against_span(
         ours_only,
@@ -1320,6 +1391,7 @@ def _ours_only_by_horizon(
         before="before_statpal_first",
         inside="inside_statpal_span",
         beyond="beyond_statpal_last",
+        bound=bound,
     )
 
 
@@ -1493,6 +1565,13 @@ def build_agreement_row(
     sources_read: Sequence[str] = (),
     window: Optional[tuple[datetime, datetime]] = None,
     measurement_window: Optional[tuple[datetime, datetime]] = None,
+    #: The span the STATPAL side was actually requested over (#3644) — the days
+    #: some call is scoped to, not the dates the returned fixtures happen to
+    #: carry. Clips their span so a miss of ours can only be placed `inside` a
+    #: stretch we really asked about. `None` for the team sports, whose one
+    #: `season-schedule` call makes the two spans the same thing by
+    #: construction; passing a bound there could only ever be wrong.
+    statpal_read_span: Optional[tuple[datetime, datetime]] = None,
     is_anchor_id: Callable[[Optional[str]], bool] = lambda v: bool(
         v and str(v).strip().isdigit()
     ),
@@ -1532,6 +1611,17 @@ def build_agreement_row(
         row["measurement_window"] = [
             measurement_window[0].isoformat(),
             measurement_window[1].isoformat(),
+        ]
+    if statpal_read_span:
+        # #3644. Published for the same reason `measurement_window` is: the row
+        # already states the span of OUR inventory it was measured over, and it
+        # said nothing at all about the span THEIRS was read over — so a reader
+        # comparing the two sides had no way to notice they were different
+        # windows, which is precisely how 13.91% came to read as a verdict.
+        # `identity.statpal_span` is now guaranteed to sit inside this.
+        row["statpal_read_span"] = [
+            statpal_read_span[0].isoformat(),
+            statpal_read_span[1].isoformat(),
         ]
 
     if read_failures:
@@ -1585,7 +1675,9 @@ def build_agreement_row(
     both = len(paired)
     denominator = both + len(statpal_only) + len(ours_only)
     horizon = _statpal_only_by_horizon(statpal_only, real_rows)
-    ours_horizon = _ours_only_by_horizon(ours_only, real_fixtures)
+    ours_horizon = _ours_only_by_horizon(
+        ours_only, real_fixtures, bound=statpal_read_span
+    )
     in_span_composition, in_span_duplicates = _ours_only_in_span_composition(
         ours_only,
         paired,
@@ -1596,7 +1688,13 @@ def build_agreement_row(
     #: The same span `ours_horizon` placed our misses against, read once here so
     #: the in-span percentage and the bucket it divides by cannot come from two
     #: different answers to "what dates does StatPal serve?".
-    statpal_span = timed_span(real_fixtures)
+    #:
+    #: The `bound` must be passed HERE TOO and not only above. These two are the
+    #: percentage and the denominator it divides by; clipping one and not the
+    #: other is how `ours_covered_in_span_pct` would come to divide a clipped
+    #: numerator by an unclipped bucket, which is a worse number than the one
+    #: #3644 was filed about because it would look deliberate.
+    statpal_span = timed_span(real_fixtures, bound=statpal_read_span)
 
     schedule: dict[str, int] = {
         "within": 0,
@@ -1705,7 +1803,7 @@ def build_agreement_row(
                 denominator=denominator,
                 horizon=horizon,
                 ours_horizon=ours_horizon,
-                statpal_has_span=statpal_span is not None,
+                statpal_span=statpal_span,
                 in_span_composition=in_span_composition,
             ),
             "schedule": (
