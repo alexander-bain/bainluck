@@ -370,6 +370,10 @@ async def _stage_undo_in_txn(
             owner_key=UNDO_OWNER_KEY,
             owner=payload[UNDO_OWNER_KEY],
         )
+    # (This comment is load bearing for `scan_mutation_residue.py` Pass B —
+    # without a line here, the closing paren above plus the bare `noqa` below
+    # reproduce `typeahead_outcome_arm_mutations:M2-NO-LIMIT`'s replacement
+    # literal verbatim and this file reads as mutation residue. Do not delete.)
     except Exception as exc:  # noqa: BLE001 — reported, never swallowed
         logger.warning("#2963 undo stage raised: %s", type(exc).__name__)
         return False, f"undo stage raised: {type(exc).__name__}"
@@ -680,6 +684,9 @@ async def read_undo(identity: str) -> tuple[Optional[dict], str]:
         got = await read_snapshot_standalone(
             identity, expected_version=UNDO_SCHEMA, max_age_s=UNDO_MAX_AGE_S
         )
+    # (Load bearing for `scan_mutation_residue.py` Pass B, as above — this line
+    # is what stops the paren + bare `noqa` pair reading as
+    # `typeahead_outcome_arm_mutations:M2-NO-LIMIT`. Do not delete.)
     except Exception as exc:  # noqa: BLE001 — a raise is UNREADABLE, not MISSING
         logger.warning("#2963 undo read raised: %s", type(exc).__name__)
         return None, REASON_UNDO_UNREADABLE
