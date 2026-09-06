@@ -1232,6 +1232,28 @@ def refresh_linked_game_books(self):
     return _tracked_run("refresh_linked_game_books", _refresh_linked_game_books())
 
 
+@celery_app.task(
+    name="app.tasks.refresh_dated_fixture_starts",
+    soft_time_limit=240,
+    time_limit=300,
+)
+def refresh_dated_fixture_starts():
+    """#3562 / CERT-2087: give ALREADY-INGESTED dated fixtures the venue's
+    published start.
+
+    Deliberately NOT a step inside `poll_kalshi_markets`. That poll's discovery
+    loop is new-first and its post-loop remainder is deadline-guarded, and
+    production receipts (#3518) show it reaching zero existing events on 24 of
+    24 beats — measured 2026-09-06, one complete run re-ingested 199 of 8,940
+    open Kalshi rows. A fix that lives in either of those places is correct and
+    unreachable for the rows a user is actually looking at.
+    """
+    from app.tasks.kalshi import _refresh_dated_fixture_starts
+    return _tracked_run(
+        "refresh_dated_fixture_starts", _refresh_dated_fixture_starts()
+    )
+
+
 @celery_app.task(name="app.tasks.run_freshness_watchdog")
 def run_freshness_watchdog():
     """#995 NEVER-AGAIN: alert the moment market CREATION stalls per source, or a
@@ -4405,6 +4427,43 @@ celery_app.conf.beat_schedule = {
         # #1609 moved this to `heavy` (320.2s p50). Stated LITERALLY rather than
         # left to the post-schedule loop — see the literal-vs-effective note on
         # that loop.
+        "options": {"queue": "heavy"},
+    },
+    "refresh-dated-fixture-starts": {
+        # #3562 / CERT-2087.
+        #
+        # `:07` on ODD hours was chosen by RUNNING the minute census over the
+        # assembled schedule (CERT-418's lesson, same method as the StatPal
+        # stampers below), not by reading the file: of 157 beat entries, `:07`
+        # and `:09` are the only minutes carrying ZERO other crontab fires, and
+        # the neighbours I would otherwise have picked are crowded — `:15` has
+        # 15 entries (8 of them `background` on an even hour) and `:45` is
+        # `poll-kalshi` itself.
+        #
+        # ODD hours, so this lands 22 minutes after each even-hour `:45` poll:
+        # that poll's p50 is 320 s, so its discovery pass is long finished and
+        # the two venue readers never hold the Kalshi rate limit at once. `:07`
+        # also clears its two `heavy` neighbours by a wide margin —
+        # `refresh-linked-game-books-hourly` at `:20` and the price refresh at
+        # `:50`.
+        #
+        # `heavy`, for the reason `refresh-linked-game-books-hourly` states
+        # beside itself: `background` has ~one effective slot for ~40 beats and
+        # is the subject of `app/utils/typeahead_beat_budget.py`. This is the
+        # same SHAPE as that sibling — a bounded per-SERIES venue re-read — so
+        # it belongs on the same queue and answers to the same budget.
+        # `heavy` is where `poll_kalshi_markets` also lives, and that is NOT a
+        # contradiction of what this task exists to escape: the failure was
+        # being INSIDE the poll (behind its new-first tail and its post-loop
+        # deadline), not being scheduled near it. `concurrency=2` and a slot
+        # 22 minutes clear keep them from queueing behind one another.
+        #
+        # Every 2 h is enough. A published start does not drift once it exists;
+        # only a venue revision (rain delay, order-of-play reshuffle) moves it.
+        # 25 series a run, most-stale-first inside a 21-day horizon, is a
+        # rotation rather than a cap.
+        "task": "app.tasks.refresh_dated_fixture_starts",
+        "schedule": crontab(minute=7, hour="1-23/2"),
         "options": {"queue": "heavy"},
     },
     "check-kalshi-freshness-daily": {

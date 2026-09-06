@@ -432,3 +432,148 @@ def test_both_poll_call_sites_pass_the_widened_gate():
     for kw in gates:
         assert isinstance(kw.value, ast.Call)
         assert kw.value.func.id == "_is_dated_fixture_ticker"
+
+
+# ---------------------------------------------------------------------------
+# CERT-2087 — the refresh must be INDEPENDENT of the path that cannot reach
+# ---------------------------------------------------------------------------
+
+class TestTheRefreshIsNotInsideThePathThatCannotReachIt:
+    """The BLOCK's finding, pinned so the repair cannot be quietly undone.
+
+    Correctness was never the problem: `_kalshi_commence_time` stores the venue
+    occurrence and `_stand_in_refinement_target` copies it to the event, and
+    both are proved above. The ship died on REACHABILITY — the only writer of
+    the market value is the discovery upsert loop, which is new-first and
+    reached zero existing events on 24 of 24 production beats (#3518), and the
+    only Event-copy writer lives in that same poll's deadline-guarded post-loop
+    remainder. Measured here 2026-09-06: one complete run re-ingested 199 of
+    8,940 open Kalshi rows, 58 of 3,445 series, 0 existing tennis rows.
+
+    So "put the refresh in the post-loop block, it is simpler" is the change
+    that would silently un-ship this, and these assertions are what refuse it.
+    """
+
+    def test_the_refresh_is_not_called_from_the_poll(self):
+        import ast
+        import inspect
+
+        import app.tasks.kalshi as kalshi_task
+
+        tree = ast.parse(inspect.getsource(kalshi_task._poll_kalshi_markets))
+        called = {
+            node.func.id
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        }
+        assert "_refresh_dated_fixture_starts" not in called, (
+            "inside the poll it inherits both failures the repair exists to "
+            "escape: the new-first tail and the post-loop deadline"
+        )
+
+    def test_it_is_a_scheduled_task_of_its_own_with_a_clear_slot(self):
+        """Independence is about not being INSIDE the poll, not about the
+        queue name. It shares `heavy` with the poll on purpose — the sibling
+        `refresh-linked-game-books-hourly` states the reason beside itself:
+        `background` has ~one effective slot for ~40 beats and is the subject
+        of `app/utils/typeahead_beat_budget.py`. What must hold is that the
+        slot is its OWN, so two venue readers never stack."""
+        from app.tasks import celery_app
+
+        sched = celery_app.conf.beat_schedule
+        entry = sched["refresh-dated-fixture-starts"]
+        assert entry["task"] == "app.tasks.refresh_dated_fixture_starts"
+        assert entry["options"]["queue"] == "heavy"
+
+        minutes = set(entry["schedule"].minute)
+        for neighbour in ("poll-kalshi", "refresh-linked-game-books-hourly"):
+            other = sched[neighbour]
+            assert other["options"]["queue"] == "heavy", neighbour
+            assert not (minutes & set(other["schedule"].minute)), neighbour
+
+    def test_the_budget_and_the_horizon_are_both_present(self):
+        """Gotcha #41 wants BOTH bounds. A budget with no horizon is an
+        oldest-first sweep that spends itself on last season; a horizon with no
+        budget is an unbounded venue read on a task with a 240s soft limit."""
+        from app.tasks.kalshi import (
+            _DATED_FIXTURE_REFRESH_HORIZON,
+            _DATED_FIXTURE_REFRESH_SERIES_BUDGET,
+        )
+
+        assert _DATED_FIXTURE_REFRESH_SERIES_BUDGET > 0
+        assert timedelta(days=7) <= _DATED_FIXTURE_REFRESH_HORIZON <= timedelta(days=60)
+
+    def test_the_candidate_query_orders_most_stale_first(self):
+        """Which makes the budget a ROTATION rather than a cap: a series the
+        run could not afford this time is first in line next time. Without the
+        ordering the same 25 series would be refreshed forever."""
+        import inspect
+
+        from app.tasks.kalshi import _dated_fixture_refresh_candidates
+
+        src = inspect.getsource(_dated_fixture_refresh_candidates)
+        assert "ORDER BY min(fm.volume_updated_at) ASC NULLS FIRST" in src
+        assert "LIMIT :budget" in src
+
+    def test_the_event_write_reuses_the_shipped_predicate(self):
+        """Not a second opinion about when a fixture starts. If this grew its
+        own copy of the gates, an `espn` start could be overwritten by one of
+        them and not the other."""
+        import inspect
+
+        from app.tasks.kalshi import _refresh_dated_fixture_starts
+
+        src = inspect.getsource(_refresh_dated_fixture_starts)
+        assert "_stand_in_refinement_target(" in src
+
+
+class TestItReadsTheVenueThroughTheSharedParser:
+    """#3569's lesson, inherited rather than re-learned.
+
+    `get_markets` is the ONE client method that hands back the venue's raw JSON,
+    and the venue silently stopped emitting the cent-based `yes_bid` /
+    `yes_ask` / `last_price` keys — which is how the 2-minute live poll went
+    dark with no error at all. `_fetch_series_books` (the sibling refresh that
+    landed for #3518/#3569) answers that by going through `parse_markets` and
+    never touching the dicts. This refresh reads the same endpoint and follows
+    the same rule, so a future key rename breaks both or neither.
+    """
+
+    def test_the_refresh_parses_rather_than_reading_raw_dicts(self):
+        import inspect
+
+        from app.tasks.kalshi import _refresh_dated_fixture_starts
+
+        src = inspect.getsource(_refresh_dated_fixture_starts)
+        assert "svc.parse_markets(" in src
+        # The tells of a raw read, which is the thing that went dark.
+        for forbidden in ('.get("occurrence_datetime")', '.get("close_time")',
+                          '.get("event_ticker")'):
+            assert forbidden not in src, forbidden
+
+    def test_it_shares_the_parser_with_the_sibling_refresh(self):
+        """Both venue-reading refreshes on this endpoint, one rule."""
+        import inspect
+
+        from app.tasks.kalshi import _fetch_series_books
+
+        assert "parse_markets(" in inspect.getsource(_fetch_series_books)
+
+    def test_the_parsed_market_really_carries_the_two_fields_we_read(self):
+        """Not a mock: the production parser on a venue-shaped payload. If
+        `occurrence_datetime` ever stops being parsed onto the model, the
+        refresh silently finds nothing to publish and this is what says so."""
+        from app.services.kalshi_api import KalshiAPIService
+
+        parsed = KalshiAPIService().parse_markets([{
+            "ticker": "KXLIGUE1GAME-26SEP11RENOLM-REN",
+            "event_ticker": "KXLIGUE1GAME-26SEP11RENOLM",
+            "occurrence_datetime": "2026-09-11T21:45:00Z",
+            "close_time": "2026-09-14T00:45:00Z",
+        }])
+        assert len(parsed) == 1
+        m = parsed[0]
+        assert m.event_ticker == "KXLIGUE1GAME-26SEP11RENOLM"
+        assert m.occurrence_datetime is not None
+        assert m.close_time is not None
+        assert m.occurrence_datetime < m.close_time

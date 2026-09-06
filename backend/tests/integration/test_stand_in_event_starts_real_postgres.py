@@ -58,6 +58,13 @@ Eight events, each paired with the defect it catches:
   14th. **+27.25h and a different calendar day**, which is the case a
   "same UTC day" rule would have refused.
 
+and, for CERT-2087's required repair, **`test_the_refresh_reaches_a_row_the_poll_never_will`** —
+the regression the BLOCK named. A dated fixture ALREADY in the table, market on its settlement
+close and event on ticker midnight, with the discovery loop's existing tail never reached (which is
+what production does on 24 of 24 beats) and the poll's post-loop remainder dropped by its own
+deadline. The shipped scheduled path must still put the venue's occurrence on the market, on the
+Event, and on what the event API reads. On the pre-repair code every one of those stays wrong.
+
 and the composition driver `test_both_post_loop_fixups_in_the_shipped_order`,
 which is the assertion neither #3488's branch nor #3532's could make alone:
 `_fix_tennis_commence_times` and `_refine_stand_in_event_starts` are two writers
@@ -580,4 +587,317 @@ async def test_without_the_dated_fixture_gate_an_outright_moves_a_fortnight(
     assert after["outright_market"].commence_time == BACKSTOP, (
         "with the gates neutralised the outright MUST move — otherwise this "
         "arm proves nothing about them"
+    )
+
+
+# ---------------------------------------------------------------------------
+# CERT-2087's required regression — the row the poll never reaches
+# ---------------------------------------------------------------------------
+
+#: The Ligue 1 fixture from #3562, as production actually holds it: ingested
+#: days ago, market on the +2d3h settlement close, event on ticker midnight.
+#:
+#: 🔴 ANCHORED TO THE CLOCK, DELIBERATELY, AND OFFSET FIRST (gotcha #44). The
+#: refresh's candidate query has a ±21-day horizon — the floor half of gotcha
+#: #41, without which an oldest-first sweep spends its budget on last season.
+#: A literal `2026-09-11` would pass today and then rot silently out of the
+#: horizon in three weeks' time, turning this regression into a test that
+#: cannot fail. Offset from now, THEN truncate to midnight; no branch on the
+#: clock anywhere, so all 12 faked clocks in `scripts/clock_sweep.py` agree.
+_REFRESH_STAND_IN = (
+    datetime.now(UTC) + timedelta(days=5)
+).replace(hour=0, minute=0, second=0, microsecond=0)
+#: The venue's shape, measured on the real fixture 2026-09-06 (notice 26):
+#: `KXLIGUE1GAME-26SEP11RENOLM` occurrence +21h45m, close +3d 0h45m.
+_REFRESH_OCCURRENCE = _REFRESH_STAND_IN + timedelta(hours=21, minutes=45)
+_REFRESH_CLOSE = _REFRESH_STAND_IN + timedelta(days=3, minutes=45)
+_REFRESH_TICKER = (
+    "KXLIGUE1GAME-"
+    + _REFRESH_STAND_IN.strftime("%y%b%d").upper()
+    + "RENOLM"
+)
+_REFRESH_OCC_ISO = _REFRESH_OCCURRENCE.strftime("%Y-%m-%dT%H:%M:%SZ")
+_REFRESH_CLOSE_ISO = _REFRESH_CLOSE.strftime("%Y-%m-%dT%H:%M:%SZ")
+_REFRESH_VENUE_PAYLOAD = {
+    "KXLIGUE1GAME": [{
+        "ticker": _REFRESH_TICKER + "-REN",
+        "event_ticker": _REFRESH_TICKER,
+        "occurrence_datetime": _REFRESH_OCC_ISO,
+        "close_time": _REFRESH_CLOSE_ISO,
+    }],
+}
+
+
+class _FakeVenue:
+    """Kalshi's `/markets?series_ticker=...` payload, verbatim in shape.
+
+    ONLY the HTTP call is faked. `parse_markets` is delegated to the REAL
+    `KalshiAPIService`, so the payload below goes through production's own
+    parser — which is the point: #3569 is the incident where the venue changed
+    its key set and a raw reader went dark with no error. A fake that also
+    faked the parse would agree with itself about exactly that.
+
+    Records what it was asked for, so the test can assert the task reads ONE
+    request per series rather than one per market — the reason the candidate
+    query groups by series at all.
+    """
+
+    def __init__(self, payload, raise_on=()):
+        from app.services.kalshi_api import KalshiAPIService
+
+        self.payload = payload
+        self.raise_on = set(raise_on)
+        self.asked: list[str] = []
+        self._real = KalshiAPIService()
+
+    async def get_markets(self, status=None, series_ticker=None, limit=None,
+                          cursor=None, event_ticker=None):
+        self.asked.append(series_ticker)
+        if series_ticker in self.raise_on:
+            raise RuntimeError("429 Too Many Requests")
+        return list(self.payload.get(series_ticker, [])), None
+
+    def parse_markets(self, raw):
+        return self._real.parse_markets(raw)
+
+
+async def _seed_already_ingested(conn) -> int:
+    """One dated fixture as an EXISTING row, plus the linkage the repair needs.
+
+    `volume_updated_at` is deliberately days old: this row is exactly what the
+    discovery loop's new-first ordering leaves behind.
+    """
+    sport_id = (
+        await conn.execute(
+            text(
+                "INSERT INTO sports (key, name, active) "
+                "VALUES ('soccer_france_ligue_one', 'Ligue 1', true) RETURNING id"
+            )
+        )
+    ).scalar_one()
+
+    event_id = (
+        await conn.execute(
+            text(
+                "INSERT INTO events "
+                "(sport_id, home_team_name, away_team_name, commence_time, "
+                " commence_time_source, status) "
+                "VALUES (:sid, 'Stade Rennais', 'Marseille', :ct, "
+                "        'kalshi_ticker', 'scheduled') RETURNING id"
+            ),
+            {"sid": sport_id, "ct": _REFRESH_STAND_IN},
+        )
+    ).scalar_one()
+
+    await conn.execute(
+        text(
+            "INSERT INTO futures_markets "
+            "(source, external_id, name, category, mutually_exclusive, status, "
+            " llm_sport_category, commence_time, event_id, volume_updated_at) "
+            "VALUES ('kalshi', :ext, 'Rennes vs Marseille', 'championship', true, "
+            "        'open', 'soccer', :ct, :eid, :touched)"
+        ),
+        {
+            "ext": _REFRESH_TICKER,
+            "ct": _REFRESH_CLOSE,
+            "eid": event_id,
+            "touched": datetime.now(UTC) - timedelta(days=5),
+        },
+    )
+    return event_id
+
+
+def _install_fake_venue(monkeypatch, venue):
+    import app.services.kalshi_api as kalshi_api
+
+    monkeypatch.setattr(kalshi_api, "KalshiAPIService", lambda *a, **k: venue)
+
+
+@needs_postgres
+async def test_the_refresh_reaches_a_row_the_poll_never_will(
+    pg_engine, monkeypatch
+):
+    """CERT-2087's regression. Fails on the pre-repair code, three ways.
+
+    The setup is production's, not a convenience: the row is ALREADY ingested
+    (`volume_updated_at` five days old), so the discovery loop's new-first
+    ordering never revisits it — measured at zero existing events on 24 of 24
+    beats (#3518). Its market therefore still holds the +2d3h settlement close,
+    and `_refine_stand_in_event_starts` — living in the poll's own
+    deadline-guarded post-loop remainder — is *correct* to refuse it, because
+    +72h45m is far outside the 36h event window.
+
+    So neither existing writer can move this row, and both are behaving as
+    designed. The refresh is the third path, and it must land all three:
+    the market, the Event, and the value the event API reads back.
+    """
+    from app.tasks.kalshi import (
+        _refine_stand_in_event_starts,
+        _refresh_dated_fixture_starts,
+    )
+    from app.utils.event_completion import KALSHI_OCCURRENCE_COMMENCE_SOURCE
+
+    async with pg_engine.begin() as conn:
+        event_id = await _seed_already_ingested(conn)
+
+    _install_real_session(monkeypatch, pg_engine)
+
+    # 1. THE CONTROL: the shipped post-loop repair, run on this row, does
+    #    nothing — and is right not to. Without this arm the test below is
+    #    equally consistent with "the poll would have fixed it anyway".
+    assert await _refine_stand_in_event_starts() == 0
+    async with pg_engine.connect() as conn:
+        assert (await conn.execute(
+            text("SELECT commence_time FROM events WHERE id = :id"),
+            {"id": event_id},
+        )).scalar_one() == _REFRESH_STAND_IN
+
+    # 2. the refresh, driven through the same seam the scheduled task uses.
+    venue = _FakeVenue(_REFRESH_VENUE_PAYLOAD)
+    _install_fake_venue(monkeypatch, venue)
+
+    stats = await _refresh_dated_fixture_starts()
+
+    assert venue.asked == ["KXLIGUE1GAME"], venue.asked
+    assert stats["markets_moved"] == 1, stats
+    assert stats["events_moved"] == 1, stats
+
+    # 3. read back on a SEPARATE connection — what another process sees.
+    async with pg_engine.connect() as conn:
+        market_ct = (await conn.execute(
+            text("SELECT commence_time FROM futures_markets "
+                 "WHERE external_id = :ext"),
+            {"ext": _REFRESH_TICKER},
+        )).scalar_one()
+        event_row = (await conn.execute(
+            text("SELECT commence_time, commence_time_source FROM events "
+                 "WHERE id = :id"),
+            {"id": event_id},
+        )).one()
+
+    assert market_ct == _REFRESH_OCCURRENCE
+    assert event_row.commence_time == _REFRESH_OCCURRENCE
+    assert event_row.commence_time_source == KALSHI_OCCURRENCE_COMMENCE_SOURCE
+
+
+@needs_postgres
+async def test_what_the_event_api_reads_back_is_the_published_hour(
+    pg_engine, monkeypatch
+):
+    """The third clause of the regression: the value the PAGE gets.
+
+    `GET /api/events/{id}` loads the row through the ORM and serves
+    `commence_time=event.commence_time` (`_format_event`). This asserts that
+    ORM read against the real server on a fresh session — the same projection
+    the route performs — rather than raw SQL, because an ORM identity-map or
+    expiry problem is invisible to a `text()` SELECT and would be exactly the
+    kind of thing to survive every assertion above.
+
+    It is a projection assertion, not an HTTP call: this repo has no real-
+    Postgres harness for the events router, and inventing one blind (there is
+    no local PostgreSQL in the agent sandbox, so it could not be run before
+    CI) would be a worse risk than stating plainly what is proved. The
+    remaining, unproved gap is the route's own serialisation, which is pinned
+    by source below and by `tests/integration/test_route_events_seeded.py`.
+    """
+    import inspect
+
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+    from app.models.models import Event
+
+    async with pg_engine.begin() as conn:
+        event_id = await _seed_already_ingested(conn)
+
+    _install_real_session(monkeypatch, pg_engine)
+    _install_fake_venue(monkeypatch, _FakeVenue(_REFRESH_VENUE_PAYLOAD))
+
+    from app.tasks.kalshi import _refresh_dated_fixture_starts
+    await _refresh_dated_fixture_starts()
+
+    maker = async_sessionmaker(pg_engine, class_=AsyncSession)
+    async with maker() as read_session:
+        event = await read_session.get(Event, event_id)
+        assert event is not None
+        assert event.commence_time == _REFRESH_OCCURRENCE
+
+    # ...and the route really does serve that attribute rather than deriving
+    # its own start from a ticker or a market.
+    import app.routes.events as events_route
+
+    src = inspect.getsource(events_route._format_event)
+    assert "commence_time=event.commence_time" in src
+
+    # The detail cache must EXPIRE, or a repaired row would be served stale
+    # until the dyno restarted. 300s is the bound this ship inherits.
+    assert 0 < events_route._EVENT_DETAIL_DEFAULT_TTL <= 900
+
+
+@needs_postgres
+async def test_a_rate_limited_series_is_skipped_not_recorded_as_no_occurrence(
+    pg_engine, monkeypatch
+):
+    """A 429 is a SKIP, never a verdict.
+
+    The failure this forbids is the expensive one: writing "the venue published
+    no start" because the venue declined to answer. The row must be left
+    exactly as found, so the next run — which sorts most-stale-first — picks it
+    up first.
+    """
+    from app.tasks.kalshi import _refresh_dated_fixture_starts
+
+    async with pg_engine.begin() as conn:
+        event_id = await _seed_already_ingested(conn)
+
+    _install_real_session(monkeypatch, pg_engine)
+    venue = _FakeVenue({}, raise_on={"KXLIGUE1GAME"})
+    _install_fake_venue(monkeypatch, venue)
+
+    stats = await _refresh_dated_fixture_starts()
+
+    assert venue.asked == ["KXLIGUE1GAME"]
+    assert stats["series_failed"] == 1
+    assert stats["markets_moved"] == 0 and stats["events_moved"] == 0
+
+    async with pg_engine.connect() as conn:
+        row = (await conn.execute(
+            text("SELECT e.commence_time AS ec, fm.commence_time AS mc "
+                 "FROM events e JOIN futures_markets fm ON fm.event_id = e.id "
+                 "WHERE e.id = :id"),
+            {"id": event_id},
+        )).one()
+
+    assert row.ec == _REFRESH_STAND_IN
+    assert row.mc == _REFRESH_CLOSE
+
+
+@needs_postgres
+async def test_the_refresh_converges_and_stops_selecting_what_it_fixed(
+    pg_engine, monkeypatch
+):
+    """It runs every two hours forever. A second pass must be a no-op.
+
+    The mechanism is not a flag: writing `kalshi_occurrence` takes the event
+    out of `DERIVED_COMMENCE_SOURCES`, so the candidate query cannot see it
+    again. Asserted by running twice and requiring the venue not to be asked
+    the second time — the cheap proof that the CANDIDATE set shrank, rather
+    than the write being re-applied to the same value.
+    """
+    from app.tasks.kalshi import _refresh_dated_fixture_starts
+
+    async with pg_engine.begin() as conn:
+        await _seed_already_ingested(conn)
+
+    _install_real_session(monkeypatch, pg_engine)
+    venue = _FakeVenue(_REFRESH_VENUE_PAYLOAD)
+    _install_fake_venue(monkeypatch, venue)
+
+    first = await _refresh_dated_fixture_starts()
+    second = await _refresh_dated_fixture_starts()
+
+    assert first["events_moved"] == 1
+    assert second["events_moved"] == 0
+    assert venue.asked == ["KXLIGUE1GAME"], (
+        "the second run must not even ask the venue — if it does, the event is "
+        "still in the candidate set and this task rewrites the same row forever"
     )

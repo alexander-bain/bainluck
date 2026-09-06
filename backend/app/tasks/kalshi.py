@@ -2892,6 +2892,220 @@ async def _refresh_linked_game_books(deadline_s: float | None = None) -> dict:
     return stats
 
 
+# ---------------------------------------------------------------------------
+# #3562 / CERT-2087 — the refresh that reaches the rows ALREADY in the table
+# ---------------------------------------------------------------------------
+
+#: How many Kalshi SERIES one refresh run may read from the venue. Bounded on
+#: purpose: `get_markets` is the one paged reader in the client with no 429
+#: retry, and this task must never become a second thing that can run long.
+#: 25 series x ~1s measured against the live endpoint = well under the soft
+#: limit, and the ordering below makes the budget a rotation rather than a cap
+#: that starves the tail (gotcha #41: oldest-first WITHIN a floor, both bounds).
+_DATED_FIXTURE_REFRESH_SERIES_BUDGET = 25
+
+#: Only fixtures whose ticker day is within this many days of now. The floor
+#: half of gotcha #41: without it an oldest-first sweep over a population that
+#: keeps growing spends its whole budget on last season's rows, which no user
+#: is looking at, and never reaches the fixture on tomorrow's page.
+_DATED_FIXTURE_REFRESH_HORIZON = timedelta(days=21)
+
+
+async def _dated_fixture_refresh_candidates(session, budget: int) -> list[str]:
+    """The series to re-read, most-stale first, inside the horizon.
+
+    Returns series tickers, not markets: one `get_markets(series_ticker=...)`
+    call returns every open market of a series with its own `event_ticker` and
+    `occurrence_datetime`, so a series is both the cheapest unit of work and the
+    unit the venue is happy to serve (#3149).
+    """
+    result = await session.execute(text("""
+            SELECT split_part(fm.external_id, '-', 1) AS series,
+                   min(fm.volume_updated_at)          AS oldest_touch
+            FROM futures_markets fm
+            JOIN events e ON e.id = fm.event_id
+            WHERE fm.source = 'kalshi'
+              AND fm.status = 'open'
+              AND fm.commence_time IS NOT NULL
+              AND e.commence_time_source = ANY(:derived)
+              AND e.commence_time >= :floor
+              AND e.commence_time <= :ceiling
+            GROUP BY 1
+            ORDER BY min(fm.volume_updated_at) ASC NULLS FIRST, 1
+            LIMIT :budget
+        """), {
+        "derived": sorted(DERIVED_COMMENCE_SOURCES),
+        "floor": datetime.now(timezone.utc) - _DATED_FIXTURE_REFRESH_HORIZON,
+        "ceiling": datetime.now(timezone.utc) + _DATED_FIXTURE_REFRESH_HORIZON,
+        "budget": budget,
+    })
+    return [r.series for r in result.fetchall() if _is_dated_fixture_ticker(
+        f"{r.series}-26SEP07AAAAAA"
+    )]
+
+
+async def _refresh_dated_fixture_starts(
+    budget: int = _DATED_FIXTURE_REFRESH_SERIES_BUDGET,
+) -> dict:
+    """Give ALREADY-INGESTED dated fixtures the venue's published start.
+
+    #3562 / the repair CERT-2087 named, and the difference between a correct
+    change and a shipped one.
+
+    **Why the poll cannot do this.** `_kalshi_commence_time` stores the venue's
+    occurrence on every market the discovery loop writes — but that loop is
+    new-first and deadline-guarded, and production receipts (#3518) show it
+    reaching **zero existing events on 24 of 24 beats**. Measured here
+    2026-09-06: one complete run re-ingested **199 of 8,940 open Kalshi rows,
+    58 of 3,445 series, 0 existing tennis rows**. So for a row already in the
+    table the market keeps its settlement close, and
+    `_refine_stand_in_event_starts` — which lives in that same post-loop
+    remainder — then correctly REFUSES it, because a close sits >=60h past its
+    own ticker midnight and the event window is 36h. Both halves behave exactly
+    as designed and the user still reads the wrong day. That is the whole bug.
+
+    **So this is a separate scheduled task**, on `background`, not a step in
+    the poll: it must not inherit the tail the poll never reaches, nor the
+    deadline that drops the poll's post-loop remainder.
+
+    It writes nothing the poll would not have written:
+
+    1. the MARKET gets `occurrence_datetime`, subject to the same ``occ <=
+       close`` bound `_kalshi_commence_time` applies — an occurrence after its
+       own settlement is not an occurrence we understand;
+    2. the derived stand-in EVENT then gets that value through
+       `_stand_in_refinement_target`, gates and all — the same pure predicate,
+       not a second opinion about when a fixture starts.
+
+    Convergent by construction: (2) rewrites `commence_time_source` to
+    `kalshi_occurrence`, which is not in `DERIVED_COMMENCE_SOURCES`, so the
+    event leaves this task's own candidate set the moment it is fixed.
+
+    A 429 is a SKIP, never a verdict: the series keeps its stale stamp and is
+    first in line next run. Recording "no occurrence" on a refused read is how
+    a rate limit becomes permanent data loss.
+    """
+    from app.services.kalshi_api import KalshiAPIService
+
+    stats: dict = {
+        "series_read": 0, "series_failed": 0,
+        "markets_moved": 0, "events_moved": 0,
+    }
+
+    async with get_task_session() as session:
+        series_list = await _dated_fixture_refresh_candidates(session, budget)
+
+    if not series_list:
+        return stats
+
+    svc = KalshiAPIService()
+    published: dict[str, datetime] = {}
+
+    for series in series_list:
+        try:
+            raw, _ = await svc.get_markets(
+                status="open", series_ticker=series, limit=1000
+            )
+        except Exception as exc:
+            # Includes 429. Skip, keep the stale stamp, retry next run.
+            stats["series_failed"] += 1
+            logger.warning("dated-fixture refresh: %s: %s", series, exc)
+            continue
+        stats["series_read"] += 1
+        # THROUGH `parse_markets`, never the raw dicts — the same rule
+        # `_fetch_series_books` follows for the same reason (#3569): `get_markets`
+        # alone hands back the venue's own JSON, its key set moves under us, and
+        # a reader that helps itself to those dicts goes dark without an error.
+        # It also gives us parsed datetimes instead of a bespoke ISO reader.
+        for m in svc.parse_markets(raw):
+            occ = m.occurrence_datetime
+            if not m.event_ticker or occ is None:
+                continue
+            occ = _as_utc(occ)
+            close = _as_utc(m.close_time) if m.close_time else None
+            if close is not None and occ > close:
+                continue
+            best = published.get(m.event_ticker)
+            if best is None or occ < best:
+                published[m.event_ticker] = occ
+
+    if not published:
+        return stats
+
+    async with get_task_session() as session:
+        rows = (await session.execute(text("""
+                SELECT fm.id                   AS market_id,
+                       fm.external_id          AS external_id,
+                       fm.commence_time        AS market_commence,
+                       e.id                    AS event_id,
+                       e.commence_time         AS event_commence,
+                       e.commence_time_source  AS event_source
+                FROM futures_markets fm
+                JOIN events e ON e.id = fm.event_id
+                WHERE fm.source = 'kalshi'
+                  AND fm.status = 'open'
+                  AND fm.external_id = ANY(:tickers)
+                ORDER BY e.id, fm.external_id
+            """), {"tickers": sorted(published)})).fetchall()
+
+        moved_events: set = set()
+        for r in rows:
+            target = published.get(r.external_id)
+            if target is None:
+                continue
+
+            # 1. the market
+            if (
+                r.market_commence is None
+                or abs((_as_utc(r.market_commence) - target).total_seconds()) > 1800
+            ):
+                await session.execute(
+                    text(
+                        "UPDATE futures_markets SET commence_time = :dt "
+                        "WHERE id = :id"
+                    ),
+                    {"dt": target, "id": r.market_id},
+                )
+                stats["markets_moved"] += 1
+
+            # 2. the event, read against the value the market NOW holds — the
+            #    composition #3532 was filed for, made explicit rather than
+            #    left to statement order.
+            if r.event_id in moved_events:
+                continue
+            event_target = _stand_in_refinement_target(
+                r.external_id, r.event_commence, r.event_source, target,
+            )
+            if event_target is None:
+                continue
+            moved_events.add(r.event_id)
+            await session.execute(
+                text("""
+                    UPDATE events
+                    SET commence_time = :dt,
+                        commence_time_source = :src
+                    WHERE id = :id
+                """),
+                {
+                    "dt": event_target,
+                    "src": KALSHI_OCCURRENCE_COMMENCE_SOURCE,
+                    "id": r.event_id,
+                },
+            )
+            stats["events_moved"] += 1
+
+        if stats["markets_moved"] or stats["events_moved"]:
+            await session.commit()
+            logger.info(
+                "Dated-fixture refresh: %d series read, %d markets and %d "
+                "events moved onto the venue's published start",
+                stats["series_read"], stats["markets_moved"],
+                stats["events_moved"],
+            )
+
+    return stats
+
+
 async def _link_sports_props_to_events() -> dict:
     """Link Kalshi sports prop markets to their parent game events.
 
