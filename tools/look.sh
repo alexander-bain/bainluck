@@ -4,6 +4,13 @@
 # Lanes: run this, then Read the PNG (Claude reads images natively) and JUDGE it like Alex would:
 # empty charts, flat lines, missing players/images, stale copy, broken layout.
 #
+# SHOT_SCROLL — shoot ONE VIEWPORT instead of the whole page. Unset = fullPage, unchanged.
+#   SHOT_SCROLL=top          the first screen
+#   SHOT_SCROLL=22411        the viewport at that pixel offset
+# Use it on any long page. `/hub/tennis` at 390px is 44,729px tall, and its fullPage PNG
+# (1332x89458) downscales to an unreadable 30px strip — a shot you cannot read is not a LOOK.
+# The document height is printed to stderr in both modes; a page 53 screens tall is a finding.
+#
 # 2026-09-01 (ux/976): rewritten to delegate to shop-shot.mjs. The old `npx playwright screenshot`
 # path CANNOT launch Chromium in the agent sandbox, and — worse — it exited 0 while producing no
 # file, so a dead camera read as a clean pass. This version exits non-zero if no PNG is written.
