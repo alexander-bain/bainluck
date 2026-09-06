@@ -186,3 +186,88 @@ final class OddsChartNoReadingsTests: XCTestCase {
             "Not enough readings since the start to draw a line yet.")
     }
 }
+
+/// #3410, second half — the "View Probability Models" link is a promise too.
+///
+/// With the chart collapsed and `sourcesToggle` already self-hiding on a game
+/// with no sources, this link was the only thing left in the card, and it points
+/// at THIS event's model breakdown — a page that is itself empty for a game with
+/// no readings. Photographed stranded between the two honest sentences on
+/// `artifacts-native-033/FIXED-esports-15305748.png`.
+///
+/// The gate is deliberately GENEROUS, so these tests are mostly about the
+/// direction that would do damage: every shape that has any evidence at all
+/// keeps its link.
+final class EventModelsLinkGateTests: XCTestCase {
+
+    private func event(_ json: String) throws -> EventDetail {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode(EventDetail.self, from: Data(json.utf8))
+    }
+
+    private func history(_ json: String) throws -> EventHistoryResponse {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode(EventHistoryResponse.self, from: Data(json.utf8))
+    }
+
+    private func bareEvent() throws -> EventDetail {
+        try event("""
+        {"id": 15305748, "home_team": "Isurus", "away_team": "wachoskys",
+         "commence_time": "2026-09-05T17:55:03Z", "status": "live",
+         "win_probability_sources": {}, "bookmaker_odds": []}
+        """)
+    }
+
+    private func emptyHistory() throws -> EventHistoryResponse {
+        try history("""
+        {"event_id": 15305748, "home_team": "Isurus", "away_team": "wachoskys",
+         "status": "live", "history": [], "espn_history": [],
+         "win_prob_history": {}, "bookmaker_history": {}, "win_prob_sources": {}}
+        """)
+    }
+
+    /// The photographed state: nothing, from any angle.
+    func testAGameWithNoEvidenceAnywhereLosesTheLink() throws {
+        XCTAssertFalse(EventDetailView.hasAnyProbabilityEvidence(
+            event: try bareEvent(), history: try emptyHistory()))
+    }
+
+    // MARK: The direction that would do damage
+
+    func testANamedSourceKeepsTheLink() throws {
+        let withSource = try event("""
+        {"id": 1, "home_team": "A", "away_team": "B",
+         "commence_time": "2026-09-05T17:55:03Z", "status": "live",
+         "win_probability_sources": {"espn": {"home_probability": 0.61}}}
+        """)
+        XCTAssertTrue(EventDetailView.hasAnyProbabilityEvidence(
+            event: withSource, history: try emptyHistory()))
+    }
+
+    func testASingleHistoryPointKeepsTheLink() throws {
+        let withPoint = try history("""
+        {"event_id": 1, "home_team": "A", "away_team": "B", "status": "live",
+         "history": [{"timestamp": "2026-09-05T17:58:00Z", "home_probability": 0.62}]}
+        """)
+        XCTAssertTrue(EventDetailView.hasAnyProbabilityEvidence(
+            event: try bareEvent(), history: withPoint))
+    }
+
+    func testEspnHistoryAloneKeepsTheLink() throws {
+        let espnOnly = try history("""
+        {"event_id": 1, "home_team": "A", "away_team": "B", "status": "live",
+         "history": [],
+         "espn_history": [{"timestamp": "2026-09-05T17:58:00Z", "home_probability": 0.62}]}
+        """)
+        XCTAssertTrue(EventDetailView.hasAnyProbabilityEvidence(
+            event: try bareEvent(), history: espnOnly))
+    }
+
+    /// A page that has not loaded yet must not flicker the link away and back.
+    func testTheLinkIsKeptWhileHistoryIsStillNil() throws {
+        XCTAssertTrue(EventDetailView.hasAnyProbabilityEvidence(
+            event: try bareEvent(), history: nil))
+    }
+}

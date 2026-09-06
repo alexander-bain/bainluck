@@ -224,19 +224,26 @@ struct EventDetailView: View {
                         // Bookmaker table (collapsible Sources panel)
                         sourcesToggle(event)
 
-                        NavigationLink(value: Route.eventModels(id: event.id)) {
-                            HStack {
-                                Spacer()
-                                HStack(spacing: 4) {
-                                    Image(systemName: "function")
-                                        .font(.caption2.weight(.bold))
-                                    Text("View Probability Models")
-                                        .font(.caption2.weight(.medium))
+                        // #3410 — this link goes to THIS event's model breakdown,
+                        // so on a game with no readings at all it promises a page
+                        // that is itself empty. With the chart collapsed and
+                        // `sourcesToggle` already self-hiding, it was the last
+                        // thing left in the card and read as stranded.
+                        if Self.hasAnyProbabilityEvidence(event: event, history: vm.history) {
+                            NavigationLink(value: Route.eventModels(id: event.id)) {
+                                HStack {
+                                    Spacer()
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "function")
+                                            .font(.caption2.weight(.bold))
+                                        Text("View Probability Models")
+                                            .font(.caption2.weight(.medium))
+                                    }
+                                    .foregroundStyle(.blue)
                                 }
-                                .foregroundStyle(.blue)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 6)
                             }
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 6)
                         }
                     }
                     .background(Color.cardBackground)
@@ -806,6 +813,28 @@ struct EventDetailView: View {
 
 
     // MARK: - Sources Toggle (v3)
+
+    /// #3410 — is there ANY probability evidence for this event, from any angle?
+    ///
+    /// Deliberately generous, and deliberately not a copy of the chart's own
+    /// `hasNoReadings`: this decides whether to offer a link to the model
+    /// breakdown, so it errs towards offering it. A single named source, a single
+    /// bookmaker quote or a single history point is enough. Only a game with none
+    /// of the three loses the link — the state photographed on 15305748 and
+    /// 15305758, where `win_prob_sources` is `{}` and every history array is empty.
+    ///
+    /// `history == nil` counts as evidence: that is the not-yet-loaded state, and
+    /// a link must not flicker away and back while a page settles.
+    static func hasAnyProbabilityEvidence(event: EventDetail, history: EventHistoryResponse?) -> Bool {
+        if !(event.winProbabilitySources ?? [:]).isEmpty { return true }
+        if !(event.bookmakerOdds ?? []).isEmpty { return true }
+        guard let history else { return true }
+        if !(history.history ?? []).isEmpty { return true }
+        if !(history.espnHistory ?? []).isEmpty { return true }
+        if !(history.winProbHistory ?? [:]).isEmpty { return true }
+        if !(history.bookmakerHistory ?? [:]).isEmpty { return true }
+        return false
+    }
 
     /// The disclosure under the chart: what the blended number is made of.
     ///
