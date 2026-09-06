@@ -1873,6 +1873,11 @@ export interface HubUpcoming {
   // it — see that file for why the open `| string` arm must stay silent too.
   status: "upcoming" | "live" | "settled" | "unknown" | string;
   start_date: string | null;
+  /** When the tournament ENDS. The tennis rail has no start date to serve (its
+   *  only date is the winner market's resolution), so it serves this instead of
+   *  mislabelling an end as a start (UX-P178). Absent or null on the domains
+   *  that know a real start. */
+  end_date?: string | null;
   is_major: boolean;
   fight_count?: number | null;
 }

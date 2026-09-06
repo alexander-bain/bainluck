@@ -317,6 +317,13 @@ def _serialize_concept(c: dict) -> dict:
         "domain": c.get("domain"),
         "status": c.get("status"),
         "start_date": c.get("start_date"),
+        # UX-P178: this is an ALLOWLIST, so a key the lister emits but this
+        # function does not name is dropped silently while the route still
+        # returns 200. The tennis rail has no start date to serve — its only
+        # date is when the tournament ends — so `end_date` must be named here
+        # or those cards lose their date entirely. `None` for the domains that
+        # do know a real start.
+        "end_date": c.get("end_date"),
         "is_major": bool(c.get("is_major")),
         "fight_count": c.get("fight_count"),
     }

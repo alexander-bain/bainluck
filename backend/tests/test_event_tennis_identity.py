@@ -43,6 +43,7 @@ from app.utils.event_tennis import (
     list_tennis_tournament_concepts,
     select_winner_field,
     tennis_gender,
+    tennis_is_major,
     tennis_status,
     tournament_tokens,
 )
@@ -623,10 +624,10 @@ class TestMergingNeverSubtractsTheDate:
     duplicated-but-dated card into one deduplicated UNDATED card, downgraded from
     `live` to `upcoming` — a silent subtraction traded for a visible duplicate.
 
-    ⚠️ The key asserted below is `start_date`, and it is misnamed: the rail serves
-    `resolution_date` — an END — under it. That is a SEPARATE defect (UX-P178) and
-    is deliberately not fixed by this ship. What matters here is that `start_date`
-    is the value the card actually PRINTS, so it is the one a merge can subtract.
+    The key asserted below was `start_date` until UX-P178, which is where that
+    END belonged all along; it is now `end_date`. What matters here is unchanged:
+    it is the value the card actually PRINTS, so it is the one a merge can
+    subtract.
     """
 
     def _pair(self):
@@ -662,7 +663,9 @@ class TestMergingNeverSubtractsTheDate:
         rich, dated, ends = self._pair()
         (card,) = await self._rail([rich, dated])
         assert card["name"] == "ATP 1000 Montreal: Winner"  # identity from the draw
-        assert card["start_date"] == ends.isoformat()  # date from the group
+        assert card["end_date"] == ends.isoformat()  # date from the group
+        # UX-P178: and it is served as the END it is, never as a start.
+        assert card["start_date"] is None
 
     async def test_the_survivor_keeps_the_status_its_borrowed_date_implies(self):
         """Was `test_the_survivor_keeps_its_live_status`, asserting `"live"`.
@@ -710,14 +713,16 @@ class TestMergingNeverSubtractsTheDate:
         """The control. A date is borrowed from a SIBLING, never invented — with
         no sibling to read, the rail still says it does not know.
 
-        `start_date is None` is the load-bearing half. The status alongside it
-        is `unknown` (UX-P209, was `upcoming`) and reads correctly now: with no
-        date on any rendering of this tournament there is nothing whatsoever to
-        infer a phase from, which is the state the word exists to name.
+        `end_date is None` is the load-bearing half (it was `start_date` until
+        UX-P178 moved the value to the key it belongs under). The status
+        alongside it is `unknown` (UX-P209, was `upcoming`) and reads correctly
+        now: with no date on any rendering of this tournament there is nothing
+        whatsoever to infer a phase from, which is the state the word exists to
+        name.
         """
         rich, _, _ = self._pair()
         (card,) = await self._rail([rich])
-        assert card["start_date"] is None and card["status"] == "unknown"
+        assert card["end_date"] is None and card["status"] == "unknown"
 
     async def test_the_winners_own_date_wins_when_it_has_one(self):
         """Identity's row is still preferred; the sibling is a fallback, not an
@@ -725,7 +730,7 @@ class TestMergingNeverSubtractsTheDate:
         rich, dated, ends = self._pair()
         rich.resolution_date = ends + timedelta(days=2)
         (card,) = await self._rail([rich, dated])
-        assert card["start_date"] == (ends + timedelta(days=2)).isoformat()
+        assert card["end_date"] == (ends + timedelta(days=2)).isoformat()
 
     async def test_the_earliest_sibling_date_is_the_one_borrowed(self):
         """`min`, not `max`, and the difference is user-visible: a tournament that
@@ -742,7 +747,7 @@ class TestMergingNeverSubtractsTheDate:
             outcomes=[SimpleNamespace(name=f"Player {i}") for i in range(12)],
         )
         (card,) = await self._rail([rich, late, dated])
-        assert card["start_date"] == ends.isoformat()
+        assert card["end_date"] == ends.isoformat()
 
     async def test_the_borrowed_date_also_orders_the_rail(self):
         """The card carries the group's date, so the rail must SORT on it too. A
@@ -760,3 +765,137 @@ class TestMergingNeverSubtractsTheDate:
         )
         names = [c["name"] for c in await self._rail([later, rich, dated])]
         assert names == ["ATP 1000 Montreal: Winner", "WTA Hamburg Winner"], names
+
+
+# ---------------------------------------------------------------------------
+# UX-P178 (#2167) — the marquee chip, and the END that was called a START
+# ---------------------------------------------------------------------------
+class TestAGrandSlamCanSayItIsOne:
+    """`is_major` was hardcoded `False` at BOTH tennis concept sites.
+
+    Measured on production 2026-08-29: 0 of 12 tennis hub cards carried the
+    "★ Marquee" chip and 0 of 48 across all five hubs — the chip had never
+    rendered anywhere. Tennis was the only one of the four hub listers with no
+    mechanism to express a major at all (combat derives one from `card_label`,
+    golf passes the source's flag through), so this is a missing capability, not
+    a mis-set flag.
+    """
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "2026 Women's US Open Winner (Tennis)",
+            "US Open Men's Singles Winner",
+            "Wimbledon: Winner",
+            "Australian Open Winner",
+            "French Open: Winner",
+            "Roland Garros Winner",  # the same slam under its other live name
+        ],
+    )
+    def test_each_slam_is_a_major(self, name):
+        assert tennis_is_major(name) is True
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "ATP 1000 Montreal: Winner",
+            "Cincinnati Open: Winner",
+            "WTA Hamburg Winner",
+            "Winston-Salem Open Winner",  # an "Open", and not a slam
+        ],
+    )
+    def test_an_ordinary_tour_stop_is_not(self, name):
+        assert tennis_is_major(name) is False
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "Huddersfield vs Wimbledon: First Half Winner",
+            "Wimbledon vs Newport",
+            "Wimbledon vs Reading",
+        ],
+    )
+    def test_afc_wimbledon_is_a_football_club_and_never_a_slam(self, name):
+        """The ` vs ` guard is the MEASURED population, not defensive padding.
+
+        A 2026-08-29 census of tennis-categorized winner markets returned 14
+        rows, of which these three are football: AFC Wimbledon carrying
+        `llm_sport_category = 'tennis'`. A bare `%Wimbledon%` substring test
+        badges a football match as a Grand Slam. Both production call sites gate
+        on `is_winner_field` first, which excludes these today — the predicate
+        does not inherit that gate and must not rely on it.
+        """
+        assert tennis_is_major(name) is False
+
+    def test_the_match_is_anchored_not_a_substring(self):
+        # "Wimbledonshire" is not Wimbledon; "carousopen" is not the US Open.
+        assert tennis_is_major("Wimbledonshire Trophy Winner") is False
+        assert tennis_is_major("Bus Openers Winner") is False
+
+    def test_no_name_is_not_a_major(self):
+        assert tennis_is_major(None) is False
+        assert tennis_is_major("") is False
+
+
+class TestTheRailServesItsDateUnderTheRightName:
+    """The rail called an END a START, and the detail page one click away called
+    the SAME timestamp an end.
+
+    `resolution_date` is when the winner market RESOLVES — at or after the
+    tournament ends. The rail served it as `start_date`, so /hub/tennis printed a
+    date days in the future on a card the reader takes to be current, while
+    `TennisEventAdapter.build_event` served that identical value as `end_date`
+    with `start_date: None`. One value, two opposite names, one click apart.
+
+    These drive the REAL lister, not a copy of its logic, and the slam flag is
+    DERIVED from the name the fixture supplies rather than written into the
+    fixture — a fixture that hand-writes a value production derives proves
+    nothing about production.
+    """
+
+    def _winner(self, name, ends):
+        return SimpleNamespace(
+            id=58728642,
+            name=name,
+            status="open",
+            resolution_date=ends,
+            volume_24h=67053,
+            outcomes=[SimpleNamespace(name=f"Player {i}") for i in range(46)],
+        )
+
+    async def _rail(self, markets):
+        return await list_tennis_tournament_concepts(_FakeDB(markets), limit=50)
+
+    async def test_the_end_is_named_end_and_no_start_is_invented(self):
+        # Gotcha #44: offset FIRST, then truncate.
+        ends = (datetime.now(timezone.utc) + timedelta(days=8)).replace(microsecond=0)
+        (card,) = await self._rail(
+            [self._winner("2026 Women's US Open Winner (Tennis)", ends)]
+        )
+        assert card["end_date"] == ends.isoformat()
+        # We have no tournament start for tennis, and a date we do not have is
+        # absent, never guessed.
+        assert card["start_date"] is None
+
+    async def test_the_us_open_card_carries_the_marquee_flag(self):
+        ends = (datetime.now(timezone.utc) + timedelta(days=8)).replace(microsecond=0)
+        (card,) = await self._rail(
+            [self._winner("2026 Women's US Open Winner (Tennis)", ends)]
+        )
+        assert card["is_major"] is True
+
+    async def test_a_tour_stop_on_the_same_rail_does_not(self):
+        """The control. `is_major: True` for everything would pass the test above
+        and is a worse bug than the one being fixed."""
+        ends = (datetime.now(timezone.utc) + timedelta(days=8)).replace(microsecond=0)
+        (card,) = await self._rail([self._winner("Cincinnati Open: Winner", ends)])
+        assert card["is_major"] is False
+
+    async def test_the_rail_and_the_detail_page_agree_about_one_timestamp(self):
+        """The agreement is asserted on ONE payload driven through BOTH real code
+        paths, rather than on two fixtures that can drift apart."""
+        ends = (datetime.now(timezone.utc) + timedelta(days=8)).replace(microsecond=0)
+        winner = self._winner("2026 Women's US Open Winner (Tennis)", ends)
+        (card,) = await self._rail([winner])
+        assert card["end_date"] == winner.resolution_date.isoformat()
+        assert card["start_date"] is None

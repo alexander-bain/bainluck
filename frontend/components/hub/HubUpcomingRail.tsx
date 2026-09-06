@@ -29,11 +29,29 @@ import { eventPath } from "@/lib/eventKey";
 import { StatusPill } from "@/components/hub/HubStatusPill";
 import { hubUpcomingHeading } from "@/lib/hubUpcomingHeading";
 
-function formatDate(iso: string | null): string {
+export function formatDate(iso: string | null | undefined): string {
   if (!iso) return "";
   const d = new Date(iso);
   if (isNaN(d.getTime())) return "";
-  return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+  // UX-P178: `timeZone` is pinned deliberately. These instants are midnight UTC,
+  // so rendering them in the viewer's zone moves the DAY for everyone west of
+  // Greenwich: `2026-09-13T00:00:00+00:00` reads "Sat, Sep 12" in Los Angeles and
+  // "Sun, Sep 13" in UTC (measured 2026-08-29). Every card on all five hubs was a
+  // day early for US readers. The date we publish is the date the data states.
+  //
+  // `Intl.DateTimeFormat` rather than `d.toLocaleDateString` deliberately: CI
+  // runs `TZ=UTC`, where the buggy unpinned call and this pinned one produce the
+  // SAME string, so a guard that relies on the runner's zone is vacuous exactly
+  // where it runs. `Date.prototype.toLocaleDateString` reaches ICU without
+  // passing through the JS-visible constructor and cannot be intercepted; going
+  // through `Intl.DateTimeFormat` lets the guard substitute a non-UTC ambient
+  // default and prove the pin actually bites, under any TZ.
+  return new Intl.DateTimeFormat("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  }).format(d);
 }
 
 export function UpcomingCard({ card }: { card: HubUpcoming }) {
@@ -52,7 +70,23 @@ export function UpcomingCard({ card }: { card: HubUpcoming }) {
         {card.name}
       </div>
       <div className="mt-3 flex items-center justify-between text-xs text-text-muted">
-        <span>{formatDate(card.start_date) || "TBD"}</span>
+        {/* UX-P178: a start date is printed bare, because a bare date on a
+            fixture card reads as "when it starts". The tennis rail has no start
+            to give — its only date is when the tournament ENDS — so that one is
+            labelled. An unlabelled end date on a card the reader takes to be
+            forthcoming is a contradiction they have to resolve; "Ends Sun, Sep
+            13" is the same fact, stated.
+            The `start_date` arm is tried FIRST and deliberately: Vercel deploys
+            ahead of Heroku, so for that window this build reads a payload whose
+            backend still carries the value under `start_date`. Falling through
+            to `end_date` only when there is no start means the split-deploy
+            window degrades to TODAY's behaviour (a bare date) rather than to a
+            blank card. */}
+        <span>
+          {formatDate(card.start_date) ||
+            (formatDate(card.end_date) && `Ends ${formatDate(card.end_date)}`) ||
+            "TBD"}
+        </span>
         {typeof card.fight_count === "number" && card.fight_count > 0 && (
           <span className="font-mono">{card.fight_count} fights</span>
         )}
