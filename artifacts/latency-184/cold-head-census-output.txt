@@ -1,0 +1,56 @@
+samples          : 48  (2026-09-06T08:04:47Z -> 2026-09-06T11:33:32Z)
+sampled window   : 08:04:47Z -> 11:33:32Z  (208.8 min)
+distinct passes  : 178 in window (210 incl. ring backfill to 07:35:32Z)
+
+inter-pass gap   : p50=41s p95=184s max=750s
+  gaps > 65s (response TTL lapses) : 46 of 177
+  gaps > 120s (expiry budget blown): 26 of 177
+
+-- Q1: whole-head-cold passes --
+expired == head_n on 34 of 178 passes (19.1%)
+COLD WALL TIME (gap beyond the 65s TTL): 71.0 min of 203.1 min = 34.9% of the window
+  ^ this is the user-facing number; the pass percentage above understates it.
+
+-- Q2: was a compaction grinder resident? --
+  turbo_collapse_futures: NO new start in window — last_started_at ['2026-09-06T06:32:20.806203+00:00']
+  turbo_collapse_odds: NO new start in window — last_started_at ['2026-09-06T06:46:42.537901+00:00']
+
+-- Q3: does the rate move across the #3399 deploy? --
+  pre-#3399  (-> 10:05:31Z): passes=133 whole-head-cold=24 (18.0%)  gap p50=42s p95=170s
+  post-#3399 (10:05:31Z ->): passes=77 whole-head-cold=14 (18.2%)  gap p50=40s p95=196s
+
+-- the cold passes, with the gap that caused each --
+   08:07:12Z  expired=40/40  period_s=317.7
+   08:20:35Z  expired=40/40  period_s=725.2
+   08:28:41Z  expired=40/40  period_s=115.2
+   08:33:50Z  expired=40/40  period_s=124.0
+   08:38:41Z  expired=40/40  period_s=117.2
+   08:47:16Z  expired=40/40  period_s=76.1
+   08:55:06Z  expired=40/40  period_s=244.8
+   09:04:11Z  expired=40/40  period_s=156.2
+   09:09:27Z  expired=40/40  period_s=162.6
+   09:13:48Z  expired=40/40  period_s=77.3
+   09:19:42Z  expired=40/40  period_s=158.1
+   09:23:37Z  expired=40/40  period_s=154.2
+   09:29:18Z  expired=40/40  period_s=131.8
+   09:34:45Z  expired=40/40  period_s=193.2
+   09:38:56Z  expired=40/40  period_s=121.5
+   09:43:56Z  expired=40/40  period_s=79.8
+   09:50:05Z  expired=40/40  period_s=154.2
+   09:56:58Z  expired=40/40  period_s=316.4
+   09:59:08Z  expired=40/40  period_s=130.5
+   10:02:41Z  expired=40/40  period_s=79.8
+   10:11:00Z  expired=40/40  period_s=82.1
+   10:13:54Z  expired=40/40  period_s=93.9
+   10:19:29Z  expired=40/40  period_s=113.3
+   10:24:02Z  expired=40/40  period_s=193.0
+   10:28:55Z  expired=40/40  period_s=91.9
+   10:37:41Z  expired=40/40  period_s=84.1
+   10:40:21Z  expired=40/40  period_s=125.9
+   10:43:44Z  expired=40/40  period_s=125.3
+   10:48:59Z  expired=40/40  period_s=146.9
+   10:53:16Z  expired=40/40  period_s=137.9
+   10:56:55Z  expired=40/40  period_s=104.3
+   11:06:07Z  expired=40/40  period_s=302.8
+   11:22:57Z  expired=40/40  period_s=134.8
+   11:28:45Z  expired=40/40  period_s=153.8
