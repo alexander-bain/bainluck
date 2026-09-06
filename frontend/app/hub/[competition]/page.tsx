@@ -147,9 +147,23 @@ function MarketCard({ market }: { market: LeagueMarket }) {
       className="block min-w-0 bg-surface-card border border-surface-border rounded-2xl p-4 transition-colors hover:border-accent-brand/50"
     >
       <div className="flex items-start justify-between gap-2 mb-2">
-        <span className="text-[14px] font-semibold text-text-primary leading-snug line-clamp-2">
-          {market.name}
-        </span>
+        {/* #3508: a Kalshi match market is named only for its two players, so a
+            US Open match and a third-tier Challenger both rendered as a bare
+            "X vs Y" and could not be told apart. The eyebrow is the venue's own
+            competition string, and it is drawn ONLY when we have one — an
+            absent tournament leaves the card exactly as it was. `min-w-0` +
+            `truncate` because this is a new unbreakable string on the card
+            UX-P183 (#2877) had to stop pushing the page sideways. */}
+        <div className="min-w-0">
+          {market.competition && (
+            <span className="block min-w-0 truncate text-[11px] font-semibold text-text-muted leading-snug">
+              {market.competition}
+            </span>
+          )}
+          <span className="block text-[14px] font-semibold text-text-primary leading-snug line-clamp-2">
+            {market.name}
+          </span>
+        </div>
         {market.prop_type && (
           <span className="flex-shrink-0 text-[10px] font-bold uppercase tracking-wide text-text-muted bg-surface-elevated px-1.5 py-0.5 rounded">
             {market.prop_type}

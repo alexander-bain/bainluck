@@ -83,6 +83,14 @@ class KalshiEvent(BaseModel):
     category: Optional[str] = None
     mutually_exclusive: bool = True
 
+    #: The tournament this event belongs to, as the venue itself names it —
+    #: "US Open Men Singles", "ATP Challenger Seville", "WTA 125K Montreux".
+    #: Kalshi carries it in ``product_metadata.competition``; NOTHING else in
+    #: the payload does. The series is generic year-round ("WTA Doubles Tennis
+    #: Match") and the title/sub_title are just the two players, so a match
+    #: market has no other tournament signal (#3508).
+    competition: Optional[str] = None
+
     # Nested markets
     markets: list[KalshiMarket] = []
 
@@ -96,6 +104,30 @@ def event_series_ticker(event_ticker: str) -> str:
     which keeps its nested markets), so a prefix test silently conflates the two.
     """
     return (event_ticker or "").split("-", 1)[0].upper()
+
+
+def _event_competition(event_data: dict) -> Optional[str]:
+    """The tournament named by Kalshi's own ``product_metadata.competition``.
+
+    Returns ``None`` — never a guess — whenever the venue does not say. The key
+    is absent on most non-sport series, and ``product_metadata`` has been
+    observed as ``null`` as well as missing, so this tolerates both rather than
+    letting a ``NoneType`` escape into ``_parse_event``'s except and drop the
+    whole event.
+
+    Deliberately NOT derived from the ticker. ``KXATPCHALLENGERMATCH`` implies a
+    tour level but names no tournament, and the main-tour families
+    (``KXATPMATCH``, ``KXWTADOUBLES``, …) are generic year-round series that
+    carry US Open and non-US-Open events alike — so a ticker-derived label would
+    be inventing the one fact the reader is asking for (#3508).
+    """
+    product_metadata = event_data.get("product_metadata")
+    if not isinstance(product_metadata, dict):
+        return None
+    competition = product_metadata.get("competition")
+    if not isinstance(competition, str):
+        return None
+    return competition.strip() or None
 
 
 def order_market_backfill_candidates(
@@ -2569,6 +2601,7 @@ class KalshiAPIService(BaseAPIClient):
                 category=event_data.get("category"),
                 mutually_exclusive=event_data.get("mutually_exclusive", True),
                 markets=markets,
+                competition=_event_competition(event_data),
             )
         except Exception as e:
             logger.warning("Error parsing Kalshi event: %s", e)
