@@ -476,10 +476,42 @@ class TestTheInvariantBites:
 class TestItIsReachable:
     """A migration that is not on the chain runs on nobody's deploy."""
 
-    def test_is_the_single_head(self):
+    def test_is_an_ancestor_of_the_single_head(self):
+        """One head, and this migration is on the chain that reaches it.
+
+        Was `test_is_the_single_head`, asserting `heads == ["uq_event_espn_id"]`.
+        That is true only until the NEXT migration lands, and then it fails for
+        a reason that has nothing to do with this migration — it failed on
+        `containers_phase1` (#2927), which chains directly onto it. The sibling
+        test below already worked this out for the parent name and refused to
+        pin one; the head assertion is the same brittleness pointing the other
+        way.
+
+        The two properties actually worth guarding are kept, both stated
+        generally so the next migration does not have to come back here:
+
+        1. There is exactly ONE head. Two heads fail the Heroku release phase
+           outright — the site does not deploy at all. (Also guarded centrally
+           by `test_alembic.py::TestAlembicSingleHead`; kept here because a
+           two-head branch is the specific way THIS file's migration silently
+           stops running on a deploy.)
+        2. `uq_event_espn_id` is an ANCESTOR of that head, i.e. reaching head
+           runs it. A migration that is not on the chain runs on nobody's
+           deploy, which is what this class is named for.
+
+        Worth keeping from the original: a local `alembic heads` on an
+        un-rebased branch reads SINGLE while the merge ref CI actually runs
+        reads TWO. Rebase before trusting it.
+        """
         script = ScriptDirectory.from_config(Config("alembic.ini"))
         heads = list(script.get_heads())
-        assert heads == ["uq_event_espn_id"], f"expected a single head, got {heads}"
+        assert len(heads) == 1, f"expected a single head, got {heads}"
+
+        walked = {r.revision for r in script.walk_revisions("base", heads[0])}
+        assert "uq_event_espn_id" in walked, (
+            f"uq_event_espn_id is not on the chain to head {heads[0]!r} — "
+            "it would run on nobody's deploy"
+        )
 
     def test_chains_onto_a_revision_that_exists(self):
         """Its parent must resolve, and the chain must reach base.

@@ -853,6 +853,47 @@ jobs:
             exit 1
           fi
 
+      - name: "#2927 containers migration round trip (real Postgres)"
+        # Migration `containers_phase1`, authorised by Alex's verbatim "go 2927"
+        # — a go whose terms are "additive, nothing altered, nothing dropped,
+        # reversible by dropping the tables". This gate is the proof of that
+        # last clause rather than the assertion of it.
+        #
+        # Why it cannot be anything cheaper. Every claim is a claim about
+        # PostgreSQL: `event_edges.receipt_id` -> `market_match_receipts` and
+        # `market_match_receipts.container_id` -> `containers` reference each
+        # other, so the table order in `upgrade()` is load-bearing, and a wrong
+        # order fails in the Heroku release phase — on production, with the
+        # site down. The CHECK and UNIQUE constraints are enforced by the
+        # server and by nothing else; C-ADHOC-PROV-CORE is the precedent, where
+        # a recording double stored and committed a value the real type would
+        # have rejected while every unit test stayed green.
+        #
+        # The test migrates a database of its OWN — created and dropped per
+        # run, never `bl_searchtest` — from empty to the parent revision,
+        # photographs `information_schema`, migrates up, proves the new
+        # constraints bite, migrates back down, and requires the second
+        # photograph to equal the first. The comparison is the point: "the four
+        # tables are gone" would also be true of a downgrade that left
+        # `container_id`, its foreign key and its index standing, and that
+        # residue is what makes the SECOND rollback fail.
+        #
+        # Same skip-detection as every gate in this job, for the same reason:
+        # pytest exits 0 when every test skips, so a gate that silently did not
+        # run is indistinguishable from one that passed.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_containers_migration_real_postgres.py \
+            -v -s -rs 2>&1 | tee /tmp/containers2927.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/containers2927.txt; then
+            echo "::error::#2927 containers migration round trip SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -E "^CONTAINERS MIGRATION ROUND TRIP" /tmp/containers2927.txt || {
+            echo "::error::no round-trip summary line — the undo line is unproved"
+            exit 1
+          }
+
   frontend-build:
     runs-on: ubuntu-latest
     defaults:

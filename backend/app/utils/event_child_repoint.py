@@ -91,6 +91,21 @@ logger = logging.getLogger(__name__)
 EVENT_SCOPED_UNIQUE_KEYS: dict[str, tuple[str, ...]] = {
     "game_moments": ("dedupe_key",),
     "odds_aggregated": ("period_start",),
+    # #2927. `uq_event_participant_slot` is UNIQUE (event_id, side, position),
+    # so two rows for one game — the twin case merges exist to fix — both hold
+    # a `(home, 0)` and repointing the loser's onto the survivor raises
+    # IntegrityError. Caught by this file's own sync test before it could:
+    # the merge rail would have started failing the first time a merged event
+    # had participants, which is the failure mode this dict exists to prevent.
+    #
+    # THE JUDGMENT, which is the part a catalog cannot supply: the survivor's
+    # `(side, position)` slot and the loser's are the SAME slot in the same
+    # fixture, so the loser's row is redundant and is dropped, named and
+    # counted, exactly as `game_moments` is. Deduping on the slot rather than on
+    # `entity_name` is deliberate — if the two rows disagree about WHO is in
+    # that slot, that is a matching defect to file under #2693, and silently
+    # keeping both would turn one singles fixture into a four-person side.
+    "event_participants": ("side", "position"),
 }
 
 

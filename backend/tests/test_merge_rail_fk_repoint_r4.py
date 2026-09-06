@@ -62,7 +62,7 @@ class TestTheListIsDerivedAndComplete:
     # the rail really emits. A pinned explicit ten follows, so a metadata-wide breakage
     # cannot pass by making every side equally empty.
 
-    def test_the_derived_set_is_the_expected_eleven(self):
+    def test_the_derived_set_is_the_expected_twelve(self):
         """Named explicitly so a metadata-wide breakage cannot make the equality above
         pass by making BOTH sides wrong (e.g. an import failure yielding two empties).
 
@@ -74,9 +74,19 @@ class TestTheListIsDerivedAndComplete:
         being merged cannot hold the same anchor key — the index already made that
         impossible — and a plain repoint cannot collide. That was checked rather than
         assumed, because it is the exact property the other two entries exist for.
+
+        WAS ELEVEN until 2026-09-05 (#2927, container graph Phase 1).
+        `event_participants` is the opposite case to the anchor above and is why
+        that paragraph checks rather than assumes: its unique key IS event-scoped
+        — `uq_event_participant_slot (event_id, side, position)` — so two rows for
+        one game both hold a `(home, 0)` and a plain repoint WOULD collide. It
+        therefore takes an entry in `EVENT_SCOPED_UNIQUE_KEYS` and the pre-dedupe
+        path. The sync test below is what caught it, before the merge rail could
+        start raising IntegrityError on the first merged event with participants.
         """
         assert set(event_fk_tables()) == {
             "espn_snapshots",
+            "event_participants",
             "event_provider_anchors",
             "futures_markets",
             "game_moments",
