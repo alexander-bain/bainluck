@@ -371,6 +371,37 @@ class _FakeResult:
         return self._rows
 
 
+_UPDATE_RE = __import__("re").compile(
+    r"UPDATE\s+(\w+)\s+SET\s+(.*?)\s+WHERE", __import__("re").S | __import__("re").I
+)
+
+
+def _assert_columns_exist(sql):
+    """Every column an UPDATE names must exist on the real table.
+
+    A fake session answers any SQL you hand it, so a driver test proves the
+    decision and nothing about the schema. #3532's first cut wrote
+    `UPDATE events SET commence_time = :dt, updated_at = NOW()` — and `events`
+    has `created_at` and NO `updated_at`, unlike `futures_markets`. Postgres
+    raises UndefinedColumn, `_poll_kalshi_markets` swallows it, and the fix-up
+    silently loses BOTH halves on every beat. Only the real-Postgres arm caught
+    it; this makes the five cheap driver tests catch the class too, off the ORM
+    metadata and with no database.
+    """
+    import app.models.models  # noqa: F401 — registers every table
+    from app.services.database import Base
+
+    for table, assignments in _UPDATE_RE.findall(sql):
+        cols = Base.metadata.tables[table].columns.keys()
+        for assignment in assignments.split(","):
+            name = assignment.split("=")[0].strip()
+            assert name in cols, (
+                f"UPDATE {table} SET {name} = ... names a column that does not "
+                f"exist. Postgres would raise UndefinedColumn and the poll's "
+                f"except would swallow it. Columns: {sorted(cols)}"
+            )
+
+
 class _FakeSession:
     """Captures the statements the driver issues, in order."""
 
@@ -383,6 +414,7 @@ class _FakeSession:
 
     async def execute(self, stmt, params=None):
         sql = str(stmt)
+        _assert_columns_exist(sql)
         if "SELECT" in sql and "futures_markets fm" in sql:
             return _FakeResult(self._rows)
         if "UPDATE futures_markets" in sql:

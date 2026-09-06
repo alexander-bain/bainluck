@@ -2204,10 +2204,12 @@ async def _fix_tennis_commence_times() -> dict:
                 target=target,
             ):
                 await session.execute(
-                    text(
-                        "UPDATE events SET commence_time = :dt, updated_at = NOW() "
-                        "WHERE id = :id"
-                    ),
+                    # `events` has `created_at` and NO `updated_at` — unlike
+                    # `futures_markets`. Setting one raises UndefinedColumn,
+                    # the poll's `except` swallows it, and the whole fix-up
+                    # silently loses BOTH halves every beat. Caught by the
+                    # real-Postgres arm below; no fake session can see it.
+                    text("UPDATE events SET commence_time = :dt WHERE id = :id"),
                     {"dt": target, "id": m.event_id},
                 )
                 event_updates.append(m.event_id)
