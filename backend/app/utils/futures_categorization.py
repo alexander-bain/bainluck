@@ -247,7 +247,22 @@ SPORT_PATTERNS = [
     (re.compile(r"\b(brexit|european\s+union|eu\s+election)\b", re.I), "geopolitics"),
 
     # Legal / Regulatory
-    (re.compile(r"\b(supreme\s+court|scotus|indictment|verdict|trial|conviction|lawsuit|regulation|antitrust)\b", re.I), "legal"),
+    #
+    # `regulation` carries a negative lookahead because "REGULATION TIME" is a
+    # sports term, not a legal one, and it is how Kalshi names the ninety
+    # minutes / three periods before extra time: "Tj Divina vs Zilina:
+    # Regulation Time Total Goals". The sports rules above are keyed on leagues
+    # and famous names, so an obscure fixture matches none of them and falls to
+    # here — measured 2026-09-06, 1,908 markets whose name contains "Regulation
+    # Time" are filed under `legal`, against 3 markets in the whole corpus that
+    # say "regulation" and mean the legal sense. This is a period qualifier
+    # sitting in the court-case bucket, so a Slovak Cup goals market is off
+    # every sport surface it belongs on.
+    #
+    # The lookahead is deliberately the narrow instrument. A market that really
+    # is about regulation ("Will the EU pass the AI regulation in 2026?") still
+    # lands here; only the two-word sports phrase is carved out.
+    (re.compile(r"\b(supreme\s+court|scotus|indictment|verdict|trial|conviction|lawsuit|regulation(?!\s+time)|antitrust)\b", re.I), "legal"),
     (re.compile(r"\b(sec\s+charges|doj|department\s+of\s+justice|impeach|pardon)\b", re.I), "legal"),
 
     # Social Media / Culture

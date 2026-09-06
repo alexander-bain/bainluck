@@ -616,6 +616,23 @@ KALSHI_TICKER_TO_SPORT_KEY: dict[str, str] = {
     "kxsvkcupadvance": "soccer_other",        # Slovak Cup tie, advance leg
     "kxknvbcupgame": "soccer_other",          # KNVB (Dutch) Cup tie, moneyline leg
     "kxknvbcupadvance": "soccer_other",       # KNVB (Dutch) Cup tie, advance leg
+    # #3414: the PROP legs of the same ties, held back by the same hold and
+    # measured as its residue — ~293 rows in 30 days sitting in
+    # `llm_sport_category='legal'`, because their names say "Regulation Time"
+    # and nothing else about them looks like a sport (see the lookahead on the
+    # legal rule in `futures_categorization.py`). Mapping the ticker is the
+    # authoritative step-1 answer, so it settles them before the name is ever
+    # read. Game-level on purpose, exactly as `kxnbaspread` / `kxnfltotal` are:
+    # a spread, a total and a both-teams-to-score belong TO a fixture, and the
+    # `…game` / `…advance` legs of the same tie are already here. If all five
+    # legs are not one sport, the tie splits again — which is the whole reason
+    # Q453 mapped the first two.
+    "kxsvkcuptotal": "soccer_other",          # Slovak Cup tie, total goals leg
+    "kxsvkcupspread": "soccer_other",         # Slovak Cup tie, spread leg
+    "kxsvkcupbtts": "soccer_other",           # Slovak Cup tie, both-teams-to-score leg
+    "kxknvbcuptotal": "soccer_other",         # KNVB Cup tie, total goals leg
+    "kxknvbcupspread": "soccer_other",        # KNVB Cup tie, spread leg
+    "kxknvbcupbtts": "soccer_other",          # KNVB Cup tie, both-teams-to-score leg
     "kxncaamsoccergame": "soccer_other",      # NCAA men's soccer
     # Asian basketball
     "kxcbagame": "basketball_other",          # Chinese CBA
