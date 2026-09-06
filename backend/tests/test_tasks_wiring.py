@@ -560,6 +560,14 @@ class TestHeavyQueueRouting:
     #: declared rather than inferred, so adding a beat here is a visible act.
     _WALL_EXCEEDS_PERIOD_BEATS = {"warm-typeahead"}
 
+    #: Beats exempt for the OTHER reason a held-off fire is not superseded: the
+    #: message cannot reach a slot inside one beat period, so the flat
+    #: `expires <= period` rule discards the only start opportunities the task
+    #: gets. The quantity is DELIVERY LATENCY, not the task's wall — the
+    #: distinction #3364 is about. Membership is declared, so adding a beat here
+    #: is a visible act. See `search_head_warmer.derive_message_expiry_s`.
+    _DELIVERY_BOUND_BEATS = {"warm-search-head"}
+
     def test_1609_expires_never_exceeds_the_beat_period(self):
         """`expires` longer than the period cannot discard a superseded message.
 
@@ -612,8 +620,9 @@ class TestHeavyQueueRouting:
 
         # --- arm 1: the flat rule, still in force for every short-wall beat ---
         too_long = {}
+        exempt = self._WALL_EXCEEDS_PERIOD_BEATS | self._DELIVERY_BOUND_BEATS
         for name, expires_s in _EXPIRING_WARMER_BEATS.items():
-            if name in self._WALL_EXCEEDS_PERIOD_BEATS:
+            if name in exempt:
                 continue
             period_s = _period_s(name)
             if expires_s > period_s:
@@ -642,6 +651,49 @@ class TestHeavyQueueRouting:
         # And it must be strictly above the beat period, or arm 1 covered it and
         # this beat does not belong in the declared set.
         assert wired > _period_s("warm-typeahead")
+
+        # --- arm 3: the delivery-latency rule (#3364) ---
+        #
+        # WHAT THIS ARM WOULD HAVE TO SEE TO GO RED (Fable's standing rule —
+        # name the failing input, do not claim coverage):
+        #
+        # * `warm-search-head` returned to an `expires` at or below its 20 s
+        #   beat. That is the exact regression #3364 repairs, it is a
+        #   two-character edit, and it would look like restoring the flat rule.
+        #   Production measured the defect at `matched_emitted` 30 /
+        #   `matched_delivered` 0 in one 600 s bucket and 102 starts against
+        #   2,949 expected fires over 16.4 h.
+        # * `_LOCK_TTL_SECONDS` raised far enough that the broker would hold more
+        #   than `MAX_LIVE_MESSAGES` of this beat's messages at once.
+        #   `derive_message_expiry_s` raises rather than returning a capped
+        #   value, and this arm propagates that raise.
+        # * The beat period changed in the schedule without
+        #   `BEAT_PERIOD_SECONDS` following it — the mirror assertion below is
+        #   the only thing keeping the derivation's input honest.
+        from app.tasks.search_head_warmer import (
+            BEAT_PERIOD_SECONDS,
+            derive_message_expiry_s as derive_search_head_expiry_s,
+        )
+
+        assert self._DELIVERY_BOUND_BEATS <= set(_EXPIRING_WARMER_BEATS), (
+            "a beat declared delivery-bound is no longer in _EXPIRING_WARMER_BEATS"
+        )
+        assert BEAT_PERIOD_SECONDS == _period_s("warm-search-head"), (
+            f"search_head_warmer.BEAT_PERIOD_SECONDS is {BEAT_PERIOD_SECONDS}s but "
+            f"the beat schedules {_period_s('warm-search-head')}s — the mirror has "
+            f"drifted and derive_message_expiry_s is deriving from a fiction"
+        )
+        wired_sh = _EXPIRING_WARMER_BEATS["warm-search-head"]
+        derived_sh = derive_search_head_expiry_s()
+        assert wired_sh == derived_sh, (
+            f"warm-search-head expires is {wired_sh}s but derives to {derived_sh}s — "
+            f"the delivery deficit this value repairs is #3364 (0.03 of schedule "
+            f"delivered); do not restore the flat rule without reading "
+            f"search_head_warmer.derive_message_expiry_s"
+        )
+        # It must be strictly above the beat period, or arm 1 covered it and this
+        # beat does not belong in the declared set.
+        assert wired_sh > _period_s("warm-search-head")
 
     def test_heavy_beat_literals_match_their_effective_queue(self):
         """Every HEAVY beat entry must SAY heavy in the source, not just dispatch there.
