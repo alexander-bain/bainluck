@@ -34,13 +34,44 @@ THE FIXTURES. `statpal_soccer_injuries_20260906_fullcensus.json` is the whole
 a 3-league slice chosen to cover every collapse shape and backs the SHAPE. One
 fixture is never asked to back both.
 """
+import asyncio
 import json
 import logging
+from collections import namedtuple
+from contextlib import asynccontextmanager
 from datetime import date, datetime, timezone
 from pathlib import Path
 
 import httpx
 import pytest
+
+#: The projected event row `_sync_statpal_injuries` selects.
+_Row = namedtuple(
+    "_Row",
+    "id home_team_name away_team_name commence_time win_probability_sources",
+)
+
+
+async def _no_sleep(_seconds):
+    """The task paces itself between sports; the test does not need to."""
+
+
+def _all_sports_fetch(**overrides):
+    """A fetch result for every StatPal sport, defaulting to `no_venue_path`.
+
+    Only soccer has an injuries endpoint at the venue, so everything else must
+    take the not-asked branch — and a test that only supplied soccer would
+    KeyError, which is the point of building the map from the real mapping.
+    """
+    from app.services.statpal_api import StatPalInjuryFetch
+    from app.utils.sport_keys import STATPAL_SPORT_MAPPING
+
+    results = {
+        sport: StatPalInjuryFetch([], "no_venue_path", sport, None)
+        for sport in set(STATPAL_SPORT_MAPPING.values())
+    }
+    results.update(overrides)
+    return results
 
 from app.services.statpal_api import (
     INJURY_BUCKET_STATUS,
@@ -328,7 +359,22 @@ class TestBothSidesOrNothing:
         ) == "f3"
 
     def test_one_side_agreeing_is_not_enough(self):
-        """The old rule's exact failure: "Wanderers" matched "Wanderers"."""
+        """The named control for the both-sides rule: the home team really does
+        agree and the away team really does not, so weakening `and` to `or`
+        fails HERE and not only in some downstream case."""
+        assert choose_fixture(
+            "Sydney FC", "Wigan Athletic", date(2026, 10, 16), [self.SYDNEY]
+        ) is None
+        # ...and the mirror, so the rule is not one-sided in the other direction.
+        assert choose_fixture(
+            "Bolton Wanderers", "WS Wanderers", date(2026, 10, 16), [self.SYDNEY]
+        ) is None
+
+    def test_a_shared_trailing_word_is_not_a_team(self):
+        """The old rule was `key.endswith(team_lower.split()[-1])`, which made
+        every club ending in "Wanderers" the same club. Token containment does
+        not: neither {bolton, wanderers} nor {ws, wanderers} contains the other."""
+        assert team_tokens("Bolton Wanderers") != team_tokens("WS Wanderers")
         assert choose_fixture(
             "Bolton Wanderers", "Wigan Athletic", date(2026, 10, 16), [self.SYDNEY]
         ) is None
@@ -496,10 +542,160 @@ class TestAgainstProductionNames:
         assert not collisions, f"same pair, same day, two fixtures: {collisions}"
 
 
+class TestTheTaskEmitsTheWriteItClaims:
+    """Drives `_sync_statpal_injuries` end to end against a fake session that
+    keeps the real SQLAlchemy statements, so the assertions are about the SQL
+    that would reach Postgres — not about a source string and not about a fake
+    that agrees by construction.
+    """
+
+    @staticmethod
+    def _run(monkeypatch, *, events, fetch_by_sport):
+        import app.services.statpal_api as api_module
+        from app.tasks import statpal_sync
+
+        executed = []
+
+        class FakeResult:
+            def __init__(self, rows):
+                self._rows = rows
+
+            def all(self):
+                return self._rows
+
+        class FakeSession:
+            async def execute(self, statement):
+                executed.append(statement)
+                is_select = statement.__visit_name__ == "select"
+                return FakeResult(events if is_select else [])
+
+        @asynccontextmanager
+        async def fake_session():
+            yield FakeSession()
+
+        class FakeService:
+            def __init__(self, *a, **kw):
+                self.asked = []
+
+            async def get_injuries_result(self, sport):
+                self.asked.append(sport)
+                return fetch_by_sport[sport]
+
+            async def close(self):
+                pass
+
+        service_holder = {}
+
+        def make_service(*a, **kw):
+            service_holder["service"] = FakeService()
+            return service_holder["service"]
+
+        monkeypatch.setattr(statpal_sync, "get_task_session", fake_session)
+        monkeypatch.setattr(api_module, "StatPalAPIService", make_service)
+        monkeypatch.setattr(api_module, "is_available", lambda: True)
+        monkeypatch.setattr(statpal_sync.asyncio, "sleep", _no_sleep)
+
+        summary = asyncio.run(statpal_sync._sync_statpal_injuries())
+        return summary, executed, service_holder["service"]
+
+    def test_a_matched_event_gets_a_core_update_carrying_the_players(
+        self, monkeypatch, census
+    ):
+        """Gotcha #4: a JSONB write goes through Core `update()`. The statement
+        below is the real thing — table, primary-key filter and payload."""
+        from app.services.statpal_api import StatPalInjuryFetch, _parse_injuries_suspensions
+
+        rows = _parse_injuries_suspensions(census)
+        events = [
+            _Row(101, "Fluminense", "Vasco da Gama", datetime(2026, 9, 6, 0, tzinfo=timezone.utc), None),
+            _Row(102, "Nowhere United", "Nobody City", datetime(2026, 9, 6, 0, tzinfo=timezone.utc), None),
+        ]
+        summary, executed, service = self._run(
+            monkeypatch,
+            events=events,
+            fetch_by_sport=_all_sports_fetch(
+                soccer=StatPalInjuryFetch(rows, "ok", "soccer", "injuries-suspensions")
+            ),
+        )
+
+        updates = [s for s in executed if s.__visit_name__ == "update"]
+        assert len(updates) == 1, "only the matched event is written"
+        statement = updates[0]
+        assert statement.table.name == "events"
+
+        values = dict(statement._values)
+        payload = list(values.values())[0].value
+        assert "win_probability_sources" in {c.name for c in values}
+        assert payload["statpal_injuries"], "the write carries players, not an empty list"
+        assert {p["team"] for p in payload["statpal_injuries"]} <= {"Fluminense", "Vasco"}
+        assert all(p["status"] in ("Out", "Questionable") for p in payload["statpal_injuries"])
+        assert payload["statpal_injuries_updated"]
+
+        assert summary["terminal"] == "complete"
+        assert summary["events_enriched"] == 1
+        assert summary["total_injuries"] == len(rows)
+
+    def test_one_fetch_per_statpal_sport(self, monkeypatch, census):
+        """Seven of our keys map to `soccer`; the venue is asked once."""
+        from app.services.statpal_api import StatPalInjuryFetch, _parse_injuries_suspensions
+        from app.utils.sport_keys import STATPAL_SPORT_MAPPING
+
+        rows = _parse_injuries_suspensions(census)
+        _, _, service = self._run(
+            monkeypatch,
+            events=[],
+            fetch_by_sport=_all_sports_fetch(
+                soccer=StatPalInjuryFetch(rows, "ok", "soccer", "injuries-suspensions")
+            ),
+        )
+        assert service.asked.count("soccer") == 1
+        assert len([k for k, v in STATPAL_SPORT_MAPPING.items() if v == "soccer"]) > 1
+        assert sorted(service.asked) == sorted(set(STATPAL_SPORT_MAPPING.values()))
+
+    def test_a_dead_venue_path_fails_the_run_and_writes_nothing(self, monkeypatch):
+        from app.services.statpal_api import StatPalInjuryFetch
+
+        summary, executed, _ = self._run(
+            monkeypatch,
+            events=[],
+            fetch_by_sport=_all_sports_fetch(
+                soccer=StatPalInjuryFetch([], "fetch_failed", "soccer", "injuries-suspensions")
+            ),
+        )
+        assert summary["terminal"] == "failed"
+        assert summary["fetch_failures"] == [
+            {"statpal_sport": "soccer", "endpoint": "injuries-suspensions"}
+        ]
+        assert not [s for s in executed if s.__visit_name__ == "update"]
+
+    def test_a_sport_with_no_path_does_not_fail_the_run(self, monkeypatch):
+        from app.services.statpal_api import StatPalInjuryFetch
+
+        summary, _, _ = self._run(
+            monkeypatch,
+            events=[],
+            fetch_by_sport=_all_sports_fetch(
+                soccer=StatPalInjuryFetch([], "empty", "soccer", "injuries-suspensions")
+            ),
+        )
+        assert summary["terminal"] == "complete"
+        assert summary["fetch_failures"] == []
+        reasons = {d["statpal_sport"]: d["reason"] for d in summary["sports"]}
+        assert reasons["nfl"] == "no_venue_path"
+        assert reasons["soccer"] == "empty"
+
+
 def test_the_window_the_task_attaches_over_is_still_the_documented_one():
-    """A guard on the shape of the ship rather than on a number: injuries are a
-    1h product and the attach window is -6h..+2d. If that window moves, the
-    census counts above stop describing what production will do."""
+    """The one thing above that is genuinely a source fact rather than a
+    behaviour: injuries are a 1h product and the attach window is -6h..+2d, and
+    the production census (168 events) was taken over exactly that window. If it
+    moves, the numbers in this file stop describing what production will do.
+
+    Everything else this file could have asserted by reading source — the Core
+    update (gotcha #4), the per-sport dedupe — is asserted against the emitted
+    SQL in `TestTheTaskEmitsTheWriteItClaims` instead. A substring guard passes
+    or fails on formatting; that one fails on behaviour.
+    """
     import inspect
 
     from app.tasks import statpal_sync
@@ -507,23 +703,3 @@ def test_the_window_the_task_attaches_over_is_still_the_documented_one():
     source = inspect.getsource(statpal_sync._sync_statpal_injuries)
     assert "timedelta(hours=6)" in source
     assert "timedelta(days=2)" in source
-    # and the write must stay a Core update — gotcha #4.
-    assert "update(Event)" in source
-    assert "event.win_probability_sources =" not in source
-
-
-def test_one_fetch_per_statpal_sport_not_one_per_league_key():
-    """Seven of our sport keys map to `soccer`. The loop this replaces asked the
-    venue for the same 224 KB payload seven times an hour and attributed each
-    copy to one league."""
-    import inspect
-
-    from app.tasks import statpal_sync
-    from app.utils.sport_keys import STATPAL_SPORT_MAPPING
-
-    soccer_keys = [k for k, v in STATPAL_SPORT_MAPPING.items() if v == "soccer"]
-    assert len(soccer_keys) > 1, "the dedupe is only meaningful while keys collide"
-
-    source = inspect.getsource(statpal_sync._sync_statpal_injuries)
-    assert "dict.fromkeys(STATPAL_SPORT_MAPPING.values())" in source
-    assert "get_injuries_result" in source
