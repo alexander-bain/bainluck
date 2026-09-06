@@ -28,6 +28,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import OddsChart from "@/components/OddsChart";
+import ScoreDifferentialChart from "@/components/ScoreDifferentialChart";
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { AnalyticsProvider } = require("@/components/Analytics");
 
@@ -154,5 +155,87 @@ describe("OddsChart period chips need a probability line under them", () => {
       />,
     );
     expect(boundaryCount(html)).toBe(1);
+  });
+});
+
+/**
+ * THE OTHER CHART, WHICH MAKES THE SAME MISTAKE IN THE OPPOSITE DIRECTION.
+ *
+ * CERT-1989: the server keeps a marker supported by EITHER the probability line
+ * or the score line, because one `period_markers` array feeds two charts and it
+ * cannot know which of them is blank. So a probability-only kickoff marker
+ * legitimately reaches `ScoreDifferentialChart`, and that chart used to bound it
+ * against its own `chartData` extent — which contains gap-filled minutes, a
+ * `pm_*_spread` constant painted onto every point, and the marker timestamps the
+ * component itself inserted. Every marker is inside that by construction.
+ *
+ * It now bounds against the span of its DRAWN SCORE SERIES, measured before any
+ * of that synthesis.
+ */
+describe("ScoreDifferentialChart period chips need a score line under them", () => {
+  const scoreDiffCount = (html: string): number => {
+    const m = html.match(/data-period-boundaries="(\d+)"/);
+    if (!m) throw new Error("wrapper lost its data-period-boundaries attribute");
+    return Number(m[1]);
+  };
+
+  const drawScoreDiff = (props: Record<string, unknown>) =>
+    draw(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      React.createElement(ScoreDifferentialChart as any, {
+        homeTeam: "Ajax",
+        awayTeam: "Union SG",
+        commenceTime: new Date(KICKOFF).toISOString(),
+        eventStatus: "completed",
+        sportKey: "soccer_uefa_champs_league",
+        ...props,
+      }),
+    );
+
+  test("a kickoff chip before the first score point does NOT draw", () => {
+    // The blocking case: the probability chart has a line at kickoff, so the
+    // server keeps the marker — but this chart's scores only start at +60.
+    const html = drawScoreDiff({
+      history: [],
+      scoreHistory: [
+        { timestamp: iso(60), home_score: 1, away_score: 0 },
+        { timestamp: iso(120), home_score: 2, away_score: 1 },
+      ],
+      periodBoundaries: [{ timestamp: iso(0), label: "1H" }],
+    });
+
+    expect(scoreDiffCount(html)).toBe(0);
+  });
+
+  test("the control — a chip inside the score span still draws", () => {
+    // Same fixture, marker moved onto the drawn stretch. Without this arm the
+    // test above would pass on a chart that had stopped drawing chips at all.
+    const html = drawScoreDiff({
+      history: [],
+      scoreHistory: [
+        { timestamp: iso(60), home_score: 1, away_score: 0 },
+        { timestamp: iso(120), home_score: 2, away_score: 1 },
+      ],
+      periodBoundaries: [{ timestamp: iso(90), label: "2H" }],
+    });
+
+    expect(scoreDiffCount(html)).toBe(1);
+  });
+
+  test("a chart with no series at all renders nothing, chips included", () => {
+    // Not `data-period-boundaries="0"` — the component returns null before it
+    // has a wrapper to hang the attribute on, which is the older and stronger
+    // form of the same answer. Asserted as absence of the whole chart so this
+    // does not read as the attribute having gone missing.
+    const html = drawScoreDiff({
+      history: [],
+      scoreHistory: [],
+      periodBoundaries: [
+        { timestamp: iso(0), label: "1H" },
+        { timestamp: iso(47), label: "2H" },
+      ],
+    });
+
+    expect(html).toBe("");
   });
 });

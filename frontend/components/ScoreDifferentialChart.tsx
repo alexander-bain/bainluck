@@ -309,7 +309,7 @@ export default function ScoreDifferentialChart({
   // Build chart data by merging projected and actual score data on timeline.
   // Bucket by minute so each "h:mm a" label is unique — required for
   // ReferenceLine period markers to match categorical XAxis values.
-  const chartData: ChartDataPoint[] = useMemo(() => {
+  const chartBuild = useMemo(() => {
     const dataMap = new Map<string, ChartDataPoint>();
 
     const ensurePoint = makeEnsurePoint<ChartDataPoint>(dataMap, () => ({
@@ -406,6 +406,40 @@ export default function ScoreDifferentialChart({
       }
     }
 
+    // ── THE SPAN OF ACTUAL INK, TAKEN HERE AND NOT LATER (CERT-1989) ──
+    //
+    // Every score series this chart draws has now been written, and NOTHING
+    // synthetic has been added yet. That ordering is the whole point, because
+    // each of the next three steps would widen this span into a lie:
+    //
+    //   * `fillMinuteGaps` adds empty minutes across the whole domain;
+    //   * the period boundaries below insert their OWN timestamps as chart
+    //     categories, so a marker over blank axis would create the category it
+    //     is then judged to be inside — circular, and exactly the defect;
+    //   * `pm_*_spread` is painted onto EVERY point (its own comment says it is
+    //     "a snapshot, not a time series"), after which every category carries a
+    //     number and a "does this point draw anything" test answers yes always.
+    //
+    // Measured from the other side: the server keeps a marker supported by
+    // EITHER the probability line or the score line, because one `period_markers`
+    // array feeds two charts and it cannot know which of them is the blank one.
+    // So a probability-only kickoff marker legitimately survives to here, and
+    // this chart has to decline it on its own behalf.
+    const drawnScoreKeys = [
+      "projectedDiff",
+      "actualDiff",
+      ...allBookmakers.map((b) => `${b}_diff`),
+    ];
+    let scoreFrom: number | null = null;
+    let scoreTo: number | null = null;
+    for (const pt of dataMap.values()) {
+      if (!drawnScoreKeys.some((k) => typeof pt[k] === "number")) continue;
+      const t = parseISO(pt.timestamp).getTime();
+      if (scoreFrom === null || t < scoreFrom) scoreFrom = t;
+      if (scoreTo === null || t > scoreTo) scoreTo = t;
+    }
+    const scoreSpan = scoreFrom === null ? null : { from: scoreFrom, to: scoreTo as number };
+
     // Fill missing minutes for uniform x-axis spacing.
     // Both charts use categorical XAxis where each category gets equal pixel width.
     // Without filling gaps, this chart has fewer categories than OddsChart,
@@ -472,18 +506,34 @@ export default function ScoreDifferentialChart({
       if (t < domainStart || t > domainEnd) dataMap.delete(key);
     }
 
-    return Array.from(dataMap.values()).sort(
+    const points = Array.from(dataMap.values()).sort(
       (a, b) =>
         parseISO(a.timestamp).getTime() - parseISO(b.timestamp).getTime()
     );
+    return { points, scoreSpan };
   }, [filteredHistory, filteredBookmakerHistory, filteredScoreHistory, filteredEspnHistory, chartStartTime, chartEndTime, pmSpreadData, periodBoundaries]);
+
+  const chartData = chartBuild.points;
+  /** Where this chart's score lines actually start and end — see the build. */
+  const scoreSpan = chartBuild.scoreSpan;
 
   // Filter period boundaries, deduplicate close markers, alternate label positions
   const filteredPeriodBoundaries = useMemo(() => {
     if (!periodBoundaries || periodBoundaries.length === 0 || chartData.length === 0) return [];
-    const chartStart = parseISO(chartData[0].timestamp).getTime();
-    const chartEnd = parseISO(chartData[chartData.length - 1].timestamp).getTime();
-    const chartDuration = chartEnd - chartStart;
+
+    // A MARKER NEEDS A SCORE LINE UNDER IT, NOT A CATEGORY (CERT-1989).
+    // `scoreSpan` is the extent of the drawn score series, measured before this
+    // component inserted the marker timestamps themselves. No score line means
+    // no marker: a chip cannot mark a period on a chart with nothing plotted.
+    if (!scoreSpan) return [];
+    const chartStart = scoreSpan.from;
+    const chartEnd = scoreSpan.to;
+
+    // Label spacing is a PIXEL problem, so it is measured on the x-axis — the
+    // full category extent — and not on the drawn subset above.
+    const chartDuration =
+      parseISO(chartData[chartData.length - 1].timestamp).getTime() -
+      parseISO(chartData[0].timestamp).getTime();
     const minSpacing = Math.max(chartDuration * 0.05, 180_000);
 
     const filtered = periodBoundaries
@@ -516,7 +566,7 @@ export default function ScoreDifferentialChart({
       time: format(parseISO(b.timestamp), "h:mm a"),
       labelPosition: i % 2 === 0 ? "insideTopLeft" : "insideTopRight",
     }));
-  }, [periodBoundaries, chartData]);
+  }, [periodBoundaries, chartData, scoreSpan]);
 
   // Early returns — show chart if we have ANY data (projected or actual scores)
   if ((!history || history.length === 0) && !hasActualScoreData) return null;
@@ -640,6 +690,11 @@ export default function ScoreDifferentialChart({
          somebody debugging this will look first. */
       data-actual-series={hasActualScoreData ? "true" : "false"}
       data-projected-series={hasProjectedScoreData ? "true" : "false"}
+      /* How many period chips this chart will draw, for the same reason as the
+         two attributes above and as OddsChart's (CERT-1989): recharts renders
+         no `<ReferenceLine>` inside `ResponsiveContainer` without a viewport,
+         so a guard hunting the label in server markup passes on both arms. */
+      data-period-boundaries={filteredPeriodBoundaries.length}
     >
       {/* Time range selector */}
       <div className="flex flex-wrap items-center gap-1 shrink-0">
