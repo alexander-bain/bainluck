@@ -98,8 +98,12 @@ async def _seed(session, *, ghost_tags=None):
 
     await session.execute(
         text(
-            "INSERT INTO sports (id, key, name) VALUES "
-            "(:a, 'tennis_atp', 'ATP'), (:b, 'tennis_atp_us_open', 'US Open (ATP)')"
+            # `active` is NOT NULL with a PYTHON-side default only, and a raw
+            # INSERT bypasses that — `tests/test_pg_gate_seed_completeness.py`
+            # is named after exactly this trap and caught this seed.
+            "INSERT INTO sports (id, key, name, active) VALUES "
+            "(:a, 'tennis_atp', 'ATP', true), "
+            "(:b, 'tennis_atp_us_open', 'US Open (ATP)', true)"
         ),
         {"a": S_ATP, "b": S_ATP_US_OPEN},
     )
