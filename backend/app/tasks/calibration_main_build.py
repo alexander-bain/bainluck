@@ -1851,6 +1851,91 @@ def _unit_costs_from(runner: PhaseRunner) -> dict[str, dict[str, int]]:
     }
 
 
+def _level_self_blocked(runner: PhaseRunner) -> bool:
+    """Did the carried level refuse EVERY unit of this beat, all by itself?
+
+    The two stages are read together because either alone means something else.
+    ``window_stop:unit_too_large`` on its own is the ordinary end of a productive
+    beat — units ran, the window filled, the next one would not fit. Zero units
+    on its own is a deferred rebuild (D45(A) hands the loop an empty iterable, so
+    the fence is never consulted) or a beat that died before Stage 2. Together
+    they are the one state that matters here: the loop reached the fence, the
+    fence refused, and it refused on the only evidence it had — a level this beat
+    did not measure, because this beat measured nothing.
+    """
+    if runner.ledger.stage_counts.get(STAGED_UNIT_STAGE, 0):
+        return False
+    return "staged:window_stop:unit_too_large" in runner.ledger.stages
+
+
+def _carry_unit_costs(runner: PhaseRunner, prior: dict[str, Any]) -> dict[str, Any]:
+    """The prior beat's unit-cost level, still describing something true.
+
+    CAL-P1027 (#1597). CAL-P163 established that this level has to be CARRIED —
+    a beat that completed no unit must not erase what earlier beats measured.
+    What it did not establish is when a carried level stops being evidence, and
+    the answer is not "never": production carried
+    ``{'unit_ms': 928347, 'units_done': 6}`` for a day against a cursor holding
+    **zero** committed units, and the beat at 05:19:04Z ran no unit at all.
+
+    Both halves of that level had gone false, in different ways, and each is
+    fixed here by making the field mean what it says:
+
+    * ``units_done`` is written by :func:`_unit_costs_from` from
+      ``staged:units_banked`` — the DURABLE cursor's position at the moment the
+      cost was measured. Carrying it verbatim carries a cursor position from
+      another beat. It is **re-stamped** from this beat's own reading, which
+      :func:`_record_staged_convergence` has already taken, so the pair always
+      describes one instant.
+
+      This is not a fence workaround dressed as bookkeeping. ``units_done`` is
+      the denominator :meth:`~app.utils.calibration_phase_ledger.PhaseLedger.measured_unit_ms`
+      requires — "a mean over zero completed units is not a measurement" — so an
+      honest zero withdraws the quote automatically, through a guard that was
+      already written, and the loop lands on the fence's own documented path for
+      having no measurement: *attempt one unit*.
+
+    * ``unit_ms`` is **withdrawn** when :func:`_level_self_blocked` says the
+      level refused every unit of the beat. A measurement that blocks the only
+      observation which could revise it has stopped being a measurement and
+      become a self-sustaining assertion: ``prior_unit_ms * 1.25`` exceeded the
+      usable window by 2.1%, so no unit started, so no unit completed, so the
+      level was carried unchanged into a beat that reproduced the arithmetic
+      exactly — for as many beats as the build has left, which is all of them.
+
+      Withdrawing costs nothing that was not already lost. The unit that then
+      runs is still bounded: ``statement_timeout_for_unit`` keeps the worst-unit
+      ring (CAL-P163), which this function never touches, so it cannot outlive
+      the beat — and a unit cancelled at its own bound is a known outcome the
+      loop already classifies as ``cancelled``, not ``failed``. The floor is one
+      honest attempt per beat where the floor was zero forever.
+
+    Every branch records why (ruling 075): a withdrawal, a re-stamp, and an
+    unreadable cursor are three different states and none of them is silence.
+    """
+    carried = {name: dict(cost) for name, cost in (prior or {}).items() if isinstance(cost, dict)}
+    futures = carried.get(PHASE_FUTURES)
+    if not futures:
+        return carried
+    if _level_self_blocked(runner):
+        carried.pop(PHASE_FUTURES)
+        runner.ledger.record_gauge("staged:unit_cost_reason:withdrawn_self_blocked", 1)
+        return carried
+    banked = runner.ledger.stages.get("staged:units_banked")
+    if banked is None:
+        # The cursor read failed or was refused; ``_record_staged_convergence``
+        # has already recorded which. Re-stamping from a number we do not have
+        # would be inventing one, so the level is carried as-is and SAYS it is
+        # unverified rather than reading as freshly confirmed (gotcha #53).
+        runner.ledger.record_gauge("staged:unit_cost_reason:units_done_unverified", 1)
+        return carried
+    banked = int(banked)
+    if int(futures.get("units_done") or 0) != banked:
+        runner.ledger.record_gauge("staged:unit_cost_units_done_restamped", banked)
+        futures["units_done"] = banked
+    return carried
+
+
 def _unit_worst_from(runner: PhaseRunner) -> dict[str, int]:
     """This beat's worst COMPLETED unit duration — CAL-P163 (#1978).
 
@@ -1888,14 +1973,22 @@ async def save_phase_ledger(runner: PhaseRunner, extra: Optional[dict[str, Any]]
 
     await _record_staged_convergence(runner)
 
-    payload = runner.ledger.as_payload()
-    if extra:
-        payload.update(extra)
     try:
         prior_history, prior_floors, prior_unit_costs, prior_worst = await load_phase_carryover()
     except Exception as exc:  # noqa: BLE001 — a lost history is not a lost ledger
         logger.warning("calibration phase ledger: history read failed: %s", exc)
         prior_history, prior_floors, prior_unit_costs, prior_worst = {}, {}, {}, {}
+    # CAL-P1027: the carry decision is taken BEFORE ``as_payload``, because the
+    # reasons it records (ruling 075) are ledger gauges and the payload is a
+    # snapshot of the ledger. Taken after, every one of them would be written to
+    # a dict nobody reads and the beat would go out silent about why its level
+    # changed. The read above moved up with it; nothing between the two depends
+    # on the order.
+    unit_costs = _unit_costs_from(runner) or _carry_unit_costs(runner, prior_unit_costs)
+
+    payload = runner.ledger.as_payload()
+    if extra:
+        payload.update(extra)
     payload["history"] = merge_history(prior_history, runner.ledger.observations())
     payload["floors"] = merge_history(prior_floors, runner.ledger.floors())
     # CAL-P067: the measured per-unit cost has to survive the beat that measured
@@ -1911,7 +2004,9 @@ async def save_phase_ledger(runner: PhaseRunner, extra: Optional[dict[str, Any]]
     # measured and sending the next plan back to no-data. Refusing to invent a
     # cost (above) and refusing to keep one that was measured are different
     # things, and only the first was intended.
-    unit_costs = _unit_costs_from(runner) or prior_unit_costs
+    #
+    # CAL-P1027: and a carried level has to still DESCRIBE something. Computed
+    # above so its reasons reach the payload; see :func:`_carry_unit_costs`.
     if unit_costs:
         payload["unit_costs"] = unit_costs
     # CAL-P163: the worst COMPLETED unit, as a rolling window. Appended to
