@@ -78,7 +78,7 @@ def _is_kalshi_game_ticker(event_ticker: str) -> Optional[str]:
     return best_label
 
 
-def _kalshi_commence_time(markets, *, is_game: bool):
+def _kalshi_commence_time(markets, *, is_game: bool, is_dated_match: bool = False):
     """The start time to store for a Kalshi event's markets.
 
     #3433. Gotcha #14 says a Kalshi market's ``commence_time`` is often its
@@ -95,14 +95,33 @@ def _kalshi_commence_time(markets, *, is_game: bool):
     ``expected_expiration_time``): when the thing actually happens. It was read
     by zero lines of our code.
 
-    Deliberately scoped to GAME tickers. ``occurrence_datetime`` is populated on
-    outrights too, where it means something else and is not always earlier than
-    close — ``KXHONEYDEUCE-01JAN27`` has occurrence 15:00Z against a 04:59Z
-    close — so preferring it everywhere would re-time markets that are not
-    broken. ``is_game`` is ``_is_kalshi_game_ticker``'s verdict, the repo's own
-    definition of a game, and the ``occ <= close`` check is the second bound:
-    an occurrence AFTER its own settlement backstop is not an occurrence we
-    understand, so we keep the close time rather than guess.
+    Deliberately scoped to tickers whose occurrence we can read as a start.
+    ``occurrence_datetime`` is populated on outrights too, where it means
+    something else and is not always earlier than close —
+    ``KXHONEYDEUCE-01JAN27`` has occurrence 15:00Z against a 04:59Z close — so
+    preferring it everywhere would re-time markets that are not broken. The
+    ``occ <= close`` check is the second bound: an occurrence AFTER its own
+    settlement backstop is not an occurrence we understand, so we keep the
+    close time rather than guess.
+
+    TWO gates open that preference, and they are separate on purpose:
+
+    * ``is_game`` — ``_is_kalshi_game_ticker``'s verdict, the repo's own
+      definition of a game. It also arms ``_build_game_market_name`` at the
+      call site, which RENAMES the market.
+    * ``is_dated_match`` — #3488. ``_is_dated_match_ticker``: a dated
+      per-match ticker (tennis and 16 non-tennis series that wear the same
+      shape — see that function; the reach is measured and pinned, not
+      incidental). Classification only; it opens this preference and nothing
+      else. ITF (``KXITFMATCH``, ``KXITFWMATCH``, the DOUBLES variants) is
+      deliberately absent from ``_KALSHI_GAME_TICKERS`` — we do not ingest ITF
+      events — so ``is_game`` is False for 138 open ITF match markets and
+      every one of them kept Kalshi's +14d settlement close. The
+      fix is NOT to call them games: that would send a satellite-tour market
+      through the matchup renamer and arm auto-create, which is the shape
+      CERT-2043 blocked. It is to say the narrower true thing — this ticker's
+      occurrence IS its start — which is the same split CERT-2060 made for
+      soccer cup props (``is_classification_only_soccer_prop_ticker``).
 
     Note what this does NOT do: no ticker parsing. ``extract_game_date_from_ticker``
     backtracks its 1-2 digit day (``KXATP1RANK-26DEC31`` -> Dec 3), which is why
@@ -115,7 +134,9 @@ def _kalshi_commence_time(markets, *, is_game: bool):
     for m in markets:
         close = getattr(m, "close_time", None)
         occ = getattr(m, "occurrence_datetime", None)
-        if is_game and occ is not None and (close is None or occ <= close):
+        if (is_game or is_dated_match) and occ is not None and (
+            close is None or occ <= close
+        ):
             starts.append(occ)
         elif close is not None:
             starts.append(close)
@@ -840,7 +861,11 @@ async def _poll_kalshi_markets():
                     if len(event.markets) == 1:
                         market = event.markets[0]
                         commence_time = _kalshi_commence_time(
-                            [market], is_game=bool(game_sport)
+                            [market],
+                            is_game=bool(game_sport),
+                            is_dated_match=_is_dated_match_ticker(
+                                event.event_ticker
+                            ),
                         )
 
                         # For game-level events, construct the best possible name
@@ -861,7 +886,11 @@ async def _poll_kalshi_markets():
                         market_name = event.title
                         # Use the earliest start across the event's markets
                         commence_time = _kalshi_commence_time(
-                            event.markets, is_game=bool(game_sport)
+                            event.markets,
+                            is_game=bool(game_sport),
+                            is_dated_match=_is_dated_match_ticker(
+                                event.event_ticker
+                            ),
                         )
 
                     # Compute market tier for relevance ranking
@@ -2011,9 +2040,51 @@ _TENNIS_MATCH_SERIES_RE = _re.compile(
 )
 
 
+def _is_dated_match_ticker(event_ticker: Optional[str]) -> bool:
+    """#3488. Is this a dated per-match ticker — one match, on a known day?
+
+    CLASSIFICATION ONLY. It answers "does this ticker's occurrence_datetime
+    mean the start of the thing" and feeds exactly one decision —
+    ``_kalshi_commence_time``'s occurrence preference. It is NOT a game
+    verdict: it never renames a market and never arms auto-create. Same split
+    CERT-2060 made for soccer cup props, for the same reason.
+
+    Shares ``_TENNIS_MATCH_SERIES_RE`` with ``_tennis_commence_target`` on
+    purpose — one definition of the row shape, so the writer that stores the
+    hour and the fix-up that must not overwrite it can never disagree about
+    which rows they mean.
+
+    **NOT TENNIS-ONLY, and that is deliberate — the shared constant's name is
+    the misleading part, not this function.** ``_TENNIS_MATCH_SERIES_RE`` is a
+    SHAPE (``KX<anything>MATCH|DOUBLES-<2-digit day><MON><2-digit day><tail>``)
+    and 16 non-tennis series wear it. Measured on production 2026-09-06, every
+    one of them is a per-match dated ticker and none is a game ticker, so all
+    618 of their rows change behaviour here:
+
+        kxrugbynrlmatch (204 rows, 3 open) · kxsquashmatch (170) ·
+        kxrugbyeslmatch (128) · kxpplmatch · kxvolleyballmatch · kxchessmatch ·
+        kxcricketodimatch · kxtglmatch · kxdartsmatch · kxcountychampmatch ·
+        kxsixnationsmatch · kxrugbymlrmatch · kxsshieldmatch ·
+        kxcrickettestmatch · kxpickleballmatch · kxwrestlingmatch
+
+    They have the SAME bug, confirmed at the venue rather than assumed:
+    ``KXRUGBYNRLMATCH-26SEP13PENSYD`` has occurrence 2026-09-13T09:05Z against
+    a close of 2026-09-27T06:05Z — the identical +14d settlement backstop — and
+    ``occ <= close`` holds. Narrowing this to tennis would leave them broken
+    for no reason. The bound that keeps it safe is the ``occ <= close`` check
+    in ``_kalshi_commence_time``, not the sport.
+
+    The reach is pinned by a test so it stays a decision and never becomes an
+    accident: a 17th series joining the shape is a test failure, not a silent
+    re-timing.
+    """
+    return bool(event_ticker) and bool(_TENNIS_MATCH_SERIES_RE.match(event_ticker))
+
+
 def _tennis_commence_target(
     external_id: str,
     event_commence: datetime | None,
+    current_commence: datetime | None = None,
 ) -> datetime | None:
     """The honest commence_time for a Kalshi tennis market, or None to leave it.
 
@@ -2034,6 +2105,23 @@ def _tennis_commence_target(
 
     ticker_date = extract_game_date_from_ticker(external_id)
     if ticker_date is None:
+        return None
+    # #3488. This fix-up exists to move a market OFF the +14d settlement
+    # backstop. A market already dated on its own ticker day is not on the
+    # backstop, and re-dating it can only LOSE information: since #3433 the
+    # poll stores the venue's own `occurrence_datetime` — a real kick-off hour
+    # — and the ticker knows nothing finer than the day, so every such rewrite
+    # replaced 18:00Z with 00:00Z. Measured 2026-09-06, that is what had
+    # happened to 426 of 471 open tennis match markets, KXATPMATCH-26SEP07ZVEDAR
+    # (Zverev vs Darderi, a US Open match the venue times at 18:00Z) among them:
+    # the page read "Sep 6, 8:00 PM EDT" for a match starting Sep 7 at 2:00 PM.
+    # Checked BEFORE the linked-event branch because the event is the weaker
+    # authority here and was itself poisoned to midnight by this same rewrite —
+    # a loop that re-confirmed its own bad answer every poll.
+    if (
+        current_commence is not None
+        and abs(current_commence - ticker_date) <= _TENNIS_EVENT_AGREEMENT_WINDOW
+    ):
         return None
     if (
         event_commence is not None
@@ -2068,7 +2156,9 @@ async def _fix_tennis_commence_times() -> int:
 
         fixed_ids = []
         for m in rows:
-            target = _tennis_commence_target(m.external_id, m.event_commence)
+            target = _tennis_commence_target(
+                m.external_id, m.event_commence, m.commence_time
+            )
             if target is None:
                 continue
             if abs((m.commence_time - target).total_seconds()) <= 1800:
