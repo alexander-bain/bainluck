@@ -48,6 +48,7 @@ from app.utils.authority_failover import (
     FAILOVER_ESPN_DARK,
     FAILOVER_ESPN_SILENT,
     FIXTURES,
+    LIVE_PATH_DARK,
     NOT_GATED,
     NOT_READ,
     NOTHING_TO_SERVE,
@@ -123,38 +124,52 @@ def test_not_read_is_its_own_symbol_and_never_collapses_into_dark():
     """
     assert NOT_READ != DARK
     assert decide(NFL, espn=DARK, gate=_open_gate()).code == STANDBY_NOT_READ
-    assert decide(NFL, espn=DARK, statpal=DARK, gate=_open_gate()).code == STANDBY_DARK
+    assert (
+        decide(
+            NFL, espn=DARK, statpal=DARK, statpal_live=DARK, gate=_open_gate()
+        ).code
+        == STANDBY_DARK
+    )
 
 
 # ── The nine outcomes ───────────────────────────────────────────────────────
 
 
 @pytest.mark.parametrize(
-    "espn,statpal,expected,serving,failed_over",
+    "espn,statpal,live,expected,serving,failed_over",
     [
         # ESPN answering ends everything, and is the only deactivation there is.
-        (FIXTURES, NOT_READ, ESPN_ANSWERED, ESPN, False),
-        # The two that fire.
-        (DARK, FIXTURES, FAILOVER_ESPN_DARK, STATPAL, True),
-        (EMPTY, FIXTURES, FAILOVER_ESPN_SILENT, STATPAL, True),
+        (FIXTURES, NOT_READ, NOT_READ, ESPN_ANSWERED, ESPN, False),
+        # The two that fire — both halves of the standby answered.
+        (DARK, FIXTURES, FIXTURES, FAILOVER_ESPN_DARK, STATPAL, True),
+        (EMPTY, FIXTURES, FIXTURES, FAILOVER_ESPN_SILENT, STATPAL, True),
         # Both answered, neither has a game: a quiet slate, never an outage.
-        (EMPTY, EMPTY, BOTH_QUIET, ESPN, False),
+        (EMPTY, EMPTY, FIXTURES, BOTH_QUIET, ESPN, False),
         # A real unexplained silence with nothing to serve in its place.
-        (DARK, EMPTY, NOTHING_TO_SERVE, ESPN, False),
+        (DARK, EMPTY, FIXTURES, NOTHING_TO_SERVE, ESPN, False),
         # Trading a known silence for an unknown one.
-        (DARK, DARK, STANDBY_DARK, ESPN, False),
-        (EMPTY, DARK, STANDBY_DARK, ESPN, False),
-        # A caller bug, reported rather than raised.
-        (DARK, NOT_READ, STANDBY_NOT_READ, ESPN, False),
+        (DARK, DARK, DARK, STANDBY_DARK, ESPN, False),
+        (EMPTY, DARK, FIXTURES, STANDBY_DARK, ESPN, False),
+        # CERT-2044: the standby has the game and cannot say what is happening
+        # in it. The blank, not a failover away from one.
+        (DARK, FIXTURES, DARK, LIVE_PATH_DARK, ESPN, False),
+        (EMPTY, FIXTURES, DARK, LIVE_PATH_DARK, ESPN, False),
+        # A caller bug, reported rather than raised — either half unread.
+        (DARK, NOT_READ, FIXTURES, STANDBY_NOT_READ, ESPN, False),
+        (DARK, FIXTURES, NOT_READ, STANDBY_NOT_READ, ESPN, False),
     ],
 )
-def test_every_outcome_under_an_open_gate(espn, statpal, expected, serving, failed_over):
+def test_every_outcome_under_an_open_gate(
+    espn, statpal, live, expected, serving, failed_over
+):
     """The states production will reach after 2026-09-11, proven now.
 
     Under the REAL gate opened by seven real days — so this is the behaviour the
     mechanism will actually have, not the behaviour of a stub.
     """
-    decision = decide(NFL, espn=espn, statpal=statpal, gate=_open_gate())
+    decision = decide(
+        NFL, espn=espn, statpal=statpal, statpal_live=live, gate=_open_gate()
+    )
     assert decision.code == expected
     assert decision.serving == serving
     assert decision.failed_over is failed_over
@@ -243,7 +258,7 @@ def test_the_disclosure_cannot_disagree_with_the_decision():
     """
     for gate in (_shut_gate(), _open_gate()):
         assert would_fail_over_now(NFL, gate) == decide(
-            NFL, espn=DARK, statpal=FIXTURES, gate=gate
+            NFL, espn=DARK, statpal=FIXTURES, statpal_live=FIXTURES, gate=gate
         )
 
 
@@ -260,17 +275,17 @@ def test_the_failover_ends_by_itself_because_nothing_was_stored():
     influenced by the first.
     """
     gate = _open_gate()
-    during = decide(NFL, espn=DARK, statpal=FIXTURES, gate=gate)
+    during = decide(NFL, espn=DARK, statpal=FIXTURES, statpal_live=FIXTURES, gate=gate)
     assert during.failed_over is True
 
-    after = decide(NFL, espn=FIXTURES, statpal=FIXTURES, gate=gate)
+    after = decide(NFL, espn=FIXTURES, statpal=FIXTURES, statpal_live=FIXTURES, gate=gate)
     assert after.code == ESPN_ANSWERED
     assert after.serving == ESPN
     assert after.failed_over is False
 
     # And the case a latch gets wrong: ESPN back with an empty slate that
     # StatPal agrees with is a quiet day, not a continuing outage.
-    quiet = decide(NFL, espn=EMPTY, statpal=EMPTY, gate=gate)
+    quiet = decide(NFL, espn=EMPTY, statpal=EMPTY, statpal_live=FIXTURES, gate=gate)
     assert quiet.failed_over is False
     assert quiet.code == BOTH_QUIET
 
@@ -284,7 +299,7 @@ def test_a_score_disagreement_cannot_reach_the_decision_at_all():
     the signature so adding one has to be a deliberate act with a test to break.
     """
     params = set(inspect.signature(decide).parameters) - {"sport_key"}
-    assert params == {"espn", "statpal", "gate", "standing"}, (
+    assert params == {"espn", "statpal", "statpal_live", "gate", "standing"}, (
         "a new input to `decide` — if it carries game STATE rather than a "
         "reading, step 7's 'never for state disagreements' stops being "
         f"structural. Got {sorted(params)}"
@@ -296,7 +311,10 @@ def test_decide_is_total_and_never_raises():
     trying to protect, so every input has an answer — including nonsense."""
     for espn in (DARK, EMPTY, FIXTURES, "who knows", ""):
         for statpal in (DARK, EMPTY, FIXTURES, NOT_READ, "who knows"):
-            decision = decide(NFL, espn=espn, statpal=statpal, gate=_open_gate())
+            decision = decide(
+                NFL, espn=espn, statpal=statpal,
+                statpal_live=FIXTURES, gate=_open_gate(),
+            )
             assert decision.serving in {ESPN, STATPAL}
             assert decision.why
 
@@ -350,7 +368,7 @@ class _Dispatches:
         self.calls: list[str] = []
         self.explode = explode
 
-    def delay(self, sport_key):
+    def delay(self, sport_key="<livescores>"):
         if self.explode:
             raise RuntimeError("broker unreachable")
         self.calls.append(sport_key)
@@ -358,10 +376,18 @@ class _Dispatches:
 
 @pytest.fixture
 def dispatches(monkeypatch):
+    """Both halves are dispatched, so both are recorded.
+
+    `sync_statpal_livescores` takes no sport argument — it sweeps every sport
+    with a live row — so it records the sentinel `<livescores>`.
+    """
     import app.tasks as tasks
 
     stub = _Dispatches()
+    live = _Dispatches()
     monkeypatch.setattr(tasks, "sync_statpal_schedules", stub, raising=False)
+    monkeypatch.setattr(tasks, "sync_statpal_livescores", live, raising=False)
+    stub.live = live
     return stub
 
 
@@ -505,7 +531,7 @@ async def test_with_a_genuine_seven_the_outage_dispatches_statpal(
     _no_ledger(monkeypatch, days=SEVEN_MEETS_DAYS, why="seven")
 
     async def _standby(sport_key):
-        return FIXTURES
+        return FIXTURES, FIXTURES
 
     monkeypatch.setattr(espn_sync, "_statpal_standby_reading", _standby)
 
@@ -540,7 +566,7 @@ async def test_an_espn_slate_statpal_contradicts_also_dispatches(
     _no_ledger(monkeypatch, days=SEVEN_MEETS_DAYS, why="seven")
 
     async def _standby(sport_key):
-        return FIXTURES
+        return FIXTURES, FIXTURES
 
     monkeypatch.setattr(espn_sync, "_statpal_standby_reading", _standby)
 
@@ -575,10 +601,11 @@ async def test_a_failed_dispatch_is_not_counted_as_a_failover_that_served(
     from app.tasks.espn_sync import _act_on_failovers, _decide_failovers
 
     monkeypatch.setattr(tasks, "sync_statpal_schedules", _Dispatches(explode=True))
+    monkeypatch.setattr(tasks, "sync_statpal_livescores", _Dispatches(), raising=False)
     _no_ledger(monkeypatch, days=SEVEN_MEETS_DAYS, why="seven")
 
     async def _standby(sport_key):
-        return FIXTURES
+        return FIXTURES, FIXTURES
 
     monkeypatch.setattr(espn_sync, "_statpal_standby_reading", _standby)
 
@@ -608,7 +635,7 @@ async def test_a_dark_standby_stops_the_failover_even_with_the_gate_open(
     _no_ledger(monkeypatch, days=SEVEN_MEETS_DAYS, why="seven")
 
     async def _standby(sport_key):
-        return DARK
+        return DARK, DARK
 
     monkeypatch.setattr(espn_sync, "_statpal_standby_reading", _standby)
 
@@ -721,10 +748,15 @@ async def test_only_future_statpal_fixtures_do_not_dispatch_but_a_started_one_do
     _no_ledger(monkeypatch, days=SEVEN_MEETS_DAYS, why="seven")
     monkeypatch.setattr(statpal_api, "is_available", lambda: True)
 
-    def _serve(rows):
+    def _serve(rows, live_dark=False):
         class _Service:
             async def get_schedule_fixtures(self, sport, day_offset=None):
                 return rows
+
+            async def get_live_fixtures(self, sport):
+                if live_dark:
+                    raise statpal_api.StatPalUpstreamError("livescores 503")
+                return []
 
             async def close(self):
                 pass
@@ -758,6 +790,110 @@ async def test_only_future_statpal_fixtures_do_not_dispatch_but_a_started_one_do
         stats,
     )
     assert dispatches.calls == [NFL]
+    assert stats["failover"][0]["code"] == FAILOVER_ESPN_SILENT
+
+
+@pytest.mark.asyncio
+async def test_a_dark_live_endpoint_refuses_by_name_and_dispatches_nothing(
+    monkeypatch, dispatches
+):
+    """**CERT-2044's named regression.** "Current schedule + live endpoint dark
+    yields a named refusal and no dispatch."
+
+    The state: StatPal's `season-schedule` is healthy and holds a game that
+    kicked off an hour ago, and `livescores` is down. Readiness used to read
+    only the first, so this reported `FAILOVER-ESPN-SILENT` and `serving:
+    statpal` while score, clock and status stayed frozen — a failover claiming
+    to serve down a path it had never checked.
+
+    It is a REFUSAL and not a quiet skip because this is the state in which the
+    site genuinely does go blank: ESPN silent, StatPal unable to say what is
+    happening. That deserves a named code an operator can search for.
+    """
+    import app.services.statpal_api as statpal_api
+
+    from app.tasks.espn_sync import _act_on_failovers, _decide_failovers
+
+    _no_ledger(monkeypatch, days=SEVEN_MEETS_DAYS, why="seven")
+    monkeypatch.setattr(statpal_api, "is_available", lambda: True)
+
+    now = datetime.now(timezone.utc)
+    started = [_Fx(now - timedelta(hours=1))]
+
+    class _Service:
+        async def get_schedule_fixtures(self, sport, day_offset=None):
+            return started
+
+        async def get_live_fixtures(self, sport):
+            raise statpal_api.StatPalUpstreamError("livescores 503")
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(statpal_api, "StatPalAPIService", _Service)
+
+    stats = {"errors": []}
+    await _act_on_failovers(
+        await _decide_failovers(
+            {"americanfootball_nfl": []}, {"americanfootball_nfl"}, stats
+        ),
+        stats,
+    )
+
+    assert dispatches.calls == []
+    assert dispatches.live.calls == []
+    assert stats.get("failover_activated", 0) == 0
+    assert stats["failover"][0]["code"] == LIVE_PATH_DARK
+    assert stats["failover"][0]["serving"] == ESPN
+    assert stats["failover"][0]["failed_over"] is False
+
+
+@pytest.mark.asyncio
+async def test_a_healthy_live_endpoint_dispatches_both_halves(
+    monkeypatch, dispatches
+):
+    """The control for the test above, and the second half of CERT-2044's
+    regression: with `livescores` answering, the same state dispatches — and it
+    dispatches BOTH tasks, because readiness proved both halves.
+
+    Dispatching only the schedule sync would restore the sport's fixtures and
+    leave score and clock to the 30s beat, which would make the live-path
+    readiness check a question nothing acted on.
+    """
+    import app.services.statpal_api as statpal_api
+
+    from app.tasks.espn_sync import _act_on_failovers, _decide_failovers
+
+    _no_ledger(monkeypatch, days=SEVEN_MEETS_DAYS, why="seven")
+    monkeypatch.setattr(statpal_api, "is_available", lambda: True)
+
+    now = datetime.now(timezone.utc)
+
+    class _Service:
+        async def get_schedule_fixtures(self, sport, day_offset=None):
+            return [_Fx(now - timedelta(hours=1))]
+
+        async def get_live_fixtures(self, sport):
+            # Answered, with no rows. A quiet `livescores` is HEALTHY — what
+            # readiness needs from this endpoint is that it replied, not that
+            # it had something to say.
+            return []
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(statpal_api, "StatPalAPIService", _Service)
+
+    stats = {"errors": []}
+    await _act_on_failovers(
+        await _decide_failovers(
+            {"americanfootball_nfl": []}, {"americanfootball_nfl"}, stats
+        ),
+        stats,
+    )
+
+    assert dispatches.calls == [NFL]
+    assert dispatches.live.calls == ["<livescores>"]
     assert stats["failover"][0]["code"] == FAILOVER_ESPN_SILENT
 
 
@@ -862,10 +998,20 @@ async def test_the_standby_is_read_through_the_client_that_can_say_dark(monkeypa
             # wrong thing.
             return [_Fx(datetime.now(timezone.utc) - timedelta(hours=1))]
 
+        async def get_live_fixtures(self, sport):
+            calls.append(f"live:{sport}")
+            return []
+
         async def get_fixtures(self, *a, **k):  # pragma: no cover - must not run
             raise AssertionError(
                 "the standby was read through `get_fixtures`, which cannot "
                 "distinguish an outage from an empty slate"
+            )
+
+        async def get_live_scores(self, *a, **k):  # pragma: no cover - must not run
+            raise AssertionError(
+                "the live half was read through `get_live_scores`, which ends "
+                "`if not data: return []` and cannot express dark"
             )
 
         async def close(self):
@@ -874,8 +1020,8 @@ async def test_the_standby_is_read_through_the_client_that_can_say_dark(monkeypa
     monkeypatch.setattr(statpal_api, "StatPalAPIService", _Service)
     monkeypatch.setattr(statpal_api, "is_available", lambda: True)
 
-    assert await _statpal_standby_reading(NFL) == FIXTURES
-    assert calls == ["schedule:nfl"]
+    assert await _statpal_standby_reading(NFL) == (FIXTURES, FIXTURES)
+    assert calls == ["schedule:nfl", "live:nfl"]
 
 
 @pytest.mark.asyncio
@@ -893,13 +1039,16 @@ async def test_an_upstream_error_from_the_standby_is_dark_not_empty(monkeypatch)
         async def get_schedule_fixtures(self, sport, day_offset=None):
             raise statpal_api.StatPalUpstreamError("502 from StatPal")
 
+        async def get_live_fixtures(self, sport):  # pragma: no cover
+            return []
+
         async def close(self):
             pass
 
     monkeypatch.setattr(statpal_api, "StatPalAPIService", _Service)
     monkeypatch.setattr(statpal_api, "is_available", lambda: True)
 
-    assert await _statpal_standby_reading(NFL) == DARK
+    assert await _statpal_standby_reading(NFL) == (DARK, DARK)
 
 
 @pytest.mark.asyncio
@@ -910,10 +1059,10 @@ async def test_an_unmapped_or_keyless_standby_is_dark_not_empty(monkeypatch):
     from app.tasks.espn_sync import _statpal_standby_reading
 
     monkeypatch.setattr(statpal_api, "is_available", lambda: False)
-    assert await _statpal_standby_reading(NFL) == DARK
+    assert await _statpal_standby_reading(NFL) == (DARK, DARK)
 
     monkeypatch.setattr(statpal_api, "is_available", lambda: True)
-    assert await _statpal_standby_reading("quidditch_premier") == DARK
+    assert await _statpal_standby_reading("quidditch_premier") == (DARK, DARK)
 
 
 def _espn_sync_function(name: str) -> ast.FunctionDef:

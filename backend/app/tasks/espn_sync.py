@@ -179,8 +179,14 @@ def espn_team_matches(our_names: list, espn_team) -> bool:
     return False
 
 
-async def _statpal_standby_reading(sport_key: str) -> str:
-    """StatPal's reading for `sport_key`, read the only way that can say "dark".
+async def _statpal_standby_reading(sport_key: str) -> tuple[str, str]:
+    """StatPal's two readings for `sport_key`, read the only way that can say "dark".
+
+    Returns `(schedule, live)`. TWO, because StatPal serves the ship's two
+    halves from two endpoints and readiness needs both: `season-schedule` says a
+    game exists, `livescores` says what is happening in it. Checking only the
+    first is how a schedule-healthy, live-dark StatPal got reported as serving a
+    sport whose score and clock were frozen (CERT-2044).
 
     `StatPalAPIService.get_fixtures` cannot answer this question. It ends with
     `if not data: return []`, so an upstream failure and a sport with no games
@@ -206,7 +212,7 @@ async def _statpal_standby_reading(sport_key: str) -> str:
         StatPalUpstreamError,
         is_available,
     )
-    from app.utils.authority_failover import DARK, reading_in_window
+    from app.utils.authority_failover import DARK, FIXTURES, reading_in_window
     from app.utils.sport_keys import STATPAL_SPORT_MAPPING
 
     statpal_sport = STATPAL_SPORT_MAPPING.get(sport_key)
@@ -214,25 +220,46 @@ async def _statpal_standby_reading(sport_key: str) -> str:
         # No mapping, or no key configured. Reported as DARK rather than EMPTY:
         # we did not ask, so StatPal has said nothing about this sport, and
         # `decide` must refuse rather than read our own silence as theirs.
-        return DARK
+        return DARK, DARK
 
     service = StatPalAPIService()
     try:
-        fixtures = await service.get_schedule_fixtures(statpal_sport)
-    except StatPalUpstreamError as exc:
-        logger.warning("StatPal standby dark for %s: %s", sport_key, exc)
-        return DARK
-    except Exception as exc:  # noqa: BLE001 — classified as DARK, never swallowed
-        logger.warning("StatPal standby read failed for %s: %s", sport_key, exc)
-        return DARK
+        try:
+            fixtures = await service.get_schedule_fixtures(statpal_sport)
+        except StatPalUpstreamError as exc:
+            logger.warning("StatPal standby schedule dark for %s: %s", sport_key, exc)
+            return DARK, DARK
+        except Exception as exc:  # noqa: BLE001 — classified, never swallowed
+            logger.warning("StatPal standby schedule failed for %s: %s", sport_key, exc)
+            return DARK, DARK
+
+        # THE SECOND HALF, and the one readiness used to skip (CERT-2044).
+        # `get_live_fixtures` is `livescores` through the authority door — it
+        # raises where `get_live_scores` returns `[]`, which is the whole
+        # reason it is the one called here.
+        #
+        # Note what is NOT required of it: rows. A healthy `livescores` with no
+        # live games is the normal state of a quiet afternoon. What is required
+        # is that it ANSWERED, because that is what proves StatPal could report
+        # the state of a game if there were one.
+        try:
+            await service.get_live_fixtures(statpal_sport)
+            live = FIXTURES
+        except StatPalUpstreamError as exc:
+            logger.warning("StatPal standby LIVE path dark for %s: %s", sport_key, exc)
+            live = DARK
+        except Exception as exc:  # noqa: BLE001 — classified, never swallowed
+            logger.warning("StatPal standby live read failed for %s: %s", sport_key, exc)
+            live = DARK
     finally:
         await service.close()
 
-    reading, detail = reading_in_window(
-        fixtures, now=datetime.now(timezone.utc)
+    schedule, detail = reading_in_window(fixtures, now=datetime.now(timezone.utc))
+    logger.info(
+        "StatPal standby for %s: schedule=%s live=%s %s",
+        sport_key, schedule, live, detail,
     )
-    logger.info("StatPal standby for %s: %s %s", sport_key, reading, detail)
-    return reading
+    return schedule, live
 
 
 async def _decide_failovers(espn_data: dict, fetch_keys, stats: dict) -> dict:
@@ -281,11 +308,13 @@ async def _decide_failovers(espn_data: dict, fetch_keys, stats: dict) -> dict:
 
         decision = failover.decide(sport_key, espn=reading, gate=gate)
         if decision.code == failover.STANDBY_NOT_READ:
+            schedule, live = await _statpal_standby_reading(sport_key)
             decision = failover.decide(
                 sport_key,
                 espn=reading,
                 gate=gate,
-                statpal=await _statpal_standby_reading(sport_key),
+                statpal=schedule,
+                statpal_live=live,
             )
         decisions[sport_key] = decision
     return decisions
@@ -336,9 +365,14 @@ async def _act_on_failovers(decisions: dict, stats: dict) -> None:
             sport_key, decision.code, decision.why,
         )
         try:
-            from app.tasks import sync_statpal_schedules
+            from app.tasks import sync_statpal_livescores, sync_statpal_schedules
 
+            # BOTH halves, matching what readiness proved. Dispatching only the
+            # schedule sync would restore the sport's fixtures while leaving
+            # score and clock to the 30s beat — and would make the readiness
+            # check on the live path a question nothing acted on.
             sync_statpal_schedules.delay(sport_key)
+            sync_statpal_livescores.delay()
             stats["failover_dispatched"] = stats.get("failover_dispatched", 0) + 1
         except Exception as exc:  # noqa: BLE001 — counted, never swallowed
             # The decision stands and is receipted either way. A dispatch that

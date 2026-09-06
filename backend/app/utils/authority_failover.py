@@ -83,6 +83,32 @@ that could dispatch anything is unreachable in production right now. That is the
 point of building it before 2026-09-11 rather than after: the mechanism can be
 written, reviewed and proven in every state while it is incapable of acting.
 
+WHAT THIS IS WORTH, GIVEN THAT THE COVERAGE ALREADY EXISTS
+══════════════════════════════════════════════════════════
+lane1/130 measured the outage coverage per sport
+(`tests/test_espn_dark_fallback_coverage_2867.py`) and the answer is that for
+the sports a failover could fire on at all, **StatPal already serves them
+through beats that do not depend on ESPN**: `transition-event-statuses` (60s,
+no API client, which is what keeps `status='live'` reachable during an outage),
+`sync-statpal-livescores` (30s), `sync-statpal-schedules-*` (1h). They also
+rejected the original sketch for this step — routing StatPal fixtures through
+the ESPN passes — as a twin factory, correctly.
+
+So the dispatch below is the SMALLEST part of this module's value, and it is
+cadence rather than coverage: it pulls an hourly schedule sync forward when
+ESPN has stopped answering. What is actually new is the other three things:
+
+  1. **The distinction the consumer had lost** — `espn_data.get(sport_key, [])`
+     (see above), which lane1/045 fixed at the producer and which died at the
+     branch.
+  2. **A receipt per silent sport per pass.** Nothing recorded an ESPN outage
+     per sport with a reason before this; the counter said how many, never
+     which or why.
+  3. **:data:`LIVE_PATH_DARK` — the state where the site DOES go blank.** ESPN
+     silent AND StatPal's `livescores` dark means no source can say what is
+     happening in a game that is on, and nothing was watching for it. The
+     beats lane1 counted all keep running greenly through it.
+
 "NEVER FOR STATE DISAGREEMENTS" IS A PROPERTY OF THE INPUT, NOT A RULE ON TOP
 ═════════════════════════════════════════════════════════════════════════════
 Program step 7 says the failover fires on an outage and *never* for state
@@ -260,6 +286,17 @@ NOTHING_TO_SERVE = "NO-FAILOVER-NOTHING-TO-SERVE"
 #: trades a known silence for an unknown one.
 STANDBY_DARK = "NO-FAILOVER-STANDBY-DARK"
 
+#: StatPal has the fixtures but its LIVE path is dark — so it can say a game
+#: exists and cannot say what is happening in it.
+#:
+#: **This is the state where the site actually goes blank, and it is the one
+#: nothing was watching.** (CERT-2044.) Two StatPal endpoints serve two halves:
+#: `get_schedule_fixtures` says a game exists, `livescores` carries its score,
+#: clock and status. Readiness read only the first, so a schedule-healthy /
+#: live-dark StatPal reported `serving: statpal` while score and clock stayed
+#: frozen — the failover claiming to serve down a path it had never checked.
+LIVE_PATH_DARK = "NO-FAILOVER-LIVE-PATH-DARK"
+
 #: The caller reached the standby question without reading the standby. A caller
 #: bug, reported rather than raised — a `KeyError` out of this path would be an
 #: outage in the sport we were trying to protect.
@@ -317,6 +354,7 @@ def decide(
     espn: str,
     gate: tuple[bool, str],
     statpal: str = NOT_READ,
+    statpal_live: str = NOT_READ,
     standing: Optional[str] = None,
 ) -> FailoverDecision:
     """Who serves `sport_key` on this pass?
@@ -388,7 +426,7 @@ def decide(
             ),
         )
 
-    if statpal == NOT_READ:
+    if NOT_READ in (statpal, statpal_live):
         return FailoverDecision(
             sport_key=sport_key,
             code=STANDBY_NOT_READ,
@@ -396,9 +434,12 @@ def decide(
             failed_over=False,
             why=(
                 f"ESPN is {espn} for {sport_key} and the gate permits a "
-                "failover, but the caller did not read the standby. This is a "
-                "caller bug, not a fact about either provider — nothing failed "
-                "over and nothing may be concluded about StatPal's coverage"
+                "failover, but the caller did not read the standby "
+                f"(schedule={statpal}, live={statpal_live}). This is a caller "
+                "bug, not a fact about either provider — nothing failed over "
+                "and nothing may be concluded about StatPal's coverage. BOTH "
+                "halves are required: one endpoint says a game exists, the "
+                "other says what is happening in it"
             ),
         )
 
@@ -441,6 +482,28 @@ def decide(
             ),
         )
 
+    if statpal_live == DARK:
+        # The half readiness used to skip. StatPal can name the game and cannot
+        # say what is happening in it, so declaring it the server would freeze
+        # score, clock and status behind a row that reads `serving: statpal`.
+        # Refused loudly rather than dispatched: this is the state in which the
+        # site genuinely does go blank, so it is the one worth an alarm.
+        return FailoverDecision(
+            sport_key=sport_key,
+            code=LIVE_PATH_DARK,
+            serving=ESPN,
+            failed_over=False,
+            why=(
+                f"ESPN is {espn} for {sport_key} AND StatPal's live path is "
+                "dark. StatPal has fixtures in the window, so it can say the "
+                "game exists — but `livescores` did not answer, so it cannot "
+                "say what is happening in it, and score, clock and status "
+                "would freeze behind a row claiming to be served. BOTH "
+                "providers are now silent about live state for a sport that "
+                "has a game on: this is the blank, not a failover away from it"
+            ),
+        )
+
     code = FAILOVER_ESPN_DARK if espn == DARK else FAILOVER_ESPN_SILENT
     detail = (
         "ESPN did not answer"
@@ -474,11 +537,20 @@ def would_fail_over_now(
     mode both exist to make impossible to walk into.
 
     Answered by running the REAL decision against the most favourable
-    hypothetical — ESPN dark, StatPal holding fixtures — rather than by a second
-    reading of the same rules. A disclosure that re-derives its subject's logic
-    is a disclosure that can disagree with it, and this one cannot: if it says
-    nothing would happen, nothing would happen, because it just asked.
+    hypothetical — ESPN dark, and BOTH halves of the standby healthy — rather
+    than by a second reading of the same rules. A disclosure that re-derives its
+    subject's logic is a disclosure that can disagree with it, and this one
+    cannot: if it says nothing would happen, nothing would happen, because it
+    just asked.
+
+    "Most favourable" has to include the live path since CERT-2044, or the
+    disclosure would answer a question the decision no longer asks.
     """
     return decide(
-        sport_key, espn=DARK, statpal=FIXTURES, gate=gate, standing=standing
+        sport_key,
+        espn=DARK,
+        statpal=FIXTURES,
+        statpal_live=FIXTURES,
+        gate=gate,
+        standing=standing,
     )
