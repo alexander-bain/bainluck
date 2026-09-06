@@ -189,6 +189,46 @@ STATPAL_SPORT_MAPPING: dict[str, str] = {
 # Other sports return 404 for the PBP endpoint — skip them to save API calls.
 STATPAL_PBP_SPORTS: set[str] = {"nfl"}
 
+# StatPal sports whose LIVE endpoint numbers fixtures in a DIFFERENT id space
+# from the one `events.statpal_fixture_id` must hold, mapped to the live field
+# that carries the right one. #3094, under D55.
+#
+# ## Why this is a declaration and not a fallback chain
+#
+# The live parser builds its id as `id or contestid or fixture_id`, which is the
+# right answer for every sport where the live endpoint and the schedule endpoint
+# number fixtures the same way. MLB is the measured exception
+# (`tests/test_statpal_mlb_id_spaces.py`, authority/016, 2026-09-04):
+#
+#   season-schedule.id   6-digit   227/227 filled, 227 distinct, 0 collisions
+#   livescores.id       10-digit   16/16 distinct, 0/16 appear in either
+#                                  schedule space — a genuinely third space
+#   livescores.oddsid    6-digit   IS season-schedule.id; 13/16 present, 13/13
+#                                  dereference to a schedule row
+#
+# So on MLB the live `id` is not a worse anchor, it is an anchor into a space
+# that does not exist anywhere else. 364 rows already hold one (measured
+# 2026-09-06, up from 322 on 09-04 — the writer is still producing them), and
+# all 5 duplicate MLB StatPal ids in the table sit in that space while the
+# 6-digit space has zero.
+#
+# The trap that makes this a per-sport DECLARATION rather than a shape check:
+# `livescores.id` spans 1329192580..1329202652 and schedule `stats_id` spans
+# 1329190986..1329201329 — same width, same prefix, overlapping ranges, and not
+# one value in common. Any rule that infers the space from digit count or
+# numeric range joins them confidently and wrongly. That is the measured MLB
+# case for D55, and it is the same defect #2879 removed from the anchor key.
+#
+# ## The coupling that must not be broken silently
+#
+# `events.statpal_fixture_id` has a second consumer: `sync_statpal_playbyplay`
+# passes it to `fixtures/{id}/playbyplay`, which needs the LIVE id. A sport that
+# appears in BOTH this map and `STATPAL_PBP_SPORTS` would have its PBP calls keyed
+# by the schedule id and get 404s. It does not happen today — PBP is NFL-only and
+# NFL is not in this map — and `test_statpal_live_anchor_field.py` asserts the two
+# stay disjoint so that adding MLB to PBP fails loudly instead of going dark.
+STATPAL_LIVE_ANCHOR_FIELD: dict[str, str] = {"mlb": "odds_id"}
+
 
 # =============================================================================
 # 4. ODDS_API_TO_WIN_PROB_KEY — Odds API key → win-prob model key
