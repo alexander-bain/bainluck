@@ -708,21 +708,54 @@ class TestItIsActuallyScheduled:
         assert entry["task"] == "app.tasks.refresh_linked_polymarket_books"
         assert entry["options"]["queue"] == "heavy"
 
-    def test_it_does_not_land_on_a_sibling_gamma_readers_minute(self):
-        """Two Gamma readers holding the same rate limit at once is the failure
-        this schedule avoids: the discovery poll is at :15 and the price refresh
-        at :50, and the Kalshi twin owns :20."""
+    def test_it_shares_its_minute_with_no_heavy_sibling(self):
+        """Written narrowly first — "clear of the other Gamma readers" — and
+        that version passed while `:35` collided with TWO heavy siblings
+        (`precompute-backfill-winners-status` hourly, and
+        `match-prediction-markets` at :05/:20/:35/:50). CI caught it;
+        this test did not, because it checked the three beats I happened to be
+        thinking about instead of the queue the task actually runs on.
+
+        So the rule is the queue: nothing else on `heavy` may fire on any minute
+        this fires on. That is also what `test_schedule_sentinel_wiring` asserts
+        globally — pinned here too so a change to THIS entry fails in the file
+        that owns it."""
         from app.tasks import celery_app
 
         beat_schedule = celery_app.conf.beat_schedule
         mine = beat_schedule["refresh-linked-polymarket-books-hourly"]["schedule"]
-        for sibling in (
-            "poll-polymarket-hourly",
-            "refresh-linked-game-books-hourly",
-            "refresh-stale-futures-prices-hourly",
-        ):
-            other = beat_schedule[sibling]["schedule"]
-            assert mine.minute != other.minute, sibling
+        my_minutes = set(mine.minute)
+
+        for name, entry in beat_schedule.items():
+            if name == "refresh-linked-polymarket-books-hourly":
+                continue
+            if (entry.get("options") or {}).get("queue") != "heavy":
+                continue
+            sched = entry.get("schedule")
+            minute = getattr(sched, "minute", None)
+            hour = getattr(sched, "hour", None)
+            if minute is None or hour is None:
+                continue
+            # Hourly, so an overlapping minute collides whatever the sibling's
+            # hour set is.
+            assert not (my_minutes & set(minute)), (
+                f"{name} fires at minute {sorted(set(minute) & my_minutes)} on "
+                "the heavy queue, which this task also claims"
+            )
+
+    def test_it_is_hourly_and_clear_of_the_other_gamma_reader(self):
+        """The venue-facing reason for the slot, kept as its own statement: the
+        discovery poll at :15 is the only other Gamma reader, and the two must
+        never hold that rate limit at once."""
+        from app.tasks import celery_app
+
+        beat_schedule = celery_app.conf.beat_schedule
+        mine = beat_schedule["refresh-linked-polymarket-books-hourly"]["schedule"]
+        assert set(mine.minute) == {38}
+        assert not (
+            set(mine.minute)
+            & set(beat_schedule["poll-polymarket-hourly"]["schedule"].minute)
+        )
 
     def test_the_celery_task_resolves_to_the_pass(self):
         from app.tasks import refresh_linked_polymarket_books

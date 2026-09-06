@@ -4542,15 +4542,25 @@ celery_app.conf.beat_schedule = {
         "schedule": crontab(minute=20),
         "options": {"queue": "heavy"},
     },
-    # #3613, the Polymarket twin of the entry above. `:35` keeps it clear of
-    # both its Kalshi sibling at `:20` and the price refresh at `:50`, and off
-    # the `:15` Gamma discovery poll — the two Gamma readers never run together.
-    # `heavy` for the same reason the sibling states: `background` has ~one
-    # effective slot for ~40 beats, and this is the same SHAPE — a bounded,
-    # batched venue re-read of rows we already hold.
+    # #3613, the Polymarket twin of the entry above.
+    #
+    # `:38` is chosen against the WHOLE heavy queue, not against the readers it
+    # is obviously related to. `:35` was the first choice and it collided twice
+    # — `precompute-backfill-winners-status` (hourly `:35`) and
+    # `match-prediction-markets` (`:05/:20/:35/:50`) — which
+    # `test_schedule_sentinel_wiring` caught and a "clear of the other Gamma
+    # readers" argument never would have. `:38` is unoccupied by any heavy
+    # sibling: 3 min after the winners-status job, 12 before the price refresh
+    # at `:50`, 18 clear of the Kalshi twin at `:20`, and 23 after the `:15`
+    # Gamma discovery poll — so the two Gamma readers never hold the rate limit
+    # at once.
+    #
+    # `heavy` for the reason the sibling states: `background` has ~one effective
+    # slot for ~40 beats, and this is the same SHAPE — a bounded, batched venue
+    # re-read of rows we already hold.
     "refresh-linked-polymarket-books-hourly": {
         "task": "app.tasks.refresh_linked_polymarket_books",
-        "schedule": crontab(minute=35),
+        "schedule": crontab(minute=38),
         "options": {"queue": "heavy"},
     },
     # UX-P139. Every 10 minutes, and it is cheap because the register bounds
