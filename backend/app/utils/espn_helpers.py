@@ -441,6 +441,54 @@ async def update_event_fields_from_espn(session, event, ee, claimed_espn_ids, st
             event.status = "completed"
             changed = True
             stats["espn_completed"] = stats.get("espn_completed", 0) + 1
+    elif getattr(ee, "stopped_without_result", False) and event.status == "live":
+        # #3397: the branch the settle arm above leaves open. ESPN reports
+        # `state="post"` with `completed` not True — postponed, abandoned,
+        # canceled — which is the authority saying BOTH "this is not being
+        # played" and "nobody finished it". The arm above correctly refuses to
+        # settle it; without this one nothing else touches the column, so the
+        # row keeps whatever it had, and what it had was `live`.
+        #
+        # MEASURED (production 2026-09-05, #3397): event 15291065, D.C. United
+        # @ FC Cincinnati, `status='live'` / `period='Postponed'` / 0-0 / zero
+        # espn_snapshots — a match that never kicked off, drawn on the MLS
+        # league page inside `Live Now 3` with a green dot and a `Postponed 0'`
+        # chip, and counted in the native tab bar's `13 live` badge. The other
+        # two rows in that rail were genuinely live and read correctly, so the
+        # rail was right about two of its three members.
+        #
+        # SUSPENDED, NOT CLOSED, AND THIS IS THE CERT-752 RULE (live/048,
+        # EVENT-GRAPH-DOCTRINE §R). A stoppage is not a result: writing
+        # `completed`/`closed` here would stamp a Final and resolve the
+        # prediction-market blend off a 0-0 nobody played, which is precisely
+        # the trade CERT-752 was filed about — a false LIVE swapped for a false
+        # FINAL, and only one of the two grades. `EVENT_SUSPENDED` is the state
+        # the ladder already keeps for "not live, and nobody reported an end":
+        # it rides a past rail rather than `Live Now`, it leaves the live count,
+        # and it grades nothing.
+        #
+        # SELF-HEALING, so a resumed match needs no second mechanism.
+        # `play_resumes` admits `suspended`, so the moment ESPN reports the
+        # fixture `in` again the branch below flips it straight back to live —
+        # the same door the six suspended US Open matches came back through.
+        # And because the scheduled→live promotion in `transition_event_statuses`
+        # selects only `status == "scheduled"`, a suspended row is never
+        # clock-promoted back into the rail behind ESPN's back.
+        from app.utils.event_completion import EVENT_SUSPENDED
+        await session.execute(
+            _sql_update(Event)
+            .where(Event.id == event.id)
+            .values(status=EVENT_SUSPENDED)
+        )
+        event.status = EVENT_SUSPENDED
+        changed = True
+        stats["espn_stopped_without_result"] = stats.get("espn_stopped_without_result", 0) + 1
+        logger.info(
+            "ESPN stoppage: event %d (%s vs %s) was live but ESPN reports "
+            "state=post/completed=false (%s) — demoted to %s, not settled (#3397)",
+            event.id, event.home_team_name, event.away_team_name,
+            ee.status_detail, EVENT_SUSPENDED,
+        )
     elif ee.status == "in" and play_resumes(event.status):
         # #1207 premature-live guard: ESPN can report a game "in" (and publish a
         # pregame win-prob) hours before first pitch. Don't flip the event live

@@ -245,6 +245,12 @@ class ESPNEvent:
     broadcasts: list[str]
     home_win_probability: Optional[float]
     season_type: Optional[int] = None  # 1=preseason, 2=regular, 3=postseason
+    # #3397: ESPN says this competition is over and nobody finished it
+    # (`state="post"`, `completed` not True — postponed/abandoned/canceled).
+    # Carried as its own field rather than folded into `status` because every
+    # reader of `status` compares it against "in"/"post"/"final" and none of
+    # them should change meaning; see `espn_stopped_without_result`.
+    stopped_without_result: bool = False
 
 
 def espn_terminal_state(status_type: dict) -> Optional[str]:
@@ -302,6 +308,60 @@ def espn_terminal_state(status_type: dict) -> Optional[str]:
     if state == "post" and status_type.get("completed") is True:
         return "post"
     return None
+
+
+def espn_stopped_without_result(status_type: dict) -> bool:
+    """``True`` when ESPN says this competition is OVER and **nobody finished
+    it** — the other half of :func:`espn_terminal_state`'s rule (#3397).
+
+    🔴 **WHY A ROW NEEDED THIS (#3397).** `espn_terminal_state` reads exactly
+    the two rows of its own census that settle, and correctly returns ``None``
+    for the two that must not. But ``None`` reaches
+    `update_event_fields_from_espn` as *no opinion*, and its if/elif chain then
+    matches neither the settle branch (``ee.status in ("post", "final")``) nor
+    the live branch (``ee.status == "in"``) — so the status column is never
+    touched. Measured on production 2026-09-05: event 15291065, D.C. United @
+    FC Cincinnati, carried ``status='live'`` with ``period='Postponed'`` written
+    by the very same sync pass. The pill read ``Postponed 0'`` while the chart
+    header read ``● Live`` and the tab bar counted it — one row saying two
+    things, which is verbatim the failure `espn_terminal_state`'s own docstring
+    was written about, arriving through the branch it left open.
+
+    **THIS IS AN ALLOWLIST ON ``state``, NOT A DENYLIST ON THE NAME.** The
+    tempting fix is to test the stoppage words — and `schedule_sentinel` already
+    hand-maintains exactly that set (``_ESPN_POSTPONED``: POSTPONED, CANCELED,
+    CANCELLED, SUSPENDED, ABANDONED, with the British spelling carried because
+    somebody was bitten once). A denylist on a status column admits every state
+    nobody anticipated, and ESPN's vocabulary is open at the top: FORFEIT,
+    DELAYED and RAIN_DELAY are all names that set is blind to. ``state`` is not
+    open — it is ESPN's own three-valued ``pre``/``in``/``post``, published on
+    every competition, and ``completed`` is the boolean that splits ``post`` in
+    two. Reading the closed pair catches a name ESPN has not invented yet.
+
+    **What it deliberately does NOT catch: ``STATUS_DELAYED``.** ESPN reports a
+    delay as ``state="in"`` before a ball is bowled (`espn_terminal_state`'s
+    docstring measured this and declined to translate ``in`` for the same
+    reason). A delayed game is therefore *claimed by the authority to be in
+    progress*, and demoting it would need the name — the rotting test this
+    function exists to avoid — on a population this change has not measured.
+    One behaviour changes here: a match ESPN says stopped without a result stops
+    reading live.
+
+    The census is `espn_terminal_state`'s, unchanged — 5,672 soccer fixtures
+    across 34 ESPN leagues, 2026-02-01 → 2026-09-04. These are its bottom two
+    rows, the ones that return ``None`` there and ``True`` here::
+
+        STATUS_POSTPONED       7  post  completed=False   stopped, no result
+        STATUS_ABANDONED       1  post  completed=False   stopped, no result
+
+    ``completed`` is load-bearing in both directions: ``STATUS_ABANDONED`` stops
+    mid-match, so it arrives with a real clock and a real period and only
+    ``completed=False`` separates it from a result.
+    """
+    if not isinstance(status_type, dict):
+        return False
+    state = str(status_type.get("state") or "").strip().lower()
+    return state == "post" and status_type.get("completed") is not True
 
 
 class ESPNAPIService:
@@ -715,6 +775,7 @@ class ESPNAPIService:
                 broadcasts=broadcasts,
                 home_win_probability=home_win_prob,
                 season_type=season_type_val,
+                stopped_without_result=espn_stopped_without_result(status_type),
             )
         except Exception as e:
             logger.error(f"Error parsing ESPN event: {e}")
