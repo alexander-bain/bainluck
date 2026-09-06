@@ -126,6 +126,25 @@ async def _yields(session):
     yield session
 
 
+def _matcher_stats() -> dict:
+    """The stats dict Phase 2's writer is called with, keys and all.
+
+    Deliberately NOT a defaultdict. The writer increments named counters, so a
+    dict that invents a missing key would let this file keep passing while the
+    caller and the writer disagreed about what is being counted — and a
+    disagreement there is how a run reports work it did not do.
+    """
+    return {
+        "markets_scanned": 0,
+        "newly_linked": 0,
+        "snapshots_written": 0,
+        "snapshots_deduped": 0,
+        "orphaned_snapshots_deleted": 0,
+        "errors": [],
+        "funnel": {},
+    }
+
+
 async def _run_ingest(session, venue_event):
     """Step 1: the REAL 2-hour poll, on the seams it already owns.
 
@@ -517,7 +536,7 @@ class TestStepThreeTheHeroStopsSayingNoPriceYet:
                     away_team_name=AWAY,
                 )
             ],
-            {"funnel": {}, "errors": []},
+            _matcher_stats(),
         )
         await session.commit()
         assert spoke is not None, (
@@ -532,6 +551,33 @@ class TestStepThreeTheHeroStopsSayingNoPriceYet:
             "this expression is what the hero branches on "
             "(`homeProb === null && awayProb === null` in "
             "EventHeroProbabilityPair.tsx). Non-null here is the ship."
+        )
+
+    async def test_the_stats_dict_this_file_passes_covers_what_the_writer_counts(self):
+        """CI found this the hard way: a missing key is a KeyError mid-write.
+
+        The writer increments named counters, so the caller's dict is part of its
+        contract. Scanning the writer rather than listing the keys means the two
+        cannot drift apart the next time a counter is added.
+        """
+        import inspect
+        import re
+
+        from app.tasks.prediction_market_matching import (
+            _phase2_persist_group_reading,
+        )
+
+        counted = set(
+            re.findall(
+                r'stats\[["\'](\w+)["\']\]\s*\+=',
+                inspect.getsource(_phase2_persist_group_reading),
+            )
+        )
+        assert counted, "the scan found no counters — it can no longer testify"
+        assert counted <= set(_matcher_stats()), (
+            f"the writer counts {sorted(counted - set(_matcher_stats()))}, which "
+            "this file does not pass it — the arm above would die on a KeyError "
+            "inside the write rather than on the claim it is making"
         )
 
     async def test_the_writer_this_file_drives_is_the_one_the_matcher_calls(self):
