@@ -115,9 +115,13 @@ AUTHORITY_BY_SPORT: dict[str, str] = {
 #:
 #: What has NOT changed, and must not be read into the above: flipping a line
 #: still does not move the event graph. `event_registry` and the matcher are
-#: lane1's under D50 and neither reads this file. The one thing that acts is the
-#: failover's dispatch of `sync_statpal_schedules`, which is a task that already
-#: runs hourly for these sports.
+#: lane1's under D50 and neither reads this file. What acts is
+#: `espn_sync._act_on_failovers`, which on an ESPN-dark pass awaits StatPal's
+#: OWN writers in-line — `_sync_statpal_schedules(sport_key)` and
+#: `_sync_statpal_livescores()`, the async implementations behind beats that
+#: already run for these sports. It dispatches no Celery task (an earlier cut
+#: did; CERT-2050 refused it) and it introduces no new path into the registry:
+#: those writers enter it through the door they always used.
 #:
 #: Kept as a declared set with an AST guard over `app/` rather than as prose,
 #: because prose about what reads a symbol is exactly the claim that rots the
@@ -135,7 +139,7 @@ SWITCH_CONSUMERS: frozenset[str] = frozenset(
         # went silent, and a sport already flipped here is served by StatPal
         # standing rather than by an outage override.
         #
-        # A decision module rather than the task that dispatches — and it counts
+        # A decision module rather than the task that serves — and it counts
         # as wiring, which is worth stating because the distinction
         # `SWITCH_REPORTERS` draws is "reports it" against "acts on it" and this
         # is neither. It DECIDES, and its decision is acted on: the switch is
