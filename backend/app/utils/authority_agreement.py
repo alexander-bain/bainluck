@@ -269,9 +269,16 @@ FLIP_BAR_PCT = 99.5
 #:         points below the bar, and #3093 (two of our rows for one game) is a
 #:         known contributor of unmeasured size to the 65-game complement.
 #:
+#:         That candidate is now PUBLISHED, as `identity.ours_covered_in_span_pct`
+#:         (#3519). It still governs nothing — this map is unchanged and naming it
+#:         stays a D63 amendment and Alex's — but it is no longer a figure a
+#:         reader has to reconstruct from `both` and a horizon bucket with a
+#:         calculator, which is what "re-measure once #3093 is fixed" used to
+#:         cost. Production 2026-09-06: **173 of 252, 68.65%**, against the 23.16
+#:         that `ours_covered_pct` reads over the honest 40-day denominator.
+#:
 #:     So MLB stays absent, and the blocker is now a number rather than a wait:
-#:     re-measure the inside-span figure once #3093 is fixed. Proposing it as a
-#:     governing number is a D63 amendment and Alex's, not this file's.
+#:     read the inside-span figure off the row once #3093 is fixed.
 #:   * ``tennis_singles`` / ``tennis_doubles`` — MEASURED from today, and absent
 #:     for a reason that no number can retire: **tennis has no D63 ruling at
 #:     all.** D63 answered the question for NBA, NHL and NFL and was not asked
@@ -377,6 +384,13 @@ IDENTITY_DENOMINATORS: dict[str, Callable[[dict[str, Any]], int]] = {
     "pct": lambda i: int(i["both"]) + int(i["statpal_only"]) + int(i["ours_only"]),
     # The games WE list.
     "ours_covered_pct": lambda i: int(i["both"]) + int(i["ours_only"]),
+    # The games we list ON THE DATES STATPAL PUBLISHES. Entered here though the
+    # number governs nothing today, because this map is what lets a number state
+    # the population it was scored on — so the D63 amendment that could name it
+    # is one line in `GOVERNING_IDENTITY_NUMBERS` and not two changes in two
+    # files, one of which is easy to forget and silently scores nothing.
+    "ours_covered_in_span_pct": lambda i: int(i["both"])
+    + int(i["ours_only_by_horizon"]["inside_statpal_span"]),
 }
 
 #: The one-paragraph summary the agreement endpoint prints above the sports, and
@@ -425,6 +439,7 @@ def _identity_block(
     denominator: int,
     horizon: dict[str, int],
     ours_horizon: dict[str, int],
+    statpal_has_span: bool,
 ) -> dict[str, Any]:
     """The identity bucket, with its two numbers and the ruling on which decides.
 
@@ -462,6 +477,36 @@ def _identity_block(
         # `ours_covered_pct`'s complement is a disagreement or their horizon.
         # Reported, never subtracted — see `_ours_only_by_horizon`.
         "ours_only_by_horizon": ours_horizon,
+        # `ours_covered_pct` asked again over ONLY the dates StatPal publishes.
+        #
+        # PUBLISHED, NOT GOVERNING. `GOVERNING_IDENTITY_NUMBERS` is untouched by
+        # this and no gate moves: naming a sport's governing number is a D63
+        # amendment and Alex's. What this removes is the arithmetic between the
+        # row and that decision — the number the block above calls "the only
+        # candidate that could govern MLB" had to be hand-computed from `both`
+        # and a horizon bucket, so nobody could read MLB's real agreement off
+        # the row, and a "re-measure once #3093 is fixed" meant a calculator.
+        #
+        # It is a DIFFERENT question from `ours_covered_pct`, not a correction
+        # of it, and both are published because the gap between them is the
+        # finding (spec rule 2). Where our inventory sits inside StatPal's span
+        # they are the same number: NFL, NBA and NHL read identically under both
+        # and their running clocks cannot be moved by this field existing.
+        # Where StatPal serves a rolling window and we hold months either side
+        # they diverge hard, and the divergence is horizon rather than
+        # disagreement — MLB, production 2026-09-06, reads 23.16 here and 68.65
+        # in span, and the 45-point gap is 495 rows dated before StatPal's first
+        # fixture, which no matching could ever have won.
+        #
+        # `None`, never a percentage, when StatPal published no timed fixture:
+        # with no span, every miss is `unplaceable`, the denominator collapses
+        # to `both`, and the ratio would read a triumphant 100% precisely when
+        # there was nothing to agree with (gotcha #53).
+        "ours_covered_in_span_pct": (
+            _pct(both, both + ours_horizon["inside_statpal_span"])
+            if statpal_has_span
+            else None
+        ),
     }
     identity["governing"] = governing_identity(sport_key, identity)
     return identity
@@ -985,6 +1030,23 @@ def measurement_bounds(
     return (min(start, now - horizon), max(end, now + horizon))
 
 
+def timed_span(side: Sequence[Side]) -> Optional[tuple[datetime, datetime]]:
+    """The first and last kickoff a side actually publishes, or `None`.
+
+    One definition, because two readers ask this question for opposite reasons
+    and a second copy is where they drift apart: `_split_against_span` places a
+    miss against it, and `_identity_block` needs to know whether the span exists
+    at all before it divides by a bucket derived from it. A side with no timed
+    fixture has no span — NOT an empty one — and the distinction is the whole
+    point: "nothing falls inside a window that does not exist" and "nothing
+    falls inside this window" are different facts (gotcha #53).
+    """
+    starts = [s.start for s in side if s.start is not None]
+    if not starts:
+        return None
+    return min(starts), max(starts)
+
+
 def _split_against_span(
     misses: Sequence[Side],
     span_source: Sequence[Side],
@@ -1005,13 +1067,13 @@ def _split_against_span(
     claim every miss falls within it. Those rows go to ``unplaceable``, as does
     any miss with no kickoff of its own.
     """
-    starts = [s.start for s in span_source if s.start is not None]
+    span = timed_span(span_source)
     split = {before: 0, inside: 0, beyond: 0, "unplaceable": 0}
-    if not starts:
+    if span is None:
         split["unplaceable"] = len(misses)
         return split
 
-    first, last = min(starts), max(starts)
+    first, last = span
     for m in misses:
         if m.start is None:
             split["unplaceable"] += 1
@@ -1210,6 +1272,10 @@ def build_agreement_row(
     denominator = both + len(statpal_only) + len(ours_only)
     horizon = _statpal_only_by_horizon(statpal_only, real_rows)
     ours_horizon = _ours_only_by_horizon(ours_only, real_fixtures)
+    #: The same span `ours_horizon` placed our misses against, read once here so
+    #: the in-span percentage and the bucket it divides by cannot come from two
+    #: different answers to "what dates does StatPal serve?".
+    statpal_span = timed_span(real_fixtures)
 
     schedule: dict[str, int] = {
         "within": 0,
@@ -1318,6 +1384,7 @@ def build_agreement_row(
                 denominator=denominator,
                 horizon=horizon,
                 ours_horizon=ours_horizon,
+                statpal_has_span=statpal_span is not None,
             ),
             "schedule": (
                 {
