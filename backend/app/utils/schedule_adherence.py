@@ -1413,3 +1413,139 @@ def residency_overlaps(beat_schedule, soft_limits, queues, *, start, days=7,
                 "overlap_s": (min(e_a, e_b) - s_b).total_seconds(),
             })
     return overlaps, unenumerable
+
+
+# =============================================================================
+# LAT-P243 REPAIR (#3480, answering CERT-2045's BLOCK)
+#
+# `residency_overlaps` asks "can two grinders hold both slots?". CERT-2045 found
+# the case it cannot see, and the finding is correct: the first staggered
+# schedule put `collapse-winprob-snapshots-daily` (declared 1700s) at 05:15Z
+# EXACTLY with `backfill-kalshi-trade-history` (600s) and `poll-polymarket-hourly`
+# (540s). Three arrivals, two slots. Two of them hold both slots for 9-10
+# minutes, `warm-typeahead`'s message expires at 120s behind them, and the search
+# box goes cold by the very mechanism the ship claimed to remove. The pair test
+# missed it because it required BOTH sides to exceed 1200s, and 600 and 540 do
+# not.
+#
+# So the invariant is re-derived from the quantity the user actually feels: the
+# warmer's own MESSAGE EXPIRY BUDGET. A fire that cannot reach a slot inside that
+# budget is not delayed, it is destroyed.
+#
+# 🔴 THE LITERAL INVARIANT IS NOT SCHEDULABLE, AND SAYING SO IS PART OF THE
+# ANSWER. "A slot opportunity within the budget throughout every compaction
+# window" cannot be met by moving beats. Measured on this schedule: **59
+# background beat entries declare a hold longer than the budget and fire 1,222
+# times a day**; by declared windows the median minute of the day has FIVE of
+# them resident on a two-slot pool, and only 7 minutes in 1,440 have none. No
+# 28-minute window exists anywhere on the clock that satisfies it. Only isolation
+# — a queue and a worker the warmer does not share — can, and that is a dyno
+# purchase and Alex's call.
+#
+# What IS schedulable, and what this therefore enforces, is the arrival pattern
+# that produced the reproduction: **SIMULTANEOUS arrival.** A compaction beat
+# that fires alongside other long-holding work hands both slots away at once and
+# puts the warmer behind them; a compaction beat that fires with the budget clear
+# on either side leaves the second slot turning over. 335 of 1,440 minutes are
+# clear on every day of the week, so this is satisfiable with room.
+#
+# The residual — a competitor arriving mid-window — is real, is NOT fixed here,
+# and is named in the ship's disclosure rather than left for the next grader.
+# =============================================================================
+
+
+def warmer_expiry_budget_s(beat_schedule, warmer_beat="warm-typeahead"):
+    """The warmer's own message-expiry bound, READ from the live schedule.
+
+    Never a typed constant. `_EXPIRING_WARMER_BEATS` derives this value (it is
+    `_LOCK_TTL_SECONDS`, deliberately a constant rather than a sampled wall) and
+    applies it to the beat's `options` at import time. Reading it back here means
+    the isolation rule and the expiry it protects can never disagree — change one
+    and the other follows.
+
+    Raises rather than defaulting: a missing bound would silently make the
+    isolation check vacuous, and a vacuous check on this property is exactly what
+    CERT-2045 caught.
+    """
+    entry = (beat_schedule or {}).get(warmer_beat)
+    if not entry:
+        raise KeyError(
+            f"{warmer_beat!r} is not in the beat schedule, so its expiry budget "
+            "cannot be read. If the warmer was renamed, this check must be "
+            "re-pointed, not skipped."
+        )
+    expires = (entry.get("options") or {}).get("expires")
+    if not expires or expires <= 0:
+        raise ValueError(
+            f"{warmer_beat!r} declares no positive `expires`, so there is no "
+            "budget to derive an isolation rule from."
+        )
+    return float(expires)
+
+
+def fire_isolation_violations(beat_schedule, soft_limits, queues, subjects, *,
+                              start, days=7, queue="background",
+                              warmer_beat="warm-typeahead"):
+    """Subject fires that share their arrival instant with other long-holding work.
+
+    ``subjects`` are the beat ENTRY names being placed (here, the compaction
+    beats). A violation is any OTHER beat on ``queue`` whose declared hold
+    exceeds the warmer's expiry budget and which fires within that same budget of
+    a subject fire — before or after, because either ordering can take the second
+    slot first.
+
+    The comparison population is "declared hold > budget", NOT "declared hold >
+    some round number". A 540s task and a 1700s task exhaust two slots exactly as
+    thoroughly as two 3600s tasks do; the only thing that matters is whether the
+    second slot comes back inside the budget, and neither of them does.
+
+    Returns ``(violations, unenumerable)`` with the same contract as
+    :func:`residency_overlaps`: a schedule shape that cannot be enumerated is
+    REPORTED, never silently treated as non-colliding.
+    """
+    from datetime import timedelta
+
+    budget = warmer_expiry_budget_s(beat_schedule, warmer_beat)
+    unenumerable, competitors = [], []
+    for name, entry in (beat_schedule or {}).items():
+        task = entry.get("task")
+        if not task or name in subjects or name == warmer_beat:
+            continue
+        if queue not in (queues.get(task) or []):
+            continue
+        if (soft_limits.get(task) or 0) <= budget:
+            continue
+        fires = crontab_fire_times(entry.get("schedule"), start, days)
+        if fires is None:
+            unenumerable.append(name)
+            continue
+        for f in fires:
+            competitors.append((f, name, soft_limits[task]))
+    competitors.sort()
+
+    violations = []
+    for name in sorted(subjects):
+        entry = (beat_schedule or {}).get(name)
+        if entry is None:
+            continue
+        fires = crontab_fire_times(entry.get("schedule"), start, days)
+        if fires is None:
+            unenumerable.append(name)
+            continue
+        for f in fires:
+            lo, hi = f - timedelta(seconds=budget), f + timedelta(seconds=budget)
+            for (cf, cname, chold) in competitors:
+                if cf <= lo:
+                    continue
+                if cf >= hi:
+                    break
+                violations.append({
+                    "subject": name,
+                    "subject_fire": f.isoformat(),
+                    "competitor": cname,
+                    "competitor_fire": cf.isoformat(),
+                    "competitor_declared_hold_s": chold,
+                    "separation_s": abs((cf - f).total_seconds()),
+                    "budget_s": budget,
+                })
+    return violations, unenumerable

@@ -5169,19 +5169,57 @@ celery_app.conf.beat_schedule = {
     # is a dyno purchase — `background`'s two slots are a MEMORY bound
     # (2 x 200MB + ~100MB ~= 512MB Standard-1X exactly) — and is Alex's call.
     #
+    # 🔴 REPAIR AFTER CERT-2045, AND THE FINDING WAS CORRECT. The first staggered
+    # schedule put `collapse-winprob-snapshots-daily` (declared 1700s) at 05:15Z
+    # EXACTLY alongside `backfill-kalshi-trade-history` (600s) and
+    # `poll-polymarket-hourly` (540s). Three arrivals, two slots: two of them hold
+    # both slots for 9-10 minutes, `warm-typeahead`'s message expires at 120s
+    # behind them, and the search box goes cold by the very mechanism this change
+    # claims to remove. The pairwise check could not see it because it required
+    # BOTH sides to exceed 1200s, and 600 and 540 do not.
+    #
+    # So there is now a SECOND invariant, derived from the quantity the user
+    # actually feels rather than from a round number: **no compaction beat may
+    # fire within `warm-typeahead`'s own message-expiry budget of any other
+    # `background` beat whose declared hold exceeds that budget.** The budget is
+    # READ from `_EXPIRING_WARMER_BEATS["warm-typeahead"]` at check time, never
+    # typed, so the rule and the expiry it protects cannot drift apart.
+    #
+    # ⚠️ WHAT THIS DOES **NOT** FIX, stated here so the next reader does not have
+    # to rediscover it. "A slot opportunity inside the budget THROUGHOUT every
+    # compaction window" is not schedulable at all: **59 background beat entries
+    # declare a hold longer than the budget and fire 1,222 times a day**, the
+    # median minute of the day has FIVE of them resident by declared window on a
+    # two-slot pool, and only 7 minutes in 1,440 have none. No 28-minute window
+    # exists anywhere on the clock that satisfies it. A competitor arriving
+    # mid-window can still pair with a compaction resident and hold both slots
+    # past the budget. Closing that needs ISOLATION — a queue and a worker the
+    # warmer does not share — which is a dyno purchase and Alex's call.
+    #
+    # What IS schedulable, and what these times therefore guarantee, is that the
+    # compaction beats never arrive SIMULTANEOUSLY with other long-holding work:
+    # 335 of 1,440 minutes are clear on every day of the week, so the constraint
+    # is satisfiable with room, and the arrival pattern CERT-2045 reproduced
+    # cannot recur.
+    #
     # HOW THE NEW TIMES WERE CHOSEN. `precompute-bookmaker-calibration` does
     # NOT move: its :55 slot is load-bearing for the hourly
     # `precompute-calibration-main` (:15) that consumes its key, and it is the
     # calibration lane's. Everything else is scheduled AROUND it, leaving each
-    # beat's own cadence untouched:
+    # beat's own cadence untouched, and solved for the LARGEST minimum gap
+    # between any two long-hold windows rather than the first assignment that
+    # fits — 43 minutes, against the 2 minutes the previous draft left:
     #
     #   00:55-01:25  precompute-bookmaker-calibration   (unchanged)
-    #   01:40-02:40  turbo-collapse-futures             (was :30 of 0,6,12,18)
-    #   03:30-04:30  turbo-collapse-odds                (was :45 of 0,6,12,18)
-    #   04:40-05:08  collapse-odds-snapshots-daily      (was 06:30)
-    #   05:15-05:43  collapse-winprob-snapshots-daily   (was 06:35)
-    #   05:50-06:18  collapse-futures-snapshots-daily   (was 06:40)
-    #   ...then the 6h cycle repeats at 06:55 / 07:40 / 09:30.
+    #   02:08-03:08  turbo-collapse-futures             (was :30 of 0,6,12,18)
+    #   03:57-04:57  turbo-collapse-odds                (was :45 of 0,6,12,18)
+    #   11:43-12:11  collapse-futures-snapshots-daily   (was 06:40)
+    #   17:43-18:11  collapse-winprob-snapshots-daily   (was 06:35)
+    #   23:43-00:11  collapse-odds-snapshots-daily      (was 06:30)
+    #   ...the 6h pair repeats at 08:08/09:57, 14:08/15:57, 20:08/21:57.
+    #
+    # The three dailies are spread across the day rather than clustered because
+    # the clustering bought nothing and the clear minutes are where they are.
     #
     # Windows are the DECLARED soft_time_limit, not a sampled duration: the
     # soft limit is the longest the system permits the task to hold the slot,
@@ -5189,41 +5227,41 @@ celery_app.conf.beat_schedule = {
     # this program. Nothing user-facing reads compaction output, so the cadence
     # has the slack the price refreshes did not.
     #
-    # THE GUARD: `tests/test_lat_p243_compaction_stagger_3480.py` re-derives
-    # this table from the LIVE beat schedule and each task's DECLARED
-    # soft_time_limit and asserts pairwise non-overlap over a 7-day
-    # enumeration. It transcribes no time, so editing a schedule here cannot
-    # rot it — and a NEW background beat that declares a long hold is covered
-    # the moment it is added. To satisfy it, a long-hold beat must either move
-    # clear of the others, route to `heavy`, or declare a shorter soft limit.
+    # THE GUARD: `tests/test_lat_p243_compaction_stagger_3480.py` re-derives BOTH
+    # invariants from the LIVE beat schedule, each task's DECLARED
+    # soft_time_limit, and the warmer's own declared expiry. It transcribes no
+    # time, so editing a schedule here cannot rot it — and a NEW background beat
+    # that declares a long hold is covered the moment it is added. To satisfy it,
+    # a long-hold beat must either move clear of the others, route to `heavy`, or
+    # declare a shorter soft limit.
     # =====================================================================
     "collapse-odds-snapshots-daily": {
         "task": "app.tasks.collapse_snapshots",
-        "schedule": crontab(minute=40, hour=4),  # Daily 04:40 UTC — see LAT-P243 above
+        "schedule": crontab(minute=43, hour=23),  # Daily 23:43 UTC — see LAT-P243 above
         "kwargs": {"table": "odds", "limit": 500},
     },
     "collapse-winprob-snapshots-daily": {
         "task": "app.tasks.collapse_snapshots",
-        "schedule": crontab(minute=15, hour=5),  # Daily 05:15 UTC — 35 min after its sibling
+        "schedule": crontab(minute=43, hour=17),  # Daily 17:43 UTC — see LAT-P243 above
         "kwargs": {"table": "winprob", "limit": 500},
     },
     "collapse-futures-snapshots-daily": {
         "task": "app.tasks.collapse_snapshots",
-        "schedule": crontab(minute=50, hour=5),  # Daily 05:50 UTC — 35 min after its sibling
+        "schedule": crontab(minute=43, hour=11),  # Daily 11:43 UTC — see LAT-P243 above
         "kwargs": {"table": "futures", "limit": 500},
     },
     "turbo-collapse-futures": {
         "task": "app.tasks.turbo_collapse_futures",
         # Every 6 hours — catch up on backlog. :40 of 1,7,13,19 clears
         # `precompute-bookmaker-calibration`'s [x:55, x+1:25] hold by 15 min.
-        "schedule": crontab(minute=40, hour="1,7,13,19"),
+        "schedule": crontab(minute=8, hour="2,8,14,20"),
         "kwargs": {"limit": 5000},
     },
     "turbo-collapse-odds": {
         "task": "app.tasks.turbo_collapse_odds",
         # Every 6 hours, two hours behind its futures sibling so the two 3600s
         # grinders can never hold both background slots at once.
-        "schedule": crontab(minute=30, hour="3,9,15,21"),
+        "schedule": crontab(minute=57, hour="3,9,15,21"),
         "kwargs": {"limit": 5000},
     },
     "matching-metrics-daily": {

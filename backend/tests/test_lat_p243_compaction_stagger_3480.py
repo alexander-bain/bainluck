@@ -44,9 +44,20 @@ from app.utils.schedule_adherence import (
     LONG_HOLD_SOFT_LIMIT_S,
     beat_queues,
     crontab_fire_times,
+    fire_isolation_violations,
     long_hold_beats,
     residency_overlaps,
+    warmer_expiry_budget_s,
 )
+
+#: The beats this ship placed. The isolation rule is about where THESE arrive.
+COMPACTION_SUBJECTS = frozenset({
+    "turbo-collapse-futures",
+    "turbo-collapse-odds",
+    "collapse-odds-snapshots-daily",
+    "collapse-winprob-snapshots-daily",
+    "collapse-futures-snapshots-daily",
+})
 
 # Fixed anchors. Gotcha #44: the anchor is offset from a literal, never from the
 # clock, and several are swept so a schedule restricted by day-of-week or
@@ -62,6 +73,18 @@ ANCHORS = [
 # The parent schedule, copied verbatim from `app/tasks/__init__.py` at e34a6ce8.
 # This is the ONLY place a literal time appears in this file, and it is here to
 # be REFUTED rather than relied on.
+# The schedule CERT-2045 BLOCKED, copied verbatim from `22bed49c`. Like the
+# parent above, it is here to be REFUTED. Its defect is NOT a pairwise long-hold
+# overlap — it has none — so `residency_overlaps` passes it and only the
+# budget-derived isolation rule can see it. That is the whole point of the repair.
+BLOCKED_SCHEDULE_AT_22bed49c = {
+    "collapse-odds-snapshots-daily": crontab(minute=40, hour=4),
+    "collapse-winprob-snapshots-daily": crontab(minute=15, hour=5),
+    "collapse-futures-snapshots-daily": crontab(minute=50, hour=5),
+    "turbo-collapse-futures": crontab(minute=40, hour="1,7,13,19"),
+    "turbo-collapse-odds": crontab(minute=30, hour="3,9,15,21"),
+}
+
 PARENT_SCHEDULE_AT_e34a6ce8 = {
     "collapse-odds-snapshots-daily": crontab(minute=30, hour=6),
     "collapse-winprob-snapshots-daily": crontab(minute=35, hour=6),
@@ -328,3 +351,175 @@ class TestTheStaggerKeepsWhatItWasNotAskedToChange:
         assert bs["collapse-futures-snapshots-daily"]["kwargs"] == {"table": "futures", "limit": 500}
         assert bs["turbo-collapse-futures"]["kwargs"] == {"limit": 5000}
         assert bs["turbo-collapse-odds"]["kwargs"] == {"limit": 5000}
+
+
+class TestNoCompactionBeatArrivesBesideOtherLongWork:
+    """CERT-2045's repair. The invariant is derived from the warmer's own expiry
+    budget, not from a round number, and it does not require both sides to be
+    long — a 540s task exhausts a slot exactly as thoroughly as a 3600s one."""
+
+    @pytest.mark.parametrize("anchor", ANCHORS, ids=lambda a: a.strftime("%Y-%m-%d"))
+    def test_the_live_schedule_has_no_simultaneous_arrivals(self, anchor):
+        bs, softs, queues = _live()
+        violations, unenumerable = fire_isolation_violations(
+            bs, softs, queues, COMPACTION_SUBJECTS, start=anchor, days=7
+        )
+        assert unenumerable == [], unenumerable
+        assert violations == [], (
+            "a compaction beat fires within `warm-typeahead`'s expiry budget of "
+            "other long-holding background work. Three arrivals on a two-slot pool "
+            "means two of them take both slots and the warmer's message dies behind "
+            "them.\nFirst 5 of "
+            f"{len(violations)}:\n" + "\n".join(str(v) for v in violations[:5])
+        )
+
+    def test_the_budget_is_read_from_the_warmer_not_typed(self):
+        """If this ever returns a default, the isolation check goes vacuous — and
+        a vacuous check on this exact property is what CERT-2045 caught."""
+        bs, _softs, _queues = _live()
+        assert warmer_expiry_budget_s(bs) == 120.0
+        assert bs["warm-typeahead"]["options"]["expires"] == 120
+
+    def test_a_missing_or_zero_budget_raises_rather_than_defaulting(self):
+        with pytest.raises(KeyError):
+            warmer_expiry_budget_s({})
+        with pytest.raises(ValueError):
+            warmer_expiry_budget_s({"warm-typeahead": {"options": {}}})
+        with pytest.raises(ValueError):
+            warmer_expiry_budget_s({"warm-typeahead": {"options": {"expires": 0}}})
+
+
+class TestTheRepairIsNotVacuous:
+    """CERT-2045's required regression, in its own words: the real 05:15 triple
+    must FAIL on the blocked sha and PASS after repair."""
+
+    def _blocked(self):
+        bs, softs, queues = _live()
+        blocked = dict(bs)
+        for name, sched in BLOCKED_SCHEDULE_AT_22bed49c.items():
+            blocked[name] = {**bs[name], "schedule": sched}
+        return blocked, softs, queues
+
+    @pytest.mark.parametrize("anchor", ANCHORS, ids=lambda a: a.strftime("%Y-%m-%d"))
+    def test_the_blocked_schedule_is_caught(self, anchor):
+        blocked, softs, queues = self._blocked()
+        violations, unenumerable = fire_isolation_violations(
+            blocked, softs, queues, COMPACTION_SUBJECTS, start=anchor, days=7
+        )
+        assert unenumerable == []
+        assert len(violations) >= 300, (
+            f"the blocked schedule collided 364 arrival-pairs per week; {len(violations)} "
+            "means the detector is not reading it"
+        )
+
+    def test_the_exact_triple_cert_2045_named_is_caught(self):
+        """Not "some violation" — the named one. `collapse-winprob-snapshots-daily`
+        at 05:15Z against `backfill-kalshi-trade-history` (600s) and
+        `poll-polymarket-hourly` (540s), both at zero separation."""
+        blocked, softs, queues = self._blocked()
+        violations, _ = fire_isolation_violations(
+            blocked, softs, queues, COMPACTION_SUBJECTS, start=ANCHORS[3], days=1
+        )
+        triple = {
+            (v["competitor"], v["competitor_declared_hold_s"], v["separation_s"])
+            for v in violations
+            if v["subject"] == "collapse-winprob-snapshots-daily"
+            and v["subject_fire"][11:16] == "05:15"
+        }
+        assert ("backfill-kalshi-trade-history", 600, 0.0) in triple, triple
+        assert ("poll-polymarket-hourly", 540, 0.0) in triple, triple
+
+    def test_the_pairwise_check_alone_would_have_passed_the_blocked_schedule(self):
+        """The reason the repair needed a SECOND invariant rather than a tweak to
+        the first. If this ever fails, the two rules have collapsed into one and
+        the isolation rule is no longer earning its place."""
+        blocked, softs, queues = self._blocked()
+        overlaps, unenumerable = residency_overlaps(
+            blocked, softs, queues, start=ANCHORS[3], days=7
+        )
+        assert unenumerable == []
+        assert overlaps == [], (
+            "the blocked schedule was pairwise-clean — that is why CERT-2045's "
+            "case slipped through it"
+        )
+
+    @pytest.mark.parametrize(
+        "competitor_minute,expected",
+        [(0, 1), (1, 1), (2, 0), (5, 0)],
+        ids=["same-instant", "60s-apart", "120s-apart-exactly", "300s-apart"],
+    )
+    def test_the_budget_boundary_is_a_bound_and_not_a_vibe(self, competitor_minute, expected):
+        """Inside the budget violates; exactly at it does not. Crontab
+        granularity is one minute, which is also the real domain — the schedule
+        cannot express a 119-second offset, so pinning one would be pinning
+        arithmetic the system can never produce. 120s is the budget, so two
+        minutes clear is the tightest legal placement, and a rule that rejected
+        it would be unsatisfiable rather than strict."""
+        bs = {
+            "warm-typeahead": {"task": "t.warm", "schedule": 10.0,
+                               "options": {"queue": "background", "expires": 120}},
+            "subject": {"task": "t.sub", "schedule": crontab(minute=0, hour=3),
+                        "options": {"queue": "background"}},
+            "comp": {"task": "t.comp",
+                     "schedule": crontab(minute=competitor_minute, hour=3),
+                     "options": {"queue": "background"}},
+        }
+        softs = {"t.warm": 100, "t.sub": 1700, "t.comp": 600}
+        queues = {k: ["background"] for k in ("t.warm", "t.sub", "t.comp")}
+        violations, unenumerable = fire_isolation_violations(
+            bs, softs, queues, {"subject"}, start=ANCHORS[3], days=1
+        )
+        assert unenumerable == [], unenumerable
+        assert len(violations) == expected, (competitor_minute, violations)
+
+    def test_a_short_competitor_is_not_a_violation_however_close(self):
+        """A beat that gives its slot back inside the budget is not the problem —
+        including one that fires at the same instant. Without this the rule would
+        forbid every arrival and be unsatisfiable."""
+        bs = {
+            "warm-typeahead": {"task": "t.warm", "schedule": 10.0,
+                               "options": {"queue": "background", "expires": 120}},
+            "subject": {"task": "t.sub", "schedule": crontab(minute=0, hour=3),
+                        "options": {"queue": "background"}},
+            "quick": {"task": "t.quick", "schedule": crontab(minute=0, hour=3),
+                      "options": {"queue": "background"}},
+        }
+        softs = {"t.warm": 100, "t.sub": 1700, "t.quick": 120}
+        queues = {k: ["background"] for k in ("t.warm", "t.sub", "t.quick")}
+        violations, _ = fire_isolation_violations(
+            bs, softs, queues, {"subject"}, start=ANCHORS[3], days=1
+        )
+        assert violations == []
+
+    def test_a_long_competitor_on_another_queue_is_not_a_violation(self):
+        bs = {
+            "warm-typeahead": {"task": "t.warm", "schedule": 10.0,
+                               "options": {"queue": "background", "expires": 120}},
+            "subject": {"task": "t.sub", "schedule": crontab(minute=0, hour=3),
+                        "options": {"queue": "background"}},
+            "heavyguy": {"task": "t.h", "schedule": crontab(minute=0, hour=3),
+                         "options": {"queue": "heavy"}},
+        }
+        softs = {"t.warm": 100, "t.sub": 1700, "t.h": 3600}
+        queues = {"t.warm": ["background"], "t.sub": ["background"], "t.h": ["heavy"]}
+        violations, _ = fire_isolation_violations(
+            bs, softs, queues, {"subject"}, start=ANCHORS[3], days=1
+        )
+        assert violations == []
+
+    def test_an_unenumerable_competitor_is_reported_not_swallowed(self):
+        bs = {
+            "warm-typeahead": {"task": "t.warm", "schedule": 10.0,
+                               "options": {"queue": "background", "expires": 120}},
+            "subject": {"task": "t.sub", "schedule": crontab(minute=0, hour=3),
+                        "options": {"queue": "background"}},
+            "weird": {"task": "t.w", "schedule": object(),
+                      "options": {"queue": "background"}},
+        }
+        softs = {"t.warm": 100, "t.sub": 1700, "t.w": 3600}
+        queues = {k: ["background"] for k in ("t.warm", "t.sub", "t.w")}
+        violations, unenumerable = fire_isolation_violations(
+            bs, softs, queues, {"subject"}, start=ANCHORS[3], days=1
+        )
+        assert violations == []
+        assert unenumerable == ["weird"]
