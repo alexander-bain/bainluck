@@ -14,6 +14,7 @@ import {
   sportVocab,
   withUnit,
   unitPhrase,
+  distributionTense,
   playedCountAbsence,
   playedUnits,
   mapColumnHeading,
@@ -460,7 +461,10 @@ export default function MarketMapSection({
         // MARKERS, which are drawn either way — only this one is a claim about
         // the band, so only this one is answerable by the band.
         : bandDrawsShape
-        ? `Final ${vocab.unit === "runs" ? "run-" : vocab.unit === "goals" ? "goal-" : ""}margin distribution`
+        // #3593: `distributionTense`, not the literal "Final". This arm is the
+        // fall-through, so it is what a PRE-GAME card gets — and it was telling
+        // the reader of an unplayed game where its margin finally landed.
+        ? `${distributionTense(status)} ${vocab.unit === "runs" ? "run-" : vocab.unit === "goals" ? "goal-" : ""}margin distribution`
         : quotedLinesPhrase(ladder.length),
       headline,
       rangeMin,
@@ -636,7 +640,10 @@ export default function MarketMapSection({
         // cards a reader sees as flat — including `/events/15304420`, whose
         // THREE rungs were all quoted at 0.20 and are just as shapeless as two.
         : bandDrawsShape
-        ? unitPhrase("Final", vocab, "distribution")
+        // #3593: same fall-through, same fix, same card. "Projected 8" over
+        // "Final runs distribution" was one card in two tenses about one
+        // unplayed game (`/events/15305464`, 2026-09-06).
+        ? unitPhrase(distributionTense(status), vocab, "distribution")
         : quotedLinesPhrase(ladder.length),
       headline: headlineValue,
       rangeMin,
