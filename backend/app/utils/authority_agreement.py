@@ -743,9 +743,9 @@ class Join:
     #: declared would publish under its own key while the declared one sat at a
     #: permanent, lying `0`.
     refusal_names: tuple[str, ...] = ()
-    #: Tolerances this strategy applied that rest on JUDGEMENT rather than on
-    #: measurement, each as a self-describing record. Published on the row under
-    #: its own `allowances` key.
+    #: Tolerances this strategy APPLIED — every rule that let two sides meet
+    #: which a stricter reading would have kept apart — each as a self-describing
+    #: record. Published on the row under its own `allowances` key.
     #:
     #: **An allowance is the inverse of a refusal and must never be folded into
     #: `excluded`.** A refusal takes rows OUT of the denominator and is counted
@@ -757,9 +757,33 @@ class Join:
     #:
     #: Keyed by allowance name (`order_aliases_reviewed` is the first), each
     #: value a list of receipts stating what was allowed and on whose authority
-    #: (#3287). Empty for every strategy that tolerates nothing it cannot
-    #: measure — which is the expected reading, as with the refusals above.
+    #: (#3287). Empty for every strategy that tolerates nothing beyond an exact
+    #: match — which is the expected reading, as with the refusals above.
+    #:
+    #: **What belongs here is the tolerance, not its provenance** (#3432). The
+    #: first cut of this field said "tolerances that rest on JUDGEMENT rather
+    #: than on measurement", and the tennis strategy read that literally: when
+    #: its order-alias set grew from 9 classes to 164, it went on publishing the
+    #: 2 that rest on judgement and disclosed none of the 162 that rest on a
+    #: measurement. Both kinds move the governing number upward and leave no
+    #: count behind, so the argument above applies to both identically; what
+    #: provenance changes is only how much of the receipt has to be READ, which
+    #: is `uncapped_allowances` below.
     allowances: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    #: Which `allowances` keys publish their receipts IN FULL, uncapped.
+    #:
+    #: The default is `RECEIPT_CAP`, like every other receipt list on the row,
+    #: and for the same reason: a 156-entry list is read by neither the bus
+    #: window nor a human, and the count beside it is never capped, so truncating
+    #: the examples can never change a number.
+    #:
+    #: An allowance that no re-runnable measurement backs is the exception, and
+    #: #3287 is why: such a receipt is the ONLY thing standing behind the
+    #: tolerance, so an operator who cannot read all of them cannot audit it at
+    #: all. A strategy names those keys here. One backed by a measurement anyone
+    #: can re-run does not need the full list — it needs its count, its basis,
+    #: and enough examples to recognise the kind.
+    uncapped_allowances: frozenset[str] = frozenset()
     #: What this strategy's denominator IS, in one sentence, published on the row
     #: as `denominator_is`.
     #:
@@ -1246,14 +1270,44 @@ def build_agreement_row(
                 **{name: len(items) for name, items in join.refusals.items()},
             },
             # Beside `excluded`, never inside it. These are the tolerances this
-            # join applied that no measurement backs — they let rows JOIN, so
-            # unlike a refusal they move the governing number upward and leave
-            # no count behind to notice them by. Published in full, receipts and
-            # all, because the whole finding of #3287 is that an unmeasurable
-            # allowance can only be made safe by being read (an empty dict for
-            # every strategy that has none).
+            # join applied — every rule that let two sides meet which a stricter
+            # reading would have kept apart. Unlike a refusal they move the
+            # governing number upward and leave no count behind to notice them
+            # by (an empty dict for every strategy that has none).
+            #
+            # The COUNT is the whole set, always, and is never capped: it is the
+            # number an operator compares against the tolerance he thinks is in
+            # force, and #3432 is what happens when it is a different set's
+            # count. The RECEIPTS are capped like every other receipt list
+            # unless the strategy names the key in `uncapped_allowances`, which
+            # it does for an allowance no re-runnable measurement backs —
+            # #3287's finding that such a tolerance can only be made safe by
+            # being read in full.
             "allowances": {
-                name: {"count": len(items), "receipts": items}
+                name: {
+                    "count": len(items),
+                    "receipts": (
+                        list(items)
+                        if name in join.uncapped_allowances
+                        else items[:RECEIPT_CAP]
+                    ),
+                    **(
+                        {}
+                        if name in join.uncapped_allowances
+                        or len(items) <= RECEIPT_CAP
+                        else {
+                            "receipts_truncated": True,
+                            "receipts_shown": RECEIPT_CAP,
+                            "receipts_note": (
+                                f"{len(items)} allowed, {RECEIPT_CAP} shown. The "
+                                "count is the whole set; the examples are a "
+                                "sample. A re-runnable measurement backs this "
+                                "allowance, so the full list is derivable "
+                                "rather than disclosed."
+                            ),
+                        }
+                    ),
+                }
                 for name, items in join.allowances.items()
             },
             "identity": _identity_block(
