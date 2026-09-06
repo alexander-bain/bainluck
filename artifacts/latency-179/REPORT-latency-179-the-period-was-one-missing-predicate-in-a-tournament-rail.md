@@ -18,8 +18,12 @@ with `TZ=America/Los_Angeles date`).
    behind lower-value jobs. **One task, `tournament_price_refresh`, holds a background slot through
    50.7% of the warmer's dead time**, and it does so because two per-market statements omit the
    leading column of the only index that covers what they probe. **5,458 ms → 0.059 ms.**
-3. **Shipped as #3402 / PR #3406 / CERT-2012 staged.** Two predicates, a corrected docstring, and a
-   class guard proved RED-first by mutation in both directions.
+3. **Shipped as #3402, CERT-2012 GREEN, merged `4a098fe3`, live and re-measured.** Two predicates, a
+   corrected docstring, and a class guard proved RED-first by mutation in both directions.
+4. **The ship itself is NOT delivered, and that is measured too.** The task is 31.8x faster and its
+   share of the dead time fell 50.7% -> 6.4%, but the warmer's dead-second share did not move:
+   `warm_event_concepts` took the freed slot (25.6% -> 47.9%). Relieving one contributor in an
+   oversubscribed queue reallocates the wait. See POST-DEPLOY below.
 
 ---
 
@@ -222,6 +226,47 @@ happened in (d) above, nobody should size a fix off them without re-pricing on m
 ITEM 4 (serving `red sox` its headline market) is recall, not latency, and is noted on #3394 with
 the measured 5s that motivates it. ITEM 5: CERT-1988 remains BLOCKED and PARKED; PR #3377 untouched;
 `program/latency-242-…` not built on. This queue's branch is fresh off master, as 178's was.
+
+---
+
+## POST-DEPLOY — the fix is confirmed, the ship is not, and both are reported
+
+Merged `4a098fe3`, live, re-measured the same night.
+
+**Confirmed, directly:**
+
+| | before | after |
+|---|---|---|
+| `tournament_price_refresh` `last_duration_ms` | 188,869 ms | **5,935 ms** (31.8x) |
+| its share of the warmer's dead time | 50.7% | **6.4%** |
+| outcomes per market (the no-narrowing control) | 1.642 | 1.647 |
+| terminal / errors | complete / `[]` | complete / `[]` |
+
+The 5,935 ms sample is the minimum of a 50-run ring in which every other entry predates the merge.
+The outcomes-per-market ratio answers the graded follow-up `LAT-P240-PREDICATE-SEMANTICS-GUARD`
+empirically — a narrowing predicate would have moved it — though as evidence, not as a guard, so
+the follow-up still stands.
+
+**Not confirmed — the dead-second share did not fall:**
+
+| window | passes | period p50 | period p95 | dead share |
+|---|---|---|---|---|
+| before | 45 / 4,284s | 42.8s | 268.5s | **37.3%** |
+| after (unioned, 49.7 min) | 46 / 2,983s | 40.2s | 231.1s | **43.7%** |
+| after (single ring read, 36.5 min) | 32 / 2,192s | — | — | **31.0%** |
+
+**`warm_event_concepts` walked into the vacated slot: 25.6% -> 47.9% of dead time, without getting
+one second slower.** The holes did not close; they changed owner.
+
+That is the honest verdict on this queue's ship. #3402 was right and is closed on its own terms — a
+31.8x regression, a real plan defect, and a comment that lied for weeks, all fixed. It is a
+necessary part of the ship and it is not sufficient, and I should not have implied a single-task fix
+would deliver a queue-level outcome. The remaining work is a total, not a ranking: bring `background`
+under 7,200 worker-seconds/hour. Directive 180 is rewritten around that.
+
+Two confounds, stated: at least two master merges deployed inside the after-window (each cycles the
+background worker), and `red sox` timeouts went to **0 of 46 passes** in the same window, so the
+warmer's own budget changed too.
 
 ---
 
