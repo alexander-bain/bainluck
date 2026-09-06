@@ -530,13 +530,67 @@ async def test_a_rerun_after_the_failure_clears_finishes_the_job():
     assert set(_statuses(conn).values()) == {repair.VOID_STATUS}
 
 
-def _drive_run(monkeypatch, conn, *, session, population_after, sport_key=None):
-    """Run the real `run()` against sqlite.
 
-    `measure` and `ensure_backup` are stubbed because they are Postgres-shaped
-    (`FILTER`, `now() - interval`, `timestamptz`, `ON CONFLICT`) and are covered
-    by their own guards. Everything CERT-1982 blocked on — the write loop, the
-    failure accounting and the terminal decision — is the real code.
+
+# ---------------------------------------------------------------------------
+# CERT-1986's BLOCK: the promised resume must actually be possible
+# ---------------------------------------------------------------------------
+#
+# The defect: the failure message told the operator to re-run, and the re-run
+# then hit `population 1 is below the floor 3000` and refused. The floor exists
+# so an empty or drifted run cannot report success, but it also made the repair's
+# own instruction false.
+#
+# CERT-1986 also caught the reason the previous guards missed it: the harness
+# monkeypatched `population_refusal_reason` away, and the "rerun" test called
+# `void_rows()` rather than the command. So the harness below stubs ONLY the two
+# Postgres-shaped readers, computes the population from the real sqlite state,
+# and lets the real gate decide. `population_refusal_reason`, `is_resumption`
+# and `measure_resume_evidence` all run for real.
+
+
+def _seeded_league(rows, sport_key=None):
+    """A sqlite store with the joins the real statements need.
+
+    `_IDS_SQL` and `_RESUME_SQL` both join `sports` and read the backup table, so
+    the guards give them a real one and run the production strings verbatim.
+    """
+    sport_key = sport_key or repair.TARGET_SPORT_KEY
+    conn = sqlite3.connect(":memory:")
+    conn.execute("CREATE TABLE sports (id INTEGER PRIMARY KEY, key TEXT)")
+    conn.execute("INSERT INTO sports (id, key) VALUES (1, ?)", (sport_key,))
+    conn.execute(
+        "CREATE TABLE events (id INTEGER PRIMARY KEY, status TEXT, sport_id INTEGER)"
+    )
+    conn.executemany(
+        "INSERT INTO events (id, status, sport_id) VALUES (?, ?, 1)", rows
+    )
+    conn.execute(
+        f"CREATE TABLE {repair.BAK_TABLE} "
+        "(event_id INTEGER PRIMARY KEY, old_status TEXT, sport_key TEXT)"
+    )
+    conn.commit()
+    return conn
+
+
+def _remaining(conn):
+    retired = ", ".join(f"'{s}'" for s in sorted(RETIRED_STATUSES))
+    return conn.execute(
+        f"SELECT count(*) FROM events WHERE status NOT IN ({retired})"
+    ).fetchone()[0]
+
+
+def _install(monkeypatch, conn, session):
+    """Wire the real `run()` to sqlite, stubbing only what is Postgres-shaped.
+
+    Stubbed: `measure` (`FILTER`, `now() - interval`) — but its population is READ
+    FROM sqlite, so "population zero" is a real observation; and `ensure_backup`
+    (`timestamptz`, `DEFAULT now()`, `ON CONFLICT`) — but it banks real rows, so
+    the resume evidence it produces is real.
+
+    NOT stubbed, deliberately: `population_refusal_reason`, `is_resumption`,
+    `measure_resume_evidence`, `_IDS_SQL`, `_RESUME_SQL`, `void_rows`, and every
+    terminal check. Those are what CERT-1986 blocked on.
     """
     import app.tasks.base as task_base
 
@@ -548,18 +602,9 @@ def _drive_run(monkeypatch, conn, *, session, population_after, sport_key=None):
             return False
 
     monkeypatch.setattr(task_base, "get_task_session", lambda: _Ctx())
-    monkeypatch.setattr(repair, "ensure_backup", _async_return(3))
-    # `run()` reads a total back out of the backup table after banking; the
-    # banking itself is stubbed, so give the count something real to read.
-    conn.execute(f"CREATE TABLE IF NOT EXISTS {repair.BAK_TABLE} (event_id INTEGER)")
-    conn.commit()
 
-    calls = {"n": 0}
-
-    async def fake_measure(_session, _sport_key=None):
-        calls["n"] += 1
-        first = calls["n"] == 1
-        population = 3 if first else population_after
+    async def fake_measure(_session, sport_key=repair.TARGET_SPORT_KEY):
+        population = _remaining(conn)
         return {
             "population": population,
             "with_score": 0,
@@ -567,18 +612,158 @@ def _drive_run(monkeypatch, conn, *, session, population_after, sport_key=None):
             "with_real_external_id": 0,
             "visible_upcoming": 0,
             "visible_unreported": 0,
-            "visible_recent": 0,
-            "visible_total": 0,
+            "visible_recent": population,
+            "visible_total": population,
         }
 
-    monkeypatch.setattr(repair, "measure", fake_measure)
-    monkeypatch.setattr(repair, "population_refusal_reason", lambda _m: None)
-    monkeypatch.setattr(
-        repair, "_IDS_SQL", "SELECT id, status FROM events ORDER BY id"
-    )
-    import asyncio as _asyncio
+    async def fake_ensure_backup(_session, sport_key=repair.TARGET_SPORT_KEY):
+        retired = ", ".join(f"'{s}'" for s in sorted(RETIRED_STATUSES))
+        cursor = conn.execute(
+            f"INSERT OR IGNORE INTO {repair.BAK_TABLE} "
+            "(event_id, old_status, sport_key) "
+            f"SELECT id, status, ? FROM events WHERE status NOT IN ({retired})",
+            (sport_key,),
+        )
+        conn.commit()
+        return cursor.rowcount
 
-    return _asyncio.get_event_loop()
+    monkeypatch.setattr(repair, "measure", fake_measure)
+    monkeypatch.setattr(repair, "ensure_backup", fake_ensure_backup)
+
+
+#: Comfortably over MIN_EXPECTED_POPULATION so the FIRST run clears the real
+#: floor without the floor being touched. Derived, so raising the constant cannot
+#: leave this test quietly passing a floor it no longer exceeds.
+_ABOVE_FLOOR = repair.MIN_EXPECTED_POPULATION + 2
+
+
+@pytest.mark.asyncio
+async def test_the_real_command_fails_short_then_resumes_to_zero_on_rerun(
+    monkeypatch, capsys
+):
+    """CERT-1986's required regression: the SAME command, twice, real gate.
+
+    Run 1 has durable progress plus one persistently failing row and must exit
+    nonzero. Run 2, with the failure removed, must be ALLOWED past the population
+    floor on the strength of the backup, and must finish to population zero.
+    """
+    ids = list(range(1, _ABOVE_FLOOR + 1))
+    conn = _seeded_league([(i, "scheduled") for i in ids])
+    fail_id = ids[-1]
+
+    failing = _FailingSqliteSession(conn, fail_id=fail_id)
+    _install(monkeypatch, conn, failing)
+    with pytest.raises(SystemExit) as exit_info:
+        await repair.run(backup=True, apply=True)
+
+    assert exit_info.value.code == 1, "a partial repair exited 0"
+    first_out = capsys.readouterr().out
+    assert "INCOMPLETE" in first_out
+    assert "✅" not in first_out
+    assert _remaining(conn) == 1, "expected exactly the failing row to survive"
+
+    # Run 2 — the failure is gone. This is the run the old build refused.
+    healthy = _SqliteSession(conn)
+    _install(monkeypatch, conn, healthy)
+    await repair.run(backup=True, apply=True)
+
+    second_out = capsys.readouterr().out
+    assert "RESUMING" in second_out, "the resume evidence was not recognised"
+    assert "below the floor" not in second_out, (
+        "the floor refused the rerun its own failure message promised"
+    )
+    assert "✅" in second_out
+    assert _remaining(conn) == 0
+    assert set(_statuses(conn).values()) == {repair.VOID_STATUS}
+
+
+@pytest.mark.asyncio
+async def test_a_small_population_this_repair_did_not_leave_is_still_refused(
+    monkeypatch, capsys
+):
+    """The control that keeps the waiver honest.
+
+    Same tiny population, but nothing is banked — so this is drift, not a resume,
+    and the floor must still refuse it. Without this, the fix for CERT-1986 would
+    simply be "delete the floor".
+    """
+    conn = _seeded_league([(1, "scheduled"), (2, "scheduled")])
+    session = _SqliteSession(conn)
+    _install(monkeypatch, conn, session)
+    monkeypatch.setattr(repair, "ensure_backup", _async_return(0))
+
+    with pytest.raises(SystemExit) as exit_info:
+        await repair.run(backup=True, apply=True)
+
+    assert exit_info.value.code == 1
+    out = capsys.readouterr().out
+    assert "below the floor" in out
+    assert _statuses(conn) == {1: "scheduled", 2: "scheduled"}, "rows were voided"
+
+
+@pytest.mark.asyncio
+async def test_a_partly_banked_remainder_is_drift_not_a_resume(monkeypatch, capsys):
+    """A row we never banked is a row this repair did not leave behind.
+
+    Evidence must cover the WHOLE remainder, or "resume" becomes a way to sweep
+    rows that arrived after the repair started.
+    """
+    conn = _seeded_league([(1, "scheduled"), (2, "scheduled")])
+    conn.execute(
+        f"INSERT INTO {repair.BAK_TABLE} (event_id, old_status, sport_key) "
+        "VALUES (1, 'scheduled', ?)",
+        (repair.TARGET_SPORT_KEY,),
+    )
+    conn.commit()
+
+    session = _SqliteSession(conn)
+    evidence = await repair.measure_resume_evidence(session)
+    assert evidence == {
+        "banked_for_key": 1,
+        "remaining_total": 2,
+        "remaining_banked": 1,
+    }
+    assert repair.is_resumption(evidence) is False
+
+    _install(monkeypatch, conn, session)
+    monkeypatch.setattr(repair, "ensure_backup", _async_return(0))
+    with pytest.raises(SystemExit):
+        await repair.run(backup=True, apply=True)
+    assert "below the floor" in capsys.readouterr().out
+
+
+def test_the_resume_waiver_needs_evidence_that_covers_every_remaining_row():
+    """The pure gate, at its edges."""
+    small = {
+        "population": 1,
+        "with_score": 0,
+        "with_team_id": 0,
+        "with_real_external_id": 0,
+    }
+    covered = {"banked_for_key": 4656, "remaining_total": 1, "remaining_banked": 1}
+    assert repair.population_refusal_reason(small, resume=covered) is None
+
+    for bad in (
+        None,
+        {"banked_for_key": 0, "remaining_total": 1, "remaining_banked": 1},
+        {"banked_for_key": 4656, "remaining_total": 2, "remaining_banked": 1},
+        {"banked_for_key": 4656, "remaining_total": 0, "remaining_banked": 0},
+    ):
+        assert repair.population_refusal_reason(small, resume=bad) is not None, bad
+
+
+def test_a_resume_does_not_waive_the_schedule_source_hazards():
+    """The floor is the ONLY thing a resume waives. A row that grew a score since
+    the first pass is still a reason to stop."""
+    resume = {"banked_for_key": 4656, "remaining_total": 1, "remaining_banked": 1}
+    for field in ("with_score", "with_team_id", "with_real_external_id"):
+        census = dict(
+            population=1, with_score=0, with_team_id=0, with_real_external_id=0
+        )
+        census[field] = 1
+        reason = repair.population_refusal_reason(census, resume=resume)
+        assert reason is not None, f"{field} was waived by the resume"
+        assert "2871" in reason
 
 
 def _async_return(value):
@@ -589,62 +774,44 @@ def _async_return(value):
 
 
 @pytest.mark.asyncio
-async def test_the_command_exits_nonzero_and_prints_no_success_on_a_short_repair(
+async def test_the_restore_command_fails_short_then_completes_on_rerun(
     monkeypatch, capsys
 ):
-    """CERT-1982's required regression, at the command level.
+    """CERT-1986's symmetric requirement, on the undo, through the real command."""
+    import app.tasks.base as task_base
 
-    Two rows commit, one fails persistently, and the three page rails all read 0
-    — the exact shape that used to print the ✅ line and exit 0.
-    """
-    conn = _seeded_db([(1, "scheduled"), (2, "scheduled"), (3, "scheduled")])
-    session = _FailingSqliteSession(conn, fail_id=2)
-    _drive_run(monkeypatch, conn, session=session, population_after=1)
+    conn = _seeded_league([(i, repair.VOID_STATUS) for i in (1, 2, 3)])
+    conn.executemany(
+        f"INSERT INTO {repair.BAK_TABLE} (event_id, old_status, sport_key) "
+        "VALUES (?, 'scheduled', ?)",
+        [(i, repair.TARGET_SPORT_KEY) for i in (1, 2, 3)],
+    )
+    conn.commit()
 
+    def wire(session):
+        class _Ctx:
+            async def __aenter__(self_inner):
+                return session
+
+            async def __aexit__(self_inner, *exc):
+                return False
+
+        monkeypatch.setattr(task_base, "get_task_session", lambda: _Ctx())
+
+    wire(_FailingSqliteSession(conn, fail_id=2))
     with pytest.raises(SystemExit) as exit_info:
-        await repair.run(backup=True, apply=True)
-
-    assert exit_info.value.code == 1, "a partial repair exited 0"
-    out = capsys.readouterr().out
-    assert "INCOMPLETE" in out
-    assert "✅" not in out, "terminal success was printed over a partial repair"
-    assert "resumes" in out, "the operator was not told the run is resumable"
-    assert _statuses(conn)[1] == repair.VOID_STATUS, "durable progress was lost"
-
-
-@pytest.mark.asyncio
-async def test_the_command_succeeds_on_the_rerun_once_the_failure_is_gone(
-    monkeypatch, capsys
-):
-    """The other half of the required regression: the same command, no failure,
-    must reach terminal success and exit normally."""
-    conn = _seeded_db([(1, "scheduled"), (2, "scheduled"), (3, "scheduled")])
-    session = _SqliteSession(conn)
-    _drive_run(monkeypatch, conn, session=session, population_after=0)
-
-    await repair.run(backup=True, apply=True)
-
-    out = capsys.readouterr().out
-    assert "✅" in out
-    assert "INCOMPLETE" not in out
-    assert set(_statuses(conn).values()) == {repair.VOID_STATUS}
-
-
-@pytest.mark.asyncio
-async def test_a_leftover_population_fails_the_run_even_with_zero_write_failures(
-    monkeypatch, capsys
-):
-    """The terminal check is the FULL population, not the page rails and not the
-    loop's own failure list. A row nobody tried to write is still a row that did
-    not leave the surface."""
-    conn = _seeded_db([(1, "scheduled"), (2, "scheduled"), (3, "scheduled")])
-    session = _SqliteSession(conn)
-    _drive_run(monkeypatch, conn, session=session, population_after=7)
-
-    with pytest.raises(SystemExit) as exit_info:
-        await repair.run(backup=True, apply=True)
+        await restore.run(apply=True)
 
     assert exit_info.value.code == 1
-    out = capsys.readouterr().out
-    assert "7 row(s) of the non-retired population remain" in out
-    assert "✅" not in out
+    first_out = capsys.readouterr().out
+    assert "RESTORE INCOMPLETE" in first_out
+    assert "✅" not in first_out
+    assert _statuses(conn) == {1: "scheduled", 2: repair.VOID_STATUS, 3: "scheduled"}
+
+    wire(_SqliteSession(conn))
+    await restore.run(apply=True)
+
+    second_out = capsys.readouterr().out
+    assert "✅" in second_out
+    assert "INCOMPLETE" not in second_out
+    assert _statuses(conn) == {1: "scheduled", 2: "scheduled", 3: "scheduled"}

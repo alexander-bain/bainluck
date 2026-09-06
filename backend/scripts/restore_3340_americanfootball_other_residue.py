@@ -97,14 +97,15 @@ async def run(apply: bool) -> None:
     from sqlalchemy import text
 
     async with get_task_session() as session:
-        exists = (
-            await session.execute(text(f"SELECT to_regclass('{BAK_TABLE}')"))
-        ).scalar()
-        if not exists:
+        # try/except rather than `to_regclass` so the same statement runs under
+        # sqlite in the guards; a failed statement aborts the Postgres
+        # transaction, hence the rollback.
+        try:
+            rows = (await session.execute(text(_PLAN_SQL))).all()
+        except Exception:
+            await session.rollback()
             print(f"No backup table {BAK_TABLE} — nothing to restore.")
             return
-
-        rows = (await session.execute(text(_PLAN_SQL))).all()
         restorable = [
             {"event_id": r.event_id, "old_status": r.old_status}
             for r in rows

@@ -261,19 +261,47 @@ def producerless_refusal_reason(sport_key: str) -> str | None:
     return None
 
 
-def population_refusal_reason(measured: dict) -> str | None:
+def is_resumption(resume: dict | None) -> bool:
+    """Does durable backup evidence prove THIS repair already started here?
+
+    Pure. True only when the backup table holds rows banked for this sport key
+    **and every remaining target row is one of them**. A row we never banked is a
+    row this repair did not leave behind — it is drift, and drift must still meet
+    the floor.
+    """
+    if not resume:
+        return False
+    remaining = resume.get("remaining_total", 0)
+    return bool(
+        resume.get("banked_for_key", 0) > 0
+        and remaining > 0
+        and resume.get("remaining_banked", 0) == remaining
+    )
+
+
+def population_refusal_reason(measured: dict, *, resume: dict | None = None) -> str | None:
     """Why the measured population must NOT be voided, or ``None`` if it is safe.
 
     Pure, so the gate is unit-testable without a database. Every clause is a
     reason to find a REAL fixture in the bucket; any one of them firing means the
     premise ("nothing here came from a schedule source") has stopped holding.
+
+    ``resume`` carries the durable evidence from :func:`measure_resume_evidence`.
+    The floor exists so an empty or drifted run cannot report success, but on its
+    own it also made the repair's own promise of resumability FALSE: a partial run
+    leaves a handful of rows, and "population 1 is below the floor 3000" then
+    refuses the very rerun the failure message told the operator to make. So the
+    floor is waived — and ONLY waived — when the backup proves this repair banked
+    every row that is left. Every hazard clause below still applies to a resume.
     """
     population = measured.get("population", 0)
-    if population < MIN_EXPECTED_POPULATION:
+    if population < MIN_EXPECTED_POPULATION and not is_resumption(resume):
         return (
-            f"population {population} is below the floor {MIN_EXPECTED_POPULATION} "
-            f"— either the repair already ran, or the census the plan was built on "
-            f"no longer describes production"
+            f"population {population} is below the floor {MIN_EXPECTED_POPULATION}, "
+            f"and the backup holds no evidence that this repair left those rows "
+            f"behind — either it never ran here, or the census the plan was built "
+            f"on no longer describes production. A resume is recognised only when "
+            f"every remaining row is already banked in {BAK_TABLE}."
         )
     if population > MAX_EXPECTED_POPULATION:
         return (
@@ -303,6 +331,22 @@ SELECT count(*) AS population,
                          AND e.external_id NOT LIKE 'pm\\_%') AS with_real_external_id
   FROM events e
   JOIN sports s ON s.id = e.sport_id
+ WHERE s.key = :sport_key
+   AND e.status NOT IN ({_RETIRED_SQL})
+"""
+
+#: Durable resume evidence: how many rows are banked for this key, how many
+#: non-retired rows are left, and how many of THOSE are ones we banked. Only when
+#: the last two are equal and nonzero has this repair provably left the remainder.
+_RESUME_SQL = f"""
+SELECT (SELECT count(*) FROM {BAK_TABLE} WHERE sport_key = :sport_key)
+           AS banked_for_key,
+       count(*)                                        AS remaining_total,
+       count(b.event_id)                               AS remaining_banked
+  FROM events e
+  JOIN sports s ON s.id = e.sport_id
+  LEFT JOIN {BAK_TABLE} b
+         ON b.event_id = e.id AND b.sport_key = :sport_key
  WHERE s.key = :sport_key
    AND e.status NOT IN ({_RETIRED_SQL})
 """
@@ -356,6 +400,33 @@ async def measure(session, sport_key: str = TARGET_SPORT_KEY) -> dict:
         "visible_total": (
             visible.upcoming_rail + visible.unreported_rail + visible.recent_rail
         ),
+    }
+
+
+async def measure_resume_evidence(session, sport_key: str = TARGET_SPORT_KEY):
+    """Durable proof that this repair already ran here, or ``None``.
+
+    Returns ``{banked_for_key, remaining_total, remaining_banked}``. ``None`` means
+    the question could not be answered — on a first run the backup table does not
+    exist yet, and that is not an error, it is the answer "no evidence".
+
+    The existence check is a try/except rather than ``to_regclass`` so the same
+    statement runs under sqlite in the guards; a failed statement aborts the
+    Postgres transaction, hence the rollback.
+    """
+    from sqlalchemy import text
+
+    try:
+        row = (
+            await session.execute(text(_RESUME_SQL), {"sport_key": sport_key})
+        ).one()
+    except Exception:
+        await session.rollback()
+        return None
+    return {
+        "banked_for_key": row.banked_for_key,
+        "remaining_total": row.remaining_total,
+        "remaining_banked": row.remaining_banked,
     }
 
 
@@ -467,7 +538,16 @@ async def run(*, backup: bool, apply: bool, sport_key: str = TARGET_SPORT_KEY) -
             print("\nNothing to repair — census already 0 (idempotent no-op).")
             return
 
-        blocked = population_refusal_reason(before)
+        resume = await measure_resume_evidence(session, sport_key)
+        if is_resumption(resume):
+            print(
+                f"\nRESUMING: {resume['remaining_total']} row(s) remain and all of "
+                f"them are already banked in {BAK_TABLE} "
+                f"({resume['banked_for_key']} banked for this key) — this repair "
+                f"left them behind, so the population floor is waived."
+            )
+
+        blocked = population_refusal_reason(before, resume=resume)
         if blocked and apply:
             print(f"\nREFUSING TO APPLY: {blocked}")
             sys.exit(1)
