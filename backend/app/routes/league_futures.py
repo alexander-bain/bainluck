@@ -1565,6 +1565,44 @@ LINKED_MATCH_POOL_LIMIT = 1500
 _NON_MATCH_TIERS = (1, 2, 4)
 
 
+def _is_submarket_bundle(market: FuturesMarket) -> bool:
+    """Does this market's OUTCOME list hold its own sub-markets rather than sides?
+
+    Polymarket serialises a match's nested sub-markets as outcomes of the group
+    (gotcha #18): "US Open ATP: A vs B Set 2 Winner" and "… Total Sets: O/U 3.5"
+    arrive as outcomes of "US Open ATP: A vs B". Under a MATCHES heading that
+    card answers everything except who wins — measured on production
+    2026-09-05, the Mensik–Tien card led with "Set 2 Winner >99%" and never
+    named a player, and four such rows printed >99% on the same card.
+
+    Detected by the prefix each sub-market name carries, because that is what
+    the serialisation actually does — not by counting outcomes, which would
+    also condemn a legitimate multi-way market. Majority rather than any, so a
+    head-to-head that happens to repeat its own name in one outcome is safe.
+    Measured over the whole 126-row tennis rail the split is unambiguous: the
+    eight bundles ran 8/9 to 16/17 prefixed, and all 71 two-sided markets ran 0.
+    """
+    name = (market.name or "").strip().lower()
+    if not name:
+        return False
+    outcomes = [(o.name or "").strip().lower() for o in (market.outcomes or [])]
+    if not outcomes:
+        return False
+    prefixed = sum(1 for o in outcomes if o.startswith(name))
+    return prefixed * 2 > len(outcomes)
+
+
+def _match_card_rank(market: FuturesMarket) -> tuple[int, int]:
+    """Which of two markets for ONE event should be the card? Higher wins.
+
+    A head-to-head outranks a sub-market bundle, and only then does the old
+    "most outcomes" rule apply. The order matters and is the whole point: the
+    bundle is always the one with MORE outcomes, so ranking by size alone picks
+    the card that cannot name a winner and discards the one that can.
+    """
+    return (0 if _is_submarket_bundle(market) else 1, len(market.outcomes or []))
+
+
 async def build_linked_matches(
     sport_key: str,
     db: AsyncSession,
@@ -1684,14 +1722,36 @@ async def build_linked_matches(
         )
     )
 
+    # ── UX-P181 (#2167): ONE card per event ──
+    #
+    # The name dedup below cannot see this pair, because the two venues do not
+    # spell the match the same way: Kalshi's "Zverev vs Tabilo" and Polymarket's
+    # "US Open ATP: Alexander Zverev vs Alejandro Tabilo" normalise differently.
+    # But we are not being asked to GUESS that they are one match — the matcher
+    # already decided it and wrote the answer down, and both rows carry
+    # `event_id = 15304537`. Printing them as two cards contradicts an identity
+    # this row already holds, and contradicts it visibly: measured on production
+    # 2026-09-05 the rail showed Zverev at 97% and, one card later, at 96%. The
+    # blend is the product — one number per question.
+    #
+    # This is deliberately NOT the open cross-source identity problem (#2166).
+    # It resolves only pairs the database already calls one event; two markets
+    # linked to two DIFFERENT event rows are a twin, which is matching's to fix
+    # (#2693) and stays visible here rather than being papered over.
+    chosen: dict[int, FuturesMarket] = {}
+    for market in candidates:
+        current = chosen.get(market.event_id)
+        if current is None or _match_card_rank(market) > _match_card_rank(current):
+            chosen[market.event_id] = market
+    # Filtered rather than rebuilt from `chosen.values()`, so the live-first /
+    # soonest-first order established above survives the dedup.
+    candidates = [m for m in candidates if chosen[m.event_id] is m]
+
     rows: list[dict] = []
     # Same name-normalising dedup `build_league` applies, for the same reason and
     # by the same rule (keep the row with the most outcomes). Measured on
     # production 2026-09-05 the raw rail listed "US Open ATP: Ben Shelton vs
-    # Stefanos Tsitsipas" twice and the live Bergs match three times. It does NOT
-    # merge the Kalshi/Polymarket pair for one match ("Bergs vs Van de Zandschulp"
-    # vs "US Open ATP: Zizou Bergs vs Botic van de Zandschulp") — that is
-    # cross-source identity (#2166), not this rail's to decide.
+    # Stefanos Tsitsipas" twice and the live Bergs match three times.
     by_name: dict[str, dict] = {}
     for market in candidates:
         if len(rows) >= LINKED_MATCH_LIMIT:

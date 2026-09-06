@@ -69,7 +69,13 @@ const SECTION_META: Record<string, { label: string }> = {
   series: { label: "Series" },
   more_markets: { label: "More Markets" },
 };
-const SECTION_ORDER = ["futures", "props", "matches", "awards", "season_stats", "series", "more_markets"];
+// Matches sit ABOVE props (UX-P181, #2167). Props outranked them until the
+// linked-match rail started finding real fixtures, and then the order stopped
+// making sense: measured on /hub/tennis during the US Open, "Matches" began at
+// y=23,746px on a 390px phone — roughly 28 screens of set-games props before
+// the live match a reader opened the page for. The derivative markets follow
+// the thing they are derived from.
+const SECTION_ORDER = ["futures", "matches", "props", "awards", "season_stats", "series", "more_markets"];
 
 function sectionLabel(key: string, served?: Record<string, string> | null): string {
   // The competition's own word wins when it has one (combat hubs say "Fight

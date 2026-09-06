@@ -219,6 +219,28 @@ def _is_settled(market: Mapping[str, Any], *, now: datetime) -> bool:
     return False
 
 
+def is_unpriced_card(market: Any, *, now: datetime) -> bool:
+    """Is this row one the histogram counts as `unpriced` — a card with no number?
+
+    Public because a surface that RENDERS the sections must be able to drop
+    exactly the rows this module COUNTS as dropped, and the only way those two
+    can never disagree is for both to call one function. They did disagree:
+    `/api/hub/tennis` served `{"total": 126, "shown": 126, "dropped": 47}` on
+    2026-09-05 — an arithmetic impossibility, and on the page it was 47 cards
+    carrying a match name and nothing else, ten of them consecutive.
+
+    Settled is tested FIRST and is never unpriced. A settled market legitimately
+    has no live price and "settled means settled" — heroes show winners, cards
+    show results — so dropping it here would delete the record the standing
+    ruling requires us to show.
+    """
+    if not isinstance(market, Mapping):
+        return False
+    if _is_settled(market, now=now):
+        return False
+    return not _has_standable_number(market)
+
+
 def count_answers(
     sections: Mapping[str, Sequence[Mapping[str, Any]]] | None,
     *,
@@ -265,7 +287,9 @@ def count_answers(
                     sec["settled"] += 1
                     totals["settled"] += 1
                     continue
-                if not _has_standable_number(market):
+                # Same predicate the renderer drops on, called rather than
+                # restated: the count and the drop are one decision.
+                if is_unpriced_card(market, now=now):
                     sec["unpriced"] += 1
                     totals["unpriced"] += 1
                     continue

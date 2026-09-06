@@ -408,7 +408,7 @@ async def build_hub(cfg: HubConfig, db: AsyncSession) -> dict:
     alongside a surviving page, so losing it is `partial`.
     """
     from app.utils.event_concept_cache import LOSS_DEGRADED, LOSS_PARTIAL, note_build_loss
-    from app.utils.entity_page_tiers import resolve_entity_tier
+    from app.utils.entity_page_tiers import is_unpriced_card, resolve_entity_tier
 
     losses: list[tuple[str, str]] = []
 
@@ -515,14 +515,46 @@ async def build_hub(cfg: HubConfig, db: AsyncSession) -> dict:
     # hub that lost its market sections cannot present as fresh (ruling 025 clause
     # 4). The counts come from the shared resolver — never reimplemented here, or
     # the histogram would predict a tier the page does not render.
+    now = datetime.now(timezone.utc)
     tiering = resolve_entity_tier(
         sections,
-        now=datetime.now(timezone.utc),
+        now=now,
         entity_is_real=True,  # a hub slug exists in HUB_CONFIGS or the route 404s
         record_n=0,  # the record strip lands on competitions at step 2 (#1744)
         next_event_count=len(upcoming),
         season_known=False,
     )
+
+    # ── UX-P181 (#2167): the hub stops RENDERING what it already counts as dropped ──
+    #
+    # The histogram above has always classified a market with no priced outcome as
+    # `unpriced`, and `section_counts.dropped` has always published that number —
+    # but nothing ever removed the row, so the payload asserted an impossibility.
+    # Measured on production 2026-09-05, after the linked-match rail shipped:
+    #
+    #     /api/hub/tennis  matches  {"total": 126, "shown": 126, "dropped": 47}
+    #
+    # and on the page those 47 were cards holding a match name and NOTHING else —
+    # no players, no probability — ten of them consecutively. It is not a tennis
+    # artefact: boxing renders 10 blank cards of 12, MMA 28 of 42.
+    #
+    # Fail closed, which is the contract this product already shipped everywhere
+    # else: L2-215 (#1486) made Discover and Sports drop an envelope with no
+    # renderable content at both web boundaries and in the native view model. The
+    # hub is the surface that never got the guard, not a place where a different
+    # rule applies.
+    #
+    # The TIER is deliberately resolved on the UNFILTERED sections above. It is a
+    # function of `answers`, which never counted these rows, so a hub cannot change
+    # shape because we stopped drawing blanks — and the counts below keep reporting
+    # the whole pool, so the exclusion stays visible (ruling 025 clause 3: a swallow
+    # that counts is detection).
+    rendered: dict = {}
+    for name, rows in sections.items():
+        kept = [m for m in (rows or []) if not is_unpriced_card(m, now=now)]
+        if kept:
+            rendered[name] = kept
+    sections = rendered
 
     response = {
         "competition": cfg.slug,
@@ -543,14 +575,16 @@ async def build_hub(cfg: HubConfig, db: AsyncSession) -> dict:
         "total_markets": sum(len(v) for v in sections.values()),
         "tier": tiering["tier"],
         "pool_counts": tiering["pool_counts"],
-        # Per-section total/shown/dropped. `shown` equals `total` on the hub today
-        # because this surface caps nothing — stated explicitly rather than omitted,
-        # so a future cap has an existing field to be counted in instead of arriving
-        # as a silent truncation (spec §4: uncounted caps are concealment).
+        # Per-section total/shown/dropped, and the three now RECONCILE: `shown` is
+        # measured on the rows actually served, not assumed equal to `total`. It
+        # was assumed, and the assumption was false the moment a section carried a
+        # dropped row — the field said "we cap nothing here" while `dropped` said
+        # 47 (spec §4: uncounted caps are concealment; an uncounted *non*-cap is
+        # the same lie in the other direction).
         "section_counts": {
             name: {
                 "total": s["total"],
-                "shown": s["total"],
+                "shown": len(sections.get(name) or []),
                 "dropped": s["unpriced"],
                 "answers": s["answers"],
             }
