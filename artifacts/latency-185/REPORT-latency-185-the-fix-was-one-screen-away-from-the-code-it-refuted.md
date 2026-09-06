@@ -131,3 +131,59 @@ The honest summary of this lane's week is that the search box has **at least fou
 of going cold — #3398 (head wholly expired), #3506 (per-term errors), #2304/#3526 (warmers blanking
 their own entries), #3480 (the morning collision) — and until 184 they were being treated as one.
 Naming them apart is most of the progress. Only #3526 moved today.
+
+---
+
+## 6. Postscript, ~13:15Z — CERT-2068 came back BLOCK, and the grader was right
+
+Graded at 12:22Z, four minutes after staging. **Token withheld, and correctly.**
+
+> "removing the eager DELETE does not keep the old `/search` entry alive through rebuild. A 20s beat
+> plus a 45s minimum yields actual eligible starts 60s apart… the submitted measured 3.3s-to-23.8s
+> sequence permits ~20.5s of absence during the second rebuild."
+
+Checked and accepted in full. The arithmetic is `hole = max(0, D_next − D_prev)`: the entry written
+at the end of one pass expires `TTL` later, the next pass finds it with roughly the *previous*
+build's duration left, and a short-then-long pair leaves the gap. My ship line — "that term stops
+going blank for the seconds the rebuild takes" — claims a continuity the diff does not deliver.
+
+**What the diff does deliver, unchanged and still worth having:**
+
+| | before | after |
+|---|---|---|
+| hole per pass | `D` — unconditional, every pass, full rebuild duration | `max(0, D_next − D_prev)` |
+| failed / degraded rebuild | leaves a hole | leaves last-good |
+
+Strictly better, never worse — and not what the header said. §3(a) of this report criticises 184 for
+an attribution it did not check; this is the same failure in my own header, caught by someone else.
+Worth stating plainly rather than filing under "narrow scope".
+
+### The block exposed the real bug — #3539
+
+`test_the_refresh_ahead_window_actually_keeps_the_head_alive` is supposed to prove the head never
+goes cold. It is unsound twice over:
+
+1. It reads `MIN_PASS_PERIOD_SECONDS` (45) rather than the **achievable** period. The beat is 20s
+   and the floor is 45s, so passes actually land 60s apart. The first clause is really `60 < 60`
+   — **false**.
+2. It has **no rebuild-duration term at all** — it assumes the write lands the instant the pass
+   starts, when the warmer awaits a rebuild measured at 3.3–23.8s.
+
+So the `/search` head has never been guaranteed resident, and the guard that says otherwise has been
+green throughout. `_drop_cached` was masking it: the head was unconditionally absent during every
+rebuild anyway, so cadence could never make it worse. Removing the DELETE is what made the cadence
+binding — and the bus noticed within four minutes.
+
+Filed as **#3539** with the three mutually exclusive repairs and what each costs: 2–3× rebuild load
+on the contended `background` queue, or a staleness ceiling moving 60s → 85s, or #1866's blocked
+DDL. **I did not pick one**, deliberately — none is a build lane's unilateral call, and the cert
+explicitly forbade the second. PR #3534 stays open and unmerged; the code and its 24 guards are
+reusable by whichever repair wins.
+
+### The honest scoreboard for this session
+
+Nothing shipped to production. What moved: one real defect fixed but blocked on an overstated claim,
+one pre-existing unsound invariant found and filed (#3539), two mis-attributions corrected (#2304's
+citation, LAT-P244's method note), one issue corroborated at scale (#3506), one measurement parked
+(LAT-P245), and Alex given a correction he had not asked for. The lane now names five distinct
+causes of a cold search box where it named one on Friday.
