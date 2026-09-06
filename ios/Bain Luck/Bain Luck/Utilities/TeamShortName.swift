@@ -59,8 +59,13 @@ enum TeamShortName {
 
     /// A founding year ("1. FC Heidenheim 1846") names a team no better than
     /// "FC" does, and the shipped rule printed it as the whole label.
+    ///
+    /// Parentheses are in the trim set because the women's marker is written
+    /// both ways in `teams`: "Argentina W" and "Harvard Crimson (W)". Trimming
+    /// only `.` and `,` saw the first and missed the second, so three women's
+    /// sides still rendered with `(W)` as their entire label.
     private static func isDesignator<S: StringProtocol>(_ token: S) -> Bool {
-        let t = token.trimmingCharacters(in: CharacterSet(charactersIn: ".,")).lowercased()
+        let t = token.trimmingCharacters(in: CharacterSet(charactersIn: "().,")).lowercased()
         if designators.contains(t) { return true }
         return t.count <= 4 && !t.isEmpty && t.allSatisfy(\.isNumber)
     }
@@ -82,7 +87,30 @@ enum TeamShortName {
     ///
     /// Derived from `short` so a club named for its designator gets `CHA` rather
     /// than `FC` — the placeholder had exactly the same defect as the label.
+    ///
+    /// Two refinements, each measured over the whole population
+    /// (`artifacts-native-031/abbr_model.py`):
+    ///
+    /// 1. **Leading designators are skipped.** `short` returns the full name for
+    ///    a designator-ending club, so taking its first three characters put the
+    ///    designator back on the badge whenever it sits at the FRONT: "FC
+    ///    Schalke 04" drew `FC `, "AD Ceuta FC" drew `AD `. That is the defect
+    ///    of #3374 relocated to the other end of the string, and it made 11
+    ///    badges worse than the rule it replaced. Never skip so far that only
+    ///    designators are left — "Athletic Club" must stay `ATH`, not `CLU`.
+    ///
+    /// 2. **The three glyphs are alphanumerics, crossing word boundaries.** A
+    ///    badge has room for three characters and a space is not one of them:
+    ///    "St. Louis City SC" reads `STL` and "D.C. United" reads `DCU`.
+    ///
+    /// Together these take unusable badges — those that cannot fill three glyphs
+    /// — from 371 on the pre-#3374 rule to 56, and regress none.
     static func abbreviation(_ name: String) -> String {
-        String(short(name).prefix(3)).uppercased()
+        var parts = short(name).split(separator: " ").filter { !$0.isEmpty }
+        if let firstReal = parts.firstIndex(where: { !isDesignator($0) }) {
+            parts = Array(parts[firstReal...])
+        }
+        let glyphs = parts.joined(separator: " ").filter { $0.isLetter || $0.isNumber }
+        return String(glyphs.prefix(3)).uppercased()
     }
 }

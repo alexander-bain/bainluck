@@ -117,6 +117,63 @@ final class TeamShortNameTests: XCTestCase {
                           TeamShortName.abbreviation("Toronto FC"))
     }
 
+    /// Deriving the badge from `short` alone put the designator straight back on
+    /// it whenever the designator leads the name — "FC Schalke 04" drew `FC `,
+    /// "AD Ceuta FC" drew `AD `. Measured over the population, 11 badges came
+    /// out worse than the pre-#3374 rule. These are those names.
+    func testTheBadgeSkipsALeadingDesignator() {
+        for (name, expected) in [
+            ("FC Schalke 04", "SCH"),
+            ("FC Ingolstadt 04", "ING"),
+            ("AD Ceuta FC", "CEU"),
+            // "AE" is not in the designator set, so it is kept and read as part
+            // of the name — AEK, which is what that club is called.
+            ("AE Kifisia FC", "AEK"),
+            ("AC Milan U20", "MIL"),
+            ("AS Roma U20", "ROM"),
+            ("1. FC Heidenheim 1846", "HEI"),
+            ("FC Viktoria Köln 1904", "VIK"),
+            ("US Catanzaro 1929", "USC"),
+            ("OB Odense BK", "OBO"),
+            ("FK Pardubice W", "PAR"),
+        ] {
+            XCTAssertEqual(TeamShortName.abbreviation(name), expected, "for \(name)")
+        }
+    }
+
+    /// The over-correction: skipping leading designators unconditionally leaves
+    /// "Athletic Club" reading `CLU`, which names the kind rather than the club.
+    /// When every token is a designator the name is already all there is.
+    func testTheBadgeNeverSkipsDownToNothing() {
+        XCTAssertEqual(TeamShortName.abbreviation("Athletic Club"), "ATH")
+        XCTAssertEqual(TeamShortName.abbreviation("AIK"), "AIK")
+    }
+
+    /// A badge has room for three characters and a space is not one of them.
+    func testTheBadgeIsAlwaysThreeRealGlyphs() {
+        XCTAssertEqual(TeamShortName.abbreviation("St. Louis City SC"), "STL")
+        XCTAssertEqual(TeamShortName.abbreviation("D.C. United"), "DCU")
+        XCTAssertEqual(TeamShortName.abbreviation("Le Mans FC"), "LEM")
+        XCTAssertEqual(TeamShortName.abbreviation("St Patricks Athletic"), "STP")
+        for name in ["Charlotte FC", "FC Schalke 04", "D.C. United",
+                     "St. Louis City SC", "1. FC Heidenheim 1846", "Baltimore Orioles"] {
+            let badge = TeamShortName.abbreviation(name)
+            XCTAssertEqual(badge.count, 3, "\(name) drew \(badge)")
+            XCTAssertTrue(badge.allSatisfy { $0.isLetter || $0.isNumber },
+                          "\(name) drew \(badge), which is not three glyphs")
+        }
+    }
+
+    /// `teams` spells the women's marker both ways. Trimming only `.` and `,`
+    /// caught "Argentina W" and missed "Harvard Crimson (W)", so three women's
+    /// sides still rendered with `(W)` as their entire label.
+    func testTheParenthesisedWomensMarkerIsADesignatorToo() {
+        XCTAssertEqual(TeamShortName.short("Harvard Crimson (W)"), "Harvard Crimson (W)")
+        XCTAssertEqual(TeamShortName.short("Stanford Cardinal (W)"), "Stanford Cardinal (W)")
+        XCTAssertEqual(TeamShortName.short("Alabama State Hornets (W)"), "Alabama State Hornets (W)")
+        XCTAssertEqual(TeamShortName.abbreviation("Harvard Crimson (W)"), "HAR")
+    }
+
     // MARK: - degenerate input
 
     func testNothingToShortenIsReturnedUnchanged() {

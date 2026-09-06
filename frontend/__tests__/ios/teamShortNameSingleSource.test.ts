@@ -101,7 +101,31 @@ d("iOS team short names have exactly one implementation", () => {
   });
 
   it("the crest placeholder derives from the shared rule, not its own split", () => {
-    expect(canonical).toMatch(/String\(short\(name\)\.prefix\(3\)\)\.uppercased\(\)/);
+    expect(canonical).toMatch(/short\(name\)\.split\(separator: " "\)/);
+    expect(canonical).toMatch(/\.uppercased\(\)/);
+  });
+
+  it("the badge skips a LEADING designator, but never down to nothing", () => {
+    // `short` returns the FULL name for a designator-ending club, so taking its
+    // first three characters put the designator straight back on the badge when
+    // it sits at the front — "FC Schalke 04" drew `FC `, "AD Ceuta FC" drew
+    // `AD `. Measured: 11 badges worse than the rule #3374 replaced.
+    expect(canonical).toMatch(/firstIndex\(where: \{ !isDesignator\(\$0\) \}\)/);
+    // The over-correction guard: dropping leading designators unconditionally
+    // turns "Athletic Club" into `CLU`. `firstIndex` returning nil must leave
+    // the parts alone, so the skip is inside `if let`.
+    expect(canonical).toMatch(/if let firstReal = parts\.firstIndex/);
+  });
+
+  it("the badge's three glyphs carry no space or punctuation", () => {
+    // A badge has room for three characters and a space is not one of them.
+    expect(canonical).toMatch(/filter \{ \$0\.isLetter \|\| \$0\.isNumber \}/);
+  });
+
+  it("the women's marker is seen in both spellings production uses", () => {
+    // `teams` writes it as "Argentina W" and as "Harvard Crimson (W)". Trimming
+    // only `.` and `,` saw the first and missed the second.
+    expect(canonical).toMatch(/charactersIn: "\(\)\.,"/);
   });
 
   it("no OTHER Swift file builds a short name — discovered, not listed", () => {
@@ -170,18 +194,27 @@ d("iOS team short names have exactly one implementation", () => {
    * the rule itself, run over the production names that motivated it.
    */
   it("the rule agrees with the Swift on real production team names", () => {
+    // A subset of the Swift set — every token an assertion below depends on.
+    // A case whose tokens are NOT here would take a different path than the
+    // Swift and could agree by luck, so keep the two in step when adding one.
     const DESIGNATORS = new Set([
-      "fc", "sc", "cf", "ac", "united", "city", "town", "county", "club",
-      "w", "jr", "sr", "b", "ii", "iii", "u20", "u21", "u23",
+      "fc", "sc", "cf", "ac", "ad", "united", "city", "town", "county", "club",
+      "athletic", "w", "jr", "sr", "b", "ii", "iii", "u20", "u21", "u23",
     ]);
     const isDesignator = (t: string) => {
-      const s = t.replace(/^[.,]+|[.,]+$/g, "").toLowerCase();
+      const s = t.replace(/^[().,]+|[().,]+$/g, "").toLowerCase();
       return DESIGNATORS.has(s) || (/^\d{1,4}$/.test(s));
     };
     const short = (name: string) => {
       const parts = name.split(" ").filter(Boolean);
       if (parts.length <= 1) return name;
       return isDesignator(parts[parts.length - 1]) ? parts.join(" ") : parts[parts.length - 1];
+    };
+    const abbreviation = (name: string) => {
+      let parts = short(name).split(" ").filter(Boolean);
+      const firstReal = parts.findIndex((p) => !isDesignator(p));
+      if (firstReal !== -1) parts = parts.slice(firstReal);
+      return (parts.join(" ").match(/[\p{L}\p{N}]/gu) ?? []).slice(0, 3).join("").toUpperCase();
     };
 
     expect(short("Charlotte FC")).toBe("Charlotte FC");
@@ -191,5 +224,18 @@ d("iOS team short names have exactly one implementation", () => {
     expect(short("Argentina W")).toBe("Argentina W");
     expect(short("1. FC Heidenheim 1846")).toBe("1. FC Heidenheim 1846");
     expect(short("AIK")).toBe("AIK");
+    // The parenthesised spelling of the same women's marker.
+    expect(short("Harvard Crimson (W)")).toBe("Harvard Crimson (W)");
+
+    // The badge: never the designator, at either end, and always three glyphs.
+    expect(abbreviation("Charlotte FC")).toBe("CHA");
+    expect(abbreviation("FC Schalke 04")).toBe("SCH");
+    expect(abbreviation("AD Ceuta FC")).toBe("CEU");
+    expect(abbreviation("1. FC Heidenheim 1846")).toBe("HEI");
+    expect(abbreviation("St. Louis City SC")).toBe("STL");
+    expect(abbreviation("D.C. United")).toBe("DCU");
+    expect(abbreviation("Baltimore Orioles")).toBe("ORI");
+    // Every token is a designator — skipping them all would read `CLU`.
+    expect(abbreviation("Athletic Club")).toBe("ATH");
   });
 });
