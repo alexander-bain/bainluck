@@ -162,6 +162,146 @@ extension SportVocab {
         unit.isEmpty ? value : "\(value) \(unit)"
     }
 
+    // MARK: - What THIS market quotes (#3509)
+
+    /// The units this app has vocabulary for — every ``unit`` in ``table`` plus
+    /// every ``scoreboardUnit``.
+    ///
+    /// Derived from the table rather than typed out again, so declaring a sport
+    /// extends it for free and it can never drift from the table it describes.
+    /// It exists only to disambiguate ONE syntactic position; see
+    /// ``declaredUnit(inMarketName:)``.
+    static let knownUnits: Set<String> = {
+        var units = Set<String>()
+        for entry in table {
+            if !entry.vocab.unit.isEmpty { units.insert(entry.vocab.unit) }
+            if !entry.vocab.scoreboardUnit.isEmpty { units.insert(entry.vocab.scoreboardUnit) }
+        }
+        return units
+    }()
+
+    /// The unit a totals market names in its OWN title, or nil where it names
+    /// none.
+    ///
+    /// #3509. ``forSport(_:)`` answers *"what does this SPORT's market quote?"*,
+    /// and for tennis "games" is the right answer — the game spread and the
+    /// match total are both in games. But a venue also lists, on the same match
+    /// and into the same `game_total` bucket, `"… Total Sets O/U 2.5"`. Nothing
+    /// read the market, so the phone printed **"Projected combined games: 2.5+"**
+    /// — and there is no tennis match in which 2.5 games is a meaningful total.
+    /// Measured on production 2026-09-06: of open linked tennis markets with
+    /// "total" in the name, **210 quote SETS and 2 quote GAMES**, over 187
+    /// events. It is not an edge case in tennis; it is nearly all of it.
+    ///
+    /// The same shape reaches other sports — soccer's `"… Total Corners"` on a
+    /// GOALS map, MMA's `"O/U 0.5 Rounds"` where we declare no unit at all — so
+    /// the question is "what does this MARKET quote", not "how do we special-case
+    /// tennis".
+    ///
+    /// **Three positions, two of them syntactically unambiguous:**
+    /// 1. `Total <Noun>` — the word "Total" governs a unit noun, so any noun is
+    ///    trusted (`Total Corners`, `Total Bases`, `Total Runs`).
+    /// 2. `O/U <n> <Noun>` — nothing but a unit follows the line (`O/U 0.5 Rounds`).
+    /// 3. `<Noun> O/U <n>` — AMBIGUOUS, because a venue also writes the SUBJECT
+    ///    there: `"Udinese Calcio vs. SS Lazio: Udinese Calcio O/U 0.5"` and
+    ///    `"Manchester United FC O/U 2.5"` are both live right now, and reading
+    ///    "calcio" as a unit is the very bug this fixes wearing a new costume.
+    ///    So this position alone is narrowed to ``knownUnits`` — which admits
+    ///    `"Set 1 Games O/U 8.5"` and refuses every club in Europe.
+    ///
+    /// Returning nil is the safe answer and the common one: a market that
+    /// declares nothing keeps inheriting its sport's unit, exactly as before.
+    static func declaredUnit(inMarketName marketName: String?) -> String? {
+        let name = (marketName ?? "").lowercased()
+        guard !name.isEmpty else { return nil }
+
+        // 1. "total <noun>" — stop at an O/U line or the end of the string.
+        if let noun = firstCapture(#"\btotal\s+([a-z]+)"#, in: name), noun != "o" {
+            return plural(noun)
+        }
+        // 2. "o/u <number> <noun>".
+        if let noun = firstCapture(#"\bo\s*/\s*u\b[^\d]{0,4}\d+(?:\.\d+)?\s+([a-z]+)"#, in: name) {
+            return plural(noun)
+        }
+        // 3. "<noun> o/u <number>", narrowed to units we have vocabulary for.
+        if let noun = firstCapture(#"\b([a-z]+)\s+o\s*/\s*u\b[^\d]{0,4}\d"#, in: name) {
+            let unit = plural(noun)
+            if knownUnits.contains(unit) { return unit }
+        }
+        return nil
+    }
+
+    /// The unit to LABEL a totals widget with, given the markets drawn on it.
+    ///
+    /// - Every market that declares a unit agrees ⇒ that unit.
+    /// - None declares one ⇒ the sport's ``unit`` (the behaviour before #3509).
+    /// - They DISAGREE ⇒ `""`, i.e. no unit noun at all.
+    ///
+    /// That last case is not hypothetical and it is why this takes the whole
+    /// list rather than one name. The backend drops sets rungs from a tennis
+    /// map whenever a match-scope rung survives (`_match_scope_tennis_totals`),
+    /// but that guard keys on the sport prefix — and real ATP/WTA matches are
+    /// currently classified `table_tennis` upstream, so they walk straight past
+    /// it. One served map today carries `"Total Sets O/U 2.5"` and
+    /// `"Set 1 Games O/U 8.5"` together (Swiatek v Podoroska, 2026-09-06).
+    /// No single noun is true of both rungs, and this type's whole rule is that
+    /// a number in the wrong unit is worse than an absent one *because it looks
+    /// sourced* — so we state none.
+    func totalsUnit(quotedBy marketNames: [String?]) -> String {
+        let declared = Set(marketNames.compactMap { SportVocab.declaredUnit(inMarketName: $0) })
+        if declared.isEmpty { return unit }
+        if declared.count == 1, let only = declared.first { return only }
+        return ""
+    }
+
+    /// The TITLE of a totals map, in the unit its rungs are actually quoted in.
+    ///
+    /// Caught on the LOOK of this very fix, which is the only place it could
+    /// have been caught: every test was green while a Braves–Phillies map read
+    /// **"Runs map"** over **"Projected total bases"** — the title still spoke
+    /// for the sport while the subtitle had started speaking for the market.
+    /// A title and its subtitle are one sentence to a reader, so they read one
+    /// selector.
+    ///
+    /// The sport's own phrasing is returned VERBATIM wherever it still applies,
+    /// so "Games map", "Runs map" and "Scoring map" are untouched on every
+    /// surface that was already right.
+    func totalTitle(quotedBy marketNames: [String?]) -> String {
+        let quoted = totalsUnit(quotedBy: marketNames)
+        if quoted == unit { return self.totalTitle }
+        if quoted.isEmpty { return "Scoring map" }
+        return quoted.prefix(1).uppercased() + quoted.dropFirst() + " map"
+    }
+
+    /// The sport's realistic span, but ONLY where this map is drawn in the
+    /// sport's unit.
+    ///
+    /// ``totalRange`` is documented as "the span a whole match's TOTAL lands
+    /// in, in ``unit``" — so it is meaningless the moment the rungs are quoted
+    /// in something else, and applying it anyway is #3503's defect with a
+    /// different literal. The Braves–Phillies bases map was drawn on baseball's
+    /// `4...14` RUNS rail under 2.5–5.5 bases lines. Nil hands the rail back to
+    /// the lines the market actually quoted, which is what nil has always meant
+    /// here.
+    func totalRange(quotedBy marketNames: [String?]) -> ClosedRange<Int>? {
+        totalsUnit(quotedBy: marketNames) == unit ? self.totalRange : nil
+    }
+
+    /// Naive pluralisation, enough for the market titles we parse: the venue
+    /// writes "Total Sets" and "O/U 0.5 Rounds" already plural, and this only
+    /// has to catch a stray singular ("Total Run") without inventing English.
+    private static func plural(_ noun: String) -> String {
+        noun.hasSuffix("s") ? noun : noun + "s"
+    }
+
+    private static func firstCapture(_ pattern: String, in text: String) -> String? {
+        guard let re = try? NSRegularExpression(pattern: pattern),
+              let m = re.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+              let r = Range(m.range(at: 1), in: text)
+        else { return nil }
+        return String(text[r])
+    }
+
     /// The sentence a widget owes a reader when it has suppressed the half it
     /// cannot state. Nil whenever the question does not arise, so a caller can
     /// bind it straight to an optional view.

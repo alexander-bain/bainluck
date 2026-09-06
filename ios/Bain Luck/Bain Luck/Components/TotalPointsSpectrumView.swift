@@ -18,9 +18,18 @@ struct TotalPointsSpectrumView: View {
     /// view said "points"; on a US Open match the same widget printed
     /// "Projected total points" over a 26.5 GAME line (ux/1034 B5's class).
     private var vocab: SportVocab { SportVocab.forSport(sportKey) }
-    /// "points"/"games"; "scoring" where the sport is undeclared and this file
-    /// must not invent a unit.
-    private var unit: String { vocab.unit.isEmpty ? "scoring" : vocab.unit }
+    /// "points"/"games"; "scoring" where neither the markets nor the sport
+    /// declare a unit and this file must not invent one.
+    ///
+    /// #3509 — read from the MARKETS on this widget, not from the sport alone.
+    /// `vocab.unit` answers "what does tennis quote?" and "games" is the right
+    /// answer to that question; it is the wrong answer for the
+    /// `"… Total Sets O/U 2.5"` rung the venue files into the same bucket, which
+    /// is how this widget came to print "Projected combined games: 2.5+".
+    private var unit: String {
+        let resolved = vocab.totalsUnit(quotedBy: thresholds.map(\.marketName))
+        return resolved.isEmpty ? "scoring" : resolved
+    }
     /// The scoreboard's totals, only where they count ``unit`` — for tennis the
     /// scoreboard reports sets, so no actual/pace total is stated at all.
     private var countsTheUnit: Bool { vocab.scoreboardCountsTheUnit }
@@ -73,7 +82,10 @@ struct TotalPointsSpectrumView: View {
         let center = thresholds.min(by: {
             abs(($0.overProbability ?? 0) - 0.5) < abs(($1.overProbability ?? 0) - 0.5)
         })
-        return center?.threshold ?? overUnder
+        // #3509 — the event-level `overUnder` is quoted in the SPORT's unit, so
+        // it is only a legitimate fallback for a widget drawn in that unit.
+        // On a bases or sets widget it is a number from another scale.
+        return center?.threshold ?? (unit == vocab.unit ? overUnder : nil)
     }
 
     private var sourceCount: Int {

@@ -62,6 +62,34 @@ struct MarketMapView: View {
     private var vocab: SportVocab { SportVocab.forSport(sportKey) }
     private var maxMargin: Int { vocab.marginRange }
 
+    /// The unit the FULL totals map is drawn in, read from the markets on it
+    /// rather than from the sport (#3509). See `SportVocab.totalsUnit`.
+    private var fullTotalUnit: String {
+        vocab.totalsUnit(quotedBy: fullGameTotals.map(\.marketName))
+    }
+    /// True where the scoreboard counts what THIS map's rungs are quoted in.
+    ///
+    /// `vocab.scoreboardCountsTheUnit` answers the same question about the
+    /// SPORT's unit, and that is the question the margin maps need. A totals
+    /// map whose rungs quote something else — soccer corners on a goals
+    /// scoreboard — has to ask it about the rungs, or it draws the scoreboard's
+    /// number on a rail that does not measure it.
+    private func scoreboardCounts(_ mapUnit: String) -> Bool {
+        vocab.scoreboardCountsTheUnit && mapUnit == vocab.unit
+    }
+    /// The EVENT-level over/under (`overUnder`) is quoted in the sport's unit,
+    /// so it belongs only on a map drawn in that unit.
+    ///
+    /// Weaker than ``scoreboardCounts(_:)`` on purpose: tennis's scoreboard
+    /// does not count games, but the event's O/U IS a game line and does belong
+    /// on the games map. Caught on the LOOK — the Braves–Phillies bases map
+    /// printed `PROJECTION 8.3`, the game's RUNS line, over rungs of 2.5–5.5
+    /// bases, and once #3509 handed the rail back to the market's own lines
+    /// that stray marker took the axis with it (7 · 8 · 9+).
+    private func sportUnitLineApplies(_ mapUnit: String) -> Bool {
+        mapUnit == vocab.unit
+    }
+
     /// The scoreboard's two numbers, ONLY where they count the thing this
     /// map's rail is drawn in (ux/1034 B5, ported from `MarketMapSection.tsx`).
     ///
@@ -87,7 +115,20 @@ struct MarketMapView: View {
     private var unitMismatchNote: String? {
         // #3465: `isDone` is the same flag that decides the note is owed, so it
         // is also the flag that decides which tense it is owed in.
-        (isLive || isDone) ? vocab.unitMismatchNote(settled: isDone) : nil
+        guard isLive || isDone else { return nil }
+        // #3509 — owed only where a map ON SCREEN actually withheld its
+        // scoreboard tile. The gate used to be "the sport is tennis", which is
+        // now too broad in a way that prints a falsehood: a doubles map whose
+        // only rung is `"Total Sets O/U 2.5"` quotes SETS, the scoreboard
+        // reports SETS, nothing is withheld — and the footnote underneath it
+        // still said "this market quotes games". Each half of this reads the
+        // same selector its own map builds its markers behind (#3503's rule:
+        // a pointer and the thing it points at are gated together, or the next
+        // person to change one orphans the other).
+        let marginWithheld = showsAnyMarginMap && !vocab.scoreboardCountsTheUnit
+        let totalWithheld = !totalMapIsEmptyChrome && !scoreboardCounts(fullTotalUnit)
+        guard marginWithheld || totalWithheld else { return nil }
+        return vocab.unitMismatchNote(settled: isDone)
     }
 
     private var hasSpreads: Bool { !(gameMarkets.spreads ?? []).isEmpty }
@@ -282,13 +323,20 @@ struct MarketMapView: View {
     /// it never had. The rule itself lives in `MarketMapRail` so it can be
     /// asserted without rasterising this view.
     private var totalMapIsEmptyChrome: Bool {
-        MarketMapRail.totalMapDrawsNothing(
+        // #3509 — `scoreboardCounts` is the SAME gate `totalMapCard` builds its
+        // scoreboard markers behind. It has to be, or the card is judged
+        // non-empty on markers it then declines to draw and we are back to
+        // #3503's empty chrome by another route.
+        let mapUnit = fullTotalUnit
+        let scoreboardIsComparable = scoreboardCounts(mapUnit)
+        return MarketMapRail.totalMapDrawsNothing(
             hasThresholds: !extractTotalThresholds(fullGameTotals).isEmpty,
-            overUnder: overUnder,
+            overUnder: sportUnitLineApplies(mapUnit) ? overUnder : nil,
             isLive: isLive,
             isDone: isDone,
-            hasScoreboardTotal: scoredHomeScore != nil && scoredAwayScore != nil,
-            hasProjectedTotal: scoredPace?.projectedTotal != nil
+            hasScoreboardTotal: scoreboardIsComparable
+                && scoredHomeScore != nil && scoredAwayScore != nil,
+            hasProjectedTotal: scoreboardIsComparable && scoredPace?.projectedTotal != nil
         )
     }
 
@@ -304,6 +352,9 @@ struct MarketMapView: View {
     private var totalMapCard: some View {
         let thresholds = extractTotalThresholds(fullGameTotals)
         let allThresh = thresholds.map(\.threshold)
+        // #3509 — this map's own unit, and whether the scoreboard counts it.
+        let mapUnit = fullTotalUnit
+        let scoreboardIsComparable = scoreboardCounts(mapUnit)
 
         let ladder: [(label: String, prob: Double, color: Color)] = thresholds.prefix(6).map {
             ("Over \(formatThreshold($0.threshold))", $0.overProb, Color(hex: "#7c3aed"))
@@ -313,18 +364,21 @@ struct MarketMapView: View {
         // are the only real numbers the card has, so the rail has to be able to
         // see them. Nothing in this block depends on the rail.
         var markers: [MapMarker] = []
-        let ouLine = overUnder ?? thresholds.first(where: { abs($0.overProb - 0.5) < 0.1 })?.threshold
+        let sportLine = sportUnitLineApplies(mapUnit) ? overUnder : nil
+        let ouLine = sportLine ?? thresholds.first(where: { abs($0.overProb - 0.5) < 0.1 })?.threshold
         if isDone {
-            if let homeScoreValue = scoredHomeScore,
+            if scoreboardIsComparable,
+               let homeScoreValue = scoredHomeScore,
                let awayScoreValue = scoredAwayScore {
                 let totalScore = homeScoreValue + awayScoreValue
-                markers.append(MapMarker(id: "final", value: Double(totalScore), type: .final_, label: "FINAL", displayValue: "\(totalScore) \(vocab.unit)"))
+                markers.append(MapMarker(id: "final", value: Double(totalScore), type: .final_, label: "FINAL", displayValue: "\(totalScore) \(mapUnit)"))
             }
             if let ou = ouLine {
                 markers.append(MapMarker(id: "pre", value: ou, type: .pre, label: "PRE-GAME", displayValue: formatThreshold(ou)))
             }
         } else if isLive {
-            if let homeScoreValue = scoredHomeScore,
+            if scoreboardIsComparable,
+               let homeScoreValue = scoredHomeScore,
                let awayScoreValue = scoredAwayScore,
                let pace = scoredPace, let proj = pace.projectedTotal {
                 let totalScore = homeScoreValue + awayScoreValue
@@ -352,7 +406,7 @@ struct MarketMapView: View {
         let bounds = MarketMapRail.totalBounds(
             thresholds: allThresh,
             markerValues: markers.map(\.value),
-            declared: vocab.totalRange,
+            declared: vocab.totalRange(quotedBy: fullGameTotals.map(\.marketName)),
             pad: 10
         )
         let rangeMin = bounds.min
@@ -362,8 +416,10 @@ struct MarketMapView: View {
         let purpleRgb = (r: 124.0, g: 58.0, b: 237.0)
 
         return mapCard(
-            title: useColumns ? "Full game total map" : vocab.totalTitle,
-            subtitle: isDone ? "Final \(vocab.unit) distribution" : "Projected total \(vocab.unit)",
+            title: useColumns
+                ? "Full game total map"
+                : vocab.totalTitle(quotedBy: fullGameTotals.map(\.marketName)),
+            subtitle: isDone ? "Final \(mapUnit) distribution" : "Projected total \(mapUnit)",
             headline: "",
             density: density,
             rangeMin: rangeMin,
@@ -475,6 +531,9 @@ struct MarketMapView: View {
     private func halfTotalCard(outcomes: [GameMarketOutcome], label: String) -> some View {
         let thresholds = extractTotalThresholds(outcomes)
         let allThresh = thresholds.map(\.threshold)
+        // #3509 — a half map reads ITS OWN rungs, not the full map's and not
+        // the sport's.
+        let mapUnit = vocab.totalsUnit(quotedBy: outcomes.map(\.marketName))
 
         var markers: [MapMarker] = []
         if let ou = thresholds.first(where: { abs($0.overProb - 0.5) < 0.1 })?.threshold {
@@ -486,7 +545,9 @@ struct MarketMapView: View {
         let bounds = MarketMapRail.totalBounds(
             thresholds: allThresh,
             markerValues: markers.map(\.value),
-            declared: vocab.halfTotalRange,
+            declared: vocab.totalRange(quotedBy: outcomes.map(\.marketName)) == nil
+                ? nil
+                : vocab.halfTotalRange,
             pad: 5
         )
         let rangeMin = bounds.min
@@ -495,7 +556,7 @@ struct MarketMapView: View {
         let purpleRgb = (r: 124.0, g: 58.0, b: 237.0)
 
         return mapCard(
-            title: label, subtitle: "Half \(vocab.unit) distribution", headline: "",
+            title: label, subtitle: "Half \(mapUnit) distribution", headline: "",
             density: density, rangeMin: rangeMin, rangeMax: rangeMax,
             zeroPosition: nil,
             leftRgb: purpleRgb, rightRgb: purpleRgb,
