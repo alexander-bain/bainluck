@@ -186,6 +186,43 @@ def validate_anchor_provider(value: str) -> str:
     return _require(value, ANCHOR_PROVIDERS, "provider")
 
 
+def normalize_anchor_sport(value):
+    """Fold ``sport`` to exactly one spelling per namespace. CERT-2006 follow-up.
+
+    ``container_provider_anchors``' unique index is
+    ``(provider, sport, id_kind, provider_id) NULLS NOT DISTINCT``. The
+    ``NULLS NOT DISTINCT`` makes "no sport" a single namespace instead of one
+    per row — but only if "no sport" is written exactly one way. Two spellings
+    reopen the hole the index was widened to close:
+
+    * ``''`` is not NULL, so an empty string is a THIRD namespace beside NULL
+      and the real sports. Two anchors spelling it differently could then claim
+      one provider id without colliding — the silent no-op D55 forbids, rebuilt
+      out of whitespace.
+    * ``'Tennis'`` and ``'tennis'`` are the same bug wearing different case.
+
+    Returns ``None`` for anything blank, and a stripped, lower-cased string
+    otherwise.
+
+    WHY CANONICALISE HERE RATHER THAN REFUSE, when every other validator in
+    this module fails closed. The two jobs are different. ``kind``, ``status``
+    and ``id_kind`` are CLOSED vocabularies, where an unexpected value means an
+    unexpected source and refusing is the informative answer. ``sport`` is an
+    OPEN namespace key — new sports arrive without a code change — so refusing
+    a variant spelling would just move the canonicalisation to every caller,
+    and the first caller that forgot would write the duplicate namespace this
+    exists to prevent. A non-string is still a type error and still raises.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ContainerVocabularyError(
+            f"sport must be a string or None, got {type(value).__name__}"
+        )
+    folded = value.strip().lower()
+    return folded or None
+
+
 def validate_node_type(value: str, field: str = "node_type") -> str:
     return _require(value, EDGE_NODE_TYPES, field)
 

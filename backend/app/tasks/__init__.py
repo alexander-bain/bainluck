@@ -723,6 +723,11 @@ celery_app.conf.task_routes = {
     # #2867 / D50 step 3. Same reasoning as the NFL line above, and the same
     # queue: dark by construction, nothing reads either stamp.
     "app.tasks.stamp_nba_statpal_fixtures": {"queue": "background"},
+    # #2927 Phase 2. `background`, and it stays there even once the hub reads
+    # it: assembly converges a container that a reader hits through
+    # `/api/containers/{slug}`, so no user is waiting on this pass. Two bounded
+    # queries per anchor, six anchors, once an hour.
+    "app.tasks.assemble_containers": {"queue": "background"},
     "app.tasks.stamp_nhl_statpal_fixtures": {"queue": "background"},
     "app.tasks.stamp_mlb_statpal_fixtures": {"queue": "background"},
     "app.tasks.heartbeat": {"queue": "realtime"},
@@ -3191,6 +3196,33 @@ def link_tennis_statpal_fixtures(self, apply=True):
 
 
 @celery_app.task(bind=True, soft_time_limit=240, time_limit=270,
+                 name="app.tasks.assemble_containers")
+def assemble_containers(self, apply=True, only=None):
+    """Assemble every declared event container from provider ids (#2927 Ph. 2).
+
+    Bootstraps the edition's container tree, claims the provider ids that name
+    it, and writes one `contains` edge per member the venue itself groups under
+    those ids — never a curated list. Declarations live in
+    `app.utils.container_tournaments`; members are discovered.
+
+    IT IS A NO-OP UNTIL PHASE 1's MIGRATION IS APPLIED, on purpose. The four
+    tables are migration-class under D45 and land only when Alex says so, so
+    the pass checks `to_regclass` first and returns `terminal: skipped,
+    reason: containers_tables_absent` rather than raising every hour. Skipped
+    is not success — the verdict contract keeps it out of the green counters
+    (gotcha #53).
+
+    `apply=False` writes nothing and still returns the counts. 240s soft limit
+    against a pass that is two bounded queries per anchor, well clear of the
+    global 300s (#966)."""
+    from app.tasks.container_assembly import _run_assemble_containers
+    return _tracked_run(
+        "assemble_containers",
+        _run_assemble_containers(apply=apply, only=only),
+    )
+
+
+@celery_app.task(bind=True, soft_time_limit=240, time_limit=270,
                  name="app.tasks.stamp_nfl_statpal_fixtures")
 def stamp_nfl_statpal_fixtures(self, apply=True):
     """Stamp each NFL row with the StatPal contest it is (#2867, D50).
@@ -5492,6 +5524,22 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.fill_futures_chart_series",
         "schedule": crontab(minute=13),
         "kwargs": {"limit": 12},
+        "options": {"queue": "background"},
+    },
+    # --- #2927 Phase 2: the container assembles itself ------------------------
+    #
+    # A CRONTAB, NOT AN INTERVAL, and that is the recorded lesson rather than a
+    # style choice: a relative interval re-arms a full period on every boot, so
+    # on a 30-release day an hourly task fires far less than hourly (#3316). A
+    # crontab fires on the wall clock whatever the deploys do.
+    #
+    # Minute 47 is unshared with any entry above. Hourly is the honest cadence
+    # for what this pass converges on: a draw's markets appear when the venue
+    # lists them, which is hours before play, and the read path is cached — a
+    # tighter loop would re-derive the same edges to learn nothing.
+    "assemble-containers-hourly": {
+        "task": "app.tasks.assemble_containers",
+        "schedule": crontab(minute=47),
         "options": {"queue": "background"},
     },
     # --- #2077 (queue 419): the settlement-capture sweep, on a schedule -------

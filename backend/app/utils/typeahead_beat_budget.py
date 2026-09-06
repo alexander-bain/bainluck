@@ -1341,7 +1341,48 @@ def free_background_slots(
 #: 19 minutes after `sync-statpal-schedules-mlb` at `:02`, and is two minutes
 #: clear of the NHL stamper at `:19` and the NFL one at `:23` — so the four
 #: StatPal readers sit at `:17`/`:19`/`:21`/`:23` and no two ever run together.
-BACKGROUND_BEAT_COUNT = 118
+#: 🔴 RE-DERIVED at lane1b/053 (2026-09-06, #2927 Phase 2): **118 → 119,
+#: explicit 73 → 74.** One beat, explicitly routed here:
+#: `assemble-containers-hourly` at `crontab(minute=47)`, the event-container
+#: assembly pass. RE-DERIVED by RUNNING the census in
+#: `test_typeahead_beat_budget.py` over the assembled `beat_schedule`, which
+#: printed `explicit 74 implicit 45 total 119` — not by adding 1 to 118 (#1910).
+#: The fall-through half is UNMOVED at **45**: the beat names its queue rather
+#: than defaulting into it, the benign direction this guard reserves.
+#:
+#: **And the guard caught the omission again, exactly as the MLB stamper's note
+#: above predicts it would.** The beat shipped without the re-derivation; the
+#: lane's focused local run (D40) selected on `receipt or container` and this
+#: file matches neither word, so it went red only in CI backend shard 1 on
+#: `74 != 73`. That is now twice in three days that the census was missed by a
+#: `-k` band named after the feature. The lesson is on the band, not the guard:
+#: a change that adds a `beat_schedule` entry runs THIS file, whatever it is
+#: about.
+#:
+#: ITS COST, declared here because this is where costs are declared. Per pass,
+#: for as long as #2927 Phase 1's migration is unapplied — which is TODAY, and
+#: is the case Alex is still deciding — the whole pass is FOUR `to_regclass`
+#: catalogue lookups and a `skipped` terminal. It touches no table, because
+#: none of the four exist. Once they do: per declared edition, one indexed read
+#: per declared venue id (the US Open edition declares 6), each bounded to the
+#: edition's own date window, plus the edge writes for whatever those ids
+#: gather. There is no scan over `futures_markets` and no LLM call. NO HTTP AT
+#: ALL — the assembly pass reads ids we already hold and never asks a venue.
+#:
+#: `background` rather than `heavy` because there is no multi-minute compute,
+#: and rather than `realtime` because NOTHING READS THE OUTPUT YET:
+#: `/api/containers/{slug}` is behind `CONTAINERS_READ_ENABLED` and the hub
+#: still renders from the register. A producer with no reader has no claim on
+#: the live queue — the same reason the four StatPal stampers above sit here.
+#:
+#: `:47` was chosen by RUNNING the minute census over the assembled schedule
+#: (CERT-418's lesson), not by reading the file: of 157 beat entries it carries
+#: ZERO other crontab fires. It is the last minute of the settlement sweep's
+#: `:31`–`:47` band, whose only other occupant is `settlement-capture-sweep-
+#: nightly` at `:31`; it is clear of the two 15-and-17-entry pile-ups at `:45`
+#: and `:40`, and one minute after `precompute-discover-candidate-base` at
+#: `:46`.
+BACKGROUND_BEAT_COUNT = 119
 #: **UX-P139 re-derivation: 101 → 103, explicit 56 → 58, fall-through still 45.**
 #: Two beats added, both naming `background` explicitly:
 #: `refresh-registered-tournament-prices` (every 10 min, ~11 bounded Gamma calls
