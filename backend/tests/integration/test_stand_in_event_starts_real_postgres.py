@@ -787,7 +787,8 @@ async def test_what_the_event_api_reads_back_is_the_published_hour(
     """The third clause of the regression: the value the PAGE gets.
 
     `GET /api/events/{id}` loads the row through the ORM and serves
-    `commence_time=event.commence_time` (`_format_event`). This asserts that
+    `"commence_time": event.commence_time.isoformat()` (`_format_event`, the
+    formatter the detail route calls at the end of its handler). This asserts that
     ORM read against the real server on a fresh session — the same projection
     the route performs — rather than raw SQL, because an ORM identity-map or
     expiry problem is invisible to a `text()` SELECT and would be exactly the
@@ -826,7 +827,7 @@ async def test_what_the_event_api_reads_back_is_the_published_hour(
     import app.routes.events as events_route
 
     src = inspect.getsource(events_route._format_event)
-    assert "commence_time=event.commence_time" in src
+    assert '"commence_time": event.commence_time.isoformat()' in src
 
     # The detail cache must EXPIRE, or a repaired row would be served stale
     # until the dyno restarted. 300s is the bound this ship inherits.
