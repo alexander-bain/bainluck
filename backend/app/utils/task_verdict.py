@@ -290,11 +290,23 @@ ENFORCED_TASKS = frozenset({
     # SAMPLER's failure mode is not an error, it is running forever and capturing
     # nothing, which is `kalshi_trades` exactly (500 fetched, 500 empty, GREEN
     # every 6h for ten weeks). Its terminals: `complete` only when the current
-    # beat is in the ring, `failed` when the ledger could not be read / a
-    # required gauge was absent / the ring could not be written, and `partial`
-    # when the ledger reads fine but no beat has landed in over two periods —
-    # the sampler working over a producer that has stopped is the one state that
-    # would otherwise look identical to health.
+    # beat is in the ring, `failed` when the ledger could not be read / the row
+    # could not be keyed / the ring could not be written, and `partial` for the
+    # producer's condition — no beat landing in over two periods, or a required
+    # gauge the beat stopped writing. The sampler working over a producer that
+    # has stopped is the one state that would otherwise look identical to health.
+    #
+    # CAL-P1042 (#3733) moved the missing-gauge case out of `failed` and into
+    # `partial`, and it is the sharpest case in this file FOR this file: an
+    # observer that publishes the PRODUCER's condition as its OWN verdict is the
+    # crying-wolf failure the header thirty lines up warns about, arriving from
+    # the inside. It read `consecutive_failures: 78` / `health: critical` on
+    # 2026-09-06 while banking every beat in 0.3s, because one gauge had been
+    # absent since 2026-09-05T07:19Z. `partial` keeps the signal (NOT_GREEN, and
+    # `record_task_incomplete` records it under its own counter) while dropping
+    # the escalation that spent it. The two facts are now separately named on
+    # the run artifact — `sampler_ok` and `producer_condition` — so neither has
+    # to be inferred from the other.
     "calibration_beat_gauge_sampler",  # terminal + appended + summary + ledger_age_s
     # #2199: the futures price refresher. Enrolled AT BIRTH with a terminal, and
     # it exists BECAUSE of a false green — two discovery polls reported success

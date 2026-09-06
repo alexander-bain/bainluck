@@ -23,6 +23,7 @@ written and which no fixed tuple can ever hold.
 
 from __future__ import annotations
 
+import asyncio
 import datetime
 
 import pytest
@@ -35,6 +36,8 @@ from app.tasks.calibration_beat_gauge_sampler import (
     build_observation,
     decide_terminal,
     merge_history,
+    producer_condition,
+    sampler_did_its_job,
     select_gauges,
     summarise,
 )
@@ -429,12 +432,18 @@ class TestDecideTerminal:
         assert terminal == "failed"
         assert "history_write_failed" in reason
 
-    def test_a_missing_required_gauge_fails(self):
+    def test_a_missing_required_gauge_is_the_producers_condition_not_a_failure(self):
+        """CAL-P1042 (#3733). It was ``failed``; that is what spent the signal.
+
+        Still NOT GREEN — the row is unreplayable and the docstring's
+        requirement is intact — but ``partial``, so it does not escalate a
+        working sampler to ``critical``.
+        """
         obs = dict(_obs(1), gauges_missing_required=["staged:served_drift_uncheckable"])
         terminal, reason = decide_terminal(
             read_status="ok", observation=obs, write_status="stored", ledger_age_s=60
         )
-        assert terminal == "failed"
+        assert terminal == "partial"
         assert "staged:served_drift_uncheckable" in reason
 
     def test_a_stale_ledger_is_partial_so_it_cannot_read_green(self):
@@ -453,6 +462,174 @@ class TestDecideTerminal:
         )
         assert terminal == "failed"
         assert "history_write_failed" in reason
+
+
+# ---------------------------------------------------------------------------
+# CAL-P1042 (#3733) — the observer's verdict is not the producer's condition
+#
+# The class of defect: an instrument that publishes the condition of the thing
+# it WATCHES as its own health. Measured cost on 2026-09-06 —
+# ``consecutive_failures: 78`` / ``health: critical`` on a sampler banking every
+# beat in 0.3s, because one gauge had been absent from the producer since
+# 2026-09-05T07:19Z. These tests pin the split in BOTH directions: a producer
+# fault never reads as a sampler failure, and a sampler fault never hides behind
+# a producer fault.
+# ---------------------------------------------------------------------------
+
+class TestTheObserverIsNotTheProducer:
+    def test_the_exact_production_shape_no_longer_reads_as_a_sampler_failure(self):
+        """The 2026-09-06 run, field for field, off ``last_failure_summary``."""
+        obs = dict(
+            _obs(1788734295931),
+            terminal="cancelled",
+            gauges_missing_required=["staged:served_at"],
+        )
+        terminal, reason = decide_terminal(
+            read_status="ok", observation=obs, write_status="unchanged",
+            ledger_age_s=1793,
+        )
+        assert terminal == "partial", "78 consecutive reds on a working instrument"
+        assert "staged:served_at" in reason
+        assert sampler_did_its_job(observation=obs, write_status="unchanged") is True
+
+    def test_a_producer_fault_still_refuses_green(self):
+        """Not a downgrade to GREEN — the docstring's requirement is kept."""
+        from app.utils.task_verdict import verdict_for
+
+        obs = dict(_obs(1), gauges_missing_required=["staged:served_at"])
+        terminal, _ = decide_terminal(
+            read_status="ok", observation=obs, write_status="stored", ledger_age_s=60
+        )
+        v = verdict_for("calibration_beat_gauge_sampler", {"terminal": terminal})
+        assert v.is_green is False
+        assert v.blocks_success is True
+        assert v.authoritative is True
+
+    def test_only_the_samplers_own_work_can_read_failed(self):
+        """Every ``failed`` branch is a fact about US, and there are three."""
+        ours = [
+            decide_terminal(read_status="unavailable", observation=None,
+                            write_status=None, ledger_age_s=None),
+            decide_terminal(read_status="ok", observation=dict(_obs(1), generation=None),
+                            write_status="stored", ledger_age_s=60),
+            decide_terminal(read_status="ok", observation=_obs(1),
+                            write_status="error", ledger_age_s=60),
+        ]
+        assert [t for t, _ in ours] == ["failed", "failed", "failed"]
+
+    def test_a_sampler_fault_is_not_masked_by_a_producer_fault(self):
+        """The other direction. A broken write under a broken beat is OURS."""
+        obs = dict(_obs(1), gauges_missing_required=["staged:served_at"])
+        terminal, reason = decide_terminal(
+            read_status="ok", observation=obs, write_status="error",
+            ledger_age_s=4 * 3600,
+        )
+        assert terminal == "failed"
+        assert "history_write_failed" in reason
+        assert sampler_did_its_job(observation=obs, write_status="error") is False
+
+    def test_both_producer_conditions_are_reported_not_just_the_first(self):
+        """They have different owners; naming one hides the other."""
+        obs = dict(_obs(1), gauges_missing_required=["staged:served_at"])
+        cond = producer_condition(observation=obs, ledger_age_s=4 * 3600)
+        assert cond["conditions"] == ["gauges_absent", "ledger_stale"]
+        assert "staged:served_at" in cond["reason"]
+        assert "ledger_stale" in cond["reason"]
+
+    def test_a_healthy_producer_reports_measured_with_no_conditions(self):
+        cond = producer_condition(observation=_obs(1), ledger_age_s=600)
+        assert cond["measured"] is True
+        assert cond["conditions"] == []
+        assert cond["gauges_absent"] == []
+        assert cond["reason"] is None
+
+    def test_an_unreadable_ledger_reports_unmeasured_never_an_all_clear(self):
+        """gotcha #53: "no conditions" and "we could not look" are two values."""
+        cond = producer_condition(observation=None, ledger_age_s=None)
+        assert cond["measured"] is False
+        assert cond["conditions"] == []
+        # The discriminator. Absent, not an empty list that reads as "none".
+        assert cond["gauges_absent"] is None
+
+
+class TestTheArtifactCarriesBothFactsByName:
+    """The named fields, on every exit — the point is that no reader has to
+    open ``last_result_summary`` and reason about which fact produced the red.
+    """
+
+    @staticmethod
+    def _run(monkeypatch, *, ledger, ledger_status="ok", history=({}, "ok"),
+             write_status="stored"):
+        import app.tasks.calibration_beat_gauge_sampler as mod
+
+        async def _rl():
+            return ledger, ledger_status
+
+        async def _rh():
+            return history
+
+        async def _pub(envelope):
+            return {"status": write_status}
+
+        monkeypatch.setattr(mod, "_read_ledger", _rl)
+        monkeypatch.setattr(mod, "_read_history", _rh)
+        monkeypatch.setattr(
+            "app.services.durable_snapshots.publish_snapshot_standalone", _pub
+        )
+        return asyncio.run(mod.run_beat_gauge_sample())
+
+    def _ledger(self, stages):
+        return {
+            "generation": 1788734295931,
+            "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "complete": True,
+            "payload": {"terminal": "cancelled", "stages": stages},
+            "status": "ok",
+        }
+
+    def test_a_beat_missing_a_gauge_banks_partial_with_the_producer_named(
+        self, monkeypatch
+    ):
+        from app.tasks.calibration_beat_gauge_sampler import (
+            REQUIRED_DISCLOSURE_GAUGES,
+        )
+
+        # Every required gauge except the one production is actually missing.
+        stages = {g: 0 for g in REQUIRED_DISCLOSURE_GAUGES if g != "staged:served_at"}
+        art = self._run(monkeypatch, ledger=self._ledger(stages))
+
+        assert art["terminal"] == "partial"
+        assert art["sampler_ok"] is True, "the sampler read, keyed and wrote"
+        assert art["producer_condition"]["measured"] is True
+        assert art["producer_condition"]["conditions"] == ["gauges_absent"]
+        assert art["producer_condition"]["gauges_absent"] == ["staged:served_at"]
+        assert art["producer_condition"]["beat_terminal"] == "cancelled"
+
+    def test_an_unreadable_ledger_marks_the_sampler_bad_and_the_producer_unknown(
+        self, monkeypatch
+    ):
+        art = self._run(monkeypatch, ledger=None, ledger_status="unavailable")
+
+        assert art["terminal"] == "failed"
+        assert art["sampler_ok"] is False
+        assert art["producer_condition"]["measured"] is False
+
+    def test_an_unreadable_ring_is_ours_and_still_reports_what_it_saw(
+        self, monkeypatch
+    ):
+        """The early return that had neither field. The producer WAS measured."""
+        from app.tasks.calibration_beat_gauge_sampler import (
+            REQUIRED_DISCLOSURE_GAUGES,
+        )
+
+        stages = {g: 0 for g in REQUIRED_DISCLOSURE_GAUGES}
+        art = self._run(
+            monkeypatch, ledger=self._ledger(stages), history=({}, "checksum_failed")
+        )
+
+        assert art["terminal"] == "failed"
+        assert art["sampler_ok"] is False
+        assert art["producer_condition"]["measured"] is True
 
 
 class TestEnrolment:
