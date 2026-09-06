@@ -687,3 +687,43 @@ async def test_the_event_the_page_reads_gets_the_venue_hour(pg_session):
     assert untouched == authoritative, (
         f"an authoritative non-midnight event moved to {untouched}"
     )
+
+    # TENNIS-EVENT-COMMENCE-CAS (CERT-2073's follow-up), proved against the
+    # server by executing THE STATEMENT PRODUCTION USES — not a copy, which
+    # could drift into agreeing with the test by construction.
+    #
+    # The provenance decision is made against a SELECT and acted on in a later
+    # statement. If ESPN sync corrects the row in between, the guard has already
+    # said yes on stale evidence, and only the CAS predicate can still refuse.
+    stale = await pg_session.execute(
+        text(kalshi_task.TENNIS_EVENT_COMMENCE_CAS_UPDATE),
+        {
+            "dt": datetime(2031, 3, 3, 3, 3, 3, tzinfo=timezone.utc),
+            "id": 15305555,
+            "old": _DOUBLES_TICKER_MIDNIGHT,   # what the SELECT saw; now stale
+            "prov": "pm_kalshi_KXWTADOUBLES-26SEP07SINTOWHUNKRA",
+        },
+    )
+    assert stale.rowcount == 0, (
+        "the CAS wrote a row whose commence_time had already moved on — a "
+        "concurrent authoritative correction would be overwritten by a "
+        "ticker-derived value the guard approved against a stale read"
+    )
+    assert _utc(await _event_commence(pg_session, 15305555)) == _TENNIS_OCCURRENCE
+
+    # ... and it is a CAS, not a statement that never matches: the same
+    # predicate with the CURRENT value does match.
+    fresh = await pg_session.execute(
+        text(kalshi_task.TENNIS_EVENT_COMMENCE_CAS_UPDATE),
+        {
+            "dt": _TENNIS_OCCURRENCE,
+            "id": 15305555,
+            "old": _TENNIS_OCCURRENCE,
+            "prov": "pm_kalshi_KXWTADOUBLES-26SEP07SINTOWHUNKRA",
+        },
+    )
+    assert fresh.rowcount == 1, (
+        "the CAS matched nothing even with the row's own current values — the "
+        "refusal above would then be proving nothing"
+    )
+    await pg_session.rollback()

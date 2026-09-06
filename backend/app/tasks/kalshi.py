@@ -2101,6 +2101,26 @@ def _tennis_commence_target(
 _DERIVED_EVENT_ID_PREFIX = "pm_kalshi_"
 
 
+#: The Event write, as a compare-and-set. Exported so a gate can execute the
+#: STATEMENT PRODUCTION USES rather than a copy of it that can drift.
+#:
+#: `TENNIS-EVENT-COMMENCE-CAS`, the nonblocking follow-up named in CERT-2073.
+#: The driver reads `e.commence_time` and `e.external_id` in one statement and
+#: writes in another, so between them ESPN sync or the matcher may have given
+#: the row an authoritative start. Without the CAS this repair would overwrite
+#: that correction with a ticker-derived value and the provenance guard, which
+#: was evaluated against the STALE read, would have approved it.
+#:
+#: Both read values are in the predicate because both are what the guard was
+#: decided on: the instant (still the bare ticker midnight?) and the provenance
+#: (still market-born?). `events` has NO `updated_at` column — only
+#: `created_at` — so the SET list is `commence_time` alone.
+TENNIS_EVENT_COMMENCE_CAS_UPDATE = (
+    "UPDATE events SET commence_time = :dt "
+    "WHERE id = :id AND commence_time = :old AND external_id = :prov"
+)
+
+
 def _tennis_event_needs_the_hour(
     *,
     event_external_id: str | None,
@@ -2203,16 +2223,20 @@ async def _fix_tennis_commence_times() -> dict:
                 ticker_date=ticker_date,
                 target=target,
             ):
-                await session.execute(
-                    # `events` has `created_at` and NO `updated_at` — unlike
-                    # `futures_markets`. Setting one raises UndefinedColumn,
-                    # the poll's `except` swallows it, and the whole fix-up
-                    # silently loses BOTH halves every beat. Caught by the
-                    # real-Postgres arm below; no fake session can see it.
-                    text("UPDATE events SET commence_time = :dt WHERE id = :id"),
-                    {"dt": target, "id": m.event_id},
+                written = await session.execute(
+                    text(TENNIS_EVENT_COMMENCE_CAS_UPDATE),
+                    {
+                        "dt": target,
+                        "id": m.event_id,
+                        "old": m.event_commence,
+                        "prov": m.event_external_id,
+                    },
                 )
-                event_updates.append(m.event_id)
+                # rowcount, not the decision: under the CAS the statement is
+                # allowed to write nothing, and a counter that ignored that
+                # would report repairs this beat did not make.
+                if written.rowcount:
+                    event_updates.append(m.event_id)
 
         if fixed_ids:
             await session.execute(

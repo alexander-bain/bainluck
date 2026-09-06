@@ -364,8 +364,13 @@ class TestTennisEventNeedsTheHour:
 
 
 class _FakeResult:
-    def __init__(self, rows):
+    def __init__(self, rows, rowcount=0):
         self._rows = rows
+        #: The CAS update reads this to decide whether it wrote. Defaulting it
+        #: to 0 would make the driver report every repair as a no-op, so the
+        #: write paths below hand back 1 and the CAS-refusal case says so
+        #: explicitly.
+        self.rowcount = rowcount
 
     def fetchall(self):
         return self._rows
@@ -409,6 +414,11 @@ class _FakeSession:
         self._rows = rows
         self.updates = []          # (id, commence_time) pairs
         self.event_updates = []    # (event_id, commence_time) pairs — #3532
+        self.event_cas_params = []  # the full bind set, so the CAS is visible
+        #: Rows the Event CAS reports writing. 1 is the ordinary case; a test
+        #: sets 0 to stand in for another writer having corrected the row
+        #: between the driver's SELECT and its UPDATE.
+        self.event_cas_rowcount = 1
         self.calibration_resets = []
         self.committed = False
 
@@ -421,8 +431,9 @@ class _FakeSession:
             self.updates.append((params["id"], params["dt"]))
             return _FakeResult([])
         if "UPDATE events" in sql:
+            self.event_cas_params.append(params)
             self.event_updates.append((params["id"], params["dt"]))
-            return _FakeResult([])
+            return _FakeResult([], rowcount=self.event_cas_rowcount)
         if "futures_outcomes" in sql:
             self.calibration_resets.append(params["ids"])
             return _FakeResult([])
@@ -570,6 +581,40 @@ class TestFixTennisCommenceTimesDriver:
         assert session.calibration_resets == []
         assert session.event_updates == [(15305555, occurrence)]
         assert session.committed is True
+
+        # TENNIS-EVENT-COMMENCE-CAS: the write must be conditional on BOTH
+        # values the provenance decision was made against, because the decision
+        # was made against a SELECT that has since been superseded.
+        (binds,) = session.event_cas_params
+        assert binds["old"] == datetime(2026, 9, 7, tzinfo=UTC)
+        assert binds["prov"] == "pm_kalshi_KXWTADOUBLES-26SEP07SINTOWHUNKRA"
+
+    @pytest.mark.asyncio
+    async def test_a_row_another_writer_corrected_is_not_counted(self, monkeypatch):
+        """The CAS refusing is a normal outcome, not an error.
+
+        When ESPN sync gives the Event an authoritative start between the
+        driver's SELECT and its UPDATE, the predicate matches nothing and the
+        statement writes no rows. The beat must report the repair it actually
+        made — 0 — or the counter becomes a record of intentions.
+        """
+        occurrence = datetime(2026, 9, 7, 18, 0, tzinfo=UTC)
+        rows = [
+            _row(
+                7,
+                "KXWTADOUBLES-26SEP07SINTOWHUNKRA",
+                occurrence,
+                event_commence=datetime(2026, 9, 7, tzinfo=UTC),
+                event_id=15305555,
+            )
+        ]
+        session = _install_fake_session(monkeypatch, rows)
+        session.event_cas_rowcount = 0  # the row moved under us
+
+        assert await _fix_tennis_commence_times() == {
+            "markets": 0, "events": 0, "scanned": 1,
+        }
+        assert session.event_cas_params, "the CAS must still be attempted"
 
     @pytest.mark.asyncio
     async def test_nothing_to_fix_commits_nothing(self, monkeypatch):
