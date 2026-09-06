@@ -2458,6 +2458,397 @@ async def _refine_stand_in_event_starts() -> int:
         return moved
 
 
+# --- #3518 / #3569: the books of the games we have already LINKED ------------
+
+#: How far ahead a linked event counts as "coming up". Seven days is the venue's
+#: own listing horizon for game series and, measured 2026-09-06, the population
+#: it defines is small and flat: **415 open linked Kalshi markets across 62
+#: series**, of which 66 held ZERO outcome rows and 255 had received no snapshot
+#: in six hours. Widening it buys championship fields that
+#: ``futures_price_refresh`` already owns; narrowing it re-opens the gap this
+#: pass exists to close.
+LINKED_BOOK_HORIZON_DAYS = 7
+
+#: A game that has already started is still worth reading — it is live, and the
+#: 2-minute poll only reaches it if the event row says ``live``.
+LINKED_BOOK_LOOKBACK_HOURS = 6
+
+#: 🔴 SERIES, NOT EVENTS, AND THAT IS THE WHOLE BOUND (#3149).
+#:
+#: ``get_markets`` takes ``series_ticker`` and returns every market of every
+#: event in that series — measured against the live endpoint 2026-09-05,
+#: ``KXMLBGAME`` with no status filter is 1,826 markets over 2 pages in 1.0s.
+#: So the cost of this pass scales with the number of LEAGUES in play (62), not
+#: with the number of games (415), and it stays flat on a busy Saturday.
+#:
+#: The cap is above today's 62 on purpose: it is a ceiling against a pathological
+#: fan-out, not a rationing device. Series are walked STALEST FIRST, so a series
+#: the cap or the deadline drops only rises up the order next run — an ordering
+#: with both bounds (gotcha #41), not a head-of-list that starves its tail.
+_LINKED_SERIES_PER_RUN = 90
+_LINKED_BOOK_DEADLINE_S = 240.0
+_LINKED_BOOK_PAGE_LIMIT = 1000
+_LINKED_BOOK_MAX_PAGES = 3
+
+#: The markets this pass owns: OPEN Kalshi markets we have already linked to an
+#: event that is live or about to be. Ordered by how long it has been since any
+#: of the market's outcomes was priced, NULLS FIRST — a market that has never
+#: been priced at all is the top of the queue, which is exactly #3518's
+#: population.
+_LINKED_GAME_BOOKS_SQL = text(
+    """
+    SELECT fm.id,
+           fm.external_id,
+           fm.name,
+           fm.event_id,
+           split_part(fm.external_id, '-', 1) AS series,
+           (SELECT MAX(fo.last_updated)
+              FROM futures_outcomes fo
+             WHERE fo.market_id = fm.id) AS newest_price
+      FROM futures_markets fm
+      JOIN events e ON e.id = fm.event_id
+     WHERE fm.source = 'kalshi'
+       AND fm.status = 'open'
+       AND fm.external_id LIKE 'KX%'
+       AND (
+             e.status = 'live'
+          OR (
+                e.status = 'scheduled'
+                AND e.commence_time > NOW() - make_interval(hours => :lookback_hours)
+                AND e.commence_time <= NOW() + make_interval(days => :horizon_days)
+             )
+           )
+     ORDER BY newest_price ASC NULLS FIRST, fm.id
+    """
+)
+
+
+def _linked_book_series_order(rows) -> list[str]:
+    """Series to walk, stalest first.
+
+    A series is as stale as its stalest market, and a market that has never been
+    priced (``newest_price IS NULL``) is infinitely stale. Ordering on the
+    series rather than on the market is what makes one request per series a
+    complete answer for that series instead of a partial one.
+    """
+    worst: dict[str, tuple[int, object]] = {}
+    for row in rows:
+        # (0, None) sorts ahead of (1, timestamp): never-priced first, then
+        # oldest-priced. A bare `min` over mixed None/datetime cannot compare.
+        key = (0, None) if row.newest_price is None else (1, row.newest_price)
+        current = worst.get(row.series)
+        if current is None or key < current:
+            worst[row.series] = key
+    return [s for s, _ in sorted(worst.items(), key=lambda kv: kv[1])]
+
+
+async def _fetch_series_books(service, series: str) -> dict[str, list]:
+    """Every market of one Kalshi series, PARSED, grouped by its event ticker.
+
+    Goes through ``parse_markets`` and never reads the raw dicts. ``get_markets``
+    returns the venue's own JSON, and the venue stopped emitting the cent-based
+    ``yes_bid``/``yes_ask``/``last_price`` keys entirely (#3569, measured
+    2026-09-06) — a reader that helps itself to those dicts sees no prices at
+    all, which is exactly how the 2-minute poll went dark without one error.
+
+    Keyed by each market's OWN ``event_ticker``, never by request order: the
+    venue does not promise either order or length.
+    """
+    books: dict[str, list] = {}
+    cursor = None
+    for _page in range(_LINKED_BOOK_MAX_PAGES):
+        raw, cursor = await service.get_markets(
+            series_ticker=series,
+            status=None,
+            limit=_LINKED_BOOK_PAGE_LIMIT,
+            cursor=cursor,
+        )
+        for market in service.parse_markets(raw):
+            if market.event_ticker and market.ticker:
+                books.setdefault(market.event_ticker, []).append(market)
+        if not cursor or not raw:
+            break
+    return books
+
+
+async def _refresh_linked_game_books(deadline_s: float | None = None) -> dict:
+    """Read the book of every Kalshi game we have LINKED to a live/imminent event.
+
+    ## the hole this fills, and why nothing else could
+
+    #3518 made ``_poll_kalshi_markets`` record an outcome row for a leg whose
+    book it could not read, instead of writing nothing. That fixes every leg the
+    poll INGESTS from now on — and the poll ingests almost nothing that already
+    exists. Measured 2026-09-06 (``/api/admin/kalshi/scan-report``): the main
+    scan's verdict was ``frozen`` on **24 of 24** runs,
+    ``unreached_existing == events_existing`` (12,396 of 12,396 on the latest),
+    ``wraps: 0``, with the deadline firing while still inside the NEW events.
+    So a market already in the table is never re-read by the poll, and:
+
+    * ``futures_price_refresh`` (#2199) states in its own docstring that it
+      "deliberately does NOT create markets, **create outcomes**" — a price
+      arriving for an id we do not hold is counted as ``unknown_outcomes`` and
+      dropped, by design;
+    * ``_poll_live_prediction_market_prices`` is UPDATE-only *and* scoped to
+      live-or-within-3h events.
+
+    Between them, a linked game more than three hours out with a missing or
+    stale outcome row had no path back. 415 open linked markets across 62
+    series on 2026-09-06; **66 with zero outcome rows** and **255 with no
+    snapshot in six hours**, on games inside a week.
+
+    ## what it does, and the three things it refuses
+
+    One request per SERIES (not per event — see :data:`_LINKED_SERIES_PER_RUN`),
+    parsed through the service, priced with ``_kalshi_yes_probability``. Then,
+    per linked market: a missing outcome row is CREATED, a readable price is
+    written, and a snapshot lands for the chart.
+
+    * **It never invents a price.** An unreadable book creates the row with
+      ``current_probability = NULL`` — #3518's state exactly — and updates
+      nothing on an existing row.
+    * **It never overwrites a graded row.** Both writes carry
+      ``is_winner IS NOT TRUE`` (gotcha #21, and ``IS NOT TRUE`` rather than
+      ``IS NULL`` because unsettled is stored as FALSE — #2199's first live
+      failure).
+    * **It never touches identity.** No ``event_id``, no ``commence_time``, no
+      tier, no category. Two writers on one column is #3532's whole story; this
+      pass writes prices and outcome rows and nothing else.
+
+    The reading reaches the event hero on its own: the 15-minute matcher is the
+    writer that stamps ``Event.win_probability_sources`` for scheduled events
+    (see ``_persist_source_reading``), and it reads these outcome rows. It had
+    nothing to read while they were missing or NULL.
+    """
+    import asyncio
+    import time as _time
+
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    from app.models.models import FuturesOddsSnapshot, FuturesOutcome
+    from app.services.kalshi_api import KalshiAPIService
+    from app.utils.odds_math import probability_to_american
+    from app.utils.price_change_stamp import price_changed_at_value
+
+    started = _time.monotonic()
+    # One capture time for the whole pass, as every other snapshot writer does:
+    # a chart reads these as one observation of the slate, not as 62 staggered
+    # ones. The outcome's own `last_updated` is `func.now()` — server clock —
+    # because that column is a freshness gate other code compares against NOW().
+    now = datetime.now(timezone.utc)
+    budget = _LINKED_BOOK_DEADLINE_S if deadline_s is None else deadline_s
+
+    stats = {
+        "markets_selected": 0,
+        "series_selected": 0,
+        "series_read": 0,
+        "series_unreadable": 0,
+        "markets_reached": 0,
+        "markets_absent_at_venue": 0,
+        "outcomes_created_priced": 0,
+        "outcomes_created_unpriced": 0,
+        "outcomes_repriced": 0,
+        "snapshots_written": 0,
+        "books_unreadable": 0,
+        "deadline_hit": False,
+        "errors": [],
+    }
+
+    async with get_task_session() as session:
+        rows = (
+            await session.execute(
+                _LINKED_GAME_BOOKS_SQL,
+                {
+                    "lookback_hours": LINKED_BOOK_LOOKBACK_HOURS,
+                    "horizon_days": LINKED_BOOK_HORIZON_DAYS,
+                },
+            )
+        ).fetchall()
+
+        stats["markets_selected"] = len(rows)
+        if not rows:
+            # Gotcha #53: an empty result is a SHAPE. "No game is coming up" and
+            # "the selector is broken" produce the same empty list, so the
+            # terminal says which question was asked.
+            stats["terminal"] = "no_linked_games_in_window"
+            return stats
+
+        by_series: dict[str, list] = {}
+        for row in rows:
+            by_series.setdefault(row.series, []).append(row)
+
+        series_order = _linked_book_series_order(rows)[:_LINKED_SERIES_PER_RUN]
+        stats["series_selected"] = len(series_order)
+
+        service = KalshiAPIService()
+        try:
+            for series in series_order:
+                if _time.monotonic() - started > budget:
+                    stats["deadline_hit"] = True
+                    break
+
+                try:
+                    books = await _fetch_series_books(service, series)
+                except Exception as exc:  # noqa: BLE001 — one series may not end the run
+                    stats["series_unreadable"] += 1
+                    stats["errors"].append(f"{series}: {str(exc)[:120]}")
+                    continue
+                stats["series_read"] += 1
+
+                for row in by_series.get(series, []):
+                    venue_markets = books.get(row.external_id) or []
+                    if not venue_markets:
+                        # The venue lists no book for a ticker we hold. Recorded,
+                        # never acted on: a market row is not retired on the
+                        # strength of one absent read (gotcha #53, and #2222's
+                        # venue-settled confirmation window is the place that
+                        # judgement belongs).
+                        stats["markets_absent_at_venue"] += 1
+                        continue
+                    stats["markets_reached"] += 1
+
+                    existing = {
+                        e[0]: e[1]
+                        for e in (
+                            await session.execute(
+                                select(
+                                    FuturesOutcome.external_id,
+                                    FuturesOutcome.is_winner,
+                                ).where(FuturesOutcome.market_id == row.id)
+                            )
+                        ).all()
+                    }
+                    rank_base = len(existing)
+
+                    for offset, venue_market in enumerate(venue_markets, 1):
+                        prob = _kalshi_yes_probability(
+                            venue_market.yes_bid,
+                            venue_market.yes_ask,
+                            venue_market.last_price,
+                        )
+                        if prob is None:
+                            stats["books_unreadable"] += 1
+                        american = (
+                            probability_to_american(prob)
+                            if prob is not None and 0 < prob < 1
+                            else None
+                        )
+
+                        if venue_market.ticker not in existing:
+                            # `row.name` is our stored name for the EVENT, which
+                            # is what `_kalshi_outcome_name` wants it for — its
+                            # only use is the "is this market's title just the
+                            # event's title?" test. Every other branch reads the
+                            # venue market itself.
+                            name = _kalshi_outcome_name(
+                                row.name, venue_market, len(venue_markets)
+                            )
+                            await session.execute(
+                                pg_insert(FuturesOutcome)
+                                .values(
+                                    market_id=row.id,
+                                    external_id=venue_market.ticker,
+                                    name=name,
+                                    current_probability=prob,
+                                    current_american_odds=american,
+                                    current_yes_bid=venue_market.yes_bid,
+                                    current_yes_ask=venue_market.yes_ask,
+                                    rank=rank_base + offset,
+                                    # Explicit, and load-bearing: the column is
+                                    # `boolean NULL DEFAULT false`, so an INSERT
+                                    # that omits it stores an affirmative graded
+                                    # LOSS (CAL-P1004R) on a leg nobody called.
+                                    is_winner=None,
+                                    resolution_source=None,
+                                )
+                                .on_conflict_do_nothing(
+                                    index_elements=["market_id", "external_id"]
+                                )
+                            )
+                            if prob is None:
+                                stats["outcomes_created_unpriced"] += 1
+                            else:
+                                stats["outcomes_created_priced"] += 1
+                        elif prob is not None:
+                            result = await session.execute(
+                                sa_update(FuturesOutcome)
+                                .where(
+                                    FuturesOutcome.market_id == row.id,
+                                    FuturesOutcome.external_id == venue_market.ticker,
+                                    # Gotcha #21. `IS NOT TRUE`, not `IS NULL`:
+                                    # unsettled is stored as FALSE, so a NULL
+                                    # test would match almost nothing and this
+                                    # would silently write no prices at all.
+                                    FuturesOutcome.is_winner.isnot(True),
+                                )
+                                .values(
+                                    current_probability=prob,
+                                    current_american_odds=american,
+                                    current_yes_bid=venue_market.yes_bid,
+                                    current_yes_ask=venue_market.yes_ask,
+                                    last_updated=func.now(),
+                                    # #2024: `last_updated` says a pass RAN;
+                                    # this says the price MOVED. Written the
+                                    # same way `futures_price_refresh` writes
+                                    # it, so the two price paths cannot leave
+                                    # the movement signal meaning two things.
+                                    price_changed_at=price_changed_at_value(
+                                        FuturesOutcome.current_probability,
+                                        FuturesOutcome.price_changed_at,
+                                        prob,
+                                    ),
+                                )
+                            )
+                            if not result.rowcount:
+                                continue
+                            stats["outcomes_repriced"] += 1
+                        else:
+                            continue
+
+                        if prob is None:
+                            continue
+
+                        outcome_id = (
+                            await session.execute(
+                                select(FuturesOutcome.id).where(
+                                    FuturesOutcome.market_id == row.id,
+                                    FuturesOutcome.external_id == venue_market.ticker,
+                                )
+                            )
+                        ).scalar()
+                        if outcome_id is None:
+                            continue
+                        await session.execute(
+                            pg_insert(FuturesOddsSnapshot).values(
+                                outcome_id=outcome_id,
+                                bookmaker="kalshi",
+                                probability=prob,
+                                american_odds=american,
+                                yes_bid=venue_market.yes_bid,
+                                yes_ask=venue_market.yes_ask,
+                                last_price=venue_market.last_price,
+                                captured_at=now,
+                            )
+                        )
+                        stats["snapshots_written"] += 1
+
+                    # Per-market commit: one bad market may not roll back a whole
+                    # series' worth of prices (gotcha #13 / #42).
+                    try:
+                        await session.commit()
+                    except Exception as exc:  # noqa: BLE001
+                        await session.rollback()
+                        stats["errors"].append(f"{row.external_id}: {str(exc)[:120]}")
+
+                await asyncio.sleep(0.2)
+        finally:
+            await service.close()
+
+    stats["elapsed_s"] = round(_time.monotonic() - started, 1)
+    stats["terminal"] = "deadline" if stats["deadline_hit"] else "complete"
+    return stats
+
+
 async def _link_sports_props_to_events() -> dict:
     """Link Kalshi sports prop markets to their parent game events.
 

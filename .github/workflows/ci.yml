@@ -998,6 +998,51 @@ jobs:
             exit 1
           fi
 
+      - name: "#3569 The live poll speaks the venue's current price dialect (real Postgres)"
+        # `get_markets` returns the venue's RAW JSON and the 2-minute poll read
+        # `yes_bid`/`yes_ask`/`last_price` off it. The venue emits none of those
+        # keys — only `*_dollars`/`*_fp` (measured 2026-09-06; the fixture is that
+        # response verbatim) — so every Kalshi market hit `else: continue`, on
+        # every beat, while `kalshi_fetched` counted the request. Same window,
+        # same function, same session: Polymarket 4,910 snapshots across 54
+        # distinct minutes, Kalshi 0 rows, against 34 live Kalshi markets.
+        #
+        # Why the server: the failure is NUMERIC and legal. A `*_dollars` string
+        # divided by 100 a second time is 0.0022 for a 22% team — inside
+        # 0 < p < 1, inside Numeric(5,4), charted without an exception anywhere.
+        # An arm has to read the stored value back and judge its SCALE.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_live_poll_kalshi_prices_real_postgres.py \
+            -v -s -rs 2>&1 | tee /tmp/livepricedialect3569.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/livepricedialect3569.txt; then
+            echo "::error::#3569 live-price dialect gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
+      - name: "#3518+#3569 A low-value future game ends up showing a price (real Postgres)"
+        # CERT-2082's required composition. Creating a row is not showing a
+        # price: the hero reads the event's blended probability, not outcome
+        # existence, so two NULL legs render the same "No price yet" as none.
+        # One specimen walks the whole chain — unreadable ingest, the controls
+        # proving no other path can fill it, the per-series re-read, the
+        # matcher's own `win_probability_sources` writer — and ends on
+        # `compute_aggregate_probability`, the function behind the hero's
+        # `homeProb === null && awayProb === null`.
+        #
+        # The specimen is deliberately the least-covered event there is (two days
+        # out, no volume, unregistered, unserved) and each of those is EXECUTED
+        # as a control, because "nothing else covers this" is the load-bearing
+        # claim. Same skip-detection as every gate here.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_linked_game_price_chain_real_postgres.py \
+            -v -s -rs 2>&1 | tee /tmp/linkedgamechain3569.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/linkedgamechain3569.txt; then
+            echo "::error::#3518+#3569 price-chain gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
   frontend-build:
     runs-on: ubuntu-latest
     defaults:

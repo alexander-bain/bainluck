@@ -217,7 +217,7 @@ async def test_scalar_result_is_not_a_loss():
 
 
 def test_every_futures_outcome_insert_names_the_grade_pair():
-    """Structural, so a THIRD insert site cannot reopen this defect silently.
+    """Structural, so a NEW insert site cannot reopen this defect silently.
 
     CAL-P1004's own lesson: its guard matched the NAME SHAPE rather than the one
     spelling already fixed, and that is how sites 3-5 were found. This is the same
@@ -246,12 +246,18 @@ def test_every_futures_outcome_insert_names_the_grade_pair():
 
     # The count is a TRIPWIRE, not bookkeeping: it forces a human to look at any
     # new INSERT site rather than letting the per-site loop below quietly bless
-    # one. Three sites today — `_create_settled_market`, the poll's per-outcome
-    # upsert, and (#3518) the poll's unpriced-outcome placeholder write. Raise it
-    # only after reading the new site; the assertions below are necessary and the
+    # one. Four sites today — `_create_settled_market`, the poll's per-outcome
+    # upsert, (#3518) the poll's unpriced-outcome placeholder write, and (#3569)
+    # `_refresh_linked_game_books`, the bounded per-series pass that reaches
+    # linked games the frozen main scan never revisits. The fourth was READ
+    # before this number moved: it names `is_winner=None` and
+    # `resolution_source=None` for the same reason the third does — a placeholder
+    # for a leg nobody has called must be born ungraded, and the column's
+    # `DEFAULT false` would make an omission an affirmative loss. Raise it only
+    # after reading the new site; the assertions below are necessary and the
     # count is what makes them get read.
-    assert len(sites) == 3, (
-        f"expected 3 futures_outcomes INSERT sites in kalshi.py, found {len(sites)} "
+    assert len(sites) == 4, (
+        f"expected 4 futures_outcomes INSERT sites in kalshi.py, found {len(sites)} "
         f"at lines {[s[0] for s in sites]} — a new one must name is_winner and "
         "resolution_source explicitly, or it inherits the false default"
     )

@@ -188,6 +188,12 @@ class TestBeatScheduleCompleteness:
         "run-freshness-watchdog",
         "poll-polymarket-hourly",
         "refresh-stale-futures-prices-hourly",
+        # #3518/#3569: the per-series re-read of games already linked to a live
+        # or imminent event — the only path back for a linked market the frozen
+        # main scan never revisits and the two price paths structurally cannot
+        # reach (one refuses to create outcomes, the other is UPDATE-only and
+        # scoped to the next three hours).
+        "refresh-linked-game-books-hourly",
         "enrich-events-hourly",
         "sync-espn-live",
         "sync-tennis-from-espn",
