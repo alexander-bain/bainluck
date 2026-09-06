@@ -146,14 +146,47 @@ describe("#3659 FuturesChart — the solid line does not cross the hole", () => 
     expect(solid.some((p) => /^M 50 [\d.]+ L 50 [\d.]+$/.test(p.d))).toBe(true);
   });
 
-  test("the break in the line and the caption under it name the same hole", () => {
-    // One threshold drives both. If they ever disagreed the chart would
-    // contradict itself in two places at once — which is why #3659 took the
-    // number from `seriesGapThresholdMs` instead of re-deriving one.
+  test("when the caption names the hole, it names the one the line broke on", () => {
+    // One threshold drives both, so they can never describe different
+    // intervals — which is why #3659 took the number from
+    // `seriesGapThresholdMs` instead of re-deriving one.
     const html = renderToStaticMarkup(<FuturesChart historyData={HOLED} showAxes />);
 
     expect(html).toContain('data-series-state="gapped"');
     expect(html).toContain("No numbers for 14 days in this stretch");
+    expect(seriesPaths(html).filter((p) => p.dash === "1 5")).toHaveLength(1);
+  });
+
+  test("when the caption is talking about something ELSE, the line still breaks", () => {
+    // THE PRODUCTION CASE, and the strongest argument for this ship.
+    //
+    // Run through the real cached payload the page rendered on 2026-09-06, the
+    // 16630403 series comes out `stale`, not `gapped` — n=358, median 1.00h,
+    // age 6.37h, largest hole 345.6h — because `seriesFreshness` ranks being
+    // behind NOW above being holed, deliberately: the right-hand end of the
+    // line is where a reader looks first.
+    //
+    // So the caption on that chart reads "Last number 6 hours ago" and says
+    // NOTHING about the fourteen days. #2961's declaration does not cover this
+    // case at all. The broken line is the only thing on the page that does.
+    const staleAndHoled: FuturesOutcomeHistory[] = [
+      {
+        outcome_id: 1,
+        name: "Yes",
+        history: pointsAt([0, 345.6, ...Array.from({ length: 18 }, (_, i) => 346.6 + i)]),
+      },
+    ];
+    // The newest point is ~24 min before NOW. Move the CLOCK forward 6h rather
+    // than the points back, so the cadence is untouched and the only thing that
+    // changes is how far behind the series has fallen — which is the one
+    // variable that flips `gapped` to `stale`.
+    jest.setSystemTime(NOW + 6 * HOUR);
+    const html = renderToStaticMarkup(<FuturesChart historyData={staleAndHoled} showAxes />);
+    jest.setSystemTime(NOW);
+
+    expect(html).toContain('data-series-state="stale"');
+    expect(html).not.toContain("No numbers for");
+    // The caption has gone quiet about the hole. The line has not.
     expect(seriesPaths(html).filter((p) => p.dash === "1 5")).toHaveLength(1);
   });
 
