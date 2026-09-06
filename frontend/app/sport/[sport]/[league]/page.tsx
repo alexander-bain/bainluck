@@ -25,7 +25,14 @@ import type {
   ProgressionStage,
   ProgressionParticipant,
 } from "@/lib/types";
-import type { LeagueFuturesResponse, LeagueMarket } from "@/lib/api";
+import type { ApiError, LeagueFuturesResponse, LeagueMarket } from "@/lib/api";
+import { describeLoadFailure } from "@/lib/loadFailure";
+import {
+  classifySportResolutionFailure,
+  isUnreachable,
+  type SportResolutionFailure,
+} from "@/lib/hierarchyLoadFailure";
+import PageLoadFailureScreen from "@/components/PageLoadFailureScreen";
 import { gridCellsToProgression } from "@/lib/gridCellState";
 import { partitionLeagueMarkets } from "@/lib/leagueCards";
 import TournamentCard from "@/components/TournamentCard";
@@ -171,7 +178,7 @@ export default function LeagueShowcasePage() {
   const [grid, setGrid] = useState<ChampionshipGridResponse | null>(null);
   const [leagueMarkets, setLeagueMarkets] = useState<LeagueFuturesResponse | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [failure, setFailure] = useState<SportResolutionFailure | null>(null);
 
   // Analytics
   usePageTracking({
@@ -185,31 +192,57 @@ export default function LeagueShowcasePage() {
     let cancelled = false;
     async function load() {
       setLoading(true);
-      setError(null);
+      setFailure(null);
       try {
         // Resolve the sport hierarchy. Inbound URLs may use the sport-key
         // prefix (e.g. "icehockey") instead of the hierarchy slug ("hockey"),
         // so try known aliases before giving up. A failure here is the only
         // hard failure for the page — everything below degrades gracefully.
+        //
+        // #3254: the hard failure is correct, the WORDING it produced was not.
+        // This loop used a bare `catch {}` and then said `Sport "tennis" not
+        // found` for every outcome, so a reader two seconds over the 60/min
+        // anonymous bucket was told tennis does not exist — while the page
+        // recovered on its own ~2 minutes later. Gotcha #36 ("never catch-all
+        // in an API client returning Optional — 429 must re-raise") and #53
+        // ("an empty read and a broken read must not render identically"), on
+        // a rendered surface.
+        //
+        // So the two cases are now distinguished at the only place that can
+        // tell them apart. A 404 from one candidate is the ALIAS MECHANISM
+        // WORKING — "hockey" 404s before "icehockey" resolves — and must stay
+        // silent. Anything else (429, 5xx, timeout, offline) means we could
+        // not ask, which is never an answer of "no such sport". A single
+        // unreachable candidate is therefore enough to disqualify the
+        // not-found claim even if a later candidate cleanly 404s.
         let h: SportHierarchy | null = null;
+        let unreachable: ApiError | null = null;
         for (const candidate of hierarchySlugCandidates(sportSlug)) {
           try {
             h = await fetchSportHierarchyDetail(candidate);
             if (h) break;
-          } catch {
-            // Try the next candidate slug.
+          } catch (err) {
+            if (isUnreachable(err)) unreachable = err as ApiError;
           }
         }
         if (cancelled) return;
         if (!h) {
-          setError(`Sport "${sportSlug}" not found`);
+          setFailure(classifySportResolutionFailure(unreachable, sportSlug));
           setLoading(false);
           return;
         }
         setHierarchy(h);
         const l = h.leagues.find((lg) => lg.slug === leagueSlug);
         if (!l) {
-          setError(`League "${leagueSlug}" not found in ${h.name}`);
+          // The sport resolved and simply does not list this league — an
+          // established absence, so "Back to Tennis" stays coherent here.
+          setFailure({
+            title: `League "${leagueSlug}" not found in ${h.name}`,
+            message: `${h.name} does not list this league.`,
+            retryable: false,
+            sportAbsent: false,
+            status: 404,
+          });
           setLoading(false);
           return;
         }
@@ -247,8 +280,16 @@ export default function LeagueShowcasePage() {
             setLeagueMarkets(marketsResult.value);
           }
         }
-      } catch {
-        if (!cancelled) setError("Failed to load league data");
+      } catch (err) {
+        // Same rule as the loop above: name the failure we actually had rather
+        // than the generic one. Nothing here has established an absence.
+        if (!cancelled) {
+          setFailure({
+            ...describeLoadFailure(err as ApiError, "league"),
+            sportAbsent: false,
+            status: (err as ApiError)?.status,
+          });
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -331,24 +372,26 @@ export default function LeagueShowcasePage() {
     );
   }
 
-  if (error || !league) {
+  if (failure || !league) {
+    const f: SportResolutionFailure = failure ?? {
+      title: "League not found",
+      message: `We could not find "${leagueSlug}".`,
+      retryable: false,
+      sportAbsent: false,
+      status: 404,
+    };
+    // The escape link is chosen on what we ESTABLISHED, not on what failed:
+    // pointing "Back to tennis" at a sport we have just declared absent is the
+    // incoherence #3254 names. Every other failure leaves the sport presumed
+    // fine, so the sport hub remains the useful place to go.
+    const escape = f.sportAbsent
+      ? { href: "/sports", label: "Browse all sports" }
+      : {
+          href: `/sport/${sportSlug}`,
+          label: `Back to ${hierarchy?.name || sportSlug}`,
+        };
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center max-w-md mx-auto px-4">
-          <p className="text-text-secondary text-sm mb-3">{error || "League not found"}</p>
-          <div className="flex items-center justify-center gap-4">
-            <button
-              onClick={() => window.location.reload()}
-              className="text-sm text-accent-brand hover:underline transition-colors"
-            >
-              Try again
-            </button>
-            <Link href={`/sport/${sportSlug}`} className="text-sm text-text-muted hover:text-text-primary transition-colors">
-              Back to {hierarchy?.name || sportSlug}
-            </Link>
-          </div>
-        </div>
-      </div>
+      <PageLoadFailureScreen failure={f} status={f.status} escape={escape} />
     );
   }
 
