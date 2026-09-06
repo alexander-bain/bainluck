@@ -597,20 +597,25 @@ KALSHI_TICKER_TO_SPORT_KEY: dict[str, str] = {
     #   kxknvbcupadvance    4 -> americanfootball_other  (14 correctly soccer_other)
     # One competition cannot be four sports.
     #
-    # HELD BACK, deliberately: the four Slovak/KNVB cup keys (`kxsvkcupgame`,
-    # `kxsvkcupadvance`, `kxknvbcupgame`, `kxknvbcupadvance`). Mapping them makes
-    # the matcher attach markets 59700960 and 59701032 to events 15297322 and
-    # 15297301 — which is the RIGHT answer (exact-name sole event for each tie,
-    # no rival row on production, and the scorer still rejects the five decoy
-    # `Trnava vs Košice` prop events) — but #2706's golden set adjudicated both
-    # pairs `correct_event_id: null` on 2026-09-02 under the note
-    # `non-sport-category;cup-ticker`, i.e. while the ticker was still unmapped.
-    # So the ratchet reads the improvement as a regression. The golden set is
-    # lane1b's under D39 and re-adjudication is theirs to make, so these four
-    # wait for it rather than being laundered past the gate by a re-record.
+    # The four Slovak/KNVB cup keys below were HELD BACK from Q453 and are added
+    # here now that the hold is discharged. Mapping them makes the matcher attach
+    # markets 59700960 and 59701032 to events 15297322 and 15297301 — the right
+    # answer (exact-name sole event for each tie, no rival row on production, and
+    # the scorer still rejects the five decoy `Trnava vs Košice` prop events) —
+    # but #2706's golden set had adjudicated both pairs `correct_event_id: null`
+    # on 2026-09-02 under the note `non-sport-category;cup-ticker`, i.e. while the
+    # ticker was still unmapped, so the ratchet read the improvement as a
+    # regression. The golden set is lane1b's under D39; lane1b/052 re-adjudicated
+    # both pairs to those event ids as recorded amendments (#2706, PR #3362, on
+    # master at bb422a81) rather than by rewriting the dated artifact. With the
+    # correction banked the two pairs are true positives, so these keys now flip
+    # them false -> true as an ordinary recorded improvement.
     # The `…advance` and `…game` legs of a cup tie are one fixture: all four land
-    # together or the tie splits again. Evidence handed over in
-    # `runner-inbox/lane1b/`; do not re-add them here without that re-adjudication.
+    # together or the tie splits again.
+    "kxsvkcupgame": "soccer_other",           # Slovak Cup tie, moneyline leg
+    "kxsvkcupadvance": "soccer_other",        # Slovak Cup tie, advance leg
+    "kxknvbcupgame": "soccer_other",          # KNVB (Dutch) Cup tie, moneyline leg
+    "kxknvbcupadvance": "soccer_other",       # KNVB (Dutch) Cup tie, advance leg
     "kxncaamsoccergame": "soccer_other",      # NCAA men's soccer
     # Asian basketball
     "kxcbagame": "basketball_other",          # Chinese CBA
