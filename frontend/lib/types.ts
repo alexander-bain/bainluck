@@ -438,6 +438,23 @@ export interface ActiveChartPoint {
   /** True when `clock` was carried forward from an earlier snapshot (gap-filled
    * minute) rather than observed at this point — render it as approximate (#925). */
   clockApprox?: boolean;
+  /**
+   * #3459 — is `homeProb`/`awayProb` a READING, or the layout placeholder?
+   *
+   * `computeLastChartPoint` has to hand back numbers (the field is not nullable
+   * and every scrub point genuinely has one), so when no source has a
+   * probability it used to fall back to a bare `0.5` and nothing downstream
+   * could tell that apart from a market that really is pick-'em. UNKNOWN and
+   * EVEN shared one value domain, so each consumer had to re-guess: the hero
+   * sniffed for the literal `0.5` and suppressed itself, `GamePlayCard` never
+   * learned the trick and printed "50% — 50%" on an event with zero markets and
+   * zero odds snapshots.
+   *
+   * Optional and absent-means-true on purpose: every existing producer —
+   * OddsChart's scrub handler above all — keeps its current meaning untouched,
+   * and only the one call site that fabricates a value has to say so.
+   */
+  probKnown?: boolean;
   scoringPlay?: ScoringPlay | null;
 }
 

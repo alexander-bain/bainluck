@@ -567,13 +567,20 @@ export function resolveProbability(
 
   // Fallback: use win_prob_history (ESPN/stat_model/Kalshi)
   // `!withheld` (UX-P042): when the only source is an untraded placeholder, its
-  // history is that same placeholder. Note this fallback ALREADY refuses an exact
-  // 0.5 chart point — the guard below is the same judgment, decided at the source.
+  // history is that same placeholder.
+  //
+  // #3459: this used to read `lastChartPoint.homeProb !== 0.5`, testing the VALUE
+  // to infer whether there was a value at all. That was the right judgment made
+  // on the wrong evidence — it also refused every market that is genuinely
+  // pick-'em, so a real dead-even game lost its hero for looking like an absence.
+  // `probKnown` is the same judgment made on the fact itself, and it is
+  // absent-means-true, so a scrub point (which always carries a real reading)
+  // behaves exactly as before.
   if (
     !withheld &&
     homeProb === null &&
     lastChartPoint &&
-    lastChartPoint.homeProb !== 0.5 &&
+    lastChartPoint.probKnown !== false &&
     !(
       isFinished &&
       (lastChartPoint.homeProb > 0.95 || lastChartPoint.homeProb < 0.05)
@@ -1050,11 +1057,27 @@ export function computeLastChartPoint(
   // multiplies the same field by 100) correctly showed ~81% — the reported
   // tooltip-vs-headline mismatch. It fired whenever win_prob_history was empty
   // (any live sport without an ESPN/stat win-prob source, e.g. cricket/soccer).
-  const homeProb =
+  // #3459 — SAY WHEN THERE IS NO READING, instead of inventing a pick-'em one.
+  //
+  // The `?? 0.5` on the end of this cascade was load-bearing for layout (the
+  // point's prob fields are not nullable) and a lie for meaning: on production
+  // event 15305801 — Ram/Salisbury v Arribage/Olivetti, US Open doubles, LIVE,
+  // with **0 rows in `futures_markets` and 0 in `odds_snapshots`** — all three
+  // sources were absent, this returned 0.5, and `GamePlayCard` printed
+  // "Ram/Salisbury 50% — Arribage/Olivetti 50%" three inches under a chart
+  // correctly reading "Tracking will begin when odds are available".
+  //
+  // The hero escaped only because `resolveProbability` sniffed for the literal
+  // `lastChartPoint.homeProb !== 0.5` — which also threw away every market that
+  // is honestly dead even. Absence and evenness cannot share a value domain;
+  // `probKnown` gives absence its own, so no consumer has to guess again.
+  const measuredHomeProb =
     latestBlendPoint(historyData.aggregate_line) ??
     lastWp?.home_probability ??
     lastHist?.home_probability ??
-    0.5;
+    null;
+  const probKnown = measuredHomeProb !== null;
+  const homeProb = measuredHomeProb ?? 0.5;
 
   // L2-163 Item 3 — moments readout scaffold. Surface the most recent scoring
   // play so the below-chart readout (GamePlayCard) shows the CURRENT moment at
@@ -1081,6 +1104,7 @@ export function computeLastChartPoint(
       "",
     homeProb,
     awayProb: 1 - homeProb,
+    probKnown,
     homeScore: lastEspn?.home_score ?? homeScore ?? null,
     awayScore: lastEspn?.away_score ?? awayScore ?? null,
     period: lastEspn?.period?.toString() ?? null,

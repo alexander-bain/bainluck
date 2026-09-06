@@ -166,8 +166,18 @@ export default function GamePlayCard({
                 {point.scoringPlay!.description || point.scoringPlay!.short_text || ""}
               </p>
             </div>
+          ) : point.probKnown === false ? (
+            /* #3459 — no source has a probability for this event, so there is no
+               number to print. Saying nothing is the honest reading; printing the
+               placeholder was how "Ram/Salisbury 50% — Arribage/Olivetti 50%"
+               appeared under a chart that said "Tracking will begin when odds are
+               available". The score, period and clock above still render, so a
+               live game with no price keeps everything we DO know. */
+            <p className="text-xs text-text-muted" data-testid="game-play-card-no-probability">
+              No price yet
+            </p>
           ) : (
-            <p className="text-xs text-text-muted">
+            <p className="text-xs text-text-muted" data-testid="game-play-card-probability">
               {homeShort}{" "}
               <span className="font-semibold" style={{ color: homeTeamColor || "var(--text-secondary)" }}>
                 {homeProb}%

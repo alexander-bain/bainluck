@@ -403,7 +403,7 @@ describe("the states that have no pair still have no pair", () => {
     expect([resolved.awayPct, resolved.homePct]).toEqual([40, 50]);
   });
 
-  it("a withheld probability renders an em-dash, not a coin flip", () => {
+  it("a withheld probability renders no number at all, not a coin flip", () => {
     // UX-P042 (#1640): the whole evidence base is an untraded placeholder.
     const resolved = resolveProbability(
       makeEvent({
@@ -433,8 +433,16 @@ describe("the states that have no pair still have no pair", () => {
         awayPct={resolved.awayPct}
       />,
     );
-    expect(html).toContain("—");
+    // #3459 — this used to assert `toContain("—")`. That pinned the RENDERING
+    // (an em-dash in the number slot) rather than this test's own stated point,
+    // which is the line above it: no coin flip, no invented number. The em-dash
+    // turned out to be its own defect — at `text-[48px] font-black` it is a 41px
+    // solid rectangle, so the withheld state photographed as a redaction bar
+    // trailed by a naked `%` — and the hero now says "No price yet" in words.
+    // The invariant is unchanged and is asserted on the fact, not the glyph.
     expect(html).not.toMatch(/tabular-nums"[^>]*>\d/);
+    expect(html).not.toMatch(/>\s*5?0\s*</); // no fabricated 50/0 anywhere
+    expect(html).toContain("No price yet");
   });
 });
 
