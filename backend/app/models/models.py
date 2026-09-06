@@ -2701,10 +2701,21 @@ class ContainerProviderAnchor(Base):
     WHY THIS IS A SEPARATE TABLE FROM ``event_provider_anchors`` RATHER THAN A
     NULLABLE ``container_id`` ON IT. The unique key differs. An event anchor is
     unique on ``(source, source_id, id_kind)`` across all events; a container
-    anchor must be unique on ``(provider, id_kind, provider_id)`` across all
+    anchor is unique on ``(provider, sport, id_kind, provider_id)`` across all
     containers — and the same ESPN league id legitimately appears in both
     spaces meaning different things. Sharing the table would make one of those
     two constraints unstatable.
+
+    ``sport`` MUST BE WRITTEN THROUGH
+    ``container_graph.normalize_anchor_sport`` (CERT-2006's follow-up). The
+    index is ``NULLS NOT DISTINCT``, which makes NULL a single namespace — but
+    that only holds if "no sport" is spelled exactly one way. An empty string
+    is not NULL, so ``''`` would open a THIRD namespace beside NULL and the
+    real sports, and two anchors could then claim one provider id without
+    colliding: the same silent no-op D55 forbids, rebuilt out of whitespace.
+    ``'Tennis'`` versus ``'tennis'`` is the same bug wearing different case.
+    The normaliser folds both, and it is applied at the writer rather than as a
+    CHECK because the fix is a canonicalisation, not a refusal.
     """
 
     __tablename__ = "container_provider_anchors"
