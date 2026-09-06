@@ -69,27 +69,47 @@ from app.tasks.precompute_calibration import (
 
 # --- Production measurements. Source AND completion status named for each. ---
 
-#: COMPLETED. ``staged:unit_ms_mean`` from the ``calibration:main:phase_ledger``
-#: durable snapshot written at the end of the 2026-09-06 **12:15Z** beat. That
-#: beat ran 1,094 s uninterrupted inside a deliberately quiet merge window,
-#: resumed its cursor cleanly, and banked its second unit of 128.
-#:
-#: This is the WORSE of two completions — the 10:15Z beat measured 723.8 s — and
-#: the worse one is used deliberately. The fit sizes a partition against a
-#: deadline, so an optimistic unit cost buys a unit that does not fit, and a unit
-#: that does not fit banks nothing at all.
-MEASURED_UNIT_S_AT_128 = 857.0
-
-#: The partition in force when the reading above was taken.
+#: The partition in force when the readings below were taken.
 MEASURED_PARTITION = 128
 
 #: Partition -> the COMPLETED unit costs production has actually observed at it,
-#: in seconds. **This is the ship list.** A partition absent from here has never
-#: finished a unit in production, so nothing in this file may endorse it,
-#: whatever the model says. Both entries are ``staged:unit_ms_mean`` off the
-#: phase ledger on 2026-09-06 (10:15Z and 12:15Z), and both are beats whose
-#: ``staged:units_completed_this_beat`` was non-zero.
-MEASURED_COMPLETIONS: dict[int, tuple[float, ...]] = {128: (723.8, 857.0)}
+#: in seconds, **in beat order**. **This is the ship list.** A partition absent
+#: from here has never finished a unit in production, so nothing in this file may
+#: endorse it, whatever the model says. Every entry is ``staged:unit_ms_mean``
+#: off the ``calibration:main:phase_ledger`` durable snapshot for a beat whose
+#: ``staged:units_completed_this_beat`` was non-zero — a cancelled unit is a
+#: lower bound and never lands here (that is the defect CAL-P1035 repaired).
+#:
+#: All three are 2026-09-06:
+#:
+#: * **10:15Z** — 723.8 s, banked unit 1 of 128.
+#: * **12:15Z** — 857.0 s, banked unit 2 of 128; ran 1,094 s uninterrupted
+#:   inside a deliberately quiet merge window and resumed its cursor cleanly.
+#: * **17:15Z** — 753.3 s, banked unit 3 of 128; the first beat after the B=17
+#:   excursion was reverted, in a window with zero releases (last release v4220
+#:   at 16:55:33Z). ``read:futures_unit`` 753,280 ms, and
+#:   ``staged:unit_ms_mean_completed`` equal to it because nothing truncated.
+#:
+#: **This list is HARVESTED, not commissioned** (CAL-P1036-GENERATION-WIDE-UNIT-
+#: COST-PRECONDITION, the CERT-2098 grader's follow-up). One completed unit cost
+#: arrives free on every clean beat, so the sample widens by one row per session
+#: at no measurement cost, and everything downstream is derived from it rather
+#: than restated: the fit anchor is its ``max``, the fit-free floor its ``min``,
+#: the spread its range. A new reading cannot be cherry-picked into the flattering
+#: slot — see :class:`TestTheCompletionSampleIsHarvestedNotCurated`.
+MEASURED_COMPLETIONS: dict[int, tuple[float, ...]] = {128: (723.8, 857.0, 753.3)}
+
+#: COMPLETED, and the anchor the fit is pinned through.
+#:
+#: DERIVED as the WORST reading in the sample above, deliberately: the fit sizes
+#: a partition against a deadline, so an optimistic unit cost buys a unit that
+#: does not fit, and a unit that does not fit banks nothing at all. Worst-of-
+#: sample also means a future clean beat can only ever make this file more
+#: pessimistic, never less — the direction a guard should move under new
+#: evidence.
+#:
+#: Today: 857.0 s (the 12:15Z beat), unmoved by the 17:15Z reading.
+MEASURED_UNIT_S_AT_128 = max(MEASURED_COMPLETIONS[MEASURED_PARTITION])
 
 #: CENSORED — a lower bound, NOT a cost. ``read:futures_unit`` from the
 #: 2026-09-06 **15:15:00Z** beat, the first beat to run at B=17 in a window no
@@ -150,9 +170,17 @@ def admission_ceiling_s() -> float:
     return MEASURED_USABLE_WINDOW_S / STAGED_UNIT_WINDOW_SAFETY
 
 
-#: The measured beat-to-beat spread of ONE unit at a FIXED partition: 723.8 s
-#: (10:15Z) then 857.0 s (12:15Z), both at 128, both completed. +18.4%.
-MEASURED_BEAT_TO_BEAT_VARIANCE = (857.0 - 723.8) / 723.8
+#: The measured beat-to-beat spread of ONE unit at a FIXED partition, DERIVED as
+#: the full range of :data:`MEASURED_COMPLETIONS` over its cheapest reading, so
+#: each harvested beat re-prices it. Today +18.4%, from 723.8 s (10:15Z) to
+#: 857.0 s (12:15Z), with 753.3 s (17:15Z) landing inside the existing range —
+#: which is why the third reading moved this number not at all. The spread is
+#: therefore not yet known to be wider than two beats said; it is now known not
+#: to be a trend, because the newest reading is not the largest.
+MEASURED_BEAT_TO_BEAT_VARIANCE = (
+    max(MEASURED_COMPLETIONS[MEASURED_PARTITION])
+    - min(MEASURED_COMPLETIONS[MEASURED_PARTITION])
+) / min(MEASURED_COMPLETIONS[MEASURED_PARTITION])
 
 
 def fit_cost_model() -> tuple[float, float]:
@@ -225,11 +253,17 @@ def predicted_unit_s(buckets: int) -> float:
 
 #: The one assumption the fit-free bound below rests on, named so it can be
 #: attacked: that units at a fixed partition cost roughly the same, so a
-#: completed unit's cost stands in for its 127 siblings. The evidence for it is
-#: thin and stated rather than hidden — two beats at B=128 measured 723.8 s and
-#: 857.0 s, and the CHEAPER is used. ``test_the_fit_free_bound_survives_the_
-#: assumption_being_wrong`` prices how wrong it may be: the finding survives
-#: until the true mean unit cost is ~3.5x below the cheaper reading.
+#: completed unit's cost stands in for its 127 siblings. The evidence is thin and
+#: stated rather than hidden — three beats at B=128 (:data:`MEASURED_COMPLETIONS`)
+#: and the CHEAPEST of them is used. ``test_the_fit_free_bound_survives_the_
+#: assumption_being_wrong`` prices how wrong it may be: the finding survives until
+#: the true mean unit cost is ~3.5x below the cheapest reading.
+#:
+#: This is the assumption CAL-P1036-GENERATION-WIDE-UNIT-COST-PRECONDITION asks
+#: to be replaced by a completed-generation distribution. It is being retired by
+#: harvest rather than by measurement: the sample grows one completed unit per
+#: clean beat, and by the time the generation finishes there will be 128 of them
+#: — at which point the assumption is not assumed, it is the census.
 FIT_FREE_BOUND_ASSUMES_UNIFORM_UNITS = True
 
 
@@ -238,7 +272,14 @@ def min_generation_work_s(buckets: int) -> float:
 
     Only two things go in, and neither is a fitted parameter:
 
-    1. A COMPLETED unit cost at B=128 — the cheaper of the two, 723.8 s.
+    1. A COMPLETED unit cost at B=128 — the CHEAPEST reading in
+       :data:`MEASURED_COMPLETIONS`, which today is 723.8 s and rests on a
+       sample of **three** completed units (10:15Z, 12:15Z, 17:15Z on
+       2026-09-06). Cheapest, because the bound must be a floor: a dearer
+       anchor would make the refusal stronger than the evidence supports. The
+       sample widens by one per clean beat, so this minimum can only fall, and
+       :meth:`TestTheCompletionSampleIsHarvestedNotCurated` pins the count so a
+       reader always knows how many units it rests on.
     2. The SHAPE of the runtime, which is not in dispute and is visible in the
        code rather than in a curve: every unit re-pays a fixed prefix and then
        reads its own share, so a generation costs ``B * P' + s'`` with
@@ -548,9 +589,15 @@ class TestTheFitIsNotUsedOutsideItsDomain:
 
         The bound treats a completed unit's cost as standing in for its 127
         siblings. Suppose it does not. The budget is only reachable if the true
-        mean unit cost at 128 is under ~206 s — **3.5x cheaper than the cheaper
-        of the two readings we have**, and cheaper than any unit ever measured
-        at any partition. That is the size of the error the finding would need.
+        mean unit cost at 128 is under ~206 s — **3.5x cheaper than the cheapest
+        reading we have**, and cheaper than any unit ever measured at any
+        partition. That is the size of the error the finding would need.
+
+        Re-priced against the widening sample every session, which is the cheap
+        half of CAL-P1036-GENERATION-WIDE-UNIT-COST-PRECONDITION: the ratio is
+        computed from :data:`MEASURED_COMPLETIONS`, so a harvested reading that
+        dragged the minimum toward 206 s would narrow it here and trip the
+        message below rather than sitting unnoticed in a docstring.
         """
         breakeven_unit_s = (
             (MAX_BEATS_TO_PUBLISH - 1) * MEASURED_USABLE_WINDOW_S
@@ -563,6 +610,53 @@ class TestTheFitIsNotUsedOutsideItsDomain:
             f"viable — the uniform-unit assumption has become load-bearing and "
             f"needs measuring rather than pricing"
         )
+
+
+class TestTheCompletionSampleIsHarvestedNotCurated:
+    """One sample feeds every anchor, so a new reading cannot be placed.
+
+    CAL-P1036-GENERATION-WIDE-UNIT-COST-PRECONDITION is being retired by harvest:
+    a completed unit cost arrives free on every clean beat and is appended to
+    :data:`MEASURED_COMPLETIONS`. The hazard that creates is selection — a
+    session that appends a reading could reach for the one that suits the
+    argument it is making, or append it in one place and not another. It cannot,
+    because the dear end and the cheap end of this file are both read off the
+    same tuple.
+    """
+
+    def test_no_anchor_is_hand_written_they_all_come_from_the_sample(self):
+        """Fit anchor, fit-free floor and spread, all off one tuple."""
+        sample = MEASURED_COMPLETIONS[MEASURED_PARTITION]
+        assert MEASURED_UNIT_S_AT_128 == max(sample), (
+            "the fit anchor has drifted off the sample — it must be the WORST "
+            "completed reading, so a new beat can only make the fit more "
+            "pessimistic, never less"
+        )
+        assert min_generation_work_s(MEASURED_PARTITION) == (
+            MEASURED_PARTITION * min(sample)
+        ), "the fit-free floor must rest on the CHEAPEST reading, or it is not a floor"
+        assert MEASURED_BEAT_TO_BEAT_VARIANCE == (
+            (max(sample) - min(sample)) / min(sample)
+        )
+
+    def test_the_sample_size_is_pinned_so_a_harvest_is_a_visible_edit(self):
+        """Three completed units as of the 2026-09-06 17:15Z beat.
+
+        Pinned deliberately. Appending a reading is meant to be a deliberate line
+        with a beat time on it, not something that happens while editing nearby
+        prose — so the count and the derived trio both move under review. Bump
+        this test in the same commit as the reading.
+        """
+        sample = MEASURED_COMPLETIONS[MEASURED_PARTITION]
+        assert len(sample) == 3, (
+            f"the B=128 sample now holds {len(sample)} completed units, not 3 — "
+            f"if that is a harvest, re-quote the count in min_generation_work_s "
+            f"and in the report; if it is a curation, revert it"
+        )
+        assert sample == (723.8, 857.0, 753.3)
+        assert MEASURED_UNIT_S_AT_128 == 857.0
+        assert min(sample) == 723.8
+        assert MEASURED_BEAT_TO_BEAT_VARIANCE == pytest.approx(0.184, abs=0.001)
 
 
 class TestWhatTheFitSaysNowThatItIsHonest:
@@ -899,10 +993,10 @@ class TestNoPartitionIsComfortable:
 
         Every partition's margin is bought out of the gap between the fixed
         prefix and the admission ceiling — 101 s. One unit at a FIXED partition
-        was measured moving 723.8 s -> 857.0 s, which is 150 s at the prefix.
-        The spread is larger than the entire budget for margin, so a self-block
-        can happen at any size. Both sides are measurements; neither is a bar
-        anyone picked.
+        ranges 723.8 s -> 857.0 s across the three completed readings, which is
+        150 s at the prefix. The spread is larger than the entire budget for
+        margin, so a self-block can happen at any size. Both sides are
+        measurements; neither is a bar anyone picked.
 
         The prefix appears here as the GENEROUS end of the argument, which is
         why it is admissible where :func:`max_achievable_margin` no longer uses
