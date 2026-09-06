@@ -46,7 +46,7 @@ import pytest
 
 from app.tasks.kalshi import (
     _fix_tennis_commence_times,
-    _is_dated_match_ticker,
+    _is_dated_fixture_ticker,
     _is_kalshi_game_ticker,
     _kalshi_commence_time,
     _tennis_commence_target,
@@ -86,13 +86,13 @@ class TestTheItfTickerReachesItsStartTime:
         # them. If someone "fixes" this by adding ITF to _KALSHI_GAME_TICKERS
         # this assertion fails and tells them why that is the wrong door.
         assert _is_kalshi_game_ticker(ticker) is None
-        assert _is_dated_match_ticker(ticker) is True
+        assert _is_dated_fixture_ticker(ticker) is True
 
         assert (
             _kalshi_commence_time(
                 [_market()],
                 is_game=False,
-                is_dated_match=_is_dated_match_ticker(ticker),
+                is_dated_fixture=_is_dated_fixture_ticker(ticker),
             )
             == OCCURRENCE
         )
@@ -104,11 +104,11 @@ class TestTheItfTickerReachesItsStartTime:
         )
 
     def test_the_gate_is_classification_only_and_never_renames(self):
-        """CERT-2043's shape. `is_dated_match` must not become a game verdict:
+        """CERT-2043's shape. `is_dated_fixture` must not become a game verdict:
         `_build_game_market_name` and auto-create both key off `is_game`, and
         a satellite-tour market must not be sent through the matchup renamer."""
         for ticker in ("KXITFMATCH-26SEP07OLIGRO", "KXITFWMATCH-26SEP06MORGAL"):
-            assert _is_dated_match_ticker(ticker) is True
+            assert _is_dated_fixture_ticker(ticker) is True
             assert _is_kalshi_game_ticker(ticker) is None
 
     def test_the_gate_covers_every_dated_match_series_game_or_not(self):
@@ -138,7 +138,7 @@ class TestTheItfTickerReachesItsStartTime:
         # One predicate covers both halves of that split, so no tennis match
         # series can be left behind by an incomplete map again.
         for ticker in non_game | game:
-            assert _is_dated_match_ticker(ticker) is True, ticker
+            assert _is_dated_fixture_ticker(ticker) is True, ticker
 
 
 class TestTheNonTennisReachIsADecisionNotAnAccident:
@@ -172,7 +172,7 @@ class TestTheNonTennisReachIsADecisionNotAnAccident:
     def test_the_non_tennis_series_are_reached_and_are_not_games(self):
         for series in self.NON_TENNIS_SERIES:
             ticker = f"{series.upper()}-26SEP07ABCDEF"
-            assert _is_dated_match_ticker(ticker) is True, ticker
+            assert _is_dated_fixture_ticker(ticker) is True, ticker
             # None of them is a game ticker, so for every one of these the
             # gate is what opens the occurrence preference — this is the real
             # behaviour change, not a no-op.
@@ -190,7 +190,7 @@ class TestTheNonTennisReachIsADecisionNotAnAccident:
         assert _kalshi_commence_time(
             [_market(occ=occ, close=close)],
             is_game=bool(_is_kalshi_game_ticker(ticker)),
-            is_dated_match=_is_dated_match_ticker(ticker),
+            is_dated_fixture=_is_dated_fixture_ticker(ticker),
         ) == occ
 
     def test_the_second_half_never_reaches_them(self):
@@ -221,7 +221,7 @@ class TestTheGateRefusesWhatItShould:
         ],
     )
     def test_outrights_and_malformed_tickers_are_refused(self, ticker):
-        assert _is_dated_match_ticker(ticker) is False
+        assert _is_dated_fixture_ticker(ticker) is False
 
     def test_an_occurrence_after_its_own_close_is_still_refused(self):
         """The second bound survives the new gate: KXHONEYDEUCE-shaped data
@@ -229,7 +229,7 @@ class TestTheGateRefusesWhatItShould:
         m = _market(occ=datetime(2027, 1, 1, 15, 0, tzinfo=UTC),
                     close=datetime(2027, 1, 1, 4, 59, tzinfo=UTC))
         assert (
-            _kalshi_commence_time([m], is_game=False, is_dated_match=True)
+            _kalshi_commence_time([m], is_game=False, is_dated_fixture=True)
             == datetime(2027, 1, 1, 4, 59, tzinfo=UTC)
         )
 
@@ -324,23 +324,23 @@ class TestTheGateIsActuallyWiredIntoThePoll:
     def test_every_call_site_passes_the_new_gate(self):
         for call in self._commence_calls():
             kwargs = {k.arg for k in call.keywords}
-            assert "is_dated_match" in kwargs, (
-                "_kalshi_commence_time is called without is_dated_match — "
+            assert "is_dated_fixture" in kwargs, (
+                "_kalshi_commence_time is called without is_dated_fixture — "
                 "ITF and the 16 non-tennis per-match series silently go back "
                 "to Kalshi's +14d settlement close"
             )
             assert "is_game" in kwargs, "the game gate must not be dropped either"
 
     def test_the_gate_is_computed_from_the_event_ticker(self):
-        """`is_dated_match=True` hard-coded, or fed from the wrong variable,
+        """`is_dated_fixture=True` hard-coded, or fed from the wrong variable,
         would re-time outrights. It must be the predicate applied to the
         event's own ticker."""
         import ast
 
         for call in self._commence_calls():
-            gate = next(k.value for k in call.keywords if k.arg == "is_dated_match")
+            gate = next(k.value for k in call.keywords if k.arg == "is_dated_fixture")
             assert isinstance(gate, ast.Call), "must be a predicate call, not a literal"
-            assert gate.func.id == "_is_dated_match_ticker"
+            assert gate.func.id == "_is_dated_fixture_ticker"
             arg = gate.args[0]
             assert isinstance(arg, ast.Attribute) and arg.attr == "event_ticker"
 
@@ -356,7 +356,7 @@ class TestEitherHalfAloneLeavesThePageWrong:
         stored = _kalshi_commence_time(
             [_market()],
             is_game=bool(_is_kalshi_game_ticker(ticker)),
-            is_dated_match=gate_open and _is_dated_match_ticker(ticker),
+            is_dated_fixture=gate_open and _is_dated_fixture_ticker(ticker),
         )
         target = _tennis_commence_target(
             ticker,

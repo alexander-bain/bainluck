@@ -82,7 +82,7 @@ def _is_kalshi_game_ticker(event_ticker: str) -> Optional[str]:
     return best_label
 
 
-def _kalshi_commence_time(markets, *, is_game: bool, is_dated_match: bool = False):
+def _kalshi_commence_time(markets, *, is_game: bool, is_dated_fixture: bool = False):
     """The start time to store for a Kalshi event's markets.
 
     #3433. Gotcha #14 says a Kalshi market's ``commence_time`` is often its
@@ -113,10 +113,13 @@ def _kalshi_commence_time(markets, *, is_game: bool, is_dated_match: bool = Fals
     * ``is_game`` — ``_is_kalshi_game_ticker``'s verdict, the repo's own
       definition of a game. It also arms ``_build_game_market_name`` at the
       call site, which RENAMES the market.
-    * ``is_dated_match`` — #3488. ``_is_dated_match_ticker``: a dated
-      per-match ticker (tennis and 16 non-tennis series that wear the same
-      shape — see that function; the reach is measured and pinned, not
-      incidental). Classification only; it opens this preference and nothing
+    * ``is_dated_fixture`` — #3488, widened by #3562.
+      ``_is_dated_fixture_ticker``: one contest on a day the ticker names —
+      tennis, the 16 non-tennis series wearing the MATCH/DOUBLES shape, and
+      since #3562 the league fixtures and the props written ON a dated fixture
+      (``GAME``/``ADVANCE``/``BTTS``/``SPREAD``/``TOTAL``/``TD``/``RACE``/
+      ``1Q``-``4Q``). See that function; the reach is measured and pinned, not
+      incidental. Classification only; it opens this preference and nothing
       else. ITF (``KXITFMATCH``, ``KXITFWMATCH``, the DOUBLES variants) is
       deliberately absent from ``_KALSHI_GAME_TICKERS`` — we do not ingest ITF
       events — so ``is_game`` is False for 138 open ITF match markets and
@@ -138,7 +141,7 @@ def _kalshi_commence_time(markets, *, is_game: bool, is_dated_match: bool = Fals
     for m in markets:
         close = getattr(m, "close_time", None)
         occ = getattr(m, "occurrence_datetime", None)
-        if (is_game or is_dated_match) and occ is not None and (
+        if (is_game or is_dated_fixture) and occ is not None and (
             close is None or occ <= close
         ):
             starts.append(occ)
@@ -903,7 +906,7 @@ async def _poll_kalshi_markets():
                         commence_time = _kalshi_commence_time(
                             [market],
                             is_game=bool(game_sport),
-                            is_dated_match=_is_dated_match_ticker(
+                            is_dated_fixture=_is_dated_fixture_ticker(
                                 event.event_ticker
                             ),
                         )
@@ -928,7 +931,7 @@ async def _poll_kalshi_markets():
                         commence_time = _kalshi_commence_time(
                             event.markets,
                             is_game=bool(game_sport),
-                            is_dated_match=_is_dated_match_ticker(
+                            is_dated_fixture=_is_dated_fixture_ticker(
                                 event.event_ticker
                             ),
                         )
@@ -2135,46 +2138,84 @@ _TENNIS_MATCH_SERIES_RE = _re.compile(
     r"^KX[A-Z]*(?:MATCH|DOUBLES)-\d{2}[A-Z]{3}\d{2}[A-Z]", _re.I
 )
 
+#: #3562. The market-type token a dated fixture series ENDS with. This is the
+#: vocabulary of a Kalshi sports series name, not a league list, and that is the
+#: whole design: a league we have never heard of arrives already covered, while
+#: the token itself is a closed set somebody has to widen on purpose.
+#:
+#: 🔴 DO NOT REPLACE THIS WITH THE BARE DATE SHAPE. Dropping the vocabulary and
+#: keeping only ``^KX[A-Z0-9]+-\d{2}[A-Z]{3}\d{2}...`` was measured on
+#: 2026-09-06 and REFUTED: it reaches 178 distinct series / 1,927 open rows
+#: where ~96 series / 896 rows are wanted, swallowing
+#: ``KXBBCHARTPOSITIONALBUM``, ``KXBBCHARTPOSITIONSONG``, ``KXNCAAFCFPPOLL``,
+#: ``KXNCAAFTOPCFPPOLL``, ``KXJOINCLUB`` and ``KXVOTESAXANH``. A Billboard chart
+#: position is not a fixture and its ``occurrence_datetime`` is not a kick-off.
+#: The tempting rescue — matchup tails are 5-6 characters — dies on
+#: ``KXJOINCLUB-26OCT02AGORDON`` at 7, inside the matchup band. Evidence: #3562.
+_DATED_FIXTURE_MARKET_TYPES = (
+    "MATCH", "DOUBLES",              # #3488: one contest, one day
+    "GAME",                          # a league fixture's moneyline
+    "ADVANCE",                       # a dated cup tie's "who goes through"
+    "BTTS", "SPREAD", "TOTAL", "TD", "RACE",   # props ON a dated fixture
+    "1Q", "2Q", "3Q", "4Q",          # quarter props on a dated fixture
+)
 
-def _is_dated_match_ticker(event_ticker: Optional[str]) -> bool:
-    """#3488. Is this a dated per-match ticker — one match, on a known day?
+#: Built from the vocabulary so there is ONE definition of it. A strict superset
+#: of ``_TENNIS_MATCH_SERIES_RE`` by construction (its two tokens are the first
+#: two here and ``[A-Z0-9]* ⊇ [A-Z]*``), pinned by a test: the tennis half of
+#: #3488 can never be narrowed by widening this.
+_DATED_FIXTURE_SERIES_RE = _re.compile(
+    r"^KX[A-Z0-9]*(?:"
+    + "|".join(_DATED_FIXTURE_MARKET_TYPES)
+    + r")-\d{2}[A-Z]{3}\d{2}[A-Z]",
+    _re.I,
+)
+
+
+def _is_dated_fixture_ticker(event_ticker: Optional[str]) -> bool:
+    """#3488, widened by #3562. One contest, on a day the ticker names?
 
     CLASSIFICATION ONLY. It answers "does this ticker's occurrence_datetime
     mean the start of the thing" and feeds exactly one decision —
-    ``_kalshi_commence_time``'s occurrence preference. It is NOT a game
+    ``_kalshi_commence_time``'s occurrence preference — plus the event-side
+    repair that copies that stored hour onto a stand-in start. It is NOT a game
     verdict: it never renames a market and never arms auto-create. Same split
-    CERT-2060 made for soccer cup props, for the same reason.
+    CERT-2060 made for soccer cup props, for the same reason, and the reason
+    ``KALSHI_TICKER_TO_DISPLAY_LABEL`` is the wrong home for this — that map
+    arms ``_build_game_market_name``, which is the shape CERT-2043 blocked.
+    ``KXNFLRACE`` is a race-to-N-points PROP and must never become a game
+    ticker; it still needs its kick-off.
 
-    Shares ``_TENNIS_MATCH_SERIES_RE`` with ``_tennis_commence_target`` on
-    purpose — one definition of the row shape, so the writer that stores the
-    hour and the fix-up that must not overwrite it can never disagree about
-    which rows they mean.
+    WHAT #3562 ADDED, measured rather than guessed. #3488 shipped the
+    MATCH/DOUBLES half and left every other dated fixture on Kalshi's
+    settlement close, so a user opening Pumas UNAM v León or Angers v Rennes
+    read the wrong DAY. Both gates missed them for the same reason::
 
-    **NOT TENNIS-ONLY, and that is deliberate — the shared constant's name is
-    the misleading part, not this function.** ``_TENNIS_MATCH_SERIES_RE`` is a
-    SHAPE (``KX<anything>MATCH|DOUBLES-<2-digit day><MON><2-digit day><tail>``)
-    and 16 non-tennis series wear it. Measured on production 2026-09-06, every
-    one of them is a per-match dated ticker and none is a game ticker, so all
-    618 of their rows change behaviour here:
+        KXLIGUE1GAME-26SEP20OLMPSG    is_game=None   dated_match=False
+        KXLIGAMXGAME-26SEP19AMECDG    is_game=None   dated_match=False
+        KXNFLRACE-26SEP14DENKC-35     is_game=None   dated_match=False
+        KXNFLGAME-26SEP07KCPHI        is_game=NFL    (already correct)
+        KXATPMATCH-26SEP07ZVEDAR      dated_match=True   (#3488)
 
-        kxrugbynrlmatch (204 rows, 3 open) · kxsquashmatch (170) ·
-        kxrugbyeslmatch (128) · kxpplmatch · kxvolleyballmatch · kxchessmatch ·
-        kxcricketodimatch · kxtglmatch · kxdartsmatch · kxcountychampmatch ·
-        kxsixnationsmatch · kxrugbymlrmatch · kxsshieldmatch ·
-        kxcrickettestmatch · kxpickleballmatch · kxwrestlingmatch
+    Reach on production 2026-09-06: the widened shape adds **96 series / 896
+    open rows**, of which **16 series / 366 rows are already game tickers** and
+    change nothing. The real behaviour change is **80 series / 530 open rows**,
+    reaching **104 stand-in events** (29 of them still in the future). Every one
+    of the 80 was then read at the VENUE (notice 26, Kalshi ``/markets``
+    ``status=open`` per series): **2,348 open markets, all date-shaped, all
+    carrying an occurrence, ZERO with occ > close, offsets +9.00h..+30.00h from
+    their own ticker midnight and none negative** — inside the 36h window this
+    pipeline already uses, with 6h of margin.
 
-    They have the SAME bug, confirmed at the venue rather than assumed:
-    ``KXRUGBYNRLMATCH-26SEP13PENSYD`` has occurrence 2026-09-13T09:05Z against
-    a close of 2026-09-27T06:05Z — the identical +14d settlement backstop — and
-    ``occ <= close`` holds. Narrowing this to tennis would leave them broken
-    for no reason. The bound that keeps it safe is the ``occ <= close`` check
-    in ``_kalshi_commence_time``, not the sport.
+    The bound that keeps it safe is still the ``occ <= close`` check in
+    ``_kalshi_commence_time``, not the sport: it is what refuses
+    ``KXHONEYDEUCE``. The vocabulary is what refuses a Billboard chart.
 
     The reach is pinned by a test so it stays a decision and never becomes an
-    accident: a 17th series joining the shape is a test failure, not a silent
+    accident: a series joining the shape is a test failure, not a silent
     re-timing.
     """
-    return bool(event_ticker) and bool(_TENNIS_MATCH_SERIES_RE.match(event_ticker))
+    return bool(event_ticker) and bool(_DATED_FIXTURE_SERIES_RE.match(event_ticker))
 
 
 def _tennis_commence_target(
@@ -2348,12 +2389,14 @@ def _stand_in_refinement_target(
        `DERIVED_COMMENCE_SOURCES` provenance qualifies. An `espn`, `odds_api`,
        `statpal`, `mlb_schedule_repair` or unknown/None start is never touched
        — including None, which is most of the table.
-    2. **The ticker must be a dated per-match ticker** (`_is_dated_match_ticker`
+    2. **The ticker must be a dated fixture ticker** (`_is_dated_fixture_ticker`
        — the same pinned predicate that armed the market-side write). This is
        what keeps gotcha #14 out: for any OTHER Kalshi ticker the market's
        `commence_time` is still a +14d settlement close, and copying that onto
        an event would replace a right-day midnight with a fortnight-out date —
-       strictly worse than the bug being fixed.
+       strictly worse than the bug being fixed. #3562 widens this gate and the
+       event side comes free: the 104 non-tennis stand-ins it reaches are
+       repaired by exactly the rail below, unchanged.
     3. **The move must be FORWARD and within `_STAND_IN_REFINEMENT_MAX`.** See
        that constant: it is what proves this write cannot re-open #2020.
 
@@ -2362,7 +2405,7 @@ def _stand_in_refinement_target(
     """
     if event_commence_source not in DERIVED_COMMENCE_SOURCES:
         return None
-    if not _is_dated_match_ticker(external_id):
+    if not _is_dated_fixture_ticker(external_id):
         return None
     if event_commence is None or market_commence is None:
         return None

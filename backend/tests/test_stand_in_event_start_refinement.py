@@ -44,7 +44,7 @@ the commit: `tests/integration/test_stand_in_event_starts_real_postgres.py`.
 
 ## the gate that is easiest to get wrong
 
-Gate 2 (`_is_dated_match_ticker`) is not decoration. For any ticker that is NOT
+Gate 2 (`_is_dated_fixture_ticker`) is not decoration. For any ticker that is NOT
 a dated per-match one, `futures_markets.commence_time` is still Kalshi's +14d
 settlement close (gotcha #14). Without gate 2 the repair would drag an event
 from a right-day midnight to a **fortnight out** — strictly worse than the bug.
@@ -168,20 +168,39 @@ def test_an_outright_never_drags_its_event_to_the_settlement_backstop():
 
 @pytest.mark.parametrize(
     "ticker",
-    ["KXNFLGAME-26SEP07KCPHI", "KXATP1RANK-26DEC31", "KXATPADVANCE-26USOSEMI",
-     "KXHONEYDEUCE-01JAN27", None, ""],
+    ["KXATP1RANK-26DEC31", "KXATPADVANCE-26USOSEMI",
+     "KXHONEYDEUCE-01JAN27", "KXBBCHARTPOSITIONALBUM-26SEP08TAYSWI",
+     "KXNCAAFCFPPOLL-26SEP16", "KXJOINCLUB-26OCT02AGORDON", None, ""],
 )
-def test_a_ticker_that_is_not_a_dated_match_is_refused(ticker):
+def test_a_ticker_that_is_not_a_dated_fixture_is_refused(ticker):
+    """None of these is one contest on a day. `KXATP1RANK-26DEC31` is the
+    day-backtracking trap, `KXATPADVANCE-26USOSEMI` is an outright wearing a
+    fixture's market-type token, and the last three are #3562's refuted-widening
+    specimens: a Billboard chart position and a poll ranking have an
+    `occurrence_datetime` that is not a kick-off, and `KXJOINCLUB`'s 7-character
+    tail is what killed the "matchup tails are 5-6 characters" rescue."""
     assert _target(external_id=ticker) is None
+
+
+def test_an_nfl_game_stand_in_now_gets_the_published_hour():
+    """#3562's behaviour change, asserted rather than merely un-asserted.
+
+    This ticker used to be refused here, and its own test said so. It is a real
+    NFL fixture: `is_game` was already True so the MARKET carried the venue's
+    kick-off, while the EVENT the user opens kept a midnight nobody published.
+    The gate widening is what closes that gap, and deleting the old refusal
+    without stating the new truth would have left the flip invisible.
+    """
+    assert _target(external_id="KXNFLGAME-26SEP07KCPHI") == PUBLISHED
 
 
 def test_the_gate_is_the_same_predicate_that_armed_the_market_side_write():
     """One definition, so the writer that stores the hour and the repair that
     propagates it can never disagree about which rows they mean (#3488)."""
-    from app.tasks.kalshi import _is_dated_match_ticker
+    from app.tasks.kalshi import _is_dated_fixture_ticker
 
-    assert _is_dated_match_ticker(TICKER)
-    assert not _is_dated_match_ticker("KXWTA-26USO")
+    assert _is_dated_fixture_ticker(TICKER)
+    assert not _is_dated_fixture_ticker("KXWTA-26USO")
 
 
 # ---------------------------------------------------------------------------

@@ -867,11 +867,20 @@ jobs:
         # is what the API serving the page would see.
         #
         # Two-armed: `test_the_unscoped_query_redates_events_for_matches_already
-        # _over` and `test_without_the_dated_match_gate_an_outright_moves_a
+        # _over` and `test_without_the_dated_fixture_gate_an_outright_moves_a
         # _fortnight` execute the MUTATED shapes against the same seeded corpus
         # and require the damage to be observable. The second drives the REAL
         # rail with the gate stubbed, so it proves the production call site
         # consults it rather than that a re-implementation would have.
+        #
+        # #3562 also runs the COMPOSITION here: `_fix_tennis_commence_times`
+        # then `_refine_stand_in_event_starts`, the order the poll calls them,
+        # asserting the END state of both columns. #3532 was filed because the
+        # first writer clobbered the venue hour the poll had just stored, and
+        # neither writer's own suite could see it — only running both can.
+        # `test_the_composition_breaks_if_the_market_writer_stops_preserving`
+        # is its two-armed half: neutralise #3488's `current_commence` guard and
+        # the market really is re-dated back to midnight.
         # Its fixture drops and recreates the schema, so it sits beside the other
         # gates that do. Same skip-detection as every gate in this job.
         run: |

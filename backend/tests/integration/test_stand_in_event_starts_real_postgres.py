@@ -45,8 +45,25 @@ Eight events, each paired with the defect it catches:
   settlement close. Selected by the SQL, refused by the window. This is the
   deploy-ordering row: the repair may run before the poll re-times the market.
 * **`outright_market`** — `KXWTA-26USO`, +14d close. Selected by the SQL,
-  refused by the dated-match gate. Without that gate this event would be
+  refused by the dated-fixture gate. Without that gate this event would be
   dragged a fortnight out.
+
+#3562 adds two more, because the gate is no longer tennis-shaped:
+
+* **`soccer_fixture`** — `KXLIGUE1GAME-26SEP20OLMPSG`, the Ligue 1 fixture whose
+  page said the wrong DAY. `llm_sport_category='soccer'`, so it also proves the
+  tennis-scoped market fix-up cannot see it. Moves, +21.75h.
+* **`nfl_prop`** — `KXNFLRACE-26SEP14DENKC-35`, a race-to-N-points prop on a
+  Monday-night game: occurrence 2026-09-15T03:15Z against a ticker naming the
+  14th. **+27.25h and a different calendar day**, which is the case a
+  "same UTC day" rule would have refused.
+
+and the composition driver `test_both_post_loop_fixups_in_the_shipped_order`,
+which is the assertion neither #3488's branch nor #3532's could make alone:
+`_fix_tennis_commence_times` and `_refine_stand_in_event_starts` are two writers
+of `futures_markets.commence_time` / `events.commence_time` in one post-loop
+block, and #3532 was filed because the first clobbered the venue hour the poll
+had just stored. Running one of them proves nothing about that.
 """
 
 from __future__ import annotations
@@ -71,38 +88,53 @@ UTC = timezone.utc
 
 STAND_IN_SEP07 = datetime(2026, 9, 7, 0, 0, tzinfo=UTC)
 STAND_IN_SEP06 = datetime(2026, 9, 6, 0, 0, tzinfo=UTC)
+STAND_IN_SEP20 = datetime(2026, 9, 20, 0, 0, tzinfo=UTC)
+STAND_IN_SEP14 = datetime(2026, 9, 14, 0, 0, tzinfo=UTC)
 PUBLISHED = datetime(2026, 9, 7, 18, 0, tzinfo=UTC)
 PUBLISHED_LATER = datetime(2026, 9, 7, 20, 30, tzinfo=UTC)
 ITF_PUBLISHED = datetime(2026, 9, 7, 9, 30, tzinfo=UTC)
 BACKSTOP = datetime(2026, 9, 21, 6, 5, tzinfo=UTC)
+#: Venue-read 2026-09-06 (notice 26), #3562.
+LIGUE1_PUBLISHED = datetime(2026, 9, 20, 21, 45, tzinfo=UTC)
+NFL_PUBLISHED = datetime(2026, 9, 15, 3, 15, tzinfo=UTC)
 
 
-# (key, event_source, event_commence, [(external_id, source, status, market_commence), ...])
+# (key, event_source, event_commence,
+#  [(external_id, source, status, market_commence, llm_sport_category), ...])
 _EVENTS = [
     ("refines", "kalshi_ticker", STAND_IN_SEP07, [
-        ("KXATPMATCH-26SEP07ZVEDAR", "kalshi", "open", PUBLISHED),
+        ("KXATPMATCH-26SEP07ZVEDAR", "kalshi", "open", PUBLISHED, "tennis"),
     ]),
     ("two_markets", "kalshi_ticker", STAND_IN_SEP07, [
-        ("KXATPMATCH-26SEP07AAAZZZ", "kalshi", "open", PUBLISHED),
-        ("KXATPMATCH-26SEP07BBBZZZ", "kalshi", "open", PUBLISHED_LATER),
+        ("KXATPMATCH-26SEP07AAAZZZ", "kalshi", "open", PUBLISHED, "tennis"),
+        ("KXATPMATCH-26SEP07BBBZZZ", "kalshi", "open", PUBLISHED_LATER, "tennis"),
     ]),
     ("itf_next_day", "kalshi_ticker", STAND_IN_SEP06, [
-        ("KXITFMATCH-26SEP06STOISH-STO", "kalshi", "open", ITF_PUBLISHED),
+        ("KXITFMATCH-26SEP06STOISH-STO", "kalshi", "open", ITF_PUBLISHED, "tennis"),
     ]),
     ("espn_event", "espn", STAND_IN_SEP07, [
-        ("KXATPMATCH-26SEP07ESPESP", "kalshi", "open", PUBLISHED),
+        ("KXATPMATCH-26SEP07ESPESP", "kalshi", "open", PUBLISHED, "tennis"),
     ]),
     ("no_source_event", None, STAND_IN_SEP07, [
-        ("KXATPMATCH-26SEP07NULNUL", "kalshi", "open", PUBLISHED),
+        ("KXATPMATCH-26SEP07NULNUL", "kalshi", "open", PUBLISHED, "tennis"),
     ]),
     ("closed_market", "kalshi_ticker", STAND_IN_SEP07, [
-        ("KXATPMATCH-26SEP07CLOCLO", "kalshi", "closed", PUBLISHED),
+        ("KXATPMATCH-26SEP07CLOCLO", "kalshi", "closed", PUBLISHED, "tennis"),
     ]),
     ("backstop_market", "kalshi_ticker", STAND_IN_SEP07, [
-        ("KXATPMATCH-26SEP07FARFAR", "kalshi", "open", BACKSTOP),
+        ("KXATPMATCH-26SEP07FARFAR", "kalshi", "open", BACKSTOP, "tennis"),
     ]),
     ("outright_market", "kalshi_ticker", STAND_IN_SEP07, [
-        ("KXWTA-26USO", "kalshi", "open", BACKSTOP),
+        ("KXWTA-26USO", "kalshi", "open", BACKSTOP, "tennis"),
+    ]),
+    # ---- #3562 -----------------------------------------------------------
+    ("soccer_fixture", "kalshi_ticker", STAND_IN_SEP20, [
+        ("KXLIGUE1GAME-26SEP20OLMPSG", "kalshi", "open", LIGUE1_PUBLISHED,
+         "soccer"),
+    ]),
+    ("nfl_prop", "kalshi_ticker", STAND_IN_SEP14, [
+        ("KXNFLRACE-26SEP14DENKC-35", "kalshi", "open", NFL_PUBLISHED,
+         "football"),
     ]),
 ]
 
@@ -120,6 +152,8 @@ _MUST_MOVE = {
     "refines": PUBLISHED,
     "two_markets": PUBLISHED,        # ORDER BY external_id -> AAAZZZ wins
     "itf_next_day": ITF_PUBLISHED,
+    "soccer_fixture": LIGUE1_PUBLISHED,
+    "nfl_prop": NFL_PUBLISHED,
 }
 
 
@@ -185,20 +219,21 @@ async def _seed(conn) -> dict[str, int]:
         ).scalar_one()
         ids[key] = event_id
 
-        for ext, source, status, market_commence in markets:
+        for ext, source, status, market_commence, sport in markets:
             await conn.execute(
                 text(
                     "INSERT INTO futures_markets "
                     "(source, external_id, name, category, mutually_exclusive, "
                     " status, llm_sport_category, commence_time, event_id) "
                     "VALUES (:source, :ext, :name, 'championship', true, "
-                    "        :status, 'tennis', :ct, :eid)"
+                    "        :status, :sport, :ct, :eid)"
                 ),
                 {
                     "source": source,
                     "ext": ext,
                     "name": f"{key} market",
                     "status": status,
+                    "sport": sport,
                     "ct": market_commence,
                     "eid": event_id,
                 },
@@ -387,8 +422,139 @@ async def test_the_unscoped_query_redates_events_for_matches_already_over(
     )
 
 
+# ---------------------------------------------------------------------------
+# the composition — two writers, one post-loop block, one column each
+# ---------------------------------------------------------------------------
+
+async def _read_markets(engine, externals):
+    out = {}
+    async with engine.connect() as conn:
+        for ext in externals:
+            out[ext] = (
+                await conn.execute(
+                    text(
+                        "SELECT commence_time FROM futures_markets "
+                        "WHERE external_id = :ext"
+                    ),
+                    {"ext": ext},
+                )
+            ).scalar_one()
+    return out
+
+
 @needs_postgres
-async def test_without_the_dated_match_gate_an_outright_moves_a_fortnight(
+async def test_both_post_loop_fixups_in_the_shipped_order(pg_engine, monkeypatch):
+    """The assertion neither branch that raced here could make on its own.
+
+    #3532 and #3488/#3544 were the same ship built twice, and INTEGRATOR-232's
+    question — are these two writers complementary or redundant? — could not be
+    answered by either test suite, because each drove ONE of them. This drives
+    both, in the order `_poll_kalshi_markets` calls them, against real Postgres,
+    and asserts the END state of both columns:
+
+    * `refines` — the market already holds the venue's 18:00Z. The market-side
+      fix-up must LEAVE it (the #3488 `current_commence` guard); if it re-dates
+      it to the ticker midnight, the refiner then measures a 0-minute move and
+      the event page keeps the wrong day. That is the exact live regression
+      #3532 documented, and only the composition can see it.
+    * `backstop_market` — the market is still on the +14d close. The market-side
+      fix-up pulls it back to the ticker day; the event, already on that day,
+      correctly does not move. Convergence, not a fight.
+    * `soccer_fixture` — `llm_sport_category='soccer'`, so the tennis-scoped
+      market fix-up is blind to it while the widened event-side gate reaches
+      it. This is what says #3562's classifier widening did NOT widen the
+      market-side re-dater with it.
+    """
+    from app.tasks.kalshi import (
+        _fix_tennis_commence_times,
+        _refine_stand_in_event_starts,
+    )
+    from app.utils.event_completion import KALSHI_OCCURRENCE_COMMENCE_SOURCE
+
+    async with pg_engine.begin() as conn:
+        ids = await _seed(conn)
+
+    _install_real_session(monkeypatch, pg_engine)
+
+    # The shipped order. Reversing these two lines is what the ordering guard
+    # in tests/test_stand_in_event_start_refinement.py forbids; this is what
+    # the order is FOR.
+    await _fix_tennis_commence_times()
+    await _refine_stand_in_event_starts()
+
+    markets = await _read_markets(
+        pg_engine,
+        [
+            "KXATPMATCH-26SEP07ZVEDAR",
+            "KXATPMATCH-26SEP07FARFAR",
+            "KXLIGUE1GAME-26SEP20OLMPSG",
+        ],
+    )
+    events = await _read_back(pg_engine, ids)
+
+    # 1. the venue hour survives the market-side fix-up...
+    assert markets["KXATPMATCH-26SEP07ZVEDAR"] == PUBLISHED
+    # ...and reaches the field the page renders.
+    assert events["refines"].commence_time == PUBLISHED
+    assert events["refines"].commence_time_source == KALSHI_OCCURRENCE_COMMENCE_SOURCE
+
+    # 2. the backstop market is pulled back to its ticker day, and the event —
+    #    already there — is left alone rather than dragged a fortnight out.
+    assert markets["KXATPMATCH-26SEP07FARFAR"] == STAND_IN_SEP07
+    assert events["backstop_market"].commence_time == STAND_IN_SEP07
+    assert events["backstop_market"].commence_time_source == "kalshi_ticker"
+
+    # 3. the soccer market is untouched by the tennis-scoped writer and its
+    #    event still gets the published hour.
+    assert markets["KXLIGUE1GAME-26SEP20OLMPSG"] == LIGUE1_PUBLISHED
+    assert events["soccer_fixture"].commence_time == LIGUE1_PUBLISHED
+
+
+@needs_postgres
+async def test_the_composition_breaks_if_the_market_writer_stops_preserving(
+    pg_engine, monkeypatch
+):
+    """The two-armed half of the test above.
+
+    Neutralise #3488's `current_commence` guard — the one line that says "a
+    market already off the backstop is not on the backstop" — and the market
+    side re-dates 18:00Z back to midnight, after which the refiner measures a
+    0-minute move and refuses. The event page keeps saying the previous
+    evening. If this arm does not go red, the composition test above is
+    agreeing with itself.
+    """
+    import app.tasks.kalshi as kalshi_task
+
+    async with pg_engine.begin() as conn:
+        ids = await _seed(conn)
+
+    _install_real_session(monkeypatch, pg_engine)
+
+    real = kalshi_task._tennis_commence_target
+
+    def _no_preserve(external_id, event_commence, current_commence=None):
+        # Exactly the pre-#3488 shape: decide without consulting what the
+        # market already holds.
+        return real(external_id, event_commence, None)
+
+    monkeypatch.setattr(kalshi_task, "_tennis_commence_target", _no_preserve)
+
+    await kalshi_task._fix_tennis_commence_times()
+    await kalshi_task._refine_stand_in_event_starts()
+
+    markets = await _read_markets(pg_engine, ["KXATPMATCH-26SEP07ZVEDAR"])
+    events = await _read_back(pg_engine, ids)
+
+    assert markets["KXATPMATCH-26SEP07ZVEDAR"] == STAND_IN_SEP07, (
+        "with the guard neutralised the market MUST be clobbered back to "
+        "midnight — otherwise this arm proves nothing about it"
+    )
+    assert events["refines"].commence_time == STAND_IN_SEP07
+    assert events["refines"].commence_time_source == "kalshi_ticker"
+
+
+@needs_postgres
+async def test_without_the_dated_fixture_gate_an_outright_moves_a_fortnight(
     pg_engine, monkeypatch
 ):
     """Neutralise gate 2 and the outright's event is dragged from Sep 7 to the
@@ -401,7 +567,7 @@ async def test_without_the_dated_match_gate_an_outright_moves_a_fortnight(
         ids = await _seed(conn)
 
     _install_real_session(monkeypatch, pg_engine)
-    monkeypatch.setattr(kalshi_task, "_is_dated_match_ticker", lambda _t: True)
+    monkeypatch.setattr(kalshi_task, "_is_dated_fixture_ticker", lambda _t: True)
 
     # The window still refuses a +336h move, so widen it too: the two bounds
     # are independent and this arm is about gate 2.
