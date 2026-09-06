@@ -804,6 +804,19 @@ class TestLeagueFuturesEndpoint:
         """
         resp = await client.get("/api/leagues/basketball_nba")
         body = resp.json()
+
+        # #3389's field, and the alarm above fired on it as designed. It is a
+        # timestamp, so it cannot be written into the literal — it is asserted for
+        # shape and then LIFTED OUT, which keeps the equality exact for every other
+        # key. Relaxing the comparison to a subset to make room for it is the one
+        # edit the docstring forbids: a field added after this would then arrive in
+        # silence, which is the whole failure this test exists to prevent.
+        from datetime import datetime
+
+        built_at = body.pop("built_at", None)
+        assert isinstance(built_at, str), "the envelope must date its own content"
+        datetime.fromisoformat(built_at)
+
         assert body == {
             "sport_key": "basketball_nba",
             "sections": {},
