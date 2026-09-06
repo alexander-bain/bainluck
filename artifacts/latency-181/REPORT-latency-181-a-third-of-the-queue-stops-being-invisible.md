@@ -112,20 +112,64 @@ the code is live.
 
 ---
 
-## State on exit
+## State on exit — both ships graded, and they went opposite ways
 
 | item | state |
 |---|---|
 | #3456 (the red shard blocking every branch) | CLOSED, fixed on master `18cbc206` |
-| 180's ship (#3399) | rebased `9dc0fd0e`, PR #3441 MERGEABLE, **CERT-2037 staged** |
-| LAT-P242 (#3466) | committed `9d2ffaff`, PR #3468, **CERT-2038 staged** |
-| exact-sha CI, both shas | 🔴 **queued** — GitHub Actions backlogged; no CI run in the repo completed in a 20-minute span |
+| **#3399 — 180's ship** | **CERT-2037 GREEN, TOKEN GRANTED** on `9dc0fd0e`; exact-sha CI **`completed/success`** (run `34019461018`, 07:51Z). Notice-13 grep passes, no supersedes row, PR #3441 MERGEABLE, no alembic. **With the integrator, not self-merged** |
+| **#3466 — LAT-P242** | 🔴 **CERT-2038 BLOCK, TOKEN WITHHELD.** PARKED |
 | #3398 (parent measurement) | open, CLAIMED by latency |
 
-⚠️ **Neither ship may merge until `completed/success` on its exact sha** (standing notice 28).
-Absence of the row is a STOP, not a pass.
+**#3399 was not self-merged, deliberately.** The integrator holds `LANE-integrator.lock` (pid 71476,
+alive) on `INTEGRATOR-228: … adjudicate the CERT-2029/2032 dead-token call` — this ship's own
+lineage. Merging into that is the CERT-793-class race. A note with every merge gate pre-checked went
+to their inbox instead; nothing is owed back to this lane.
 
----
+### The BLOCK on LAT-P242 is correct, and this queue is not re-arguing it
+
+CERT-2038's finding: the block shipped **an instrument, no number, and no user-visible surface, and
+named neither a pillar nor a ship**. That is a violation of the binding progress/queue/rider/lane-role
+rules — a *ship* failure, not a guard-only objection.
+
+It is right. The program file and the directive both name the pillar and the ship; **the cert block
+did not**, and it opened by conceding "it ships no number" and "no user-visible surface change".
+CLAUDE.md's rider rule says architecture rides a named user-visible ship and is never the cargo.
+LAT-P242 was presented as cargo.
+
+The code is green and reviewable — 38 tests, 12/12 mutants, 573 green, no migration, and the
+grader's own row calls the implementation coherent. It is **parked, not abandoned**, at
+`PARKED-MEASUREMENTS.md`, on `program/latency-246-the-queue-can-be-sized` @ `9d2ffaff` (PR #3468),
+with the BLOCK's restage condition recorded verbatim.
+
+### Complying with the BLOCK turned up the better brief
+
+The BLOCK demanded LAT-P242 be restaged only as a rider to "an already queued user-visible search
+change that actually fixes cold typeahead scheduling/expiry". Going to look for that ship found it
+in the beat schedule, with no measurement needed (`app/tasks/__init__.py:5131-5155`):
+
+| UTC | entry | limit |
+|---|---|---|
+| 06:30 | `collapse-odds-snapshots-daily` | 500 |
+| 06:30 | `turbo-collapse-futures` (every 6h) | 5000 |
+| 06:35 | `collapse-winprob-snapshots-daily` | 500 |
+| 06:40 | `collapse-futures-snapshots-daily` | 500 |
+| 06:45 | `turbo-collapse-odds` (every 6h) | 5000 |
+
+**Five compaction beats in a fifteen-minute window on a two-slot queue.** All five default to
+`background`; both `turbo_collapse_*` carry `soft_time_limit=3600`. The codebase already says the
+consequence in its own words at `app/tasks/__init__.py:3690` — they "may hold **half the background
+pool for a full hour**, four times a day", and "a long pair can hold BOTH slots simultaneously — a
+scheduled, total background outage window with nothing else able to run."
+
+Meanwhile `warm_typeahead` fires every 10s with `expires: 120` and queues 18 deep, so through that
+window every fire is discarded before a slot frees and the 65s TTL lapses.
+
+That is a user-visible ship with a pillar and **a time of day**: *DISCOVER — the search box stops
+going cold every morning while five compaction passes share two slots.* It is a beat-schedule
+change, it costs nothing, and — unlike a topology argument — it does not depend on knowing the
+total, because removing a scheduling coincidence is provably good at any utilisation. That is what
+LAT-P242 should ride, and it is a sharper brief than the demand total would have produced.
 
 ## Rules added by this queue
 
@@ -149,6 +193,14 @@ dividing it evenly invents a number.
 **(fff) Signal-wired observability fails silently in two indistinguishable ways** — never connected,
 and connected-but-raising — because the handlers swallow by contract. Drive the REAL signal in the
 test; calling the handler directly proves neither.
+
+**(ggg) An instrument is never the cargo, however good it is and however badly the next decision
+needs it.** CERT-2038 BLOCKed a green, well-guarded, genuinely useful measurement instrument purely
+on queue shape, and it was right to. Name the pillar and the user-visible ship **in the cert block
+header**, or the block is refused before its evidence is read. The corollary is the useful half: if
+you cannot name the ship, you have not found it yet — and looking for it is what turned "the queue
+is oversubscribed, somehow" into "five compaction passes share two slots for fifteen minutes every
+morning".
 
 Carried: 168 (a)–(g), 170 (b)–(e), 171 (b)–(e), 173 (f)–(i), 174 (j)–(m), 175 (n)–(x), 176 (y)–(dd),
 177 (ee)–(kk), 178 (ll)–(oo), 179 (pp)–(uu), 180 (vv)–(aaa) all hold.

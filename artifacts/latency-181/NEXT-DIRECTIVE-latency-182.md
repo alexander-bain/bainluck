@@ -1,181 +1,203 @@
-# latency/182 — take the reading, then move the grinders
+# latency/182 — five compaction passes, two slots, fifteen minutes
 
-Written by latency/181 at 2026-09-06 12:45am PT (07:45Z — PT = local `date` minus 3h, notice 24,
-verified with `TZ=America/Los_Angeles date`). Staged, not consumed.
+Written by latency/181 at 2026-09-06 1:05am PT (08:05Z — PT = local `date` minus 3h, notice 24,
+verified with `TZ=America/Los_Angeles date`). Staged, not consumed. **Rewritten at 08:05Z after
+CERT-2038 BLOCKed 181's second ship; the earlier draft's ITEM 0/ITEM 1 are void — this is the
+operative text.**
 
-**PILLAR: DISCOVER.** **SHIP: the search box stops being cold 45% of the time** — the same ship as
-178, 179, 180 and 181. 181 built the instrument. This queue is the first one that can act on a
-number instead of a ranking.
+**PILLAR: DISCOVER.** **SHIP: the search box stops going cold every morning while five compaction
+passes share two slots.** That is a named, user-visible ship with a pillar, and it is the one thing
+this queue must deliver. 178–181 circled it; 181 found it in the beat schedule.
 
 ## Read first
 
 `artifacts/latency-181/REPORT-latency-181-a-third-of-the-queue-stops-being-invisible.md` and
-`artifacts/latency-180/REPORT-latency-180-the-instrument-could-not-see-a-third-of-the-queue.md`.
-Issues **#3466** (181's ship, the instrument), **#3399** (180's ship), **#3398** (the parent
-measurement, CLAIMED by latency), **#3444** (label map), **#3440** (settled concepts), **#3364**
-(`warm_search_head` silenced).
+`artifacts/latency-180/REPORT-latency-180-…` (both on branch `program/latency-181-artifacts`).
+Issues **#3466**, **#3399**, **#3398** (parent, CLAIMED by latency), **#3444**, **#3440**, **#3364**.
+`PARKED-MEASUREMENTS.md`, the LAT-P242 entry at the end.
 
-**Do not re-derive any of this:**
+**Do not re-derive:** the concurrency sweep, `WARM_CONCURRENCY`, `REFRESH_AHEAD_SECONDS`,
+`RESPONSE_CACHE_TTL_S` (178 settled all three); priority queueing (179 refuted it);
+`pg_stat_statements` totals (reset 5+ days ago, 135 of the top 200 dead).
 
-- Do NOT re-run the concurrency sweep. Do NOT touch `WARM_CONCURRENCY`, `REFRESH_AHEAD_SECONDS` or
-  `RESPONSE_CACHE_TTL_S`. 178 settled all three.
-- Do NOT implement priority queueing. 179 measured and refuted it.
-- Do NOT move anything to `heavy` on the strength of the old figures. 180 measured it at **0.91x**
-  against background's 0.84x *floor* — but see ITEM 1: both of those numbers came from the blind
-  instrument and **`heavy` must be re-read on `queue_demand` before it is ruled out**.
-- Do NOT rebuild the demand model. **`artifacts/latency-180/demand.py` is now superseded** by
-  `queue_demand` on the adherence endpoint — one read, no label join, no `rate x mean`. Use the
-  endpoint. Keep `demand.py` only as a cross-check if the two disagree, and if they do, read
-  rule (vv) before believing either.
-- Do NOT trust `pg_stat_statements` totals. Reset 5+ days ago; 135 of its top 200 statements are
-  dead.
+## State on arrival — READ BOTH, they will have moved
 
-## State on arrival — CHECK BOTH OF THESE FIRST, they may have moved
+**1. #3399 (180's typeahead shed fix) — GREEN, CI GREEN, with the integrator.**
+`CERT-2037 — GREEN, TOKEN GRANTED` on `9dc0fd0e63de5665235287206fc52297646c2396`, and its exact-sha
+CI went **`completed/success`** (run `34019461018`) at 07:51Z, so the one condition on its token is
+met. Notice-13 grep passes, no supersedes row, PR #3441 MERGEABLE, no alembic.
 
-🔴 **Two ships were staged for cert and neither had exact-sha CI green when 181 ended.** GitHub
-Actions was backlogged; no CI run in the repo completed in a 20-minute span.
+181 did **not** self-merge it: the integrator holds `LANE-integrator.lock` (pid 71476, alive) with
+`INTEGRATOR-228: … adjudicate the CERT-2029/2032 dead-token call` — which is this ship's lineage —
+and merging into that is the CERT-793-class race. A note with every gate pre-checked is in
+`runner-inbox/integrator/from-latency-181-the-cert-2032-dead-token-call-is-already-resolved…`.
+**Check whether it landed. If it did, the post-deploy check is owed and is yours:**
+`GET /api/events/typeahead?q=sta` twice, ~2s apart; the second should be a warm hit where both used
+to be 5–8s. Same for `red`. If it is not warm, suspect first that `sta` has fallen out of the warmed
+head — read `last_outcome.head` from `/api/admin/typeahead-warmer/last`, and note the ring truncates
+that list to 12 while the task-metrics summary carries all 40.
 
-| ship | branch | sha | PR | cert |
-|---|---|---|---|---|
-| #3399 — 180's typeahead shed fix, rebased | `program/latency-245-the-search-box-stops-going-cold` | `9dc0fd0e` | #3441 | **CERT-2037 staged** |
-| #3466 — LAT-P242, the instrument | `program/latency-246-the-queue-can-be-sized` | `9d2ffaff` | #3468 | **CERT-2038 staged** |
+**2. 🔴 #3466 (LAT-P242, the demand instrument) — BLOCKED and PARKED. Do not restage it alone.**
+`CERT-2038 — BLOCK, TOKEN WITHHELD` on `9d2ffaff…` (branch `program/latency-246-the-queue-can-be-sized`,
+PR #3468). The finding, and it is correct: the block shipped **an instrument, no number, and no
+user-visible surface, and named neither a pillar nor a ship** — a violation of the
+progress/queue/rider/lane-role rules, i.e. a *ship* failure, not a guard gap. **Do not re-argue it.**
+The code itself is green and reviewable (38 tests, 12/12 mutants, 573 green, no migration) and the
+grader called the implementation coherent; only its queue shape was wrong.
 
-For each: read the ledger for a graded row, then require `completed/success` on the **exact sha**
-(`gh api "repos/alexander-bain/bainluck/actions/runs?head_sha=$SHA"`, full 40 chars — an
-abbreviation returns `[]` and reads as a STOP). **Absence of the row is a STOP, not a pass**
-(notice 28). Then check no later ledger row names that cert after "supersedes" (notice 18).
+Its restage condition, verbatim: restage "only as a rider to an already queued user-visible search
+change that actually fixes cold typeahead scheduling/expiry and names its pillar", with a catching
+proof of "a saturated-queue before/after showing `warm_typeahead` delivered before 120s expiry and
+representative `sta`/`red` requests returning cached answers within the ship's latency bound".
 
-⚠️ **#3399's history, so you do not re-litigate it.** CERT-2032 granted a token on `2a28a13f`
-conditional on exact-sha CI, and that condition was unmeetable because #3456 had every branch cut
-from master red on shard 2. #3456 is CLOSED (`18cbc206`). The branch was rebased, and CERT-2037 is a
-**fresh grade, not a sha-swap** — the branch moved past the certed sha with real code
-(`git diff abd532c0..9dc0fd0e -- backend/` is +58/−20), so the byte-identical-diff precedent does
-**not** apply and was not claimed. Do not try to merge on CERT-2032.
+**ITEM 1 below is that ship. LAT-P242 rides it.** That is the whole shape of this queue.
 
-## ITEM 0 — THE READING. This is the whole point of 181 and it is one GET.
+## ITEM 1 — THE SHIP: five compaction beats, two slots, a fifteen-minute window
 
-**Blocked until #3466 is live**, and the counters need a window: they are 24h-windowed and empty at
-deploy, so `wall_window_s` starts at 0 and every `worker_seconds_per_hour` is withheld until each
-task has run at least once. **Give it long enough that the slow beats have fired** — the hourly and
-6h ones are the multi-minute grinders, so a 20-minute read will systematically under-report exactly
-the tasks this is for. Read `wall_window_s` per row and say what it was; do not quote a total whose
-rows have windows shorter than the cadence of the tasks in them.
+Read straight off the beat schedule, `app/tasks/__init__.py:5131-5155`. No measurement required to
+see it:
 
-```
-source ~/.claude/.env && curl -s -H "Authorization: Bearer $ADMIN_TOKEN" \
-  "$BAINLUCK_API/api/admin/celery/schedule-adherence" | python3 -m json.tool
-```
+| UTC | entry | limit |
+|---|---|---|
+| 06:30 | `collapse-odds-snapshots-daily` | 500 |
+| 06:30 | `turbo-collapse-futures` (every 6h) | 5000 |
+| 06:35 | `collapse-winprob-snapshots-daily` | 500 |
+| 06:40 | `collapse-futures-snapshots-daily` | 500 |
+| 06:45 | `turbo-collapse-odds` (every 6h) | 5000 |
 
-Then answer, in this order:
+All five default to `background` (no `options`, no `task_routes` entry ⇒ `task_default_queue`).
+Both `turbo_collapse_*` carry `soft_time_limit=3600`.
 
-1. **`queue_demand.background.utilisation`.** Above 1.0 is proof of oversubscription and settles the
-   question three queues have been arguing about. Below 1.0 is **not** proof of headroom — read
-   `tasks_unpriced`, `tasks_split_across_queues` and the residuals before saying anything.
-2. **Re-price `heavy` on the same field.** 180 ruled it out at 0.91x on the *blind* instrument. That
-   number was computed without the 32 and is not evidence any more, in either direction.
-3. **Reconcile `collapse_snapshots`.** 180 found it reading **0.00/hr on the delivery counter while
-   being the largest occupant of the queue** (45.5% of `inspect` samples). One of those numbers is
-   lying. It now has `deliveries` and `worker_seconds_per_hour` **on the same row**, so this is a
-   read, not a measurement. It also has three beat entries — check whether it lands in
-   `tasks_split_across_queues`, because if it does, its demand is real and attributed to nothing.
-4. **`refresh_hub`.** Not a beat entry at all, and holding a background slot when 180 looked. It
-   will not appear in `queue_demand` — that is the non-beat-dispatch residual working as documented,
-   not a bug. Find what dispatches it and price it separately.
+**The codebase already states the consequence, in its own words, at `app/tasks/__init__.py:3690`:**
+they "may hold **half the background pool for a full hour**, four times a day", and they "fire :30
+and :45 of the same hours, so a long pair can hold BOTH slots simultaneously — a scheduled, total
+background outage window with nothing else able to run." Measured: `turbo_collapse_futures` mean
+**942.7s**, 36.4% of `inspect` samples; `collapse_snapshots` **45.5%**.
 
-## ITEM 1 — THE SHIP: act on the total, not on the ranking
+Against that, `warm_typeahead` fires every 10s with `expires: 120` and its messages queue 18 deep in
+a 33-deep census — so during the window every one of its fires is discarded before a slot frees, the
+65s TTL lapses, and the head goes cold. That is the user-visible defect, and it has a time of day.
 
-The two named candidates are unchanged, but **do not pick from the list before ITEM 0 gives you the
-total**. 179's rule (tt) still holds — relieving one contributor in an oversubscribed queue
-reallocates the wait — and 180 adds that a ranking from a partially-blind instrument can name the
-wrong task entirely. That instrument is fixed; the reading has not been taken.
+**Why this is the right ship and not another ranking-chase.** 179's rule (tt) says relieving one
+contributor in an oversubscribed queue reallocates the wait. This is not that move: it removes a
+**scheduling coincidence**, not a contributor. Making five compaction passes non-overlapping is
+provably better at *any* utilisation, so unlike a topology change it does not depend on first
+knowing the total. That is exactly why it can ship before the instrument is live, and why the
+instrument can ride it rather than gate it.
 
-- **`turbo_collapse_futures`** — mean **942.7s**, in 36.4% of `inspect` samples. A 16-minute task on
-  a 2-slot queue.
-- **`collapse_snapshots`** — was unlabelled, in **45.5%** of samples. Now visible.
+**Do first, in this order:**
 
-Both are collapse/compaction work with no reader waiting on them, which is the exact profile
-`refresh_stale_futures_prices` had when it was pinned to `heavy`.
+1. **Confirm the collision is real before changing a schedule.** `crontab(minute=30, hour="*/6")`
+   and `crontab(minute=45, hour="*/6")` — enumerate the actual fire times rather than reading the
+   cron by eye, and check the three daily `collapse_snapshots` entries land where they look like
+   they do. `backend/scripts/clock_sweep.py` and `beat_intervals()` are the honest tools.
+   ⚠️ `collapse_snapshots` has **three** beat entries; its effective cadence is the SUM of their
+   rates, and 181's `beat_queues()` will tell you whether they agree about the queue.
+2. **Check both `turbo_collapse_*` for 179's defect class first.** A 942s mean is a strong prior for
+   a per-item loop, and if the work is simply cheap the collision stops mattering. The tells are
+   `Total Cost` and `Shared Read Blocks`, **never `Node Type`** — an `Index Scan` with an
+   unconstrained leading column is a full scan that reads exactly like a seek. If this pays, it is
+   the better fix and it costs nothing elsewhere.
+3. **Then stagger**, so no two compaction beats can be resident given their soft limits. Nothing
+   user-facing reads compaction output, so the cadence has slack the price refreshes did not.
+   Guard test: assert pairwise non-overlap derived from the live `beat_schedule` and each task's
+   declared `soft_time_limit` — **not** transcribed times, or the guard rots the first time someone
+   edits the schedule.
 
-In order of preference:
+**Bundle LAT-P242 into this ship** (`git cherry-pick` from `program/latency-246-…` @ `9d2ffaff`, or
+branch off it). Name the pillar and the ship in the cert block header this time.
 
-1. **Make them cheaper.** Check both for 179's defect class FIRST — an `Index Scan` whose leading
-   column is unconstrained is a full scan that reads like a seek, and the tells are `Total Cost` and
-   `Shared Read Blocks`, **never `Node Type`**. A 942s task is a strong prior for a per-item loop.
-   Costs nothing elsewhere; if it works it is the right answer.
-2. **Cadence** — but ask 179's class question first. `tournament_price_refresh` did not need to run
-   less often, it needed to stop costing 189s. Compaction genuinely may not need its cadence, and
-   unlike a price refresh nothing user-facing reads it.
-3. **A fourth queue, or `--concurrency=3` on background.** ⚠️ **SPENDING. OUT OF SCOPE without
-   Alex.** `background`'s 2 slots are a MEMORY bound (2 × 200MB + ~100MB ≈ 512MB Standard-1X
-   exactly), so this is a dyno purchase, not a config edit. If the measurement says it is the only
-   answer, that is a YOUR-TURN entry with the number, in plain English (notice 19: no "cert", no
-   jargon), not a change.
+⚠️ **Out of scope without Alex:** a fourth queue or `--concurrency=3` on background. That is a dyno
+purchase — `background`'s 2 slots are a MEMORY bound (2 × 200MB + ~100MB ≈ 512MB Standard-1X
+exactly). If the measurement says it is the only answer, that is a YOUR-TURN entry with the number
+in plain English (notice 19: no "cert", no jargon), not a change.
 
-## ITEM 2 — the guard debt, oldest first
+## ITEM 2 — the catching proof the BLOCK demands
 
-- **`TYPEAHEAD-SHED-RUNTIME-CACHE-CONTRACT` (CERT-2032's remaining follow-up).** The endpoint-level
-  regression: a shed answer WRITES and the next request HITS; a full futures-stage timeout writes
-  NOTHING. The grader proved both by hand against production; there is no test. **Why it is not done
-  yet, so it is not rediscovered:** three test files drive `typeahead_search` directly
-  (`test_typeahead_trending_cache_hit_2117`, `test_search_origin_channel_p118`,
-  `test_typeahead_eval_calls_do_not_vote`) and **all three rely on a cache HIT returning before the
-  first query**, so they pass `db=None`. This contract needs the MISS path — a fake `AsyncSession`
-  surviving every stage of a 1,000-line function. `test_search_response_cache.py::_search` is the
-  model. ⚠️ Its warning cost that file a red run: the debug flags' declared defaults are `Query(...)`
-  marker objects, **TRUTHY outside FastAPI**, so pass every flag explicitly or the assertions are
-  made against the uncached path.
-- **`LAT-P240-PREDICATE-SEMANTICS-GUARD` is still owed.** 179's guard counts emitted writes against
-  a permissive fake, which is not a semantic check. Production answered it empirically
-  (outcomes-per-market 1.642 → 1.647 across the deploy) but that is evidence, not a guard.
+Do not present this ship without it. A saturated-queue before/after showing `warm_typeahead`
+**delivered** before its 120s expiry, and `sta`/`red` returning cached answers within the ship's
+latency bound. Admin-counter tests alone were explicitly ruled not to pay this gate.
 
-## ITEM 3 — filed, not ours; coordinate, do not claim
+Once LAT-P242 is live it makes the "after" cheap and rigorous — `queue_demand` gives
+`background.utilisation` from one GET instead of a bespoke model. Note the counters are 24h-windowed
+and empty at deploy, so **give the slow beats time to fire**: a 20-minute read systematically
+under-reports the hourly and 6h grinders, which are the whole subject. Read `wall_window_s` per row
+and say what it was.
 
+Three reads worth taking while you are there, all now one GET rather than a measurement:
+`heavy`'s real utilisation (180's 0.91x came from the blind instrument and is not evidence in either
+direction); `collapse_snapshots`' contradiction (0.00/hr on the delivery counter while being the
+largest occupant — it now carries deliveries and worker-seconds on the same row, and check whether
+it lands in `tasks_split_across_queues`); and `refresh_hub`, which is not a beat entry at all and
+will not appear — that is the documented non-beat-dispatch residual, not a bug. Find its dispatcher.
+
+## ITEM 3 — guard debt, oldest first
+
+- **`TYPEAHEAD-SHED-RUNTIME-CACHE-CONTRACT`** (CERT-2032/2037's remaining nonblocking follow-up): a
+  shed answer WRITES and the next request HITS; a full futures-stage timeout writes NOTHING. Proved
+  by hand on production, never tested. **Why it is not done, so it is not rediscovered:** three test
+  files drive `typeahead_search` directly and **all three rely on a cache HIT returning before the
+  first query**, so they pass `db=None`. This needs the MISS path — a fake `AsyncSession` surviving
+  every stage of a 1,000-line function. `test_search_response_cache.py::_search` is the model.
+  ⚠️ Its warning cost that file a red run: the debug flags' declared defaults are `Query(...)` marker
+  objects, **TRUTHY outside FastAPI**, so pass every flag explicitly or you assert against the
+  uncached path.
+- **`LAT-P240-PREDICATE-SEMANTICS-GUARD`** still owed. 179's guard counts emitted writes against a
+  permissive fake; production answered it empirically (1.642 → 1.647) but that is evidence, not a
+  guard.
+
+## ITEM 4 — filed, not ours; coordinate, do not claim
+
+- **#3364** — `warm_search_head`'s `expires: 20` discards **96.7%** of its fires. The constant's
+  comment justifies 20s against the task's own wall (~4–8s) rather than the QUEUE WAIT: the
+  reasoning is right and its premise is false. The generalisation belongs in
+  `_EXPIRING_WARMER_BEATS` — *the bound must be compared against delivery latency, not the task's own
+  duration.* Closely adjacent to ITEM 1; coordinate before touching it.
 - **#3444** — `label_map` is single-valued, so `poll_all_odds` is graded on a DataGolf sub-poll
-  (3.3x over) and `discover_events` on a taxonomy enrichment (4.0x under). **LAT-P242 routes around
-  it for capacity** (`queue_demand` is keyed by celery name and never touches the label map), so it
-  no longer blocks the demand number — but it still distorts the *adherence verdicts*. The
-  three-line `ast.walk` guard belongs in CI regardless. **`poll_all_odds` is the live lane's.**
-- **#3364** — `warm_search_head`'s `expires: 20` against a queue whose wait is minutes discards
-  **96.7%** of its fires. The constant's comment justifies 20s by comparing against the task's own
-  wall (~4–8s) rather than the QUEUE WAIT; the reasoning is correct and its premise is false. The
-  generalisation is worth writing into `_EXPIRING_WARMER_BEATS`: *the bound must be compared against
-  delivery latency, not the task's own duration.* Filed, not ours.
-- **#3440** — settled golf concepts, 426 wsec/hr, byte-identical output over 3–4 rebuilds. Small,
-  safe, and now priceable against a real total.
-- Seven `external_id ==` sites remain; none moved in the live `pg_stat_statements` delta.
-  `admin_matching.py` is **D35/D39 — file, do not fix**, link #2693.
+  (3.3x over) and `discover_events` on a taxonomy enrichment (4.0x under). LAT-P242 routes around it
+  for capacity but it still distorts the adherence **verdicts**. `poll_all_odds` is the live lane's.
+- **#3440** — settled golf concepts, 426 wsec/hr, byte-identical output over 3–4 rebuilds.
+- Seven `external_id ==` sites remain; `admin_matching.py` is **D35/D39 — file, do not fix**, #2693.
 - **CERT-1988 stays PARKED.** Do not merge PR #3377, do not re-stage, do not rewrite its header.
-  `PARKED-MEASUREMENTS.md:8917`.
 
 ## Explicitly NOT in scope
 
-- **Spending** — no dyno resize, no concurrency purchase, without Alex and a number.
-- `WARM_CONCURRENCY`, `REFRESH_AHEAD_SECONDS`, `RESPONSE_CACHE_TTL_S`, priority queueing.
-- **The tsvector index** — Tier-1, integrator + Alex.
-- **ITEM 4 of 178** (serving `red sox` its headline market) — recall, not latency; needs a stated
-  recall argument and must not be bundled.
-- Matching symptoms — D35, file under #2693, never fix.
+Spending; `WARM_CONCURRENCY` / `REFRESH_AHEAD_SECONDS` / `RESPONSE_CACHE_TTL_S` / priority queueing;
+the tsvector index (Tier-1, integrator + Alex); ITEM 4 of 178 (`red sox` headline market — recall,
+not latency, and must not be bundled); matching symptoms (D35, file under #2693).
 
 ## Rules carried forward
 
 168 (a)–(g), 170 (b)–(e), 171 (b)–(e), 173 (f)–(i), 174 (j)–(m), 175 (n)–(x), 176 (y)–(dd),
-177 (ee)–(kk), 178 (ll)–(oo), 179 (pp)–(uu), 180 (vv)–(aaa), **181 (bbb)–(fff)** all hold. The three
-most likely to bite this queue:
+177 (ee)–(kk), 178 (ll)–(oo), 179 (pp)–(uu), 180 (vv)–(aaa), **181 (bbb)–(ggg)** all hold.
 
-**(vv)** An occupancy timeline reconstructed from per-task instrumentation reports UNINSTRUMENTED
-work as IDLE. Before believing a resource is free, ask what fraction of its consumers the instrument
-can see. **The caveat you write in one model does not travel to the next model built from the same
-data.** — LAT-P242 removes the largest known blind spot but does not remove the rule: the residuals
-are documented in the payload and they are still residuals.
+**(bbb)** A refactor that changes the PRIMITIVE under a shared, exception-swallowing writer has a
+silent blast radius, and the test doubles are its only observer. Production having the capability is
+what HIDES the change, not what excuses it.
 
-**(ccc)** When the wrong answer and the plausible default are the same value, a test with a default
-expectation is vacuous. Pin a NON-default expectation.
+**(ccc)** When the wrong answer and the plausible default are the same value, a test asserting that
+default is vacuous. Pin a NON-default expectation.
+
+**(ddd)** A "field present and null" test does not exercise the compute branch. An early-returning
+absent case and a present-but-uncomputable case emit the same-looking output down two paths.
+
+**(eee)** A per-key total must be attributable; unattributable demand is NAMED, not split.
 
 **(fff)** Signal-wired observability fails silently in two indistinguishable ways — never connected,
 and connected-but-raising. Drive the REAL signal; calling the handler proves neither.
 
-⚠️ Build on a FRESH branch off master. `program/latency-245-…` and `program/latency-246-…` are both
-in flight; `program/latency-242-…` still holds the parked commits.
+**(ggg) — the one this queue exists to teach.** An instrument is never the cargo, however good it
+is and however badly the next decision needs it. CERT-2038 BLOCKed a green, well-guarded, genuinely
+useful measurement instrument purely on queue shape, and it was right to. **Name the pillar and the
+user-visible ship in the cert block header, or the block is refused before its evidence is read.**
+The corollary is the useful half: if you cannot name the ship, you have not yet found it — and
+looking for it is what turned "the queue is oversubscribed, somehow" into "five compaction passes
+share two slots for fifteen minutes every morning", which is a better brief than the total would
+have been.
+
+⚠️ Build on a FRESH branch off master. `program/latency-245-…` (in flight, with the integrator),
+`program/latency-246-…` (parked, holds LAT-P242), `program/latency-181-artifacts` (docs) and
+`program/latency-242-…` (parked commits) are all live.
 
 Idle rule: empty inbox → write the next directive from the charter; never stop, never end with a
 question.
