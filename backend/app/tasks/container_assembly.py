@@ -700,6 +700,148 @@ async def assemble_container(session, container, candidates: list[Candidate]) ->
 
 
 # ---------------------------------------------------------------------------
+# Bootstrap: the container tree a tournament needs before assembly can run
+# ---------------------------------------------------------------------------
+
+#: The draws a tennis tournament has. Named, not inferred, and this list is the
+#: ONLY hand-written thing in the whole program — the spec's promise is that
+#: nobody writes a list of MEMBERS, not that nobody names the draws a Slam has.
+#: Each becomes a child container with its own anchor and its own status, which
+#: is what lets Men's Doubles go `final` while Mixed is still `live`.
+TENNIS_DRAWS = (
+    ("mens-singles", "Men's Singles"),
+    ("womens-singles", "Women's Singles"),
+    ("mens-doubles", "Men's Doubles"),
+    ("womens-doubles", "Women's Doubles"),
+    ("mixed-doubles", "Mixed Doubles"),
+)
+
+
+@dataclass(frozen=True)
+class PlannedContainer:
+    """One row `bootstrap_container_tree` would write. A PLAN, not a write."""
+
+    slug: str
+    name: str
+    kind: str
+    parent_slug: Optional[str] = None
+    category: Optional[str] = None
+
+
+def plan_container_tree(
+    tournament: str, season: str, display_name: str, draws=TENNIS_DRAWS
+) -> list[PlannedContainer]:
+    """The parent container and one child per draw. Pure — returns a plan.
+
+    SEPARATED FROM THE WRITE ON PURPOSE. A plan that can be printed, diffed and
+    tested without a database is a plan somebody will actually read before it
+    runs, and D51's shape is "say what you did and the undo line" — which is
+    much easier to honour when the *intent* was reviewable first. It is also
+    what lets the slug contract below be tested at all.
+
+    SLUGS ARE DERIVED, NEVER TYPED. `us-open` + `2026` + `mens-doubles` →
+    `us-open-2026-mens-doubles`, always. The slug is the public URL and the
+    unique key, so a hand-typed one is a 404 waiting for a typo — and because
+    it is derived, a re-run produces the same slugs and the bootstrap is
+    idempotent for free.
+    """
+    root = f"{tournament}-{season}"
+    plan = [
+        PlannedContainer(slug=root, name=display_name, kind="tournament")
+    ]
+    for draw_slug, draw_name in draws:
+        plan.append(
+            PlannedContainer(
+                slug=f"{root}-{draw_slug}",
+                name=f"{display_name} — {draw_name}",
+                kind="tournament",
+                parent_slug=root,
+            )
+        )
+    return plan
+
+
+async def apply_container_tree(session, plan: list[PlannedContainer]) -> dict:
+    """Create the planned containers if they do not exist. Idempotent.
+
+    Never updates an existing row. A container that is already there may have
+    had its `status` set by its authority (D27) or its window corrected, and a
+    bootstrap re-run must not stamp over that — the job's purpose is to make
+    the tree EXIST, not to own it afterwards.
+
+    Parents are created before children in one pass, which is safe because
+    `plan_container_tree` always emits the root first; the lookup below does
+    not assume it, so a hand-built plan in the wrong order fails loudly on the
+    missing parent instead of silently orphaning a draw.
+    """
+    created: list[str] = []
+    existing: list[str] = []
+    by_slug: dict[str, int] = {}
+
+    for planned in plan:
+        row = (
+            await session.execute(
+                text("SELECT id FROM containers WHERE slug = :slug"),
+                {"slug": planned.slug},
+            )
+        ).fetchone()
+        if row is not None:
+            by_slug[planned.slug] = int(row[0])
+            existing.append(planned.slug)
+            continue
+
+        parent_id = None
+        if planned.parent_slug is not None:
+            parent_id = by_slug.get(planned.parent_slug)
+            if parent_id is None:
+                parent_row = (
+                    await session.execute(
+                        text("SELECT id FROM containers WHERE slug = :slug"),
+                        {"slug": planned.parent_slug},
+                    )
+                ).fetchone()
+                if parent_row is None:
+                    raise ValueError(
+                        f"{planned.slug!r} names parent {planned.parent_slug!r}, "
+                        "which does not exist and is not earlier in the plan"
+                    )
+                parent_id = int(parent_row[0])
+
+        new_row = (
+            await session.execute(
+                text(
+                    "INSERT INTO containers "
+                    "(kind, name, slug, category, parent_container_id) "
+                    "VALUES (:kind, :name, :slug, :category, :parent_id) "
+                    "RETURNING id"
+                ),
+                {
+                    "kind": planned.kind,
+                    "name": planned.name,
+                    "slug": planned.slug,
+                    "category": planned.category,
+                    "parent_id": parent_id,
+                },
+            )
+        ).fetchone()
+        by_slug[planned.slug] = int(new_row[0])
+        created.append(planned.slug)
+
+    return {"created": created, "existing": existing, "ids": by_slug}
+
+
+#: D51. Undo for one bootstrap, and it is deliberately narrow: it removes only
+#: containers that hold NO edges, so a re-run after assembly cannot delete a
+#: populated hub. The slugs to pass are the `created` list the apply returned —
+#: never `existing`, which the bootstrap did not create and must not remove.
+BOOTSTRAP_UNDO_LINE = (
+    "DELETE FROM containers c WHERE c.slug = ANY(:created_slugs) "
+    "AND NOT EXISTS (SELECT 1 FROM event_edges e "
+    "                WHERE e.parent_type = 'container' AND e.parent_id = c.id)"
+)
+
+
+# ---------------------------------------------------------------------------
 # The invariant check — part of the ship, not a follow-up (spec §2)
 # ---------------------------------------------------------------------------
 
