@@ -682,11 +682,33 @@ def test_the_refresh_ahead_window_actually_keeps_the_head_alive():
     # 🔴 Clause (2) is about the THRESHOLD, not the TTL. CERT-2084 blocked the
     # version that read `ttl - period > budget` here; a threshold at exactly
     # `period + budget` is the boundary it must refuse.
-    survives, why_survives = residency_invariant(refresh_ahead_s=period + budget)
+    #
+    # ⚠️ The boundary has to be driven at a budget where clause (2) is the clause
+    # that FIRES, and at the shipped 50 s budget it is not. `period + budget` is
+    # 110 s, which is below clause (1)'s `ttl - period` = 120 s, so clause (1)
+    # catches it first and this assertion would be testing (1) twice under (2)'s
+    # name. That is not a defect in either clause — CERT-2095 shrank the budget
+    # from 70 to 50 and the two boundaries crossed — but a test that silently
+    # starts checking a different clause is worth less than one that fails, so the
+    # budget is passed explicitly to put (2)'s boundary back above (1)'s.
+    reachable_budget = 80.0
+    assert period + reachable_budget > SEARCH_RESPONSE_TTL_SECONDS - period, (
+        "this fixture must keep clause (2)'s boundary above clause (1)'s, or it is "
+        "asserting on clause (1) while claiming to test clause (2)"
+    )
+    survives, why_survives = residency_invariant(
+        refresh_ahead_s=period + reachable_budget, budget_s=reachable_budget
+    )
     assert not survives, (
         "clause (2) is dead: a threshold at exactly period + budget must NOT pass"
     )
-    assert "DOES NOT SURVIVE" in why_survives
+    assert "DOES NOT SURVIVE" in why_survives, why_survives
+
+    # ...and one second above the boundary it must pass, so the clause is driven
+    # from both sides rather than only convicted.
+    assert residency_invariant(
+        refresh_ahead_s=period + reachable_budget + 1, budget_s=reachable_budget
+    )[0], "clause (2) refuses a threshold that clears period + budget"
 
     bounded, why_bounded = residency_invariant(ttl_s=REFRESH_AHEAD_SECONDS - 1)
     assert not bounded, "clause (3) is dead: refresh-ahead above the TTL must NOT pass"
@@ -717,11 +739,26 @@ def test_the_refresh_ahead_window_actually_keeps_the_head_alive():
     )
     assert "WRITE INTERVAL" in blocked_2086[1]
 
+    # Clause (4) at its exact boundary. ⚠️ It has to be driven at a budget whose
+    # PASS GAP exceeds the period, or the boundary is unreachable: clauses (2) and
+    # (3) together require `period + budget < refresh_ahead <= ttl`, and clause (4)
+    # requires `ttl <= gap + budget`, so a configuration in which (4) is the clause
+    # that fires needs `gap > period`. At the shipped 50 s budget the gap is 60 s
+    # and the period is 60 s, so no such threshold exists and
+    # `residency_invariant(ttl_s=max_same_query_write_interval_s())` would be
+    # asserting on clause (3) under clause (4)'s name. A 100 s budget gives a 100 s
+    # gap and puts the boundary back in reach.
+    wide = 100.0
+    boundary = max_same_query_write_interval_s(budget_s=wide)   # 200
     interval_dead, why_interval = residency_invariant(
-        ttl_s=max_same_query_write_interval_s()
+        ttl_s=boundary, refresh_ahead_s=170, budget_s=wide
     )
     assert not interval_dead, "clause (4) is dead: a TTL equal to the interval must NOT pass"
-    assert "WRITE INTERVAL" in why_interval
+    assert "WRITE INTERVAL" in why_interval, why_interval
+    # ...and one second of life above it must pass, so (4) is driven both ways.
+    assert residency_invariant(
+        ttl_s=boundary + 1, refresh_ahead_s=170, budget_s=wide
+    )[0], "clause (4) refuses a TTL that clears the write interval"
 
     # And the shipped threshold is the derived one, not a hand-picked neighbour.
     from app.tasks.search_head_warmer import derive_refresh_ahead_s
@@ -783,17 +820,32 @@ def test_the_full_rebuild_budget_is_the_pass_not_one_query():
     no meaning to fix.
     """
     from app.tasks.search_head_warmer import (
+        PASS_SETUP_BOUND_SECONDS,
         PER_QUERY_TIMEOUT_SECONDS,
+        ROLLBACK_BOUND_SECONDS,
         ROUTE_SEARCH_DEADLINE_SECONDS,
         TTL_READ_BOUND_SECONDS,
         full_rebuild_budget_s,
         worker_unit_bound_s,
+        worker_unit_worst_case_s,
     )
 
-    assert full_rebuild_budget_s() == 70.0
-    assert full_rebuild_budget_s() > worker_unit_bound_s(), (
-        "the budget must exceed one unit's bound — the last-written entry "
-        "waits out every earlier wave"
+    assert full_rebuild_budget_s() == 50.0
+    assert full_rebuild_budget_s() > worker_unit_worst_case_s(), (
+        "the budget must exceed one unit's worst case — the last-written entry "
+        "waits out every earlier wave, and the pass pays setup before any of them"
+    )
+
+    # 🔴 CERT-2095: the budget is the LOCK-HELD interval, so setup is in it and the
+    # multiplicand is the unit's WORST CASE (wall + the rollback that runs after
+    # the wall), not the wall. Both terms driven explicitly — at the shipped
+    # numbers a form that dropped setup and a form that used the bare wall are
+    # each distinguishable from the real one.
+    assert worker_unit_worst_case_s() == worker_unit_bound_s() + ROLLBACK_BOUND_SECONDS
+    assert worker_unit_worst_case_s() == 40.0
+    assert full_rebuild_budget_s() == PASS_SETUP_BOUND_SECONDS + 1 * 40.0
+    assert full_rebuild_budget_s(setup_s=0) == 40.0, (
+        "setup dropped out of the budget — this is the CERT-2095 defect exactly"
     )
 
     # The unit is the SUM OF ENFORCED WALLS. Driven with explicit arguments in
@@ -814,11 +866,13 @@ def test_the_full_rebuild_budget_is_the_pass_not_one_query():
         "slow-but-successful rebuild is now an abandonment that writes nothing"
     )
 
-    assert full_rebuild_budget_s(head_size=2, concurrency=2, per_query_s=25) == 25.0
-    assert full_rebuild_budget_s(head_size=3, concurrency=2, per_query_s=25) == 50.0
+    # Waves, at setup_s=0 so the wave arithmetic is read on its own.
+    assert full_rebuild_budget_s(head_size=2, concurrency=2, per_query_s=25, setup_s=0) == 25.0
+    assert full_rebuild_budget_s(head_size=3, concurrency=2, per_query_s=25, setup_s=0) == 50.0
     # The width is load-bearing in this expression, not incidental to it.
-    assert full_rebuild_budget_s(head_size=8, concurrency=2, per_query_s=35) == 140.0
-    assert full_rebuild_budget_s(head_size=8, concurrency=4, per_query_s=35) == 70.0
+    assert full_rebuild_budget_s(head_size=8, concurrency=2, per_query_s=40, setup_s=0) == 160.0
+    assert full_rebuild_budget_s(head_size=8, concurrency=4, per_query_s=40, setup_s=0) == 80.0
+    assert full_rebuild_budget_s(head_size=8, concurrency=8, per_query_s=40, setup_s=0) == 40.0
 
 
 def test_the_message_expiry_is_derived_from_the_lock_ttl_not_the_beat_period():

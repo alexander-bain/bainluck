@@ -109,11 +109,15 @@ contamination-proof by construction.
 THE COST, STATED, because this lane's own doctrine is that a warmer is not free.
 `/search` is a much heavier call than `/typeahead`, so the knobs that bound TOTAL
 work are set below its sibling's: 8 terms rather than 40, and a 45 s floor rather
-than 30 s. **Concurrency is now the same 4, and that is a change (CERT-2089).**
-It is derived, not preferred — see `WARM_CONCURRENCY` — and what it buys is a
-shorter pass rather than more work: the same eight queries in two waves instead
-of four. Peak concurrent `/search` builds on the background worker go 2 -> 4;
-total database time is unchanged. A steady-state pass rebuilds 8 entries, and
+than 30 s. **Concurrency is 8, ABOVE its sibling's 4, and that is the one knob
+here that is no longer conservative.** It is not preferred, it is *solved for* —
+`minimum_concurrency_for_residency()` computes it from the enforced walls and a
+test fails if the constant disagrees. What it buys is a shorter pass rather than
+more work: the same eight queries in ONE wave instead of four. Peak concurrent
+`/search` builds on the background worker go 2 -> 8 and total database time is
+unchanged, so the whole cost is peak. **The risk that carries is named at
+`WARM_CONCURRENCY` and is owed a post-deploy reading, not an assurance.**
+A steady-state pass rebuilds 8 entries, and
 production measures the pass wall at **3.3-26.1 s, p50
 ~7.9 s** (2026-09-06) — the "~1-2 s per query, ~4-8 s per pass" this paragraph
 used to carry was 3-20x low, and it is corrected rather than quietly dropped
@@ -142,8 +146,15 @@ is `residency_invariant()`, which is executable rather than prose. An entry live
     unit > every cooperative bound inside it       (5) and the budget is ENFORCED
     rebuild_budget < _LOCK_TTL_SECONDS             (6) and (4)'s lock really holds
 
-At 180 / 150 / 60 / 70: `150 > 120` ✓, `90 > 70` ✓, `150 <= 180` ✓, `180 > 150` ✓,
-`35 > 28.2` ✓, `70 < 180` ✓.
+At 180 / 130 / 60 / 50: `130 > 120` ✓, `70 > 50` ✓, `130 <= 180` ✓, `180 > 110` ✓,
+`35 > 28.2` ✓, `50 < 180` ✓.
+
+🔴 **`rebuild_budget` IS THE LOCK-HELD INTERVAL, NOT THE WARMING (CERT-2095).** It is
+`setup + waves × unit_worst_case`, where `unit_worst_case` is the wall PLUS the
+rollback that runs after the wall fires. Five presentations priced it as the
+warming alone, so every clause above was certifying an interval shorter than the
+one the lock actually covers. Teardown is no longer in it because teardown is no
+longer under the lock.
 
 **READ (5) FIRST, BECAUSE IT IS WHAT MAKES (1)-(4) MEAN ANYTHING.** All four of the
 earlier clauses are arithmetic over `rebuild_budget`, and a budget is a fact only
@@ -279,24 +290,45 @@ PER_QUERY_TIMEOUT_SECONDS = 25
 #: choice: an `AsyncSession` is not safe for concurrent use, so a second
 #: coroutine on the same session is a corruption bug rather than a slowdown.
 #:
-#: **FOUR, AND IT IS DERIVED RATHER THAN CHOSEN (CERT-2089).** The residency
-#: arithmetic admits a full-pass budget of at most 80 s (any higher and
-#: `max_same_query_write_interval_s()` clears D81's 180 s TTL), and the budget is
-#: `ceil(head / concurrency) * worker_unit_bound_s()`. At concurrency 2 that needs
-#: a unit bound of 20 s — a wall at or below the 20 s cooperative deadline it has
-#: to sit above, which is the configuration the paragraph on
-#: `PER_QUERY_TIMEOUT_SECONDS` rules out. **Concurrency 2 has no solution.** At 4
-#: it does: 35 s units, a 70 s budget, a 150 s worst interval inside a 180 s life.
+#: **EIGHT, AND IT IS SOLVED FOR RATHER THAN CHOSEN.** Do not edit this number by
+#: hand: `minimum_concurrency_for_residency()` computes it from the walls, and
+#: `test_the_width_is_whatever_the_solver_says` fails if the two disagree.
 #:
-#: WHAT IT COSTS, STATED RATHER THAN ELIDED: peak concurrent `/search` builds on
-#: the background worker go 2 -> 4. **Total work is unchanged** — the same eight
-#: queries, in two waves instead of four — so this buys the halved pass duration
-#: that residency needs with peak load, not with more database time. Each session
-#: comes from its own `get_task_session()` engine (`tasks/base.py` builds a fresh
-#: engine per call), so the width is four connections and not four checkouts of
-#: one five-connection pool. It is the request path this endpoint is heavy on, and
-#: this is not the request path.
-WARM_CONCURRENCY = 4
+#: It was 2, then 4 (CERT-2089, argued in prose), and 4 was blocked by CERT-2095
+#: for the reason the prose could not see: the pass budget priced only the warming
+#: and left session entry, head resolution, teardown and the post-timeout rollback
+#: unpriced. Fully priced, the search reads:
+#:
+#:     conc 2   warming 160   lock-held 170   interval 350   no
+#:     conc 4   warming  80   lock-held  90   interval 190   no      <- 10 s over
+#:     conc 8   warming  40   lock-held  50   interval 110   FITS, 70 s of room
+#:
+#: ⚠️ Width 4 misses by **10 s**, which is inside shaving distance of every
+#: constant in the unit — and that is precisely why the width is computed and the
+#: walls are not. See `minimum_concurrency_for_residency()`.
+#:
+#: WHAT IT COSTS, STATED RATHER THAN ELIDED, because this is the second doubling:
+#: peak concurrent `/search` builds on the background worker go 2 -> 8, and at
+#: `DEFAULT_HEAD_SIZE = 8` the pass is now a SINGLE WAVE. **Total database work is
+#: unchanged** — the same eight queries — so what is bought is a 40 s pass instead
+#: of a 160 s one, with peak load rather than with more of it. Each session is its
+#: own `get_task_session()` engine (`tasks/base.py` builds one per call), so this
+#: is eight connections, not eight checkouts of one five-connection pool. It is
+#: the REQUEST path this endpoint is heavy on, and this is not the request path.
+#:
+#: 🔴 THE RISK THIS CARRIES, NAMED RATHER THAN DISCOVERED LATER: eight concurrent
+#: heavy searches contend with each other, so a wider pass can make each query
+#: slower and push some past the route's own 20 s deadline — the warmer would then
+#: be manufacturing the degradations its walls exist to bound. Nothing here proves
+#: it does not. The post-deploy check owed on #3526 must read `timeouts` and
+#: `no_write` at the new width before this is called settled; a rise in either is
+#: this paragraph coming true, and the answer would be a smaller head rather than
+#: a narrower pass (a narrower pass has no solution, per the table above).
+#:
+#: ONE QUERY PER SESSION remains an invariant and not a tuning choice: an
+#: `AsyncSession` is not safe for concurrent use, so a second coroutine on the same
+#: session is a corruption bug rather than a slowdown.
+WARM_CONCURRENCY = 8
 
 #: Socket + connect bound for ONE TTL read, and the reason it is stated as a
 #: constant is that the two TTL reads are part of the worker unit whose length the
@@ -317,6 +349,43 @@ TTL_READ_BACKOFF_CAP_SECONDS = 0.1
 #: cooperative bound is not an enforcement of it, it is a way of turning slow
 #: successes into losses.
 TTL_READ_BOUND_SECONDS = 5.0
+
+#: 🔴 THE WALL ON THE RECOVERY THAT RUNS **AFTER** A WALL FIRES (CERT-2095).
+#:
+#: `_warm_one`'s unit wall used to be followed by a bare `await
+#: _safe_rollback(session)` — OUTSIDE the `wait_for`, on the exact path the wall
+#: exists to handle. A `rollback()` on the connection that just wedged is the
+#: least likely rollback in the system to return promptly, and asyncpg imposes no
+#: bound of its own, so the unit could run indefinitely past its own declared
+#: wall while still holding a cursor slot. The grader measured `_warm_one` at 5x
+#: its declared wall. **A wall whose failure handler is unbounded is not a wall**,
+#: and this was mine: I introduced it in the CERT-2089 repair while writing that
+#: a coroutine which never suspends cannot be cancelled.
+#:
+#: One round-trip on an existing connection; the same order as this module's
+#: other single-round-trip wall (`TTL_READ_BOUND_SECONDS`). It is deliberately
+#: NOT tuned down to 2.5 s: `minimum_concurrency_for_residency()` below shows
+#: that 2.5 s is exactly what it would take to keep concurrency at 4, and picking
+#: the bound that produces the width you wanted is the substitution that has now
+#: been blocked five times in this chain.
+ROLLBACK_BOUND_SECONDS = 5.0
+
+#: The ENFORCED wall on everything a pass does under the run lock BEFORE the
+#: first warm: entering `width` session contexts and resolving the head.
+#:
+#: 🔴 ALSO CERT-2095 — these were unpriced, and `full_rebuild_budget_s()`'s own
+#: docstring already said they should not be. It promises "the longest a pass may
+#: take to **reach** and write the last head entry", and reaching includes getting
+#: sessions and deciding what to warm. The body only ever counted the warming.
+#:
+#: Sized against a measurement rather than a guess, and the measurement says the
+#: bound is generous: `_USER_HEAD_SQL` runs in **0.967 ms** on production
+#: (`EXPLAIN ANALYZE`, 2026-09-06, 12.6 ms round-trip), and session entry does no
+#: I/O at all — `tasks/base.get_task_session` builds an engine and a sessionmaker,
+#: neither of which connects, so the first TLS handshake is paid inside the head
+#: query. 10 s is ~770x the measured round-trip, which is the honest direction for
+#: a wall that must not fire on a healthy pass.
+PASS_SETUP_BOUND_SECONDS = 10.0
 
 #: Rebuild an entry with less than this much life left. **DERIVED, not chosen**
 #: — `derive_refresh_ahead_s()` below, asserted by `residency_invariant()`.
@@ -345,7 +414,7 @@ TTL_READ_BOUND_SECONDS = 5.0
 #: and come back one period later with `REFRESH_AHEAD - P` left. At 150 that was
 #: 90 s against a permitted 100 s rebuild: a 10 s hole, which is what CERT-2084
 #: measured. #3539 wrote `REFRESH_AHEAD - P_effective > D_max` from the start.
-REFRESH_AHEAD_SECONDS = 150
+REFRESH_AHEAD_SECONDS = 130
 
 #: The floor between two real passes, checked UNDER the run lock so two beats
 #: cannot both pass it. This is the load bound: the beat may fire more often,
@@ -634,21 +703,71 @@ def worker_unit_bound_s(
     return float(2 * ttl_read_s + route_call_s)
 
 
+def worker_unit_worst_case_s(
+    *,
+    wall_s: float | None = None,
+    rollback_s: float = ROLLBACK_BOUND_SECONDS,
+) -> float:
+    """How long a unit can occupy a cursor slot **including the recovery**.
+
+    🔴 CERT-2095, AND THE DISTINCTION IS THE WHOLE POINT: `worker_unit_bound_s()`
+    is what `wait_for` ENFORCES; this is what the slot actually COSTS. They differ
+    because something runs *after* the wall fires — the rollback of the session
+    whose query just wedged — and a budget built on the wall alone prices a
+    failing unit as if failing were free.
+
+    The three reachable paths, and why the wall is the same 35 s on two of them:
+
+        success        ttl read (5) + route (25) + ttl re-read (5)   = 35
+        route timeout  ttl read (5) + route (25) + rollback (5)      = 35
+        wall breach    the wall fires at 35, THEN the handler rolls back = 35 + 5
+
+    The rollback REPLACES the second TTL read on the route-timeout path, so it is
+    free there. It is not free on the third path, and the third path is exactly
+    the one the CERT-2089 repair introduced. `full_rebuild_budget_s()` therefore
+    multiplies THIS number, never the wall.
+    """
+    wall = worker_unit_bound_s() if wall_s is None else float(wall_s)
+    if wall <= 0 or rollback_s <= 0:
+        raise ValueError("the unit wall and rollback bound must both be positive")
+    return float(wall + rollback_s)
+
+
 def full_rebuild_budget_s(
     *,
     head_size: int = DEFAULT_HEAD_SIZE,
     concurrency: int = WARM_CONCURRENCY,
     per_query_s: float | None = None,
+    setup_s: float = PASS_SETUP_BOUND_SECONDS,
 ) -> float:
-    """The longest a pass may take to reach and write the LAST head entry.
+    """The longest a pass may hold the RUN LOCK: setup, head resolution, warming.
 
-    `ceil(head_size / concurrency) * worker_unit_bound_s()` — the number of waves
-    the pool admits, each bounded by the ENFORCED whole-unit wall. At 8 terms,
-    concurrency 4 and a 35 s unit that is **70 s**.
+        setup + ceil(head_size / concurrency) * worker_unit_worst_case_s()
+
+    At 8 terms, concurrency 8, a 40 s worst-case unit and a 10 s setup wall that
+    is **50 s**.
+
+    🔴 CERT-2095 CHANGED THIS FUNCTION'S BODY TO MATCH ITS OWN FIRST SENTENCE, and
+    that is the shortest true statement of the defect. The docstring has always
+    promised "the longest a pass may take to **reach** and write the last head
+    entry". Reaching a head entry means entering `width` session contexts and
+    running `resolve_head` — both under the lock, neither priced. The body counted
+    only the warming, and clauses (2), (4) and (6) consume this number as the
+    length of the whole lock-held interval. So the interval they certified was
+    short by everything a pass does before its first warm.
+
+    Teardown is NOT in here, and that is a change rather than an omission: commit,
+    close and `engine.dispose()` now happen **after** `_release_run_lock()`
+    (`_warm_search_head`). Teardown writes no cache entry, so keeping it inside
+    the exclusion lengthened the pass gap for no residency benefit. Moving it out
+    is the cheaper half of the repair CERT-2095 named — it shrinks BOTH terms of
+    `max_same_query_write_interval_s`.
 
     The multiplicand is the WORKER UNIT and not the route call (CERT-2089): the
     cursor hands out units, so the wave length is a unit, and the two TTL reads
-    inside one are part of the wave whether or not anything bounds them.
+    inside one are part of the wave whether or not anything bounds them. And it is
+    `worker_unit_worst_case_s()`, not `worker_unit_bound_s()` — a unit that
+    breaches its wall still has to roll back (CERT-2095).
 
     ⚠️ **This is the quantity #3539's option 4 got wrong, and it is why that
     option does not work as written.** It priced the rebuild at
@@ -661,15 +780,62 @@ def full_rebuild_budget_s(
     DERIVED FROM THE DECLARED BUDGET, NEVER FROM A SAMPLE. Production walls
     measure 3.3-26.1 s (p50 ~11 s), and sizing this at `measured_max * k` is the
     error this program has already made twice — the next sample refutes it. The
-    budget is what the code PERMITS, and the code permits 70 s.
+    budget is what the code PERMITS, and the code permits 50 s.
 
-    `per_query_s` keeps its name for its callers but now means "the whole worker
-    unit"; passing one is how the regressions drive the blocked bounds back in.
+    `per_query_s` keeps its name for its callers but now means "one whole worker
+    unit, worst case"; passing one is how the regressions drive the blocked bounds
+    back in.
     """
-    bound = worker_unit_bound_s() if per_query_s is None else float(per_query_s)
+    bound = worker_unit_worst_case_s() if per_query_s is None else float(per_query_s)
     if head_size <= 0 or concurrency <= 0 or bound <= 0:
         raise ValueError("head size, concurrency and unit bound must be positive")
-    return float(math.ceil(head_size / concurrency) * bound)
+    if setup_s < 0:
+        raise ValueError("the setup wall may not be negative")
+    return float(setup_s + math.ceil(head_size / concurrency) * bound)
+
+
+def minimum_concurrency_for_residency(
+    *,
+    head_size: int = DEFAULT_HEAD_SIZE,
+    ttl_s: float = SEARCH_RESPONSE_TTL_SECONDS,
+) -> int | None:
+    """The narrowest width at which `residency_invariant()` holds. `None` = no width does.
+
+    🔴 THE WIDTH IS SOLVED FOR, NOT CHOSEN, AND THIS FUNCTION IS THE SOLVER.
+    CERT-2089 moved it 2 -> 4 on this argument in prose; CERT-2095 showed the
+    prose had priced the pass wrong, so the argument is executable now and the
+    answer moves with the walls instead of being re-argued each time.
+
+    **The honest walls give 8.** Run the search at the shipped constants and
+    widths 2 and 4 both fail on the write interval; 8 passes with 70 s of room:
+
+        conc 2   warming 160   lock-held 170   interval 350   no
+        conc 4   warming  80   lock-held  90   interval 190   no      <- 10 s over
+        conc 8   warming  40   lock-held  50   interval 110   FITS
+
+    ⚠️ **THE 10 s IS THE INTERESTING NUMBER AND IT IS WHY THIS IS A FUNCTION.**
+    Width 4 misses by so little that every constant in the unit is within shaving
+    distance of rescuing it — `ROLLBACK_BOUND_SECONDS` 5 -> 2.5 and
+    `PASS_SETUP_BOUND_SECONDS` 10 -> 5 make width 4 fit exactly, at 80.0 against
+    a ceiling of 80. That is the substitution this chain has been blocked for five
+    times running: picking the bound that produces the width you already wanted.
+    The walls are derived where they are for reasons written at each constant, the
+    solver reads them, and the width is whatever falls out.
+
+    Returns `None` rather than raising when nothing works: "no width satisfies
+    this" is a real answer about the constants and a caller must be able to hold
+    it. It is what width 2 got in CERT-2089 and it may be what every width gets
+    the next time the TTL moves.
+    """
+    for conc in range(1, head_size + 1):
+        budget = full_rebuild_budget_s(head_size=head_size, concurrency=conc)
+        refresh_ahead = derive_refresh_ahead_s(budget_s=budget)
+        ok, _ = residency_invariant(
+            ttl_s=ttl_s, refresh_ahead_s=refresh_ahead, budget_s=budget
+        )
+        if ok:
+            return conc
+    return None
 
 
 def max_same_query_write_interval_s(
@@ -1233,8 +1399,31 @@ async def _warm_one_inner(session, q: str, started: float) -> dict:
 
 
 async def _safe_rollback(session) -> None:
+    """Roll back a poisoned session, and **come back** whether or not it works.
+
+    🔴 WALLED, BECAUSE THIS RUNS AFTER A WALL HAS ALREADY FIRED (CERT-2095). Every
+    caller is a timeout handler, so by construction the connection being rolled
+    back is the one that just failed to finish something — the least likely
+    rollback in the system to return promptly. asyncpg imposes no bound of its
+    own, and an unbounded call here holds a cursor slot open past the unit wall
+    that was supposed to close it. The grader measured `_warm_one` at 5x its
+    declared wall through exactly this path.
+
+    Failing to roll back is survivable and is reported: the session is discarded
+    at teardown anyway, and every caller returns a non-`ok` result. Failing to
+    RETURN is not survivable, because the budget every residency clause consumes
+    is built on this function terminating.
+    """
     try:
-        await session.rollback()
+        await asyncio.wait_for(session.rollback(), timeout=ROLLBACK_BOUND_SECONDS)
+    except asyncio.TimeoutError:
+        # Its own line, and it says something different from the generic failure:
+        # the connection did not answer a rollback, which means the session is
+        # wedged rather than merely dirty.
+        logger.warning(
+            "search_head_warmer: rollback hit the %ss wall — session wedged",
+            ROLLBACK_BOUND_SECONDS,
+        )
     except Exception:  # noqa: BLE001
         logger.warning("search_head_warmer: rollback failed", exc_info=True)
 
@@ -1559,20 +1748,77 @@ async def _warm_search_head(
 
     _record_pass_start(now)
     wall_started = time.monotonic()
+    head, source, results = [], "none", []
+    # 🔴 CERT-2095. THE LOCK IS RELEASED AFTER THE LAST WRITE, NOT AFTER TEARDOWN,
+    # and this flag is what makes that safe to do twice.
+    #
+    # Everything between `_acquire_run_lock` and `_release_run_lock` is the
+    # interval `full_rebuild_budget_s()` declares and every residency clause
+    # consumes. It used to include the `AsyncExitStack` unwind — `width` x
+    # (commit + close + `engine.dispose()`), all network work, none of it priced
+    # and none of it writing a cache entry. Teardown cannot affect residency, so
+    # holding the exclusion through it lengthened the pass gap for nothing.
+    #
+    # Releasing early means the release can happen on two paths, and a naive
+    # double release is WORSE than a late one: `_release_run_lock` does an
+    # unconditional DELETE, so a second call after the next pass has legitimately
+    # acquired the lock would delete THAT pass's exclusion and let a third run
+    # underneath it. Hence the flag rather than relying on idempotence.
+    lock_held = True
+
+    def _release_once() -> None:
+        nonlocal lock_held
+        if lock_held:
+            lock_held = False
+            _release_run_lock()
+
     try:
         async with AsyncExitStack() as stack:
-            sessions = [
-                await stack.enter_async_context(get_task_session())
-                for _ in range(width)
-            ]
-            if queries is None:
-                head, source = await resolve_head(sessions[0], head_size)
-            else:
-                head, source = [normalize_search_query(x) for x in queries], "explicit"
-            head = [q for q in head if _MIN_QUERY_CHARS <= len(q) <= _MAX_QUERY_CHARS]
-            results = await _warm_head_concurrently(sessions[:width], head)
+            try:
+                # Setup + head resolution are under the lock and are therefore in
+                # the budget, so they get the wall the budget assumes. Measured
+                # cost of the pair is ~13 ms (`PASS_SETUP_BOUND_SECONDS`); the
+                # wall is 10 s and exists so an unreachable database cannot hold
+                # the exclusion open indefinitely, not because this is slow.
+                async def _prepare():
+                    sessions = [
+                        await stack.enter_async_context(get_task_session())
+                        for _ in range(width)
+                    ]
+                    if queries is None:
+                        h, src = await resolve_head(sessions[0], head_size)
+                    else:
+                        h = [normalize_search_query(x) for x in queries]
+                        src = "explicit"
+                    return sessions, h, src
+
+                try:
+                    sessions, head, source = await asyncio.wait_for(
+                        _prepare(), timeout=PASS_SETUP_BOUND_SECONDS
+                    )
+                except asyncio.TimeoutError:
+                    # Its own skip reason. A pass that never reached its first
+                    # warm and a pass that warmed nothing are different failures,
+                    # and `_summarize` must not be able to call either one
+                    # `complete` (an empty head is already `partial`).
+                    logger.warning(
+                        "search_head_warmer: setup/head resolution hit the %ss wall",
+                        PASS_SETUP_BOUND_SECONDS,
+                    )
+                    # No explicit release here: returning runs the `finally` below,
+                    # which releases before the stack unwinds. An extra call was
+                    # here and a mutant proved it dead — removed rather than left
+                    # in with a test written to justify it.
+                    return _no_work("setup_timeout", since_last)
+
+                head = [q for q in head if _MIN_QUERY_CHARS <= len(q) <= _MAX_QUERY_CHARS]
+                results = await _warm_head_concurrently(sessions[:width], head)
+            finally:
+                # The last write has landed (or failed). Everything after this is
+                # teardown and belongs outside the exclusion.
+                _release_once()
     finally:
-        _release_run_lock()
+        _release_once()
 
     summary = _summarize(
         head=head,

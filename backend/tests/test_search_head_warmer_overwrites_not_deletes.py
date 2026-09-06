@@ -1180,57 +1180,83 @@ def test_residency_holds_at_the_full_enforced_unit_wall_across_a_rerank():
     )
 
 
-def test_concurrency_two_has_no_solution_and_that_is_why_the_width_moved():
-    """The width is DERIVED. This is the derivation, as an executable claim.
+def test_the_width_is_whatever_the_solver_says():
+    """The width is SOLVED FOR, and this asserts the shipped constant equals the solution.
 
-    Doubling concurrency on the heaviest endpoint is a load decision and it must
-    not read as a tuning preference. It is forced: the residency arithmetic admits
-    a budget of at most 80 s, and at width 2 that needs a 20 s worker unit — a
-    wall at or below the 20 s cooperative deadline it is required to sit above,
-    which clause (5) refuses by name.
+    🔴 CERT-2095. CERT-2089 moved the width 2 -> 4 on an argument in prose, and the
+    prose had priced the pass wrong, so the argument was wrong in a way no test
+    could see. The argument is a function now: `minimum_concurrency_for_residency()`
+    reads the walls and returns the narrowest width that satisfies the invariant.
+    Nobody edits `WARM_CONCURRENCY` by hand; if the walls move, this test says so.
+
+    Both directions matter. If the constant is WIDER than the solution we are
+    taking load we do not need; if it is NARROWER the head goes cold.
+    """
+    from app.tasks.search_head_warmer import (
+        WARM_CONCURRENCY,
+        minimum_concurrency_for_residency,
+        residency_invariant,
+    )
+
+    solved = minimum_concurrency_for_residency()
+    assert solved is not None, (
+        "no width satisfies the invariant at the shipped walls — the constants no "
+        "longer admit a resident head at any concurrency, which is a product "
+        "decision (the TTL or the head size), not a tuning one"
+    )
+    assert WARM_CONCURRENCY == solved, (
+        f"WARM_CONCURRENCY is {WARM_CONCURRENCY} but the walls solve to {solved}. "
+        f"{'It is wider than needed — that is load nobody is buying anything with.' if WARM_CONCURRENCY > solved else 'It is narrower than the arithmetic allows — the head will go cold.'}"
+    )
+    assert residency_invariant()[0], residency_invariant()[1]
+
+
+def test_every_width_below_the_solution_actually_fails_and_the_next_one_up_passes():
+    """The solver is only worth trusting if the widths it rejects really do fail.
+
+    A `min` over a predicate that is true everywhere returns 1 and looks decisive.
+    So: sweep every width below the solution and require the invariant to refuse
+    each one, then require the solution itself to pass. This is the assertion that
+    would have caught CERT-2089's width-4 claim, which was true of the budget as
+    it was priced and false of the pass as it runs.
     """
     from app.tasks.search_head_warmer import (
         DEFAULT_HEAD_SIZE,
-        WARM_CONCURRENCY,
+        derive_refresh_ahead_s,
         full_rebuild_budget_s,
+        minimum_concurrency_for_residency,
         residency_invariant,
-        worker_unit_bound_s,
     )
 
-    unit = worker_unit_bound_s()
+    solved = minimum_concurrency_for_residency()
 
-    # At the shipped width the whole thing holds...
-    ok, why = residency_invariant()
-    assert ok, why
+    def _holds(conc):
+        budget = full_rebuild_budget_s(head_size=DEFAULT_HEAD_SIZE, concurrency=conc)
+        return residency_invariant(
+            refresh_ahead_s=derive_refresh_ahead_s(budget_s=budget), budget_s=budget
+        )
 
-    # ...and at width 2, with the SAME enforced unit, it does not. The clause that
-    # fires is (4)/(2) — the budget doubles — not (5): the unit is fine, the width
-    # is what cannot carry it.
-    narrow_budget = full_rebuild_budget_s(
-        head_size=DEFAULT_HEAD_SIZE, concurrency=2, per_query_s=unit
-    )
-    ok_narrow, why_narrow = residency_invariant(budget_s=narrow_budget)
-    assert not ok_narrow, (
-        f"width 2 at a {unit:g}s enforced unit gives a {narrow_budget:g}s budget and "
-        f"the invariant accepted it: {why_narrow}"
-    )
+    for conc in range(1, solved):
+        ok, why = _holds(conc)
+        assert not ok, (
+            f"width {conc} is below the solver's answer of {solved} and the "
+            f"invariant accepted it — the solver is not returning a minimum: {why}"
+        )
+    assert _holds(solved)[0], _holds(solved)[1]
 
-    # ...and the only unit that WOULD fit at width 2 is one clause (5) refuses,
-    # which is the whole argument for moving the width rather than the wall.
-    fitting_unit = 80.0 / math.ceil(DEFAULT_HEAD_SIZE / 2)
-    ok_wall, why_wall = residency_invariant(
-        budget_s=full_rebuild_budget_s(concurrency=2, per_query_s=fitting_unit),
-        unit_s=fitting_unit,
-    )
-    assert not ok_wall, (
-        f"a {fitting_unit:g}s unit fits width 2's budget but is not above the "
-        f"cooperative bounds inside it; the invariant accepted it: {why_wall}"
-    )
-    assert "THE WALL IS NOT ABOVE WHAT IT WALLS" in why_wall, why_wall
-    assert WARM_CONCURRENCY == 4, (
-        "the width is derived from the arithmetic above; changing it without "
-        "changing the derivation is how this chain got four BLOCKs"
-    )
+    # 🔴 The 10 seconds that decide it, pinned. Width 4 fails by exactly this much,
+    # and the two constants that would rescue it are named so that anyone tempted
+    # to shave them finds this test first. Shaving a wall to buy a width is the
+    # substitution five BLOCKs in this chain were about.
+    if solved > 4:
+        budget_4 = full_rebuild_budget_s(head_size=DEFAULT_HEAD_SIZE, concurrency=4)
+        assert budget_4 == 90.0, budget_4
+        _, why4 = _holds(4)
+        assert "WRITE INTERVAL EXCEEDS THE TTL" in why4, why4
+        assert "190s" in why4, (
+            f"width 4's write interval should be 190s against a 180s life — a 10s "
+            f"miss, not a comfortable one: {why4}"
+        )
 
 
 def test_the_wall_sits_strictly_above_every_cooperative_bound_inside_the_unit():
@@ -1490,6 +1516,225 @@ def test_the_ttl_read_client_is_built_at_the_bounds_clause_five_assumes():
     assert TTL_READ_BOUND_SECONDS > ttl_read_cooperative_bound_s(), (
         "the TTL read's wall is not above its own cooperative bound"
     )
+
+
+# ===========================================================================
+# CERT-2095's TWO NAMED REGRESSIONS.
+#
+#   "the declared 70-second full-pass budget omits lock-held session entry, head
+#    resolution, four session context exits, commit/close/engine disposal, and
+#    timeout rollback. An independent exact-code scaled probe made all eight query
+#    results succeed yet `_warm_search_head()` reported `complete` after 208 ms
+#    against a 20 ms scaled declared budget; a second probe showed `_warm_one()`
+#    still running at 5x its declared wall because post-timeout rollback is
+#    outside `wait_for`. ... add a scaled two-pass successful slow-teardown/
+#    head-resolution regression plus a hung-rollback unit-wall regression."
+# ===========================================================================
+
+
+def test_a_hung_rollback_cannot_run_past_the_unit_wall():
+    """The grader's second probe: `_warm_one` at 5x its declared wall. **My bug.**
+
+    I introduced it in the CERT-2089 repair, in the same commit whose docstring
+    says *"a coroutine that never suspends cannot be cancelled"* — and then put
+    `await _safe_rollback(session)` in the wall's own `except` clause, outside the
+    `wait_for`. The path the wall exists to handle was the one path it did not
+    bound, and the rollback on it is the least likely rollback to return: it is
+    being issued against the connection that just wedged.
+
+    Driven at real time with scaled constants. A rollback that never returns must
+    cost at most its own wall, not the process.
+    """
+    import time
+
+    from app.tasks import search_head_warmer as warmer
+
+    class _WedgedSession:
+        """A session whose `rollback()` never completes. asyncpg offers no bound."""
+
+        def __init__(self):
+            self.rollback_started = False
+
+        async def rollback(self):
+            self.rollback_started = True
+            await asyncio.sleep(30)
+
+    async def _never_returns(session, q, started):
+        await asyncio.sleep(30)
+
+    session = _WedgedSession()
+    with patch.object(warmer, "_warm_one_inner", _never_returns), \
+         patch.object(warmer, "worker_unit_bound_s", lambda: 0.10), \
+         patch.object(warmer, "ROLLBACK_BOUND_SECONDS", 0.10):
+        started = time.monotonic()
+        result = asyncio.run(warmer._warm_one(session, "patriots"))
+        elapsed = time.monotonic() - started
+
+    assert session.rollback_started, "the poisoned session was never rolled back at all"
+    assert result["reason"] == "unit_timeout", result
+    assert elapsed < 3.0, (
+        f"the unit took {elapsed:.1f}s against a 0.10s wall and a 0.10s rollback "
+        f"bound. A wall whose failure handler is unbounded is not a wall, and the "
+        f"pass budget every residency clause consumes is built on this returning."
+    )
+
+
+def test_a_slow_teardown_and_head_resolution_cannot_widen_the_write_interval():
+    """The grader's first probe, as a two-pass residency regression. Scaled.
+
+    `_warm_search_head` reported `complete` after 208 ms against a 20 ms scaled
+    declared budget, because the budget counted only the warming while the lock
+    was held through session entry, head resolution and `width` context exits.
+
+    Two independent claims, and the second is the one that makes the first safe:
+
+    1. Setup and head resolution are IN the declared budget now.
+    2. Teardown is OUTSIDE the run lock, so however slow it is it cannot widen the
+       gap between passes — and therefore cannot widen the same-query write
+       interval that clause (4) certifies.
+
+    (2) is asserted by observing WHEN the lock is released relative to teardown,
+    which is the only thing that actually decides it.
+    """
+    from app.tasks import search_head_warmer as warmer
+
+    events = []
+
+    class _SlowTeardownSession:
+        async def rollback(self):
+            pass
+
+    class _SlowCM:
+        async def __aenter__(self):
+            events.append("setup")
+            return _SlowTeardownSession()
+
+        async def __aexit__(self, *a):
+            # The expensive part: commit + close + engine.dispose(), all network.
+            events.append("teardown_start")
+            await asyncio.sleep(0.05)
+            events.append("teardown_end")
+            return False
+
+    async def _fake_resolve_head(session, limit):
+        events.append("resolve_head")
+        return ["aa", "bb"], "test"
+
+    async def _fake_warm_one(session, q):
+        events.append(f"warm:{q}")
+        return {"q": q, "ok": True, "reason": "warmed", "ttl_before": 1,
+                "rebuilt": True, "ttl_after": 99, "seconds": 0.0}
+
+    def _release():
+        events.append("lock_released")
+
+    from app.tasks import base as task_base
+    with patch.object(task_base, "get_task_session", lambda: _SlowCM()), \
+         patch.object(warmer, "resolve_head", _fake_resolve_head), \
+         patch.object(warmer, "_warm_one", _fake_warm_one), \
+         patch.object(warmer, "_acquire_run_lock", lambda: True), \
+         patch.object(warmer, "_release_run_lock", _release), \
+         patch.object(warmer, "_seconds_since_last_pass", lambda now: None), \
+         patch.object(warmer, "_record_pass_start", lambda now: None), \
+         patch.object(warmer, "head_warm_enabled", lambda: True):
+        summary = asyncio.run(warmer._warm_search_head(head_size=2))
+
+    assert summary["warmed"] == 2, summary
+    assert "lock_released" in events, f"the lock was never released: {events}"
+
+    # 🔴 THE ASSERTION THAT MATTERS. Teardown must begin only after the lock is
+    # gone, or the exclusion covers work that writes nothing and the pass gap —
+    # and with it the write interval clause (4) certifies — is longer than the
+    # budget says.
+    assert events.index("lock_released") < events.index("teardown_start"), (
+        f"the run lock is still held during teardown, so the lock-held interval is "
+        f"longer than `full_rebuild_budget_s()` declares and clause (4)'s write "
+        f"interval is understated: {events}"
+    )
+    # ...and the lock must not be released before the last write, or two passes
+    # can warm at once and the exclusion means nothing.
+    assert events.index("warm:bb") < events.index("lock_released"), events
+
+    # Setup and head resolution are inside the declared budget, and the budget
+    # says so rather than a comment saying so.
+    assert warmer.full_rebuild_budget_s(setup_s=0) < warmer.full_rebuild_budget_s(), (
+        "the setup wall is not a term in the budget — CERT-2095 exactly"
+    )
+
+
+def test_a_setup_that_never_finishes_releases_the_lock_and_says_why():
+    """The other half of the setup wall: it must not hold the exclusion open.
+
+    A wall that fires and then leaves the run lock held has converted a slow pass
+    into a dead warmer — every later beat takes the `lock` skip path forever.
+    """
+    import time
+
+    from app.tasks import search_head_warmer as warmer
+
+    released = []
+
+    class _HangingCM:
+        async def __aenter__(self):
+            await asyncio.sleep(30)
+
+        async def __aexit__(self, *a):
+            return False
+
+    from app.tasks import base as task_base
+    with patch.object(task_base, "get_task_session", lambda: _HangingCM()), \
+         patch.object(warmer, "PASS_SETUP_BOUND_SECONDS", 0.05), \
+         patch.object(warmer, "_acquire_run_lock", lambda: True), \
+         patch.object(warmer, "_release_run_lock", lambda: released.append(1)), \
+         patch.object(warmer, "_seconds_since_last_pass", lambda now: None), \
+         patch.object(warmer, "_record_pass_start", lambda now: None), \
+         patch.object(warmer, "head_warm_enabled", lambda: True):
+        started = time.monotonic()
+        summary = asyncio.run(warmer._warm_search_head(head_size=2))
+        elapsed = time.monotonic() - started
+
+    assert elapsed < 3.0, f"the setup wall did not fire: {elapsed:.1f}s"
+    assert summary["skip_reason"] == "setup_timeout", summary
+    assert summary["terminal"] != "complete", (
+        f"a pass that never reached its first warm reported {summary['terminal']!r}"
+    )
+    assert released, "the setup wall fired and left the run lock held — the warmer is now wedged"
+    # Exactly once. A double release would delete the NEXT pass's exclusion.
+    assert len(released) == 1, f"the lock was released {len(released)} times: {released}"
+
+
+def test_the_solver_does_not_read_the_constant_it_exists_to_derive():
+    """🔴 A SURVIVING MUTANT, REPORTED AND KILLED. The solver must not be circular.
+
+    Replacing `derive_refresh_ahead_s(budget_s=budget)` with a bare
+    `REFRESH_AHEAD_SECONDS` inside `minimum_concurrency_for_residency()` left the
+    whole suite green, because at the shipped constants the two are the same
+    number — `REFRESH_AHEAD_SECONDS` IS `derive_refresh_ahead_s()`, by
+    construction. So every assertion on the shipped answer passed with the
+    derivation deleted.
+
+    That is not cosmetic. The solver's job is to be right when the constants MOVE,
+    and a solver that reads the current threshold while solving for the width that
+    determines the threshold is circular: it would report that today's width is
+    fine no matter what the walls became. Each candidate width implies its own
+    budget, and each budget implies its own threshold.
+
+    Driven by making the two differ: pin `REFRESH_AHEAD_SECONDS` to a value the
+    invariant refuses and require the answer not to move.
+    """
+    from app.tasks import search_head_warmer as warmer
+
+    honest = warmer.minimum_concurrency_for_residency()
+
+    for bogus in (25, 60, 179):
+        with patch.object(warmer, "REFRESH_AHEAD_SECONDS", bogus):
+            assert warmer.minimum_concurrency_for_residency() == honest, (
+                f"the solver's answer moved to "
+                f"{warmer.minimum_concurrency_for_residency()} when "
+                f"REFRESH_AHEAD_SECONDS was set to {bogus}. It is reading the "
+                f"shipped threshold instead of deriving one per candidate width, "
+                f"which makes the width and the threshold depend on each other."
+            )
 
 
 def test_the_ttl_read_retry_mirror_has_not_drifted():
