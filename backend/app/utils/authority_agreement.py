@@ -34,8 +34,10 @@ which, and reports the clock as its own bucket that gates nothing.
 WHAT A ROW SAYS
 ═══════════════
   * ``identity`` — in both / StatPal-only / ours-only. The governing bucket, and
-    it carries TWO numbers: ``pct`` over the union of both sides, and
-    ``ours_covered_pct`` over the games we list. Both are published for every
+    it carries the CANDIDATE numbers a flip can be scored on: ``pct`` over the
+    union of both sides, ``ours_covered_pct`` over the games we list, and
+    ``ours_covered_in_span_pct`` over the games we list on the dates StatPal
+    publishes. All are published for every
     sport. ``identity.governing`` says which of them scores THIS sport's streak
     and whether it clears the bar (D63; `GOVERNING_IDENTITY_NUMBERS`) — because
     the answer differs by sport, and a reader picking one is a reader who can
@@ -217,13 +219,14 @@ MEASUREMENT_POPULATIONS: frozenset[str] = frozenset(
 #: here, so the row can carry its own verdict instead of a reader comparing.
 FLIP_BAR_PCT = 99.5
 
-#: WHICH of identity's two numbers a sport's seven-day streak is scored on.
+#: WHICH of identity's published numbers a sport's seven-day streak is scored on.
 #: D63 = A (Alex, 2026-09-04): "NBA/NHL seven-day agreement = 'of the games WE
 #: list, StatPal has them'; NFL symmetric."
 #:
 #: `identity` is the governing BUCKET — that is the axis `governs` marks, against
 #: `schedule` and `anchors`, which report and gate nothing. D63 settles a second
-#: question the bucket flag cannot answer, because identity carries TWO numbers:
+#: question the bucket flag cannot answer, because identity carries MORE THAN
+#: ONE candidate number:
 #:
 #:   * ``pct`` — the UNION denominator. "Of every game either side lists, how
 #:     many does the other also list?" Meaningful only where both sides publish
@@ -328,7 +331,7 @@ GOVERNING_IDENTITY_NUMBERS: dict[str, tuple[str, ...]] = {
 #:     measurement. See `MINIMUM_SCORED_DENOMINATOR`. Carries the streak: a day
 #:     with one game on it is not a day anybody disagreed.
 #:   * ``PENDING-NO-GOVERNING-NUMBER`` — the sport has not been told which of
-#:     its two numbers decides. Nothing to advance, nothing to reset.
+#:     its numbers decides. Nothing to advance, nothing to reset.
 #:
 #: The last three are all "not advancing" and are still not the same thing: a
 #: quiet day, a day too small to read, and an unanswered question. Only one of
@@ -403,7 +406,7 @@ IDENTITY_DENOMINATORS: dict[str, Callable[[dict[str, Any]], int]] = {
 #: governing bucket against `schedule` and `anchors`, but a reader who has just
 #: been told "identity >= 99.5%" reaches for `identity.pct`, which for NBA and
 #: NHL reads 3.40 and governs nothing. Scoring a sport on the wrong one of
-#: identity's two numbers is the exact mistake D63 exists to prevent, so it may
+#: identity's numbers is the exact mistake D63 exists to prevent, so it may
 #: not survive in the payload's opening sentence.
 #:
 #: So this says the four things a reader needs before they look at a number:
@@ -418,7 +421,7 @@ FLIP_GATE_SUMMARY = (
     f"D50: a flip needs 7 consecutive daily rows clearing "
     f"{FLIP_BAR_PCT}%, plus a YOUR-TURN entry Alex has seen. Identity governs; "
     "schedule and anchors are reported and gate nothing. WHICH of identity's "
-    "two numbers scores a sport is per sport (D63), so do not compare a "
+    "published numbers scores a sport is per sport (D63), so do not compare a "
     "percentage to the bar yourself — read the verdict off that sport's "
     "`identity.governing`, which names the number(s), their values, the "
     "denominator each was scored on and the bar it used. Five gate states: "
@@ -441,7 +444,7 @@ def _identity_block(
     ours_horizon: dict[str, int],
     statpal_has_span: bool,
 ) -> dict[str, Any]:
-    """The identity bucket, with its two numbers and the ruling on which decides.
+    """The identity bucket, with its numbers and the ruling on which decides.
 
     Built here rather than inline so that `governing` is assembled from the very
     same numbers the row publishes. A verdict computed from a second, parallel
@@ -454,7 +457,7 @@ def _identity_block(
         "ours_only": ours_only,
         "pct": _pct(both, denominator),
         # `identity` is the governing BUCKET, against `schedule` and `anchors`.
-        # WHICH of its two numbers scores the streak is a separate question,
+        # WHICH of its numbers scores the streak is a separate question,
         # answered per sport in `governing` below (D63).
         "governs": True,
         # Where the StatPal-only games fall against our own inventory.
@@ -543,8 +546,9 @@ def governing_identity(sport_key: str, identity: dict[str, Any]) -> dict[str, An
             "gate": GATE_PENDING,
             "why": (
                 f"{sport_key} has no governing identity number, so no daily row "
-                "can advance its streak. Both numbers are still published below; "
-                "what is missing is the ruling on which one decides."
+                "can advance its streak. Every identity number is still "
+                "published below; what is missing is the ruling on which one "
+                "decides."
             ),
         }
     values = {name: identity[name] for name in names}
@@ -1474,8 +1478,11 @@ def ledger_line(row: dict[str, Any], *, day: str, streak: str = "?/7") -> str:
         # a bus operator appends a catastrophic-looking row every morning for a
         # sport where the two sides agree about every game we hold.
         f"| covers={ident['ours_covered_pct']}% "
-        # D63: the two numbers above are BOTH published for every sport, and
-        # this field says which of them this sport is scored on and whether it
+        # D63: the two numbers above are the two this LINE renders — the row
+        # publishes more, and `ours_covered_in_span_pct` is deliberately not
+        # here because the line's format is spec-fixed and a bus parser reading
+        # a changed line is a cost with no ship behind it. This field says
+        # which of the row's numbers this sport is scored on and whether it
         # clears. Rendered from the row's own verdict rather than recomputed,
         # so the line can never disagree with the JSON it came from — and so a
         # bus operator advances a streak by reading a word, not by remembering

@@ -1871,7 +1871,7 @@ async def statpal_usage(
 #: the endpoint because it is one query with one purpose: the banked row says
 #: what the pass believed, and this says what the table holds now. When they
 #: disagree, something outside the stamper wrote a StatPal anchor — which is a
-#: finding, and it is invisible if only one of the two numbers is published.
+#: finding, and it is invisible if only one of the numbers is published.
 _ANCHOR_CENSUS = """
 SELECT COUNT(*) AS anchors,
        COUNT(*) FILTER (
@@ -1964,7 +1964,7 @@ async def statpal_authority_agreement(
     a row from yesterday's pass answers a question about yesterday.
 
     The `gate` string is `FLIP_GATE_SUMMARY`, imported rather than written here.
-    Which of identity's two numbers scores a sport is a PER-SPORT ruling (D63),
+    Which of identity's numbers scores a sport is a PER-SPORT ruling (D63),
     so the summary sends its reader to that sport's `identity.governing` instead
     of naming a number — the payload's opening sentence is the last place a
     reader should be pointed at the wrong one.
