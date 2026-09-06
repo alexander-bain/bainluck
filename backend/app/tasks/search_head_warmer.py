@@ -119,20 +119,35 @@ is `MIN_PASS_PERIOD_SECONDS`: at most one pass per 45 s, whatever the beat does.
 ✅ THE TWO DEFECTS THIS DOCSTRING USED TO NAME AS OPEN ARE CLOSED (#3539, under
 ruling D81 = A). The arithmetic below is now asserted by `residency_invariant()`
 rather than promised in prose, and the configurations that read plausible and
-hole — 60/25, 180/90, 180/150 — are each refused by name in its test.
+hole — 60/25, 180/90, 180/150, 180/170-at-a-100s-budget — are each refused by
+name in its test.
 
 THE THREE CONSTANTS ARE ONE DECISION, not three — and the relation binding them
 is `residency_invariant()`, which is executable rather than prose. An entry lives
 `SEARCH_RESPONSE_TTL_SECONDS`; a real pass arrives every
 `effective_pass_period_s()`; a pass rebuilds anything with under
 `REFRESH_AHEAD_SECONDS` left, and that rebuild may take up to
-`full_rebuild_budget_s()`. For the head never to go cold, ALL THREE must hold:
+`full_rebuild_budget_s()`. For the head never to go cold, ALL FOUR must hold:
 
     REFRESH_AHEAD > TTL - P_effective              (1) the first pass CATCHES it
     REFRESH_AHEAD - P_effective > rebuild_budget   (2) and it SURVIVES the rebuild
     REFRESH_AHEAD <= TTL                           (3) and it is still a threshold
+    TTL > max_same_query_write_interval_s()        (4) across a RE-RANKED pass
 
-At 180 / 170 / 60 / 100: `170 > 120` ✓, `110 > 100` ✓, `170 <= 180` ✓.
+At 180 / 160 / 60 / 80: `160 > 120` ✓, `100 > 80` ✓, `160 <= 180` ✓, `180 > 160` ✓.
+
+🔴 CLAUSE (4) IS THE ONE THREE PRESENTATIONS MISSED (CERT-2086). Clauses (1)-(3)
+all reason about a query that holds its POSITION within a pass. It does not:
+`resolve_head` re-ranks every pass and `_warm_head_concurrently` dispatches
+through a shared cursor, so one query can be written FIRST in one pass and LAST
+in the next — `pass_gap + budget` apart, which at a 100 s budget is 200 s against
+a 180 s life and a measured 19 s hole.
+
+🔴 AND THE BUDGET ITSELF WAS 25 % HIGH. `full_rebuild_budget_s()` multiplied
+`PER_QUERY_TIMEOUT_SECONDS` (25 s), but the ROUTE degrades and returns at its own
+20 s deadline, so 25 s is a backstop above a bound that already binds. Sized off
+the bound that actually holds, the budget is 80 s, and clause (4) has 20 s of
+room instead of being 20 s short.
 
 🔴 CLAUSE (2) IS ABOUT THE **THRESHOLD**, NOT THE TTL, AND CERT-2084 BLOCKED THE
 VERSION THAT CONFUSED THEM. `TTL - P_effective > budget` reads 120 > 100 and
@@ -237,7 +252,7 @@ WARM_CONCURRENCY = 2
 #: and come back one period later with `REFRESH_AHEAD - P` left. At 150 that was
 #: 90 s against a permitted 100 s rebuild: a 10 s hole, which is what CERT-2084
 #: measured. #3539 wrote `REFRESH_AHEAD - P_effective > D_max` from the start.
-REFRESH_AHEAD_SECONDS = 170
+REFRESH_AHEAD_SECONDS = 160
 
 #: The floor between two real passes, checked UNDER the run lock so two beats
 #: cannot both pass it. This is the load bound: the beat may fire more often,
@@ -454,11 +469,37 @@ def effective_pass_period_s(
     return float(beat_s * math.ceil(floor_s / beat_s))
 
 
+#: The ROUTE's own deadline, in seconds. It binds BEFORE this module's
+#: `PER_QUERY_TIMEOUT_SECONDS` (25 s) and is therefore the real per-query bound:
+#: `search_events` degrades and returns at its deadline, so a warming call cannot
+#: run past it and the 25 s timeout is a backstop above a bound that already
+#: exists. Mirrored from the same env var the route reads rather than imported,
+#: because `app.routes.events` importing back into tasks is the circular-import
+#: shape this package avoids — and `test_the_route_deadline_mirror_has_not_drifted`
+#: asserts the two agree, so drift is caught rather than merely hoped against.
+ROUTE_SEARCH_DEADLINE_SECONDS = int(os.getenv("SEARCH_DEADLINE_MS", "20000")) / 1000.0
+
+
+def effective_per_query_bound_s(
+    *,
+    per_query_s: float = PER_QUERY_TIMEOUT_SECONDS,
+    route_deadline_s: float = ROUTE_SEARCH_DEADLINE_SECONDS,
+) -> float:
+    """The bound a single warming query can actually reach: `min` of the two.
+
+    Taking this module's own 25 s constant makes every budget derived from it 25 %
+    high, because the route degrades at 20 s and returns. Budgets sized off the
+    looser of two bounds are how `full_rebuild_budget_s` came out at 100 s and put
+    the write interval over D81's ceiling (CERT-2086).
+    """
+    return float(min(per_query_s, route_deadline_s))
+
+
 def full_rebuild_budget_s(
     *,
     head_size: int = DEFAULT_HEAD_SIZE,
     concurrency: int = WARM_CONCURRENCY,
-    per_query_s: float = PER_QUERY_TIMEOUT_SECONDS,
+    per_query_s: float | None = None,
 ) -> float:
     """The longest a pass may take to reach and write the LAST head entry.
 
@@ -479,16 +520,50 @@ def full_rebuild_budget_s(
     error this program has already made twice — the next sample refutes it. The
     budget is what the code PERMITS, and the code permits 100 s.
     """
-    if head_size <= 0 or concurrency <= 0 or per_query_s <= 0:
+    bound = effective_per_query_bound_s() if per_query_s is None else float(per_query_s)
+    if head_size <= 0 or concurrency <= 0 or bound <= 0:
         raise ValueError("head size, concurrency and per-query bound must be positive")
-    return float(math.ceil(head_size / concurrency) * per_query_s)
+    return float(math.ceil(head_size / concurrency) * bound)
+
+
+def max_same_query_write_interval_s(
+    *,
+    beat_s: float = BEAT_PERIOD_SECONDS,
+    floor_s: float = MIN_PASS_PERIOD_SECONDS,
+    budget_s: float | None = None,
+) -> float:
+    """The longest gap between two consecutive writes OF THE SAME QUERY.
+
+    🔴 CERT-2086. Every earlier form of this arithmetic assumed a query keeps its
+    position within a pass. **It does not, twice over:**
+
+    * `resolve_head` re-ranks the head on EVERY pass (by distinct sessions, which
+      move), so a query's index changes between passes; and
+    * `_warm_head_concurrently` dispatches through a SHARED CURSOR — deliberately,
+      so a slow query cannot idle a worker — so even a fixed index does not fix a
+      completion position.
+
+    So one query can be written FIRST in one pass and LAST in the next. Its two
+    writes are then `pass_gap + budget` apart, not `pass_gap` apart:
+
+        pass k    A written at t=1 (first), entry expires at 1 + TTL = 181
+        pass k    holds the run lock until t=100 (full budget)
+        pass k+1  starts at t=100, re-ranked, A now LAST, written at t=200
+        ======>   COLD [181, 200) = 19 s     (reproduced exactly)
+
+    The pass gap is itself bounded by the lock, not by the floor: the next pass
+    cannot start until this one ends, quantized up to the beat.
+    """
+    budget = full_rebuild_budget_s() if budget_s is None else float(budget_s)
+    pass_gap = beat_s * math.ceil(max(floor_s, budget) / beat_s)
+    return float(pass_gap + budget)
 
 
 def derive_refresh_ahead_s(
     *,
     period_s: float | None = None,
     budget_s: float | None = None,
-    margin_s: float = BEAT_PERIOD_SECONDS / 2.0,
+    margin_s: float = BEAT_PERIOD_SECONDS,
 ) -> float:
     """The threshold at which an entry must be rebuilt. **`P + B + margin`.**
 
@@ -582,10 +657,24 @@ def residency_invariant(
             f"{ttl_s:g}s TTL, so no entry can ever be `fresh` and the skip is dead code."
         )
 
+    # (4) INTERVAL. 🔴 CERT-2086: the three clauses above all reason about ONE
+    # query holding its position within a pass. The head is re-ranked every pass
+    # and dispatched through a shared cursor, so a query written first in one pass
+    # can be written last in the next, and the TTL has to cover THAT gap.
+    interval = max_same_query_write_interval_s(budget_s=budget)
+    if ttl_s <= interval:
+        return False, (
+            f"WRITE INTERVAL EXCEEDS THE TTL: the head is re-ranked each pass and "
+            f"dispatched through a shared cursor, so one query can be written first in "
+            f"one pass and last in the next — up to {interval:g}s apart against a "
+            f"{ttl_s:g}s life. Needs ttl > {interval:g}s."
+        )
+
     return True, (
         f"resident: caught by {refresh_ahead_s:g}s (warmer phase leaves {warmer_phase:g}s), "
         f"and the worst phase starts its rebuild with {least_life_at_rebuild:g}s against a "
-        f"{budget:g}s budget — {least_life_at_rebuild - budget:g}s of margin"
+        f"{budget:g}s budget — {least_life_at_rebuild - budget:g}s of margin; and the worst "
+        f"same-query write interval is {interval:g}s inside a {ttl_s:g}s life"
     )
 
 

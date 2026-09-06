@@ -651,6 +651,7 @@ def test_the_refresh_ahead_window_actually_keeps_the_head_alive():
         REFRESH_AHEAD_SECONDS,
         effective_pass_period_s,
         full_rebuild_budget_s,
+        max_same_query_write_interval_s,
         residency_invariant,
     )
     from app.utils.search_cache import SEARCH_RESPONSE_TTL_SECONDS
@@ -690,12 +691,27 @@ def test_the_refresh_ahead_window_actually_keeps_the_head_alive():
         "#3539's option 4 (180/90) leaves the entry uncaught at its first "
         "eligible pass — it must not satisfy the invariant either"
     )
-    blocked_2084 = residency_invariant(ttl_s=180, refresh_ahead_s=150)
+    blocked_2084 = residency_invariant(ttl_s=180, refresh_ahead_s=150, budget_s=100.0)
     assert blocked_2084[0] is False, (
         "180/150 is the configuration CERT-2084 blocked: an organic entry seen at "
         "the threshold is rebuilt one period later with 90s against a 100s budget"
     )
     assert "DOES NOT SURVIVE" in blocked_2084[1]
+
+    # 🔴 CERT-2086: 180/170 passed clauses (1)-(3) and still holed, because one
+    # query can be written first in one pass and last in the next.
+    blocked_2086 = residency_invariant(ttl_s=180, refresh_ahead_s=170, budget_s=100.0)
+    assert blocked_2086[0] is False, (
+        "180/170 at a 100s budget is the configuration CERT-2086 blocked — the "
+        "re-ranked write interval reaches 200s against a 180s life"
+    )
+    assert "WRITE INTERVAL" in blocked_2086[1]
+
+    interval_dead, why_interval = residency_invariant(
+        ttl_s=max_same_query_write_interval_s()
+    )
+    assert not interval_dead, "clause (4) is dead: a TTL equal to the interval must NOT pass"
+    assert "WRITE INTERVAL" in why_interval
 
     # And the shipped threshold is the derived one, not a hand-picked neighbour.
     from app.tasks.search_head_warmer import derive_refresh_ahead_s
@@ -750,10 +766,23 @@ def test_the_full_rebuild_budget_is_the_pass_not_one_query():
         full_rebuild_budget_s,
     )
 
-    assert full_rebuild_budget_s() == 100.0
+    from app.tasks.search_head_warmer import (
+        ROUTE_SEARCH_DEADLINE_SECONDS,
+        effective_per_query_bound_s,
+    )
+
+    assert full_rebuild_budget_s() == 80.0
     assert full_rebuild_budget_s() > PER_QUERY_TIMEOUT_SECONDS, (
         "the budget must exceed one query's bound — the last-written entry "
         "waits out every earlier wave"
+    )
+    # 🔴 CERT-2086: sized off the bound that ACTUALLY binds. The route degrades
+    # and returns at its own deadline, so this module's looser 25 s timeout is a
+    # backstop, and multiplying by it made every derived budget 25 % high.
+    assert effective_per_query_bound_s() == ROUTE_SEARCH_DEADLINE_SECONDS == 20.0
+    assert effective_per_query_bound_s() < PER_QUERY_TIMEOUT_SECONDS, (
+        "if this module's timeout ever drops below the route deadline it becomes "
+        "the binding one and this expression must follow it, not the constant"
     )
     assert full_rebuild_budget_s(head_size=2, concurrency=2, per_query_s=25) == 25.0
     assert full_rebuild_budget_s(head_size=3, concurrency=2, per_query_s=25) == 50.0

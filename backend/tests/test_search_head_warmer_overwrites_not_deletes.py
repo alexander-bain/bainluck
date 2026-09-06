@@ -850,7 +850,7 @@ def test_the_organic_phase_is_swept_not_sampled_at_one_lucky_offset():
             ttl_s=SEARCH_RESPONSE_TTL_SECONDS,
             refresh_ahead_s=150,
             period_s=period,
-            budget_s=budget,
+            budget_s=100.0,
         )
     ]
     assert convicted, "the sweep does not convict the blocked 150 — it proves nothing"
@@ -871,3 +871,150 @@ def _sweep_one_offset(*, offset, ttl_s, refresh_ahead_s, period_s, budget_s):
     if r <= 0:                        # already expired before any pass saw it
         return [(offset, "expired unseen")]
     return [] if r > budget_s else [(offset, f"rebuild starts with {r}s vs {budget_s}s budget")]
+
+
+# ---------------------------------------------------------------------------
+# CERT-2086's NAMED REGRESSION — the head is RE-RANKED and the cursor is SHARED,
+# so a query does not hold its position between passes.
+#
+#   "the proof assumes one within-pass write position while production re-ranks
+#    the head every pass and dispatches it through a dynamic two-worker cursor.
+#    An allowed full-budget schedule writes query A first at t=1, holds the pass
+#    lock to t=100, then after re-ranking writes A last at t=200; its 180-second
+#    entry expires at t=181, leaving [181,200) cold. ... Required catching test:
+#    real two-worker cursor plus run-lock fake clock, same query first/fast then
+#    last/full-budget, continuously asserting no absence; current SHA must expose
+#    the 19-second hole."
+# ---------------------------------------------------------------------------
+
+
+def _run_two_pass_reranked(*, ttl_s, per_query_s, head_a, head_b, walls):
+    """Drive the REAL shared-cursor dispatcher twice, re-ranking between passes.
+
+    `_warm_head_concurrently` is production's own function — the point of this
+    harness is that the cursor is the real one, because it is the cursor that
+    makes a query's write position vary. `_warm_one` is replaced by a stub that
+    consumes fake time from `walls` and records the write; the run lock is
+    modelled by starting pass two no earlier than pass one's end.
+
+    Returns the write times of query "a" and the absence intervals for its key.
+    """
+    from unittest.mock import patch
+
+    from app.tasks import search_head_warmer as warmer
+
+    clock = {"t": 0.0}
+    log = _ExpiringWriteLog(ttl_s)
+    writes_a = []
+
+    async def _fake_warm_one(session, q):
+        # One query in flight per session, and each session keeps its OWN clock —
+        # the two workers run in parallel. Threading a single global clock through
+        # both serializes the pool and inflates every write time (this harness did
+        # exactly that on its first run, and reported a 199 s hole where the real
+        # schedule gives 19 s).
+        # Yield once, so `asyncio.gather` actually interleaves the two workers over
+        # the shared cursor. Without it the stub never suspends, the first worker
+        # drains the whole cursor, and the pool is silently a pool of one — which
+        # inflated this harness's first run to a 199 s hole where the real schedule
+        # gives 19 s.
+        await asyncio.sleep(0)
+        wall = walls[q].pop(0) if walls.get(q) else per_query_s
+        session["free_at"] += wall
+        clock["t"] = max(clock["t"], session["free_at"])
+        if q == "a":
+            log.setex(session["free_at"])
+            writes_a.append(session["free_at"])
+        return {"q": q, "ok": True, "reason": "warmed", "rebuilt": True, "seconds": wall}
+
+    async def _one_pass(head, pass_start):
+        clock["t"] = pass_start
+        sessions = [{"free_at": pass_start}, {"free_at": pass_start}]
+        with patch.object(warmer, "_warm_one", _fake_warm_one):
+            await warmer._warm_head_concurrently(sessions, head)
+        return max(s["free_at"] for s in sessions)      # the pass END = lock release
+
+    end_1 = asyncio.get_event_loop_policy().new_event_loop().run_until_complete(
+        _one_pass(head_a, 0.0)
+    )
+    # The run lock: pass two cannot start before pass one ends, quantized to the beat.
+    start_2 = 20.0 * math.ceil(max(45.0, end_1) / 20.0)
+    asyncio.get_event_loop_policy().new_event_loop().run_until_complete(
+        _one_pass(head_b, start_2)
+    )
+
+    absent, run_start = [], None
+    t = writes_a[0]
+    horizon = writes_a[-1] + 5
+    while t <= horizon:
+        present = log.present_at(t)
+        if not present and run_start is None:
+            run_start = t
+        elif present and run_start is not None:
+            absent.append((round(run_start, 1), round(t, 1)))
+            run_start = None
+        t = round(t + 0.1, 1)
+    return writes_a, absent
+
+
+#: "a" is fast and FIRST in pass one; slow and LAST in pass two after re-ranking.
+_HEAD_FIRST = ["a", "b", "c", "d", "e", "f", "g", "h"]
+_HEAD_RERANKED = ["b", "c", "d", "e", "f", "g", "h", "a"]
+
+
+def test_the_previous_budget_holes_when_a_query_is_written_first_then_last():
+    """The RED half of CERT-2086's regression, on the 100 s budget it blocked.
+
+    Query "a" is written at t=1 in pass one and, after the head is re-ranked, at
+    t=200 in pass two. Its 180 s entry expired at t=181.
+    """
+    walls = {q: [25.0] * 4 for q in _HEAD_FIRST}
+    walls["a"] = [1.0, 25.0]
+    writes, absent = _run_two_pass_reranked(
+        ttl_s=180, per_query_s=25.0, head_a=_HEAD_FIRST, head_b=_HEAD_RERANKED, walls=walls
+    )
+    assert absent, f"the 100s-budget configuration must hole; writes of 'a' = {writes}"
+    width = max(b - a for a, b in absent)
+    assert 18.0 <= width <= 20.0, (
+        f"expected the graded ~19 s hole, measured {width:.1f}s across {absent} "
+        f"(writes of 'a' at {writes})"
+    )
+
+
+def test_a_reranked_query_written_first_then_last_stays_resident_at_the_shipped_budget():
+    """The GREEN half. Same re-ranking, same worst schedule, corrected budget.
+
+    Sized off the route's own 20 s deadline the full pass budget is 80 s, so the
+    worst same-query interval is 80 + 80 = 160 s inside a 180 s life.
+    """
+    from app.tasks.search_head_warmer import effective_per_query_bound_s
+    from app.utils.search_cache import SEARCH_RESPONSE_TTL_SECONDS
+
+    bound = effective_per_query_bound_s()
+    walls = {q: [bound] * 4 for q in _HEAD_FIRST}
+    walls["a"] = [1.0, bound]
+    writes, absent = _run_two_pass_reranked(
+        ttl_s=SEARCH_RESPONSE_TTL_SECONDS,
+        per_query_s=bound,
+        head_a=_HEAD_FIRST,
+        head_b=_HEAD_RERANKED,
+        walls=walls,
+    )
+    assert absent == [], f"'a' went cold across the re-rank: {absent} (writes {writes})"
+
+
+def test_the_route_deadline_mirror_has_not_drifted():
+    """`ROUTE_SEARCH_DEADLINE_SECONDS` mirrors the route; a mirror needs a guard.
+
+    It is a mirror rather than an import because `app.routes.events` importing
+    back into `app.tasks` is the circular shape this package avoids. The cost of a
+    mirror is drift, and the payment for it is this test — the same bargain
+    `/typeahead`'s 45->65 s change had to make in two places.
+    """
+    from app.routes import events
+    from app.tasks.search_head_warmer import ROUTE_SEARCH_DEADLINE_SECONDS
+
+    assert ROUTE_SEARCH_DEADLINE_SECONDS == events._SEARCH_DEADLINE_MS / 1000.0, (
+        "the warmer's copy of the route deadline has drifted from the route. Every "
+        "residency budget is derived from it, so the drift silently re-opens the hole."
+    )
