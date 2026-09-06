@@ -383,15 +383,24 @@ export function FuturesChart({
                     stroke="#e5e7eb"
                     strokeDasharray="4"
                   />
-                  <text
-                    x={padding.left - 8}
-                    y={yScale(maxProb * pct)}
-                    textAnchor="end"
-                    dominantBaseline="middle"
-                    className="text-xs fill-slate"
-                  >
-                    {Math.round(maxProb * pct * 100)}%
-                  </text>
+                  {/* #3599: MINI ONLY. On a full chart these labels are drawn
+                      by the pinned gutter below instead. They used to live here
+                      for every size, and here is INSIDE the scrolled SVG — so
+                      #3035, which rests the initial scroll on the right so the
+                      chart opens on today, carried them out of the visible
+                      window and left five unlabelled gridlines. A mini chart has
+                      no scroll container, so it keeps them in place. */}
+                  {mini && (
+                    <text
+                      x={padding.left - 8}
+                      y={yScale(maxProb * pct)}
+                      textAnchor="end"
+                      dominantBaseline="middle"
+                      className="text-xs fill-slate"
+                    >
+                      {Math.round(maxProb * pct * 100)}%
+                    </text>
+                  )}
                 </g>
               ))}
 
@@ -638,6 +647,40 @@ export function FuturesChart({
             data-testid="futures-chart-fade-right"
             className="pointer-events-none absolute inset-y-0 right-0 z-10 w-8 bg-gradient-to-l from-surface-card to-transparent"
           />
+        )}
+        {/* #3599 — THE AXIS STAYS PUT WHILE THE PLOT SCROLLS UNDER IT.
+
+            Sibling of the scroller for the same reason the fades are (#3035):
+            an absolutely positioned child of an overflow container travels
+            with its content, so an axis placed inside would scroll away —
+            which is exactly the bug this fixes.
+
+            Positioned by PERCENTAGE of the wrapper's height rather than in
+            viewBox units, and that is what makes it breakpoint-proof. The SVG
+            is `w-full min-w-[600px]` against a viewBox 800 wide, so its render
+            scale changes with the viewport and any fixed px offset would drift.
+            The wrapper hugs the SVG, so `yScale(v) / effectiveHeight` is the
+            same fraction of the wrapper at every width.
+
+            Each label carries its own `bg-surface-card` rather than sitting on
+            one opaque strip, so the left fade still reads as a fade between
+            them instead of being covered by a solid block. */}
+        {!mini && effectiveShowAxes && (
+          <div
+            aria-hidden="true"
+            data-testid="futures-chart-y-axis"
+            className="pointer-events-none absolute bottom-0 left-0 top-0 z-20"
+          >
+            {[0, 0.25, 0.5, 0.75, 1].map((pct) => (
+              <span
+                key={pct}
+                className="absolute left-0 -translate-y-1/2 bg-surface-card pr-1 text-xs text-text-muted"
+                style={{ top: `${(yScale(maxProb * pct) / effectiveHeight) * 100}%` }}
+              >
+                {Math.round(maxProb * pct * 100)}%
+              </span>
+            ))}
+          </div>
         )}
       </div>
 

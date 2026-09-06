@@ -120,8 +120,58 @@ describe("#3035 arm B — FuturesChart actually wires the anchor and the fades",
     expect(fades).toHaveLength(2);
     // Each fade renders inside a block that is pointer-events-none and hidden
     // from the accessibility tree — it marks plot, it is not a control.
+    //
+    // #3599 amendment: this used to assert the whole file contained exactly two
+    // `pointer-events-none absolute inset-y-0` blocks, which read as "there are
+    // two fades" but actually said "there are two pinned overlays of any kind".
+    // The pinned y-axis is a legitimate third, so the count is now scoped to
+    // the fades themselves — which is what the test was always about.
+    const fadeBlocks = fades.filter((l) => l.includes("futures-chart-fade-"));
+    expect(fadeBlocks).toHaveLength(2);
     expect(CODE.match(/pointer-events-none absolute inset-y-0/g)).toHaveLength(2);
     expect(CODE.match(/aria-hidden="true"/g)?.length).toBeGreaterThanOrEqual(2);
+  });
+
+  test("#3599 — the y-axis is pinned outside the scroller, not drawn inside it", () => {
+    // The regression this guards: the axis labels were `<text>` inside the
+    // scrolled SVG, so anchoring the scroll to the right (the whole point of
+    // #3035) carried them out of view and left five unlabelled gridlines.
+    expect(CODE).toContain("futures-chart-y-axis");
+
+    const scroller = CODE.indexOf('className={mini ? "" : "overflow-x-auto relative"}');
+    const wrapper = CODE.indexOf('className={mini ? "" : "relative"}');
+    const axis = CODE.indexOf("futures-chart-y-axis");
+    expect(wrapper).toBeLessThan(scroller);
+    // Same rule as the fades: it must be a SIBLING of the scroller. If it ever
+    // moves inside, it scrolls away again and this goes red.
+    expect(axis).toBeGreaterThan(scroller);
+    const scrollerClose = CODE.indexOf("</div>", CODE.indexOf("Hover tooltip"));
+    expect(scrollerClose).toBeLessThan(axis);
+
+    // Positioned as a FRACTION of the wrapper. A px offset would drift, because
+    // the SVG's render scale changes with the viewport (`w-full min-w-[600px]`
+    // against a viewBox 800 wide).
+    expect(CODE).toMatch(/yScale\(maxProb \* pct\) \/ effectiveHeight\) \* 100/);
+
+    // And it does not swallow a hover meant for the chart. Asserted against the
+    // gutter's OWN class string, not a window around it: a ±400-char slice here
+    // reaches the right fade's `pointer-events-none` and passed even with the
+    // gutter's removed — the mutant survived until this line was tightened.
+    expect(CODE).toContain(
+      'className="pointer-events-none absolute bottom-0 left-0 top-0 z-20"',
+    );
+  });
+
+  test("#3599 — a full chart draws its y labels exactly once", () => {
+    // Both renderers exist (mini keeps the in-SVG text, which has no scroll
+    // container to escape), so the risk is that a full chart draws BOTH and
+    // prints every percentage twice, offset by the scroll.
+    const svgLabel = CODE.indexOf("textAnchor=\"end\"");
+    expect(svgLabel).toBeGreaterThan(-1);
+    // The in-SVG label is gated on `mini`; the pinned gutter is gated on
+    // `!mini`. Neither gate may be dropped.
+    expect(CODE.slice(svgLabel - 200, svgLabel)).toContain("{mini && (");
+    expect(CODE).toContain("{!mini && effectiveShowAxes && (");
   });
 
   test("the fades sit outside the scrolling element, or they scroll away with it", () => {
