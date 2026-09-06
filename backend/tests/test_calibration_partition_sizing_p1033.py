@@ -196,11 +196,20 @@ MEASURED_MONOLITH_S_LOWER_BOUND = 1350.0
 #: The spread is only 3.3% (1,132,886–1,170,007) and the admission verdict at
 #: today's anchor flips sign inside it — which is why the two derivations below
 #: exist and why the undirected constant this replaced was a defect.
-MEASURED_USABLE_WINDOWS: tuple[float, ...] = (
-    1144.221,
-    1170.007,
-    1161.909,
-    1132.886,
+#: KEYED BY BEAT, deliberately. Two things in this file need one specific beat's
+#: window rather than an end of the sample — the gauge reconstructions — and the
+#: first draft of this repair let them carry their own copy of the literal, which
+#: is the duplication the harvest doctrine exists to forbid: correcting a reading
+#: here would have left the reconstruction quietly asserting the old one.
+MEASURED_USABLE_WINDOW_MS_BY_BEAT: dict[str, int] = {
+    "12:15Z": 1_144_221,
+    "17:15Z": 1_170_007,
+    "18:15Z": 1_161_909,
+    "19:18Z": 1_132_886,
+}
+
+MEASURED_USABLE_WINDOWS: tuple[float, ...] = tuple(
+    ms / 1000.0 for ms in MEASURED_USABLE_WINDOW_MS_BY_BEAT.values()
 )
 
 #: The window to use when the conclusion is a REFUSAL — the MOST generous hour
@@ -222,12 +231,17 @@ WINDOW_FOR_REFUSAL_S = max(MEASURED_USABLE_WINDOWS)
 #: production falsified it at 19:18Z, which is how the direction split was found.
 WINDOW_FOR_ADMISSION_S = min(MEASURED_USABLE_WINDOWS)
 
-#: The 12:15Z window specifically, kept because one test reconstructs the gauge
-#: production reported AT THAT BEAT and must use that beat's own reading. Pulling
-#: today's anchor into a historical reconstruction is an anachronism that decays
-#: silently as the sample widens — see
-#: :meth:`test_the_historical_value_projects_the_number_production_reported`.
-WINDOW_AT_THE_12_15Z_BEAT_S = 1144.221
+def window_at_beat_s(beat: str) -> float:
+    """One named beat's own usable window, for a HISTORICAL reconstruction.
+
+    Neither end of the sample is right when the question is "what did production
+    compute at 12:15Z" — that beat had one window and it is the only admissible
+    one. Pulling today's anchor or today's extreme into a historical
+    reconstruction is an anachronism that decays silently as the sample widens;
+    :meth:`test_the_historical_value_projects_the_number_production_reported`
+    is the test that caught it doing exactly that.
+    """
+    return MEASURED_USABLE_WINDOW_MS_BY_BEAT[beat] / 1000.0
 
 # --- The budget. This is the ruling, not a measurement. ----------------------
 
@@ -829,10 +843,27 @@ class TestTheCompletionSampleIsHarvestedNotCurated:
             f"the window sample now holds {len(MEASURED_USABLE_WINDOWS)} "
             f"readings, not 4 — re-quote the duty cycle and the spread"
         )
-        assert MEASURED_USABLE_WINDOWS == (1144.221, 1170.007, 1161.909, 1132.886)
+        assert MEASURED_USABLE_WINDOWS == pytest.approx(
+            (1144.221, 1170.007, 1161.909, 1132.886)
+        )
         assert WINDOW_FOR_REFUSAL_S == max(MEASURED_USABLE_WINDOWS)
         assert WINDOW_FOR_ADMISSION_S == min(MEASURED_USABLE_WINDOWS)
-        assert WINDOW_AT_THE_12_15Z_BEAT_S in MEASURED_USABLE_WINDOWS
+
+    def test_every_beat_reading_is_looked_up_never_repeated(self):
+        """One table of raw per-beat readings; nothing carries its own copy.
+
+        The gauge reconstructions and the outcome oracle both need one named
+        beat's window, and both used to hold their own literal — so a corrected
+        reading would have moved the sample and left them asserting the old
+        value. Both now read :data:`MEASURED_USABLE_WINDOW_MS_BY_BEAT`, and this
+        pins that they do.
+        """
+        assert {label for label, *_ in OBSERVED_BEATS} == set(
+            MEASURED_USABLE_WINDOW_MS_BY_BEAT
+        )
+        for label, _carried_ms, window_ms, _banked in OBSERVED_BEATS:
+            assert window_ms == MEASURED_USABLE_WINDOW_MS_BY_BEAT[label]
+            assert window_at_beat_s(label) * 1000.0 == pytest.approx(window_ms)
 
     def test_the_window_spread_is_narrow_and_that_is_why_it_matters(self):
         """3.3%, and the admission verdict changes sign inside it.
@@ -1079,14 +1110,14 @@ class TestTheGuardFiresOnTheCodeThatShipped:
         assert beats_to_publish(buckets) == math.inf
 
     @pytest.mark.parametrize(
-        "label,units_banked,unit_s,window_s,ledger_said",
+        "label,units_banked,ledger_said",
         [
-            ("12:15Z", 2, 857.021, 1144.221, 95),
-            ("18:15Z", 4, 918.454, 1161.909, 99),
+            ("12:15Z", 2, 95),
+            ("18:15Z", 4, 99),
         ],
     )
     def test_the_historical_value_projects_the_number_production_reported(
-        self, label, units_banked, unit_s, window_s, ledger_said
+        self, label, units_banked, ledger_said
     ):
         """The independent check on the whole model, at TWO beats, EXACTLY.
 
@@ -1108,6 +1139,8 @@ class TestTheGuardFiresOnTheCodeThatShipped:
         Reality at 128 is 129 whole beats, and the gap to 95 is not rounding — it
         is the gauge crediting a beat with 1.3 units of progress it cannot bank.
         """
+        unit_s = COMPLETED_UNIT_MS_BY_BEAT[label] / 1000.0
+        window_s = window_at_beat_s(label)
         assert gauge_at_a_beat(units_banked, unit_s, window_s) == ledger_said, (
             f"the {label} ledger reported {ledger_said} beats to publish and "
             f"production's formula over that beat's own readings now gives "
@@ -1194,12 +1227,29 @@ class TestABeatBanksAtMostOneUnit:
 #: are these values rounded to 0.1 s, and
 #: :meth:`TestTheFenceReproducesWhatProductionDid.test_rounding_to_the_stored_
 #: precision_cannot_flip_a_verdict` checks that the rounding is not load-bearing.
-OBSERVED_BEATS: tuple[tuple[str, int, int, bool], ...] = (
-    ("12:15Z", 723_801, 1_144_221, True),
-    ("17:15Z", 857_021, 1_170_007, True),
-    ("18:15Z", 753_280, 1_161_909, True),
-    ("19:18Z", 918_454, 1_132_886, False),
+#: The window is LOOKED UP rather than repeated, so the two tables cannot drift.
+OBSERVED_BEATS: tuple[tuple[str, int, int, bool], ...] = tuple(
+    (label, carried_ms, MEASURED_USABLE_WINDOW_MS_BY_BEAT[label], banked)
+    for label, carried_ms, banked in (
+        ("12:15Z", 723_801, True),
+        ("17:15Z", 857_021, True),
+        ("18:15Z", 753_280, True),
+        ("19:18Z", 918_454, False),
+    )
 )
+
+#: Beat -> the unit cost that beat COMPLETED, in milliseconds, DERIVED rather
+#: than restated: it is the level the NEXT row carried. That identity is the
+#: mechanism the whole duty-cycle argument rests on — ``prior_unit_ms`` is
+#: rewritten only by a completed unit — so deriving it here means the table
+#: cannot assert the mechanism and contradict it at the same time.
+#:
+#: The withdrawal has no entry, because it completed nothing.
+COMPLETED_UNIT_MS_BY_BEAT: dict[str, int] = {
+    OBSERVED_BEATS[i][0]: OBSERVED_BEATS[i + 1][1]
+    for i in range(len(OBSERVED_BEATS) - 1)
+    if OBSERVED_BEATS[i][3]
+}
 
 
 class TestTheFenceReproducesWhatProductionDid:
@@ -1237,6 +1287,43 @@ class TestTheFenceReproducesWhatProductionDid:
             f"predicate moved or the window derivation is wrong; nothing "
             f"downstream of the fence in this file can be trusted until it agrees"
         )
+
+    def test_every_carried_level_is_a_reading_the_sample_already_holds(self):
+        """The transcription guard, and it asserts the mechanism as well.
+
+        A carried level is never invented: it is the completed cost of the last
+        beat that banked, so every value in this table must round to a member of
+        :data:`MEASURED_COMPLETIONS`. Without this a mistyped level that happened
+        to land on the same side of the fence would change no outcome and pass
+        unnoticed — which is exactly what a 753,280 -> 700,000 mutation did
+        before this test existed.
+        """
+        sample = MEASURED_COMPLETIONS[MEASURED_PARTITION]
+        for label, carried_ms, _window_ms, _banked in OBSERVED_BEATS:
+            assert round(carried_ms / 1000.0, 1) in sample, (
+                f"the {label} beat carried {carried_ms:,} ms, which is not any "
+                f"completed unit cost this file holds {sample} — either the "
+                f"reading is mistyped or a completed unit is missing from the "
+                f"harvest; a carried level cannot come from anywhere else"
+            )
+
+    def test_the_completed_cost_of_a_beat_is_the_level_the_next_one_carries(self):
+        """The identity the duty-cycle argument depends on, pinned.
+
+        Also the reason the 19:18Z beat could not recover on its own: it
+        completed nothing, so it appears in no row's carried level, so the level
+        stayed at 918,454 for whatever ran next.
+        """
+        assert COMPLETED_UNIT_MS_BY_BEAT == {
+            "12:15Z": 857_021,
+            "17:15Z": 753_280,
+            "18:15Z": 918_454,
+        }
+        assert "19:18Z" not in COMPLETED_UNIT_MS_BY_BEAT
+        for beat, unit_ms in COMPLETED_UNIT_MS_BY_BEAT.items():
+            assert round(unit_ms / 1000.0, 1) in MEASURED_COMPLETIONS[
+                MEASURED_PARTITION
+            ], f"the {beat} beat's completed unit is not in the harvest sample"
 
     def test_the_oracle_contains_both_outcomes_or_it_proves_nothing(self):
         """A four-row oracle that all went one way would be satisfied by a stub."""
