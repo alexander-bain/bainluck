@@ -295,6 +295,7 @@ def live_reading_for(
     live_rows: Optional[Iterable[Any]],
     *,
     key: Any,
+    bears_state: Any,
 ) -> tuple[str, dict[str, Any]]:
     """Is StatPal reporting live on THE GAMES AT RISK — not merely answering?
 
@@ -310,12 +311,23 @@ def live_reading_for(
     So readiness is now evidence about the specific games at risk. Every active
     fixture must appear on the live board; one missing is a refusal.
 
-    `key` is passed in — and the caller passes `statpal_sync._fixture_match_key`,
-    **the writer's own matching function**. That is the point: readiness and the
-    writer then agree by construction rather than by two implementations of
-    "same game" that can disagree. If the writer's matching changes, readiness
-    changes with it, and a game readiness counted as covered is exactly a game
-    the writer will find.
+    **A MATCHING ROW IS NOT ENOUGH; IT HAS TO CARRY STATE** (CERT-2047, the
+    fourth and last turn of this same screw). A live row for the right teams
+    marked `scheduled`, with no scores and no period, matches on the key and
+    advances nothing: the writer's every state-bearing branch is guarded on
+    `home_score`/`away_score` being present or a `raw_status` richer than
+    "live". Accepting it declared StatPal to be serving over a pass that would
+    write nothing at all.
+
+    **BOTH PREDICATES ARE PASSED IN, AND BOTH BELONG TO THE WRITER.** The caller
+    passes `statpal_sync._fixture_match_key` and
+    `statpal_sync.live_row_bears_state` — the writer's own matching function and
+    a predicate that lives in the writer's own module beside the loop it
+    describes. That is the whole design, arrived at the hard way over four
+    reviews: readiness and the writer cannot disagree about "same game" or
+    "useful row", because there is one definition of each and readiness borrows
+    it. A game readiness counts as covered is exactly a game the writer will
+    find AND advance.
 
     Returns `(reading, detail)`. `DARK` is not produced here — a transport
     failure is the caller's to catch, because a raise and a gap are different
@@ -325,9 +337,12 @@ def live_reading_for(
     if live_rows is None:
         return DARK, {"read": "dark"}
 
+    rows = list(live_rows)
+    stateless = sum(1 for r in rows if not bears_state(r))
     live_keys = {
         key(getattr(r, "home_team", "") or "", getattr(r, "away_team", "") or "")
-        for r in live_rows
+        for r in rows
+        if bears_state(r)
     }
     missing = [
         r
@@ -339,7 +354,13 @@ def live_reading_for(
     detail = {
         "read": "ok",
         "active": len(active),
-        "live_rows": len(live_keys),
+        "live_rows": len(rows),
+        "state_bearing": len(live_keys),
+        # Counted and published rather than silently filtered: a board that is
+        # all `scheduled` rows is a specific, diagnosable thing, and an operator
+        # reading `missing: 1` deserves to know the row was THERE and empty
+        # rather than absent.
+        "stateless_rows": stateless,
         "missing": len(missing),
         "missing_keys": sorted(
             key(

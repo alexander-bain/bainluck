@@ -680,11 +680,35 @@ class _Fx:
     with no names would be a game neither side could match.
     """
 
-    def __init__(self, start_time, home="Bears", away="Packers", status="live"):
+    def __init__(
+        self,
+        start_time,
+        home="Bears",
+        away="Packers",
+        status="live",
+        home_score=None,
+        away_score=None,
+        raw_status=None,
+    ):
         self.start_time = start_time
         self.home_team = home
         self.away_team = away
         self.status = status
+        # Since CERT-2047 a live row must also CARRY STATE for readiness to
+        # count it. Default None, so a row is stateless unless a test says
+        # otherwise — the safer default, and the one that would have caught
+        # CERT-2047 had it been the default the first time.
+        self.home_score = home_score
+        self.away_score = away_score
+        self.raw_status = raw_status
+
+
+def _live(start_time, home="Bears", away="Packers"):
+    """A live-board row that carries state the writer can advance from."""
+    return _Fx(
+        start_time, home=home, away=away,
+        home_score=14, away_score=7, raw_status="Q2",
+    )
 
 
 def test_a_whole_season_of_future_fixtures_is_an_empty_reading():
@@ -788,7 +812,8 @@ async def test_only_future_statpal_fixtures_do_not_dispatch_but_a_started_one_do
                 # Carries whatever the schedule says is under way, so this
                 # stub is a HEALTHY StatPal. The contradiction case has its
                 # own test.
-                return [r for r in rows if r.status == "live"
+                return [_live(r.start_time, r.home_team, r.away_team)
+                        for r in rows if r.status == "live"
                         and r.start_time <= datetime.now(timezone.utc)]
 
             async def close(self):
@@ -918,7 +943,7 @@ async def test_a_healthy_live_endpoint_dispatches_both_halves(
             # would refuse a sport StatPal was serving perfectly well — so this
             # is what pins "readiness uses the writer's key" at the actor,
             # rather than only where the key is passed in.
-            return [_Fx(now - timedelta(hours=1), home="MONTREAL", away="bears")]
+            return [_live(now - timedelta(hours=1), home="MONTREAL", away="bears")]
 
         async def close(self):
             pass
@@ -999,7 +1024,7 @@ def test_a_finished_fixture_is_not_expected_on_the_live_board():
     false for the six hours after every game ends — the window is 6h back, so
     every completed game sits in it.
     """
-    from app.tasks.statpal_sync import _fixture_match_key
+    from app.tasks.statpal_sync import _fixture_match_key, live_row_bears_state
     from app.utils.authority_failover import active_fixtures, live_reading_for
 
     now = datetime.now(timezone.utc)
@@ -1009,13 +1034,15 @@ def test_a_finished_fixture_is_not_expected_on_the_live_board():
     assert active_fixtures([done], now=now) == []
     # An empty live board with only a finished fixture in window is healthy.
     reading, _ = live_reading_for(
-        active_fixtures([done], now=now), [], key=_fixture_match_key
+        active_fixtures([done], now=now), [], key=_fixture_match_key,
+        bears_state=live_row_bears_state,
     )
     assert reading == FIXTURES
 
     # And the live one still has to be carried.
     reading, detail = live_reading_for(
-        active_fixtures([done, playing], now=now), [], key=_fixture_match_key
+        active_fixtures([done, playing], now=now), [], key=_fixture_match_key,
+        bears_state=live_row_bears_state,
     )
     assert reading == EMPTY
     assert detail["missing"] == 1
@@ -1030,23 +1057,27 @@ def test_readiness_matches_on_the_writers_own_key():
     same game" is how readiness comes to count a fixture the writer will not
     find, which is the whole class of defect CERT-2044 and CERT-2046 are in.
     """
-    from app.tasks.statpal_sync import _fixture_match_key
+    from app.tasks.statpal_sync import _fixture_match_key, live_row_bears_state
     from app.utils.authority_failover import live_reading_for
 
     now = datetime.now(timezone.utc)
     scheduled = _Fx(now - timedelta(hours=1), home="Montréal", away="Bears")
     # The live board spells it without the accent and in a different case —
     # the writer's key normalises both away, so readiness must too.
-    live = _Fx(now, home="MONTREAL", away="bears")
+    live = _live(now, home="MONTREAL", away="bears")
 
     reading, detail = live_reading_for(
-        [scheduled], [live], key=_fixture_match_key
+        [scheduled], [live], key=_fixture_match_key,
+        bears_state=live_row_bears_state,
     )
     assert reading == FIXTURES, detail
 
     # The control: a genuinely different game does NOT cover it.
-    other = _Fx(now, home="Jets", away="Bills")
-    reading, detail = live_reading_for([scheduled], [other], key=_fixture_match_key)
+    other = _live(now, home="Jets", away="Bills")
+    reading, detail = live_reading_for(
+        [scheduled], [other], key=_fixture_match_key,
+        bears_state=live_row_bears_state,
+    )
     assert reading == EMPTY
     assert detail["missing"] == 1
 
@@ -1171,6 +1202,201 @@ async def test_the_matching_live_row_advances_score_and_period_through_the_real_
     assert result["events_updated"] == 1
 
 
+@pytest.mark.parametrize(
+    "kwargs,expected,why",
+    [
+        ({"home_score": 14}, True, "a home score alone is state"),
+        ({"away_score": 7}, True, "an away score alone is state"),
+        ({"raw_status": "Q3"}, True, "a period alone is state"),
+        ({"raw_status": "HT"}, True, "half time is a period"),
+        # 0-0 IS a score. `is not None`, never truthiness — a scoreless first
+        # quarter is the most ordinary live state there is, and a predicate
+        # written with `if fixture.home_score:` would call it stateless and
+        # refuse to fail over during exactly the part of a game where the
+        # score has not moved yet.
+        ({"home_score": 0, "away_score": 0}, True, "0-0 is a score, not an absence"),
+        ({}, False, "no score and no period is nothing the writer can use"),
+        ({"raw_status": "live"}, False, "'live' says it is live, not what is happening"),
+        ({"raw_status": "Live"}, False, "same, capitalised — the writer excludes both"),
+        ({"raw_status": ""}, False, "an empty string is not a period"),
+    ],
+)
+def test_each_branch_of_the_state_predicate_on_its_own(kwargs, expected, why):
+    """Every branch isolated, because a row with all of them proves none of them.
+
+    Found by mutation: deleting the `home_score` branch left the whole suite
+    green, because every state-bearing fake carried scores AND a period, so the
+    surviving branches covered for the deleted one. A predicate the writer's
+    behaviour depends on has to be pinned one condition at a time.
+    """
+    from app.tasks.statpal_sync import live_row_bears_state
+
+    row = _Fx(datetime.now(timezone.utc), **kwargs)
+    assert live_row_bears_state(row) is expected, why
+
+
+@pytest.mark.asyncio
+async def test_a_same_team_row_with_no_state_refuses_and_dispatches_nothing(
+    monkeypatch, dispatches
+):
+    """**CERT-2047's first named regression.**
+
+    "An in-window active schedule row plus same-team scheduled/no-state live row
+    must refuse and dispatch nothing."
+
+    The row MATCHES on the team key and carries nothing the writer can use — no
+    scores, no period. Presentation four accepted it, because coverage was
+    measured by key presence alone. Every state-bearing branch in the writer is
+    guarded on `home_score`/`away_score` being present or a `raw_status` richer
+    than "live", so this pass would have written nothing while the receipt said
+    `serving: statpal`.
+    """
+    import app.services.statpal_api as statpal_api
+
+    from app.tasks.espn_sync import _act_on_failovers, _decide_failovers
+
+    _no_ledger(monkeypatch, days=SEVEN_MEETS_DAYS, why="seven")
+    monkeypatch.setattr(statpal_api, "is_available", lambda: True)
+
+    now = datetime.now(timezone.utc)
+
+    class _Service:
+        async def get_schedule_fixtures(self, sport, day_offset=None):
+            return [_Fx(now - timedelta(hours=1))]
+
+        async def get_live_fixtures(self, sport):
+            # Right teams. `scheduled`. No scores, no raw period.
+            return [_Fx(now - timedelta(hours=1), status="scheduled")]
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(statpal_api, "StatPalAPIService", _Service)
+
+    stats = {"errors": []}
+    await _act_on_failovers(
+        await _decide_failovers(
+            {"americanfootball_nfl": []}, {"americanfootball_nfl"}, stats
+        ),
+        stats,
+    )
+
+    assert dispatches.calls == []
+    assert dispatches.live.calls == []
+    assert stats.get("failover_activated", 0) == 0
+    assert stats["failover"][0]["code"] == LIVE_PATH_SILENT_ON_THE_GAME
+    assert stats["failover"][0]["failed_over"] is False
+
+
+@pytest.mark.asyncio
+async def test_a_stateless_live_row_advances_nothing_through_the_real_writer(
+    monkeypatch,
+):
+    """**CERT-2047's second half, and the proof that the predicate is honest.**
+
+    `live_row_bears_state` claims to describe what the writer can act on. That
+    claim is worth exactly as much as its agreement with the writer, so this
+    runs the REAL `_sync_statpal_livescores` over a row the predicate rejects
+    and shows score and period unmoved.
+
+    Paired with
+    `test_the_matching_live_row_advances_score_and_period_through_the_real_writer`,
+    which does the same with a row the predicate accepts and shows both move.
+    Together they are the evidence that readiness and the writer agree — which
+    four reviews running has been the thing this ship kept failing to have.
+    """
+    from sqlalchemy import create_engine, select
+    from sqlalchemy.orm import Session
+
+    import app.services.statpal_api as statpal_api
+    import app.tasks.base as task_base
+    from app.models.models import Base, Event, ScoreSnapshot, Sport
+    from app.tasks.statpal_sync import _sync_statpal_livescores, live_row_bears_state
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(
+        engine,
+        tables=[Event.__table__, Sport.__table__, ScoreSnapshot.__table__],
+    )
+    sync_session = Session(engine, expire_on_commit=False)
+
+    now = datetime.now(timezone.utc)
+    sport = Sport(key=NFL, name="NFL")
+    sync_session.add(sport)
+    sync_session.flush()
+    event = Event(
+        sport_id=sport.id,
+        home_team_name="Bears",
+        away_team_name="Packers",
+        commence_time=now - timedelta(hours=1),
+        status="live",
+    )
+    sync_session.add(event)
+    sync_session.commit()
+    event_id = event.id
+
+    class _AsyncShim:
+        def __init__(self, session):
+            self._s = session
+
+        async def execute(self, statement):
+            return self._s.execute(statement)
+
+        def add(self, obj):
+            self._s.add(obj)
+
+        async def commit(self):
+            self._s.commit()
+
+        async def flush(self):
+            self._s.flush()
+
+    class _Ctx:
+        async def __aenter__(self_inner):
+            return _AsyncShim(sync_session)
+
+        async def __aexit__(self_inner, *exc):
+            sync_session.commit()
+            return False
+
+    monkeypatch.setattr(task_base, "get_task_session", lambda: _Ctx())
+    monkeypatch.setattr(
+        "app.tasks.statpal_sync.get_task_session", lambda: _Ctx(), raising=False
+    )
+    monkeypatch.setattr(statpal_api, "is_available", lambda: True)
+
+    stateless = _Fx(now - timedelta(hours=1), status="scheduled")
+    stateless.fixture_id = "sp-777"
+    # The predicate's claim, stated before the writer is asked.
+    assert live_row_bears_state(stateless) is False
+
+    class _Service:
+        async def get_live_scores(self, sport):
+            return [stateless]
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(statpal_api, "StatPalAPIService", _Service)
+
+    await _sync_statpal_livescores()
+
+    fresh = sync_session.execute(
+        select(Event).where(Event.id == event_id)
+    ).scalar_one()
+    assert fresh.home_score is None, "the writer advanced a score from a stateless row"
+    assert fresh.away_score is None
+    assert fresh.period is None, "the writer advanced a period from a stateless row"
+    snaps = sync_session.execute(
+        select(ScoreSnapshot).where(ScoreSnapshot.event_id == event_id)
+    ).scalars().all()
+    assert snaps == []
+
+    # And the predicate's other half, so this is not "the predicate says False
+    # about everything": the same row with a score is accepted.
+    assert live_row_bears_state(_live(now)) is True
+
+
 def test_the_note_says_what_a_flip_does_NOT_do(monkeypatch):
     """CERT-2040's other finding: the disclosure over-claimed.
 
@@ -1274,7 +1500,7 @@ async def test_the_standby_is_read_through_the_client_that_can_say_dark(monkeypa
 
         async def get_live_fixtures(self, sport):
             calls.append(f"live:{sport}")
-            return [_Fx(datetime.now(timezone.utc) - timedelta(hours=1))]
+            return [_live(datetime.now(timezone.utc) - timedelta(hours=1))]
 
         async def get_fixtures(self, *a, **k):  # pragma: no cover - must not run
             raise AssertionError(

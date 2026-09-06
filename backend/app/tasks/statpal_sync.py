@@ -1246,6 +1246,41 @@ async def _sync_statpal_rosters(sport_key: Optional[str] = None) -> dict:
 # =============================================================================
 
 
+def live_row_bears_state(fixture) -> bool:
+    """Can `_sync_statpal_livescores` advance an event's SCORE or PERIOD from this row?
+
+    #3473 / CERT-2047. Lives here, beside the writer whose behaviour it
+    describes, and is exported for `utils/authority_failover`'s readiness check
+    — because a failover that accepts a row the writer will skip declares
+    StatPal to be serving over a pass that writes nothing. Readiness and the
+    writer have to answer "is this row useful?" the same way, and the only
+    reliable way to make two answers agree is to have one.
+
+    It mirrors, exactly, the three conditions the loop above sets `updated` on
+    that touch game state:
+
+      * `fixture.home_score is not None` / `away_score is not None`;
+      * a `raw_status` that is not the bare literal `live`/`Live` — the loop
+        writes `event.period` only from a raw status that says something more
+        than "this is a live game" (`Q3`, `1H`, `HT`).
+
+    It deliberately does NOT count the fourth `updated` branch, the
+    `fixture_id` backfill. That link is an id repair, not live state: it would
+    let a `scheduled` row with no scores and no period read as "StatPal is
+    serving this game", which is the precise mistake CERT-2047 caught.
+
+    Proven against the writer rather than asserted:
+    `test_a_stateless_live_row_advances_nothing_through_the_real_writer` runs
+    the real task over a row this rejects and shows score and period unmoved.
+    """
+    if getattr(fixture, "home_score", None) is not None:
+        return True
+    if getattr(fixture, "away_score", None) is not None:
+        return True
+    raw = getattr(fixture, "raw_status", None)
+    return bool(raw and raw not in ("live", "Live"))
+
+
 def _fixture_match_key(home: str, away: str) -> str:
     """Create a normalized key for matching fixtures to events."""
     import unicodedata

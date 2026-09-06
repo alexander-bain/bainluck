@@ -261,15 +261,17 @@ async def _statpal_standby_reading(sport_key: str) -> tuple[str, str]:
     # game kicked off an hour ago and a live board carrying nothing are two
     # readings from one provider that contradict each other, and the writer —
     # which keys live rows to events by team pair — would skip every one of
-    # them. So the check is coverage of the active fixtures, using the WRITER'S
-    # OWN key function, so readiness and the writer cannot disagree about what
-    # "the same game" means.
-    from app.tasks.statpal_sync import _fixture_match_key
+    # them. So the check is coverage of the active fixtures by rows that CARRY
+    # STATE, using the WRITER'S OWN key function and the WRITER'S OWN
+    # usefulness predicate, so readiness and the writer cannot disagree about
+    # what "the same game" or "a row worth having" means.
+    from app.tasks.statpal_sync import _fixture_match_key, live_row_bears_state
 
     live, live_detail = live_reading_for(
         active_fixtures(fixtures, now=now),
         live_rows,
         key=_fixture_match_key,
+        bears_state=live_row_bears_state,
     )
     logger.info(
         "StatPal standby for %s: schedule=%s %s | live=%s %s",
