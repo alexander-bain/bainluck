@@ -55,6 +55,25 @@
     "And the fixture's own market commence_time of 2026-09-05 07:00Z, which looks like a third date, is not one: it is EXACTLY the market's latest_expiration_time (2026-09-05T07:00:00Z) read off the venue. We stored Kalshi's settlement backstop where a start time belongs — the #3438 class — so that value is evidence about our ingest, not about the tie.",
     "FOLLOW-ON, filed not fixed under D35 and belonging to lane1 under D39, NOT a condition of this amendment: (a) event 15293431's commence_time is wrong by ~2 days against the venue; (b) event 15294151 'Deportivo Toluca FC vs Club Leon FC' (soccer_other, 2026-08-28 16:15:23Z, closed) looks like a second row for this same tie — two rows for one game, the #2693 bar."
    ]
+  },
+  {
+   "market_id": 59173468,
+   "was": null,
+   "now": 15291291,
+   "on": "2026-09-06",
+   "by": "lane1b/067",
+   "raised_by": "lane1/151",
+   "artifact_note": "non-sport-category;cup-ticker",
+   "why": "Fourth of the class, same cause as 59700960, 59701032 and 59700871: a `d-mislabel` pair whose `null` meant 'target left unresolved', not 'this market belongs on no event'. This is the EASIEST of the four and it is worth saying why, because the previous one was the hardest. 59700871 had to survive a genuine two-day disagreement between the ticker date and the event date. This pair has no such gap to explain away: ticker `26AUG26` and event `2026-08-27 00:30Z` are the same evening either side of the UTC midnight line (Aug 26, 19:30 CDT in Toluca), and the venue's own close_time for the contract is 2026-08-27T03:03:57Z -- about 2.5h after that kickoff, which is what a 90-minute match settles like. The competition is not inferred from the ticker letters: Kalshi's own product_metadata names it. Amended.",
+   "evidence": [
+    "Venue-side read of Kalshi's own API 2026-09-06 ~18:30Z, browser UA (standing notice 26): GET /trade-api/v2/events/KXLEAGUESCUPGAME-26AUG26TOLATX?with_nested_markets=true returns series_ticker KXLEAGUESCUPGAME, product_metadata.competition 'Leagues Cup', competition_scope 'Regulation Time Moneyline', title 'Toluca vs Austin: Regulation Time Moneyline' and sub_title 'TOL vs ATX (Aug 26)'. All three legs (-TOL/-ATX/-TIE) carry rules_primary '... the Toluca vs Austin professional Leagues Cup soccer game originally scheduled for Aug 26, 2026 ...'. The venue NAMES the competition; it is not read off the ticker letters.",
+    "Venue-side uniqueness by SERIES DISCOVERY, not a guessed ticker (notice 26): scanned all 60 settled events of series KXLEAGUESCUPGAME. EXACTLY ONE is a Toluca-Austin tie -- KXLEAGUESCUPGAME-26AUG26TOLATX, sub_title 'TOL vs ATX (Aug 26)'. There is no rival tie at the venue, so `null` cannot have meant 'it belongs on a different Toluca-Austin match'.",
+    "Production 2026-09-06 ~18:35Z, every %Toluca% or %Austin FC% event between 2026-08-24 and 2026-08-30: FOUR rows, and exactly one pairs the two clubs -- event 15291291 (Toluca, Austin FC, 2026-08-27 00:30:00Z, completed, soccer_concacaf_leagues_cup, external_id a757053929c339a085eea0fc463f85ce). SAME COMPETITION as the market. The other three are different fixtures entirely (Austin FC v Colorado Rapids, Deportivo Toluca v Club Leon, Toluca v Juarez). The candidate is unambiguous on our side as well as the venue's.",
+    "The adjudicated candidate is PRESENT in the pair's own captured candidate set (event 15291291 is one of its 10 events), so the pair is winnable rather than being amended to an answer the replay could never reach -- the guarantee the capture script would otherwise recompute.",
+    "The `null` was recorded under the exact condition this change removes: the pair's note is `non-sport-category;cup-ticker` and the market's stored llm_sport_category at capture was `legal`. With `kxleaguescupgame` unmapped, an LLM category of 'legal' decided the market's sport, so the matcher could not reach a soccer event at all. That is our bug, not the market's truth -- the same sentence as the three amendments above.",
+    "Replayed on the real harness with the prefix mapped: `replay()` returns (15291291, 'matched'). Without the mapping it returns (None, 'no_match'). The ticker mapping is the whole difference, and the golden suite is green on the combined tree with the baseline UNMOVED at 652 -- the pair passed before as a correct `None` and passes after as a correct 15291291.",
+    "NOT a condition of this amendment, filed under D35 and belonging to lane1 under D39: our stored market commence_time for 59173468 is 2026-08-27 03:03:57Z, which is EXACTLY the venue's close_time for all three legs -- we again stored a Kalshi settlement stamp where a start time belongs (the #3438 / #3532 class). It is evidence about our ingest, not about the tie."
+   ]
   }
  ]
 }

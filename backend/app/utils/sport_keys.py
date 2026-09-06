@@ -508,39 +508,21 @@ _SOCCER_CUP_GAME_TICKER_TO_SPORT_KEY: dict[str, str] = {
     "kxueclgame": "soccer_uefa_europa_conference_league",  # UEFA Conference L.
     "kxconmebollibgame": "soccer_conmebol_copa_libertadores",
     "kxconmebolsudgame": "soccer_conmebol_copa_sudamericana",
-    # HELD: "kxleaguescupgame" -> "soccer_concacaf_leagues_cup". It is the ninth
-    # and it is correct; it is not here because the golden set has to move first
-    # and the golden set is lane1b's under D39. Mapping it flips ONE pair,
-    # 59173468 `KXLEAGUESCUPGAME-26AUG26TOLATX` "Toluca vs Austin", from
-    # `None` to event 15291291 — and 15291291 is the right answer:
+    # The ninth, off hold. lane1/151 held it because mapping it moves golden-set
+    # pair 59173468 (`KXLEAGUESCUPGAME-26AUG26TOLATX`, "Toluca vs Austin") from
+    # `None` to event 15291291, and the golden set is lane1b's under D39.
+    # lane1b/067 has adjudicated it AMENDMENT, `null -> 15291291`, on its own
+    # venue read — see the amendment's `evidence` for the full chain. Both halves
+    # are in one commit, exactly as the five prop prefixes were released in
+    # e35d56d2, because either alone is red:
     #
-    #   * Kalshi's own `rules_primary` for the tie reads "the Toluca vs Austin
-    #     professional LEAGUES CUP soccer game originally scheduled for Aug 26,
-    #     2026", so the competition is not in question (venue read 2026-09-06,
-    #     `/markets?event_ticker=…`, browser UA — standing notice 26);
-    #   * event 15291291 is `soccer_concacaf_leagues_cup` "Toluca v Austin FC"
-    #     at 2026-08-27 00:30Z, the same two clubs in the same competition, and
-    #     the contract settled at 2026-08-27 03:05:27Z — ~2.5h after that
-    #     kickoff, which is what a 90-minute match settles like. The ticker's
-    #     `26AUG26` and the event's `Aug 27 00:30Z` are one evening either side
-    #     of the UTC date line, not a two-day gap.
+    #     prefix alone      expected None       matcher returns 15291291   RED
+    #     amendment alone   expected 15291291   matcher returns None       RED
+    #     both              expected 15291291   matcher returns 15291291   green
     #
-    # The adjudication that says `None` was taken on 2026-09-02 with this exact
-    # note: `non-sport-category;cup-ticker`, on a row whose stored
-    # `llm_sport_category` was `legal` — i.e. it was recorded WHILE the ticker
-    # was unmapped, which is the state this change ends. That is verbatim the
-    # reasoning lane1b/059 used to amend the sibling pair 59700871
-    # (`KXLEAGUESCUPSPREAD-26SEP02TOLLEO`, `null -> 15293431`) — same clubs, same
-    # competition, weaker evidence than this one, since that pair really did
-    # carry a two-day gap and this one does not.
-    #
-    # BOTH HALVES MUST LAND IN ONE COMMIT, for the reason stated for the prop
-    # prefixes above: with the prefix alone the fixture expects `None` and gets
-    # 15291291, with the amendment alone it expects 15291291 and gets `None`.
     # `test_the_held_leagues_cup_prefix_lands_with_its_amendment_or_not_at_all`
-    # is that coupling as a test — it forbids the HALF, not the mapping. Handed
-    # to lane1b with the venue read; released the way the prop prefixes were
-    # released, not by editing their fixture.
+    # is that coupling as a test: it forbids the HALF, not the mapping.
+    "kxleaguescupgame": "soccer_concacaf_leagues_cup",     # Leagues Cup
 }
 
 # =============================================================================

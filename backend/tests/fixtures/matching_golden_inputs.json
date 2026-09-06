@@ -1,5 +1,6 @@
 {
  "amended_market_ids": [
+  59173468,
   59700871,
   59700960,
   59701032
@@ -10,7 +11,7 @@
   "market_gone": 0
  },
  "golden_pairs": 709,
- "negative_pairs": 547,
+ "negative_pairs": 546,
  "pairs": [
   {
    "correct_event_id": 15300763,
@@ -19189,7 +19190,7 @@
    "venue": "kalshi"
   },
   {
-   "correct_event_id": null,
+   "correct_event_id": 15291291,
    "events": [
     {
      "away_team_name": "Austin Clayton",
@@ -60900,6 +60901,6 @@
    "venue": "kalshi"
   }
  ],
- "positive_pairs": 162,
+ "positive_pairs": 163,
  "source_file": "MATCHING-GOLDEN-2026-09-02.json"
 }
