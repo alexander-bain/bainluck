@@ -1544,18 +1544,38 @@ export default function OddsChart({
                 }}
               />
             ))}
-            {/* Final marker — exactly one, at the game-end snapshot (settled only) */}
+            {/* Final marker — exactly one, at the game-end snapshot (settled only).
+                THE LINE, AND DELIBERATELY NO LABEL (#3541).
+
+                It used to carry `value: "Final"` at `insideTopLeft`, and what
+                reached every settled event page was a bare `F`. `finalMarkerTime`
+                is the LAST chart category, which since the right-hand buffer was
+                removed is the plot's right rule — and `insideTopLeft` anchors the
+                text `start` there, so it grows out of the svg and is clipped to
+                its first glyph. That is structural, not a breakpoint: the same
+                orphan `F` is on the 1280px shot as on the 390px one, because the
+                svg ends 10px past the rule at every width.
+
+                Anchoring it inside instead is the expensive answer and buys
+                nothing. `insideTopRight` grows the text LEFT out of the right
+                rule, into the space UX-P022 above reserves for the last period
+                boundary — and `minSpacing` (7% of the chart) is sized for labels
+                that all grow the same way, while the Final marker is deduped only
+                against final-LIKE boundaries, so a `Q4` or `T9` can sit right
+                beside it. Making the spacing rule bidirectional would be real
+                work to restore a word the page already says twice: the hero
+                carries a FINAL chip, and the line's own position at the end of
+                the timeline is the part that carries information. So the marker
+                keeps its full stop and loses its caption.
+
+                Guarded by `chartTextStaysInsideThePlot.test.tsx`, which pins BOTH
+                halves — no text off the right edge, and this line still drawn. */}
             {finalMarkerTime && (
               <ReferenceLine
                 x={finalMarkerTime}
                 stroke="rgba(0,0,0,0.35)"
                 strokeWidth={1.5}
                 isFront
-                label={{
-                  value: "Final",
-                  position: "insideTopLeft",
-                  style: { fontSize: 11, fill: "rgba(0,0,0,0.7)", fontWeight: 700 },
-                }}
               />
             )}
             <Tooltip content={<CustomTooltip />} />
@@ -1742,13 +1762,33 @@ export default function OddsChart({
                           flipping on a measurement, because there is nothing to
                           measure: the anchor point is the right edge by
                           construction, so the right-hand side is never the
-                          answer. 12px clears the dot's 8px glow. */}
+                          answer. 12px clears the dot's 8px glow.
+
+                          #3561, THE HALO: once the number rendered, it rendered
+                          ON the line. `cy` is the last data point and the series
+                          TERMINATES there, so a label centred on `cy` sits
+                          exactly where the line arrives — a collision by
+                          construction, not a property of one specimen. It
+                          bisected the digits and turned `41%` into `41°`.
+
+                          Lifting it vertically is the obvious answer and is
+                          wrong: on a steeply-arriving series the line just left
+                          of the dot is ABOVE `cy`, so a lift walks the label
+                          into the line instead of out of it, and it would need a
+                          clamp against the plot ceiling as well. The label has
+                          to stay on the dot's row — it is labelling the dot — so
+                          it is made legible OVER ink instead. A painted-under
+                          white stroke is slope-independent and needs no
+                          geometry. */}
                       <text
                         x={cx - 12}
                         y={cy}
                         textAnchor="end"
                         dominantBaseline="central"
                         fill={fillColor}
+                        stroke="#FFFFFF"
+                        strokeWidth={3}
+                        paintOrder="stroke"
                         fontSize={11}
                         fontWeight={700}
                         fontFamily="monospace"

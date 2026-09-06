@@ -20,6 +20,11 @@
  *          `ReferenceLine` label at `position: "right"`, clipped by the card to
  *          its first glyph.
  *
+ *   #3541  the same chart, settled pages only, found by this guard and closed
+ *          on live/075: a bare `F`, the `Final` marker's label anchored `start`
+ *          at the plot's right rule. Not a breakpoint bug — the same orphan
+ *          glyph is on the 1280px shot as on the 390px one.
+ *
  * ═══ WHY THIS GUARD MEASURES THE RENDER AND NOT THE MODULE ═══
  *
  * `contenderChart.ts` already had a battery asserting its labels clear 44px of
@@ -392,16 +397,69 @@ describe("#3525 — the win-probability chart prints nothing past its own edge",
     // it, visible in the production shot as a ringed dot with nothing beside it.
     // Both are fixed. Neither may come back.
     const offenders = textsGrowingOffTheRightEdge(chartHtml());
-    // `Final` is the third instance and is NOT fixed here — it is #3541. It is
-    // a settled-only marker whose anchoring is governed by UX-P022's rule that
-    // every boundary label anchors on the same side, and `minSpacing` (7% of
-    // the chart) is sized for a label growing RIGHT; flipping this one to grow
-    // LEFT out of the right rule walks it into the space the last period label
-    // was given. That is a spacing decision, not a one-line flip. Pinned here
-    // so the list cannot grow quietly and so FIXING it fails this line rather
-    // than passing unnoticed — whoever closes #3541 changes this to `[]`.
-    // Anything else appearing in this array is a regression.
-    expect(offenders).toEqual(["Final"]);
+    // `Final` was the third instance and shipped as a bare `F` on every settled
+    // event page. It is closed on live/075 (#3541) by deleting the marker's
+    // LABEL and keeping its line — see the test below, which pins the line, and
+    // the comment on the marker in `OddsChart.tsx` for why anchoring it inside
+    // was rejected. This list is now empty and anything appearing in it is a
+    // regression.
+    expect(offenders).toEqual([]);
+  });
+
+  it("still draws the Final marker itself, on the plot's right rule", () => {
+    // The other half of #3541's fix, and the reason the empty list above is not
+    // simply "we deleted the marker". A settled chart keeps its full stop; what
+    // it loses is the caption, which no reader could read.
+    //
+    // Pinning the marker's POSITION is the part that earns its keep. The label
+    // was impossible because `finalMarkerTime` is the last chart category and
+    // the right-hand buffer is gone, so the line lands exactly on the plot's
+    // right rule and a `start`-anchored label there has nowhere to grow but out
+    // of the svg. If a future change re-inserts a buffer, this assertion fails
+    // — and that failure is the signal that a caption could be reconsidered,
+    // not a nuisance to silence.
+    const html = chartHtml();
+    const finals = [...html.matchAll(/<line\b([^>]*stroke="rgba\(0,0,0,0\.35\)"[^>]*)>/g)];
+    expect(finals).toHaveLength(1);
+    const attrs = finals[0][1];
+    const x1 = Number(/\bx1="([\d.]+)"/.exec(attrs)?.[1] ?? "NaN");
+    const x2 = Number(/\bx2="([\d.]+)"/.exec(attrs)?.[1] ?? "NaN");
+    expect(x1).toBe(PLOT_RIGHT_PX);
+    expect(x2).toBe(PLOT_RIGHT_PX);
+    // …and no text anywhere still says it. `textsGrowingOffTheRightEdge` only
+    // sees text that escapes the right edge, so a "tidy" re-add at some other
+    // position would pass that check while putting the word back on the chart.
+    expect(html).not.toContain("Final");
+  });
+
+  it("keeps the current-probability number legible where the line runs through it", () => {
+    // #3561. #3525 moved this number from `cx + 12` — past the plot's right
+    // rule, so it never rendered — to the left of the dot, where it does. What
+    // it landed on was the line: `cy` is the LAST data point and the series
+    // terminates there, so the 2.5px line arrives exactly through a label
+    // centred on `cy`. On production it bisected the digits and turned `41%`
+    // into `41°` (`artifacts-live-075/crop-callout-3x.png`).
+    //
+    // Both facts are pinned, and the first is why the second is not decoration:
+    // the label sits ON the dot's row BY CONSTRUCTION, at every slope, so it can
+    // only be made legible over ink. A vertical lift was rejected — on a steeply
+    // arriving series the line left of the dot is above `cy`, so lifting walks
+    // into it. If a future change does move the label off the row, the first
+    // assertion fails and the halo can be dropped deliberately rather than
+    // silently.
+    const html = chartHtml();
+    const dot = /<circle cx="([\d.]+)" cy="([\d.]+)" r="5"([^>]*)>/.exec(html);
+    expect(dot).not.toBeNull();
+    const callout = /<text([^>]*font-family="monospace"[^>]*)>(\d+)%<\/text>/.exec(html);
+    expect(callout).not.toBeNull();
+    const attrs = callout![1];
+    // On the dot's row, to the dot's left.
+    expect(/\by="([\d.]+)"/.exec(attrs)?.[1]).toBe(dot![2]);
+    expect(Number(/\bx="([\d.]+)"/.exec(attrs)?.[1])).toBeLessThan(Number(dot![1]));
+    // …and therefore haloed: painted under the glyphs, not over them.
+    expect(attrs).toContain('stroke="#FFFFFF"');
+    expect(attrs).toContain('paint-order="stroke"');
+    expect(Number(/stroke-width="([\d.]+)"/.exec(attrs)?.[1])).toBeGreaterThanOrEqual(2.5);
   });
 
   it("prints `50%` exactly once, on the axis that owns it", () => {
