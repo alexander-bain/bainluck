@@ -16,16 +16,20 @@ import CoreGraphics
 /// label 80  +  spacing 8  +  [bar]  +  spacing 8  +  badges 70
 /// ```
 ///
-/// Measured off `artifacts-native-038/AFTER-mlb-15305463-s900.png` (Brewers @
-/// Reds, iPhone 17, 402 pt wide, scale exactly 3.0) by scanning the PNG for the
-/// card background rectangle: the two team cards span x = 3.0…398.7 pt with a
-/// 16.0 pt gap, so each card is **190.0 pt** and, after `teamCard`'s
-/// `.padding(12)`, each row has **166.0 pt** to spend.
+/// 80 + 8 + 8 + 70 = **166**, and the bar got whatever was left. Measured off
+/// `artifacts-native-038/AFTER-mlb-15305463-s900.png` (Brewers @ Reds, iPhone
+/// 17, 402 pt wide, scale exactly 3.0) by scanning the PNG for the card
+/// background rectangle, what was left was **0.0 pt**: the two team cards span
+/// x = 3.0…398.7 pt, each card 190.0 pt, and after `teamCard`'s `.padding(12)`
+/// each row had exactly the 166.0 pt it had already spent.
 ///
-/// 80 + 8 + 8 + 70 = **166**. The bar was offered exactly **0.0 pt**, so
-/// `max(2, 0 * probability)` returned the 2 pt floor — and the same PNG shows
-/// the Brewers' 99.6%, 96.2% and 13.4% rows all drawing an identical 2.00 pt
-/// fill at x = 103.0 pt, which is precisely 3 + 12 + 80 + 8. The bar has been
+/// The 190 is circular, and that is the whole mechanism. The row *demanded*
+/// 166 pt, so the card became 166 + 24 pt of padding whether or not the screen
+/// had room — two of them plus the gap came to 396 pt inside the 338.3 pt the
+/// page actually offers, so the card overflowed the screen AND left its own bar
+/// nothing. `max(2, 0 * probability)` returned the 2 pt floor, and the same PNG
+/// shows the Brewers' 99.6%, 96.2% and 13.4% rows all drawing an identical
+/// 2.00 pt fill at x = 103.0 pt, which is precisely 3 + 12 + 80 + 8. The bar was
 /// decorative, at every probability, on every iPhone-width event page (#3580).
 ///
 /// From the other end, the same absence of slack is why a **clinched** row
@@ -36,8 +40,18 @@ import CoreGraphics
 /// **The rule.** A row keeps the compact one-line shape only where the card is
 /// actually wide enough for it, counting the gaps and the padding. Where it is
 /// not, the label takes its own line and the bar and badges take the next one,
-/// which hands the bar the width it never had. At 166 pt both a clinched and an
-/// ordinary card stack; on iPad and Mac neither does.
+/// which hands the bar the width it never had.
+///
+/// Measured on the fixed render (`artifacts-native-039/`): the cards no longer
+/// inflate past the page, each is **161.5 pt** with **137.3 pt** of content, and
+/// both the clinched and the ordinary card stack. The Brewers' bars went from
+/// 2.00 / 2.00 / 2.00 pt to 29.0 / 28.0 / ~4 pt for 99.6% / 96.2% / 13.4%. On
+/// iPad and Mac neither card stacks, so those keep the compact row.
+///
+/// What that leaves open, stated rather than hidden: 137.3 pt is not enough for
+/// the bar to reach `minBarWidth` even stacked, so 96% and 99.6% land within a
+/// point of each other. The rule gives the bar everything the card has; making
+/// the card bigger is a different question from how a row divides it.
 enum ChampionshipRowLayout {
 
     // MARK: Measured constants

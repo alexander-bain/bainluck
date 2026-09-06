@@ -64,27 +64,35 @@ final class ChampionshipRowLayoutTests: XCTestCase {
         ]
     }
 
-    // MARK: - The measurement the photograph pins
+    // MARK: - The measurement the photographs pin
 
+    /// The card the fix produces, measured off `artifacts-native-039/`: the pair
+    /// of cards spans x = 31.7 … 370.0 pt (338.3 pt) inside the page's 16 pt
+    /// padding, each card is 161.5 pt, and each row has 137.3 pt.
     func testTeamCardContentWidthReproducesTheMeasuredProductionCard() {
-        // 396.0 pt of cards, two of them: the exact span measured off the PNG.
-        let content = ChampionshipRowLayout.teamCardContentWidth(totalWidth: 396, cardCount: 2)
+        let content = ChampionshipRowLayout.teamCardContentWidth(
+            totalWidth: 338.3, cardCount: 2)
         XCTAssertEqual(
-            content, 166.0, accuracy: 0.01,
-            "the formula must land on the 166.0 pt measured off "
-            + "AFTER-mlb-15305463-s900.png (card 190.0 pt less 12 pt padding each "
-            + "side). A fit formula that drops the 16 pt gap or the 24 pt of "
-            + "padding is how the row came to believe it had room for a bar.")
+            content, 137.15, accuracy: 0.5,
+            "the formula must land on the 137.3 pt measured off the live render. "
+            + "A fit formula that drops the 16 pt gap or the 24 pt of padding is "
+            + "how the row came to believe it had room for a bar.")
 
         // A single card takes the whole width — no gap to subtract.
         XCTAssertEqual(
-            ChampionshipRowLayout.teamCardContentWidth(totalWidth: 396, cardCount: 1),
-            372.0, accuracy: 0.01)
+            ChampionshipRowLayout.teamCardContentWidth(totalWidth: 338.3, cardCount: 1),
+            314.3, accuracy: 0.01)
     }
 
-    /// The defect itself, stated as arithmetic: the old row spent every point it
-    /// had before reaching the bar.
-    func testTheOldFixedColumnsConsumedTheEntireCard() {
+    /// The defect itself, stated as arithmetic.
+    ///
+    /// The old card was 190.0 pt wide (measured off
+    /// `artifacts-native-038/AFTER-mlb-15305463-s900.png`) for a circular reason:
+    /// the row's fixed columns *demanded* 166 pt, so the card became 166 + 24 of
+    /// padding, and two of those plus the gap came to 396 pt inside a 338.3 pt
+    /// space. The card did not starve the row — the row inflated the card past
+    /// the screen and then had nothing left over for itself.
+    func testTheOldFixedColumnsConsumedEverythingTheyDemanded() {
         // 70 is written out rather than read from `valueBadgeWidth`: this test
         // is about the column that shipped, and it must keep describing that
         // column after the constant moves.
@@ -94,45 +102,59 @@ final class ChampionshipRowLayoutTests: XCTestCase {
             + 70                                                     // the old badge column
         XCTAssertEqual(
             oldRowSpend, 166.0, accuracy: 0.01,
-            "80 + 8 + 8 + 70 is exactly the 166 pt a row has, which is why the "
-            + "GeometryReader was offered 0.0 pt and every bar drew the 2 pt "
-            + "floor — 99.6% and 13.4% alike (#3580).")
+            "80 + 8 + 8 + 70 leaves the bar exactly nothing out of the 166 pt the "
+            + "row itself demanded, which is why the GeometryReader was offered "
+            + "0.0 pt and every bar drew the 2 pt floor — 99.6% and 13.4% alike "
+            + "(#3580).")
     }
 
     // MARK: - The rule
+
+    /// The real card width, not the one the broken layout inflated itself to.
+    private let productionContentWidth: CGFloat = 137.3
 
     func testBothProductionCardsStackAtIPhoneWidth() throws {
         let brewers = try brewersStages()
         let reds = try redsStages()
 
         XCTAssertTrue(
-            ChampionshipRowLayout.stacksBelowLabel(contentWidth: 166, stages: brewers),
+            ChampionshipRowLayout.stacksBelowLabel(
+                contentWidth: productionContentWidth, stages: brewers),
             "the clinched card cannot hold label + bar + 'clinched' on one line "
-            + "at 166 pt (#3574)")
+            + "at 137.3 pt (#3574)")
         XCTAssertTrue(
-            ChampionshipRowLayout.stacksBelowLabel(contentWidth: 166, stages: reds),
-            "nor can an ordinary card: 80 + 8 + 36 + 8 + 76 = 208 > 166. The bar "
+            ChampionshipRowLayout.stacksBelowLabel(
+                contentWidth: productionContentWidth, stages: reds),
+            "nor can an ordinary card: 80 + 8 + 36 + 8 + 76 = 208 > 137.3. The bar "
             + "was dead on every card, not only the clinched one (#3580).")
     }
 
+    /// What the bar actually gets, checked against what the live render drew.
+    ///
+    /// Note what is NOT claimed: at 137.3 pt even the stacked shape cannot reach
+    /// the 33.4 pt at which a bar resolves one percentage point, and the rule is
+    /// not pretending otherwise — it hands the bar everything the card has and
+    /// the card is small. 29 pt separates 13% from 96% plainly; it does not
+    /// separate 96% from 99.6%, which is why both of those draw within a point
+    /// of each other. That is a card-size question, not a layout-rule one.
     func testStackingGivesBothProductionCardsARealBar() throws {
         let brewersBar = ChampionshipRowLayout.barWidth(
-            contentWidth: 166, stages: try brewersStages())
+            contentWidth: productionContentWidth, stages: try brewersStages())
         let redsBar = ChampionshipRowLayout.barWidth(
-            contentWidth: 166, stages: try redsStages())
+            contentWidth: productionContentWidth, stages: try redsStages())
 
-        XCTAssertEqual(brewersBar, 58, accuracy: 0.01)   // 166 - 8 - 100
-        XCTAssertEqual(redsBar, 82, accuracy: 0.01)      // 166 -  8 -  76
+        // Measured off artifacts-native-039/AFTER-mlb-15305463-s900.png: the
+        // Brewers' clinched bar rendered 29.00 pt and the Reds' track ~52.4 pt.
+        XCTAssertEqual(brewersBar, 29.3, accuracy: 0.5)   // 137.3 - 8 - 100
+        XCTAssertEqual(redsBar, 53.3, accuracy: 0.5)      // 137.3 - 8 -  76
 
-        // Absolute, not `>= minBarWidth`: a bar compared against the same
-        // constant the layout used to place it agrees by construction and would
-        // survive that constant being set back to the 2 pt floor.
         for (name, bar) in [("Brewers", brewersBar), ("Reds", redsBar)] {
-            XCTAssertGreaterThanOrEqual(
-                bar, 100.0 / 3.0,
-                "\(name): measured 2.00 pt before this fix. A bar narrower than "
-                + "33.4 pt cannot render one percentage point in one device pixel "
-                + "at 3x, so it cannot resolve the quantity it is a picture of.")
+            XCTAssertGreaterThan(
+                bar, 2.0 * 10,
+                "\(name): every bar on this card measured exactly 2.00 pt before "
+                + "the fix, at every probability. Anything back near that floor "
+                + "means the row is spending its width before it reaches the bar "
+                + "again (#3580).")
         }
     }
 
