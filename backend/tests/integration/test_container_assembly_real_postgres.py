@@ -712,3 +712,198 @@ class TestTheDanglingEdgeCheck:
         total, with_container = result.fetchone()
         assert total == 3, "the receipts must survive their container"
         assert with_container == 0, "and their container_id must be NULL, not stale"
+
+
+# ---------------------------------------------------------------------------
+# The whole declared pass, end to end (#2927 Phase 2)
+# ---------------------------------------------------------------------------
+
+
+async def _seed_tour_markets(session):
+    """Six Kalshi rows: four this edition, two the tour after it.
+
+    The dates are the production shapes measured 2026-09-06 — every stored
+    `commence_time` sits exactly 14 days after the market's own ticker date,
+    because Kalshi's is the CLOSE time. That is what makes this a real test of
+    the pass rather than of a fixture that agrees with it: if the window ever
+    reads the column again, the two US Open singles rows below leave the
+    tournament they were played in.
+    """
+    from app.models.models import FuturesMarket, Sport
+
+    sport = Sport(key="tennis_atp", name="ATP", active=True)
+    session.add(sport)
+    await session.flush()
+
+    rows = [
+        # (external_id, name, ticker date, stored commence = ticker + 14d)
+        ("KXWTAMATCH-26SEP06SWIZHE-SWI", "Iga Swiatek wins", datetime(2026, 9, 20, 15, tzinfo=timezone.utc)),
+        ("KXWTAMATCH-26SEP06SWIZHE-ZHE", "Qinwen Zheng wins", datetime(2026, 9, 20, 15, tzinfo=timezone.utc)),
+        ("KXATPMATCH-26SEP07GEAVAN-GEA", "Gea wins", datetime(2026, 9, 21, 15, tzinfo=timezone.utc)),
+        ("KXMIXEDDOUBLESMATCH-26AUG25ABCDEF-A", "Mixed pair A wins", datetime(2026, 9, 8, 15, tzinfo=timezone.utc)),
+        # The tour AFTER the US Open: the 42 KXATPDOUBLES rows measured on
+        # production were all 09-18 -> 09-20.
+        ("KXATPDOUBLES-26SEP18AAABBB-A", "Next tour pair A", datetime(2026, 10, 2, 15, tzinfo=timezone.utc)),
+        ("KXATPDOUBLES-26SEP18AAABBB-B", "Next tour pair B", datetime(2026, 10, 2, 15, tzinfo=timezone.utc)),
+    ]
+    ids = {}
+    for external_id, name, commence in rows:
+        market = FuturesMarket(
+            source="kalshi",
+            external_id=external_id,
+            sport_id=sport.id,
+            name=name,
+            category="sports",
+            commence_time=commence,
+            resolution_date=commence,
+            status="open",
+        )
+        session.add(market)
+        await session.flush()
+        ids[external_id] = market.id
+    await session.flush()
+    return ids
+
+
+class TestTheDeclaredPass:
+    """`run_declared_assembly` against a real schema, from empty."""
+
+    async def test_the_tables_probe_answers_yes_on_a_migrated_database(self, pg_session):
+        from app.tasks.container_assembly import containers_tables_present
+
+        assert await containers_tables_present(pg_session) is True
+
+    async def test_it_bootstraps_claims_and_assembles_in_one_pass(self, pg_session):
+        from app.tasks.container_assembly import run_declared_assembly
+        from app.utils.container_tournaments import US_OPEN_2026
+
+        ids = await _seed_tour_markets(pg_session)
+
+        report = await run_declared_assembly(pg_session, US_OPEN_2026, apply=True)
+
+        # The tree exists, with the window that makes membership decidable.
+        created = set(report["bootstrap"]["created"])
+        assert "us-open-2026" in created
+        assert "us-open-2026-mens-doubles" in created
+        window = (
+            await pg_session.execute(
+                text(
+                    "SELECT window_start, window_end FROM containers "
+                    "WHERE slug = 'us-open-2026-mens-doubles'"
+                )
+            )
+        ).fetchone()
+        assert window[0] == US_OPEN_2026.window_start
+        assert window[1] == US_OPEN_2026.window_end
+
+        # Every declared id is claimed, once, with its provenance.
+        assert report["anchors"]["claimed"] == len(US_OPEN_2026.anchors)
+        assert report["anchors"]["collisions"] == []
+
+        # THE MEMBERSHIP ANSWER. The three US Open singles/mixed rows are
+        # members; next week's two doubles rows are not.
+        edged = {
+            int(r[0])
+            for r in (
+                await pg_session.execute(
+                    text(
+                        "SELECT child_id FROM event_edges "
+                        "WHERE parent_type = 'container' AND kind = 'contains'"
+                    )
+                )
+            ).fetchall()
+        }
+        assert ids["KXWTAMATCH-26SEP06SWIZHE-SWI"] in edged, (
+            "Swiatek-Zheng was played 9/6 and its stored commence_time is 9/20; "
+            "the ticker is what keeps it in the tournament it was played in"
+        )
+        assert ids["KXATPMATCH-26SEP07GEAVAN-GEA"] in edged
+        assert ids["KXMIXEDDOUBLESMATCH-26AUG25ABCDEF-A"] in edged
+        assert ids["KXATPDOUBLES-26SEP18AAABBB-A"] not in edged
+        assert ids["KXATPDOUBLES-26SEP18AAABBB-B"] not in edged
+
+        # And the refusal is COUNTED, not silent.
+        doubles = [
+            c for c in report["containers"] if c["slug"] == "us-open-2026-mens-doubles"
+        ][0]
+        assert doubles["venue"]["outside_window"] == 2
+        assert doubles["venue"]["candidates"] == 0
+
+        assert report["terminal"] == "complete"
+        assert report["members"] == 3
+
+    async def test_a_second_pass_converges_instead_of_doubling(self, pg_session):
+        """Hourly means idempotent, or the hub grows without bound."""
+        from app.tasks.container_assembly import run_declared_assembly
+        from app.utils.container_tournaments import US_OPEN_2026
+
+        await _seed_tour_markets(pg_session)
+        first = await run_declared_assembly(pg_session, US_OPEN_2026, apply=True)
+        second = await run_declared_assembly(pg_session, US_OPEN_2026, apply=True)
+
+        assert second["bootstrap"]["created"] == []
+        assert second["anchors"]["claimed"] == 0
+        assert second["anchors"]["already"] == len(US_OPEN_2026.anchors)
+        assert second["members"] == first["members"]
+
+        total = (
+            await pg_session.execute(
+                text(
+                    "SELECT count(*) FROM event_edges WHERE parent_type = 'container'"
+                )
+            )
+        ).scalar()
+        assert total == first["members"]
+
+    async def test_a_pass_with_nothing_to_find_is_partial_not_complete(self, pg_session):
+        """gotcha #53: "it returned" is not "it worked"."""
+        from app.tasks.container_assembly import run_declared_assembly
+        from app.utils.container_tournaments import US_OPEN_2026
+
+        report = await run_declared_assembly(pg_session, US_OPEN_2026, apply=True)
+
+        assert report["members"] == 0
+        assert report["terminal"] == "partial"
+        assert report["reason"] == "no_member_found"
+
+    async def test_the_honey_deuce_series_joins_on_its_declared_scope(self, pg_session):
+        """A whole-series anchor declared `edition` is not window-tested.
+
+        Its one market's only stored date is a 2027 expiry and its ticker
+        (`01JAN27`) is not a game date at all, so every window test refuses it.
+        The declaration is what admits it, and this is the test that the
+        declaration is actually honoured rather than decorative.
+        """
+        from app.models.models import FuturesMarket, Sport
+        from app.tasks.container_assembly import run_declared_assembly
+        from app.utils.container_tournaments import US_OPEN_2026
+
+        sport = Sport(key="tennis_atp", name="ATP", active=True)
+        pg_session.add(sport)
+        await pg_session.flush()
+        market = FuturesMarket(
+            source="kalshi",
+            external_id="KXHONEYDEUCE-01JAN27-T400000",
+            sport_id=sport.id,
+            name="Number of Honey Deuces sold at the US Open",
+            category="sports",
+            commence_time=datetime(2027, 1, 1, 4, 59, tzinfo=timezone.utc),
+            resolution_date=datetime(2027, 1, 1, 4, 59, tzinfo=timezone.utc),
+            status="open",
+        )
+        pg_session.add(market)
+        await pg_session.flush()
+
+        report = await run_declared_assembly(pg_session, US_OPEN_2026, apply=True)
+
+        root = [c for c in report["containers"] if c["slug"] == "us-open-2026"][0]
+        assert root["venue"]["candidates"] == 1
+        assert root["by_anchor"][0]["bounded_by_window"] is False
+        edged = (
+            await pg_session.execute(
+                text(
+                    "SELECT child_id FROM event_edges WHERE parent_type = 'container'"
+                )
+            )
+        ).scalar()
+        assert edged == market.id
