@@ -6,6 +6,7 @@ import {
   buildMarketSection,
   MAX_CARDS_PER_CATEGORY,
   MAX_OUTCOMES_PER_CARD,
+  type DecidedSetsWinner,
   type MarketCard,
 } from "@/lib/otherMarketGroups";
 import {
@@ -23,6 +24,12 @@ interface SpecialEventMarketsProps {
    * changes. See `buildMarketSection`'s `completedSets`.
    */
   completedSets?: number;
+  /**
+   * Who took those sets, when the score can say — so a decided row can state
+   * the result instead of a frozen price. Tennis only; see
+   * `decidedSetsWinnerFor`.
+   */
+  decidedSetsWinner?: DecidedSetsWinner | null;
 }
 
 function OutcomeBar({
@@ -40,6 +47,17 @@ function OutcomeBar({
   // that asked about it. Both end in the same render, because both are the same
   // statement to a reader: this number stopped being a chance.
   const frozen = settled || outcome.decided === true;
+
+  // The strongest state: the question is answered AND this view can say what
+  // the answer was. No bar and no number — a percentage beside `Noskova won
+  // Set 1` invites the reader to price a set that is already in the books.
+  if (outcome.result) {
+    return (
+      <div className="flex items-baseline gap-2 text-xs" data-testid="special-markets-result">
+        <div className="flex-1 font-semibold">{outcome.result}</div>
+      </div>
+    );
+  }
 
   // A settled row loses the bar, exactly as `PropTravelBar`'s `ResolvedMark`
   // does. A filled bar is a picture of a live distribution; leaving it up and
@@ -119,10 +137,11 @@ export default function SpecialEventMarkets({
   data,
   eventStatus,
   completedSets,
+  decidedSetsWinner,
 }: SpecialEventMarketsProps) {
   const section = useMemo(
-    () => buildMarketSection(data.other, { completedSets }),
-    [data.other, completedSets],
+    () => buildMarketSection(data.other, { completedSets, decidedSetsWinner }),
+    [data.other, completedSets, decidedSetsWinner],
   );
 
   // #2086. `eventStatus` has been DECLARED on this component's props and PASSED
