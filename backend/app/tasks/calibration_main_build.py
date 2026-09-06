@@ -167,7 +167,13 @@ STAGED_FUTURES_ENABLED = True
 #: this from the population size would re-partition everything each time the
 #: population crossed a boundary — the exact thrash the fix exists to end.
 #:
-#: SIZING — 128 WAS A REASONED SIZE AND PRODUCTION REFUTED IT (CAL-P1033, #3536).
+#: SIZING — READ TO THE END BEFORE MOVING THIS. The history below runs
+#: 128 -> 17 -> 128, and the middle section argues for a value that is no longer
+#: in force. Both refutations are kept because the second one is only legible
+#: against the first. The operative rule is the LAST section, "THE RULE".
+#:
+#: SIZING PART ONE — 128 WAS A REASONED SIZE AND PRODUCTION REFUTED IT
+#: (CAL-P1033, #3536). Superseded in part by PART TWO below.
 #:
 #: The reasoning this replaces is kept verbatim, because it is a good argument
 #: and it is wrong, and the next editor is owed both halves:
@@ -182,9 +188,15 @@ STAGED_FUTURES_ENABLED = True
 #: ===========  ==================  ==========================================
 #: partition    markets per unit    measured cost per unit
 #: ===========  ==================  ==========================================
-#: 1 (monolith) ~110,000            ~1,350 s
+#: 1 (monolith) ~110,000            >1,350 s — CANCELLED, a floor, NOT a cost
 #: 128          ~860                724 s (10:15Z beat) / **857 s (12:15Z)**
 #: ===========  ==================  ==========================================
+#:
+#: The ">" on the first row is PART TWO's correction and it is the whole defect:
+#: this table originally read "~1,350 s" and the fit below treats it as an
+#: equality. It is a Postgres cancellation. Every conclusion drawn from it in the
+#: rest of PART ONE — including "P ≈ 853 s" and "nearly the whole cost" — is
+#: therefore wrong in a known direction.
 #:
 #: 0.8% of the rows costs 54–63% of the price. Fitting ``cost(B) = P + s·N/B``
 #: on the WORSE of the two 128-way readings gives a fixed per-unit prefix
@@ -225,33 +237,64 @@ STAGED_FUTURES_ENABLED = True
 #: how much each surviving beat is worth. Anyone reading a self-blocked beat as
 #: evidence against the partition should check it against this paragraph first.
 #:
-#: 17 is not a taste. The rule is stated in the guard and searched, not asserted:
-#: take the SMALLEST partition whose admission margin reaches **half the maximum
-#: any partition can reach** — a derived bar, not a picked one — subject to
-#: publishing inside the beat budget. That lands on 17: margin **+3.74%** against
-#: a 7.30% ceiling, unit cost 882 s, and **~13 productive beats to publish,
-#: against 95.9 today.** B=8 is the first that admits at all and its margin is
-#: **+0.01%**, which is not a margin.
+#: SIZING PART TWO — THE OPERATIVE ONE.
+#: 17 SHIPPED FOR ONE HOUR AND PRODUCTION REFUTED IT TOO (CAL-P1035, #3536).
+#: THE PARAGRAPH ABOVE ASKED FOR THE THIRD MEASURED POINT. HERE IT IS.
 #:
-#: Deliberately NOT the theoretical optimum. Margin still rises past 17 (+6.8% at
-#: 128) but beats rise faster, and every number here below B=128 is EXTRAPOLATED
-#: from a two-point fit whose small-B anchor is a historical monolith reading on
-#: a different code path. 17 is a large, safe step that will produce the third
-#: measured point — a real cost at a small partition — which is what makes the
-#: NEXT step defensible with data instead of extrapolation. Re-measure at 17 and
-#: re-fit. Move the MEASUREMENT, never the ceiling.
+#: It said, correctly, that "every number here below B=128 is EXTRAPOLATED from a
+#: two-point fit whose small-B anchor is a historical monolith reading" — and
+#: then shipped the extrapolation anyway. The anchor was worse than "historical":
+#: the ~1,350 s monolith reading is a statement Postgres **CANCELLED** at
+#: 1,351,525 ms (#2052). A cancellation is a floor, not a duration. Fitting an
+#: equality through it dragged the curve down, understated the scalable term and
+#: overstated the fixed prefix — which is exactly the bias that makes a small
+#: partition look affordable.
 #:
-#: THIS IS THE DIAL, NOT THE REPAIR, and the margin arithmetic above is why the
-#: repair is now required rather than nice to have. Bringing the fixed prefix
-#: down is the only thing that buys real headroom: a unit's statement scanning
-#: only its own slot instead of paying the full-population prefix B times over.
-#: That lives in ``_main_futures_sql`` in ruling-D45-frozen
-#: ``precompute_calibration.py`` and needs Alex's words; this constant does not.
+#: THE THIRD POINT, and it is decisive. 2026-09-06 **15:15:00Z**, the first beat
+#: at B=17 in a window no release touched (``beat:cancel_cause:incomplete``,
+#: elapsed 1,350,702 ms, ``staged:units_partition`` 17). It paid a 197,931 ms
+#: generation freeze, handed ONE unit a 1,137,529 ms statement bound — essentially
+#: the entire remainder of the beat — and the unit **did not finish**:
+#: ``read:futures_unit`` 1,137,955 ms, ``staged:units_cancelled`` 1,
+#: ``staged:units_completed_this_beat`` 0, ``staged:window_stop:unit_too_large``.
+#:
+#: Predicted 882 s. Cancelled, still running, at 1,138 s — at least 29% over, with
+#: the true cost unknown. **There is no longer window to give it**, so B=17 cannot
+#: bank a unit on any beat, ever. It is not slow, it is non-convergent: strictly
+#: worse than the 128 it replaced, which at least banks one unit per beat.
+#:
+#: THE REFIT, anchored on the completion at 128 and the CENSORED floor at 17 (so
+#: every number it produces is a lower bound and every "this fits" is optimistic):
+#: fixed prefix **P ≈ 814 s**, scalable part **≈ 5,508 s** for the whole
+#: population. The scalable term is nearly SEVEN times the prefix per unit — the
+#: opposite of what the refuted fit said — while across a generation the prefix is
+#: paid B times and still dwarfs it (104,000 s vs 5,500 s at B=128). Both are true;
+#: conflating them is what produced 17.
+#:
+#: THE RULE, tightened so this cannot happen a third time — searched in the guard,
+#: not asserted here: **ship the smallest partition that (a) the optimistic model
+#: admits AND (b) production has COMPLETED a unit at.** Clause (a) alone is what
+#: shipped 17. Clause (b) is new and it is the one that bites: the model admits
+#: everything from 55 up, but the only partition with measured completions is 128
+#: (723.8 s and 857.0 s). So 128 it is — not because it is good, but because it is
+#: the only size we have watched finish. To ship 55 or 64, MEASURE ONE THERE FIRST
+#: and add it to ``MEASURED_COMPLETIONS``.
+#:
+#: 128 costs 129 whole beats and misses the 24-beat freshness budget by 5x. Under
+#: an honest fit NO partition reaches that budget — the cheapest admissible one,
+#: B=55, still costs 56 beats. **The dial is exhausted.** That is the finding, and
+#: it is not a reason to keep turning it.
+#:
+#: THIS IS THE DIAL, NOT THE REPAIR. Bringing the fixed prefix down is now the
+#: ONLY thing left: a unit's statement scanning only its own slot instead of
+#: paying the full-population prefix B times over. That lives in
+#: ``_futures_population_sql`` in ruling-D45-frozen ``precompute_calibration.py``
+#: and needs Alex's words (D80); this constant does not.
 #:
 #: Changing it re-keys every unit and costs exactly one generation of banked
-#: work — safe, not free. The bank held TWO units when this was changed, so the
-#: re-key was free on the day and will not be once the build converges.
-STAGED_FUTURES_BUCKETS = 17
+#: work — safe, not free. The bank held ZERO units when this was changed back
+#: (B=17 never banked one), so the re-key cost nothing on the day.
+STAGED_FUTURES_BUCKETS = 128
 
 def _process_rss_mb() -> float | None:
     """This process's resident set size in MB, or ``None`` if unobtainable.
