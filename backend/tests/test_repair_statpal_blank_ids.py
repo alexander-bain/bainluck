@@ -951,3 +951,460 @@ class TestTheRestoreIsReachableOnTheRail:
         assert s.committed_receipt["event_ids"] == [1, 3]
         assert 2 not in s.committed_receipt["event_ids"]
         assert s.rows[2] == "1329200777"
+
+
+# ---------------------------------------------------------------------------
+# The receipt through the REAL durable store and the REAL reader
+#
+# CERT-1979 blocked this rail for a defect no test above could see: every one of
+# them either observes `committed_receipt` (a dict the fake session kept) or
+# hands `restore` a payload through `_fake_read_undo`. Both stop at the payload.
+# The defect lived one layer out, in the ENVELOPE — `_undo_envelope` passed the
+# RUN's completion into the artifact's `complete` flag, `decode_envelope` types
+# any `complete=False` envelope as MALFORMED/IncompleteArtifact, and `read_undo`
+# turns that into UNDO_CORRUPT. So every partial and every deadline-stopped run
+# wrote a receipt that its own restore refused to read.
+#
+# A fake that skips the store cannot fail on that, however many assertions it
+# makes about the payload. These tests run the real `publish_owned_snapshot_in_txn`
+# and the real `read_snapshot` — statements and all — against stdlib sqlite3,
+# then drive `restore` with NO reader stub.
+# ---------------------------------------------------------------------------
+
+_DURABLE_DDL = """
+CREATE TABLE durable_state_snapshots (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    identity       TEXT UNIQUE NOT NULL,
+    schema_version TEXT NOT NULL,
+    generation     INTEGER NOT NULL,
+    generated_at   TEXT NOT NULL,
+    payload        TEXT NOT NULL,
+    checksum       TEXT NOT NULL,
+    complete       INTEGER NOT NULL,
+    source         TEXT NOT NULL,
+    updated_at     TEXT NOT NULL
+)
+"""
+
+#: The only two Postgres-isms in the durable statements, and both are FORM.
+#: `CAST(x AS jsonb)` is a no-op in a store with no JSONB type, and `NOW()` and
+#: `CURRENT_TIMESTAMP` are the same clock under two names. Nothing about the
+#: upsert's guards, the owner predicate, or `RETURNING` is rewritten — those are
+#: the parts under test. `payload ->> :key` needs no rewrite: sqlite has it too.
+_PG_REWRITES = (
+    ("CAST(:payload AS jsonb)", ":payload"),
+    ("NOW()", "CURRENT_TIMESTAMP"),
+)
+
+
+def _to_sqlite(sql: str) -> str:
+    """The production statement, in the one dialect this sandbox can execute."""
+    out = sql
+    for pg, lite in _PG_REWRITES:
+        out = out.replace(pg, lite)
+    # If a THIRD Postgres-ism ever appears, this harness would silently prove a
+    # different statement than production runs. Refuse instead (gotcha #53).
+    assert "::" not in out, f"unrewritten Postgres cast: {out}"
+    assert "jsonb" not in out.lower(), f"unrewritten JSONB: {out}"
+    assert "NOW()" not in out, f"unrewritten NOW(): {out}"
+    return out
+
+
+class _Mappings:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def first(self):
+        return self._rows[0] if self._rows else None
+
+
+class _StoreResult:
+    """A result that answers both shapes the durable service asks for."""
+
+    def __init__(self, rows):
+        self._rows = rows
+
+    def scalar_one_or_none(self):
+        if not self._rows:
+            return None
+        return list(self._rows[0].values())[0]
+
+    def mappings(self):
+        return _Mappings(self._rows)
+
+
+class _DurableSqlite:
+    """The real ``durable_state_snapshots`` statements, executed by sqlite3.
+
+    Deliberately NOT a model of the store: it holds no opinion about what an
+    upsert should do. It runs the production SQL and reports what the database
+    did with it, so the generation guard, the owner predicate and `RETURNING`
+    are the real ones.
+    """
+
+    def __init__(self):
+        import sqlite3
+
+        self.conn = sqlite3.connect(":memory:")
+        self.conn.execute(_DURABLE_DDL)
+        self.conn.commit()
+        self.statements = []
+
+    def execute(self, sql, params):
+        import json as _json
+        from datetime import datetime as _dt
+
+        bound = {}
+        for k, v in (params or {}).items():
+            if isinstance(v, _dt):
+                # The dialect's own string form, so `>=` window comparisons sort
+                # and Python 3.12's deprecated datetime adapter is never used.
+                bound[k] = v.isoformat()
+            elif isinstance(v, bool):
+                bound[k] = int(v)
+            else:
+                bound[k] = v
+        prepared = _to_sqlite(sql)
+        self.statements.append(prepared)
+        cur = self.conn.execute(prepared, bound)
+        cols = [d[0] for d in cur.description] if cur.description else []
+        rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+        for row in rows:
+            # JSONB comes back from asyncpg as a dict; TEXT comes back as a str.
+            # Decoding here is what keeps the reader's `payload` the same type it
+            # sees in production — a str would fail the checksum for the wrong
+            # reason and the test would pass while proving nothing.
+            if isinstance(row.get("payload"), str):
+                row["payload"] = _json.loads(row["payload"])
+            if "complete" in row:
+                row["complete"] = bool(row["complete"])
+        return _StoreResult(rows)
+
+
+class _EventsAndRealStore(_EventsTable):
+    """``_EventsTable`` for ``events``, the real sqlite store for the receipt.
+
+    The receipt's transaction is the repair's transaction, exactly as in
+    production: a commit here commits both, and a rollback takes the batch and
+    its receipt together.
+    """
+
+    def __init__(self, rows, store, **kw):
+        super().__init__(rows, **kw)
+        self.store = store
+
+    async def execute(self, stmt, params=None):
+        sql = str(stmt)
+        if "durable_state_snapshots" in sql:
+            self.calls.append((sql, params or {}))
+            self.undo_stages += 1
+            return self.store.execute(sql, params or {})
+        return await super().execute(stmt, params)
+
+    async def commit(self):
+        self.store.conn.commit()
+        await super().commit()
+
+    async def rollback(self):
+        self.store.conn.rollback()
+        await super().rollback()
+
+
+class _ReaderSession:
+    """A read-only session over the same store, for ``read_snapshot``."""
+
+    def __init__(self, store):
+        self.store = store
+
+    async def execute(self, stmt, params=None):
+        sql = str(stmt)
+        if "statement_timeout" in sql:
+            return _StoreResult([])
+        return self.store.execute(sql, params or {})
+
+
+def _serve_reads_from(monkeypatch, store):
+    """Point the standalone durable read at ``store``.
+
+    Patching the SESSION rather than the reader is the point: `read_snapshot`,
+    `decode_envelope`, the checksum, the version check, the completeness check
+    and the age bound all still run for real. Stubbing `read_undo` — which is
+    what the rest of this file does — is what hid CERT-1979's defect.
+    """
+    import contextlib
+
+    import app.tasks.base as base
+
+    @contextlib.asynccontextmanager
+    async def _session():
+        yield _ReaderSession(store)
+
+    monkeypatch.setattr(base, "get_task_session", _session)
+
+
+def _stop_before_the_first_batch(monkeypatch):
+    """A deadline already blown when the loop is first entered."""
+    import time as _time
+
+    ticks = iter([0.0, 10_000.0])
+    last = [0.0]
+
+    def _fake():
+        try:
+            last[0] = next(ticks)
+        except StopIteration:
+            pass
+        return last[0]
+
+    monkeypatch.setattr(_time, "monotonic", _fake)
+
+
+def _stop_after_two_batches(monkeypatch):
+    """A scripted monotonic clock: two batches run, the third is not attempted.
+
+    Scripted rather than slept, and it never branches on the real clock
+    (gotcha #44) — the sequence IS the deadline.
+    """
+    import time as _time
+
+    ticks = iter([0.0, 1.0, 2.0, 10_000.0])
+    last = [0.0]
+
+    def _fake():
+        try:
+            last[0] = next(ticks)
+        except StopIteration:
+            pass
+        return last[0]
+
+    monkeypatch.setattr(_time, "monotonic", _fake)
+
+
+class TestThePartialReceiptSurvivesTheRealReader:
+    """The CERT-1979 boundary: partial receipt -> real store -> real reader ->
+    restore. No `read_undo` stub anywhere in this class."""
+
+    @pytest.mark.asyncio
+    async def test_a_deadline_stopped_run_can_be_restored(self, monkeypatch):
+        import scripts.repair_statpal_fixture_id_blanks as mod
+
+        store = _DurableSqlite()
+        s = _EventsAndRealStore([(i, "") for i in range(1, 10)], store)
+        monkeypatch.setattr(mod, "BATCH_SIZE", 3)
+        _stop_after_two_batches(monkeypatch)
+
+        res = await mod.repair(
+            s, apply=True, expected_blank=9, deadline_seconds=100.0
+        )
+        assert res["stopped_on_deadline"] is True
+        assert res["terminal"] == "partial"
+        assert res["rows_nulled"] == 6
+
+        # The rows really are NULL, and really are on the record.
+        assert [i for i, v in s.rows.items() if v is None] == [1, 2, 3, 4, 5, 6]
+
+        _serve_reads_from(monkeypatch, store)
+        payload, reason = await mod.read_undo(res["undo_identity"])
+        assert reason == "ok", f"the real reader refused a partial receipt: {reason}"
+        assert payload["event_ids"] == [1, 2, 3, 4, 5, 6]
+        # The RUN was partial. That is a fact in the payload, and it does not
+        # make the RECORD untrustworthy.
+        assert payload["complete"] is False
+
+        out = await mod.restore(s, res["undo_identity"], apply=True)
+        assert out["applied"] is True
+        assert out["rows_restored"] == 6
+        assert out["receipt_complete"] is False
+        assert out["terminal"] == "complete"
+        assert all(s.rows[i] == "" for i in range(1, 7))
+
+    @pytest.mark.asyncio
+    async def test_the_empty_pre_write_receipt_is_readable_too(self, monkeypatch):
+        """The backup written BEFORE the first batch carries ``complete=False``
+        in its payload too, so under the defect it was unreadable from the
+        moment it was written — and a run that died before its first commit
+        could not even be shown to have changed nothing.
+
+        That is the D51 promise failing at its quietest: the operator is handed
+        an `undo_identity`, and the record behind it refuses to open.
+        """
+        import scripts.repair_statpal_fixture_id_blanks as mod
+
+        store = _DurableSqlite()
+        s = _EventsAndRealStore([(1, ""), (2, "")], store)
+        monkeypatch.setattr(mod, "BATCH_SIZE", 1)
+        _stop_before_the_first_batch(monkeypatch)
+
+        res = await mod.repair(
+            s, apply=True, expected_blank=2, deadline_seconds=100.0
+        )
+        assert res["rows_nulled"] == 0
+        assert s.rows == {1: "", 2: ""}, "nothing was written"
+
+        _serve_reads_from(monkeypatch, store)
+        payload, reason = await mod.read_undo(res["undo_identity"])
+        assert reason == "ok", f"the empty pre-write receipt was unreadable: {reason}"
+        assert payload["event_ids"] == []
+        assert payload["complete"] is False
+
+        # An empty receipt is a legitimate answer — "this apply changed nothing"
+        # — and must read as that, never as a corrupt record.
+        out = await mod.restore(s, res["undo_identity"], apply=True)
+        assert out["terminal"] == "noop"
+        assert out["verdict"] == "empty_receipt"
+
+    @pytest.mark.asyncio
+    async def test_a_completed_run_is_still_readable(self, monkeypatch):
+        """The case that always worked keeps working — a fix that only moved the
+        failure to the other branch would pass the test above (gotcha #43)."""
+        import scripts.repair_statpal_fixture_id_blanks as mod
+
+        store = _DurableSqlite()
+        s = _EventsAndRealStore([(i, "") for i in range(1, 5)], store)
+        monkeypatch.setattr(mod, "BATCH_SIZE", 2)
+
+        res = await mod.repair(s, apply=True, expected_blank=4)
+        assert res["terminal"] == "complete"
+
+        _serve_reads_from(monkeypatch, store)
+        payload, reason = await mod.read_undo(res["undo_identity"])
+        assert reason == "ok"
+        assert payload["complete"] is True
+        assert payload["event_ids"] == [1, 2, 3, 4]
+
+        out = await mod.restore(s, res["undo_identity"], apply=True)
+        assert out["applied"] is True
+        assert out["rows_restored"] == 4
+
+
+class TestTheHarnessCanSeeTheDefect:
+    """A regression that cannot fail on the bug it names is decoration.
+
+    These re-create CERT-1979's exact code — the run's completion passed into the
+    envelope's `complete` — and assert the tests above would have caught it.
+    """
+
+    @pytest.mark.asyncio
+    async def test_the_blocked_expression_makes_the_receipt_unreadable(
+        self, monkeypatch
+    ):
+        import scripts.repair_statpal_fixture_id_blanks as mod
+
+        store = _DurableSqlite()
+        s = _EventsAndRealStore([(i, "") for i in range(1, 10)], store)
+        monkeypatch.setattr(mod, "BATCH_SIZE", 3)
+
+        # THE BLOCKED LINE, restored verbatim: `complete=bool(payload.get("complete"))`.
+        real_envelope = mod._undo_envelope
+
+        def _cert_1979_envelope(identity, payload, generation):
+            env = real_envelope(identity, payload, generation)
+            from dataclasses import replace
+
+            return replace(env, complete=bool(payload.get("complete")))
+
+        monkeypatch.setattr(mod, "_undo_envelope", _cert_1979_envelope)
+        _stop_after_two_batches(monkeypatch)
+
+        res = await mod.repair(
+            s, apply=True, expected_blank=9, deadline_seconds=100.0
+        )
+        assert res["rows_nulled"] == 6, "the write itself was never the defect"
+
+        _serve_reads_from(monkeypatch, store)
+        payload, reason = await mod.read_undo(res["undo_identity"])
+        assert payload is None
+        assert reason == mod.REASON_UNDO_CORRUPT
+
+        out = await mod.restore(s, res["undo_identity"], apply=True)
+        assert out["refused"] is True
+        assert out["rows_restored"] == 0
+        # Six rows NULLed, and the reversal unreachable. This is what shipped
+        # would have meant.
+        assert all(s.rows[i] is None for i in range(1, 7))
+
+    def test_the_two_completions_are_different_facts(self):
+        """The fix in one assertion: a COMPLETE record of a PARTIAL run."""
+        import scripts.repair_statpal_fixture_id_blanks as mod
+        from datetime import datetime, timezone
+
+        payload = mod.undo_payload(
+            invocation="inv-1",
+            started_at=datetime.now(timezone.utc),
+            event_ids=[7, 8],
+            complete=False,
+            expected_blank=9,
+        )
+        env = mod._undo_envelope("id-1", payload, 1)
+        assert payload["complete"] is False
+        assert env.complete is True
+
+    def test_the_reader_still_refuses_a_genuinely_incomplete_artifact(self):
+        """`complete=False` keeps its real meaning for producers that use it —
+        the fix is that this rail never sets it, not that the flag was defanged.
+        """
+        from app.utils.durable_state import DurableEnvelope, decode_envelope
+        from datetime import datetime, timezone
+
+        env = DurableEnvelope.build(
+            identity="x", schema_version="v1", payload={"a": 1},
+            generated_at=datetime.now(timezone.utc), complete=False, source="t",
+        )
+        raw = {
+            "identity": env.identity, "schema_version": env.schema_version,
+            "generation": env.generation, "generated_at": env.generated_at,
+            "payload": env.payload, "checksum": env.checksum,
+            "complete": env.complete, "source": env.source,
+        }
+        got = decode_envelope(raw, tier="durable", expected_version="v1")
+        assert got.status == "malformed"
+        assert got.error_class == "IncompleteArtifact"
+
+
+class TestTheSqliteHarnessRunsTheRealStatements:
+    """If the harness quietly proves a different statement than production runs,
+    everything above is theatre."""
+
+    def test_the_ddl_covers_every_production_column(self):
+        from app.models.models import DurableStateSnapshot
+
+        produced = {c.name for c in DurableStateSnapshot.__table__.columns}
+        harness = set()
+        for line in _DURABLE_DDL.splitlines():
+            line = line.strip()
+            if line and not line.startswith(("CREATE", ")")):
+                harness.add(line.split()[0])
+        assert produced == harness, f"harness/production column drift: {produced ^ harness}"
+
+    def test_only_the_two_form_rewrites_are_applied(self):
+        from app.services.durable_snapshots import (
+            _OWNED_UPSERT_SQL, _SELECT_OWNER_SQL, _SELECT_SQL,
+        )
+
+        for stmt in (_OWNED_UPSERT_SQL, _SELECT_SQL, _SELECT_OWNER_SQL):
+            # `_to_sqlite` asserts internally that nothing Postgres-specific
+            # survived; reaching here at all is the proof.
+            _to_sqlite(str(stmt))
+
+    def test_the_owner_guard_is_the_real_one(self):
+        """A second apply may not overwrite the first's receipt — the property
+        CERT-856 added, running here as SQL rather than as a promise."""
+        from app.services.durable_snapshots import _OWNED_UPSERT_SQL
+        from datetime import datetime, timezone
+        import json
+
+        store = _DurableSqlite()
+        now = datetime.now(timezone.utc)
+        base = {
+            "identity": "r:1", "schema_version": "v1", "generation": 10,
+            "generated_at": now, "checksum": "c", "complete": True,
+            "source": "s", "owner_key": "undo_invocation",
+        }
+        mine = dict(base, payload=json.dumps({"undo_invocation": "run-A"}),
+                    owner="run-A")
+        assert store.execute(str(_OWNED_UPSERT_SQL), mine).scalar_one_or_none() == 10
+
+        theirs = dict(base, generation=11,
+                      payload=json.dumps({"undo_invocation": "run-B"}),
+                      owner="run-B")
+        assert store.execute(str(_OWNED_UPSERT_SQL), theirs).scalar_one_or_none() is None

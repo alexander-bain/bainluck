@@ -329,7 +329,25 @@ def _undo_envelope(identity: str, payload: dict[str, Any], generation: int):
         # is ``generation <= EXCLUDED.generation``, and two batches inside one
         # millisecond would otherwise share a generation.
         generation=generation,
-        complete=bool(payload.get("complete")),
+        # ALWAYS True, and the distinction is the whole point: the envelope's
+        # ``complete`` is a property of the ARTIFACT ("this record was fully
+        # written and may be trusted"), while ``payload["complete"]`` is a
+        # property of the RUN ("every batch finished"). They are different
+        # facts about different things and only look like one word.
+        #
+        # Every receipt this rail stores is a whole artifact by construction —
+        # it is built in memory, checksummed, and written by a single statement
+        # that co-commits with its batch, so there is no torn-write state for
+        # the flag to describe. A deadline-stopped run's last receipt is a
+        # COMPLETE record of a PARTIAL run.
+        #
+        # Passing run-completion here instead is what CERT-1979 blocked:
+        # ``decode_envelope`` types any ``complete=False`` envelope as
+        # MALFORMED/``IncompleteArtifact``, so ``read_undo`` returned
+        # UNDO_CORRUPT and the restore refused — the reversal was unreachable
+        # for exactly the deadline-stopped runs the resume path makes routine,
+        # which is to say for the runs most likely to need it.
+        complete=True,
         source="repair:statpal-blank-ids:undo",
     )
 
