@@ -138,12 +138,24 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
     )
     # THE constraint this table exists for: one provider id names ONE
-    # container. A second claim raises — it never silently no-ops (D55).
+    # container, within its own namespace. A second claim raises — it never
+    # silently no-ops (D55).
+    #
+    # ``sport`` IS IN THE KEY, and ``NULLS NOT DISTINCT`` is what makes it hold
+    # (CERT-2001). Without ``sport`` the key contradicts D55's explicit
+    # ``(provider, sport, id)`` namespace: ESPN tournament ``1234`` in tennis
+    # and ``1234`` in golf are different tournaments and the second would be
+    # REFUSED, so a whole hub goes missing rather than wrong. And with ``sport``
+    # but WITHOUT ``NULLS NOT DISTINCT`` the constraint quietly evaporates for
+    # every provider that does not namespace by sport, because Postgres treats
+    # each NULL as distinct and would accept both rows. PG 15+ feature; CI runs
+    # postgres:15 and production runs 17.10.
     op.create_index(
         "uq_container_anchor",
         "container_provider_anchors",
-        ["provider", "id_kind", "provider_id"],
+        ["provider", "sport", "id_kind", "provider_id"],
         unique=True,
+        postgresql_nulls_not_distinct=True,
     )
     op.create_index(
         "ix_container_anchor_container",

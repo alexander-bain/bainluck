@@ -2743,12 +2743,31 @@ class ContainerProviderAnchor(Base):
 
     __table_args__ = (
         # Identity, and the collision detector. Name matches the migration.
+        #
+        # ``sport`` IS IN THE KEY (CERT-2001). It was omitted in the first cut —
+        # the key was ``(provider, id_kind, provider_id)`` — which contradicted
+        # D55's explicit ``(provider, sport, id)`` namespace and made two
+        # legitimate containers collide: ESPN tournament id ``1234`` in tennis
+        # and ``1234`` in golf are different tournaments, and the second one to
+        # claim would have been REFUSED. The failure is silent in the worst
+        # direction, because a refused anchor is a container assembly can never
+        # resolve, so an entire hub goes missing rather than wrong.
+        #
+        # ``NULLS NOT DISTINCT`` is the other half and is not optional. A plain
+        # unique index treats every NULL as distinct, so making ``sport``
+        # nullable-and-in-the-key would have quietly UNDONE the constraint for
+        # every provider that does not namespace by sport — two rows with
+        # ``sport IS NULL`` and the same provider id would both be accepted,
+        # which is exactly the silent no-op D55 forbids. Postgres 15+ (CI runs
+        # 15, production runs 17), so the feature is available on both.
         Index(
             "uq_container_anchor",
             "provider",
+            "sport",
             "id_kind",
             "provider_id",
             unique=True,
+            postgresql_nulls_not_distinct=True,
         ),
         # "Resolve this container's anchors" — assembly's first step.
         Index("ix_container_anchor_container", "container_id"),
