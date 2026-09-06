@@ -1720,6 +1720,39 @@ def _is_submarket_bundle(market: FuturesMarket) -> bool:
     return prefixed * 2 > len(outcomes)
 
 
+def _venue_competition(market: FuturesMarket) -> str | None:
+    """The competition string exactly as the venue wrote it, or None.
+
+    Deliberately NOT `_market_competition`, which is the DISPLAY reader and
+    suppresses a label that merely echoes the card's own name. A rail-ordering
+    rule wants the raw fact — "did the venue say which draw this is" — and a
+    label that echoes the name is still an answer to that question.
+    """
+    metadata = getattr(market, "market_metadata", None)
+    if not isinstance(metadata, dict):
+        return None
+    competition = metadata.get("competition")
+    return competition if isinstance(competition, str) and competition.strip() else None
+
+
+def _rail_tier(
+    market: FuturesMarket,
+    is_undercard: Callable[[str | None, str | None, str | None], object] | None = None,
+) -> int:
+    """0 for the tournament the reader came for, 1 for a feeder-circuit match.
+
+    #3640, the ordering half. See `build_linked_matches` for why this sorts
+    INSIDE the live band rather than above it.
+    """
+    if is_undercard is None:
+        return 0
+    return (
+        1
+        if is_undercard(market.external_id, market.name, _venue_competition(market))
+        else 0
+    )
+
+
 def _match_card_rank(
     market: FuturesMarket,
     is_prop: Callable[[str | None, str | None], object] | None = None,
@@ -1770,6 +1803,9 @@ async def build_linked_matches(
     now: datetime | None = None,
     also_sport_keys: Sequence[str] = (),
     is_prop: Callable[[str | None, str | None], object] | None = None,
+    is_undercard: (
+        Callable[[str | None, str | None, str | None], object] | None
+    ) = None,
 ) -> list[dict]:
     """The head-to-head markets for this league's CURRENTLY PLAYABLE events.
 
@@ -1789,6 +1825,11 @@ async def build_linked_matches(
     out of this section must pass the same predicate it will move them with, or
     the one card this function elects per event can be a card that caller then
     deletes — which removes the match, not the prop.
+
+    `is_undercard` is the caller's feeder-circuit predicate, used ONLY to order
+    the rail (`_rail_tier`, #3640's ordering half): a match the venue itself
+    labels a Challenger sorts below one it does not, INSIDE the live band. It
+    ranks, never filters, so a rail of nothing but Challengers is unchanged.
 
     Only rows `_assign_section` calls `matches` survive: the same query also
     lands hundreds of markets ABOUT a match ("… : Total Sets O/U 3.5"), and a
@@ -1903,12 +1944,40 @@ async def build_linked_matches(
     if not playable:
         return []
 
-    # Live first, then soonest — the order a person watching a tournament reads
-    # the rail in. In Python because the currency test it sorts on is.
+    # Live first, then the tournament the reader came for, then soonest — the
+    # order a person watching a tournament reads the rail in. In Python because
+    # the currency test it sorts on is.
+    #
+    # ── #3640, the ordering half: why the middle key exists ──
+    #
+    # Measured on production 2026-09-06 at 19:45Z, mid-US-Open: eight of the
+    # nineteen cards on `/hub/tennis` were ATP Challenger matches, and they held
+    # rail positions 2 and 4–10 — above Swiatek–Zheng at 11, Osaka–Rybakina at
+    # 12, Khachanov at 16 and Zverev at 17. Nothing had gone wrong: the
+    # Challengers at Phan Thiet and Shanghai start at 06:00–07:10Z and the US
+    # Open singles at 15:00Z, so pure soonest-first is doing exactly what it
+    # says. It is the RULE that is wrong. A reader who opens the tennis page
+    # during a Slam came for the Slam, and a clock is not a reason to bury it.
+    #
+    # ── and why it sorts INSIDE the live band, not above it ──
+    #
+    # The outer key is untouched, so a Challenger that is ON COURT still leads a
+    # Slam match that has not started. That is the deliberate half of this
+    # change: "what is on now" stays the rail's first promise, and the one case
+    # it costs — a live Challenger above a Slam two hours out — is rarer, and
+    # less wrong, than a not-yet-started match displacing a live one. On the
+    # measured population it costs nothing at all: both live rows were US Open
+    # doubles and every Challenger was scheduled.
+    #
+    # A rank key, never a filter: a rail of nothing BUT Challengers is still a
+    # full rail in its own chronological order. `is_undercard=None` — every
+    # non-hub caller, including `/api/leagues/tennis_atp`, which is a TOUR page
+    # where a Challenger is on topic — is byte-identical to the prior ordering.
     candidates = [m for m in candidates if m.event_id in playable]
     candidates.sort(
         key=lambda m: (
             0 if playable[m.event_id][1] == "live" else 1,
+            _rail_tier(m, is_undercard),
             playable[m.event_id][0],
         )
     )

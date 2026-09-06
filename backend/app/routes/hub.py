@@ -50,6 +50,7 @@ from app.utils.entity_page_tiers import (
 )
 from app.utils.event_tennis import (
     classify_tennis_prop,
+    is_tennis_feeder_circuit,
     list_tennis_tournament_concepts,
 )
 from app.utils.event_ufc import classify_ufc_prop, list_ufc_card_concepts
@@ -157,6 +158,22 @@ _PROP_CLASSIFIERS: dict[str, Callable[[str | None, str | None], str | None]] = {
     # linked-matches source does not fix: 55 season-long ranking props sat under
     # "MATCHES · 56" on production.
     "tennis": classify_tennis_prop,
+}
+
+# Per-domain feeder-circuit predicates, keyed by the SAME `prop_classifier_domain`
+# — one field naming which sport's market vocabulary a hub speaks, not two.
+# Signature: (external_id, name, competition) -> bool.
+#
+# #3640's ordering half. Only tennis has a feeder circuit its venues name (see
+# `is_tennis_feeder_circuit`); a domain absent from this table passes None and
+# its rail keeps pure live-first/soonest-first ordering. MMA and boxing are
+# absent deliberately rather than by omission: a UFC prelim IS on the card the
+# reader came for, so demoting it would be the same mistake pointed the other
+# way.
+_UNDERCARD_CLASSIFIERS: dict[
+    str, Callable[[str | None, str | None, str | None], bool]
+] = {
+    "tennis": is_tennis_feeder_circuit,
 }
 
 
@@ -497,12 +514,21 @@ async def build_hub(cfg: HubConfig, db: AsyncSession) -> dict:
         if cfg.prop_classifier_domain
         else None
     )
+    # #3640's ordering half: the same rail also needs to know which of its
+    # matches the venue calls a feeder circuit, or a Phan Thiet Challenger
+    # starting nine hours sooner leads the page over Swiatek during the US Open.
+    undercard = (
+        _UNDERCARD_CLASSIFIERS.get(cfg.prop_classifier_domain)
+        if cfg.prop_classifier_domain
+        else None
+    )
     try:
         linked_matches = await build_linked_matches(
             cfg.sport_key,
             db,
             also_sport_keys=cfg.extra_match_sport_keys,
             is_prop=classifier,
+            is_undercard=undercard,
         )
     except Exception:
         logger.exception("hub linked matches failed for %s", cfg.slug)
