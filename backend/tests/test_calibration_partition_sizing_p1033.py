@@ -35,6 +35,10 @@ from __future__ import annotations
 import pytest
 
 from app.tasks.calibration_main_build import STAGED_FUTURES_BUCKETS
+from app.tasks.precompute_calibration import (
+    STAGED_UNIT_WINDOW_SAFETY,
+    _unit_fits_in_window,
+)
 
 # --- Production measurements. Source is named for every one. -----------------
 
@@ -65,15 +69,32 @@ MEASURED_USABLE_WINDOW_S = 1144.2
 
 # --- The budget. These are the ruling, not a measurement. --------------------
 
-#: A generation must publish within one working day of beats. 81 was the number
-#: that made the page 29 hours stale; anything in this range publishes daily even
-#: when several beats in a row are lost to a restart or a cursor wipe.
-MAX_BEATS_TO_PUBLISH = 8
+#: PRODUCTIVE beats to publish one generation. Raised from 8 to 16 by CERT-2071's
+#: repair, deliberately and with the cost stated: the real admission gate leaves
+#: so little headroom (see :func:`admission_ceiling_s`) that every partition fast
+#: enough for 8 beats has an admission margin under 1%, which is not a margin.
+#: Wall-clock will exceed this — self-blocked beats are structural (below) — so
+#: this is a floor on the work, not a promise about the clock. 95.9 was the
+#: number that made the page 29 hours stale.
+MAX_BEATS_TO_PUBLISH = 16
 
-#: How much of the usable window a single unit may claim. A unit that overruns
-#: its window is not merely slow — the fence stops offering it, and the build
-#: banks zero units per beat forever, which is strictly worse than 128 was.
-MAX_WINDOW_FRACTION = 0.85
+#: THE ADMISSION CEILING IS NOT OURS TO PICK (CERT-2071's repair). It is
+#: ``_unit_fits_in_window``: ``remaining_ms >= reference * STAGED_UNIT_WINDOW_SAFETY``.
+#: At the start of a beat ``remaining_ms`` is the whole unit budget and the
+#: reference is the previous beat's measured mean, so a partition is viable iff
+#: ``cost(B) * STAGED_UNIT_WINDOW_SAFETY <= MEASURED_USABLE_WINDOW_S``.
+#:
+#: This file first wrote ``MAX_WINDOW_FRACTION = 0.85`` here, by hand. The
+#: production rule is 1/1.25 = 0.80, and the 5 percentage points of difference
+#: are exactly the ones that let B=5 through a guard the real gate refuses. The
+#: factor is now IMPORTED, so it cannot drift from the code it models.
+def admission_ceiling_s() -> float:
+    return MEASURED_USABLE_WINDOW_S / STAGED_UNIT_WINDOW_SAFETY
+
+
+#: The measured beat-to-beat spread of ONE unit at a FIXED partition: 723.8 s
+#: (10:15Z) then 857.0 s (12:15Z), both at 128. +18.4%.
+MEASURED_BEAT_TO_BEAT_VARIANCE = (857.0 - 723.8) / 723.8
 
 
 def fit_cost_model() -> tuple[float, float]:
@@ -98,6 +119,26 @@ def predicted_unit_s(buckets: int) -> float:
 
 def predicted_generation_s(buckets: int) -> float:
     return buckets * predicted_unit_s(buckets)
+
+
+def admission_margin(buckets: int) -> float:
+    """How far a partition sits under the production gate, as a fraction.
+
+    Negative means the gate refuses the next beat's first unit. This is also
+    the fraction by which the true unit cost may exceed the model before that
+    happens, which is the number that matters when the model is a two-point fit.
+    """
+    return admission_ceiling_s() / predicted_unit_s(buckets) - 1.0
+
+
+def max_achievable_margin() -> float:
+    """The best any partition can do — the B → ∞ limit, i.e. the fixed prefix.
+
+    Derived, not chosen. It is the ceiling on every safety argument in this
+    file, and it is small (see the variance test below).
+    """
+    fixed, _ = fit_cost_model()
+    return admission_ceiling_s() / fixed - 1.0
 
 
 class TestTheFitIsTheOneProductionMeasured:
@@ -136,37 +177,51 @@ class TestThePartitionInForcePublishes:
 
     def test_one_unit_still_fits_one_beat(self):
         unit_s = predicted_unit_s(STAGED_FUTURES_BUCKETS)
-        ceiling = MEASURED_USABLE_WINDOW_S * MAX_WINDOW_FRACTION
+        ceiling = admission_ceiling_s()
         assert unit_s <= ceiling, (
             f"a unit at {STAGED_FUTURES_BUCKETS} buckets costs {unit_s:.0f}s "
-            f"against a {ceiling:.0f}s ceiling — the admission fence will refuse "
-            f"it and the build will bank nothing at all"
+            f"against the production gate's {ceiling:.0f}s ceiling — the fence "
+            f"will refuse the next beat's FIRST unit and the build alternates "
+            f"between progress and self-blocked beats"
         )
 
-    def test_the_shipped_value_is_the_SMALLEST_partition_that_clears_both(self):
-        """The two halves squeeze from opposite sides; 6 is where they meet.
+    def test_the_shipped_value_is_the_ONE_THE_RULE_PICKS(self):
+        """The choice is searched, not asserted — that is what caught 5 and 6.
 
-        Stated as a search rather than an assertion about 6, so the choice stays
-        checkable when a measurement changes. Under the fit in force: B=2 costs
-        96% of the unit budget and B=4 costs 85.4% — both refused by the window
-        ceiling — while B=6 costs 82% and publishes in ~5 beats. Publishing
-        sooner is always better, so anything LARGER than the smallest admissible
-        value is leaving convergence speed on the table for no safety it does
-        not already have.
+        THE RULE. Take the smallest partition whose admission margin reaches
+        HALF the maximum margin any partition can reach, subject to the beat
+        budget. Every term is derived:
+
+        * the margin is against the production gate, not a chosen fraction;
+        * "half the maximum" is a bar computed from the fit, not picked — it
+          says "do not sit in the bottom half of the achievable range", which is
+          a statement about the shape of the cost curve rather than a taste;
+        * smallest-that-qualifies, because publishing sooner is the whole point
+          and margin past the bar is bought with beats.
+
+        Under the fit in force it lands on 17 (+3.74% against a +7.30% ceiling).
+        B=8 is the first partition that ADMITS AT ALL, at +0.01%.
         """
-        ceiling = MEASURED_USABLE_WINDOW_S * MAX_WINDOW_FRACTION
+        margin_ceiling = max_achievable_margin()
 
-        def admissible(b: int) -> bool:
+        def qualifies(b: int) -> bool:
             return (
-                predicted_unit_s(b) <= ceiling
+                admission_margin(b) >= 0.5 * margin_ceiling
                 and predicted_generation_s(b) / MEASURED_USABLE_WINDOW_S
                 <= MAX_BEATS_TO_PUBLISH
             )
 
-        smallest = next(b for b in range(1, MEASURED_PARTITION + 1) if admissible(b))
-        assert STAGED_FUTURES_BUCKETS == smallest, (
-            f"the smallest partition clearing both bounds is {smallest}, but "
-            f"{STAGED_FUTURES_BUCKETS} ships — publish sooner, or say here why not"
+        picked = next(
+            (b for b in range(1, MEASURED_PARTITION + 1) if qualifies(b)), None
+        )
+        assert picked is not None, (
+            "no partition satisfies the rule — the fixed prefix has grown past "
+            "what any partition can absorb; this is the #3536 repair, not a dial"
+        )
+        assert STAGED_FUTURES_BUCKETS == picked, (
+            f"the rule picks {picked} (margin {admission_margin(picked):+.2%}), "
+            f"but {STAGED_FUTURES_BUCKETS} ships "
+            f"(margin {admission_margin(STAGED_FUTURES_BUCKETS):+.2%})"
         )
 
     def test_the_partition_is_a_usable_count(self):
@@ -182,8 +237,12 @@ class TestTheGuardFiresOnTheCodeThatShipped:
     is load-bearing rather than trivially satisfied by whatever is checked in.
     """
 
-    @pytest.mark.parametrize("buckets", [128, 64, 32, 16])
+    @pytest.mark.parametrize("buckets", [128, 64, 32, 24])
     def test_the_budget_rejects_every_partition_that_was_too_large(self, buckets):
+        # 16 came off this list when CERT-2071's repair raised the budget to 16
+        # beats: at 12.4 projected beats it is now inside it, and what rejects
+        # it is the SELECTION RULE's margin bar, not the budget. The two bounds
+        # reject different things on purpose and neither is redundant.
         beats = predicted_generation_s(buckets) / MEASURED_USABLE_WINDOW_S
         assert beats > MAX_BEATS_TO_PUBLISH, (
             f"{buckets} buckets projects {beats:.0f} beats, which the budget "
@@ -210,6 +269,110 @@ class TestTheGuardFiresOnTheCodeThatShipped:
         completes, banks nothing, and is the state #2052 recorded as a Postgres
         statement timeout. The budget test alone would happily accept it.
         """
-        ceiling = MEASURED_USABLE_WINDOW_S * MAX_WINDOW_FRACTION
+        ceiling = admission_ceiling_s()
         assert predicted_unit_s(1) > ceiling
         assert predicted_generation_s(1) / MEASURED_USABLE_WINDOW_S <= MAX_BEATS_TO_PUBLISH
+
+class TestTwoConsecutiveBeatsEachBankAUnit:
+    """CERT-2071's required regression, driven through the REAL gate.
+
+    The BLOCK's finding was not that 5 is slow — it is that the production
+    admission rule REFUSES the beat after the first new-size unit completes, so
+    the build alternates between a productive beat and a self-blocked one and
+    the "beats to publish" arithmetic silently doubles. A partition is only
+    shippable if TWO CONSECUTIVE beats each admit a unit.
+
+    These call ``_unit_fits_in_window`` itself — production's own predicate,
+    with production's own ``STAGED_UNIT_WINDOW_SAFETY`` — rather than restating
+    its inequality. A guard that re-derives the rule it is checking agrees by
+    construction; this one can only pass if the shipped code says so.
+    """
+
+    @staticmethod
+    def _two_beats(buckets: int, carried_level_s: float) -> tuple[bool, bool]:
+        """``(beat 1 admitted, beat 2 admitted)`` at a partition.
+
+        Beat 1 opens with the level carried from the PREVIOUS partition's beats
+        (nothing at this size has run yet) and, if it is admitted, ends having
+        measured this size's own cost. Beat 2 opens on that new level. That
+        second opening is the one the BLOCK caught.
+        """
+        window_ms = MEASURED_USABLE_WINDOW_S * 1000.0
+        new_cost_ms = predicted_unit_s(buckets) * 1000.0
+
+        beat1 = _unit_fits_in_window(
+            window_ms, worst_unit_ms=0.0, prior_unit_ms=carried_level_s * 1000.0
+        )
+        beat2 = _unit_fits_in_window(
+            window_ms, worst_unit_ms=0.0, prior_unit_ms=new_cost_ms
+        )
+        return beat1, beat2
+
+    def test_the_shipping_partition_admits_a_unit_on_two_consecutive_beats(self):
+        beat1, beat2 = self._two_beats(
+            STAGED_FUTURES_BUCKETS, carried_level_s=MEASURED_UNIT_S_AT_128
+        )
+        assert beat1, "the deploy beat is refused before it measures anything"
+        assert beat2, (
+            f"B={STAGED_FUTURES_BUCKETS} banks a unit and then BLOCKS ITSELF: "
+            f"{predicted_unit_s(STAGED_FUTURES_BUCKETS):.0f}s x "
+            f"{STAGED_UNIT_WINDOW_SAFETY} exceeds the "
+            f"{MEASURED_USABLE_WINDOW_S:.0f}s budget, so beat two refuses its "
+            f"first unit — progress alternates and the beat count doubles"
+        )
+
+    @pytest.mark.parametrize("buckets", [2, 4, 5, 6, 7])
+    def test_it_fails_on_beat_two_for_every_partition_the_block_named(self, buckets):
+        """The falsifier, run against the values this guard must reject.
+
+        5 is the one CERT-2071 caught on the exact SHA. Each of these is
+        admitted on beat one — the carried 128-era level is small enough to let
+        it through — and refused on beat two by its own measurement. That
+        asymmetry is precisely why a one-beat check could not see the defect,
+        and why this class exists.
+        """
+        beat1, beat2 = self._two_beats(buckets, carried_level_s=MEASURED_UNIT_S_AT_128)
+        assert beat1, "setup is wrong: beat one should be admitted on the old level"
+        assert not beat2, (
+            f"B={buckets} now survives beat two — the model or the gate moved, "
+            f"and the partition choice must be re-derived before trusting this"
+        )
+
+
+class TestNoPartitionIsComfortable:
+    """The finding that outlives whatever number ships, stated as assertions.
+
+    It is the reason CERT-2071's "choose a partition with defensible real
+    margin" cannot be fully satisfied by a dial, and the reason the frozen-file
+    repair is required rather than optional. Anyone who reads a self-blocked
+    beat as evidence against the shipped partition should meet this first.
+    """
+
+    def test_the_fixed_prefix_alone_nearly_fills_the_window(self):
+        fixed, _ = fit_cost_model()
+        share = fixed * STAGED_UNIT_WINDOW_SAFETY / MEASURED_USABLE_WINDOW_S
+        assert share > 0.9, (
+            f"the fixed prefix at the safety factor is {share:.1%} of the unit "
+            f"budget — if this has fallen below 90% the repair has landed and "
+            f"the partition should be re-derived with the new headroom"
+        )
+
+    def test_the_best_margin_any_partition_can_reach_is_small(self):
+        assert max_achievable_margin() < 0.10, (
+            "more than 10% headroom is now reachable — re-derive the partition"
+        )
+
+    def test_beat_to_beat_variance_exceeds_the_best_achievable_margin(self):
+        """The structural statement: self-blocked beats are not a partition bug.
+
+        One unit measured 723.8 s and then 857.0 s on consecutive beats at the
+        SAME partition — +18.4%, against a best-case margin of +7.3%. No value
+        of ``STAGED_FUTURES_BUCKETS`` can absorb that, including the 128 that
+        shipped for weeks. The dial changes how often a self-block costs
+        something, never whether one can happen.
+        """
+        assert MEASURED_BEAT_TO_BEAT_VARIANCE > max_achievable_margin(), (
+            f"variance {MEASURED_BEAT_TO_BEAT_VARIANCE:+.1%} is now inside the "
+            f"achievable margin {max_achievable_margin():+.1%} — the build has "
+            f"become schedulable and this file's pessimism should be revisited"
+        )
