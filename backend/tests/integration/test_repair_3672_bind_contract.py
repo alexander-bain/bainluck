@@ -108,7 +108,12 @@ class TestTheRepairsOwnStatementsSurviveTheDriver:
 
         assert isinstance(SINCE, datetime)
         await pg_session.execute(
-            text("INSERT INTO sports (id, key, name) VALUES (1, 'tennis_wta', 'WTA')")
+            text(
+                # `active` is NOT NULL with a PYTHON-side default only, and a
+                # raw INSERT bypasses it — see test_pg_gate_seed_completeness.
+                "INSERT INTO sports (id, key, name, active) "
+                "VALUES (1, 'tennis_wta', 'WTA', true)"
+            )
         )
         rows = {
             "before": SINCE.replace(tzinfo=timezone.utc) - timedelta(days=30),
@@ -125,9 +130,13 @@ class TestTheRepairsOwnStatementsSurviveTheDriver:
             )
             await pg_session.execute(
                 text(
+                    # category / mutually_exclusive / status are NOT NULL with
+                    # PYTHON-side defaults only; a raw INSERT bypasses those.
                     "INSERT INTO futures_markets "
-                    "  (id, source, external_id, name, event_id) "
-                    "VALUES (:i, 'kalshi', :ext, 'Minnen vs Charaeva', :i)"
+                    "  (id, source, external_id, name, event_id, "
+                    "   category, mutually_exclusive, status) "
+                    "VALUES (:i, 'kalshi', :ext, 'Minnen vs Charaeva', :i, "
+                    "        'championship', true, 'open')"
                 ),
                 {"i": i, "ext": f"KXWTACHALLENGERMATCH-26JUN0{i}MINCHA"},
             )
@@ -165,7 +174,12 @@ class TestTheRepairsOwnStatementsSurviveTheDriver:
         )
 
         await pg_session.execute(
-            text("INSERT INTO sports (id, key, name) VALUES (1, 'tennis_wta', 'WTA')")
+            text(
+                # `active` is NOT NULL with a PYTHON-side default only, and a
+                # raw INSERT bypasses it — see test_pg_gate_seed_completeness.
+                "INSERT INTO sports (id, key, name, active) "
+                "VALUES (1, 'tennis_wta', 'WTA', true)"
+            )
         )
         when = SINCE.replace(tzinfo=timezone.utc) + timedelta(days=30)
         await pg_session.execute(
@@ -178,9 +192,11 @@ class TestTheRepairsOwnStatementsSurviveTheDriver:
         )
         await pg_session.execute(
             text(
-                "INSERT INTO futures_markets (id, source, external_id, name, event_id) "
+                "INSERT INTO futures_markets "
+                "  (id, source, external_id, name, event_id, "
+                "   category, mutually_exclusive, status) "
                 "VALUES (1, 'kalshi', 'KXWTACHALLENGERMATCH-26JUN02MINCHA', "
-                "        'Minnen vs Charaeva', 1)"
+                "        'Minnen vs Charaeva', 1, 'championship', true, 'open')"
             )
         )
         await pg_session.commit()
