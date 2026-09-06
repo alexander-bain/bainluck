@@ -57,13 +57,26 @@ STUBS = {
 }
 
 
-def run_arms(tmp_path, stub, reps=1):
+# macOS prints "load averages:", Linux prints "load average:". CI is Linux, this rig is run on a
+# Mac, and the wrapper has to stamp a real number on both.
+UPTIME_FORMATS = {
+    "macos": "22:02  up 1 day,  9:58, 15 users, load averages: 9.14 10.29 13.08",
+    "linux": "21:58:32 up 5 days, 23:04,  3 users,  load average: 5.71, 5.81, 5.75",
+}
+
+
+def run_arms(tmp_path, stub, reps=1, uptime=None):
     """Run the wrapper with `node` stubbed out. Returns (exit_code, combined_output, outdir)."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     node = bin_dir / "node"
     node.write_text(STUBS[stub])
     node.chmod(0o755)
+
+    if uptime is not None:
+        fake = bin_dir / "uptime"
+        fake.write_text(f'#!/bin/bash\necho "{UPTIME_FORMATS[uptime]}"\n')
+        fake.chmod(0o755)
 
     out_dir = tmp_path / "out"
     env = dict(os.environ)
@@ -137,3 +150,46 @@ def test_load_stamping_still_happens(tmp_path):
     row = json.loads((out_dir / "discover-A-first-r1.json").read_text())["results"][0]
     assert "load1" in row and isinstance(row["load1"], float)
     assert row["exit"] == 0
+
+
+@pytest.mark.parametrize("flavour,expected", [("macos", 9.14), ("linux", 5.71)])
+def test_load_average_parses_on_both_platforms(tmp_path, flavour, expected):
+    """macOS says "load averages:", Linux says "load average:".
+
+    The original pattern matched only the plural, so on Linux the substitution no-opped and the
+    stamp became the first field of the line — a clock, "21:58:32". Harmless while the exit code
+    was discarded; fatal once the validator's exit code counts.
+    """
+    code, out, out_dir = run_arms(tmp_path, "healthy", uptime=flavour)
+    assert code == 0, f"{flavour} uptime broke the run:\n{out}"
+    row = json.loads((out_dir / "discover-A-first-r1.json").read_text())["results"][0]
+    assert row["load1"] == expected
+
+
+def test_unparseable_load_average_is_a_null_stamp_not_a_dead_arm(tmp_path):
+    """A cosmetic stamp failure must not be reported as a failed measurement.
+
+    Same class of lie as the defect this file exists for, pointed the other way.
+    """
+    bin_dir = tmp_path / "prebin"
+    bin_dir.mkdir()
+    fake = bin_dir / "uptime"
+    fake.write_text('#!/bin/bash\necho "something no parser expected"\n')
+    fake.chmod(0o755)
+
+    node = bin_dir / "node"
+    node.write_text(STUBS["healthy"])
+    node.chmod(0o755)
+
+    out_dir = tmp_path / "out"
+    env = dict(os.environ)
+    env["PATH"] = f"{bin_dir}:{env['PATH']}"
+    env["FELT_SLEEP_S"] = "0"
+    proc = subprocess.run(
+        ["bash", str(WRAPPER), "discover", "1", str(out_dir)],
+        cwd=REPO, env=env, capture_output=True, text=True, timeout=120,
+    )
+
+    assert proc.returncode == 0, f"a good arm was failed over a bad load stamp:\n{proc.stdout}"
+    row = json.loads((out_dir / "discover-A-first-r1.json").read_text())["results"][0]
+    assert row["load1"] is None  # the row says the stamp is missing rather than inventing one

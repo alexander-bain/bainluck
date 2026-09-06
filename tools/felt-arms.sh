@@ -57,7 +57,13 @@ TOTAL=0
 for rep in $(seq 1 "$REPS"); do
   for entry in "${ARMS[@]}"; do
     arm="${entry%%:*}"; seed="${entry#*:}"
-    load=$(uptime | sed 's/.*averages: //' | awk '{print $1}' | tr -d ',')
+    # 🔴 `averages?` — macOS prints "load averages:", Linux prints "load average:". The original
+    # pattern matched only the plural, so on Linux the substitution silently no-opped and $load
+    # became the first field of the line instead: a CLOCK ("21:58:32"). That was invisible while the
+    # exit code was discarded and stderr swallowed — the stamp just never happened off macOS. It
+    # stops being invisible the moment the validator's exit code counts, so fix it rather than
+    # inherit it.
+    load=$(uptime | sed -E 's/.*load averages?:[[:space:]]*//' | awk '{print $1}' | tr -d ',')
     f="$OUT/$SURFACE-$arm-r$rep.json"
     echo "[$(date +%H:%M:%S)] load1=$load  $SURFACE  $arm  rep $rep"
     env FELT_MODE=cold FELT_THROTTLE=slow4g FELT_PACE_MS=0 FELT_ARM="$arm" \
@@ -73,7 +79,12 @@ for rep in $(seq 1 "$REPS"); do
     #   0 usable · 10 no valid run · 11 all self-throttled · 12 no file · 13 unreadable/unwritable
     python3 - "$f" "$load" "$rc" <<'PY'
 import json,sys
-p,load,rc=sys.argv[1],float(sys.argv[2]),int(sys.argv[3])
+p,rc=sys.argv[1],int(sys.argv[3])
+# A load average we could not parse is a MISSING STAMP, not a dead arm. Crashing here would report
+# a perfectly good measurement as a failed one, which is the same class of lie as the defect above,
+# pointed the other way. Stamp null and let the row say so.
+try: load=float(sys.argv[2])
+except ValueError: load=None
 try: d=json.load(open(p))
 except FileNotFoundError: raise SystemExit(12)
 except Exception: raise SystemExit(13)
