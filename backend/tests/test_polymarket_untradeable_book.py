@@ -282,13 +282,18 @@ class TestForwardOnlyByConstruction:
             )
 
     def test_parent_market_path_no_longer_bypasses_the_guard(self):
-        """Path 4 — the least-guarded write, per the #1578 audit."""
+        """Path 4 — the least-guarded write, per the #1578 audit.
+
+        #3613 moved this path into `_parent_outcome_data`, which is now the ONE
+        place that builds a parent market's legs — both the hourly poll and the
+        dark-market refresh call it. Reading that function's own source instead
+        of a fixed-width slice of the module makes the guard stronger: it can no
+        longer pass because a neighbouring block happened to fall inside 1,400
+        characters, and it now covers the refresh path for free.
+        """
         from app.tasks import polymarket
 
-        src = inspect.getsource(polymarket)
-        marker = "# Also keep parent market outcomes"
-        assert marker in src
-        block = src[src.index(marker) : src.index(marker) + 1400]
+        block = inspect.getsource(polymarket._parent_outcome_data)
         assert "is_fabricated_midpoint(" in block, (
             "the parent-market pass takes Gamma's raw outcome_prices[0]; it must "
             "apply the #1578 phantom test"

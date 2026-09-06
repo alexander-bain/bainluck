@@ -1233,6 +1233,36 @@ def refresh_linked_game_books(self):
 
 
 @celery_app.task(
+    bind=True,
+    name="app.tasks.refresh_linked_polymarket_books",
+    soft_time_limit=300,
+    time_limit=360,
+)
+def refresh_linked_polymarket_books(self):
+    """#3613: give a price to a LINKED Polymarket market holding NO outcome rows.
+
+    The Kalshi twin above, one venue over, and the same three paths fail for the
+    same reasons: the hourly Gamma poll is a bounded newest-first discovery scan
+    (measured 2026-09-06 on `volume_updated_at`, its own stamp: of 1,607 open
+    linked markets, 152 touched inside six hours and 279 not for over a week),
+    `refresh_stale_futures_prices` refuses to create an outcome by design, and
+    the 2-minute live poll is UPDATE-only. A market listed before its book opens
+    therefore keeps the parent row it was born with and never gets legs.
+
+    501 open linked markets across 159 events were dark on 2026-09-06, and 20 of
+    those event pages showed no price from any source at all.
+
+    Cost scales with BATCHES (20 event ids per Gamma call), not markets.
+    Mechanism: `app/tasks/polymarket.py`.
+    """
+    from app.tasks.polymarket import _refresh_linked_polymarket_books
+
+    return _tracked_run(
+        "refresh_linked_polymarket_books", _refresh_linked_polymarket_books()
+    )
+
+
+@celery_app.task(
     name="app.tasks.refresh_dated_fixture_starts",
     soft_time_limit=240,
     time_limit=300,
@@ -4510,6 +4540,17 @@ celery_app.conf.beat_schedule = {
     "refresh-linked-game-books-hourly": {
         "task": "app.tasks.refresh_linked_game_books",
         "schedule": crontab(minute=20),
+        "options": {"queue": "heavy"},
+    },
+    # #3613, the Polymarket twin of the entry above. `:35` keeps it clear of
+    # both its Kalshi sibling at `:20` and the price refresh at `:50`, and off
+    # the `:15` Gamma discovery poll — the two Gamma readers never run together.
+    # `heavy` for the same reason the sibling states: `background` has ~one
+    # effective slot for ~40 beats, and this is the same SHAPE — a bounded,
+    # batched venue re-read of rows we already hold.
+    "refresh-linked-polymarket-books-hourly": {
+        "task": "app.tasks.refresh_linked_polymarket_books",
+        "schedule": crontab(minute=35),
         "options": {"queue": "heavy"},
     },
     # UX-P139. Every 10 minutes, and it is cheap because the register bounds
