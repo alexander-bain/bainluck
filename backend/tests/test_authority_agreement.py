@@ -152,6 +152,14 @@ def test_a_five_hour_kickoff_gap_is_one_game_not_two_misses():
         # `ours_covered_pct` — as it must wherever our inventory sits inside
         # StatPal's span (#3519).
         "ours_covered_in_span_pct": 100.0,
+        # Zeros rather than `None`: the default join declares an identity
+        # relation on our side, the span exists, and the bucket this decomposes
+        # is empty — *measured, no duplicates* (#3616). `None` here would mean
+        # the question could not be asked, which is a different fact.
+        "ours_only_in_span_composition": {
+            "second_row_for_a_matched_game": 0,
+            "our_only_row_for_the_game": 0,
+        },
         # D63: NFL is scored on BOTH numbers, because both sides carry the same
         # population and where the two questions have the same answer asking
         # both is free. Here they do — and the day still does not advance the
@@ -366,6 +374,13 @@ def test_a_contest_we_hold_no_row_for_is_statpal_only():
         # question is askable — it is our own side that is empty, so there is
         # nothing to divide by (#3519).
         "ours_covered_in_span_pct": None,
+        # Zeros, not `None`, and the contrast with the line above is the point:
+        # the in-span PERCENTAGE has nothing to divide by, while the in-span
+        # COMPOSITION has an empty bucket to decompose and can say so (#3616).
+        "ours_only_in_span_composition": {
+            "second_row_for_a_matched_game": 0,
+            "our_only_row_for_the_game": 0,
+        },
         # D63 + spec rule 6. `pct` IS scored here (0.0 — StatPal lists a game
         # and we list none), but the other governing number has no denominator,
         # and a sport does not half clear a bar. So the day is NO-SCORE: it

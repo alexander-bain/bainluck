@@ -44,7 +44,9 @@ WHAT A ROW SAYS
     pick the wrong one. Each number's complement is split by horizon —
     ``statpal_only_by_horizon`` and ``ours_only_by_horizon`` — so an absence
     outside the span the other side publishes is never read as a disagreement
-    about a game.
+    about a game; and the one bucket of that split which IS a finding is split
+    again by ``ours_only_in_span_composition``, because most of what looked like
+    StatPal missing a game is us holding it twice (#3616).
   * ``schedule`` — within the window / off by hours / a different day. Reported,
     never merged into identity (spec rule 2: a blend buried five real findings
     inside twenty-four non-findings).
@@ -268,9 +270,24 @@ FLIP_BAR_PCT = 99.5
 #:         the reason to say so here rather than let seven daily rows say it.
 #:       - the only candidate that could govern MLB is the same number measured
 #:         INSIDE StatPal's span, which is what the pre-filtered row was already
-#:         reporting under the wrong name: **157 of 222, 70.72%**. That is 29
-#:         points below the bar, and #3093 (two of our rows for one game) is a
-#:         known contributor of unmeasured size to the 65-game complement.
+#:         reporting under the wrong name: **157 of 222, 70.72%**. That reads 29
+#:         points below the bar, and #3093 (two of our rows for one game) was
+#:         named here as "a known contributor of unmeasured size" to the 65-game
+#:         complement.
+#:
+#:         **It is now measured, and it is not a contributor — it is the whole
+#:         complement** (#3616, published as `ours_only_in_span_composition`).
+#:         Production 2026-09-06: the in-span bucket is 79 rows and 79 of them
+#:         are a second row of ours for a game the same pass already matched. An
+#:         independent census of our own table over those dates finds 253 rows
+#:         resolving to 174 distinct games. Counted once per game the two sides
+#:         agree on 173 of 174, so MLB's distance from the bar is one game and
+#:         not 29 points, and every point of the apparent gap is ours to fix
+#:         rather than StatPal's to serve. That does NOT make MLB rulable today:
+#:         the number a governing ruling would be scored on still counts rows,
+#:         the duplicate rows are still there, and retiring them is lane1's
+#:         (#3093 / #2693, D39). What changed is that the blocker has a name, an
+#:         owner and a size instead of a suspicion.
 #:
 #:         That candidate is now PUBLISHED, as `identity.ours_covered_in_span_pct`
 #:         (#3519). It still governs nothing — this map is unchanged and naming it
@@ -306,6 +323,14 @@ FLIP_BAR_PCT = 99.5
 #:         rows for one match, not two matches; each one inflates `ours_only` by
 #:         a row that agrees with nothing by construction. Same shape as #3093's
 #:         contribution to MLB's in-span misses, and lane1's under D39/#2693.
+#:
+#:         MLB's half of that sentence is now a number on the row and tennis's is
+#:         not, and the asymmetry is deliberate rather than pending:
+#:         `ours_only_in_span_composition` publishes `None` for both draws
+#:         because the tennis join's identity relation is not a key and cannot be
+#:         asked "are these two rows of ours the same match?" (see
+#:         `Join.same_game_on_our_side`). The 1,811 above stands as the estimate
+#:         it always was, measured by a query rather than by the join.
 #:
 #:     Proposing a governing number for either population is a D63 amendment and
 #:     Alex's, not this file's — and it needs those two fixed first, or the number
@@ -443,6 +468,7 @@ def _identity_block(
     horizon: dict[str, int],
     ours_horizon: dict[str, int],
     statpal_has_span: bool,
+    in_span_composition: Optional[dict[str, int]] = None,
 ) -> dict[str, Any]:
     """The identity bucket, with its numbers and the ruling on which decides.
 
@@ -510,6 +536,16 @@ def _identity_block(
             if statpal_has_span
             else None
         ),
+        # What the bucket above DIVIDES BY is made of: their hole, or our own
+        # second row for a game already matched. See
+        # `_ours_only_in_span_composition` — including why MLB reads 79 of 79
+        # here and why that changes what `ours_covered_in_span_pct` means.
+        #
+        # PUBLISHED, NOT GOVERNING, and not subtracted from anything: the two
+        # counts sum to `ours_only_by_horizon.inside_statpal_span` and neither is
+        # removed from `ours_covered_in_span_pct`'s denominator. `None` when the
+        # join's identity relation cannot answer it (tennis).
+        "ours_only_in_span_composition": in_span_composition,
     }
     identity["governing"] = governing_identity(sport_key, identity)
     return identity
@@ -848,6 +884,27 @@ class Join:
         "normalised (away, home) pair; kickoff is a tiebreak within a key and "
         "never a filter"
     )
+    #: "Are these two rows of OURS the same game?" — the strategy's own identity
+    #: relation, turned on our side alone, or `None` if it cannot say.
+    #:
+    #: Only `_ours_only_in_span_composition` reads it, and only to answer one
+    #: question: is an in-span miss of ours a SECOND row for a game this same
+    #: pass already matched? That question is answerable in our own table, but
+    #: only in the vocabulary of the strategy that decided what "the same game"
+    #: meant a hundred lines earlier — a second, hand-written notion of sameness
+    #: here would report a duplicate the join does not believe in, or miss one it
+    #: does, and the number would then be measuring the disagreement between two
+    #: definitions instead of the data.
+    #:
+    #: **`None` is the default, and the default is the safe direction.** A
+    #: strategy whose identity relation is not a key cannot answer this — tennis
+    #: is the standing case (`pair_by_normalized_key`'s docstring says why:
+    #: `Garcia` and `Garcia Garcia` are both reachable from `G. Garcia` and are
+    #: not each other, so no key holds them). A strategy that stays silent gets
+    #: `None` published, which reads as *not measured*; inventing zeros for it
+    #: would read as *measured, no duplicates* about the sport whose duplicates
+    #: are the largest known population on the row (gotcha #53).
+    same_game_on_our_side: Optional[Callable[[Side, Side], bool]] = None
 
     def __post_init__(self) -> None:
         """Both ways a declared vocabulary can lie, refused at construction.
@@ -940,6 +997,23 @@ def pair_by_normalized_key(
         statpal_only.extend(spare_f)
         ours_only.extend(spare_r)
 
+    def same_game(a: Side, b: Side) -> bool:
+        """Two of OUR rows that this join would have put under one fixture.
+
+        The key join's own relation, restated on one side: same normalised pair,
+        and kickoffs close enough that they cannot be two meetings of a series.
+        `WITHIN` is the tolerance rather than exact equality because a duplicate
+        row is frequently written by a second endpoint with its own rounding —
+        and it is a tolerance rather than the whole key because without it the
+        three games of one series, which share a key by design, would all read as
+        duplicates of each other.
+        """
+        ka, kb = _pair_key(a, normalize), _pair_key(b, normalize)
+        if ka is None or kb is None or ka != kb:
+            return False
+        d = _delta(a, b)
+        return d is not None and d <= WITHIN
+
     return Join(
         fixtures=usable_f,
         rows=usable_r,
@@ -948,6 +1022,7 @@ def pair_by_normalized_key(
         ours_only=ours_only,
         unusable_fixtures=[f for f in fixtures if _pair_key(f, normalize) is None],
         unusable_rows=[r for r in rows if _pair_key(r, normalize) is None],
+        same_game_on_our_side=same_game,
     )
 
 
@@ -1173,6 +1248,91 @@ def _ours_only_by_horizon(
     )
 
 
+def _ours_only_in_span_composition(
+    ours_only: Sequence[Side],
+    paired: Sequence[tuple[Side, Side]],
+    fixtures: Sequence[Side],
+    same_game: Optional[Callable[[Side, Side], bool]],
+) -> tuple[Optional[dict[str, int]], list[dict[str, Any]]]:
+    """What `inside_statpal_span` is MADE OF: their hole, or our second row.
+
+    `_ours_only_by_horizon` established that an absence inside StatPal's span is
+    the only part of `ours_only` that could be evidence of a hole in the site.
+    That was true of the bucket and false of most of its contents, and MLB is the
+    case that proves it. Production 2026-09-06: `ours_covered_in_span_pct` reads
+    **68.65% (173 of 252)**, and an independent census of our own table over the
+    same dates finds 253 rows resolving to 174 distinct games — **79 duplicate
+    rows**, against an `inside_statpal_span` bucket of **79** (#3616). The same
+    79. Every in-span receipt the cap let through is a member of a size-2
+    duplicate group, in four shapes, all of them one game written twice:
+
+        41 x (completed / livescores id) + (suspended / schedule id)
+        23 x (closed    / schedule id)   + (completed / livescores id)
+        14 x (scheduled / schedule id)   + (scheduled / blank)
+         1 x (live      / livescores id) + (live      / schedule id)
+
+    So MLB's 31-point "disagreement with StatPal" is not one. Counted once per
+    game, the two sides agree on 173 of 174. Nobody could read that off the row,
+    and the code that publishes the 68.65 said so out loud — #3093 was named
+    there as "a known contributor of unmeasured size". Unmeasured is the word
+    this function retires, and the reason it belongs on the row rather than in an
+    artifact is the same one #3519 gave for the in-span figure itself: naming
+    MLB's governing number is a D63 amendment and Alex's, the two readings point
+    at opposite decisions, and the day #3093 lands the number has to move by
+    itself instead of costing another census.
+
+    Two buckets, and the second is deliberately not called a hole:
+
+      * ``second_row_for_a_matched_game`` — this pass matched another of our rows
+        to a StatPal fixture, and `same_game` says this one is that same game.
+        Ours to fix, and already filed: #3093 / #2693, lane1's under D39.
+      * ``our_only_row_for_the_game`` — the residue. The single row we hold for
+        that game, inside the dates StatPal serves, with nothing under it on
+        their side. Named for what was measured and not for its cause: it is
+        where a genuine StatPal gap would appear, and also where a name our
+        normaliser splits would appear, and this function cannot tell those two
+        apart.
+
+    Reported, never subtracted (spec rule 5). `ours_covered_in_span_pct` does not
+    move, no gate moves, and `GOVERNING_IDENTITY_NUMBERS` is untouched.
+
+    `None`, never zeros, when the strategy declares no identity relation on our
+    side — see `Join.same_game_on_our_side`. Tennis is that case today, and it is
+    exactly the sport where zeros would lie loudest.
+    """
+    if same_game is None:
+        return None, []
+
+    span = timed_span(fixtures)
+    if span is None:
+        # No span, so nothing is "inside" one and the bucket this decomposes is
+        # itself all `unplaceable`. Zeros here would be a decomposition of a
+        # bucket that does not exist, which is the same claim `_split_against_span`
+        # refuses to make one function up.
+        return None, []
+
+    first, last = span
+    matched_rows = [r for _f, r in paired]
+    counts = {"second_row_for_a_matched_game": 0, "our_only_row_for_the_game": 0}
+    receipts: list[dict[str, Any]] = []
+
+    for miss in ours_only:
+        if miss.start is None or miss.start < first or miss.start > last:
+            continue
+        twin = next((r for r in matched_rows if same_game(miss, r)), None)
+        if twin is None:
+            counts["our_only_row_for_the_game"] += 1
+            continue
+        counts["second_row_for_a_matched_game"] += 1
+        if len(receipts) < RECEIPT_CAP:
+            # The matched row's ref is on the receipt because the finding is a
+            # PAIR of our event ids, and one of them alone cannot be acted on:
+            # #3093's repair has to know which row to keep.
+            receipts.append(_row_receipt(miss, matched_row=twin.ref))
+
+    return counts, receipts
+
+
 def build_agreement_row(
     *,
     sport_key: str,
@@ -1276,6 +1436,9 @@ def build_agreement_row(
     denominator = both + len(statpal_only) + len(ours_only)
     horizon = _statpal_only_by_horizon(statpal_only, real_rows)
     ours_horizon = _ours_only_by_horizon(ours_only, real_fixtures)
+    in_span_composition, in_span_duplicates = _ours_only_in_span_composition(
+        ours_only, paired, real_fixtures, join.same_game_on_our_side
+    )
     #: The same span `ours_horizon` placed our misses against, read once here so
     #: the in-span percentage and the bucket it divides by cannot come from two
     #: different answers to "what dates does StatPal serve?".
@@ -1389,6 +1552,7 @@ def build_agreement_row(
                 horizon=horizon,
                 ours_horizon=ours_horizon,
                 statpal_has_span=statpal_span is not None,
+                in_span_composition=in_span_composition,
             ),
             "schedule": (
                 {
@@ -1422,6 +1586,11 @@ def build_agreement_row(
                     _fixture_receipt(f) for f in statpal_only[:RECEIPT_CAP]
                 ],
                 "ours_only": [_row_receipt(r) for r in ours_only[:RECEIPT_CAP]],
+                # Named, not just counted, for the reason `our_retired` is: the
+                # count says how big #3093 is and the receipts say WHICH pairs,
+                # and a repair that has to pick a row to keep cannot act on a
+                # number. Empty for a strategy that publishes no composition.
+                "ours_only_in_span_duplicates": in_span_duplicates,
                 "schedule_disagreements": schedule_receipts,
                 "anchor_mismatch": anchor_mismatch[:RECEIPT_CAP],
                 "polluted_column": polluted[:RECEIPT_CAP],
