@@ -444,6 +444,12 @@ async def test_a_non_game_outright_keeps_its_close_time(pg_session):
 _TENNIS_OCCURRENCE = datetime(2026, 9, 7, 18, 0, tzinfo=timezone.utc)
 _TENNIS_CLOSE = datetime(2026, 9, 21, 15, 0, tzinfo=timezone.utc)
 _ITF_TICKER_MIDNIGHT = datetime(2026, 9, 6, tzinfo=timezone.utc)
+_DOUBLES_TICKER_MIDNIGHT = datetime(2026, 9, 7, tzinfo=timezone.utc)
+
+assert _TENNIS_OCCURRENCE != _DOUBLES_TICKER_MIDNIGHT, (
+    "the venue hour must differ from the ticker midnight, or the Event arm "
+    "below cannot tell a repair from a no-op"
+)
 
 
 async def test_the_tennis_fixup_keeps_the_venue_start_but_still_repairs_a_close(
@@ -517,4 +523,167 @@ async def test_the_tennis_fixup_keeps_the_venue_start_but_still_repairs_a_close(
         f"{_ITF_TICKER_MIDNIGHT}. #3532 must not switch the fix-up off: 140 open "
         "ITF markets at the venue have no route to their occurrence and the "
         "ticker date is the only thing standing between them and a +14d close"
+    )
+
+
+# --------------------------------------------------------------------------
+# CERT-2070: the market row is not the ship. `GET /api/events/{id}` serialises
+# `event.commence_time`, and the page header and "Starts in" countdown read
+# that field — so the market can hold 18:00Z while the page renders midnight.
+# --------------------------------------------------------------------------
+
+
+async def _seed_event(session, *, event_id, external_id, commence, ticker):
+    """One tennis Event and the open Kalshi market linked to it.
+
+    The market is already at the venue occurrence: that is the steady state
+    after the main loop runs, and it is the state in which the Event is the
+    only thing still wrong.
+    """
+    from app.models.models import Event, FuturesMarket, Sport
+
+    sport = (
+        await session.execute(text("SELECT id FROM sports WHERE key = 'tennis_wta'"))
+    ).scalar_one_or_none()
+    if sport is None:
+        s = Sport(key="tennis_wta", name="WTA")
+        session.add(s)
+        await session.flush()
+        sport = s.id
+
+    session.add(
+        Event(
+            id=event_id,
+            external_id=external_id,
+            sport_id=sport,
+            home_team_name="Siniakova / Townsend",
+            away_team_name="Hunter / Krawczyk",
+            commence_time=commence,
+            status="scheduled",
+        )
+    )
+    await session.flush()
+    session.add(
+        FuturesMarket(
+            source="kalshi",
+            external_id=ticker,
+            name="Siniakova / Townsend vs Hunter / Krawczyk",
+            category="championship",
+            llm_sport_category="tennis",
+            status="open",
+            event_id=event_id,
+            commence_time=_TENNIS_OCCURRENCE,
+            resolution_date=_TENNIS_CLOSE,
+        )
+    )
+    await session.commit()
+
+
+async def _event_commence(session, event_id):
+    return (
+        await session.execute(
+            text("SELECT commence_time FROM events WHERE id = :i"), {"i": event_id}
+        )
+    ).scalar_one()
+
+
+async def _route_commence(session, event_id):
+    """What `GET /api/events/{id}` actually serialises, off this same server."""
+    from httpx import ASGITransport, AsyncClient
+
+    from app.main import app
+    from app.routes.events import _event_detail_cache
+    from app.services.database import get_db
+
+    # The route memoises by event id in-process; a hit would answer from a
+    # payload built before the repair ran and the arm would prove nothing.
+    _event_detail_cache.clear()
+
+    async def _db():
+        yield session
+
+    app.dependency_overrides[get_db] = _db
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.get(f"/api/events/{event_id}")
+        assert resp.status_code == 200, f"route returned {resp.status_code}"
+        return datetime.fromisoformat(resp.json()["commence_time"])
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+        _event_detail_cache.clear()
+
+
+async def test_the_event_the_page_reads_gets_the_venue_hour(pg_session):
+    """CERT-2070's named repair, through the real path and the real route.
+
+    Three Events, one pass. `/events/15305555` is the specimen from the issue.
+    Both controls exist because provenance and value are independent guards and
+    a single control cannot show that either one is doing work.
+    """
+    await _seed_event(
+        pg_session,
+        event_id=15305555,
+        external_id="pm_kalshi_KXWTADOUBLES-26SEP07SINTOWHUNKRA",
+        commence=_DOUBLES_TICKER_MIDNIGHT,
+        ticker="KXWTADOUBLES-26SEP07SINTOWHUNKRA",
+    )
+    # Control A — provenance. An ESPN row sitting on the very same midnight.
+    # Only the `pm_kalshi_` guard stands between it and a rewrite.
+    await _seed_event(
+        pg_session,
+        event_id=15305556,
+        external_id="espn_401745231",
+        commence=_DOUBLES_TICKER_MIDNIGHT,
+        ticker="KXWTAMATCH-26SEP07OSARYB",
+    )
+    # Control B — the block's named control: an authoritative non-midnight start.
+    authoritative = datetime(2026, 9, 7, 15, 0, tzinfo=timezone.utc)
+    await _seed_event(
+        pg_session,
+        event_id=15305557,
+        external_id="espn_401745232",
+        commence=authoritative,
+        ticker="KXWTAMATCH-26SEP07JOVGAU",
+    )
+
+    from app.tasks import kalshi as kalshi_task
+
+    @asynccontextmanager
+    async def _session_cm():
+        yield pg_session
+
+    with patch.object(kalshi_task, "get_task_session", _session_cm):
+        result = await kalshi_task._fix_tennis_commence_times()
+
+    assert result["events"] == 1, (
+        f"the repair moved {result['events']} events, expected exactly 1. 0 means "
+        "the Event pass never ran and the page is still wrong; >1 means a control "
+        f"was overwritten. full result: {result}"
+    )
+
+    stored = _utc(await _event_commence(pg_session, 15305555))
+    assert stored == _TENNIS_OCCURRENCE, (
+        f"events.commence_time is {stored}, expected {_TENNIS_OCCURRENCE}. This is "
+        "the field the page reads — the market row being right does not move it"
+    )
+
+    served = await _route_commence(pg_session, 15305555)
+    assert _utc(served) == _TENNIS_OCCURRENCE, (
+        f"GET /api/events/15305555 served {served}, expected {_TENNIS_OCCURRENCE}. "
+        "The stored value is right but the payload is not, so the header and the "
+        "'Starts in' countdown still render 8:00 PM the previous evening"
+    )
+
+    same_midnight = _utc(await _event_commence(pg_session, 15305556))
+    assert same_midnight == _DOUBLES_TICKER_MIDNIGHT, (
+        f"an ESPN event was re-timed to {same_midnight}. Provenance, not the "
+        "value, is what makes the specimen eligible — an authoritative start is "
+        "never overwritten from a Kalshi ticker even when it sits on the midnight"
+    )
+
+    untouched = _utc(await _event_commence(pg_session, 15305557))
+    assert untouched == authoritative, (
+        f"an authoritative non-midnight event moved to {untouched}"
     )

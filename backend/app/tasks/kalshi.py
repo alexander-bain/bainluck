@@ -1536,10 +1536,15 @@ async def _poll_kalshi_markets():
             # backstop, so its date is two weeks out until it settles.
             try:
                 tennis_fixed = await _fix_tennis_commence_times()
-                stats["tennis_commence_fixed"] = tennis_fixed
+                stats["tennis_commence_fixed"] = tennis_fixed["markets"]
+                # #3532: counted separately from the market fixes because the
+                # steady state is "market already correct, Event still wrong" —
+                # folding them together would report the user-visible half as 0.
+                stats["tennis_event_commence_fixed"] = tennis_fixed["events"]
             except Exception as e:
                 logger.warning("Tennis commence_time fix failed: %s", e)
                 stats["tennis_commence_fixed"] = 0
+                stats["tennis_event_commence_fixed"] = 0
         else:
             stats["post_loop_skipped_deadline"] = True
 
@@ -2004,6 +2009,20 @@ _TENNIS_MATCH_SERIES_RE = _re.compile(
 )
 
 
+def _tennis_ticker_date(external_id: str) -> datetime | None:
+    """The ticker's own date for a per-match tennis series, or None.
+
+    Split out so the driver and :func:`_tennis_commence_target` cannot drift on
+    which rows are in scope or on what "the ticker date" is — the Event repair
+    below has to compare against the same instant the market decision used.
+    """
+    from app.utils.prediction_market_matching import extract_game_date_from_ticker
+
+    if not external_id or not _TENNIS_MATCH_SERIES_RE.match(external_id):
+        return None
+    return extract_game_date_from_ticker(external_id)
+
+
 def _knows_the_hour(candidate: datetime | None, ticker_date: datetime) -> bool:
     """True when ``candidate`` is a start time worth preferring over the bare
     ticker midnight.
@@ -2065,12 +2084,7 @@ def _tennis_commence_target(
     rows a reader sees — which is what ``_knows_the_hour`` rejecting an exact
     ticker-midnight match is for.
     """
-    from app.utils.prediction_market_matching import extract_game_date_from_ticker
-
-    if not external_id or not _TENNIS_MATCH_SERIES_RE.match(external_id):
-        return None
-
-    ticker_date = extract_game_date_from_ticker(external_id)
+    ticker_date = _tennis_ticker_date(external_id)
     if ticker_date is None:
         return None
     for candidate in (event_commence, market_commence):
@@ -2079,20 +2093,83 @@ def _tennis_commence_target(
     return ticker_date
 
 
-async def _fix_tennis_commence_times() -> int:
-    """Re-date OPEN Kalshi tennis markets off the ticker, not the close_time.
+#: An auto-created event's ``external_id`` is ``f"pm_{source}_{ticker}"``
+#: (``_create_event_from_prediction_market``). That prefix is the only
+#: unambiguous "this row was born from a Kalshi market" marker on ``events``:
+#: ``commence_time_source`` is NULL on the specimen and on most of the
+#: population, so it cannot carry the provenance guard.
+_DERIVED_EVENT_ID_PREFIX = "pm_kalshi_"
+
+
+def _tennis_event_needs_the_hour(
+    *,
+    event_external_id: str | None,
+    event_commence: datetime | None,
+    ticker_date: datetime | None,
+    target: datetime | None,
+) -> bool:
+    """True when a market-born Event is still on the bare ticker midnight and
+    the venue's real hour is now available to give it.
+
+    #3532, the second half. Fixing ``futures_markets.commence_time`` is not the
+    ship: ``GET /api/events/{id}`` serialises ``event.commence_time``, and the
+    page header and "Starts in" countdown both read that field, so the market
+    row can carry 18:00Z while the page keeps rendering midnight. These Events
+    were auto-created FROM the clobbered market, so they inherited its midnight
+    and nothing else ever re-times them — the NHL/NBA/MLB re-link in
+    ``prediction_market_matching`` does not cover tennis.
+
+    Two guards, and both are needed:
+
+    * **Provenance.** Only a row whose ``external_id`` starts with
+      ``pm_kalshi_`` — one this pipeline minted itself. An ESPN or Odds API
+      event's start is authoritative and is never overwritten from a ticker.
+    * **Still hour-less.** Only when the Event sits EXACTLY on the ticker
+      midnight, i.e. it is carrying the ticker restated. Anything else already
+      knows something we do not, including a value some other writer has since
+      corrected.
+
+    Deliberately does NOT touch ``commence_time_source``. Stamping a source
+    that ``commence_time_is_a_reported_start`` accepts would feed the q076
+    live-birth/promotion class; this repair moves the instant and nothing else.
+
+    A market-born Event still holding the +14d close_time is also left alone:
+    it is out of the repair named in the CERT-2070 block, and re-dating it is a
+    different decision from restoring an hour to the right day.
+    """
+    if event_commence is None or ticker_date is None or target is None:
+        return False
+    if not (event_external_id or "").startswith(_DERIVED_EVENT_ID_PREFIX):
+        return False
+    if event_commence != ticker_date:
+        return False
+    return target != ticker_date
+
+
+async def _fix_tennis_commence_times() -> dict:
+    """Re-date OPEN Kalshi tennis markets, and carry the hour to their Events.
 
     Scoped to open markets: a resolved row's close_time has already collapsed
     to its real settlement instant, and re-dating it would invalidate closing
     lines that calibration has already banked. Mirrors the hockey fix-up, and
     like it resets calibration_probability on the outcomes it moves.
+
+    #3532: the Event pass is the half that a reader actually sees. See
+    :func:`_tennis_event_needs_the_hour` for the two provenance guards. It is a
+    separate list from ``fixed_ids`` on purpose — the common case is a market
+    that needs NO write (the main loop already stored the venue instant) beside
+    an Event that does, so sharing one counter would report the ship as a no-op.
+
+    Returns ``{"markets": n, "events": n, "scanned": n}``.
     """
     async with get_task_session() as session:
         result = await session.execute(text("""
                 SELECT fm.id,
                        fm.external_id,
                        fm.commence_time,
-                       e.commence_time AS event_commence
+                       fm.event_id,
+                       e.commence_time AS event_commence,
+                       e.external_id AS event_external_id
                 FROM futures_markets fm
                 LEFT JOIN events e ON e.id = fm.event_id
                 WHERE fm.source = 'kalshi'
@@ -2103,19 +2180,37 @@ async def _fix_tennis_commence_times() -> int:
         rows = result.fetchall()
 
         fixed_ids = []
+        event_updates = []
         for m in rows:
+            ticker_date = _tennis_ticker_date(m.external_id)
             target = _tennis_commence_target(
                 m.external_id, m.event_commence, market_commence=m.commence_time,
             )
             if target is None:
                 continue
-            if abs((m.commence_time - target).total_seconds()) <= 1800:
-                continue
-            await session.execute(
-                text("UPDATE futures_markets SET commence_time = :dt WHERE id = :id"),
-                {"dt": target, "id": m.id},
-            )
-            fixed_ids.append(m.id)
+            if abs((m.commence_time - target).total_seconds()) > 1800:
+                await session.execute(
+                    text(
+                        "UPDATE futures_markets SET commence_time = :dt "
+                        "WHERE id = :id"
+                    ),
+                    {"dt": target, "id": m.id},
+                )
+                fixed_ids.append(m.id)
+            if _tennis_event_needs_the_hour(
+                event_external_id=m.event_external_id,
+                event_commence=m.event_commence,
+                ticker_date=ticker_date,
+                target=target,
+            ):
+                await session.execute(
+                    text(
+                        "UPDATE events SET commence_time = :dt, updated_at = NOW() "
+                        "WHERE id = :id"
+                    ),
+                    {"dt": target, "id": m.event_id},
+                )
+                event_updates.append(m.event_id)
 
         if fixed_ids:
             await session.execute(
@@ -2127,15 +2222,22 @@ async def _fix_tennis_commence_times() -> int:
                 """),
                 {"ids": fixed_ids},
             )
+
+        if fixed_ids or event_updates:
             await session.commit()
             logger.info(
-                "Fixed commence_time for %d open Kalshi tennis markets "
-                "(of %d scanned)",
+                "Fixed commence_time for %d open Kalshi tennis markets and "
+                "carried the venue hour to %d market-born events (of %d scanned)",
                 len(fixed_ids),
+                len(event_updates),
                 len(rows),
             )
 
-        return len(fixed_ids)
+        return {
+            "markets": len(fixed_ids),
+            "events": len(event_updates),
+            "scanned": len(rows),
+        }
 
 
 async def _link_sports_props_to_events() -> dict:

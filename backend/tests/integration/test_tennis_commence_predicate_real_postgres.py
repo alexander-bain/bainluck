@@ -387,7 +387,17 @@ async def test_the_real_predicate_selects_only_the_rows_the_repair_may_move(
 
     # Three rows move, and only three: the plain bug, the one that defers to a
     # nearby Event, and the one that refuses a poisoned Event.
-    assert fixed == 3, f"expected 3 repairs, got {fixed}"
+    assert fixed["markets"] == 3, f"expected 3 repairs, got {fixed}"
+
+    # #3532 gave the driver a second, Event-side pass. Every Event this corpus
+    # seeds is inserted with a NULL `external_id`, so none carries the
+    # `pm_kalshi_` provenance that pass requires — and none may move. This is a
+    # free control on the provenance guard, in the one file that already drives
+    # the real SQL over a real Event join.
+    assert fixed["events"] == 0, (
+        f"the Event pass re-timed {fixed['events']} rows in a corpus with no "
+        "market-born Events — the provenance guard is not holding"
+    )
 
     assert _aware(commence["moves"]) == SEP07
     assert _aware(commence["event_agrees"]) == SEP06_KICKOFF, (

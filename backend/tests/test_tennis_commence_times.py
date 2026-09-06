@@ -276,6 +276,93 @@ class TestVenueOccurrenceSurvivesTheFixup:
         assert kalshi_task._is_kalshi_game_ticker(self.SPECIMEN) == "WTA"
 
 
+class TestTennisEventNeedsTheHour:
+    """#3532 / CERT-2070: the half a reader actually sees.
+
+    Fixing `futures_markets.commence_time` does not move the page.
+    `GET /api/events/{id}` serialises `event.commence_time`, and the header and
+    "Starts in" countdown read that field — so the market row can carry 18:00Z
+    while `/events/15305555` keeps rendering midnight. These Events were
+    auto-created FROM the clobbered market and nothing else re-times them.
+    """
+
+    TICKER_MIDNIGHT = datetime(2026, 9, 7, tzinfo=UTC)
+    OCCURRENCE = datetime(2026, 9, 7, 18, 0, tzinfo=UTC)
+    DERIVED = "pm_kalshi_KXWTADOUBLES-26SEP07SINTOWHUNKRA"
+
+    def _call(self, **kw):
+        kw.setdefault("event_external_id", self.DERIVED)
+        kw.setdefault("event_commence", self.TICKER_MIDNIGHT)
+        kw.setdefault("ticker_date", self.TICKER_MIDNIGHT)
+        kw.setdefault("target", self.OCCURRENCE)
+        return kalshi_task._tennis_event_needs_the_hour(**kw)
+
+    def test_a_market_born_event_on_the_ticker_midnight_is_repaired(self):
+        """The named specimen: event 15305555, `/events/15305555`."""
+        assert self._call() is True
+
+    @pytest.mark.parametrize(
+        "external_id",
+        [
+            "espn_401745231",          # ESPN
+            "odds_api_9f2c",           # Odds API
+            "pm_polymarket_0xabc",     # another venue's derived row
+            None,                      # no provenance at all
+            "",
+        ],
+    )
+    def test_an_event_we_did_not_mint_is_never_re_timed(self, external_id):
+        """The control the CERT-2070 block requires. An authoritative start is
+        never overwritten from a ticker, even when it happens to sit on the
+        ticker's midnight — provenance decides, not the value."""
+        assert self._call(event_external_id=external_id) is False
+
+    def test_an_authoritative_hour_is_not_overwritten(self):
+        """The other direction: a real kick-off is not the ticker midnight, so
+        the equality guard alone already refuses it."""
+        kickoff = datetime(2026, 9, 7, 15, 0, tzinfo=UTC)
+        assert self._call(event_commence=kickoff, target=kickoff) is False
+
+    def test_a_market_born_event_still_on_the_close_time_is_left_alone(self):
+        """Out of the repair named in the block. Re-dating a +14d close is a
+        different decision from restoring an hour to the right day, and doing
+        it here would move an Event two weeks with no venue instant behind it."""
+        assert self._call(event_commence=CLOSE_SHAPED) is False
+
+    def test_nothing_happens_when_there_is_no_hour_to_give(self):
+        """`target` back at the bare ticker midnight means the venue told us
+        nothing the Event does not already have — writing would be churn."""
+        assert self._call(target=self.TICKER_MIDNIGHT) is False
+
+    @pytest.mark.parametrize("field", ["event_commence", "ticker_date", "target"])
+    def test_a_missing_input_refuses(self, field):
+        assert self._call(**{field: None}) is False
+
+    def test_the_repaired_hour_still_links_to_its_own_ticker(self):
+        """The thing that would break silently. The Kalshi linkage guard
+        compares the ticker date to the EVENT's commence_time, and moving an
+        Event off midnight is exactly the sort of change that can push it out
+        of tolerance and unlink every market on it.
+
+        It does not, because a date-only ticker is compared by EASTERN CALENDAR
+        DAY (`_EVENT_DATE_MAX_DIFF_DAYS = 2`), not the ±3h
+        `_EVENT_DATE_MAX_DIFF_HOURS` window. Asserted against the real
+        predicate rather than reasoned about — I predicted the opposite.
+        """
+        from app.tasks.prediction_market_matching import auto_create_self_refutes
+
+        market = SimpleNamespace(
+            source="kalshi",
+            external_id="KXWTADOUBLES-26SEP07SINTOWHUNKRA",
+            commence_time=self.OCCURRENCE,
+        )
+        assert auto_create_self_refutes(market, self.TICKER_MIDNIGHT) is False
+        assert auto_create_self_refutes(market, self.OCCURRENCE) is False, (
+            "moving the Event to the venue hour put it outside the ticker-date "
+            "linkage tolerance — every market on it would stop linking"
+        )
+
+
 class _FakeResult:
     def __init__(self, rows):
         self._rows = rows
@@ -290,6 +377,7 @@ class _FakeSession:
     def __init__(self, rows):
         self._rows = rows
         self.updates = []          # (id, commence_time) pairs
+        self.event_updates = []    # (event_id, commence_time) pairs — #3532
         self.calibration_resets = []
         self.committed = False
 
@@ -299,6 +387,9 @@ class _FakeSession:
             return _FakeResult(self._rows)
         if "UPDATE futures_markets" in sql:
             self.updates.append((params["id"], params["dt"]))
+            return _FakeResult([])
+        if "UPDATE events" in sql:
+            self.event_updates.append((params["id"], params["dt"]))
             return _FakeResult([])
         if "futures_outcomes" in sql:
             self.calibration_resets.append(params["ids"])
@@ -323,12 +414,34 @@ def _install_fake_session(monkeypatch, rows):
     return session
 
 
-def _row(id, external_id, commence_time, event_commence=None):
+def _row(
+    id,
+    external_id,
+    commence_time,
+    event_commence=None,
+    *,
+    event_id=None,
+    event_external_id=None,
+):
+    """One row of the driver's SELECT.
+
+    `event_external_id` defaults to the market-born shape the auto-create
+    produces (`pm_kalshi_<ticker>`) whenever the row has a linked Event, so a
+    case that says nothing about provenance describes the majority population
+    rather than an unlinked one.
+    """
+    linked = event_commence is not None
     return SimpleNamespace(
         id=id,
         external_id=external_id,
         commence_time=commence_time,
         event_commence=event_commence,
+        event_id=event_id if event_id is not None else (id if linked else None),
+        event_external_id=(
+            event_external_id
+            if event_external_id is not None
+            else (f"pm_kalshi_{external_id}" if linked else None)
+        ),
     )
 
 
@@ -345,7 +458,7 @@ class TestFixTennisCommenceTimesDriver:
 
         fixed = await _fix_tennis_commence_times()
 
-        assert fixed == 1
+        assert fixed["markets"] == 1
         assert session.updates == [(1, datetime(2026, 9, 7, tzinfo=UTC))]
 
     @pytest.mark.asyncio
@@ -355,7 +468,9 @@ class TestFixTennisCommenceTimesDriver:
         rows = [_row(9, "KXWTA-26USO", datetime(2026, 9, 21, 15, 0, tzinfo=UTC))]
         session = _install_fake_session(monkeypatch, rows)
 
-        assert await _fix_tennis_commence_times() == 0
+        assert await _fix_tennis_commence_times() == {
+            "markets": 0, "events": 0, "scanned": 1,
+        }
         assert session.updates == []
         assert session.committed is False
 
@@ -372,7 +487,7 @@ class TestFixTennisCommenceTimesDriver:
         ]
         session = _install_fake_session(monkeypatch, rows)
 
-        assert await _fix_tennis_commence_times() == 1
+        assert (await _fix_tennis_commence_times())["markets"] == 1
         assert session.updates == [(3, kickoff)]
 
     @pytest.mark.asyncio
@@ -390,12 +505,20 @@ class TestFixTennisCommenceTimesDriver:
         assert session.committed is True
 
     @pytest.mark.asyncio
-    async def test_a_row_holding_the_venue_start_is_never_written(self, monkeypatch):
-        """#3532 end to end through the driver: the main loop has already put
-        the venue's 18:00Z on this row and its linked Event still carries the
-        old midnight. The driver must issue no UPDATE at all — not an UPDATE
-        that happens to write the same value, which would still reset
-        calibration_probability on every outcome, every beat."""
+    async def test_the_market_is_left_alone_and_the_event_gets_the_hour(
+        self, monkeypatch
+    ):
+        """#3532 end to end through the driver, both halves at once.
+
+        The steady state after the main loop has run: the market already holds
+        the venue's 18:00Z and its linked Event still carries the old midnight.
+
+        The market must get NO UPDATE — not even one writing the same value,
+        which would still reset `calibration_probability` on every outcome
+        every beat. The EVENT must get one, because `event.commence_time` is
+        the field `GET /api/events/{id}` serialises and the page header and
+        "Starts in" countdown render.
+        """
         occurrence = datetime(2026, 9, 7, 18, 0, tzinfo=UTC)
         rows = [
             _row(
@@ -403,21 +526,27 @@ class TestFixTennisCommenceTimesDriver:
                 "KXWTADOUBLES-26SEP07SINTOWHUNKRA",
                 occurrence,
                 event_commence=datetime(2026, 9, 7, tzinfo=UTC),
+                event_id=15305555,
             )
         ]
         session = _install_fake_session(monkeypatch, rows)
 
-        assert await _fix_tennis_commence_times() == 0
+        assert await _fix_tennis_commence_times() == {
+            "markets": 0, "events": 1, "scanned": 1,
+        }
         assert session.updates == []
         assert session.calibration_resets == []
-        assert session.committed is False
+        assert session.event_updates == [(15305555, occurrence)]
+        assert session.committed is True
 
     @pytest.mark.asyncio
     async def test_nothing_to_fix_commits_nothing(self, monkeypatch):
         rows = [_row(2, "KXATPMATCH-26SEP06PAUALC", datetime(2026, 9, 6, tzinfo=UTC))]
         session = _install_fake_session(monkeypatch, rows)
 
-        assert await _fix_tennis_commence_times() == 0
+        assert await _fix_tennis_commence_times() == {
+            "markets": 0, "events": 0, "scanned": 1,
+        }
         assert session.calibration_resets == []
         assert session.committed is False
 
