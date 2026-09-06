@@ -30,12 +30,16 @@ struct ScoreDifferentialChartView: View {
     /// in chart space rather than plot space.
     @State private var plotWidth: CGFloat = 0
 
-    private var homeShort: String {
-        homeTeamAbbrev ?? TeamShortName.short(homeTeam)
+    /// #3430 — the two ends of one differential axis. If both read the same, a
+    /// curve above the midline says nothing about who is ahead.
+    private var sides: (away: String, home: String) {
+        TeamShortName.shortPair(
+            away: awayTeam, home: homeTeam,
+            awayServed: awayTeamAbbrev, homeServed: homeTeamAbbrev
+        )
     }
-    private var awayShort: String {
-        awayTeamAbbrev ?? TeamShortName.short(awayTeam)
-    }
+    private var homeShort: String { sides.home }
+    private var awayShort: String { sides.away }
 
     private var isGameStarted: Bool {
         eventStatus == "live" || eventStatus == "completed" || eventStatus == "closed"

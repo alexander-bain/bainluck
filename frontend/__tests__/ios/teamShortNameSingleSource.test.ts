@@ -101,7 +101,12 @@ d("iOS team short names have exactly one implementation", () => {
   });
 
   it("the crest placeholder derives from the shared rule, not its own split", () => {
-    expect(canonical).toMatch(/short\(name\)\.split\(separator: " "\)/);
+    // #3430 moved the glyph-taking into `glyphs(ofLabel:)` so the pair rule
+    // could badge a label it had just widened. The property is unchanged and
+    // still asserted: `abbreviation` starts from `short`, never from its own
+    // split of the raw name.
+    expect(canonical).toMatch(/static func abbreviation\(_ name: String\) -> String \{\s*glyphs\(ofLabel: short\(name\)\)/);
+    expect(canonical).toMatch(/label\.split\(separator: " "\)/);
     expect(canonical).toMatch(/\.uppercased\(\)/);
   });
 
@@ -171,6 +176,157 @@ d("iOS team short names have exactly one implementation", () => {
     ).toBe(true);
   });
 
+  /**
+   * #3430 — the pair rule, and the scan that keeps it from being bypassed.
+   *
+   * Every assertion above judges ONE name in isolation, which is why the whole
+   * suite was green over the settled Clemson–LSU page: "Tigers" is exactly what
+   * a reader calls Clemson, and `short` returning it is correct. It is only
+   * wrong because LSU are the Tigers too — a fact no single-name test can see.
+   */
+  describe("#3430 — the two competitors of one matchup", () => {
+    it("the pair rule exists and grows the label rather than truncating it", () => {
+      expect(canonical).toMatch(/static func shortPair\(/);
+      expect(canonical).toMatch(/static func abbreviationPair\(/);
+      // The mechanism: widen leftward until the two differ.
+      expect(canonical).toMatch(/private static func grown\(away: String, home: String\)/);
+      expect(canonical).toMatch(/private static func lastWords\(/);
+    });
+
+    it("a served abbreviation loses to the names when it collides with the other side", () => {
+      // `teams.abbreviation` is wrong for hundreds of rows (#3353), so trusting
+      // a served pair unconditionally re-prints "TIG" twice on the provider's
+      // word. If this guard inverts, the fix is dead wherever team_data is set.
+      expect(canonical).toMatch(/guard a == h else \{ return \(a, h\) \}/);
+    });
+
+    it("the badge is taken from the WIDENED label, not re-shortened", () => {
+      // `abbreviation` runs `short` first, so badging the widened "White Sox"
+      // through it collapses straight back onto SOX. The split-out helper is
+      // what makes the widening reach the badge at all.
+      expect(canonical).toMatch(/private static func glyphs\(ofLabel label: String\)/);
+      expect(canonical).toMatch(/glyphs\(ofLabel: widened\.away\)/);
+    });
+
+    it("growth does not stop on a bare designator", () => {
+      expect(canonical).toMatch(/private static func namesSomething\(/);
+    });
+
+    /** A call that shortens one SIDE of a matchup rather than a lone name. */
+    const SIDE_CALL = /TeamShortName\.(short|abbreviation)\(\s*([^)]*)\)/g;
+
+    it("no view shortens both sides of a matchup on its own — discovered, not listed", () => {
+      const offenders: string[] = [];
+
+      for (const path of swiftFiles(IOS_ROOT)) {
+        if (path === CANONICAL) continue;
+        const code = stripComments(readFileSync(path, "utf8"));
+        // A file that asks for a pair has already made the decision.
+        if (/TeamShortName\.(shortPair|abbreviationPair)\(/.test(code)) continue;
+
+        const sides = new Set<string>();
+        for (const [, , arg] of code.matchAll(SIDE_CALL)) {
+          if (/away/i.test(arg)) sides.add("away");
+          if (/home/i.test(arg)) sides.add("home");
+        }
+        if (sides.has("away") && sides.has("home")) {
+          offenders.push(
+            `${path.slice(IOS_ROOT.length + 1)} — shortens away AND home without TeamShortName.shortPair/abbreviationPair`
+          );
+        }
+      }
+
+      expect(offenders).toEqual([]);
+    });
+
+    it("the pair scan fires on the REAL pre-fix source", () => {
+      // Copied verbatim from EventDetailView.swift at origin/master 38324fb2 —
+      // the two lines that printed "Tigers 10 - Tigers 51". A scan is only
+      // proven by the code it was built to catch, and this one would happily
+      // pass over a synthetic that merely matches its own regex.
+      const prefix = `
+        let away = event.awayTeamData?.abbreviation ?? TeamShortName.short(event.awayTeam)
+        let home = event.homeTeamData?.abbreviation ?? TeamShortName.short(event.homeTeam)
+      `;
+      const sides = new Set<string>();
+      for (const [, , arg] of stripComments(prefix).matchAll(SIDE_CALL)) {
+        if (/away/i.test(arg)) sides.add("away");
+        if (/home/i.test(arg)) sides.add("home");
+      }
+      expect([...sides].sort()).toEqual(["away", "home"]);
+    });
+
+    it("the pair scan does NOT fire on a surface that shows one competitor", () => {
+      // The inverse hazard: a scan that flags every file makes the suite a
+      // nuisance and gets suppressed. A futures row names one entrant and has
+      // no second side to collide with.
+      const oneSided = `Text(TeamShortName.short(teamName))`;
+      const sides = new Set<string>();
+      for (const [, , arg] of stripComments(oneSided).matchAll(SIDE_CALL)) {
+        if (/away/i.test(arg)) sides.add("away");
+        if (/home/i.test(arg)) sides.add("home");
+      }
+      expect(sides.size).toBe(0);
+    });
+
+    /**
+     * The pair rule run over the production pairs that motivated it.
+     * Transcribed, like the rule above it, so an edit to one must touch the
+     * other — and stated as LITERAL expectations, never re-derived.
+     */
+    it("the pair rule agrees with the Swift on the real colliding matchups", () => {
+      const DESIGNATORS = new Set([
+        "fc", "sc", "cf", "ac", "ad", "united", "city", "town", "county", "club",
+        "athletic", "w", "jr", "sr", "b", "ii", "iii", "u20", "u21", "u23",
+      ]);
+      const isDesignator = (t: string) => {
+        const s = t.replace(/^[().,]+|[().,]+$/g, "").toLowerCase();
+        return DESIGNATORS.has(s) || /^\d{1,4}$/.test(s);
+      };
+      const words = (s: string) => s.split(" ").filter(Boolean);
+      const short = (name: string) => {
+        const p = words(name);
+        if (p.length <= 1) return name;
+        return isDesignator(p[p.length - 1]) ? p.join(" ") : p[p.length - 1];
+      };
+      const lastWords = (name: string, k: number) => {
+        const w = words(name);
+        return w.length === 0 ? name : w.slice(Math.max(0, w.length - Math.max(1, k))).join(" ");
+      };
+      const namesSomething = (name: string, k: number) => {
+        const whole = words(name).length;
+        const first = words(lastWords(name, k))[0];
+        return first === undefined || !isDesignator(first) || k >= whole;
+      };
+      const shortPair = (away: string, home: string): [string, string] => {
+        const a = short(away), h = short(home);
+        if (a !== h) return [a, h];
+        let k = Math.max(1, words(a).length, words(h).length);
+        const limit = Math.max(words(away).length, words(home).length);
+        while (k <= limit) {
+          const ga = lastWords(away, k), gh = lastWords(home, k);
+          if (ga !== gh && namesSomething(away, k) && namesSomething(home, k)) return [ga, gh];
+          k += 1;
+        }
+        return [away, home];
+      };
+
+      // The photographed page, and the derby that reads worst.
+      expect(shortPair("Clemson Tigers", "LSU Tigers")).toEqual(["Clemson Tigers", "LSU Tigers"]);
+      expect(shortPair("Chicago White Sox", "Boston Red Sox")).toEqual(["White Sox", "Red Sox"]);
+      expect(shortPair("Dinamo Moscow", "Spartak Moscow")).toEqual(["Dinamo Moscow", "Spartak Moscow"]);
+      expect(shortPair("Cercle Brugge", "Club Brugge")).toEqual(["Cercle Brugge", "Club Brugge"]);
+      // Growth that must not stop on the designator it passes through.
+      expect(shortPair("AA Internacional Limeira SP", "Guarani FC SP"))
+        .toEqual(["Internacional Limeira SP", "Guarani FC SP"]);
+      // The other direction: a pair that already reads correctly is untouched.
+      expect(shortPair("Baltimore Orioles", "Boston Red Sox")).toEqual(["Orioles", "Sox"]);
+      expect(shortPair("Charlotte FC", "Houston Dynamo")).toEqual(["Charlotte FC", "Dynamo"]);
+      // Identical names: terminate, do not invent a difference.
+      expect(shortPair("Detroit Tigers", "Detroit Tigers")).toEqual(["Detroit Tigers", "Detroit Tigers"]);
+    });
+  });
+
   it("the surfaces fixed by #3374 delegate to the shared rule", () => {
     // Named explicitly so a revert is loud rather than merely un-discovered.
     for (const file of [
@@ -185,7 +341,9 @@ d("iOS team short names have exactly one implementation", () => {
       "Components/TournamentCompactRow.swift",
     ]) {
       // `\b` not `\(` — OddsChartView passes the function itself to `.map`.
-      expect(readFileSync(join(IOS_ROOT, file), "utf8")).toMatch(/TeamShortName\.(short|abbreviation)\b/);
+      // `(Pair)?` because #3430 moved the both-competitor surfaces onto the
+      // pair entry points, which are the same shared rule seeing both names.
+      expect(readFileSync(join(IOS_ROOT, file), "utf8")).toMatch(/TeamShortName\.(short|abbreviation)(Pair)?\b/);
     }
   });
 

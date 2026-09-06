@@ -127,13 +127,14 @@ struct GamePlayCardView: View {
         }
     }
 
-    private var homeShort: String {
-        TeamShortName.short(homeTeam)
+    /// #3430 — both competitors of one matchup, so the pair rule decides.
+    private var sides: (away: String, home: String) {
+        TeamShortName.shortPair(away: awayTeam, home: homeTeam)
     }
 
-    private var awayShort: String {
-        TeamShortName.short(awayTeam)
-    }
+    private var homeShort: String { sides.home }
+
+    private var awayShort: String { sides.away }
 }
 
 // MARK: - Game Play Point

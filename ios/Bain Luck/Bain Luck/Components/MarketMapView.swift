@@ -44,8 +44,15 @@ struct MarketMapView: View {
 
     @Environment(\.horizontalSizeClass) private var sizeClass
 
-    private var hAbbr: String { homeAbbr ?? TeamShortName.short(homeTeam) }
-    private var aAbbr: String { awayAbbr ?? TeamShortName.short(awayTeam) }
+    /// #3430 — both competitors of one matchup, so the pair rule decides.
+    private var sides: (away: String, home: String) {
+        TeamShortName.shortPair(
+            away: awayTeam, home: homeTeam,
+            awayServed: awayAbbr, homeServed: homeAbbr
+        )
+    }
+    private var hAbbr: String { sides.home }
+    private var aAbbr: String { sides.away }
     private var isDone: Bool { eventStatus == "completed" || eventStatus == "closed" }
     private var isLive: Bool { eventStatus == "live" }
     private var isPre: Bool { !isDone && !isLive }

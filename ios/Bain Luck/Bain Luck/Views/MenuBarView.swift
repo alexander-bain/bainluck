@@ -146,10 +146,17 @@ struct MenuBarView: View {
                     servedHome: fromCurrentOdds ? odds?.homeRenderedPercent : nil
                 )
                 guard let awayPct = duel[0], let homePct = duel[1] else { return nil }
+                // #3430 — both competitors of one matchup on one menu row, in
+                // the least room any surface gives them.
+                let menuSides = TeamShortName.shortPair(
+                    away: event.awayTeam, home: event.homeTeam,
+                    awayServed: event.awayTeamData?.abbreviation,
+                    homeServed: event.homeTeamData?.abbreviation
+                )
                 return MenuBarGame(
                     id: event.id,
-                    homeAbbrev: event.homeTeamData?.abbreviation ?? TeamShortName.short(event.homeTeam),
-                    awayAbbrev: event.awayTeamData?.abbreviation ?? TeamShortName.short(event.awayTeam),
+                    homeAbbrev: menuSides.home,
+                    awayAbbrev: menuSides.away,
                     homeScore: event.homeScore,
                     awayScore: event.awayScore,
                     homeProb: homePct,

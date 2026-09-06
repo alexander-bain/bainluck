@@ -239,8 +239,10 @@ struct Bain_LuckApp: App {
                     .filter { $0.status == "live" }
 
                 if let best = liveEvents.first {
-                    let away = TeamShortName.short(best.awayTeam)
-                    let home = TeamShortName.short(best.homeTeam)
+                    // #3430 — one matchup, both sides, one line of text.
+                    let (away, home) = TeamShortName.shortPair(
+                        away: best.awayTeam, home: best.homeTeam
+                    )
                     let score = "\(away) \(best.awayScore ?? 0) - \(home) \(best.homeScore ?? 0)"
                     let period = best.espn?.period ?? best.espn?.gameClock ?? ""
                     navCoordinator.liveGameTitle = period.isEmpty ? score : "\(score) • \(period)"

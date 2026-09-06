@@ -12,11 +12,17 @@ struct PlayerPropsCardView: View {
     @State private var teamFilter: String = "all"
     @State private var expandedCards: Set<String> = []
 
+    /// #3430 — both competitors of one matchup, so the pair rule decides. A
+    /// prop attributed to a team the other side shares a label with is
+    /// attributed to nobody.
+    private var sides: (away: String, home: String) {
+        TeamShortName.shortPair(away: awayTeam, home: homeTeam)
+    }
     private var homeAbbr: String {
-        homeTeam.isEmpty ? "Home" : TeamShortName.short(homeTeam)
+        homeTeam.isEmpty ? "Home" : sides.home
     }
     private var awayAbbr: String {
-        awayTeam.isEmpty ? "Away" : TeamShortName.short(awayTeam)
+        awayTeam.isEmpty ? "Away" : sides.away
     }
     private var isDone: Bool { eventStatus == "completed" || eventStatus == "closed" }
     private var isLive: Bool { eventStatus == "live" }
