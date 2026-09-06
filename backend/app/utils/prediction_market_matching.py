@@ -169,17 +169,44 @@ def feeds_win_prob_blend(external_id: Optional[str]) -> bool:
 # "Team A at/vs/v/@ Team B" (bare matchup without stat — no colon separator)
 # Case-insensitive to handle various capitalizations
 # Includes / for doubles tennis (e.g., "Schnaitter/Wallner vs Glinka/Sakellaridis")
+# Includes & for the land-grant and colonial colleges — "Alabama A&M vs Howard",
+# "William & Mary vs Villanova". Every other matchup pattern in this module
+# reads its team names with a bare `.+?`; these two carry an explicit character
+# class, so they were the only two that could refuse a character, and `&` is the
+# one real team names use. The separator alternation is unchanged, so `&` can
+# only ever land INSIDE a team name, never between two of them.
 _BARE_MATCHUP_RE = re.compile(
-    r'^([\w][\w\s.\'\-()/]+?)\s+(?:at|vs\.?|v\.?|@)\s+([\w][\w\s.\'\-()/]+?)$',
+    r'^([\w][\w\s.\'\-()/&]+?)\s+(?:at|vs\.?|v\.?|@)\s+([\w][\w\s.\'\-()/&]+?)$',
     re.IGNORECASE,
 )
 
 # "Team A - Team B" (dash/hyphen separator, common in European sports)
 _DASH_MATCHUP_RE = re.compile(
-    r'^([\w][\w\s.\'\-()]{2,}?)\s+[-–—]\s+([\w][\w\s.\'\-()]{2,}?)$',
+    r'^([\w][\w\s.\'\-()&]{2,}?)\s+[-–—]\s+([\w][\w\s.\'\-()&]{2,}?)$',
     re.IGNORECASE,
 )
 
+# NOTE (#2335, resolved against master 2026-09-06): this branch carried two more
+# substrates here and both are superseded by master's #3026, which landed after
+# the branch was cut.
+#
+#  * A `_BARE_MATCHUP_STRONG_RE` that preferred `vs`/`v`/`@` over `at`, so
+#    "University at Albany vs Buffalo" read as ("University at Albany",
+#    "Buffalo") rather than ("University", "Albany vs Buffalo"). It also made
+#    "Announcers at Duke vs Virginia" read as ("Announcers at Duke",
+#    "Virginia") — a clean-looking two-team game — which is precisely the
+#    164-event EMBEDDED MATCHUP shape #3026 exists to refuse, and #3026 refuses
+#    it by reading the parse. A better parse of one name silently un-refused
+#    274 rows.
+#  * A three-way refusal, because once `&` is admitted "Bitcoin vs. Gold vs.
+#    S&P 500 in 2026" parses. `question_refusal_reason` already refuses it, and
+#    every other three-way name, with "away name '…' contains a whole matchup,
+#    so it is not a competitor" — at the MINT, which is where #3026 argues the
+#    refusal belongs precisely so it does not change what LINKS.
+#
+# So the parse is left exactly as master has it. "University at Albany" still
+# does not reach its own game; that is a real defect, it predates this branch,
+# and it is filed rather than fixed by a parse preference that costs #3026.
 # "Will (the) Team A beat/win against Team B?"
 _WILL_BEAT_RE = re.compile(
     r'^Will\s+(?:the\s+)?(.+?)\s+(?:beat|defeat|win\s+against)\s+(?:the\s+)?(.+?)\??$',
@@ -305,6 +332,18 @@ def _strip_category_prefix(market_name: str) -> str:
 # the participant grammar can't resolve it to the event's team entity. Strip the
 # container label BEFORE matchup extraction so the recovered matchup_title (and
 # thus the resolution-engine participants) is the clean "A vs. B" (#1021).
+#
+# This branch originally ALSO stripped the five big Polymarket sub-market
+# labels here — "- Exact Score", "- First Team to Score", "- Second Half
+# Result", "- Halftime Result", "- Total Corners" — to stop auto-create
+# stamping one of them as the away team's name. Master answers the same failure
+# the other way and got there first: #2871's `is_derivative_market_name` refuses
+# such a row as evidence of a game instead of sanitising it into one, and
+# deliberately LEAVES the suffix on the parsed name because
+# `_MATCHUP_NON_GAME_KEYWORDS` reads "winner" out of it to keep a period market
+# out of a full-game blend. Stripping it here would silently defeat that rule
+# and did regress golden pair 59683704 ("AEK vs. OFI - Total Corners").
+# Refusing a derivative beats cleaning one; the strip was dropped, not lost.
 _MORE_MARKETS_RE = re.compile(
     r'\s*-\s*(?:More Markets|Player Props)\s*$', re.IGNORECASE
 )
@@ -2122,6 +2161,21 @@ _CITY_ABBREV_TO_NAME: dict[str, str] = {
 }
 
 
+# Last words that are an INSTITUTIONAL SUFFIX, not a nickname. The mascot rule
+# below takes the last word of a multi-word name as a search term, on the theory
+# that "WSH Capitals" should also find "Washington Capitals". A suffix breaks
+# that theory: "Missouri State" yields "%State%", which is every state school in
+# the country. That matters because the candidate query is `LIMIT 20 ORDER BY
+# commence_time` — measured on production 2026-08-30, "Missouri State vs. Texas
+# A&M" filled all twenty slots with unrelated state schools and its own event
+# (14793413, five days out) never made the list, so the market found no event at
+# all. "United", "City" and "Town" do the same to English football.
+_INSTITUTIONAL_SUFFIXES = frozenset({
+    "state", "united", "city", "town", "college", "university",
+    "athletic", "athletics", "club", "academy", "county",
+})
+
+
 _KALSHI_NAME_ALIASES: dict[str, list[str]] = {
     "a's": ["Athletics"],
     "chicago ws": ["White Sox"],
@@ -2154,10 +2208,16 @@ def _expand_team_search_terms(team: str) -> list[str]:
 
     words = team.split()
 
-    # Multi-word: extract mascot (last word) if long enough
+    # Multi-word: extract mascot (last word) if long enough, unless that word is
+    # an institutional suffix rather than a nickname (see
+    # _INSTITUTIONAL_SUFFIXES — "%State%" is not a search, it is a census).
     if len(words) >= 2:
         mascot = words[-1]
-        if len(mascot) >= 5 and mascot != team:
+        if (
+            len(mascot) >= 5
+            and mascot != team
+            and mascot.lower() not in _INSTITUTIONAL_SUFFIXES
+        ):
             terms.append(mascot)
 
     # Single short word or abbreviation: try city lookup
