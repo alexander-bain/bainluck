@@ -1,40 +1,35 @@
 """What reading the authority switch actually does, kept true by a tree walk.
 
-#3442. `AUTHORITY_BY_SPORT` is the one-line-per-sport flip described by program
-step 6, and today **exactly one module under `app/` reads it: the admin route
-that reports its own value.** No ingest task, registry path or serving route
-asks `authority_for` anything, so changing a line changes one string on an admin
-page and nothing else.
+#3442, amended by #3473. `AUTHORITY_BY_SPORT` is the one-line-per-sport flip
+described by program step 6. When this file was written **exactly one module
+under `app/` read it: the admin route that reports its own value** — so changing
+a line changed one string on an admin page and nothing else, and the row said so
+in a derived `INERT` note.
 
-That is not a defect — a dark switch is what step 6 built, and
-`test_a_genuine_seven_now_reaches_the_gate_but_flips_nothing_by_itself` already
-pins that opening the gate does not move the switch. What this file adds is the
-next question, which nothing asked: *and if someone DID move it?*
+That was not a defect; a dark switch is what step 6 built. The note existed
+because of WHEN it would stop being harmless. NFL, NBA and NHL all read gate
+`MEETS` at day 2 of 7 on production (2026-09-06 05:44Z), so the earliest a
+genuine seven exists is around 2026-09-11 — and on that day someone would read a
+YOUR-TURN entry, edit one line, see the row change from `espn` to `statpal`, and
+reasonably conclude the site now ran on StatPal for that sport.
 
-The timing is why it is worth a file. NFL, NBA and NHL all read gate `MEETS` at
-day 2 of 7 on production (2026-09-06 05:44Z), so the earliest a genuine seven
-exists is around 2026-09-11. On that day someone reads a YOUR-TURN entry, edits
-one line, sees the admin row change from `espn` to `statpal`, and reasonably
-concludes the site now runs on StatPal for that sport. It would not.
+**THE NOTE HAS NOW BEEN RETIRED BY THE THING IT WAS WAITING FOR.** Program step
+7 (#3473) wired `app.utils.authority_failover`, which reads `authority_for` to
+decide who serves a sport on a pass where ESPN went silent. The docstring above
+used to end "wiring a real consumer fails these tests — that is the intended
+cost"; this is that cost being paid, in the same diff as the wiring, which is
+the whole point of a derived disclosure. What each test asserts about *today*
+moved; what the file guards did not:
 
-**The config file already knew.** Its module docstring says "the consumer that
-acts on it is lane1's to build". What it did not do is say it anywhere the
-person deciding would look: the row publishes `authority.current` and a gate
-note reading like a two-condition procedure, and an operator is not expected to
-open a config module to learn that satisfying both conditions does nothing. A
-true sentence in the wrong file is how this lane's last defect worked too
-(#3432), and the fix is the same one — put it on the row, and derive it so it
-cannot outlive its condition.
+  * the declared set and the tree must agree, in both directions;
+  * the published note is DERIVED from the set, never written twice;
+  * `switch_is_wired` still answers False for a tree of reporters only, so the
+    predicate has not simply become "return True".
 
-So the claim is declared (`SWITCH_CONSUMERS`), published where the person
-deciding will read it (`authority.switch_note` on the agreement row), and pinned
-here by walking `app/` with the ast module — never by grepping, because a
+The walk uses the `ast` module and never a grep, because a
 `from app.config.authority_by_sport import (\\n    authority_for,\\n)` wrapped
 across lines defeats a substring scan, and an import written that way is what
 the linter produces.
-
-Wiring a real consumer fails these tests. That is the intended cost: the note
-saying "INERT" must stop being served the same day it stops being true.
 """
 
 from __future__ import annotations
@@ -122,11 +117,19 @@ def test_the_switch_names_every_module_that_reads_it():
     )
 
 
-def test_the_walk_finds_the_one_consumer_we_know_about():
+def test_the_walk_finds_the_consumers_we_know_about():
     """The guard would pass vacuously if the walk found nothing at all — an
     import-detection bug and a genuinely unread switch look identical from the
-    assertion above."""
-    assert _consumers() == {"app.routes.admin_providers"}
+    assertion above.
+
+    Two, since #3473: the route that REPORTS the switch and the failover that
+    ACTS on it. They are named individually rather than counted, because the
+    difference between the two kinds is what the whole disclosure turns on.
+    """
+    assert _consumers() == {
+        "app.routes.admin_providers",
+        "app.utils.authority_failover",
+    }
 
 
 def test_the_walk_sees_an_import_a_substring_scan_would_miss(tmp_path):
@@ -158,36 +161,58 @@ def test_a_bare_module_import_counts_as_a_read():
     assert _reads_the_switch(ast.parse("import app.config.authority_by_sport"))
 
 
-def test_the_note_says_inert_while_the_only_consumer_is_the_page_reporting_it():
+def test_the_note_no_longer_says_inert_because_the_switch_is_wired():
     """The published sentence, checked against the derived fact rather than
-    written twice."""
-    assert SWITCH_IS_WIRED is False
-    assert "INERT" in SWITCH_WIRING_NOTE
-    assert "step 7" in SWITCH_WIRING_NOTE
+    written twice.
+
+    This is the assertion #3442 wrote knowing it would one day have to change,
+    and #3473 is the change. `INERT` had to stop being served the same day it
+    stopped being true, and the only way to be sure of that is to derive it —
+    which is why this test reads `SWITCH_IS_WIRED` rather than a literal.
+    """
+    assert SWITCH_IS_WIRED is True
+    assert "INERT" not in SWITCH_WIRING_NOTE
+    assert "WIRED" in SWITCH_WIRING_NOTE
+
+    # The note must still tell an operator the ONE thing a flip does not do,
+    # because that is now the easiest wrong conclusion available to them.
+    assert "event_registry" in SWITCH_WIRING_NOTE
 
 
-def test_the_note_flips_when_a_real_consumer_appears():
-    """The disclosure is derived by a function, so it cannot outlive the
-    condition it describes — nobody has to remember to delete the `INERT`
-    sentence. Asked about a tree that does not exist yet, which is the only way
-    to test a predicate whose today-answer the other tests already pin."""
-    wired = switch_is_wired({"app.routes.admin_providers", "app.tasks.espn_sync"})
-    assert wired is True
-    assert "INERT" not in switch_wiring_note(wired)
-    assert "changes what the site serves" in switch_wiring_note(wired)
+def test_the_note_would_go_back_to_inert_if_the_actor_were_removed():
+    """The disclosure is a function of the derived fact in BOTH directions.
+
+    The interesting case is no longer "what if someone wires one" — someone has
+    — but "what if the actor is refactored away and the reporter is left". A
+    note that only knew how to become WIRED would then keep claiming the switch
+    was live. Asked about a tree that does not exist, which is the only way to
+    test the direction today's answer is not in.
+    """
+    unwired = switch_is_wired({"app.routes.admin_providers"})
+    assert unwired is False
+    assert "INERT" in switch_wiring_note(unwired)
+    assert "step 7" in switch_wiring_note(unwired)
 
     # And the control, so the assertion above cannot pass because the function
-    # returns True for everything: the reporting route alone is not wiring.
-    assert switch_is_wired({"app.routes.admin_providers"}) is False
+    # returns False for everything.
+    assert switch_is_wired({"app.routes.admin_providers", "app.tasks.anything"}) is True
     assert switch_is_wired(set()) is False
 
 
-def test_a_second_reporter_would_still_not_be_wiring_but_must_be_declared():
+def test_a_reporter_is_not_wiring_but_is_still_a_reader_that_must_be_declared():
     """The two mechanisms are independent and both are needed. A module that
     only reports the value does not make the switch live — but it is still an
-    undeclared reader, and the tree walk is what catches it."""
+    undeclared reader, and the tree walk is what catches it.
+
+    Since #3473 the declared set is strictly larger than the reporter set, and
+    the difference is exactly the actors. Asserting that relationship, rather
+    than equality, is what keeps this test meaningful now that both kinds exist.
+    """
     assert switch_is_wired(SWITCH_REPORTERS) is False
-    assert set(SWITCH_CONSUMERS) == set(SWITCH_REPORTERS)
+    assert set(SWITCH_REPORTERS) < set(SWITCH_CONSUMERS)
+    assert set(SWITCH_CONSUMERS) - set(SWITCH_REPORTERS) == {
+        "app.utils.authority_failover"
+    }
 
 
 @pytest.mark.asyncio
@@ -222,10 +247,19 @@ async def test_the_row_publishes_the_wiring_beside_the_current_authority(monkeyp
         # Beside `current`, in the same object. A note published one level up
         # would not travel with the value it qualifies.
         assert authority["current"] == ESPN
-        assert authority["switch_wired"] is False
-        assert "INERT" in authority["switch_note"]
+        assert authority["switch_wired"] is True
+        assert "INERT" not in authority["switch_note"]
         # And it is the derived sentence, not a second copy that could drift.
         assert authority["switch_note"] == SWITCH_WIRING_NOTE
+
+        # #3473 publishes the step-7 question beside the step-6 one, because
+        # they are the same operator's two halves: "does flipping do anything"
+        # and "does the outage cover behind it work". Both must be inside
+        # `authority`, for the same reason the note is.
+        failover = authority["failover"]
+        assert failover["would_fire_if_espn_went_dark"] is False
+        assert failover["code"] == "NO-FAILOVER-NOT-GATED"
+        assert "measured half" in failover["why"]
 
 
 def test_nothing_has_flipped_so_the_note_is_the_only_thing_standing_between():

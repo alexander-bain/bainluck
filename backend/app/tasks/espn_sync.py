@@ -12,6 +12,11 @@ from sqlalchemy.orm import selectinload
 from app.models import Event, Sport
 from app.tasks.base import get_task_session, run_async
 from app.tasks.config import ESPN_SPORT_MAPPING
+# #3473. Imported as a module rather than by name so the two consuming loops
+# below read `_failover.espn_reading(...)` — at the exact lines that used to say
+# `espn_data.get(sport_key, [])`, the reader can see that a reading is being
+# taken and go and find out what the three of them are.
+from app.utils import authority_failover as _failover
 from app.utils.team_binding_invariant import accept_team_binding
 from app.utils.name_normalization import (
     token_overlap_score as _team_name_match_score,
@@ -174,6 +179,166 @@ def espn_team_matches(our_names: list, espn_team) -> bool:
     return False
 
 
+async def _statpal_standby_reading(sport_key: str) -> str:
+    """StatPal's reading for `sport_key`, read the only way that can say "dark".
+
+    `StatPalAPIService.get_fixtures` cannot answer this question. It ends with
+    `if not data: return []`, so an upstream failure and a sport with no games
+    arrive as the same empty list — the identical collapse this whole ship
+    exists to undo, on the other side of the comparison. Failing ESPN over to a
+    standby on the strength of a `[]` that might mean "we could not ask" would
+    replace one silent authority with another.
+
+    `get_schedule_fixtures` is the authority read path program step 1 built for
+    exactly this: it raises `StatPalUpstreamError` rather than returning `[]`
+    when StatPal did not answer, and its own docstring says why — *"no games is
+    the finding it exists to report and a swallowed failure forges it"*.
+    """
+    from app.services.statpal_api import (
+        StatPalAPIService,
+        StatPalUpstreamError,
+        is_available,
+    )
+    from app.utils.authority_failover import DARK, reading_from_fixtures
+    from app.utils.sport_keys import STATPAL_SPORT_MAPPING
+
+    statpal_sport = STATPAL_SPORT_MAPPING.get(sport_key)
+    if not statpal_sport or not is_available():
+        # No mapping, or no key configured. Reported as DARK rather than EMPTY:
+        # we did not ask, so StatPal has said nothing about this sport, and
+        # `decide` must refuse rather than read our own silence as theirs.
+        return DARK
+
+    service = StatPalAPIService()
+    try:
+        return reading_from_fixtures(await service.get_schedule_fixtures(statpal_sport))
+    except StatPalUpstreamError as exc:
+        logger.warning("StatPal standby dark for %s: %s", sport_key, exc)
+        return DARK
+    except Exception as exc:  # noqa: BLE001 — classified as DARK, never swallowed
+        logger.warning("StatPal standby read failed for %s: %s", sport_key, exc)
+        return DARK
+    finally:
+        await service.close()
+
+
+async def _decide_failovers(espn_data: dict, fetch_keys, stats: dict) -> dict:
+    """Per sport ESPN did not answer for: who serves it, and does anything act?
+
+    Called once per pass, between the fetch and the passes that consume it, so
+    both consuming loops read one decision rather than each re-deriving it.
+
+    **Why the gate is asked before the standby is read.** `decide` refuses on
+    `flip_permitted` before it looks at StatPal, and reports `STANDBY_NOT_READ`
+    if it gets that far without one — so this function asks it, and only goes to
+    the network when the answer says the standby could have mattered. The
+    ordering lives in the pure function and the caller obeys it, rather than
+    both holding a copy that can drift. Today `flip_permitted` refuses every
+    sport, so **this path makes no StatPal call at all** and costs one durable
+    read per silent sport per pass.
+    """
+    from app.config.authority_by_sport import flip_permitted
+    from app.services.authority_ledger import read_ledger_days
+    from app.utils import authority_failover as failover
+    from app.utils.authority_agreement import SHADOW_STAMPERS
+
+    decisions: dict[str, object] = {}
+    for sport_key in sorted(fetch_keys):
+        reading = failover.espn_reading(espn_data, sport_key)
+        if reading == failover.FIXTURES:
+            continue
+
+        if sport_key not in SHADOW_STAMPERS:
+            # No dark id join for this sport, so there is nothing to fail over
+            # onto and no ledger to read — `flip_permitted` refuses on exactly
+            # this before it ever looks at days. Asked here so a pass over a
+            # dozen quiet sports costs no durable reads at all; the refusal and
+            # its wording still come from the gate, never from a second copy.
+            gate = flip_permitted(sport_key, [])
+        else:
+            days, ledger_why = await read_ledger_days(sport_key)
+            # A ledger we could not read is not a streak of zero and is not a
+            # permission either. It refuses, carrying its own reason, so an
+            # outage in the snapshot store can never open this gate.
+            gate = (
+                (False, ledger_why)
+                if days is None
+                else flip_permitted(sport_key, days)
+            )
+
+        decision = failover.decide(sport_key, espn=reading, gate=gate)
+        if decision.code == failover.STANDBY_NOT_READ:
+            decision = failover.decide(
+                sport_key,
+                espn=reading,
+                gate=gate,
+                statpal=await _statpal_standby_reading(sport_key),
+            )
+        decisions[sport_key] = decision
+    return decisions
+
+
+async def _act_on_failovers(decisions: dict, stats: dict) -> None:
+    """Do the thing, and leave a receipt whether or not there was one to do.
+
+    **The act.** A sport that fails over gets `sync_statpal_schedules` dispatched
+    for it, now, instead of waiting up to an hour for its own beat. That is the
+    whole of it, and it is deliberately the smallest act that delivers the ship:
+    the task already exists, already runs hourly for these sports, already
+    creates their events through the registry's own door under a `statpal`
+    claim, and is already the thing that would have kept the games on the site.
+    What the outage changes is not whether StatPal may write but *when* — an
+    hourly cadence is fine while ESPN is answering every two minutes and is the
+    difference between a fresh slate and a stale one while it is not.
+
+    Nothing in the registry or the matcher is touched, which is D50's line: this
+    lane hands those to lane1.
+
+    **The receipts.** Every decision that is not the ordinary
+    `ESPN_ANSWERED` is published on the task summary, not just the ones that
+    acted — an outage the site rode out silently is indistinguishable from an
+    outage that never happened. They are a per-pass series rather than
+    edge-triggered records, so an activation and a deactivation are both
+    recoverable by differencing consecutive passes, and there is no stored
+    "currently failed over" flag that a lost write could strand in the wrong
+    state.
+    """
+    from app.utils.authority_failover import FAILOVER_CODES
+
+    receipts = []
+    for sport_key in sorted(decisions):
+        decision = decisions[sport_key]
+        receipts.append(decision.as_receipt())
+
+        if decision.code not in FAILOVER_CODES:
+            logger.info(
+                "ESPN silent for %s — no failover (%s): %s",
+                sport_key, decision.code, decision.why,
+            )
+            continue
+
+        stats["failover_activated"] = stats.get("failover_activated", 0) + 1
+        logger.warning(
+            "AUTHORITY FAILOVER for %s (%s): %s",
+            sport_key, decision.code, decision.why,
+        )
+        try:
+            from app.tasks import sync_statpal_schedules
+
+            sync_statpal_schedules.delay(sport_key)
+            stats["failover_dispatched"] = stats.get("failover_dispatched", 0) + 1
+        except Exception as exc:  # noqa: BLE001 — counted, never swallowed
+            # The decision stands and is receipted either way. A dispatch that
+            # failed is a failover that did not happen, and it must not read as
+            # one: it is counted apart from `failover_activated` so the two can
+            # be differenced rather than assumed equal.
+            stats["errors"].append(f"failover_dispatch_{sport_key}: {exc}")
+            logger.warning("failover dispatch failed for %s: %s", sport_key, exc)
+
+    if receipts:
+        stats["failover"] = receipts
+
+
 async def _sync_espn_live_events():
     """Async implementation of sync_espn_live_events.
 
@@ -209,6 +374,12 @@ async def _sync_espn_live_events():
         # separately from an empty slate — a dark sport is skipped, never read
         # as "no games".
         "authority_dark_sports": 0,
+        # #3473. Sports the failover actually moved to StatPal, and the
+        # dispatches that reached the queue. Two counters rather than one: a
+        # dispatch can fail after the decision is made, and a failover that was
+        # decided but never dispatched must not report as one that served.
+        "failover_activated": 0,
+        "failover_dispatched": 0,
         "errors": [],
     }
 
@@ -259,6 +430,17 @@ async def _sync_espn_live_events():
             finally:
                 await espn.close()
 
+            # ── Who serves a sport ESPN did not answer for? (#3473) ─
+            #
+            # BEFORE the passes, because both of them consume the same silence
+            # and neither may read it as an empty slate. This is the step-7
+            # question, and it is answered here rather than inside the loops so
+            # that a sport is decided once per pass and receipted once.
+            failover_decisions = await _decide_failovers(
+                espn_data, all_fetch_keys, stats
+            )
+            await _act_on_failovers(failover_decisions, stats)
+
             # ── First pass: live + recently-completed events ─────
             recently_completed_cutoff = datetime.now(timezone.utc) - timedelta(hours=6)
             started_cutoff = datetime.now(timezone.utc) - timedelta(hours=5)
@@ -269,9 +451,17 @@ async def _sync_espn_live_events():
                 if sport_key not in ESPN_SPORT_MAPPING:
                     continue
 
-                espn_events = espn_data.get(sport_key, [])
-                if not espn_events:
+                # `espn_data.get(sport_key, [])` used to stand here, and it is
+                # the line #3473 is about: it mapped "ESPN went dark" and "ESPN
+                # says there are no games" onto one `[]` and one `continue`,
+                # undoing the distinction the fetch loop above had just taken
+                # care to preserve. The reading keeps the two apart; the branch
+                # below is the same for both because there is nothing ESPN can
+                # contribute either way, and what differs — whether anything
+                # fails over — was decided above.
+                if _failover.espn_reading(espn_data, sport_key) != _failover.FIXTURES:
                     continue
+                espn_events = espn_data[sport_key]
 
                 try:
                     await _process_live_sport(
@@ -289,9 +479,11 @@ async def _sync_espn_live_events():
             for sport_key in scheduled_sport_keys:
                 if sport_key not in ESPN_SPORT_MAPPING:
                     continue
-                espn_events = espn_data.get(sport_key, [])
-                if not espn_events:
+                # Same reading, same reason as the pass above (#3473). The
+                # decision was taken once, before either loop.
+                if _failover.espn_reading(espn_data, sport_key) != _failover.FIXTURES:
                     continue
+                espn_events = espn_data[sport_key]
                 try:
                     await sync_scheduled_events(session, sport_key, espn_events, stats)
                 except Exception as e:
