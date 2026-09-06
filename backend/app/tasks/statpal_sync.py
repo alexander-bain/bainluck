@@ -403,32 +403,6 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                         continue
                     # Create the missing event.
                     #
-                    # #1945/Q438 — the row is created either way (the playoff gap
-                    # this path exists to fill is real), but it may only be
-                    # created LIVE once its own start time has arrived. Same
-                    # predicate as the score write above; one implementation.
-                    #
-                    # 🔴 MEASURED on production 2026-08-29: this path had created
-                    # **48 events since 2026-05-15, and all 48 were created
-                    # BEFORE their own commence_time** — it has never once
-                    # created a game that was actually in progress. 46 have since
-                    # rolled to `completed`; the two still sitting `live` were
-                    # 15292756 (Colts vs Lions) and 15292757 (Titans vs Bears),
-                    # minted 2026-08-26 for an 2026-08-29 kickoff and badged LIVE
-                    # on the NFL league page for three days.
-                    premature_create = live_write_is_premature(
-                        live_fix.start_time, now
-                    )
-                    if premature_create:
-                        premature_live_created_as_scheduled += 1
-                        logger.warning(
-                            "StatPal premature-live guard: creating %s vs %s (%s) as "
-                            "'scheduled', not 'live' — start_time %s is still in the "
-                            "future (now %s) (#1945/Q438)",
-                            live_fix.home_team, live_fix.away_team, our_key,
-                            live_fix.start_time.isoformat() if live_fix.start_time else None,
-                            now.isoformat(),
-                        )
                     # ── #2963. NO ID, NO ROW. This used to read
                     #
                     #     claim_id = live_fix.fixture_id or f"statpal_live_{home}_{away}"
@@ -475,6 +449,32 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                             live_fix.start_time.isoformat() if live_fix.start_time else None,
                         )
                         continue
+                    # #1945/Q438 — the row is created either way (the playoff gap
+                    # this path exists to fill is real), but it may only be
+                    # created LIVE once its own start time has arrived. Same
+                    # predicate as the score write above; one implementation.
+                    #
+                    # 🔴 MEASURED on production 2026-08-29: this path had created
+                    # **48 events since 2026-05-15, and all 48 were created
+                    # BEFORE their own commence_time** — it has never once
+                    # created a game that was actually in progress. 46 have since
+                    # rolled to `completed`; the two still sitting `live` were
+                    # 15292756 (Colts vs Lions) and 15292757 (Titans vs Bears),
+                    # minted 2026-08-26 for an 2026-08-29 kickoff and badged LIVE
+                    # on the NFL league page for three days.
+                    premature_create = live_write_is_premature(
+                        live_fix.start_time, now
+                    )
+                    if premature_create:
+                        premature_live_created_as_scheduled += 1
+                        logger.warning(
+                            "StatPal premature-live guard: creating %s vs %s (%s) as "
+                            "'scheduled', not 'live' — start_time %s is still in the "
+                            "future (now %s) (#1945/Q438)",
+                            live_fix.home_team, live_fix.away_team, our_key,
+                            live_fix.start_time.isoformat() if live_fix.start_time else None,
+                            now.isoformat(),
+                        )
                     claim_id = live_fix.fixture_id
                     identity = EventIdentity(
                         sport_key=our_key,
