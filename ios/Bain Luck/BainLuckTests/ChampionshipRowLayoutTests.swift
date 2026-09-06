@@ -111,7 +111,7 @@ final class ChampionshipRowLayoutTests: XCTestCase {
             + "at 166 pt (#3574)")
         XCTAssertTrue(
             ChampionshipRowLayout.stacksBelowLabel(contentWidth: 166, stages: reds),
-            "nor can an ordinary card: 80 + 8 + 36 + 8 + 70 = 202 > 166. The bar "
+            "nor can an ordinary card: 80 + 8 + 36 + 8 + 76 = 208 > 166. The bar "
             + "was dead on every card, not only the clinched one (#3580).")
     }
 
@@ -313,6 +313,59 @@ final class ChampionshipRowLayoutTests: XCTestCase {
                        + "width; measured \(widths)")
     }
 
+    // MARK: - The view has to actually consult the rule
+
+    /// A rule the view does not call is a description, not a decider — and every
+    /// test above would stay green while the card kept its 2 pt bar.
+    ///
+    /// The two shapes differ in height: a stacked row puts the label on its own
+    /// line. So render one card narrow and the same card wide, and require the
+    /// narrow one to be taller. Only a view that branches on its measured width
+    /// can produce that.
+    @MainActor
+    func testTheCardRendersTheShapeTheRuleChose() throws {
+        let card = ChampionshipPathView(progression: try brewersAtRedsProgression(
+            stageJSON: [
+                stageJSON("make_playoffs", "Make Playoffs", probability: 0.996, trend: 0.9133),
+                stageJSON("division", "Division", probability: 0.9615, trend: -0.0258),
+                stageJSON("championship", "World Series", probability: 0.134, trend: 0.0039),
+            ].joined(separator: ",")))
+
+        let phone = renderedHeight(of: card, width: 402)
+        let wide = renderedHeight(of: card, width: 1200)
+
+        XCTAssertGreaterThan(phone, 0, "precondition: the card must render at all")
+        XCTAssertGreaterThan(
+            phone, wide,
+            "at 402 pt the rule says stack (166 pt of content, and a clinched row "
+            + "needs \(ChampionshipRowLayout.inlineRowMinimumWidth(badgeWidth: ChampionshipRowLayout.clinchedBadgeWidth)) "
+            + "pt to stay on one line); at 1200 pt it says keep the one line. Equal "
+            + "heights mean the view is drawing one shape regardless and never "
+            + "asks — which is the state that shipped a 2 pt bar (#3580).")
+    }
+
+    /// Lays the card out and lets the width measurement come back before asking.
+    ///
+    /// The card learns its width from a preference, which arrives on a second
+    /// pass — a single synchronous `layoutIfNeeded` measures the card before it
+    /// knows how wide it is, and would report the unmeasured shape at every
+    /// width.
+    @MainActor
+    private func renderedHeight<V: View>(of view: V, width: CGFloat) -> CGFloat {
+        let host = UIHostingController(rootView: view.frame(width: width))
+        host.view.frame = CGRect(x: 0, y: 0, width: width, height: 2000)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: width, height: 2000))
+        window.rootViewController = host
+        window.isHidden = false
+        for _ in 0..<4 {
+            host.view.setNeedsLayout()
+            host.view.layoutIfNeeded()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.02))
+        }
+        return host.sizeThatFits(
+            in: CGSize(width: width, height: CGFloat.greatestFiniteMagnitude)).height
+    }
+
     /// The width the view asks for when nothing constrains it.
     @MainActor
     private func naturalWidth<V: View>(of view: V) -> CGFloat {
@@ -324,13 +377,18 @@ final class ChampionshipRowLayoutTests: XCTestCase {
                        height: CGFloat.greatestFiniteMagnitude)).width
     }
 
-    /// The Brewers card alone, carrying whatever stages the caller wants, built
-    /// the way production serves it so the decode path is the one under test too.
-    private func brewersProgression(stageJSON: String) throws -> TeamProgressionResponse {
+    /// Brewers @ Reds as production serves it — **both** cards, because the card
+    /// count is half the arithmetic. A one-team fixture gets the whole 346 pt and
+    /// stays on one line at phone width, quite correctly, and would hide every
+    /// question this file is about.
+    private func brewersAtRedsProgression(stageJSON: String) throws -> TeamProgressionResponse {
         let json = #"""
         {"event_id": 15305463, "league": "mlb", "league_name": "MLB Playoffs 2026",
          "away_team": {"name": "Milwaukee Brewers", "short_name": "Brewers",
                        "record": "88-55", "conference": "National League",
+                       "stages": [\#(stageJSON)]},
+         "home_team": {"name": "Cincinnati Reds", "short_name": "Reds",
+                       "record": "68-74", "conference": "National League",
                        "stages": [\#(stageJSON)]}}
         """#
         return try decoder().decode(TeamProgressionResponse.self, from: Data(json.utf8))
