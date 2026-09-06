@@ -46,15 +46,19 @@ _DUP_VALUES = [
 
 
 class _Result:
-    def __init__(self, rows, rowcount=0):
+    def __init__(self, rows, rowcount=0, scalar=None):
         self._rows = rows
         self.rowcount = rowcount
+        self._scalar = scalar
 
     def all(self):
         return self._rows
 
     def one(self):
         return self._rows[0]
+
+    def scalar_one_or_none(self):
+        return self._scalar
 
 
 class _EventsTable:
@@ -65,18 +69,75 @@ class _EventsTable:
     point of a self-verifying repair (gotcha #48/#53).
     """
 
-    def __init__(self, rows):
+    def __init__(self, rows, undo_store_fails_after=None):
         # rows: list of (id, statpal_fixture_id)
         self.rows = {i: v for i, v in rows}
         self.calls = []
         self.updates = []            # (lo, hi, rows_affected)
         self.commits = 0
+        self.rollbacks = 0
         self.nulled_at_each_commit = []
+        # The durable receipt store, modelled well enough to hold ONE identity's
+        # payload and to be observed after every commit. `staged` is the
+        # uncommitted write; `committed` is what a crash would leave behind —
+        # the distinction IS the co-commit property under test.
+        self.staged_receipt = None
+        self.committed_receipt = None
+        self.receipts_at_each_commit = []
+        # Fail the Nth durable stage (1-based) to exercise the refusal paths.
+        self.undo_store_fails_after = undo_store_fails_after
+        self.undo_stages = 0
+        # (id, prior_value) for every mutation since the last commit.
+        self._pending = []
+        # Optional hook: mutate the table after the blank-id plan is read.
+        self.after_plan_read = None
 
     async def execute(self, stmt, params=None):
         sql = str(stmt)
         params = params or {}
         self.calls.append((sql, params))
+
+        if "statement_timeout" in sql:
+            return _Result([])
+
+        if "INSERT INTO durable_state_snapshots" in sql:
+            self.undo_stages += 1
+            if (self.undo_store_fails_after is not None
+                    and self.undo_stages > self.undo_store_fails_after):
+                # The store declining to write. `publish_owned_snapshot_in_txn`
+                # reports this as a status, so the shape the repair sees is a
+                # non-`ok` return, not an exception.
+                return _Result([], scalar=None)
+            import json as _json
+            self.staged_receipt = _json.loads(params["payload"])
+            return _Result([], scalar=int(params["generation"]))
+
+        if "SELECT payload" in sql or "payload ->>" in sql:
+            # The owner-classification read after a refused upsert.
+            return _Result([])
+
+        if "SET statpal_fixture_id = ''" in sql:
+            # The predicate is READ OFF THE SQL, never assumed. A fake that
+            # hard-codes `IS NULL` here cannot see the guard being deleted, and
+            # the deletion is survivable in silence precisely because the
+            # relinked REPORT is computed by a different statement — it would go
+            # on saying "refused 1" while the write clobbered that row.
+            only_null = "statpal_fixture_id IS NULL" in sql
+            hit = [
+                i for i in params["ids"]
+                if i in self.rows and (not only_null or self.rows[i] is None)
+            ]
+            for i in hit:
+                self._pending.append((i, self.rows[i]))
+                self.rows[i] = ""
+            return _Result([SimpleNamespace(id=i) for i in hit], rowcount=len(hit))
+
+        if "statpal_fixture_id IS NOT NULL" in sql and "SELECT id" in sql:
+            return _Result([
+                SimpleNamespace(id=i, statpal_fixture_id=self.rows[i])
+                for i in sorted(params["ids"])
+                if self.rows.get(i) is not None
+            ])
 
         if "COUNT(*) FILTER" in sql:
             vals = list(self.rows.values())
@@ -98,29 +159,61 @@ class _EventsTable:
             ])
 
         if "SELECT id FROM events" in sql:
-            return _Result([
+            out = _Result([
                 SimpleNamespace(id=i)
                 for i in sorted(k for k, v in self.rows.items() if v == "")
             ])
+            # A concurrent writer, fired between the plan read and the first
+            # write. This is the ONLY case that tells a receipt built from
+            # `RETURNING` apart from one built by filtering the planned list.
+            if self.after_plan_read is not None:
+                self.after_plan_read(self)
+                self.after_plan_read = None
+            return out
 
         if "UPDATE events" in sql:
             lo, hi = params["lo"], params["hi"]
             hit = [i for i, v in self.rows.items() if lo <= i <= hi and v == ""]
             for i in hit:
+                self._pending.append((i, self.rows[i]))
                 self.rows[i] = None
             self.updates.append((lo, hi, len(hit)))
-            return _Result([], rowcount=len(hit))
+            # RETURNING id — the receipt's only honest source.
+            return _Result([SimpleNamespace(id=i) for i in hit], rowcount=len(hit))
 
         raise AssertionError(f"unexpected SQL: {sql[:160]}")
 
     async def commit(self):
         self.commits += 1
+        self._pending = []
+        self.committed_receipt = self.staged_receipt
         self.nulled_at_each_commit.append(
             sum(1 for v in self.rows.values() if v is None)
         )
+        self.receipts_at_each_commit.append(
+            list((self.committed_receipt or {}).get("event_ids", []))
+        )
+
+    async def rollback(self):
+        self.rollbacks += 1
+        # Everything since the last commit is lost — the data write AND the
+        # receipt. Modelled rather than approximated, because "the batch rolled
+        # back and took its rows with it" is the property under test.
+        for i, prior in reversed(self._pending):
+            self.rows[i] = prior
+        self._pending = []
+        self.staged_receipt = self.committed_receipt
 
 
-def _table(blanks=10, reals=3, nulls=5, duplicates=False):
+def _fake_read_undo(payload):
+    """Stand in for the durable read: the restore's input is a receipt, and the
+    property under test is what it DOES with one, not how it fetches it."""
+    async def _read(_identity):
+        return payload, "ok"
+    return _read
+
+
+def _table(blanks=10, reals=3, nulls=5, duplicates=False, undo_store_fails=None):
     """Build a table: blanks first, then real ids, then NULLs, ids ascending."""
     rows, nid = [], 1
     for _ in range(blanks):
@@ -133,7 +226,7 @@ def _table(blanks=10, reals=3, nulls=5, duplicates=False):
         for v in _DUP_VALUES:
             rows.append((nid, v)); nid += 1
             rows.append((nid, v)); nid += 1
-    return _EventsTable(rows)
+    return _EventsTable(rows, undo_store_fails_after=undo_store_fails)
 
 
 # ---------------------------------------------------------------------------
@@ -358,7 +451,11 @@ class TestBatchingCommitsPerBatch:
         assert res["batches_committed"] == len(res["batches"])
         assert res["commits"] == res["batches_committed"]
         assert sum(b["rows"] for b in res["batches"]) == res["rows_nulled"] == 10
-        assert s.commits == res["batches_committed"]
+        # The session commits once per batch PLUS the two receipt commits that
+        # bracket the run: the empty backup before the first write, and the seal
+        # after the last. Stated as the sum rather than as a bare total, so a
+        # future change that quietly adds a third bracket has to say so here.
+        assert s.commits == 1 + res["batches_committed"] + 1
 
     @pytest.mark.asyncio
     async def test_progress_is_durable_after_each_batch(self, monkeypatch):
@@ -369,10 +466,12 @@ class TestBatchingCommitsPerBatch:
         res = await mod.repair(s, apply=True, expected_blank=7)
 
         assert [b["rows"] for b in res["batches"]] == [3, 3, 1]
-        assert s.commits == 3
+        assert s.commits == 1 + 3 + 1          # backup + three batches + seal
         # Each commit banked strictly more work than the last: a timeout after
-        # any of them leaves consistent, resumable progress.
-        assert s.nulled_at_each_commit == [3, 6, 7]
+        # any of them leaves consistent, resumable progress. The leading 0 is the
+        # empty backup commit and the trailing 7 is the seal, neither of which
+        # touches a row.
+        assert s.nulled_at_each_commit == [0, 3, 6, 7, 7]
 
     @pytest.mark.asyncio
     async def test_every_committed_batch_reports_its_own_rowcount(self, monkeypatch):
@@ -534,3 +633,778 @@ class TestExternalIdUniquenessAlreadyExists:
         # keeps the deferral honest instead of aspirational.
         assert Event.__table__.c.statpal_fixture_id.unique is not True
         assert Event.__table__.c.espn_id.unique is not True
+
+
+# ---------------------------------------------------------------------------
+# D51 — the backup, the receipt, and the restore (#2963)
+# ---------------------------------------------------------------------------
+def _payloads(session):
+    """Every receipt payload this session was ASKED to store, in order."""
+    import json
+
+    return [
+        json.loads(p["payload"])
+        for sql, p in session.calls
+        if "INSERT INTO durable_state_snapshots" in sql
+    ]
+
+
+def _first_index(session, needle):
+    for i, (sql, _p) in enumerate(session.calls):
+        if needle in sql:
+            return i
+    return None
+
+
+class TestBackupBeforeWrite:
+    """D51(b): unattended apply is allowed only against a backup that already
+    exists. The ORDER is the whole property — a backup written afterwards is a
+    backup that does not exist for exactly the run that died halfway."""
+
+    @pytest.mark.asyncio
+    async def test_the_receipt_is_on_disk_before_the_first_row_is_written(self):
+        s = _table(blanks=5, reals=0, nulls=0)
+        await repair(s, apply=True, expected_blank=5)
+
+        first_receipt = _first_index(s, "INSERT INTO durable_state_snapshots")
+        first_write = _first_index(s, "UPDATE events")
+        assert first_receipt is not None and first_write is not None
+        assert first_receipt < first_write
+
+    @pytest.mark.asyncio
+    async def test_that_first_receipt_claims_nothing(self):
+        # At that instant the true answer to "what has this run changed" is
+        # "nothing". A record claiming otherwise is CERT-846's defect.
+        s = _table(blanks=5, reals=0, nulls=0)
+        await repair(s, apply=True, expected_blank=5)
+
+        assert _payloads(s)[0]["event_ids"] == []
+        assert _payloads(s)[0]["rows"] == 0
+        assert _payloads(s)[0]["complete"] is False
+
+    @pytest.mark.asyncio
+    async def test_apply_writes_nothing_at_all_when_the_receipt_cannot_be_stored(self):
+        from scripts.repair_statpal_fixture_id_blanks import REASON_UNDO_UNWRITTEN
+
+        s = _table(blanks=5, reals=0, nulls=0, undo_store_fails=0)
+        res = await repair(s, apply=True, expected_blank=5)
+
+        assert res["refused"] is True
+        assert res["verdict"] == "refused_undo_unwritten"
+        assert res["reason_codes"] == [REASON_UNDO_UNWRITTEN]
+        assert res["rows_nulled"] == 0
+        # The point of the refusal: not one row moved, so nothing needs undoing.
+        assert s.updates == []
+        assert sum(1 for v in s.rows.values() if v == "") == 5
+        assert res["after"] == res["before"]
+
+    @pytest.mark.asyncio
+    async def test_the_refusal_leaves_the_session_usable(self):
+        # Postgres aborts a transaction on a failed statement; the caller still
+        # has a census to report, so the refusal path must roll back.
+        s = _table(blanks=5, reals=0, nulls=0, undo_store_fails=0)
+        await repair(s, apply=True, expected_blank=5)
+        assert s.rollbacks == 1
+
+
+class TestReceiptIsCoCommittedWithItsBatch:
+    """The invariant a partial run rests on: at every instant the durable record
+    names exactly the rows committed as NULL — never more, never fewer."""
+
+    @pytest.mark.asyncio
+    async def test_every_commit_leaves_the_record_matching_the_committed_rows(
+        self, monkeypatch
+    ):
+        import scripts.repair_statpal_fixture_id_blanks as mod
+
+        monkeypatch.setattr(mod, "BATCH_SIZE", 3)
+        s = _table(blanks=7, reals=0, nulls=0)
+        await mod.repair(s, apply=True, expected_blank=7)
+
+        # backup, then three batches, then the seal.
+        assert s.receipts_at_each_commit == [
+            [],
+            [1, 2, 3],
+            [1, 2, 3, 4, 5, 6],
+            [1, 2, 3, 4, 5, 6, 7],
+            [1, 2, 3, 4, 5, 6, 7],
+        ]
+        # And the receipt at each commit is exactly the set of NULLed rows.
+        assert [len(r) for r in s.receipts_at_each_commit] == \
+            s.nulled_at_each_commit
+
+    @pytest.mark.asyncio
+    async def test_a_batch_whose_receipt_fails_is_rolled_back_with_its_rows(
+        self, monkeypatch
+    ):
+        import scripts.repair_statpal_fixture_id_blanks as mod
+
+        monkeypatch.setattr(mod, "BATCH_SIZE", 3)
+        # Stage 1 is the backup, stage 2 is batch one, stage 3 is batch two.
+        s = _table(blanks=7, reals=0, nulls=0, undo_store_fails=2)
+        res = await mod.repair(s, apply=True, expected_blank=7)
+
+        assert res["verdict"] == "partial_undo_lost"
+        assert res["reason_codes"] == [mod.REASON_UNDO_LOST]
+        # Batch one stands; batch two took its rows back with it.
+        assert res["rows_nulled"] == 3
+        assert sorted(i for i, v in s.rows.items() if v is None) == [1, 2, 3]
+        assert sorted(i for i, v in s.rows.items() if v == "") == [4, 5, 6, 7]
+        # The record still names exactly what is committed.
+        assert s.committed_receipt["event_ids"] == [1, 2, 3]
+
+    @pytest.mark.asyncio
+    async def test_it_stops_rather_than_clearing_rows_it_cannot_name(
+        self, monkeypatch
+    ):
+        import scripts.repair_statpal_fixture_id_blanks as mod
+
+        monkeypatch.setattr(mod, "BATCH_SIZE", 3)
+        s = _table(blanks=9, reals=0, nulls=0, undo_store_fails=2)
+        res = await mod.repair(s, apply=True, expected_blank=9)
+
+        # Three batches were planned; it did not carry on past the lost receipt.
+        assert res["batches_planned"] == 3
+        assert res["batches_committed"] == 1
+        assert res["stopped_on_deadline"] is False
+
+
+class TestTheReceiptIsTheRowsWrittenNotThePlan:
+    """CERT-846's class, on this rail. The batch bound is an id RANGE, so the
+    planned range spans rows the write never touched; a receipt built from it
+    would restore '' onto a row that never held it."""
+
+    @pytest.mark.asyncio
+    async def test_a_non_blank_row_inside_the_range_is_not_in_the_receipt(
+        self, monkeypatch
+    ):
+        import scripts.repair_statpal_fixture_id_blanks as mod
+
+        monkeypatch.setattr(mod, "BATCH_SIZE", 4)
+        # ids 1,2 blank · 3 real · 4 blank -> one range (1, 4) spanning id 3.
+        s = _EventsTable([(1, ""), (2, ""), (3, "real-x"), (4, "")])
+        res = await mod.repair(s, apply=True, expected_blank=3)
+
+        assert res["batches"] == [{"lo": 1, "hi": 4, "rows": 3}]
+        assert s.committed_receipt["event_ids"] == [1, 2, 4]
+        assert 3 not in s.committed_receipt["event_ids"]
+        assert s.rows[3] == "real-x"
+
+
+class TestRestore:
+    """The one-command reversal D51 requires."""
+
+    @staticmethod
+    async def _applied(monkeypatch, **table):
+        """Run an apply and hand back (session, receipt payload)."""
+        import scripts.repair_statpal_fixture_id_blanks as mod
+
+        s = _table(**table)
+        blanks = sum(1 for v in s.rows.values() if v == "")
+        await mod.repair(s, apply=True, expected_blank=blanks)
+        return s, s.committed_receipt
+
+    @pytest.mark.asyncio
+    async def test_it_puts_back_exactly_the_rows_the_apply_nulled(
+        self, monkeypatch
+    ):
+        import scripts.repair_statpal_fixture_id_blanks as mod
+
+        s, receipt = await self._applied(monkeypatch, blanks=4, reals=2, nulls=3)
+        assert sum(1 for v in s.rows.values() if v == "") == 0
+
+        monkeypatch.setattr(
+            mod, "read_undo", _fake_read_undo(receipt)
+        )
+        res = await mod.repair(s, apply=True, undo_identity="whatever")
+
+        assert res["action"] == "restore"
+        assert res["rows_restored"] == 4
+        assert res["accounted"] is True
+        assert sorted(i for i, v in s.rows.items() if v == "") == [1, 2, 3, 4]
+        # The three rows that were ALWAYS NULL are not in the receipt and stay
+        # NULL — a restore is not "re-blank everything".
+        assert sorted(i for i, v in s.rows.items() if v is None) == [7, 8, 9]
+
+    @pytest.mark.asyncio
+    async def test_a_row_relinked_since_the_apply_is_refused_and_named(
+        self, monkeypatch
+    ):
+        import scripts.repair_statpal_fixture_id_blanks as mod
+
+        s, receipt = await self._applied(monkeypatch, blanks=4, reals=0, nulls=0)
+        # A forward linker does what NULLing the row was FOR.
+        s.rows[2] = "1329200999"
+
+        monkeypatch.setattr(mod, "read_undo", _fake_read_undo(receipt))
+        res = await mod.repair(s, apply=True, undo_identity="whatever")
+
+        assert res["relinked_count"] == 1
+        assert res["relinked"] == [
+            {"event_id": 2, "statpal_fixture_id": "1329200999"}
+        ]
+        assert res["verdict"] == "restored_with_refusals"
+        assert res["rows_restored"] == 3
+        assert res["accounted"] is True
+        # The real id survived the undo.
+        assert s.rows[2] == "1329200999"
+
+    @pytest.mark.asyncio
+    async def test_the_restore_dry_run_writes_nothing(self, monkeypatch):
+        import scripts.repair_statpal_fixture_id_blanks as mod
+
+        s, receipt = await self._applied(monkeypatch, blanks=4, reals=0, nulls=0)
+        monkeypatch.setattr(mod, "read_undo", _fake_read_undo(receipt))
+        res = await mod.repair(s, apply=False, undo_identity="whatever")
+
+        assert res["verdict"] == "dry_run"
+        assert res["would_restore"] == 4
+        assert res["rows_restored"] == 0
+        assert all(v is None for i, v in s.rows.items())
+
+    @pytest.mark.asyncio
+    async def test_an_unreadable_receipt_refuses_and_writes_nothing(
+        self, monkeypatch
+    ):
+        import scripts.repair_statpal_fixture_id_blanks as mod
+
+        s, _receipt = await self._applied(monkeypatch, blanks=4, reals=0, nulls=0)
+
+        async def _missing(_identity):
+            return None, mod.REASON_UNDO_MISSING
+
+        monkeypatch.setattr(mod, "read_undo", _missing)
+        res = await mod.repair(s, apply=True, undo_identity="gone")
+
+        assert res["refused"] is True
+        assert res["reason_codes"] == [mod.REASON_UNDO_MISSING]
+        assert res["rows_restored"] == 0
+        assert all(v is None for v in s.rows.values())
+
+    @pytest.mark.asyncio
+    async def test_missing_and_unreadable_are_different_answers(self):
+        # "I could not read it" must never be reported as "it was never
+        # written": an operator told the record is missing stops looking.
+        import scripts.repair_statpal_fixture_id_blanks as mod
+
+        assert mod.REASON_UNDO_MISSING != mod.REASON_UNDO_UNREADABLE
+        assert mod.REASON_UNDO_CORRUPT not in (
+            mod.REASON_UNDO_MISSING, mod.REASON_UNDO_UNREADABLE
+        )
+
+    @pytest.mark.asyncio
+    async def test_an_empty_receipt_restores_nothing_and_says_so(
+        self, monkeypatch
+    ):
+        import scripts.repair_statpal_fixture_id_blanks as mod
+
+        s = _table(blanks=0, reals=1, nulls=1)
+        monkeypatch.setattr(mod, "read_undo", _fake_read_undo(
+            {"event_ids": [], "complete": False, "started_at": "x"}
+        ))
+        res = await mod.repair(s, apply=True, undo_identity="empty")
+
+        assert res["verdict"] == "empty_receipt"
+        assert res["rows_restored"] == 0
+
+
+class TestTheRestoreIsReachableOnTheRail:
+    def test_the_repair_declares_undo_identity_so_the_dispatcher_passes_it(self):
+        # The dispatcher passes through only what a repair's signature NAMES.
+        # Without this, `?undo_identity=` is silently dropped and the D51
+        # restore is a paragraph in a handoff note rather than a runnable thing.
+        import inspect
+
+        from scripts.repair_statpal_fixture_id_blanks import repair as fn
+
+        assert "undo_identity" in inspect.signature(fn).parameters
+
+    def test_the_restore_command_names_this_run_identity(self):
+        from scripts.repair_statpal_fixture_id_blanks import restore_command
+
+        cmd = restore_command("repair:statpal_fixture_id_blanks:undo:X:abc")
+        assert "--restore repair:statpal_fixture_id_blanks:undo:X:abc" in cmd
+        assert cmd.count("--restore") == 1
+
+    @pytest.mark.asyncio
+    async def test_a_row_relinked_between_the_plan_and_the_write_is_not_receipted(
+        self, monkeypatch
+    ):
+        """The case that separates `RETURNING` from filtering the planned list.
+
+        A linker gives id 2 a real StatPal id after the plan is read. The
+        UPDATE's repeated `= ''` predicate correctly skips it — but the PLAN
+        still names it, so a receipt derived from the plan would hand an
+        operator a restore that writes `''` over a real id.
+        """
+        import scripts.repair_statpal_fixture_id_blanks as mod
+
+        s = _EventsTable([(1, ""), (2, ""), (3, "")])
+
+        def _linker_wins_the_race(table):
+            table.rows[2] = "1329200777"
+
+        s.after_plan_read = _linker_wins_the_race
+        res = await mod.repair(s, apply=True, expected_blank=3)
+
+        assert res["rows_nulled"] == 2
+        assert s.committed_receipt["event_ids"] == [1, 3]
+        assert 2 not in s.committed_receipt["event_ids"]
+        assert s.rows[2] == "1329200777"
+
+
+# ---------------------------------------------------------------------------
+# The receipt through the REAL durable store and the REAL reader
+#
+# CERT-1979 blocked this rail for a defect no test above could see: every one of
+# them either observes `committed_receipt` (a dict the fake session kept) or
+# hands `restore` a payload through `_fake_read_undo`. Both stop at the payload.
+# The defect lived one layer out, in the ENVELOPE — `_undo_envelope` passed the
+# RUN's completion into the artifact's `complete` flag, `decode_envelope` types
+# any `complete=False` envelope as MALFORMED/IncompleteArtifact, and `read_undo`
+# turns that into UNDO_CORRUPT. So every partial and every deadline-stopped run
+# wrote a receipt that its own restore refused to read.
+#
+# A fake that skips the store cannot fail on that, however many assertions it
+# makes about the payload. These tests run the real `publish_owned_snapshot_in_txn`
+# and the real `read_snapshot` — statements and all — against stdlib sqlite3,
+# then drive `restore` with NO reader stub.
+# ---------------------------------------------------------------------------
+
+_DURABLE_DDL = """
+CREATE TABLE durable_state_snapshots (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    identity       TEXT UNIQUE NOT NULL,
+    schema_version TEXT NOT NULL,
+    generation     INTEGER NOT NULL,
+    generated_at   TEXT NOT NULL,
+    payload        TEXT NOT NULL,
+    checksum       TEXT NOT NULL,
+    complete       INTEGER NOT NULL,
+    source         TEXT NOT NULL,
+    updated_at     TEXT NOT NULL
+)
+"""
+
+#: The only two Postgres-isms in the durable statements, and both are FORM.
+#: `CAST(x AS jsonb)` is a no-op in a store with no JSONB type, and `NOW()` and
+#: `CURRENT_TIMESTAMP` are the same clock under two names. Nothing about the
+#: upsert's guards, the owner predicate, or `RETURNING` is rewritten — those are
+#: the parts under test. `payload ->> :key` needs no rewrite: sqlite has it too.
+_PG_REWRITES = (
+    ("CAST(:payload AS jsonb)", ":payload"),
+    ("NOW()", "CURRENT_TIMESTAMP"),
+)
+
+
+def _to_sqlite(sql: str) -> str:
+    """The production statement, in the one dialect this sandbox can execute."""
+    out = sql
+    for pg, lite in _PG_REWRITES:
+        out = out.replace(pg, lite)
+    # If a THIRD Postgres-ism ever appears, this harness would silently prove a
+    # different statement than production runs. Refuse instead (gotcha #53).
+    assert "::" not in out, f"unrewritten Postgres cast: {out}"
+    assert "jsonb" not in out.lower(), f"unrewritten JSONB: {out}"
+    assert "NOW()" not in out, f"unrewritten NOW(): {out}"
+    return out
+
+
+class _Mappings:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def first(self):
+        return self._rows[0] if self._rows else None
+
+
+class _StoreResult:
+    """A result that answers both shapes the durable service asks for."""
+
+    def __init__(self, rows):
+        self._rows = rows
+
+    def scalar_one_or_none(self):
+        if not self._rows:
+            return None
+        return list(self._rows[0].values())[0]
+
+    def mappings(self):
+        return _Mappings(self._rows)
+
+
+class _DurableSqlite:
+    """The real ``durable_state_snapshots`` statements, executed by sqlite3.
+
+    Deliberately NOT a model of the store: it holds no opinion about what an
+    upsert should do. It runs the production SQL and reports what the database
+    did with it, so the generation guard, the owner predicate and `RETURNING`
+    are the real ones.
+    """
+
+    def __init__(self):
+        import sqlite3
+
+        self.conn = sqlite3.connect(":memory:")
+        self.conn.execute(_DURABLE_DDL)
+        self.conn.commit()
+        self.statements = []
+
+    def execute(self, sql, params):
+        import json as _json
+        from datetime import datetime as _dt
+
+        bound = {}
+        for k, v in (params or {}).items():
+            if isinstance(v, _dt):
+                # The dialect's own string form, so `>=` window comparisons sort
+                # and Python 3.12's deprecated datetime adapter is never used.
+                bound[k] = v.isoformat()
+            elif isinstance(v, bool):
+                bound[k] = int(v)
+            else:
+                bound[k] = v
+        prepared = _to_sqlite(sql)
+        self.statements.append(prepared)
+        cur = self.conn.execute(prepared, bound)
+        cols = [d[0] for d in cur.description] if cur.description else []
+        rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+        for row in rows:
+            # JSONB comes back from asyncpg as a dict; TEXT comes back as a str.
+            # Decoding here is what keeps the reader's `payload` the same type it
+            # sees in production — a str would fail the checksum for the wrong
+            # reason and the test would pass while proving nothing.
+            if isinstance(row.get("payload"), str):
+                row["payload"] = _json.loads(row["payload"])
+            if "complete" in row:
+                row["complete"] = bool(row["complete"])
+        return _StoreResult(rows)
+
+
+class _EventsAndRealStore(_EventsTable):
+    """``_EventsTable`` for ``events``, the real sqlite store for the receipt.
+
+    The receipt's transaction is the repair's transaction, exactly as in
+    production: a commit here commits both, and a rollback takes the batch and
+    its receipt together.
+    """
+
+    def __init__(self, rows, store, **kw):
+        super().__init__(rows, **kw)
+        self.store = store
+
+    async def execute(self, stmt, params=None):
+        sql = str(stmt)
+        if "durable_state_snapshots" in sql:
+            self.calls.append((sql, params or {}))
+            self.undo_stages += 1
+            return self.store.execute(sql, params or {})
+        return await super().execute(stmt, params)
+
+    async def commit(self):
+        self.store.conn.commit()
+        await super().commit()
+
+    async def rollback(self):
+        self.store.conn.rollback()
+        await super().rollback()
+
+
+class _ReaderSession:
+    """A read-only session over the same store, for ``read_snapshot``."""
+
+    def __init__(self, store):
+        self.store = store
+
+    async def execute(self, stmt, params=None):
+        sql = str(stmt)
+        if "statement_timeout" in sql:
+            return _StoreResult([])
+        return self.store.execute(sql, params or {})
+
+
+def _serve_reads_from(monkeypatch, store):
+    """Point the standalone durable read at ``store``.
+
+    Patching the SESSION rather than the reader is the point: `read_snapshot`,
+    `decode_envelope`, the checksum, the version check, the completeness check
+    and the age bound all still run for real. Stubbing `read_undo` — which is
+    what the rest of this file does — is what hid CERT-1979's defect.
+    """
+    import contextlib
+
+    import app.tasks.base as base
+
+    @contextlib.asynccontextmanager
+    async def _session():
+        yield _ReaderSession(store)
+
+    monkeypatch.setattr(base, "get_task_session", _session)
+
+
+def _stop_before_the_first_batch(monkeypatch):
+    """A deadline already blown when the loop is first entered."""
+    import time as _time
+
+    ticks = iter([0.0, 10_000.0])
+    last = [0.0]
+
+    def _fake():
+        try:
+            last[0] = next(ticks)
+        except StopIteration:
+            pass
+        return last[0]
+
+    monkeypatch.setattr(_time, "monotonic", _fake)
+
+
+def _stop_after_two_batches(monkeypatch):
+    """A scripted monotonic clock: two batches run, the third is not attempted.
+
+    Scripted rather than slept, and it never branches on the real clock
+    (gotcha #44) — the sequence IS the deadline.
+    """
+    import time as _time
+
+    ticks = iter([0.0, 1.0, 2.0, 10_000.0])
+    last = [0.0]
+
+    def _fake():
+        try:
+            last[0] = next(ticks)
+        except StopIteration:
+            pass
+        return last[0]
+
+    monkeypatch.setattr(_time, "monotonic", _fake)
+
+
+class TestThePartialReceiptSurvivesTheRealReader:
+    """The CERT-1979 boundary: partial receipt -> real store -> real reader ->
+    restore. No `read_undo` stub anywhere in this class."""
+
+    @pytest.mark.asyncio
+    async def test_a_deadline_stopped_run_can_be_restored(self, monkeypatch):
+        import scripts.repair_statpal_fixture_id_blanks as mod
+
+        store = _DurableSqlite()
+        s = _EventsAndRealStore([(i, "") for i in range(1, 10)], store)
+        monkeypatch.setattr(mod, "BATCH_SIZE", 3)
+        _stop_after_two_batches(monkeypatch)
+
+        res = await mod.repair(
+            s, apply=True, expected_blank=9, deadline_seconds=100.0
+        )
+        assert res["stopped_on_deadline"] is True
+        assert res["terminal"] == "partial"
+        assert res["rows_nulled"] == 6
+
+        # The rows really are NULL, and really are on the record.
+        assert [i for i, v in s.rows.items() if v is None] == [1, 2, 3, 4, 5, 6]
+
+        _serve_reads_from(monkeypatch, store)
+        payload, reason = await mod.read_undo(res["undo_identity"])
+        assert reason == "ok", f"the real reader refused a partial receipt: {reason}"
+        assert payload["event_ids"] == [1, 2, 3, 4, 5, 6]
+        # The RUN was partial. That is a fact in the payload, and it does not
+        # make the RECORD untrustworthy.
+        assert payload["complete"] is False
+
+        out = await mod.restore(s, res["undo_identity"], apply=True)
+        assert out["applied"] is True
+        assert out["rows_restored"] == 6
+        assert out["receipt_complete"] is False
+        assert out["terminal"] == "complete"
+        assert all(s.rows[i] == "" for i in range(1, 7))
+
+    @pytest.mark.asyncio
+    async def test_the_empty_pre_write_receipt_is_readable_too(self, monkeypatch):
+        """The backup written BEFORE the first batch carries ``complete=False``
+        in its payload too, so under the defect it was unreadable from the
+        moment it was written — and a run that died before its first commit
+        could not even be shown to have changed nothing.
+
+        That is the D51 promise failing at its quietest: the operator is handed
+        an `undo_identity`, and the record behind it refuses to open.
+        """
+        import scripts.repair_statpal_fixture_id_blanks as mod
+
+        store = _DurableSqlite()
+        s = _EventsAndRealStore([(1, ""), (2, "")], store)
+        monkeypatch.setattr(mod, "BATCH_SIZE", 1)
+        _stop_before_the_first_batch(monkeypatch)
+
+        res = await mod.repair(
+            s, apply=True, expected_blank=2, deadline_seconds=100.0
+        )
+        assert res["rows_nulled"] == 0
+        assert s.rows == {1: "", 2: ""}, "nothing was written"
+
+        _serve_reads_from(monkeypatch, store)
+        payload, reason = await mod.read_undo(res["undo_identity"])
+        assert reason == "ok", f"the empty pre-write receipt was unreadable: {reason}"
+        assert payload["event_ids"] == []
+        assert payload["complete"] is False
+
+        # An empty receipt is a legitimate answer — "this apply changed nothing"
+        # — and must read as that, never as a corrupt record.
+        out = await mod.restore(s, res["undo_identity"], apply=True)
+        assert out["terminal"] == "noop"
+        assert out["verdict"] == "empty_receipt"
+
+    @pytest.mark.asyncio
+    async def test_a_completed_run_is_still_readable(self, monkeypatch):
+        """The case that always worked keeps working — a fix that only moved the
+        failure to the other branch would pass the test above (gotcha #43)."""
+        import scripts.repair_statpal_fixture_id_blanks as mod
+
+        store = _DurableSqlite()
+        s = _EventsAndRealStore([(i, "") for i in range(1, 5)], store)
+        monkeypatch.setattr(mod, "BATCH_SIZE", 2)
+
+        res = await mod.repair(s, apply=True, expected_blank=4)
+        assert res["terminal"] == "complete"
+
+        _serve_reads_from(monkeypatch, store)
+        payload, reason = await mod.read_undo(res["undo_identity"])
+        assert reason == "ok"
+        assert payload["complete"] is True
+        assert payload["event_ids"] == [1, 2, 3, 4]
+
+        out = await mod.restore(s, res["undo_identity"], apply=True)
+        assert out["applied"] is True
+        assert out["rows_restored"] == 4
+
+
+class TestTheHarnessCanSeeTheDefect:
+    """A regression that cannot fail on the bug it names is decoration.
+
+    These re-create CERT-1979's exact code — the run's completion passed into the
+    envelope's `complete` — and assert the tests above would have caught it.
+    """
+
+    @pytest.mark.asyncio
+    async def test_the_blocked_expression_makes_the_receipt_unreadable(
+        self, monkeypatch
+    ):
+        import scripts.repair_statpal_fixture_id_blanks as mod
+
+        store = _DurableSqlite()
+        s = _EventsAndRealStore([(i, "") for i in range(1, 10)], store)
+        monkeypatch.setattr(mod, "BATCH_SIZE", 3)
+
+        # THE BLOCKED LINE, restored verbatim: `complete=bool(payload.get("complete"))`.
+        real_envelope = mod._undo_envelope
+
+        def _cert_1979_envelope(identity, payload, generation):
+            env = real_envelope(identity, payload, generation)
+            from dataclasses import replace
+
+            return replace(env, complete=bool(payload.get("complete")))
+
+        monkeypatch.setattr(mod, "_undo_envelope", _cert_1979_envelope)
+        _stop_after_two_batches(monkeypatch)
+
+        res = await mod.repair(
+            s, apply=True, expected_blank=9, deadline_seconds=100.0
+        )
+        assert res["rows_nulled"] == 6, "the write itself was never the defect"
+
+        _serve_reads_from(monkeypatch, store)
+        payload, reason = await mod.read_undo(res["undo_identity"])
+        assert payload is None
+        assert reason == mod.REASON_UNDO_CORRUPT
+
+        out = await mod.restore(s, res["undo_identity"], apply=True)
+        assert out["refused"] is True
+        assert out["rows_restored"] == 0
+        # Six rows NULLed, and the reversal unreachable. This is what shipped
+        # would have meant.
+        assert all(s.rows[i] is None for i in range(1, 7))
+
+    def test_the_two_completions_are_different_facts(self):
+        """The fix in one assertion: a COMPLETE record of a PARTIAL run."""
+        import scripts.repair_statpal_fixture_id_blanks as mod
+        from datetime import datetime, timezone
+
+        payload = mod.undo_payload(
+            invocation="inv-1",
+            started_at=datetime.now(timezone.utc),
+            event_ids=[7, 8],
+            complete=False,
+            expected_blank=9,
+        )
+        env = mod._undo_envelope("id-1", payload, 1)
+        assert payload["complete"] is False
+        assert env.complete is True
+
+    def test_the_reader_still_refuses_a_genuinely_incomplete_artifact(self):
+        """`complete=False` keeps its real meaning for producers that use it —
+        the fix is that this rail never sets it, not that the flag was defanged.
+        """
+        from app.utils.durable_state import DurableEnvelope, decode_envelope
+        from datetime import datetime, timezone
+
+        env = DurableEnvelope.build(
+            identity="x", schema_version="v1", payload={"a": 1},
+            generated_at=datetime.now(timezone.utc), complete=False, source="t",
+        )
+        raw = {
+            "identity": env.identity, "schema_version": env.schema_version,
+            "generation": env.generation, "generated_at": env.generated_at,
+            "payload": env.payload, "checksum": env.checksum,
+            "complete": env.complete, "source": env.source,
+        }
+        got = decode_envelope(raw, tier="durable", expected_version="v1")
+        assert got.status == "malformed"
+        assert got.error_class == "IncompleteArtifact"
+
+
+class TestTheSqliteHarnessRunsTheRealStatements:
+    """If the harness quietly proves a different statement than production runs,
+    everything above is theatre."""
+
+    def test_the_ddl_covers_every_production_column(self):
+        from app.models.models import DurableStateSnapshot
+
+        produced = {c.name for c in DurableStateSnapshot.__table__.columns}
+        harness = set()
+        for line in _DURABLE_DDL.splitlines():
+            line = line.strip()
+            if line and not line.startswith(("CREATE", ")")):
+                harness.add(line.split()[0])
+        assert produced == harness, f"harness/production column drift: {produced ^ harness}"
+
+    def test_only_the_two_form_rewrites_are_applied(self):
+        from app.services.durable_snapshots import (
+            _OWNED_UPSERT_SQL, _SELECT_OWNER_SQL, _SELECT_SQL,
+        )
+
+        for stmt in (_OWNED_UPSERT_SQL, _SELECT_SQL, _SELECT_OWNER_SQL):
+            # `_to_sqlite` asserts internally that nothing Postgres-specific
+            # survived; reaching here at all is the proof.
+            _to_sqlite(str(stmt))
+
+    def test_the_owner_guard_is_the_real_one(self):
+        """A second apply may not overwrite the first's receipt — the property
+        CERT-856 added, running here as SQL rather than as a promise."""
+        from app.services.durable_snapshots import _OWNED_UPSERT_SQL
+        from datetime import datetime, timezone
+        import json
+
+        store = _DurableSqlite()
+        now = datetime.now(timezone.utc)
+        base = {
+            "identity": "r:1", "schema_version": "v1", "generation": 10,
+            "generated_at": now, "checksum": "c", "complete": True,
+            "source": "s", "owner_key": "undo_invocation",
+        }
+        mine = dict(base, payload=json.dumps({"undo_invocation": "run-A"}),
+                    owner="run-A")
+        assert store.execute(str(_OWNED_UPSERT_SQL), mine).scalar_one_or_none() == 10
+
+        theirs = dict(base, generation=11,
+                      payload=json.dumps({"undo_invocation": "run-B"}),
+                      owner="run-B")
+        assert store.execute(str(_OWNED_UPSERT_SQL), theirs).scalar_one_or_none() is None
