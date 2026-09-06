@@ -32,15 +32,100 @@ export function providerOf(source: string): string {
   return source;
 }
 
+// ---------------------------------------------------------------------------
+// NAMING A SOURCE — CAL-P1024 (#1865, the SOURCE half of its raw-payload-key item)
+//
+// Measured on production 2026-09-05: `datagolf` reached the reader RAW in two
+// places in the default view — the last Source Comparison row, where every
+// sibling is a proper name, and the By Source sentence, which opened on a
+// lowercase database identifier ("datagolf has no outcomes in this cohort...").
+//
+// It is a SCHEDULED defect, not a typo. `/api/calibration` publishes seven
+// source keys today; the frozen fixture `fixtures/calibration/prod-2026-08-02
+// .json` carries five. The vocabulary is data-driven — there is no source-key
+// constant in the backend to hold this file against — so the map falls behind
+// upstream growth and nothing notices until a reader does.
+//
+// The remedy is not a judgement call: #1865 already settled it for CATEGORIES,
+// where `table_tennis` reached the reader for the identical reason, and
+// `calibrationCategories.ts:14-27` records the ruling. Both halves, always —
+// the curated entry because a brand is an opinion and a generated name is a
+// fabrication ("DataGolf", never "Datagolf"), and the prettified fallback
+// because one label is not a class.
+// ---------------------------------------------------------------------------
+
+/**
+ * Tokens inside a SOURCE key that are shouted rather than spelled.
+ *
+ * Deliberately its own set rather than `calibrationCategories`' — that one is
+ * derived from `LEAGUE_DISPLAY`, so a source key colliding with a league key
+ * would come back named after the league. Two key spaces, two sets.
+ */
+const SOURCE_ACRONYMS: ReadonlySet<string> = new Set([
+  "ai", "api", "espn", "mlb", "nba", "nfl", "nhl", "pga", "ufc", "wta",
+]);
+
+/**
+ * A source or provider key we hold no curated name for, made readable.
+ *
+ * **Never returns a raw payload key**: the result carries no underscore and
+ * never leads lowercase, so the raw-key state this function exists to close is
+ * unreachable for any input, not just the one that exposed it. An imperfect
+ * generated name ("Datagolf") is only ever the state of a source nobody has
+ * named yet — every source we have an opinion about is in the map above it.
+ */
+export function prettifySourceKey(raw: string): string {
+  const tokens = raw.split(/[_\s]+/).filter(Boolean);
+  if (!tokens.length) return raw;
+  return tokens
+    .map((t) => {
+      const lower = t.toLowerCase();
+      return SOURCE_ACRONYMS.has(lower)
+        ? lower.toUpperCase()
+        : lower.charAt(0).toUpperCase() + lower.slice(1);
+    })
+    .join(" ");
+}
+
 /** Reader-facing provider names. */
 const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   kalshi: "Kalshi",
   polymarket: "Polymarket",
   odds_api_family: "Sportsbooks (Odds API)",
+  datagolf: "DataGolf",
 };
 
 export function providerLabel(provider: string): string {
-  return PROVIDER_DISPLAY_NAMES[provider] || provider;
+  return PROVIDER_DISPLAY_NAMES[provider] || prettifySourceKey(provider);
+}
+
+/**
+ * Reader-facing names for individual SOURCE keys.
+ *
+ * Kept separate from `PROVIDER_DISPLAY_NAMES` rather than folded into it,
+ * because the two genuinely disagree and the disagreement is deliberate:
+ * `odds_api` is "Odds API" as a source, while the family it belongs to is
+ * "Sportsbooks (Odds API)" as a provider. Only the FALLBACK is shared.
+ *
+ * Moved here from `app/calibration/page.tsx` by CAL-P1024 under ruling 005
+ * (extract-on-touch), for the reason `calibrationCategories.ts` records for its
+ * own extraction: the page is a `"use client"` component behind SWR, so no
+ * guard could call this function — which is why nothing had ever asserted
+ * anything about it, and why `datagolf` sat unnamed since UX-P128.
+ */
+const SOURCE_DISPLAY_NAMES: Record<string, string> = {
+  kalshi: "Kalshi",
+  polymarket: "Polymarket",
+  odds_api: "Odds API",
+  odds_api_spreads: "Spreads (Odds API)",
+  odds_api_totals: "Totals (Odds API)",
+  odds_api_bookmaker: "Per-Bookmaker (Odds API)",
+  datagolf: "DataGolf",
+};
+
+/** A source key's human label. **Never returns a raw payload key.** */
+export function sourceLabel(src: string): string {
+  return SOURCE_DISPLAY_NAMES[src] || prettifySourceKey(src);
 }
 
 /**

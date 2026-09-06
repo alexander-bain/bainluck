@@ -36,6 +36,7 @@ import {
 import {
   groupSourcesByProvider,
   shapeBreakdownIsSymmetric,
+  sourceLabel,
   SHAPE_BREAKDOWN_MIN_N,
 } from "@/lib/calibrationProviders";
 // UX-P078 (Alex ruling 2026-08-14(b) item 3): By Source is a panel per PROVIDER
@@ -147,18 +148,10 @@ const COLORS = [
   "#0891b2", "#be185d", "#059669", "#9333ea", "#c2410c",
 ];
 
-const SOURCE_DISPLAY_NAMES: Record<string, string> = {
-  kalshi: "Kalshi",
-  polymarket: "Polymarket",
-  odds_api: "Odds API",
-  odds_api_spreads: "Spreads (Odds API)",
-  odds_api_totals: "Totals (Odds API)",
-  odds_api_bookmaker: "Per-Bookmaker (Odds API)",
-};
-
-function sourceLabel(src: string): string {
-  return SOURCE_DISPLAY_NAMES[src] || src;
-}
+// CAL-P1024 (#1865): `SOURCE_DISPLAY_NAMES` and `sourceLabel` moved to
+// `lib/calibrationProviders.ts`. They lived here, inside a `"use client"`
+// component, so no guard could call them — and `datagolf` had been falling
+// through to its raw payload key since UX-P128 with nothing to catch it.
 
 interface DrillInState {
   source: string;

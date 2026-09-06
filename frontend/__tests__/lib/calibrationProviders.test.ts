@@ -1,6 +1,8 @@
 import {
   providerOf,
   providerLabel,
+  prettifySourceKey,
+  sourceLabel,
   groupSourcesByProvider,
   shapeBreakdownIsSymmetric,
   SHAPE_BREAKDOWN_MIN_N,
@@ -50,8 +52,19 @@ describe("providerLabel", () => {
     expect(providerLabel("odds_api_family")).toBe("Sportsbooks (Odds API)");
   });
 
-  it("falls back to the raw provider rather than rendering undefined", () => {
-    expect(providerLabel("some_future_source")).toBe("some_future_source");
+  // CAL-P1024 (#1865): this assertion used to read
+  // `expect(providerLabel("some_future_source")).toBe("some_future_source")`,
+  // and it was PASSING — the raw-key fallback was pinned here as the contract,
+  // under a name ("rather than rendering undefined") that argues only against
+  // the worse of two bad options. That is how `datagolf` printed at readers for
+  // three weeks with a green suite over it: the guard agreed with the bug.
+  //
+  // The requirement it was reaching for is real and is kept — an unnamed source
+  // must still get a row, never `undefined` and never a dropped source. It is
+  // just no longer satisfied by handing over the database key.
+  it("still names an unknown provider — but never with its raw key", () => {
+    expect(providerLabel("some_future_source")).toBe("Some Future Source");
+    expect(providerLabel("some_future_source")).not.toContain("undefined");
   });
 });
 
@@ -136,5 +149,98 @@ describe("shapeBreakdownIsSymmetric", () => {
 
   it("is FALSE on an empty payload — nothing symmetric about nothing", () => {
     expect(shapeBreakdownIsSymmetric([], {})).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CAL-P1024 (#1865) — naming a source, and never printing its database key
+//
+// The defect, photographed on production 2026-09-05 before the fix: the last
+// Source Comparison row read `datagolf` where every sibling read a proper name,
+// and the By Source sentence opened on it — "datagolf has no outcomes in this
+// cohort, so its panel is not drawn here...".
+//
+// `LIVE_SOURCES` above is the 2026-08-13 vocabulary and has FIVE keys. The
+// vocabulary measured off `/api/calibration` on 2026-09-05 has SEVEN. That
+// growth, with no backend constant to hold the maps against, is the mechanism —
+// so the class guard below is written over ARBITRARY keys, not over either
+// list. A list-shaped guard would be dead for exactly the key that broke.
+// ---------------------------------------------------------------------------
+
+/** Measured off production `/api/calibration` `by_source`, 2026-09-05 4:57pm PT. */
+const LIVE_SOURCES_20260905 = [
+  "kalshi",
+  "polymarket",
+  "odds_api_bookmaker",
+  "odds_api",
+  "odds_api_totals",
+  "odds_api_spreads",
+  "datagolf",
+];
+
+describe("source and provider naming", () => {
+  it("names DataGolf in the Source Comparison row — the string production printed raw", () => {
+    // The exact path the table takes: a key -> its provider -> that row's label.
+    expect(providerOf("datagolf")).toBe("datagolf");
+    expect(providerLabel(providerOf("datagolf"))).toBe("DataGolf");
+    expect(groupSourcesByProvider(["datagolf"])[0].label).toBe("DataGolf");
+  });
+
+  it("names DataGolf wherever the page names a SOURCE, not just a provider", () => {
+    // The tab strip, panel headers, chart legends and the drill-in title all go
+    // through `sourceLabel`, and they are what the withheld sentence invites the
+    // reader to go and look at.
+    expect(sourceLabel("datagolf")).toBe("DataGolf");
+  });
+
+  it("is the curated brand, never the generated one", () => {
+    // The whole reason the map entry exists alongside the fallback: the
+    // prettifier cannot know where the capital G goes, and a fabricated brand is
+    // the quiet version of this bug rather than a fix for it.
+    expect(prettifySourceKey("datagolf")).toBe("Datagolf");
+    expect(sourceLabel("datagolf")).not.toBe(prettifySourceKey("datagolf"));
+  });
+
+  it("names every source key production publishes today", () => {
+    for (const src of LIVE_SOURCES_20260905) {
+      expect(sourceLabel(src)).not.toBe(src);
+      expect(providerLabel(providerOf(src))).not.toBe(providerOf(src));
+    }
+  });
+
+  // -- the class, not the instance -----------------------------------------
+  // #1865's bar, generalised from categories to sources: no label can ever be a
+  // raw payload key, FOR ANY KEY, not just this one. These run over keys that
+  // are in no map by construction, so they cannot be satisfied by remembering
+  // to add an entry.
+  const UNMAPPED = [
+    "datagolf",            // today's, so the fallback is proven on the real shape
+    "sportradar",
+    "espn_bpi",
+    "some_new_provider",
+    "betfair_exchange",
+    "nba_stats_api",
+    "x",
+  ];
+
+  it.each(UNMAPPED)("never hands the reader the raw key %s", (key) => {
+    for (const label of [prettifySourceKey(key), sourceLabel(key), providerLabel(key)]) {
+      expect(label).not.toContain("_");
+      expect(label.charAt(0)).toBe(label.charAt(0).toUpperCase());
+      expect(label).not.toBe(key);
+    }
+  });
+
+  it("shouts the acronyms a source key is made of rather than spelling them", () => {
+    expect(prettifySourceKey("espn_bpi")).toBe("ESPN Bpi");
+    expect(prettifySourceKey("nba_stats_api")).toBe("NBA Stats API");
+  });
+
+  it("does not fabricate a name for nothing", () => {
+    // An empty or separator-only key has no tokens to title-case. Returning the
+    // input unchanged is honest; inventing a word for it would not be. Nothing
+    // reaches a reader here either way — `by_source` is keyed by a real column.
+    expect(prettifySourceKey("")).toBe("");
+    expect(prettifySourceKey("___")).toBe("___");
   });
 });
