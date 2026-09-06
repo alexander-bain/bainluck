@@ -430,3 +430,91 @@ async def test_a_non_game_outright_keeps_its_close_time(pg_session):
         "is_game scope has been dropped and every outright is now being re-timed "
         "onto a field that does not mean kick-off for them"
     )
+
+
+# --------------------------------------------------------------------------
+# #3532: the SECOND writer. Every fixture above is football precisely because
+# the post-loop fix-ups skip it — which left the one sport where two writers
+# both fire untested, and they disagreed.
+# --------------------------------------------------------------------------
+
+
+# The venue's own values for KXWTADOUBLES-26SEP07SINTOWHUNKRA, read 2026-09-06:
+# a 2:00 PM EDT match against the +14d tennis settlement backstop.
+_TENNIS_OCCURRENCE = datetime(2026, 9, 7, 18, 0, tzinfo=timezone.utc)
+_TENNIS_CLOSE = datetime(2026, 9, 21, 15, 0, tzinfo=timezone.utc)
+_ITF_TICKER_MIDNIGHT = datetime(2026, 9, 6, tzinfo=timezone.utc)
+
+
+async def test_the_tennis_fixup_keeps_the_venue_start_but_still_repairs_a_close(
+    pg_session,
+):
+    """Both tennis writers, one poll, on a real server.
+
+    The subject and the control run TOGETHER, and that is the point. Asserting
+    only the subject would pass just as well if the fix-up never selected the
+    row at all — `tennis_commence_fixed == 0` reads the same whether the value
+    was deliberately kept or never looked at. The ITF control is a row the main
+    loop CANNOT date (KXITFMATCH is absent from KALSHI_TICKER_TO_DISPLAY_LABEL,
+    so `is_game` is False and it stores the close), so a non-zero count is proof
+    the fix-up ran, selected tennis, and wrote — in the same run in which it
+    left the doubles row alone.
+    """
+    doubles = "KXWTADOUBLES-26SEP07SINTOWHUNKRA"
+    itf = "KXITFMATCH-26SEP06AHRNEC"
+    events = [
+        KalshiEvent(
+            event_ticker=doubles,
+            title="Siniakova/Townsend vs Hunter/Krawczyk",
+            category="Sports",
+            mutually_exclusive=True,
+            markets=[
+                _market(
+                    doubles, "SINTOW", "Siniakova/Townsend", 0.83,
+                    occurrence=_TENNIS_OCCURRENCE, close=_TENNIS_CLOSE,
+                ),
+                _market(
+                    doubles, "HUNKRA", "Hunter/Krawczyk", 0.17,
+                    occurrence=_TENNIS_OCCURRENCE, close=_TENNIS_CLOSE,
+                ),
+            ],
+        ),
+        KalshiEvent(
+            event_ticker=itf,
+            title="Ahrens vs Necker",
+            category="Sports",
+            mutually_exclusive=True,
+            markets=[
+                _market(
+                    itf, "AHR", "Ahrens", 0.55,
+                    occurrence=None, close=_TENNIS_CLOSE,
+                ),
+            ],
+        ),
+    ]
+
+    stats = await _run_poll(pg_session, events)
+
+    assert stats.get("tennis_commence_fixed") == 1, (
+        "the tennis fix-up wrote "
+        f"{stats.get('tennis_commence_fixed')} rows, expected exactly 1 (the ITF "
+        "control). 0 means it never selected these rows, so the subject below "
+        "proves nothing; 2 means it also rewrote the doubles row"
+    )
+
+    stored = _utc(await _stored_commence(pg_session, doubles))
+    assert stored == _TENNIS_OCCURRENCE, (
+        f"the doubles market stored {stored}, expected the venue's "
+        f"{_TENNIS_OCCURRENCE}. The main loop reads occurrence_datetime for this "
+        "series and the post-loop tennis fix-up then re-dated it to the ticker's "
+        f"midnight ({_ITF_TICKER_MIDNIGHT.replace(day=7)}) — which Eastern renders "
+        "as 8:00 PM the previous evening, the wrong hour AND the wrong day (#3532)"
+    )
+
+    repaired = _utc(await _stored_commence(pg_session, itf))
+    assert repaired == _ITF_TICKER_MIDNIGHT, (
+        f"the ITF control stored {repaired}, expected the ticker date "
+        f"{_ITF_TICKER_MIDNIGHT}. #3532 must not switch the fix-up off: 140 open "
+        "ITF markets at the venue have no route to their occurrence and the "
+        "ticker date is the only thing standing between them and a +14d close"
+    )

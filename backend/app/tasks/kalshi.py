@@ -2004,9 +2004,30 @@ _TENNIS_MATCH_SERIES_RE = _re.compile(
 )
 
 
+def _knows_the_hour(candidate: datetime | None, ticker_date: datetime) -> bool:
+    """True when ``candidate`` is a start time worth preferring over the bare
+    ticker midnight.
+
+    Two things must hold. It has to AGREE with the ticker on which match this
+    is — the 36h window, wide enough for a night session that spills past
+    midnight, far too narrow for the +14d close_time (measured: every
+    close-shaped tennis row sits 13d12h-15d3h from its ticker date). And it has
+    to actually SAY something the ticker did not: a candidate sitting exactly on
+    the ticker's own midnight is the ticker restated, not a kick-off, and
+    preferring it is how the clobber below survived.
+    """
+    if candidate is None:
+        return False
+    if candidate == ticker_date:
+        return False
+    return abs(candidate - ticker_date) <= _TENNIS_EVENT_AGREEMENT_WINDOW
+
+
 def _tennis_commence_target(
     external_id: str,
     event_commence: datetime | None,
+    *,
+    market_commence: datetime | None,
 ) -> datetime | None:
     """The honest commence_time for a Kalshi tennis market, or None to leave it.
 
@@ -2015,10 +2036,34 @@ def _tennis_commence_target(
     ``KXATP1RANK-26DEC31``, whose close_time IS their horizon and must never be
     re-dated to a match day.
 
-    When a linked Event lands within a day-and-a-half of the ticker date its
-    kick-off is preferred (ESPN/odds_api know the hour; the ticker only knows
-    the day). The window is what stops a poisoned Event date — one itself
-    derived from the same +14d close_time — being copied back onto the market.
+    Candidates that know the hour beat the ticker's midnight, linked Event
+    first (ESPN/odds_api), then the market's own stored value. The window is
+    what stops a poisoned Event date — one itself derived from the same +14d
+    close_time — being copied back onto the market.
+
+    #3532: ``market_commence`` is the second candidate because this fix-up had
+    become the SECOND writer of ``commence_time`` in one beat, and the worse of
+    the two. Since #3433 the main loop stores the venue's ``occurrence_datetime``
+    for game tickers, and every per-match tennis series is one
+    (``kxwtadoubles``, ``kxatpmatch``, …). Measured at the venue 2026-09-06,
+    ``/markets?series_ticker=…&status=open``: 224 of 224 open per-match tennis
+    markets carry an occurrence and NONE is at midnight. So the main loop wrote
+    ``KXWTADOUBLES-26SEP07SINTOWHUNKRA`` its true 18:00Z start and this function
+    then re-dated it to 2026-09-07 00:00Z — which Eastern renders as 8:00 PM on
+    the 6th, the wrong hour and the wrong day.
+
+    ``market_commence`` is keyword-only and REQUIRED (same shape as
+    ``_kalshi_commence_time``'s ``is_game``) because the driver's own SELECT
+    filters ``commence_time IS NOT NULL``: there is no production row without
+    one, and a default would let every caller silently exercise a state that
+    cannot happen.
+
+    Why the Event still goes first, and why it is not enough on its own: 206 of
+    the 426 clobbered rows ARE linked, and their Events were auto-created from
+    the already-clobbered market, so they carry the identical midnight.
+    Preferring the Event unconditionally would defeat this fix on exactly the
+    rows a reader sees — which is what ``_knows_the_hour`` rejecting an exact
+    ticker-midnight match is for.
     """
     from app.utils.prediction_market_matching import extract_game_date_from_ticker
 
@@ -2028,11 +2073,9 @@ def _tennis_commence_target(
     ticker_date = extract_game_date_from_ticker(external_id)
     if ticker_date is None:
         return None
-    if (
-        event_commence is not None
-        and abs(event_commence - ticker_date) <= _TENNIS_EVENT_AGREEMENT_WINDOW
-    ):
-        return event_commence
+    for candidate in (event_commence, market_commence):
+        if _knows_the_hour(candidate, ticker_date):
+            return candidate
     return ticker_date
 
 
@@ -2061,7 +2104,9 @@ async def _fix_tennis_commence_times() -> int:
 
         fixed_ids = []
         for m in rows:
-            target = _tennis_commence_target(m.external_id, m.event_commence)
+            target = _tennis_commence_target(
+                m.external_id, m.event_commence, market_commence=m.commence_time,
+            )
             if target is None:
                 continue
             if abs((m.commence_time - target).total_seconds()) <= 1800:
