@@ -311,6 +311,28 @@ jobs:
             exit 1
           fi
 
+      - name: #3672 repair bind contract (real asyncpg)
+        # #1884's class, recurred. `repair_3672_bare_namespace_event_names.py`
+        # shipped with 42 green unit tests, passed CERT-2139, merged and
+        # deployed — and raised asyncpg DataError on its FIRST statement, having
+        # bound `SINCE` as an ISO string into `CAST(:since AS timestamptz)`.
+        # It planned nothing and wrote no backup.
+        #
+        # The unit suite could not see it: its fake session accepts any params
+        # object, so the bind's type never met a type system. The cliff drain's
+        # bind contract closed this class for the drain's OWN sql; the unit of
+        # protection turns out to be a statement, not a codebase.
+        #
+        # Same skip detection as every gate in this job.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_repair_3672_bind_contract.py \
+            -v -rs 2>&1 | tee /tmp/bind3672.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/bind3672.txt; then
+            echo "::error::#3672 repair bind contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: Provenance enum contract (real Postgres)
         # C-ADHOC-PROV-CORE. The receiver accepted `play` while the migration's
         # enum declared six values without it, and the route specimen STORED it

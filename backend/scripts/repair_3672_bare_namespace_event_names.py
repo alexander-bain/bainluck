@@ -93,6 +93,7 @@ import argparse
 import asyncio
 import os
 import sys
+from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -115,7 +116,22 @@ _PRE_FIX_NAMESPACE = ""
 
 #: The bug shipped in #2706 and the events it minted start here. Earlier rows are
 #: out of scope: their markets have purged, so nothing can be proved about them.
-SINCE = "2026-06-01"
+#:
+#: 🔴 A `datetime`, NOT the ISO string this shipped as. It is bound into
+#: `CAST(:since AS timestamptz)`, Postgres infers that parameter as `timestamptz`,
+#: and **asyncpg refuses a `str` there rather than casting it** — psycopg2 would
+#: have coerced it silently. As shipped (CERT-2139, master `343eea23`, Heroku
+#: v4240) the script raised
+#:
+#:     asyncpg.exceptions.DataError: invalid input for query argument $1:
+#:     '2026-06-01' (expected a datetime.date or datetime.datetime instance)
+#:
+#: on its FIRST statement, so it never planned a row and never wrote a backup.
+#: It is the same class as #1884's cliff drain — see
+#: `tests/integration/test_kalshi_cliff_bind_contract.py`, whose docstring says
+#: it exists to close this class — and the class recurred because that file
+#: executes only the drain's own SQL.
+SINCE = datetime(2026, 6, 1, tzinfo=timezone.utc)
 
 BAK_TABLE = "bak_3672_event_names"
 
