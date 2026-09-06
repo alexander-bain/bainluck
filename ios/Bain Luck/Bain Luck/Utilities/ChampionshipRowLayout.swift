@@ -64,19 +64,27 @@ enum ChampionshipRowLayout {
 
     /// The badge column when every row ends in a percentage.
     ///
-    /// Unchanged at 70 pt so that a card of ordinary rows keeps exactly the
-    /// column it has today. The widest such row is a trend badge beside
-    /// `formatProb`'s longest string — `<1%`; note `>99%` is unreachable in this
-    /// branch, since anything above 0.99 takes the clinched branch instead.
-    static let valueBadgeWidth: CGFloat = 70
+    /// Measured by hosting the real `ChampionshipStageBadges` and asking what
+    /// width it wants, over every combination of trend and probability the view
+    /// can produce (`ChampionshipRowLayoutTests`). Two things that table shows:
+    ///
+    /// * The probability string costs nothing — `<1%`, `13%`, `50%` and `99%`
+    ///   all measure the same under `monospacedDigit()`. (`>99%` is unreachable
+    ///   here; anything above 0.99 takes the clinched branch.) **The trend badge
+    ///   is what drives the width**: 64.67 pt at `2.0%`, 69.67 at `91.3%`,
+    ///   70.67 at `99.9%`, 75.00 at `100.0%`.
+    /// * So the shipping 70 pt was already short of its own worst case, by 0.67
+    ///   pt at `99.9%` and 5 pt at `100.0%` — a truncated probability waiting on
+    ///   a large enough day. `trend_24h` is a difference of two probabilities,
+    ///   so `100.0%` is in range, and #3581 has the field publishing 91.4% today.
+    static let valueBadgeWidth: CGFloat = 76
 
     /// The badge column when any row in the card says "clinched".
     ///
-    /// Measured, not estimated: see `ChampionshipRowLayoutTests`, which pins it
-    /// against the widest content the column must hold — an arrow, a
-    /// four-character delta, a checkmark and the word — rendered at the sizes
-    /// `ChampionshipPathView` actually uses.
-    static let clinchedBadgeWidth: CGFloat = 96
+    /// Same measurement, plus the checkmark and the word: 89.33 pt at `2.0%`,
+    /// 94.00 at `91.3%` — which is the row photographed breaking in #3574,
+    /// against a 70 pt column — 95.33 at `99.9%`, and 99.67 at `100.0%`.
+    static let clinchedBadgeWidth: CGFloat = 100
 
     /// A stage at or below this is shown as a percentage, above it as "clinched".
     static let clinchedProbability: Double = 0.99

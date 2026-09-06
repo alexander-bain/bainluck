@@ -247,6 +247,24 @@ struct ChampionshipPathView: View {
     }
 
     private func stageBadges(stage: ProgressionStageData, color: Color) -> some View {
+        ChampionshipStageBadges(stage: stage, color: color)
+    }
+}
+
+/// The trailing badges of one Championship Path row: an optional trend badge,
+/// then either "clinched" or the probability.
+///
+/// A view of its own rather than a `@ViewBuilder` method so a test can host it
+/// and ask what width it actually wants. `ChampionshipRowLayout`'s badge-column
+/// constants claim to be measured against this content; without something to
+/// measure, "96 pt is enough for `↑91.3% ✓ clinched`" would be an estimate
+/// wearing the word measured — and a column one point too narrow is exactly
+/// what #3574 was.
+struct ChampionshipStageBadges: View {
+    let stage: ProgressionStageData
+    var color: Color = .blue
+
+    var body: some View {
         let prob = stage.probability ?? 0
         let isClinched = ChampionshipRowLayout.isClinched(probability: stage.probability)
 
@@ -254,7 +272,9 @@ struct ChampionshipPathView: View {
         // this content, so it should never fire. It is here so that if it ever
         // does — a larger Dynamic Type setting, a longer future string — the
         // failure is a legible ellipsis rather than `clinc` / `hed` (#3574).
-        return HStack(spacing: 4) {
+        // It is why a row's HEIGHT can no longer testify about this bug, and why
+        // the test that guards it measures width instead.
+        HStack(spacing: 4) {
             if let trend = stage.trend24h,
                ChampionshipRowLayout.showsTrendBadge(trend: trend) {
                 HStack(spacing: 1) {
@@ -277,7 +297,7 @@ struct ChampionshipPathView: View {
                 }
                 .foregroundStyle(.green)
             } else {
-                Text(formatProb(prob))
+                Text(Self.formatProb(prob))
                     .font(.caption)
                     .fontWeight(.bold)
                     .monospacedDigit()
@@ -287,7 +307,7 @@ struct ChampionshipPathView: View {
         }
     }
 
-    private func formatProb(_ p: Double) -> String {
+    static func formatProb(_ p: Double) -> String {
         if p >= 0.995 { return ">99%" }
         if p <= 0.005 { return "<1%" }
         return "\(Int((p * 100).rounded()))%"

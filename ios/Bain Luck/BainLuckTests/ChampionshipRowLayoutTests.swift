@@ -85,10 +85,13 @@ final class ChampionshipRowLayoutTests: XCTestCase {
     /// The defect itself, stated as arithmetic: the old row spent every point it
     /// had before reaching the bar.
     func testTheOldFixedColumnsConsumedTheEntireCard() {
+        // 70 is written out rather than read from `valueBadgeWidth`: this test
+        // is about the column that shipped, and it must keep describing that
+        // column after the constant moves.
         let oldRowSpend = ChampionshipRowLayout.labelWidth          // 80
             + ChampionshipRowLayout.spacing                          //  8
             + ChampionshipRowLayout.spacing                          //  8
-            + ChampionshipRowLayout.valueBadgeWidth                  // 70
+            + 70                                                     // the old badge column
         XCTAssertEqual(
             oldRowSpend, 166.0, accuracy: 0.01,
             "80 + 8 + 8 + 70 is exactly the 166 pt a row has, which is why the "
@@ -118,8 +121,8 @@ final class ChampionshipRowLayoutTests: XCTestCase {
         let redsBar = ChampionshipRowLayout.barWidth(
             contentWidth: 166, stages: try redsStages())
 
-        XCTAssertEqual(brewersBar, 166 - 8 - 96, accuracy: 0.01)   // 62
-        XCTAssertEqual(redsBar, 166 - 8 - 70, accuracy: 0.01)      // 88
+        XCTAssertEqual(brewersBar, 58, accuracy: 0.01)   // 166 - 8 - 100
+        XCTAssertEqual(redsBar, 82, accuracy: 0.01)      // 166 -  8 -  76
 
         // Absolute, not `>= minBarWidth`: a bar compared against the same
         // constant the layout used to place it agrees by construction and would
@@ -218,58 +221,107 @@ final class ChampionshipRowLayoutTests: XCTestCase {
         XCTAssertTrue(ChampionshipRowLayout.showsTrendBadge(trend: 0.9133))
     }
 
-    // MARK: - The symptom, measured on the rendered view
+    // MARK: - The column, measured against what the view actually draws
 
-    /// A wrapped badge makes its row taller. That is what `clinc` / `hed` *is*.
+    /// Height cannot testify about this bug, so width has to.
     ///
-    /// So: render the same card twice, once with the trend badge that busted the
-    /// column and once without it, and require the two to be the same height.
-    /// Before this fix the clinched-and-moved card was taller, because both of
-    /// its `Text`s had broken across two lines.
+    /// `clinc` / `hed` was a wrap, and a wrap makes a row taller — but the badge
+    /// `Text`s now carry `lineLimit(1)`, so the same too-narrow column truncates
+    /// instead and the row's height never moves. An equal-height assertion would
+    /// pass for the same reason the bug would still be there. (Found by mutation:
+    /// setting `clinchedBadgeWidth` back to 70 left a height test green.)
+    ///
+    /// What is left is the honest question: does the column hold the content?
+    /// So host the real badge view, ask it what width it wants, and require the
+    /// constant to cover it. Nothing here re-derives the view's own arithmetic —
+    /// if the fonts, spacings or the word "clinched" change, this fails.
+    /// `trend_24h` is a difference of two probabilities, so the badge can read
+    /// anything from `0.5%` to `100.0%`. Sweep it rather than trusting one
+    /// fixture: a column sized against a convenient example is how 70 pt came to
+    /// be 0.67 pt short of `↓99.9%` without anyone noticing.
+    private let everyTrend: [Double?] = [nil, 0.005, 0.02, 0.9133, 0.999, 1.0]
+    private let everyProbability: [Double] = [0.0005, 0.004, 0.134, 0.5, 0.99, 0.996, 1.0]
+
     @MainActor
-    func testAClinchedRowIsNoTallerForCarryingItsTrendBadge() throws {
-        func height(trend: Double?) throws -> CGFloat {
-            let view = ChampionshipPathView(progression: try brewersProgression(
-                stageJSON: stageJSON("make_playoffs", "Make Playoffs",
-                                     probability: 0.996, trend: trend)))
-            return renderedHeight(of: view, width: 402)
+    func testEachBadgeColumnHoldsTheWidestRowItCanEverBeAskedToDraw() throws {
+        var worst: [Bool: (width: CGFloat, describe: String)] = [:]
+
+        for trend in everyTrend {
+            for probability in everyProbability {
+                let row = try stage("k", "L", probability: probability, trend: trend)
+                let clinched = ChampionshipRowLayout.isClinched(probability: probability)
+                let wanted = naturalWidth(of: ChampionshipStageBadges(stage: row))
+                let label = "trend \(trend.map { String(format: "%.1f%%", abs($0 * 100)) } ?? "none")"
+                    + " + " + (clinched ? "clinched" : ChampionshipStageBadges.formatProb(probability))
+                if wanted > (worst[clinched]?.width ?? 0) {
+                    worst[clinched] = (wanted, label)
+                }
+            }
         }
 
-        let withTrend = try height(trend: 0.9133)
-        let withoutTrend = try height(trend: nil)
+        let ordinary = try XCTUnwrap(worst[false])
+        let clinched = try XCTUnwrap(worst[true])
 
-        XCTAssertGreaterThan(withoutTrend, 0, "precondition: the card must render")
-        XCTAssertEqual(
-            withTrend, withoutTrend, accuracy: 0.5,
-            "the clinched row grew by \(withTrend - withoutTrend) pt when its trend "
-            + "badge appeared. That extra height is a second line inside the badge "
-            + "column — the `clinc` / `hed` break of #3574. The column must be wide "
-            + "enough to hold an arrow, a delta, a checkmark and the word.")
+        XCTAssertGreaterThanOrEqual(
+            ChampionshipRowLayout.valueBadgeWidth, ordinary.width,
+            "the widest ordinary row (\(ordinary.describe)) wants \(ordinary.width) pt "
+            + "and the column offers \(ChampionshipRowLayout.valueBadgeWidth) pt")
+        XCTAssertGreaterThanOrEqual(
+            ChampionshipRowLayout.clinchedBadgeWidth, clinched.width,
+            "the widest clinched row (\(clinched.describe)) wants \(clinched.width) pt "
+            + "and the column offers \(ChampionshipRowLayout.clinchedBadgeWidth) pt. "
+            + "Short by any amount and the row breaks its own words (#3574).")
+
+        // The column must not be padded far past what it holds either — every
+        // point it takes is a point off the bar (#3580).
+        XCTAssertLessThan(
+            ChampionshipRowLayout.valueBadgeWidth - ordinary.width, 4,
+            "the ordinary column is wider than it needs to be, at the bar's expense")
+        XCTAssertLessThan(
+            ChampionshipRowLayout.clinchedBadgeWidth - clinched.width, 4,
+            "the clinched column is wider than it needs to be, at the bar's expense")
     }
 
-    /// The control for the test above: it must be able to see a wrap at all.
-    /// A row whose column is deliberately far too narrow *does* grow, so an
-    /// equal-height assertion is measuring something.
+    /// The precondition the whole fix rests on: the content genuinely did not fit
+    /// the 70 pt column that shipped. If it did, #3574 could not have happened
+    /// and every test above is guarding nothing.
     @MainActor
-    func testTheHeightAssertionCanSeeAWrap() throws {
-        let view = ChampionshipPathView(progression: try brewersProgression(
-            stageJSON: stageJSON("make_playoffs", "Make Playoffs",
-                                 probability: 0.996, trend: 0.9133)))
-
+    func testThePhotographedRowDidNotFitTheOldColumn() throws {
+        let photographed = try stage(
+            "make_playoffs", "Make Playoffs", probability: 0.996, trend: 0.9133)
         XCTAssertGreaterThan(
-            renderedHeight(of: view, width: 150), renderedHeight(of: view, width: 402),
-            "squeezed to 150 pt the same card must get taller — otherwise the "
-            + "equal-height test above passes because nothing can ever change "
-            + "the height, not because the wrap is gone")
+            naturalWidth(of: ChampionshipStageBadges(stage: photographed)), 70,
+            "'↑91.3%  ✓ clinched' — the Brewers row in "
+            + "AFTER-mlb-15305463-s900.png — must want more than the 70 pt it was "
+            + "given, or the `clinc` / `hed` break has some other cause")
     }
 
+    /// The probability string is not what drives the column; the trend badge is.
+    /// Worth pinning, because it is the reason `<1%` and `99%` need the same room
+    /// and the reason a wider column buys nothing on a card with no movement.
     @MainActor
-    private func renderedHeight<V: View>(of view: V, width: CGFloat) -> CGFloat {
-        let host = UIHostingController(rootView: view.frame(width: width))
+    func testTheProbabilityStringCostsTheColumnNothing() throws {
+        XCTAssertEqual(ChampionshipStageBadges.formatProb(0.004), "<1%")
+        XCTAssertEqual(ChampionshipStageBadges.formatProb(0.99), "99%")
+
+        let widths = try [0.004, 0.134, 0.5, 0.99].map { probability in
+            naturalWidth(of: ChampionshipStageBadges(
+                stage: try stage("k", "L", probability: probability, trend: 0.02)))
+        }
+        XCTAssertEqual(Set(widths).count, 1,
+                       "monospacedDigit() should make every percentage the same "
+                       + "width; measured \(widths)")
+    }
+
+    /// The width the view asks for when nothing constrains it.
+    @MainActor
+    private func naturalWidth<V: View>(of view: V) -> CGFloat {
+        let host = UIHostingController(rootView: view)
         host.view.setNeedsLayout()
         host.view.layoutIfNeeded()
         return host.sizeThatFits(
-            in: CGSize(width: width, height: .greatestFiniteMagnitude)).height
+            in: CGSize(width: CGFloat.greatestFiniteMagnitude,
+                       height: CGFloat.greatestFiniteMagnitude)).width
     }
 
     /// The Brewers card alone, carrying whatever stages the caller wants, built
