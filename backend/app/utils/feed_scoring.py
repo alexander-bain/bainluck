@@ -59,13 +59,30 @@ TAG_BOOSTS = {
 COMPLETED_FRESH_HOURS = 1.5
 COMPLETED_DECAY_HOURS = 6.0
 COMPLETED_MAX_DECAY = 0.55
-# A completed event is RE-RANKED, never removed. `routes/feed.py` drops an event
-# scoring under `min_score` (30 for an anonymous reader), so an unbounded decay
-# would silently empty the recent-results content instead of reordering it —
-# the #1091 class. 35 is the established "survives but ranks below interesting
-# futures" floor already used for the demotion cap and the championship
-# override, and it sits above every min_score gate.
-COMPLETED_DECAY_FLOOR = 35
+
+# HOW "RE-RANKED, NEVER REMOVED" IS ACTUALLY GUARANTEED — and how the first
+# version of this got it wrong (CERT-2048).
+#
+# That version decayed inside `compute_base_score` and defended no-removal with a
+# score floor of 35, reasoning that 35 "sits above every min_score gate" because
+# the anonymous gate is 30. That reasoning only held for the anonymous reader.
+# The real gate in `_score_events` tests the PERSONALIZED score, and a reader who
+# said "if it's wild" to a sport gets multiplier 0.7 against `min_score = 55`:
+#
+#     98 pre-decay  -> 98 * 0.7 = 68.6 >= 55   admitted
+#     44 decayed    -> 44 * 0.7 = 30.8 <  55   DROPPED
+#
+# So the decay deleted cards for exactly the readers who had asked to see fewer
+# of them, which is the #1091 class the floor was written to prevent. A floor
+# large enough to survive that gate would have to be 55/0.7 = 79 — i.e. no decay
+# worth having. The floor was the wrong instrument.
+#
+# The guarantee is now STRUCTURAL rather than numeric: `_score_events` runs its
+# admission gate on the PRE-decay score and applies the decay afterwards, so the
+# set of admitted events is bit-for-bit what it was before this feature existed,
+# whatever the reader's affinities. Freshness can only reorder what personalization
+# already admitted. There is deliberately NO floor — with removal impossible by
+# construction, a floor would only weaken the re-ranking it can no longer protect.
 
 
 def compute_completed_freshness_factor(
@@ -94,19 +111,37 @@ def compute_completed_freshness_factor(
 
 
 def apply_completed_freshness_decay(
-    score: int,
+    display_score: int,
+    rank_score: float,
     event_status: str,
     hours_since_finish: float | None,
-) -> tuple[int, list[str]]:
-    """Age-decay a finished game's score. Returns (new_score, reasons)."""
-    factor = compute_completed_freshness_factor(event_status, hours_since_finish)
-    if factor >= 1.0 or score <= COMPLETED_DECAY_FLOOR:
-        return score, []
+) -> tuple[int, float, list[str]]:
+    """Age-decay a finished game's DISPLAY and ORDERING scores together.
 
-    decayed = max(COMPLETED_DECAY_FLOOR, int(score * factor))
-    if decayed >= score:
-        return score, []
-    return decayed, ["stale_result"]
+    Returns ``(display_score, rank_score, reasons)``.
+
+    The two are decayed by ONE factor in ONE call because they cannot be allowed
+    to disagree. ``_rank_score`` is ``max(display, base * multiplier)``, so
+    decaying the display score alone is a no-op the moment the uncapped ordering
+    term is the larger of the two — which, for the high-scoring finished games
+    this exists to demote, it always is. Two call sites would be two chances for
+    a later edit to move one and not the other; the same discipline is why
+    ``hours_since_finish`` is derived once and published rather than re-derived.
+
+    Callers must apply this AFTER their admission gate — see the module comment
+    above. Nothing here can prevent a removal, because nothing here knows about
+    the reader's multiplier or gate; not being asked before admission is the
+    entire guarantee.
+    """
+    factor = compute_completed_freshness_factor(event_status, hours_since_finish)
+    if factor >= 1.0:
+        return display_score, rank_score, []
+
+    decayed_display = int(display_score * factor)
+    decayed_rank = rank_score * factor
+    if decayed_display >= display_score and decayed_rank >= rank_score:
+        return display_score, rank_score, []
+    return decayed_display, decayed_rank, ["stale_result"]
 
 
 def compute_content_richness_penalty(
@@ -195,7 +230,6 @@ def compute_base_score(
     ei_metadata: str | dict | None = None,
     volume_24h: int | None = None,
     volume_7d_avg: float | None = None,
-    hours_since_finish: float | None = None,
 ) -> tuple[int, list[str]]:
     """Compute the base interestingness score for a feed event.
 
@@ -303,16 +337,13 @@ def compute_base_score(
         score += richness_adj
         reasons.extend(richness_reasons)
 
-    # Freshness decay for finished games. LAST, deliberately: it scales the whole
-    # post-game stack (highlight + EI + comeback + volume), which is the only way
-    # to reach a score that is mostly age-blind bonuses.
-    score, staleness_reasons = apply_completed_freshness_decay(
-        score=score,
-        event_status=event_status,
-        hours_since_finish=hours_since_finish,
-    )
-    reasons.extend(staleness_reasons)
-
+    # The completed-game freshness decay is deliberately NOT applied here, even
+    # though this is where the age-blind post-game stack it scales is built.
+    # This function's return value is what `_score_events` feeds to the
+    # personalization multiplier and then to the `min_score` admission gate, so
+    # decaying it here decides who gets SHOWN a card, not merely where it ranks —
+    # the CERT-2048 defect. The caller applies the decay after that gate, via
+    # `apply_completed_freshness_decay`. See the module comment at the top.
     return score, reasons
 
 

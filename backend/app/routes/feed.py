@@ -6383,7 +6383,11 @@ async def _score_events(
 
     champ_probs = await _get_championship_probabilities(db)
 
-    from app.utils.feed_scoring import compute_base_score, format_event_data
+    from app.utils.feed_scoring import (
+        apply_completed_freshness_decay,
+        compute_base_score,
+        format_event_data,
+    )
     from app.tasks.odds_polling import get_statpal_end_time
 
     for event in events:
@@ -6540,10 +6544,6 @@ async def _score_events(
                 source_count=_source_count,
                 game_progress=_game_progress,
                 ei_metadata=event.ei_metadata,
-                # Same clock that set `is_recently_finished` — taken off the
-                # result rather than re-derived, so the eligibility window and
-                # the freshness decay can never disagree about a game's age.
-                hours_since_finish=highlight_result.hours_since_finish,
             )
             highlight_result.reasons = extra_reasons
 
@@ -6607,6 +6607,38 @@ async def _score_events(
                 min_score = 30
             if personalized_score < min_score:
                 continue
+
+            # --- Completed-game freshness decay (#3484) ---
+            #
+            # AFTER the gate above, and that position is the whole fix rather
+            # than a detail of it. Every `min_score` branch above reads the
+            # personalized score, so a decay folded into `base_score` changes
+            # who is ADMITTED, not just how they rank: a "if it's wild" reader
+            # (multiplier 0.7, min_score 55) kept a 98-point result at 68.6 and
+            # lost the decayed one at 30.8 — the decay deleting cards for the
+            # readers who asked to see fewer of them, which is #1091 again.
+            # Gating first makes the admitted set identical to what it was
+            # before this feature existed, for every reader, and leaves freshness
+            # able to do only the one thing it is for: reorder.
+            #
+            # `personalized_score` itself is left alone because the
+            # personalization trace below explains `base * multiplier` and would
+            # otherwise book the freshness cut as a personalization effect.
+            _rank_score = max(
+                float(personalized_score), base_score * p_result.multiplier
+            )
+            _display_score, _rank_score, _staleness_reasons = (
+                apply_completed_freshness_decay(
+                    display_score=personalized_score,
+                    rank_score=_rank_score,
+                    event_status=event.status,
+                    hours_since_finish=highlight_result.hours_since_finish,
+                )
+            )
+            if _staleness_reasons:
+                highlight_result.reasons = (
+                    list(highlight_result.reasons) + _staleness_reasons
+                )
 
             # Generate reason text
             reason = generate_event_reason(
@@ -6724,15 +6756,15 @@ async def _score_events(
 
             item = {
                 "type": "event",
-                "score": personalized_score,
-                # De-saturated ORDERING score (#141/Item 1): use the uncapped
+                "score": _display_score,
+                # De-saturated ORDERING score (#141/Item 1): the uncapped
                 # base*multiplier so events share one sort scale with de-saturated
                 # futures, but never below the display floor (respects the "Nah"
                 # championship override at 35). compute_base_score does not clamp at
                 # 98, so this genuinely de-saturates line-move / high-EI events too.
-                "_rank_score": max(
-                    float(personalized_score), base_score * p_result.multiplier
-                ),
+                # Both are computed together above the reason text, where the
+                # completed-game freshness decay scales them by one shared factor.
+                "_rank_score": _rank_score,
                 "reason": reason,
                 "headline": get_highlight_label(highlight_result),
                 "data": event_data,

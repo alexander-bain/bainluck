@@ -24,11 +24,18 @@ must not touch live or scheduled events.
 """
 
 from datetime import datetime, timedelta, timezone
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.routes.feed import _score_events
+from app.utils.personalization import (
+    LOW_AFFINITY_THRESHOLD,
+    NAH_AFFINITY_THRESHOLD,
+    PersonalizationContext,
+    compute_event_multiplier,
+)
 from app.utils.feed_scoring import (
-    COMPLETED_DECAY_FLOOR,
     COMPLETED_DECAY_HOURS,
     COMPLETED_FRESH_HOURS,
     COMPLETED_MAX_DECAY,
@@ -48,6 +55,11 @@ def _completed_score(hours_since_finish: float | None, *, raw_ei: float = 0.87) 
     Mirrors the production shape of the measured rows: a high-EI completed game
     with no champ-prob stakes and no tags, so the only thing separating two calls
     is the age.
+
+    `compute_base_score` no longer decays — the decay moved behind the admission
+    gate (CERT-2048, see the module docstring's "WHERE THE DECAY IS APPLIED") —
+    so this composes the two exactly as `_score_events` does, and returns the
+    display score a reader would rank on at multiplier 1.0.
     """
     score, _ = compute_base_score(
         highlight_score=60,
@@ -59,9 +71,14 @@ def _completed_score(hours_since_finish: float | None, *, raw_ei: float = 0.87) 
         event_tags=[],
         event_status="completed",
         raw_ei=raw_ei,
+    )
+    display, _rank, _reasons = apply_completed_freshness_decay(
+        display_score=score,
+        rank_score=float(score),
+        event_status="completed",
         hours_since_finish=hours_since_finish,
     )
-    return score
+    return display
 
 
 class TestTheDecayIsAGradientNotAFlag:
@@ -143,81 +160,252 @@ class TestTheFactorCurve:
 class TestItReranksAndNeverDeletes:
     """#1091: a surface must never be capped into emptiness.
 
-    "Never deletes" is exact for the anonymous reader — the one the measurement
-    was taken as, and the one whose gate is the binding constraint. The single
-    exception, a down-weighted sport, is pinned explicitly below rather than
-    papered over.
+    THIS CLASS IS THE CERT-2048 REPAIR, and the shape of what it replaced is the
+    reason it is written the way it is.
+
+    The first version defended "never deletes" with a numeric floor of 35 and
+    proved it by asserting arithmetic on constants — `COMPLETED_DECAY_FLOOR > 30`,
+    `int(35 * 0.7) < 30`, and a break-even derived from those same two numbers.
+    Every one of those assertions passed. They were all against a gate of 30,
+    which is the ANONYMOUS reader's. A reader who has down-weighted a sport is
+    the only reader whose multiplier is below 1.0 — and their gate is not 30, it
+    is 55. The test never executed `_score_events`, so nothing could tell it that
+    it was modelling the wrong branch, and it certified the exact regression it
+    was written to catch:
+
+        98 pre-decay -> 98 * 0.7 = 68.6 >= 55   admitted
+        44 decayed   -> 44 * 0.7 = 30.8 <  55   DROPPED
+
+    So the guarantee is no longer a number to be compared against a remembered
+    gate. It is structural — the decay is applied after the gate — and it is
+    proved by RUNNING the gate rather than by restating it.
     """
-
-    def test_the_decay_never_pushes_a_score_below_the_floor(self):
-        # 300 is well above any real score, 24h is the oldest an event can be
-        # and still be a feed candidate.
-        for score in (36, 50, 98, 130, 300):
-            decayed, _ = apply_completed_freshness_decay(score, "completed", 24.0)
-            assert decayed >= COMPLETED_DECAY_FLOOR
-
-    def test_the_floor_clears_the_anonymous_min_score_gate(self):
-        """routes/feed.py drops an event scoring under min_score (30 anonymous).
-
-        If the floor ever slipped to or below that gate, the decay would start
-        silently deleting recent results instead of re-ranking them.
-
-        SCOPE, stated precisely so this is not read as more than it is: the gate
-        is applied to `min(98, int(base_score * personalization_multiplier))`.
-        This guarantee is therefore exact for the anonymous reader and for any
-        personalized reader whose multiplier is >= 1.0 (whose gate is 10, lower
-        still). A reader who has DOWN-weighted a sport carries a multiplier below
-        1.0 against the same gate of 30, so for them a fully-decayed result can
-        fall under it — see the test below, which pins that as understood
-        behaviour rather than leaving it to be discovered.
-        """
-        assert COMPLETED_DECAY_FLOOR > 30
-
-    def test_a_down_weighted_sport_can_drop_an_old_result_and_that_is_understood(self):
-        """The one case where the decay does remove a card, made explicit.
-
-        A reader who down-weighted this sport (multiplier < 1.0, gate still 30)
-        loses a fully-decayed result. That is a deliberate consequence: the card
-        is a six-hour-old game in a sport they asked to see less of. It is pinned
-        here so a future change to the floor, the gate or the multiplier cannot
-        move this line without a test going red.
-        """
-        anonymous_gate = 30
-        down_weighted_multiplier = 0.7
-
-        # The worst case is a card sitting ON the floor — that is the lowest a
-        # decayed score can go, so if the floor survives, everything above it does.
-        assert COMPLETED_DECAY_FLOOR >= anonymous_gate
-
-        # ...for the anonymous reader. Multiply by a down-weight and it goes under.
-        assert int(COMPLETED_DECAY_FLOOR * down_weighted_multiplier) < anonymous_gate
-
-        # And the boundary is not folklore: it is the multiplier at which the
-        # floor stops clearing the gate.
-        breakeven = anonymous_gate / COMPLETED_DECAY_FLOOR
-        assert down_weighted_multiplier < breakeven < 1.0
-        # A real, high-scoring result is comfortably clear of it even down-weighted.
-        decayed_from_98, _ = apply_completed_freshness_decay(98, "completed", 24.0)
-        assert int(decayed_from_98 * down_weighted_multiplier) >= anonymous_gate
-
-    def test_a_score_already_at_or_under_the_floor_is_left_alone(self):
-        for score in (0, 12, COMPLETED_DECAY_FLOOR):
-            decayed, reasons = apply_completed_freshness_decay(score, "completed", 24.0)
-            assert decayed == score
-            assert reasons == []
 
     def test_the_decay_never_raises_a_score(self):
         for hours in (0.0, 2.0, 6.0, 24.0, 100.0):
-            decayed, _ = apply_completed_freshness_decay(90, "completed", hours)
-            assert decayed <= 90
+            display, rank, _ = apply_completed_freshness_decay(90, 90.0, "completed", hours)
+            assert display <= 90
+            assert rank <= 90.0
+
+    def test_the_display_and_ordering_scores_decay_by_the_same_factor(self):
+        """They are returned together so they cannot drift apart.
+
+        `_rank_score` is `max(display, base * multiplier)` and is UNCAPPED, so a
+        card displaying the capped 98 can rank on a much larger number. Decaying
+        only the display score would be a no-op for exactly the high-scoring
+        finished games this feature exists to demote.
+        """
+        display, rank, _ = apply_completed_freshness_decay(98, 260.0, "completed", 24.0)
+        factor = compute_completed_freshness_factor("completed", 24.0)
+        assert display == int(98 * factor)
+        assert rank == pytest.approx(260.0 * factor)
+        # And the ordering score really did move, by a lot.
+        assert rank < 150.0
 
     def test_a_decayed_card_says_why(self):
-        _, reasons = apply_completed_freshness_decay(98, "completed", 9.0)
+        _, _, reasons = apply_completed_freshness_decay(98, 98.0, "completed", 9.0)
         assert "stale_result" in reasons
 
     def test_an_undecayed_card_adds_no_reason(self):
-        _, reasons = apply_completed_freshness_decay(98, "completed", 0.5)
+        _, _, reasons = apply_completed_freshness_decay(98, 98.0, "completed", 0.5)
         assert reasons == []
+
+
+# ── The required regression: the real gate, not a remembered one ──────────────
+#
+# Everything below drives the actual `_score_events`, with a real
+# `PersonalizationContext`, so the `min_score` branch under test is production's
+# own and not a number copied into a test.
+
+
+def _sport(key="baseball_mlb", name="MLB"):
+    s = MagicMock()
+    s.key = key
+    s.name = name
+    return s
+
+
+def _feed_event(event_id: int, *, hours_since_finish: float, raw_ei: float = 0.95):
+    """A finished, high-scoring game of a given age, in production's shape.
+
+    Modelled on the measured rows: `status='completed'`, `statpal_end_time` NULL,
+    `completed_at` populated — the 13/13 shape that made the age read from
+    kickoff before this ship.
+    """
+    e = MagicMock()
+    e.id = event_id
+    e.status = "completed"
+    e.commence_time = NOW - timedelta(hours=hours_since_finish + 3)
+    e.completed_at = NOW - timedelta(hours=hours_since_finish)
+    e.statpal_end_time = None
+    e.home_team_id = 100 + event_id
+    e.away_team_id = 200 + event_id
+    e.home_team_name = f"Home{event_id}"
+    e.away_team_name = f"Away{event_id}"
+    e.opening_home_probability = 0.20
+    e.opening_away_probability = 0.80
+    e.win_probability_sources = {"betting": {"home_probability": 0.95}}
+    e.opening_home_spread = -3.5
+    e.opening_over_under = 8.5
+    e.opening_favorite = f"Away{event_id}"
+    e.llm_importance = "regular"
+    e.llm_gender = None
+    e.llm_level = None
+    e.llm_league = None
+    e.sport = _sport()
+    e.period = None
+    e.raw_ei = raw_ei
+    e.ei_metadata = None
+    e.home_score = 7
+    e.away_score = 2
+    e.external_id = f"ext-{event_id}"
+    e.game_clock = None
+    e.broadcast_info = None
+    e.event_tags = []
+    return e
+
+
+def _mock_db(events):
+    db = AsyncMock()
+
+    def make_result(rows):
+        r = MagicMock()
+        r.scalars.return_value.all.return_value = rows
+        r.all.return_value = []
+        return r
+
+    async def execute(stmt, *a, **k):
+        s = str(stmt).lower()
+        if "win_prob_snapshots" in s:
+            return make_result([])
+        if "events" in s:
+            return make_result(events)
+        return make_result([])
+
+    db.execute = AsyncMock(side_effect=execute)
+    return db
+
+
+async def _run_score_events(events, ctx):
+    with patch(
+        "app.routes.feed._get_championship_probabilities",
+        new=AsyncMock(return_value={}),
+    ):
+        return await _score_events(_mock_db(events), NOW, None, ctx)
+
+
+def _low_affinity_ctx():
+    """The reader the repair is about: "if it's wild" on this sport.
+
+    Affinity 0.1 is below `LOW_AFFINITY_THRESHOLD` (0.2) and above
+    `NAH_AFFINITY_THRESHOLD` (0.05), which is the band that produces
+    `sport_suppress` and multiplier 0.7 — and 0.7 is the ONLY multiplier below
+    1.0 that reaches the 55 gate, because "Nah" (0.0) is filtered out earlier.
+    Read off the real constants rather than hardcoded, so a change to the band
+    moves this fixture instead of silently making it a different reader.
+    """
+    affinity = (LOW_AFFINITY_THRESHOLD + NAH_AFFINITY_THRESHOLD) / 2
+    assert NAH_AFFINITY_THRESHOLD < affinity < LOW_AFFINITY_THRESHOLD
+    return PersonalizationContext(
+        is_authenticated=True,
+        sport_affinities={"baseball_mlb": affinity},
+    )
+
+
+class TestTheGateRunsBeforeTheDecay:
+    """The required regression (CERT-2048), against the real `_score_events`."""
+
+    @pytest.mark.asyncio
+    async def test_the_low_affinity_reader_is_the_one_at_the_55_gate(self):
+        """The premise. Without this the tests below could pass vacuously.
+
+        If this reader ever stops producing `sport_suppress` at multiplier 0.7,
+        they are no longer the reader whose gate is 55, and the two tests below
+        would be proving something about a reader who was never at risk.
+        """
+        ctx = _low_affinity_ctx()
+        p = compute_event_multiplier(
+            ctx=ctx,
+            home_team_id=101,
+            away_team_id=201,
+            sport_key="baseball_mlb",
+            event_id=1,
+        )
+        assert any("sport_suppress" in r for r in p.reasons), p.reasons
+        assert p.multiplier == pytest.approx(0.7)
+
+        # And the arithmetic that made this a removal, restated against the real
+        # multiplier: admitted before the decay, under the gate after it.
+        assert 98 * p.multiplier >= 55
+        decayed, _, _ = apply_completed_freshness_decay(98, 98.0, "completed", 24.0)
+        assert decayed * p.multiplier < 55
+
+    @pytest.mark.asyncio
+    async def test_a_stale_result_stays_admitted_for_a_down_weighted_reader(self):
+        """The regression itself: pre-decay-qualified, therefore still shown.
+
+        Against the parent commit this event is absent from the payload entirely.
+        """
+        stale = _feed_event(1, hours_since_finish=24.0)
+        items = await _run_score_events([stale], _low_affinity_ctx())
+
+        ids = {i["data"]["id"] for i in items if i["type"] == "event"}
+        assert 1 in ids, (
+            "a completed card that cleared the 55 gate BEFORE the decay was "
+            f"removed by it — the CERT-2048 regression. got {ids}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_and_it_ranks_below_a_fresh_result_for_that_same_reader(self):
+        """Admitted is only half of it — the ship is that it ranks LOWER.
+
+        Same reader, same sport, same shape; the only difference is age. If the
+        repair had bought admission by weakening the decay, this fails.
+        """
+        fresh = _feed_event(1, hours_since_finish=0.25)
+        stale = _feed_event(2, hours_since_finish=24.0)
+        items = await _run_score_events([fresh, stale], _low_affinity_ctx())
+
+        ranks = {
+            i["data"]["id"]: i["_rank_score"] for i in items if i["type"] == "event"
+        }
+        assert {1, 2} <= set(ranks), f"both cards must survive: {ranks}"
+        assert ranks[2] < ranks[1], (
+            f"the 24h-old result must rank below the fresh one: {ranks}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_control_a_card_under_the_gate_before_the_decay_stays_excluded(
+        self,
+    ):
+        """The other direction, which is what makes the repair a repair.
+
+        Gating pre-decay must not ADMIT anything the reader's preferences
+        already excluded. A weak completed game that cannot clear 55 even at
+        full score is still absent — so the fix moved the decay, it did not
+        quietly disable the gate.
+        """
+        weak = _feed_event(3, hours_since_finish=24.0, raw_ei=0.0)
+        weak.win_probability_sources = {}
+        weak.home_score = 1
+        weak.away_score = 0
+        weak.opening_home_probability = 0.5
+        weak.opening_away_probability = 0.5
+
+        ctx = _low_affinity_ctx()
+        items = await _run_score_events([weak], ctx)
+        ids = {i["data"]["id"] for i in items if i["type"] == "event"}
+        assert 3 not in ids, (
+            "gating before the decay must not admit a card the reader's own "
+            f"preferences excluded: {ids}"
+        )
+
+        # ...and it is the 55 gate doing it, not the card being unscoreable:
+        # the same card reaches an unsuppressed reader.
+        plain = await _run_score_events([_feed_event(3, hours_since_finish=24.0,
+                                                     raw_ei=0.0)],
+                                        PersonalizationContext())
+        assert 3 in {i["data"]["id"] for i in plain if i["type"] == "event"}
 
 
 class TestTheFinishReferenceIsTheBestOneAvailable:
@@ -313,41 +501,63 @@ class TestTheFinishReferenceIsTheBestOneAvailable:
 
 
 class TestNothingElseMoved:
-    def test_a_live_event_score_is_unchanged_by_the_new_argument(self):
-        kwargs = dict(
-            highlight_score=60,
-            highlight_reasons=["live"],
-            home_champ_prob=0.0,
-            away_champ_prob=0.0,
-            sport_key="baseball_mlb",
-            now=NOW,
-            event_tags=[],
-            event_status="live",
-            raw_ei=0.5,
-            game_progress=0.6,
-            source_count=3,
+    def test_compute_base_score_cannot_decay_because_it_no_longer_knows_the_age(self):
+        """The structural half of the CERT-2048 repair, pinned as a signature.
+
+        The gate reads `compute_base_score`'s return value. As long as that
+        function cannot see how old a game is, no future edit inside it can put
+        the freshness cut back in front of the admission decision — the mistake
+        would have to be made in `_score_events`, where the ordering is visible
+        in ten lines and the tests above execute it.
+
+        This is deliberately a signature assertion and not a value comparison:
+        the old version of this test passed `hours_since_finish=11.0` and checked
+        the score did not move, which was true for live events and told nobody
+        anything about the completed ones.
+        """
+        import inspect
+
+        params = inspect.signature(compute_base_score).parameters
+        assert "hours_since_finish" not in params, (
+            "the freshness age is back in front of the admission gate — "
+            "see the CERT-2048 note in feed_scoring.py"
         )
-        without, _ = compute_base_score(**kwargs)
-        with_age, _ = compute_base_score(**kwargs, hours_since_finish=11.0)
 
-        assert without == with_age
+    @pytest.mark.asyncio
+    async def test_a_live_event_is_untouched_end_to_end(self):
+        """A live game keeps every point, whatever its kickoff was.
 
-    def test_a_scheduled_event_score_is_unchanged_by_the_new_argument(self):
-        kwargs = dict(
-            highlight_score=45,
-            highlight_reasons=["starting_soon"],
-            home_champ_prob=0.0,
-            away_champ_prob=0.0,
-            sport_key="baseball_mlb",
-            now=NOW,
-            event_tags=[],
-            event_status="scheduled",
-            raw_ei=None,
-        )
-        without, _ = compute_base_score(**kwargs)
-        with_age, _ = compute_base_score(**kwargs, hours_since_finish=11.0)
+        Through the real `_score_events`, so a decay that started firing on a
+        status it has no business touching would show up here as a lost card or
+        a `stale_result` on something still being played.
+        """
+        live = _feed_event(9, hours_since_finish=11.0)
+        live.status = "live"
+        live.completed_at = None
+        live.period = "T7"
+        # A live game earns its score from being CLOSE, not from a finished
+        # blowout's post-game stack, so the control has to be a real live card
+        # or it fails the anonymous gate for reasons that have nothing to do
+        # with the decay.
+        live.home_score = 4
+        live.away_score = 3
+        live.raw_ei = 70.0
+        live.opening_home_probability = 0.55
+        live.opening_away_probability = 0.45
+        live.win_probability_sources = {"betting": {"home_probability": 0.55}}
+        # And a plausible kickoff: `_score_events` drops a "live" game that
+        # started 14 hours ago under a separate staleness rule that has nothing
+        # to do with this feature. Measured while writing this — the same card
+        # at -1h/-3h/-6h scores 67, at -14h it is filtered. Leaving the helper's
+        # default here would have made this control pass for the wrong reason
+        # (absent card, absent decay) if the decay ever did start touching live.
+        live.commence_time = NOW - timedelta(hours=1)
 
-        assert without == with_age
+        items = await _run_score_events([live], PersonalizationContext())
+        events = [i for i in items if i["type"] == "event"]
+
+        assert [i["data"]["id"] for i in events] == [9]
+        assert "stale_result" not in (events[0].get("reason") or "")
 
     def test_omitting_the_argument_entirely_preserves_the_old_score(self):
         """Every other caller of compute_base_score passes no age at all."""
