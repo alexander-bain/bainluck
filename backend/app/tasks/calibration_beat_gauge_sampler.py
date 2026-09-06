@@ -196,6 +196,41 @@ CURSOR_PREFIX = "staged:cursor_"
 #: line here and nowhere else.
 CAPTURED_PREFIXES = (CONVERGENCE_REASON_PREFIX, CANCEL_CAUSE_PREFIX, CURSOR_PREFIX)
 
+#: The FOURTH capture rule, added by CAL-P1030 (#3454) — and the first one that
+#: is not a prefix, because a prefix cannot express it.
+#:
+#: 🔴 WHY A BEAT STOPPED EARLY WAS THE ONE THING THE RING COULD NOT SAY. The
+#: producer records a stage the moment it gives up, every time, under a name
+#: built from a stem and a reason — ``staged:window_stop:deadline``,
+#: ``staged:window_stop:unit_too_large``, ``staged:window_stop:units_cancelling``,
+#: ``staged:rebuild_stop:interrupted``, ``staged:rebuild_stop:overlap_lock``,
+#: ``staged:rebuild_stop:no_window_after_publish``, ``staged:rebuild_stop:error``.
+#: **Not one of them was captured**: measured 2026-09-06 over all 168 banked
+#: observations, no ``*_stop:*`` key occurs once. So the three most recent beats
+#: at the time of writing ended with ~19 of their 23 minutes unused and zero
+#: units done, and the ring could show that they stopped but never why.
+#:
+#: TWO STEMS, SO NOT ONE PREFIX. ``window_stop`` and ``rebuild_stop`` share no
+#: prefix beyond ``staged:``, which would sweep in every other staged gauge, and
+#: the reason half is interpolated so no fixed name can reach it either. Matching
+#: the INFIX is what the producer's own naming convention actually guarantees,
+#: and it is the only rule here that a third stem cannot silently escape — which
+#: is the defect this file has now recorded four times.
+STOP_REASON_INFIX = "_stop:"
+
+#: The namespace the infix is qualified by, so ``_stop:`` cannot match a key
+#: belonging to some unrelated producer.
+STAGED_PREFIX = "staged:"
+
+
+def is_stop_key(key: Any) -> bool:
+    """True for a ``staged:<stem>_stop:<reason>`` key, whatever the stem. Pure."""
+    return (
+        isinstance(key, str)
+        and key.startswith(STAGED_PREFIX)
+        and STOP_REASON_INFIX in key[len(STAGED_PREFIX):]
+    )
+
 
 def _required_disclosure_gauges() -> tuple[str, ...]:
     """Every gauge ``build_disclosure`` consumes, read off that module.
@@ -236,6 +271,20 @@ OPERATIONAL_GAUGES = (
     "staged:window_left_ms",
     "staged:cursor_resume",
     "staged:units_cancelled",
+    # CAL-P1030 (#3454). The rebuild's most destructive event, and the one its
+    # telemetry could not show. ``retain_planned_units``' CAL-P034 FAIL-CLOSED
+    # arm discards EVERY banked unit — building bank AND serving bank — when any
+    # one banked unit is not in the current plan ("Everything goes, and the walk
+    # restarts"), and this stage is its only signal. Measured: the live
+    # generation ``c1d6afbc16`` went 6 banked units → 0 between 03:16Z and 04:16Z
+    # on 2026-09-06 with every ``staged:cursor_reason:*`` at 0, i.e. with no
+    # recorded cause at all, and the one path that produces exactly that shape
+    # was unobservable by construction.
+    #
+    # This entry is the one place the tuple's own "forgetting one costs a column
+    # in a report" licence does not hold, and the comment stays so the next
+    # editor does not prune it as a report column.
+    "staged:units_dropped",
 )
 
 
@@ -260,9 +309,11 @@ def select_gauges(stages: Any) -> tuple[dict, list[str]]:
         if name in stages:
             captured[name] = stages[name]
 
-    # The prefix half. Never a fixed name, so never in the tuples above.
+    # The pattern half. Never a fixed name, so never in the tuples above.
     for key, value in stages.items():
-        if isinstance(key, str) and key.startswith(CAPTURED_PREFIXES):
+        if not isinstance(key, str):
+            continue
+        if key.startswith(CAPTURED_PREFIXES) or is_stop_key(key):
             captured[key] = value
 
     missing = [n for n in REQUIRED_DISCLOSURE_GAUGES if n not in captured]
@@ -306,6 +357,63 @@ def cursor_decision(gauges: Any) -> dict:
         elif suffix in CURSOR_ACTIONS:
             action = suffix
     return {"action": action, "reason": reason}
+
+
+def stop_reasons(gauges: Any) -> list[str]:
+    """Every stop reason the beat recorded, as ``<stem>:<reason>``. Pure, sorted.
+
+    CAL-P1030 (#3454). ``[]`` means the beat recorded no stop reason — it ran to
+    the end of its work, or it died before it could say anything, which the
+    ``terminal`` field beside this one distinguishes. It never means "stopped for
+    an unknown reason", because the producer writes one of these on every path
+    that gives up early.
+
+    The VALUE of a stop stage is always ``0``; presence is the flag. So this
+    returns names, not a map — reporting the zeros would invite a reader to treat
+    the most important field on the row as "nothing happened".
+    """
+    if not isinstance(gauges, dict):
+        return []
+    # The ``staged:`` namespace is stripped and the rest kept verbatim, including
+    # a stem whose reason half is empty: that is still a stop, and dropping it
+    # would let a malformed key read as "did not stop".
+    return sorted(
+        {key[len(STAGED_PREFIX):] for key in gauges if is_stop_key(key)}
+    )
+
+
+def bank_drop(gauges: Any) -> dict:
+    """``{"units_dropped": int|None, "measured": bool}`` off one banked row. Pure.
+
+    CAL-P1030 (#3454), and the shape is gotcha #53 in miniature: the producer
+    writes ``staged:units_dropped`` **only inside** ``if dropped:``, so absence
+    carries two different facts and this function's job is to refuse to merge
+    them.
+
+    The disambiguating second signal is already on the row.
+    ``record_stage(f"staged:cursor_{action}")`` fires unconditionally three lines
+    ABOVE the ``retain_planned_units`` call that can drop, so:
+
+    * a cursor action present and no drop key ⇒ the drop path ran and dropped
+      **zero** — ``{"units_dropped": 0, "measured": True}``;
+    * no cursor action ⇒ the beat refused its lease or died before reaching the
+      drop path, and how many units it would have dropped is **unknown** —
+      ``{"units_dropped": None, "measured": False}``. Reporting that as ``0``
+      would be the CAL-P028 collapse ("nothing dropped" vs "we never looked")
+      arriving through the one field added to end it.
+
+    Rows banked BEFORE CAL-P1030 carry no drop key whatever happened, so on a
+    historical row a ``0`` is only as good as its cursor key. That is unavoidable
+    and is why the fix is a capture change rather than a reader change.
+    """
+    if not isinstance(gauges, dict):
+        return {"units_dropped": None, "measured": False}
+    raw = gauges.get("staged:units_dropped")
+    if isinstance(raw, int) and not isinstance(raw, bool):
+        return {"units_dropped": raw, "measured": True}
+    if cursor_decision(gauges)["action"] is None:
+        return {"units_dropped": None, "measured": False}
+    return {"units_dropped": 0, "measured": True}
 
 
 def _parse_stamp(value):
@@ -355,6 +463,7 @@ def build_observation(
     payload = payload if isinstance(payload, dict) else {}
     stages = payload.get("stages")
     captured, missing = select_gauges(stages)
+    drop = bank_drop(captured)
     stamp = _parse_stamp(generated_at)
 
     # 🔴 THE WALL CLOCK GETS IN HERE IF YOU LET IT, AND THIS SUITE CAUGHT IT.
@@ -411,6 +520,16 @@ def build_observation(
         # -- the fixed gauge set, verbatim ------------------------------------
         "gauges": captured,
         "gauges_missing_required": missing,
+        # -- CAL-P1030 (#3454): why the beat stopped, and what it cost ---------
+        # Derived here as well as capturable from ``gauges`` for the CAL-P1002
+        # reason: the question "did a finished bank get thrown away, and why did
+        # this beat end with 19 minutes unused" is the one a reader arrives with,
+        # and making them substring-search a 30-key map to reach it is how it
+        # went unasked for two nights. ``[]`` is "recorded no stop reason", never
+        # "stopped for an unknown reason" — see :func:`stop_reasons`.
+        "stop_reasons": stop_reasons(captured),
+        "units_dropped": drop["units_dropped"],
+        "units_dropped_measured": drop["measured"],
         # -- derived, through production ---------------------------------------
         "disclosure": disclosure,
         "tolerance_pp": bound,
@@ -639,6 +758,12 @@ async def run_beat_gauge_sample() -> dict:
     artifact["tolerance_pp"] = observation["tolerance_pp"]
     artifact["beat_terminal"] = observation["terminal"]
     artifact["gauges_missing_required"] = observation["gauges_missing_required"]
+    # CAL-P1030 (#3454). On the run artifact too, not only in the ring: the
+    # sampler's own terminal is read by whoever is watching a stalled rebuild
+    # tonight, and "the beat stopped because a deploy took the worker away"
+    # should not require a second call to the ring to find out.
+    artifact["beat_stop_reasons"] = observation["stop_reasons"]
+    artifact["beat_units_dropped"] = observation["units_dropped"]
 
     stamp = _parse_stamp(ledger["generated_at"])
     ledger_age_s = (started - stamp).total_seconds() if stamp is not None else None

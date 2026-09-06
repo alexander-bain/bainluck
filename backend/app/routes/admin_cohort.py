@@ -653,6 +653,13 @@ async def calibration_beat_gauges(request: Request, limit: int = 24, full: bool 
     what the beat did with its checkpoint and why. Both ``null`` means the row
     carries no cursor key, which is a real state (refused, or died before the
     write) and, on rows banked before CAL-P1002, means only "not a resume".
+
+    CAL-P1030 (#3454) adds ``stop_reasons`` — why the beat gave up early, which
+    the ring dropped entirely until now — and ``units_dropped`` /
+    ``units_dropped_measured``, the fail-closed full-bank wipe and whether the
+    row can speak to it at all. ``units_dropped: null`` with
+    ``units_dropped_measured: false`` means the beat never reached the drop path,
+    which is not the same fact as a drop of zero and is never rendered as one.
     """
     _check_admin_secret(request=request)
 
@@ -660,7 +667,9 @@ async def calibration_beat_gauges(request: Request, limit: int = 24, full: bool 
     from app.tasks.calibration_beat_gauge_sampler import (
         HISTORY_IDENTITY,
         HISTORY_SCHEMA,
+        bank_drop,
         cursor_decision,
+        stop_reasons,
         summarise,
     )
 
@@ -730,6 +739,27 @@ async def calibration_beat_gauges(request: Request, limit: int = 24, full: bool 
             "gauges_missing_required": r.get("gauges_missing_required"),
             "cursor_action": c["action"],
             "cursor_reason": c["reason"],
+            # CAL-P1030 (#3454). Read off the row when the row has them, and
+            # re-derived from the raw gauges when it does not: rows banked before
+            # this change carry neither field, but a `full=true` row does carry
+            # the gauge map, so a historical beat that recorded a stop reason can
+            # still be read back. A row with no gauges at all answers `[]` /
+            # `null`, which is honest — it is the pre-CAL-P1002 shape.
+            "stop_reasons": (
+                r["stop_reasons"]
+                if isinstance(r.get("stop_reasons"), list)
+                else stop_reasons(r.get("gauges"))
+            ),
+            "units_dropped": (
+                r["units_dropped"]
+                if "units_dropped" in r
+                else bank_drop(r.get("gauges"))["units_dropped"]
+            ),
+            "units_dropped_measured": (
+                r["units_dropped_measured"]
+                if "units_dropped_measured" in r
+                else bank_drop(r.get("gauges"))["measured"]
+            ),
         }
         for r, c in zip(bounded, cursors)
     ]
