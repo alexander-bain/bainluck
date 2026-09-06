@@ -281,6 +281,70 @@ class TestTheFixupStopsThrowingTheHourAway:
         assert session.updates == [(2, TICKER_MIDNIGHT)]
 
 
+class TestTheGateIsActuallyWiredIntoThePoll:
+    """A gate nobody passes is not a gate. Every other test in this file calls
+    `_kalshi_commence_time` directly, so all of them would still pass if the
+    two call sites inside `_poll_kalshi_markets` silently dropped the new
+    keyword and every tennis market went back to its +14d close.
+
+    Asserted with AST rather than a substring: a `grep` for the name matches
+    its own definition and survives being commented out."""
+
+    def _poller_body(self):
+        import ast
+        import inspect
+
+        from app.tasks import kalshi as kalshi_task
+
+        tree = ast.parse(inspect.getsource(kalshi_task))
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and node.name == "_poll_kalshi_markets"
+            ):
+                return node
+        raise AssertionError("_poll_kalshi_markets not found")
+
+    def _commence_calls(self):
+        import ast
+
+        return [
+            n
+            for n in ast.walk(self._poller_body())
+            if isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Name)
+            and n.func.id == "_kalshi_commence_time"
+        ]
+
+    def test_both_call_sites_exist(self):
+        """One for the single-market branch, one for the multivariate branch.
+        If a third appears it must be checked too, so pin the count."""
+        assert len(self._commence_calls()) == 2
+
+    def test_every_call_site_passes_the_new_gate(self):
+        for call in self._commence_calls():
+            kwargs = {k.arg for k in call.keywords}
+            assert "is_dated_match" in kwargs, (
+                "_kalshi_commence_time is called without is_dated_match — "
+                "ITF and the 16 non-tennis per-match series silently go back "
+                "to Kalshi's +14d settlement close"
+            )
+            assert "is_game" in kwargs, "the game gate must not be dropped either"
+
+    def test_the_gate_is_computed_from_the_event_ticker(self):
+        """`is_dated_match=True` hard-coded, or fed from the wrong variable,
+        would re-time outrights. It must be the predicate applied to the
+        event's own ticker."""
+        import ast
+
+        for call in self._commence_calls():
+            gate = next(k.value for k in call.keywords if k.arg == "is_dated_match")
+            assert isinstance(gate, ast.Call), "must be a predicate call, not a literal"
+            assert gate.func.id == "_is_dated_match_ticker"
+            arg = gate.args[0]
+            assert isinstance(arg, ast.Attribute) and arg.attr == "event_ticker"
+
+
 class TestEitherHalfAloneLeavesThePageWrong:
     """The reason both halves ship in one commit. Each control replays the
     pipeline — poll writes `commence_time`, next poll's fix-up may rewrite it —
