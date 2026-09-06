@@ -406,6 +406,21 @@ ENFORCED_TASKS = frozenset({
     # never re-enumerate one), so a permanently inert beat breaks nothing
     # visible and simply lets dead last-trade prices keep rendering as live.
     "kalshi_resolution_window",        # terminal + candidates + writes_applied
+    # #2907 (authority/049). Enrolled in the same change that gives it a
+    # terminal, per the trap two entries up: enrolment without one buys nothing.
+    #
+    # This task ran hourly for its whole life and wrote ZERO rows — measured
+    # 2026-09-06, 0 of 2,610 events carried `statpal_injuries`. It asked
+    # `v2/soccer/injuries`, which 404s (the v2 name is `injuries-suspensions`),
+    # and `_get` turns every 404 into None, which the caller turned into `[]`,
+    # which is also what "nobody is hurt today" looks like. A dead endpoint and
+    # a quiet day were the same summary, so the health surface had nothing to
+    # go on and reported a returning invocation for months.
+    #
+    # Its terminal is `failed` whenever a SUPPORTED sport could not be read, and
+    # `complete` otherwise — including when the venue serves no injury path for
+    # a sport at all, which is a fact about the venue and not a failed run.
+    "statpal_injuries",                # terminal + fetch_failures
 })
 
 

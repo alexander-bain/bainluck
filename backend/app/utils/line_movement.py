@@ -647,8 +647,17 @@ def assess_move_attribution(
             return MoveAttribution(0.85, f"Scoring play{where}: {desc}", "scoring_play")
 
     # 2. Injury to the team whose probability FELL (direction-consistent).
+    #
+    # The match must be UNAMBIGUOUS. `_team_matches` accepts a shared last word,
+    # which is right for "Vasco" vs "Vasco da Gama" and wrong for a derby: "Real
+    # Madrid" and "Atletico Madrid" both end in "Madrid", so a Real injury would
+    # be offered as the cause of Atletico's drop. An injury whose team reads as
+    # BOTH sides identifies neither, and naming the wrong club on the page is
+    # worse than saying nothing (#2907; soccer injuries make this reachable, and
+    # ESPN's have always had the same exposure).
     for inj in injuries or []:
-        if _team_matches(inj.get("team_name", ""), fell_team):
+        team_name = inj.get("team_name", "")
+        if _team_matches(team_name, fell_team) and not _team_matches(team_name, gained_team):
             player = inj.get("player_name", "").strip()
             status = inj.get("status", "").strip()
             itype = (inj.get("injury_type") or "").strip()

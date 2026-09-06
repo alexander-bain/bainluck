@@ -416,6 +416,17 @@ class TestEnforcementScope:
             # has already finalized (gotcha #33), so an inert beat breaks
             # nothing visible and just lets dead prices keep rendering as live.
             "kalshi_resolution_window",
+            # #2907 (authority/049): the StatPal injury sync, enrolled in the
+            # change that gives it a terminal AND the change that makes it
+            # capable of producing a row at all. It is the longest-running
+            # instance of this module's founding shape in the tree — it asked a
+            # URL that does not exist, hourly, for its whole life, and 0 of
+            # 2,610 events carried its output on 2026-09-06. A 404 became None
+            # became `[]` became "nobody is hurt today". Its `terminal` is
+            # `failed` when a SUPPORTED sport could not be read and `complete`
+            # otherwise, so a sport the venue serves no injury path for stays
+            # green (that is a fact about StatPal) while a dead path does not.
+            "statpal_injuries",
         }
 
     def test_enforced_task_partial_blocks_success(self):

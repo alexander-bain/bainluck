@@ -1,0 +1,242 @@
+{
+ "injuries_suspensions": {
+  "updated": "06.09.2026 01:01:10",
+  "updated_ts": 1788656470,
+  "league": [
+   {
+    "name": "Australia: A-League",
+    "id": "2919",
+    "match": {
+     "main_id": "2026101612553",
+     "fallback_id_1": "6238340",
+     "fallback_id_2": "6745794",
+     "fallback_id_3": "9406013",
+     "date": "16.10.2026",
+     "time": "09:00",
+     "home": {
+      "id": "2338103",
+      "name": "Sydney FC",
+      "sidelined": {
+       "to_miss": null,
+       "questionable": null
+      }
+     },
+     "away": {
+      "id": "2338116",
+      "name": "WS Wanderers",
+      "sidelined": {
+       "to_miss": null,
+       "questionable": null
+      }
+     }
+    }
+   },
+   {
+    "name": "Belgium: Jupiler Pro League",
+    "id": "6094",
+    "match": [
+     {
+      "main_id": "2026090513660",
+      "fallback_id_1": "",
+      "fallback_id_2": "",
+      "fallback_id_3": "9536525",
+      "date": "05.09.2026",
+      "time": "14:00",
+      "home": {
+       "id": "2338584",
+       "name": "Charleroi",
+       "sidelined": {
+        "to_miss": {
+         "player": {
+          "id": "2712964",
+          "name": "A. Bernier",
+          "status": "Injury"
+         }
+        },
+        "questionable": null
+       }
+      },
+      "away": {
+       "id": "2338742",
+       "name": "Royale Union SG",
+       "sidelined": {
+        "to_miss": {
+         "player": [
+          {
+           "id": "3192181",
+           "name": "N. Chibani",
+           "status": "Inactive"
+          },
+          {
+           "id": "3158427",
+           "name": "K. Rodriguez",
+           "status": "Inactive"
+          }
+         ]
+        },
+        "questionable": null
+       }
+      }
+     },
+     {
+      "main_id": "2026090613526",
+      "fallback_id_1": "",
+      "fallback_id_2": "",
+      "fallback_id_3": "9539531",
+      "date": "06.09.2026",
+      "time": "11:30",
+      "home": {
+       "id": "2338583",
+       "name": "Cercle Brugge KSV",
+       "sidelined": {
+        "to_miss": {
+         "player": [
+          {
+           "id": "3086927",
+           "name": "C. Herrmann",
+           "status": "Muscle Injury"
+          },
+          {
+           "id": "3282960",
+           "name": "A. Manneh",
+           "status": "Inactive"
+          },
+          {
+           "id": "3041287",
+           "name": "J. Ndala",
+           "status": "Knee Injury"
+          },
+          {
+           "id": "3438958",
+           "name": "Yago Lincoln",
+           "status": "Transfer negotiations"
+          },
+          {
+           "id": "2469717",
+           "name": "H. van der Bruggen",
+           "status": "Knock"
+          }
+         ]
+        },
+        "questionable": {
+         "player": {
+          "id": "3278250",
+          "name": "A. K. Ouattara",
+          "status": "Muscle Injury"
+         }
+        }
+       }
+      },
+      "away": {
+       "id": "2338609",
+       "name": "Gent",
+       "sidelined": {
+        "to_miss": {
+         "player": {
+          "id": "3309454",
+          "name": "H. Goore",
+          "status": "Injury"
+         }
+        },
+        "questionable": null
+       }
+      }
+     }
+    ]
+   },
+   {
+    "name": "Brazil: Serie A Betano",
+    "id": "2974",
+    "match": {
+     "main_id": "2026090614680",
+     "fallback_id_1": "6136089",
+     "fallback_id_2": "6643503",
+     "fallback_id_3": "9540483",
+     "date": "06.09.2026",
+     "time": "14:00",
+     "home": {
+      "id": "2339078",
+      "name": "Coritiba",
+      "sidelined": {
+       "to_miss": {
+        "player": [
+         {
+          "id": "3217158",
+          "name": "Brandao",
+          "status": "Inactive"
+         },
+         {
+          "id": "3228719",
+          "name": "Lucas Ronier",
+          "status": "Knee Injury"
+         },
+         {
+          "id": "2869008",
+          "name": "B. Ocampo",
+          "status": "Injury"
+         },
+         {
+          "id": "3023119",
+          "name": "Tiago Coser",
+          "status": "Yellow Cards"
+         },
+         {
+          "id": "2630008",
+          "name": "Tinga",
+          "status": "Injury"
+         }
+        ]
+       },
+       "questionable": {
+        "player": [
+         {
+          "id": "2804943",
+          "name": "Jacy",
+          "status": "Injury"
+         },
+         {
+          "id": "3016013",
+          "name": "Pedro Rangel",
+          "status": "Inactive"
+         }
+        ]
+       }
+      }
+     },
+     "away": {
+      "id": "2339268",
+      "name": "Mirassol",
+      "sidelined": {
+       "to_miss": {
+        "player": [
+         {
+          "id": "2924304",
+          "name": "Edson Carioca",
+          "status": "Injury"
+         },
+         {
+          "id": "2948940",
+          "name": "Jose Aldo",
+          "status": "Muscle Injury"
+         },
+         {
+          "id": "2803752",
+          "name": "Negueba",
+          "status": "Knee Injury"
+         }
+        ]
+       },
+       "questionable": {
+        "player": {
+         "id": "2468258",
+         "name": "Walter",
+         "status": "Injury"
+        }
+       }
+      }
+     }
+    }
+   }
+  ]
+ }
+}
