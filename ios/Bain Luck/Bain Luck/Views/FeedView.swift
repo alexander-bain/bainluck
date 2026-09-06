@@ -117,9 +117,10 @@ struct FeedView: View {
 
     // MARK: - iPad Grid
 
-    private var iPadGridColumns: [GridItem] {
-        [GridItem(.adaptive(minimum: 340), spacing: 12)]
-    }
+    /// Width available to the iPad card grid, in points. 0 until the first
+    /// geometry pass resolves, which `DiscoverMasonry` reads as one column
+    /// (#3709).
+    @State private var gridWidth: CGFloat = 0
 
     private func updateLandscapeColumns() {
         guard sizeClass == .regular else { return }
@@ -244,13 +245,38 @@ struct FeedView: View {
     private func feedSection(title: String, systemImage: String, imageColor: Color, items: [FeedItem]) -> some View {
         Section {
             if sizeClass == .regular {
-                // iPad: multi-column grid with context menu for pin
-                LazyVGrid(columns: iPadGridColumns, spacing: 12) {
-                    ForEach(items) { item in
-                        gridCard(item)
-                            .onAppear { emitSportsFirstRenderIfNeeded() }
+                // iPad: multi-column masonry with context menu for pin.
+                //
+                // #3709 — see `DiscoverMasonry`. `LazyVGrid` lays out in ROWS
+                // and pads every cell to the tallest in its row; `items` mixes
+                // the tall `EventCardView` with the short futures strip, so the
+                // shorter card in a row carried the surplus as dead space
+                // BELOW it.
+                let columnCount = DiscoverMasonry.listColumnCount(availableWidth: gridWidth)
+                let masonryColumns = DiscoverMasonry.columns(
+                    cardCount: items.count,
+                    columnCount: columnCount
+                )
+                HStack(alignment: .top, spacing: DiscoverMasonry.listCardSpacing) {
+                    ForEach(Array(masonryColumns.enumerated()), id: \.offset) { _, indices in
+                        VStack(spacing: DiscoverMasonry.listCardSpacing) {
+                            ForEach(indices, id: \.self) { idx in
+                                gridCard(items[idx])
+                                    .onAppear { emitSportsFirstRenderIfNeeded() }
+                            }
+                        }
+                        .frame(maxWidth: .infinity)
                     }
                 }
+                .background(
+                    GeometryReader { geo in
+                        Color.clear
+                            .onAppear { gridWidth = geo.size.width }
+                            .onChange(of: geo.size.width) { _, newValue in
+                                gridWidth = newValue
+                            }
+                    }
+                )
                 .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
             } else {
                 ForEach(items) { item in
@@ -285,15 +311,40 @@ struct FeedView: View {
     private var groupedFuturesSection: some View {
         Section {
             if sizeClass == .regular {
-                LazyVGrid(columns: iPadGridColumns, spacing: 12) {
-                    ForEach(vm.groupedItems) { item in
-                        groupedRow(item)
-                            .padding(12)
-                            .background(Color.cardBackgroundDark)
-                            .clipShape(RoundedRectangle(cornerRadius: 12))
-                            .onAppear { emitSportsFirstRenderIfNeeded() }
+                // #3709 — same `LazyVGrid` row-padding defect as the section
+                // above. These cells are all `groupedRow`, so unlike the mixed
+                // feed sections they at least share a builder — but a grouped
+                // futures card is as tall as the outcomes it holds, and two
+                // markets with different outcome counts sit side by side here
+                // routinely. Same treatment, for the same reason.
+                let columnCount = DiscoverMasonry.listColumnCount(availableWidth: gridWidth)
+                let masonryColumns = DiscoverMasonry.columns(
+                    cardCount: vm.groupedItems.count,
+                    columnCount: columnCount
+                )
+                HStack(alignment: .top, spacing: DiscoverMasonry.listCardSpacing) {
+                    ForEach(Array(masonryColumns.enumerated()), id: \.offset) { _, indices in
+                        VStack(spacing: DiscoverMasonry.listCardSpacing) {
+                            ForEach(indices, id: \.self) { idx in
+                                groupedRow(vm.groupedItems[idx])
+                                    .padding(12)
+                                    .background(Color.cardBackgroundDark)
+                                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                                    .onAppear { emitSportsFirstRenderIfNeeded() }
+                            }
+                        }
+                        .frame(maxWidth: .infinity)
                     }
                 }
+                .background(
+                    GeometryReader { geo in
+                        Color.clear
+                            .onAppear { gridWidth = geo.size.width }
+                            .onChange(of: geo.size.width) { _, newValue in
+                                gridWidth = newValue
+                            }
+                    }
+                )
                 .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
             } else {
                 ForEach(vm.groupedItems) { item in

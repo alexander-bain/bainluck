@@ -12,9 +12,10 @@ struct SportCategoryView: View {
     @EnvironmentObject private var pinManager: PinManager
     @Environment(\.horizontalSizeClass) private var sizeClass
 
-    private var iPadGridColumns: [GridItem] {
-        [GridItem(.adaptive(minimum: 340), spacing: 12)]
-    }
+    /// Width available to the iPad card grid, in points. 0 until the first
+    /// geometry pass resolves, which `DiscoverMasonry` reads as one column
+    /// (#3709).
+    @State private var gridWidth: CGFloat = 0
 
     init(categoryKey: String, categoryName: String) {
         self.categoryKey = categoryKey
@@ -175,14 +176,41 @@ struct SportCategoryView: View {
     private func feedSection(title: String, systemImage: String, imageColor: Color, items: [FeedItem]) -> some View {
         Section {
             if sizeClass == .regular {
-                LazyVGrid(columns: iPadGridColumns, spacing: 12) {
-                    ForEach(items) { item in
-                        feedRow(item)
-                            .padding(12)
-                            .background(Color.cardBackgroundDark)
-                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                // #3709 — see `DiscoverMasonry`. `LazyVGrid` lays out in ROWS
+                // and pads every cell to the tallest in its row; `items` mixes
+                // the tall `EventCardView` with the short futures strip, so the
+                // shorter card in a row carried the surplus as dead space
+                // BELOW it. This is the surface that was photographed:
+                // `bainluck://category/tennis` on iPad Pro 11-inch, right-column
+                // gap 50 px BEFORE and 30 px AFTER, against a left column that
+                // did not move (28 px both times).
+                let columnCount = DiscoverMasonry.listColumnCount(availableWidth: gridWidth)
+                let masonryColumns = DiscoverMasonry.columns(
+                    cardCount: items.count,
+                    columnCount: columnCount
+                )
+                HStack(alignment: .top, spacing: DiscoverMasonry.listCardSpacing) {
+                    ForEach(Array(masonryColumns.enumerated()), id: \.offset) { _, indices in
+                        VStack(spacing: DiscoverMasonry.listCardSpacing) {
+                            ForEach(indices, id: \.self) { idx in
+                                feedRow(items[idx])
+                                    .padding(12)
+                                    .background(Color.cardBackgroundDark)
+                                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                            }
+                        }
+                        .frame(maxWidth: .infinity)
                     }
                 }
+                .background(
+                    GeometryReader { geo in
+                        Color.clear
+                            .onAppear { gridWidth = geo.size.width }
+                            .onChange(of: geo.size.width) { _, newValue in
+                                gridWidth = newValue
+                            }
+                    }
+                )
                 .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
             } else {
                 ForEach(items) { item in
