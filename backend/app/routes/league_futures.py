@@ -15,7 +15,7 @@ import re
 from collections.abc import Callable, Sequence
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, Path
-from sqlalchemy import select, and_, or_, func, literal_column
+from sqlalchemy import select, and_, or_, exists, func, literal_column
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload
 
@@ -50,7 +50,11 @@ from app.utils.event_concept_cache import (
     release_refresh_lock,
 )
 from app.utils.proven_duplicates import not_a_proven_duplicate
-from app.utils.sport_keys import SPORT_HIERARCHY
+from app.utils.sport_keys import (
+    SPORT_HIERARCHY,
+    TOUR_LEAGUES_INCLUDING_TOURNAMENTS,
+    tour_scope_sport_keys,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -288,7 +292,33 @@ RESULTS_LIMIT = 8
 UNREPORTED_LIMIT = 6
 
 
-def upcoming_games_query(sport_key: str, now: datetime):
+def _rail_league_scope(sport_key: str, also_sport_keys: Sequence[str]):
+    """The `sports` predicate that scopes a games rail to one league.
+
+    #3677. A tour page's own play can be spread across several registered sport
+    keys — `tennis_atp` holds the tour, `tennis_atp_us_open` holds the Slam — and
+    `sport_keys.tour_scope_sport_keys` decides which of those belong together.
+    This turns that answer into the WHERE clause all three rails share, so they
+    cannot drift about what "a tennis_atp game" means (the same reason
+    `_league_scope_filters` exists for the futures side).
+
+    🔴 **Renders `sports.key = :key` byte-for-byte when nothing is added.** Not a
+    tidiness point: `recent_results_query`'s `OFFSET 0` fence and this file's
+    no-fence decision on the upcoming rail are both claims about the exact
+    statement they were measured on (LAT-P110's block table). `IN (:key)` is a
+    different statement, and 27 of the 29 declared leagues add nothing, so they
+    keep the plan those numbers were taken from and only an opted-in tour gets a
+    statement that has to be re-measured.
+    """
+    scope = [sport_key, *also_sport_keys]
+    if len(scope) == 1:
+        return Sport.key == sport_key
+    return Sport.key.in_(scope)
+
+
+def upcoming_games_query(
+    sport_key: str, now: datetime, *, also_sport_keys: Sequence[str] = ()
+):
     """The UPCOMING GAMES rail, scoped to one league.
 
     `events` has no `sport_key` column, so the league scope is a join through
@@ -311,7 +341,7 @@ def upcoming_games_query(sport_key: str, now: datetime):
         select(Event)
         .join(Sport, Sport.id == Event.sport_id)
         .where(
-            Sport.key == sport_key,
+            _rail_league_scope(sport_key, also_sport_keys),
             upcoming_rail_condition(now),
             # #2263: THE rail that made this visible. Read on 2026-08-29, the MLB
             # page printed Dodgers–Tigers, Marlins–Nationals and Padres–Rays TWICE
@@ -335,7 +365,9 @@ def upcoming_games_query(sport_key: str, now: datetime):
     )
 
 
-def recent_results_query(sport_key: str, now: datetime):
+def recent_results_query(
+    sport_key: str, now: datetime, *, also_sport_keys: Sequence[str] = ()
+):
     """The RECENT RESULTS rail, scoped to one league.
 
     🔴 **THE `OFFSET 0` IS AN OPTIMIZATION FENCE, NOT A PAGING CLAUSE.** Removing
@@ -390,7 +422,7 @@ def recent_results_query(sport_key: str, now: datetime):
         select(Event)
         .join(Sport, Sport.id == Event.sport_id)
         .where(
-            Sport.key == sport_key,
+            _rail_league_scope(sport_key, also_sport_keys),
             # #2263, as on the upcoming rail. Placed INSIDE the fence with the
             # other filters, which is where the fence's own measurement says the
             # filtering happens — it runs to completion before the sort either
@@ -439,7 +471,9 @@ def recent_results_query(sport_key: str, now: datetime):
     )
 
 
-def unreported_games_query(sport_key: str, now: datetime):
+def unreported_games_query(
+    sport_key: str, now: datetime, *, also_sport_keys: Sequence[str] = ()
+):
     """The NO RESULT REPORTED rail, scoped to one league — #3211.
 
     Matches whose kickoff has passed while the row still says `scheduled`. They
@@ -464,7 +498,7 @@ def unreported_games_query(sport_key: str, now: datetime):
         select(Event)
         .join(Sport, Sport.id == Event.sport_id)
         .where(
-            Sport.key == sport_key,
+            _rail_league_scope(sport_key, also_sport_keys),
             unreported_rail_condition(
                 now, lookback=timedelta(days=RESULTS_LOOKBACK_DAYS)
             ),
@@ -1435,9 +1469,72 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
     more_results = False
     more_unreported = False
     try:
-        _games_q = upcoming_games_query(sport_key, now)
-        _results_q = recent_results_query(sport_key, now)
-        _unreported_q = unreported_games_query(sport_key, now)
+        # #3677: a tour's own tournaments are registered as their OWN sport keys,
+        # so `Sport.key == 'tennis_atp'` — correct as a predicate, and the reason
+        # nobody looked at it — could not see the US Open. Measured 2026-09-06:
+        # 245 US Open matches under `tennis_atp_us_open`/`tennis_wta_us_open` were
+        # on neither tour page for the whole fortnight, while the two pages filled
+        # instead with the midnight-stamped surname-only rows of #2878 (191 + 115
+        # in 7 days), which DO carry the bare tour key. The page looked populated,
+        # which is why three LOOK passes read it as fine.
+        #
+        # Resolved from the rows that exist, not from config: `sports` is ~101
+        # rows and this runs once per league BUILD (cached), so it is one small
+        # query, and a tournament key that has never been minted cannot widen the
+        # scope. Opt-in is declared per league — see
+        # `TOUR_LEAGUES_INCLUDING_TOURNAMENTS` for why a bare prefix rule would
+        # have merged the women's Bundesliga into the men's page.
+        #
+        # 🔴 ONLY tournaments with rows in the rails' own window, and that clause
+        # is load-bearing rather than tidy. Measured on production 2026-09-06
+        # with `EXPLAIN (ANALYZE, BUFFERS)`, reading the ROOT node's block count
+        # (every node's counter already includes its children — summing them
+        # inflates the answer ~4x and invents a plan regression that is not
+        # there):
+        #
+        #     upcoming rail, tennis_atp alone                 702 blocks   394 ms
+        #     upcoming rail, tennis_atp_us_open alone       8,689          581 ms
+        #     upcoming rail, both                           9,390          932 ms
+        #
+        # 702 + 8,689 = 9,391. The widened scope costs EXACTLY what reading the
+        # US Open's own rows costs and not one block more — the plan does not
+        # degrade, and a merge of two separate statements would pay the identical
+        # total. That is the price of the content, so it is worth paying.
+        #
+        # What is NOT worth paying: `tennis_atp` has 20 registered tournament
+        # keys and 19 of them are last season's. The scope is a nested loop over
+        # the matching `sports` rows and the BitmapOr over `ix_events_status_
+        # commence` (~409k index rows, ~584 blocks) is rebuilt on EVERY loop, so
+        # each dead key costs its ~600 blocks to contribute nothing. Pruning to
+        # the tournaments in play is what keeps this additive instead of linear
+        # in the size of the tour's history.
+        #
+        # `startswith(autoescape=True)`: `_` is a single-character wildcard in
+        # LIKE and every sport key is full of them (gotcha #45's shape). The SQL
+        # prefix is only a cheap prefilter — `tour_scope_sport_keys` remains the
+        # authority on membership, so the `<parent>_` boundary is decided in one
+        # pure, unit-tested place rather than half here and half in SQL.
+        _also_keys: list[str] = []
+        if sport_key in TOUR_LEAGUES_INCLUDING_TOURNAMENTS:
+            _in_play = await asyncio.wait_for(
+                db.execute(
+                    select(Sport.key).where(
+                        Sport.key.startswith(f"{sport_key}_", autoescape=True),
+                        exists().where(
+                            and_(
+                                Event.sport_id == Sport.id,
+                                Event.commence_time
+                                > now - timedelta(days=RESULTS_LOOKBACK_DAYS),
+                            )
+                        ),
+                    )
+                ),
+                timeout=10,
+            )
+            _also_keys = tour_scope_sport_keys(sport_key, _in_play.scalars().all())[1:]
+        _games_q = upcoming_games_query(sport_key, now, also_sport_keys=_also_keys)
+        _results_q = recent_results_query(sport_key, now, also_sport_keys=_also_keys)
+        _unreported_q = unreported_games_query(sport_key, now, also_sport_keys=_also_keys)
         _g = await asyncio.wait_for(db.execute(_games_q), timeout=10)
         _g_events = list(_g.scalars().all())
         _r = await asyncio.wait_for(db.execute(_results_q), timeout=10)
