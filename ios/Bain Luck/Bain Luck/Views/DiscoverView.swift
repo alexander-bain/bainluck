@@ -105,6 +105,11 @@ struct DiscoverView: View {
     @EnvironmentObject private var navCoordinator: NavigationCoordinator
     @State private var visibleCount = 20
 
+    /// Width available to the card area, in points. 0 until the first
+    /// geometry pass resolves, which `DiscoverMasonry.columnCount` reads as one
+    /// column (#3651).
+    @State private var gridWidth: CGFloat = 0
+
     // First-render attribution (L2-206 Item 3 / L2-210 Item 2 / L2-212 Item 2):
     // `lastEmittedRenderGenerationId` guards a single `discover_feed_first_render`
     // event PER RENDER GENERATION (keyed on the view model's immutable generation id,
@@ -576,6 +581,251 @@ struct DiscoverView: View {
     /// personalize → interleave pipeline over the whole payload on the main actor.
     /// The memo rebuilds only when a semantic input changes; see
     /// `presentationSignature`.
+    /// One Discover card, with its identity and its impression/pagination
+    /// bookkeeping.
+    ///
+    /// #3651 — extracted so the single-column path and the multi-column masonry
+    /// path build the *same* card from one definition. Two copies of a 220-line
+    /// `switch` is how a fix reaches one platform and not the other.
+    ///
+    /// `idx` stays the card's rank in the whole page, not its position in its
+    /// column, so the guess-slot cadence, `trackImpression`'s rank and the
+    /// pagination triggers all mean what they meant before the columns existed.
+    @ViewBuilder
+    private func discoverCard(
+        idx: Int,
+        gi: DiscoverGroupedItem,
+        pageGrouped: [DiscoverGroupedItem],
+        totalCount: Int,
+        proxy: ScrollViewProxy
+    ) -> some View {
+        let isGuessSlot = (idx + 1) % 5 == 0
+        Group {
+            switch gi {
+            case .group(let title, let items, let kind, let theme):
+                // #1773: group cards were the largest of three
+                // archetypes rendered with NO swipe wrapper at all
+                // (group / tournament / concept — 10 of 30 cards on
+                // a measured production feed). They are not "swipe
+                // is flaky"; they are swipe-absent by construction,
+                // so no like/unlike signal could ever be produced
+                // for them and the feed could not learn from a third
+                // of what it showed.
+                SwipeToDismiss(
+                    onSwipeLeft: {
+                        if let primary = items.first {
+                            recordInteraction(for: primary, action: .unlike, source: "swipe")
+                        }
+                        hideForSession(ids: Self.dismissKeys(forGroupOf: items))
+                    },
+                    onSwipeRight: {
+                        if let primary = items.first {
+                            recordInteraction(for: primary, action: .like, source: "swipe")
+                        }
+                        hideForSession(ids: Self.dismissKeys(forGroupOf: items))
+                    }
+                ) {
+                    NativeGroupCard(title: title, items: items, kind: kind, theme: theme)
+                }
+            case .single(let item):
+                if isGuessSlot, item.type == "futures", let f = item.futures,
+                   f.discoverCard?.suggestedFormat != "threshold_heatmap",
+                   f.discoverCard?.suggestedFormat != "outcome_distribution",
+                   f.discoverCard?.suggestedFormat != "cross_source_comparison",
+                   f.status != "closed", f.status != "resolved",
+                   let leaderProbability = f.topOutcomes?.first?.probability,
+                   leaderProbability < 0.95 {
+                    SwipeToDismiss(
+                        onSwipeLeft: {
+                            recordInteraction(for: item, action: .unlike, source: "swipe")
+                            hideForSession(itemId(item))
+                        },
+                        onSwipeRight: {
+                            recordInteraction(for: item, action: .like, source: "swipe")
+                            hideForSession(itemId(item))
+                        }
+                    ) {
+                        NativeGuessCard(data: f, onNextQuestion: { scrollToNextGuessGrouped(proxy: proxy, after: idx, in: pageGrouped) }, onGuessCompleted: { incrementDaily() })
+                    }
+                } else if isGuessSlot, item.type == "event", let e = item.event, e.currentOdds?.homeProbability != nil,
+                          e.status != "completed", e.status != "closed" {
+                    SwipeToDismiss(
+                        onSwipeLeft: {
+                            recordInteraction(for: item, action: .unlike, source: "swipe")
+                            hideForSession(itemId(item))
+                        },
+                        onSwipeRight: {
+                            recordInteraction(for: item, action: .like, source: "swipe")
+                            hideForSession(itemId(item))
+                        }
+                    ) {
+                        NativeGuessCard(event: e, onNextQuestion: { scrollToNextGuessGrouped(proxy: proxy, after: idx, in: pageGrouped) }, onGuessCompleted: { incrementDaily() })
+                    }
+                } else if item.type == "event", let e = item.event {
+                    SwipeToDismiss(
+                        onSwipeLeft: {
+                            recordInteraction(for: item, action: .unlike, source: "swipe")
+                            hideForSession(itemId(item))
+                        },
+                        onSwipeRight: {
+                            recordInteraction(for: item, action: .like, source: "swipe")
+                            hideForSession(itemId(item))
+                        }
+                    ) {
+                        NativeEventDiscoverCard(event: e, feedContext: item.contextSummary ?? item.reason ?? item.headline, expandedContext: item.reason ?? item.headline, navigationPath: $navigationPath, onOpen: {
+                            recordInteraction(for: item, action: .detailOpen, source: "card")
+                        }, onContextExpand: {
+                            recordInteraction(for: item, action: .contextExpand, source: "context")
+                        }, onContextCollapse: {
+                            recordInteraction(for: item, action: .contextCollapse, source: "context")
+                        })
+                    }
+                    .contextMenu { discoverCardMenu(item) }
+                } else if item.type == "futures", let f = item.futures,
+                          f.discoverCard?.suggestedFormat == "threshold_heatmap",
+                          (f.discoverCard?.thresholdPoints ?? []).filter({ $0.probability != nil }).count >= 2 {
+                    SwipeToDismiss(
+                        onSwipeLeft: {
+                            recordInteraction(for: item, action: .unlike, source: "swipe")
+                            hideForSession(itemId(item))
+                        },
+                        onSwipeRight: {
+                            recordInteraction(for: item, action: .like, source: "swipe")
+                            hideForSession(itemId(item))
+                        }
+                    ) {
+                        HeatMapCardView(data: f, navigationPath: $navigationPath, onOpen: {
+                            recordInteraction(for: item, action: .detailOpen, source: "card")
+                        })
+                    }
+                    .contextMenu { discoverCardMenu(item) }
+                } else if item.type == "futures", let f = item.futures,
+                          f.discoverCard?.suggestedFormat == "outcome_distribution",
+                          (f.discoverCard?.distributionOutcomes ?? []).filter({ $0.probability != nil }).count >= 4 {
+                    SwipeToDismiss(
+                        onSwipeLeft: {
+                            recordInteraction(for: item, action: .unlike, source: "swipe")
+                            hideForSession(itemId(item))
+                        },
+                        onSwipeRight: {
+                            recordInteraction(for: item, action: .like, source: "swipe")
+                            hideForSession(itemId(item))
+                        }
+                    ) {
+                        DistributionCardView(data: f, navigationPath: $navigationPath, onOpen: {
+                            recordInteraction(for: item, action: .detailOpen, source: "card")
+                        })
+                    }
+                    .contextMenu { discoverCardMenu(item) }
+                } else if item.type == "futures", let f = item.futures,
+                          (f.discoverCard?.suggestedFormat == "cross_source_comparison"
+                           || (f.topOutcomes?.count ?? 0) >= 4) {
+                    SwipeToDismiss(
+                        onSwipeLeft: {
+                            recordInteraction(for: item, action: .unlike, source: "swipe")
+                            hideForSession(itemId(item))
+                        },
+                        onSwipeRight: {
+                            recordInteraction(for: item, action: .like, source: "swipe")
+                            hideForSession(itemId(item))
+                        }
+                    ) {
+                        ComparisonCardView(data: f, navigationPath: $navigationPath, onOpen: {
+                            recordInteraction(for: item, action: .detailOpen, source: "card")
+                        })
+                    }
+                    .contextMenu { discoverCardMenu(item) }
+                } else if item.type == "futures", let f = item.futures {
+                    SwipeToDismiss(
+                        onSwipeLeft: {
+                            recordInteraction(for: item, action: .unlike, source: "swipe")
+                            hideForSession(itemId(item))
+                        },
+                        onSwipeRight: {
+                            recordInteraction(for: item, action: .like, source: "swipe")
+                            hideForSession(itemId(item))
+                        }
+                    ) {
+                        NativeFuturesDiscoverCard(data: f, feedContext: item.contextSummary ?? item.reason ?? item.headline, expandedContext: f.hookDescription ?? item.reason ?? item.headline, navigationPath: $navigationPath, onOpen: {
+                            recordInteraction(for: item, action: .detailOpen, source: "card")
+                        }, onContextExpand: {
+                            recordInteraction(for: item, action: .contextExpand, source: "context")
+                        }, onContextCollapse: {
+                            recordInteraction(for: item, action: .contextCollapse, source: "context")
+                        })
+                    }
+                    .contextMenu { discoverCardMenu(item) }
+                } else if item.type == "tournament", let t = item.tournament {
+                    // #1773: was rendered bare — no swipe wrapper.
+                    SwipeToDismiss(
+                        onSwipeLeft: {
+                            recordInteraction(for: item, action: .unlike, source: "swipe")
+                            hideForSession(itemId(item))
+                        },
+                        onSwipeRight: {
+                            recordInteraction(for: item, action: .like, source: "swipe")
+                            hideForSession(itemId(item))
+                        }
+                    ) {
+                        NativeTournamentDiscoverCard(
+                            data: t,
+                            feedContext: item.contextSummary ?? item.reason ?? item.headline,
+                            navigationPath: $navigationPath
+                        )
+                    }
+                    .contextMenu { discoverCardMenu(item) }
+                } else if item.type == "concept", let c = item.concept {
+                    // L2-179: event-concept marquee card (Tour de France,
+                    // World Cup, UFC card). Previously dropped at decode; now
+                    // rendered so the marquee finally appears on device.
+                    // #1773: was rendered bare — no swipe wrapper.
+                    SwipeToDismiss(
+                        onSwipeLeft: {
+                            recordInteraction(for: item, action: .unlike, source: "swipe")
+                            hideForSession(itemId(item))
+                        },
+                        onSwipeRight: {
+                            recordInteraction(for: item, action: .like, source: "swipe")
+                            hideForSession(itemId(item))
+                        }
+                    ) {
+                        NativeConceptDiscoverCard(
+                            data: c,
+                            headline: item.headline,
+                            feedContext: item.contextSummary ?? item.reason ?? item.headline,
+                            navigationPath: $navigationPath,
+                            onOpen: {
+                                recordInteraction(for: item, action: .detailOpen, source: "card")
+                            }
+                        )
+                    }
+                    .contextMenu { discoverCardMenu(item) }
+                }
+            }
+        }
+        .id(gi.id)
+        .onAppear {
+            // The first eligible card actually on screen → the
+            // true first-render milestone, once per generation
+            // (L2-206 Item 3 / L2-212 Item 2). Acknowledgement is
+            // ALSO driven by `.onChange(of: vm.firstRenderGeneration)`
+            // below so a retained same-card-ID refresh (SwiftUI
+            // would not re-fire this `onAppear`) still emits its new
+            // generation — this call is the cold-first-paint path,
+            // not the sole trigger (the C76 `onappear_refire_assumption`
+            // fix). The shared once-per-generation guard prevents any
+            // double emit.
+            if idx == 0 { emitFirstRenderIfNeeded() }
+            trackImpression(for: gi, rank: idx + 1)
+            if idx == pageGrouped.count - 3 && visibleCount < totalCount {
+                visibleCount += 20
+            }
+            if idx == pageGrouped.count - 5 {
+                Task { await vm.loadMoreIfNeeded() }
+            }
+        }
+    }
+
     private var groupedItems: [DiscoverGroupedItem] {
         presentationCache.resolve(signature: presentationSignature) {
             buildGroupedItems()
@@ -924,238 +1174,55 @@ struct DiscoverView: View {
 
                 // Cards (paginated — show `visibleCount` at a time)
                 let pageGrouped = Array(grouped.prefix(visibleCount))
-                let columns = [GridItem(.adaptive(minimum: 300), spacing: 16)]
+                // #3651 — this was a `LazyVGrid` over
+                // `GridItem(.adaptive(minimum: 300), spacing: 16)`, which lays
+                // out in ROWS and pads every cell to the tallest cell beside
+                // it. On iPad that left 68–91 pt of background down the
+                // right-hand column against a 16 pt design spacing; on iPhone
+                // the adaptive column resolved to one and nothing was ever
+                // padded, which is why only the iPad shot showed it.
+                // `DiscoverMasonry` deals the cards into per-column
+                // `LazyVStack`s, which pack at exactly their spacing. At one
+                // column that is one `LazyVStack` holding every card in feed
+                // order — the phone keeps the single file it always had.
+                let columnCount = DiscoverMasonry.columnCount(availableWidth: gridWidth)
+                let masonryColumns = DiscoverMasonry.columns(
+                    cardCount: pageGrouped.count,
+                    columnCount: columnCount
+                )
                 ScrollViewReader { proxy in
-                    LazyVGrid(columns: columns, spacing: 16) {
-                        ForEach(Array(pageGrouped.enumerated()), id: \.element.id) { idx, gi in
-                            let isGuessSlot = (idx + 1) % 5 == 0
-                            Group {
-                                switch gi {
-                                case .group(let title, let items, let kind, let theme):
-                                    // #1773: group cards were the largest of three
-                                    // archetypes rendered with NO swipe wrapper at all
-                                    // (group / tournament / concept — 10 of 30 cards on
-                                    // a measured production feed). They are not "swipe
-                                    // is flaky"; they are swipe-absent by construction,
-                                    // so no like/unlike signal could ever be produced
-                                    // for them and the feed could not learn from a third
-                                    // of what it showed.
-                                    SwipeToDismiss(
-                                        onSwipeLeft: {
-                                            if let primary = items.first {
-                                                recordInteraction(for: primary, action: .unlike, source: "swipe")
-                                            }
-                                            hideForSession(ids: Self.dismissKeys(forGroupOf: items))
-                                        },
-                                        onSwipeRight: {
-                                            if let primary = items.first {
-                                                recordInteraction(for: primary, action: .like, source: "swipe")
-                                            }
-                                            hideForSession(ids: Self.dismissKeys(forGroupOf: items))
-                                        }
-                                    ) {
-                                        NativeGroupCard(title: title, items: items, kind: kind, theme: theme)
-                                    }
-                                case .single(let item):
-                                    if isGuessSlot, item.type == "futures", let f = item.futures,
-                                       f.discoverCard?.suggestedFormat != "threshold_heatmap",
-                                       f.discoverCard?.suggestedFormat != "outcome_distribution",
-                                       f.discoverCard?.suggestedFormat != "cross_source_comparison",
-                                       f.status != "closed", f.status != "resolved",
-                                       let leaderProbability = f.topOutcomes?.first?.probability,
-                                       leaderProbability < 0.95 {
-                                        SwipeToDismiss(
-                                            onSwipeLeft: {
-                                                recordInteraction(for: item, action: .unlike, source: "swipe")
-                                                hideForSession(itemId(item))
-                                            },
-                                            onSwipeRight: {
-                                                recordInteraction(for: item, action: .like, source: "swipe")
-                                                hideForSession(itemId(item))
-                                            }
-                                        ) {
-                                            NativeGuessCard(data: f, onNextQuestion: { scrollToNextGuessGrouped(proxy: proxy, after: idx, in: pageGrouped) }, onGuessCompleted: { incrementDaily() })
-                                        }
-                                    } else if isGuessSlot, item.type == "event", let e = item.event, e.currentOdds?.homeProbability != nil,
-                                              e.status != "completed", e.status != "closed" {
-                                        SwipeToDismiss(
-                                            onSwipeLeft: {
-                                                recordInteraction(for: item, action: .unlike, source: "swipe")
-                                                hideForSession(itemId(item))
-                                            },
-                                            onSwipeRight: {
-                                                recordInteraction(for: item, action: .like, source: "swipe")
-                                                hideForSession(itemId(item))
-                                            }
-                                        ) {
-                                            NativeGuessCard(event: e, onNextQuestion: { scrollToNextGuessGrouped(proxy: proxy, after: idx, in: pageGrouped) }, onGuessCompleted: { incrementDaily() })
-                                        }
-                                    } else if item.type == "event", let e = item.event {
-                                        SwipeToDismiss(
-                                            onSwipeLeft: {
-                                                recordInteraction(for: item, action: .unlike, source: "swipe")
-                                                hideForSession(itemId(item))
-                                            },
-                                            onSwipeRight: {
-                                                recordInteraction(for: item, action: .like, source: "swipe")
-                                                hideForSession(itemId(item))
-                                            }
-                                        ) {
-                                            NativeEventDiscoverCard(event: e, feedContext: item.contextSummary ?? item.reason ?? item.headline, expandedContext: item.reason ?? item.headline, navigationPath: $navigationPath, onOpen: {
-                                                recordInteraction(for: item, action: .detailOpen, source: "card")
-                                            }, onContextExpand: {
-                                                recordInteraction(for: item, action: .contextExpand, source: "context")
-                                            }, onContextCollapse: {
-                                                recordInteraction(for: item, action: .contextCollapse, source: "context")
-                                            })
-                                        }
-                                        .contextMenu { discoverCardMenu(item) }
-                                    } else if item.type == "futures", let f = item.futures,
-                                              f.discoverCard?.suggestedFormat == "threshold_heatmap",
-                                              (f.discoverCard?.thresholdPoints ?? []).filter({ $0.probability != nil }).count >= 2 {
-                                        SwipeToDismiss(
-                                            onSwipeLeft: {
-                                                recordInteraction(for: item, action: .unlike, source: "swipe")
-                                                hideForSession(itemId(item))
-                                            },
-                                            onSwipeRight: {
-                                                recordInteraction(for: item, action: .like, source: "swipe")
-                                                hideForSession(itemId(item))
-                                            }
-                                        ) {
-                                            HeatMapCardView(data: f, navigationPath: $navigationPath, onOpen: {
-                                                recordInteraction(for: item, action: .detailOpen, source: "card")
-                                            })
-                                        }
-                                        .contextMenu { discoverCardMenu(item) }
-                                    } else if item.type == "futures", let f = item.futures,
-                                              f.discoverCard?.suggestedFormat == "outcome_distribution",
-                                              (f.discoverCard?.distributionOutcomes ?? []).filter({ $0.probability != nil }).count >= 4 {
-                                        SwipeToDismiss(
-                                            onSwipeLeft: {
-                                                recordInteraction(for: item, action: .unlike, source: "swipe")
-                                                hideForSession(itemId(item))
-                                            },
-                                            onSwipeRight: {
-                                                recordInteraction(for: item, action: .like, source: "swipe")
-                                                hideForSession(itemId(item))
-                                            }
-                                        ) {
-                                            DistributionCardView(data: f, navigationPath: $navigationPath, onOpen: {
-                                                recordInteraction(for: item, action: .detailOpen, source: "card")
-                                            })
-                                        }
-                                        .contextMenu { discoverCardMenu(item) }
-                                    } else if item.type == "futures", let f = item.futures,
-                                              (f.discoverCard?.suggestedFormat == "cross_source_comparison"
-                                               || (f.topOutcomes?.count ?? 0) >= 4) {
-                                        SwipeToDismiss(
-                                            onSwipeLeft: {
-                                                recordInteraction(for: item, action: .unlike, source: "swipe")
-                                                hideForSession(itemId(item))
-                                            },
-                                            onSwipeRight: {
-                                                recordInteraction(for: item, action: .like, source: "swipe")
-                                                hideForSession(itemId(item))
-                                            }
-                                        ) {
-                                            ComparisonCardView(data: f, navigationPath: $navigationPath, onOpen: {
-                                                recordInteraction(for: item, action: .detailOpen, source: "card")
-                                            })
-                                        }
-                                        .contextMenu { discoverCardMenu(item) }
-                                    } else if item.type == "futures", let f = item.futures {
-                                        SwipeToDismiss(
-                                            onSwipeLeft: {
-                                                recordInteraction(for: item, action: .unlike, source: "swipe")
-                                                hideForSession(itemId(item))
-                                            },
-                                            onSwipeRight: {
-                                                recordInteraction(for: item, action: .like, source: "swipe")
-                                                hideForSession(itemId(item))
-                                            }
-                                        ) {
-                                            NativeFuturesDiscoverCard(data: f, feedContext: item.contextSummary ?? item.reason ?? item.headline, expandedContext: f.hookDescription ?? item.reason ?? item.headline, navigationPath: $navigationPath, onOpen: {
-                                                recordInteraction(for: item, action: .detailOpen, source: "card")
-                                            }, onContextExpand: {
-                                                recordInteraction(for: item, action: .contextExpand, source: "context")
-                                            }, onContextCollapse: {
-                                                recordInteraction(for: item, action: .contextCollapse, source: "context")
-                                            })
-                                        }
-                                        .contextMenu { discoverCardMenu(item) }
-                                    } else if item.type == "tournament", let t = item.tournament {
-                                        // #1773: was rendered bare — no swipe wrapper.
-                                        SwipeToDismiss(
-                                            onSwipeLeft: {
-                                                recordInteraction(for: item, action: .unlike, source: "swipe")
-                                                hideForSession(itemId(item))
-                                            },
-                                            onSwipeRight: {
-                                                recordInteraction(for: item, action: .like, source: "swipe")
-                                                hideForSession(itemId(item))
-                                            }
-                                        ) {
-                                            NativeTournamentDiscoverCard(
-                                                data: t,
-                                                feedContext: item.contextSummary ?? item.reason ?? item.headline,
-                                                navigationPath: $navigationPath
-                                            )
-                                        }
-                                        .contextMenu { discoverCardMenu(item) }
-                                    } else if item.type == "concept", let c = item.concept {
-                                        // L2-179: event-concept marquee card (Tour de France,
-                                        // World Cup, UFC card). Previously dropped at decode; now
-                                        // rendered so the marquee finally appears on device.
-                                        // #1773: was rendered bare — no swipe wrapper.
-                                        SwipeToDismiss(
-                                            onSwipeLeft: {
-                                                recordInteraction(for: item, action: .unlike, source: "swipe")
-                                                hideForSession(itemId(item))
-                                            },
-                                            onSwipeRight: {
-                                                recordInteraction(for: item, action: .like, source: "swipe")
-                                                hideForSession(itemId(item))
-                                            }
-                                        ) {
-                                            NativeConceptDiscoverCard(
-                                                data: c,
-                                                headline: item.headline,
-                                                feedContext: item.contextSummary ?? item.reason ?? item.headline,
-                                                navigationPath: $navigationPath,
-                                                onOpen: {
-                                                    recordInteraction(for: item, action: .detailOpen, source: "card")
-                                                }
-                                            )
-                                        }
-                                        .contextMenu { discoverCardMenu(item) }
-                                    }
+                    HStack(alignment: .top, spacing: DiscoverMasonry.spacing) {
+                        ForEach(Array(masonryColumns.enumerated()), id: \.offset) { _, indices in
+                            LazyVStack(spacing: DiscoverMasonry.spacing) {
+                                ForEach(indices, id: \.self) { idx in
+                                    discoverCard(
+                                        idx: idx,
+                                        gi: pageGrouped[idx],
+                                        pageGrouped: pageGrouped,
+                                        totalCount: grouped.count,
+                                        proxy: proxy
+                                    )
                                 }
                             }
-                            .id(gi.id)
-                            .onAppear {
-                                // The first eligible card actually on screen → the
-                                // true first-render milestone, once per generation
-                                // (L2-206 Item 3 / L2-212 Item 2). Acknowledgement is
-                                // ALSO driven by `.onChange(of: vm.firstRenderGeneration)`
-                                // below so a retained same-card-ID refresh (SwiftUI
-                                // would not re-fire this `onAppear`) still emits its new
-                                // generation — this call is the cold-first-paint path,
-                                // not the sole trigger (the C76 `onappear_refire_assumption`
-                                // fix). The shared once-per-generation guard prevents any
-                                // double emit.
-                                if idx == 0 { emitFirstRenderIfNeeded() }
-                                trackImpression(for: gi, rank: idx + 1)
-                                if idx == pageGrouped.count - 3 && visibleCount < grouped.count {
-                                    visibleCount += 20
-                                }
-                                if idx == pageGrouped.count - 5 {
-                                    Task { await vm.loadMoreIfNeeded() }
-                                }
-                            }
+                            .frame(maxWidth: .infinity)
                         }
                     }
                 }
+                // The card area's own width, which is what decides the column
+                // count. Read from a `.background` so it cannot influence the
+                // layout it measures, and taken BEFORE `.padding(.horizontal)`
+                // so it is the width the cards actually get. There is no
+                // feedback loop: this width comes from the enclosing column, not
+                // from the cards, so `columnCount` never changes it.
+                .background(
+                    GeometryReader { geo in
+                        Color.clear
+                            .onAppear { gridWidth = geo.size.width }
+                            .onChange(of: geo.size.width) { _, newValue in
+                                gridWidth = newValue
+                            }
+                    }
+                )
                 .padding(.horizontal)
                 .padding(.bottom)
 
