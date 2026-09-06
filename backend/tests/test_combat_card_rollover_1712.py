@@ -54,6 +54,50 @@ def _utc(y, m, d, hh=0, mm=0):
     return datetime(y, m, d, hh, mm, tzinfo=timezone.utc)
 
 
+#: The next UTC midnight strictly after now. Every card handed to the LISTER is
+#: placed relative to this instant instead of on a fixed calendar date.
+#:
+#: `list_card_concepts` reads the wall clock and `combat_status` drops a card
+#: more than six hours past its last bout, so a lister fixture pinned to an
+#: absolute date is a timer, not a test. The arms below were written against the
+#: real `26sep05` card, whose last bout was 2026-09-06T00:40Z: at 06:40Z that
+#: day the card went `settled`, the lister stopped returning it, and CI went red
+#: on master and on every open branch at the same instant, for a reason no
+#: branch had caused. Gotcha #44 — offset FIRST, then truncate; if the anchor
+#: contains an `if`, it isn't fixed.
+#:
+#: Anchoring on the NEXT midnight (not `today`) is what makes it total: the last
+#: bout of every card below lands after `_next_utc_midnight()`, so it is in the
+#: future at every wall clock, `combat_status` returns `live` or `upcoming`
+#: — both of which the arms ask for — and there is no hour of any day at which
+#: one of these cards can expire.
+def _next_utc_midnight() -> datetime:
+    now = datetime.now(timezone.utc)
+    return datetime(
+        now.year, now.month, now.day, tzinfo=timezone.utc
+    ) + timedelta(days=1)
+
+
+#: Spelled out here rather than imported from `event_combat`, so the arms assert
+#: against a token this test owns instead of re-deriving the expected answer
+#: from the code under test. Kept locale-proof for the same reason production is
+#: (`%b` is locale-dependent; an explicit tuple is not).
+_MONTH_ABBRS = (
+    "jan", "feb", "mar", "apr", "may", "jun",
+    "jul", "aug", "sep", "oct", "nov", "dec",
+)
+
+
+def _token_for(d) -> str:
+    """The card date-token for UTC date `d`, e.g. date(2026, 9, 5) -> "26sep05"."""
+    return f"{d.year % 100:02d}{_MONTH_ABBRS[d.month - 1]}{d.day:02d}"
+
+
+def _ticker_for(d, suffix: str) -> str:
+    """A UFC fight ticker on card date `d`, e.g. "KXUFCFIGHT-26SEP05HOOPAR"."""
+    return f"KXUFCFIGHT-{_token_for(d).upper()}{suffix}"
+
+
 class TestTokenDate:
     def test_reads_a_card_token(self):
         assert token_date("26sep19") == date(2026, 9, 19)
@@ -228,67 +272,99 @@ def _fight_row(mid, ticker, name, when, title=None):
 
 @pytest.mark.asyncio
 class TestTheListerFoldsTheCard:
-    async def test_the_sept_19_card_lists_once_with_every_fight(self):
-        """Both sources, both halves — one concept, 13 bouts, right main event."""
+    """These three arms call the LISTER, which reads the wall clock.
+
+    Their fixtures are therefore anchored on `_next_utc_midnight()` and keep the
+    real cards' shapes — the Sep 19 night's eight bouts at their measured
+    spacing, the Sep 5/6 halves 2h55 apart, two real nights 24h apart. The
+    calendar dates are gone; the geometry, which is what #1712 is about, is not.
+    """
+
+    async def test_the_night_that_crosses_midnight_lists_once_with_every_fight(self):
+        """Both sources, both halves — one concept, every bout, right main event.
+
+        Shaped on the measured Sep 19/20 card: four bouts before midnight UTC,
+        four after, main event last.
+        """
+        midnight = _next_utc_midnight()
+        card_day = (midnight - timedelta(days=1)).date()
         events = [
-            _bout("Casey O'Neill", "Eduarda Moura", _utc(2026, 9, 19, 22, 15)),
-            _bout("Giga Chikadze", "Joanderson Brito", _utc(2026, 9, 19, 22, 45)),
-            _bout("Edmen Shahbazyan", "Brunno Ferreira", _utc(2026, 9, 19, 23, 15)),
-            _bout("Tai Tuivasa", "Robelis Despaigne", _utc(2026, 9, 19, 23, 45)),
-            _bout("Marlon Vera", "Charles Jourdain", _utc(2026, 9, 20, 0, 15)),
-            _bout("Gable Steveson", "Sean Sharaf", _utc(2026, 9, 20, 0, 45)),
-            _bout("Renato Moicano", "Brian Ortega", _utc(2026, 9, 20, 1, 45)),
-            _bout("Joshua Van", "Alexandre Pantoja", _utc(2026, 9, 20, 3, 15)),
+            _bout("Casey O'Neill", "Eduarda Moura", midnight - timedelta(hours=1, minutes=45)),
+            _bout("Giga Chikadze", "Joanderson Brito", midnight - timedelta(hours=1, minutes=15)),
+            _bout("Edmen Shahbazyan", "Brunno Ferreira", midnight - timedelta(minutes=45)),
+            _bout("Tai Tuivasa", "Robelis Despaigne", midnight - timedelta(minutes=15)),
+            _bout("Marlon Vera", "Charles Jourdain", midnight + timedelta(minutes=15)),
+            _bout("Gable Steveson", "Sean Sharaf", midnight + timedelta(minutes=45)),
+            _bout("Renato Moicano", "Brian Ortega", midnight + timedelta(hours=1, minutes=45)),
+            _bout("Joshua Van", "Alexandre Pantoja", midnight + timedelta(hours=3, minutes=15)),
         ]
         concepts = await list_ufc_card_concepts(
             _FakeDB(events), statuses=("upcoming", "live"), rows=[]
         )
         assert len(concepts) == 1, [c["key"] for c in concepts]
         card = concepts[0]
-        assert card["key"] == "event:ufc:26sep19"
+        assert card["key"] == f"event:ufc:{_token_for(card_day)}"
         assert card["fight_count"] == 8
         # The main event is the LAST bout of the night, which lives in the half
         # that used to be its own card.
         assert "Pantoja" in card["name"]
 
     async def test_kalshi_and_events_halves_land_on_one_token(self):
-        events = [_bout("Daniel Hooker", "Salahdine Parnasse", _utc(2026, 9, 5, 21, 45))]
+        """The arm that took CI red: shaped on the real Hooker/Parnasse card,
+        whose two halves sat 2h55 apart across midnight UTC."""
+        midnight = _next_utc_midnight()
+        card_day = (midnight - timedelta(days=1)).date()
+        spillover_day = midnight.date()
+        first_bout = midnight - timedelta(hours=2, minutes=15)
+        second_bout = midnight + timedelta(minutes=40)
+        events = [_bout("Daniel Hooker", "Salahdine Parnasse", first_bout)]
         rows = [
             _fight_row(
                 1,
-                "KXUFCFIGHT-26SEP05HOOPAR",
+                _ticker_for(card_day, "HOOPAR"),
                 "Fight Night: Hooker vs Parnasse",
-                _utc(2026, 9, 5, 21, 45),
+                first_bout,
                 "Fight Night: Hooker vs Parnasse",
             ),
             _fight_row(
                 2,
-                "KXUFCFIGHT-26SEP06SPIPET",
+                _ticker_for(spillover_day, "SPIPET"),
                 "Fight Night: Spivac vs Petrino",
-                _utc(2026, 9, 6, 0, 40),
+                second_bout,
             ),
         ]
         concepts = await list_ufc_card_concepts(
-            _FakeDB(events + [_bout("Spivac", "Petrino", _utc(2026, 9, 6, 0, 40))]),
+            _FakeDB(events + [_bout("Spivac", "Petrino", second_bout)]),
             statuses=("upcoming", "live"),
             rows=rows,
         )
-        assert [c["key"] for c in concepts] == ["event:ufc:26sep05"]
+        assert [c["key"] for c in concepts] == [f"event:ufc:{_token_for(card_day)}"]
         assert concepts[0]["fight_count"] == 2
 
     async def test_two_real_nights_still_list_twice(self):
-        """The must-not-regress control: folding is not merging everything."""
+        """The must-not-regress control: folding is not merging everything.
+
+        Compared as a SET, not a sorted list: two adjacent card tokens sort
+        lexically, so `26sep30` and `26oct01` would compare backwards and the
+        control would fail on the four days a year the anchor straddles a month.
+        """
+        midnight = _next_utc_midnight()
+        first_night = midnight - timedelta(hours=2)
+        second_night = midnight + timedelta(hours=22)
         events = [
-            _bout("A Fighter", "B Fighter", _utc(2026, 9, 11, 22, 0)),
-            _bout("C Fighter", "D Fighter", _utc(2026, 9, 12, 22, 0)),
+            _bout("A Fighter", "B Fighter", first_night),
+            _bout("C Fighter", "D Fighter", second_night),
         ]
         concepts = await list_ufc_card_concepts(
             _FakeDB(events), statuses=("upcoming", "live"), rows=[]
         )
-        assert sorted(c["key"] for c in concepts) == [
-            "event:ufc:26sep11",
-            "event:ufc:26sep12",
-        ]
+        assert {c["key"] for c in concepts} == {
+            f"event:ufc:{_token_for(first_night.date())}",
+            f"event:ufc:{_token_for(second_night.date())}",
+        }
+        # The two nights are 24h apart — far outside the fold's window — so the
+        # control is about the gap, not about the dates.
+        assert (second_night - first_night).total_seconds() / 3600 > ROLLOVER_MAX_GAP_HOURS
 
 
 class TestTheCardPageFoldsTheSameWay:
