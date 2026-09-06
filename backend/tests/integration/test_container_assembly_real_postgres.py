@@ -329,6 +329,156 @@ class TestAMissingChildIsReceiptedNotEdged:
         assert len(await _edge_rows(pg_session, container.id)) == 3
 
 
+class TestTheBootstrap:
+    """Creating the tree is idempotent, and its undo cannot delete a live hub."""
+
+    async def test_it_creates_a_root_and_five_draws(self, pg_session):
+        from app.tasks.container_assembly import (
+            apply_container_tree,
+            plan_container_tree,
+        )
+
+        plan = plan_container_tree("us-open", "2026", "US Open 2026")
+        out = await apply_container_tree(pg_session, plan)
+        await pg_session.commit()
+
+        assert len(out["created"]) == 6
+        assert out["existing"] == []
+
+        result = await pg_session.execute(
+            text(
+                "SELECT c.slug, p.slug FROM containers c "
+                "LEFT JOIN containers p ON p.id = c.parent_container_id "
+                "ORDER BY c.slug"
+            )
+        )
+        rows = dict(result.fetchall())
+        assert rows["us-open-2026"] is None
+        assert rows["us-open-2026-mens-doubles"] == "us-open-2026"
+        assert rows["us-open-2026-mixed-doubles"] == "us-open-2026"
+
+    async def test_a_second_run_creates_nothing(self, pg_session):
+        """Idempotent, so it is safe on a schedule and safe to re-run by hand."""
+        from app.tasks.container_assembly import (
+            apply_container_tree,
+            plan_container_tree,
+        )
+
+        plan = plan_container_tree("us-open", "2026", "US Open 2026")
+        await apply_container_tree(pg_session, plan)
+        await pg_session.commit()
+        second = await apply_container_tree(pg_session, plan)
+        await pg_session.commit()
+
+        assert second["created"] == []
+        assert len(second["existing"]) == 6
+        count = await pg_session.execute(text("SELECT count(*) FROM containers"))
+        assert count.scalar() == 6
+
+    async def test_a_rerun_does_not_stamp_over_an_authority_set_status(
+        self, pg_session
+    ):
+        """D27: the authority owns `status`, not the bootstrap.
+
+        A re-run that "helpfully" reset every draw to `scheduled` would take a
+        finished tournament live again on the hub — the exact inference D27
+        forbids, arriving from the opposite direction.
+        """
+        from app.tasks.container_assembly import (
+            apply_container_tree,
+            plan_container_tree,
+        )
+
+        plan = plan_container_tree("us-open", "2026", "US Open 2026")
+        await apply_container_tree(pg_session, plan)
+        await pg_session.execute(
+            text("UPDATE containers SET status = 'final' WHERE slug = :s"),
+            {"s": "us-open-2026-mixed-doubles"},
+        )
+        await pg_session.commit()
+
+        await apply_container_tree(pg_session, plan)
+        await pg_session.commit()
+
+        result = await pg_session.execute(
+            text("SELECT status FROM containers WHERE slug = :s"),
+            {"s": "us-open-2026-mixed-doubles"},
+        )
+        assert result.scalar() == "final"
+
+    async def test_the_undo_removes_only_what_it_created_and_only_if_empty(
+        self, pg_session
+    ):
+        """D51's undo, exercised — the narrowness is the point.
+
+        An empty draw is removed. A draw assembly has since filled is KEPT,
+        because the undo must not be able to delete a working hub when someone
+        runs it after a successful assembly rather than after a failed one.
+        """
+        from app.tasks.container_assembly import (
+            BOOTSTRAP_UNDO_LINE,
+            apply_container_tree,
+            plan_container_tree,
+        )
+
+        plan = plan_container_tree("us-open", "2026", "US Open 2026")
+        out = await apply_container_tree(pg_session, plan)
+        await pg_session.commit()
+
+        populated = out["ids"]["us-open-2026-mens-doubles"]
+        await pg_session.execute(
+            text(
+                "INSERT INTO event_edges (parent_id, parent_type, child_id, "
+                " child_type, kind, class, source, confidence) "
+                "VALUES (:pid, 'container', 1, 'event', 'contains', "
+                " 'doubles', 'venue_grouping', 1.0)"
+            ),
+            {"pid": populated},
+        )
+        await pg_session.commit()
+
+        await pg_session.execute(
+            text(BOOTSTRAP_UNDO_LINE), {"created_slugs": out["created"]}
+        )
+        await pg_session.commit()
+
+        remaining = await pg_session.execute(
+            text("SELECT slug FROM containers ORDER BY slug")
+        )
+        assert [r[0] for r in remaining.fetchall()] == ["us-open-2026-mens-doubles"]
+
+    async def test_the_undo_leaves_containers_it_did_not_create(self, pg_session):
+        """Scoped to the `created` list, never to everything that is empty.
+
+        A container somebody else made — by hand, or by an earlier bootstrap —
+        is not this run's to remove, and passing `existing` would remove it.
+        """
+        from app.tasks.container_assembly import (
+            BOOTSTRAP_UNDO_LINE,
+            apply_container_tree,
+            plan_container_tree,
+        )
+        from app.models.models import Container
+
+        pg_session.add(
+            Container(kind="award_show", name="The Oscars", slug="oscars-2027")
+        )
+        await pg_session.flush()
+
+        out = await apply_container_tree(
+            pg_session, plan_container_tree("us-open", "2026", "US Open 2026")
+        )
+        await pg_session.commit()
+
+        await pg_session.execute(
+            text(BOOTSTRAP_UNDO_LINE), {"created_slugs": out["created"]}
+        )
+        await pg_session.commit()
+
+        remaining = await pg_session.execute(text("SELECT slug FROM containers"))
+        assert [r[0] for r in remaining.fetchall()] == ["oscars-2027"]
+
+
 class TestTheSanctionedAnchorWriter:
     """CERT-2006's follow-up, and the reason it is a WRITER not a validator.
 

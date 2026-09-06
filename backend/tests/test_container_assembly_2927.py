@@ -19,11 +19,14 @@ the program exists to end.
 import pytest
 
 from app.tasks.container_assembly import (
+    BOOTSTRAP_UNDO_LINE,
     SOURCE_CONFIDENCE,
+    TENNIS_DRAWS,
     Candidate,
     RegisterHarvest,
     container_chain_has_cycle,
     gather_register_candidates,
+    plan_container_tree,
 )
 from app.routes.containers import CLASS_ORDER, order_classes
 from app.utils.container_class import classify_member
@@ -268,6 +271,95 @@ class TestTheReceiptVocabularyIsRegistered:
             ),
         )
         assert receipt.to_row()["container_id"] is None
+
+
+class TestTheContainerTreePlan:
+    """One parent, one child per draw, slugs DERIVED and never typed."""
+
+    def test_the_us_open_plan_is_a_root_plus_five_draws(self):
+        plan = plan_container_tree("us-open", "2026", "US Open 2026")
+        assert len(plan) == 6
+        assert plan[0].slug == "us-open-2026"
+        assert plan[0].parent_slug is None
+        assert all(p.parent_slug == "us-open-2026" for p in plan[1:])
+
+    def test_doubles_draws_are_present_and_are_their_own_containers(self):
+        """The whole point: Men's Doubles gets its own anchor and its own status.
+
+        `status` is authority-set (D27), and one container per draw is what lets
+        Men's Doubles go `final` while Mixed is still `live`. A single container
+        with a `draw` facet could not express that.
+        """
+        slugs = {p.slug for p in plan_container_tree("us-open", "2026", "US Open 2026")}
+        assert {
+            "us-open-2026-mens-doubles",
+            "us-open-2026-womens-doubles",
+            "us-open-2026-mixed-doubles",
+        } <= slugs
+
+    def test_slugs_are_derived_so_a_rerun_is_idempotent(self):
+        a = plan_container_tree("us-open", "2026", "US Open 2026")
+        b = plan_container_tree("us-open", "2026", "US Open 2026")
+        assert [p.slug for p in a] == [p.slug for p in b]
+
+    def test_the_same_tournament_in_two_seasons_does_not_collide(self):
+        """The slug is the public URL and the unique key.
+
+        If the season were dropped from the slug, 2027's bootstrap would find
+        2026's rows already present, write nothing, and silently attach next
+        year's markets to last year's hub.
+        """
+        y26 = {p.slug for p in plan_container_tree("us-open", "2026", "US Open 2026")}
+        y27 = {p.slug for p in plan_container_tree("us-open", "2027", "US Open 2027")}
+        assert not (y26 & y27)
+
+    def test_a_different_tournament_does_not_collide(self):
+        uso = {p.slug for p in plan_container_tree("us-open", "2026", "US Open 2026")}
+        wim = {p.slug for p in plan_container_tree("wimbledon", "2026", "Wimbledon 2026")}
+        assert not (uso & wim)
+
+    def test_the_root_comes_first_so_one_pass_can_apply_it(self):
+        for tournament in ("us-open", "wimbledon", "roland-garros"):
+            plan = plan_container_tree(tournament, "2026", "X")
+            seen = set()
+            for planned in plan:
+                if planned.parent_slug is not None:
+                    assert planned.parent_slug in seen, planned.slug
+                seen.add(planned.slug)
+
+    def test_every_planned_container_uses_a_real_kind(self):
+        from app.utils.container_graph import validate_container_kind
+
+        for planned in plan_container_tree("us-open", "2026", "US Open 2026"):
+            assert validate_container_kind(planned.kind) == planned.kind
+
+    def test_the_draw_list_is_the_only_hand_written_list(self):
+        """A named check on the program's own promise.
+
+        The spec's claim is that nobody writes a list of MEMBERS — not that
+        nobody names the draws a Slam has. `TENNIS_DRAWS` is that one exception
+        and it is five entries long; if it ever grows toward the size of a
+        member list, this test is where someone will notice.
+        """
+        assert len(TENNIS_DRAWS) == 5
+        assert all(len(entry) == 2 for entry in TENNIS_DRAWS)
+
+
+class TestTheBootstrapUndoIsNarrow:
+    def test_the_undo_refuses_to_delete_a_populated_container(self):
+        """D51's undo must not be able to delete a working hub.
+
+        Asserted on the statement rather than by executing it, because the
+        property is structural: the `NOT EXISTS` on `event_edges` is what stops
+        a re-run-then-undo from removing a container assembly has since filled.
+        The real-Postgres file exercises it.
+        """
+        assert "NOT EXISTS" in BOOTSTRAP_UNDO_LINE
+        assert "event_edges" in BOOTSTRAP_UNDO_LINE
+        assert ":created_slugs" in BOOTSTRAP_UNDO_LINE
+        # Scoped to the slugs the apply REPORTED creating — never to everything
+        # that happens to be empty, and never to `existing`.
+        assert "slug = ANY(:created_slugs)" in BOOTSTRAP_UNDO_LINE
 
 
 class TestTheCycleGuard:
