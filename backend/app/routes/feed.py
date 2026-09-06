@@ -6507,6 +6507,7 @@ async def _score_events(
                 away_team_name=event.away_team_name,
                 importance=importance,
                 end_time=event.statpal_end_time,
+                completed_at=event.completed_at,
                 period=event.period,
             )
 
@@ -6539,6 +6540,10 @@ async def _score_events(
                 source_count=_source_count,
                 game_progress=_game_progress,
                 ei_metadata=event.ei_metadata,
+                # Same clock that set `is_recently_finished` — taken off the
+                # result rather than re-derived, so the eligibility window and
+                # the freshness decay can never disagree about a game's age.
+                hours_since_finish=highlight_result.hours_since_finish,
             )
             highlight_result.reasons = extra_reasons
 

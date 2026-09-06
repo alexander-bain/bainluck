@@ -36,6 +36,79 @@ TAG_BOOSTS = {
 }
 
 
+# === Completed-event freshness decay ===
+#
+# Everything a finished game earns — `recent_finish`, `recent_finish_upset`, the
+# EI boost, the comeback and lead-change bonuses — was age-blind, gated only by
+# `is_recently_finished`, a BINARY 24-hour flag. A game that ended sixty seconds
+# ago and one that ended twenty-three hours ago scored identically, so as a
+# night's slate finished it displaced everything unplayed: measured 2026-09-06,
+# the Sports feed's first page carried 14 finished games out of 20 (7 at 10pm,
+# 8 at 11pm, 14 by 12:26am) while the only two live games scored 35 and 40.
+#
+# The decay is MULTIPLICATIVE, not a flat subtraction, because the score that
+# actually orders the feed (`_rank_score` in routes/feed.py) is UNCAPPED — a card
+# displaying the capped 98 can rank on a considerably larger number, and a fixed
+# penalty would barely move it. A proportional cut is scale-invariant and can
+# never drive a score negative.
+# 1.5h of full credit, then a ramp to the maximum cut at 6h. The endpoint is set
+# off the measured slate, not taste: the Saturday MLB games that were still
+# holding page one at 12:26am PT had ended 4.7-7.1 hours earlier, and a result
+# that old is yesterday's news to someone opening the app tonight. A game still
+# inside the fresh window is the WHAT-HIT card and keeps every point it earned.
+COMPLETED_FRESH_HOURS = 1.5
+COMPLETED_DECAY_HOURS = 6.0
+COMPLETED_MAX_DECAY = 0.55
+# A completed event is RE-RANKED, never removed. `routes/feed.py` drops an event
+# scoring under `min_score` (30 for an anonymous reader), so an unbounded decay
+# would silently empty the recent-results content instead of reordering it —
+# the #1091 class. 35 is the established "survives but ranks below interesting
+# futures" floor already used for the demotion cap and the championship
+# override, and it sits above every min_score gate.
+COMPLETED_DECAY_FLOOR = 35
+
+
+def compute_completed_freshness_factor(
+    event_status: str,
+    hours_since_finish: float | None,
+) -> float:
+    """Return the multiplier a finished game's score keeps, given its age.
+
+    1.0 for anything not completed, for an unknown age, and for the first
+    ``COMPLETED_FRESH_HOURS`` after the final whistle — a game that just ended is
+    the product, not clutter. Then a linear ramp down to
+    ``1 - COMPLETED_MAX_DECAY`` at ``COMPLETED_DECAY_HOURS``, flat thereafter.
+
+    A negative age (a clock skew, or a finish reference in the future) keeps the
+    full score rather than inverting the ramp.
+    """
+    if event_status not in ("completed", "closed"):
+        return 1.0
+    if hours_since_finish is None or hours_since_finish <= COMPLETED_FRESH_HOURS:
+        return 1.0
+
+    span = COMPLETED_DECAY_HOURS - COMPLETED_FRESH_HOURS
+    ramp = (hours_since_finish - COMPLETED_FRESH_HOURS) / span
+    ramp = min(1.0, max(0.0, ramp))
+    return 1.0 - (COMPLETED_MAX_DECAY * ramp)
+
+
+def apply_completed_freshness_decay(
+    score: int,
+    event_status: str,
+    hours_since_finish: float | None,
+) -> tuple[int, list[str]]:
+    """Age-decay a finished game's score. Returns (new_score, reasons)."""
+    factor = compute_completed_freshness_factor(event_status, hours_since_finish)
+    if factor >= 1.0 or score <= COMPLETED_DECAY_FLOOR:
+        return score, []
+
+    decayed = max(COMPLETED_DECAY_FLOOR, int(score * factor))
+    if decayed >= score:
+        return score, []
+    return decayed, ["stale_result"]
+
+
 def compute_content_richness_penalty(
     event_status: str,
     raw_ei: float | None,
@@ -122,6 +195,7 @@ def compute_base_score(
     ei_metadata: str | dict | None = None,
     volume_24h: int | None = None,
     volume_7d_avg: float | None = None,
+    hours_since_finish: float | None = None,
 ) -> tuple[int, list[str]]:
     """Compute the base interestingness score for a feed event.
 
@@ -133,6 +207,7 @@ def compute_base_score(
     - Season context (late-season major league boost)
     - LLM tag boosts (rivalry, elimination, narrative, etc.)
     - EI boost for completed high-excitement games
+    - Freshness decay for completed games (applied last, to the whole stack)
     """
     score = highlight_score
     reasons = list(highlight_reasons)
@@ -227,6 +302,16 @@ def compute_base_score(
     if richness_adj != 0:
         score += richness_adj
         reasons.extend(richness_reasons)
+
+    # Freshness decay for finished games. LAST, deliberately: it scales the whole
+    # post-game stack (highlight + EI + comeback + volume), which is the only way
+    # to reach a score that is mostly age-blind bonuses.
+    score, staleness_reasons = apply_completed_freshness_decay(
+        score=score,
+        event_status=event_status,
+        hours_since_finish=hours_since_finish,
+    )
+    reasons.extend(staleness_reasons)
 
     return score, reasons
 
