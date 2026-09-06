@@ -120,6 +120,80 @@ enum PeriodLabel {
         return s
     }
 
+    /// The label for a **scoreboard column** — `GameSegmentsView`'s "Score by
+    /// period" header — as opposed to a chart chip.
+    ///
+    /// #3273. That card had grown its own parser, which read ESPN's clock PREFIX
+    /// as the period number and headed a four-quarter football game
+    /// `Q14 · Q8 · Q5 · Q1 ... Q4`. It is expressed here, on top of `normalize`,
+    /// so there is still exactly ONE thing that knows how to read a period string;
+    /// what differs is only the presentation, and only for two reasons:
+    ///
+    /// 1. **Innings are digits, not ordinals.** The column is 22pt, sized for two
+    ///    digits by UX-P090's geometry — the width that keeps the TOTAL column on
+    ///    a 375pt phone. `12th` does not fit where `12` does. A chart chip has the
+    ///    room and keeps its self-explaining ordinal.
+    /// 2. **A non-period gets no column.** `HT`, `INT`, a golf `PO` and anything
+    ///    `normalize` passes through unrecognised (`"Delayed"` reached production
+    ///    as a column header) are dropped. A header row is a claim about how the
+    ///    game is divided; an unreadable string is not one.
+    ///
+    /// Deliberately takes no sport key. `basketball_ncaab` plays HALVES and
+    /// `basketball_wncaab` plays QUARTERS, so any sport-prefix branch labels one
+    /// of them wrong — the noun in the data is the only thing that can be right
+    /// for both. Same principle as #3317: gate on what is actually being played.
+    ///
+    /// Returns `""` for "no column", matching `normalize`'s "no chip" contract.
+    static func columnLabel(_ raw: String) -> String {
+        let chip = normalize(raw)
+        if chip.isEmpty || chip == "HT" || chip == "INT" || chip == "PO" { return "" }
+
+        // "9th" -> "9". The ordinal is the chart's vocabulary, not the column's.
+        if let match = chip.range(of: #"^\d+(?:st|nd|rd|th)$"#, options: [.regularExpression, .caseInsensitive]) {
+            return String(chip[match].filter(\.isNumber))
+        }
+
+        // Everything a period column may legally say. Anything else is a string
+        // `normalize` could not name, and is dropped rather than printed.
+        if chip.range(of: #"^(?:Q\d+|P\d+|R\d+|\d+H|OT|OT\d+|\d+OT)$"#, options: [.regularExpression, .caseInsensitive]) != nil {
+            return chip
+        }
+        return ""
+    }
+
+    /// The label for the live **status badge** — the red capsule on the event
+    /// hero and on every sports feed card.
+    ///
+    /// #3273, found shooting the live Michigan game while fixing the card below
+    /// it: the badge read **"5:11 - 1st Quarter 5:11"**. `StatusBadge` joined the
+    /// raw ESPN period to `game_clock`, and the period embeds that same clock —
+    /// the third consumer of this string to print it verbatim.
+    ///
+    /// Differs from `columnLabel` in one deliberate way: **baseball keeps its
+    /// half-inning.** "Bottom 7th" tells a reader something "7th" does not, and a
+    /// capsule has room for it, where a 22pt scoreboard column does not. That is
+    /// also why this is not just `normalize`, which drops the qualifier.
+    static func liveBadgeLabel(_ raw: String) -> String {
+        var body = raw.trimmingCharacters(in: .whitespaces)
+
+        // The badge prints the clock itself, beside this. Printing it here too is
+        // the whole defect.
+        if let clock = body.range(of: #"^[\d.:]+\s*-\s*"#, options: .regularExpression) {
+            body = String(body[clock.upperBound...])
+        }
+
+        // "Bottom 7th" / "End 8th" — kept whole. The `\d` is what keeps
+        // "End of 1st Quarter" out of this branch and on the shortening path.
+        if body.range(
+            of: #"^(?:top|bottom|mid|middle|end)\s+\d+"#,
+            options: [.regularExpression, .caseInsensitive]
+        ) != nil {
+            return body
+        }
+
+        return normalize(body)
+    }
+
     /// Render an inning number as a self-explaining ordinal. A non-positive or
     /// unparseable inning is not a period and yields `""` (no chip).
     static func inning<S: StringProtocol>(_ digits: S) -> String {

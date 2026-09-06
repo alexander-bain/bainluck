@@ -1239,11 +1239,30 @@ private struct GameSegmentsView: View {
     var finalAwayScore: Int?
 
     private var homeShort: String {
-        homeTeamAbbrev ?? homeTeam.split(separator: " ").last.map(String.init) ?? "Home"
+        Self.shortLabel(abbreviation: homeTeamAbbrev, teamName: homeTeam, fallback: "Home")
     }
 
     private var awayShort: String {
-        awayTeamAbbrev ?? awayTeam.split(separator: " ").last.map(String.init) ?? "Away"
+        Self.shortLabel(abbreviation: awayTeamAbbrev, teamName: awayTeam, fallback: "Away")
+    }
+
+    /// #3273. The team column is 44pt by the UX-P090 geometry — that width is what
+    /// keeps the TOTAL column on screen, so it cannot simply grow. The old fallback
+    /// handed it a whole nickname ("Buckeyes"), which SwiftUI then truncated to
+    /// `Bu…`; on Alex's Ball State @ Ohio State specimen the served event carries
+    /// `home_team_data: null`, so the fallback is what ran. Measured 2026-09-05:
+    /// 154 of 1,008 teams across the eight sports this card draws for have no
+    /// abbreviation (35% of wncaab), so this path is not an edge case.
+    ///
+    /// A real abbreviation is always preferred. Failing that, emit three uppercase
+    /// letters, which fits the column: an intentional short form reads as an
+    /// abbreviation where `Bu…` reads as a rendering fault.
+    private static func shortLabel(abbreviation: String?, teamName: String, fallback: String) -> String {
+        if let abbreviation, !abbreviation.trimmingCharacters(in: .whitespaces).isEmpty {
+            return abbreviation
+        }
+        guard let nickname = teamName.split(separator: " ").last else { return fallback }
+        return String(nickname.prefix(3)).uppercased()
     }
 
     var body: some View {
@@ -1407,7 +1426,7 @@ private struct SegmentBreakdown {
                     return nil
                 }
 
-                let label = Self.formatPeriodLabel(rawPeriod, sportKey: sportKey)
+                let label = Self.formatPeriodLabel(rawPeriod)
                 guard !label.isEmpty else { return nil }
                 return CumulativeSegment(
                     label: label,
@@ -1502,55 +1521,35 @@ private struct SegmentBreakdown {
         self.hasUnknownSegments = sawUnknown
     }
 
-    private static func formatPeriodLabel(_ rawPeriod: String, sportKey: String?) -> String {
-        let trimmed = rawPeriod.trimmingCharacters(in: .whitespacesAndNewlines)
-        let lower = trimmed.lowercased()
-        let sport = sportKey?.lowercased() ?? ""
-
-        if lower == "halftime" || lower == "half time" || lower == "ht" { return "" }
-        if lower.contains("pre") || lower.contains("final") { return "" }
-        let number = firstNumber(in: lower)
-
-        // Sport-specific branches first — baseball must come before the
-        // generic OT check because "Bottom 3rd" contains "ot" in "Bottom".
-        if sport.hasPrefix("baseball_") {
-            if let number { return "\(number)" }
-        } else if sport.hasPrefix("basketball_") || sport.hasPrefix("americanfootball_") {
-            if lower.contains("ot") || lower.contains("overtime") {
-                return number.map { "OT\($0)" } ?? "OT"
-            }
-            if let number { return "Q\(number)" }
-        } else if sport.hasPrefix("icehockey_") {
-            if lower.contains("ot") || lower.contains("overtime") {
-                return number.map { "OT\($0)" } ?? "OT"
-            }
-            if let number { return "P\(number)" }
-        } else if sport.hasPrefix("soccer_") {
-            if let number { return number <= 1 ? "1H" : "2H" }
-        } else {
-            if lower.contains("ot") || lower.contains("overtime") {
-                return number.map { "OT\($0)" } ?? "OT"
-            }
-        }
-
-        if lower.hasPrefix("q"), let number { return "Q\(number)" }
-        if lower.contains("quarter"), let number { return "Q\(number)" }
-        if lower.contains("period"), let number { return "P\(number)" }
-        if lower.contains("half"), let number { return "\(number)H" }
-        if let number { return "\(number)" }
-        return trimmed
-    }
-
-    private static func firstNumber(in value: String) -> Int? {
-        var digits = ""
-        for character in value {
-            if character.isNumber {
-                digits.append(character)
-            } else if !digits.isEmpty {
-                break
-            }
-        }
-        return Int(digits)
+    /// #3273. The card used to run its OWN period parser, and that parser read
+    /// the GAME CLOCK: ESPN writes the clock as a PREFIX (`"14:54 - 1st Quarter"`),
+    /// so taking the first number in the string headed a football card
+    /// `Q14 · Q8 · Q5 · Q1 ... Q4` — thirteen columns on a four-quarter game, of
+    /// which one was right by accident (`"End of 1st Quarter"` carries no clock).
+    ///
+    /// The parser it should have been calling already existed. #1832 deleted the
+    /// duplicate period-label implementations and left `PeriodLabel.normalize` as
+    /// the single source — but its ratchet
+    /// (`frontend/__tests__/ios/periodLabelSingleSource.test.ts`) enumerated its
+    /// consumers by NAME, and this file was never in the list, so a third copy
+    /// grew here unwatched and drifted. That guard now DISCOVERS consumers instead
+    /// of listing them.
+    ///
+    /// What is left here is the one thing genuinely local to this card: its column
+    /// vocabulary. The 22pt column is sized for digits (UX-P090), so an inning is
+    /// `9`, not the chart's self-explaining `9th`; and a status that is not a
+    /// period at all gets no column. Anything the shared parser cannot name is
+    /// dropped rather than guessed.
+    ///
+    /// Measured against every distinct period string in production (10,665
+    /// sport/period pairs, 2026-09-05): 10,159 change, and the resulting label
+    /// vocabulary is closed — football `Q1`-`Q4`; basketball `Q1`-`Q4`, `1H`,
+    /// `2H`, `OT`-`4OT`; baseball `1`-`13`. No clock reading can reach a header.
+    /// Note this needs no sport key: `ncaab` plays halves and `wncaab` plays
+    /// quarters under the same `basketball_` prefix, so reading the noun out of
+    /// the data is the only thing that can label both correctly.
+    private static func formatPeriodLabel(_ rawPeriod: String) -> String {
+        PeriodLabel.columnLabel(rawPeriod)
     }
 }
 
