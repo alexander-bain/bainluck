@@ -287,11 +287,100 @@ extension SportVocab {
         totalsUnit(quotedBy: marketNames) == unit ? self.totalRange : nil
     }
 
+    // MARK: - What THIS margin market quotes (#3533)
+
+    /// The unit a SPREAD or HANDICAP market names in its own title, or nil
+    /// where it names none.
+    ///
+    /// #3533, the margin-map twin of ``declaredUnit(inMarketName:)``. A US Open
+    /// match serves both of these in one `spreads[]` array:
+    ///
+    /// ```
+    /// Game Spread:  Sabalenka (-5.5) vs Townsend (+5.5)    a line in GAMES
+    /// Set Handicap: Sabalenka (-1.5) vs Townsend (+1.5)    a line in SETS
+    /// ```
+    ///
+    /// `MarketMapView.isFullGameSpread` excludes halves and nothing else, so
+    /// both passed, and both were drawn on one rail whose width is
+    /// ``marginRange`` — **games** — with a ±1.5 SET rung sitting where a
+    /// 1.5-game spread would be, indistinguishable from one.
+    ///
+    /// **One syntactic position, and it is unambiguous:** the noun immediately
+    /// before the market-kind word governs it. `Set Handicap` → sets,
+    /// `Game Spread` → games, `Run Line` → runs, `Point Spread` → points.
+    ///
+    /// Narrowed to ``knownUnits`` for the same reason position 3 of
+    /// ``declaredUnit(inMarketName:)`` is: a venue writes the SUBJECT in this
+    /// slot too. `"Asian Handicap"` is not a line in asians, `"Alternate
+    /// Spread"` is not a line in alternates, and `"Puck Line"` is not a line in
+    /// pucks — it is a line in goals, which is hockey's own unit, so nil is the
+    /// right answer and the fallback already gives it. `"New England vs
+    /// Seattle: Spread"` has a colon where the noun would be and matches
+    /// nothing, which is how every named NFL ladder keeps inheriting points.
+    static func declaredMarginUnit(inMarketName marketName: String?) -> String? {
+        let name = (marketName ?? "").lowercased()
+        guard !name.isEmpty else { return nil }
+        guard let noun = firstCapture(#"\b([a-z]+)\s+(?:spread|handicap|line)\b"#, in: name) else { return nil }
+        let unit = plural(noun)
+        return knownUnits.contains(unit) ? unit : nil
+    }
+
+    /// The sport's own ± span, but ONLY where the map is drawn in the sport's
+    /// unit.
+    ///
+    /// The exact argument ``totalRange(quotedBy:)`` makes: ``marginRange`` is
+    /// documented as "the sport's own realistic spread" *in ``unit``*, so it is
+    /// meaningless the moment the rungs are quoted in something else. Nil hands
+    /// the rail back to the lines the market actually quoted
+    /// (`MarketMapRail.marginBounds`).
+    func marginRange(quotedBy mapUnit: String) -> Int? {
+        mapUnit == unit ? marginRange : nil
+    }
+
+    /// The TITLE of a margin map, in the unit its rungs are actually quoted in.
+    ///
+    /// The sport's own phrasing is returned verbatim wherever it still applies,
+    /// so "Run margin map", "Goal margin map", "Game margin map" and "Margin
+    /// map" are untouched on every surface that was already right.
+    func marginTitle(quotedBy mapUnit: String) -> String {
+        if mapUnit == unit { return marginTitle }
+        if mapUnit.isEmpty { return "Margin map" }
+        let one = SportVocab.singular(mapUnit)
+        return one.prefix(1).uppercased() + one.dropFirst() + " margin map"
+    }
+
+    /// True where the sentence ``unitMismatchNote(settled:)`` prints —
+    /// *"the scoreboard reports sets, this market quotes games"* — is true of a
+    /// map drawn in `mapUnit`.
+    ///
+    /// #3533's second requirement, and the one that is easy to miss: the note
+    /// names ``unit`` explicitly, so it describes a map drawn in ``unit`` and
+    /// no other. A tennis map drawn in SETS withholds nothing — the scoreboard
+    /// reports sets — and a footnote under it saying "this market quotes games"
+    /// is a falsehood pointing at a card that does not contain one.
+    ///
+    /// This is deliberately NOT the complement of
+    /// `MarketMapView.scoreboardCounts(_:)`. Both are false for a sets map, and
+    /// that is the point: the scoreboard does not count what the SPORT quotes,
+    /// *and* the note does not describe this map either. #3503's rule is that a
+    /// pointer and the thing it points at are gated by one condition; this is
+    /// that condition, for the pointer.
+    func noteDescribesMap(quotedBy mapUnit: String) -> Bool {
+        mapUnit == unit && !scoreboardCountsTheUnit
+    }
+
     /// Naive pluralisation, enough for the market titles we parse: the venue
     /// writes "Total Sets" and "O/U 0.5 Rounds" already plural, and this only
     /// has to catch a stray singular ("Total Run") without inventing English.
     private static func plural(_ noun: String) -> String {
         noun.hasSuffix("s") ? noun : noun + "s"
+    }
+
+    /// The inverse of ``plural(_:)``, and exactly as naive — applied to the
+    /// same closed vocabulary (``knownUnits``: games, sets, runs, goals,
+    /// points), where dropping a trailing "s" is right every time.
+    private static func singular(_ noun: String) -> String {
+        noun.hasSuffix("s") ? String(noun.dropLast()) : noun
     }
 
     private static func firstCapture(_ pattern: String, in text: String) -> String? {

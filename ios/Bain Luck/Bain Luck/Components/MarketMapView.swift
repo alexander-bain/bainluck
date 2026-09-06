@@ -60,7 +60,25 @@ struct MarketMapView: View {
     /// that knew four sports and no tennis, so a US Open match got basketball's
     /// ±18 rail and "Projected total points" over a 26.5 GAME line.
     private var vocab: SportVocab { SportVocab.forSport(sportKey) }
-    private var maxMargin: Int { vocab.marginRange }
+
+    // MARK: - The full-game margin map's own rungs and unit (#3552 / #3533)
+
+    /// The full-match spread legs, before anything is read out of them.
+    private var fullGameSpreadLegs: [SpreadRungs.Leg] {
+        (gameMarkets.spreads ?? [])
+            .filter { isFullGameSpread($0.marketName) }
+            .map(Self.leg)
+    }
+
+    /// What the full margin map may draw, and the unit it is drawn in.
+    ///
+    /// Read once and passed down, because three things have to agree about it —
+    /// the card, the empty-chrome gate that decides whether the card exists,
+    /// and the footnote that explains what the card withheld. That is #3503's
+    /// rule, and computing it three times is how it gets broken.
+    private var fullMarginData: SpreadRungs.Map {
+        SpreadRungs.map(from: fullGameSpreadLegs, home: homeTeam, away: awayTeam, sportUnit: vocab.unit)
+    }
 
     /// The unit the FULL totals map is drawn in, read from the markets on it
     /// rather than from the sport (#3509). See `SportVocab.totalsUnit`.
@@ -77,8 +95,8 @@ struct MarketMapView: View {
     private func scoreboardCounts(_ mapUnit: String) -> Bool {
         vocab.scoreboardCountsTheUnit && mapUnit == vocab.unit
     }
-    /// The EVENT-level over/under (`overUnder`) is quoted in the sport's unit,
-    /// so it belongs only on a map drawn in that unit.
+    /// The EVENT-level over/under (`overUnder`) and spread (`homeSpread`) are
+    /// quoted in the sport's unit, so they belong only on a map drawn in it.
     ///
     /// Weaker than ``scoreboardCounts(_:)`` on purpose: tennis's scoreboard
     /// does not count games, but the event's O/U IS a game line and does belong
@@ -133,8 +151,17 @@ struct MarketMapView: View {
         // same selector its own map builds its markers behind (#3503's rule:
         // a pointer and the thing it points at are gated together, or the next
         // person to change one orphans the other).
-        let marginWithheld = showsAnyMarginMap && !vocab.scoreboardCountsTheUnit
-        let totalWithheld = !totalMapIsEmptyChrome && !scoreboardCounts(fullTotalUnit)
+        //
+        // #3533 — and each half now asks whether the sentence describes ITS
+        // map, not whether the scoreboard counts the sport's unit. The two
+        // questions are different the moment a map is drawn in something other
+        // than `vocab.unit`: a tennis SET margin map withholds nothing (the
+        // scoreboard reports sets) and the note under it would have said "this
+        // market quotes games" about a card containing no game line at all. The
+        // totals half had the same latent falsehood, reachable as soon as a
+        // sets totals map draws; both are gated by one predicate now.
+        let marginWithheld = showsAnyMarginMap && vocab.noteDescribesMap(quotedBy: fullMarginData.unit)
+        let totalWithheld = !totalMapIsEmptyChrome && vocab.noteDescribesMap(quotedBy: fullTotalUnit)
         guard marginWithheld || totalWithheld else { return nil }
         return vocab.unitMismatchNote(settled: isDone)
     }
@@ -229,11 +256,11 @@ struct MarketMapView: View {
     /// literally nothing left in it, and empty chrome reads worse than an
     /// absent card.
     private var marginMapIsEmptyChrome: Bool {
-        let parsed = (gameMarkets.spreads ?? [])
-            .filter { isFullGameSpread($0.marketName) }
-            .compactMap { parseSprOutcome($0) }
-        guard parsed.isEmpty else { return false }
-        let hasProjection = homeSpread != nil
+        guard fullMarginData.rungs.isEmpty else { return false }
+        // With no rungs there is no map unit either, so the event-level spread
+        // is the sport's number on a rail nobody has drawn yet — it applies
+        // exactly when the sport declares a unit for it to be in.
+        let hasProjection = sportUnitLineApplies(fullMarginData.unit) && homeSpread != nil
         let hasScoreTile = scoredHomeScore != nil && scoredAwayScore != nil && (isLive || isDone)
         return !hasProjection && !hasScoreTile
     }
@@ -248,20 +275,29 @@ struct MarketMapView: View {
     }
 
     private var marginMapCard: some View {
-        let spreads = gameMarkets.spreads ?? []
-        let fullGame = spreads.filter { isFullGameSpread($0.marketName) }
-        let parsed = fullGame.compactMap { parseSprOutcome($0) }
+        let data = fullMarginData
+        let parsed = data.rungs
         let allMargins = parsed.map(\.margin)
-        let rangeMin = min((allMargins.min() ?? Double(-maxMargin)) - 3, Double(-maxMargin))
-        let rangeMax = max((allMargins.max() ?? Double(maxMargin)) + 3, Double(maxMargin))
+        let bounds = MarketMapRail.marginBounds(
+            margins: allMargins,
+            declared: vocab.marginRange(quotedBy: data.unit),
+            pad: 3
+        )
+        let rangeMin = bounds.min
+        let rangeMax = bounds.max
         let density = buildDensityFromSpreads(parsed, rangeMin: rangeMin, rangeMax: rangeMax)
 
+        // `Int(abs(margin))` truncated: a `-5.5` game line printed "+5", and on
+        // the set maps this change introduces `-1.5` printed "+1" — a
+        // two-set handicap relabelled as a one-set one, which is a different
+        // market. `formatThreshold` is the same formatter the totals ladder
+        // has always used.
         let ladder: [(label: String, prob: Double, color: Color)] =
             parsed.filter { !$0.isHome }.sorted { abs($0.margin) < abs($1.margin) }.prefix(3).map {
-                ("\(aAbbr) +\(Int(abs($0.margin)))", $0.probability, awayColor)
+                ("\(aAbbr) +\(formatThreshold(abs($0.margin)))", $0.probability, awayColor)
             } +
             parsed.filter(\.isHome).sorted { $0.margin < $1.margin }.prefix(3).map {
-                ("\(hAbbr) +\(Int($0.margin))", $0.probability, homeColor)
+                ("\(hAbbr) +\(formatThreshold($0.margin))", $0.probability, homeColor)
             }
 
         // Headline: favored team + win %
@@ -273,7 +309,12 @@ struct MarketMapView: View {
 
         // Markers
         var markers: [MapMarker] = []
-        let projValue = homeSpread != nil ? -(homeSpread!) : closestToEvenMargin(parsed)
+        // The event-level spread is quoted in the SPORT's unit, so it may only
+        // be plotted on a rail drawn in that unit — the same gate `overUnder`
+        // has carried on the totals side since #3509. Without it a tennis SET
+        // margin map would print the books' GAME line as its projection.
+        let sportSpread = sportUnitLineApplies(data.unit) ? homeSpread : nil
+        let projValue = sportSpread != nil ? -(sportSpread!) : closestToEvenMargin(parsed)
         if isDone {
             if let homeScoreValue = scoredHomeScore,
                let awayScoreValue = scoredAwayScore {
@@ -302,8 +343,13 @@ struct MarketMapView: View {
         let homeRgb = resolveRGB(homeColor)
         let awayRgb = resolveRGB(awayColor)
 
+        // The axis ends name the rail's own outer bound. They used to name
+        // `vocab.marginRange` regardless, which is the same number on every map
+        // drawn in the sport's unit and a games number on one that is not.
+        let axisEnd = formatThreshold(rangeMax)
+
         return mapCard(
-            title: useColumns ? "Full game margin map" : vocab.marginTitle,
+            title: useColumns ? "Full game margin map" : vocab.marginTitle(quotedBy: data.unit),
             subtitle: isDone ? "Final margin distribution" : "Projected margin distribution",
             headline: headline,
             density: density,
@@ -312,9 +358,9 @@ struct MarketMapView: View {
             zeroPosition: zeroPos,
             leftRgb: awayRgb,
             rightRgb: homeRgb,
-            axisLeft: "\(aAbbr) by \(maxMargin)+",
+            axisLeft: "\(aAbbr) by \(axisEnd)+",
             axisMid: "Tie",
-            axisRight: "\(hAbbr) by \(maxMargin)+",
+            axisRight: "\(hAbbr) by \(axisEnd)+",
             markers: markers,
             ladder: ladder
         )
@@ -515,10 +561,20 @@ struct MarketMapView: View {
     }
 
     private func halfMarginCard(outcomes: [GameMarketOutcome], label: String) -> some View {
-        let parsed = outcomes.compactMap { parseSprOutcome($0) }
+        // A half reads its OWN rungs and its own unit, exactly as #3509 made
+        // the half totals cards do.
+        let data = SpreadRungs.map(
+            from: outcomes.map(Self.leg), home: homeTeam, away: awayTeam, sportUnit: vocab.unit
+        )
+        let parsed = data.rungs
         let allMargins = parsed.map(\.margin)
-        let rangeMin = min((allMargins.min() ?? Double(-maxMargin)) - 3, Double(-maxMargin))
-        let rangeMax = max((allMargins.max() ?? Double(maxMargin)) + 3, Double(maxMargin))
+        let bounds = MarketMapRail.marginBounds(
+            margins: allMargins,
+            declared: vocab.marginRange(quotedBy: data.unit),
+            pad: 3
+        )
+        let rangeMin = bounds.min
+        let rangeMax = bounds.max
         let density = buildDensityFromSpreads(parsed, rangeMin: rangeMin, rangeMax: rangeMax)
         let zeroPos = posOnRail(0, min: rangeMin, max: rangeMax)
         let projValue = closestToEvenMargin(parsed)
@@ -528,12 +584,13 @@ struct MarketMapView: View {
             markers.append(MapMarker(id: "pre", value: pv, type: .pre, label: "PRE-GAME", displayValue: "\(pv > 0 ? hAbbr : aAbbr) +\(String(format: "%.1f", abs(pv)))"))
         }
 
+        let axisEnd = formatThreshold(rangeMax)
         return mapCard(
             title: label, subtitle: "Half margin distribution", headline: "",
             density: density, rangeMin: rangeMin, rangeMax: rangeMax,
             zeroPosition: zeroPos,
             leftRgb: resolveRGB(awayColor), rightRgb: resolveRGB(homeColor),
-            axisLeft: "\(aAbbr) by \(maxMargin)+", axisMid: "Tie", axisRight: "\(hAbbr) by \(maxMargin)+",
+            axisLeft: "\(aAbbr) by \(axisEnd)+", axisMid: "Tie", axisRight: "\(hAbbr) by \(axisEnd)+",
             markers: markers, ladder: []
         )
     }
@@ -760,18 +817,10 @@ struct MarketMapView: View {
         VStack(spacing: 5) {
             ForEach(entries.indices, id: \.self) { i in
                 let entry = entries[i]
-                HStack(spacing: 8) {
-                    // Label with team color dot for visual association
-                    HStack(spacing: 4) {
-                        Circle()
-                            .fill(entry.color)
-                            .frame(width: 5, height: 5)
-                        Text(entry.label)
-                            .font(.system(size: 10, weight: .heavy))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                    .frame(width: 82, alignment: .leading)
+                HStack(spacing: MarketMapLadderLayout.rowSpacing) {
+                    // Label with team color dot for visual association.
+                    MarketMapLadderLabel(text: entry.label, color: entry.color)
+                        .frame(width: MarketMapLadderLayout.labelColumnWidth, alignment: .leading)
                     GeometryReader { geo in
                         Capsule()
                             .fill(Color.secondary.opacity(0.08))
@@ -784,7 +833,7 @@ struct MarketMapView: View {
                     .frame(height: 16)
                     Text("\(Int((entry.prob * 100).rounded()))%")
                         .font(.system(size: 10, weight: .black, design: .monospaced))
-                        .frame(width: 32, alignment: .trailing)
+                        .frame(width: MarketMapLadderLayout.valueColumnWidth, alignment: .trailing)
                 }
             }
         }
@@ -805,7 +854,7 @@ struct MarketMapView: View {
         t.truncatingRemainder(dividingBy: 1) == 0 ? "\(Int(t))" : String(format: "%.1f", t)
     }
 
-    private func closestToEvenMargin(_ parsed: [ParsedSpread]) -> Double? {
+    private func closestToEvenMargin(_ parsed: [SpreadRungs.Rung]) -> Double? {
         guard !parsed.isEmpty else { return nil }
         let closest = parsed.min(by: { abs($0.probability - 0.5) < abs($1.probability - 0.5) })!
         return closest.isHome ? closest.margin : closest.margin
@@ -852,23 +901,17 @@ struct MarketMapView: View {
 
     // MARK: - Data Parsing
 
-    private struct ParsedSpread {
-        let margin: Double
-        let probability: Double
-        let isHome: Bool
-    }
-
-    private func parseSprOutcome(_ o: GameMarketOutcome) -> ParsedSpread? {
-        let lower = o.outcomeName.lowercased()
-        let homeWords = homeTeam.lowercased().split(separator: " ")
-        let awayWords = awayTeam.lowercased().split(separator: " ")
-        let isHome = homeWords.contains(where: { $0.count >= 3 && lower.contains($0) })
-        let isAway = awayWords.contains(where: { $0.count >= 3 && lower.contains($0) })
-        guard isHome || isAway else { return nil }
-        let threshold = o.threshold ?? Self.extractNumber(from: o.outcomeName)
-        guard let t = threshold else { return nil }
-        let margin = isHome ? t : -t
-        return ParsedSpread(margin: margin, probability: o.probability ?? 0.5, isHome: isHome)
+    /// `parseSprOutcome` used to live here. It read only `outcomeName`, matched
+    /// team words as substrings and resolved an ambiguous hit to home; all
+    /// three are now `SpreadRungs`, where they can be asserted without
+    /// rasterising this view. #3552 / #3568.
+    private static func leg(_ o: GameMarketOutcome) -> SpreadRungs.Leg {
+        SpreadRungs.Leg(
+            marketName: o.marketName,
+            outcomeName: o.outcomeName,
+            threshold: o.threshold,
+            probability: o.probability
+        )
     }
 
     private func extractTotalThresholds(_ outcomes: [GameMarketOutcome]) -> [(threshold: Double, overProb: Double)] {
@@ -893,7 +936,7 @@ struct MarketMapView: View {
 
     // MARK: - Density Computation
 
-    private func buildDensityFromSpreads(_ spreads: [ParsedSpread], rangeMin: Double, rangeMax: Double, segments: Int = 14) -> [Double] {
+    private func buildDensityFromSpreads(_ spreads: [SpreadRungs.Rung], rangeMin: Double, rangeMax: Double, segments: Int = 14) -> [Double] {
         if spreads.isEmpty { return Array(repeating: 5, count: segments) }
         var density = Array(repeating: 0.0, count: segments)
         let step = (rangeMax - rangeMin) / Double(segments)
