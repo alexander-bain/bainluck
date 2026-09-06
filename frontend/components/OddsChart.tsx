@@ -1492,17 +1492,27 @@ export default function OddsChart({
               axisLine={{ stroke: "rgba(0,0,0,0.1)" }}
               tickFormatter={formatYTick}
             />
-            {/* 50% reference line */}
+            {/* 50% reference line.
+
+                #3525: IT USED TO CARRY A `50%` LABEL AND THAT LABEL WAS NEVER
+                ONCE READ BY ANYONE. `position: "right"` puts a label OUTSIDE the
+                plot's right edge, and this chart's right margin is 10px against
+                a ~22px label, so what actually reached the page was a bare `5`
+                clipped at the card boundary, floating beside the dashes at the
+                50% gridline with nothing to attach it to. Alex's reading of it —
+                a digit a reader can take for a score or a set count — is the
+                whole cost, and there was no benefit on the other side of it:
+                `yTicks` already includes 50 and the left axis already prints
+                `50%` on this exact line, so the label was a duplicate even in the
+                world where it rendered. Deleted rather than moved inside, because
+                moving it in would put a second `50%` on a chart that already has
+                one. The guard is on the class: no rendered text outside a
+                chart's plot bounds. */}
             <ReferenceLine
               y={50}
               stroke="rgba(0,0,0,0.2)"
               strokeWidth={1.5}
               strokeDasharray="4 4"
-              label={{
-                value: "50%",
-                position: "right",
-                style: { fontSize: 10, fill: "rgba(0,0,0,0.4)", fontWeight: 600 },
-              }}
             />
             {/* Game Start marker — solid line at commence_time */}
             {gameStartTime && filteredPeriodBoundaries.length === 0 && (
@@ -1715,11 +1725,28 @@ export default function OddsChart({
                       <circle cx={cx} cy={cy} r={8} fill={fillColor} fillOpacity={0.2} />
                       {/* Inner dot */}
                       <circle cx={cx} cy={cy} r={5} fill={fillColor} stroke="#FFFFFF" strokeWidth={2} />
-                      {/* Probability label */}
+                      {/* Probability label.
+
+                          #3525 (found by its guard, not by the issue): this
+                          was `cx + 12`, anchored `start`, and it had NEVER
+                          rendered. The callout marks the LAST data point, and
+                          since the right-hand buffer was removed the last data
+                          point IS the plot's right edge — so `cx + 12` is
+                          always past it, and the svg clips its own overflow.
+                          What a reader got was the dot with no number, which is
+                          the one thing the callout exists to say; it is visible
+                          in `artifacts-live-073/sabalenka-townsend.png`, a
+                          ringed green dot at 81% with nothing beside it.
+
+                          It goes on the LEFT unconditionally rather than
+                          flipping on a measurement, because there is nothing to
+                          measure: the anchor point is the right edge by
+                          construction, so the right-hand side is never the
+                          answer. 12px clears the dot's 8px glow. */}
                       <text
-                        x={cx + 12}
+                        x={cx - 12}
                         y={cy}
-                        textAnchor="start"
+                        textAnchor="end"
                         dominantBaseline="central"
                         fill={fillColor}
                         fontSize={11}

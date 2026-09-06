@@ -820,26 +820,110 @@ export interface AxisTick {
  * 40/20/40 on a phone).
  */
 
-/** Plot width, in px, that each tier's breakpoint first gives this chart. */
-const TIER_PLOT_PX: Record<AxisTickTier, number> = {
-  // Measured on the same element `lg:h-40` / `2xl:h-56` were measured against
-  // (see `ContenderChart`'s viewBox note for the end-to-end arithmetic): ~358px
-  // on a phone, ~486px at `lg`, ~817px at `2xl`.
-  major: 358,
+/**
+ * Plot width, in px, that each tier's breakpoint first gives this chart.
+ *
+ * ⚠️ **THESE ARE MEASURED, NOT DERIVED, AND THAT IS THE POINT (#3520).** They
+ * used to be read off `ContenderChart`'s viewBox note, which computes the plot
+ * from the window width by subtracting the shell's gutters. That arithmetic was
+ * right at `lg` and `2xl` and wrong on a phone — it put the phone plot at 358px
+ * when it is ~305px, a 17% overstatement, because the tournament page carries
+ * ~28px of its own horizontal padding at that width which the chain never
+ * subtracted. The axis therefore believed it had room for eight daily labels
+ * across the US Open's 7-day window, emitted all eight, and `30 Aug` and
+ * `31 Aug` overprinted into one 11-character non-word on both draws.
+ *
+ * Re-measured off production screenshots at each breakpoint (DPR 2, so CSS px
+ * is half the image px), by finding the chart card's own left and right border
+ * columns and taking off the 1px borders and the `px-3.5` padding:
+ *
+ *   390px  → card border cols 56/723   → 334 − 2 − 28 = ~305px   (was 358)
+ *   1024px → card border cols 96/1125  → 515 − 2 − 28 = ~485px   (said 486)
+ *   1600px → card border cols 96/1787  → 846 − 2 − 28 = ~816px   (said 817)
+ *
+ * Artifacts: `artifacts-live-074/usopen-lg.png`, `usopen-2xl.png`, and
+ * `artifacts-live-073/usopen-womens.png` for the phone. Cross-checked against
+ * the rendered tick pitch in each shot (43.4 / 69.3 / 116.5 CSS px over the same
+ * 7 intervals), which agrees to within a pixel. The two desktop numbers are left
+ * exactly as they were: they were already right, and moving them by the 1px of
+ * measurement noise would be pretending to a precision this has not got.
+ *
+ * If the page's gutters change, RE-MEASURE — do not re-derive. The derivation is
+ * what was wrong.
+ */
+export const TIER_PLOT_PX: Record<AxisTickTier, number> = {
+  major: 305,
   wide: 486,
   fine: 817,
 };
 
 /**
+ * The widest label this axis can print, in px.
+ *
+ * `30 Aug` at `text-[9.5px]`: two tabular digits, a space, and a three-letter
+ * month. Measured at 31.1px off the production crop (`crop-axis-labels.png`,
+ * a 3x crop of a DPR-2 shot, so 6x — the ink runs divide out), rounded up. A
+ * one-digit day (`6 Sep`) is ~25px; the widest is the one the budget must clear.
+ */
+export const AXIS_LABEL_MAX_PX = 32;
+
+/**
+ * How far a label may hang past the plot into the card's own padding, in px.
+ *
+ * The card is `px-3.5` (14px), so 12px of bleed still leaves the label 2px clear
+ * of the border — it stays inside the card, which is the bound that matters, and
+ * `#3525` is the same family of bug on the other chart caught the other way.
+ *
+ * This exists to buy back the pitch that the edge alignment spends; see
+ * `LABEL_PITCH_PX`.
+ */
+export const AXIS_LABEL_BLEED_PX = 12;
+
+/**
+ * How far the first and last labels must move INWARD to stay inside the bleed.
+ *
+ * A centred label at the very edge of the plot hangs half its width past it. The
+ * bleed absorbs `AXIS_LABEL_BLEED_PX` of that; whatever is left over is a nudge
+ * the renderer applies, and a cost the pitch below has to carry.
+ */
+export const AXIS_LABEL_NUDGE_PX = Math.max(
+  0,
+  AXIS_LABEL_MAX_PX / 2 - AXIS_LABEL_BLEED_PX
+);
+
+/** Minimum air between two neighbouring labels, in px. */
+const LABEL_AIR_PX = 8;
+
+/**
  * Centre-to-centre px two neighbouring labels need.
  *
- * A `26 Aug` label is ~30px at `text-[9.5px]` in tabular figures (6 glyphs, and
- * tabular means the widest date is the same width as the narrowest). 44 leaves
- * 14px of air, which is more than the 8px the previous pass budgeted, because
- * this axis puts labels at even intervals — if the pitch is wrong here it is
- * wrong for EVERY pair on the axis rather than for one unlucky snap.
+ * ═══ WHY THIS IS DERIVED NOW AND NOT A BARE `44` (#3520) ═══
+ *
+ * It was a bare 44 with a note about `26 Aug` being ~30px and 44 leaving "14px
+ * of air". That reasoning is sound **for two centred labels** and it is the only
+ * case it ever considered — but `ContenderChart` does not centre all of them.
+ * The first and last are clamped so they cannot hang off the card, which shoves
+ * each one HALF A LABEL inward, toward the neighbour it is already closest to.
+ * So the two edge pairs are ~16px tighter than every interior pair, and the
+ * budget never knew. On the US Open's 7-day window that is exactly where the
+ * overprint landed — not in the middle of the axis, at both ends of it.
+ *
+ * The honest requirement, for the worst pair (both labels full width):
+ *
+ *   interior:  pitch ≥ w/2 + w/2 + air              = 32 + 8      = 40
+ *   at an edge: pitch ≥ (w/2 + nudge) + w/2 + air   = 32 + 4 + 8  = 44
+ *
+ * So 44 was never wrong about the number — it was wrong about which pair it
+ * described, and it only survives as 44 BECAUSE of the bleed. Take the bleed
+ * away and the edge requirement is 32 + 16 + 8 = 56, which is what the axis was
+ * actually being asked to do with 44px of budget.
+ *
+ * Both halves are guarded, and the guard measures a rendered tick set at 305px
+ * rather than re-deriving this expression — a guard that recomputes the thing it
+ * is checking agrees with it by construction and catches nothing.
  */
-const LABEL_PITCH_PX = 44;
+const LABEL_PITCH_PX =
+  AXIS_LABEL_MAX_PX + AXIS_LABEL_NUDGE_PX + LABEL_AIR_PX;
 
 /** Calendar steps a person can count in their head. Ascending. */
 const STEP_LADDER_DAYS = [1, 2, 7, 14, 28, 91, 182, 364];
@@ -919,6 +1003,8 @@ export function axisTicks(geometry: ChartGeometry, timeframe?: Timeframe): AxisT
   const strides = tickStrides(step / span);
 
   const out: AxisTick[] = [];
+  /** The `k` each emitted tick was generated at, parallel to `out`. */
+  const steps: number[] = [];
   // `k` counts steps back from the LATEST reading, so `k = 0` is the right-hand
   // edge and is visible at every width (0 is a multiple of every stride).
   for (let k = 0; lastDay - k * step >= firstDay; k += 1) {
@@ -933,9 +1019,69 @@ export function axisTicks(geometry: ChartGeometry, timeframe?: Timeframe): AxisT
       label: shortDateLabel(date),
       tier,
     });
+    steps.push(k);
   }
 
+  pinOldestLabel(out, steps, strides.major);
+
   return out.reverse();
+}
+
+/**
+ * ═══ THE OLDEST TICK CARRIES A LABEL AT EVERY WIDTH (#3520) ═══
+ *
+ * A stride anchored on the newest reading labels `k = 0, S, 2S, …`, and it only
+ * lands on the oldest tick when the tick count happens to be a multiple of `S`.
+ * When it does not, the axis's leftmost DRAWN tick has no label on a phone, and
+ * the chart contradicts itself: the footer says `7d shown`, the axis reads
+ * `31 Aug … 6 Sep`, and a reader counting the axis gets six.
+ *
+ * So the oldest emitted tick is promoted to `major`. The module already holds
+ * that the NEWEST must always be labelled ("where the endpoint dot is and where
+ * the reader's eye starts"); this is the same claim about the other end, which a
+ * window chart needs at least as much — the left edge is the only thing on the
+ * page that says how far back the window reaches.
+ *
+ * ⚠️ **THE PROMOTION COSTS THE EVEN SPACING, AND THAT IS THE TRADE.** Promoting
+ * `k = K` without demoting anything would put a label one step from the label at
+ * `k = K − (K mod S)`, which is the overprint this queue exists to remove,
+ * re-created at the far end. So the neighbour is demoted to `wide` — it keeps
+ * its label from `lg` up, where there is room for both. The phone axis is
+ * therefore even everywhere except its leftmost gap, which is `(K mod S) + S`
+ * steps instead of `S`: strictly less than double, and the price of the axis
+ * agreeing with the footer. UX-P207's even-spacing rule still governs every
+ * other pair, and the guard asserts the exception is exactly this one pair and
+ * not a general licence to be ragged.
+ *
+ * `k = 0` is never demoted — if the only major near the oldest tick IS the
+ * newest, the pin is abandoned rather than trade one endpoint for the other.
+ */
+function pinOldestLabel(
+  ticks: AxisTick[],
+  steps: number[],
+  majorStride: number
+): void {
+  const oldest = ticks.length - 1;
+  if (oldest <= 0 || ticks[oldest].tier === "major") return;
+
+  // Scan toward the newest for the nearest tick that already has a label.
+  let neighbour = -1;
+  for (let i = oldest - 1; i >= 0; i -= 1) {
+    if (ticks[i].tier === "major") {
+      neighbour = i;
+      break;
+    }
+  }
+  if (neighbour < 0) return;
+  if (steps[oldest] - steps[neighbour] >= majorStride) {
+    // Already a full stride clear — promote and leave the neighbour alone.
+    ticks[oldest].tier = "major";
+    return;
+  }
+  // Too close to coexist on a phone, and `k = 0` is not ours to give up.
+  if (steps[neighbour] === 0) return;
+  ticks[oldest].tier = "major";
+  ticks[neighbour].tier = "wide";
 }
 
 /** `2026-08-26` -> `26 Aug`. Day-first, because the month repeats and the day does not. */

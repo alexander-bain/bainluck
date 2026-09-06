@@ -4,9 +4,12 @@ import React, { useMemo, useState } from "react";
 
 import ShowMore, { COLLAPSED_LIST_COUNT } from "./ShowMore";
 import {
+  AXIS_LABEL_BLEED_PX,
+  AXIS_LABEL_NUDGE_PX,
   MAX_SERIES_COUNT,
   NO_WINDOW_STARTS,
   RANGE_LABELS,
+  TIER_PLOT_PX,
   axisSpanDays,
   axisTicks,
   axisWindow,
@@ -108,17 +111,30 @@ const TICK_TIER_VISIBILITY: Record<AxisTickTier, string> = {
 };
 
 /**
- * Half a `26 Aug` label as a fraction of the NARROWEST plot (~15 of 358px).
+ * How far into the plot a label must start before the bleed can hold all of it.
  *
- * A centred label needs this much room on each side or it hangs off the card.
- * UX-P207 made this a position test rather than an index test: the axis used to
- * place its first and last ticks ON the domain's ends, so "first in the array"
- * and "at the left edge" were the same thing. They are not any more — the grid
- * is anchored on the latest reading, so the leftmost tick can sit a little way
- * in and wants centring like any other. Keying the alignment off the index
- * would shove that label ~15px right of the rule it belongs to.
+ * ═══ WHAT #3520 CHANGED, AND WHY IT IS A SMALLER NUMBER THAN IT LOOKS ═══
+ *
+ * This used to be `15 / 358` — half a label over the plot width — and it drove a
+ * three-way alignment: hard left-align at the left edge, hard right-align at the
+ * right, centre in between. Hard alignment is a HALF-LABEL shove. It is what
+ * kept `30 Aug` inside the card, and it is also what drove it into `31 Aug`:
+ * the two edge pairs ended up ~16px tighter than every interior pair, which
+ * `LABEL_PITCH_PX` had no idea about (see its note).
+ *
+ * The shove is now a nudge. The strip bleeds `AXIS_LABEL_BLEED_PX` into the
+ * card's own `px-3.5` padding, so an edge label only has to move by the part the
+ * bleed cannot absorb — `AXIS_LABEL_NUDGE_PX`, 4px rather than 16. Every label
+ * on the axis is centred on its rule; two of them are centred 4px off it. The
+ * denominator is the phone plot because the phone is where the room runs out,
+ * and it is now a MEASURED 305px rather than a derived 358 (`TIER_PLOT_PX`).
+ *
+ * UX-P207's reason for making this a POSITION test rather than an index test is
+ * unchanged and still load-bearing: the grid is anchored on the latest reading,
+ * so the leftmost tick can sit a little way in and wants centring like any
+ * other. Keying off the index would nudge a label that had no need of it.
  */
-const LABEL_HALF_FRACTION = 15 / 358;
+const LABEL_NUDGE_FRACTION = AXIS_LABEL_NUDGE_PX / TIER_PLOT_PX.major;
 
 export default function ContenderChart({
   rows,
@@ -320,13 +336,25 @@ export default function ContenderChart({
         >
           {yLabels.map((entry) => {
             const fromTop = 1 - entry.probability / (yLabels[0].probability || 1);
+            /* #3520: A LABEL ON THE EDGE RULE IS ONLY HALF IN THE PLOT. Every
+               label used to be centred on its rule, which is right for the
+               interior ones and wrong for the two on the boundary: `0%` sits on
+               the baseline, so half of it hung BELOW the plot and landed in the
+               date strip, printing over the leading `3` of `30 Aug`. The
+               boundary labels are therefore anchored rather than centred — `0%`
+               by its bottom, the ceiling by its top — so all of the ink stays
+               inside the plot it is labelling. Same rule as the date strip and
+               as #3525 on the other chart: no text outside the plot bounds. */
+            const anchor =
+              fromTop >= 1 ? "-translate-y-full" : fromTop <= 0 ? "" : "-translate-y-1/2";
             return (
               <span
                 key={entry.label}
-                className="absolute left-0 -translate-y-1/2 bg-surface-card/85 pr-1 text-[9.5px] font-semibold tabular-nums leading-none text-text-muted"
+                className={`absolute left-0 bg-surface-card/85 pr-1 text-[9.5px] font-semibold tabular-nums leading-none text-text-muted ${anchor}`}
                 style={{ top: `${(fromTop * 100).toFixed(2)}%` }}
                 data-testid="chart-y-label"
                 data-probability={entry.probability}
+                data-anchor={fromTop >= 1 ? "bottom" : fromTop <= 0 ? "top" : "centre"}
               >
                 {entry.label}
               </span>
@@ -450,17 +478,32 @@ export default function ContenderChart({
         </div>
         {/* THE DATE LABELS. HTML rather than SVG text, and positioned by the
             same fraction of the width the tick uses, so they cannot drift from
-            the rules they belong to. First is left-aligned and last is
-            right-aligned against the plot edges; only the interior tick is
-            centred, because a centred label at x=0 hangs off the card. */}
+            the rules they belong to. EVERY label is centred on its rule (#3520);
+            the two at the ends are nudged inward by the few px the bleed below
+            cannot absorb, which is small enough not to read as a misalignment.
+
+            THE STRIP IS WIDER THAN THE PLOT, ON PURPOSE. `-mx-3` pulls it
+            `AXIS_LABEL_BLEED_PX` into the card's own `px-3.5`, so an edge label
+            has somewhere to hang other than into its neighbour — 12 of the 14px
+            of padding, leaving the label 2px clear of the border. The plot's own
+            0→1 therefore maps to `12px → 100% − 12px` inside this strip, which
+            is what the `calc` re-establishes: without it every label would drift
+            12px left of the tick it names. */}
         <div
-          className="relative mt-0.5 h-3.5 select-none"
+          className="relative -mx-3 mt-0.5 h-3.5 select-none"
           aria-hidden="true"
           data-testid="chart-axis"
           data-ticks={ticks.length}
         >
           {ticks.map((tick) => {
             const fraction = tick.x / WIDTH;
+            // By POSITION, not by index — see LABEL_NUDGE_FRACTION.
+            const nudge =
+              fraction <= LABEL_NUDGE_FRACTION
+                ? AXIS_LABEL_NUDGE_PX
+                : fraction >= 1 - LABEL_NUDGE_FRACTION
+                  ? -AXIS_LABEL_NUDGE_PX
+                  : 0;
             return (
               <span
                 key={tick.date}
@@ -468,15 +511,14 @@ export default function ContenderChart({
                   TICK_TIER_VISIBILITY[tick.tier]
                 }`}
                 data-tier={tick.tier}
+                data-nudge={nudge}
                 style={{
-                  left: `${fraction * 100}%`,
-                  // By POSITION, not by index — see LABEL_HALF_FRACTION.
-                  transform:
-                    fraction <= LABEL_HALF_FRACTION
-                      ? "none"
-                      : fraction >= 1 - LABEL_HALF_FRACTION
-                        ? "translateX(-100%)"
-                        : "translateX(-50%)",
+                  left: `calc(${AXIS_LABEL_BLEED_PX}px + ${fraction} * (100% - ${
+                    AXIS_LABEL_BLEED_PX * 2
+                  }px))`,
+                  transform: nudge
+                    ? `translateX(calc(-50% + ${nudge}px))`
+                    : "translateX(-50%)",
                 }}
                 data-testid="chart-axis-label"
                 data-date={tick.date}
