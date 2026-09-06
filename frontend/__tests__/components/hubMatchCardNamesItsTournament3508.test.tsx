@@ -175,10 +175,15 @@ describe("#3508: a hub match card says which tournament it belongs to", () => {
     currentPayload = payloadWith([market(1, SLAM_NAME, SLAM_COMPETITION)]);
     const card = cardFor(render(), SLAM_NAME);
 
-    // Between the card's start and the match name — i.e. an eyebrow above it,
-    // not a stray string somewhere else in the document.
-    expect(card.indexOf(SLAM_COMPETITION)).toBeLessThan(card.indexOf(SLAM_NAME));
-    expect(card).toContain(SLAM_NAME);
+    // Ordering alone is NOT enough to assert here: `indexOf` returns -1 when
+    // the label is missing entirely, and -1 is less than any real index, so an
+    // ordering-only check passes vacuously on a card that never drew it.
+    const labelAt = card.indexOf(SLAM_COMPETITION);
+    const nameAt = card.indexOf(SLAM_NAME);
+    expect(labelAt).toBeGreaterThanOrEqual(0);
+    expect(nameAt).toBeGreaterThanOrEqual(0);
+    // An eyebrow ABOVE the match name, not a stray string elsewhere.
+    expect(labelAt).toBeLessThan(nameAt);
   });
 
   it("a card with no tournament renders exactly as it did before", () => {
