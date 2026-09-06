@@ -718,9 +718,32 @@
     border-radius: 10px;
   }
 
+  /* #3704 — FIVE tracks, because a phone renders FIVE cells, not four.
+     `.hideOnMobile` below is `display: none`, so the spark and the Δ chip leave
+     grid flow entirely; what is left is rank, party, name, bar, pct. Against the
+     four tracks this used to declare, the fifth child (`pct` in a row, `Now` in
+     the header) auto-flowed into an IMPLICIT second row at column 1 — the
+     probability landed left-aligned under the candidate's name, the full width
+     of the card away from the bar encoding the same number.
+
+     The name is the fixed track and the BAR is the flexible one, not the other
+     way round: each row is its own grid, so sizing the name to its content would
+     give every row a different bar width and the bars would stop being
+     comparable down the column. 164px fits the longest name in the field
+     (`Alexandria Ocasio-Cortez`, measured at 158.5px off a 390px capture) with
+     the ellipsis on `.candidateName` as the backstop for anything longer.
+
+     The bar track is `minmax(32px, 1fr)` and NOT a bare `1fr`: a bare `1fr` is
+     `minmax(auto, 1fr)`, and that `auto` floor is the min-content size. The
+     header's cell over this track holds the unbreakable word "PROBABILITY"
+     (~73px at 390px) while a row's holds only `.barWrap`, so a bare `1fr` would
+     size the header's bar track to 73px and every row's to 64px — the header
+     would silently stop lining up with the rows it labels. The explicit 32px
+     minimum pins both to the same fr share and lets the label overflow instead;
+     it clears the right-aligned `NOW` by ~13px at 390px. */
   .barRaceHeader,
   .barRaceRow {
-    grid-template-columns: 14px 14px 1fr 42px;
+    grid-template-columns: 14px 14px 164px minmax(32px, 1fr) 42px;
     gap: 8px;
   }
 
