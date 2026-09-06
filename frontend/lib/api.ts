@@ -1785,6 +1785,14 @@ export interface LeagueMarket {
   section: string;
   /** Set on hub props that were reclassified out of "matches" (e.g. MMA). */
   prop_type?: string;
+  /**
+   * The tournament this match belongs to, as the venue names it — "US Open Men
+   * Singles", "ATP Challenger Seville". Optional, and absent for the whole of a
+   * split deploy: Vercel ships the frontend before Heroku, and the label only
+   * lands once the next Kalshi poll rewrites the row. Renders as nothing when
+   * missing, never as a guess (#3508).
+   */
+  competition?: string | null;
 }
 
 /**

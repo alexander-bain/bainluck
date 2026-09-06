@@ -931,6 +931,13 @@ async def _poll_kalshi_markets():
                         kalshi_metadata["kalshi_event_ticker"] = event.event_ticker
                     if event.title:
                         kalshi_metadata["event_title"] = event.title
+                    # #3508: the tournament, as the venue names it. Rides the
+                    # ordinary poll — `update_set` rewrites market_metadata every
+                    # cycle, so open rows pick it up on the next pass and no
+                    # backfill is needed. Absent stays absent: a card that cannot
+                    # name its tournament prints nothing rather than a guess.
+                    if event.competition:
+                        kalshi_metadata["competition"] = event.competition
                     if len(event.markets) > 1:
                         kalshi_metadata["market_count"] = len(event.markets)
 

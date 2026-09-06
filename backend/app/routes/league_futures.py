@@ -1127,6 +1127,28 @@ def _serialize_outcomes(sorted_outcomes: list) -> list[dict]:
     ]
 
 
+def _market_competition(market) -> str | None:
+    """The tournament a match card belongs to, or None when nobody said.
+
+    Read straight from what the venue stated at ingest — never derived here.
+    A Kalshi match market's name is only the two players ("Iannaccone vs Weis"),
+    so without this the reader cannot tell a US Open match from a third-tier
+    Challenger; both render as a bare "X vs Y" (#3508).
+
+    None is a first-class answer. Polymarket rows carry no competition key —
+    their own name already leads with the tournament ("US Open WTA: …") — and
+    Kalshi omits it on series that genuinely have no tournament. A card that
+    cannot name one says nothing, rather than inheriting a neighbour's label.
+    """
+    metadata = getattr(market, "market_metadata", None)
+    if not isinstance(metadata, dict):
+        return None
+    competition = metadata.get("competition")
+    if not isinstance(competition, str):
+        return None
+    return competition.strip() or None
+
+
 async def build_league(sport_key: str, db: AsyncSession) -> dict:
     """Build one league payload from the database. Does not touch the cache."""
     now = datetime.now(timezone.utc)
@@ -1857,6 +1879,7 @@ async def build_linked_matches(
             "canonical_market_key": market.canonical_market_key,
             "group_id": market.group_id,
             "section": "matches",
+            "competition": _market_competition(market),
         }
         by_name[dedup_key] = row
         rows.append(row)
