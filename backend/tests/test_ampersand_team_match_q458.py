@@ -11,14 +11,21 @@ at all, and every A&M, A&T, "William & Mary", "Brighton & Hove Albion" and
 Admitting ``&`` is one character. The other three changes guarded here are what
 makes admitting it SAFE, and each was found by measuring the first:
 
-* **Strong-separator split.** Admitting ``&`` let more names through the bare
-  pattern, which exposed that the pattern splits at the FIRST separator — and
-  "at" is a preposition that lives inside real names. "University at Albany vs
-  Buffalo" read as ("University", "Albany vs Buffalo"). Splitting at the strong
-  separator (``vs``/``v``/``@``, which no team name contains) reads the game.
-* **The three-way refusal.** Once a side may contain ``&``, "Bitcoin vs. Gold
-  vs. S&P 500 in 2026" parses as a two-team game. A side that is ITSELF a
-  matchup means the name was never a game.
+* **The three-way refusal — DROPPED.** Once a side may contain ``&``, "Bitcoin
+  vs. Gold vs. S&P 500 in 2026" parses as a two-team game for the first time.
+  This branch refused it in the PARSE. Master's #3026 landed after the branch
+  was cut and already refuses it at the MINT
+  (``question_refusal_reason``: "away name '…' contains a whole matchup, so it
+  is not a competitor") — which is where #3026 argues the refusal belongs,
+  precisely so it does not also change what LINKS. What is asserted below is
+  that admitting ``&`` does not open a route around it.
+* **The strong-separator split — DROPPED.** It made "University at Albany vs
+  Buffalo" read as one team and its opponent, which is right, but it also made
+  "Announcers at Duke vs Virginia" read as ("Announcers at Duke", "Virginia") —
+  a clean-looking two-team game, and the exact 164-event EMBEDDED MATCHUP shape
+  #3026 refuses BY READING THE PARSE. A better parse of one name silently
+  un-refused 274 production rows. "University at Albany" is filed, not patched
+  in the parse.
 * **The sub-market descriptor never names an event.** Admitting ``&`` lets
   "Cambridge City FC vs. Maldon & Tiptree FC - Exact Score" parse for the first
   time, and AUTO-CREATE stamps whatever team_b holds — live proof, events
@@ -51,6 +58,7 @@ from app.utils.prediction_market_matching import (
     extract_matchup,
     is_derivative_market_name,
     is_game_level_market,
+    question_refusal_reason,
 )
 
 
@@ -126,58 +134,75 @@ def test_dash_matchup_also_admits_the_ampersand():
 
 
 # ---------------------------------------------------------------------------
-# Substrate 1 — split at the strong separator, because "at" lives inside names
-# ---------------------------------------------------------------------------
-
-def test_a_team_name_containing_at_is_not_split_on_it():
-    """"University at Albany" is one team. Splitting at the first separator made
-    it two, and buried the opponent in the second capture."""
-    assert _teams("University at Albany vs Buffalo") == (
-        "University at Albany",
-        "Buffalo",
-    )
-    assert _teams("University at Albany vs LIU") == ("University at Albany", "LIU")
-    assert _teams("University At Albany Great Danes vs Colgate Raiders") == (
-        "University At Albany Great Danes",
-        "Colgate Raiders",
-    )
-
-
-def test_the_same_team_on_the_other_side_still_parses():
-    """It already worked here — team_b absorbing " at " was harmless. Pinned so
-    the strong-separator preference cannot break the case it was not aimed at."""
-    assert _teams("New Hampshire vs University at Albany") == (
-        "New Hampshire",
-        "University at Albany",
-    )
-
-
-def test_at_is_still_a_separator_when_it_is_the_only_one():
-    """The strong separator is a PREFERENCE, not a requirement."""
-    assert _teams("Kansas City at Las Vegas") == ("Kansas City", "Las Vegas")
-    assert _teams("Toledo at Michigan St.") == ("Toledo", "Michigan St.")
-
-
-# ---------------------------------------------------------------------------
-# Substrate 2 — a side that is itself a matchup means it was never a game
+# Substrate 1+2 — DROPPED, and what replaced them
+#
+# This branch carried a strong-separator split ("University at Albany vs
+# Buffalo" read as one team and its opponent) and a three-way refusal ("Bitcoin
+# vs. Gold vs. S&P 500 in 2026" is not a game). Master's #3026 landed after the
+# branch was cut and answers both, better:
+#
+#  * the strong-separator split also read "Announcers at Duke vs Virginia" as
+#    ("Announcers at Duke", "Virginia") — a clean-looking two-team game, and the
+#    exact 164-event EMBEDDED MATCHUP shape #3026 refuses BY READING THE PARSE.
+#    A better parse of one name silently un-refused 274 production rows.
+#  * `question_refusal_reason` already refuses every three-way name, at the MINT
+#    rather than in the parse, which is where #3026 argues it belongs precisely
+#    so the refusal does not also change what LINKS.
+#
+# What is asserted instead is the property that only exists BECAUSE of this
+# ship: `&` makes these names parse for the first time, so #3026 is being asked
+# a question it was never asked before and must still answer no.
 # ---------------------------------------------------------------------------
 
 THREE_WAY_NAMES = [
-    "Bitcoin vs. Gold vs. S&P 500 in 2026",
+    "Bitcoin vs. Gold vs. S&P 500 in 2026",   # only parses once & is admitted
     "Bitcoin vs Gold vs Silver",
     "Alice vs Bob vs Carol",
 ]
 
 
 @pytest.mark.parametrize("name", THREE_WAY_NAMES)
-def test_a_three_way_comparison_is_not_a_game(name):
-    assert _teams(name) is None
-    assert is_game_level_market(name, None, external_id=None) is False
+def test_a_three_way_comparison_is_still_refused_at_the_mint(name):
+    """Asserted as the refusal, not as the parse: #3026 wants the parse to
+    happen and the MINT to say no."""
+    matchup = extract_matchup(name)
+    assert matchup is not None, "the ampersand ship must make this parse"
+    assert question_refusal_reason(matchup.team_a, matchup.team_b) is not None, (
+        f"{name!r} parses as a two-team game and nothing refuses it"
+    )
 
 
-def test_the_three_way_refusal_does_not_reach_a_two_team_game():
-    """The refusal keys on a SECOND separator, not on the name being long."""
+def test_the_refusal_does_not_reach_a_two_team_game_with_an_ampersand():
+    """The boundary. A real ampersand fixture must NOT be refused."""
+    m = extract_matchup("Wingate & Finchley FC vs Maldon & Tiptree FC")
+    assert (m.team_a, m.team_b) == (
+        "Wingate & Finchley FC", "Maldon & Tiptree FC"
+    )
+    assert question_refusal_reason(m.team_a, m.team_b) is None
     assert _teams("Bitcoin vs. Gold") == ("Bitcoin", "Gold")
+
+
+def test_a_name_containing_at_is_still_split_on_it_as_master_does():
+    """Pinned as the KNOWN-WRONG behaviour this branch stopped trying to fix.
+
+    "University at Albany" is one team and the parse cuts it in half. That is a
+    real defect and it is filed, not patched here — patching it in the parse is
+    what un-refused #3026's 274 rows. If a later ship fixes it properly, this
+    test is the one that should fail and be rewritten, deliberately.
+    """
+    assert _teams("University at Albany vs Buffalo") == (
+        "University",
+        "Albany vs Buffalo",
+    )
+    # And the mint still refuses that, which is why the defect is a missing
+    # link rather than a fabricated event.
+    m = extract_matchup("University at Albany vs Buffalo")
+    assert question_refusal_reason(m.team_a, m.team_b) is not None
+
+
+def test_at_is_a_separator_when_it_is_the_only_one():
+    assert _teams("Kansas City at Las Vegas") == ("Kansas City", "Las Vegas")
+    assert _teams("Toledo at Michigan St.") == ("Toledo", "Michigan St.")
 
 
 def test_doubles_tennis_slashes_are_not_separators():

@@ -186,40 +186,27 @@ _DASH_MATCHUP_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Same pattern, but only the separators that a team name can never contain.
-# "at" is a preposition and lives INSIDE real names — "University at Albany" —
-# while "vs", "v" and "@" never do. `_BARE_MATCHUP_RE` is non-greedy on the
-# first group, so on "University at Albany vs Buffalo" it splits at the FIRST
-# separator and reads ("University", "Albany vs Buffalo"). Splitting at the
-# STRONG separator when the name has one reads ("University at Albany",
-# "Buffalo"), which is the game.
-_BARE_MATCHUP_STRONG_RE = re.compile(
-    r'^([\w][\w\s.\'\-()/&]+?)\s+(?:vs\.?|v\.?|@)\s+([\w][\w\s.\'\-()/&]+?)$',
-    re.IGNORECASE,
-)
-
-# A strong separator on its own, for testing a side that has already been split.
-_STRONG_SEPARATOR_RE = re.compile(r'\s+(?:vs\.?|v\.?|@)\s+', re.IGNORECASE)
-
-
-def _split_bare_matchup(name: str) -> Optional[tuple[str, str]]:
-    """Split "Team A at/vs/v/@ Team B" into its two sides, or None.
-
-    Prefers the strong separator, so a team name containing "at" survives, and
-    then refuses any split that leaves a strong separator on either side — a
-    two-team game has exactly one, so a side that is ITSELF a matchup means the
-    name was never a game. "Bitcoin vs. Gold vs. S&P 500 in 2026" would
-    otherwise read as Bitcoin against "Gold vs. S&P 500 in 2026".
-    """
-    m = _BARE_MATCHUP_STRONG_RE.match(name) or _BARE_MATCHUP_RE.match(name)
-    if not m:
-        return None
-    team_a, team_b = m.group(1).strip(), m.group(2).strip()
-    if _STRONG_SEPARATOR_RE.search(team_a) or _STRONG_SEPARATOR_RE.search(team_b):
-        return None
-    return team_a, team_b
-
-
+# NOTE (#2335, resolved against master 2026-09-06): this branch carried two more
+# substrates here and both are superseded by master's #3026, which landed after
+# the branch was cut.
+#
+#  * A `_BARE_MATCHUP_STRONG_RE` that preferred `vs`/`v`/`@` over `at`, so
+#    "University at Albany vs Buffalo" read as ("University at Albany",
+#    "Buffalo") rather than ("University", "Albany vs Buffalo"). It also made
+#    "Announcers at Duke vs Virginia" read as ("Announcers at Duke",
+#    "Virginia") — a clean-looking two-team game — which is precisely the
+#    164-event EMBEDDED MATCHUP shape #3026 exists to refuse, and #3026 refuses
+#    it by reading the parse. A better parse of one name silently un-refused
+#    274 rows.
+#  * A three-way refusal, because once `&` is admitted "Bitcoin vs. Gold vs.
+#    S&P 500 in 2026" parses. `question_refusal_reason` already refuses it, and
+#    every other three-way name, with "away name '…' contains a whole matchup,
+#    so it is not a competitor" — at the MINT, which is where #3026 argues the
+#    refusal belongs precisely so it does not change what LINKS.
+#
+# So the parse is left exactly as master has it. "University at Albany" still
+# does not reach its own game; that is a real defect, it predates this branch,
+# and it is filed rather than fixed by a parse preference that costs #3026.
 # "Will (the) Team A beat/win against Team B?"
 _WILL_BEAT_RE = re.compile(
     r'^Will\s+(?:the\s+)?(.+?)\s+(?:beat|defeat|win\s+against)\s+(?:the\s+)?(.+?)\??$',
@@ -818,12 +805,12 @@ def _check_game_level(name: str) -> bool:
         return True
     if _TO_BEAT_RE.match(name):
         return True
-    bare = _split_bare_matchup(name)
-    if bare:
+    m = _BARE_MATCHUP_RE.match(name)
+    if m:
         # A season-long futures ("Panthers vs. Saints Season Series Winner")
         # matches this pattern because the second capture greedily absorbs the
         # trailing descriptor. Reject it so it is NOT auto-created as a game.
-        if _has_futures_matchup_keyword(name, *bare):
+        if _has_futures_matchup_keyword(name, m.group(1), m.group(2)):
             return False
         return True
     m = _DASH_MATCHUP_RE.match(name)
@@ -1063,9 +1050,10 @@ def _extract_matchup_impl(market_name: str) -> Optional[MatchupInfo]:
         return MatchupInfo(team_a, team_b, yes_team=team_a, format_type="to_beat")
 
     # "Team A at/vs/v Team B" (bare matchup)
-    bare = _split_bare_matchup(market_name)
-    if bare:
-        team_a, team_b = bare
+    m = _BARE_MATCHUP_RE.match(market_name)
+    if m:
+        team_a = m.group(1).strip()
+        team_b = m.group(2).strip()
         # A season-long futures ("Panthers vs. Saints Season Series Winner")
         # matches here because team_b absorbs the trailing descriptor. Do not
         # treat it as a game matchup (prevents bogus event auto-creation).
