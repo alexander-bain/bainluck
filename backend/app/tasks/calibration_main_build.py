@@ -167,25 +167,65 @@ STAGED_FUTURES_ENABLED = True
 #: this from the population size would re-partition everything each time the
 #: population crossed a boundary — the exact thrash the fix exists to end.
 #:
-#: SIZING, and the one thing production has to settle. Convergence needs
-#: ``units completed per beat > units invalidated per beat``. Invalidation
-#: saturates at the number of markets that resolve during a beat (each can
-#: disturb at most its own unit), while completions scale UP with the bucket
-#: count, because a bucket's cost falls as it holds fewer markets. So a larger
-#: count is the safer direction, until per-unit fixed overhead starts to
-#: dominate. 128 puts roughly 860 of the ~110K roster markets in each unit —
-#: about a third of the 2,500-market chunks the positional planner produced,
-#: whose measured cost was 51s against a ~23 min beat.
+#: SIZING — 128 WAS A REASONED SIZE AND PRODUCTION REFUTED IT (CAL-P1033, #3536).
 #:
-#: That is a REASONED size, not a measured one: the arrival rate could not be
-#: measured from here (``resolution_date`` is a scheduled date, not a transition
-#: timestamp, and a bare ``COUNT(*)`` over the population exceeds the query
-#: timeout). The first beats after deploy settle it, and they say so out loud —
-#: ``_run_staged_futures`` records a ``staged:units_dropped`` stage. If that
-#: number rivals the units completed per beat, the build is thrashing rather
-#: than converging and this constant is the dial: raise it. Doing so re-keys
-#: every unit and costs exactly one generation of banked work — safe, not free.
-STAGED_FUTURES_BUCKETS = 128
+#: The reasoning this replaces is kept verbatim, because it is a good argument
+#: and it is wrong, and the next editor is owed both halves:
+#:
+#:   *"completions scale UP with the bucket count, because a bucket's cost falls
+#:   as it holds fewer markets. So a larger count is the safer direction, until
+#:   per-unit fixed overhead starts to dominate."*
+#:
+#: Per-unit fixed overhead does not merely dominate; it is nearly the whole cost.
+#: Two measured points, one per partition:
+#:
+#: ===========  ==================  ==========================================
+#: partition    markets per unit    measured cost per unit
+#: ===========  ==================  ==========================================
+#: 1 (monolith) ~110,000            ~1,350 s
+#: 128          ~860                724 s (10:15Z beat) / **857 s (12:15Z)**
+#: ===========  ==================  ==========================================
+#:
+#: 0.8% of the rows costs 54–63% of the price. Fitting ``cost(B) = P + s·N/B``
+#: on the WORSE of the two 128-way readings gives a fixed per-unit prefix
+#: **P ≈ 853 s** against a scalable part of only ≈497 s for the ENTIRE
+#: population, so a generation costs ``853·B + 497`` seconds — 30 hours at
+#: B=128. Both beats were watched to their terminal and neither was killed: the
+#: 10:15Z beat ran 964 s and banked its 1st unit, the 12:15Z beat ran 1,094 s
+#: inside a deliberately quiet merge window, **resumed its cursor cleanly**
+#: (``staged:cursor_reason:resumable``) and banked its 2nd. They recorded
+#: ``staged:beats_to_publish`` = 81 and then **95** — the estimate got WORSE on
+#: the beat that went perfectly. That is why ``/api/calibration`` served a
+#: 29-hour-old ``generated_at`` while the task ran every hour, and why quieting
+#: the deploys around the beat could never have been the fix.
+#:
+#: WHY 5, AND NOT 4 OR 2. Fewer buckets always publishes sooner, so the only
+#: thing holding the number up is the window: a unit that does not fit is
+#: cancelled at the deadline, banks nothing, and can be refused by the admission
+#: fence thereafter (``staged:window_stop:unit_too_large``; see
+#: :func:`_level_self_blocked` for the state that costs). The measured unit
+#: budget is ~1,144 s (``unit_ms_mean`` + ``window_left_ms``, 12:15Z) and the
+#: fence sits at ``staged:unit_bound_ms:futures`` = 1,114 s.
+#:
+#: 5 is not a taste; it is the SMALLEST partition that clears both bounds, and
+#: ``test_the_shipped_value_is_the_SMALLEST_partition_that_clears_both`` searches
+#: for it rather than trusting this paragraph. Under the fit in force B=2 costs
+#: 96% of the unit budget and B=4 costs 85.4% — both past the 85% ceiling, so
+#: both are refused — while **B=5 costs 952 s, 83% of budget, 14% clear of the
+#: fence, and publishes a whole generation in ~5 beats against 95.** This
+#: constant was written 4, then 6, before that search settled it; a partition
+#: chosen by hand is how it came to be 128. Re-measure at 5 and re-fit before
+#: moving it again, and move the MEASUREMENT, never the ceiling.
+#:
+#: THIS IS THE DIAL, NOT THE REPAIR. The repair is making a unit's statement scan
+#: only its own slot instead of paying the full-population prefix B times over.
+#: That lives in ``_main_futures_sql`` in ruling-D45-frozen
+#: ``precompute_calibration.py`` and needs Alex's words; this constant does not.
+#:
+#: Changing it re-keys every unit and costs exactly one generation of banked
+#: work — safe, not free. The bank held ONE unit when this was changed, so the
+#: re-key was free on the day and will not be once the build converges.
+STAGED_FUTURES_BUCKETS = 5
 
 def _process_rss_mb() -> float | None:
     """This process's resident set size in MB, or ``None`` if unobtainable.
