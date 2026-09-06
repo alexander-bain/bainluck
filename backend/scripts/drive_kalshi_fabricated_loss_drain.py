@@ -51,6 +51,20 @@ not evidence of agreement).
 Every page writes ``batch-NNN-dryrun.json`` (which contains the plan artifact —
 that IS the backup) and ``batch-NNN-apply.json`` (which contains the
 one-command undo), plus a line in ``progress.jsonl``.
+
+Because those two files are the backup and the undo, the driver **refuses to
+start** if any ``batch-NNN`` artifact at or above ``--start-batch`` already
+exists, and names the ``--start-batch`` that would have been correct. A resume
+launched with a stale number would otherwise renumber from there and walk over
+the previous run's slots, removing the only way to reverse an apply that has
+already happened. ``--overwrite-artifacts`` is the deliberate escape hatch.
+
+``summary.json`` describes **one invocation**: ``totals`` is zeroed at every
+launch, so on a resume it counts from ``--start-batch``. It therefore also
+carries ``covers_batches`` and ``sweep_totals`` — the latter recomputed from the
+append-only ``progress.jsonl``, which is the only record that spans resumes.
+Reading ``totals`` as the sweep is how CAL-P1026's 720-batch sweep was first
+written up from its 420-batch tail (12 unexplained absences reported, 804 real).
 """
 
 from __future__ import annotations
@@ -65,6 +79,75 @@ from pathlib import Path
 from typing import Any
 
 RAIL = "kalshi-fabricated-loss"
+
+
+class ArtifactCollision(RuntimeError):
+    """A banked artifact would have been overwritten."""
+
+
+def _sweep_totals(progress: Path) -> dict[str, Any]:
+    """Totals over the WHOLE sweep, read back from the append-only progress log.
+
+    ``progress.jsonl`` is appended across resumes and is therefore the only record
+    of the sweep; the in-memory ``totals`` only ever describe one invocation.
+    """
+    if not progress.exists():
+        return {"batches": 0, "note": "no progress.jsonl"}
+    agg: dict[str, Any] = {
+        "batches": 0, "examined": 0, "answered": 0, "unexplained_absence": 0,
+        "markets_written": 0, "legs_written": 0,
+        "winners_restored": 0, "losses_retracted": 0,
+    }
+    verdicts: dict[str, int] = {}
+    first = last = None
+    for line in progress.read_text().splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        agg["batches"] += 1
+        b = row.get("batch")
+        if isinstance(b, int):
+            first = b if first is None else min(first, b)
+            last = b if last is None else max(last, b)
+        for k in list(agg):
+            if k != "batches" and isinstance(row.get(k), (int, float)):
+                agg[k] += row[k]
+        for k, v in (row.get("leg_verdicts") or {}).items():
+            verdicts[k] = verdicts.get(k, 0) + v
+    agg["batch_range"] = {"first": first, "last": last}
+    agg["leg_verdicts"] = verdicts
+    return agg
+
+
+def _bank(path: Path, payload: Any, *, overwrite: bool) -> None:
+    """Write a per-batch artifact, refusing to destroy one that already exists.
+
+    ``batch-NNN-dryrun.json`` IS the backup and ``batch-NNN-apply.json`` IS the
+    one-command undo, so overwriting either does not merely lose a log line — it
+    removes the only way to reverse an apply that already happened. A resume
+    launched with the wrong ``--start-batch`` renumbers from that point and walks
+    straight over the previous run's slots, which is why this refuses by default
+    rather than trusting the operator to have picked the right number.
+    """
+    if path.exists() and not overwrite:
+        # Reaching here means the preflight missed a collision, and by this point
+        # the apply it documents may ALREADY have run — so refusing outright would
+        # destroy the very undo this guard exists to protect. Park the new payload
+        # under a name that cannot collide, keep the incumbent untouched, and only
+        # then stop the run.
+        parked = path.with_suffix(f".CONFLICT-{int(time.time())}.json")
+        parked.write_text(json.dumps(payload, indent=1))
+        raise ArtifactCollision(
+            f"{path.name} already exists in {path.parent}. That file is a backup or an "
+            f"undo, so it was left untouched and this run's copy was parked at "
+            f"{parked.name} — neither is lost. Resume into a fresh --out directory, or "
+            f"pass --overwrite-artifacts if you have established the existing artifacts "
+            f"are not needed."
+        )
+    path.write_text(json.dumps(payload, indent=1))
 
 
 def _curl(url: str, token: str, timeout: int = 180) -> tuple[int, Any]:
@@ -252,6 +335,9 @@ def main() -> int:
     ap.add_argument("--after-date", default=None)
     ap.add_argument("--band-as-of", default=None)
     ap.add_argument("--sleep", type=float, default=1.0)
+    ap.add_argument("--overwrite-artifacts", action="store_true",
+                    help="permit this run to overwrite existing batch-NNN artifacts; "
+                         "they are backups and undos, so this is refused by default")
     args = ap.parse_args()
 
     api = os.environ.get("BAINLUCK_API")
@@ -263,6 +349,29 @@ def main() -> int:
     out = Path(os.path.expanduser(args.out))
     out.mkdir(parents=True, exist_ok=True)
     progress = out / "progress.jsonl"
+
+    # Preflight, before a single venue call or apply. The write-time guard in
+    # _bank() is the backstop, but by the time it fires an apply may already have
+    # been made against production; the only place a collision can be refused for
+    # free is here.
+    if not args.overwrite_artifacts:
+        clashes = sorted(
+            p.name for p in out.glob("batch-*.json")
+            if (p.name.split("-")[1] or "").isdigit()
+            and int(p.name.split("-")[1]) >= args.start_batch
+        )
+        if clashes:
+            print(
+                f"REFUSING TO START: {len(clashes)} banked artifact(s) in {out} are numbered "
+                f"at or above --start-batch {args.start_batch} and would be overwritten, "
+                f"beginning with {clashes[0]}. Those files are the backups and one-command "
+                f"undos for batches that have already been applied.\n"
+                f"  - resuming a partial sweep? point --out at a fresh directory, or\n"
+                f"  - re-running deliberately? pass --overwrite-artifacts.\n"
+                f"The correct --start-batch for this directory is "
+                f"{max(int(p.split('-')[1]) for p in clashes) + 1}."
+            )
+            return 2
 
     cursor = {
         "after_id": args.after_id,
@@ -296,7 +405,8 @@ def main() -> int:
 
             # The plan artifact IS the backup, and the durable plan slot holds
             # exactly one plan: bank it before anything can overwrite it.
-            (out / f"batch-{n:03d}-dryrun.json").write_text(json.dumps(body, indent=1))
+            _bank(out / f"batch-{n:03d}-dryrun.json", body,
+                  overwrite=args.overwrite_artifacts)
 
             if res.get("stopped_on_venue_rate_limit"):
                 print(f"[{n:03d}] venue 429 budget stop; limit {limit} -> {max(5, limit // 2)}, sleeping 60s")
@@ -360,7 +470,8 @@ def main() -> int:
                 if acode != 200:
                     raise Halt(f"apply HTTP {acode}: {str(abody)[:300]}")
                 ares = abody["result"]
-                (out / f"batch-{n:03d}-apply.json").write_text(json.dumps(abody, indent=1))
+                _bank(out / f"batch-{n:03d}-apply.json", abody,
+                      overwrite=args.overwrite_artifacts)
                 check_apply(ares, plan_legs, args.max_drift_pct)
                 row.update({
                     "applied": True,
@@ -411,12 +522,21 @@ def main() -> int:
             halt_reason = f"--max-batches {args.max_batches} reached"
     except Halt as e:
         halt_reason = f"HALT: {e}"
+    except ArtifactCollision as e:
+        halt_reason = f"HALT: {e}"
     except KeyboardInterrupt:
         halt_reason = "interrupted"
 
     summary = {
         "halt_reason": halt_reason,
+        # THIS INVOCATION ONLY. `totals` is zeroed at every launch, so on a resume
+        # it counts from --start-batch and not from the top of the sweep. Reading it
+        # as the sweep total understated CAL-P1026 by 300 batches (12 unexplained
+        # absences reported against 804 actual), which is why the scope is now named
+        # in the file and the sweep-wide figures are computed beside it.
+        "covers_batches": {"first": args.start_batch, "last": max(n - 1, args.start_batch - 1)},
         "totals": totals,
+        "sweep_totals": _sweep_totals(progress),
         "last_cursor": cursor,
         # `n` is incremented only at the bottom of a completed batch, so it is
         # already the next batch to run on both the HALT and the max-batches path.
