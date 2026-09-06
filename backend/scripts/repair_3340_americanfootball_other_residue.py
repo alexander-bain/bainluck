@@ -395,17 +395,26 @@ async def ensure_backup(session, sport_key: str = TARGET_SPORT_KEY) -> int:
     return banked
 
 
-async def void_rows(session, event_ids: list[int], *, progress_every: int = 250) -> int:
+async def void_rows(
+    session, event_ids: list[int], *, progress_every: int = 250
+) -> tuple[int, list[int]]:
     """Flip each row to ``voided``, ONE ROW PER TRANSACTION.
 
     Deliberately not a batch UPDATE and deliberately without a short
     `lock_timeout`: `events` is write-hot (constant poller and backfill locks), and
     a batched or lock-impatient one-off rolls back on every row. A single-row
     UPDATE that is willing to WAIT for the lock succeeds. Slow is the point.
+
+    Returns ``(written, failed_ids)``. The failed ids are RETAINED rather than
+    only printed: a row that exhausted its retries is still servable, and on a
+    detached dyno whose stdout cannot be read, a printed `FAILED` line that does
+    not reach the exit code is indistinguishable from a clean run. "It returned"
+    is not "it worked" (gotcha #53).
     """
     from sqlalchemy import text
 
     written = 0
+    failed: list[int] = []
     for index, event_id in enumerate(event_ids, start=1):
         for attempt in (1, 2, 3):
             try:
@@ -423,11 +432,12 @@ async def void_rows(session, event_ids: list[int], *, progress_every: int = 250)
                 await session.rollback()
                 if attempt == 3:
                     print(f"  FAILED event {event_id} after 3 attempts: {exc}")
+                    failed.append(event_id)
                 else:
                     await asyncio.sleep(attempt)
         if progress_every and index % progress_every == 0:
             print(f"  … {index}/{len(event_ids)} processed, {written} voided")
-    return written
+    return written, failed
 
 
 async def run(*, backup: bool, apply: bool, sport_key: str = TARGET_SPORT_KEY) -> None:
@@ -490,24 +500,46 @@ async def run(*, backup: bool, apply: bool, sport_key: str = TARGET_SPORT_KEY) -
         ).all()
         event_ids = [r.id for r in rows]
         print(f"\nVOIDING {len(event_ids)} rows, one transaction each …")
-        written = await void_rows(session, event_ids)
+        written, failed = await void_rows(session, event_ids)
 
         after = await measure(session, sport_key)
         print(f"\nCOMMITTED: {written} rows set status→'{VOID_STATUS}'.")
         print(json.dumps({"before": before, "after": after}, indent=2))
-        if after["visible_total"] == 0:
-            print(
-                f"\n✅ #3340: the {sport_key} page serves 0 cards "
-                f"(was {before['visible_total']})."
-            )
-        else:
-            print(
-                f"\n⚠️  {after['visible_total']} cards still visible — investigate "
-                f"before closing #3340."
-            )
         print(
             "\nUndo: python3 scripts/restore_3340_americanfootball_other_residue.py "
             "--apply"
+        )
+
+        # The terminal check is the FULL non-retired population, not the three page
+        # rails. A row that failed its retries can sit outside the 14-day window —
+        # invisible to `visible_total`, still servable by the by-id read, search and
+        # the feed. Checking only the rails would let a partial repair print the
+        # success message and exit 0 on a dyno whose stdout nobody can read.
+        problems = []
+        if failed:
+            problems.append(
+                f"{len(failed)} row(s) exhausted their retries and are still "
+                f"servable: {failed[:20]}{' …' if len(failed) > 20 else ''}"
+            )
+        if after["population"]:
+            problems.append(
+                f"{after['population']} row(s) of the non-retired population remain "
+                f"— the sweep is incomplete"
+            )
+        if problems:
+            print("\n❌ #3340 INCOMPLETE — the repair did NOT finish:")
+            for problem in problems:
+                print(f"  - {problem}")
+            print(
+                "\nThe committed rows are durable, so re-running with "
+                "--backup --apply resumes from here."
+            )
+            sys.exit(1)
+
+        print(
+            f"\n✅ #3340: {sport_key} serves 0 rows on every surface "
+            f"(page was {before['visible_total']} cards, population was "
+            f"{before['population']})."
         )
 
 

@@ -46,16 +46,23 @@ SELECT b.event_id, b.old_status, e.status AS current_status
 """
 
 
-async def restore_rows(session, plan: list, *, progress_every: int = 250) -> int:
+async def restore_rows(
+    session, plan: list, *, progress_every: int = 250
+) -> tuple[int, list[int]]:
     """Put each banked status back, ONE ROW PER TRANSACTION.
 
     Same rail as the repair: `events` is write-hot, so a batch UPDATE or a short
     `lock_timeout` rolls back on every row where a patient single-row write
     succeeds.
+
+    Returns ``(written, failed_ids)``. An undo that silently leaves rows voided is
+    worse than one that fails loudly — the operator believes the takedown has been
+    reversed and stops looking.
     """
     from sqlalchemy import text
 
     written = 0
+    failed: list[int] = []
     for index, entry in enumerate(plan, start=1):
         for attempt in (1, 2, 3):
             try:
@@ -77,11 +84,12 @@ async def restore_rows(session, plan: list, *, progress_every: int = 250) -> int
                 await session.rollback()
                 if attempt == 3:
                     print(f"  FAILED event {entry['event_id']} after 3 attempts: {exc}")
+                    failed.append(entry["event_id"])
                 else:
                     await asyncio.sleep(attempt)
         if progress_every and index % progress_every == 0:
             print(f"  … {index}/{len(plan)} processed, {written} restored")
-    return written
+    return written, failed
 
 
 async def run(apply: bool) -> None:
@@ -148,9 +156,38 @@ async def run(apply: bool) -> None:
             return
 
         print(f"\nRESTORING {len(restorable)} rows, one transaction each …")
-        written = await restore_rows(session, restorable)
+        written, failed = await restore_rows(session, restorable)
         print(f"\nCOMMITTED: {written} rows restored to their banked status.")
         print(f"The backup table {BAK_TABLE} is left in place deliberately.")
+
+        # Same terminal rule as the repair: re-read the state rather than trusting
+        # the loop's own count, and never report a clean undo over a short one.
+        still_void = (
+            await session.execute(
+                text(
+                    f"SELECT count(*) FROM {BAK_TABLE} b JOIN events e "
+                    "ON e.id = b.event_id WHERE e.status = :void"
+                ),
+                {"void": VOID_STATUS},
+            )
+        ).scalar() or 0
+
+        if failed or still_void:
+            print("\n❌ RESTORE INCOMPLETE — the undo did NOT finish:")
+            if failed:
+                print(
+                    f"  - {len(failed)} row(s) exhausted their retries: "
+                    f"{failed[:20]}{' …' if len(failed) > 20 else ''}"
+                )
+            if still_void:
+                print(f"  - {still_void} banked row(s) are still '{VOID_STATUS}'")
+            print(
+                "\nThe restored rows are durable, so re-running --apply resumes "
+                "from here."
+            )
+            sys.exit(1)
+
+        print(f"\n✅ every banked row is off '{VOID_STATUS}'.")
 
 
 def main() -> None:

@@ -334,9 +334,28 @@ def test_the_retired_status_list_is_derived_from_the_shipped_constant():
 # ---------------------------------------------------------------------------
 
 
+class _SqliteRow:
+    """Attribute access over a sqlite tuple, the way SQLAlchemy rows read."""
+
+    def __init__(self, columns, values):
+        for column, value in zip(columns, values):
+            setattr(self, column, value)
+
+
 class _SqliteResult:
-    def __init__(self, rowcount):
-        self.rowcount = rowcount
+    def __init__(self, cursor):
+        self.rowcount = cursor.rowcount
+        self._columns = [c[0] for c in (cursor.description or [])]
+        self._rows = cursor.fetchall() if cursor.description else []
+
+    def scalar(self):
+        return self._rows[0][0] if self._rows else None
+
+    def all(self):
+        return [_SqliteRow(self._columns, values) for values in self._rows]
+
+    def one(self):
+        return self.all()[0]
 
 
 class _SqliteSession:
@@ -353,7 +372,7 @@ class _SqliteSession:
 
     async def execute(self, statement, params=None):
         cursor = self.conn.execute(str(statement), params or {})
-        return _SqliteResult(cursor.rowcount)
+        return _SqliteResult(cursor)
 
     async def commit(self):
         self.commits += 1
@@ -382,13 +401,13 @@ async def test_the_repair_voids_the_population_and_the_restore_puts_it_all_back(
     conn = _seeded_db(seed)
     session = _SqliteSession(conn)
 
-    written = await repair.void_rows(session, [1, 2, 3, 4], progress_every=0)
-    assert written == 4
+    written, failed = await repair.void_rows(session, [1, 2, 3, 4], progress_every=0)
+    assert (written, failed) == (4, [])
     assert set(_statuses(conn).values()) == {repair.VOID_STATUS}
 
     plan = [{"event_id": eid, "old_status": status} for eid, status in seed]
-    restored = await restore.restore_rows(session, plan, progress_every=0)
-    assert restored == 4
+    restored, failed = await restore.restore_rows(session, plan, progress_every=0)
+    assert (restored, failed) == (4, [])
     assert _statuses(conn) == dict(seed)
 
 
@@ -399,10 +418,10 @@ async def test_an_already_retired_row_is_left_alone_so_the_repair_is_idempotent(
     conn = _seeded_db([(1, "scheduled"), (2, "merged"), (3, "voided")])
     session = _SqliteSession(conn)
 
-    first = await repair.void_rows(session, [1, 2, 3], progress_every=0)
+    first, _ = await repair.void_rows(session, [1, 2, 3], progress_every=0)
     assert first == 1, "only the un-retired row should have been written"
 
-    second = await repair.void_rows(session, [1, 2, 3], progress_every=0)
+    second, _ = await repair.void_rows(session, [1, 2, 3], progress_every=0)
     assert second == 0, "the repair is not idempotent"
     assert _statuses(conn)[2] == "merged", "an existing 'merged' marker was clobbered"
 
@@ -420,7 +439,7 @@ async def test_the_restore_refuses_a_row_whose_status_moved_on():
         {"event_id": 1, "old_status": "scheduled"},
         {"event_id": 2, "old_status": "scheduled"},
     ]
-    restored = await restore.restore_rows(session, plan, progress_every=0)
+    restored, _ = await restore.restore_rows(session, plan, progress_every=0)
     assert restored == 1
     assert _statuses(conn) == {1: "scheduled", 2: "live"}
 
@@ -433,3 +452,199 @@ async def test_every_row_is_its_own_transaction():
     session = _SqliteSession(conn)
     await repair.void_rows(session, [1, 2, 3, 4, 5], progress_every=0)
     assert session.commits == 5
+
+
+# ---------------------------------------------------------------------------
+# CERT-1982's BLOCK: a short run must never exit 0 or print terminal success
+# ---------------------------------------------------------------------------
+#
+# The defect: after retry exhaustion both loops printed `FAILED` and continued,
+# and the caller judged success on `visible_total == 0` — the three page rails
+# only. A failed row outside the 14-day window is invisible to those rails while
+# remaining servable by the by-id read, search and the feed, so a partial repair
+# could print the success message and exit 0. On a detached dyno whose stdout
+# cannot be read, that is indistinguishable from a clean run.
+
+
+class _FailingSqliteSession(_SqliteSession):
+    """Fails one event id persistently, so its three retries all exhaust."""
+
+    def __init__(self, conn, fail_id):
+        super().__init__(conn)
+        self.fail_id = fail_id
+
+    async def execute(self, statement, params=None):
+        if params and params.get("eid") == self.fail_id:
+            raise RuntimeError(f"simulated persistent lock failure on {self.fail_id}")
+        return await super().execute(statement, params)
+
+
+@pytest.mark.asyncio
+async def test_a_persistently_failing_row_is_returned_not_just_printed():
+    """The repair direction. Row 1 commits first, THEN row 2 fails — so the run
+    has real durable progress alongside a real failure, which is the case that
+    used to report success."""
+    conn = _seeded_db([(1, "scheduled"), (2, "scheduled"), (3, "scheduled")])
+    session = _FailingSqliteSession(conn, fail_id=2)
+
+    written, failed = await repair.void_rows(session, [1, 2, 3], progress_every=0)
+
+    assert failed == [2], "the failed id was printed but not returned"
+    assert written == 2
+    statuses = _statuses(conn)
+    assert statuses[1] == repair.VOID_STATUS, "earlier commit was not preserved"
+    assert statuses[3] == repair.VOID_STATUS, "the loop stopped at the failure"
+    assert statuses[2] == "scheduled", "the failing row is still servable"
+
+
+@pytest.mark.asyncio
+async def test_the_restore_direction_returns_its_failures_too():
+    """The undo has the symmetric false-success path: an operator who believes
+    the takedown was reversed stops looking."""
+    conn = _seeded_db([(i, repair.VOID_STATUS) for i in (1, 2, 3)])
+    session = _FailingSqliteSession(conn, fail_id=2)
+    plan = [{"event_id": i, "old_status": "scheduled"} for i in (1, 2, 3)]
+
+    written, failed = await restore.restore_rows(session, plan, progress_every=0)
+
+    assert failed == [2]
+    assert written == 2
+    statuses = _statuses(conn)
+    assert statuses[1] == "scheduled" and statuses[3] == "scheduled"
+    assert statuses[2] == repair.VOID_STATUS, "still voided, and it must be reported"
+
+
+@pytest.mark.asyncio
+async def test_a_rerun_after_the_failure_clears_finishes_the_job():
+    """Resumability. The per-row commits are the reason a partial run is
+    recoverable rather than a mess, so the rerun must be a short one."""
+    conn = _seeded_db([(1, "scheduled"), (2, "scheduled"), (3, "scheduled")])
+    failing = _FailingSqliteSession(conn, fail_id=2)
+    await repair.void_rows(failing, [1, 2, 3], progress_every=0)
+
+    healthy = _SqliteSession(conn)
+    written, failed = await repair.void_rows(healthy, [1, 2, 3], progress_every=0)
+
+    assert failed == []
+    assert written == 1, "the already-voided rows were written again"
+    assert set(_statuses(conn).values()) == {repair.VOID_STATUS}
+
+
+def _drive_run(monkeypatch, conn, *, session, population_after, sport_key=None):
+    """Run the real `run()` against sqlite.
+
+    `measure` and `ensure_backup` are stubbed because they are Postgres-shaped
+    (`FILTER`, `now() - interval`, `timestamptz`, `ON CONFLICT`) and are covered
+    by their own guards. Everything CERT-1982 blocked on — the write loop, the
+    failure accounting and the terminal decision — is the real code.
+    """
+    import app.tasks.base as task_base
+
+    class _Ctx:
+        async def __aenter__(self_inner):
+            return session
+
+        async def __aexit__(self_inner, *exc):
+            return False
+
+    monkeypatch.setattr(task_base, "get_task_session", lambda: _Ctx())
+    monkeypatch.setattr(repair, "ensure_backup", _async_return(3))
+    # `run()` reads a total back out of the backup table after banking; the
+    # banking itself is stubbed, so give the count something real to read.
+    conn.execute(f"CREATE TABLE IF NOT EXISTS {repair.BAK_TABLE} (event_id INTEGER)")
+    conn.commit()
+
+    calls = {"n": 0}
+
+    async def fake_measure(_session, _sport_key=None):
+        calls["n"] += 1
+        first = calls["n"] == 1
+        population = 3 if first else population_after
+        return {
+            "population": population,
+            "with_score": 0,
+            "with_team_id": 0,
+            "with_real_external_id": 0,
+            "visible_upcoming": 0,
+            "visible_unreported": 0,
+            "visible_recent": 0,
+            "visible_total": 0,
+        }
+
+    monkeypatch.setattr(repair, "measure", fake_measure)
+    monkeypatch.setattr(repair, "population_refusal_reason", lambda _m: None)
+    monkeypatch.setattr(
+        repair, "_IDS_SQL", "SELECT id, status FROM events ORDER BY id"
+    )
+    import asyncio as _asyncio
+
+    return _asyncio.get_event_loop()
+
+
+def _async_return(value):
+    async def _inner(*args, **kwargs):
+        return value
+
+    return _inner
+
+
+@pytest.mark.asyncio
+async def test_the_command_exits_nonzero_and_prints_no_success_on_a_short_repair(
+    monkeypatch, capsys
+):
+    """CERT-1982's required regression, at the command level.
+
+    Two rows commit, one fails persistently, and the three page rails all read 0
+    — the exact shape that used to print the ✅ line and exit 0.
+    """
+    conn = _seeded_db([(1, "scheduled"), (2, "scheduled"), (3, "scheduled")])
+    session = _FailingSqliteSession(conn, fail_id=2)
+    _drive_run(monkeypatch, conn, session=session, population_after=1)
+
+    with pytest.raises(SystemExit) as exit_info:
+        await repair.run(backup=True, apply=True)
+
+    assert exit_info.value.code == 1, "a partial repair exited 0"
+    out = capsys.readouterr().out
+    assert "INCOMPLETE" in out
+    assert "✅" not in out, "terminal success was printed over a partial repair"
+    assert "resumes" in out, "the operator was not told the run is resumable"
+    assert _statuses(conn)[1] == repair.VOID_STATUS, "durable progress was lost"
+
+
+@pytest.mark.asyncio
+async def test_the_command_succeeds_on_the_rerun_once_the_failure_is_gone(
+    monkeypatch, capsys
+):
+    """The other half of the required regression: the same command, no failure,
+    must reach terminal success and exit normally."""
+    conn = _seeded_db([(1, "scheduled"), (2, "scheduled"), (3, "scheduled")])
+    session = _SqliteSession(conn)
+    _drive_run(monkeypatch, conn, session=session, population_after=0)
+
+    await repair.run(backup=True, apply=True)
+
+    out = capsys.readouterr().out
+    assert "✅" in out
+    assert "INCOMPLETE" not in out
+    assert set(_statuses(conn).values()) == {repair.VOID_STATUS}
+
+
+@pytest.mark.asyncio
+async def test_a_leftover_population_fails_the_run_even_with_zero_write_failures(
+    monkeypatch, capsys
+):
+    """The terminal check is the FULL population, not the page rails and not the
+    loop's own failure list. A row nobody tried to write is still a row that did
+    not leave the surface."""
+    conn = _seeded_db([(1, "scheduled"), (2, "scheduled"), (3, "scheduled")])
+    session = _SqliteSession(conn)
+    _drive_run(monkeypatch, conn, session=session, population_after=7)
+
+    with pytest.raises(SystemExit) as exit_info:
+        await repair.run(backup=True, apply=True)
+
+    assert exit_info.value.code == 1
+    out = capsys.readouterr().out
+    assert "7 row(s) of the non-retired population remain" in out
+    assert "✅" not in out
