@@ -618,15 +618,15 @@ def _linked_market(
 
 
 def _row_result(tuples):
-    """A Result for `build_linked_matches`, which reads `.unique().all()` and gets
-    `(FuturesMarket, commence_time, status)` triples."""
+    """A Result for the events read, which does `.all()` over
+    `(id, commence_time, status)` triples."""
     result = MagicMock()
     result.unique.return_value = result
     result.all.return_value = tuples
     return result
 
 
-def _sql_dispatching_db(*, unlinked, linked):
+def _sql_dispatching_db(*, unlinked, linked, event_status="scheduled", event_time=None):
     """A db holding ONE population, answering each statement as the real one would.
 
     Dispatching on the compiled SQL rather than on call ORDER is deliberate:
@@ -635,8 +635,8 @@ def _sql_dispatching_db(*, unlinked, linked):
     anything upstream added one — and the test would keep passing while
     asserting nothing.
 
-    The no-predicate branch is load-bearing, and it started out wrong. It
-    returned `[]`, which made `test_the_futures_list_does_not_gain_linked_rows`
+    The no-`event_id`-predicate branch is load-bearing, and it started out wrong.
+    It returned `[]`, which made `test_the_futures_list_does_not_gain_linked_rows`
     VACUOUS under the exact mutation it exists to catch: delete `build_league`'s
     `event_id.is_(None)` and its SQL then matches neither branch, so the fake
     handed back nothing and the assertion passed on an empty list. A query that
@@ -646,12 +646,14 @@ def _sql_dispatching_db(*, unlinked, linked):
     from unittest.mock import AsyncMock
 
     db = AsyncMock()
+    commence = event_time or datetime.now(timezone.utc)
 
     async def _execute(stmt, *a, **kw):
         sql = str(stmt)
-        if "event_id IS NOT NULL" in sql:
+        # `build_linked_matches` resolves its events in a second, set-based read.
+        if "FROM events" in sql and "futures_markets" not in sql:
             return _row_result(
-                [(m, datetime.now(timezone.utc), "scheduled") for m in linked]
+                [(m.event_id, commence, event_status) for m in linked]
             )
         if "event_id IS NULL" in sql:
             return _scalars_result(unlinked)
@@ -784,33 +786,96 @@ class TestHubLinkedMatchesRail:
             "end of year rankings" in m["name"] for m in sections.get("props", [])
         )
 
-    async def test_a_finished_match_is_not_on_the_rail(self, client):
-        """The hub card renders a name and prices — no date, no status — so a
-        played match is indistinguishable from tonight's. Measured on production
-        2026-09-05: 18 head-to-heads dated Sep 2 were still `scheduled`."""
+    async def test_a_completed_event_is_not_on_the_rail(self, client):
+        """A `completed` event's markets can still be `open` (gotcha #33), and the
+        hub card renders a name and prices with NO date or status — so a finished
+        match is indistinguishable from tonight's."""
+        from app.routes.league_futures import build_linked_matches
+
+        db = _sql_dispatching_db(
+            unlinked=[],
+            linked=[_linked_market(market_id=1, name="Alcaraz vs Sinner")],
+            event_status="completed",
+        )
+        assert await build_linked_matches("tennis_atp", db) == []
+
+    async def test_a_stale_scheduled_row_is_not_on_the_rail(self, client):
+        """Status alone is not enough. Measured on production 2026-09-05: 18
+        head-to-heads dated Sep 2 were still `scheduled` three days after they
+        were played, so the clock floor is what catches them."""
         from app.routes.league_futures import (
             LINKED_MATCH_LOOKBACK,
             build_linked_matches,
-            _league_scope_filters,
         )
-        import app.routes.league_futures as lf
 
         now = datetime.now(timezone.utc)
-        captured = {}
+        stale_db = _sql_dispatching_db(
+            unlinked=[],
+            linked=[_linked_market(market_id=1, name="Alcaraz vs Sinner")],
+            event_status="scheduled",
+            event_time=now - LINKED_MATCH_LOOKBACK - timedelta(hours=1),
+        )
+        assert await build_linked_matches("tennis_atp", stale_db, now=now) == []
+
+        # The paired positive: the SAME row inside the window does appear, so the
+        # test above cannot pass by the rail being broken outright.
+        fresh_db = _sql_dispatching_db(
+            unlinked=[],
+            linked=[_linked_market(market_id=1, name="Alcaraz vs Sinner")],
+            event_status="scheduled",
+            event_time=now + timedelta(hours=2),
+        )
+        assert len(await build_linked_matches("tennis_atp", fresh_db, now=now)) == 1
+
+    async def test_a_live_match_leads_the_rail(self, client):
+        """Live first, then soonest — the order a person watching reads it in."""
+        from app.routes.league_futures import build_linked_matches
+
+        now = datetime.now(timezone.utc)
+        soon = _linked_market(market_id=1, name="Fritz vs Shelton")
+        live = _linked_market(market_id=2, name="Alcaraz vs Sinner")
+
+        from unittest.mock import AsyncMock
+
+        db = AsyncMock()
+
+        async def _execute(stmt, *a, **kw):
+            sql = str(stmt)
+            if "FROM events" in sql and "futures_markets" not in sql:
+                return _row_result([
+                    (soon.event_id, now + timedelta(hours=1), "scheduled"),
+                    (live.event_id, now + timedelta(hours=6), "live"),
+                ])
+            if "futures_markets" in sql:
+                return _scalars_result([soon, live])
+            return _scalars_result([])
+
+        db.execute = _execute
+        rows = await build_linked_matches("tennis_atp", db, now=now)
+        assert [r["name"] for r in rows] == ["Alcaraz vs Sinner", "Fritz vs Shelton"], (
+            "the live match must lead even though it starts later"
+        )
+
+    async def test_the_pool_read_does_not_pay_for_an_event_id_predicate(self, client):
+        """Spelling `event_id IS NOT NULL` in SQL cost 1.23s on production
+        (2026-09-05, EXPLAIN ANALYZE): the planner ANDs the whole 588,398-row
+        `ix_futures_markets_event_id` bitmap to express a predicate that is free
+        in Python over rows already fetched. Pinned because the obvious tidy-up
+        is to "just put the filter in the query"."""
+        from app.routes.league_futures import build_linked_matches
+
+        seen: list[str] = []
 
         class _DB:
             async def execute(self, stmt, *a, **kw):
-                captured["sql"] = str(stmt)
-                return _row_result([])
+                seen.append(str(stmt))
+                return _scalars_result([])
 
-        await build_linked_matches("tennis_atp", _DB(), now=now)
-        sql = captured["sql"]
-        assert "events.status != " in sql, "a completed event can reach the rail"
-        assert "events.commence_time >=" in sql, (
-            "no clock floor — a stale `scheduled` row for a match played days ago "
-            "would render as an upcoming match"
+        await build_linked_matches("tennis_atp", _DB())
+        assert seen, "no statement was issued"
+        assert "event_id IS NOT NULL" not in seen[0], (
+            "the pool read regained the predicate that costs 1.23s for no rows"
         )
-        assert LINKED_MATCH_LOOKBACK.total_seconds() > 0
 
 
 def _get_db_dep():

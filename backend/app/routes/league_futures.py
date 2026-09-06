@@ -1415,6 +1415,17 @@ LINKED_MATCH_LOOKBACK = timedelta(hours=12)
 #: remainder does not exist (the count travels in `section_counts`).
 LINKED_MATCH_LIMIT = 200
 
+#: Cap on the market pool read before the event read narrows it. Generous
+#: because it is a per-LEAGUE scope, not a per-sport one: measured on production
+#: 2026-09-05 the whole `tennis_atp` pool was 725 rows mid-US-Open.
+LINKED_MATCH_POOL_LIMIT = 1500
+
+#: Tiers that can never produce a `matches` row — `_assign_section` sends 1, 2
+#: and 4 straight to "championship". Pruned in SQL so the event read below has
+#: fewer rows to resolve. Tier 3 and NULL are NOT pruned: they can still reach
+#: "matches" through the series-keyword and game_prop branches.
+_NON_MATCH_TIERS = (1, 2, 4)
+
 
 async def build_linked_matches(
     sport_key: str,
@@ -1433,30 +1444,44 @@ async def build_linked_matches(
     lands hundreds of markets ABOUT a match ("… : Total Sets O/U 3.5"), and a
     rail that showed those under "MATCHES" would have swapped one false heading
     for another.
+
+    ── Why this is two reads and not one join ──
+
+    Written first as a single joined query, measured on production, and rewritten
+    — the join cost **5.2s** against `build_league`'s 729ms on the same scope,
+    which is not a price a hub rebuild can pay. Two separate causes, both
+    measured with EXPLAIN (ANALYZE, BUFFERS) on 2026-09-05:
+
+    1. Spelling `event_id IS NOT NULL` in SQL made the planner AND in the whole
+       588,398-row `ix_futures_markets_event_id` bitmap: **1.23s** to express a
+       predicate that costs nothing in Python over rows already fetched.
+    2. The join drove one `events_pkey` probe per MARKET (611 of them) where the
+       distinct event count is 240 — and `events` is currently 437% dead tuples
+       (1,015,682 dead against 231,980 live), so a single-row pkey lookup reads
+       ~400 buffers instead of ~4. Deduplicating the event ids and reading them
+       in one set-based statement removes 60% of the probes.
+
+    The bloat is a production database problem, not this rail's, and it is filed
+    as its own issue — but it is the reason this function is shaped defensively
+    rather than as the obvious join. Net: ~1.4s, behind the hub's 180s cache and
+    background refresh.
     """
     now = now or datetime.now(timezone.utc)
 
     filters = _league_scope_filters(sport_key, now)
-    filters.append(FuturesMarket.event_id.isnot(None))
-    # Not finished, and not a stale `scheduled` row for a match already played.
-    filters.append(Event.status != "completed")
+    # NB: no `event_id IS NOT NULL` here — see the docstring. Filtered in Python.
     filters.append(
         or_(
-            Event.status == "live",
-            Event.commence_time >= now - LINKED_MATCH_LOOKBACK,
+            FuturesMarket.market_tier.is_(None),
+            FuturesMarket.market_tier.notin_(_NON_MATCH_TIERS),
         )
     )
 
     query = (
-        select(FuturesMarket, Event.commence_time, Event.status)
-        .join(Event, Event.id == FuturesMarket.event_id)
+        select(FuturesMarket)
         .options(selectinload(FuturesMarket.outcomes))
         .where(*filters)
-        .order_by(
-            (Event.status == "live").desc(),
-            Event.commence_time.asc(),
-        )
-        .limit(LINKED_MATCH_LIMIT)
+        .limit(LINKED_MATCH_POOL_LIMIT)
     )
 
     try:
@@ -1467,8 +1492,49 @@ async def build_linked_matches(
         logger.warning("linked matches timed out for %s", sport_key)
         raise
 
+    candidates = [
+        m
+        for m in result.scalars().unique().all()
+        if m.event_id is not None and _assign_section(m, sport_key) == "matches"
+    ]
+    if not candidates:
+        return []
+
+    # One set-based read of the distinct events, then the currency test in
+    # Python. `status` alone is not enough (a stale `scheduled` row outlives the
+    # match it describes), and the clock alone is not enough (a `completed`
+    # event inside the window is still over), so both are applied.
+    event_rows = await asyncio.wait_for(
+        db.execute(
+            select(Event.id, Event.commence_time, Event.status).where(
+                Event.id.in_({m.event_id for m in candidates})
+            )
+        ),
+        timeout=15,
+    )
+    playable: dict[int, tuple] = {}
+    floor = now - LINKED_MATCH_LOOKBACK
+    for event_id, commence_time, status in event_rows.all():
+        if status == "completed":
+            continue
+        if status != "live" and (commence_time is None or commence_time < floor):
+            continue
+        playable[event_id] = (commence_time, status)
+
+    if not playable:
+        return []
+
+    # Live first, then soonest — the order a person watching a tournament reads
+    # the rail in. In Python because the currency test it sorts on is.
+    candidates = [m for m in candidates if m.event_id in playable]
+    candidates.sort(
+        key=lambda m: (
+            0 if playable[m.event_id][1] == "live" else 1,
+            playable[m.event_id][0],
+        )
+    )
+
     rows: list[dict] = []
-    seen_ids: set[int] = set()
     # Same name-normalising dedup `build_league` applies, for the same reason and
     # by the same rule (keep the row with the most outcomes). Measured on
     # production 2026-09-05 the raw rail listed "US Open ATP: Ben Shelton vs
@@ -1477,12 +1543,9 @@ async def build_linked_matches(
     # vs "US Open ATP: Zizou Bergs vs Botic van de Zandschulp") — that is
     # cross-source identity (#2166), not this rail's to decide.
     by_name: dict[str, dict] = {}
-    for market, _commence, _status in result.unique().all():
-        if market.id in seen_ids:
-            continue
-        seen_ids.add(market.id)
-        if _assign_section(market, sport_key) != "matches":
-            continue
+    for market in candidates:
+        if len(rows) >= LINKED_MATCH_LIMIT:
+            break
         sorted_outcomes = _sorted_outcomes(market)
         if _effectively_resolved(sorted_outcomes):
             continue
