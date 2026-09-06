@@ -538,6 +538,12 @@ export default function MarketMapSection({
         type: "proj",
         label: "Projection",
         displayValue: String(Math.round(ouVal)),
+        // #3360: the ring carries its own number. `hideTile: true` means this
+        // marker draws NO tile underneath, so the dot was the only mark on the
+        // rail and it was empty — a 26px ring with nothing in it, which reads
+        // as a missing value rather than a marker. `logoFallback` is what
+        // MarketMap renders inside a `proj` dot.
+        logoFallback: String(Math.round(ouVal)),
         hideTile: true,
       });
     } else if (status === "live") {
@@ -564,7 +570,13 @@ export default function MarketMapSection({
           type: "proj",
           label: "Projection",
           displayValue: String(projected.toFixed(1)),
-          logoFallback: String(projected.toFixed(1)),
+          // #3360: rounded, not `toFixed(1)`. Measured in the real browser on
+          // the real dot (Inter, 8px, weight 950, 22px inner box): "36.4" is
+          // 20.72px and only just fits, but "108.5" is 25.36px and OVERFLOWS a
+          // 26px ring — so the one-decimal string was already broken for every
+          // high-total sport, tennis simply never reached three digits. The
+          // tile below still carries the decimal via `displayValue`.
+          logoFallback: String(Math.round(projected)),
         });
       }
     } else {
