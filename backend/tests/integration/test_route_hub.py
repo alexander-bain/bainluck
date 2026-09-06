@@ -184,6 +184,58 @@ class TestGolfTennisHubs:
         assert card["is_major"] is True
         assert "_internal" not in card
 
+    async def test_end_date_survives_the_serializer_allowlist(self, client, monkeypatch):
+        """UX-P178 (#2167): `_serialize_concept` is an ALLOWLIST.
+
+        A key the lister emits but the serializer does not name is dropped
+        silently while the route still returns 200 — the failure mode this same
+        test file already pins with `_internal`, in the opposite direction. The
+        tennis rail has no start date to serve, so `end_date` IS the card's date:
+        if it does not survive the allowlist the card renders "TBD" and the whole
+        ship is invisible with every backend test still green.
+        """
+        import app.routes.hub as hub
+
+        async def _fake_tennis(db, *, limit=20):
+            return [{
+                "key": "event:tennis:us-open",
+                "name": "2026 Women's US Open Winner (Tennis)",
+                "domain": "tennis",
+                "status": "unknown",
+                "start_date": None,
+                "end_date": "2026-09-13T00:00:00+00:00",
+                "is_major": True,
+                "entry_count": 128,
+            }]
+
+        monkeypatch.setitem(hub._UPCOMING_LISTERS, "tennis", _fake_tennis)
+        card = (await client.get("/api/hub/tennis")).json()["upcoming"][0]
+        assert card["end_date"] == "2026-09-13T00:00:00+00:00"
+        assert card["start_date"] is None
+        assert card["is_major"] is True
+
+    async def test_a_domain_with_a_real_start_still_serves_it(self, client, monkeypatch):
+        """The control: adding `end_date` must not disturb the domains that know
+        a genuine start. Golf serves one and it survives unchanged, with
+        `end_date` present-and-null rather than the start moved."""
+        import app.routes.hub as hub
+
+        async def _fake_golf(db, *, limit=20):
+            return [{
+                "key": "event:golf:the-open-championship",
+                "name": "The Open Championship",
+                "domain": "golf",
+                "status": "upcoming",
+                "start_date": "2026-07-16T00:00:00+00:00",
+                "is_major": True,
+                "entry_count": 156,
+            }]
+
+        monkeypatch.setitem(hub._UPCOMING_LISTERS, "golf", _fake_golf)
+        card = (await client.get("/api/hub/golf")).json()["upcoming"][0]
+        assert card["start_date"] == "2026-07-16T00:00:00+00:00"
+        assert card["end_date"] is None
+
 
 class TestEsportsHub:
     """L2-92 (B4): esports drops in as a sections-ONLY hub (no concept_domain).
