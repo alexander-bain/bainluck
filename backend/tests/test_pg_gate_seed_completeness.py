@@ -265,3 +265,31 @@ def test_the_never_wired_allowlist_has_not_grown_stale():
         f"these names are allowlisted as never-wired but are now wired or gone: "
         f"{stale}. Remove them from _NEVER_WIRED."
     )
+
+
+def test_every_search_recall_step_that_runs_something_has_a_name():
+    """An unnamed gate step is unreadable in the only place it ever reports.
+
+    `- name: #3672 …` is a YAML COMMENT, not a name: the `#` after the space
+    starts one, `name:` resolves to null, and the step runs anonymously. It does
+    not fail the build — which is the problem. `search-recall` is a wall of
+    hand-written gate steps whose entire diagnostic value is which NAME went
+    red, and an anonymous one reports as a bare "Run" in the UI.
+
+    The repo already writes these correctly — `"#1852 fabricated-loss drain bind
+    contract (real Postgres)"` and `"#2722 …"` are both quoted. This exists so
+    the next person who forgets the quotes finds out in the sandbox.
+    """
+    workflow = yaml.safe_load(
+        (Path(__file__).resolve().parents[2] / ".github" / "workflows" / "ci.yml").read_text()
+    )
+    anonymous = [
+        step
+        for step in workflow["jobs"]["search-recall"]["steps"]
+        if "run" in step and not step.get("name")
+    ]
+    assert not anonymous, (
+        f"{len(anonymous)} search-recall step(s) run something under no name — "
+        f"a `#`-leading name must be QUOTED or YAML eats it as a comment. "
+        f"First command: {anonymous[0]['run'].strip().splitlines()[0]!r}"
+    )

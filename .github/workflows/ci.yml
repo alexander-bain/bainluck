@@ -311,7 +311,7 @@ jobs:
             exit 1
           fi
 
-      - name: #3672 repair bind contract (real asyncpg)
+      - name: "#3672 repair bind contract (real asyncpg)"
         # #1884's class, recurred. `repair_3672_bare_namespace_event_names.py`
         # shipped with 42 green unit tests, passed CERT-2139, merged and
         # deployed — and raised asyncpg DataError on its FIRST statement, having
