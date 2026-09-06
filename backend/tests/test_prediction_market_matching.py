@@ -3236,14 +3236,19 @@ class TestSoccerSeriesAreTickerMapped:
             == "basketball_ncaab"
         )
 
-    def test_cup_ties_are_held_back_pending_the_golden_re_adjudication(self):
-        """The four cup keys are deliberately NOT mapped yet — see sport_keys.py.
+    def test_cup_ties_are_soccer_now_the_golden_hold_is_discharged(self):
+        """The four cup keys, formerly held back, are mapped.
 
-        Mapping them is right on the merits but trips two #2706 golden pairs that
-        were adjudicated while the ticker was unmapped. This test pins the
-        deferral so the omission reads as a decision rather than an oversight,
-        and so re-adding them is a conscious edit to this test too. Both legs of
-        a tie move together, which is why all four are listed.
+        They were withheld in Q453 not because mapping them was wrong but because
+        #2706's golden set had adjudicated markets 59700960/59701032 to
+        `correct_event_id: null` while the ticker was still unmapped, so the
+        ratchet read the improvement as a regression. lane1b/052 re-adjudicated
+        both pairs to events 15297322/15297301 as recorded amendments (PR #3362,
+        master bb422a81), which discharges the hold.
+
+        Both legs of a tie move together, which is why all four are listed: an
+        `…advance` leg filed under a different sport from its own `…game` leg is
+        the split this mapping exists to prevent.
         """
         for ticker in [
             "KXSVKCUPGAME-26SEP02FOMSKA",
@@ -3251,7 +3256,32 @@ class TestSoccerSeriesAreTickerMapped:
             "KXKNVBCUPGAME-26SEP02ASSWES",
             "KXKNVBCUPADVANCE-26SEP02ASSWES",
         ]:
-            assert get_sport_prefix_from_ticker(ticker) is None, ticker
+            assert get_sport_prefix_from_ticker(ticker) == "soccer_other", ticker
+
+    def test_the_four_cup_keys_are_not_shadowed_by_an_earlier_prefix(self):
+        """`get_sport_key_from_ticker` is FIRST-match-wins over insertion order.
+
+        It is not longest-prefix-wins, so a new key placed after a shorter
+        prefix that also matches would be dead on arrival — silently, because
+        the shadowing entry still returns *a* sport. The test above would still
+        pass if some earlier `soccer_other` prefix were doing the work, so this
+        one asserts the four entries are themselves reachable.
+        """
+        from app.utils.sport_keys import KALSHI_TICKER_TO_SPORT_KEY
+
+        for key in [
+            "kxsvkcupgame",
+            "kxsvkcupadvance",
+            "kxknvbcupgame",
+            "kxknvbcupadvance",
+        ]:
+            assert key in KALSHI_TICKER_TO_SPORT_KEY, key
+            shadowing = [
+                p
+                for p in KALSHI_TICKER_TO_SPORT_KEY
+                if p != key and key.startswith(p)
+            ]
+            assert shadowing == [], f"{key} is shadowed by {shadowing}"
 
 
 class TestNoTickerMapsToAmericanFootballOther:
