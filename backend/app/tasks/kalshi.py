@@ -2666,6 +2666,7 @@ async def _refresh_linked_game_books(deadline_s: float | None = None) -> dict:
         ).fetchall()
 
         stats["markets_selected"] = len(rows)
+        return stats  # FALSIFICATION M1: pretend this pass does not exist
         if not rows:
             # Gotcha #53: an empty result is a SHAPE. "No game is coming up" and
             # "the selector is broken" produce the same empty list, so the

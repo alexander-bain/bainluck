@@ -4915,10 +4915,11 @@ async def _poll_live_prediction_market_prices():
                         # counted the request. `parse_markets` already owns
                         # the dollars-then-cents cascade, and the parsed
                         # values are DECIMAL probabilities — do not scale them.
-                        for km in service.parse_markets(markets_data):
-                            yes_bid = km.yes_bid
-                            yes_ask = km.yes_ask
-                            last_price = km.last_price
+                        for km in markets_data:
+                            yes_bid = km.get("yes_bid")
+                            yes_ask = km.get("yes_ask")
+                            last_price = km.get("last_price")
+                            km = type("_M", (), {"ticker": km.get("ticker", "")})()
 
                             # One price policy per venue: the same spread guard
                             # the 2-hour poll uses (gotcha #19 / #181), so a
