@@ -796,6 +796,97 @@ class TestASuccessfulSnapshotReplacesTheOldOne:
         # not the column.
         assert after["espn"] == {"probability": 0.5}
 
+    @pytest.mark.parametrize(
+        "body",
+        [
+            {"data": []},
+            {},
+            {"injuries_suspensions": []},
+            {"injuries_suspensions": None},
+            {"injuries_suspensions": {"updated": "06.09.2026 01:01:10"}},
+            {"error": "something else"},
+        ],
+        ids=["data-list", "bare", "section-list", "section-null", "no-league", "other"],
+    )
+    def test_a_malformed_two_hundred_preserves_state_and_fails_the_run(
+        self, monkeypatch, body
+    ):
+        """CERT-2005. A 200 whose body we do not recognise parses to zero
+        injuries — indistinguishable from a real empty day, which is now an
+        instruction to DELETE. It must be a failure to read.
+
+        Straight through the transport so the envelope gate is exercised where
+        it lives, not around it.
+        """
+        import app.services.statpal_api as api_module
+
+        stale = {
+            "statpal_injuries": [
+                {"player": "Still Injured", "team": "Fluminense", "status": "Out",
+                 "type": "Hip Injury", "detail": None}
+            ],
+            "statpal_injuries_updated": "2026-09-05T01:00:00+00:00",
+        }
+
+        real_service = api_module.StatPalAPIService(api_key="test-key-not-a-real-key")
+
+        async def fake_http_get(url, params=None):
+            return httpx.Response(200, json=body, request=httpx.Request("GET", url))
+
+        monkeypatch.setattr(real_service.client, "get", fake_http_get)
+        result = asyncio.run(real_service.get_injuries_result("soccer"))
+        assert result.reason == "fetch_failed", f"{body!r} was taken as authoritative"
+        assert result.is_alarm is True
+
+        summary, executed, _ = TestTheTaskEmitsTheWriteItClaims._run(
+            monkeypatch,
+            events=[self._event(stale)],
+            fetch_by_sport=_all_sports_fetch(soccer=result),
+        )
+        assert not [s for s in executed if s.__visit_name__ == "update"], (
+            "a body we could not read deleted stored injuries"
+        )
+        assert summary["terminal"] == "failed"
+        assert summary["events_cleared"] == 0
+
+    def test_the_canonical_empty_snapshot_still_clears(self, monkeypatch):
+        """The paired half. `league: []` — nobody sidelined anywhere — IS the
+        vendor's real empty answer and must keep clearing, or the repair above
+        would have bought safety by making the CERT-1999 repair a no-op."""
+        import app.services.statpal_api as api_module
+
+        stale = {
+            "statpal_injuries": [
+                {"player": "Recovered Player", "team": "Fluminense", "status": "Out",
+                 "type": "Hip Injury", "detail": None}
+            ],
+            "statpal_injuries_updated": "2026-09-05T01:00:00+00:00",
+        }
+        canonical_empty = {
+            "injuries_suspensions": {"updated": "06.09.2026 01:01:10", "league": []}
+        }
+
+        real_service = api_module.StatPalAPIService(api_key="test-key-not-a-real-key")
+
+        async def fake_http_get(url, params=None):
+            return httpx.Response(
+                200, json=canonical_empty, request=httpx.Request("GET", url)
+            )
+
+        monkeypatch.setattr(real_service.client, "get", fake_http_get)
+        result = asyncio.run(real_service.get_injuries_result("soccer"))
+        assert result.reason == "empty"
+        assert result.is_alarm is False
+
+        summary, executed, _ = TestTheTaskEmitsTheWriteItClaims._run(
+            monkeypatch,
+            events=[self._event(stale)],
+            fetch_by_sport=_all_sports_fetch(soccer=result),
+        )
+        assert self._route_reads(self._written(executed)) == []
+        assert summary["events_cleared"] == 1
+        assert summary["terminal"] == "complete"
+
     def test_a_fetch_failure_never_deletes_what_we_already_know(self, monkeypatch):
         """The control that keeps the clear safe. A 404 hour must not wipe every
         injury list on the site — that is the destructive twin of the bug this

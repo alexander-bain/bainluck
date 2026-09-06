@@ -1317,6 +1317,21 @@ class StatPalAPIService(BaseAPIClient):
             )
             return StatPalInjuryFetch([], "fetch_failed", sport, endpoint)
 
+        if not _is_injury_envelope(data):
+            # A 200 whose body we do not recognise. Before the caller learned to
+            # CLEAR on a successful empty snapshot this was harmless — it parsed
+            # to `[]` and nothing happened. Now `empty` is an instruction to
+            # delete, so an unrecognised shape has to be a failure to read, not
+            # an authoritative "nobody is hurt". Same asymmetry as everywhere
+            # else here: preserving stale data costs a wrong name on a page,
+            # deleting live data costs every injury list on the site.
+            logger.error(
+                f"StatPal injuries: {sport}/{endpoint} answered 200 with an "
+                f"unrecognised envelope (top-level keys: {sorted(data)[:5]}) — "
+                "reporting fetch_failed so stored injuries are preserved"
+            )
+            return StatPalInjuryFetch([], "fetch_failed", sport, endpoint)
+
         injuries = _parse_injuries_suspensions(data)
         reason = "ok" if injuries else "empty"
         return StatPalInjuryFetch(injuries, reason, sport, endpoint)
@@ -1504,6 +1519,30 @@ def _as_list(val) -> list:
     if val is None:
         return []
     return val if isinstance(val, list) else [val]
+
+
+def _is_injury_envelope(data) -> bool:
+    """Is this body the injuries product at all?
+
+    The canonical envelope is `{"injuries_suspensions": {..., "league": [...]}}`.
+    `league: []` — nobody sidelined anywhere — IS canonical and must stay a
+    successful empty snapshot, because that is the reading the caller acts on
+    when it clears stale players.
+
+    Everything else is refused: a missing or non-dict `injuries_suspensions`, or
+    a section with no `league` key at all. `{"data": []}` and `{}` both parse to
+    zero injuries and would otherwise be indistinguishable from a real empty
+    day, which is now an instruction to DELETE stored state.
+
+    A section that omits `league` entirely is treated as malformed rather than
+    empty on purpose. We have never observed the vendor omit it, so the choice
+    is between preserving state on a shape we do not understand and destroying
+    it — and only one of those is recoverable on the next good pass.
+    """
+    if not isinstance(data, dict):
+        return False
+    section = data.get("injuries_suspensions")
+    return isinstance(section, dict) and "league" in section
 
 
 def _parse_injuries_suspensions(data: dict) -> list[StatPalInjury]:
