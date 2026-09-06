@@ -141,7 +141,13 @@ class TestTheFactorCurve:
 
 
 class TestItReranksAndNeverDeletes:
-    """#1091: a surface must never be capped into emptiness."""
+    """#1091: a surface must never be capped into emptiness.
+
+    "Never deletes" is exact for the anonymous reader — the one the measurement
+    was taken as, and the one whose gate is the binding constraint. The single
+    exception, a down-weighted sport, is pinned explicitly below rather than
+    papered over.
+    """
 
     def test_the_decay_never_pushes_a_score_below_the_floor(self):
         # 300 is well above any real score, 24h is the oldest an event can be
@@ -155,8 +161,44 @@ class TestItReranksAndNeverDeletes:
 
         If the floor ever slipped to or below that gate, the decay would start
         silently deleting recent results instead of re-ranking them.
+
+        SCOPE, stated precisely so this is not read as more than it is: the gate
+        is applied to `min(98, int(base_score * personalization_multiplier))`.
+        This guarantee is therefore exact for the anonymous reader and for any
+        personalized reader whose multiplier is >= 1.0 (whose gate is 10, lower
+        still). A reader who has DOWN-weighted a sport carries a multiplier below
+        1.0 against the same gate of 30, so for them a fully-decayed result can
+        fall under it — see the test below, which pins that as understood
+        behaviour rather than leaving it to be discovered.
         """
         assert COMPLETED_DECAY_FLOOR > 30
+
+    def test_a_down_weighted_sport_can_drop_an_old_result_and_that_is_understood(self):
+        """The one case where the decay does remove a card, made explicit.
+
+        A reader who down-weighted this sport (multiplier < 1.0, gate still 30)
+        loses a fully-decayed result. That is a deliberate consequence: the card
+        is a six-hour-old game in a sport they asked to see less of. It is pinned
+        here so a future change to the floor, the gate or the multiplier cannot
+        move this line without a test going red.
+        """
+        anonymous_gate = 30
+        down_weighted_multiplier = 0.7
+
+        # The worst case is a card sitting ON the floor — that is the lowest a
+        # decayed score can go, so if the floor survives, everything above it does.
+        assert COMPLETED_DECAY_FLOOR >= anonymous_gate
+
+        # ...for the anonymous reader. Multiply by a down-weight and it goes under.
+        assert int(COMPLETED_DECAY_FLOOR * down_weighted_multiplier) < anonymous_gate
+
+        # And the boundary is not folklore: it is the multiplier at which the
+        # floor stops clearing the gate.
+        breakeven = anonymous_gate / COMPLETED_DECAY_FLOOR
+        assert down_weighted_multiplier < breakeven < 1.0
+        # A real, high-scoring result is comfortably clear of it even down-weighted.
+        decayed_from_98, _ = apply_completed_freshness_decay(98, "completed", 24.0)
+        assert int(decayed_from_98 * down_weighted_multiplier) >= anonymous_gate
 
     def test_a_score_already_at_or_under_the_floor_is_left_alone(self):
         for score in (0, 12, COMPLETED_DECAY_FLOOR):
