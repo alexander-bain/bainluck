@@ -2494,6 +2494,149 @@ def _phase15_eligible_where():
     )
 
 
+def _market_sport_prefix(market) -> Optional[str]:
+    """The sport family a market claims, ticker first then stored LLM tag.
+
+    Ticker beats the stored tag on purpose: the tag is what the LLM guessed at
+    ingest and it is wrong on exactly the rows this matters for (#3478 measured
+    419 of 1,066 cup rows tagged something other than soccer).
+    """
+    market_sport = (
+        get_sport_prefix_from_ticker(market.external_id)
+        if market.external_id else None
+    )
+    if not market_sport and market.llm_sport_category:
+        market_sport = _SPORT_CATEGORY_TO_KEY_PREFIX.get(market.llm_sport_category)
+    return market_sport
+
+
+def _sport_family(sport_key: Optional[str]) -> Optional[str]:
+    """`soccer_uefa_europa_conference_league` -> `soccer`. The part before `_`."""
+    if not sport_key:
+        return None
+    return sport_key.split("_", 1)[0]
+
+
+def _is_cross_sport_link(
+    market_sport: Optional[str],
+    event_sport_key: Optional[str],
+    *,
+    allow_unclassified_bucket: bool = True,
+) -> bool:
+    """Does a market of ``market_sport`` sit on an event of a DIFFERENT sport?
+
+    ``allow_unclassified_bucket`` selects which of two questions is being asked,
+    and the default answers the one this function is named for.
+
+    * ``True`` (revalidation, and the resolved-row sweep): "is this link WRONG
+      enough to break?" A precise cup key on `soccer_other` is not — it is the
+      right game in the unclassified bucket, so breaking it destroys a correct
+      pairing.
+    * ``False`` (the forward path): "is this candidate RIGHT enough to create a
+      new link?" Here strictness is free, because declining costs nothing that
+      a later pass cannot redo. It also matters: on the golden set the
+      wrong-sport reject is doing real work that nothing else does — an
+      `KXNCAAFGAME-26AUG27…` ticker against `americanfootball_other` events two
+      days off its date is refused on sport, and four adjudicated `no-event`
+      pairs start linking if that reject is relaxed. Not making, not breaking.
+
+    ONE definition, two callers — the Phase 1.5 loop that acts on it and the
+    resolved-row sweep that selects candidates for that loop. If the selector
+    used a different rule than the actor, the sweep would hand the loop rows it
+    then declines, and the counters would report a sweep that fixed nothing.
+
+    THE `_other` CARVE-OUT, and why it is not a loosening. Despite its name
+    ``get_sport_prefix_from_ticker`` returns a FULL key, so the historical test
+    here — ``not event_sport_key.startswith(market_sport)`` — asks "is the event
+    the same LEAGUE", not "the same sport". That was harmless while cup tickers
+    mapped to nothing (a `None` sport can never mismatch), and #3478 made it
+    harmful the moment it armed them: `soccer_other`.startswith(
+    `soccer_uefa_europa_conference_league`) is False, so every CORRECT cup row
+    sitting in the `soccer_other` bucket would newly read as a cross-sport
+    mislink and be relinked or detached. Production has 4 resolved and 1 OPEN
+    such row today.
+
+    `<family>_other` is the unclassified bucket, not a claim about the league:
+    an event filed `soccer_other` is "a soccer match we did not classify", which
+    is #3605's qualifying-round gap, not a contradiction of a UECL ticker. So a
+    precise key against its own family's `_other` is NOT a mismatch. Two
+    DIFFERENT precise keys still are — `americanfootball_nfl` on
+    `americanfootball_ncaaf` stays a mislink, which is the detection this arm
+    was added for.
+    """
+    if not market_sport or not event_sport_key:
+        return False
+    if event_sport_key.startswith(market_sport):
+        return False  # same key, or the market names only the family
+    if (
+        allow_unclassified_bucket
+        and event_sport_key == f"{_sport_family(market_sport)}_other"
+    ):
+        return False  # the unclassified bucket of our OWN sport (#3605)
+    return True
+
+
+# --- Resolved-row cross-sport sweep (#3478 / CERT-2102) ---------------------
+# Phase 1.5 revalidates linked markets, but only `status='open'` ones — see
+# `_phase15_eligible_where`. That is right for the common case and it leaves a
+# hole with no other floor under it: a market that RESOLVES while linked to the
+# wrong sport can never be re-examined by anything. Phase 1.5 excludes it for
+# being resolved, and the historical backfill only ever selects UNLINKED rows,
+# so a wrong link that survives to resolution is permanent.
+#
+# Arming a new ticker prefix is exactly when that hole bites, because the rows
+# the new key would have matched correctly are already linked — wrongly — and
+# already resolved. #3478 armed eight cup prefixes and left 15 such rows on
+# production: 12 `KXUECLGAME` + 1 `KXUELGAME` on `baseball_other` events and 3
+# `KXUECLGAME` on `americanfootball_other`, every one of them resolved. A
+# European Conference League tie rendering on a completed baseball game is the
+# user-visible half.
+#
+# The sweep is deliberately narrow on three axes rather than one:
+#   * only prefixes with a known league key (`_SOCCER_CUP_GAME_TICKER_TO_SPORT_KEY`),
+#     so it cannot wander into the rest of the resolved corpus;
+#   * only rows `_is_cross_sport_link` already calls wrong, filtered BEFORE the
+#     loop sees them. This is the load-bearing one. Phase 1.5's body treats a
+#     `completed` event as reason enough to relink, and a resolved market's
+#     event is almost always completed — so handing it the unfiltered resolved
+#     population would put every correct link in the relink path. Only genuine
+#     mismatches are handed over, so "completed" never gets a vote here;
+#   * capped per beat, oldest-first, so it can neither starve the pass it shares
+#     a budget with nor permanently strand a tail (gotcha #41).
+_RESOLVED_CROSS_SPORT_SCAN_LIMIT = 200
+
+
+def _resolved_cross_sport_candidate_query(limit: int = _RESOLVED_CROSS_SPORT_SCAN_LIMIT):
+    """Resolved, linked cup-moneyline rows — the population Phase 1.5 cannot see.
+
+    Returns ``(FuturesMarket, Event, sport_key)``; the sport key rides along from
+    the join so the caller can apply `_is_cross_sport_link` without a per-row
+    lookup (gotcha: a COUNT/SELECT in a loop re-scans).
+    """
+    from app.models.models import FuturesMarket, Event, Sport
+    from app.utils.sport_keys import _SOCCER_CUP_GAME_TICKER_TO_SPORT_KEY
+
+    return (
+        select(FuturesMarket, Event, Sport.key)
+        .join(Event, FuturesMarket.event_id == Event.id)
+        .join(Sport, Event.sport_id == Sport.id)
+        .where(
+            FuturesMarket.source == "kalshi",
+            FuturesMarket.event_id.isnot(None),
+            FuturesMarket.status != "open",
+            # `ilike` per prefix rather than `split_part(...) IN (...)`: the
+            # latter is Postgres-only, and a selector no test can execute on the
+            # suite's engine is a selector nothing guards.
+            or_(*[
+                FuturesMarket.external_id.ilike(f"{prefix}-%")
+                for prefix in sorted(_SOCCER_CUP_GAME_TICKER_TO_SPORT_KEY)
+            ]),
+        )
+        .order_by(FuturesMarket.updated_at.asc())
+        .limit(limit)
+    )
+
+
 def _phase15_priority_order():
     """Finished events first, then events we auto-created, then the rest."""
     from app.models.models import Event
@@ -2613,6 +2756,30 @@ async def _phase15_revalidate(
             _seen_market_ids.add(market.id)
             all_linked_rows.append((market, linked_event))
 
+    # The resolved-row cross-sport sweep. Selected separately because these rows
+    # fail `_phase15_eligible_where` by design, and pre-filtered to confirmed
+    # mismatches so the loop's `completed`-relink arm never sees a correct row.
+    resolved_candidates = (
+        await session.execute(_resolved_cross_sport_candidate_query())
+    ).all()
+    resolved_cross_sport = 0
+    for market, linked_event, event_sport_key in resolved_candidates:
+        if not _is_cross_sport_link(_market_sport_prefix(market), event_sport_key):
+            continue  # a cup ticker on a `soccer_*` event — correct, leave it
+        if market.id in _seen_market_ids:
+            continue
+        _seen_market_ids.add(market.id)
+        all_linked_rows.append((market, linked_event))
+        resolved_cross_sport += 1
+    stats["funnel"]["phase15_resolved_cross_sport_scanned"] = len(resolved_candidates)
+    stats["funnel"]["phase15_resolved_cross_sport_candidates"] = resolved_cross_sport
+    if resolved_cross_sport:
+        logger.info(
+            "Resolved-row cross-sport sweep: %d of %d resolved cup rows are "
+            "linked to the wrong sport and are queued for revalidation",
+            resolved_cross_sport, len(resolved_candidates),
+        )
+
     for market, linked_event in all_linked_rows:
         if _time_remaining() < 60:
             logger.info("Phase 1.5 time budget exhausted after %d/%d markets",
@@ -2708,16 +2875,14 @@ async def _phase15_revalidate(
             # treat it as a mislink even if team names match. This catches
             # cases like baseball "Royals" linked to cricket "Rajasthan Royals".
             sport_mismatch = False
-            market_sport = get_sport_prefix_from_ticker(market.external_id) if market.external_id else None
-            if not market_sport and market.llm_sport_category:
-                market_sport = _SPORT_CATEGORY_TO_KEY_PREFIX.get(market.llm_sport_category)
+            market_sport = _market_sport_prefix(market)
             if market_sport and linked_event.sport_id:
                 from app.models.models import Sport as _Sport
                 event_sport_result = await session.execute(
                     select(_Sport.key).where(_Sport.id == linked_event.sport_id)
                 )
                 event_sport_key = event_sport_result.scalar_one_or_none()
-                if event_sport_key and not event_sport_key.startswith(market_sport):
+                if _is_cross_sport_link(market_sport, event_sport_key):
                     sport_mismatch = True
                     logger.info(
                         "Cross-sport mislinkage detected: %s market '%s' (sport=%s) "
@@ -2744,6 +2909,20 @@ async def _phase15_revalidate(
                 session, matchup, market, now,
                 game_date_override=ticker_game_date,
             )
+
+            # A RESOLVED row's own game is always in the past, and
+            # `_find_matching_event` will only consider an event that is
+            # scheduled/live or started within MAX_PAST_GAME_DELTA (6h) of now.
+            # So for the resolved-cross-sport sweep the live finder can never
+            # see the twin it is supposed to move to: production's rows are July
+            # ties and the sweep runs in September. Without this fallback every
+            # one of them would fall through to the unlink arm below and be
+            # detached from its own game.
+            if not better_match and market.status != "open" and ticker_game_date:
+                better_match = await _find_historical_event(
+                    session, matchup, market, ticker_game_date,
+                    allow_unclassified_bucket=True,
+                )
 
             # #210 Item 1c: Phase 1.5's relink previously bypassed the
             # duplicate-linkage guard, letting a re-validated market land on an
@@ -2838,6 +3017,27 @@ async def _phase15_revalidate(
                     stats["funnel"]["stale_relinked"] += 1
             elif is_auto_created:
                 pass
+            elif (not teams_match or sport_mismatch) and market.status != "open":
+                # NEVER DETACH A RESOLVED ROW. The unlink arm below is a
+                # reasonable last resort for a live market: the link is wrong,
+                # the pass runs again in 15 minutes, and the forward path can
+                # re-link it once the right event appears. None of that is true
+                # here. A resolved market will not be re-offered by the forward
+                # path (the historical backfill selects only UNLINKED rows, and
+                # then only ones it has not already failed), so a detach here is
+                # permanent — and the wrong-sport rows this sweep exists for are
+                # linked to the RIGHT GAME under the wrong sport key, so a
+                # detach trades a mis-filed link for no link at all.
+                #
+                # Leaving it is the conservative outcome and it is visible:
+                # nothing is lost, and the counter says the sweep declined.
+                logger.info(
+                    "Leaving resolved %s '%s' on event %d — cross-sport but no "
+                    "historical twin found; detaching would be worse (reason=%s)",
+                    market.source, market.name, linked_event.id, reason,
+                )
+                stats["funnel"].setdefault("resolved_cross_sport_left_alone", 0)
+                stats["funnel"]["resolved_cross_sport_left_alone"] += 1
             elif not teams_match or sport_mismatch:
                 logger.info(
                     "Unlinking %s '%s' from mismatched event %d — no better match (reason=%s)",
@@ -4068,7 +4268,8 @@ async def _record_no_match_reason(
 
 
 def _score_candidates(
-    candidates, matchup, market, now, game_date_override=None, *, receipt=None
+    candidates, matchup, market, now, game_date_override=None, *, receipt=None,
+    allow_unclassified_bucket: bool = False,
 ):
     """Score candidate events and return the best match (or None).
 
@@ -4121,10 +4322,7 @@ def _score_candidates(
     # Compute sport prefix once (depends only on market, not on candidates).
     # Ticker-derived prefix (Kalshi) is most reliable. Falls back to
     # llm_sport_category (Polymarket and Kalshi without parseable ticker).
-    ticker_sport_prefix = get_sport_prefix_from_ticker(market.external_id) if market.external_id else None
-    sport_prefix = ticker_sport_prefix
-    if not sport_prefix and market.llm_sport_category:
-        sport_prefix = _SPORT_CATEGORY_TO_KEY_PREFIX.get(market.llm_sport_category)
+    sport_prefix = _market_sport_prefix(market)
 
     best_match = None
     best_score = -1
@@ -4220,8 +4418,22 @@ def _score_candidates(
         # Both ticker and llm_sport_category are hard rejects — city-name
         # collisions (Boston/New York) and generic team names (Royals/Indians)
         # cause cross-sport mismatches if we only use soft scoring.
+        #
+        # `_is_cross_sport_link` rather than a bare `startswith`, and it is the
+        # SAME call Phase 1.5's mislink arm makes, on purpose — a scorer that
+        # refuses an event the revalidator would happily keep is a loop: the
+        # forward path declines to link, so the row stays where it is, and the
+        # counters show a matcher that "found no event" for a game that exists.
+        # #3478 built exactly that loop. Arming the cup prefixes made
+        # `sport_prefix` a full key (`soccer_uefa_europa_conference_league`), so
+        # every qualifying-round fixture in the `soccer_other` bucket — which is
+        # where #3605 says they all live — was hard-rejected here as "wrong
+        # sport" while being a perfect team-and-date match.
         if sport_prefix and event.sport and event.sport.key:
-            if not event.sport.key.startswith(sport_prefix):
+            if _is_cross_sport_link(
+                sport_prefix, event.sport.key,
+                allow_unclassified_bucket=allow_unclassified_bucket,
+            ):
                 _trace(event, _receipts.REJECT_WRONG_SPORT, score=score)
                 continue  # Wrong sport — skip this candidate
             score += 5  # Same sport confirmed
@@ -5700,12 +5912,19 @@ async def _mark_backfill_failed(session, market):
     )
 
 
-async def _find_historical_event(session, matchup, market, ref_time):
+async def _find_historical_event(
+    session, matchup, market, ref_time, *, allow_unclassified_bucket: bool = False,
+):
     """Like _find_matching_event but without status/past_cutoff filters.
 
     Args:
         ref_time: For Kalshi = ticker-extracted game date (precise).
                   For Polymarket = commence_time (approximate, wider window).
+        allow_unclassified_bucket: accept an event filed in our own sport's
+            `_other` bucket. Off for the backfill, which is a forward path and
+            must stay as strict as the golden set expects; on for Phase 1.5's
+            resolved-row relink, which is choosing between moving a link and
+            destroying it. See `_is_cross_sport_link`.
     """
     from app.models.models import Event
 
@@ -5739,7 +5958,10 @@ async def _find_historical_event(session, matchup, market, ref_time):
     )
     candidates = event_result.scalars().unique().all()
 
-    result = _score_candidates(candidates, matchup, market, ref_time, ref_time)
+    result = _score_candidates(
+        candidates, matchup, market, ref_time, ref_time,
+        allow_unclassified_bucket=allow_unclassified_bucket,
+    )
     if result and result.get("score", 0) < 15:
         logger.debug(
             "Backfill rejecting low-confidence match (score=%d) for %s",

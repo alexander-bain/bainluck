@@ -429,6 +429,152 @@ _SOCCER_CUP_PROP_TICKER_TO_SPORT_KEY: dict[str, str] = {
 # RED. Whoever splits them will see a regression that is not one.
 
 
+# =============================================================================
+# 7-pre-b. THE MONEYLINE LEGS OF THE SAME CUP TIES — #3478
+#
+# #3446 shipped the 73 PROP prefixes above and deliberately PINNED these 15
+# `…GAME` (moneyline) series unmapped, because the obvious completion —
+# `soccer_other` for all 15 — regressed 17 golden-set pairs (CI 34019815553).
+# This is the completion done by measurement instead, and it splits 15 into 8,
+# 6 and 1 because the three halves need different treatment.
+#
+# WHY A MONEYLINE LEG CANNOT REUSE THE PROP ANSWER. The props are
+# CLASSIFICATION-ONLY: they answer `get_sport_key_from_ticker` and are then
+# subtracted from `KALSHI_GAME_TICKER_PREFIXES`, so they never become the
+# matcher's hard sport key and the broad `soccer` value costs nothing. A
+# `…GAME` prefix that is mapped is ARMED — its value becomes the hard sport
+# gate in `_score_candidates`, where it is doing TWO jobs at once, in opposite
+# directions:
+#
+#   * it REJECTS every candidate whose key fails `startswith` (line ~4224), and
+#   * its mere PRESENCE lifts the no-prefix guard: an unmapped market needs
+#     score >= 21 to link at all, a mapped one does not, and it gets +5.
+#
+# So `soccer_other` failed twice over. It rejected the right event for the
+# competitions that DO have a precise key, and — being itself a real key with
+# thousands of events — it admitted a crowd of wrong ones while removing the
+# threshold that had been refusing them. Bare `soccer` fixes only the first
+# half: measured against the golden set on 2026-09-06 it flips 10 adjudicated
+# negatives into links, 9 of them `KXSERIECCUPGAME` ties landing on the same two
+# clubs' Serie C LEAGUE fixture. Only the competition's own key does both jobs.
+#
+# MEASURED AGAINST PRODUCTION 2026-09-06 (1,066 rows across the 15 series):
+# only 39 are linked, and 419 carry a sport tag that is not soccer at all —
+# `KXUECLGAME` alone has 11 markets attached to `baseball_other` EVENTS and 3
+# to `americanfootball_other`. That is not a near miss, it is a Europa
+# Conference League tie living on a baseball game, and it is caused here: with
+# no ticker mapping the matcher falls back to the row's `llm_sport_category`
+# (`_score_candidates`, line ~4126), so a mis-tagged row is scoped to the wrong
+# sport and links inside it. The ticker is read LIVE on every matching pass, so
+# mapping it repairs the rows already in the table without any re-ingest — and
+# the cross-sport detector (`prediction_market_matching.py` line ~2720) then
+# sees those 14 links as mislinkage and takes them off.
+#
+# THE EIGHT BELOW ARE ARMED. Each key was confirmed to exist BY NAME in the
+# production `sports` table with real events behind it (EFL Cup 87, FA Cup 50,
+# DFB-Pokal 56, Coppa Italia 29, Europa League 65, Europa Conference 63, Copa
+# Libertadores 155, Copa Sudamericana 161) — a key that is merely plausible
+# would silently reject its own competition, which is the `soccer_other`
+# failure again wearing a better name.
+#
+# THE COST THIS ACCEPTS, because it is real and it is not zero. Twenty existing
+# links fail the new `startswith` gate. FOURTEEN are the bug (soccer moneylines
+# on `baseball_other` / `americanfootball_other` events) and detaching them is
+# the point. SIX are correct links that break, all the same shape: we file a
+# cup's QUALIFYING rounds under `soccer_other` and only its main draw under the
+# competition key. `soccer_uefa_europa_conference_league` holds 0 events before
+# Oct 15 while every UECL market we hold is a July qualifier; `…europa_league`
+# starts Sep 16; Ossett United v Pontefract is an FA Cup qualifying tie filed
+# `soccer_other`. All six are resolved past ties, so no page a reader can open
+# changes today, and the forward case is near and large — the UEL league phase
+# is 2026-09-16 and UECL's is 2026-10-15, with 18 events each already ingested,
+# and an unmapped ticker sends those back into the `llm_sport_category` fallback
+# that produced the 14 baseball attachments. Bare `soccer` was measured as the
+# alternative that keeps all six: 650/709 on the golden set against 652 for
+# precise keys, and it starts a new wrong link. So it is worse, not kinder.
+# The real repair is on the event side — file cup qualifying rounds under their
+# competition key — and is the follow-up on #3478, not a reason to hold this.
+#
+# Guards: `tests/test_soccer_cup_game_legs_reach_their_cup_3478.py`, which pins
+# the cost as numbers so the follow-up has a population and nobody re-derives it.
+# =============================================================================
+
+_SOCCER_CUP_GAME_TICKER_TO_SPORT_KEY: dict[str, str] = {
+    "kxeflcupgame": "soccer_england_efl_cup",              # EFL (Carabao) Cup
+    "kxfacupgame": "soccer_fa_cup",                        # FA Cup
+    "kxdfbpokalgame": "soccer_germany_dfb_pokal",          # DFB-Pokal
+    "kxcoppaitaliagame": "soccer_italy_coppa_italia",      # Coppa Italia
+    "kxuelgame": "soccer_uefa_europa_league",              # UEFA Europa League
+    "kxueclgame": "soccer_uefa_europa_conference_league",  # UEFA Conference L.
+    "kxconmebollibgame": "soccer_conmebol_copa_libertadores",
+    "kxconmebolsudgame": "soccer_conmebol_copa_sudamericana",
+    # HELD: "kxleaguescupgame" -> "soccer_concacaf_leagues_cup". It is the ninth
+    # and it is correct; it is not here because the golden set has to move first
+    # and the golden set is lane1b's under D39. Mapping it flips ONE pair,
+    # 59173468 `KXLEAGUESCUPGAME-26AUG26TOLATX` "Toluca vs Austin", from
+    # `None` to event 15291291 — and 15291291 is the right answer:
+    #
+    #   * Kalshi's own `rules_primary` for the tie reads "the Toluca vs Austin
+    #     professional LEAGUES CUP soccer game originally scheduled for Aug 26,
+    #     2026", so the competition is not in question (venue read 2026-09-06,
+    #     `/markets?event_ticker=…`, browser UA — standing notice 26);
+    #   * event 15291291 is `soccer_concacaf_leagues_cup` "Toluca v Austin FC"
+    #     at 2026-08-27 00:30Z, the same two clubs in the same competition, and
+    #     the contract settled at 2026-08-27 03:05:27Z — ~2.5h after that
+    #     kickoff, which is what a 90-minute match settles like. The ticker's
+    #     `26AUG26` and the event's `Aug 27 00:30Z` are one evening either side
+    #     of the UTC date line, not a two-day gap.
+    #
+    # The adjudication that says `None` was taken on 2026-09-02 with this exact
+    # note: `non-sport-category;cup-ticker`, on a row whose stored
+    # `llm_sport_category` was `legal` — i.e. it was recorded WHILE the ticker
+    # was unmapped, which is the state this change ends. That is verbatim the
+    # reasoning lane1b/059 used to amend the sibling pair 59700871
+    # (`KXLEAGUESCUPSPREAD-26SEP02TOLLEO`, `null -> 15293431`) — same clubs, same
+    # competition, weaker evidence than this one, since that pair really did
+    # carry a two-day gap and this one does not.
+    #
+    # BOTH HALVES MUST LAND IN ONE COMMIT, for the reason stated for the prop
+    # prefixes above: with the prefix alone the fixture expects `None` and gets
+    # 15291291, with the amendment alone it expects 15291291 and gets `None`.
+    # `test_the_held_leagues_cup_prefix_lands_with_its_amendment_or_not_at_all`
+    # is that coupling as a test — it forbids the HALF, not the mapping. Handed
+    # to lane1b with the venue read; released the way the prop prefixes were
+    # released, not by editing their fixture.
+}
+
+# =============================================================================
+# THE SIX WITH NO KEY TO NAME — left unmapped, and that is the finding
+#
+# These competitions have NO row in the `sports` table (verified 2026-09-06:
+# there is no Greek Cup, no Taça de Portugal, no Coppa Italia Serie C, no Copa
+# do Brasil, no Israeli cup and no ASEAN Championship key; `soccer_greece_super_
+# league` is the Greek LEAGUE, a different competition). Where their markets do
+# link today the event is `soccer_other` — 7 Greek Cup rows and 2 Copa do Brasil
+# rows — so `soccer_other` is not obviously wrong for THEM.
+#
+# It is still refused, and so is the classification-only `soccer` that the props
+# beside them use. Both were tried and measured: arming any value here lifts the
+# >=21 no-prefix threshold that is the only thing currently keeping 12
+# adjudicated `KXSERIECCUPGAME` negatives off the wrong Serie C league fixture,
+# and 9 of the 12 flip. A Coppa Italia Serie C tie and a Serie C league match
+# are the same two clubs in different competitions, which is precisely the pair
+# a lifted threshold cannot tell apart. The classification-only split does NOT
+# shield them either — that split gates entry to the game PASS, while the golden
+# replay reaches `_score_candidates` directly, so the prefix still decides.
+#
+# The 34 rows across these six that are mis-tagged today (a Taça de Portugal tie
+# filed under `health`) are real and they are not worth 9 wrong links.
+#
+# Arming them is a real ship and it is NOT this one: it needs the six league
+# keys to exist first, and then the events behind them. Filed as the follow-up
+# on #3478 rather than guessed at here, because a wrong precise key is worse
+# than an honest broad one and an armed broad key is worse than both.
+#
+#   kxgrecupgame · kxtacaportgame · kxserieccupgame
+#   kxcopadobrasilgame · kxisrplcupgame · kxaseangame
+# =============================================================================
+
 
 # =============================================================================
 # 7. KALSHI_TICKER_TO_SPORT_KEY — Kalshi ticker prefix → Odds API sport key
@@ -819,6 +965,12 @@ KALSHI_TICKER_TO_SPORT_KEY: dict[str, str] = {
     # they classify as soccer; subtracted from KALSHI_GAME_TICKER_PREFIXES below
     # so they never become the matcher's hard sport key. See that dict's header.
     **_SOCCER_CUP_PROP_TICKER_TO_SPORT_KEY,
+    # ── #3478: the MONEYLINE legs of those same cup ties. Unlike the props
+    # above these are NOT subtracted from KALSHI_GAME_TICKER_PREFIXES — being
+    # armed for the matcher is the whole ship. The six competitions with no
+    # league key, and the held Leagues Cup prefix, are absent by measurement;
+    # see the dict's header.
+    **_SOCCER_CUP_GAME_TICKER_TO_SPORT_KEY,
     # Asian basketball
     "kxcbagame": "basketball_other",          # Chinese CBA
     "kxjbleaguegame": "basketball_other",     # Japanese B.League

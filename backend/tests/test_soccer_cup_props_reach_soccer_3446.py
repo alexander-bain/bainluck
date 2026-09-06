@@ -159,22 +159,29 @@ class TestTheMappingStaysNarrow:
 #
 # This list is here so the omission is a decision on the record, not a gap, and so
 # the test below fails loudly if someone adds one without doing that work.
+#
+# ── UPDATED DELIBERATELY BY #3478, which is the work this comment filed ───────
+# Eight of the nine now carry their real league key and are ARMED for the
+# matcher; the ratchet moved +1/-0 (`test_matching_golden_set_2706.py`, market
+# 59173127 Pisa vs Fiorentina stops linking to a same-club league distractor).
+# The full statement of what is mapped, what is not, and why each is in the
+# bucket it is in lives in `tests/test_soccer_cup_game_legs_reach_their_cup_3478.py`.
+# What stays on THIS list is the residue that is still genuinely unmapped:
+#
+#   * the SIX with no league key in the `sports` table at all, and
+#   * KXLEAGUESCUPGAME, held only because releasing it needs a golden-set
+#     amendment and the golden set is lane1b's under D39.
+#
+# The tripwire below is unchanged in meaning — it still says "no generic soccer
+# key for an unmapped `…GAME` leg" — it just now guards the seven that are left.
 GAME_LEGS_DELIBERATELY_UNMAPPED = [
     "KXASEANGAME",
-    "KXCONMEBOLLIBGAME",
-    "KXCONMEBOLSUDGAME",
     "KXCOPADOBRASILGAME",
-    "KXCOPPAITALIAGAME",
-    "KXDFBPOKALGAME",
-    "KXEFLCUPGAME",
-    "KXFACUPGAME",
     "KXGRECUPGAME",
     "KXISRPLCUPGAME",
     "KXLEAGUESCUPGAME",
     "KXSERIECCUPGAME",
     "KXTACAPORTGAME",
-    "KXUECLGAME",
-    "KXUELGAME",
 ]
 
 
@@ -185,6 +192,9 @@ class TestTheGameLegsStayUnmapped:
     future change maps one, it must map it to the competition's real league key and
     re-run `tests/test_matching_golden_set_2706.py`, at which point this test should
     be updated deliberately rather than deleted in passing.
+
+    #3478 did exactly that for eight prefixes. The seven that remain are the ones
+    for which "its real league key" does not yet exist as an answer.
     """
 
     def test_game_legs_are_not_mapped_to_a_generic_soccer_key(self):
