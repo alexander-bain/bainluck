@@ -222,3 +222,95 @@ which also shrinks the live-score concern I raised.
 - Nothing merged. No production write. `master` untouched by this lane.
 - **Owed after deploy:** head-term `x-search-cache` hit rate and `last_result_summary.expired`
   (8/8 on production today) — named in the cert rather than claimed.
+
+---
+
+# PART THREE — four presentations, four correct BLOCKs, and where presentation five starts
+
+The residency ship did **not** land. It is on `program/latency-248-…` at `5e5b3f70`, PR #3534 OPEN
+and MERGEABLE, CERT-2089 BLOCK. Stopping here is a judgement, not an abandonment — reasoning in §16.
+
+## 13. The chain, and what each grade found
+
+Every BLOCK was correct, and each found a term the previous one had no reason to look at. Recording
+them together because the *pattern* is the lesson, not any single defect.
+
+| cert | sha | what it found | verified by me before accepting |
+|---|---|---|---|
+| **2068** | `f81fdfe4` | removing the DELETE does not keep the entry alive through a rebuild | reproduced 20.5 s |
+| **2084** | `cc2e0694` | invariant used `TTL − period` where the necessary form is **`refresh_ahead − period`**; an organic write at the threshold edge is skipped, then rebuilt with 90 s against a 100 s budget | reproduced **10.0 s** |
+| **2086** | `31598471` | the head is **re-ranked every pass** and dispatched through a **shared cursor**, so one query is written first in one pass and last in the next | reproduced **[181, 200) = 19 s** |
+| **2089** | `5e5b3f70` | the route's 20 s deadline is a **cooperative per-stage** timeout, not a hard wall; `wait_for` wraps only the route call at 25 s, and the two **sync** `_cache_ttl_seconds` Redis reads occupy the cursor *outside* it | confirmed at `search_head_warmer.py:858` and `:734` |
+
+**The through-line: every one of my four models was a bound taken from something that was not the
+thing that binds.** The floor instead of the period. The TTL instead of the threshold. A stable
+position instead of a re-ranked one. A cooperative stage deadline instead of an enforced wall. Each
+time the number was *available and plausible* and each time it was not the constraint.
+
+## 14. What IS built and correct on that branch
+
+Not wasted, and presentation five should build on it rather than restart:
+
+- `effective_pass_period_s()` — `beat × ceil(floor/beat)` = 60 s, not the 45 s floor.
+- `max_same_query_write_interval_s()` — `quantize(max(floor, budget)) + budget`, the run lock
+  bounding the pass gap.
+- `residency_invariant()` — four clauses (CAUGHT · SURVIVES · BOUNDED · INTERVAL), each with a named
+  failure string, each independently mutation-killed.
+- Four regressions, each red-then-green with the graded interval reproduced to the tenth, plus a
+  reachable-offset phase sweep by a closed form that is asserted to convict its own blocked value.
+- **13/13 mutants killed**, control green.
+
+The only wrong number is the **budget**, and clause (4) already consumes it correctly.
+
+## 15. Presentation five, specified
+
+CERT-2089's required repair: *"derive from and enforce a hard whole-worker-unit bound, or change
+width/concurrency/cadence so that real bound fits D81."*
+
+The constraint is `quantize(max(45, B)) + B < 180` with `B = ceil(head/concurrency) × U`, where `U`
+is the **enforced** whole-worker-unit bound (TTL read + route call + TTL re-read). Feasible set:
+
+| option | B | interval | margin | cost |
+|---|---|---|---|---|
+| current (head 8, conc 2, U=25 + unbounded sync reads) | ≥100 | ≥200 | **−20** | the BLOCK |
+| **(a) head 8, conc 2, hard U=20** | 80 | 160 | +20 | tightest timeout; load unchanged |
+| **(b) head 8, conc 4, U=25** | 50 | 110 | **+70** | doubles concurrent DB sessions on the heavy endpoint |
+| (c) head 6, conc 2, U=25 | 75 | 155 | +25 | warms 2 fewer terms — a product regression |
+| (d) head 8, conc 2, hard U=15 | 60 | 120 | +60 | tighter still |
+
+**Recommendation: (a), and it needs one open question answered honestly rather than modelled away.**
+A hard unit bound means a rebuild can be *abandoned*, and an abandoned rebuild writes nothing — so
+the write interval for that key becomes two pass gaps and the invariant's own premise ("every pass
+writes every key") is not guaranteed by any choice of constants. Presentation five must either bound
+that case too or state it as a reported failure mode (`timeouts`) distinct from a residency defect,
+and say which in the cert's first paragraph. Modelling it silently is how presentation five becomes
+BLOCK five.
+
+Two mechanical items the same repair should carry:
+
+1. Wrap the **whole** unit, not the route call — the sync TTL reads at `:734` are inside the cursor
+   and outside the timeout. They also block the event loop (gotcha #39's shape) while holding a
+   cursor slot.
+2. `effective_per_query_bound_s()`'s `min` against the route deadline is **wrong as justification**
+   and should go or be re-framed: a cooperative stage deadline is not a wall. Keep the function only
+   if it takes the min of *enforced* bounds.
+
+## 16. Why I stopped at four rather than pushing a fifth
+
+Four consecutive presentations, each blocked by a term I had not modelled, at the end of a long
+session. The remaining choice is not a bug fix — it is a **load/product trade-off** (tighten the
+per-query wall, double concurrency on the heaviest endpoint, or warm fewer terms), and option (a)
+carries an unresolved question about abandoned rebuilds. A fifth attempt built now would be a guess
+dressed as a proof, and the cert bus has correctly refused four of those already.
+
+Nothing is stranded: the branch is pushed, the PR is open and mergeable, the invariant and all four
+regressions are committed, and the feasible set above is arithmetic rather than opinion.
+
+## 17. Session totals
+
+- ✅ **#3546's post-deploy check PAID** — the one thing the directive ordered first. Delivery
+  `undelivered_fraction` **1.0 → 0.143**, three head terms **miss → hit**.
+- ✅ **#3539 put to Alex**, ruled **D81 = A**, and the note corrected twice when the build refuted it.
+- ✅ **#1916** extended to `/search` with measured evidence.
+- ⛔ **The residency ship is not landed.** CERT-2089 BLOCK, specified above for the next session.
+- Issue comments: #3364, #3539, #1916. Alex: one note + one correction. Certs staged: 2084, 2086, 2089.
