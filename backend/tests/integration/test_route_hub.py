@@ -59,7 +59,11 @@ def _mock_market(
         market_tier=market_tier,
         status=status,
         event_id=None,
-        outcomes=outcomes or [
+        # `is not None`, NOT `or`: with `or`, an explicitly EMPTY outcome list —
+        # the whole subject of the unpriced-card guards — was silently swapped
+        # for the two priced defaults, so the fixture could not build the row it
+        # was asked for and the guard passed on a market that was never blank.
+        outcomes=outcomes if outcomes is not None else [
             _mock_outcome(outcome_id=market_id * 10, name="Jones", probability=0.6),
             _mock_outcome(outcome_id=market_id * 10 + 1, name="Aspinall", probability=0.4, rank=2),
         ],
@@ -993,6 +997,92 @@ class TestHubLinkedMatchesRail:
             "the live match must lead even though it started later"
         )
 
+    async def test_one_event_gets_one_card(self, client):
+        """Two venues, one match, one card.
+
+        Kalshi and Polymarket spell the same match differently, so the
+        name-normalising dedup cannot pair them — but both rows carry the SAME
+        `event_id`, an identity the matcher already established. Measured on
+        production 2026-09-05 this printed Zverev at 97% and, one card down, at
+        96%: two numbers for one question.
+        """
+        from app.routes.league_futures import build_linked_matches
+
+        kalshi = _linked_market(market_id=1, name="Zverev vs Tabilo")
+        poly = _linked_market(
+            market_id=2, name="US Open ATP: Alexander Zverev vs Alejandro Tabilo"
+        )
+        poly.event_id = kalshi.event_id  # what the matcher decided
+        poly.source = "polymarket"
+
+        rows = await _linked_rows_for(build_linked_matches, [kalshi, poly])
+        assert len(rows) == 1, (
+            f"one event produced {len(rows)} cards: {[r['name'] for r in rows]}"
+        )
+
+    async def test_two_events_still_get_two_cards(self, client):
+        """The paired positive, and the boundary this fix must not cross.
+
+        Two markets linked to two DIFFERENT events are a twin — a matching
+        defect (#2693), not this rail's to hide. If the dedup ever collapses
+        these it is silently deleting a real match whenever the matcher is
+        right and the names merely look alike.
+        """
+        from app.routes.league_futures import build_linked_matches
+
+        a = _linked_market(market_id=1, name="Zverev vs Tabilo")
+        b = _linked_market(market_id=2, name="Mensik vs Tien")
+        assert a.event_id != b.event_id
+
+        rows = await _linked_rows_for(build_linked_matches, [a, b])
+        assert len(rows) == 2
+
+    async def test_the_card_that_names_a_winner_beats_the_bigger_one(self, client):
+        """WHICH of the two survives, and the reason the old rule was wrong.
+
+        The dedup already in place keeps the market with the most outcomes. A
+        Polymarket sub-market bundle ALWAYS has more (17 against 2 for
+        Mensik–Tien), so size alone reliably picks the card that cannot name a
+        player and discards the one that can. Mutate `_match_card_rank` to drop
+        the bundle term and this fails.
+        """
+        from app.routes.league_futures import build_linked_matches
+
+        head_to_head = _linked_market(
+            market_id=1,
+            name="Mensik vs Tien",
+            outcomes=[
+                _mock_outcome(outcome_id=10, name="Jakub Mensik", probability=0.6),
+                _mock_outcome(
+                    outcome_id=11, name="Learner Tien", probability=0.4, rank=2
+                ),
+            ],
+        )
+        bundle_name = "US Open ATP: Jakub Mensik vs Learner Tien"
+        bundle = _linked_market(
+            market_id=2,
+            name=bundle_name,
+            outcomes=[
+                _mock_outcome(
+                    outcome_id=20 + i,
+                    name=f"{bundle_name} {suffix}",
+                    probability=0.99,
+                    rank=i + 1,
+                )
+                for i, suffix in enumerate(
+                    ["Set 1 Winner", "Set 2 Winner", "Total Sets: O/U 3.5",
+                     "Set 1 O/U 8.5", "Set 3 O/U 9.5"]
+                )
+            ],
+        )
+        bundle.event_id = head_to_head.event_id
+        bundle.source = "polymarket"
+
+        rows = await _linked_rows_for(build_linked_matches, [head_to_head, bundle])
+        assert [r["name"] for r in rows] == ["Mensik vs Tien"], (
+            "the rail kept the sub-market bundle over the head-to-head"
+        )
+
     async def test_the_pool_read_does_not_pay_for_an_event_id_predicate(self, client):
         """Spelling `event_id IS NOT NULL` in SQL cost 1.23s on production
         (2026-09-05, EXPLAIN ANALYZE): the planner ANDs the whole 588,398-row
@@ -1015,6 +1105,103 @@ class TestHubLinkedMatchesRail:
         )
 
 
+# ============================================================================
+# UX-P181 (#2167) — the hub stops rendering the cards it counts as dropped
+# ============================================================================
+
+
+@pytest.mark.asyncio
+class TestHubDropsUnpricedCards:
+    """A card with no priced outcome is a match name and nothing else.
+
+    Measured on production 2026-09-05: `/api/hub/tennis` served
+    `matches {"total": 126, "shown": 126, "dropped": 47}` and drew all 126, ten
+    blank ones consecutively. Boxing drew 10 blanks of 12, MMA 28 of 42.
+    """
+
+    async def test_a_card_with_no_priced_outcome_is_not_rendered(self, client):
+        from app.routes.hub import HUB_CONFIGS, build_hub
+
+        priced = _linked_market(market_id=1, name="Alcaraz vs Sinner")
+        blank = _linked_market(market_id=2, name="Dev vs O'Connell", outcomes=[])
+
+        db = _sql_dispatching_db(
+            unlinked=[],
+            linked=[priced, blank],
+            event_time=datetime.now(timezone.utc) + timedelta(hours=2),
+        )
+        body = await build_hub(HUB_CONFIGS["tennis"], db)
+        names = {m["name"] for m in body["sections"].get("matches", [])}
+
+        assert "Dev vs O'Connell" not in names, "a card with no number was drawn"
+        # The paired positive: the guard must not empty the rail outright, which
+        # is how a "nothing renders" bug passes a "the bad row is gone" test.
+        assert "Alcaraz vs Sinner" in names
+
+    async def test_shown_plus_dropped_reconciles_with_total(self, client):
+        """The contract the payload was breaking.
+
+        `shown` was hard-coded to `total` while `dropped` counted the unpriced
+        rows, so the three numbers could not all be true at once. Whatever the
+        rule is, the arithmetic has to close.
+        """
+        from app.routes.hub import HUB_CONFIGS, build_hub
+
+        db = _sql_dispatching_db(
+            unlinked=[],
+            linked=[
+                _linked_market(market_id=1, name="Alcaraz vs Sinner"),
+                _linked_market(market_id=2, name="Dev vs O'Connell", outcomes=[]),
+                _linked_market(market_id=3, name="Kumasaka vs Borisiouk", outcomes=[]),
+            ],
+            event_time=datetime.now(timezone.utc) + timedelta(hours=2),
+        )
+        body = await build_hub(HUB_CONFIGS["tennis"], db)
+        counts = body["section_counts"]["matches"]
+
+        assert counts["dropped"] == 2, counts
+        assert counts["shown"] + counts["dropped"] == counts["total"], counts
+        assert counts["shown"] == len(body["sections"]["matches"]), counts
+
+    async def test_the_pool_size_is_still_published(self, client):
+        """Dropping must stay DETECTION, not concealment (ruling 025 clause 3).
+
+        `total` keeps counting the whole pool, so "this sport is thin" and "this
+        sport's markets are unpriced" remain different, visible states. A fix
+        that quietly shrank `total` to match would erase the 47.
+        """
+        from app.routes.hub import HUB_CONFIGS, build_hub
+
+        db = _sql_dispatching_db(
+            unlinked=[],
+            linked=[
+                _linked_market(market_id=1, name="Alcaraz vs Sinner"),
+                _linked_market(market_id=2, name="Dev vs O'Connell", outcomes=[]),
+            ],
+            event_time=datetime.now(timezone.utc) + timedelta(hours=2),
+        )
+        body = await build_hub(HUB_CONFIGS["tennis"], db)
+        assert body["section_counts"]["matches"]["total"] == 2
+
+    async def test_a_settled_card_is_not_dropped_as_unpriced(self, client):
+        """"Settled means settled" — a finished market has no live price and must
+        still show its result. If the drop tested only for a number, every
+        settled card on every hub would vanish with the blanks.
+        """
+        from app.utils.entity_page_tiers import is_unpriced_card
+
+        now = datetime.now(timezone.utc)
+        settled = {
+            "id": 1,
+            "name": "US Open 2026 Winner",
+            "status": "resolved",
+            "top_outcomes": [{"name": "Alcaraz", "probability": None}],
+        }
+        assert is_unpriced_card(settled, now=now) is False
+        # …while the same row, unsettled, is exactly what we drop.
+        assert is_unpriced_card({**settled, "status": "open"}, now=now) is True
+
+
 def _get_db_dep():
     from app.services.database import get_db
 
@@ -1026,6 +1213,35 @@ def _yield(db):
         yield db
 
     return _gen()
+
+
+async def _linked_rows_for(build_linked_matches, markets):
+    """Drive `build_linked_matches` over markets that carry their OWN event ids.
+
+    `_sql_dispatching_db` derives one event per market, which is exactly the
+    case the per-event dedup is about and so cannot be used to test it. Here the
+    events read answers from whatever `event_id` each fixture actually holds —
+    two markets sharing one id resolve to one event row, as they do in the
+    database.
+    """
+    from unittest.mock import AsyncMock
+
+    now = datetime.now(timezone.utc)
+    db = AsyncMock()
+
+    async def _execute(stmt, *a, **kw):
+        sql = str(stmt)
+        if "FROM events" in sql and "futures_markets" not in sql:
+            return _row_result(
+                [(eid, now + timedelta(hours=2), "scheduled")
+                 for eid in {m.event_id for m in markets}]
+            )
+        if "futures_markets" in sql:
+            return _scalars_result(list(markets))
+        return _scalars_result([])
+
+    db.execute = _execute
+    return await build_linked_matches("tennis_atp", db, now=now)
 
 
 async def _linked_rows(build_linked_matches, markets):
