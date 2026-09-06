@@ -12,12 +12,21 @@ still LIVE — because this tool sits on every lane's critical path and must
 never wedge the bus for a legitimate re-stage.
 """
 
+import os
 import subprocess
+import threading
 from pathlib import Path
 
 import pytest
 
 SCRIPT = Path(__file__).resolve().parents[2] / "tools" / "stage-cert.sh"
+
+# Enough blocks that the id scan and the duplicate scan take real time, which is
+# what opens the window two invocations race through. With a two-block queue the
+# critical section is short enough that the pre-lock script looks correct most
+# runs; the negative control below is what proves this width is sufficient.
+RACE_QUEUE_BLOCKS = 400
+RACE_TRIALS = 8
 
 STAGED_SHA = "1ff738bce62df2b9eef6f685061f0235a1ffbd81"
 DONE_SHA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -125,6 +134,121 @@ class TestDoesNotWedgeTheBus:
         assert "## MY PRESENTATION\nline two\n" in q.read_text()
 
 
+def _race_queue(tmp_path, name="CERT-QUEUE.md"):
+    """A queue wide enough to have a real critical section."""
+    q = tmp_path / name
+    log = tmp_path / "CODEX-CERT-LOG.md"
+    q.write_text(
+        "# CERT QUEUE\n"
+        + "".join(_block(200 + i, "done", f"{i:040x}") for i in range(RACE_QUEUE_BLOCKS))
+    )
+    log.write_text("# LEDGER\n")
+    return q, log
+
+
+def _run_two_at_once(script, q, log, sha, workdir):
+    """Two invocations that enter the critical section together.
+
+    Threads alone are not enough: `subprocess` spawn jitter is larger than the
+    section we are trying to overlap, so each side is started first and made to
+    spin on a file that appears only once both are already hot.
+    """
+    go = workdir / "go"
+    runner = workdir / "runner.sh"
+    runner.write_text(
+        f'while [ ! -f "{go}" ]; do :; done\n'
+        f'exec bash "{script}" SUBJ lane1b lane1b/br "{sha}" '
+        f'https://example.invalid/pr "#1"\n'
+    )
+    env = {
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        "HOME": str(workdir),
+        "CERT_QUEUE": str(q),
+        "CERT_LOG": str(log),
+        # Long enough that the loser waits for the winner rather than timing out.
+        "STAGE_CERT_LOCK_WAIT": "20",
+    }
+    results = {}
+
+    def go_run(slot):
+        results[slot] = subprocess.run(
+            ["bash", str(runner)], input="body\n",
+            capture_output=True, text=True, env=env,
+        )
+
+    threads = [threading.Thread(target=go_run, args=(i,)) for i in (0, 1)]
+    for t in threads:
+        t.start()
+    # Both are spinning by now; release them into the section together.
+    go.write_text("")
+    for t in threads:
+        t.join(timeout=60)
+    return [results[0], results[1]]
+
+
+def _tally(q, sha):
+    text = q.read_text()
+    sha_rows = sum(1 for ln in text.splitlines() if ln.strip() == f"sha: {sha}")
+    ids = [ln.split()[1] for ln in text.splitlines() if ln.startswith("# CERT-")]
+    return sha_rows, ids
+
+
+class TestTheLockIsReal:
+    """The duplicate-sha guard cannot see a block that has not been written yet.
+
+    `flock 9 2>/dev/null || true` reads as a lock and is not one on a host with
+    no `flock` — which is this one — so the id scan, the duplicate check and the
+    append all ran unlocked and two invocations could interleave straight
+    through the guard.
+    """
+
+    def test_two_synchronised_same_sha_invocations_produce_one_block(self, tmp_path):
+        for trial in range(RACE_TRIALS):
+            work = tmp_path / f"t{trial}"
+            work.mkdir()
+            q, log = _race_queue(work)
+            before_ids = _tally(q, FRESH_SHA)[1]
+
+            rs = _run_two_at_once(SCRIPT, q, log, FRESH_SHA, work)
+            codes = sorted(r.returncode for r in rs)
+            sha_rows, ids = _tally(q, FRESH_SHA)
+            new_ids = [i for i in ids if i not in before_ids]
+
+            assert codes == [0, 2], (
+                f"trial {trial}: expected one success and one refusal, got {codes}\n"
+                + "\n".join(r.stderr for r in rs)
+            )
+            assert sha_rows == 1, f"trial {trial}: {sha_rows} blocks for one sha"
+            assert len(new_ids) == 1, f"trial {trial}: ids appended {new_ids}"
+            assert len(set(new_ids)) == len(new_ids), "the same id was used twice"
+
+    def test_a_held_lock_fails_closed_without_mutating(self, tmp_path):
+        """The property that matters when the lock cannot be taken: refuse, and
+        write nothing. A tool that proceeds on a failed acquisition is the
+        unlocked tool with extra steps."""
+        q, log = _race_queue(tmp_path)
+        lockd = Path(str(q) + ".lockd")
+        lockd.mkdir()
+        (lockd / "pid").write_text(str(os.getpid()))
+        before = q.read_text()
+
+        r = _stage((q, log), FRESH_SHA, STAGE_CERT_LOCK_WAIT="1")
+
+        assert r.returncode == 3, r.stdout + r.stderr
+        assert "REFUSING" in r.stderr
+        assert q.read_text() == before, "a refused acquisition must append nothing"
+
+    def test_the_lock_is_released_so_the_next_stage_succeeds(self, tmp_path):
+        """Fail-closed is only safe if the ordinary path always releases."""
+        q, log = _race_queue(tmp_path)
+        assert _stage((q, log), FRESH_SHA).returncode == 0
+        assert not Path(str(q) + ".lockd").exists(), "lock survived a clean exit"
+        # And a refusal path must release too, or one refusal wedges the bus.
+        r = _stage((q, log), FRESH_SHA)
+        assert r.returncode == 2, "second stage of a live sha is the dupe refusal"
+        assert not Path(str(q) + ".lockd").exists(), "lock survived the refusal"
+
+
 class TestGuardIsNotVacuous:
     def test_without_the_guard_the_duplicate_would_have_been_staged(
         self, queue, tmp_path
@@ -157,4 +281,37 @@ class TestGuardIsNotVacuous:
         assert r.stdout.strip() == "CERT-102", (
             "the pre-guard tool stages a second block on a sha already being "
             "graded — which is exactly CERT-2020/CERT-2021"
+        )
+
+    def test_without_the_lock_the_same_race_really_does_double_stage(self, tmp_path):
+        """Falsification for `TestTheLockIsReal`.
+
+        A concurrency test that never had a window to fail through proves
+        nothing — it would pass just as well against the unlocked script. So
+        run the identical trials against a copy with the lock stripped out and
+        require the failure to actually appear. If this ever stops finding a
+        double-stage, the race test above has gone vacuous (the machine got
+        faster, or the critical section got narrower) and `RACE_QUEUE_BLOCKS`
+        must be widened rather than the assertion relaxed.
+        """
+        src = SCRIPT.read_text()
+        start = src.index('LOCKD="$Q.lockd"')
+        end = src.index("\ndone\n", start) + len("\ndone\n")
+        unlocked = tmp_path / "stage-cert-nolock.sh"
+        unlocked.write_text(src[:start] + src[end:])
+
+        double_staged = 0
+        for trial in range(RACE_TRIALS):
+            work = tmp_path / f"u{trial}"
+            work.mkdir()
+            q, log = _race_queue(work)
+            rs = _run_two_at_once(unlocked, q, log, FRESH_SHA, work)
+            sha_rows, _ = _tally(q, FRESH_SHA)
+            if sorted(r.returncode for r in rs) == [0, 0] or sha_rows > 1:
+                double_staged += 1
+
+        assert double_staged > 0, (
+            f"{RACE_TRIALS} synchronised trials against the UNLOCKED script never "
+            "produced a double stage, so the locked test above is not being "
+            "exercised — widen RACE_QUEUE_BLOCKS"
         )
