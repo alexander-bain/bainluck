@@ -56,6 +56,30 @@ final class DiscoverMasonryTests: XCTestCase {
         XCTAssertEqual(DiscoverMasonry.columnCount(availableWidth: 10), 1)
     }
 
+    /// #3709 gave `columnCount` its two card metrics as parameters so My Stuff's
+    /// 340/12 grid could share the arithmetic instead of copying it. Discover
+    /// calls it with neither, so Discover's breakpoints now live in the DEFAULT
+    /// ARGUMENTS — somewhere a reader editing the My Stuff surface would not
+    /// think to look. This pins the two together: passing Discover's own
+    /// constants explicitly must be indistinguishable from passing nothing,
+    /// across the whole supported range and both sides of every boundary.
+    func testDiscoverDefaultsAreDiscoverConstants() {
+        XCTAssertEqual(DiscoverMasonry.minimumCardWidth, 300)
+        XCTAssertEqual(DiscoverMasonry.spacing, 16)
+
+        for width in stride(from: -16.0, through: 1400.0, by: 1.0) {
+            XCTAssertEqual(
+                DiscoverMasonry.columnCount(availableWidth: CGFloat(width)),
+                DiscoverMasonry.columnCount(
+                    availableWidth: CGFloat(width),
+                    minimumCardWidth: DiscoverMasonry.minimumCardWidth,
+                    spacing: DiscoverMasonry.spacing
+                ),
+                "the default arguments drifted from Discover's constants at \(width) pt"
+            )
+        }
+    }
+
     // MARK: - The deal
 
     /// One column is the identity. This is the assertion that says the phone

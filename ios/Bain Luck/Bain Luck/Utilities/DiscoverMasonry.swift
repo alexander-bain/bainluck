@@ -80,11 +80,38 @@ enum DiscoverMasonry {
     /// design spacing, and the number the measured 68 pt should have been.
     static let spacing: CGFloat = 16
 
+    // MARK: The List-backed surfaces
+
+    /// The narrowest a card may be drawn on the `List`-backed iPad surfaces —
+    /// My Stuff, Sports and a sport category (#3709).
+    ///
+    /// Those three had `private var iPadGridColumns: [GridItem] {
+    /// [GridItem(.adaptive(minimum: 340), spacing: 12)] }` copied verbatim into
+    /// each file, plus a fourth copy in `SearchView`. The numbers are carried
+    /// over unchanged so no card changes width; what changes is that there is
+    /// now one of them. Wider than Discover's 300 because these cells carry
+    /// their own 12 pt padding and card background inside the width.
+    static let listCardMinimumWidth: CGFloat = 340
+
+    /// The gap between cards on those same surfaces — what the old
+    /// `LazyVGrid(spacing: 12)` asked for and, in the right-hand column, never
+    /// got.
+    static let listCardSpacing: CGFloat = 12
+
+    /// How many columns `availableWidth` holds on the `List`-backed surfaces.
+    static func listColumnCount(availableWidth: CGFloat) -> Int {
+        columnCount(
+            availableWidth: availableWidth,
+            minimumCardWidth: listCardMinimumWidth,
+            spacing: listCardSpacing
+        )
+    }
+
     // MARK: Column count
 
     /// How many columns `availableWidth` holds, reproducing what
-    /// `GridItem(.adaptive(minimum: 300), spacing: 16)` resolved to so that no
-    /// device changes its column count as a side effect of this fix.
+    /// `GridItem(.adaptive(minimum:), spacing:)` resolved to so that no device
+    /// changes its column count as a side effect of this fix.
     ///
     /// `.adaptive` fits as many columns of at least `minimum` as it can:
     /// `n` columns need `n * minimum + (n - 1) * spacing`. Solving for the
@@ -92,7 +119,19 @@ enum DiscoverMasonry {
     /// floored at 1 so a width that is not yet known (0 on the first layout
     /// pass, before the geometry resolves) renders the single-column phone path
     /// rather than nothing.
-    static func columnCount(availableWidth: CGFloat) -> Int {
+    ///
+    /// The two card metrics are parameters with Discover's own numbers as
+    /// defaults, because Discover is not the only surface that asked
+    /// `LazyVGrid` for a masonry layout: My Stuff's iPad grid (#3709) had the
+    /// identical shape at `minimum: 340, spacing: 12`. One arithmetic with two
+    /// callers is the point — the repo has been bitten before by one rule
+    /// growing three implementations (#3554), and a second copy of this
+    /// `floor((w + s) / (m + s))` would be exactly that.
+    static func columnCount(
+        availableWidth: CGFloat,
+        minimumCardWidth: CGFloat = DiscoverMasonry.minimumCardWidth,
+        spacing: CGFloat = DiscoverMasonry.spacing
+    ) -> Int {
         guard availableWidth > 0 else { return 1 }
         let n = Int((availableWidth + spacing) / (minimumCardWidth + spacing))
         return max(1, n)

@@ -13,7 +13,10 @@ struct MyStuffView: View {
     @State private var predictionStats: PredictionStats?
     @State private var path = NavigationPath()
     @State private var showOnboarding = false
-    @State private var landscapeColumns = false
+    /// Width available to the iPad card grid, in points. 0 until the first
+    /// geometry pass resolves, which `DiscoverMasonry.columnCount` reads as one
+    /// column (#3709).
+    @State private var gridWidth: CGFloat = 0
     /// The render generation already reported to the first-card rail (L2-217 Item 3
     /// / C88). Keying the once-only guard on the token's IMMUTABLE id — not a
     /// boolean an `onAppear` refire could desync — is what lets a same-row-ID
@@ -55,16 +58,10 @@ struct MyStuffView: View {
         }
         .onAppear {
             AnalyticsService.trackScreen(name: "my_stuff", type: "my_stuff")
-            updateLandscapeColumns()
         }
         .task {
             predictionStats = try? await APIClient.shared.fetchPredictionStats()
         }
-        #if os(iOS)
-        .onReceive(NotificationCenter.default.publisher(for: UIDevice.orientationDidChangeNotification)) { _ in
-            updateLandscapeColumns()
-        }
-        #endif
         .onChange(of: navCoordinator.pendingRoute) { _, _ in
             if navCoordinator.selectedTab == .myStuff,
                let route = navCoordinator.consumeRoute() {
@@ -332,21 +329,6 @@ struct MyStuffView: View {
         }
     }
 
-    // MARK: - iPad Grid
-
-    private var iPadGridColumns: [GridItem] {
-        [GridItem(.adaptive(minimum: 340), spacing: 12)]
-    }
-
-    private func updateLandscapeColumns() {
-        guard sizeClass == .regular else { return }
-        #if os(iOS)
-        let bounds = UIScreen.main.bounds
-        landscapeColumns = bounds.width > bounds.height
-        #else
-        landscapeColumns = true
-        #endif
-    }
 
     private var teamFeedList: some View {
         List {
@@ -437,17 +419,66 @@ struct MyStuffView: View {
     private func feedSection(title: String, systemImage: String, imageColor: Color, items: [FeedItem]) -> some View {
         Section {
             if sizeClass == .regular {
-                // iPad: multi-column grid with context menu for pin
-                LazyVGrid(columns: iPadGridColumns, spacing: 12) {
-                    ForEach(items) { item in
-                        feedRow(item)
-                            .padding(12)
-                            .background(Color.cardBackgroundDark)
-                            .clipShape(RoundedRectangle(cornerRadius: 12))
-                            .contextMenu { pinContextMenu(item) }
-                            .onAppear { emitMyStuffFirstRenderIfNeeded() }
+                // iPad: multi-column masonry with context menu for pin.
+                //
+                // #3709 — this was a `LazyVGrid` over
+                // `GridItem(.adaptive(minimum: 340), spacing: 12)`, the same
+                // shape #3651 fixed in Discover, and it fails the same way:
+                // `LazyVGrid` lays out in ROWS and pads every cell to the
+                // tallest cell in its row. A My Stuff section mixes the tall
+                // `EventCardView` with the short `FuturesCardView` /
+                // `MyTeamFuturesCard` strip, so the pairs are exactly the ones
+                // that show it. The surplus lands as dead space BELOW the
+                // shorter card in its column — the cell content is top-aligned
+                // in the padded row and `.background` wraps the content, not
+                // the row frame, so the card does not stretch, the gap under it
+                // grows. Measured on the photographed sibling surface: 50 px of
+                // right-column gap against the left column's 28 px.
+                //
+                // `DiscoverMasonry` deals the cards into per-column stacks,
+                // which pack at exactly their spacing, so no cell is ever
+                // padded to a neighbour's height. At one column that is one
+                // stack in the order the view model served — but the phone
+                // never reaches this branch at all (`sizeClass == .regular`).
+                //
+                // `VStack`, not `LazyVStack`: this whole grid is a single
+                // `List` row, so the List has already sized it and there is
+                // nothing left to be lazy about. A My Stuff section is a
+                // handful of items, not Discover's paged hundreds.
+                let columnCount = DiscoverMasonry.listColumnCount(availableWidth: gridWidth)
+                let masonryColumns = DiscoverMasonry.columns(
+                    cardCount: items.count,
+                    columnCount: columnCount
+                )
+                HStack(alignment: .top, spacing: DiscoverMasonry.listCardSpacing) {
+                    ForEach(Array(masonryColumns.enumerated()), id: \.offset) { _, indices in
+                        VStack(spacing: DiscoverMasonry.listCardSpacing) {
+                            ForEach(indices, id: \.self) { idx in
+                                feedRow(items[idx])
+                                    .padding(12)
+                                    .background(Color.cardBackgroundDark)
+                                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                                    .contextMenu { pinContextMenu(items[idx]) }
+                                    .onAppear { emitMyStuffFirstRenderIfNeeded() }
+                            }
+                        }
+                        .frame(maxWidth: .infinity)
                     }
                 }
+                // The card area's own width, which is what decides the column
+                // count. Read from a `.background` so it cannot influence the
+                // layout it measures; there is no feedback loop, because this
+                // width comes from the enclosing List row and not from the
+                // cards, so `columnCount` never changes it.
+                .background(
+                    GeometryReader { geo in
+                        Color.clear
+                            .onAppear { gridWidth = geo.size.width }
+                            .onChange(of: geo.size.width) { _, newValue in
+                                gridWidth = newValue
+                            }
+                    }
+                )
                 .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
             } else {
                 ForEach(items) { item in
