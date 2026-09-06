@@ -29,6 +29,26 @@ from app.utils.game_pairing import Pairing, live_write_is_premature, pair_verdic
 logger = logging.getLogger(__name__)
 
 
+def statpal_provided_an_id(value: Optional[str]) -> bool:
+    """Did StatPal actually give us an id for this fixture? (#2963)
+
+    Hoisted and named because it is a judgement, not a null check, and because
+    the two values it has to reject are the two that have already shipped as
+    defects on this column:
+
+    * ``None`` — the field was absent.
+    * ``''`` — what ``_parse_single_fixture`` produces when it recognises none of
+      ``id`` / ``contestid`` / ``fixture_id``. **A blank is not an absence, it is
+      an unusable linkage**: 8,272 rows once carried ``''`` for exactly this
+      reason, and every reader that tests ``statpal_fixture_id IS NOT NULL``
+      counted every one of them as linked.
+
+    Whitespace is stripped before the test for the same reason: a provider that
+    serves ``' '`` has told us nothing, and a truthiness check would disagree.
+    """
+    return bool(str(value or "").strip())
+
+
 async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
     """Sync fixture schedules from StatPal for all mapped sports.
 
@@ -78,6 +98,15 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
     # Q438: creations this path DOWNGRADED to 'scheduled' because the game had
     # not started. Always present; 0 is a reading, not an absence (gotcha #53).
     premature_live_created_as_scheduled = 0
+    # #2963. Live fixtures this path REFUSED to create because StatPal served no
+    # id for them. Always present; 0 is a reading, and 0 is what NFL should read
+    # now that `contestid` is parsed — a non-zero here names a sport whose live
+    # payload has no id field we know about, which is a finding, not a shrug.
+    live_created_refused_no_provider_id = 0
+    # #2963, the schedule-path twin. Expected to stay 0 — no row in production has
+    # ever carried a `statpal_<home>_<away>` value — and it is reported anyway so
+    # that "has never fired" stays a measured claim.
+    schedule_created_refused_no_provider_id = 0
 
     # Track StatPal fixture IDs already processed in this run
     # to prevent duplicates across soccer league iterations
@@ -175,7 +204,42 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                             find_or_create_event, EventIdentity, EventClaim,
                             STATPAL_LISTING_IS_NOT_A_DEREFERENCE,
                         )
-                        claim_id = fixture.fixture_id or f"statpal_{fixture.home_team}_{fixture.away_team}"
+                        # #2963, the schedule-path twin of the live-path refusal
+                        # below. This read
+                        #
+                        #     claim_id = fixture.fixture_id or f"statpal_{home}_{away}"
+                        #
+                        # and the comment under it already conceded the fallback
+                        # "was never an anchor either — a label wearing an id's
+                        # clothing, ruling 042". A label wearing an id's clothing is
+                        # not a thing to keep passing to the registry.
+                        #
+                        # MEASURED before changing it: zero rows in production have
+                        # ever carried a `statpal_<home>_<away>` value (census
+                        # 2026-09-05 and again 2026-09-06, whole-table, by prefix).
+                        # This branch has never once fabricated, so refusing costs
+                        # nothing that has ever happened — unlike its live-path twin,
+                        # which had fired 48 times.
+                        #
+                        # AND IF IT EVER DOES FIRE, the loss is visible rather than
+                        # silent: a future fixture we decline to create is exactly a
+                        # `statpal_only` receipt on the authority-agreement row ("the
+                        # venue has a game we don't"), which is the finding this lane
+                        # exists to surface. Minting it with a fabricated anchor
+                        # instead would erase the finding AND poison the column — the
+                        # row would then be classified POLLUTED_COLUMN forever and
+                        # could never receive its real id.
+                        if not statpal_provided_an_id(fixture.fixture_id):
+                            schedule_created_refused_no_provider_id += 1
+                            logger.warning(
+                                "StatPal schedule-create refused: no provider id for "
+                                "%s vs %s (%s, start %s). A row is not created from a "
+                                "fabricated id (#2963).",
+                                fixture.away_team, fixture.home_team, our_key,
+                                fixture.start_time.isoformat() if fixture.start_time else None,
+                            )
+                            continue
+                        claim_id = fixture.fixture_id
                         identity = EventIdentity(
                             sport_key=our_key,
                             home_team_name=fixture.home_team,
@@ -365,7 +429,53 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                             live_fix.start_time.isoformat() if live_fix.start_time else None,
                             now.isoformat(),
                         )
-                    claim_id = live_fix.fixture_id or f"statpal_live_{live_fix.home_team}_{live_fix.away_team}"
+                    # ── #2963. NO ID, NO ROW. This used to read
+                    #
+                    #     claim_id = live_fix.fixture_id or f"statpal_live_{home}_{away}"
+                    #
+                    # and that `or` fabricated a provider id out of two team names on
+                    # every live fixture StatPal served without one. It fired 48 times
+                    # between 2026-05-15 and 2026-08-26 — every NFL row this path has
+                    # ever created — because NFL's payload keys its id `contestid` and
+                    # the parser only read `id`, so `fixture_id` was `''` and falsy.
+                    #
+                    # WHY A FABRICATED ID IS WORSE THAN NO ROW, which is the whole of
+                    # the judgment here:
+                    #
+                    #   * `EventClaim.anchor_source_id` is documented as "the id an
+                    #     anchor key must be built from — the provider's, never ours",
+                    #     and it returns `provider_id or source_id`. A synthesized
+                    #     `source_id` with no `provider_id` therefore hands the anchor
+                    #     channel a game key made of team names — the one shape that
+                    #     can merge two real fixtures (gotcha #32, ruling 048).
+                    #   * It is unrepairable in place. `stamp_nfl_statpal_fixtures`
+                    #     classifies such a row POLLUTED_COLUMN and deliberately will
+                    #     not write to it, so the row can never receive its real
+                    #     contest id while the fabricated one sits there.
+                    #   * ~11 readers treat `statpal_fixture_id IS NOT NULL` as "this
+                    #     event is linked to StatPal". A fabricated value makes all of
+                    #     them report a linkage that does not exist.
+                    #
+                    # Refusing costs nothing measured. All 48 rows this branch created
+                    # were created BEFORE their own commence_time (the Q438 note
+                    # below), so it has never once filled the live playoff gap it
+                    # exists for; and since the parser learned `contestid` every NFL
+                    # live fixture carries a real id, so this branch should now be
+                    # unreachable for the only sport that ever reached it. The refusal
+                    # is counted rather than silent precisely so "unreachable" stays a
+                    # measured claim instead of an assumption.
+                    if not statpal_provided_an_id(live_fix.fixture_id):
+                        live_created_refused_no_provider_id += 1
+                        logger.warning(
+                            "StatPal live-create refused: no provider id for %s vs %s "
+                            "(%s, start %s). A row is not created from a fabricated "
+                            "id (#2963); StatPal serving no id for this sport's live "
+                            "payload is the finding.",
+                            live_fix.away_team, live_fix.home_team, our_key,
+                            live_fix.start_time.isoformat() if live_fix.start_time else None,
+                        )
+                        continue
+                    claim_id = live_fix.fixture_id
                     identity = EventIdentity(
                         sport_key=our_key,
                         home_team_name=live_fix.home_team,
@@ -440,6 +550,10 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
         "live_pair_refused": live_pair_refused,
         "premature_live_skipped": premature_live_skipped,
         "premature_live_created_as_scheduled": premature_live_created_as_scheduled,
+        # #2963 — same rule again: always present, and 0 is the reading that says
+        # the fabricator is unreachable rather than merely unobserved.
+        "live_created_refused_no_provider_id": live_created_refused_no_provider_id,
+        "schedule_created_refused_no_provider_id": schedule_created_refused_no_provider_id,
     }
 
 
