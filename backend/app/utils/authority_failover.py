@@ -96,6 +96,7 @@ reach this function, because there is no parameter they could arrive in.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Mapping, Optional
 
 from app.config.authority_by_sport import ESPN, STATPAL, authority_for
@@ -144,10 +145,87 @@ def reading_from_fixtures(fixtures: Optional[Iterable[Any]]) -> str:
     `get_scoreboard`, and every StatPal read this feeds on follows that
     convention. A client that cannot express the difference must not be turned
     into a reading by guessing which one it meant.
+
+    **Counts whatever it is handed, so the caller owns the window.** Handing it
+    an unfiltered season schedule is the defect :func:`reading_in_window`
+    exists to prevent; see that function before using this one on a standby.
     """
     if fixtures is None:
         return DARK
     return FIXTURES if list(fixtures) else EMPTY
+
+
+#: How far back a standby fixture may have started and still count as a game the
+#: site should be showing right now.
+#:
+#: **Not a chosen number.** It is `_sync_espn_live_events`'s own
+#: `recently_completed_cutoff` — the sync's existing definition of "recent
+#: enough that this pass still cares" — restated here so the failover's window
+#: and the pass's window cannot drift apart. A bound invented for this
+#: comparison would be a bound from a guess, and the next sport with a longer
+#: game would refute it.
+WINDOW_BACK = timedelta(hours=6)
+
+
+def reading_in_window(
+    fixtures: Optional[Iterable[Any]],
+    *,
+    now: datetime,
+    back: timedelta = WINDOW_BACK,
+) -> tuple[str, dict[str, Any]]:
+    """A standby's reading over the window ESPN's silence was measured in.
+
+    **THE COMPARISON HAS TO BE OVER MATCHED WINDOWS, AND THIS IS THE FUNCTION
+    THAT MAKES IT ONE.** `get_scoreboard` answers about *today*;
+    `get_schedule_fixtures` answers with a whole season — 321 NFL games from
+    August to February, 1,206 NBA, 1,404 NHL. Counting the season against
+    today's board says "StatPal has fixtures and ESPN does not" on every quiet
+    day there has ever been, which would turn `BOTH_QUIET` — the state that
+    exists precisely so an empty board is not read as a failure — into a state
+    the system could never enter. (Found by CERT-2040 against the first cut of
+    this ship, which did exactly that.)
+
+    THE WINDOW IS `[now - back, now]`, AND ITS FORWARD EDGE IS `now` ON PURPOSE.
+    A fixture that has not started yet cannot be the blank this ship is about: a
+    scheduled game is on the site from the odds and StatPal schedule beats
+    whether or not ESPN ever mentions it. What goes blank when ESPN goes dark is
+    a game that is **already under way or has just finished** and stops being
+    updated. So the forward edge needs no invented bound — there is nothing to
+    put there.
+
+    A fixture with no `start_time` is UNPLACEABLE and does not count. It cannot
+    be shown to be in the window, and counting it would let an undated season
+    row trigger the very failover this function exists to prevent. Reported in
+    the detail rather than dropped silently.
+
+    Returns `(reading, detail)`; the detail is receipt material, so an operator
+    reading `EMPTY` can see it was 0 of 321 rather than 0 of 0.
+    """
+    if fixtures is None:
+        return DARK, {"read": "dark"}
+
+    rows = list(fixtures)
+    start = now - back
+    in_window = 0
+    undated = 0
+    for row in rows:
+        when = getattr(row, "start_time", None)
+        if when is None:
+            undated += 1
+            continue
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        if start <= when <= now:
+            in_window += 1
+
+    detail = {
+        "read": "ok",
+        "total": len(rows),
+        "in_window": in_window,
+        "undated": undated,
+        "window": [start.isoformat(), now.isoformat()],
+    }
+    return (FIXTURES if in_window else EMPTY), detail
 
 
 # --- Decision codes ----------------------------------------------------------
@@ -274,8 +352,15 @@ def decide(
             failed_over=False,
             why=(
                 f"{sport_key} has already flipped: StatPal is its source of "
-                "record standing, not as an outage override. Nothing here is a "
-                "failover and ESPN's reading does not change what serves it"
+                "record standing, not as an outage override, so this pass's "
+                "silence from ESPN is not an outage for it and nothing here is "
+                "a failover. NOTE THE LIMIT — the flip is not yet a serving "
+                "path: on a pass where ESPN DOES answer, this sport is "
+                "processed by the ordinary ESPN loops exactly as before, "
+                "because they select on what ESPN returned and not on this "
+                "switch. `switch_wiring_note` carries the same caveat for the "
+                "operator; do not read `serving: statpal` here as ESPN having "
+                "been suppressed"
             ),
         )
 

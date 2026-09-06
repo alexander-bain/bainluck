@@ -193,13 +193,20 @@ async def _statpal_standby_reading(sport_key: str) -> str:
     exactly this: it raises `StatPalUpstreamError` rather than returning `[]`
     when StatPal did not answer, and its own docstring says why — *"no games is
     the finding it exists to report and a swallowed failure forges it"*.
+
+    **AND IT IS COUNTED OVER A WINDOW, NOT IN FULL.** That endpoint answers with
+    a whole season — 321 NFL games, 1,206 NBA, 1,404 NHL — while
+    `get_scoreboard` answers about today. Comparing the two unfiltered says
+    "StatPal has fixtures and ESPN does not" on every quiet day there has ever
+    been. `reading_in_window` is where that is fixed and where the window is
+    argued; this function's job is to hand it the raw read and the clock.
     """
     from app.services.statpal_api import (
         StatPalAPIService,
         StatPalUpstreamError,
         is_available,
     )
-    from app.utils.authority_failover import DARK, reading_from_fixtures
+    from app.utils.authority_failover import DARK, reading_in_window
     from app.utils.sport_keys import STATPAL_SPORT_MAPPING
 
     statpal_sport = STATPAL_SPORT_MAPPING.get(sport_key)
@@ -211,7 +218,7 @@ async def _statpal_standby_reading(sport_key: str) -> str:
 
     service = StatPalAPIService()
     try:
-        return reading_from_fixtures(await service.get_schedule_fixtures(statpal_sport))
+        fixtures = await service.get_schedule_fixtures(statpal_sport)
     except StatPalUpstreamError as exc:
         logger.warning("StatPal standby dark for %s: %s", sport_key, exc)
         return DARK
@@ -220,6 +227,12 @@ async def _statpal_standby_reading(sport_key: str) -> str:
         return DARK
     finally:
         await service.close()
+
+    reading, detail = reading_in_window(
+        fixtures, now=datetime.now(timezone.utc)
+    )
+    logger.info("StatPal standby for %s: %s %s", sport_key, reading, detail)
+    return reading
 
 
 async def _decide_failovers(espn_data: dict, fetch_keys, stats: dict) -> dict:

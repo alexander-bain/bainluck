@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import ast
 import inspect
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -53,9 +54,11 @@ from app.utils.authority_failover import (
     STANDBY_DARK,
     STANDBY_NOT_READ,
     STANDING_STATPAL,
+    WINDOW_BACK,
     decide,
     espn_reading,
     reading_from_fixtures,
+    reading_in_window,
     would_fail_over_now,
 )
 
@@ -618,6 +621,175 @@ async def test_a_dark_standby_stops_the_failover_even_with_the_gate_open(
     assert stats["failover"][0]["code"] == STANDBY_DARK
 
 
+# ── CERT-2040's repair: the two windows must be matched ─────────────────────
+
+
+class _Fx:
+    """A standby fixture, reduced to the one field the window question needs."""
+
+    def __init__(self, start_time):
+        self.start_time = start_time
+
+
+def test_a_whole_season_of_future_fixtures_is_an_empty_reading():
+    """**The CERT-2040 BLOCK, in one assertion.**
+
+    `get_scoreboard` answers about today; `get_schedule_fixtures` answers with a
+    season — 321 NFL games from August to February. The first cut counted the
+    season against today's board, so a healthy quiet day read as StatPal having
+    fixtures ESPN was hiding, and `BOTH_QUIET` became a state the system could
+    not enter.
+    """
+    now = datetime(2026, 9, 6, 12, 0, tzinfo=timezone.utc)
+    season = [_Fx(now + timedelta(days=d)) for d in range(1, 90)]
+
+    reading, detail = reading_in_window(season, now=now)
+    assert reading == EMPTY, (
+        "a season of fixtures none of which have started is not evidence that "
+        "ESPN is hiding a game happening right now"
+    )
+    assert detail["total"] == 89 and detail["in_window"] == 0
+
+
+def test_a_game_that_started_inside_the_window_is_a_fixtures_reading():
+    """The control, and what stops the repair from being "always say EMPTY".
+
+    One game two hours ago, among the same season of future ones: that is the
+    blank this ship is about — a game under way that ESPN has stopped
+    reporting.
+    """
+    now = datetime(2026, 9, 6, 12, 0, tzinfo=timezone.utc)
+    rows = [_Fx(now + timedelta(days=d)) for d in range(1, 90)]
+    rows.append(_Fx(now - timedelta(hours=2)))
+
+    reading, detail = reading_in_window(rows, now=now)
+    assert reading == FIXTURES
+    assert detail["in_window"] == 1
+
+
+def test_the_window_edges_and_the_undated_row():
+    """Both edges are inclusive, and an undated fixture never counts.
+
+    An undated row cannot be shown to be in the window, and counting it would
+    let an unplaceable season row trigger the exact failover the window exists
+    to prevent — so it is reported and excluded, never guessed at.
+    """
+    now = datetime(2026, 9, 6, 12, 0, tzinfo=timezone.utc)
+
+    assert reading_in_window([_Fx(now)], now=now)[0] == FIXTURES
+    assert reading_in_window([_Fx(now - WINDOW_BACK)], now=now)[0] == FIXTURES
+    # Just outside, on both sides.
+    assert reading_in_window(
+        [_Fx(now - WINDOW_BACK - timedelta(minutes=1))], now=now
+    )[0] == EMPTY
+    assert reading_in_window([_Fx(now + timedelta(minutes=1))], now=now)[0] == EMPTY
+
+    reading, detail = reading_in_window([_Fx(None), _Fx(None)], now=now)
+    assert reading == EMPTY
+    assert detail["undated"] == 2 and detail["in_window"] == 0
+
+
+def test_a_naive_start_time_is_read_as_utc_rather_than_crashing():
+    """A parser that dropped the tzinfo must not take the sync down — comparing
+    an aware `now` with a naive fixture raises `TypeError` in Python."""
+    now = datetime(2026, 9, 6, 12, 0, tzinfo=timezone.utc)
+    naive = datetime(2026, 9, 6, 10, 0)
+    assert reading_in_window([_Fx(naive)], now=now)[0] == FIXTURES
+
+
+def test_a_dark_standby_still_reads_dark_through_the_windowed_path():
+    """The window must not swallow the distinction the read path exists for."""
+    now = datetime(2026, 9, 6, 12, 0, tzinfo=timezone.utc)
+    assert reading_in_window(None, now=now)[0] == DARK
+
+
+@pytest.mark.asyncio
+async def test_only_future_statpal_fixtures_do_not_dispatch_but_a_started_one_does(
+    monkeypatch, dispatches
+):
+    """CERT-2040's named regression, end to end at the actor.
+
+    "ESPN empty today plus only future StatPal fixtures must not dispatch,
+    while a same-day fixture must." Both halves, under an open gate, through
+    the real `_statpal_standby_reading`.
+    """
+    import app.services.statpal_api as statpal_api
+    import app.tasks.espn_sync as espn_sync
+
+    from app.tasks.espn_sync import _act_on_failovers, _decide_failovers
+
+    _no_ledger(monkeypatch, days=SEVEN_MEETS_DAYS, why="seven")
+    monkeypatch.setattr(statpal_api, "is_available", lambda: True)
+
+    def _serve(rows):
+        class _Service:
+            async def get_schedule_fixtures(self, sport, day_offset=None):
+                return rows
+
+            async def close(self):
+                pass
+
+        monkeypatch.setattr(statpal_api, "StatPalAPIService", _Service)
+
+    now = datetime.now(timezone.utc)
+
+    # Half one: a season of fixtures, none started. A quiet day, not an outage.
+    _serve([_Fx(now + timedelta(days=d)) for d in range(1, 90)])
+    stats = {"errors": []}
+    await _act_on_failovers(
+        await _decide_failovers(
+            {"americanfootball_nfl": []}, {"americanfootball_nfl"}, stats
+        ),
+        stats,
+    )
+    assert dispatches.calls == []
+    assert stats["failover"][0]["code"] == BOTH_QUIET
+
+    # Half two: the same season plus one game that kicked off an hour ago.
+    _serve(
+        [_Fx(now + timedelta(days=d)) for d in range(1, 90)]
+        + [_Fx(now - timedelta(hours=1))]
+    )
+    stats = {"errors": []}
+    await _act_on_failovers(
+        await _decide_failovers(
+            {"americanfootball_nfl": []}, {"americanfootball_nfl"}, stats
+        ),
+        stats,
+    )
+    assert dispatches.calls == [NFL]
+    assert stats["failover"][0]["code"] == FAILOVER_ESPN_SILENT
+
+
+def test_the_note_says_what_a_flip_does_NOT_do(monkeypatch):
+    """CERT-2040's other finding: the disclosure over-claimed.
+
+    The first cut's note said flipping "changes what serves it", which an
+    operator would reasonably read as ESPN having been suppressed. It has not
+    been — `_sync_espn_live_events` selects sports by what ESPN returned, not by
+    the switch, so a flipped sport still takes its scores and win probability
+    from ESPN on every pass ESPN answers.
+
+    The repair is the note, not the behaviour: suppressing ESPN for a flipped
+    sport would remove a win-probability source from the blend, which is a
+    product decision and a further build step. So this pins that the limit is
+    STATED, which is what #3442 established as the standard — put the true
+    sentence where the person deciding will read it.
+    """
+    from app.config.authority_by_sport import SWITCH_WIRING_NOTE, switch_wiring_note
+
+    note = switch_wiring_note(True)
+    assert note == SWITCH_WIRING_NOTE
+    assert "DOES NOT" in note
+    assert "does not suppress the ESPN path" in note
+    assert "win probability" in note
+
+    # And the decision's own reason carries the same caveat, so a reader of the
+    # receipt is not left with a `serving: statpal` they will over-read.
+    standing = decide(NFL, espn=DARK, gate=_shut_gate(), standing=STATPAL)
+    assert "NOTE THE LIMIT" in standing.why
+
+
 # ── The two reads the tests above stub, proven for themselves ───────────────
 
 
@@ -683,7 +855,12 @@ async def test_the_standby_is_read_through_the_client_that_can_say_dark(monkeypa
     class _Service:
         async def get_schedule_fixtures(self, sport, day_offset=None):
             calls.append(f"schedule:{sport}")
-            return ["a fixture"]
+            # A game that kicked off an hour ago. It has to be a real
+            # `start_time`: since CERT-2040's repair an undated row is
+            # unplaceable and does not count, so a bare sentinel here would
+            # (correctly) read EMPTY and this test would be asserting the
+            # wrong thing.
+            return [_Fx(datetime.now(timezone.utc) - timedelta(hours=1))]
 
         async def get_fixtures(self, *a, **k):  # pragma: no cover - must not run
             raise AssertionError(
