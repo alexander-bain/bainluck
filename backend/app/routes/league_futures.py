@@ -12,7 +12,7 @@ import asyncio
 import json
 import logging
 import re
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, Path
 from sqlalchemy import select, and_, or_, func, literal_column
@@ -1720,15 +1720,47 @@ def _is_submarket_bundle(market: FuturesMarket) -> bool:
     return prefixed * 2 > len(outcomes)
 
 
-def _match_card_rank(market: FuturesMarket) -> tuple[int, int]:
+def _match_card_rank(
+    market: FuturesMarket,
+    is_prop: Callable[[str | None, str | None], object] | None = None,
+) -> tuple[int, int, int]:
     """Which of two markets for ONE event should be the card? Higher wins.
 
-    A head-to-head outranks a sub-market bundle, and only then does the old
-    "most outcomes" rule apply. The order matters and is the whole point: the
-    bundle is always the one with MORE outcomes, so ranking by size alone picks
-    the card that cannot name a winner and discards the one that can.
+    A real match outranks a prop, a head-to-head outranks a sub-market bundle,
+    and only then does the old "most outcomes" rule apply. The order matters and
+    is the whole point: the loser of each pair is always the one with MORE
+    outcomes, so ranking by size alone picks the card that cannot name a winner
+    and discards the one that can.
+
+    ── #3640: the prop key, and why it is FIRST ──
+
+    `is_prop` is the caller's own prop predicate — for a hub, the very
+    `_PROP_CLASSIFIERS` entry that is about to move props OUT of the matches
+    section. A card elected here that predicate then evicts does not move the
+    event to another section: this function elects exactly ONE card per event,
+    so the eviction takes the whole match off the rail.
+
+    Measured on production 2026-09-06 19:20Z, replaying these functions over the
+    34 playable in-scope tennis events: the elected card was a prop for NINE of
+    them, and those nine were exactly the absent US Open singles —
+    Alcaraz–Paul (LIVE), Medvedev–Tiafoe (LIVE), Michelsen, Kalinskaya,
+    Jovic–Gauff, Gea, Osaka, Zverev, Khachanov. Each lost to a Kalshi
+    "<A> vs <B>: Exact Match Score" row whose six outcomes ("Alcaraz wins 3-0",
+    …) outnumbered the two-sided head-to-head's two. Notice 27, the Marquee
+    Axiom: a Slam match that is on court is never absent because we picked the
+    wrong one of its own markets.
+
+    It is a RANK key and not a filter, so an event whose every market is a prop
+    still gets a card rather than vanishing — the failure this repairs, inverted,
+    is not a repair. `is_prop=None` (every non-hub caller) is byte-identical to
+    the pre-#3640 ordering.
     """
-    return (0 if _is_submarket_bundle(market) else 1, len(market.outcomes or []))
+    prop = bool(is_prop(market.external_id, market.name)) if is_prop else False
+    return (
+        0 if prop else 1,
+        0 if _is_submarket_bundle(market) else 1,
+        len(market.outcomes or []),
+    )
 
 
 async def build_linked_matches(
@@ -1737,6 +1769,7 @@ async def build_linked_matches(
     *,
     now: datetime | None = None,
     also_sport_keys: Sequence[str] = (),
+    is_prop: Callable[[str | None, str | None], object] | None = None,
 ) -> list[dict]:
     """The head-to-head markets for this league's CURRENTLY PLAYABLE events.
 
@@ -1750,6 +1783,12 @@ async def build_linked_matches(
     women's. See `_league_scope_filters`. It reaches this rail and NOT
     `build_league`, because `/api/leagues/tennis_atp` is a tour page and is
     correct as it stands: a hub is a sport, a league is a tour.
+
+    `is_prop` is the caller's prop predicate, used ONLY to rank each event's
+    candidates (`_match_card_rank`, #3640). A caller that will later move props
+    out of this section must pass the same predicate it will move them with, or
+    the one card this function elects per event can be a card that caller then
+    deletes — which removes the match, not the prop.
 
     Only rows `_assign_section` calls `matches` survive: the same query also
     lands hundreds of markets ABOUT a match ("… : Total Sets O/U 3.5"), and a
@@ -1890,10 +1929,18 @@ async def build_linked_matches(
     # It resolves only pairs the database already calls one event; two markets
     # linked to two DIFFERENT event rows are a twin, which is matching's to fix
     # (#2693) and stays visible here rather than being papered over.
+    #
+    # #3640 adds the prop key to that rank. Same principle one step out: the
+    # `event_id` already decides WHICH match this is, and electing a prop to
+    # speak for it hands the row to the caller's prop split, which then removes
+    # the match. Nine live-or-today US Open singles, Alcaraz among them, left
+    # `/hub/tennis` this way on 2026-09-06.
     chosen: dict[int, FuturesMarket] = {}
     for market in candidates:
         current = chosen.get(market.event_id)
-        if current is None or _match_card_rank(market) > _match_card_rank(current):
+        if current is None or _match_card_rank(market, is_prop) > _match_card_rank(
+            current, is_prop
+        ):
             chosen[market.event_id] = market
     # Filtered rather than rebuilt from `chosen.values()`, so the live-first /
     # soonest-first order established above survives the dedup.
