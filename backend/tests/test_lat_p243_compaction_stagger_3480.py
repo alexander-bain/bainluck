@@ -523,3 +523,82 @@ class TestTheRepairIsNotVacuous:
         )
         assert violations == []
         assert unenumerable == ["weird"]
+
+
+class TestTheClaimThatIsolationIsTheOnlyRemainingPath:
+    """The load-bearing claim in this ship's disclosure, made checkable.
+
+    CERT-2045 asked for "a worker opportunity for `warm-typeahead` inside 120s
+    THROUGHOUT every moved compaction window". That is not schedulable, and the
+    ship says so rather than substituting a weaker invariant quietly. Prose
+    claims rot; this asserts it.
+
+    ⚠️ **IF THIS TEST FAILS, THAT IS GOOD NEWS AND THE SHIP SHOULD ACT ON IT.**
+    It fails when a schedulable window HAS appeared — because beats were retired,
+    moved to `heavy`, or given shorter soft limits — which would mean the
+    throughout-the-window invariant became reachable and the dedicated-worker ask
+    in `alex-inbox` can be withdrawn. Do not raise the bound to make it pass.
+    """
+
+    #: The shortest moved compaction window (`collapse_snapshots`, soft 1700s).
+    #: A window this long must exist and be free before "throughout the window"
+    #: could be satisfied by scheduling at all.
+    SHORTEST_COMPACTION_WINDOW_MIN = 1700 // 60
+
+    def _over_budget_windows(self, anchor):
+        bs, softs, queues = _live()
+        budget = warmer_expiry_budget_s(bs)
+        out = []
+        for name, entry in bs.items():
+            task = entry.get("task")
+            if not task or name in COMPACTION_SUBJECTS or name == "warm-typeahead":
+                continue
+            if "background" not in (queues.get(task) or []):
+                continue
+            hold = softs.get(task) or 0
+            if hold <= budget:
+                continue
+            fires = crontab_fire_times(entry["schedule"], anchor, 1)
+            if fires is None:
+                continue
+            for f in fires:
+                out.append((f, f + timedelta(seconds=hold)))
+        return out
+
+    def test_no_free_window_long_enough_to_hold_a_compaction_pass_exists(self):
+        anchor = ANCHORS[3]
+        windows = self._over_budget_windows(anchor)
+        assert windows, "nothing to measure — the population went empty, which is itself news"
+        free_run = best = 0
+        for m in range(1440):
+            t = anchor + timedelta(minutes=m)
+            if any(a <= t < b for a, b in windows):
+                free_run = 0
+            else:
+                free_run += 1
+                best = max(best, free_run)
+        assert best < self.SHORTEST_COMPACTION_WINDOW_MIN, (
+            f"a {best}-minute window free of over-budget background beats now exists, which "
+            f"is longer than the shortest compaction pass ({self.SHORTEST_COMPACTION_WINDOW_MIN} "
+            "min). The 'throughout the window' invariant may now be schedulable — reopen the "
+            "dedicated-worker question in alex-inbox before raising this bound."
+        )
+
+    def test_the_population_is_large_enough_that_this_is_structural(self):
+        """Not one awkward beat: a crowd. Stated as a floor so adding beats can
+        never make it pass for the wrong reason."""
+        bs, softs, queues = _live()
+        budget = warmer_expiry_budget_s(bs)
+        entries = [
+            n for n, e in bs.items()
+            if e.get("task")
+            and n not in COMPACTION_SUBJECTS
+            and n != "warm-typeahead"
+            and "background" in (queues.get(e["task"]) or [])
+            and (softs.get(e["task"]) or 0) > budget
+        ]
+        assert len(entries) >= 40, (
+            f"only {len(entries)} background beats now declare a hold over the "
+            f"{budget:.0f}s budget, down from 59. If this has genuinely shrunk, "
+            "re-measure before trusting the disclosure that says isolation is the only path."
+        )
