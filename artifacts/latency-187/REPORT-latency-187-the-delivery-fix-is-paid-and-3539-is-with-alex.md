@@ -132,3 +132,93 @@ Provenance of the backtick is **unresolved** — the strings appear nowhere in `
 5. Do not present a fourth repair of #3480; it is parked on Alex.
 
 — latency/187
+
+---
+
+# PART TWO — D81 = A arrived mid-session, and the residency fix was built to it
+
+At 14:40Z a directive landed: Fable-5 read the alex-inbox note, opened **D81 in YOUR-TURN §1 with
+default A**, and ordered the CERT-2068 repair built to it (Alex is on his phone until Monday). So
+the second half of this session is a build, not a measurement.
+
+## 7. What shipped into review
+
+`PR #3534`, branch `program/latency-248-…`, rebased onto current master (which now carries #3546).
+
+| | value | why |
+|---|---|---|
+| `SEARCH_RESPONSE_TTL_SECONDS` | 60 → **180** | **ruling D81 = A**, cited at the constant, in the docstring, and in the test that pins it |
+| `REFRESH_AHEAD_SECONDS` | 25 → **170** | derived: `P_effective + full_rebuild_budget + margin` |
+| `effective_pass_period_s()` | **60 s** | `beat × ceil(floor/beat)` — the floor (45 s) is NOT the period |
+| `full_rebuild_budget_s()` | **100 s** | `ceil(head/concurrency) × per-query bound` — the pass, not one query |
+| `residency_invariant()` | 3 clauses | CAUGHT · SURVIVES · BOUNDED, executable, each with a named failure string |
+
+## 8. Three things this build refuted, two of them mine
+
+**(a) CERT-2068's repair was unsatisfiable as written.** It required the cadence bind *"without
+extending the 60 s freshness ceiling"*. Residency needs `TTL > P_effective + budget` = 160 s, so at
+a 60 s ceiling the feasible set is **empty**. That is why the ceiling had to become a product
+question rather than a lane's tuning — and it is what §2's note to Alex bought.
+
+**(b) #3539's option 4 — which I recommended to Alex in writing — ships a hole.** It set
+`REFRESH_AHEAD = 90`, below `TTL − P_effective` = 120, so the first pass that could rebuild an entry
+calls it `fresh` and walks past. Refused by name in a test. The ruling's *intent* (a three-minute
+answer) is honoured; its arithmetic was wrong.
+
+**(c) 🔴 My first repair was blocked, and the grader was right — CERT-2084.** I asserted
+`TTL − period > budget` where #3539's necessary form is **`refresh_ahead − period > budget`**.
+`TTL − period` describes only the phase the *warmer* writes at. The route writes its own cache on an
+organic MISS at an **arbitrary** phase, so an entry can first be seen at exactly the threshold, be
+skipped by the `<`, and return one period later with 90 s against a permitted 100 s rebuild — a
+**10 s** cold interval. Reproduced before fixing. The second repair (CERT-2086) binds the threshold.
+
+## 9. The regressions, both halves red-then-green
+
+| case | blocked constants | shipped constants |
+|---|---|---|
+| CERT-2068's short-then-long, warmer phase | absent **`[(63.3, 83.8)]` = 20.5 s** on `f81fdfe4` | none over 600 s |
+| CERT-2084's organic entry at the threshold edge | absent **`[(180.0, 190.0)]`** on `cc2e0694` — the graded interval to the tenth | none over 1200 s |
+| every pass pinned at the full 100 s budget | — | none over 900 s |
+| phase sweep, every reachable organic offset, by a **closed form that is not the simulation** | convicts 150 (asserted) | clean |
+
+The run lock is modelled (a rebuild longer than one beat suppresses the fires underneath it), and
+the beat grid carries a phase, because its alignment relative to a user's write is arbitrary.
+
+**Mutation: 12/12 killed, control green, tree clean.** Including threshold → 150 (the blocked
+value), threshold → 161 (clears `P+B` by 1 s with no margin), clause (2) reverted to the exact
+blocked bug, and each of the three clauses dropped independently.
+
+## 10. Cost, corrected in Alex's inbox
+
+I told Alex option A "halves the work". **That was wrong** and is corrected in an appended section
+of his note: the halving came from option 4's every-other-pass cadence, which is precisely what
+opens the hole. The head rebuilds on **every** pass, so load is unchanged and a served answer stays
+**~71–86 s** old — essentially today's freshness. 180 s is a provability ceiling, not a typical age,
+which also shrinks the live-score concern I raised.
+
+## 11. Traps this half paid for
+
+- 🔴 **A guard can be written against the wrong phase and look rigorous.** The first harness seeded
+  only warmer-aligned writes, so it could not observe the state that holes. When a system has two
+  writers (a warmer and the route itself), a residency proof must sweep the phase, not sample it.
+- 🔴 **A sweep that ranges outside the reachable set manufactures failures.** Mine initially swept
+  organic offsets to the TTL and reported 80–180 as cold; a pass arrives within one period of any
+  write, so those states cannot occur. The temptation is then to loosen the assertion. Bound the
+  sweep instead, and say why in the docstring.
+- **A fake Redis with one mutable expiry cannot answer a question about the past.** The first
+  write-log draft reported a clean run over a configuration that measurably holes, because a later
+  write had moved the expiry the backwards scan read. Append-only log.
+- **Read a mutation battery's exit code, not its text.** My first battery printed all nine SURVIVED
+  because it grepped lowercase `failed` against pytest's uppercase `FAILED` summary line. Every one
+  had actually died. `rc == 1` is a result; anything else is a story about the harness.
+- **A blocked cert's required repair can contain an impossible clause.** Reading it as binding would
+  have produced a fourth blocked presentation. The move is to prove the impossibility arithmetically
+  and route the impossible term to whoever owns it — here, Alex.
+
+## 12. State at session end
+
+- **CERT-2086** staged (`repairs CERT-2084`), sha `31598471`, PR #3534 OPEN, exact-sha CI in flight.
+- **CERT-2084** BLOCK banked; **CERT-2068** BLOCK banked. Chain: 2068 → 2084 → 2086.
+- Nothing merged. No production write. `master` untouched by this lane.
+- **Owed after deploy:** head-term `x-search-cache` hit rate and `last_result_summary.expired`
+  (8/8 on production today) — named in the cert rather than claimed.
