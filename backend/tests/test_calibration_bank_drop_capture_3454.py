@@ -32,6 +32,26 @@ The three classes of test here
    its SOURCE and fail if the emitted literals move — CAL-P993's rule paid for
    differently, the same way ``test_calibration_cursor_decision_capture_1002.py``
    pays for ``CURSOR_PREFIX``.
+4. **The capture-version gate (CERT-2051).** A capture rule changes what ABSENCE
+   means, and this ring outlives the change.
+5. **The real endpoint**, over one ring holding all three row classes at once.
+
+What CERT-2051 blocked, and what classes 4 and 5 exist to stop coming back
+---------------------------------------------------------------------------
+The first version of this change derived the two new fields from ``r["gauges"]``
+whenever the row did not carry them — which is exactly the 168 rows already
+banked, and exactly where the derivation is unsound. Those rows' gauge maps had
+the drop and stop keys discarded **at capture time**, while the cursor key
+``bank_drop`` disambiguates against HAS been captured since CAL-P1002. So the
+known 6-banked-units → 0 wipe row was served as ``units_dropped: 0``,
+``units_dropped_measured: true``, ``stop_reasons: []``: a confident, wrong,
+*measured* zero on the TRUTH surface added to end exactly that collapse.
+
+The fix is that a row now says what its sampler could retain
+(``gauge_capture_version``), one reader gates on it (``row_stop_and_drop``), and
+a row below the floor answers ``null`` / ``false`` on every one of the fields.
+``null`` and ``[]`` do not share a value domain here: ``[]`` is a measurement
+("recorded no stop reason") and a legacy row never made it.
 """
 
 from __future__ import annotations
@@ -43,12 +63,19 @@ from pathlib import Path
 import pytest
 
 from app.tasks.calibration_beat_gauge_sampler import (
+    DROP_AND_STOP_CAPTURE_VERSION,
+    GAUGE_CAPTURE_VERSION,
+    HISTORY_IDENTITY,
+    HISTORY_SCHEMA,
     OPERATIONAL_GAUGES,
     STAGED_PREFIX,
     STOP_REASON_INFIX,
+    UNVERSIONED_CAPTURE,
     bank_drop,
     build_observation,
+    capture_version,
     is_stop_key,
+    row_stop_and_drop,
     select_gauges,
     stop_reasons,
 )
@@ -262,3 +289,333 @@ def test_the_writer_still_writes_the_cursor_action_before_it_can_drop():
         "the cursor action is no longer written before the drop path — "
         "bank_drop's zero-vs-unknown inference no longer holds"
     )
+
+
+# ---------------------------------------------------------------------------
+# 4. the capture-version gate — CERT-2051
+# ---------------------------------------------------------------------------
+
+#: The row the grader reproduced against the live ring: the 2026-09-06 04:16Z
+#: beat that went 6 banked units → 0, **as it is actually banked**. It has a
+#: cursor key, because CAL-P1002 captured those. It has no drop key and no stop
+#: key, because the sampler of the day discarded both — NOT because the beat did
+#: not drop. And it carries no ``gauge_capture_version``, because nothing did.
+#:
+#: This is the one fixture in the file that is a legacy row rather than a future
+#: one, and every assertion about it is about refusing to answer.
+LEGACY_WIPE_ROW = {
+    "generation": 1757131234567,
+    "generated_at": "2026-09-06T04:16:00+00:00",
+    "tolerance_pp": 4.0,
+    "terminal": "partial",
+    "measured": True,
+    "gauges": {
+        "staged:cursor_resume": 0,
+        "staged:cursor_reason:generation_unchanged": 0,
+        "staged:units_done": 0,
+        "staged:units_banked": 0,
+        "staged:window_left_ms": 1150000,
+    },
+    "disclosure": {"measured": True, "units_banked": 0},
+}
+
+
+def test_a_new_observation_stamps_what_its_capture_could_retain():
+    observation = build_observation(
+        generation=1757131234567,
+        generated_at="2026-09-06T04:16:00+00:00",
+        complete=True,
+        payload={"stages": {"staged:cursor_resume": 0}, "terminal": "partial"},
+    )
+    assert observation["gauge_capture_version"] == GAUGE_CAPTURE_VERSION
+    assert GAUGE_CAPTURE_VERSION >= DROP_AND_STOP_CAPTURE_VERSION, (
+        "the sampler stamps a version below its own drop/stop floor, so every "
+        "row it banks from now on reads as unable to answer"
+    )
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        {},
+        {"gauge_capture_version": None},
+        # ``isinstance(True, int)`` is True, so a bool would sail through as 1.
+        {"gauge_capture_version": True},
+        {"gauge_capture_version": "2"},
+        {"gauge_capture_version": 2.0},
+        None,
+        "not a row",
+    ],
+)
+def test_a_row_that_does_not_plainly_say_its_version_is_unversioned(row):
+    """Unproven capture support is unknown, never a number."""
+    assert capture_version(row) == UNVERSIONED_CAPTURE
+    assert UNVERSIONED_CAPTURE < DROP_AND_STOP_CAPTURE_VERSION
+
+
+def test_the_legacy_wipe_row_answers_unknown_rather_than_a_measured_zero():
+    """CERT-2051 in one test. This is the exact false statement it blocked.
+
+    The bare readers, called on this row's gauge map, still say ``0``/``[]`` —
+    that is what they are for, over a map that could have held the keys — so the
+    assertion that matters is that the GATE does not let them near it.
+    """
+    assert bank_drop(LEGACY_WIPE_ROW["gauges"]) == {"units_dropped": 0, "measured": True}
+    assert stop_reasons(LEGACY_WIPE_ROW["gauges"]) == []
+
+    gated = row_stop_and_drop(LEGACY_WIPE_ROW)
+    assert gated["capture_version"] == UNVERSIONED_CAPTURE
+    assert gated["units_dropped"] is None
+    assert gated["units_dropped_measured"] is False
+    assert gated["stop_reasons"] is None
+    assert gated["stop_reasons_measured"] is False
+
+
+def test_no_stop_reason_and_could_not_have_seen_one_are_different_values():
+    """``[]`` is a measurement; a legacy row never made it. gotcha #53's shape.
+
+    If these two ever collapse into one value the gate is decorative — a reader
+    cannot tell "this beat ran to the end" from "this row predates the capture".
+    """
+    ran_to_the_end = row_stop_and_drop(
+        {"gauge_capture_version": GAUGE_CAPTURE_VERSION, "gauges": {"staged:units_done": 128}}
+    )
+    could_not_say = row_stop_and_drop(LEGACY_WIPE_ROW)
+
+    assert ran_to_the_end["stop_reasons"] == []
+    assert could_not_say["stop_reasons"] is None
+    assert ran_to_the_end["stop_reasons"] != could_not_say["stop_reasons"]
+    assert ran_to_the_end["stop_reasons_measured"] is True
+    assert could_not_say["stop_reasons_measured"] is False
+
+
+def test_a_versioned_row_is_read_off_its_own_banked_fields():
+    row = {
+        "gauge_capture_version": GAUGE_CAPTURE_VERSION,
+        "stop_reasons": ["rebuild_stop:overlap_lock"],
+        "units_dropped": 6,
+        "units_dropped_measured": True,
+        # Deliberately EMPTY, to prove the banked fields are preferred to a
+        # re-derivation: a row is not re-litigated against a map it already
+        # reduced.
+        "gauges": {},
+    }
+    assert row_stop_and_drop(row) == {
+        "capture_version": GAUGE_CAPTURE_VERSION,
+        "stop_reasons": ["rebuild_stop:overlap_lock"],
+        "stop_reasons_measured": True,
+        "units_dropped": 6,
+        "units_dropped_measured": True,
+    }
+
+
+def test_a_versioned_row_missing_its_derived_fields_falls_back_to_its_gauges():
+    """Sound at this version, and only at this version: the capture retained the
+    keys, so their absence from the map is a fact about the beat."""
+    row = {
+        "gauge_capture_version": GAUGE_CAPTURE_VERSION,
+        "gauges": {"staged:cursor_fresh": 0, "staged:window_stop:deadline": 0},
+    }
+    gated = row_stop_and_drop(row)
+    assert gated["units_dropped"] == 0
+    assert gated["units_dropped_measured"] is True
+    assert gated["stop_reasons"] == ["window_stop:deadline"]
+
+
+def test_a_versioned_row_may_still_report_an_unknown_drop():
+    """``units_dropped: null`` is a legitimate banked value — the beat refused
+    before reaching the drop path — so presence of the KEY is the test, not
+    truthiness. A null read as "absent" would send this row down the fallback."""
+    row = {
+        "gauge_capture_version": GAUGE_CAPTURE_VERSION,
+        "stop_reasons": [],
+        "units_dropped": None,
+        "units_dropped_measured": False,
+        # Would re-derive to a MEASURED ZERO if the banked null were skipped.
+        "gauges": {"staged:cursor_invalidate": 0},
+    }
+    gated = row_stop_and_drop(row)
+    assert gated["units_dropped"] is None
+    assert gated["units_dropped_measured"] is False
+
+
+def test_the_ring_schema_is_not_bumped_to_describe_a_row_field():
+    """``HISTORY_SCHEMA`` is the envelope's ``expected_version``.
+
+    Bumping it to announce ``gauge_capture_version`` would make the entire banked
+    ring unreadable in one deploy — the endpoint would answer
+    ``history_unreadable`` — and throw away the seven days of history the version
+    marker exists to keep readable. Row shape is versioned per row instead.
+    """
+    assert HISTORY_SCHEMA == "calibration-beat-gauge-history/v1"
+
+
+# ---------------------------------------------------------------------------
+# 5. the real endpoint, over a ring holding all three row classes
+# ---------------------------------------------------------------------------
+
+def _banked(generation, generated_at, stages):
+    """A ring row built by the PRODUCER, from raw stages.
+
+    Not a hand-written dict. Every field the endpoint reads — including the
+    capture version and the two derived fields — is whatever
+    ``build_observation`` actually writes, so a fixture cannot agree with
+    production by construction and the version stamp cannot go missing behind a
+    literal that keeps asserting it is there.
+    """
+    return build_observation(
+        generation=generation,
+        generated_at=generated_at,
+        complete=True,
+        payload={"stages": stages, "terminal": "partial"},
+    )
+
+
+#: A beat banked by THIS sampler that reached the drop path and dropped nothing:
+#: a cursor action, no drop key, no stop key. The shape ``LEGACY_WIPE_ROW`` was
+#: wrongly given.
+NEW_ZERO_DROP_ROW = _banked(
+    1757134800000,
+    "2026-09-06T05:16:00+00:00",
+    {"staged:cursor_resume": 0, "staged:units_done": 12},
+)
+
+#: The same wipe as ``LEGACY_WIPE_ROW``, as it will be banked from now on.
+NEW_WIPE_ROW = _banked(
+    1757138400000,
+    "2026-09-06T06:16:00+00:00",
+    {
+        "staged:cursor_resume": 0,
+        "staged:units_dropped": 6,
+        "staged:window_stop:deadline": 0,
+    },
+)
+
+
+async def _serve(monkeypatch, rows):
+    """The real endpoint over a ring of ``rows``, with only the read stubbed."""
+    from datetime import datetime, timezone
+
+    from app.routes import admin_cohort
+    from app.utils.durable_state import DurableEnvelope, EnvelopeRead
+
+    payload = {
+        "schema": HISTORY_SCHEMA,
+        "limit": 168,
+        "observations": rows,
+        "summary": {"observations": len(rows)},
+    }
+    envelope = DurableEnvelope.build(
+        identity=HISTORY_IDENTITY,
+        schema_version=HISTORY_SCHEMA,
+        payload=payload,
+        complete=True,
+        source="calibration_beat_gauge_sampler",
+        generated_at=datetime(2026, 9, 6, 7, 0, tzinfo=timezone.utc),
+    )
+
+    async def _fake_read(identity, *, expected_version=None, max_age_s=None):
+        assert identity == HISTORY_IDENTITY
+        assert expected_version == HISTORY_SCHEMA
+        return EnvelopeRead(status="fresh", tier="durable", envelope=envelope)
+
+    import app.services.durable_snapshots as ds
+
+    monkeypatch.setattr(admin_cohort, "_check_admin_secret", lambda **kw: None)
+    monkeypatch.setattr(ds, "read_snapshot_standalone", _fake_read)
+    return await admin_cohort.calibration_beat_gauges(request=None, limit=24)
+
+
+@pytest.mark.asyncio
+async def test_the_endpoint_tells_the_three_row_classes_apart_in_one_call(monkeypatch):
+    """The regression CERT-2051 named, on the surface it named.
+
+    One ring, three rows, one request — because the finding was never that the
+    readers are wrong, it was that the endpoint applied them to rows they do not
+    describe. Only serving all three together shows the gate discriminating
+    rather than simply nulling everything.
+    """
+    out = await _serve(monkeypatch, [LEGACY_WIPE_ROW, NEW_ZERO_DROP_ROW, NEW_WIPE_ROW])
+    legacy, zero, wipe = out["observations"]
+
+    # The row that cannot speak, and the false statement that was shipped here.
+    assert legacy["capture_version"] == UNVERSIONED_CAPTURE
+    assert legacy["units_dropped"] is None
+    assert legacy["units_dropped_measured"] is False
+    assert legacy["stop_reasons"] is None
+    assert legacy["stop_reasons_measured"] is False
+    # It still reports everything it CAN: the gate withholds two answers, it does
+    # not blank the row.
+    assert legacy["cursor_action"] == "resume"
+    assert legacy["cursor_reason"] == "generation_unchanged"
+    assert legacy["tolerance_pp"] == 4.0
+
+    # A measured zero, which is the value the legacy row was wrongly given.
+    assert zero["units_dropped"] == 0
+    assert zero["units_dropped_measured"] is True
+    assert zero["stop_reasons"] == []
+    assert zero["stop_reasons_measured"] is True
+
+    # And the wipe, once the capture can see it.
+    assert wipe["units_dropped"] == 6
+    assert wipe["units_dropped_measured"] is True
+    assert wipe["stop_reasons"] == ["window_stop:deadline"]
+
+    assert out["observations_returned"] == 3
+
+
+@pytest.mark.asyncio
+async def test_the_endpoint_never_renders_an_unmeasured_drop_as_a_number(monkeypatch):
+    """The single assertion a reader of this surface depends on: any row whose
+    ``units_dropped_measured`` is false carries ``null``, never ``0``.
+
+    The counts are asserted FIRST and on purpose. A loop over "every unmeasured
+    row" is vacuously green on a payload with no unmeasured rows — which is
+    precisely what the defect produced, since it declared the legacy row
+    measured. So the control is the finding: exactly one of these three rows must
+    be unable to answer.
+    """
+    out = await _serve(monkeypatch, [LEGACY_WIPE_ROW, NEW_ZERO_DROP_ROW, NEW_WIPE_ROW])
+    rows = out["observations"]
+
+    assert sum(1 for r in rows if not r["units_dropped_measured"]) == 1
+    assert sum(1 for r in rows if not r["stop_reasons_measured"]) == 1
+
+    for row in rows:
+        if not row["units_dropped_measured"]:
+            assert row["units_dropped"] is None
+        if not row["stop_reasons_measured"]:
+            assert row["stop_reasons"] is None
+
+
+@pytest.mark.asyncio
+async def test_the_full_view_hands_back_the_row_verbatim(monkeypatch):
+    """``full=true`` is the replayable form and must not acquire a derived field.
+
+    A legacy row there carries NO drop or stop key at all, which is honest — the
+    danger was only ever in the default view's re-derivation.
+    """
+    from app.routes import admin_cohort
+    from app.utils.durable_state import DurableEnvelope, EnvelopeRead
+    from datetime import datetime, timezone
+
+    envelope = DurableEnvelope.build(
+        identity=HISTORY_IDENTITY,
+        schema_version=HISTORY_SCHEMA,
+        payload={"schema": HISTORY_SCHEMA, "observations": [LEGACY_WIPE_ROW]},
+        complete=True,
+        source="calibration_beat_gauge_sampler",
+        generated_at=datetime(2026, 9, 6, 7, 0, tzinfo=timezone.utc),
+    )
+
+    async def _fake_read(identity, *, expected_version=None, max_age_s=None):
+        return EnvelopeRead(status="fresh", tier="durable", envelope=envelope)
+
+    import app.services.durable_snapshots as ds
+
+    monkeypatch.setattr(admin_cohort, "_check_admin_secret", lambda **kw: None)
+    monkeypatch.setattr(ds, "read_snapshot_standalone", _fake_read)
+    out = await admin_cohort.calibration_beat_gauges(request=None, full=True)
+
+    assert out["observations"] == [LEGACY_WIPE_ROW]
+    assert "units_dropped" not in out["observations"][0]

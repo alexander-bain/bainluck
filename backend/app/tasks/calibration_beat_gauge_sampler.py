@@ -98,6 +98,10 @@ _EPOCH = datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc)
 #: identity: this row must survive the ledger being overwritten, which is the
 #: entire point.
 HISTORY_IDENTITY = "calibration:beat_gauge_history"
+#: ⚠️ DO NOT BUMP THIS TO DESCRIBE A NEW FIELD ON A ROW. It is the envelope's
+#: ``expected_version``, so a bump makes the whole banked ring unreadable in one
+#: deploy and throws away the seven days of history the ring exists to hold. Row
+#: shape is versioned per row instead — :data:`GAUGE_CAPTURE_VERSION`.
 HISTORY_SCHEMA = "calibration-beat-gauge-history/v1"
 
 #: How many beat observations the ring keeps. 168 = 7 days at the hourly beat.
@@ -230,6 +234,56 @@ def is_stop_key(key: Any) -> bool:
         and key.startswith(STAGED_PREFIX)
         and STOP_REASON_INFIX in key[len(STAGED_PREFIX):]
     )
+
+
+#: WHAT THE SAMPLER THAT BANKED A ROW WAS ABLE TO RETAIN — stamped onto every
+#: observation by :func:`build_observation`, and the reason CERT-2051 blocked the
+#: first version of this change.
+#:
+#: 🔴 A CAPTURE RULE CHANGES WHAT ABSENCE MEANS, AND THE RING OUTLIVES THE CHANGE.
+#: The ring holds 168 rows — seven days — so it spans every deploy that edits
+#: :func:`select_gauges`, and a row banked by an OLDER sampler has a gauge map
+#: from which today's keys were discarded **at capture time**. Re-deriving
+#: :func:`bank_drop` from such a map reads "the drop key is absent" as "the drop
+#: path ran and dropped zero", because the cursor key it disambiguates against
+#: HAS been captured since CAL-P1002. Measured on the live ring: the 6-banked-
+#: units → 0 wipe of 2026-09-06 04:16Z was served as ``units_dropped: 0,
+#: units_dropped_measured: true`` — gotcha #53 arriving one layer above the field
+#: added to end it, with the instrument's authority behind it.
+#:
+#: So the row says what it could see, and a row that does not say is UNKNOWN. A
+#: version is the only marker that works here: the fields themselves are absent
+#: on a legacy row, and "absent" is precisely the value that must not be read.
+GAUGE_CAPTURE_VERSION = 2
+
+#: The first capture version whose :func:`select_gauges` retains
+#: ``staged:units_dropped`` and every ``staged:<stem>_stop:<reason>`` key —
+#: i.e. the first version on which their absence from a gauge map is a fact about
+#: the BEAT rather than a fact about the sampler. Separate from
+#: :data:`GAUGE_CAPTURE_VERSION` so a later capture rule can bump the stamp
+#: without silently re-dating this floor.
+DROP_AND_STOP_CAPTURE_VERSION = 2
+
+#: A row banked before CAL-P1030 carries no version at all. Zero, so the
+#: comparison against the floor is an ordinary ``<`` and an unparseable or
+#: hostile value lands here too — absence fails to unknown, never to a number.
+UNVERSIONED_CAPTURE = 0
+
+
+def capture_version(row: Any) -> int:
+    """The capture version of one banked observation. Pure.
+
+    :data:`UNVERSIONED_CAPTURE` for anything that does not carry a plain integer
+    — a legacy row, a non-dict, a ``bool`` (which ``isinstance(x, int)`` would
+    otherwise wave through as 1 and 0), a string ``"2"``. Every one of those is a
+    row whose capture support is unproven, and unproven is unknown.
+    """
+    if not isinstance(row, dict):
+        return UNVERSIONED_CAPTURE
+    raw = row.get("gauge_capture_version")
+    if isinstance(raw, int) and not isinstance(raw, bool):
+        return raw
+    return UNVERSIONED_CAPTURE
 
 
 def _required_disclosure_gauges() -> tuple[str, ...]:
@@ -402,9 +456,12 @@ def bank_drop(gauges: Any) -> dict:
       would be the CAL-P028 collapse ("nothing dropped" vs "we never looked")
       arriving through the one field added to end it.
 
-    Rows banked BEFORE CAL-P1030 carry no drop key whatever happened, so on a
-    historical row a ``0`` is only as good as its cursor key. That is unavoidable
-    and is why the fix is a capture change rather than a reader change.
+    ⚠️ THIS FUNCTION IS ONLY SOUND OVER A GAUGE MAP CAPTURED AT
+    :data:`DROP_AND_STOP_CAPTURE_VERSION` OR LATER. Its whole inference is "the
+    key is absent, therefore the writer did not write it" — and on a row banked
+    by an older sampler the key is absent because the SAMPLER dropped it, so this
+    returns a confident, wrong zero. Never call it on a raw ring row; call
+    :func:`row_stop_and_drop`, which checks the version first. CERT-2051.
     """
     if not isinstance(gauges, dict):
         return {"units_dropped": None, "measured": False}
@@ -414,6 +471,66 @@ def bank_drop(gauges: Any) -> dict:
     if cursor_decision(gauges)["action"] is None:
         return {"units_dropped": None, "measured": False}
     return {"units_dropped": 0, "measured": True}
+
+
+def row_stop_and_drop(row: Any) -> dict:
+    """Why one banked beat stopped and what it cost, gated on capture. Pure.
+
+    ``{"capture_version": int, "stop_reasons": list[str]|None,
+    "stop_reasons_measured": bool, "units_dropped": int|None,
+    "units_dropped_measured": bool}``.
+
+    THE ONLY PLACE THE VERSION GATE LIVES, so a second reader cannot re-open
+    CERT-2051's hole by calling the pure readers directly. Two arms:
+
+    * **Below** :data:`DROP_AND_STOP_CAPTURE_VERSION` — the sampler that banked
+      this row discarded the drop and stop keys, so the row cannot speak to
+      either question and says so: ``None`` / ``False`` on both. Not ``0``, and
+      not ``[]``. **A null and an empty list must not share a value domain**:
+      ``[]`` is :func:`stop_reasons`' own word for "recorded no stop reason",
+      which is a measurement, and serving it for a row that was never able to
+      record one is the false statement this repair exists to remove.
+    * **At or above it** — the row's own banked fields, which
+      :func:`build_observation` derived from a capture that DID retain the keys.
+      A same-version row missing them falls back to re-deriving from its gauge
+      map, which is sound at that version and keeps the row replayable.
+    """
+    version = capture_version(row)
+    if version < DROP_AND_STOP_CAPTURE_VERSION:
+        return {
+            "capture_version": version,
+            "stop_reasons": None,
+            "stop_reasons_measured": False,
+            "units_dropped": None,
+            "units_dropped_measured": False,
+        }
+
+    banked_stops = row.get("stop_reasons")
+    stops = (
+        [s for s in banked_stops if isinstance(s, str)]
+        if isinstance(banked_stops, list)
+        else stop_reasons(row.get("gauges"))
+    )
+
+    # ``units_dropped`` is legitimately ``None`` on a versioned row (the beat
+    # refused before reaching the drop path), so presence of the KEY is the test,
+    # paired with a well-typed measured flag — a row carrying one without the
+    # other is malformed and is re-derived rather than half-trusted.
+    if "units_dropped" in row and isinstance(row.get("units_dropped_measured"), bool):
+        dropped = row["units_dropped"]
+        measured = row["units_dropped_measured"]
+    else:
+        drop = bank_drop(row.get("gauges"))
+        dropped = drop["units_dropped"]
+        measured = drop["measured"]
+
+    return {
+        "capture_version": version,
+        "stop_reasons": stops,
+        "stop_reasons_measured": True,
+        "units_dropped": dropped,
+        "units_dropped_measured": measured,
+    }
 
 
 def _parse_stamp(value):
@@ -530,6 +647,13 @@ def build_observation(
         "stop_reasons": stop_reasons(captured),
         "units_dropped": drop["units_dropped"],
         "units_dropped_measured": drop["measured"],
+        # What THIS row's capture was able to retain (CERT-2051). Stamped on the
+        # row rather than on the ring because the ring spans seven days and
+        # therefore every deploy that edits ``select_gauges``: the versions are
+        # mixed inside one artifact, and only the row knows which one it is. Any
+        # reader of the three fields above must go through
+        # :func:`row_stop_and_drop`, which reads this first.
+        "gauge_capture_version": GAUGE_CAPTURE_VERSION,
         # -- derived, through production ---------------------------------------
         "disclosure": disclosure,
         "tolerance_pp": bound,
