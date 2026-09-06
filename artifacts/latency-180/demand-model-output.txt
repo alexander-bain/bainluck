@@ -1,0 +1,145 @@
+
+================================================================================================================
+BACKGROUND  —  2 slots = 7,200 worker-seconds/hour  (110 beats)
+================================================================================================================
+ wsec/hr A  wsec/hr B rate/h A rate/h B    mean     p50     p95    n  bimod  task
+      1947       1943   130.77   130.54    14.9     0.1    39.5   50 283.5x  warm_typeahead
+       748        669    11.20    10.01    66.8    68.2    83.8   50         warm_event_concepts
+       641        684     8.99     9.60    71.3    72.0    90.7   50         precompute_discover_candidate_base
+       200         53     1.28     0.34   156.2   156.3   250.6   50         enrich_market_images
+       185        183     0.20     0.19   942.7   996.2  1440.1   50         turbo_collapse_futures
+       177        176     3.66     3.65    48.4    18.2   170.4   50   2.7x  fill_futures_chart_series
+       168        167     1.01     1.01   165.8   182.2   189.7   50         warm_prop_families
+       167        172     1.06     1.10   156.8   135.0   252.7   50         precompute_category_pages
+       136        135     0.20     0.20   673.1   751.9   840.3   50         backfill_winners
+       101        101     1.05     1.04    96.8    87.0   161.6   50         poll_polymarket_markets
+        93         55     2.04     1.21    45.6    37.8    93.6   50         discover_events
+        92          —     0.19     0.00   491.5   476.4   702.7   50         turbo_collapse_odds
+        91         91     0.19     0.19   469.4   599.7   897.8   50         precompute_bookmaker_calibration
+        81         61     0.70     0.53   116.1    36.3   140.3   50   3.2x  run_data_quality_watchdog   [STEP 36->116s @ newest 11/50]
+        77         76     0.21     0.21   365.5   343.7   591.6   50         enrich_cu_v2_profiles
+        66         30     0.85     0.39    77.6    79.4   157.6   50         backfill_polymarket_history
+        62         62     6.04     6.09    10.2     9.1    15.6   50         link_tournament_matchups
+        58         68    10.23    12.06     5.7     5.2     9.0   50         warm_futures_categories
+        53         53     1.04     1.04    51.1    29.6    96.1   50         kalshi_cliff_drain   [STEP 15->51s @ newest 43/50]
+        51         73     0.22     0.31   234.3   192.7   483.8   50         backfill_kalshi_trades
+        50         49     6.87     6.82     7.2     5.2    24.5   50         warm_search_head
+        48         49     6.06     6.22     7.9   195.0   233.7   50   0.0x  refresh_registered_tournament_prices   [STEP 186->8s @ newest 4/50]
+        44         44     2.04     2.04    21.6    18.0    34.7   50         precompute_admin_matured_linkage
+        41         42     6.09     6.19     6.7     5.0    19.8   50         sync_tennis_from_espn
+        36         36     0.21     0.21   173.4   179.9   355.4   50         recover_datagolf_participation
+        34         35     0.17     0.17   199.4   200.9   250.2   50         enrich_discover_llm_metadata
+        28         19     0.78     0.52    36.7    29.1    76.4   50         precompute_interestingness
+        24         24     0.26     0.26    94.4   120.3   140.7   50         backfill_espn_win_prob
+        23         23     0.05     0.05   440.0   460.9   501.9    9         run_settlement_sweep
+        22         21    12.56    11.89     1.7     0.0    13.6   50  79.0x  refresh_open_commentary
+        22         21     0.18     0.18   117.6   121.8   148.3   50         enrich_market_hooks
+        20         20     0.30     0.30    65.5    20.9   167.4    3   3.1x  backfill_kalshi_settled
+        20         19     0.80     0.76    24.7    24.7    26.8    2         sweep_kalshi_resolution_window
+        19         19     0.18     0.18   103.8    92.7   194.3   50         enrich_snippet_angles
+        16         16     6.03     5.97     2.7     2.7     4.6   50         flush_search_gin_pending_lists
+        16          5     0.91     0.28    17.6    16.2    27.1   50         poll_futures_odds
+        15         15     3.85     3.85     3.9     1.8    12.9   50   2.1x  sync_statpal_schedules
+        13         13     0.22     0.22    57.3    54.3    81.7   50         backfill_settled_gap_creation
+        12         11     0.18     0.18    64.1    65.2    76.7   14         backfill_image_dimensions
+        10          9     0.20     0.20    47.6    33.0    96.1   50         clob_resolve_drain
+         9          9     2.03     2.03     4.4     3.0     6.1   50         precompute_admin_audit_all
+         8          8     0.18     0.17    45.8    53.1    67.6   50         correct_both_winner_guess_side
+         8          8    18.09    18.07     0.4     0.3     0.7   50         sync_tournament_results
+         7          8     1.10     1.19     6.5     5.7     8.6   50         sync_statpal_injuries
+         6          6     2.04     2.04     2.7     2.1     8.3   50         poll_mlb_pregame
+         5          5     0.40     0.40    12.9    14.2    22.9   50         backfill_kalshi_history
+         5          5     0.17     0.17    27.9    25.3    49.0   50         null_impossible_both_sides_openings
+         4          —     0.32     0.00    12.1     9.3    28.6   50         backfill_box_scores
+         4          —     0.11     0.00    32.8    17.1    90.1   50         regrade_polymarket_under_signflip
+         4          4     2.03     2.04     1.8     1.7     3.4   50         send_big_move_alerts
+         3          3     1.07     1.06     2.7     2.8     4.2   36         stamp_mlb_statpal_fixtures
+         3          2     0.52     0.52     4.8     4.4     8.7   50         compute_game_moments
+         2          2     0.05     0.05    51.1    49.2    78.0    3         backfill_thin_event_charts
+         2          2     0.05     0.05    38.7    30.3    71.1   26         check_data_quality
+         1          1     1.05     1.04     1.4     1.2     2.4   39         stamp_nhl_statpal_fixtures
+         1          2     0.22     0.32     6.5     3.5    14.7   50         sync_polymarket_resolved
+         1          1     6.34     6.07     0.2     0.2     0.3   50         run_freshness_watchdog
+         1          1     0.98     0.97     1.4     1.3     2.2   38         stamp_nba_statpal_fixtures
+         1          1     0.05     0.05    25.7    22.0    66.6   26         evaluate_discover_with_llm
+         1          1     1.04     1.04     1.0     1.0     1.5   44         stamp_nfl_statpal_fixtures
+         1          1     1.89     1.87     0.4     0.3     0.7   50         calibration_beat_gauge_sampler
+         0          0     0.05     0.05     9.3     6.8    20.0   26         snapshot_discover_candidate_pool
+         0          0     0.05     0.05     8.8     8.4    10.7   26         snapshot_golf_leaderboard
+         0          0     0.05     0.05     7.8     7.3    16.1   26         backfill_combat_wps
+         0          0     0.18     0.18     1.9     0.9     5.8   50         enrich_tmdb_images
+         0          0     0.05     0.05     6.2     3.1     6.6   26   2.0x  sync_statpal_standings
+         0          0     1.97     1.97     0.1     0.1     0.2   50         reconcile_unanchored_events
+         0          0     0.06     0.06     3.0     2.2     5.2   26         send_morning_digest   [STEP 1->3s @ newest 19/26]
+         0          0     0.28     0.27     0.4     0.3     1.0   27         export_engagement
+         0          0     0.05     0.05     1.7     1.1     8.3   26         generate_discover_comparison_candidates
+         0          0     0.06     0.06     1.3     1.1     2.5   26         send_daily_challenge_push
+         0          0     4.38     3.97     0.0     0.0     0.0   50         sentry_snapshot
+         0          0     0.17     0.17     0.1     0.1     0.3   50         unresolve_datagolf_premature
+         0          0     0.17     0.17     0.1     0.1     0.3   50         compare_ws_shadow
+         0          0     0.05     0.05     0.4     0.3     0.8   26         snapshot_discover_label_eval_run
+         0          0     0.04     0.04     0.4     0.4     0.7   26         check_aggregation_quality
+         0          0     0.05     0.05     0.0     0.0     0.0   26         import_external_curator_ground_truth
+         0          0     0.05     0.05     0.0     0.0     0.0   26         check_ground_truth_health
+
+  TOTAL arm A (deliveries / deliveries_window_s):      5,784 wsec/hr = 0.80x capacity
+  TOTAL arm B (starts / starts_window_s):             5,417 wsec/hr = 0.75x capacity
+  UNPRICED (no duration sample — a FLOOR on the total, not a zero): 32 beats
+    update_max_movement@6.25/hr, track_statpal_usage@5.53/hr, compute_gei_batch@2.04/hr, merge_duplicate_events@2.04/hr, check_tier1_coverage@1.06/hr, enrich_events_metadata@1.06/hr, compute_gei_percentiles@1.03/hr, sync_sports@1.03/hr, backfill_team_links@1.02/hr, backfill_historical_links@0.49/hr, mark_resolved_futures@0.19/hr, backfill_team_logos@0.17/hr, merge_degenerate_combat_events@0.17/hr, backfill_polymarket_matchups@0.13/hr, backfill_espn_ids@0.11/hr, send_daily_digest@0.06/hr, sync_rosters@0.05/hr, compute_matching_metrics@0.05/hr, snapshot_discover_ground_truth_diagnostics@0.05/hr, audit_related_futures@0.05/hr, audit_prediction_market_links@0.05/hr, backfill_canonical_keys@0.05/hr, canonicalize_entities@0.05/hr, sync_statpal_rosters@0.05/hr, check_kalshi_freshness@0.00/hr, sync_statpal_team_stats@0.00/hr, digest_external_feature_requests@0.00/hr, capture_featured_markets@0.00/hr, collapse_snapshots@0.00/hr, recategorize_other@0.00/hr, backfill_polymarket_winners@0.00/hr, audit_canonical_keys@0.00/hr
+  STEP-CHANGED (priced on the recent population): run_data_quality_watchdog STEP 36->116s @ newest 11/50, kalshi_cliff_drain STEP 15->51s @ newest 43/50, refresh_registered_tournament_prices STEP 186->8s @ newest 4/50, send_morning_digest STEP 1->3s @ newest 19/26
+  ARMS DISAGREE >1.5x: enrich_market_images(A=1.28/B=0.34), discover_events(A=2.04/B=1.21), backfill_polymarket_history(A=0.85/B=0.39), precompute_interestingness(A=0.78/B=0.52), poll_futures_odds(A=0.91/B=0.28)
+
+================================================================================================================
+HEAVY  —  2 slots = 7,200 worker-seconds/hour  (28 beats)
+================================================================================================================
+ wsec/hr A  wsec/hr B rate/h A rate/h B    mean     p50     p95    n  bimod  task
+      2652       2001     5.35     4.03   496.1   612.2   752.5   50         match_prediction_markets
+       983        978    51.97    51.72    18.9    20.1    20.2   50         prewarm_live_feed_shapes
+       934        819     4.53     3.97   206.1   249.2   249.3   50         precompute_backfill_progress
+       374        381     1.06     1.08   352.9   356.5   600.3   50         precompute_backfill_winners_status
+       241        181     0.70     0.52   344.6   352.8   480.3   50         poll_kalshi_markets
+       199        196     2.17     2.14    91.6    91.8   150.0   50         rebuild_typeahead_index
+       195        190     1.09     1.07   178.2    43.6   193.5   50   4.1x  refresh_stale_futures_prices   [STEP 36->178s @ newest 5/50]
+       194        194     2.04     2.04    95.1    92.4   120.0   50         precompute_admin_link_rate
+       167        154     3.28     3.01    51.0    56.7    96.3   50         backfill_market_shapes
+       145        145     1.05     1.05   138.9   955.0  1351.4   50   0.1x  precompute_calibration_main   [STEP 842->139s @ newest 3/50]
+       129        135     4.05     4.22    32.0    31.9    40.4   50         matching_reconciliation
+       126         84     0.29     0.19   437.2   538.5   567.6   50         compute_calibration_prices
+        73         71     0.38     0.37   191.8    14.1   482.1   27  13.6x  snapshot_coverage_metrics
+        64         52     0.22     0.18   296.6   301.3   302.5   50         compute_time_horizon_calibration
+        24         23     0.23     0.23   102.4    89.6   218.6   50         compute_fair_fight_comparison
+         8          8     0.04     0.04   185.5   185.5   317.6    2         anchor_schedule_sentinel
+         4          4     0.20     0.20    22.6    20.7    43.9   50         precompute_source_intelligence
+         3          3     0.04     0.04    66.6    70.7   117.9   32         flow_sentinel
+         1          1     0.05     0.05    19.4    18.6    24.8   26         board_sentinel
+         1          1     0.05     0.05    11.0     9.1    25.8   18         typeahead_index_sentinel
+         0          0     0.05     0.05     8.5     7.9    20.6   25         horizon_sentinel
+         0          0     0.04     0.04     1.6     1.1     5.8   26         mlb_schedule_coverage
+         0          0     0.05     0.05     0.9     0.8     1.1    9         tournament_register_sentinel
+         0          0     0.05     0.05     0.2     0.1     0.2   26         grid_register_sentinel
+
+  TOTAL arm A (deliveries / deliveries_window_s):      6,516 wsec/hr = 0.91x capacity
+  TOTAL arm B (starts / starts_window_s):             5,622 wsec/hr = 0.78x capacity
+  UNPRICED (no duration sample — a FLOOR on the total, not a zero): 4 beats
+    calibration_sentinel@0.00/hr, grid_sentinel@0.00/hr, schedule_sentinel@0.00/hr, settled_concept_sentinel@0.00/hr
+  STEP-CHANGED (priced on the recent population): refresh_stale_futures_prices STEP 36->178s @ newest 5/50, precompute_calibration_main STEP 842->139s @ newest 3/50
+
+================================================================================================================
+REALTIME  —  4 slots = 14,400 worker-seconds/hour  (10 beats)
+================================================================================================================
+ wsec/hr A  wsec/hr B rate/h A rate/h B    mean     p50     p95    n  bimod  task
+     13565       1074   116.54     9.22   116.4   114.8   184.0   50         poll_all_odds
+      4541       2578    37.23    21.14   122.0   108.8   219.5   50         poll_datagolf_inplay
+      2976       2716    57.44    52.42    51.8    49.8    75.7   50         sync_espn_live_events
+      1467       1432    27.41    26.75    53.5    50.8    77.4   50         poll_live_prediction_markets
+       526        498    57.44    54.46     9.2     9.1    11.3   50         transition_event_statuses
+       401        387   116.52   112.50     3.4     3.3     4.6   50         sync_statpal_livescores
+        91         82     6.92     6.25    13.1    12.9    17.4   50         link_tennis_statpal_fixtures
+        42         35    27.41    22.93     1.5     0.0     5.6   50  32.2x  sync_mlb_win_probability
+        28         26    57.44    54.23     0.5     0.5     0.7   50         sync_statpal_live_plays
+
+  TOTAL arm A (deliveries / deliveries_window_s):     23,636 wsec/hr = 1.64x capacity
+  TOTAL arm B (starts / starts_window_s):             8,829 wsec/hr = 0.61x capacity
+  UNPRICED (no duration sample — a FLOOR on the total, not a zero): 1 beats
+    heartbeat@57.22/hr
+  ARMS DISAGREE >1.5x: poll_all_odds(A=116.54/B=9.22), poll_datagolf_inplay(A=37.23/B=21.14)
