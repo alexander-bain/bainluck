@@ -1529,10 +1529,22 @@ def _is_injury_envelope(data) -> bool:
     successful empty snapshot, because that is the reading the caller acts on
     when it clears stale players.
 
-    Everything else is refused: a missing or non-dict `injuries_suspensions`, or
-    a section with no `league` key at all. `{"data": []}` and `{}` both parse to
-    zero injuries and would otherwise be indistinguishable from a real empty
-    day, which is now an instruction to DELETE stored state.
+    Everything else is refused: a missing or non-dict `injuries_suspensions`, a
+    section with no `league` key at all, or a `league` whose VALUE the parser
+    cannot walk. `{"data": []}` and `{}` both parse to zero injuries and would
+    otherwise be indistinguishable from a real empty day, which is now an
+    instruction to DELETE stored state.
+
+    Checking that the key is PRESENT is not the same as checking that its value
+    is readable, and the gap between the two was itself a deletion bug: a 200
+    carrying `{"injuries_suspensions": {"league": null}}` has the key, so a
+    key-only check calls it canonical; `_as_list(None)` is `[]`, so it parses to
+    zero injuries, reads as a successful empty snapshot and clears every stored
+    player. `null` is the vendor's own collapse of "no data" — the shape we are
+    least entitled to read as authority. So only the two values the parser
+    actually walks are accepted: a `list` of leagues, or the single-league
+    `dict` collapse (`_as_list`). Anything else — `null`, a string, a number —
+    is `fetch_failed`.
 
     A section that omits `league` entirely is treated as malformed rather than
     empty on purpose. We have never observed the vendor omit it, so the choice
@@ -1542,7 +1554,9 @@ def _is_injury_envelope(data) -> bool:
     if not isinstance(data, dict):
         return False
     section = data.get("injuries_suspensions")
-    return isinstance(section, dict) and "league" in section
+    if not isinstance(section, dict) or "league" not in section:
+        return False
+    return isinstance(section["league"], (list, dict))
 
 
 def _parse_injuries_suspensions(data: dict) -> list[StatPalInjury]:

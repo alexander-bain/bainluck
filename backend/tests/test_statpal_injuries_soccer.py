@@ -805,15 +805,30 @@ class TestASuccessfulSnapshotReplacesTheOldOne:
             {"injuries_suspensions": None},
             {"injuries_suspensions": {"updated": "06.09.2026 01:01:10"}},
             {"error": "something else"},
+            {"injuries_suspensions": {"updated": "06.09.2026 01:01:10", "league": None}},
+            {"injuries_suspensions": {"league": ""}},
+            {"injuries_suspensions": {"league": 0}},
         ],
-        ids=["data-list", "bare", "section-list", "section-null", "no-league", "other"],
+        ids=[
+            "data-list", "bare", "section-list", "section-null", "no-league", "other",
+            "league-null", "league-string", "league-number",
+        ],
     )
     def test_a_malformed_two_hundred_preserves_state_and_fails_the_run(
         self, monkeypatch, body
     ):
-        """CERT-2005. A 200 whose body we do not recognise parses to zero
-        injuries — indistinguishable from a real empty day, which is now an
-        instruction to DELETE. It must be a failure to read.
+        """CERT-2005, and its last three cases are CERT-2007's.
+
+        A 200 whose body we do not recognise parses to zero injuries —
+        indistinguishable from a real empty day, which is now an instruction to
+        DELETE. It must be a failure to read.
+
+        The `league-*` cases are the gap CERT-2007 found between "the key is
+        there" and "the value is readable": `{"league": null}` HAS the key, and
+        `_as_list(None)` is `[]`, so a key-only gate called it a successful
+        empty snapshot and cleared every stored player on it. Only the two
+        values the parser walks — a list, or the single-league dict collapse —
+        may pass.
 
         Straight through the transport so the envelope gate is exercised where
         it lives, not around it.
@@ -886,6 +901,43 @@ class TestASuccessfulSnapshotReplacesTheOldOne:
         assert self._route_reads(self._written(executed)) == []
         assert summary["events_cleared"] == 1
         assert summary["terminal"] == "complete"
+
+    def test_a_single_league_collapsed_to_a_dict_is_still_read(
+        self, monkeypatch, census
+    ):
+        """CERT-2007's other side. The gate now judges the VALUE of `league`,
+        so it has to accept every value the parser can walk — and StatPal
+        collapses one-child lists to bare dicts at every level of this payload
+        (`match`, `to_miss`, `questionable` all do it in the pinned census). A
+        gate that only accepted `list` would call a quiet day at a one-league
+        venue a failed read, and the endpoint would silently stop producing.
+        """
+        import app.services.statpal_api as api_module
+
+        # Not every league in the census has anyone sidelined; a collapse test
+        # over an empty one would pass whether or not the parser ran.
+        one_league = next(
+            league
+            for league in census["injuries_suspensions"]["league"]
+            if _parse_injuries_suspensions({"injuries_suspensions": {"league": [league]}})
+        )
+        collapsed = {"injuries_suspensions": {"league": one_league}}
+
+        real_service = api_module.StatPalAPIService(api_key="test-key-not-a-real-key")
+
+        async def fake_http_get(url, params=None):
+            return httpx.Response(200, json=collapsed, request=httpx.Request("GET", url))
+
+        monkeypatch.setattr(real_service.client, "get", fake_http_get)
+        result = asyncio.run(real_service.get_injuries_result("soccer"))
+
+        assert result.reason == "ok", "a collapsed single league was refused"
+        assert result.is_alarm is False
+        expected = _parse_injuries_suspensions(
+            {"injuries_suspensions": {"league": [one_league]}}
+        )
+        assert [i.player_name for i in result.injuries] == [i.player_name for i in expected]
+        assert result.injuries, "the collapsed arm produced nobody"
 
     def test_a_fetch_failure_never_deletes_what_we_already_know(self, monkeypatch):
         """The control that keeps the clear safe. A 404 hour must not wipe every
