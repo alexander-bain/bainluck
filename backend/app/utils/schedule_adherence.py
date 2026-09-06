@@ -38,6 +38,23 @@ a fact.
 
 from __future__ import annotations
 
+#: Celery ``--concurrency`` per worker queue, from ``backend/Procfile``.
+#:
+#: LAT-P242 (#3466). Mirrored here rather than read at runtime because the
+#: Procfile is not on a path the dyno can rely on, and pinned against the
+#: Procfile text for all three queues by
+#: ``test_worker_concurrency_mirror_matches_the_procfile`` — the same guard that
+#: already pinned the background entry alone, widened, so a concurrency change
+#: cannot land silently on any queue.
+#:
+#: This is the DENOMINATOR of every capacity claim this lane makes: a queue's
+#: capacity is ``slots x 3600`` worker-seconds per hour, and demand measured
+#: against the wrong slot count is not a measurement. ``background``'s 2 is a
+#: MEMORY bound, not a preference — 2 x 200MB + ~100MB overhead fits a 512MB
+#: Standard-1X exactly — so raising it is a dyno purchase and never a config
+#: edit. See the routing block in ``app/tasks/__init__.py``.
+QUEUE_SLOTS = {"realtime": 4, "background": 2, "heavy": 2}
+
 #: A window must have had room for at least this many fires before a shortfall
 #: means anything. At 2 expected, observing 0 is a real signal; at 0.3 expected,
 #: observing 0 is the overwhelmingly likely outcome for a perfectly healthy task
@@ -1132,6 +1149,49 @@ def beat_intervals(beat_schedule):
             continue
         rates[task] = rates.get(task, 0.0) + 1.0 / iv
     return {t: 1.0 / r for t, r in rates.items() if r > 0}
+
+
+def beat_queues(beat_schedule, task_routes=None, default_queue="background"):
+    """``task name -> [distinct worker queues its beat entries land on]``.
+
+    LAT-P242 (#3466). The companion to :func:`beat_intervals` and it must get
+    the same two shapes right, both of which have already misled readers:
+
+    1. **The beat schedule is keyed by ENTRY name, not by task name.** An entry
+       is ``{"task": "app.tasks.foo", "schedule": ..., "options": {...}}`` under
+       an arbitrary key. Looking an entry up by task name silently finds
+       nothing, and "nothing" here degrades to the default queue — which is
+       ``background``, the very queue being sized, so the failure would have
+       inflated the number it was built to measure.
+
+    2. **One task can have several entries** (``collapse_snapshots`` has three)
+       and they need not agree about the queue. So this returns a LIST, always,
+       and never collapses it. A task whose entries disagree cannot have its
+       wall time attributed to a queue at all — the counter is per task, not per
+       entry — and the caller must report that rather than pick one.
+
+    Precedence within an entry is celery's: ``options["queue"]`` OVERRIDES
+    ``task_routes``. The routing block in ``app/tasks/__init__.py`` says so in
+    the same words ("beat options override task_routes, so both must agree").
+    Getting it backwards would credit the three multi-minute grinders that were
+    deliberately pinned to ``heavy`` back to the queue they were moved off.
+    """
+    task_routes = task_routes or {}
+    out: dict = {}
+    for entry in (beat_schedule or {}).values():
+        task = entry.get("task")
+        if not task:
+            continue
+        options = entry.get("options") or {}
+        queue = (
+            options.get("queue")
+            or (task_routes.get(task) or {}).get("queue")
+            or default_queue
+        )
+        seen = out.setdefault(task, [])
+        if queue not in seen:
+            seen.append(queue)
+    return {t: sorted(q) for t, q in out.items()}
 
 
 def find_lapping(graded):
