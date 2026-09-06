@@ -846,6 +846,43 @@ jobs:
             exit 1
           fi
 
+      - name: Stand-in event starts get the published hour (real Postgres)
+        # #3544, the repair CERT-2075 named. `_kalshi_commence_time` stores the
+        # venue's published `occurrence_datetime` on the MARKET; the user reads
+        # the EVENT, and `/api/events/15305789` served
+        # `"commence_time": "2026-09-07T00:00:00+00:00"` — a midnight stand-in —
+        # for a match the venue times at 18:00Z. `_refine_stand_in_event_starts`
+        # propagates it. Nothing already in the tree could: the auto-create path
+        # runs only for an UNLINKED market (gotcha #15) and these are linked, and
+        # `commence_time_write_authorized('kalshi_ticker','kalshi')` refuses on a
+        # tie anyway.
+        #
+        # Real Postgres because three things here are not pure and a fake can
+        # only agree with itself about them: `= ANY(:derived)` binding a Python
+        # list to a `varchar` column through the real driver (with a NULL row
+        # that must not match); `AND fm.status = 'open'`, the ONE clause the
+        # pure predicate does not duplicate, so deleting it re-dates finished
+        # matches invisibly; and whether the UPDATE was COMMITTED and wrote BOTH
+        # columns — every assertion reads back on a separate connection, which
+        # is what the API serving the page would see.
+        #
+        # Two-armed: `test_the_unscoped_query_redates_events_for_matches_already
+        # _over` and `test_without_the_dated_match_gate_an_outright_moves_a
+        # _fortnight` execute the MUTATED shapes against the same seeded corpus
+        # and require the damage to be observable. The second drives the REAL
+        # rail with the gate stubbed, so it proves the production call site
+        # consults it rather than that a re-implementation would have.
+        # Its fixture drops and recreates the schema, so it sits beside the other
+        # gates that do. Same skip-detection as every gate in this job.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_stand_in_event_starts_real_postgres.py \
+            -v -s -rs 2>&1 | tee /tmp/standinstarts.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/standinstarts.txt; then
+            echo "::error::stand-in event start gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#1852 gap-create grade round trip (real Postgres)"
         # CAL-P1004R, the repair CERT-948 named. `graded_columns()` returns an
         # EMPTY mapping when the venue has not answered — right on an UPDATE,
