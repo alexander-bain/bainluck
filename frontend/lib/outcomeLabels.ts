@@ -45,20 +45,71 @@
  * identical" to rows a reader can tell apart.
  */
 
+/**
+ * ── #3538 (ux/1097): THE ALL-OR-NOTHING GATE IS GONE, AND THAT REVERSES A
+ *    DELIBERATE #2662 DECISION. Read this before restoring it. ──
+ *
+ * 🔴 #2662 shipped `outcomeDisplayNames` gated on `names.every(prefixed)`, with the
+ * stated reason: *"A market where only some outcomes are prefixed is left alone: a
+ * partial strip would make the rows less comparable, not more."* That sentence was
+ * reasoned, not measured — #2662's 375-market population was defined by a `HAVING`
+ * clause that only admits all-prefixed markets, so the partial case was never in the
+ * data it looked at.
+ *
+ * It is now, and it is the larger half. `/hub/tennis`, production 2026-09-06:
+ *
+ *     US Open ATP: Karen Khachanov vs Learner Tien
+ *       US Open ATP: Karen Khacha…   66%     <- Total Sets: O/U 3.5
+ *       US Open ATP: Karen Khacha…   56%     <- Set 1 O/U 9.5
+ *       US Open ATP: Karen Khacha…   53%     <- Game Spread +/-2.5
+ *       US Open ATP: Karen Khacha…   51%     <- Match O/U 38.5
+ *
+ * Four prices, four labels a reader cannot tell apart — and the gate is precisely
+ * what withheld the fix, because a tenth outcome on that card is named
+ * `Karen Khachanov` (the real match-winner leg) and is not prefixed. 31 of 62 outcome
+ * rows on that rail restate their own card's headline, and **0 of the affected hub
+ * cards are all-prefixed; 4 of 4 are partial.**
+ *
+ * So the gate is now per-row: strip the rows that carry the parent prefix, leave the
+ * rest exactly as served. Measured before changing it, `POST /api/admin/db-query`,
+ * 2026-09-06, over every open market resolving in the next 7 days — the markets a
+ * reader can currently reach:
+ *
+ *     all-prefixed  (the #2662 population)   238 markets /  1,348 outcomes
+ *     PARTLY prefixed (refused until now)    446 markets /  2,216 outcomes
+ *     none prefixed (never touched)        9,265 markets / 27,652 outcomes
+ *
+ * And over those 446 partial markets, applying the per-row rule:
+ *
+ *     markets that lose label distinctness    0 of 446
+ *     markets with a row that strips to ""   15 of 446   (already covered by `|| name`)
+ *
+ * Zero. The comparability worry does not appear in the data, and the one hazard that
+ * does — a row stripping to nothing — is the hazard #2662 had already built the
+ * `|| name` fallback for. That fallback is untouched and is what makes this safe.
+ *
+ * What #2662 MEASURED is all preserved and still guarded: all-prefixed markets behave
+ * exactly as before (every row is prefixed, so a per-row rule strips every row), its
+ * two named controls carry zero prefixed outcomes and cannot move, the separator is
+ * still leading whitespace only, matching is still case-sensitive, order and length
+ * are still one-label-per-input, and no duplicate label is created that the raw names
+ * did not already have.
+ */
+
 /** Leading whitespace only — measured, not guessed. See the note above. */
 const LEADING_SPACE = /^\s+/;
 
 /**
- * Display labels for one market's outcomes, with the shared parent-name prefix
- * removed.
+ * Display labels for one market's outcomes, with the parent-name prefix removed
+ * from each row that carries it.
  *
- * Fires only when the whole shipped outcome set is prefixed by the market name —
- * deliberately the same predicate as the population's `HAVING` clause — so every
- * market outside that population is returned byte-identically and the two controls
- * named on #2662 (`Set 1 Winner: Sonmez vs Gauff` with No/Yes outcomes, and
- * `Will Coco Gauff advance to the Round of 16…` with Yes/No) cannot move. A market
- * where only *some* outcomes are prefixed is left alone: a partial strip would make
- * the rows less comparable, not more.
+ * Applied PER ROW (#3538 — see the block above for the measurement that reversed
+ * #2662's all-or-nothing gate). A row that does not begin with the market name is
+ * returned byte-identically, so the two controls named on #2662
+ * (`Set 1 Winner: Sonmez vs Gauff` with No/Yes outcomes, and `Will Coco Gauff advance
+ * to the Round of 16…` with Yes/No) carry no prefixed rows and cannot move — and
+ * neither can the real match-winner leg (`Karen Khachanov`) sitting beside nine
+ * prefixed siblings on one hub card.
  *
  * An outcome named exactly the market name keeps its full name rather than becoming
  * empty. It is then the only long row on the card, which is enough to tell it from
@@ -82,16 +133,19 @@ export function outcomeDisplayNames(
   // A one-outcome market has nothing to disambiguate, and an empty parent name
   // would make `startsWith` vacuously true for every string.
   if (!parent || names.length < 2) return [...names];
-  if (!names.every((n) => typeof n === "string" && n.startsWith(parent))) {
-    return [...names];
-  }
-  return names.map((n) => n.slice(parent.length).replace(LEADING_SPACE, "").trim() || n);
+  return names.map((n) =>
+    typeof n === "string" ? stripParentPrefix(parent, n) : n,
+  );
 }
 
 /**
- * The same rule for a single outcome, when the caller already knows the whole set
- * qualifies. Kept separate so the all-or-nothing predicate above stays in one place
- * and cannot be applied per-row by accident.
+ * The rule for a single outcome, and since #3538 the only rule there is —
+ * `outcomeDisplayNames` is now this function mapped over a market's rows.
+ *
+ * It stays exported and separate because the list form still owns two things this
+ * one cannot see: the `names.length < 2` no-op (a single-outcome market has nothing
+ * to disambiguate) and the empty-parent guard. Call the list form unless you are
+ * genuinely labelling one row in isolation.
  */
 export function stripParentPrefix(marketName: string, name: string): string {
   if (!marketName || !name.startsWith(marketName)) return name;
