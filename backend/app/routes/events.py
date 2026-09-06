@@ -8647,6 +8647,23 @@ _PLAYER_PROP_OU_RE = re.compile(
 # to the GAME, not to a person.
 _MATCHUP_SUBJECT_RE = re.compile(r"\b(?:vs\.?|at)\b", re.IGNORECASE)
 
+# The stat words `_PLAYER_PROP_RE` never learned, and the reason #3594 happened:
+# Polymarket's baseball card quotes "<Player>: Total Bases O/U n" and "bases" is in
+# neither vocabulary, so the structural test above returned False and the market fell
+# through to `game_total`. Measured on production 2026-09-06: `Total Bases` was the
+# ONLY missing family (52 open markets across 5 events; every other subject-prefixed
+# O/U stat — home runs, hits, strikeouts, hits + runs + rbis — already matched).
+#
+# Kept SEPARATE from `_PLAYER_PROP_RE` on purpose. That regex is the shared vocabulary
+# three other classifier branches consult, and it is asked a looser question there
+# ("does this name mention a stat"); this one is only ever asked of a name that has
+# already proved the `<non-matchup subject>: <stat> O/U <line>` shape, so a word may be
+# safe here and unsafe there. Widening the shared one instead would move markets on
+# paths this issue never measured.
+_PLAYER_PROP_OU_STAT_RE = re.compile(
+    r"\b(?:bases|rbis?|walks|doubles|triples|singles)\b", re.IGNORECASE
+)
+
 
 def _is_player_prop_ou_market(name: str) -> bool:
     """True for Polymarket's "<Player>: <Stat> O/U <line>" player-prop shape."""
@@ -8655,7 +8672,60 @@ def _is_player_prop_ou_market(name: str) -> bool:
         return False
     if _MATCHUP_SUBJECT_RE.search(m.group("who")):
         return False
-    return bool(_PLAYER_PROP_RE.search(m.group("stat")))
+    stat = m.group("stat")
+    return bool(_PLAYER_PROP_RE.search(stat) or _PLAYER_PROP_OU_STAT_RE.search(stat))
+
+
+def _prop_side(outcome_name: Optional[str]) -> str:
+    """Which side of the line a prop row quotes, as the build loop reads it.
+
+    Rows are stored over-oriented (`over_probability`), and an Under row carries the
+    complement — so the two sides of one market are near-identical numbers about the
+    same question. They are still two rows on the page, and this key is what keeps a
+    cross-source dedup from quietly folding them into one and calling that two sources.
+    """
+    name = (outcome_name or "").lower().strip()
+    return "under" if name.startswith("under") or name == "no" else "over"
+
+
+def _prop_player_and_stat(
+    market_name: Optional[str], outcome_name: Optional[str]
+) -> tuple[str, str]:
+    """WHO the prop is about and WHICH stat it counts. Provider-specific, both.
+
+    The same split as #1976 §5, one field over: where the LINE lives is
+    provider-specific, and so is where the PLAYER lives.
+
+        Kalshi      market "Reds at Cardinals: Home Runs"       outcome "Soto: 2+"
+        Polymarket  market "Brandon Marsh: Total Bases O/U 2.5" outcome "Over"
+
+    Reading the player off the OUTCOME alone — what the dedup below used to do —
+    gives every Polymarket prop on a page the same two identities, `over` and
+    `under`, because that is all its outcomes say. Distinct players then collide on
+    a shared threshold and one of them is averaged away under the other's name.
+    Measured on production 2026-09-06, `GET /api/events/15305464/game-markets`
+    (Phillies at Braves) served 8 props at 8 DISTINCT thresholds — 0.5, 1.5, 2.5,
+    3.5, 4.5, 5.5, 6.5, 7.5 — out of 45 prop markets: one survivor per number, which
+    is the signature of this key rather than of the market.
+    """
+    oname = (outcome_name or "").strip()
+    mname = (market_name or "").strip()
+    stat = mname.split(":")[-1].strip().lower() if ":" in mname else "other"
+
+    colon = oname.find(":")
+    if colon > 0:
+        # Kalshi: "Soto: 2+" names the player; the market names the stat.
+        return oname[:colon].strip().lower(), stat
+
+    # Polymarket: a bare "Over"/"Under" names nobody, so the market's subject does.
+    m = _PLAYER_PROP_OU_RE.match(mname)
+    if m and not _MATCHUP_SUBJECT_RE.search(m.group("who")):
+        who = m.group("who").strip().lower()
+        return who, (m.group("stat").strip().lower() or stat)
+
+    # Neither shape: fall back to what the old key used, so a row we cannot identify
+    # groups exactly as it did rather than joining someone else's group.
+    return oname.lower(), stat
 
 # Matches per-player outcome names inside team stat markets.
 # Kalshi uses "PlayerName: X+" format for individual player contracts
@@ -10076,11 +10146,13 @@ async def _build_game_markets(
     if len(player_props) > 1:
         dedup_map: dict[tuple, list[dict]] = {}
         for p in player_props:
-            # Extract player name from outcome ("Aaron Judge: 1+" → "aaron judge")
-            oname = p.get("outcome_name", "")
-            colon_idx = oname.find(":")
-            player_part = oname[:colon_idx].strip().lower() if colon_idx > 0 else oname.lower()
-            key = (player_part, p.get("threshold"))
+            # WHO and WHICH STAT, read provider-appropriately (#3594). The key also
+            # carries the side, so this stays a CROSS-SOURCE dedup and never folds a
+            # market's own Over row into its Under row.
+            player_part, stat_part = _prop_player_and_stat(
+                p.get("market_name"), p.get("outcome_name")
+            )
+            key = (player_part, stat_part, p.get("threshold"), _prop_side(p.get("outcome_name")))
             dedup_map.setdefault(key, []).append(p)
 
         merged_props = []
@@ -10103,11 +10175,14 @@ async def _build_game_markets(
         from collections import defaultdict
         player_stat_groups: dict[tuple, list[dict]] = defaultdict(list)
         for p in player_props:
-            oname = p.get("outcome_name", "")
-            colon_idx = oname.find(":")
-            player_part = oname[:colon_idx].strip().lower() if colon_idx > 0 else oname.lower()
-            stat = p.get("market_name", "").split(":")[-1].strip().lower() if ":" in p.get("market_name", "") else "other"
-            player_stat_groups[(player_part, stat)].append(p)
+            # Same identity as the dedup above (#3594). Read off the outcome alone,
+            # a Polymarket page had exactly two groups — `over` and `under` — so the
+            # monotonicity pass compared different players' lines to each other and
+            # dropped whichever "violated" a curve it was never on.
+            player_part, stat = _prop_player_and_stat(
+                p.get("market_name"), p.get("outcome_name")
+            )
+            player_stat_groups[(player_part, stat, _prop_side(p.get("outcome_name")))].append(p)
         monotonic_props = []
         for group in player_stat_groups.values():
             group.sort(key=lambda x: x.get("threshold", 0) or 0)
