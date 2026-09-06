@@ -113,4 +113,63 @@ enum MarketMapRail {
         if isLive, hasScoreboardTotal, hasProjectedTotal { return false }  // ACTUAL + PROJECTED
         return true
     }
+
+    // MARK: - Where the mid axis label goes
+
+    /// Where a map's middle axis label belongs.
+    ///
+    /// #3566. A margin map used to print the concept twice: `densityRail` drew
+    /// a `"0"` at the real zero, and `mapCard` drew `"Tie"` in an equal-spacer
+    /// `HStack`, which is to say always at the geometric centre. On an
+    /// asymmetric rail — which is every rail with a favourite on it — the two
+    /// are either contradictory or on top of each other, and there is no rail
+    /// on which both are right.
+    ///
+    /// Measured on ONE page, event 14632820 (SF 49ers @ LA Rams, iPhone 17
+    /// against production, 2026-09-06, `artifacts-native-038/`):
+    ///
+    /// - full game, margins `[-15.0, 20.5]` → rail `[-18.0, 23.5]` → zero at
+    ///   **43.4%**: `0` and `Tie` crowded 6.6 points apart.
+    /// - 1st half, rail `[-52.0, 18.0]` → zero at **74.3%**: `Tie` a quarter of
+    ///   the rail from the tie line, while the card's own tile said `LAR +1.0`.
+    /// - 2nd half, rail `[-18.0, 18.0]` → zero at **50.0%**: `0` printed on top
+    ///   of `Tie`, illegible.
+    ///
+    /// So the mid label IS the zero label wherever a rail has a zero, and there
+    /// is only one of it.
+    enum MidAxisLabel: Equatable {
+        /// No zero on this rail — the label is the midpoint of the range and
+        /// belongs at the middle. Every totals map.
+        case centred
+        /// A margin rail: the label names zero, so it goes where zero is.
+        case at(percent: Double)
+        /// Zero is close enough to an end that the label would print on top of
+        /// an end label. The end label already says whose territory that is.
+        case withheld
+    }
+
+    /// How wide a band at each end of the axis row the end labels occupy.
+    ///
+    /// Measured, not chosen: off `artifacts-native-038/nfl-14632820-s900.png`
+    /// (iPhone 17, 402 pt, axis row ~907/920 of the frame), `SF by 18+` runs to
+    /// **13.5%** from the left edge and `LAR by 18+` back to **16.2%** from the
+    /// right. 20 clears the wider of the two with room for a longer abbreviation.
+    ///
+    /// Web withholds its own zero label at a much narrower `>5 && <95`
+    /// (`frontend/components/MarketMap.tsx:344`) because web moves a 7 px `"0"`
+    /// and keeps `"Tie"` centred. iOS moves the word, so it needs the word's
+    /// room. The two surfaces are answering different halves of #3566; web owes
+    /// the other half.
+    static let endLabelBandPercent: Double = 20
+
+    /// - Parameter zeroPercent: where zero falls on the rail, 0–100, or nil on a
+    ///   rail that has no zero (a totals map).
+    static func midAxisLabel(
+        zeroPercent: Double?,
+        endLabelBand: Double = endLabelBandPercent
+    ) -> MidAxisLabel {
+        guard let zero = zeroPercent else { return .centred }
+        if zero <= endLabelBand || zero >= 100 - endLabelBand { return .withheld }
+        return .at(percent: zero)
+    }
 }
