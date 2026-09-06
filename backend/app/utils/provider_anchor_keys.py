@@ -63,13 +63,19 @@ it no longer uses that reading. `statpal_anchor_key` is qualified by the
 was only ever inferred. Counting digits gave three wrong answers at once the
 moment a second sport arrived — NFL's 6-digit `contestid` filed into MLB's `s6`,
 tennis's 7-digit id anchorable nowhere, NBA/NHL unmeasured — and none of them
-raised. See `statpal_anchor_key` for the full argument and for the two-step
-sequence that removes the legacy branch.
+raised. See `statpal_anchor_key` for the full argument and for the three-step
+sequence — completed 2026-09-06 — that removed the digit rule from the key side.
 
 Read this way, the two functions disagree about nothing. One asks *"are these
 two values from the same space?"*, which only the values can answer. The other
 asks *"what is this fixture's identity?"*, which the caller can answer better
 than the value can.
+
+So `statpal_namespace` survives step 3 while `statpal_legacy_source_id` does not,
+and that is not an inconsistency left behind. What step 3 deleted is the digit
+rule's authority to NAME a fixture; its ability to DESCRIBE a value is the only
+tool `compare_statpal_ids` has for saying `INCOMPARABLE` honestly, and the 21
+conflicting groups still need it.
 
 ## What this module deliberately does NOT do
 
@@ -238,28 +244,42 @@ def statpal_anchor_key(
     So a key is `sport_key:fixture_id`, and with `source='statpal'` on the row
     that is the `(provider, sport, id)` tuple D55 asks for.
 
-    ## The legacy branch, and when it is deleted
+    ## The legacy branch is GONE (step 3, 2026-09-06)
 
-    `sport_key=None` still returns the old digit-derived key. That is a
-    deliberate, temporary bridge and it is the only reason this change can ship
-    without darkening a live channel: the two production call sites are in
-    `event_registry.py`, which is lane1's file under D50, so they cannot be
-    updated in the same commit. The order is:
+    This function used to answer an unqualified call with the old digit-derived
+    key, as a deliberate bridge across a three-step sequence that is now
+    complete:
 
-        1. this change      — accept a sport, keep the old answer without one
-        2. lane1            — pass `sport_key=identity.sport_key` (two lines)
-        3. this lane again  — re-key the 91 live `s6:` MLB anchors, then DELETE
-                              the branch below and the digit path with it
+        1. accept a sport, keep the old answer without one   (a350323e)
+        2. `event_registry.py` passes `sport_key=identity.sport_key`  (8e9d816c,
+           lane1's file under D50 — which is why it could not be one commit)
+        3. re-key the live legacy rows, then delete the branch  <- HERE
 
-    Until step 3 lands, `anchor_channel.anchor_key_for_claim` logs every
-    unqualified StatPal request, so the bridge is *observable* rather than
-    merely tolerated. Deleting it before step 2 would strand every StatPal
-    anchor in the `NO_ANCHOR_CHANNEL` state that ruling 048's amendment exists
-    to forbid, which is a worse answer than one deploy of a logged fallback.
+    Step 3's data half ran first and is the reason the code half is safe: the
+    94 legacy `s6:` anchors were re-keyed on 2026-09-06 (29 rewritten, 65 already
+    superseded by a qualified row on the same event and therefore deleted, 0
+    collisions), leaving **zero** legacy-shaped rows in
+    `event_provider_anchors`. Deleting this branch while any remained would have
+    darkened the StatPal channel for MLB — the `NO_ANCHOR_CHANNEL` state ruling
+    048's amendment forbids walking into on purpose.
 
-    Refusing to write is still the correct failure for an id we cannot key:
-    `None` here means *write nothing and match nothing*, and a `game` anchor on
-    an unqualified id is the one outcome that can merge two real games.
+    The evidence that step 2 was live everywhere is the table rather than a log
+    grep: no legacy-shaped anchor had been written for 67 hours (last `s6:` write
+    2026-09-04 00:02Z) while qualified writes continued through the moment of the
+    re-key. A shape that has stopped being written is a stronger statement than a
+    warning that has stopped being logged, because it survives log retention.
+
+    ## What an unqualified call gets now: nothing
+
+    `sport_key=None` is no longer a bridge, it is a refusal — the same answer a
+    present-but-blank qualifier has always got. That is D55's actual instruction:
+    a namespace is never inferred, and the one thing this must not do is guess.
+    `None` means *write nothing and match nothing*, and a `game` anchor on an
+    unqualified id is the one outcome that can merge two real games.
+
+    The refusal is not silent. `anchor_channel.anchor_key_for_claim` logs it at
+    WARNING, because D55's other half is that a case we cannot key raises or
+    tags rather than no-opping quietly.
     """
     if fixture_id is None:
         return None
@@ -267,33 +287,21 @@ def statpal_anchor_key(
     if not token:
         return None
 
-    # `None` means "this caller has not been updated yet" and takes the legacy
-    # branch. A sport_key that is PRESENT but blank means the caller tried to
-    # qualify and had nothing to qualify with, which is a different fact and
-    # gets the conservative answer: refuse. Collapsing the two would let a
-    # caller with an empty sport field fall silently back onto the digit rule —
-    # the exact silence this ruling is removing.
-    if sport_key is not None:
-        qualifier = str(sport_key).strip()
-        # A qualifier that is empty or carries the separator produces a key that
-        # cannot be split back apart, and `anchor_is_current` re-derives the
-        # sport from exactly that split. Refuse rather than emit a key its own
-        # reader will misread.
-        if not qualifier or ":" in qualifier:
-            return None
-        return AnchorKey(
-            source=SOURCE_STATPAL,
-            source_id=f"{qualifier}:{token}",
-            id_kind=ANCHOR_KIND_GAME,
-        )
-
-    # --- LEGACY BRIDGE, deleted at step 3 above (D55 / #2879) ---
-    ns = statpal_namespace(token)
-    if ns is None:
+    # Missing, empty and separator-bearing qualifiers all get the same answer,
+    # and that convergence is the point of step 3. While the bridge existed the
+    # three had to be told apart, because `None` meant "caller not updated yet"
+    # and had somewhere to fall back to. Now there is nowhere to fall back to:
+    # every one of them is a caller that cannot name the sport, and a key we
+    # cannot qualify is a key we do not write. A qualifier carrying `:` is
+    # refused for a second reason that outlives the bridge — the key could not be
+    # split back apart, and `anchor_is_current` re-derives the sport from exactly
+    # that split, so it would emit a key its own reader misreads.
+    qualifier = "" if sport_key is None else str(sport_key).strip()
+    if not qualifier or ":" in qualifier:
         return None
     return AnchorKey(
         source=SOURCE_STATPAL,
-        source_id=f"{ns}:{token}",
+        source_id=f"{qualifier}:{token}",
         id_kind=ANCHOR_KIND_GAME,
     )
 
@@ -353,9 +361,16 @@ def statpal_id_space(sport_key: Optional[str]) -> Optional[str]:
 
 
 #: The two digit-derived prefixes this module used before D55, as they appear in
-#: `event_provider_anchors.source_id`. Named here rather than rebuilt by the
-#: re-key script, so that deleting the legacy branch above and finding this
-#: constant's remaining readers is one grep instead of an archaeology exercise.
+#: `event_provider_anchors.source_id`.
+#:
+#: These OUTLIVE the writer that made them (deleted at step 3) because they are
+#: now a READER's defence, and the two jobs are not the same job. Production
+#: holds zero legacy rows today, but `statpal_sport_from_source_id` is what tells
+#: `anchor_is_current` which sport a stored key belongs to, and without this list
+#: a resurrected `s6:354453` — from the `--rollback` restore, from a backup
+#: table, from an old export — would be read as a row whose sport is literally
+#: `"s6"`. Refusing to name a sport for a shape we no longer write costs nothing;
+#: inventing one for it corroborates an anchor against the wrong column.
 STATPAL_LEGACY_SOURCE_ID_PREFIXES = (
     f"{STATPAL_NS_SHORT}:",
     f"{STATPAL_NS_LONG}:",
@@ -379,28 +394,14 @@ def statpal_bare_fixture_id(source_id: Optional[str]) -> Optional[str]:
     return bare or None
 
 
-def statpal_legacy_source_id(key: Optional[AnchorKey]) -> Optional[str]:
-    """The pre-D55 `source_id` the same fixture would have been written under.
-
-    Returns `None` when there is no such value: a non-StatPal key, a key that is
-    already legacy, or a fixture id whose digit count matched neither of the two
-    shapes the old rule knew — which is the tennis case, and is precisely why the
-    old rule had to go.
-
-    This exists for the transition read in `anchor_channel.find_event_by_anchor`
-    and for the re-key script, and it is deleted with them. It is written as a
-    derivation rather than a stored mapping on purpose: a mapping would have to
-    be maintained, and the whole point is that this has one job and then stops.
-    """
-    if key is None or key.source != SOURCE_STATPAL:
-        return None
-    if statpal_sport_from_source_id(key.source_id) is None:
-        return None  # already legacy — nothing to translate back to
-    bare = statpal_bare_fixture_id(key.source_id)
-    ns = statpal_namespace(bare)
-    if ns is None:
-        return None
-    return f"{ns}:{bare}"
+#: `statpal_legacy_source_id` lived here until step 3 (2026-09-06). It derived
+#: the pre-D55 `source_id` a fixture *would* have been written under, so that
+#: `find_event_by_anchor` could read both shapes across the transition. It is
+#: deleted rather than left dead: it is the last function in this module capable
+#: of turning a fixture id into a digit-derived namespace, and a dead one is a
+#: live one for whoever wires it back up. The two-shape read in
+#: `anchor_channel._FIND_BY_ANCHOR_SQL` went with it, in the same commit, because
+#: a reader for rows that no longer exist is a branch no test can reach honestly.
 
 
 def statpal_sport_from_source_id(source_id: Optional[str]) -> Optional[str]:

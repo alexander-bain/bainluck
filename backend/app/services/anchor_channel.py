@@ -107,7 +107,6 @@ from app.utils.provider_anchor_keys import (
     odds_api_anchor_key,
     polymarket_anchor_key,
     statpal_anchor_key,
-    statpal_legacy_source_id,
     statpal_sport_from_source_id,
 )
 from app.utils.sport_keys import get_llm_category_for_prefix
@@ -177,17 +176,18 @@ def anchor_key_for_claim(
     ``sport_key`` is used by StatPal only, and under D55 (#2879) it is what
     qualifies the key: a StatPal id is only an id *inside its sport*, because
     NFL's 6-digit `contestid` and MLB's 6-digit `id` are otherwise the same key.
-    It is optional purely so that this can ship before the two `event_registry`
-    call sites — lane1's file under D50 — start passing it. Every unqualified
-    StatPal request is logged below, so the bridge is visible in production for
-    as long as it exists rather than silently outliving its reason.
+    It stays optional in the signature after step 3 deleted the digit-derived
+    fallback, because an optional argument that is absent now REFUSES rather
+    than guessing — which is the behaviour D55 asks for and the reason the
+    parameter no longer needs to be mandatory to be safe.
 
-    ``warn_unqualified=False`` turns that log off for the two callers that
-    RE-DERIVE a key from one already written. A pre-D55 row's key is legacy by
-    construction, so there is no sport for its re-derivation to pass and telling
-    it to pass one would make the log say the opposite of the truth: the countdown
-    this warning exists to run has to count *claims*, not corroborations, or it
-    never reaches zero.
+    ``warn_unqualified=False`` turns the log below off for the two callers that
+    RE-DERIVE a key from one already written (`anchor_is_current`,
+    `invalidate_scalar_anchor`) rather than claiming. Those two legitimately have
+    no sport to pass for a non-StatPal or unrecognised key, and a WARNING on a
+    corroboration would report a refusal nobody asked for. It is off for
+    corroborations and on for claims because only a claim is a write that did
+    not happen.
     """
     if source == "odds_api":
         return odds_api_anchor_key(source_id)
@@ -195,15 +195,18 @@ def anchor_key_for_claim(
         return espn_anchor_key(source_id)
     if source == "statpal":
         if warn_unqualified and sport_key is None and source_id:
-            # WARNING and not DEBUG on purpose: this line is the countdown on
-            # the legacy branch in `statpal_anchor_key`. When it stops appearing
-            # for a full day, step 2 of that sequence is done everywhere and the
-            # branch can be deleted with evidence instead of with optimism.
+            # WARNING and not DEBUG on purpose, and the reason changed with step
+            # 3. While the digit fallback existed this was a COUNTDOWN — it
+            # marked a call that still got an answer, by the wrong rule. Now it
+            # marks a claim that got NO anchor at all, which is a hole in the
+            # channel rather than a deprecation notice, so it must not get
+            # quieter as it becomes more serious. D55's second clause is that a
+            # key we cannot form raises or tags; this is the tag.
             logger.warning(
-                "D55/#2879: StatPal anchor key requested without a sport_key "
-                "(id=%s) — falling back to the digit-derived namespace. This "
-                "fallback is scheduled for deletion; the caller should pass "
-                "sport_key.",
+                "D55/#2879: StatPal anchor claim REFUSED — no sport_key for "
+                "fixture id=%s, so no anchor was written or matched. The "
+                "digit-derived fallback was deleted at step 3; the caller must "
+                "pass sport_key.",
                 source_id,
             )
         return statpal_anchor_key(source_id, sport_key)
@@ -231,29 +234,26 @@ _SCALAR_COLUMN_ORDER = ("espn_id", "external_id", "statpal_fixture_id")
 #: STATEMENT rather than a paraphrase of it. A guard that retypes the SQL it is
 #: guarding passes forever after the SQL changes.
 #:
-#: The two-shape predicate is the D55 (#2879) transition and is deleted with the
-#: legacy branch in `statpal_anchor_key`: a fixture written before the sport
-#: qualifier existed is stored under `s6:`/`s10:` while the caller now derives
-#: `sport_key:id`. Reading both makes re-keying the 91 live rows a separate,
-#: unhurried step instead of a flag day — and without it there is a window in
-#: which the channel is dark for MLB, which is the `NO_ANCHOR_CHANNEL` state
-#: ruling 048's amendment forbids walking into on purpose. For every other
-#: provider, and for a StatPal key with no legacy equivalent, the caller passes
-#: the same value twice and the OR collapses to the original equality.
+#: This read carried a second, `OR`-ed predicate for the D55 (#2879) transition:
+#: a fixture written before the sport qualifier existed was stored under
+#: `s6:`/`s10:` while the caller derived `sport_key:id`, so both shapes had to
+#: resolve or the StatPal channel went dark for MLB. Step 3 removed the reason on
+#: 2026-09-06 — the 94 legacy rows were re-keyed or deleted and the table holds
+#: none — so the predicate is back to the single equality, in the same commit
+#: that deleted the writer and `statpal_legacy_source_id`.
 #:
-#: The `ORDER BY` is not decoration. When both shapes exist for one fixture —
-#: which is the normal state between lane1 passing the sport and the re-key —
-#: `LIMIT 1` without it returns whichever row the plan reached first, and a
-#: duplicate resolution that changes answer by plan is worse than an arbitrary
-#: one that is stable. The D55 key wins; ties break on the lower `event_id`.
+#: The `ORDER BY` went with it, and that is the part worth being deliberate
+#: about. It existed to make the two-shape case DETERMINISTIC, not to break ties
+#: in general: with one predicate a `LIMIT 1` can only be arbitrary if the unique
+#: index `(source, source_id, id_kind)` is violated, which it cannot be. An
+#: `ORDER BY` retained past its cause reads as a tie-break rule someone relies
+#: on, and it is a sort the planner now pays for on every claim.
 _FIND_BY_ANCHOR_SQL = (
     "SELECT a.event_id, e.sport_id "
     "FROM event_provider_anchors a "
     "JOIN events e ON e.id = a.event_id "
     "WHERE a.source = :source AND a.id_kind = :id_kind "
-    "AND (a.source_id = :source_id OR a.source_id = :legacy_source_id) "
-    "ORDER BY CASE WHEN a.source_id = :source_id THEN 0 ELSE 1 END, "
-    "a.event_id ASC "
+    "AND a.source_id = :source_id "
     "LIMIT 1"
 )
 
@@ -300,18 +300,23 @@ async def anchor_is_current(
 
     # Re-derive through the SAME key function the writer used rather than
     # comparing raw strings. StatPal's `source_id` is qualified
-    # (`baseball_mlb:355372`, or legacy `s6:355372`) while the column holds the
-    # bare `355372`, so a raw compare would read every live StatPal anchor as
-    # stale — and an id we cannot qualify correctly yields `None` here, i.e. not
-    # current, which is the same refusal `statpal_anchor_key` already makes on
-    # the write side.
+    # (`baseball_mlb:355372`) while the column holds the bare `355372`, so a raw
+    # compare would read every live StatPal anchor as stale — and an id we
+    # cannot qualify correctly yields `None` here, i.e. not current, which is
+    # the same refusal `statpal_anchor_key` already makes on the write side.
     #
     # D55: the qualifier is read back off the key being tested, not resolved
     # from the event. That is exact — it is by definition the qualifier the
-    # writer used — and it costs no query. `statpal_sport_from_source_id`
-    # returns `None` for a legacy `s6:`/`s10:` key, which falls through to the
-    # digit path and keeps pre-D55 anchors corroborating correctly until they
-    # are re-keyed.
+    # writer used — and it costs no query. It is also what makes tennis work,
+    # where the two differ: the writer qualifies by `statpal_id_space()`
+    # (`tennis`), not by `sports.key` (`tennis_atp_us_open`), so re-resolving
+    # from the event would re-derive a key the writer never wrote.
+    #
+    # A legacy `s6:`/`s10:` key yields `None` from `statpal_sport_from_source_id`
+    # and therefore `None` here: NOT current. Before step 3 that case fell
+    # through to the digit path so pre-D55 anchors kept corroborating; after the
+    # re-key there are none, and a resurrected one SHOULD read as stale rather
+    # than authoritative.
     current_key = anchor_key_for_claim(
         key.source,
         current_value,
@@ -411,18 +416,12 @@ async def find_event_by_anchor(
     if key is None or not key.may_anchor_absorption:
         return None
 
-    # D55 transition — the argument is on `_FIND_BY_ANCHOR_SQL`. `or
-    # key.source_id` is what makes the predicate a no-op for every provider that
-    # has no legacy shape to translate to.
-    legacy_source_id = statpal_legacy_source_id(key) or key.source_id
-
     row = (
         await session.execute(
             text(_FIND_BY_ANCHOR_SQL),
             {
                 "source": key.source,
                 "source_id": key.source_id,
-                "legacy_source_id": legacy_source_id,
                 "id_kind": key.id_kind,
             },
         )

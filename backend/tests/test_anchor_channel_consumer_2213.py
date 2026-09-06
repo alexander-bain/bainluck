@@ -99,6 +99,13 @@ STATPAL_ROW_ID = 15228865
 # under one column name, for the same game.
 STATPAL_ID_SHORT = "355372"
 STATPAL_ID_LONG = "1329192448"
+#: The sport both rows are in, and since D55 (#2879) the qualifier every StatPal
+#: `source_id` carries. Both ids are MLB — that is the shape of these 21 groups,
+#: two StatPal endpoints numbering one league — so the sport does NOT separate
+#: them and the three-valued `compare_statpal_ids` is still what keeps them
+#: apart. Written out here because the anchors below must be stored under the
+#: key the writer actually writes, or the refusals pass by being unreachable.
+MLB_SPORT_KEY = "baseball_mlb"
 
 GAME_TIME = datetime(2026, 8, 25, 22, 40, tzinfo=timezone.utc)
 
@@ -462,7 +469,11 @@ class TestTheRefusals:
                         statpal_fixture_id=STATPAL_ID_LONG)
         session = _AnchorSession(
             anchors={
-                ("statpal", f"s10:{STATPAL_ID_LONG}", ANCHOR_KIND_GAME): ESPN_ROW_ID,
+                (
+                    "statpal",
+                    f"{MLB_SPORT_KEY}:{STATPAL_ID_LONG}",
+                    ANCHOR_KIND_GAME,
+                ): ESPN_ROW_ID,
             },
             event_sports={ESPN_ROW_ID: MLB_SPORT_ID},
             structured_candidates=[espn_row],
@@ -701,22 +712,30 @@ class TestAStaleScalarAnchorHasNoAuthority:
     async def test_statpal_corroboration_is_namespace_qualified(self):
         """A raw string compare would read every live StatPal anchor as stale.
 
-        The anchor's `source_id` is `s6:355372`; the column holds the bare
-        `355372`. Corroboration therefore re-derives the key from the current
-        column value instead of comparing strings — and this asserts BOTH
-        directions, because a check that only refused would have passed the
+        The anchor's `source_id` is `baseball_mlb:355372`; the column holds the
+        bare `355372`. Corroboration therefore re-derives the key from the
+        current column value instead of comparing strings — and this asserts
+        BOTH directions, because a check that only refused would have passed the
         stale test above while silently disabling StatPal entirely.
         """
         live = _row(event_id=STATPAL_ROW_ID, statpal_fixture_id=STATPAL_ID_SHORT)
         session = _AnchorSession(
-            anchors={("statpal", f"s6:{STATPAL_ID_SHORT}", ANCHOR_KIND_GAME): STATPAL_ROW_ID},
+            anchors={
+                (
+                    "statpal",
+                    f"{MLB_SPORT_KEY}:{STATPAL_ID_SHORT}",
+                    ANCHOR_KIND_GAME,
+                ): STATPAL_ROW_ID
+            },
             event_sports={STATPAL_ROW_ID: MLB_SPORT_ID},
             structured_candidates=[live],
             sport_id=MLB_SPORT_ID,
         )
         assert await find_event_by_anchor(
             session,
-            anchor_key_for_claim("statpal", STATPAL_ID_SHORT),
+            anchor_key_for_claim(
+                "statpal", STATPAL_ID_SHORT, sport_key=MLB_SPORT_KEY
+            ),
             expected_sport_id=MLB_SPORT_ID,
         ) == STATPAL_ROW_ID
 
@@ -724,7 +743,9 @@ class TestAStaleScalarAnchorHasNoAuthority:
         live.statpal_fixture_id = STATPAL_ID_LONG
         assert await find_event_by_anchor(
             session,
-            anchor_key_for_claim("statpal", STATPAL_ID_SHORT),
+            anchor_key_for_claim(
+                "statpal", STATPAL_ID_SHORT, sport_key=MLB_SPORT_KEY
+            ),
             expected_sport_id=MLB_SPORT_ID,
         ) is None
 
@@ -913,13 +934,49 @@ class TestInvalidationAtTheRekeySite:
     async def test_invalidation_is_namespace_qualified_like_the_writer(self):
         """A raw source_id would miss the row the writer actually wrote."""
         session = _AnchorSession(
-            anchors={("statpal", f"s6:{STATPAL_ID_SHORT}", ANCHOR_KIND_GAME): STATPAL_ROW_ID},
+            anchors={
+                (
+                    "statpal",
+                    f"{MLB_SPORT_KEY}:{STATPAL_ID_SHORT}",
+                    ANCHOR_KIND_GAME,
+                ): STATPAL_ROW_ID
+            },
+            sport_id=MLB_SPORT_ID,
+        )
+        assert await invalidate_scalar_anchor(
+            session,
+            source="statpal",
+            source_id=STATPAL_ID_SHORT,
+            sport_key=MLB_SPORT_KEY,
+        ) == 1
+        assert session.anchors == {}
+
+    @pytest.mark.asyncio
+    async def test_a_statpal_invalidation_without_a_sport_deletes_nothing(self):
+        """The safe direction, pinned rather than left to be discovered.
+
+        `invalidate_scalar_anchor`'s own docstring says a StatPal re-key site
+        that omits `sport_key` deletes nothing. Before step 3 that was only true
+        for ids the digit rule refused; for a 6-digit id it would have derived
+        `s6:355372` and deleted whatever held that key. Now no key is formed at
+        all, so the claim in the docstring is true for every id shape — and an
+        anchor that survives a re-key is caught on the read side by
+        `anchor_is_current`, which is why deleting nothing is the safe failure.
+        """
+        session = _AnchorSession(
+            anchors={
+                (
+                    "statpal",
+                    f"{MLB_SPORT_KEY}:{STATPAL_ID_SHORT}",
+                    ANCHOR_KIND_GAME,
+                ): STATPAL_ROW_ID
+            },
             sport_id=MLB_SPORT_ID,
         )
         assert await invalidate_scalar_anchor(
             session, source="statpal", source_id=STATPAL_ID_SHORT
-        ) == 1
-        assert session.anchors == {}
+        ) == 0
+        assert session.anchors != {}, "the anchor must survive an unqualified call"
 
     @pytest.mark.asyncio
     async def test_an_unanchorable_id_deletes_nothing(self):

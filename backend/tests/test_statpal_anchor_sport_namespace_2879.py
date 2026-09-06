@@ -43,7 +43,6 @@ from app.utils.provider_anchor_keys import (
     STATPAL_NS_SHORT,
     statpal_anchor_key,
     statpal_bare_fixture_id,
-    statpal_legacy_source_id,
     statpal_namespace,
     statpal_sport_from_source_id,
 )
@@ -87,18 +86,26 @@ def test_no_two_sports_can_produce_the_same_statpal_source_id():
 
 
 def test_control_the_pre_d55_rule_fails_the_invariant_above():
-    """The arm that proves the test can fail.
+    """The arm that proves the test above can fail.
 
-    The legacy branch is still reachable (a caller that passes no sport), so the
-    broken behaviour can be exercised directly rather than described. One
-    fixture id, every sport, ONE key: that is the collision, demonstrated.
+    Until step 3 this exercised the real legacy branch, because it was still
+    reachable by passing no sport. The branch is gone, so the old rule is
+    reconstructed here from the one piece of it that legitimately survives —
+    `statpal_namespace`, which still answers the *comparison* question
+    `compare_statpal_ids` asks — and shown to collapse.
+
+    Reconstructing it is not a weaker test than exercising it was. The invariant
+    above is a claim about a whole class of rules, not about one deleted
+    function, and a control arm that can only be written by keeping the defect
+    alive is a reason to keep the defect alive.
     """
     sports = sorted(SPORT_LEAGUE_MAP)
-    legacy_keys = {
-        statpal_anchor_key(SHARED_SIX_DIGIT_ID).source_id for _ in sports
+    digit_derived = {
+        f"{statpal_namespace(SHARED_SIX_DIGIT_ID)}:{SHARED_SIX_DIGIT_ID}"
+        for _ in sports
     }
-    assert legacy_keys == {f"{STATPAL_NS_SHORT}:{SHARED_SIX_DIGIT_ID}"}
-    assert len(legacy_keys) == 1 < len(sports)
+    assert digit_derived == {f"{STATPAL_NS_SHORT}:{SHARED_SIX_DIGIT_ID}"}
+    assert len(digit_derived) == 1 < len(sports)
 
 
 def test_the_nfl_and_mlb_specimens_that_forced_the_ruling():
@@ -132,7 +139,11 @@ def test_a_seven_digit_tennis_fixture_is_anchorable_once_the_sport_is_known():
     stamped nothing, because `None` here means "write nothing" and nothing about
     that is loud.
     """
-    assert statpal_anchor_key(TENNIS_FIXTURE_ID) is None  # the old answer
+    # `None` unqualified — under the old rule because seven digits matched
+    # neither regex, and now because an unqualified call is refused outright.
+    # Same answer, and after step 3 it is the answer for EVERY id shape rather
+    # than only for the shapes the digit rule happened not to recognise.
+    assert statpal_anchor_key(TENNIS_FIXTURE_ID) is None
 
     key = statpal_anchor_key(TENNIS_FIXTURE_ID, sport_key="tennis_atp")
     assert key is not None
@@ -151,31 +162,77 @@ def test_an_absent_fixture_id_refuses_even_with_a_sport(fixture_id):
     assert statpal_anchor_key(fixture_id, sport_key="baseball_mlb") is None
 
 
-@pytest.mark.parametrize("sport_key", ["", "   ", "tennis:atp", "a:b:c"])
+@pytest.mark.parametrize("sport_key", [None, "", "   ", "tennis:atp", "a:b:c"])
 def test_an_unusable_sport_qualifier_refuses_rather_than_emitting_an_ambiguous_key(
     sport_key,
 ):
-    """A qualifier containing the separator produces a key that cannot be split
-    back apart, and `anchor_is_current` re-derives the sport by splitting it.
-    Refuse rather than write a key whose own reader will misread it.
+    """Every qualifier we cannot use gets the same answer: no key.
 
-    The blank cases refuse too, and that is the distinction worth pinning:
-    `sport_key=None` means *this caller has not been updated yet* and takes the
-    legacy branch, while a sport_key that is present but empty means the caller
-    tried to qualify and had nothing to qualify with. Collapsing the two would
-    let a caller with an empty sport field fall silently back onto the digit
-    rule — the exact silence D55 removes.
+    A qualifier containing the separator produces a key that cannot be split
+    back apart, and `anchor_is_current` re-derives the sport by splitting it, so
+    it would be a key whose own reader misreads it. The blank cases and `None`
+    refuse for the plainer reason that there is nothing to qualify with.
+
+    `None` joined this list at step 3, and its arrival is the whole ruling.
+    While the bridge existed the three had to be told apart — `None` meant
+    "caller not updated yet" and had a digit rule to fall back on, so collapsing
+    it into the others would have darkened the channel. With the bridge gone
+    there is nothing to fall back to and the distinction has no content left:
+    all three are a caller that cannot name the sport, and D55 says such a call
+    writes nothing rather than guessing.
     """
     assert statpal_anchor_key(MLB_FIXTURE_ID, sport_key=sport_key) is None
 
 
-def test_only_an_absent_sport_key_takes_the_legacy_branch():
-    """The other half of the distinction above, asserted directly so that the
-    two cannot drift apart."""
-    assert (
-        statpal_anchor_key(MLB_FIXTURE_ID, sport_key=None).source_id
-        == f"{STATPAL_NS_SHORT}:{MLB_FIXTURE_ID}"
-    )
+def test_no_id_shape_whatsoever_can_produce_a_key_without_a_sport():
+    """The direct anti-regression on step 3, stated over shapes rather than one
+    specimen.
+
+    The deleted branch keyed exactly two shapes — 6 digits and 10 — and refused
+    everything else. So a test that only checked the tennis id would have passed
+    against the *un*-deleted branch, and a test that only checked `354453` would
+    not notice a rule that kept `s10`. Both live shapes, both dead shapes and the
+    boundary lengths either side of them are asserted together, which is what
+    makes this a claim about the rule and not about a value.
+    """
+    shapes = [
+        MLB_FIXTURE_ID,  # 6 digits — was `s6`, the one with 94 live rows
+        SHARED_SIX_DIGIT_ID,  # 6 digits — the NFL contestid that forced this
+        "1329190539",  # 10 digits — was `s10`
+        TENNIS_FIXTURE_ID,  # 7 digits — was refused, for the wrong reason
+        "35445",  # 5
+        "3544531",  # 7
+        "132919053",  # 9
+        "13291905390",  # 11
+    ]
+    for fixture_id in shapes:
+        assert statpal_anchor_key(fixture_id) is None, (
+            f"{fixture_id!r} produced an anchor key with no sport — the "
+            f"digit-derived namespace is back"
+        )
+        # Non-vacuity: the same id IS anchorable the moment a sport is named,
+        # so the refusals above are the missing qualifier and not a broken
+        # function that refuses everything.
+        assert (
+            statpal_anchor_key(fixture_id, sport_key="baseball_mlb").source_id
+            == f"baseball_mlb:{fixture_id}"
+        )
+
+
+def test_the_key_module_no_longer_exports_a_way_to_derive_a_legacy_key():
+    """`statpal_legacy_source_id` was the last function that turned a fixture id
+    into a digit-derived namespace. It is deleted rather than left unused,
+    because a dead function is a live one for whoever wires it back up — and the
+    grep that finds it is this test, in the file that explains why.
+
+    `statpal_namespace` deliberately survives: it answers a different question
+    (are these two raw column values from the same space?) for
+    `compare_statpal_ids`, and the module docstring says so.
+    """
+    import app.utils.provider_anchor_keys as keys
+
+    assert not hasattr(keys, "statpal_legacy_source_id")
+    assert hasattr(keys, "statpal_namespace")  # the control arm
 
 
 def test_every_qualified_key_still_fits_the_column():
@@ -188,41 +245,55 @@ def test_every_qualified_key_still_fits_the_column():
 
 
 # ---------------------------------------------------------------------------
-# The transition: reading a pre-D55 row back
+# Reading a key back — and what a resurrected legacy row is read as
 # ---------------------------------------------------------------------------
 
 
-def test_a_qualified_key_can_name_the_legacy_row_it_replaces():
-    """This is what lets the 91 live rows be cleaned up as a separate, unhurried
-    step instead of a flag day. Without it there is a window in which the
-    channel is dark for MLB — the `NO_ANCHOR_CHANNEL` state ruling 048's
-    amendment forbids walking into on purpose."""
+def test_a_qualified_key_reads_back_as_its_own_sport_and_bare_id():
+    """`anchor_is_current` re-derives a key by splitting a stored `source_id`
+    into these two halves, so if either read drifts, every live StatPal anchor
+    reads as stale and the channel invalidates itself."""
     key = statpal_anchor_key(MLB_FIXTURE_ID, sport_key="baseball_mlb")
-    assert statpal_legacy_source_id(key) == f"{STATPAL_NS_SHORT}:{MLB_FIXTURE_ID}"
     assert statpal_sport_from_source_id(key.source_id) == "baseball_mlb"
     assert statpal_bare_fixture_id(key.source_id) == MLB_FIXTURE_ID
 
 
-def test_a_legacy_key_has_no_sport_to_read_back_and_no_further_translation():
-    legacy = statpal_anchor_key(MLB_FIXTURE_ID)
-    assert statpal_sport_from_source_id(legacy.source_id) is None
-    assert statpal_legacy_source_id(legacy) is None  # already legacy
-    assert statpal_bare_fixture_id(legacy.source_id) == MLB_FIXTURE_ID
+@pytest.mark.parametrize("legacy_source_id", ["s6:354453", "s10:1329190539"])
+def test_a_resurrected_legacy_row_names_no_sport_rather_than_a_sport_called_s6(
+    legacy_source_id,
+):
+    """Production holds zero legacy rows after the re-key, which is exactly why
+    this has to be pinned rather than dropped.
+
+    The rows are not unreachable — the re-key's own `--rollback` puts all 94
+    back, verbatim, and that restore is D51's condition for having applied it
+    unattended. So the reader must keep an opinion about the shape after the
+    writer stopped producing it, and the opinion must be `None`: refusing to
+    name a sport costs an anchor, whereas answering `"s6"` corroborates the row
+    against a sport that does not exist and lets a stale anchor read as current.
+
+    The bare id still parses out, because the rollback path and any audit of the
+    backup table need to know which fixture a restored row is about.
+    """
+    assert statpal_sport_from_source_id(legacy_source_id) is None
+    assert statpal_bare_fixture_id(legacy_source_id) == legacy_source_id.split(":")[1]
 
 
-def test_a_tennis_key_has_no_legacy_equivalent_because_it_never_had_one():
-    """Seven digits matched neither old regex, so there is no pre-D55 row for a
-    tennis fixture to be reconciled against — and the transition read must not
-    invent one."""
-    key = statpal_anchor_key(TENNIS_FIXTURE_ID, sport_key="tennis_atp")
-    assert statpal_legacy_source_id(key) is None
+def test_the_legacy_prefixes_the_reader_defends_against_are_the_ones_that_existed():
+    """The reader's defence and the shapes the writer used to emit must name the
+    same two things. A third prefix added to one and not the other is either a
+    row nobody defends against or a defence against nothing."""
+    from app.utils.provider_anchor_keys import (
+        STATPAL_LEGACY_SOURCE_ID_PREFIXES,
+        STATPAL_NS_LONG,
+    )
 
-
-def test_the_translation_refuses_keys_from_other_providers():
-    from app.utils.provider_anchor_keys import espn_anchor_key
-
-    assert statpal_legacy_source_id(espn_anchor_key("401816587")) is None
-    assert statpal_legacy_source_id(None) is None
+    assert set(STATPAL_LEGACY_SOURCE_ID_PREFIXES) == {
+        f"{STATPAL_NS_SHORT}:",
+        f"{STATPAL_NS_LONG}:",
+    }
+    for prefix in STATPAL_LEGACY_SOURCE_ID_PREFIXES:
+        assert statpal_sport_from_source_id(f"{prefix}999999") is None
 
 
 # ---------------------------------------------------------------------------
@@ -235,8 +306,8 @@ def _anchor_fixture_db():
 
     sqlite, not a mock: the thing under test is a SQL statement, and a mock that
     returns whatever the test tells it to proves the test, not the statement.
-    The predicate, the OR and the ORDER BY are all portable, so the same text
-    that runs on production runs here.
+    The predicate is portable, so the same text that runs on production runs
+    here.
     """
     import sqlite3
 
@@ -250,19 +321,43 @@ def _anchor_fixture_db():
     return conn
 
 
-def _params(key_source_id: str, legacy_source_id: str) -> dict:
+def _params(key_source_id: str) -> dict:
     return {
         "source": SOURCE_STATPAL,
         "id_kind": ANCHOR_KIND_GAME,
         "source_id": key_source_id,
-        "legacy_source_id": legacy_source_id,
     }
 
 
-def test_the_step_2_read_finds_a_pre_d55_row_from_the_qualified_key():
-    """The window this closes: lane1 starts passing the sport, the caller derives
-    `baseball_mlb:354453`, and every live row still says `s6:354453`. Without the
-    two-shape predicate the channel is dark for MLB until the re-key runs."""
+def test_the_qualified_key_still_resolves_its_own_row():
+    """Non-vacuity for everything below: the single-predicate read works.
+
+    Every test in this section that asserts a MISS is worthless without this
+    one, because a statement that resolves nothing passes them all.
+    """
+    from app.services.anchor_channel import _FIND_BY_ANCHOR_SQL
+
+    conn = _anchor_fixture_db()
+    conn.execute(
+        "INSERT INTO event_provider_anchors "
+        "VALUES (10,'statpal','baseball_mlb:354453','game')"
+    )
+
+    key = statpal_anchor_key(MLB_FIXTURE_ID, sport_key="baseball_mlb")
+    row = conn.execute(_FIND_BY_ANCHOR_SQL, _params(key.source_id)).fetchone()
+    assert row == (10, 3)
+
+
+def test_the_read_no_longer_reaches_a_legacy_row_from_a_qualified_key():
+    """Step 3's read half, executed against the live statement.
+
+    This is the assertion that would have been catastrophic to make one day
+    earlier and is correct today, and the difference is entirely the data: 94
+    legacy rows on 2026-09-05, zero after the re-key. So the test is written to
+    fail loudly if the OR ever comes back — not because the OR was wrong, but
+    because it was right only while its rows existed, and a transition read left
+    standing is a second lookup path nobody is maintaining.
+    """
     from app.services.anchor_channel import _FIND_BY_ANCHOR_SQL
 
     conn = _anchor_fixture_db()
@@ -271,59 +366,38 @@ def test_the_step_2_read_finds_a_pre_d55_row_from_the_qualified_key():
     )
 
     key = statpal_anchor_key(MLB_FIXTURE_ID, sport_key="baseball_mlb")
-    row = conn.execute(
-        _FIND_BY_ANCHOR_SQL,
-        _params(key.source_id, statpal_legacy_source_id(key)),
-    ).fetchone()
-    assert row == (10, 3)
+    assert conn.execute(_FIND_BY_ANCHOR_SQL, _params(key.source_id)).fetchone() is None
+
+    # The statement text itself, so a reintroduced OR fails here even if some
+    # future fixture happens not to exercise it.
+    assert "legacy_source_id" not in _FIND_BY_ANCHOR_SQL
+    assert " OR " not in _FIND_BY_ANCHOR_SQL
 
 
-def test_when_both_shapes_exist_the_d55_key_wins_deterministically():
-    """The normal state between lane1's change and the re-key: the writer has
-    added a qualified row beside the legacy one. `LIMIT 1` without the ORDER BY
-    would answer by plan, and an identity that changes with the plan is not an
-    identity."""
+def test_the_read_binds_exactly_three_parameters_and_no_orphan_placeholder():
+    """A removed predicate that leaves its bind name behind is the failure mode
+    this catches: SQLAlchemy raises on an unbound `:legacy_source_id` only when
+    the statement is executed, so an untested path would carry it to production.
+    Asserted by executing with precisely the parameter set the caller passes.
+    """
+    import re as _re
+
     from app.services.anchor_channel import _FIND_BY_ANCHOR_SQL
 
-    conn = _anchor_fixture_db()
-    conn.executemany(
-        "INSERT INTO event_provider_anchors VALUES (?,?,?,?)",
-        [
-            (10, "statpal", "s6:354453", "game"),
-            (11, "statpal", "baseball_mlb:354453", "game"),
-        ],
-    )
-
-    key = statpal_anchor_key(MLB_FIXTURE_ID, sport_key="baseball_mlb")
-    row = conn.execute(
-        _FIND_BY_ANCHOR_SQL,
-        _params(key.source_id, statpal_legacy_source_id(key)),
-    ).fetchone()
-    assert row == (11, 3), "the qualified row is the one that must answer"
-
-
-def test_a_caller_that_has_not_been_updated_still_reads_its_own_legacy_row():
-    """Today's production path, unchanged: no sport passed, legacy key derived,
-    legacy row found. This is the arm that proves the change is additive."""
-    from app.services.anchor_channel import _FIND_BY_ANCHOR_SQL
+    bound = set(_re.findall(r":(\w+)", _FIND_BY_ANCHOR_SQL))
+    assert bound == {"source", "source_id", "id_kind"}
 
     conn = _anchor_fixture_db()
-    conn.execute(
-        "INSERT INTO event_provider_anchors VALUES (10,'statpal','s6:354453','game')"
-    )
-
-    key = statpal_anchor_key(MLB_FIXTURE_ID)  # no sport — the pre-D55 caller
-    assert statpal_legacy_source_id(key) is None
-    row = conn.execute(
-        _FIND_BY_ANCHOR_SQL, _params(key.source_id, key.source_id)
-    ).fetchone()
-    assert row == (10, 3)
+    conn.execute(_FIND_BY_ANCHOR_SQL, _params("baseball_mlb:354453"))
 
 
-def test_the_two_shape_predicate_cannot_widen_a_non_statpal_lookup():
-    """For every other provider the caller passes the same value twice and the
-    OR collapses to the original equality. Asserted with a row that WOULD match
-    a widened predicate, so the test can fail."""
+def test_the_read_cannot_widen_a_non_statpal_lookup():
+    """A legacy-shaped row under another provider must not answer for it.
+
+    Kept from the two-shape era with its specimen intact: `s6:401816587` is the
+    row a widened predicate would find, so the test still has something to fail
+    against rather than passing because the widening is gone.
+    """
     from app.services.anchor_channel import _FIND_BY_ANCHOR_SQL
     from app.utils.provider_anchor_keys import SOURCE_ESPN, espn_anchor_key
 
@@ -337,41 +411,48 @@ def test_the_two_shape_predicate_cannot_widen_a_non_statpal_lookup():
     )
 
     key = espn_anchor_key("401816587")
-    assert statpal_legacy_source_id(key) is None
     row = conn.execute(
         _FIND_BY_ANCHOR_SQL,
         {
             "source": SOURCE_ESPN,
             "id_kind": ANCHOR_KIND_GAME,
             "source_id": key.source_id,
-            "legacy_source_id": key.source_id,
         },
     ).fetchone()
     assert row == (10, 3)
 
 
 # ---------------------------------------------------------------------------
-# The countdown on the legacy branch
+# The refusal is loud
 # ---------------------------------------------------------------------------
 
 
-def test_an_unqualified_statpal_claim_is_logged_so_the_bridge_cannot_go_quiet(
-    caplog,
-):
-    """The legacy branch is deleted when this log line stops appearing for a
-    day. A bridge with no counter is just a permanent fixture nobody noticed."""
+def test_an_unqualified_statpal_claim_writes_no_anchor_and_says_so(caplog):
+    """D55's second clause: a key we cannot form raises or tags, never no-ops.
+
+    Before step 3 this line was a deprecation countdown on a call that still got
+    an answer. Now it marks a claim that got NO anchor — a hole in the channel,
+    which is the `NO_ANCHOR_CHANNEL` state ruling 048's amendment says must
+    never be papered over. It got more serious, so it must not get quieter, and
+    both halves are asserted: the refusal AND the record of it.
+    """
     with caplog.at_level(logging.WARNING, logger="app.services.anchor_channel"):
         key = anchor_key_for_claim("statpal", MLB_FIXTURE_ID)
 
-    assert key.source_id == f"{STATPAL_NS_SHORT}:{MLB_FIXTURE_ID}"
-    assert any(
-        "D55" in r.message or "D55" in r.getMessage() for r in caplog.records
-    ), "the unqualified fallback must be observable in production logs"
+    assert key is None, "an unqualified StatPal claim must not produce an anchor"
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("D55" in m for m in messages), (
+        "a refused anchor claim must be observable in production logs"
+    )
+    assert any("REFUSED" in m for m in messages), (
+        "the log must say the claim was refused, not that it fell back — the "
+        "fallback it used to describe no longer exists"
+    )
 
 
 def test_a_qualified_claim_does_not_warn():
     """The control arm: a warning that fires on the good path is a warning
-    everyone learns to ignore, and then the countdown never reaches zero."""
+    everyone learns to ignore, and then nobody sees the real one."""
     import logging as _logging
 
     records: list[_logging.LogRecord] = []
@@ -395,9 +476,11 @@ def test_a_qualified_claim_does_not_warn():
 
 
 def test_a_re_derivation_of_an_existing_key_does_not_warn():
-    """`anchor_is_current` re-derives a key from one already written. A pre-D55
-    row's key is legacy by construction, so there is no sport for it to pass and
-    telling it to pass one would make the log say the opposite of the truth."""
+    """`anchor_is_current` and `invalidate_scalar_anchor` re-derive a key from
+    one already written rather than claiming. They legitimately have no sport to
+    pass for an unrecognised key, and a WARNING on a corroboration would report
+    a refusal nobody asked for. Off for corroborations, on for claims, because
+    only a claim is a write that did not happen."""
     import logging as _logging
 
     records: list[_logging.LogRecord] = []

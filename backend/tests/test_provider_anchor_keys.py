@@ -44,6 +44,14 @@ from app.utils.provider_anchor_keys import (
 SPECIMEN_SHORT = "354812"
 SPECIMEN_LONG = "1329147155"
 
+#: The sport those two rows are in. Both specimens are MLB — that is the point
+#: of the pair, two StatPal endpoints numbering one league's fixtures
+#: differently — so the sport qualifier D55 introduced does NOT separate them,
+#: and `compare_statpal_ids` reading their two shapes is still the only thing
+#: that can. The two functions answer different questions; see the module
+#: docstring of `provider_anchor_keys`.
+SPECIMEN_SPORT = "baseball_mlb"
+
 
 # ---------------------------------------------------------------------------
 # The namespace, and the three-valued comparison it makes possible
@@ -106,38 +114,51 @@ def test_incomparable_never_authorizes_anything():
 
 def test_a_statpal_anchor_carries_its_namespace_in_the_source_id():
     """The unique key is `(source, source_id, id_kind)` with a BARE source_id.
-    An unqualified `354812` from two id spaces is one key for two games."""
-    short = statpal_anchor_key(SPECIMEN_SHORT)
-    long = statpal_anchor_key(SPECIMEN_LONG)
+    An unqualified `354812` from two id spaces is one key for two games.
+
+    The qualifier is the SPORT since D55 (#2879) — see
+    `test_statpal_anchor_sport_namespace_2879.py` for why counting digits could
+    not survive a second sport. Here it is only the property that matters: a
+    StatPal `source_id` is never bare.
+    """
+    short = statpal_anchor_key(SPECIMEN_SHORT, sport_key=SPECIMEN_SPORT)
+    long = statpal_anchor_key(SPECIMEN_LONG, sport_key=SPECIMEN_SPORT)
     assert short.source == long.source == SOURCE_STATPAL
-    assert short.source_id == f"{STATPAL_NS_SHORT}:{SPECIMEN_SHORT}"
-    assert long.source_id == f"{STATPAL_NS_LONG}:{SPECIMEN_LONG}"
+    assert short.source_id == f"{SPECIMEN_SPORT}:{SPECIMEN_SHORT}"
+    assert long.source_id == f"{SPECIMEN_SPORT}:{SPECIMEN_LONG}"
     assert short.source_id != long.source_id
     assert short.id_kind == ANCHOR_KIND_GAME
 
 
-def test_a_hypothetical_cross_namespace_value_collision_cannot_share_a_key():
+def test_a_hypothetical_cross_sport_value_collision_cannot_share_a_key():
     """The property, stated directly rather than via the specimens.
 
-    If the two namespaces ever emit the same literal digits for two different
-    games, the qualified keys must still differ. Six digits cannot equal ten, so
-    construct the collision the only way it could arise — the same token
-    classified into different spaces — and assert the keys stay apart.
+    Two sports emitting the same literal fixture digits for two different games
+    is the collision that actually threatens this table — NFL `contestid` and
+    MLB `id` are both 6-digit — so construct it and assert the keys stay apart.
     """
     keys = {
-        statpal_anchor_key(v).source_id
-        for v in (SPECIMEN_SHORT, SPECIMEN_LONG)
+        statpal_anchor_key(SPECIMEN_SHORT, sport_key=s).source_id
+        for s in ("baseball_mlb", "americanfootball_nfl")
     }
     assert len(keys) == 2
     assert all(k.count(":") == 1 for k in keys)
-    assert {k.split(":", 1)[0] for k in keys} == {STATPAL_NS_SHORT, STATPAL_NS_LONG}
+    assert {k.split(":", 1)[0] for k in keys} == {
+        "baseball_mlb",
+        "americanfootball_nfl",
+    }
 
 
-def test_an_unknown_statpal_namespace_writes_no_anchor_at_all():
+def test_an_unusable_statpal_id_writes_no_anchor_at_all():
     """Refusing to write is the correct failure. A `game` anchor on an
     unqualified id is the one outcome that can merge two real games."""
-    for junk in (None, "", "abc", "12345", "12345678901"):
-        assert statpal_anchor_key(junk) is None
+    for junk in (None, "", "   "):
+        assert statpal_anchor_key(junk, sport_key=SPECIMEN_SPORT) is None
+    # And an id we cannot attribute to a sport, whatever its shape. Since D55
+    # this is every unqualified call, not only the digit shapes the old rule
+    # failed to recognise.
+    for token in (SPECIMEN_SHORT, SPECIMEN_LONG, "abc", "12345"):
+        assert statpal_anchor_key(token) is None
 
 
 # ---------------------------------------------------------------------------
@@ -367,8 +388,8 @@ def test_espn_and_odds_api_ids_are_game_anchors():
 @pytest.mark.parametrize(
     "key",
     [
-        statpal_anchor_key(SPECIMEN_SHORT),
-        statpal_anchor_key(SPECIMEN_LONG),
+        statpal_anchor_key(SPECIMEN_SHORT, sport_key=SPECIMEN_SPORT),
+        statpal_anchor_key(SPECIMEN_LONG, sport_key=SPECIMEN_SPORT),
         kalshi_anchor_key("KXMLBGAME-26APR291840COLCIN"),
         kalshi_anchor_key("SOMETHING-WITH-NO-GAME-TOKEN"),
         polymarket_anchor_key(condition_id="0xabc"),
@@ -393,7 +414,7 @@ def test_every_emitted_key_is_wellformed_and_fits_the_column(key):
 def test_an_anchor_key_cannot_be_mutated_after_its_kind_was_checked():
     """`frozen=True` is the point: a key whose `id_kind` can change after the
     absorption check is a key whose check means nothing."""
-    key = statpal_anchor_key(SPECIMEN_SHORT)
+    key = statpal_anchor_key(SPECIMEN_SHORT, sport_key=SPECIMEN_SPORT)
     assert key.may_anchor_absorption is True
     with pytest.raises(Exception):
         key.id_kind = ANCHOR_KIND_MARKET  # type: ignore[misc]
