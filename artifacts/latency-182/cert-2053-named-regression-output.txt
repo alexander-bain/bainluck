@@ -46,4 +46,3 @@ WHAT WOULD MAKE THIS SHIPPABLE. LAT-P242 (#3466, merged) is the instrument that
 gives the 78 unlabelled beats a duration. Once it has a week of data, re-run this
 against MEASURED p95s instead of declared soft limits, and model the self-gate.
 Then the quantity becomes real and this becomes the guard CERT-2053 asked for.
-
