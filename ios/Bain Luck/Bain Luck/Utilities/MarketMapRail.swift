@@ -89,6 +89,50 @@ enum MarketMapRail {
         return Bounds(min: Swift.max(0, lo - spread / 2), max: hi + spread / 2)
     }
 
+    /// The rail for a MARGIN map.
+    ///
+    /// #3533. The margin rail was one inline expression that always widened to
+    /// the sport's own ± span:
+    ///
+    /// ```swift
+    /// let rangeMin = min((allMargins.min() ?? Double(-maxMargin)) - 3, Double(-maxMargin))
+    /// ```
+    ///
+    /// which is right for every map drawn in the sport's unit and wrong for the
+    /// one that is not. A tennis SET margin map — rungs at ±1.5 and ±2.5 — laid
+    /// on tennis's ±6 **games** span puts a two-set handicap a quarter of the
+    /// way along a rail that does not measure sets, next to axis labels reading
+    /// "by 6+". `declared` is nil there (see
+    /// ``SportVocab/marginRange(quotedBy:)``) and the rungs set their own scale.
+    ///
+    /// - Parameters:
+    ///   - margins: every signed rung the map will draw.
+    ///   - declared: the sport's ± span, nil where this map is not in its unit.
+    ///   - pad: breathing room beyond the outermost rung. Declared case only —
+    ///     three points either side of an NFL ladder is room, three SETS either
+    ///     side of a set handicap is a rail of empty space.
+    static func marginBounds(margins: [Double], declared: Int?, pad: Double) -> Bounds {
+        if let declared {
+            // Verbatim the pre-#3533 arithmetic, so no map drawn in its own
+            // sport's unit moves by a pixel on this change.
+            let span = Double(declared)
+            return Bounds(
+                min: Swift.min((margins.min() ?? -span) - pad, -span),
+                max: Swift.max((margins.max() ?? span) + pad, span)
+            )
+        }
+        // Undeclared: the rungs are the only scale in evidence, and a margin
+        // rail is symmetric about zero because the two sides of a match are.
+        // Rounded UP to a whole unit past the outermost rung, so a ±1.5 set
+        // handicap gets a ±2 rail whose end labels ("by 2+") are true, rather
+        // than a rung sitting exactly on the end of its own axis.
+        guard let widest = margins.map(abs).max(), widest > 0 else {
+            return Bounds(min: -1, max: 1)
+        }
+        let half = (widest + 0.5).rounded(.up)
+        return Bounds(min: -half, max: half)
+    }
+
     /// True when a totals map would draw no ladder, no density and no marker —
     /// a purple bar with an axis under it and nothing on it.
     ///
