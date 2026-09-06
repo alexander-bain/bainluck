@@ -13,8 +13,10 @@ never wedge the bus for a legitimate re-stage.
 """
 
 import os
+import signal
 import subprocess
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -247,6 +249,145 @@ class TestTheLockIsReal:
         r = _stage((q, log), FRESH_SHA)
         assert r.returncode == 2, "second stage of a live sha is the dupe refusal"
         assert not Path(str(q) + ".lockd").exists(), "lock survived the refusal"
+
+
+def _pre_repair_variant(src):
+    """The script with the PRE-REPAIR trap shape restored.
+
+    `trap _release_lock EXIT INT TERM HUP` — one handler for the exit and for
+    every signal, installed only once the lock is held, and a release with no
+    idempotency and no ownership check.
+    """
+    lines = src.splitlines(keepends=True)
+    out, i = [], 0
+    while i < len(lines):
+        ln = lines[i]
+        if ln.startswith("_release_lock() {"):
+            while not lines[i].startswith("}"):
+                i += 1
+            i += 1
+            out.append(
+                '_release_lock() {\n'
+                '  [ -n "$_LOCK_HELD" ] || return 0\n'
+                '  rm -f "$LOCKD/pid" 2>/dev/null\n'
+                '  rmdir "$LOCKD" 2>/dev/null\n'
+                '}\n'
+            )
+            continue
+        if ln.rstrip() == "trap _release_lock EXIT" or ln.startswith("trap 'exit "):
+            i += 1
+            continue
+        if ln.strip() == "_LOCK_HELD=1":
+            out.append(ln)
+            out.append("    trap _release_lock EXIT INT TERM HUP\n")
+            i += 1
+            continue
+        out.append(ln)
+        i += 1
+    return "".join(out)
+
+
+def _term_during_critical_section(script, workdir):
+    """SIGTERM a run that is provably holding the lock, at a known point.
+
+    Getting a signal to land INSIDE the critical section is otherwise a race:
+    the section is ~0.15s even against the real 41k-line queue, and bash defers
+    a trap until the current foreground command returns. Both problems are
+    solved by making `CERT_LOG` a FIFO. The id scan opens it and blocks with the
+    lock already taken, the TERM is delivered and held pending, and closing the
+    writer end releases grep so the trap fires at a command boundary we chose.
+    Deterministic, and no multi-megabyte fixture.
+    """
+    q = workdir / "Q.md"
+    q.write_text("# Q\n")
+    fifo = workdir / "log.fifo"
+    os.mkfifo(fifo)
+    lockd = Path(str(q) + ".lockd")
+
+    p = subprocess.Popen(
+        ["bash", str(script), "SUBJ", "lane1b", "lane1b/br", FRESH_SHA,
+         "https://example.invalid/pr", "#1"],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True,
+        env={"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "HOME": str(workdir),
+             "CERT_QUEUE": str(q), "CERT_LOG": str(fifo)},
+    )
+    time.sleep(0.4)
+    held_during_scan = lockd.exists()
+    p.send_signal(signal.SIGTERM)
+    time.sleep(0.2)
+    open(fifo, "w").close()
+    out, _err = p.communicate(input="body\n", timeout=60)
+    return {
+        "held_during_scan": held_during_scan,
+        "returncode": p.returncode,
+        "stdout": out.strip(),
+        "appended": len(q.read_text()) - len("# Q\n"),
+        "orphan_lock": lockd.exists(),
+    }
+
+
+class TestASignalCannotResumeIntoTheCriticalSection:
+    """A bash trap handler RESUMES where it left off unless it exits.
+
+    So `trap _release_lock EXIT INT TERM HUP` dropped the lock on TERM and then
+    carried on inside the section it no longer held — appending, printing a cert
+    id and exiting 0. Signal traps now only `exit`; EXIT is the one cleanup path.
+    """
+
+    def test_a_term_holding_the_lock_fails_closed(self, tmp_path):
+        r = _term_during_critical_section(SCRIPT, tmp_path)
+        assert r["held_during_scan"], "probe never got the lock; it proves nothing"
+        assert r["returncode"] != 0, "a terminated stage must not report success"
+        assert r["returncode"] == 143, f"expected 128+SIGTERM, got {r['returncode']}"
+        assert r["stdout"] == "", f"a terminated stage handed out id {r['stdout']!r}"
+        assert r["appended"] == 0, "a terminated stage appended to the queue"
+        assert not r["orphan_lock"], "the EXIT trap must still release the lock"
+
+    def test_a_terminated_run_never_releases_a_successors_lock(self, tmp_path):
+        """The release is ownership-checked, so no arrangement of traps can make
+        one run delete a lock that belongs to another."""
+        q, log = _race_queue(tmp_path)
+        lockd = Path(str(q) + ".lockd")
+        lockd.mkdir()
+        (lockd / "pid").write_text("999999")  # a foreign holder
+
+        p = subprocess.Popen(
+            ["bash", str(SCRIPT), "SUBJ", "lane1b", "lane1b/br", FRESH_SHA,
+             "https://example.invalid/pr", "#1"],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True,
+            env={"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "HOME": str(tmp_path),
+                 "CERT_QUEUE": str(q), "CERT_LOG": str(log),
+                 "STAGE_CERT_LOCK_WAIT": "30"},
+        )
+        time.sleep(0.5)          # it is waiting on the foreign lock
+        p.send_signal(signal.SIGTERM)
+        p.communicate(timeout=60)
+
+        assert p.returncode == 143
+        assert lockd.exists(), "the terminated run removed a lock it did not own"
+        assert (lockd / "pid").read_text() == "999999", "it rewrote a foreign lock"
+
+    def test_the_pre_repair_trap_shape_really_did_resume_and_append(self, tmp_path):
+        """Falsification. Without this, the two tests above would pass just as
+        happily against a script that never handled the signal at all."""
+        buggy = tmp_path / "stage-cert-pre-repair.sh"
+        buggy.write_text(_pre_repair_variant(SCRIPT.read_text()))
+        work = tmp_path / "w"
+        work.mkdir()
+
+        r = _term_during_critical_section(buggy, work)
+
+        assert r["held_during_scan"]
+        assert r["returncode"] == 0 and r["appended"] > 0, (
+            "the pre-repair trap shape is supposed to survive its own TERM and "
+            f"append anyway; got {r}"
+        )
+        assert r["stdout"].startswith("CERT-"), (
+            "and hand out a cert id after termination — which is the defect "
+            "CERT-2035 blocked on"
+        )
 
 
 class TestGuardIsNotVacuous:

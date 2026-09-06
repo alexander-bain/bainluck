@@ -32,19 +32,46 @@ SUBJ="$1"; LANE="$2"; BR="$3"; SHA="$4"; PR="$5"; ISSUE="$6"; REPAIRS="${7:-}"
 # trap releases on every ordinary exit path — including the refusal below and a
 # Ctrl-C — so an orphan requires a hard kill, and a human is the right person to
 # adjudicate that.
+#
+# SIGNALS MUST EXIT, NOT MERELY CLEAN UP. `trap _release_lock EXIT INT TERM HUP`
+# is wrong in a way that is invisible until you send the signal: a bash trap
+# handler RESUMES the script where it left off unless it exits. So a TERM during
+# the critical section ran the release, dropped the lock, and then carried on
+# INSIDE the section it no longer held — appending, printing a cert id and
+# exiting 0, which is the unlocked tool again with a worse story. Measured on the
+# exact script: a TERM probe exited 0 and appended after termination. The signal
+# traps therefore only `exit`, at a conventional 128+signo, and the EXIT trap is
+# the single cleanup path.
+#
+# `_release_lock` is idempotent AND ownership-checked. Idempotent because a
+# signal exit runs the EXIT trap once more and a double release would remove the
+# NEXT holder's lock; ownership-checked because that is the property that
+# actually matters — we remove the lock only while `$LOCKD/pid` still names this
+# process, so no arrangement of traps, signals or races can make this script
+# delete a lock belonging to a successor.
 LOCKD="$Q.lockd"
 LOCK_WAIT_S="${STAGE_CERT_LOCK_WAIT:-15}"
 _LOCK_HELD=""
 _release_lock() {
   [ -n "$_LOCK_HELD" ] || return 0
+  _LOCK_HELD=""
+  _owner=$(cat "$LOCKD/pid" 2>/dev/null || true)
+  # An ABSENT pid is our own lock, caught in the instant between `mkdir` and the
+  # stamp below: a successor cannot mkdir over a directory that already exists,
+  # so an unstamped lock is never anyone else's. Any OTHER pid is a successor's
+  # and we leave it alone.
+  [ -z "$_owner" ] || [ "$_owner" = "$$" ] || return 0
   rm -f "$LOCKD/pid" 2>/dev/null
   rmdir "$LOCKD" 2>/dev/null
 }
+trap _release_lock EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
 _deadline=$(( $(date +%s) + LOCK_WAIT_S ))
 while :; do
   if mkdir "$LOCKD" 2>/dev/null; then
     _LOCK_HELD=1
-    trap _release_lock EXIT INT TERM HUP
     echo $$ > "$LOCKD/pid"
     break
   fi
