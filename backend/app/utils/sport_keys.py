@@ -357,6 +357,13 @@ _SOCCER_CUP_PROP_TICKER_TO_SPORT_KEY: dict[str, str] = {
 "kxisrplcupbtts": "soccer",
 "kxisrplcupspread": "soccer",
 "kxisrplcuptotal": "soccer",
+# Leagues Cup (28 rows) — held out by lane1/145, released by lane1b/059's
+# adjudication of golden pair 59700871 (amendment `null -> 15293431`).
+"kxleaguescupbtts": "soccer",
+"kxleaguescupscore": "soccer",
+"kxleaguescupspread": "soccer",
+"kxleaguescupteamtotal": "soccer",
+"kxleaguescuptotal": "soccer",
 # Copa do Brasil (22 rows)
 "kxcopadobrasilbtts": "soccer",
 "kxcopadobrasilspread": "soccer",
@@ -397,27 +404,29 @@ _SOCCER_CUP_PROP_TICKER_TO_SPORT_KEY: dict[str, str] = {
 "kxurypdbtts": "soccer",
 }
 
-# ── HELD OUT (lane1/145): the five `kxleaguescup*` prop prefixes ─────────────
-# Mapping these regresses ONE golden-set pair — market 59700871
-# "Toluca vs Leon: Regulation Time Spread", ticker KXLEAGUESCUPSPREAD-26SEP02TOLLEO.
-# With the ticker mapped, the matcher attaches it to event 15293431, "Toluca vs
-# León" @ 2026-08-31 23:00Z, while the ticker's own date reads 26SEP02. The pair
-# is adjudicated `correct_event_id: null` under the note
-# `non-sport-category;cup-ticker` — the same note as the two pairs lane1b/051
-# already amended, where null meant "mislabelled, target unresolved" and NOT
-# "belongs on no event". So this is probably the same improvement-read-as-a-
-# regression. Probably is not good enough to move someone else's baseline on:
-# the two amended pairs matched their ticker date exactly and this one is two
-# days off, which is the one difference that would make it a genuine mis-link.
+# ── HOLD RELEASED (lane1/147): the five `kxleaguescup*` prefixes are back ────
+# lane1/145 held them because mapping them moves ONE golden-set pair — market
+# 59700871 "Toluca vs Leon: Regulation Time Spread", ticker
+# KXLEAGUESCUPSPREAD-26SEP02TOLLEO — which the matcher then attaches to event
+# 15293431 @ 2026-08-31 23:00Z while the ticker's own date reads 26SEP02. A
+# two-day gap is the one difference that separates an amendment from a genuine
+# mis-link, and the golden set is lane1b's under D39, so the hold was correct.
 #
-# The golden set, its baseline and its amendments are lane1b's under D39. The
-# precedent is in that file's own header: lane1 held four ticker mappings out of
-# #2321 rather than re-record a baseline it does not own. Same here — these five
-# are held, not abandoned, pending lane1b's adjudication of 59700871.
+# lane1b/059 adjudicated it AMENDMENT (`null -> 15293431`) on 2026-09-06, and
+# the gap resolves the OPPOSITE way from the way it was feared: the ticker date
+# is right and OUR event's stored date is wrong. Their venue read found exactly
+# one Toluca-Leon tie across all three Leagues Cup prop series, all
+# `*-26SEP02TOLLEO`; the contract settles on winner-declaration and is
+# `finalized` 2026-09-03T03:36:31Z, which cannot describe a match played Aug 31;
+# and event 15293431 is `soccer_concacaf_leagues_cup`, the same competition as
+# the market, which refutes the Liga MX reading (Toluca's league fixtures that
+# week are against Juárez, not León). Their amendment and its evidence are in
+# `tests/fixtures/matching_golden_adjudication_amendments.json`.
 #
-# DISCLOSED CONSEQUENCE: new `kxleaguescup*` rows keep classifying wrong until
-# that adjudication lands. The 1,908-row data repair already fixed the existing
-# ones, so this is a forward-looking gap in one competition, not a live bucket.
+# BOTH HALVES LANDED IN ONE COMMIT, and that is load-bearing: with the prefixes
+# alone the fixture expects `None` and gets 15293431; with the amendment alone
+# it expects 15293431 and gets `None`. Either half on its own takes the ratchet
+# RED. Whoever splits them will see a regression that is not one.
 
 
 

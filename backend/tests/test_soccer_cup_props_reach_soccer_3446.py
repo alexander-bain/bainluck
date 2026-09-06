@@ -326,10 +326,10 @@ class TestThePropPrefixesNeverBecomeAHardMatchKey:
         )
 
 
-# The five Leagues Cup prop prefixes held out of this ship. Mapping any of them
-# regresses golden-set pair 59700871 (see the HELD OUT note in `sport_keys.py`).
-# They are held pending lane1b's adjudication of that pair, not abandoned.
-HELD_PENDING_GOLDEN_ADJUDICATION = [
+# The five Leagues Cup prop prefixes lane1/145 held out, released by lane1b/059's
+# adjudication of golden pair 59700871 and landed here in the SAME commit as that
+# amendment (see `TestTheLeaguesCupHalvesStayTogether` for why that matters).
+RELEASED_BY_GOLDEN_ADJUDICATION = [
     "kxleaguescupbtts",
     "kxleaguescupscore",
     "kxleaguescupspread",
@@ -337,33 +337,83 @@ HELD_PENDING_GOLDEN_ADJUDICATION = [
     "kxleaguescuptotal",
 ]
 
+#: The market whose adjudication released them, and the event it was amended to.
+GOLDEN_PAIR_THAT_RELEASED_THEM = 59700871
+AMENDED_TO_EVENT = 15293431
 
-class TestTheHeldLeaguesCupPrefixesStayHeld:
-    """A tripwire, like `TestTheGameLegsStayUnmapped` above.
 
-    Whoever maps these must re-run `tests/test_matching_golden_set_2706.py` and
-    land lane1b's amendment for market 59700871 FIRST, then update this test
-    deliberately. Deleting it to go green is the failure mode it exists for.
+class TestTheLeaguesCupHalvesStayTogether:
+    """The successor to `TestTheHeldLeaguesCupPrefixesStayHeld`.
+
+    That tripwire asked "are these five still unmapped?", which was the right
+    question while lane1b owed us an adjudication. It is the wrong question now
+    — the answer flipped, and a test that only ever guards one direction goes
+    vacuous the moment it does.
+
+    What replaces it guards the property that actually bites. The prefix mapping
+    and lane1b's amendment are RED APART and green only together:
+
+        prefixes alone   expected None   -> matcher returns 15293431  RED
+        amendment alone  expected 15293431 -> matcher returns None    RED
+        both             expected 15293431 -> matcher returns 15293431  green
+
+    So the damaging future edit is not "someone maps them", it is "someone
+    reverts ONE HALF" — most plausibly by reverting a matching change and
+    leaving the fixture, or by re-recording the golden baseline from an older
+    amendments file. Either way the ratchet cries regression at a pair that is
+    correct, and the next lane spends a session re-deriving what lane1b already
+    proved. These assert the halves in both directions, by name.
     """
 
-    def test_the_leagues_cup_props_are_not_mapped(self):
+    def test_the_five_prefixes_are_mapped(self):
         from app.utils.sport_keys import KALSHI_TICKER_TO_SPORT_KEY
 
-        mapped = [p for p in HELD_PENDING_GOLDEN_ADJUDICATION
-                  if p in KALSHI_TICKER_TO_SPORT_KEY]
-        assert not mapped, (
-            f"{mapped} were mapped without amending golden pair 59700871 — "
-            "run tests/test_matching_golden_set_2706.py and read the HELD OUT "
-            "note in app/utils/sport_keys.py"
+        unmapped = [p for p in RELEASED_BY_GOLDEN_ADJUDICATION
+                    if p not in KALSHI_TICKER_TO_SPORT_KEY]
+        assert not unmapped, (
+            f"{unmapped} lost their classification — if this is a deliberate "
+            "re-hold, revert lane1b/059's amendment for market "
+            f"{GOLDEN_PAIR_THAT_RELEASED_THEM} in the SAME commit, or the "
+            "golden ratchet will report a regression that is not one"
         )
 
-    def test_the_hold_is_the_only_gap_and_it_is_named(self):
-        """The hold must stay a NAMED five, not quietly grow."""
+    def test_the_amendment_that_released_them_is_still_recorded(self):
+        """The other half, read from the file the capture script consumes."""
+        import json
+        from pathlib import Path
+
+        path = (Path(__file__).parent / "fixtures"
+                / "matching_golden_adjudication_amendments.json")
+        amendments = json.loads(path.read_text())["amendments"]
+        match = [a for a in amendments
+                 if a["market_id"] == GOLDEN_PAIR_THAT_RELEASED_THEM]
+
+        assert match, (
+            f"market {GOLDEN_PAIR_THAT_RELEASED_THEM}'s amendment is gone while "
+            "the five kxleaguescup* prefixes are still mapped — that is the "
+            "RED-apart half. Read the HOLD RELEASED note in sport_keys.py"
+        )
+        assert match[-1]["now"] == AMENDED_TO_EVENT, (
+            f"the amendment now points at {match[-1]['now']}, not "
+            f"{AMENDED_TO_EVENT}; the mapped prefixes make the matcher answer "
+            f"{AMENDED_TO_EVENT}, so the fixture and the code disagree"
+        )
+
+    def test_the_classification_set_is_the_named_size(self):
+        """73, not 68 — the five are back, which also retires the stale copy.
+
+        The dict's own header, its merge comment and
+        `is_classification_only_soccer_prop_ticker`'s docstring have said 73
+        throughout; while the five were held the executed dict was 68 and the
+        prose was drifting (`SOCCER-CUP-PROP-COUNT-COPY-DRIFT`, the nonblocking
+        follow-up CERT-2060 named). Restoring them makes the prose true again
+        rather than editing it down, so there is one number here, not two.
+        """
         from app.utils.sport_keys import _SOCCER_CUP_PROP_TICKER_TO_SPORT_KEY
 
-        assert len(_SOCCER_CUP_PROP_TICKER_TO_SPORT_KEY) == 68, (
-            "the classification set changed size — if prefixes were added or "
-            "held, say which in the HELD OUT note and update this count"
+        assert len(_SOCCER_CUP_PROP_TICKER_TO_SPORT_KEY) == 73, (
+            "the classification set changed size — say which prefixes moved in "
+            "the dict's header note and update this count and the prose with it"
         )
 
 
