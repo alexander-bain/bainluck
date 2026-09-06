@@ -21,10 +21,16 @@ The expectations here are written literally on purpose. Deriving them from
 construction and assert nothing.
 """
 
+from datetime import datetime, timezone
+
 import pytest
 
 from app.tasks.kalshi import _categorize_kalshi_market
 from app.utils.sport_keys import get_sport_key_from_ticker
+
+# A fixed anchor. No branch on the clock (gotcha #44): every arm below offsets
+# from this, so the file reads the same on any day it runs.
+_NOW = datetime(2026, 9, 6, tzinfo=timezone.utc)
 
 # (series prefix, rows it held in `legal` on 2026-09-06)
 SOCCER_CUP_PREFIXES = [
@@ -359,3 +365,312 @@ class TestTheHeldLeaguesCupPrefixesStayHeld:
             "the classification set changed size — if prefixes were added or "
             "held, say which in the HELD OUT note and update this count"
         )
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# CERT-2055 — Pass 1 was only HALF the boundary
+#
+# The blocked presentation argued that subtracting these prefixes from
+# `KALSHI_GAME_TICKER_PREFIXES` was enough to keep them away from auto-create.
+# It is not, and the cert was right. That subtraction closes the PASS-1 TICKER
+# SCAN. Pass 2 — the general scan — selects by NAME, and Kalshi writes these
+# props with a COLON:
+#
+#     "Toluca vs Leon: Regulation Time Spread"
+#
+# `is_derivative_market_name` (#2871) refuses only a DASH-introduced suffix, so
+# it says False here; `extract_matchup` reads a clean two-team matchup; the row
+# is game-level on its NAME; and #3446's deliberately broad `soccer` key is not
+# in the writer's `_ODDS_API_COVERED_PREFIXES`. Every gate said yes, so a prop
+# with no candidate event minted its own fixture — and because the claim is
+# id-less it can never absorb (ruling 048), leaving one row per prop leg with
+# every later prop rendering on the twin.
+#
+# The two arms below are the two halves CERT-2055 named. Both are BEHAVIOURAL:
+# `session=None` is the assertion for "never reached the registry", because a
+# writer that got as far as `find_or_create_event` would dereference it.
+# ═════════════════════════════════════════════════════════════════════════════
+
+# The real production shape, from the 1,908-row population (#3446).
+CUP_PROP_SPECIMENS = [
+    ("KXUELBTTS-26SEP18AJASIO", "Ajax vs Sion: Regulation Time BTTS"),
+    ("KXUECLSPREAD-26SEP18FIOMAI", "Fiorentina vs Mainz: Regulation Time Spread"),
+    ("KXEFLCUPTOTAL-26SEP23ARSPOR", "Arsenal vs Port Vale: Regulation Time Total"),
+    ("KXDFBPOKALSCORE-26OCT28BAYKOL", "Bayern vs Koln: Regulation Time Score"),
+    ("KXCOPPAITALIABTTS-26SEP24JUVUDI", "Juventus vs Udinese: Regulation Time BTTS"),
+]
+
+
+class TestTheColonPropIsTheGapCert2055Named:
+    """The gap is real: every upstream gate admits this shape.
+
+    If any of these flip, the refusal below stops being load-bearing and this
+    file should say so rather than keeping a guard that guards nothing.
+    """
+
+    @pytest.mark.parametrize("ticker,name", CUP_PROP_SPECIMENS)
+    def test_the_dash_derivative_guard_does_not_catch_the_colon(self, ticker, name):
+        from app.utils.prediction_market_matching import is_derivative_market_name
+
+        assert is_derivative_market_name(name) is False, (
+            "#2871 now catches the colon shape — collapse the #3446 refusal "
+            "into it deliberately rather than keeping two"
+        )
+
+    @pytest.mark.parametrize("ticker,name", CUP_PROP_SPECIMENS)
+    def test_the_name_parses_as_a_clean_two_team_matchup(self, ticker, name):
+        """This is WHY it reaches the mint: the parse succeeds."""
+        from app.utils.prediction_market_matching import extract_matchup
+
+        matchup = extract_matchup(name)
+        assert matchup is not None and matchup.team_a and matchup.team_b
+
+    def test_the_broad_soccer_key_is_not_covered_by_the_odds_api_list(self):
+        """The other gate that would have stopped it, and does not."""
+        covered = (
+            "basketball_nba", "basketball_ncaab", "basketball_wnba",
+            "americanfootball_nfl", "americanfootball_ncaaf",
+            "baseball_mlb", "icehockey_nhl", "soccer_usa_mls",
+        )
+        assert not any("soccer".startswith(p) for p in covered)
+
+
+class TestACupPropNeverMintsItsOwnFixture:
+    """CERT-2055's required repair, proved at the writer.
+
+    ``session=None`` is the whole assertion. The refusal has to land BEFORE
+    anything reaches ``find_or_create_event``; a refusal that happened after it
+    would already have written the row. On the blocked SHA these raise instead
+    of returning None, which is what makes the arm non-vacuous.
+    """
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("ticker,name", CUP_PROP_SPECIMENS)
+    async def test_the_specimen_props_mint_nothing(self, ticker, name):
+        from app.tasks.prediction_market_matching import (
+            _create_event_from_prediction_market,
+        )
+        from app.utils.prediction_market_matching import extract_matchup
+
+        matchup = extract_matchup(name)
+        assert matchup is not None, "specimen no longer parses — pick another"
+
+        result = await _create_event_from_prediction_market(
+            None, matchup, _CupPropMarket(ticker, name), _NOW,
+        )
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_every_mapped_prefix_is_refused_not_just_the_specimens(self):
+        """The boundary is the DICT, so the guard must cover all of it."""
+        from app.tasks.prediction_market_matching import (
+            _create_event_from_prediction_market,
+        )
+        from app.utils.prediction_market_matching import extract_matchup
+
+        name = "Toluca vs Leon: Regulation Time Spread"
+        matchup = extract_matchup(name)
+        minted = []
+        for prefix in _prop_prefixes():
+            ticker = f"{prefix.upper()}-26SEP02TOLLEO"
+            try:
+                result = await _create_event_from_prediction_market(
+                    None, matchup, _CupPropMarket(ticker, name), _NOW,
+                )
+            except Exception as exc:  # reached the registry with a None session
+                minted.append((prefix, type(exc).__name__))
+                continue
+            if result is not None:
+                minted.append((prefix, "created"))
+        assert not minted, (
+            f"{len(minted)} mapped prefixes still reach the registry: "
+            f"{minted[:5]}"
+        )
+
+    def test_the_predicate_reads_the_same_dict_the_subtraction_reads(self):
+        """No drift: adding a prefix arms the refusal without a second edit."""
+        from app.utils.sport_keys import (
+            _SOCCER_CUP_PROP_TICKER_TO_SPORT_KEY,
+            is_classification_only_soccer_prop_ticker,
+        )
+
+        missed = [
+            p for p in _SOCCER_CUP_PROP_TICKER_TO_SPORT_KEY
+            if not is_classification_only_soccer_prop_ticker(f"{p.upper()}-26SEP02AAABBB")
+        ]
+        assert not missed, f"predicate does not cover its own dict: {missed[:5]}"
+
+
+class TestTheRefusalIsRecordedNotSilent:
+    """A refusal nobody can count is how a bucket goes missing (#2705)."""
+
+    @pytest.mark.asyncio
+    async def test_the_decline_persists_auto_create_declined(self):
+        from datetime import datetime, timezone
+
+        from app.tasks.prediction_market_matching import _try_link_market
+        from app.utils.match_receipts import (
+            MatchReceipt,
+            REJECT_AUTO_CREATE_DECLINED,
+        )
+        from app.utils.prediction_market_matching import extract_matchup
+
+        name = "Ajax vs Sion: Regulation Time BTTS"
+        market = _CupPropMarket("KXUELBTTS-26SEP18AJASIO", name)
+        receipt = MatchReceipt(
+            market_id=1,
+            source="kalshi",
+            external_id=market.external_id,
+            market_name=name,
+            phase="general",
+            attempted_at=datetime(2026, 9, 6, tzinfo=timezone.utc),
+        )
+        stats = {"funnel": {
+            "no_event_found": 0,
+            "no_matchup_extracted": 0,
+            "sample_game_level_no_event": [],
+        }, "newly_linked": 0}
+
+        # session=None again: nothing on this path may touch the database.
+        await _try_link_market(
+            None, market, extract_matchup(name), None, stats,
+            None, _NOW, [], receipt=receipt,
+        )
+
+        assert receipt.reject_reason == REJECT_AUTO_CREATE_DECLINED
+        assert receipt.detail.get("auto_create") == "declined"
+        assert receipt.linked_event_id is None
+        assert stats["funnel"]["no_event_found"] == 1
+
+
+class TestLinkingIsUntouched:
+    """The other half of CERT-2055's required control.
+
+    The refusal must cost these props nothing except the fixture they should
+    never have invented. Two independent statements of that, because the risk
+    of a mint-guard is always that it is really a link-guard wearing a hat.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_cup_prop_still_links_to_a_real_europa_league_fixture(
+        self, monkeypatch,
+    ):
+        """BEHAVIOURAL. The same specimen CERT-2043 named, with a candidate.
+
+        This is the pair that decides whether the repair is a mint-guard or a
+        link-guard wearing a hat. `_try_link_market` is driven for real; only
+        the two collaborators that need a database are replaced, and neither of
+        them is the thing under test — the duplicate-linkage guard is given its
+        permissive answer so the LINK branch is the one exercised.
+        """
+        from app.tasks import prediction_market_matching as pmm
+        from app.utils.match_receipts import MatchReceipt
+        from app.utils.prediction_market_matching import extract_matchup
+
+        name = "Ajax vs Sion: Regulation Time BTTS"
+        market = _CupPropMarket("KXUELBTTS-26SEP18AJASIO", name)
+        market.event_id = None
+        market.group_id = None
+        market.sport_id = None
+        market.id = 1
+
+        # The real Europa League fixture, in the shape `_find_matching_event`
+        # hands back.
+        matched_event = {
+            "event_id": 15305579,
+            "home_team": "Ajax",
+            "away_team": "Sion",
+            "yes_is_home": True,
+            "sport_id": 77,
+        }
+
+        monkeypatch.setattr(
+            pmm, "_check_duplicate_kalshi_linkage_reason",
+            _async_return(None),
+        )
+        monkeypatch.setattr(
+            pmm, "_register_market_team_identities", _async_return(None),
+        )
+
+        receipt = MatchReceipt(
+            market_id=1, source="kalshi", external_id=market.external_id,
+            market_name=name, phase="general", attempted_at=_NOW,
+        )
+        stats = {"funnel": {
+            "linked": 0, "no_event_found": 0, "no_matchup_extracted": 0,
+            "sample_game_level_no_event": [],
+        }, "newly_linked": 0}
+
+        await pmm._try_link_market(
+            _RecordingSession(), market, extract_matchup(name), matched_event,
+            stats, None, _NOW, [], receipt=receipt,
+        )
+
+        assert market.event_id == 15305579, (
+            "the cup prop no longer links to its own Europa League fixture — "
+            "the refusal has leaked onto the linking path"
+        )
+        assert receipt.linked_event_id == 15305579
+        assert receipt.reject_reason is None
+        assert stats["newly_linked"] == 1
+
+    @pytest.mark.parametrize("league_key,_events", REAL_LEAGUE_KEYS_THESE_SERIES_MUST_REACH)
+    def test_the_precise_league_scope_still_admits_its_own_fixture(
+        self, league_key, _events,
+    ):
+        """CERT-2043's finding must not regress while CERT-2055's is repaired.
+
+        This is the pair that matters: the same prefix must SCOPE to a key that
+        admits the real league event (so it links) *and* refuse to mint one.
+        """
+        from app.utils.sport_keys import (
+            get_sport_key_from_ticker,
+            is_classification_only_soccer_prop_ticker,
+        )
+
+        for prefix in _prop_prefixes():
+            ticker = f"{prefix.upper()}-26SEP02AAABBB"
+            scope = get_sport_key_from_ticker(ticker)
+            assert league_key.startswith(scope or ""), (
+                f"{prefix} scopes to {scope!r}, which refuses real "
+                f"{league_key} fixtures"
+            )
+            assert is_classification_only_soccer_prop_ticker(ticker)
+
+
+def _async_return(value):
+    async def _stub(*args, **kwargs):
+        return value
+    return _stub
+
+
+class _RecordingSession:
+    """A session that may be committed but must never be queried.
+
+    The link branch legitimately commits. Anything that tried to READ would be
+    reaching past what this test stubs, so `execute` fails loudly rather than
+    quietly returning a mock that makes the assertion below meaningless.
+    """
+
+    def __init__(self):
+        self.commits = 0
+
+    async def commit(self):
+        self.commits += 1
+
+    async def execute(self, *args, **kwargs):  # pragma: no cover - guard
+        raise AssertionError(
+            "the link branch read from the database — this test stubs only "
+            "the two collaborators that need one; add the new reader"
+        )
+
+
+class _CupPropMarket:
+    """The fields `_create_event_from_prediction_market` reads, and no others."""
+
+    def __init__(self, external_id, name):
+        self.source = "kalshi"
+        self.external_id = external_id
+        self.name = name
+        self.llm_sport_category = "soccer"
+        self.commence_time = _NOW

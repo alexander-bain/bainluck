@@ -1968,6 +1968,66 @@ def is_kalshi_shadowed_futures_ticker(external_id: str) -> bool:
     return longest_game <= kalshi_futures_prefix_len(external_id)
 
 
+def is_classification_only_soccer_prop_ticker(external_id: Optional[str]) -> bool:
+    """Is this ticker evidence of a SPORT but never that a FIXTURE exists (#3446)?
+
+    CERT-2055. ``_SOCCER_CUP_PROP_TICKER_TO_SPORT_KEY`` answers "what sport is
+    this row" for 73 Kalshi soccer cup and continental PROP series so they stop
+    being filed as ``legal``. Subtracting them from
+    :data:`KALSHI_GAME_TICKER_PREFIXES` keeps them out of the matcher's Pass 1
+    ticker scan — and that is only half a boundary, which is what CERT-2055
+    blocked the previous attempt for.
+
+    The other half is Pass 2, the GENERAL scan, which selects by NAME. Kalshi
+    writes these props as ``"Toluca vs Leon: Regulation Time Spread"`` — a
+    COLON, where :func:`is_derivative_market_name` refuses only a DASH-introduced
+    suffix (``"… - Exact Score"``, #2871). So the name parses as a matchup, the
+    row reads game-level, the derivative refusal is False, and the bare
+    ``soccer`` key this dict supplies is not in the auto-create writer's
+    ``_ODDS_API_COVERED_PREFIXES`` list. A prop that finds no candidate event
+    therefore reaches ``find_or_create_event`` and MINTS one — an id-less claim,
+    so it never absorbs and never converges (ruling 048 / gotcha #32). One tie
+    becomes a fixture per prop leg, and every later prop renders on the twin.
+
+    This predicate is that other half, read from the SAME dict so the two can
+    not drift: a prefix added up there is refused auto-create down here without
+    anyone remembering to restate it. It is the same principle as Q435
+    (a tennis prop may not invent its match) and #2871 (a Polymarket derivative
+    may not invent its game), for the shape those two do not cover.
+
+    It gates AUTO-CREATE ONLY. Classification is unaffected, and so is linking
+    to a fixture we already hold — which is the whole point of #3446's broad
+    ``soccer`` key, and is asserted by its own control test.
+
+    **A tie refuses.** Longest prefix wins, and when a real game prefix is
+    strictly longer the ticker is that game and may create normally. On an exact
+    tie this returns True, because the two directions are not symmetric: a false
+    negative mints a permanent duplicate fixture, a false positive leaves one
+    prop unlinked until its tie is matched — visible, reversible, nobody's
+    identity destroyed. The two sets are disjoint today (the dict is subtracted
+    from ``KALSHI_GAME_TICKER_PREFIXES``), so the tie branch is unreachable; it
+    is defined rather than incidental, like the tie in
+    :func:`is_kalshi_game_level_ticker`.
+    """
+    if not external_id:
+        return False
+    ext_lower = external_id.lower()
+    longest_classification_only = max(
+        (
+            len(p) for p in _SOCCER_CUP_PROP_TICKER_TO_SPORT_KEY
+            if ext_lower.startswith(p)
+        ),
+        default=0,
+    )
+    if not longest_classification_only:
+        return False
+    longest_game = max(
+        (len(p) for p in KALSHI_GAME_TICKER_PREFIXES if ext_lower.startswith(p)),
+        default=0,
+    )
+    return longest_classification_only >= longest_game
+
+
 def is_kalshi_game_level_ticker(external_id: str) -> bool:
     """Is this ticker game-level *unambiguously* — longest prefix wins.
 

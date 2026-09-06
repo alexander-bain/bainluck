@@ -4548,6 +4548,38 @@ async def _create_event_from_prediction_market(session, matchup, market, now):
         )
         return None
 
+    # #3446 / CERT-2055: the same principle, the shape the other two miss.
+    #
+    # Q435 above catches tennis props BY TICKER; #2871 catches Polymarket
+    # derivatives BY NAME, but only a DASH-introduced suffix. Kalshi's soccer
+    # cup props are named with a COLON — "Toluca vs Leon: Regulation Time
+    # Spread" — so `is_derivative_market_name` is False, the name parses as a
+    # clean matchup, and #3446's deliberately broad `soccer` key is not in
+    # `_ODDS_API_COVERED_PREFIXES`. Every gate above therefore says yes and a
+    # prop with no candidate event mints its own fixture. Because the claim is
+    # id-less it can never absorb (ruling 048), so the tie ends up as one row
+    # per prop leg and every later prop renders on the twin.
+    #
+    # Keeping these prefixes out of `KALSHI_GAME_TICKER_PREFIXES` closes Pass 1
+    # only; this closes Pass 2, the general scan, which selects by name. The
+    # predicate reads the same dict as that subtraction, so the two halves can
+    # not drift apart.
+    #
+    # LINKING IS UNTOUCHED. This writer runs only after `_find_matching_event`
+    # found nothing, so refusing here costs a prop nothing except the fixture it
+    # should never have invented — it still links the moment its tie exists.
+    from app.utils.sport_keys import is_classification_only_soccer_prop_ticker
+
+    if market.source == "kalshi" and is_classification_only_soccer_prop_ticker(
+        market.external_id
+    ):
+        logger.debug(
+            "Refusing auto-create from classification-only soccer prop %s "
+            "(#3446) — the ticker proves a sport, not a fixture",
+            market.external_id,
+        )
+        return None
+
     # Clean team names: strip sport name prefixes ("Ice Hockey USA" → "USA")
     # and championship suffixes that may leak through ("Canada Medal" → "Canada")
     team_a = _strip_championship_suffix(_strip_sport_name_prefix(matchup.team_a.strip())).strip()
