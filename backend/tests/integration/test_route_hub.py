@@ -627,13 +627,21 @@ def _row_result(tuples):
 
 
 def _sql_dispatching_db(*, unlinked, linked):
-    """A db whose answer depends on WHICH pool the statement asks for.
+    """A db holding ONE population, answering each statement as the real one would.
 
     Dispatching on the compiled SQL rather than on call ORDER is deliberate:
     `build_league` issues several statements of its own, so an ordered
     `side_effect` list would silently re-pair fixtures with queries the moment
     anything upstream added one — and the test would keep passing while
     asserting nothing.
+
+    The no-predicate branch is load-bearing, and it started out wrong. It
+    returned `[]`, which made `test_the_futures_list_does_not_gain_linked_rows`
+    VACUOUS under the exact mutation it exists to catch: delete `build_league`'s
+    `event_id.is_(None)` and its SQL then matches neither branch, so the fake
+    handed back nothing and the assertion passed on an empty list. A query that
+    does not filter on `event_id` must see the WHOLE table — that is what a
+    database does, and modelling it is what makes the guard bite.
     """
     from unittest.mock import AsyncMock
 
@@ -647,6 +655,8 @@ def _sql_dispatching_db(*, unlinked, linked):
             )
         if "event_id IS NULL" in sql:
             return _scalars_result(unlinked)
+        if "futures_markets" in sql:
+            return _scalars_result(list(unlinked) + list(linked))
         return _scalars_result([])
 
     db.execute = _execute
