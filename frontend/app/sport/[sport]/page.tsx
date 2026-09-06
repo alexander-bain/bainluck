@@ -4,6 +4,9 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { fetchSportHierarchyDetail, fetchGolfData } from "@/lib/api";
+import type { ApiError } from "@/lib/api";
+import { describeLoadFailure, type LoadFailure } from "@/lib/loadFailure";
+import PageLoadFailureScreen from "@/components/PageLoadFailureScreen";
 import type { SportHierarchy, SportLeague, SportShowcaseEvent, GolfTournament } from "@/lib/types";
 import TournamentCard from "@/components/TournamentCard";
 import { tournamentHubHref } from "@/lib/tournamentHubs";
@@ -94,7 +97,9 @@ export default function SportHubPage() {
   const [hierarchy, setHierarchy] = useState<SportHierarchy | null>(null);
   const [golfTournaments, setGolfTournaments] = useState<GolfTournament[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [failure, setFailure] = useState<
+    (LoadFailure & { status?: number }) | null
+  >(null);
 
   // Analytics — must be before any conditional return
   usePageTracking({ pageType: "sport_hub", pageTitle: `${sportSlug} - BainLuck` });
@@ -105,7 +110,7 @@ export default function SportHubPage() {
     let cancelled = false;
     async function load() {
       setLoading(true);
-      setError(null);
+      setFailure(null);
       try {
         const data = await fetchSportHierarchyDetail(sportSlug);
         if (!cancelled) setHierarchy(data);
@@ -119,8 +124,17 @@ export default function SportHubPage() {
             // Golf data is supplementary — don't block the page
           }
         }
-      } catch {
-        if (!cancelled) setError(`Sport "${sportSlug}" not found`);
+      } catch (err) {
+        // #3254, the same defect as the league page one level down: this said
+        // `Sport "tennis" not found` for EVERY failure, so a 429 read as a
+        // permanent absence. Only a 404 means the sport is not there; a 429,
+        // a 5xx or a dropped connection mean we could not ask.
+        if (!cancelled) {
+          setFailure({
+            ...describeLoadFailure(err as ApiError, "sport"),
+            status: (err as ApiError)?.status,
+          });
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -137,24 +151,19 @@ export default function SportHubPage() {
     );
   }
 
-  if (error || !hierarchy) {
+  if (failure || !hierarchy) {
+    const f: LoadFailure & { status?: number } = failure ?? {
+      title: "Sport not found",
+      message: `We could not find "${sportSlug}".`,
+      retryable: false,
+      status: 404,
+    };
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center max-w-md mx-auto px-4">
-          <p className="text-text-secondary text-sm mb-3">{error || "Sport not found"}</p>
-          <div className="flex items-center justify-center gap-4">
-            <button
-              onClick={() => window.location.reload()}
-              className="text-sm text-accent-brand hover:underline transition-colors"
-            >
-              Try again
-            </button>
-            <Link href="/" className="text-sm text-text-muted hover:text-text-primary transition-colors">
-              Back to home
-            </Link>
-          </div>
-        </div>
-      </div>
+      <PageLoadFailureScreen
+        failure={f}
+        status={f.status}
+        escape={{ href: "/", label: "Back to home" }}
+      />
     );
   }
 
