@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
+from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services import get_db
@@ -266,6 +267,25 @@ _SETTLED_EXCLUDED_SQL = f"""
 #: comes back as JSON saying so rather than as somebody else's error page.
 _CENSUS_STATEMENT_TIMEOUT_MS = 22_000
 
+#: 🔴 THE SECOND WALL, AND THE FIRST ONE DOES NOT IMPLY IT
+#: (CERT-1981 follow-up ``L1B-051B-POOL-CHECKOUT-WALL``).
+#:
+#: ``statement_timeout`` bounds a statement THE SERVER IS RUNNING. It says
+#: nothing about the time before there is a connection to run it on: SQLAlchemy
+#: waits up to ``pool_timeout`` for a checkout, and this engine takes that
+#: default — **30 seconds, which is the router's own limit**. So under pool
+#: pressure the endpoint could sit in checkout and H12 without Postgres ever
+#: being asked anything, which is the exact failure CERT-1981 removed, arriving
+#: through the one door it did not cover. Three concurrent sessions per request
+#: made that door wider, not narrower.
+#:
+#: A total deadline over the whole census closes both: checkout, statement, and
+#: the row fetch after it. 25s leaves the 22s statement wall room to fire first
+#: on the ordinary slow-query path — so the common case still reports
+#: ``census_timeout`` and names the query — while still landing inside 30s when
+#: the delay is somewhere the statement wall cannot see.
+_CENSUS_TOTAL_DEADLINE_S = 25.0
+
 
 async def _census_rows(sql: str, params: dict) -> list:
     """Run one census statement on its own session, under its own wall.
@@ -283,6 +303,33 @@ async def _census_rows(sql: str, params: dict) -> list:
             text(f"SET LOCAL statement_timeout = {_CENSUS_STATEMENT_TIMEOUT_MS}")
         )
         return (await session.execute(text(sql), params)).fetchall()
+
+
+#: Every way the census can fail to produce an answer, and they are NOT one
+#: class: ``DBAPIError`` is the server refusing (statement_timeout, lock
+#: timeout), ``SQLAlchemyTimeoutError`` is the connection pool refusing before
+#: the server is reached, and ``asyncio.TimeoutError`` is this endpoint's own
+#: deadline. Catching only the first was the hole: the other two are exactly the
+#: cases where nothing is wrong with the QUERY, and they would have escaped as a
+#: 500 — which a reader distinguishes from a green verdict no better than they
+#: distinguish an H12.
+_CENSUS_FAILURES = (DBAPIError, SQLAlchemyTimeoutError, asyncio.TimeoutError)
+
+#: Which wall fired, for the `reason` field. A reader who has to act on an
+#: `unknown` needs to know whether to look at the query, the pool, or the
+#: endpoint — one reason string for three causes would send them to the wrong
+#: one two times in three.
+_CENSUS_FAILURE_REASONS = {
+    SQLAlchemyTimeoutError: "census_pool_exhausted",
+    asyncio.TimeoutError: "census_deadline",
+}
+
+
+def _census_failure_reason(exc: BaseException) -> str:
+    for cls, reason in _CENSUS_FAILURE_REASONS.items():
+        if isinstance(exc, cls):
+            return reason
+    return "census_timeout"
 
 
 @router.get("/futures-price-freshness")
@@ -332,28 +379,39 @@ async def futures_price_freshness(
         )
 
     try:
-        eligible, settled, registered_all = await asyncio.gather(
-            _census_rows(_PRICE_DARK_SQL, params),
-            _census_rows(
-                _SETTLED_EXCLUDED_SQL, {"volume_floor": HIGH_VALUE_VOLUME_FLOOR}
+        # `wait_for`, not just the per-statement wall: the statement wall cannot
+        # see the time spent WAITING FOR A CONNECTION, and this engine's
+        # `pool_timeout` default is 30s — the router's own limit. See
+        # `_CENSUS_TOTAL_DEADLINE_S`.
+        eligible, settled, registered_all = await asyncio.wait_for(
+            asyncio.gather(
+                _census_rows(_PRICE_DARK_SQL, params),
+                _census_rows(
+                    _SETTLED_EXCLUDED_SQL, {"volume_floor": HIGH_VALUE_VOLUME_FLOOR}
+                ),
+                _registered_rows(),
             ),
-            _registered_rows(),
+            timeout=_CENSUS_TOTAL_DEADLINE_S,
         )
-    except DBAPIError as exc:
+    except _CENSUS_FAILURES as exc:
         # A CENSUS THAT DID NOT FINISH IS NOT A GREEN ONE, and it is not an
         # HTML error page either. `status: "unknown"` is the third state this
         # endpoint has always needed and never had: every caller that branches
         # on `status == "red"` would otherwise read a failed census as a
         # passing one (gotcha #53 — an absence and a clean bill arriving in the
         # same shape).
-        logger.warning("futures-price-freshness census did not finish: %s", exc)
+        reason = _census_failure_reason(exc)
+        logger.warning(
+            "futures-price-freshness census did not finish (%s): %s", reason, exc
+        )
         return {
             "status": "unknown",
             "status_all": "unknown",
-            "reason": "census_timeout",
+            "reason": reason,
             "detail": (
-                "the freshness census exceeded its "
-                f"{_CENSUS_STATEMENT_TIMEOUT_MS // 1000}s wall and reports "
+                "the freshness census did not finish inside its "
+                f"{_CENSUS_STATEMENT_TIMEOUT_MS // 1000}s statement wall or its "
+                f"{int(_CENSUS_TOTAL_DEADLINE_S)}s total deadline, and reports "
                 "nothing rather than reporting green"
             ),
             "max_age_hours": max_age_hours,
