@@ -11387,6 +11387,53 @@ def _finished_event_end_cap(completed_at, commence_time, commence_cap):
     return commence_cap
 
 
+async def _end_cap_hides_every_point(db, event_id: int, end_cap) -> bool:
+    """True when the end cap excludes EVERY snapshot the event has.
+
+    live/068. A cap that trims a stale tail is doing its job; a cap that lands
+    before the FIRST point is not trimming anything, it is deleting the chart.
+    The two are told apart by one question — is there a single point inside the
+    cap? — and only the second is a defect.
+
+    The cohort is the same one live/035 found on the open side, arriving here
+    through the settled door: `commence_time` is a Kalshi ticker-derived
+    midnight stand-in (gotcha #14) and `completed_at` is null, so
+    `_finished_event_end_cap` has nothing to fall back to but the placeholder.
+    Specimen, measured on production 2026-09-05:
+
+        events.id 15300276  Jodar v Bu  status 'closed'  completed_at NULL
+        commence_time 2026-09-01 00:00 UTC (commence_time_source 'kalshi_ticker')
+        559 Kalshi win-prob rows spanning 09-01 15:56 .. 09-02 21:03
+        cap = commence + 6.5h = 09-01 06:30 -> 0 of 559 rows served
+
+    Deliberately one-directional: it can only ever widen a window that is
+    currently serving nothing, so no event that draws a line today can change.
+    Asked only when the capped odds query already came back empty, so the common
+    path costs one indexed aggregate and the second query is reached only by an
+    event with no win-prob rows at all.
+    """
+    from app.models.models import WinProbSnapshot
+
+    earliest_win_prob = (
+        await db.execute(
+            select(func.min(WinProbSnapshot.captured_at)).where(
+                WinProbSnapshot.event_id == event_id
+            )
+        )
+    ).scalar()
+    if earliest_win_prob is not None:
+        return earliest_win_prob > end_cap
+
+    earliest_odds = (
+        await db.execute(
+            select(func.min(OddsSnapshot.captured_at)).where(
+                OddsSnapshot.event_id == event_id
+            )
+        )
+    ).scalar()
+    return earliest_odds is not None and earliest_odds > end_cap
+
+
 def _event_started_long_ago_unsettled(event, now, hours: int) -> bool:
     """An event whose start is older than the whole requested window, still open.
 
@@ -11570,6 +11617,8 @@ async def get_event_odds_history(
         response.headers["Cache-Control"] = "public, max-age=3600, stale-while-revalidate=300"
 
     end_cap = None
+    end_cap_relaxed = False
+    snapshots_override = None
     if is_stale_open:
         # No cutoff and no end cap — see `_event_started_long_ago_unsettled` on
         # why `commence_time` cannot be trusted to bound this cohort.
@@ -11607,6 +11656,25 @@ async def get_event_odds_history(
             query = query.where(OddsSnapshot.captured_at <= end_cap)
         result = await db.execute(query.order_by(OddsSnapshot.captured_at).limit(3000))
         cutoff = None
+
+        # live/068: a cap that lands before the first point is not trimming a
+        # stale tail, it is deleting the chart. Only ever asked when the capped
+        # odds query is already empty, and only ever answered yes when EVERY
+        # point the event has lies beyond the cap — so this cannot narrow a
+        # window or change an event that draws a line today.
+        snapshots_override = result.scalars().all()
+        if end_cap is not None and not snapshots_override:
+            if await _end_cap_hides_every_point(db, event_id, end_cap):
+                end_cap = None
+                end_cap_relaxed = True
+                snapshots_override = (
+                    await db.execute(
+                        select(OddsSnapshot)
+                        .where(OddsSnapshot.event_id == event_id)
+                        .order_by(OddsSnapshot.captured_at)
+                        .limit(3000)
+                    )
+                ).scalars().all()
     else:
         # Include snapshots where:
         # 1. captured_at >= cutoff (created within the window), OR
@@ -11637,7 +11705,9 @@ async def get_event_odds_history(
             .order_by(OddsSnapshot.captured_at)
             .limit(3000)
         )
-    snapshots = result.scalars().all()
+    snapshots = (
+        snapshots_override if snapshots_override is not None else result.scalars().all()
+    )
 
     # Group snapshots by capture time and aggregate across bookmakers
     # For snapshots that started before the cutoff but were valid during it,
@@ -12367,6 +12437,31 @@ async def get_event_odds_history(
             _domain_start is None or _earliest < _domain_start
         ):
             _domain_start = _earliest
+    if end_cap_relaxed:
+        # live/068: the cap that was the axis end has just been shown to lie
+        # before every point, and `completed_at` is null on this cohort, so the
+        # only honest end is the last point served. `history` alone cannot
+        # supply it — the specimen is Kalshi-only, so its odds history is empty
+        # and the axis would come back null on a chart that finally has a line.
+        _served = [
+            pts for pts in list(win_prob_history.values()) + [history] if pts
+        ]
+        _earliest = min(
+            (datetime.fromisoformat(pts[0]["timestamp"]) for pts in _served),
+            default=None,
+        )
+        _latest = max(
+            (datetime.fromisoformat(pts[-1]["timestamp"]) for pts in _served),
+            default=None,
+        )
+        # Widen only — never narrow — so a trustworthy commence_time still opens
+        # the axis and only a placeholder that sits after the data is overridden.
+        if _earliest is not None and (
+            _domain_start is None or _earliest < _domain_start
+        ):
+            _domain_start = _earliest
+        if _latest is not None and (_domain_end is None or _latest > _domain_end):
+            _domain_end = _latest
     time_domain = None
     if _domain_start and _domain_end:
         if not is_finished and (
