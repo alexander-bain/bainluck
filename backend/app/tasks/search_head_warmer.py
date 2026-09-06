@@ -116,20 +116,31 @@ used to carry was 3-20x low, and it is corrected rather than quietly dropped
 because it is the number the ENABLED decision was justified on. The load bound
 is `MIN_PASS_PERIOD_SECONDS`: at most one pass per 45 s, whatever the beat does.
 
-⚠️ TWO OPEN DEFECTS LIVE IN THE ARITHMETIC BELOW. Neither is fixed here; both are
-named so nobody reads this docstring as a guarantee.
+✅ THE TWO DEFECTS THIS DOCSTRING USED TO NAME AS OPEN ARE CLOSED (#3539, under
+ruling D81 = A). The arithmetic below is now asserted by `residency_invariant()`
+rather than promised in prose, and the configurations that read plausible and
+hole — 60/25, 180/90, 180/150 — are each refused by name in its test.
 
 THE THREE CONSTANTS ARE ONE DECISION, not three — and the relation binding them
 is `residency_invariant()`, which is executable rather than prose. An entry lives
 `SEARCH_RESPONSE_TTL_SECONDS`; a real pass arrives every
 `effective_pass_period_s()`; a pass rebuilds anything with under
 `REFRESH_AHEAD_SECONDS` left, and that rebuild may take up to
-`full_rebuild_budget_s()`. For the head never to go cold, BOTH must hold:
+`full_rebuild_budget_s()`. For the head never to go cold, ALL THREE must hold:
 
-    REFRESH_AHEAD > TTL - P_effective          (1) the first pass CATCHES it
-    TTL - P_effective > full_rebuild_budget    (2) and it SURVIVES the rebuild
+    REFRESH_AHEAD > TTL - P_effective              (1) the first pass CATCHES it
+    REFRESH_AHEAD - P_effective > rebuild_budget   (2) and it SURVIVES the rebuild
+    REFRESH_AHEAD <= TTL                           (3) and it is still a threshold
 
-At 180 / 150 / 60 / 100: `150 > 120` ✓ and `120 > 100` ✓, 20 s of margin.
+At 180 / 170 / 60 / 100: `170 > 120` ✓, `110 > 100` ✓, `170 <= 180` ✓.
+
+🔴 CLAUSE (2) IS ABOUT THE **THRESHOLD**, NOT THE TTL, AND CERT-2084 BLOCKED THE
+VERSION THAT CONFUSED THEM. `TTL - P_effective > budget` reads 120 > 100 and
+passes, but it only describes an entry the WARMER wrote — always observed with
+`TTL - P` left. The route writes its own cache on an organic MISS at an arbitrary
+phase, so an entry can first be seen at exactly `REFRESH_AHEAD`, be skipped by the
+`<`, and return one period later with `REFRESH_AHEAD - P` left. That is the least
+life any rebuild can begin with, and it is the number the budget must clear.
 
 🔴 **THE RELATION THIS REPLACED WAS UNSOUND IN BOTH CLAUSES, AND ITS GUARD WAS
 GREEN THE WHOLE TIME (#3539, CERT-2068).** It read:
@@ -213,14 +224,20 @@ WARM_CONCURRENCY = 2
 #: Rebuild an entry with less than this much life left. **DERIVED, not chosen**
 #: — `derive_refresh_ahead_s()` below, asserted by `residency_invariant()`.
 #:
-#: It was 25 s, and 25 s is the number CERT-2068 blocked #3526 over. The bound a
-#: refresh-ahead threshold has to clear is not "a bit less than the TTL"; it is
-#: `SEARCH_RESPONSE_TTL_SECONDS - effective_pass_period_s()`, because that is
-#: the most life an entry can still have when the first pass that could rebuild
-#: it arrives. Set below that, the pass calls the entry `fresh`, walks past it,
-#: and the entry dies before the pass after — which is the 20.5 s of cold path
-#: the grader measured.
-REFRESH_AHEAD_SECONDS = 150
+#: It was 25 s (CERT-2068 blocked #3526 over that), then 150 s — and **150 was
+#: blocked too, by CERT-2084, for deriving this from the wrong quantity.** Both
+#: numbers are kept here because the second mistake is the instructive one.
+#:
+#: The threshold is NOT "a bit less than the TTL". It is
+#: `effective_pass_period_s() + full_rebuild_budget_s() + margin`, because the
+#: number that has to clear the rebuild budget is the life an entry has when its
+#: rebuild STARTS, and the worst case for that is not the warmer's own phase.
+#: The route writes its cache on an organic MISS at an arbitrary phase, so an
+#: entry can first be observed at exactly this threshold, be skipped by the `<`,
+#: and come back one period later with `REFRESH_AHEAD - P` left. At 150 that was
+#: 90 s against a permitted 100 s rebuild: a 10 s hole, which is what CERT-2084
+#: measured. #3539 wrote `REFRESH_AHEAD - P_effective > D_max` from the start.
+REFRESH_AHEAD_SECONDS = 170
 
 #: The floor between two real passes, checked UNDER the run lock so two beats
 #: cannot both pass it. This is the load bound: the beat may fire more often,
@@ -469,21 +486,38 @@ def full_rebuild_budget_s(
 
 def derive_refresh_ahead_s(
     *,
-    ttl_s: float = SEARCH_RESPONSE_TTL_SECONDS,
     period_s: float | None = None,
+    budget_s: float | None = None,
+    margin_s: float = BEAT_PERIOD_SECONDS / 2.0,
 ) -> float:
-    """The smallest refresh-ahead that catches an entry on its FIRST eligible pass.
+    """The threshold at which an entry must be rebuilt. **`P + B + margin`.**
 
-    An entry written at the end of pass *k* is looked at again at pass *k+1*,
-    `period_s` later, with `ttl_s - period_s` of life left. If the threshold is
-    below that, `_needs_rebuild` returns False, the pass reports it `fresh`, and
-    the entry gets one more period to live through — which it cannot.
+    🔴 THE QUANTITY HERE IS THE THRESHOLD, NOT THE TTL, AND SUBSTITUTING ONE FOR
+    THE OTHER IS WHAT CERT-2084 BLOCKED. The first repair derived this from
+    `ttl - period`, reasoning about an entry written by the WARMER — which is
+    always observed at `ttl - period` of life and so is always caught. But the
+    route writes its own cache on an organic MISS, at an **arbitrary phase**, so
+    an entry can first be observed at *any* remaining life, including exactly the
+    threshold.
 
-    So the bound is `> ttl_s - period_s`, and the value is that plus a margin of
-    one period so a single DROPPED fire does not immediately re-open the hole.
+    Walk that case at the blocked values (`R = 150`, `P = 60`, `B = 100`):
+
+        pass 1  ttl == 150  ->  `_needs_rebuild(150)` is `150 < 150` = False, SKIP
+        pass 2  ttl ==  90  ->  rebuilt, and the rebuild may take 100 s
+                                the entry dies at +90, the write lands at +100
+                                ======> 10 s with no cached answer
+
+    The life an entry can have when its rebuild STARTS is therefore `R - P`, not
+    `ttl - P`, and it is that number which has to clear the rebuild budget. So:
+
+        R  >  P + B          (and #3539 said exactly this from the beginning)
+
+    The margin is half a beat: enough that the bound is not satisfied at equality,
+    small enough that `R <= TTL` still leaves the `fresh` skip reachable.
     """
     period = effective_pass_period_s() if period_s is None else float(period_s)
-    return float(ttl_s - period + period / 2.0)
+    budget = full_rebuild_budget_s() if budget_s is None else float(budget_s)
+    return float(period + budget + margin_s)
 
 
 def residency_invariant(
@@ -513,22 +547,45 @@ def residency_invariant(
     """
     period = effective_pass_period_s() if period_s is None else float(period_s)
     budget = full_rebuild_budget_s() if budget_s is None else float(budget_s)
-    remaining = ttl_s - period
-    if refresh_ahead_s <= remaining:
+
+    # (1) CAUGHT. A warmer-written entry is observed with `ttl - period` left.
+    warmer_phase = ttl_s - period
+    if refresh_ahead_s <= warmer_phase:
         return False, (
-            f"NOT CAUGHT: an entry has {remaining:g}s left at the first pass that "
-            f"could rebuild it, and refresh-ahead is {refresh_ahead_s:g}s — the pass "
-            f"calls it `fresh` and walks past. Needs > {remaining:g}s."
+            f"NOT CAUGHT: a warmer-written entry has {warmer_phase:g}s left at the first "
+            f"pass that could rebuild it, and refresh-ahead is {refresh_ahead_s:g}s — the "
+            f"pass calls it `fresh` and walks past. Needs > {warmer_phase:g}s."
         )
-    if remaining <= budget:
+
+    # (2) SURVIVES. 🔴 The binding phase is NOT the warmer's. The route writes its
+    # own cache on an organic MISS at an arbitrary phase, so an entry can first be
+    # seen at exactly `refresh_ahead` — skipped by `<` — and next seen one period
+    # later. `refresh_ahead - period` is therefore the LEAST life any rebuild can
+    # start with, and it is that number the budget has to clear. CERT-2084 blocked
+    # the form that used `ttl - period` here: at 180/150/60/100 it read 120 > 100
+    # and passed, while the real floor was 90 and the hole was 10 s.
+    least_life_at_rebuild = refresh_ahead_s - period
+    if least_life_at_rebuild <= budget:
         return False, (
-            f"DOES NOT SURVIVE: the rebuild starts with {remaining:g}s of life and may "
-            f"take {budget:g}s, so the entry expires mid-rebuild and the head goes cold. "
-            f"Needs ttl > period + budget = {period + budget:g}s."
+            f"DOES NOT SURVIVE: an entry first seen at the threshold is skipped and "
+            f"rebuilt one period later with only {least_life_at_rebuild:g}s of life, "
+            f"against a rebuild permitted {budget:g}s — a {budget - least_life_at_rebuild:g}s "
+            f"cold interval. Needs refresh_ahead > period + budget = {period + budget:g}s."
         )
+
+    # (3) BOUNDED. A threshold above the TTL is not a threshold: every entry is
+    # always eligible, the `fresh` skip becomes unreachable, and the constant
+    # stops describing anything.
+    if refresh_ahead_s > ttl_s:
+        return False, (
+            f"NOT A THRESHOLD: refresh-ahead {refresh_ahead_s:g}s exceeds the "
+            f"{ttl_s:g}s TTL, so no entry can ever be `fresh` and the skip is dead code."
+        )
+
     return True, (
-        f"resident: caught at {remaining:g}s left (threshold {refresh_ahead_s:g}s), "
-        f"survives a {budget:g}s rebuild with {remaining - budget:g}s of margin"
+        f"resident: caught by {refresh_ahead_s:g}s (warmer phase leaves {warmer_phase:g}s), "
+        f"and the worst phase starts its rebuild with {least_life_at_rebuild:g}s against a "
+        f"{budget:g}s budget — {least_life_at_rebuild - budget:g}s of margin"
     )
 
 

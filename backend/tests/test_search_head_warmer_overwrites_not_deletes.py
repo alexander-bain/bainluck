@@ -48,6 +48,7 @@ reformatting the condition cannot silently disarm them.
 import ast
 import asyncio
 import inspect
+import math
 import textwrap
 from unittest.mock import patch
 
@@ -543,17 +544,38 @@ class _ExpiringWriteLog:
         return self.ttl_at(t) != -2
 
 
-def _simulate_residency(*, ttl_s, refresh_ahead_s, period_s, rebuild_walls, horizon_s):
+def _simulate_residency(
+    *,
+    ttl_s,
+    refresh_ahead_s,
+    rebuild_walls,
+    horizon_s,
+    beat_s=20.0,
+    floor_s=45.0,
+    organic_phase=False,
+):
     """Run pass cycles on a fake clock and report every interval the key was ABSENT.
 
     Faithful to the post-#3526 mechanism: the warmer does NOT delete, so the old
     value keeps serving for the whole rebuild and is replaced by `setex` at the
     END of it.
 
-    🔴 The eligibility decision is production's `_needs_rebuild`. To exercise a
-    configuration other than the shipped one we patch the CONSTANT it reads
-    rather than reimplementing the predicate around it — the predicate under test
-    stays the real one.
+    🔴 THE RUN LOCK IS MODELLED (CERT-2084). A pass holds `_LOCK_KEY` for its whole
+    duration, so a rebuild longer than one beat does not merely delay itself — it
+    suppresses every fire underneath it. The next pass starts at the first beat
+    multiple at or after BOTH the floor and the previous pass's end. A scheduler
+    that just adds a fixed period cannot see that, and a 100 s rebuild against a
+    20 s beat is exactly where it stops being fixed.
+
+    🔴 `organic_phase=True` SEEDS THE ENTRY THE WAY A USER DOES, NOT THE WAY THE
+    WARMER DOES (CERT-2084). `/search` writes its own cache on a MISS, at whatever
+    moment the user searched, so an entry can first be observed at ANY remaining
+    life — including exactly `refresh_ahead_s`, where `<` skips it. Seeding only
+    warmer-aligned writes (always observed at `ttl - period`) is what made the
+    first version of this harness green over a configuration that holes.
+
+    Eligibility is production's `_needs_rebuild`; alternative configurations are
+    exercised by patching the CONSTANT it reads, never by reimplementing it.
     """
     from unittest.mock import patch
 
@@ -561,27 +583,48 @@ def _simulate_residency(*, ttl_s, refresh_ahead_s, period_s, rebuild_walls, hori
 
     log = _ExpiringWriteLog(ttl_s)
 
-    with patch.object(warmer, "REFRESH_AHEAD_SECONDS", refresh_ahead_s):
-        # Pass 0 finds nothing and builds the first entry — the cold start.
-        first_write = rebuild_walls[0]
-        log.setex(first_write)
-        timeline = [("write", first_write)]
+    def _next_start(last_start, last_end, phase):
+        # The floor is measured from the last pass START; the lock from its END.
+        # `phase` is the beat grid's alignment, which relative to a user's organic
+        # write is ARBITRARY — pinning it to 0 privileges one alignment and is how
+        # a sweep can miss the edge entirely.
+        earliest = max(last_start + floor_s, last_end)
+        return phase + beat_s * math.ceil((earliest - phase) / beat_s)
 
-        pass_i = 1
-        while pass_i * period_s <= horizon_s:
-            start = pass_i * period_s
+    with patch.object(warmer, "REFRESH_AHEAD_SECONDS", refresh_ahead_s):
+        if organic_phase:
+            # A user's MISS writes at t=0; the first pass therefore lands with
+            # exactly `refresh_ahead_s` of life left — the skipped edge.
+            log.setex(0.0)
+            watch_from = 0.0
+            start = float(ttl_s - refresh_ahead_s)
+            phase = start % beat_s
+            last_start, last_end = start - floor_s, 0.0
+        else:
+            # Warmer-aligned: pass 0 finds nothing and builds the first entry.
+            first = rebuild_walls[0]
+            log.setex(first)
+            watch_from = first
+            last_start, last_end = 0.0, first
+            phase = 0.0
+            start = _next_start(last_start, last_end, phase)
+
+        timeline, i = [], 1
+        while start <= horizon_s:
             ttl_before = log.ttl_at(start)
             if warmer._needs_rebuild(None if ttl_before == -2 else ttl_before):
-                wall = rebuild_walls[min(pass_i, len(rebuild_walls) - 1)]
+                wall = rebuild_walls[min(i, len(rebuild_walls) - 1)]
                 log.setex(start + wall)
-                timeline.append(("write", start + wall))
+                timeline.append(("write", start + wall, ttl_before))
+                last_start, last_end = start, start + wall
             else:
-                timeline.append(("fresh", start))
-            pass_i += 1
+                timeline.append(("fresh", start, ttl_before))
+                last_start, last_end = start, start   # a skip is ~instant
+            start = _next_start(last_start, last_end, phase)
+            i += 1
 
-    # Continuous check across the whole horizon.
     absent, run_start = [], None
-    t = first_write
+    t = watch_from
     while t <= horizon_s:
         present = log.present_at(t)
         if not present and run_start is None:
@@ -611,7 +654,6 @@ def test_the_blocked_constants_leave_the_key_absent_for_the_graders_twenty_secon
     absent, _ = _simulate_residency(
         ttl_s=60,
         refresh_ahead_s=25,
-        period_s=60.0,
         rebuild_walls=_SHORT_THEN_LONG,
         horizon_s=180.0,
     )
@@ -639,7 +681,6 @@ def test_the_head_never_disappears_across_two_cycles_at_the_shipped_constants():
     absent, timeline = _simulate_residency(
         ttl_s=SEARCH_RESPONSE_TTL_SECONDS,
         refresh_ahead_s=REFRESH_AHEAD_SECONDS,
-        period_s=effective_pass_period_s(),
         rebuild_walls=_SHORT_THEN_LONG,
         horizon_s=600.0,
     )
@@ -648,7 +689,7 @@ def test_the_head_never_disappears_across_two_cycles_at_the_shipped_constants():
         f"timeline: {timeline}"
     )
     # ...and it was actually doing work, not passing by never rebuilding.
-    assert sum(1 for kind, _ in timeline if kind == "write") >= 5, (
+    assert sum(1 for kind, *_ in timeline if kind == "write") >= 5, (
         "a run that never rebuilt would also report no absence — that is the "
         "vacuous pass this assertion exists to refuse"
     )
@@ -673,7 +714,6 @@ def test_residency_holds_when_every_rebuild_takes_the_full_declared_budget():
     absent, _ = _simulate_residency(
         ttl_s=SEARCH_RESPONSE_TTL_SECONDS,
         refresh_ahead_s=REFRESH_AHEAD_SECONDS,
-        period_s=effective_pass_period_s(),
         rebuild_walls=[budget] * 12,
         horizon_s=900.0,
     )
@@ -694,7 +734,6 @@ def test_option_four_as_written_on_3539_would_have_shipped_a_hole():
     absent, _ = _simulate_residency(
         ttl_s=180,
         refresh_ahead_s=90,
-        period_s=60.0,
         rebuild_walls=[100.0] * 12,
         horizon_s=900.0,
     )
@@ -702,3 +741,133 @@ def test_option_four_as_written_on_3539_would_have_shipped_a_hole():
         "option 4 as written (180/90) must be shown to leave a hole — if it does "
         "not, the derivation that rejected it is over-strict and should be revisited"
     )
+
+
+# ---------------------------------------------------------------------------
+# CERT-2084's NAMED REGRESSION — the ORGANIC phase, which the first harness
+# could not see.
+#
+#   "residency_invariant() checks TTL - period > budget instead of #3539's
+#    necessary refresh_ahead - period > budget. At shipped 180/150/60/100,
+#    _needs_rebuild(150) skips; the next pass sees 90s left and a permitted 100s
+#    rebuild opens a 10s cold interval. The fake-clock guard seeds only
+#    warmer-aligned writes and cannot see an organic route write at the
+#    threshold edge. ... Required catching test: organic entry first observed at
+#    TTL exactly threshold, next pass 60s later, full 100s rebuild, continuously
+#    resident; current SHA must expose [180,190)."
+# ---------------------------------------------------------------------------
+
+
+def test_the_previous_threshold_holes_when_the_entry_is_seen_at_the_threshold_edge():
+    """The RED half of CERT-2084's regression. 150 was the blocked value.
+
+    A user's MISS writes the entry at t=0 with a 180 s life. The first pass lands
+    when exactly 150 s remain — `_needs_rebuild(150)` is `150 < 150`, False, so the
+    pass walks past. The next pass is 60 s later with 90 s left, and the rebuild is
+    permitted 100 s: the entry dies at t=180 and the replacement lands at t=190.
+
+    This is the interval the grader named, reproduced exactly: **[180, 190)**.
+    """
+    absent, timeline = _simulate_residency(
+        ttl_s=180,
+        refresh_ahead_s=150,          # the blocked value
+        rebuild_walls=[100.0] * 12,   # the full declared budget
+        horizon_s=600.0,
+        organic_phase=True,
+    )
+    assert absent, f"the blocked threshold must hole on the organic phase; timeline={timeline}"
+    assert absent[0] == (180.0, 190.0), (
+        f"expected the graded [180, 190) cold interval, measured {absent[0]}"
+    )
+
+
+def test_an_organic_entry_seen_at_the_threshold_edge_stays_resident_at_the_shipped_threshold():
+    """The GREEN half. Same seeding, same full-budget rebuilds, shipped constants.
+
+    At 170 the entry is skipped at 170 s and rebuilt one period later with 110 s
+    left, against a 100 s budget — it survives with 10 s to spare, every cycle.
+    """
+    from app.tasks.search_head_warmer import REFRESH_AHEAD_SECONDS
+    from app.utils.search_cache import SEARCH_RESPONSE_TTL_SECONDS
+
+    absent, timeline = _simulate_residency(
+        ttl_s=SEARCH_RESPONSE_TTL_SECONDS,
+        refresh_ahead_s=REFRESH_AHEAD_SECONDS,
+        rebuild_walls=[100.0] * 20,
+        horizon_s=1200.0,
+        organic_phase=True,
+    )
+    assert absent == [], (
+        f"the served key disappeared on the organic phase: {absent}\ntimeline={timeline}"
+    )
+    assert sum(1 for kind, *_ in timeline if kind == "write") >= 5, (
+        "a run that never rebuilt would also report no absence"
+    )
+
+
+def test_the_organic_phase_is_swept_not_sampled_at_one_lucky_offset():
+    """One seeding is one phase. The route writes at ARBITRARY phase, so sweep it.
+
+    A single organic offset can miss the edge by luck — which is exactly how the
+    warmer-aligned-only harness passed over a holing configuration. Every REACHABLE
+    offset is swept by a CLOSED FORM that is deliberately not the simulation, so the
+    two methods have to agree rather than one method being run twice.
+
+    The sweep runs over `[0, period]`, not `[0, TTL]`, and the bound is load-bearing
+    rather than an optimisation: a pass arrives within one period of any write, so
+    an entry cannot first be OBSERVED with less than `TTL - period` left. Sweeping
+    to the TTL reports offsets 80-180 as cold, and every one of them is a state the
+    scheduler cannot produce — a sweep that ranges outside the reachable set
+    manufactures failures and then gets loosened to silence them.
+    """
+    from app.tasks.search_head_warmer import (
+        REFRESH_AHEAD_SECONDS,
+        effective_pass_period_s,
+        full_rebuild_budget_s,
+    )
+    from app.utils.search_cache import SEARCH_RESPONSE_TTL_SECONDS
+
+    period, budget = effective_pass_period_s(), full_rebuild_budget_s()
+    bad = [
+        bad_row
+        for offset in range(0, int(period) + 1)
+        for bad_row in _sweep_one_offset(
+            offset=offset,
+            ttl_s=SEARCH_RESPONSE_TTL_SECONDS,
+            refresh_ahead_s=REFRESH_AHEAD_SECONDS,
+            period_s=period,
+            budget_s=budget,
+        )
+    ]
+    assert bad == [], f"organic write offsets that leave the head cold: {bad[:6]}"
+
+    # ...and the same sweep must CONVICT the blocked threshold, or it is vacuous.
+    convicted = [
+        row
+        for offset in range(0, int(period) + 1)
+        for row in _sweep_one_offset(
+            offset=offset,
+            ttl_s=SEARCH_RESPONSE_TTL_SECONDS,
+            refresh_ahead_s=150,
+            period_s=period,
+            budget_s=budget,
+        )
+    ]
+    assert convicted, "the sweep does not convict the blocked 150 — it proves nothing"
+
+
+def _sweep_one_offset(*, offset, ttl_s, refresh_ahead_s, period_s, budget_s):
+    """Closed-form residency for one organic offset. Deliberately NOT the sim.
+
+    A second, independent derivation of the same property: an entry first seen
+    with `r0 = ttl - offset` left is skipped while `r >= refresh_ahead`, and the
+    first pass that rebuilds it starts with `r` seconds of life against a
+    `budget_s` rebuild. If any such `r` is <= the budget, the head goes cold.
+    Two methods agreeing is worth more than one method run twice.
+    """
+    r = ttl_s - offset
+    while r >= refresh_ahead_s:      # skipped as `fresh`
+        r -= period_s
+    if r <= 0:                        # already expired before any pass saw it
+        return [(offset, "expired unseen")]
+    return [] if r > budget_s else [(offset, f"rebuild starts with {r}s vs {budget_s}s budget")]

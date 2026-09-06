@@ -668,12 +668,21 @@ def test_the_refresh_ahead_window_actually_keeps_the_head_alive():
     assert not caught, "clause (1) is dead: a threshold at exactly TTL - period must NOT pass"
     assert "NOT CAUGHT" in why_caught
 
-    survives, why_survives = residency_invariant(ttl_s=period + budget)
-    assert not survives, "clause (2) is dead: a TTL equal to period + budget must NOT pass"
+    # 🔴 Clause (2) is about the THRESHOLD, not the TTL. CERT-2084 blocked the
+    # version that read `ttl - period > budget` here; a threshold at exactly
+    # `period + budget` is the boundary it must refuse.
+    survives, why_survives = residency_invariant(refresh_ahead_s=period + budget)
+    assert not survives, (
+        "clause (2) is dead: a threshold at exactly period + budget must NOT pass"
+    )
     assert "DOES NOT SURVIVE" in why_survives
 
-    # The configuration CERT-2068 blocked, and the one #3539's option 4 proposed.
-    # Both must be refused BY NAME, because both read plausible.
+    bounded, why_bounded = residency_invariant(ttl_s=REFRESH_AHEAD_SECONDS - 1)
+    assert not bounded, "clause (3) is dead: refresh-ahead above the TTL must NOT pass"
+    assert "NOT A THRESHOLD" in why_bounded
+
+    # Three configurations that all read plausible and all hole. Each must be
+    # refused BY NAME, and each was actually proposed by someone.
     assert residency_invariant(ttl_s=60, refresh_ahead_s=25)[0] is False, (
         "the pre-#3526 constants (60/25) must not satisfy the invariant"
     )
@@ -681,6 +690,12 @@ def test_the_refresh_ahead_window_actually_keeps_the_head_alive():
         "#3539's option 4 (180/90) leaves the entry uncaught at its first "
         "eligible pass — it must not satisfy the invariant either"
     )
+    blocked_2084 = residency_invariant(ttl_s=180, refresh_ahead_s=150)
+    assert blocked_2084[0] is False, (
+        "180/150 is the configuration CERT-2084 blocked: an organic entry seen at "
+        "the threshold is rebuilt one period later with 90s against a 100s budget"
+    )
+    assert "DOES NOT SURVIVE" in blocked_2084[1]
 
     # And the shipped threshold is the derived one, not a hand-picked neighbour.
     from app.tasks.search_head_warmer import derive_refresh_ahead_s
