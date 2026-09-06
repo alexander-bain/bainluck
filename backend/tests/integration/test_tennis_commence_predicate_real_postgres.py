@@ -429,6 +429,12 @@ async def test_the_unpredicated_query_sweeps_up_rows_the_repair_must_never_touch
     decided by the predicate. If this FAILS, the corpus stopped containing a
     row that discriminates and the arm above has gone vacuous — which is the
     outcome a fake session can never report.
+
+    `base` here is a COPY of production's statement, used only to demonstrate
+    that each conjunct discriminates over this corpus. Nothing rests on the copy
+    staying in step: the arm above drives the real
+    `_fix_tennis_commence_times()`, so production's actual SQL is what decides
+    every assertion about what moved.
     """
     async with pg_engine.begin() as conn:
         ids = await _seed(conn)
@@ -451,18 +457,27 @@ async def test_the_unpredicated_query_sweeps_up_rows_the_repair_must_never_touch
         for key in ("closed", "other_source", "not_tennis", "null_commence"):
             assert ids[key] not in selected, f"{key} is already inside the predicate"
 
-        for key, clause in (
-            ("closed", "AND fm.status = 'open'"),
-            ("other_source", "AND fm.source = 'kalshi'"),
-            ("not_tennis", "AND fm.llm_sport_category = 'tennis'"),
-            ("null_commence", "AND fm.commence_time IS NOT NULL"),
+        # Each conjunct is neutralised to TRUE rather than deleted. Deleting the
+        # text is what the first CI run of this file actually did, and it taught
+        # the lesson the hard way: the leading conjunct is spelled `WHERE
+        # fm.source = ...`, not `AND fm.source = ...`, so a delete-the-clause
+        # mutation matched nothing, changed nothing, and would have reported the
+        # UNMUTATED query as evidence that the clause was load-bearing. Only the
+        # `mutated != base` tripwire below turned that into a red. Neutralising
+        # the PREDICATE is uniform across all four positions and always leaves
+        # valid SQL.
+        for key, predicate in (
+            ("closed", "fm.status = 'open'"),
+            ("other_source", "fm.source = 'kalshi'"),
+            ("not_tennis", "fm.llm_sport_category = 'tennis'"),
+            ("null_commence", "fm.commence_time IS NOT NULL"),
         ):
-            mutated = base.replace(clause, "")
-            assert mutated != base, f"clause not found verbatim: {clause}"
+            mutated = base.replace(predicate, "TRUE")
+            assert mutated != base, f"predicate not found verbatim: {predicate}"
             rows = {r[0] for r in (await conn.execute(text(mutated))).all()}
             assert ids[key] in rows, (
-                f"deleting `{clause}` did not admit {key} — this corpus cannot "
-                "prove that clause is load-bearing"
+                f"neutralising `{predicate}` did not admit {key} — this corpus "
+                "cannot prove that clause is load-bearing"
             )
 
         # The LEFT JOIN, made INNER: every unlinked market disappears, including
