@@ -13,6 +13,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 import ContenderChart from "@/components/tournament/ContenderChart";
 import TournamentResults from "@/components/tournament/TournamentResults";
 import {
+  AXIS_LABEL_BLEED_PX,
+  AXIS_LABEL_MAX_PX,
+  AXIS_LABEL_NUDGE_PX,
+  TIER_PLOT_PX,
   axisSpanDays,
   axisStepDays,
   axisTickStrides,
@@ -191,8 +195,36 @@ describe("item 6 — the chart's x-axis", () => {
   const PHONE = ["major"];
   const LG = ["major", "wide"];
   const XXL = ["major", "wide", "fine"];
-  /** The three plot widths the tiers are spent at — see `TIER_PLOT_PX`. */
-  const PLOT_PX: Record<string, number> = { major: 358, wide: 486, fine: 817 };
+  /**
+   * The three plot widths the tiers are spent at — MEASURED, and owned here.
+   *
+   * These are deliberately written out rather than imported from
+   * `TIER_PLOT_PX`, and then checked against it below. A guard that reads
+   * production's constant and asserts something about it agrees by
+   * construction: the old `major: 358` was wrong by 17% and every assertion in
+   * this file cleared "≥44px at 358px" for years while `30 Aug` and `31 Aug`
+   * overprinted on the live page. The number has to come from somewhere other
+   * than the code under test, and where it comes from is a ruler on a
+   * production screenshot — the card's own border columns at DPR 2, less the
+   * 1px borders and the `px-3.5` padding, cross-checked against the rendered
+   * tick pitch in the same shot:
+   *
+   *   390px  → artifacts-live-073/usopen-womens.png → ~305px
+   *   1024px → artifacts-live-074/usopen-lg.png     → ~486px
+   *   1600px → artifacts-live-074/usopen-2xl.png    → ~817px
+   */
+  const PLOT_PX: Record<string, number> = { major: 305, wide: 486, fine: 817 };
+
+  it("believes the plot is as wide as production actually draws it", () => {
+    // The bug under #3520 was ONE WRONG NUMBER; this is the line that would
+    // have caught it. Re-measure (see `PLOT_PX`) before touching either side.
+    expect(TIER_PLOT_PX).toEqual(PLOT_PX);
+    // And the pieces the pitch budget is built out of, so a change to any of
+    // them has to be a deliberate one.
+    expect(AXIS_LABEL_MAX_PX).toBe(32);
+    expect(AXIS_LABEL_BLEED_PX).toBe(12);
+    expect(AXIS_LABEL_NUDGE_PX).toBe(AXIS_LABEL_MAX_PX / 2 - AXIS_LABEL_BLEED_PX);
+  });
 
   /**
    * A plot geometry for the x-axis assertions below.
@@ -273,20 +305,81 @@ describe("item 6 — the chart's x-axis", () => {
     }
   });
 
-  it("is evenly spaced at EVERY width, over every window length", () => {
+  it("is evenly spaced at EVERY width, over every window length — bar the one gap the pin buys", () => {
     // The defect was irregular spacing, so the guard is regular spacing — and
     // it has to hold per TIER, because a tier is what a given screen sees. An
     // axis that is even at `2xl` and ragged on a phone is the women's board
     // before this change (40% / 20% / 40%).
+    //
+    // #3520 CARVES OUT EXACTLY ONE EXCEPTION AND THIS GUARD PINS ITS SHAPE. The
+    // oldest tick is promoted so the axis's left edge always carries a label
+    // (otherwise the axis reads `31 Aug … 6 Sep` while the footer says `7d
+    // shown`), and its too-close neighbour is demoted to pay for it. That makes
+    // the LEFTMOST gap `(K mod S) + S` steps where every other gap is `S`. So:
+    // at most two distinct gaps, the odd one out is the first, and it is
+    // strictly between one and two of the others. Anything else — a ragged
+    // interior, a doubled gap, three distinct widths — still fails.
+    const seen = { even: 0, pinned: 0 };
     for (const span of [1, 2, 3, 5, 6, 7, 10, 12, 13, 20, 24, 30, 45, 60, 90, 120, 200, 400, 900]) {
       const dates = dailyDates("2024-01-01", span + 1);
       const ticks = axisTicks(geo(dates));
       for (const [name, tiers] of [["phone", PHONE], ["lg", LG], ["2xl", XXL]] as const) {
         const visible = atTier(ticks, tiers as string[]);
         expect(visible.length).toBeGreaterThanOrEqual(2);
-        const gaps = new Set(gapsOf(visible));
-        expect(`${span}d ${name}: ${[...gaps]}`).toBe(`${span}d ${name}: ${[...gaps].slice(0, 1)}`);
+        const gaps = gapsOf(visible);
+        const where = `${span}d ${name}`;
+        const interior = new Set(gaps.slice(1));
+        if (interior.size === 0 || new Set(gaps).size === 1) {
+          seen.even += 1;
+          continue;
+        }
+        seen.pinned += 1;
+        // The interior is still perfectly regular …
+        expect(`${where}: ${[...interior]}`).toBe(`${where}: ${[...interior].slice(0, 1)}`);
+        // … and the leftmost gap is wider, but by less than a whole extra gap.
+        const [unit] = [...interior];
+        expect(`${where}: ${gaps[0] > unit}`).toBe(`${where}: true`);
+        expect(`${where}: ${gaps[0] < unit * 2}`).toBe(`${where}: true`);
       }
+    }
+    // Neither branch may go unvisited: an all-even sweep would mean the pin
+    // never fires and the exception above is untested prose, and an all-pinned
+    // one would mean the even-spacing rule it is an exception TO has stopped
+    // being asserted anywhere.
+    expect(seen.even).toBeGreaterThan(0);
+    expect(seen.pinned).toBeGreaterThan(0);
+  });
+
+  it("labels the oldest drawn tick at every width, so the axis agrees with `Nd shown`", () => {
+    // THE SHIP OF #3520's SECOND HALF. On the US Open's 7-day window the phone
+    // stride is 2 over 7 intervals, so a stride anchored on the newest reading
+    // labels 6/4/2 Sep and 31 Aug and leaves the leftmost tick — 30 Aug, the
+    // day the window starts — silent. The footer next to it says `7d shown`. A
+    // reader who counts the axis gets six, and the chart is arguing with itself.
+    for (const span of [5, 7, 9, 10, 11, 12, 13, 20, 30, 45, 90, 200]) {
+      const dates = dailyDates("2024-03-01", span + 1);
+      const ticks = axisTicks(geo(dates));
+      const phone = atTier(ticks, PHONE);
+      // Both ends of the DRAWN axis carry a label on the narrowest screen.
+      // `ticks` is oldest-first (`axisTicks` reverses on the way out).
+      expect(`${span}d oldest: ${phone[0]?.date}`).toBe(`${span}d oldest: ${ticks[0].date}`);
+      expect(`${span}d newest: ${phone[phone.length - 1]?.date}`).toBe(
+        `${span}d newest: ${ticks[ticks.length - 1].date}`
+      );
+    }
+  });
+
+  it("never buys the oldest label with the newest one", () => {
+    // The module's older rule — the latest reading is where the endpoint dot is
+    // and must always be labelled — outranks the pin. `pinOldestLabel` refuses
+    // rather than demote `k = 0`, and this is that refusal asserted on the only
+    // shape that can reach it: two ticks, needing a stride of two.
+    for (const span of [1, 2, 3, 5, 6, 7, 10, 30, 200, 900]) {
+      const dates = dailyDates("2024-06-01", span + 1);
+      const ticks = axisTicks(geo(dates));
+      const newest = ticks[ticks.length - 1];
+      expect(`${span}d newest tier: ${newest.tier}`).toBe(`${span}d newest tier: major`);
+      expect(newest.x).toBe(320);
     }
   });
 
@@ -326,7 +419,7 @@ describe("item 6 — the chart's x-axis", () => {
       expect(major).toBeGreaterThanOrEqual(wide);
       expect(wide).toBeGreaterThanOrEqual(fine);
       // …and each tier's own pitch clears 44px at the width it first appears.
-      for (const [stride, px] of [[major, 358], [wide, 486], [fine, 817]] as const) {
+      for (const [stride, px] of [[major, PLOT_PX.major], [wide, PLOT_PX.wide], [fine, PLOT_PX.fine]] as const) {
         expect(stride * fraction * px).toBeGreaterThanOrEqual(44);
       }
     }
@@ -356,7 +449,7 @@ describe("item 6 — the chart's x-axis", () => {
     // tabular figures, plus 14px of air.
     for (const span of [1, 5, 7, 10, 12, 13, 24, 30, 45, 60, 90, 200, 400, 900]) {
       const ticks = axisTicks(geo(dailyDates("2024-07-01", span + 1)));
-      for (const [tiers, px] of [[PHONE, 358], [LG, 486], [XXL, 817]] as const) {
+      for (const [tiers, px] of [[PHONE, PLOT_PX.major], [LG, PLOT_PX.wide], [XXL, PLOT_PX.fine]] as const) {
         const visible = atTier(ticks, tiers as string[]);
         for (let i = 1; i < visible.length; i += 1) {
           const apart = ((visible[i].x - visible[i - 1].x) / 320) * (px as number);
@@ -489,11 +582,20 @@ describe("item 6 — the chart's x-axis", () => {
     }
   });
 
-  it("aligns each label on its own rule, by POSITION and not by index", () => {
-    // The leftmost tick is no longer AT the left edge, so the old
-    // `index === 0 ? "none"` would have shoved it ~15px right of the rule it
-    // labels. 29 Jul sits at 1 of 29 days — inside the half-label margin, so it
-    // stays left-aligned — while 5 Aug is interior and must be centred.
+  it("centres every label on its own rule, nudging the ends by POSITION and not by index", () => {
+    // The leftmost tick is no longer AT the left edge, so an `index === 0` rule
+    // would nudge a label that has no need of it. 29 Jul sits at 1 of 29 days —
+    // inside the margin the bleed cannot cover — while 5 Aug is interior.
+    //
+    // #3520 CHANGED WHAT THE ENDS DO, NOT WHEN THEY DO IT. They used to be hard
+    // left- and right-ALIGNED, a half-label shove that drove `30 Aug` into
+    // `31 Aug` on production. Now every label is centred and the two ends are
+    // nudged by `AXIS_LABEL_NUDGE_PX` — the sliver the strip's bleed into the
+    // card padding cannot absorb. Pinning the arithmetic and not just the
+    // shape: at 32px of label against 12px of bleed the nudge is 4px, and if
+    // someone widens the label or narrows the bleed without re-reading
+    // `LABEL_PITCH_PX` this line is what tells them.
+    expect(AXIS_LABEL_NUDGE_PX).toBe(4);
     const html = renderToStaticMarkup(
       <ContenderChart rows={rows} draw="mens-singles" selection={selection} onToggle={() => {}} />
     );
@@ -502,22 +604,56 @@ describe("item 6 — the chart's x-axis", () => {
       const open = html.lastIndexOf("<span", at);
       return /style="([^"]*)"/.exec(html.slice(open, at))?.[1] ?? "";
     };
-    expect(styleFor("29 Jul")).not.toContain("translateX");
+    // This window's oldest tick sits 1 of 29 days in, and 1/29 of 305px is
+    // 10.5px — a 16px half-label hangs 5.5px past the rule, which the 12px
+    // bleed swallows whole. So it is NOT nudged, and that is the position test
+    // earning its keep: under the old half-label margin (15/358) it would have
+    // been shoved, and under an index rule it would have been shoved too.
+    expect(styleFor("29 Jul")).toContain("translateX(-50%)");
+    expect(styleFor("29 Jul")).not.toContain("calc(-50%");
     expect(styleFor("5 Aug")).toContain("translateX(-50%)");
     expect(styleFor("12 Aug")).toContain("translateX(-50%)");
-    expect(styleFor("26 Aug")).toContain("translateX(-100%)");
+    // The newest reading IS at the right edge, always — so it always nudges.
+    expect(styleFor("26 Aug")).toContain("translateX(calc(-50% + -4px))");
 
-    // A tick a whisker inside the left edge is CENTRED, not left-aligned — the
+    // Nobody is left-aligned or right-aligned any more. Asserted as an absence
+    // over the WHOLE strip, because the shove is what the bug was made of and a
+    // per-label check would miss it coming back on a label this test does not
+    // happen to name.
+    const strip = html.slice(html.indexOf('data-testid="chart-axis"'));
+    expect(strip.slice(0, strip.indexOf("</div>"))).not.toContain("translateX(-100%)");
+
+    // A tick a whisker inside the left edge is centred with NO nudge — the
     // index rule could not tell those two apart and this one must.
     const wide = [row({ trend: dailyDates("2026-08-01", 31).map((d) => ({ date: d, probability: 0.4 })) })];
     const wideHtml = renderToStaticMarkup(
       <ContenderChart rows={wide} draw="mens-singles" selection={wide.map((r) => r.entity_key)}
         onToggle={() => {}} />
     );
-    // 3 Aug is 2 of 30 days = 6.7%, outside the 4.2% half-label margin.
+    // 3 Aug is 2 of 30 days = 6.7%, outside the 1.3% margin the bleed leaves.
     const at = wideHtml.indexOf(">3 Aug</span>");
     const open = wideHtml.lastIndexOf("<span", at);
-    expect(/style="([^"]*)"/.exec(wideHtml.slice(open, at))?.[1]).toContain("translateX(-50%)");
+    const style = /style="([^"]*)"/.exec(wideHtml.slice(open, at))?.[1] ?? "";
+    expect(style).toContain("translateX(-50%)");
+    expect(style).not.toContain("calc(-50%");
+
+    // AND THE CASE THAT FILED THE BUG: the US Open's 7-day window, where the
+    // step is daily and the oldest tick lands exactly ON the left edge. Both
+    // ends nudge, in opposite directions, and nothing in between does.
+    const week = [row({ trend: dailyDates("2026-08-30", 8).map((d) => ({ date: d, probability: 0.4 })) })];
+    const weekHtml = renderToStaticMarkup(
+      <ContenderChart rows={week} draw="womens-singles" selection={week.map((r) => r.entity_key)}
+        onToggle={() => {}} />
+    );
+    const weekStyle = (label: string) => {
+      const idx = weekHtml.indexOf(`>${label}</span>`);
+      const span = weekHtml.lastIndexOf("<span", idx);
+      return /style="([^"]*)"/.exec(weekHtml.slice(span, idx))?.[1] ?? "";
+    };
+    expect(weekStyle("30 Aug")).toContain("translateX(calc(-50% + 4px))");
+    expect(weekStyle("6 Sep")).toContain("translateX(calc(-50% + -4px))");
+    const nudged = [...weekHtml.matchAll(/data-nudge="(-?\d+)"/g)].map((m) => m[1]);
+    expect(nudged.filter((value) => value !== "0")).toEqual(["4", "-4"]);
   });
 
   it("labels live OUTSIDE the svg, which is non-uniformly scaled", () => {
