@@ -8,6 +8,7 @@ import {
   MAX_OUTCOMES_PER_CARD,
   type DecidedSetsWinner,
   type MarketCard,
+  type TennisSetsWon,
 } from "@/lib/otherMarketGroups";
 import {
   isSettledStatus,
@@ -30,6 +31,11 @@ interface SpecialEventMarketsProps {
    * `decidedSetsWinnerFor`.
    */
   decidedSetsWinner?: DecidedSetsWinner | null;
+  /**
+   * The per-side set tally, so an exact-match-score row the board has already
+   * ruled out stops carrying a price. Tennis only; see `tennisSetsWonFor`.
+   */
+  setsWon?: TennisSetsWon | null;
 }
 
 function OutcomeBar({
@@ -51,10 +57,19 @@ function OutcomeBar({
   // The strongest state: the question is answered AND this view can say what
   // the answer was. No bar and no number — a percentage beside `Noskova won
   // Set 1` invites the reader to price a set that is already in the books.
+  // A struck row is the same shape but the opposite emphasis. `Tiafoe won Set 2`
+  // is something that happened and reads bold; `Medvedev 3-0 — no longer
+  // possible` is a row being crossed off, and it sits at the bottom of the card
+  // precisely so it stops competing for the reader's eye.
   if (outcome.result) {
     return (
       <div className="flex items-baseline gap-2 text-xs" data-testid="special-markets-result">
-        <div className="flex-1 font-semibold">{outcome.result}</div>
+        <div
+          className={`flex-1 ${outcome.unreachable ? "text-text-muted" : "font-semibold"}`}
+          data-testid={outcome.unreachable ? "special-markets-unreachable" : undefined}
+        >
+          {outcome.result}
+        </div>
       </div>
     );
   }
@@ -138,10 +153,11 @@ export default function SpecialEventMarkets({
   eventStatus,
   completedSets,
   decidedSetsWinner,
+  setsWon,
 }: SpecialEventMarketsProps) {
   const section = useMemo(
-    () => buildMarketSection(data.other, { completedSets, decidedSetsWinner }),
-    [data.other, completedSets, decidedSetsWinner],
+    () => buildMarketSection(data.other, { completedSets, decidedSetsWinner, setsWon }),
+    [data.other, completedSets, decidedSetsWinner, setsWon],
   );
 
   // #2086. `eventStatus` has been DECLARED on this component's props and PASSED

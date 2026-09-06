@@ -64,7 +64,11 @@ import { describeLoadFailure } from "@/lib/loadFailure";
 import Tooltip from "@/components/Tooltip";
 import RelatedByTag from "@/components/RelatedByTag";
 import { getLeagueDisplay, getCategoryForLeague } from "@/lib/sportCategories";
-import { completedSetsForTennis, decidedSetsWinnerFor } from "@/lib/otherMarketGroups";
+import {
+  completedSetsForTennis,
+  decidedSetsWinnerFor,
+  tennisSetsWonFor,
+} from "@/lib/otherMarketGroups";
 import { sportVocab, marketMapSectionMounts, totalsMapRenders } from "@/lib/marketMapUtils";
 import { espnTeamLogoByName } from "@/lib/images";
 import { sourceLabel } from "@/lib/sourceColors";
@@ -1584,6 +1588,7 @@ export default function EventPage({ params }: EventPageProps) {
                 eventStatus={event.status}
                 completedSets={completedSetsForTennis(event.sport, gameMarkets)}
                 decidedSetsWinner={decidedSetsWinnerFor(event.sport, gameMarkets)}
+                setsWon={tennisSetsWonFor(event.sport, gameMarkets)}
               />
             </SectionErrorBoundary>
           )}

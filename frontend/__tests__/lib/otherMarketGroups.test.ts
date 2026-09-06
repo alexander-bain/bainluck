@@ -13,11 +13,14 @@ import {
   buildMarketSection,
   categorizeMarketName,
   completedSetsForTennis,
+  matchScoreStillReachable,
   mergeOutcomes,
+  parseMatchScoreOutcome,
   parsePropLabel,
   periodWinnerParts,
   setNumberFromLabel,
   stripCardPrefix,
+  tennisSetsWonFor,
   type OtherMarketRow,
 } from "../../lib/otherMarketGroups";
 
@@ -618,5 +621,190 @@ describe("buildMarketSection — every row on the card names a side (#3575)", ()
       { market_name: "Game MVP", outcome_name: "Judge", probability: 0.25, source: PM },
     ];
     expect(labelsOf(buildMarketSection(rows))).toContain("Rain Delay");
+  });
+});
+
+// ─── #3703 — a match page stops pricing a score the board has ruled out ──────
+//
+// Production, `GET /api/events/15304939/game-markets` at 22:05Z 2026-09-06,
+// Medvedev–Tiafoe in the US Open round of 16. `home_score: 0, away_score: 2`,
+// the hero read `6-7, 4-6, 4-4`, and the card two rows above the ladder read
+// `Tiafoe won Set 2 / Tiafoe won Set 1`. The Polymarket ladder nevertheless made
+// `Daniil Medvedev 3-0` its LEADING outcome at 0.390 — bold, violet bar — a
+// score that stopped being reachable an hour earlier. Kalshi's ladder had the
+// same result at 0.010, so the two cards disagreed by 38 points on one question.
+//
+// Both wire dialects below are verbatim from that single response.
+const MEDVEDEV_TIAFOE_SETS = {
+  home: 0,
+  away: 2,
+  homeTeam: "Daniil Medvedev",
+  awayTeam: "Frances Tiafoe",
+};
+
+const EXACT_SCORE_WIRE: OtherMarketRow[] = [
+  { market_name: "Daniil Medvedev vs. Frances Tiafoe - Exact Score", outcome_name: "Daniil Medvedev 3-0", probability: 0.39, source: PM },
+  { market_name: "Daniil Medvedev vs. Frances Tiafoe - Exact Score", outcome_name: "Frances Tiafoe 3-0", probability: 0.384, source: PM },
+  { market_name: "Daniil Medvedev vs. Frances Tiafoe - Exact Score", outcome_name: "Daniil Medvedev 3-2", probability: 0.215, source: PM },
+  { market_name: "Daniil Medvedev vs. Frances Tiafoe - Exact Score", outcome_name: "Frances Tiafoe 3-1", probability: 0.205, source: PM },
+  { market_name: "Daniil Medvedev vs. Frances Tiafoe - Exact Score", outcome_name: "Frances Tiafoe 3-2", probability: 0.115, source: PM },
+  { market_name: "Daniil Medvedev vs. Frances Tiafoe - Exact Score", outcome_name: "Daniil Medvedev 3-1", probability: 0.0475, source: PM },
+];
+
+describe("tennisSetsWonFor", () => {
+  test("it reports the per-side tally the live specimen carried", () => {
+    expect(
+      tennisSetsWonFor("tennis_atp_us_open", {
+        home_score: 0,
+        away_score: 2,
+        home_team: "Daniil Medvedev",
+        away_team: "Frances Tiafoe",
+      }),
+    ).toEqual(MEDVEDEV_TIAFOE_SETS);
+  });
+
+  test("it answers at one set all, where `decidedSetsWinnerFor` must stay silent", () => {
+    // The state this exists for: nobody can be named the winner of the sets so
+    // far, yet BOTH 3-0 finishes are already dead.
+    expect(
+      tennisSetsWonFor("tennis_wta", {
+        home_score: 1,
+        away_score: 1,
+        home_team: "Marta Kostyuk",
+        away_team: "Linda Noskova",
+      }),
+    ).toEqual({ home: 1, away: 1, homeTeam: "Marta Kostyuk", awayTeam: "Linda Noskova" });
+  });
+
+  test("it is null at 0-0, for every other sport, and with a name missing", () => {
+    const named = { home_team: "A", away_team: "B" };
+    expect(tennisSetsWonFor("tennis_atp", { home_score: 0, away_score: 0, ...named })).toBeNull();
+    expect(tennisSetsWonFor("baseball_mlb", { home_score: 4, away_score: 2, ...named })).toBeNull();
+    expect(tennisSetsWonFor("tennis_atp", { home_score: 6, away_score: 4, ...named })).toBeNull();
+    expect(tennisSetsWonFor("tennis_atp", { home_score: 0, away_score: 2, home_team: "", away_team: "B" })).toBeNull();
+    expect(tennisSetsWonFor("tennis_atp", null)).toBeNull();
+  });
+});
+
+describe("parseMatchScoreOutcome", () => {
+  test("both live dialects parse to the same shape", () => {
+    expect(parseMatchScoreOutcome("Frances Tiafoe wins 3-0")).toEqual({ side: "Frances Tiafoe", won: 3, lost: 0 });
+    expect(parseMatchScoreOutcome("Daniil Medvedev 3-1")).toEqual({ side: "Daniil Medvedev", won: 3, lost: 1 });
+    expect(parseMatchScoreOutcome("Aryna Sabalenka 2-0")).toEqual({ side: "Aryna Sabalenka", won: 2, lost: 0 });
+  });
+
+  test("it refuses every label that is not a match score", () => {
+    // A set's game score, a totals line, a bare side, and a losing tally.
+    expect(parseMatchScoreOutcome("Medvedev 6-4")).toBeNull();
+    expect(parseMatchScoreOutcome("Match O/U 21.5")).toBeNull();
+    expect(parseMatchScoreOutcome("Over")).toBeNull();
+    expect(parseMatchScoreOutcome("Tiafoe 1-3")).toBeNull();
+    expect(parseMatchScoreOutcome("Tiafoe 3-3")).toBeNull();
+    expect(parseMatchScoreOutcome("3-0")).toBeNull();
+    expect(parseMatchScoreOutcome(null)).toBeNull();
+  });
+});
+
+describe("matchScoreStillReachable", () => {
+  test("the two dead scores are dead, in both dialects", () => {
+    for (const label of ["Daniil Medvedev 3-0", "Daniil Medvedev wins 3-0", "Daniil Medvedev 3-1", "Daniil Medvedev wins 3-1"]) {
+      expect(matchScoreStillReachable(label, MEDVEDEV_TIAFOE_SETS)).toBe(false);
+    }
+  });
+
+  test("every score still on the table survives", () => {
+    for (const label of ["Daniil Medvedev 3-2", "Frances Tiafoe 3-0", "Frances Tiafoe 3-1", "Frances Tiafoe 3-2"]) {
+      expect(matchScoreStillReachable(label, MEDVEDEV_TIAFOE_SETS)).toBe(true);
+    }
+  });
+
+  test("at one set all it strikes BOTH 3-0s and nothing else", () => {
+    const sets = { home: 1, away: 1, homeTeam: "Marta Kostyuk", awayTeam: "Linda Noskova" };
+    expect(matchScoreStillReachable("Marta Kostyuk 3-0", sets)).toBe(false);
+    expect(matchScoreStillReachable("Linda Noskova 3-0", sets)).toBe(false);
+    expect(matchScoreStillReachable("Marta Kostyuk 3-1", sets)).toBe(true);
+    expect(matchScoreStillReachable("Linda Noskova 3-2", sets)).toBe(true);
+  });
+
+  test("it fails OPEN — no tally, no parse, or a side it cannot place", () => {
+    // Striking a LIVE row off is the worse error, so every door returns true.
+    expect(matchScoreStillReachable("Daniil Medvedev 3-0", null)).toBe(true);
+    expect(matchScoreStillReachable("Something Else", MEDVEDEV_TIAFOE_SETS)).toBe(true);
+    // A side naming neither competitor, and — the collision door — one naming
+    // both, which is what a doubles pair sharing a surname produces.
+    expect(matchScoreStillReachable("Carlos Alcaraz 3-0", MEDVEDEV_TIAFOE_SETS)).toBe(true);
+    expect(
+      matchScoreStillReachable("Bryan 2-0", {
+        home: 1,
+        away: 0,
+        homeTeam: "Bob Bryan",
+        awayTeam: "Mike Bryan",
+      }),
+    ).toBe(true);
+  });
+
+  test("the surname the market uses places against the full name the event uses", () => {
+    // The wire is not consistent about this: the ladder writes full names while
+    // `Set N Winner` markets write surnames, and both must place.
+    expect(matchScoreStillReachable("Medvedev 3-0", MEDVEDEV_TIAFOE_SETS)).toBe(false);
+    expect(matchScoreStillReachable("Tiafoe 3-1", MEDVEDEV_TIAFOE_SETS)).toBe(true);
+  });
+});
+
+describe("buildMarketSection — the struck exact-score row (#3703)", () => {
+  const cardOf = (opts: Parameters<typeof buildMarketSection>[1]) => {
+    const section = buildMarketSection(EXACT_SCORE_WIRE, opts);
+    const cards = section.categories.flatMap((c) => c.cards);
+    expect(cards).toHaveLength(1);
+    return cards[0];
+  };
+
+  test("today's render, reproduced: the impossible score leads the card", () => {
+    const card = cardOf({});
+    expect(card.outcomes[0].label).toBe("Daniil Medvedev 3-0");
+    expect(card.outcomes[0].result).toBeUndefined();
+    expect(card.outcomes[0].unreachable).toBeUndefined();
+  });
+
+  test("with the tally, it is struck, said plainly, and sunk to the bottom", () => {
+    const card = cardOf({ setsWon: MEDVEDEV_TIAFOE_SETS });
+    // The leader is now the score both venues actually agree on.
+    expect(card.outcomes[0].label).toBe("Frances Tiafoe 3-0");
+    expect(card.outcomes[0].unreachable).toBeUndefined();
+
+    const struck = card.outcomes.filter((o) => o.unreachable === true);
+    expect(struck.map((o) => o.result)).toEqual([
+      "Daniil Medvedev 3-0 — no longer possible",
+      "Daniil Medvedev 3-1 — no longer possible",
+    ]);
+    // Sunk: both live at the END of the list, after every reachable row.
+    expect(card.outcomes.slice(-2)).toEqual(struck);
+    // And they are still THERE. A reader who came looking for 3-0 gets an
+    // answer; a silently dropped row is not one.
+    expect(card.outcomes).toHaveLength(EXACT_SCORE_WIRE.length);
+  });
+
+  test("reachable rows keep their bar, their price and their order", () => {
+    const card = cardOf({ setsWon: MEDVEDEV_TIAFOE_SETS });
+    const live = card.outcomes.filter((o) => o.unreachable !== true);
+    expect(live.map((o) => o.label)).toEqual([
+      "Frances Tiafoe 3-0",
+      "Daniil Medvedev 3-2",
+      "Frances Tiafoe 3-1",
+      "Frances Tiafoe 3-2",
+    ]);
+    for (const o of live) {
+      expect(o.decided).toBeUndefined();
+      expect(o.result).toBeUndefined();
+    }
+    expect(live[0].prob).toBeCloseTo(0.384);
+  });
+
+  test("a non-tennis ladder is byte-for-byte what it is today", () => {
+    // `setsWon` is null for every other sport, so this is the whole regression
+    // surface for the MLB and NFL payloads this module was built on.
+    const before = buildMarketSection(USO_WIRE, { completedSets: 1 });
+    const after = buildMarketSection(USO_WIRE, { completedSets: 1, setsWon: null });
+    expect(after).toEqual(before);
   });
 });
