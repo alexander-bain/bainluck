@@ -120,6 +120,38 @@ EVENT_CHILD_DISPOSITIONS: dict[str, Disposition] = {
     # it is this row; a rail that can destroy its own evidence while reporting a
     # clean deletion is the shape of failure that produced #1779/#1798.
     "event_provider_anchors": "SUBSTANCE",
+    # Added 2026-09-05 (#2927, container graph Phase 1) the moment
+    # `event_participants` gained an ORM model. The rail refused to run until it
+    # was classified and 37 tests went red saying so — this file working exactly
+    # as designed, for the second time, and the reason the classification below
+    # is argued rather than asserted.
+    #
+    # SUBSTANCE, and — as with `event_provider_anchors` — the first instinct is
+    # POINTER. A participant row looks like a restatement of
+    # `home_team_name`/`away_team_name`, which are still written and still
+    # correct; on that reading it carries no observation of its own.
+    #
+    # It is SUBSTANCE for one specific and sufficient reason: **for a doubles
+    # fixture the participant rows are the only place the second player on each
+    # side exists.** `events` has exactly two name columns and a doubles side
+    # holds two people, which is the whole reason this table was added (spec §3).
+    # Deleting the parent CASCADES them away, so a rail that classified this
+    # POINTER could destroy the only record of who played — while reporting a
+    # clean deletion. That is the shape of #1779/#1798 and the same argument the
+    # anchor entry above makes: the rail must not be able to erase its own
+    # evidence.
+    #
+    # THE CONSEQUENCE, STATED RATHER THAN DISCOVERED LATER. Once the M3 backfill
+    # runs, every two-sided event carries participant rows, and a SUBSTANCE
+    # child that every row has makes the delete rail withhold everything. That
+    # is a real narrowing of the rail's reach and it is not bought back by
+    # mis-classifying the table — the honest fix, when it matters, is for the
+    # rail to distinguish a participant row DERIVED from the parent's own name
+    # columns from one that carries a name found nowhere else. Today it costs
+    # nothing: this migration ships the table EMPTY, M3 is a separate attended
+    # step not authorised by "go 2927", and `substance_tables()` is evaluated
+    # against rows that do not exist yet.
+    "event_participants": "SUBSTANCE",
 }
 
 #: Polymorphic references with no database FK. Not derivable — enumerated, and the
@@ -142,6 +174,11 @@ CASCADING_CHILD_TABLES: frozenset[str] = frozenset(
         # set exists, and an anchor is the one child whose silent removal would
         # also remove the proof that the deletion was correct.
         "event_provider_anchors",
+        # `ON DELETE CASCADE` in `containers_phase1` (#2927). Named here for
+        # R4's silent half: a doubles side's second player exists in this table
+        # and nowhere else, so a deletion that removed it without saying so is
+        # precisely the unreviewed effect this set exists to prevent.
+        "event_participants",
     }
 )
 
