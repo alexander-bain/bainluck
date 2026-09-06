@@ -30,6 +30,7 @@ only" excludes every Grand Slam match.
 import ast
 import inspect
 import json
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -171,6 +172,16 @@ def _live(pairs):
     ]
 
 
+def _soon(pairs):
+    at = datetime.now(timezone.utc) + timedelta(minutes=30)
+    return [
+        SimpleNamespace(
+            id=50 + i, home_team_name=home, away_team_name=away, commence_time=at
+        )
+        for i, (home, away) in enumerate(pairs)
+    ]
+
+
 def _champ(names):
     return [
         SimpleNamespace(id=100 + i, name=name, status="open", market_tier=1)
@@ -246,6 +257,165 @@ class TestTheRowTheUserGets:
         assert "US Open Men's Singles Winner" in [c["query"] for c in champ_chips], (
             "the thing a person opening Search on US Open Saturday is looking "
             "for is not on the row"
+        )
+
+    async def test_the_declared_us_open_ship_survives_all_four_sections_at_budget(
+        self, no_redis
+    ):
+        """🔴 CERT-2138's BLOCK, PINNED — the state the first presentation missed.
+
+        The ship is named "the first row shows the US Open", and the first
+        version of this change did not deliver it in the state that matters:
+        every timely section saturated. 3 + 2 + 1 + 1 is the whole budget table,
+        which left the backfill exactly ONE slot — enough for `Presidential
+        Election Winner 2028` and not for `US Open Men's Singles Winner`, which
+        is rank 2 of the measured order. The row was "no longer minor-league" and
+        still not the declared ship.
+
+        Two arms, because the repair answers the block in two different ways.
+
+        **A — the grader's own shape.** Offer all four sections their full
+        budget. `_SUGGESTION_BACKFILL_RESERVE` makes that state UNREACHABLE
+        rather than survivable: sections 1 and 2 spend the whole timely
+        allowance, so sections 3 and 4 are not even queried, and the reserved
+        three slots go to the top of the volume order. The trade is visible in
+        the assertion — two timely chips for the two markets a person opening
+        Search on US Open Saturday is actually looking for.
+
+        **B — all four sections actually contributing.** A quieter evening where
+        sections 1 and 2 do not spend the allowance on their own, so the mover
+        and the upset both reach the row. The marquee must still be there; a
+        reserve that only works when the later timely sections are starved would
+        be answering the block by accident.
+        """
+        # ---- arm A: every timely section offered its budget -----------------
+        db = _RecordingDB(
+            [
+                _Rows(_live(_PRODUCTION_LIVE_PAIRS)),      # offers 8, may keep 3
+                _Rows(_soon([("Aces", "Liberty"), ("Sky", "Storm")])),
+                _Rows(_champ(_PRODUCTION_CHAMP_MARKETS)),
+                # NOTHING for sections 3 and 4: if they are queried at all this
+                # fixture raises, which is the assertion.
+            ]
+        )
+
+        resp = await events_routes._build_search_suggestions(db)
+        queries = [c["query"] for c in resp["suggestions"]]
+        reserve = events_routes._SUGGESTION_BACKFILL_RESERVE
+
+        assert "US Open Men's Singles Winner" in queries, (
+            "CERT-2138's exact finding is back: the timely sections are at their "
+            f"allowance and the marquee chip fell off the row — {queries}"
+        )
+        assert queries[: _MAX_SUGGESTIONS - reserve] == [
+            "Chicago Fire",
+            "Platense",
+            "Tacoma Rainiers",
+            "Aces",
+            "Sky",
+        ], f"the timely allowance is not spent in section order: {queries}"
+        assert queries[_MAX_SUGGESTIONS - reserve :] == (
+            _PRODUCTION_CHAMP_MARKETS[:reserve]
+        ), f"the reserved slots are not the top of the volume order: {queries}"
+        assert len(queries) == _MAX_SUGGESTIONS
+
+        # ---- arm B: all four timely sections actually contribute ------------
+        mover = SimpleNamespace(
+            name="Denver",
+            market_id=900,
+            probability_change_24h=0.06,
+            market=SimpleNamespace(name="NBA Championship Winner", event=None),
+        )
+        upset = SimpleNamespace(
+            id=70,
+            home_team_name="Fever",
+            away_team_name="Sparks",
+            home_score=88,
+            away_score=80,
+            opening_home_probability=0.30,
+            commence_time=datetime.now(timezone.utc) - timedelta(hours=2),
+        )
+        db = _RecordingDB(
+            [
+                _Rows(_live(_PRODUCTION_LIVE_PAIRS[:1])),
+                _Rows(_soon([("Aces", "Liberty")])),
+                _Rows([mover]),
+                _Rows([upset]),
+                _Rows(_champ(_PRODUCTION_CHAMP_MARKETS)),
+            ]
+        )
+
+        resp = await events_routes._build_search_suggestions(db)
+        queries = [c["query"] for c in resp["suggestions"]]
+
+        assert queries[:4] == ["Chicago Fire", "Aces", "Denver", "Fever"], (
+            f"all four timely sections must reach the row here: {queries}"
+        )
+        assert "US Open Men's Singles Winner" in queries, (
+            f"the marquee chip is missing when the later sections do run: {queries}"
+        )
+        assert len(queries) == _MAX_SUGGESTIONS
+
+    async def test_the_reserve_makes_the_expensive_section_skippable_again(
+        self, no_redis
+    ):
+        """The cost half of the same repair, and it is a WIN not a concession.
+
+        Sections 1 and 2 at full budget spend the whole timely allowance, so
+        sections 3 and 4 are skipped outright — the 588 ms pooled movers
+        statement is never issued on a busy evening. LAT-P124's ship, restored by
+        the change that was supposed to spend it.
+        """
+        soon_at = datetime.now(timezone.utc) + timedelta(minutes=30)
+        soon = [
+            SimpleNamespace(
+                id=50 + i, home_team_name=h, away_team_name=a, commence_time=soon_at
+            )
+            for i, (h, a) in enumerate([("Aces", "Liberty"), ("Sky", "Storm")])
+        ]
+        db = _RecordingDB(
+            [
+                _Rows(_live(_PRODUCTION_LIVE_PAIRS)),
+                _Rows(soon),
+                _Rows(_champ(_PRODUCTION_CHAMP_MARKETS)),
+            ]
+        )
+
+        resp = await events_routes._build_search_suggestions(db)
+
+        assert len(db.executed) == 3, (
+            "sections 3 and 4 must not be queried once the timely allowance is "
+            "spent — the movers sort is back on every build"
+        )
+        assert len(resp["suggestions"]) == _MAX_SUGGESTIONS
+
+    async def test_the_row_never_overruns_the_window(self, no_redis):
+        """🔴 THE BOUND IS THE PREDICATE'S JOB NOW, AND THIS IS THE TEST THAT
+        MAKES THAT TRUE.
+
+        `_build_search_suggestions` used to end in `suggestions[:_MAX_SUGGESTIONS]`
+        — a second authority on the window that silently absorbed any failure of
+        the first. The mutation battery proved it: M6 turns `_window_full`'s
+        `>=` into `>` and SURVIVED, because the ninth chip it admitted was
+        truncated by the slice and nothing could see the predicate had stopped
+        working.
+
+        Every section here offers more than it may keep, so a predicate that is
+        off by one overruns the row instead of being quietly trimmed.
+        """
+        db = _RecordingDB(
+            [
+                _Rows(_live(_PRODUCTION_LIVE_PAIRS)),
+                _Rows(_soon([("Aces", "Liberty"), ("Sky", "Storm"), ("Sun", "Wings")])),
+                _Rows(_champ(_PRODUCTION_CHAMP_MARKETS)),
+            ]
+        )
+
+        resp = await events_routes._build_search_suggestions(db)
+
+        assert len(resp["suggestions"]) == _MAX_SUGGESTIONS, (
+            f"the build returned {len(resp['suggestions'])} chips for an "
+            f"eight-slot row: {[c['query'] for c in resp['suggestions']]}"
         )
 
     async def test_a_quiet_night_still_fills_the_row(self, no_redis):

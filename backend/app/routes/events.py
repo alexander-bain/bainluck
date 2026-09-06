@@ -6961,12 +6961,6 @@ _SUGGESTION_MOVERS_LIMIT = 5
 #: stops any ONE section owning the row even when every candidate is legitimate.
 #: #3675 gave section 3 a per-MARKET cap for the same reason one section over.
 #:
-#: 🔴 THE SUM IS THE POINT: 3 + 2 + 1 + 1 = 7, one short of `_MAX_SUGGESTIONS`.
-#: Sections 1-4 cannot between them close the window, so the popularity-ordered
-#: section ALWAYS gets at least one slot. That is a property of the numbers, not
-#: of the code reading them, and the guard test asserts it directly — change a
-#: budget and the test says which invariant you broke.
-#:
 #: Section 5 is deliberately ABSENT, i.e. uncapped: it is the backfill. On a
 #: quiet Tuesday with no live tier-1/2 game, nothing else has anything to say and
 #: a row of the eight most-traded championship markets is a good row, not a
@@ -6975,6 +6969,44 @@ _SUGGESTION_MOVERS_LIMIT = 5
 #: Slack flows forward on its own: a section that under-delivers leaves the
 #: global window open and the next section takes what it can use.
 _SUGGESTION_SECTION_BUDGETS = {1: 3, 2: 2, 3: 1, 4: 1}
+
+
+#: 🔴 #3685, CERT-2138's REPAIR (`LAT-P253-RESERVE-THE-MARQUEE-SLOT`): SLOTS THE
+#: TIMELY SECTIONS MAY NOT TAKE, HOWEVER MUCH THEY HAVE TO SAY.
+#:
+#: The first presentation relied on the budgets summing to 7 — one short of the
+#: window — so section 5 always got "at least one slot". The grader saturated all
+#: four budgets and showed that ONE slot is not the declared ship: the row came
+#: back with the seven timely chips and `Presidential Election Winner 2028`,
+#: and `US Open Men's Singles Winner` — the SECOND row of the measured volume
+#: order, and the actual thing a person opens Search for on that Saturday — was
+#: still absent. "Reachable" and "reaches the marquee" are different claims and
+#: the arithmetic only bought the first.
+#:
+#: So the guarantee is now a floor with a name instead of a remainder: sections
+#: 1-4 may fill at most `_MAX_SUGGESTIONS - _SUGGESTION_BACKFILL_RESERVE` slots
+#: between them, and the volume-ordered section gets the rest. THREE, not two:
+#: the named marquee chip is rank 2 today, and a reserve sized exactly to
+#: today's ranking dies the first time one new market outranks it. Three covers
+#: `Presidential Election Winner 2028`, `US Open Men's Singles Winner` and
+#: `College Football National Championship` on the measured order, and keeps a
+#: slot of headroom over the one that matters.
+#:
+#: The two mechanisms are not redundant. Without the per-section budgets, section
+#: 1 alone would take all five of the timely slots; without this reserve, the
+#: four of them together squeeze the marquee off the row. Each is the other's
+#: blind spot.
+#:
+#: ⚠️ WHAT IT COSTS, SAID OUT LOUD: if section 5 returns FEWER rows than the
+#: reserve, the row is short by the difference — sections 1-4 have already
+#: finished by then and nothing re-opens them. On production that is a
+#: hypothetical (3,126 tier-1 open markets, 1,024 with positive `volume_24h`),
+#: and the honest failure of a dead section 5 is a five-chip row plus the
+#: `_log_dead_suggestion_section` line that says which section died. A spillover
+#: pass would fix the hypothetical and would mean holding every section's
+#: rejected candidates for a re-run; it is not worth that, and this note is here
+#: so the next author decides that with the trade in front of them.
+_SUGGESTION_BACKFILL_RESERVE = 3
 
 #: 🔴 #3675: SECTION 3 IS NOW ALLOWED TO CONTRIBUTE NOTHING, AND THAT IS THE
 #: DESIGN RATHER THAN A SIDE EFFECT.
@@ -7488,17 +7520,28 @@ async def _build_search_suggestions(db: AsyncSession) -> dict:
         directions by ``test_route_search_suggestions_cold_p124.py``.
 
         LAT-P124 wrote that identity as two expressions that happened to compare
-        the same number. #3685 makes it one call, because there are now two ways
-        for a section to be finished — the shared window, and its own budget —
-        and a skip that consulted one while its loop consulted the other would
-        delete suggestions silently.
+        the same number. #3685 makes it one call, because there are now three
+        ways for a section to be finished — the shared window, its own budget,
+        and the backfill reserve — and a skip that consulted one while its loop
+        consulted another would delete suggestions silently.
 
-        The ENTRY behaviour is unchanged by #3685: a section is entered with its
-        own counter at zero, so on entry this is exactly ``_window_full()`` and
-        the LAT-P124 cost skip fires on precisely the reads it fired on before.
+        🔴 THE RESERVE MAKES THE LAT-P124 SKIP FIRE AGAIN, AND EARLIER THAN IT
+        USED TO. A budgeted section is entered with its own counter at zero, so
+        the budget clause cannot fire on entry — but the reserve clause can, and
+        does: sections 1 and 2 at full budget put five chips on the row, which is
+        the whole timely allowance, so sections 3 and 4 are skipped outright on a
+        busy evening and the 588 ms movers statement is never issued. That is the
+        same cost ship LAT-P124 bought, restored by the repair that was supposed
+        to spend it.
         """
         budget = _SUGGESTION_SECTION_BUDGETS.get(section)
-        if budget is not None and section_used[section] >= budget:
+        if budget is None:
+            # Section 5: the backfill. Bounded only by the window it is here to
+            # fill — the reserve exists FOR it and must not be applied TO it.
+            return _window_full()
+        if section_used[section] >= budget:
+            return True
+        if len(suggestions) >= _MAX_SUGGESTIONS - _SUGGESTION_BACKFILL_RESERVE:
             return True
         return _window_full()
 
@@ -7877,7 +7920,18 @@ async def _build_search_suggestions(db: AsyncSession) -> dict:
     # (`_publish_search_suggestions`), so that a build reached through the
     # stale-refresh path publishes through exactly the same writer as one
     # reached through a request. Two writers for one tier is LAT-P001's defect.
-    return {"suggestions": suggestions[:_MAX_SUGGESTIONS]}
+    #
+    # 🔴 THE `[:_MAX_SUGGESTIONS]` SLICE IS GONE, AND A SURVIVING MUTANT IS WHY.
+    # `_section_full` already bounds every section — each loop tests it before
+    # each row and `_add` appends at most once per row — so the slice was a
+    # SECOND authority on the same number. The battery proved it was worse than
+    # redundant: M6 (`_window_full` goes strict, `>` for `>=`) SURVIVED, because
+    # the ninth chip it lets through was silently truncated here and no
+    # assertion could see the predicate had stopped working. Two bounds is two
+    # chances to diverge and one of them hiding the other; this file's whole
+    # doctrine is one authority per number. The overrun case is now pinned by a
+    # test instead of absorbed by a slice.
+    return {"suggestions": suggestions}
 
 
 @router.get("/debug/sport-keys")

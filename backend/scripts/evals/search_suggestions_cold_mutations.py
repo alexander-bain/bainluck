@@ -57,25 +57,25 @@ MUTANTS: list[tuple[str, str, str, str]] = [
     (
         "M1",
         "section 3 skips even when the window is OPEN — silently deletes movers",
-        "        movers_rows = []\n        if not _window_full():",
+        "        movers_rows = []\n        if not _section_full(3):",
         "        movers_rows = []\n        if False:",
     ),
     (
         "M2",
         "section 3 never skips — the no-op 'fix', 1.14 GB back on every request",
-        "        movers_rows = []\n        if not _window_full():",
+        "        movers_rows = []\n        if not _section_full(3):",
         "        movers_rows = []\n        if True:",
     ),
     (
         "M3",
         "section 2 never skips",
-        "        soon_rows = []\n        if not _window_full():",
+        "        soon_rows = []\n        if not _section_full(2):",
         "        soon_rows = []\n        if True:",
     ),
     (
         "M4",
         "section 4 never skips",
-        "        upsets_rows = []\n        if not _window_full():",
+        "        upsets_rows = []\n        if not _section_full(4):",
         "        upsets_rows = []\n        if True:",
     ),
     (
@@ -194,6 +194,65 @@ MUTANTS: list[tuple[str, str, str, str]] = [
         """    enveloped = jsonable_encoder(ssc.stamp(response))
     ssc.write(jsonable_encoder(ssc.stamp({"suggestions": response["suggestions"][:4]})))""",
     ),
+    # ---------------------------------------------------------------------
+    # M15-M18 — #3685's HALF. The row stops being four AAA baseball games.
+    #
+    # Each of these is a plausible edit rather than a vandalism: three of the
+    # four are what a later author would write if they had not read the comment
+    # above the budget table, and the fourth is the shape the first draft of
+    # this change actually had.
+    # ---------------------------------------------------------------------
+    (
+        "M15",
+        "section 1 is given the whole timely allowance — the row goes back to "
+        "being one section's, which is what production actually served",
+        "_SUGGESTION_SECTION_BUDGETS = {1: 3, 2: 2, 3: 1, 4: 1}",
+        "_SUGGESTION_SECTION_BUDGETS = {1: 5, 2: 2, 3: 1, 4: 1}",
+    ),
+    (
+        "M19",
+        "the backfill reserve is sized to today's exact volume ranking — "
+        "CERT-2138's finding restored: the row reaches Presidential Election "
+        "Winner 2028 and stops one short of the US Open market it is named for",
+        "_SUGGESTION_BACKFILL_RESERVE = 3",
+        "_SUGGESTION_BACKFILL_RESERVE = 1",
+    ),
+    (
+        "M20",
+        "the reserve is applied TO the backfill instead of FOR it — section 5 "
+        "can no longer fill the slots that were held open for it",
+        """        if budget is None:""",
+        """        if budget is None and False:""",
+    ),
+    (
+        "M16",
+        "the per-section half of the predicate is dropped — every section is "
+        "back to being bounded only by the shared window, which is exactly the "
+        "state the row was in on production",
+        """        if section_used[section] >= budget:
+            return True""",
+        """        if section_used[section] >= _MAX_SUGGESTIONS:
+            return True""",
+    ),
+    (
+        "M17",
+        "the tier gate comes off section 1 — AAA baseball and ninth-tier "
+        "non-league football are candidates for the row again",
+        """                Event.status == "live",
+                Sport.key.in_(tier_12_keys),""",
+        """                Event.status == "live",""",
+    ),
+    (
+        "M18",
+        "the budget is spent on the CANDIDATE rather than on the add, so two "
+        "live games with the same shorter team name silently shrink the section",
+        """        if key in seen_queries:
+            return""",
+        """        if key in seen_queries:
+            if section in section_used:
+                section_used[section] += 1
+            return""",
+    ),
 ]
 
 
@@ -209,6 +268,11 @@ MUTANTS: list[tuple[str, str, str, str]] = [
 SUITES = [
     SUITE,
     ROOT / "tests" / "test_search_suggestions_mirror_lat_p139.py",
+    # #3685: the tier gate and the per-section budget are guarded in their own
+    # file, and M15-M18 are mutants of exactly those two mechanisms. Leaving it
+    # out would reproduce the LAT-P139 mistake this list was written to fix —
+    # a survivor that is really "the oracle was not looking".
+    ROOT / "tests" / "test_search_suggestions_tier_and_budget_3685.py",
 ]
 
 
