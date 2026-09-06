@@ -11,6 +11,7 @@ Level 2: Time-series scoring (uses odds_snapshots for volatility,
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
+from functools import lru_cache
 from typing import Optional, Literal
 import math
 
@@ -384,6 +385,34 @@ def get_league_tier(sport_key: Optional[str]) -> int:
     if tour_agnostic is not None:
         return LEAGUE_TIERS.get(tour_agnostic, 4)
     return 4
+
+
+@lru_cache(maxsize=1)
+def tier_12_sport_keys() -> frozenset:
+    """Every sport key `get_league_tier` scores 1 or 2, INCLUDING the tour-prefixed
+    tennis spellings this table does not list.
+
+    🔴 A SQL predicate cannot call `get_league_tier`, so anything building an
+    `IN (...)` from tier has to expand the same fallback the function applies —
+    and the obvious `{k for k, t in LEAGUE_TIERS.items() if t <= 2}` does not.
+    That comprehension is #2552's defect in set form: it yields `tennis_us_open`,
+    which no event carries, and omits `tennis_atp_us_open` and
+    `tennis_wta_us_open`, which is what every US Open match in `events` is
+    actually keyed on. A "tier 1-2 only" filter built that way silently drops
+    every Grand Slam match — the exact rows the tier gate exists to keep.
+
+    Round-tripped by the guard test in both directions: every key returned scores
+    ≤2 through `get_league_tier`, and no tier-3+ key sneaks in via the expansion.
+    """
+    keys = {k for k, t in LEAGUE_TIERS.items() if t <= 2}
+    for key, tier in list(LEAGUE_TIERS.items()):
+        if tier > 2 or not key.startswith("tennis_"):
+            continue
+        rest = key.split("_", 1)[1]
+        if rest.split("_", 1)[0] in _TENNIS_TOUR_SEGMENTS:
+            continue  # already tour-qualified; nothing to expand
+        keys.update(f"tennis_{tour}_{rest}" for tour in _TENNIS_TOUR_SEGMENTS)
+    return frozenset(keys)
 
 
 def get_season_multiplier(sport_key: Optional[str], now: Optional[datetime] = None) -> float:
