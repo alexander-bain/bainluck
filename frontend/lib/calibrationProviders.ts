@@ -128,6 +128,67 @@ export function sourceLabel(src: string): string {
   return SOURCE_DISPLAY_NAMES[src] || prettifySourceKey(src);
 }
 
+// ---------------------------------------------------------------------------
+// THE MAP STOPS BEING THE ONLY LINE OF DEFENCE — CAL-P1025 (#3357)
+//
+// CAL-P1024 closed the raw-key state on this page, but a client that has never
+// heard of a source can only TIDY its key: `espn_bpi` becomes "ESPN Bpi", not
+// whatever that provider is actually called. The class of leaked identifiers
+// was closed; the class of wrong-but-plausible generated names was not, and it
+// cannot be closed from a client that is guessing. It was also per-surface —
+// `ios/` and every future client needed their own map, each rotting alone.
+//
+// `/api/calibration` now publishes a `source_labels` vocabulary, owned in one
+// place (`backend/app/utils/calibration_source_labels.py`) and guarded in CI.
+// It sits BESIDE `by_source` rather than on each row because the endpoint holds
+// a contract that its measurement rows come back byte-identical to what the
+// producer published — a display string has no business inside one.
+//
+// PRECEDENCE, and the reason for it (#3357's acceptance line: the frontend map
+// "becomes an override for house style, not the only thing standing between a
+// database column and a reader"):
+//
+//   1. this page's curated map — house style, and it genuinely disagrees with
+//      the server on purpose. The server calls `odds_api` "Odds API"; this page
+//      needs that name for the SOURCE row while the FAMILY row above it reads
+//      "Sportsbooks (Odds API)". A server label may not silently overwrite a
+//      deliberate local choice.
+//   2. the server's published name — for every source this page has no opinion
+//      about, which is exactly the set that used to leak.
+//   3. the prettifier — for a payload banked before `label` existed, so the
+//      dated fallback tiers keep the CAL-P1024 floor.
+//
+// `providerLabel` is deliberately NOT wired to the payload: provider families
+// are a grouping this page invents, and the backend has no opinion about them.
+// ---------------------------------------------------------------------------
+
+/** The shape this module needs out of `source_labels`; anything else is ignored. */
+export interface PublishedSourceLabel {
+  label?: string | null;
+}
+
+/**
+ * Build this page's source labeller from the payload it is rendering.
+ *
+ * Returns the same `(src: string) => string` shape the page already threads
+ * through its subcomponents, so the payload's names reach the chart legends and
+ * the drill-in title without every call site learning about the payload.
+ */
+export function makeSourceLabeller(
+  published: Readonly<Record<string, PublishedSourceLabel>> | null | undefined
+): (src: string) => string {
+  return (src: string) => {
+    const houseStyle = SOURCE_DISPLAY_NAMES[src];
+    if (houseStyle) return houseStyle;
+    const name = published?.[src]?.label;
+    // A blank or whitespace-only label is an absent one, not a name — rendering
+    // it would leave the reader looking at nothing at all, which is worse than
+    // the guess this whole path exists to improve on.
+    if (typeof name === "string" && name.trim()) return name.trim();
+    return prettifySourceKey(src);
+  };
+}
+
 /**
  * The per-shape sample floor for showing the shape breakdown INLINE.
  *

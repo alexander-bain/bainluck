@@ -395,6 +395,23 @@ class TestCalibrationPublicEndpoint:
             # into the dated fallback tiers describing a curve that is no
             # longer there.
             "scorecard",
+            # CAL-P1025 / #3357: the fifth serve-time key, and the first that is
+            # neither a declaration nor a number but a VOCABULARY — the reader-
+            # facing name for each key in `by_source`. Those rows were keyed by
+            # an internal source key and carried no name anywhere, so every
+            # surface kept a hand-maintained translation map that fell behind
+            # the next time the data side added a source: `datagolf` reached
+            # readers on /calibration as a raw lowercase database key, in the
+            # default view, for about three weeks.
+            #
+            # Serve-time for its own reason, not its siblings': a name is
+            # presentation, not measurement. `precompute_calibration` is frozen
+            # under D45, and a name baked into the artifact would ride into the
+            # dated fallback tiers unchanged. It is published on EVERY answer,
+            # `{}` when there is nothing to name, so a client can always look a
+            # source up rather than testing for the block — the absence of a
+            # field is exactly what made every client guess in the first place.
+            "source_labels",
         }
 
     async def test_coverage_census_is_labelled_and_never_the_headline(self, client, mock_db):

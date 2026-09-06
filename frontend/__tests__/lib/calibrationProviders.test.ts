@@ -3,6 +3,7 @@ import {
   providerLabel,
   prettifySourceKey,
   sourceLabel,
+  makeSourceLabeller,
   groupSourcesByProvider,
   shapeBreakdownIsSymmetric,
   SHAPE_BREAKDOWN_MIN_N,
@@ -242,5 +243,68 @@ describe("source and provider naming", () => {
     // reaches a reader here either way — `by_source` is keyed by a real column.
     expect(prettifySourceKey("")).toBe("");
     expect(prettifySourceKey("___")).toBe("___");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CAL-P1025 (#3357) — the server publishes the name, the map becomes an override
+// ---------------------------------------------------------------------------
+
+describe("makeSourceLabeller — the payload's names, with house style on top", () => {
+  it("uses the server's name for a source this page has no opinion about", () => {
+    // The exact case that made #3357: a key nobody here has heard of. Without
+    // the payload it would be tidied into a guess; with it, it is named.
+    const label = makeSourceLabeller({ espn_bpi: { label: "ESPN BPI" } });
+    expect(label("espn_bpi")).toBe("ESPN BPI");
+    expect(sourceLabel("espn_bpi")).toBe("ESPN Bpi"); // what the guess would be
+  });
+
+  it("keeps house style when this page and the server deliberately disagree", () => {
+    // The server calls `odds_api` "Odds API" and so does this page AT SOURCE
+    // level — while the FAMILY row above it reads "Sportsbooks (Odds API)".
+    // A server label must never silently overwrite a deliberate local choice,
+    // or the two rows collapse into the same words.
+    const label = makeSourceLabeller({
+      odds_api: { label: "Sportsbooks" },
+      odds_api_bookmaker: { label: "Per-Bookmaker" },
+    });
+    expect(label("odds_api")).toBe("Odds API");
+    expect(label("odds_api_bookmaker")).toBe("Per-Bookmaker (Odds API)");
+  });
+
+  it("falls back to the CAL-P1024 prettifier on a payload banked before `label`", () => {
+    // The dated fallback tiers can serve an artifact older than the field, so
+    // the floor has to survive its absence — never the raw key, either way.
+    const absent: (Record<string, { label?: string | null }> | null | undefined)[] = [
+      undefined,
+      null,
+      {},
+      { sportradar: {} },
+    ];
+    for (const vocab of absent) {
+      expect(makeSourceLabeller(vocab)("sportradar")).toBe("Sportradar");
+    }
+  });
+
+  it("treats a blank server label as absent, not as a name", () => {
+    // An empty string is how a source ends up rendering as nothing at all.
+    const label = makeSourceLabeller({ sportradar: { label: "   " } });
+    expect(label("sportradar")).toBe("Sportradar");
+  });
+
+  it("never returns a raw payload key, whatever the payload says", () => {
+    for (const bad of [null, undefined, ""]) {
+      const label = makeSourceLabeller({ some_new_source: { label: bad } });
+      expect(label("some_new_source")).not.toBe("some_new_source");
+      expect(label("some_new_source")).not.toContain("_");
+    }
+  });
+
+  it("names a source the payload never mentioned", () => {
+    // `sourceLabel`'s contract, unchanged: total over source keys, so a key the
+    // vocabulary omits is still named rather than left raw.
+    const label = makeSourceLabeller({ kalshi: { label: "Kalshi" } });
+    expect(label("polymarket")).toBe("Polymarket");
+    expect(label("betfair_exchange")).toBe("Betfair Exchange");
   });
 });

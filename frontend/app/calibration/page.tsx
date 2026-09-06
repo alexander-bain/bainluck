@@ -35,8 +35,8 @@ import {
 } from "@/lib/calibrationProvability";
 import {
   groupSourcesByProvider,
+  makeSourceLabeller,
   shapeBreakdownIsSymmetric,
-  sourceLabel,
   SHAPE_BREAKDOWN_MIN_N,
 } from "@/lib/calibrationProviders";
 // UX-P078 (Alex ruling 2026-08-14(b) item 3): By Source is a panel per PROVIDER
@@ -621,6 +621,14 @@ export default function CalibrationPage() {
   const publishedSourceEce = new Map(
     (data.by_source ?? []).map(m => [m.source, m.ece])
   );
+  // CAL-P1025 (#3357): the payload now publishes a `source_labels` vocabulary
+  // beside those rows, so a source this page has no opinion about arrives named
+  // instead of guessed. Built here, beside the other read off `by_source`, and
+  // threaded down as the same `(src) => string` the subcomponents already take
+  // — the payload reaches the chart legends and the drill-in title without any
+  // call site learning about it. Precedence (house style > server > prettify)
+  // and its reasoning live in `calibrationProviders.ts`.
+  const sourceLabel = makeSourceLabeller(data.source_labels);
   const sourcePanelBuckets = sources.map(src => ({
     source: src,
     buckets: aggregateBuckets(normalized, b => b.source === src && (!cohortFilter || cohortFilter(b))),

@@ -21,6 +21,10 @@ from app.utils.calibration_provability import (
     GradedShareCensus,
     annotate_cells,
 )
+from app.utils.calibration_source_labels import (
+    SOURCE_LABELS_FIELD,
+    source_label_map as _source_label_map,
+)
 
 # Queue #257 Item 1: the in-request calibration fallback used to re-implement the
 # whole CTE chain + wilson_ci / bootstrap_mce_ci / _compute_horizon_mce here (a
@@ -1054,6 +1058,27 @@ async def public_calibration(
         #    buckets); it declares no availability, because a score is a
         #    statement about the numbers, not about whether they arrived.
         out[_scoring.SCORECARD_FIELD] = _score_payload(out)
+        # 5. **The payload names its own sources** (#3357, CAL-P1025). ``by_source``
+        #    was keyed by an internal source key and carried no display name
+        #    anywhere, so every surface kept its own hand-maintained translation
+        #    map and each one fell behind the next time the data side added a
+        #    source — ``datagolf`` reached readers as a raw lowercase database
+        #    key, in the default view, for about three weeks.
+        #
+        #    The FIFTH envelope key, and it joins deliberately rather than by
+        #    accident (the enumeration in `test_calibration_field_completeness_
+        #    257.py` exists to force exactly that). It is a serve-time key for a
+        #    different reason than its four siblings: not a claim about *now*,
+        #    but a *vocabulary* — presentation, not measurement. Which is also
+        #    why the rows themselves are left byte-identical: the route is a
+        #    serving tier, not a second builder, and a display string has no
+        #    business inside a measurement row.
+        #
+        #    At the exit rather than in the producer: `precompute_calibration`
+        #    is frozen under D45, and a name baked into the artifact would ride
+        #    into the dated fallback tiers unchanged — so this touches no
+        #    fingerprint and forces no rebuild.
+        out[SOURCE_LABELS_FIELD] = _source_label_map(out.get("by_source"))
         return _declare(out, _never_stronger(out.get(AVAILABILITY_FIELD), availability))
 
     def _degraded(

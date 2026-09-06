@@ -380,8 +380,18 @@ async def test_route_serves_the_shared_compute_payload_unaltered(healthy_staged_
     # must not write it. A producer-baked score rides into the dated fallback
     # tiers still describing whichever curve was current when it was baked —
     # the same "claim about the past" failure `availability` was pulled out for.
-    # Enumerated, still: a fifth may not join by accident.
-    envelope_keys = {"availability", "producer", "staged", "scorecard"}
+    # CAL-P1025 / #3357 adds the FIFTH, and it is the first that is not a claim
+    # about *now* at all: ``source_labels`` is a VOCABULARY — the reader-facing
+    # name for each source key in `by_source`. It is serve-time for a different
+    # reason than its four siblings. A name is presentation, not measurement, so
+    # the producer is the wrong owner twice over: `precompute_calibration` is
+    # frozen under D45, and a name baked into the artifact rides into the dated
+    # fallback tiers unchanged. What it must NOT do is what the first draft of
+    # it did — write `label` onto each `by_source` row, which is a content field
+    # and would have made the route a second builder for the sake of a string.
+    # This test caught that, which is what the enumeration is for.
+    # A sixth may still not join by accident.
+    envelope_keys = {"availability", "producer", "staged", "scorecard", "source_labels"}
 
     shared = await compute_calibration_payload(_FakeDB())
     calibration._cache = {"data": shared, "timestamp": _time.time()}

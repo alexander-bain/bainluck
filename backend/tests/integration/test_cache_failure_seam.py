@@ -276,6 +276,12 @@ async def test_calibration_warm_hit_serves_and_remembers(monkeypatch):
     scorecard = out.pop("scorecard")
     assert scorecard["status"] == "unavailable"
     assert scorecard["cells_at_bar"] is None
+    # CAL-P1025 / #3357: the fifth serve-time key. This stub has no `by_source`
+    # to name, so the vocabulary is honestly EMPTY — published anyway, on every
+    # answer, because a client that has to test for the block is back to
+    # guessing, which is the defect. `{}` costs a name, never the curve.
+    source_labels = out.pop("source_labels")
+    assert source_labels == {}
     assert out == payload
 
 
