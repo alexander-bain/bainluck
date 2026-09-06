@@ -447,3 +447,146 @@ class TestTheBehaviourEndToEnd:
         assert funnel["phase15_resolved_cross_sport_candidates"] == 1, (
             "exactly one of them is cross-sport; the qualifier control is not"
         )
+
+
+def _decrementing_clock(start: float, per_call: float):
+    """A budget that is SPENT by reading it, like the real one is by working.
+
+    A test that hands Phase 1.5 a constant `lambda: 600.0` can never see the
+    loop's `_time_remaining() < 60` stop, which is the whole mechanism that
+    decides whether a row at the back of the queue is reached. Clock-free by
+    gotcha #44: it counts calls, it does not read a wall clock.
+    """
+    state = {"left": float(start)}
+
+    def _tick() -> float:
+        now_left = state["left"]
+        state["left"] -= per_call
+        return now_left
+
+    return _tick
+
+
+async def _run_phase15_with_clock(session, now, time_remaining):
+    from app.tasks import prediction_market_matching as task_mod
+
+    stats = {
+        "orphaned_snapshots_deleted": 0,
+        "funnel": {"stale_relinked": 0, "mislink_fixed": 0},
+    }
+    link_changes = []
+    await task_mod._phase15_revalidate(
+        _AsyncShim(session), stats, now, time_remaining, link_changes,
+    )
+    session.commit()
+    return stats, link_changes
+
+
+def _fill_the_eligible_queue(session, sport_id, event_id, count):
+    """`count` ordinary open linked markets — the fresh/rotation population.
+
+    These are what the resolved slice was queued BEHIND in production.
+    """
+    from app.models.models import FuturesMarket
+
+    session.add_all([
+        FuturesMarket(
+            source="kalshi", external_id=f"KXNBAGAME-26JUL09FILL{i:03d}",
+            name=f"Filler {i} vs Filler {i}", category="sports",
+            status="open", event_id=event_id, sport_id=sport_id,
+            llm_sport_category="basketball", commence_time=TIE_DATE,
+        )
+        for i in range(count)
+    ])
+    session.commit()
+
+
+class TestTheResolvedSliceIsReachedNotJustSelected:
+    """#3478 follow-up `RESOLVED-CUP-SWEEP-BUDGET-REACHABILITY`.
+
+    Selecting a row and REACHING it are different claims, and the first shipped
+    while the second was false. The sweep appended its rows to a queue holding
+    up to `_PHASE15_SCAN_LIMIT` (1,000) fresh + rotation rows, and the loop
+    breaks at `_time_remaining() < 60` of a 780s pass. A 1,000-row revalidation
+    does not finish in that, so position 1,001 was never reached — measured on
+    production 2026-09-06, where the 15 mislinked rows did not move on a single
+    beat after the fix meant to move them went live. The counters said the sweep
+    found its candidate every time.
+    """
+
+    @pytest.mark.asyncio
+    async def test_the_resolved_row_is_reached_when_the_budget_runs_out(self, rail):
+        """The regression test. Fails on the append-to-the-tail version."""
+        from app.models.models import Event, FuturesMarket
+
+        session = rail["session"]
+        # 40 ordinary rows against a clock that stops the loop after ~26 of
+        # them: strictly more queue than budget, which is production's steady
+        # state and the only state in which queue POSITION decides anything.
+        misfiled = session.get(Event, rail["misfiled_id"])
+        _fill_the_eligible_queue(
+            session, misfiled.sport_id, rail["misfiled_id"], 40,
+        )
+        stats, _ = await _run_phase15_with_clock(
+            session, TIE_DATE + timedelta(hours=2),
+            _decrementing_clock(600.0, 20.0),
+        )
+
+        assert stats["funnel"]["phase15_checked"] < 40, (
+            "the rail must actually exhaust the budget, or it is not testing "
+            "reachability at all"
+        )
+        wrong = session.get(FuturesMarket, rail["wrong_market_id"])
+        session.refresh(wrong)
+        assert wrong.event_id == rail["twin_id"], (
+            "the resolved cup row must lead the queue, not trail 40 ordinary "
+            "rows the budget never gets past"
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_expensive_scan_is_skipped_below_its_floor(self, rail):
+        """Entering Phase 1.5 is not enough budget to afford the sweep's scan.
+
+        The selector heap-scans ~132k rows (9-15s, production 2026-09-06) — a
+        prefix `ilike` cannot use an index under en_US collation. Spending that
+        on a pass with 130s left buys rows the loop cannot process.
+        """
+        session = rail["session"]
+        stats, _ = await _run_phase15_with_clock(
+            session, TIE_DATE + timedelta(hours=2), lambda: 130.0,
+        )
+
+        funnel = stats["funnel"]
+        assert funnel["phase15_skipped_budget"] is False, (
+            "130s clears the 120s entry guard — the phase itself still runs"
+        )
+        assert funnel["phase15_resolved_sweep_skipped_budget"] is True
+        assert funnel["phase15_resolved_cross_sport_scanned"] == 0, (
+            "the scan must not have run; a skipped sweep that still pays for "
+            "its selector is the cost without the benefit"
+        )
+
+    def test_the_floor_is_ordered_against_the_guards_it_sits_between(self):
+        """Pin the three numbers' RELATIONSHIP, so a future edit to one shows.
+
+        Each is meaningless alone: a floor below the entry guard could never
+        fire, and a floor below the loop stop would admit a scan whose rows the
+        loop rejects on the next line.
+        """
+        from app.tasks import prediction_market_matching as task_mod
+
+        assert task_mod._PHASE15_RESOLVED_SWEEP_FLOOR > 120, (
+            "a floor at or below the 120s entry guard can never skip anything"
+        )
+        assert task_mod._PHASE15_RESOLVED_SWEEP_FLOOR > 60, (
+            "a floor at or below the loop's own stop would buy rows the very "
+            "next line refuses to process"
+        )
+        assert (
+            task_mod._RESOLVED_CROSS_SPORT_SCAN_LIMIT
+            < task_mod._PHASE15_SCAN_LIMIT
+        ), (
+            "the slice leads the queue, so it must stay a bounded fraction of "
+            "it — leading with 1,000 rows would starve the fresh slice it "
+            "jumped ahead of"
+        )
