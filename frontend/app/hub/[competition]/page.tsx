@@ -105,7 +105,20 @@ function OutcomeRow({ o }: { o: LeagueMarketOutcome }) {
   const pct = probabilityBarWidth(o.probability);
   return (
     <div className="flex items-center gap-2 py-1.5">
-      <span className="flex-1 text-[13px] text-text-secondary truncate">{o.name}</span>
+      {/* UX-P183 (#2877): `min-w-0` is what makes `truncate` do anything here.
+          A flex item defaults to `min-width: auto`, so it refuses to shrink
+          below its content's min-content width — and `truncate` sets
+          `white-space: nowrap`, which makes that min-content width the WHOLE
+          string. The two cancelled out: the name never truncated, the row grew
+          to fit it, and the card grew with the row.
+
+          Measured on production 2026-09-06 at 390px: the grid CELL was 358px
+          and the card inside it rendered 650px, so `documentElement.scrollWidth`
+          was 666 and the page dragged sideways. The 292px hanging off the right
+          edge is where the probability lives — `Kevin Krawietz / Tim Putz` and
+          its `72%` were both in the DOM, and only the name was on the screen.
+          A card that prints one number printed none of it. */}
+      <span className="flex-1 min-w-0 text-[13px] text-text-secondary truncate">{o.name}</span>
       {pct !== null && (
         <div className="w-20 h-1.5 rounded-full bg-surface-elevated overflow-hidden">
           <div className="h-full rounded-full bg-accent-brand" style={{ width: `${pct}%` }} />
@@ -125,7 +138,13 @@ function MarketCard({ market }: { market: LeagueMarket }) {
   return (
     <Link
       href={`/futures/${market.id}`}
-      className="block bg-surface-card border border-surface-border rounded-2xl p-4 transition-colors hover:border-accent-brand/50"
+      // UX-P183 (#2877): `min-w-0` on the card itself, as well as on the row
+      // above, so this class of blowout needs TWO regressions to come back and
+      // not one. The card is a grid item, and a grid item's `min-width` is also
+      // `auto` — the parent grid carries `min-w-0`, which does nothing for its
+      // children. Without this, any future child with an unbreakable string
+      // pushes the whole page sideways again on a phone.
+      className="block min-w-0 bg-surface-card border border-surface-border rounded-2xl p-4 transition-colors hover:border-accent-brand/50"
     >
       <div className="flex items-start justify-between gap-2 mb-2">
         <span className="text-[14px] font-semibold text-text-primary leading-snug line-clamp-2">
