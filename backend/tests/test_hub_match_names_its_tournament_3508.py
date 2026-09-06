@@ -68,10 +68,34 @@ ATP_CHALLENGER = {
 
 
 class _StubMarket:
-    """The two attributes `_market_competition` reads off a FuturesMarket."""
+    """The attributes `_market_competition` reads off a FuturesMarket."""
 
-    def __init__(self, market_metadata):
+    def __init__(self, market_metadata, name="Dart / Lumsden vs Bucsa / Melichar-Martinez"):
         self.market_metadata = market_metadata
+        self.name = name
+
+
+#: (card name, competition) pairs measured on production 2026-09-06 for the
+#: OTHER hubs this shared card path also feeds. On every one of them Kalshi's
+#: competition merely restates the card, so drawing it literally would put a
+#: "MMA" eyebrow over a name already starting "MMA:".
+ECHOING_ROWS = [
+    ("MMA: Loud vs Natividad", "MMA"),
+    ("MMA: Kwon vs Gomes", "MMA"),
+    ("331: Chikadze vs Brito", "331"),
+    ("331: O'Neill vs Moura", "331"),
+    ("Canelo Alvarez vs Christian Mbilli", "Alvarez vs Mbilli"),
+    ("Ryan Garcia vs Conor Benn", "Garcia vs Benn"),
+]
+
+#: The tennis rows the ship exists for — the label is new information here.
+INFORMATIVE_ROWS = [
+    ("Dart / Lumsden vs Bucsa / Melichar-Martinez", "US Open Women Doubles"),
+    ("Cerundolo vs Blockx", "US Open Men Singles"),
+    ("Kim vs Tamm", "ATP Challenger Phan Thiet 3"),
+    ("Iannaccone vs Weis", "ATP Challenger Seville"),
+    ("Dencheva vs Lachinova", "WTA 125K Montreux"),
+]
 
 
 # --- The venue names the tournament -----------------------------------------
@@ -204,6 +228,61 @@ def test_card_competition_is_none_when_nobody_said(metadata):
     from app.routes.league_futures import _market_competition
 
     assert _market_competition(_StubMarket(metadata)) is None
+
+
+@pytest.mark.parametrize("name,competition", ECHOING_ROWS,
+                         ids=[f"{n[:18]}" for n, _ in ECHOING_ROWS])
+def test_a_label_that_restates_the_card_is_not_drawn(name, competition):
+    """The regression this shared card path would otherwise ship to /hub/mma.
+
+    `_market_competition` reaches EVERY hub, not just tennis. Measured on
+    production, the competition on the MMA and boxing rails is the card's own
+    name or its prefix, so drawing it re-creates UX-P239 / #3491 — a card
+    printing its own question back at itself — on another surface.
+    """
+    from app.routes.league_futures import _market_competition
+
+    market = _StubMarket({"competition": competition}, name=name)
+    assert _market_competition(market) is None
+
+
+@pytest.mark.parametrize("name,competition", INFORMATIVE_ROWS,
+                         ids=[c[:16] for _, c in INFORMATIVE_ROWS])
+def test_a_label_that_adds_information_survives_the_echo_check(name, competition):
+    """The other direction, and the one that makes the arm above non-trivial.
+
+    A suppressor that dropped everything would satisfy the echo arms perfectly
+    and kill the entire ship, so the tennis rows are pinned against exactly the
+    same code path.
+    """
+    from app.routes.league_futures import _market_competition
+
+    market = _StubMarket({"competition": competition}, name=name)
+    assert _market_competition(market) == competition
+
+
+def test_the_echo_check_is_about_information_not_string_prefixes():
+    """Boxing is neither an equality nor a prefix match — hence tokens.
+
+    "Alvarez vs Mbilli" is the surnames of "Canelo Alvarez vs Christian Mbilli",
+    interleaved with words that are not in the label. An `==` or `startswith`
+    suppressor passes every MMA arm above and still ships the boxing echo.
+    """
+    from app.routes.league_futures import _competition_echoes_name
+
+    name = "Canelo Alvarez vs Christian Mbilli"
+    assert not name.startswith("Alvarez vs Mbilli")
+    assert name != "Alvarez vs Mbilli"
+    assert _competition_echoes_name("Alvarez vs Mbilli", name) is True
+    # One genuinely new word is enough to make a label worth drawing.
+    assert _competition_echoes_name("WBC Alvarez vs Mbilli", name) is False
+
+
+def test_the_echo_check_tolerates_a_missing_name():
+    from app.routes.league_futures import _competition_echoes_name
+
+    assert _competition_echoes_name("US Open Men Singles", None) is False
+    assert _competition_echoes_name("...", "anything") is True
 
 
 def test_control_serialize_outcomes_shape_is_unchanged():

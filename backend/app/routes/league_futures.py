@@ -11,6 +11,7 @@ with sport-aware keyword classification for awards, series, and props.
 import asyncio
 import json
 import logging
+import re
 from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, Path
@@ -1127,18 +1128,48 @@ def _serialize_outcomes(sorted_outcomes: list) -> list[dict]:
     ]
 
 
+def _competition_echoes_name(competition: str, market_name: str | None) -> bool:
+    """True when the competition says nothing the card's own name does not.
+
+    MEASURED ON PRODUCTION, and the reason this function exists — outside
+    tennis, Kalshi's competition IS the card's own name, or its prefix:
+
+        card "MMA: Loud vs Natividad"              competition "MMA"
+        card "331: Chikadze vs Brito"              competition "331"
+        card "Canelo Alvarez vs Christian Mbilli"  competition "Alvarez vs Mbilli"
+
+    Drawn literally, every MMA card on `/hub/mma` would wear a "MMA" eyebrow
+    over a name already starting "MMA:", which is UX-P239 / #3491's bug — a card
+    printing its own question back at itself — reintroduced on another surface.
+
+    Token containment rather than a prefix or equality test, because the boxing
+    case is neither: "Alvarez vs Mbilli" is the surnames of "Canelo Alvarez vs
+    Christian Mbilli", scattered through it. If every word of the label is
+    already on the card, the label is redundant BY DEFINITION, so this needs no
+    per-sport denylist and no sport_key — and tennis passes it untouched
+    ("US Open Women Doubles" shares no token with "Dart / Lumsden vs Bucsa /
+    Melichar-Martinez").
+    """
+    tokens = set(re.findall(r"[a-z0-9]+", competition.lower()))
+    if not tokens:
+        return True
+    return tokens <= set(re.findall(r"[a-z0-9]+", (market_name or "").lower()))
+
+
 def _market_competition(market) -> str | None:
     """The tournament a match card belongs to, or None when nobody said.
 
     Read straight from what the venue stated at ingest — never derived here.
-    A Kalshi match market's name is only the two players ("Iannaccone vs Weis"),
-    so without this the reader cannot tell a US Open match from a third-tier
-    Challenger; both render as a bare "X vs Y" (#3508).
+    A Kalshi tennis match market's name is only the two players ("Iannaccone vs
+    Weis"), so without this the reader cannot tell a US Open match from a
+    third-tier Challenger; both render as a bare "X vs Y" (#3508).
 
-    None is a first-class answer. Polymarket rows carry no competition key —
-    their own name already leads with the tournament ("US Open WTA: …") — and
-    Kalshi omits it on series that genuinely have no tournament. A card that
-    cannot name one says nothing, rather than inheriting a neighbour's label.
+    None is a first-class answer, and it is the COMMON case rather than an error
+    path. Polymarket rows carry no competition key — their own name already
+    leads with the tournament ("US Open WTA: …"). Kalshi omits it on series with
+    no tournament. And on every non-tennis hub measured, the value it does carry
+    merely restates the card, so it is dropped by `_competition_echoes_name`.
+    A card that cannot say something new says nothing.
     """
     metadata = getattr(market, "market_metadata", None)
     if not isinstance(metadata, dict):
@@ -1146,7 +1177,12 @@ def _market_competition(market) -> str | None:
     competition = metadata.get("competition")
     if not isinstance(competition, str):
         return None
-    return competition.strip() or None
+    competition = competition.strip()
+    if not competition:
+        return None
+    if _competition_echoes_name(competition, getattr(market, "name", None)):
+        return None
+    return competition
 
 
 async def build_league(sport_key: str, db: AsyncSession) -> dict:
