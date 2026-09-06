@@ -156,8 +156,7 @@ class TestSelectionPredicate:
             "task._SERVED_REACHABLE_SQL": fpr._SERVED_REACHABLE_SQL.text,
             "task.ELIGIBLE_POOL_SQL": fpr.ELIGIBLE_POOL_SQL,
             "guard._PRICE_DARK_SQL": _health._PRICE_DARK_SQL,
-            "guard._REGISTERED_DARK_SQL": _health._REGISTERED_DARK_SQL,
-            "guard._REGISTERED_ELIGIBLE_SQL": _health._REGISTERED_ELIGIBLE_SQL,
+            "guard._REGISTERED_SQL": _health._REGISTERED_SQL,
             # CERT-452: the seventh. `tournament_price_refresh` runs every ten
             # minutes against register-pinned Polymarket identities and was
             # outside this predicate entirely, so a market the hourly refresher
@@ -186,12 +185,17 @@ class TestSelectionPredicate:
         import app.routes.admin_source_health as _health
         import app.tasks.tournament_price_refresh as _tpr
 
-        # #3315 made the composition two-level: five sites still interpolate
-        # LIVE_MARKET_SQL directly, and four compose it transitively through
-        # ELIGIBLE_POOL_SQL (which is itself one of the five). Counting only the
-        # direct token would let a new asker join through the pool without ever
-        # being enrolled, which is exactly the hole this census exists to close.
-        enrolled = 9
+        # #3315 made the composition two-level: sites that interpolate
+        # LIVE_MARKET_SQL directly, and sites that compose it transitively
+        # through ELIGIBLE_POOL_SQL (which is itself one of them). Counting only
+        # the direct token would let a new asker join through the pool without
+        # ever being enrolled, which is exactly the hole this census exists to
+        # close.
+        #
+        # Went 9 -> 8 when the guard's two registered statements became one
+        # (`_REGISTERED_SQL`): a REMOVED asker is as much a census event as an
+        # added one, because the number is what makes the dictionary honest.
+        enrolled = 8
         found = sum(
             inspect.getsource(mod).count("{LIVE_MARKET_SQL}")
             + inspect.getsource(mod).count("{ELIGIBLE_POOL_SQL}")
@@ -655,7 +659,7 @@ class TestTheGuardCanSeeTheCuratedPopulation:
     """
 
     def test_registered_arm_exists_and_drops_the_value_bounds(self):
-        sql = _extract_sql_literal(_ADMIN_SRC, "_REGISTERED_DARK_SQL")
+        sql = _extract_sql_literal(_ADMIN_SRC, "_REGISTERED_SQL")
         assert "market_tier = 1" not in sql
         assert "volume_floor" not in sql
         assert "fm.id = ANY(:market_ids)" in sql
@@ -667,7 +671,7 @@ class TestTheGuardCanSeeTheCuratedPopulation:
         assert "updated_at" not in sql
 
     def test_it_reports_tier_so_a_reader_sees_why_the_class_arm_missed_it(self):
-        assert "fm.market_tier" in _extract_sql_literal(_ADMIN_SRC, "_REGISTERED_DARK_SQL")
+        assert "fm.market_tier" in _extract_sql_literal(_ADMIN_SRC, "_REGISTERED_SQL")
         assert '"market_tier": r[4]' in _ADMIN_SRC
 
     def test_the_class_verdict_keeps_its_meaning(self):
@@ -1348,3 +1352,121 @@ class TestAnUnavailablePageOneSignalCannotReadGreen:
         # A summary that predates the field keeps its old meaning rather than
         # turning every legacy caller amber.
         assert fpr._terminal(base) == "complete"
+
+
+class TestTheGuardAnswersInsideTheRoutersWall:
+    """#3315, found by the post-deploy check on `f96114d7`.
+
+    The widening was right and it made the guard unreadable. Measured on
+    production 2026-09-06 00:20Z, ~10 minutes after the merge went live: the
+    four statements the endpoint ran IN SERIES cost 15.1s + 3.3s + 1.4s + 1.1s,
+    26.0s end to end, and one read in two came back as Heroku's H12 HTML error
+    page. The same census under the pre-#3315 predicate cost 2.2s over 872
+    markets; the new pool is 4,916.
+
+    Two failures, not one, and the second is the one that matters. A guard that
+    is slow is an annoyance. A guard whose failure arrives as an HTML 503 is a
+    guard whose reader cannot distinguish "the invariant holds" from "nobody
+    checked" — the exact shape of the bug this endpoint exists to catch
+    (gotcha #53), reappearing one level up in the instrument itself.
+    """
+
+    def _endpoint_ast(self):
+        import ast
+
+        tree = ast.parse(_ADMIN_SRC)
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.AsyncFunctionDef)
+                and node.name == "futures_price_freshness"
+            ):
+                return node
+        raise AssertionError("futures_price_freshness not found in the module")
+
+    def test_the_wall_is_below_the_routers(self):
+        """22s against the router's 30s. Both numbers are load-bearing: above
+        30s the wall never fires, and the reader gets HTML instead of JSON."""
+        import app.routes.admin_source_health as _health
+
+        assert _health._CENSUS_STATEMENT_TIMEOUT_MS < 30_000
+        # And it is actually applied, server-side, per statement.
+        import inspect
+
+        src = inspect.getsource(_health._census_rows)
+        assert "SET LOCAL statement_timeout" in src
+        assert "_CENSUS_STATEMENT_TIMEOUT_MS" in src
+
+    def test_no_census_statement_escapes_the_wall(self):
+        """AST, not a substring: a statement issued on the request-scoped
+        session carries no timeout, and it is one line to add one back."""
+        import ast
+
+        node = self._endpoint_ast()
+        for call in ast.walk(node):
+            if isinstance(call, ast.Attribute) and call.attr == "execute":
+                raise AssertionError(
+                    "the endpoint executes SQL outside _census_rows, so that "
+                    "statement runs without the wall"
+                )
+
+    def test_the_statements_run_concurrently(self):
+        """The serial shape is what turned a 15s query into a 26s request.
+
+        Asserted structurally rather than by timing: every `_census_rows` call
+        in the endpoint has to be inside the `asyncio.gather`, because one left
+        outside it is added back to the wall in full.
+        """
+        import ast
+
+        node = self._endpoint_ast()
+        gathers = [
+            c
+            for c in ast.walk(node)
+            if isinstance(c, ast.Call)
+            and isinstance(c.func, ast.Attribute)
+            and c.func.attr == "gather"
+        ]
+        assert len(gathers) == 1, "expected exactly one asyncio.gather"
+        assert len(gathers[0].args) >= 3, (
+            "the census is three statements; gathering fewer means one of them "
+            "is still serial"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_census_that_cannot_finish_does_not_read_green(
+        self, monkeypatch
+    ):
+        """THE POINT OF THE WALL. A timeout must be a third state.
+
+        Before this, a census that blew the router's wall returned an HTML 503
+        with no body. Any caller that branches on `status == "red"` — the
+        cockpit tile, CERT-404 G5, this lane's own post-deploy check — read that
+        as "not red", which is to say as a pass.
+        """
+        from sqlalchemy.exc import DBAPIError
+
+        import app.routes.admin_source_health as _health
+
+        async def _boom(sql, params):
+            raise DBAPIError(
+                "SELECT ...",
+                {},
+                Exception("canceling statement due to statement timeout"),
+            )
+
+        monkeypatch.setattr(_health, "_census_rows", _boom)
+        monkeypatch.setattr(
+            _health, "_check_admin_secret", lambda *a, **kw: None
+        )
+
+        out = await _health.futures_price_freshness(
+            request=object(), secret="x", max_age_hours=24
+        )
+        assert out["status"] == "unknown"
+        assert out["status_all"] == "unknown"
+        assert out["reason"] == "census_timeout"
+        # And it must not carry a verdict-shaped zero beside the unknown: a
+        # `price_dark: 0` next to `status: unknown` is how a reader talks
+        # themselves into green.
+        assert "price_dark" not in out
+        assert "eligible_markets" not in out

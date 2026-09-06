@@ -1,10 +1,12 @@
 """Source-level health dashboard — shows live status of every external data source."""
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services import get_db
@@ -206,25 +208,25 @@ _WORST_SAMPLE = 25
 #:
 #: No tier or volume bound, same liveness bounds, same snapshot-derived freshness
 #: — the register decides membership and the market decides nothing.
-_REGISTERED_DARK_SQL = f"""
+#: ONE SCAN, both answers, for the same reason :data:`_PRICE_DARK_SQL` is one
+#: scan: the darkness is a SELECT expression, not a WHERE clause, so the
+#: denominator and the numerator come back from a single evaluation of
+#: ``LIVE_MARKET_SQL`` and cannot describe two different populations. It also
+#: halves this arm's cost, which is not free: measured on production
+#: 2026-09-06 the two statements this replaces cost 1.38s and 1.10s.
+_REGISTERED_SQL = f"""
     SELECT fm.id, fm.source, fm.external_id, fm.name, fm.market_tier,
-           COALESCE(fm.llm_sport_category, 'uncategorized') AS category
-      FROM futures_markets fm
-     WHERE fm.id = ANY(:market_ids)
-       AND {LIVE_MARKET_SQL}
-       AND NOT EXISTS (
+           COALESCE(fm.llm_sport_category, 'uncategorized') AS category,
+           NOT EXISTS (
              SELECT 1 FROM futures_outcomes fo
                JOIN futures_odds_snapshots s ON s.outcome_id = fo.id
               WHERE fo.market_id = fm.id
                 AND s.captured_at > NOW() - make_interval(hours => :max_age_hours)
-           )
-     ORDER BY fm.id
-"""
-
-_REGISTERED_ELIGIBLE_SQL = f"""
-    SELECT COUNT(*) FROM futures_markets fm
+           ) AS is_dark
+      FROM futures_markets fm
      WHERE fm.id = ANY(:market_ids)
        AND {LIVE_MARKET_SQL}
+     ORDER BY fm.id
 """
 
 #: #2222 — the exclusion report, and the reason the guard is not allowed to
@@ -247,13 +249,47 @@ _SETTLED_EXCLUDED_SQL = f"""
      ORDER BY fm.volume DESC NULLS LAST
 """
 
+#: 🔴 THE WALL, AND WHY THIS ENDPOINT OWNS ONE.
+#:
+#: Heroku's router kills a request at 30s with an HTML error page (H12), and an
+#: HTML error page is the one answer this endpoint must never give: a reader
+#: polling a guard cannot tell "the invariant holds" from "the guard fell over"
+#: if the second arrives as a 503 with no body. Measured on production
+#: 2026-09-06, hours after #3315 widened the pool from 872 markets to 4,916, the
+#: four statements below cost 15.1s + 3.3s + 1.4s + 1.1s **in series** — 26.0s
+#: end to end, and one read in two came back H12. The widening was right and the
+#: serial shape was what made it fatal.
+#:
+#: So: each statement gets its own session and they run CONCURRENTLY (the bound
+#: becomes the longest one, ~16s, not their sum), and each carries a server-side
+#: ``statement_timeout`` **below** the router's, so a census that cannot finish
+#: comes back as JSON saying so rather than as somebody else's error page.
+_CENSUS_STATEMENT_TIMEOUT_MS = 22_000
+
+
+async def _census_rows(sql: str, params: dict) -> list:
+    """Run one census statement on its own session, under its own wall.
+
+    Its own session because :func:`asyncio.gather` over a single
+    ``AsyncSession`` is not concurrency — SQLAlchemy serialises it, and in
+    asyncpg it is an error. The engine pool is 10 + 10 overflow per web
+    process; this endpoint holds at most three of them, for at most the wall
+    below.
+    """
+    from app.services.database import async_session_maker
+
+    async with async_session_maker() as session:
+        await session.execute(
+            text(f"SET LOCAL statement_timeout = {_CENSUS_STATEMENT_TIMEOUT_MS}")
+        )
+        return (await session.execute(text(sql), params)).fetchall()
+
 
 @router.get("/futures-price-freshness")
 async def futures_price_freshness(
     request: Request,
     secret: str = Query(None),
     max_age_hours: int = Query(24, ge=1, le=720),
-    db: AsyncSession = Depends(get_db),
 ):
     """#2199: high-value tier-1 open futures markets with no recent price capture.
 
@@ -276,12 +312,54 @@ async def futures_price_freshness(
         "unpriced_pool_limit": UNPRICED_POOL_LIMIT,
     }
     params = {**pool_params, "max_age_hours": max_age_hours}
-    eligible = (await db.execute(text(_PRICE_DARK_SQL), params)).fetchall()
-    settled = (
-        await db.execute(
-            text(_SETTLED_EXCLUDED_SQL), {"volume_floor": HIGH_VALUE_VOLUME_FLOOR}
+
+    # The curated half. Every market a committed register renders, at any tier.
+    from app.utils.tournament_register import registered_market_ids
+
+    registered_ids = sorted(registered_market_ids())
+    registered_params = {
+        "market_ids": registered_ids,
+        "max_age_hours": max_age_hours,
+    }
+
+    # CONCURRENTLY, and the reason is `_CENSUS_STATEMENT_TIMEOUT_MS` above: in
+    # series these three cost 26s against a 30s router wall.
+    async def _registered_rows() -> list:
+        return (
+            await _census_rows(_REGISTERED_SQL, registered_params)
+            if registered_ids
+            else []
         )
-    ).fetchall()
+
+    try:
+        eligible, settled, registered_all = await asyncio.gather(
+            _census_rows(_PRICE_DARK_SQL, params),
+            _census_rows(
+                _SETTLED_EXCLUDED_SQL, {"volume_floor": HIGH_VALUE_VOLUME_FLOOR}
+            ),
+            _registered_rows(),
+        )
+    except DBAPIError as exc:
+        # A CENSUS THAT DID NOT FINISH IS NOT A GREEN ONE, and it is not an
+        # HTML error page either. `status: "unknown"` is the third state this
+        # endpoint has always needed and never had: every caller that branches
+        # on `status == "red"` would otherwise read a failed census as a
+        # passing one (gotcha #53 — an absence and a clean bill arriving in the
+        # same shape).
+        logger.warning("futures-price-freshness census did not finish: %s", exc)
+        return {
+            "status": "unknown",
+            "status_all": "unknown",
+            "reason": "census_timeout",
+            "detail": (
+                "the freshness census exceeded its "
+                f"{_CENSUS_STATEMENT_TIMEOUT_MS // 1000}s wall and reports "
+                "nothing rather than reporting green"
+            ),
+            "max_age_hours": max_age_hours,
+            "volume_floor": HIGH_VALUE_VOLUME_FLOOR,
+            "checked_at": datetime.now(timezone.utc).isoformat(),
+        }
 
     # One scan, three answers. Ordered by volume DESC in SQL, so `worst` is a
     # slice rather than a second sort with a second chance to disagree.
@@ -295,29 +373,10 @@ async def futures_price_freshness(
         cat = by_category.setdefault(r[5], {})
         cat[r[0]] = cat.get(r[0], 0) + 1
 
-    # The curated half. Every market a committed register renders, at any tier.
-    from app.utils.tournament_register import registered_market_ids
-
-    registered_ids = sorted(registered_market_ids())
-    registered_params = {
-        "market_ids": registered_ids,
-        "max_age_hours": max_age_hours,
-    }
-    registered_dark = (
-        (await db.execute(text(_REGISTERED_DARK_SQL), registered_params)).fetchall()
-        if registered_ids
-        else []
-    )
-    registered_eligible = (
-        (
-            await db.execute(
-                text(_REGISTERED_ELIGIBLE_SQL), {"market_ids": registered_ids}
-            )
-        ).scalar()
-        or 0
-        if registered_ids
-        else 0
-    )
+    # Same one-scan shape as the class half: `is_dark` is column 6, the
+    # denominator is the row count, and neither can drift from the other.
+    registered_dark = [r for r in registered_all if r[6]]
+    registered_eligible = len(registered_all)
 
     return {
         "invariant": (
