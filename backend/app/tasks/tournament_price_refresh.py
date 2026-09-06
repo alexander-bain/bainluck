@@ -38,6 +38,21 @@ against a limit around 1,000, and it is bounded by the register rather than by
 the catalogue: a tournament that ends stops costing anything the moment its
 register is retired.
 
+⚠️  "CHEAP" WAS ABOUT THE GAMMA CALLS AND WAS READ AS BEING ABOUT THE TASK
+(LAT-P240, #3402).  The 11 requests really are cheap.  What this paragraph did
+not say is that ``_write_refreshed_prices`` then issues TWO DATABASE STATEMENTS
+PER RETURNED MARKET, and until #3402 both of them probed
+``futures_markets.external_id`` without ``source`` — the leading column of the
+only index that covers it — so each one scanned the whole index instead of
+seeking.  Measured: 994 ms per statement, 190 statements, ``last_duration_ms``
+188,869.  This "cheap" task was the largest latency-tolerant consumer on the
+2-slot ``background`` queue and held a slot through half the search warmer's
+dead time.  The fix is two predicates and it is in the loop with the numbers.
+
+The lesson is kept rather than edited out, because the sentence above is the
+sentence a reader will write again: a cost claim about the REMOTE call is not a
+cost claim about the TASK, and a per-item loop behind it is where the time goes.
+
 This task NEVER creates a market and never touches identity.  It updates prices
 for outcomes the register already pins, which is why it is safe to run at a
 cadence the discovery poll could not sustain.
@@ -323,6 +338,47 @@ async def _write_refreshed_prices(
 
     async with get_task_session() as session:
         for market in markets:
+            # ── BOTH LOOKUPS BELOW SUPPLY `source`, AND THAT IS A PLAN FIX, NOT
+            # A NARROWING (LAT-P240, #3402).
+            #
+            # The only index covering `external_id` is the composite
+            # `uq_futures_source_external (source, external_id)`. A probe that
+            # omits the LEADING column still uses that index — Postgres will
+            # happily choose it — but it cannot SEEK. It scans the whole thing.
+            # Measured on production, same row, same plan shape:
+            #
+            #     WHERE external_id = :cid                    5,458.591 ms   31,160 blocks read
+            #     WHERE source = 'polymarket' AND external_id  = :cid
+            #                                                     0.059 ms        2 blocks read
+            #
+            # This loop issues TWO such statements per market. The run that
+            # measured it returned 95 markets — 190 statements — and took
+            # `last_duration_ms` 188,869, i.e. 994 ms each. The arithmetic
+            # closes, and it is the whole of this task's cost: the 11 batched
+            # Gamma calls the docstring calls cheap really are cheap.
+            #
+            # 🔴 WHY IT MATTERS SOMEWHERE ELSE ENTIRELY. `background` is a
+            # 2-slot queue measured ~1.9x oversubscribed, and this task was
+            # holding a slot through **50.7% of the search warmer's dead time**
+            # — attributed, not inferred, by overlaying `recent_durations_at` +
+            # `recent_durations_ms` occupancy intervals on the warmer ring's own
+            # holes (654s of 1,290 dead seconds; present in all four of the
+            # longest). The warmed typeahead head is entirely cold 42% of the
+            # time because of runs like this one. That is why a plan fix in a
+            # tournament rail is filed under a search ship.
+            #
+            # NOT A NARROWING, measured rather than argued: every `0x…`
+            # `external_id` in `futures_markets` is Polymarket's —
+            # `GROUP BY source` over the 518,851 of them returns exactly one
+            # row, `polymarket`. It is also true by construction, because the
+            # register these condition ids come from is
+            # `registered_polymarket_conditions`. The predicate cannot exclude a
+            # row the old form would have matched.
+            #
+            # The sibling rail beside this one in the beat schedule,
+            # `refresh_stale_futures_prices`, is pinned to `heavy` with the note
+            # that a multi-minute beat "does not share [background], it closes
+            # it". This task was that beat and did not know.
             # ── THE VOLUME OBSERVATION TRAVELS WITH THE PRICE TOO (UX-P158).
             #
             # Q428 taught this rail to write the BOOK alongside the price it
@@ -351,7 +407,12 @@ async def _write_refreshed_prices(
             # on the surface permanently unreadable.
             await session.execute(
                 update(FuturesMarket)
-                .where(FuturesMarket.external_id == market.condition_id)
+                .where(
+                    # LAT-P240: leading column first. See the block at the top
+                    # of this loop — without it this UPDATE scans the index.
+                    FuturesMarket.source == "polymarket",
+                    FuturesMarket.external_id == market.condition_id,
+                )
                 .values(
                     volume_24h=(
                         int(market.volume_24h)
@@ -375,6 +436,9 @@ async def _write_refreshed_prices(
                     select(FuturesOutcome.id, FuturesOutcome.name)
                     .join(FuturesMarket, FuturesMarket.id == FuturesOutcome.market_id)
                     .where(
+                        # LAT-P240: leading column first, same reason as the
+                        # UPDATE above — this SELECT ran 994 ms without it.
+                        FuturesMarket.source == "polymarket",
                         FuturesMarket.external_id == market.condition_id,
                         # CERT-452: never overwrite a graded outcome. The
                         # condition filter above is the market-level bound; this
