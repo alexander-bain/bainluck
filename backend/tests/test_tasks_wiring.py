@@ -185,6 +185,7 @@ class TestBeatScheduleCompleteness:
         "poll-futures-every-4h",
         "poll-kalshi",
         "check-kalshi-freshness-daily",
+        "refresh-dated-fixture-starts",
         "run-freshness-watchdog",
         "poll-polymarket-hourly",
         "refresh-stale-futures-prices-hourly",
