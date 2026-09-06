@@ -18,6 +18,7 @@ import type {
 import ErrorState from "@/components/ErrorState";
 import PoliticsSkeleton from "@/components/skeletons/PoliticsSkeleton";
 import Sparkline from "@/components/Sparkline";
+import { formatSpan, seriesFreshness, seriesHasHole } from "@/lib/seriesFreshness";
 import { eventPath } from "@/lib/eventKey";
 import s from "./politics.module.css";
 import { BORDER_COLOR, SourceBadge } from "@/components/politics/atoms";
@@ -125,23 +126,56 @@ function SubNav({
 // CandidateSpark — politics-table single-market spark. Uses the shared Sparkline
 // (L2-150 kernel-(c) consolidation); renders a fixed-size placeholder when there
 // is not enough real history so the table row layout never shifts.
+//
+// #2961: THIS SPARK HAS NO TIME AXIS, WHICH IS WHY IT NEEDS A SENTENCE.
+//
+// `Sparkline` is index-spaced by construction — `x = padX + usableW * i / (n-1)`
+// — so it takes `number[]` and drops the timestamps entirely. That is correct
+// for a 60x18 cell and it means an 8-hour gap and a nine-day gap are drawn
+// identically. Measured on production 2026-09-06: all eleven full-length rows
+// carry 51 points on an 8h median cadence with a ≈220h hole, under a column
+// headed "7d trend". The line cannot show that, so the row says it.
+//
+// The note is `title` AND `aria-label` — but the spark also goes muted, because
+// #2961's acceptance is that the reader learns this WITHOUT hovering, and a
+// tooltip alone would not clear that bar. Colour is the part that reads at a
+// glance; the text is there for whoever wants the number.
 function CandidateSpark({ history, width = 60, height = 18 }: {
   history?: { t: string; p: number }[];
   width?: number;
   height?: number;
 }) {
+  const freshness = seriesFreshness((history ?? []).map((h) => h.t));
+
   if (!history || history.length < 2) {
-    return <span style={{ width, height, display: "inline-block" }} />;
+    // Already the right call for n=0 (DeSantis and Rubio serve `history: []`):
+    // two points is the least a line can be drawn from. Kept as a sized
+    // placeholder so the row layout never shifts.
+    return (
+      <span
+        style={{ width, height, display: "inline-block" }}
+        title={freshness.note ?? undefined}
+      />
+    );
   }
+
+  const incomplete = freshness.state !== "current";
+
   return (
-    <Sparkline
-      data={history.map((h) => h.p)}
-      width={width}
-      height={height}
-      padX={1}
-      padTop={1}
-      padBottom={1}
-    />
+    <span
+      style={{ display: "inline-block", opacity: incomplete ? 0.45 : 1 }}
+      title={freshness.note ?? undefined}
+      aria-label={freshness.note ?? undefined}
+    >
+      <Sparkline
+        data={history.map((h) => h.p)}
+        width={width}
+        height={height}
+        padX={1}
+        padTop={1}
+        padBottom={1}
+      />
+    </span>
   );
 }
 
@@ -264,6 +298,28 @@ function PresBarRace({ sorted, sourceMode, data }: {
   const scale = 100 / Math.max(maxProb * 1.1, 10);
   const showDualBars = sourceMode === "merged" && data.has_dual_source;
 
+  /**
+   * #2961 — the definition behind the dimmed trend lines, or `null` for silence.
+   *
+   * Summarised once for the table rather than repeated per row, and it reports
+   * the WIDEST hole rather than a count, because the widest one is the claim a
+   * reader has to discount: on production 2026-09-06 all eleven full-length
+   * rows shared a ≈220h hole, so "11 rows are incomplete" would have been
+   * eleven ways of saying the same nine days.
+   */
+  const trendNote = useMemo(() => {
+    const marked = sorted
+      .map((c) => seriesFreshness((c.history ?? []).map((h) => h.t)))
+      .filter((f) => f.state === "gapped" || f.state === "stale");
+    if (marked.length === 0) return null;
+
+    const widest = marked.reduce((a, b) => ((b.largestGapMs ?? 0) > (a.largestGapMs ?? 0) ? b : a));
+    const gap = widest.largestGapMs;
+    return gap && seriesHasHole(widest)
+      ? `Dimmed trend lines have stretches we have no numbers for — the longest is ${formatSpan(gap)}.`
+      : `Dimmed trend lines are missing recent numbers.`;
+  }, [sorted]);
+
   return (
     <div>
       {/* Column header */}
@@ -303,6 +359,18 @@ function PresBarRace({ sorted, sourceMode, data }: {
           </div>
         );
       })}
+
+      {/* #2961 — what the dimmed trend lines mean, said once for the table.
+          Per-row the cell is 60x18 and has no room for a sentence, so the
+          rows carry the DIMMING and this carries the definition. Rendered only
+          when at least one row is actually dimmed: a note that is always there
+          teaches a reader to stop seeing it, and #2961's acceptance is that a
+          complete series is NOT marked. */}
+      {trendNote && (
+        <div className={s.sourceLegend} data-testid="politics-trend-note">
+          <span>{trendNote}</span>
+        </div>
+      )}
 
       {/* Source legend */}
       {showDualBars && (
