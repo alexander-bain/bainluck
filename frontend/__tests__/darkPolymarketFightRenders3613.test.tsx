@@ -40,6 +40,16 @@ import RelatedFutures from "@/components/RelatedFutures";
 import type { RelatedFuturesResponse } from "@/lib/types";
 
 const EVENT_ID = 15305793;
+/**
+ * The label the API actually serves — read off the real-Postgres round trip in
+ * CI, not invented here. Two hops produce it: `_parent_outcome_data` gives a
+ * single-market event one leg named "Yes", and `_build_related_futures`
+ * relabels a "Yes" on a matchup-named market to "<first side> Win". Production
+ * reads the same way on the working sibling today ("UFC 331: Gable Steveson
+ * Win"). Writing "Ozzy Diaz" here would have been a fixture that renders and a
+ * claim about a payload nothing serves.
+ */
+const OUTCOME_LABEL = "UFC 331: Ozzy Diaz Win";
 const FIGHTER = "Ozzy Diaz";
 const MARKET_NAME =
   "UFC 331: Ozzy Diaz vs. Ryan Gandra (Middleweight, Early Prelims)";
@@ -60,7 +70,7 @@ const ROW = (displayCategory: string) => ({
   category: displayCategory,
   source: "polymarket",
   outcome_id: 991,
-  outcome_name: FIGHTER,
+  outcome_name: OUTCOME_LABEL,
   external_id: "0xf5200af3",
   probability: PRICE,
   american_odds: 239,
@@ -143,6 +153,13 @@ describe("#3613 / CERT-2111 — the dark fight's price reaches the page", () => 
     const html = renderWith("game_prop");
 
     expect(html).toContain("Game props");
+    // The card SPLITS the served label: "UFC 331" becomes the entity title and
+    // the remainder becomes the value line. So the fighter reaches the reader
+    // as "Ozzy Diaz Win" under a "UFC 331" heading — asserted as the rendered
+    // fragments rather than as the raw API string, because the raw string never
+    // appears in the markup and a test demanding it would be red on a correct
+    // page.
+    expect(html).toContain(">Ozzy Diaz Win</div>");
     expect(html).toContain(FIGHTER);
   });
 
@@ -181,6 +198,7 @@ describe("#3613 / CERT-2111 — the dark fight's price reaches the page", () => 
   it("renders nothing when the row is still labelled championship", () => {
     const html = renderWith("championship");
 
+    expect(html).not.toContain("Ozzy Diaz Win");
     expect(html).not.toContain(FIGHTER);
     expect(renderedPercents(html)).toEqual([]);
   });

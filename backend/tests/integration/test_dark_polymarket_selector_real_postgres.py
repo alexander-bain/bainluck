@@ -506,7 +506,7 @@ class TestTheReaderCanActuallySeeIt:
         # this asserts — a `json.dumps(resp)` check would fail here for a reason
         # that has nothing to do with the ship.
         assert not any(
-            (r.get("outcome_name") or "") == "Ozzy Diaz" for r in rows
+            "Ozzy Diaz" in (r.get("outcome_name") or "") for r in rows
         ), "no leg exists yet, so no priced row for this fighter can be served"
 
     async def test_after_the_pass_the_venues_price_is_on_the_page(self, pg_session):
@@ -544,7 +544,19 @@ class TestTheReaderCanActuallySeeIt:
         # Only `series_markets` nests an `outcomes` list, and this market is not
         # one. Reading the wrong shape is how the first version of this arm
         # would have failed even once the row was surfaced.
-        priced = [r for r in mine if (r.get("outcome_name") or "") == "Ozzy Diaz"]
+        # The SERVED label, which is not the stored one and is not the venue's.
+        # Two hops, both of them production behaviour this arm exists to pin:
+        # `_parent_outcome_data` yields a single-market event ONE leg named
+        # "Yes" (the venue's own convention for a two-sided moneyline), and
+        # `_build_related_futures` then relabels a "Yes" on a matchup-named
+        # market to "<first side> Win". The working sibling reads exactly the
+        # same way on production today — "UFC 331: Gable Steveson Win". Asserted
+        # as an equality on the whole string, because "the fighter's name
+        # appears somewhere" is satisfied by the market_name on every row here.
+        priced = [
+            r for r in mine
+            if (r.get("outcome_name") or "") == "UFC 331: Ozzy Diaz Win"
+        ]
         assert priced, f"no Ozzy Diaz row in {blob}"
         assert priced[0]["probability"] == pytest.approx(MONEYLINE_PRICE), (
             "the number on the page must be the number the venue is quoting — "
