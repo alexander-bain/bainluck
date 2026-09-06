@@ -12,6 +12,8 @@ those numbers, and in both directions: each pass links what it should and
 refuses what it must.
 """
 
+from datetime import datetime, timezone
+
 import pytest
 
 from app.services.espn_tennis import (
@@ -1156,3 +1158,83 @@ class TestNotStartedIsAStatementNotASilence:
 
     def test_without_a_clock_the_class_is_not_judged(self):
         assert state_contradiction("live", None, "upcoming") is None
+
+
+class TestTheInPlayLineIsStampedByTheTask:
+    """#3242 END TO END: the stamp is only worth anything if the PASS writes it.
+
+    `games_line_write` takes `observed_at` as an optional argument, and an
+    optional argument the one caller that matters forgets to pass is a feature
+    that is green in every unit test and dead on the site. So this drives the
+    real task and reads the column it wrote.
+    """
+
+    async def test_a_live_match_comes_out_of_the_pass_stamped(self, monkeypatch):
+        from app.tasks.espn_sync import _sync_tennis_from_espn
+
+        event = _Event(
+            15303395, "Anastasia Potapova", "Amanda Anisimova", "live",
+            _at("2026-09-05T15:04Z"), espn_id="182540",
+            home_score=0, away_score=0,
+        )
+        _install(
+            monkeypatch,
+            payloads=[_payload([_competition(
+                "182540", ["Anastasia Potapova", "Amanda Anisimova"],
+                state="in", status_name="STATUS_IN_PROGRESS", period=1,
+                date="2026-09-05T15:04Z",
+                # A set IN PROGRESS at 0-1: neither side has won it, so no
+                # winner flag. That is the exact shape #3242 measured.
+                linescores=[_mixed((0, None)), _mixed((1, None))],
+            )])],
+            errors=[],
+            sport_keys=["tennis_wta_us_open", "tennis_wta"],
+            events=[event],
+        )
+
+        stats = await _sync_tennis_from_espn()
+
+        line = (event.box_score_data or {})["tennis"]
+        assert line["sets"] == [[0, 1]]
+        stamp = line.get("observed_at")
+        assert stamp, (
+            "the pass wrote a games line with no observation time, so the page "
+            "has nothing to age and #3242's chip renders nothing"
+        )
+        # It is THIS pass's clock, not a leftover: parseable, timezone-aware,
+        # and within a minute of now. Bounded rather than pinned because the
+        # task reads the wall clock and a fixed assertion could not pass.
+        parsed = datetime.fromisoformat(stamp)
+        assert parsed.tzinfo is not None
+        assert abs((datetime.now(timezone.utc) - parsed).total_seconds()) < 60
+        assert stats["line_writes"] == 1
+
+    async def test_a_settled_match_comes_out_of_the_pass_unstamped(self, monkeypatch):
+        """The control. A decided row must not be stamped, or every settled
+        tennis page grows a freshness chip that ages forever."""
+        from app.tasks.espn_sync import _sync_tennis_from_espn
+
+        event = _Event(
+            15293821, "Roman Safiullin", "Carlos Alcaraz", "closed",
+            _at("2026-08-30T15:00Z"), completed_at=_at("2026-08-30T19:42Z"),
+            espn_id="182705", home_score=0, away_score=3,
+        )
+        _install(
+            monkeypatch,
+            payloads=[_payload([_competition(
+                "182705", ["Carlos Alcaraz", "Roman Safiullin"],
+                state="post", status_name="STATUS_FINAL", period=3,
+                date="2026-08-30T19:30Z",
+                linescores=[_won(6, 6, 6), _lost(4, 3, 2)],
+                winners=[True, False],
+            )])],
+            errors=[],
+            sport_keys=["tennis_atp_us_open", "tennis_atp"],
+            events=[event],
+        )
+
+        await _sync_tennis_from_espn()
+
+        line = (event.box_score_data or {}).get("tennis")
+        assert line is not None, "fixture drifted: this row is supposed to get a line"
+        assert "observed_at" not in line

@@ -186,6 +186,14 @@ export interface Event {
     home_games: number;
     away_games: number;
     source?: string;
+    /**
+     * When we last CONFIRMED this line against ESPN's board — not when it last
+     * changed (#3242). Present only while the match is in play, because a
+     * decided match's line is final and has no freshness to report. The beat is
+     * ~10 minutes, so this is what lets the hero say whether the games count is
+     * from this minute or the last one; absent means say nothing.
+     */
+    observed_at?: string;
   } | null;
   current_odds?: CurrentOdds;
   bookmaker_odds?: BookmakerOddsDetail[];

@@ -10,6 +10,7 @@ import type { EventTournamentResponse, TeamProgressionResponse } from "@/lib/typ
 import { EVENT_BOOT_HISTORY_HOURS } from "@/lib/event/detailBoot";
 import { canonicalEventHref } from "@/lib/canonicalEventUrl";
 import { useLiveEventStream } from "@/hooks/useLiveEventStream";
+import FreshnessChip from "@/components/event/FreshnessChip";
 import LiveAgeStamp from "@/components/event/LiveAgeStamp";
 import LiveSparkline from "@/components/event/LiveSparkline";
 import {
@@ -1164,10 +1165,22 @@ export default function EventPage({ params }: EventPageProps) {
               to re-pair `6` with `3` across the probability. Reads
               left-to-right against the two columns — see `liveGamesLine`. */}
           {liveGamesLine && (
-            <div className="text-center mt-3">
+            <div className="flex flex-wrap items-center justify-center gap-2 mt-3">
               <span className="text-[13px] font-semibold text-text-primary tabular-nums font-mono bg-surface-elevated px-2.5 py-1 rounded">
                 {liveGamesLine}
               </span>
+              {/* HOW OLD THIS GAMES COUNT IS (#3242).
+                  It is NOT the badge above it. That one reads the freshest
+                  win-probability write and can honestly say `1s ago` while this
+                  line is a full beat behind: measured on production 2026-09-05,
+                  ESPN published a match's first game at 15:12 and we showed it
+                  at 15:22. The beat is ~10 minutes, so a games count with no age
+                  on it is a confident number that may be from ten minutes ago.
+                  `observed_at` is when we last CONFIRMED this line with ESPN, so
+                  an unchanged score still reads fresh, and a beat that stalls
+                  (#3316 measured a 42.8-minute hole) makes the chip go Stale
+                  rather than letting the page keep a straight face. */}
+              <FreshnessChip asOf={event.linescore?.observed_at} />
             </div>
           )}
 

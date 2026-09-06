@@ -1967,6 +1967,10 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
         # whose stored line the authority moved; `line_refused` is keyed by
         # reason for the same reason `score_refused` is.
         "line_writes": 0,
+        # Re-confirmations of an UNCHANGED in-play line (#3242). Kept apart from
+        # `line_writes` so that metric stays a count of movement; this one is a
+        # count of live rows the pass reached, which is the other useful number.
+        "line_stamp_refreshes": 0,
         "line_refused": {},
         "contradictions": {},
         "row_errors": 0,
@@ -2287,10 +2291,18 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
                 # that one is unconditional on the state write: the population
                 # that needs it most is the row the authority already agrees
                 # with, which produces no `changes` at all.
+                # `observed_at` is this pass's clock, and it is what makes the
+                # page able to say how old the games count is (#3242). Measured
+                # on production 2026-09-05: ESPN had a match's first game at
+                # 15:12, our page showed it at 15:22, and nothing on the page
+                # said so — the `LIVE · 1s ago` badge beside it is the win-prob
+                # write's age, a different number entirely. Only in-play rows
+                # are stamped; see `games_line_write`.
                 line = games_line_write(
                     ours=ours,
                     our_box_score_data=event.box_score_data,
                     competition=competition,
+                    observed_at=now,
                 )
                 if line["reason"] is not None:
                     stats["line_refused"][line["reason"]] = (
@@ -2300,7 +2312,14 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
                     # A WHOLE NEW DICT, not a key set on the old one — an
                     # in-place JSONB edit does not flush (gotcha #4).
                     event.box_score_data = line["box_score_data"]
-                    stats["line_writes"] += 1
+                    # MOVEMENT AND CONFIRMATION ARE COUNTED APART. `line_writes`
+                    # has always meant "the line changed"; re-stamping an
+                    # unchanged in-play line is a different event and folding it
+                    # in would turn the metric into a count of live rows.
+                    if line["moved"]:
+                        stats["line_writes"] += 1
+                    else:
+                        stats["line_stamp_refreshes"] += 1
 
             except Exception as exc:  # noqa: BLE001 — one row never costs the pass
                 stats["row_errors"] += 1
@@ -2312,12 +2331,13 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
         "Tennis ESPN sync: %d events, %d anchored (%d already), %d refused, "
         "%d status writes, %d closes revoked, %d contradictions, "
         "%d score writes (%d blanks filled, %d corrected), %d scores refused, "
-        "%d games lines written, %d lines refused",
+        "%d games lines written (%d in-play re-stamped), %d lines refused",
         stats["events_considered"], stats["anchored"], stats["already_anchored"],
         sum(stats["refused"].values()), stats["status_writes"],
         stats["completions_revoked"], sum(stats["contradictions"].values()),
         stats["score_writes"], stats["score_blanks_filled"],
         stats["score_corrections"], sum(stats["score_refused"].values()),
-        stats["line_writes"], sum(stats["line_refused"].values()),
+        stats["line_writes"], stats["line_stamp_refreshes"],
+        sum(stats["line_refused"].values()),
     )
     return {"status": "ok", **stats}

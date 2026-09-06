@@ -82,6 +82,7 @@ miss: it names the player the draw does not contain.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Iterable, Optional
 
 from app.services.espn_tennis import is_placeholder_pairing, pair_key
@@ -876,19 +877,42 @@ def authority_games_line(
 #: grows two shapes.
 BOX_SCORE_TENNIS_KEY = "tennis"
 
+#: When we last CONFIRMED this line against ESPN's board — not when it last
+#: changed. Only present while the match is in play; see :func:`games_line_write`.
+LINE_OBSERVED_AT_KEY = "observed_at"
+
+#: The one ESPN state that means "this match is on court right now".
+IN_PLAY_STATE = "in_progress"
+
+
+def line_value(stored: Any) -> Optional[dict[str, Any]]:
+    """A stored tennis line with its freshness stamp removed — what MOVED.
+
+    The stamp changes every pass; the line changes when somebody wins a game.
+    Comparing the two shapes as one would make every row differ from itself on
+    every cycle. Every movement test goes through here so that the writer and
+    the tests cannot disagree about which keys are the value.
+    """
+    if not isinstance(stored, dict):
+        return None
+    return {k: v for k, v in stored.items() if k != LINE_OBSERVED_AT_KEY}
+
 
 def games_line_write(
     *,
     ours: list[str],
     our_box_score_data: Any,
     competition: dict[str, Any],
+    observed_at: Optional[datetime] = None,
 ) -> dict[str, Any]:
     """What the authority changes about the stored games line — or nothing.
 
-    Returns ``{"box_score_data": dict | None, "reason": str | None}``.  The dict
-    is the WHOLE new column value, ready to assign; ``None`` means leave the row
-    alone, and ``reason`` separates a refusal (named) from an agreement
-    (``None``), exactly as :func:`authority_score_write` does.
+    Returns ``{"box_score_data": dict | None, "reason": str | None, "moved":
+    bool}``.  The dict is the WHOLE new column value, ready to assign; ``None``
+    means leave the row alone, and ``reason`` separates a refusal (named) from
+    an agreement (``None``), exactly as :func:`authority_score_write` does.
+    ``moved`` says whether the LINE ITSELF changed, so a caller can keep
+    counting movement separately from a freshness re-stamp.
 
     ═══ WHY ``box_score_data`` AND NOT A COLUMN OF ITS OWN ═══
 
@@ -907,13 +931,55 @@ def games_line_write(
 
     Freshness is the score's.  A line and the set score beside it are written in
     the same pass off the same payload, so a page can never show a line from one
-    moment under a hero from another; there is deliberately no timestamp stored
-    beside it, because a stamp nothing checks is a freshness claim nobody
-    measured (see ``r_onupdate_column_is_not_a_freshness_signal``).
+    moment under a hero from another.
+
+    ═══ ``observed_at``, AND THE RULE THAT USED TO FORBID IT (#3242) ═══
+
+    This docstring used to end "there is deliberately no timestamp stored beside
+    it, because a stamp nothing checks is a freshness claim nobody measured".
+    That rule is right and it still holds; what changed is its precondition.
+    There is now a reader — the hero games line prints the stamp's age, and past
+    five minutes it says ``Stale`` — so the stamp is checked, by the person the
+    number is for.
+
+    It exists because the beat is ~10 minutes and the page did not say so.
+    Measured on production 2026-09-05: ESPN published a match's first game at
+    15:12 and our page showed it at 15:22, under a badge reading ``LIVE · 1s
+    ago`` — which is the WIN-PROBABILITY write's age, a different quantity
+    entirely, sitting next to a games count ten minutes behind it.
+
+    Three things make this a stamp somebody can act on rather than decoration:
+
+    * **It is an OBSERVATION time, not a change time.**  It is refreshed every
+      pass that reads this match, whether or not the number moved, so it answers
+      "when did we last confirm this with ESPN" — which is the reader's
+      question.  A change time would print "8m ago" for a score we re-confirmed
+      thirty seconds back.
+    * **It is only written while the match is IN PLAY.**  A decided match's line
+      is final and needs no freshness; stamping it every pass forever is exactly
+      the "200 unchanged JSONB values every cycle" this function already refuses.
+      The in-play population is 2-24 rows.
+    * **A refused or unreached row is not stamped**, so its age keeps growing and
+      the page says so.  That is the point: when the beat itself is starved
+      (#3316 measured a 42.8-minute hole), the reader sees 42 minutes, not a
+      confident number.  A stamp that could not go stale would prove nothing.
+
+    ``observed_at`` is the caller's clock, never this function's — the rail is
+    pure and a ``now()`` in here would make every test above clock-dependent
+    (gotcha #44).  Omit it and nothing is stamped, which is what every caller
+    that is not the live pass wants.
+
+    Crucially it is EXCLUDED from the unchanged-line comparison below.  Folding
+    a per-pass timestamp into the compared value would make every line differ
+    from itself on every pass, turn ``line_writes`` from a count of movement
+    into a count of rows, and reintroduce the write storm the comparison exists
+    to prevent.  Movement and confirmation are two different events and the
+    return value names both: ``moved`` is the first, a non-None
+    ``box_score_data`` is either.
     """
     verdict = authority_games_line(ours, competition)
     if verdict["reason"] is not None:
-        return {"box_score_data": None, "reason": verdict["reason"]}
+        return {"box_score_data": None, "reason": verdict["reason"], "moved": False}
 
     line = {
         "sets": verdict["sets"],
@@ -922,14 +988,22 @@ def games_line_write(
         "source": "espn",
     }
     existing = our_box_score_data if isinstance(our_box_score_data, dict) else {}
-    if existing.get(BOX_SCORE_TENNIS_KEY) == line:
-        # THE ROW ALREADY SAYS THIS. Returning `None` rather than an identical
-        # dict keeps a 3-minute beat from writing 200 unchanged JSONB values
-        # every cycle, and keeps `line_writes` a count of MOVEMENT.
-        return {"box_score_data": None, "reason": None}
+    stored = existing.get(BOX_SCORE_TENNIS_KEY)
+    moved = line_value(stored) != line
+
+    if observed_at is not None and competition.get("state") == IN_PLAY_STATE:
+        line = {**line, LINE_OBSERVED_AT_KEY: observed_at.isoformat()}
+
+    if not moved and line.get(LINE_OBSERVED_AT_KEY) is None:
+        # THE ROW ALREADY SAYS THIS, AND NOTHING NEW WAS OBSERVED. Returning
+        # `None` rather than an identical dict keeps a 3-minute beat from
+        # writing 200 unchanged JSONB values every cycle, and keeps
+        # `line_writes` a count of MOVEMENT.
+        return {"box_score_data": None, "reason": None, "moved": False}
     return {
         "box_score_data": {**existing, BOX_SCORE_TENNIS_KEY: line},
         "reason": None,
+        "moved": moved,
     }
 
 
