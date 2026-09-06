@@ -178,13 +178,22 @@ describe("the shared EventCard's headline chips print one question", () => {
     expect(percents).toEqual(expect.arrayContaining([57, 40]));
   });
 
-  it("still prints a dash when there is no price to print", () => {
+  it("still prints NO number when there is no price to print", () => {
     // `AnimatedProbability` changed shape (probability -> whole percent), and
-    // `null` had to keep meaning "no number", not "0%".
+    // `null` had to keep meaning "no number", not "0%". That is the fact this
+    // arm exists for, and it is unchanged.
+    //
+    // #2882 AMENDMENT (2026-09-06): the second line used to assert the literal
+    // `-`, which pinned the GLYPH rather than the fact — the same distinction
+    // c13c13cd drew for #3459's hero. Both sides being absent now says so in
+    // words instead of drawing two dashes and an empty bar, so the dash is no
+    // longer what a reader sees here. The assertion follows the fact: no
+    // percent at all, and specifically never `0%`.
     const html = render(
       makeEvent({ current_odds: null } as unknown as Partial<Event>),
     );
     expect(printedPercents(html)).toHaveLength(0);
-    expect(html.replace(/<[^>]*>/g, " ")).toContain("-");
+    expect(html.replace(/<[^>]*>/g, " ")).not.toContain("0%");
+    expect(html).toContain("No price yet");
   });
 });
