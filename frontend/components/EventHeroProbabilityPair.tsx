@@ -153,6 +153,33 @@ export default function EventHeroProbabilityPair({
     homePct, awayPct, countedHome, animate,
   );
 
+  // #3459 — NEITHER side has a number. Drawing the chrome anyway produced
+  // `—%–—%`: at `text-[48px] font-black` an em-dash is a 41px solid rectangle,
+  // so the hero photographed as two redaction bars each trailed by a naked `%`,
+  // and a reader could not tell "we are withholding this" from "the number
+  // failed to draw". A `%` with nothing in front of it is not a withheld value,
+  // it is a broken one. Say it in words instead.
+  //
+  // Only the both-null case changes. One side known and the other not still
+  // prints the pair with an em-dash, because there the dash sits BESIDE a real
+  // number and reads as the comparison it is.
+  const noReading = homeProb === null && awayProb === null;
+
+  if (noReading) {
+    return (
+      <div
+        className="flex items-baseline"
+        data-testid="event-hero-probability"
+        data-probability=""
+        data-probability-source={probSourceLabel ?? ""}
+      >
+        <span className="text-lg font-semibold text-text-muted leading-none">
+          No price yet
+        </span>
+      </div>
+    );
+  }
+
   return (
     // UX-P003: the hero's half of "card == hero == chart". The rail reads
     // `data-probability` here and on the Discover card that links to this page,

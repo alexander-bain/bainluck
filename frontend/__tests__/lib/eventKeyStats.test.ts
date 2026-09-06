@@ -68,9 +68,13 @@ describe("computeLastChartPoint (#1003 fraction fix)", () => {
     expect(pt!.homeProb).toBeCloseTo(0.62);
   });
 
-  test("defaults to 0.5 when no probability anywhere", () => {
+  test("defaults to 0.5 when no probability anywhere, and SAYS it is not a reading (#3459)", () => {
     const pt = computeLastChartPoint(hist({ win_prob_history: {}, history: [] }), null, null);
+    // Still 0.5, because the field is not nullable and the bar needs a width…
     expect(pt!.homeProb).toBeCloseTo(0.5);
+    // …but the placeholder now declares itself, so no consumer has to infer
+    // absence by comparing against the literal 0.5.
+    expect(pt!.probKnown).toBe(false);
   });
 
   test("null historyData → null", () => {
