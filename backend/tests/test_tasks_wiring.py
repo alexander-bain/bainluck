@@ -195,6 +195,10 @@ class TestBeatScheduleCompleteness:
         # reach (one refuses to create outcomes, the other is UPDATE-only and
         # scoped to the next three hours).
         "refresh-linked-game-books-hourly",
+        # #3613: the same re-read for Polymarket, whose parent rows are born
+        # priceless when a market is listed before its book opens and have no
+        # path back for exactly the same three reasons.
+        "refresh-linked-polymarket-books-hourly",
         "enrich-events-hourly",
         "sync-espn-live",
         "sync-tennis-from-espn",

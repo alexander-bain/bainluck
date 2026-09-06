@@ -372,9 +372,13 @@ class TestTheReleaseIsForwardOnly:
 
         from app.tasks import polymarket
 
-        src = inspect.getsource(polymarket)
+        # #3613: the old end-marker moved out with the parent-leg build. Bound
+        # the slice by the poll's OWN source and the CAL-P006 guard that
+        # genuinely follows the Under block (see the twin note in
+        # tests/test_polymarket_under_leg_book.py).
+        src = inspect.getsource(polymarket._process_event_batch)
         start = src.index("# Create Under/No outcome if available")
-        end = src.index("# Also keep parent market outcomes")
+        end = src.index("# CAL-P006 (#1527)")
         # COMMENTS STRIPPED FIRST. The block discusses all three columns at
         # length — that prose is the reason the fix is scoped the way it is, and
         # a check that cannot tell an explanation from a write would force the

@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import ast
 import inspect
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -182,50 +183,75 @@ def test_a_market_with_no_outcomes_attribute_does_not_crash():
 # ---------------------------------------------------------------------------
 
 
-def _outcome_name_assignments() -> list[ast.Assign]:
-    """Every ``outcome_name = ...`` statement in the polling module.
+def _parent_leg_names() -> list[ast.expr]:
+    """Every expression the parent-leg builder uses as a leg's ``name``.
 
-    RAISES rather than returning empty when the module cannot be parsed or the
-    assignments have moved — a source scan that silently finds nothing is a
-    guard that silently stops guarding.
+    RE-POINTED BY #3613, and the message the old version printed on the way is
+    the reason it was re-pointed rather than deleted: it scanned for
+    ``outcome_name = ...`` ASSIGNMENTS, and #3613 extracted the poll's three
+    parent-leg shapes into ``_parent_outcome_data``, where the label goes
+    straight into the dict literal and no such statement exists. Zero
+    assignments is not zero writers.
+
+    So this reads the thing the guard was always ABOUT — the ``"name"`` value
+    of each leg the parent builder appends — from that one function. The claim
+    is unchanged and now has a single place to be true: both writers that
+    resolve ``outcome_prices[0]`` label their leg through ``_leg_label``.
+
+    RAISES rather than returning empty when the shape moves again, because a
+    source scan that silently finds nothing is a guard that silently stops
+    guarding.
     """
-    source = Path(inspect.getsourcefile(_leg_label)).read_text()
-    tree = ast.parse(source)
+    from app.tasks.polymarket import _parent_outcome_data
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(_parent_outcome_data)))
     found = [
-        node
+        value
         for node in ast.walk(tree)
-        if isinstance(node, ast.Assign)
-        and any(
-            isinstance(t, ast.Name) and t.id == "outcome_name" for t in node.targets
-        )
+        if isinstance(node, ast.Dict)
+        for key, value in zip(node.keys, node.values)
+        if isinstance(key, ast.Constant) and key.value == "name"
     ]
     if not found:
         raise AssertionError(
-            "no `outcome_name = ...` assignment found in app/tasks/polymarket.py — "
-            "the Q492 wiring guard can no longer see what it is guarding; "
-            "re-point it rather than deleting it"
+            "no leg `\"name\"` value found in _parent_outcome_data — the Q492 "
+            "wiring guard can no longer see what it is guarding; re-point it "
+            "rather than deleting it"
         )
     return found
 
 
 def test_both_price_writers_name_their_leg_through_the_fix():
     """The negRisk writer and the game-level parent-anchor writer both take
-    ``outcome_prices[0]``, so both must label it through ``_leg_label``."""
-    assignments = _outcome_name_assignments()
+    ``outcome_prices[0]``, so both must label it through ``_leg_label``.
 
-    # Two writers today. If a third appears, this fails loudly and on purpose.
-    assert len(assignments) == 2, (
-        f"expected 2 `outcome_name` writers, found {len(assignments)} — a new "
+    Three leg-name expressions live in ``_parent_outcome_data``: those two, and
+    the single-market shape's literal ``"Yes"`` — which is correct precisely
+    BECAUSE a one-market event has no side to name, and is pinned here so it
+    cannot quietly become a third unlabelled price writer.
+    """
+    names = _parent_leg_names()
+
+    assert len(names) == 3, (
+        f"expected 3 parent leg-name expressions, found {len(names)} — a new "
         "Polymarket price writer must also name its leg through _leg_label"
     )
 
-    for node in assignments:
-        call = node.value
+    literals = [n for n in names if isinstance(n, ast.Constant)]
+    calls = [n for n in names if not isinstance(n, ast.Constant)]
+
+    assert [n.value for n in literals] == ["Yes"], (
+        "the only leg allowed a hard-coded name is the single-market event's "
+        f"\"Yes\"; found {[getattr(n, 'value', n) for n in literals]}"
+    )
+
+    assert len(calls) == 2, "the two outcome_prices[0] writers must both remain"
+    for call in calls:
         assert isinstance(call, ast.Call), (
-            f"line {node.lineno}: outcome_name is not assigned from a call"
+            f"line {call.lineno}: a leg name is neither a call nor \"Yes\""
         )
         assert isinstance(call.func, ast.Name) and call.func.id == "_leg_label", (
-            f"line {node.lineno}: outcome_name is assigned from "
+            f"line {call.lineno}: a leg is named by "
             f"{ast.dump(call.func)[:80]}, not _leg_label — this is the exact "
             "shape that shipped a price labelled with its own market's name"
         )

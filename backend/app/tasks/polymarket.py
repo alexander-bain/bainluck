@@ -7,6 +7,7 @@ with source="polymarket".
 """
 
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -1151,31 +1152,12 @@ async def _process_event_batch(
                 futures_market_id = result.scalar_one()
                 stats["events_processed"] += 1
 
-                # Collect outcome data for ranking
-                outcome_data = []
+                # Collect outcome data for ranking. One function for all three
+                # event shapes (#3613) so the refresh pass that re-reads a dark
+                # market cannot price it differently from this poll.
+                outcome_data = _parent_outcome_data(event)
 
-                if event.neg_risk and len(event.markets) > 1:
-                    # NegRisk multi-outcome event: each market is one outcome
-                    for market in event.markets:
-                        prob = _resolve_market_probability(market)
-
-                        if prob is None or prob <= 0:
-                            continue
-
-                        # Prefer groupItemTitle (e.g., "33°F or below") over question
-                        # parsing; Q492 rescues the case where both collapse onto the
-                        # event's own title and so name no side.
-                        outcome_name = _leg_label(market, event.title)
-
-                        outcome_data.append({
-                            "external_id": market.condition_id,
-                            "name": outcome_name,
-                            "prob": prob,
-                            "yes_bid": market.best_bid,
-                            "yes_ask": market.best_ask,
-                            "last_price": market.last_trade_price,
-                        })
-                elif not event.neg_risk and len(event.markets) > 1:
+                if not event.neg_risk and len(event.markets) > 1:
                     # Game-level event: each sub-market (moneyline, spread, O/U,
                     # player props) becomes its own FuturesMarket row. Without this,
                     # all 40 sub-markets are flattened into outcomes of a single
@@ -1587,55 +1569,8 @@ async def _process_event_batch(
                         stats["snapshots_created"] += 1
                         stats["sub_markets_created"] = stats.get("sub_markets_created", 0) + 1
 
-                    # Also keep parent market outcomes (for the moneyline matching task)
-                    for market in event.markets:
-                        prob = market.outcome_prices[0] if market.outcome_prices else None
-                        # #1578: the least-guarded of the five Polymarket write
-                        # paths — it takes Gamma's precomputed price raw, skipping
-                        # the placeholder filter and the #151 evidence gate that
-                        # _resolve_market_probability applies. Only the phantom
-                        # test is added here, deliberately: this feeds moneyline
-                        # matching, so changing its placeholder/evidence semantics
-                        # belongs in its own change, not riding along in this one.
-                        if is_fabricated_midpoint(prob, market.best_bid, market.best_ask):
-                            prob = (
-                                float(market.last_trade_price)
-                                if market.last_trade_price is not None
-                                and 0 < market.last_trade_price < 1
-                                else None
-                            )
-                        if prob is None or prob <= 0:
-                            continue
-                        # Q492: this is the parent anchor of a game-level event, and
-                        # its moneyline leg is exactly the one Polymarket sends with
-                        # no groupItemTitle — the case that produced a price labelled
-                        # with the whole matchup.
-                        outcome_name = _leg_label(market, event.title)
-                        outcome_data.append({
-                            "external_id": market.condition_id,
-                            "name": outcome_name,
-                            "prob": prob,
-                            "yes_bid": market.best_bid,
-                            "yes_ask": market.best_ask,
-                            "last_price": market.last_trade_price,
-                        })
-
-                else:
-                    # Single-market event
-                    for market in event.markets:
-                        prob = _resolve_market_probability(market)
-
-                        if prob is None or prob <= 0:
-                            continue
-
-                        outcome_data.append({
-                            "external_id": market.condition_id,
-                            "name": "Yes",
-                            "prob": prob,
-                            "yes_bid": market.best_bid,
-                            "yes_ask": market.best_ask,
-                            "last_price": market.last_trade_price,
-                        })
+                # The parent's own legs for this shape were built by
+                # `_parent_outcome_data` above, before the branch.
 
                 # CAL-P006 (#1527): an impossible field is not a price — refuse it
                 # at CAPTURE rather than storing it and repairing it later.
@@ -1766,6 +1701,417 @@ async def _process_event_batch(
         # It is now `link_polymarket_sub_markets`, called ONCE per poll — see that
         # function's docstring for the measurement and the equivalence argument.
         await session.commit()
+
+
+# =========================================================================
+# Dark linked markets (#3613) — the Polymarket twin of #3518's Kalshi hole
+# =========================================================================
+
+#: How far ahead a scheduled event is still worth re-reading, and how long after
+#: kick-off a not-yet-flipped row stays in scope. Both MEASURED against the
+#: population rather than chosen: on 2026-09-06 every one of the 501 dark linked
+#: markets sat inside 14 days (119 within 2 days, 298 at 2-7d, 46 at 7-14d, 38 on
+#: live events), so 14 days covers 100% of the work and reaches the 7-14d band
+#: that the Kalshi twin's 7-day horizon leaves behind (#3602).
+LINKED_POLY_BOOK_HORIZON_DAYS = 14
+LINKED_POLY_BOOK_LOOKBACK_HOURS = 6
+
+#: Ids per Gamma request. Same figure as `futures_price_refresh`'s
+#: POLYMARKET_ID_BATCH, verified against the live API in #2199; kept as its own
+#: constant so this module does not import another task module.
+_LINKED_POLY_ID_BATCH = 20
+
+#: Ceiling on markets read in one pass. 501 today, so this is headroom, not a
+#: fence — but an unbounded selector on a beat is how a pass becomes the thing
+#: that starves the queue it runs on.
+_LINKED_POLY_MAX_MARKETS = 600
+
+#: Wall-clock budget, mirroring `_refresh_linked_game_books`.
+_LINKED_POLY_DEADLINE_S = 240.0
+
+_LINKED_POLY_BOOKS_SQL = text(
+    """
+    SELECT fm.id,
+           fm.external_id,
+           fm.name,
+           fm.event_id,
+           fm.category,
+           fm.market_tier
+      FROM futures_markets fm
+      JOIN events e ON e.id = fm.event_id
+     WHERE fm.source = 'polymarket'
+       AND fm.status = 'open'
+       -- The Gamma EVENT id is what `/events?id=` addresses. A row keyed by a
+       -- bare condition_id is a decomposed SUB-market and is not fetchable this
+       -- way; it is also never the row a dark event is missing (all 501 measured
+       -- rows are parents), so excluding it costs nothing and keeps every id in
+       -- the batch answerable.
+       AND fm.external_id NOT LIKE '0x%'
+       AND (
+             e.status = 'live'
+          OR (
+                e.status = 'scheduled'
+                AND e.commence_time > NOW() - make_interval(hours => :lookback_hours)
+                AND e.commence_time <= NOW() + make_interval(days => :horizon_days)
+             )
+           )
+       AND NOT EXISTS (
+             SELECT 1 FROM futures_outcomes fo WHERE fo.market_id = fm.id
+           )
+     ORDER BY e.commence_time
+     LIMIT :max_markets
+    """
+)
+
+
+#: The repo's OWN definition of a single-game matchup name, character for
+#: character: `app/routes/events.py::_GAME_MATCHUP_RE`, the regex
+#: `_build_related_futures` uses to decide whether a market is tied to one game.
+#: Copied rather than imported because a task importing a route module at call
+#: time is an import cycle waiting to happen, and pinned equal by
+#: `test_the_predicate_is_the_routes_own_definition` so the two cannot drift:
+#: the label this pass writes and the route's own game-specific test have to
+#: mean the same thing or the page disagrees with the database about what a row
+#: is.
+#:
+#: NOT a matcher helper. `prediction_market_matching`'s matchup extractors are
+#: PERMISSIVE by design — a false accept there costs a candidate that later
+#: checks reject. This drives a DISPLAY label, where a false accept is a wrong
+#: label on a page with nothing downstream to catch it. The route's regex is the
+#: display-side definition and refuses the prose that trips a permissive one:
+#: "Who will be UFC Middleweight champion at the end of 2026?" contains the word
+#: "at" and is correctly rejected.
+_GAME_MATCHUP_NAME_RE = re.compile(
+    r"\bvs\.?\s|\s–\s|\bat\b.*:\s*\w|^[\w][\w\s.'\-()]+\bat\b\s+[\w][\w\s.'\-()]+$",
+    re.IGNORECASE,
+)
+
+
+def _is_one_game_matchup_name(name: str | None) -> bool:
+    """Does this market name describe ONE contest between two named sides?"""
+    return bool(name) and bool(_GAME_MATCHUP_NAME_RE.search(name))
+
+
+async def _refresh_linked_polymarket_books(deadline_s: float | None = None) -> dict:
+    """Give a price to a LINKED Polymarket market that has no outcome rows at all.
+
+    ## the hole this fills
+
+    Exactly #3518's hole, one venue over. A market row is created by the hourly
+    discovery poll on FIRST sight, and its outcome rows are written in the same
+    pass — but only for the sub-markets that carry a price *at that moment*. A
+    fight listed before its book opens gets a parent row and nothing else, and
+    then nothing ever comes back for it:
+
+    * ``_poll_polymarket_markets`` is a bounded, newest-first discovery scan.
+      Measured 2026-09-06 over the 1,607 open Polymarket markets linked to a
+      live-or-future event, by ``volume_updated_at`` (written only by that
+      poll's own upsert): **152 touched inside six hours, 1,120 not for over a
+      day, 279 not for over a week.**
+    * ``futures_price_refresh`` (#2199) addresses markets by id and could reach
+      them — and states in its own docstring that it "deliberately does NOT
+      create markets, **create outcomes**". A price for an outcome row we do not
+      hold is counted and dropped, by design.
+    * ``_poll_live_prediction_market_prices`` is UPDATE-only.
+
+    Every path needs an outcome row to exist, and the one path that creates them
+    cannot reach the market again. **501 open linked markets across 159 events**
+    were dark on 2026-09-06; **20 of those event pages showed no price from any
+    source at all** — the reader-facing end of it is a page reading "No price
+    yet" while Polymarket quotes the fight. The specimen: event 15305793, UFC 331
+    Ozzy Diaz vs Ryan Gandra, our market ``972409`` with zero outcome rows
+    against a venue book of 21c bid / 38c ask.
+
+    ## what it does, and the four things it refuses
+
+    Batched ``/events?id=`` reads (the addressing #2199 built), parsed through the
+    service, priced by :func:`_parent_outcome_data` — the poll's own function, so
+    a dark market gets the price the poll would have given it and never a second
+    opinion.
+
+    * **It never invents a price.** Nothing here decides what a book is worth;
+      every refusal (placeholder slots, the #151 evidence gate, the #1578
+      phantom-midpoint test) is inherited whole from that shared function, and a
+      market it prices at nothing simply gets no row.
+    * **It never overwrites anything.** Every write is
+      ``ON CONFLICT DO NOTHING`` on a market SELECTED for having no outcome rows.
+      A row that appears underneath us — a poll landing mid-pass — wins. There is
+      no update branch to get a grade guard wrong (gotcha #21): a graded row
+      cannot be in this population, because a graded row is a row.
+    * **It never touches identity.** No ``event_id``, no ``commence_time``, no
+      tier, no name on the market row. Two writers on one column is #3532's whole
+      story and this pass is not the second one. The ONE market-row column it
+      does write is ``category``, a display label, and only on a row it has just
+      given its first legs — see the block that does it for why a price nobody
+      can see is not a ship, and for the population it deliberately leaves alone.
+    * **It refuses an incoherent field.** CAL-P006 (#1527), the same guard and
+      the same reason as the poll: an impossible field is not a price.
+
+    ``opening_probability`` is written only under the poll's own
+    ``has_real_trading`` test, so a first sighting through this path cannot bank
+    an opening the poll would have declined to bank.
+    """
+    import asyncio
+    import time as _time
+
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    from app.models.models import FuturesOddsSnapshot, FuturesOutcome
+    from app.services.polymarket_api import PolymarketAPIService
+    from app.utils.odds_math import probability_to_american
+
+    started = _time.monotonic()
+    # One capture time for the whole pass, as every other snapshot writer does.
+    now = datetime.now(timezone.utc)
+    budget = _LINKED_POLY_DEADLINE_S if deadline_s is None else deadline_s
+
+    stats: dict = {
+        "markets_selected": 0,
+        "batches_read": 0,
+        "batches_unreadable": 0,
+        "markets_reached": 0,
+        "markets_absent_at_venue": 0,
+        "markets_unpriced_at_venue": 0,
+        "incoherent_fields_skipped": 0,
+        "outcomes_created": 0,
+        "snapshots_written": 0,
+        "display_labels_corrected": 0,
+        "deadline_hit": False,
+        "errors": [],
+    }
+
+    async with get_task_session() as session:
+        rows = (
+            await session.execute(
+                _LINKED_POLY_BOOKS_SQL,
+                {
+                    "lookback_hours": LINKED_POLY_BOOK_LOOKBACK_HOURS,
+                    "horizon_days": LINKED_POLY_BOOK_HORIZON_DAYS,
+                    "max_markets": _LINKED_POLY_MAX_MARKETS,
+                },
+            )
+        ).fetchall()
+
+        stats["markets_selected"] = len(rows)
+        if not rows:
+            # Gotcha #53: an empty result is a SHAPE. "Nothing is dark" and "the
+            # selector is broken" produce the same empty list, so the terminal
+            # says which question was asked.
+            stats["terminal"] = "no_dark_linked_markets_in_window"
+            return stats
+
+        # Copy to plain scalars: the per-market commit below expires ORM state,
+        # and a row read after it is a row that may not answer (gotcha #6).
+        work = [
+            {
+                "id": r.id,
+                "external_id": str(r.external_id),
+                "name": r.name,
+                "category": r.category,
+                "market_tier": r.market_tier,
+            }
+            for r in rows
+        ]
+        by_external_id = {w["external_id"]: w for w in work}
+
+        service = PolymarketAPIService()
+        try:
+            ids = list(by_external_id.keys())
+            for start in range(0, len(ids), _LINKED_POLY_ID_BATCH):
+                if _time.monotonic() - started > budget:
+                    stats["deadline_hit"] = True
+                    break
+
+                chunk = ids[start : start + _LINKED_POLY_ID_BATCH]
+                try:
+                    raw_events = await service.get_events_by_ids(chunk)
+                except Exception as exc:  # noqa: BLE001 — one batch may not end the run
+                    stats["batches_unreadable"] += 1
+                    stats["errors"].append(f"batch {chunk[0]}…: {str(exc)[:120]}")
+                    continue
+                stats["batches_read"] += 1
+
+                # Key by the event's OWN id, never by request order: Gamma omits
+                # ids it does not recognise, so the response neither lines up with
+                # the request nor promises its length (that function says so).
+                parsed = {}
+                for raw in raw_events:
+                    event = service._parse_event(raw)
+                    if event and event.id:
+                        parsed[str(event.id)] = event
+
+                for external_id in chunk:
+                    row = by_external_id[external_id]
+                    event = parsed.get(external_id)
+                    if event is None:
+                        # Recorded, never acted on: a market row is not retired on
+                        # the strength of one absent read (gotcha #53).
+                        stats["markets_absent_at_venue"] += 1
+                        continue
+                    stats["markets_reached"] += 1
+
+                    outcome_data = _parent_outcome_data(event)
+                    if not outcome_data:
+                        stats["markets_unpriced_at_venue"] += 1
+                        continue
+
+                    # CAL-P006 (#1527), the poll's guard, same reason: a negRisk
+                    # field with several near-certain legs is not a price.
+                    if field_is_incoherent(
+                        (od["prob"] for od in outcome_data),
+                        mutually_exclusive=bool(event.neg_risk),
+                    ):
+                        stats["incoherent_fields_skipped"] += 1
+                        logger.warning(
+                            "Polymarket event %s (%s): %d/%d legs near-certain on "
+                            "a negRisk single-winner field — refusing to capture "
+                            "(#1527)",
+                            event.id, (event.title or "")[:80],
+                            count_near_certain(od["prob"] for od in outcome_data),
+                            len(outcome_data),
+                        )
+                        continue
+
+                    outcome_data.sort(key=lambda x: x["prob"], reverse=True)
+
+                    # Whether THIS market got a leg, not whether the pass did:
+                    # the label correction below must not fire on a market whose
+                    # every leg lost the `ON CONFLICT DO NOTHING` race.
+                    _created_before_this_market = stats["outcomes_created"]
+
+                    for rank, od in enumerate(outcome_data, 1):
+                        prob = od["prob"]
+                        american = (
+                            probability_to_american(prob) if 0 < prob < 1 else None
+                        )
+                        # The poll's own test, not a new one.
+                        has_real_trading = (
+                            od["yes_bid"] is not None
+                            and od["yes_bid"] > 0
+                            and od["yes_ask"] is not None
+                            and (od["yes_ask"] - od["yes_bid"]) < 0.50
+                        ) or (
+                            od.get("last_price") is not None and od["last_price"] > 0
+                        )
+
+                        created_id = (
+                            await session.execute(
+                                pg_insert(FuturesOutcome)
+                                .values(
+                                    market_id=row["id"],
+                                    external_id=od["external_id"],
+                                    name=od["name"],
+                                    current_probability=prob,
+                                    current_american_odds=american,
+                                    current_yes_bid=od["yes_bid"],
+                                    current_yes_ask=od["yes_ask"],
+                                    opening_probability=prob if has_real_trading else None,
+                                    opening_american_odds=(
+                                        american if has_real_trading else None
+                                    ),
+                                    opening_captured_at=now if has_real_trading else None,
+                                    rank=rank,
+                                    # Explicit, and load-bearing: the column is
+                                    # `boolean NULL DEFAULT false`, so an INSERT
+                                    # that omits it stores an affirmative graded
+                                    # LOSS (CAL-P1004R) on a leg nobody called.
+                                    is_winner=None,
+                                    resolution_source=None,
+                                )
+                                .on_conflict_do_nothing(
+                                    index_elements=["market_id", "external_id"]
+                                )
+                                .returning(FuturesOutcome.id)
+                            )
+                        ).scalar()
+
+                        if created_id is None:
+                            # DO NOTHING fired: a concurrent writer got there
+                            # first and its row, not ours, is the truth.
+                            continue
+                        stats["outcomes_created"] += 1
+
+                        await session.execute(
+                            pg_insert(FuturesOddsSnapshot).values(
+                                outcome_id=created_id,
+                                bookmaker="polymarket",
+                                probability=prob,
+                                american_odds=american,
+                                yes_bid=od["yes_bid"],
+                                yes_ask=od["yes_ask"],
+                                last_price=od["last_price"],
+                                captured_at=now,
+                            )
+                        )
+                        stats["snapshots_written"] += 1
+
+                    # ── The half that makes the price READABLE (CERT-2111) ──
+                    #
+                    # A price nobody can see is not a ship. CERT-2111 measured
+                    # the rest of the path: the leg written above does reach
+                    # `/related-futures`, and the web `categorizeFutures()`
+                    # (`components/RelatedFutures.tsx`) then DROPS it — it has
+                    # buckets for `game_prop`, `award`, `season_stat`,
+                    # `playoff_path`, `conference`, `series`, `trade`,
+                    # `novelty` and `other`, and none at all for
+                    # `championship`. `display_category` is
+                    # `classify_market_category(...)`, which for a name like
+                    # this one returns the market's own `category` verbatim.
+                    #
+                    # So the row is invisible because a Polymarket game
+                    # moneyline was born labelled `championship`. The working
+                    # sibling proves what the right label is rather than my
+                    # guessing it: event 15190803, the same UFC card, renders
+                    # under Bigger Picture -> GAME PROPS from market 60285732,
+                    # whose `category` is `game_prop`; its parent row 60280233
+                    # carries `championship` and is dropped exactly like ours.
+                    #
+                    # This is a DISPLAY label, not identity — no `event_id`, no
+                    # `commence_time`, no tier, no name, no price — and it is
+                    # written ONLY on a row this pass has just given its first
+                    # legs, that is linked to an event (the selector's own
+                    # requirement), is tier 5, and whose name describes one
+                    # contest between two sides. `IS DISTINCT FROM` keeps it a
+                    # no-op on a row already labelled correctly.
+                    #
+                    # DELIBERATELY NOT WIDENED. The same mislabel sits on
+                    # **7,167 open tier-5 event-linked matchup markets**
+                    # (6,666 Polymarket + 501 Kalshi, production 2026-09-06),
+                    # every one of them invisible in Bigger Picture. Relabelling
+                    # that population is a product decision about what an event
+                    # page shows, not a rider on a price-capture fix; it is
+                    # filed as #3649 for the surface's owner.
+                    if (
+                        stats["outcomes_created"] > _created_before_this_market
+                        and (row.get("category") or "") != "game_prop"
+                        and row.get("market_tier") == 5
+                        and _is_one_game_matchup_name(row.get("name"))
+                    ):
+                        await session.execute(
+                            text(
+                                "UPDATE futures_markets SET category = 'game_prop' "
+                                "WHERE id = :id "
+                                "AND category IS DISTINCT FROM 'game_prop'"
+                            ),
+                            {"id": row["id"]},
+                        )
+                        stats["display_labels_corrected"] += 1
+
+                    # Per-market commit: one bad market may not roll back a whole
+                    # batch's worth of prices (gotcha #13 / #42).
+                    try:
+                        await session.commit()
+                    except Exception as exc:  # noqa: BLE001
+                        await session.rollback()
+                        stats["errors"].append(f"{external_id}: {str(exc)[:120]}")
+
+                await asyncio.sleep(0.2)
+        finally:
+            await service.close()
+
+    stats["elapsed_s"] = round(_time.monotonic() - started, 1)
+    stats["terminal"] = "deadline" if stats["deadline_hit"] else "complete"
+    return stats
 
 
 async def _backfill_polymarket_price_history(
@@ -2051,6 +2397,91 @@ def complementary_book(
     no_ask = None if yes_bid is None else 1 - float(yes_bid)
     no_last = None if yes_last_trade is None else 1 - float(yes_last_trade)
     return no_bid, no_ask, no_last
+
+
+def _parent_outcome_data(event) -> list[dict]:
+    """The PARENT market's outcome rows for one Gamma event. Pure, no DB, no network.
+
+    Extracted from ``_process_event_batch`` (#3613) so the hourly poll and the
+    dark-market refresh below cannot drift into two different ideas of what a
+    Polymarket event's parent price is. Both call this and nothing else.
+
+    The three shapes are the poll's own, unchanged, and the difference between
+    them is deliberate — folding them together would be a pricing change wearing
+    a refactor's clothes:
+
+    * **negRisk multi-market** — a single-winner partition, so each sub-market IS
+      one leg. Priced through :func:`_resolve_market_probability`, which applies
+      the placeholder filter and the #151 evidence gate.
+    * **non-negRisk multi-market** (a game: moneyline + spread + O/U + props) —
+      the parent keeps a leg per sub-market for the moneyline matching task, and
+      it takes Gamma's precomputed ``outcome_prices[0]`` RAW, bypassing those two
+      gates. #1578 recorded that as the least-guarded of the five write paths and
+      deliberately added only the phantom-midpoint test to it; that judgement is
+      preserved here rather than quietly tightened.
+    * **single-market** — one "Yes" leg, priced through the gated resolver.
+
+    Returns the rows unsorted and unranked; the caller sorts, ranks and writes.
+    """
+    outcome_data: list[dict] = []
+
+    if event.neg_risk and len(event.markets) > 1:
+        for market in event.markets:
+            prob = _resolve_market_probability(market)
+            if prob is None or prob <= 0:
+                continue
+            # Prefer groupItemTitle (e.g., "33°F or below") over question
+            # parsing; Q492 rescues the case where both collapse onto the
+            # event's own title and so name no side.
+            outcome_data.append({
+                "external_id": market.condition_id,
+                "name": _leg_label(market, event.title),
+                "prob": prob,
+                "yes_bid": market.best_bid,
+                "yes_ask": market.best_ask,
+                "last_price": market.last_trade_price,
+            })
+        return outcome_data
+
+    if len(event.markets) > 1:
+        for market in event.markets:
+            prob = market.outcome_prices[0] if market.outcome_prices else None
+            if is_fabricated_midpoint(prob, market.best_bid, market.best_ask):
+                prob = (
+                    float(market.last_trade_price)
+                    if market.last_trade_price is not None
+                    and 0 < market.last_trade_price < 1
+                    else None
+                )
+            if prob is None or prob <= 0:
+                continue
+            # Q492: this is the parent anchor of a game-level event, and its
+            # moneyline leg is exactly the one Polymarket sends with no
+            # groupItemTitle — the case that produced a price labelled with
+            # the whole matchup.
+            outcome_data.append({
+                "external_id": market.condition_id,
+                "name": _leg_label(market, event.title),
+                "prob": prob,
+                "yes_bid": market.best_bid,
+                "yes_ask": market.best_ask,
+                "last_price": market.last_trade_price,
+            })
+        return outcome_data
+
+    for market in event.markets:
+        prob = _resolve_market_probability(market)
+        if prob is None or prob <= 0:
+            continue
+        outcome_data.append({
+            "external_id": market.condition_id,
+            "name": "Yes",
+            "prob": prob,
+            "yes_bid": market.best_bid,
+            "yes_ask": market.best_ask,
+            "last_price": market.last_trade_price,
+        })
+    return outcome_data
 
 
 def _resolve_market_probability(market) -> float | None:

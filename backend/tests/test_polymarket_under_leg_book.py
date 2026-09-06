@@ -164,9 +164,16 @@ class TestTheWriterRecordsIt:
     def _under_block() -> str:
         from app.tasks import polymarket
 
-        src = inspect.getsource(polymarket)
+        # #3613 moved the parent-leg build out of this function into
+        # `_parent_outcome_data`, taking the old "# Also keep parent market
+        # outcomes" end-marker with it. Slicing the POLL'S OWN source rather
+        # than the module's makes both bounds unambiguous — a marker inside one
+        # function cannot be shadowed by the same words elsewhere in the file —
+        # and the CAL-P006 guard is a real construct rather than a comment kept
+        # alive to be an anchor.
+        src = inspect.getsource(polymarket._process_event_batch)
         start = src.index("# Create Under/No outcome if available")
-        end = src.index("# Also keep parent market outcomes")
+        end = src.index("# CAL-P006 (#1527)")
         assert end > start
         return src[start:end]
 
