@@ -1,8 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FuturesOutcomeHistory } from "@/lib/types";
 import { canZoomSeries, computeZoomBound, resolveYAxisMax } from "@/lib/chartZoom";
+import { anchorScrollLeft, edgeOverflowFor } from "@/lib/chartScroll";
 import { priceCadenceNote } from "@/lib/priceCadenceCopy";
 import {
   SERIES_COLORS,
@@ -131,6 +132,36 @@ export function FuturesChart({
   // L2-164: zoom state for the opt-in low-prob zoom chip — also before any
   // early returns so the hooks order is stable.
   const [zoomed, setZoomed] = useState(false);
+
+  // #3035: on a phone the plot overflows its card, and a scroll container rests
+  // on its LEFT edge — the OLDEST data — so a live race opened on last week. Rest
+  // it on `now` instead and fade whichever edge still hides plot; a chart you can
+  // scroll but cannot tell is scrollable is half the bug. Why not just compress:
+  // `lib/chartScroll.ts`, which owns both decisions as pure arithmetic.
+  // These hooks sit above the displayedOutcomes early return to keep hook order
+  // stable.
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const [edgeOverflow, setEdgeOverflow] = useState({ left: false, right: false });
+
+  const syncEdgeOverflow = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    setEdgeOverflow(edgeOverflowFor(el));
+  }, []);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (mini || !el) return;
+    // Re-anchors whenever the series changes — the 1D/1W/1M/All switch filters
+    // client-side and hands down a new historyData, so a range change lands on
+    // "now" too rather than inheriting the previous range's scroll offset.
+    el.scrollLeft = anchorScrollLeft(el);
+    syncEdgeOverflow();
+    // A rotate or resize changes clientWidth, and with it whether either edge
+    // still has plot behind it.
+    window.addEventListener("resize", syncEdgeOverflow);
+    return () => window.removeEventListener("resize", syncEdgeOverflow);
+  }, [mini, displayedOutcomes, syncEdgeOverflow]);
 
   if (displayedOutcomes.length === 0) {
     if (mini) return null;
@@ -305,280 +336,308 @@ export function FuturesChart({
 
   return (
     <div className={`${mini ? "" : "space-y-4"} ${className ?? ""}`}>
-      <div className={mini ? "" : "overflow-x-auto relative"}>
-        {/* L2-164: tap-to-zoom chip. Fixed 0–100% is the default; the chip lets
-            the user opt into a rounded low-prob zoom and snap back. Absolutely
-            positioned so it never shifts the chart layout. */}
-        {canZoom && (
-          <button
-            type="button"
-            onClick={() => setZoomed((z) => !z)}
-            aria-pressed={isZoomed}
-            className="absolute top-0 right-0 z-20 rounded-full border border-surface-border bg-surface-card/90 px-2 py-0.5 text-[10px] font-semibold text-text-secondary backdrop-blur-sm transition-colors hover:text-text-primary"
-          >
-            {isZoomed ? "Full 0–100%" : `Zoom 0–${Math.round(zoomBound * 100)}%`}
-          </button>
-        )}
-        <svg
-          viewBox={`0 0 ${chartWidth} ${effectiveHeight}`}
-          className={mini ? "w-full" : "w-full min-w-[600px]"}
-          style={{
-            // Honor the caller's requested height (L2-149): the old hard 250px
-            // non-mini cap silently shrank taller surfaces (event-concept charts
-            // ask for 260–280; EvolutionView asks for 300, or 600 fullscreen).
-            maxHeight: `${effectiveHeight}px`,
-            cursor: mini ? undefined : "crosshair",
-          }}
-          onMouseMove={mini ? undefined : handleChartHover}
-          onMouseLeave={mini ? undefined : handleChartLeave}
+      {/* #3035: the fades must live OUTSIDE the scrolling element. Absolutely
+          positioned children of an overflow container travel with its content,
+          so a fade placed inside would slide off the edge it is meant to mark. */}
+      <div className={mini ? "" : "relative"}>
+        <div
+          ref={scrollRef}
+          onScroll={mini ? undefined : syncEdgeOverflow}
+          className={mini ? "" : "overflow-x-auto relative"}
         >
-          {/* Y-axis grid lines */}
-          {effectiveShowAxes &&
-            [0, 0.25, 0.5, 0.75, 1].map((pct) => (
-              <g key={pct}>
-                <line
-                  x1={padding.left}
-                  y1={yScale(maxProb * pct)}
-                  x2={chartWidth - padding.right}
-                  y2={yScale(maxProb * pct)}
-                  stroke="#e5e7eb"
-                  strokeDasharray="4"
-                />
-                <text
-                  x={padding.left - 8}
-                  y={yScale(maxProb * pct)}
-                  textAnchor="end"
-                  dominantBaseline="middle"
-                  className="text-xs fill-slate"
-                >
-                  {Math.round(maxProb * pct * 100)}%
-                </text>
-              </g>
-            ))}
+          {/* L2-164: tap-to-zoom chip. Fixed 0–100% is the default; the chip lets
+              the user opt into a rounded low-prob zoom and snap back. Absolutely
+              positioned so it never shifts the chart layout. */}
+          {canZoom && (
+            <button
+              type="button"
+              onClick={() => setZoomed((z) => !z)}
+              aria-pressed={isZoomed}
+              className="absolute top-0 right-0 z-20 rounded-full border border-surface-border bg-surface-card/90 px-2 py-0.5 text-[10px] font-semibold text-text-secondary backdrop-blur-sm transition-colors hover:text-text-primary"
+            >
+              {isZoomed ? "Full 0–100%" : `Zoom 0–${Math.round(zoomBound * 100)}%`}
+            </button>
+          )}
+          <svg
+            viewBox={`0 0 ${chartWidth} ${effectiveHeight}`}
+            className={mini ? "w-full" : "w-full min-w-[600px]"}
+            style={{
+              // Honor the caller's requested height (L2-149): the old hard 250px
+              // non-mini cap silently shrank taller surfaces (event-concept charts
+              // ask for 260–280; EvolutionView asks for 300, or 600 fullscreen).
+              maxHeight: `${effectiveHeight}px`,
+              cursor: mini ? undefined : "crosshair",
+            }}
+            onMouseMove={mini ? undefined : handleChartHover}
+            onMouseLeave={mini ? undefined : handleChartLeave}
+          >
+            {/* Y-axis grid lines */}
+            {effectiveShowAxes &&
+              [0, 0.25, 0.5, 0.75, 1].map((pct) => (
+                <g key={pct}>
+                  <line
+                    x1={padding.left}
+                    y1={yScale(maxProb * pct)}
+                    x2={chartWidth - padding.right}
+                    y2={yScale(maxProb * pct)}
+                    stroke="#e5e7eb"
+                    strokeDasharray="4"
+                  />
+                  <text
+                    x={padding.left - 8}
+                    y={yScale(maxProb * pct)}
+                    textAnchor="end"
+                    dominantBaseline="middle"
+                    className="text-xs fill-slate"
+                  >
+                    {Math.round(maxProb * pct * 100)}%
+                  </text>
+                </g>
+              ))}
 
-          {/* X-axis time labels */}
-          {effectiveShowAxes &&
-            (() => {
-              const timeRange = maxTime - minTime;
-              const tickCount = Math.min(
-                5,
-                Math.max(2, Math.floor(innerWidth / 150))
-              );
-              const ticks: number[] = [];
-              for (let i = 0; i <= tickCount; i++) {
-                ticks.push(minTime + (timeRange * i) / tickCount);
-              }
+            {/* X-axis time labels */}
+            {effectiveShowAxes &&
+              (() => {
+                const timeRange = maxTime - minTime;
+                const tickCount = Math.min(
+                  5,
+                  Math.max(2, Math.floor(innerWidth / 150))
+                );
+                const ticks: number[] = [];
+                for (let i = 0; i <= tickCount; i++) {
+                  ticks.push(minTime + (timeRange * i) / tickCount);
+                }
 
-              const formatTime = (ts: number) => {
-                const d = new Date(ts);
-                if (timeRange < 24 * 60 * 60 * 1000) {
-                  return d.toLocaleTimeString("en-US", {
-                    hour: "numeric",
-                    minute: "2-digit",
-                  });
-                } else if (timeRange < 7 * 24 * 60 * 60 * 1000) {
-                  return (
-                    d.toLocaleDateString("en-US", {
+                const formatTime = (ts: number) => {
+                  const d = new Date(ts);
+                  if (timeRange < 24 * 60 * 60 * 1000) {
+                    return d.toLocaleTimeString("en-US", {
+                      hour: "numeric",
+                      minute: "2-digit",
+                    });
+                  } else if (timeRange < 7 * 24 * 60 * 60 * 1000) {
+                    return (
+                      d.toLocaleDateString("en-US", {
+                        month: "short",
+                        day: "numeric",
+                      }) +
+                      " " +
+                      d.toLocaleTimeString("en-US", { hour: "numeric" })
+                    );
+                  } else {
+                    return d.toLocaleDateString("en-US", {
                       month: "short",
                       day: "numeric",
-                    }) +
-                    " " +
-                    d.toLocaleTimeString("en-US", { hour: "numeric" })
-                  );
-                } else {
-                  return d.toLocaleDateString("en-US", {
-                    month: "short",
-                    day: "numeric",
-                  });
-                }
-              };
+                    });
+                  }
+                };
 
-              return ticks.map((t, i) => (
-                <g key={`x-${i}`}>
-                  <line
-                    x1={xScale(t)}
-                    y1={padding.top + innerHeight}
-                    x2={xScale(t)}
-                    y2={padding.top + innerHeight + 4}
-                    stroke="#94a3b8"
-                  />
-                  <text
-                    x={xScale(t)}
-                    y={padding.top + innerHeight + 16}
-                    textAnchor="middle"
-                    className="text-xs fill-slate"
-                    style={{ fontSize: "9px" }}
-                  >
-                    {formatTime(t)}
-                  </text>
-                </g>
-              ));
-            })()}
+                return ticks.map((t, i) => (
+                  <g key={`x-${i}`}>
+                    <line
+                      x1={xScale(t)}
+                      y1={padding.top + innerHeight}
+                      x2={xScale(t)}
+                      y2={padding.top + innerHeight + 4}
+                      stroke="#94a3b8"
+                    />
+                    <text
+                      x={xScale(t)}
+                      y={padding.top + innerHeight + 16}
+                      textAnchor="middle"
+                      className="text-xs fill-slate"
+                      style={{ fontSize: "9px" }}
+                    >
+                      {formatTime(t)}
+                    </text>
+                  </g>
+                ));
+              })()}
 
-          {/* L2-135: round/state boundary markers — dashed verticals + top labels
-              (R1/R2/R3/R4) giving the axis a real sense of time. Clipped to the
-              visible window; skipped in mini mode. */}
-          {!mini &&
-            effectiveShowAxes &&
-            timeMarkers?.map((m, i) =>
-              m.time < minTime || m.time > maxTime ? null : (
-                <g key={`marker-${i}`}>
-                  <line
-                    x1={xScale(m.time)}
-                    y1={padding.top}
-                    x2={xScale(m.time)}
-                    y2={padding.top + innerHeight}
-                    stroke="#cbd5e1"
-                    strokeDasharray="4 3"
-                    strokeWidth={1}
-                  />
-                  <text
-                    x={xScale(m.time) + 3}
-                    y={padding.top + 10}
-                    textAnchor="start"
-                    className="fill-slate"
-                    style={{ fontSize: "9px", fontWeight: 600 }}
-                  >
-                    {m.label}
-                  </text>
-                </g>
-              ),
-            )}
+            {/* L2-135: round/state boundary markers — dashed verticals + top labels
+                (R1/R2/R3/R4) giving the axis a real sense of time. Clipped to the
+                visible window; skipped in mini mode. */}
+            {!mini &&
+              effectiveShowAxes &&
+              timeMarkers?.map((m, i) =>
+                m.time < minTime || m.time > maxTime ? null : (
+                  <g key={`marker-${i}`}>
+                    <line
+                      x1={xScale(m.time)}
+                      y1={padding.top}
+                      x2={xScale(m.time)}
+                      y2={padding.top + innerHeight}
+                      stroke="#cbd5e1"
+                      strokeDasharray="4 3"
+                      strokeWidth={1}
+                    />
+                    <text
+                      x={xScale(m.time) + 3}
+                      y={padding.top + 10}
+                      textAnchor="start"
+                      className="fill-slate"
+                      style={{ fontSize: "9px", fontWeight: 600 }}
+                    >
+                      {m.label}
+                    </text>
+                  </g>
+                ),
+              )}
 
-          {/* Lines */}
-          {displayedOutcomes.map((outcome, idx) => {
-            const points = outcome.history
-              .filter((p) => p.probability !== null)
-              .map((p) => ({
-                x: xScale(new Date(p.timestamp).getTime()),
-                y: yScale(p.probability!),
-              }));
+            {/* Lines */}
+            {displayedOutcomes.map((outcome, idx) => {
+              const points = outcome.history
+                .filter((p) => p.probability !== null)
+                .map((p) => ({
+                  x: xScale(new Date(p.timestamp).getTime()),
+                  y: yScale(p.probability!),
+                }));
 
-            if (points.length < 2) return null;
+              if (points.length < 2) return null;
 
-            const pathD = stepInterpolation
-              ? points
-                  .map((p, i) =>
-                    i === 0
-                      ? `M ${p.x} ${p.y}`
-                      : `H ${p.x} V ${p.y}`
-                  )
-                  .join(" ")
-              : points
-                  .map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`)
-                  .join(" ");
+              const pathD = stepInterpolation
+                ? points
+                    .map((p, i) =>
+                      i === 0
+                        ? `M ${p.x} ${p.y}`
+                        : `H ${p.x} V ${p.y}`
+                    )
+                    .join(" ")
+                : points
+                    .map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`)
+                    .join(" ");
 
-            // L2-149: highlight/eliminated line weighting. When one outcome is
-            // highlighted (leaderboard or chart hover), it thickens and the rest
-            // dim; eliminated contenders draw thin + dashed + faded for context.
-            const elim = !!outcome.eliminated;
-            const isFocus = highlightedOutcomeId === outcome.outcome_id;
-            const isDimmed =
-              highlightedOutcomeId != null && highlightedOutcomeId !== outcome.outcome_id;
-            const strokeWidth = mini
-              ? 1.5
-              : isFocus
-                ? 2.75
-                : isDimmed
-                  ? 1
-                  : elim
-                    ? 1.25
-                    : 2;
-            const strokeOpacity = isDimmed ? 0.2 : elim ? 0.4 : 1;
+              // L2-149: highlight/eliminated line weighting. When one outcome is
+              // highlighted (leaderboard or chart hover), it thickens and the rest
+              // dim; eliminated contenders draw thin + dashed + faded for context.
+              const elim = !!outcome.eliminated;
+              const isFocus = highlightedOutcomeId === outcome.outcome_id;
+              const isDimmed =
+                highlightedOutcomeId != null && highlightedOutcomeId !== outcome.outcome_id;
+              const strokeWidth = mini
+                ? 1.5
+                : isFocus
+                  ? 2.75
+                  : isDimmed
+                    ? 1
+                    : elim
+                      ? 1.25
+                      : 2;
+              const strokeOpacity = isDimmed ? 0.2 : elim ? 0.4 : 1;
 
-            return (
+              return (
+                <path
+                  key={outcome.outcome_id}
+                  d={pathD}
+                  fill="none"
+                  stroke={colorFor(outcome, idx)}
+                  strokeWidth={strokeWidth}
+                  strokeOpacity={strokeOpacity}
+                  strokeDasharray={elim ? "4 3" : undefined}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              );
+            })}
+
+            {/* L2-149: combined (summed) probability line — dashed, dark, drawn on
+                top so the aggregate reads clearly against the contender lines. */}
+            {!mini && combinedPoints && (
               <path
-                key={outcome.outcome_id}
-                d={pathD}
+                d={combinedPoints
+                  .map((p, i) => `${i === 0 ? "M" : "L"} ${xScale(p.t)} ${yScale(p.sum)}`)
+                  .join(" ")}
                 fill="none"
-                stroke={colorFor(outcome, idx)}
-                strokeWidth={strokeWidth}
-                strokeOpacity={strokeOpacity}
-                strokeDasharray={elim ? "4 3" : undefined}
+                stroke={COMBINED_COLOR}
+                strokeWidth={2.2}
+                strokeOpacity={highlightedOutcomeId != null ? 0.45 : 0.9}
+                strokeDasharray="7 4"
                 strokeLinecap="round"
                 strokeLinejoin="round"
               />
-            );
-          })}
+            )}
 
-          {/* L2-149: combined (summed) probability line — dashed, dark, drawn on
-              top so the aggregate reads clearly against the contender lines. */}
-          {!mini && combinedPoints && (
-            <path
-              d={combinedPoints
-                .map((p, i) => `${i === 0 ? "M" : "L"} ${xScale(p.t)} ${yScale(p.sum)}`)
-                .join(" ")}
-              fill="none"
-              stroke={COMBINED_COLOR}
-              strokeWidth={2.2}
-              strokeOpacity={highlightedOutcomeId != null ? 0.45 : 0.9}
-              strokeDasharray="7 4"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          )}
-
-          {/* Hover crosshair and dots */}
-          {hoverInfo && !mini && (
-            <>
-              <line
-                x1={hoverInfo.svgX}
-                y1={padding.top}
-                x2={hoverInfo.svgX}
-                y2={padding.top + innerHeight}
-                stroke={greenTheme ? "#006747" : goldTheme ? "#D4AF37" : "#94a3b8"}
-                strokeWidth={1}
-                strokeDasharray="4 2"
-                opacity={0.6}
-              />
-              {hoverInfo.values.map((v, i) => (
-                <circle
-                  key={i}
-                  cx={hoverInfo.svgX}
-                  cy={yScale(v.prob)}
-                  r={4}
-                  fill={v.color}
-                  stroke={greenTheme ? "#e6f7ef" : goldTheme ? "#fef9e7" : "#FFFFFF"}
-                  strokeWidth={2}
+            {/* Hover crosshair and dots */}
+            {hoverInfo && !mini && (
+              <>
+                <line
+                  x1={hoverInfo.svgX}
+                  y1={padding.top}
+                  x2={hoverInfo.svgX}
+                  y2={padding.top + innerHeight}
+                  stroke={greenTheme ? "#006747" : goldTheme ? "#D4AF37" : "#94a3b8"}
+                  strokeWidth={1}
+                  strokeDasharray="4 2"
+                  opacity={0.6}
                 />
-              ))}
-            </>
-          )}
-        </svg>
-
-        {/* Hover tooltip */}
-        {hoverInfo && !mini && (
-          <div
-            className="absolute pointer-events-none z-50"
-            style={{
-              left: `${(hoverInfo.svgX / chartWidth) * 100}%`,
-              top: 0,
-              transform:
-                hoverInfo.svgX > chartWidth * 0.6
-                  ? "translateX(-105%)"
-                  : "translateX(5%)",
-            }}
-          >
-            <div className="bg-surface-deep/95 backdrop-blur-sm rounded-lg px-3 py-2 border border-surface-border shadow-lg min-w-[140px]">
-              <div className="text-[10px] text-text-muted mb-1 font-mono">
-                {formatTooltipTime(hoverInfo.time)}
-              </div>
-              {hoverInfo.values.map((v, i) => (
-                <div key={i} className="flex items-center gap-2 py-0.5">
-                  <span
-                    className="w-2 h-2 rounded-full flex-shrink-0"
-                    style={{ backgroundColor: v.color }}
+                {hoverInfo.values.map((v, i) => (
+                  <circle
+                    key={i}
+                    cx={hoverInfo.svgX}
+                    cy={yScale(v.prob)}
+                    r={4}
+                    fill={v.color}
+                    stroke={greenTheme ? "#e6f7ef" : goldTheme ? "#fef9e7" : "#FFFFFF"}
+                    strokeWidth={2}
                   />
-                  <span className="text-[11px] text-text-secondary truncate max-w-[120px]">
-                    {v.name}
-                  </span>
-                  <span className="text-[11px] font-mono font-bold text-text-primary ml-auto pl-2">
-                    {Math.round(v.prob * 100)}%
-                  </span>
+                ))}
+              </>
+            )}
+          </svg>
+
+          {/* Hover tooltip */}
+          {hoverInfo && !mini && (
+            <div
+              className="absolute pointer-events-none z-50"
+              style={{
+                left: `${(hoverInfo.svgX / chartWidth) * 100}%`,
+                top: 0,
+                transform:
+                  hoverInfo.svgX > chartWidth * 0.6
+                    ? "translateX(-105%)"
+                    : "translateX(5%)",
+              }}
+            >
+              <div className="bg-surface-deep/95 backdrop-blur-sm rounded-lg px-3 py-2 border border-surface-border shadow-lg min-w-[140px]">
+                <div className="text-[10px] text-text-muted mb-1 font-mono">
+                  {formatTooltipTime(hoverInfo.time)}
                 </div>
-              ))}
+                {hoverInfo.values.map((v, i) => (
+                  <div key={i} className="flex items-center gap-2 py-0.5">
+                    <span
+                      className="w-2 h-2 rounded-full flex-shrink-0"
+                      style={{ backgroundColor: v.color }}
+                    />
+                    <span className="text-[11px] text-text-secondary truncate max-w-[120px]">
+                      {v.name}
+                    </span>
+                    <span className="text-[11px] font-mono font-bold text-text-primary ml-auto pl-2">
+                      {Math.round(v.prob * 100)}%
+                    </span>
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
+        </div>
+        {/* #3035: the scroll affordance. Rendered only for the edge that still
+            has plot behind it, so on a desktop width where nothing overflows
+            neither appears. Decorative and non-interactive — the fade marks the
+            hidden plot, it must never eat a hover or a tap meant for the chart.
+            z-10 keeps it under the zoom chip (z-20) and the tooltip (z-50). */}
+        {!mini && edgeOverflow.left && (
+          <div
+            aria-hidden="true"
+            data-testid="futures-chart-fade-left"
+            className="pointer-events-none absolute inset-y-0 left-0 z-10 w-8 bg-gradient-to-r from-surface-card to-transparent"
+          />
+        )}
+        {!mini && edgeOverflow.right && (
+          <div
+            aria-hidden="true"
+            data-testid="futures-chart-fade-right"
+            className="pointer-events-none absolute inset-y-0 right-0 z-10 w-8 bg-gradient-to-l from-surface-card to-transparent"
+          />
         )}
       </div>
 
