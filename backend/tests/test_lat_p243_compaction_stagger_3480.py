@@ -199,9 +199,35 @@ class TestTheDerivationItself:
 
     def test_a_task_with_entries_on_two_queues_counts_for_background(self):
         """`beat_queues` returns a LIST because entries need not agree. One
-        entry on the pool is enough to hold one of its slots."""
+        entry on the pool is enough to hold one of its slots — wherever in the
+        list it appears. `beat_queues` happens to sort, and "background" happens
+        to sort first among this repo's three queue names, so a membership test
+        written as "is it the FIRST entry" would pass today and break the day a
+        queue named earlier in the alphabet is added."""
         bs = {"x": {"task": "t.x", "schedule": crontab(minute=0)}}
         assert long_hold_beats(bs, {"t.x": 3600}, {"t.x": ["background", "heavy"]}) == ["x"]
+        assert long_hold_beats(bs, {"t.x": 3600}, {"t.x": ["heavy", "background"]}) == ["x"]
+        assert long_hold_beats(bs, {"t.x": 3600}, {"t.x": ["alpha", "heavy"]}) == []
+
+    def test_the_overlap_span_is_the_shorter_windows_share_not_the_longer_one(self):
+        """A 10-minute beat landing inside a 1-hour grinder's window overlaps for
+        TEN minutes, not for the fifty that remain of the grinder. Reporting the
+        longer side would make every small collision look like a total outage
+        and rank the work-list wrong."""
+        bs = {
+            "grinder": {"task": "t.long", "schedule": crontab(minute=0, hour=3),
+                        "options": {"queue": "background"}},
+            "shortish": {"task": "t.short", "schedule": crontab(minute=10, hour=3),
+                         "options": {"queue": "background"}},
+        }
+        overlaps, _ = residency_overlaps(
+            bs, {"t.long": 3600, "t.short": 1200},
+            {"t.long": ["background"], "t.short": ["background"]},
+            start=ANCHORS[3], days=1,
+        )
+        assert len(overlaps) == 1, overlaps
+        # `shortish` runs 03:10-03:30 entirely inside `grinder`'s 03:00-04:00.
+        assert overlaps[0]["overlap_s"] == pytest.approx(1200.0)
 
     def test_star_slash_six_expands_to_four_fires_a_day(self):
         """Read from celery's own parsed field set, so the '*/6' string itself
