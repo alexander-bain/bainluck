@@ -60,7 +60,8 @@ and puts its rows back. It exists because Alex's D51 lets a lane apply a data
 repair unattended *provided* it backs up first and ships a one-command restore:
 the restore has to be a real, runnable thing, so it is a parameter on the same
 rail with the same auth rather than a paragraph in a handoff note. Dry-run
-unless ``apply=true``. Only ``authority-id-collisions`` declares it today.
+unless ``apply=true``. ``authority-id-collisions`` and ``statpal-blank-ids``
+declare it today.
 
 ``probe`` (queue 375) records ONE identity observation of a reviewed population
 and returns, for rails that must PROVE stillness before they may census — ruling
@@ -203,6 +204,10 @@ _REPAIRS = {
     # OUT OF SCOPE: the 8 duplicate real statpal ids (16 rows) are REPORTED with
     # their event ids and never written — clearing them is attended, by-name
     # work, and until it lands the column still cannot be made unique.
+    # D51 (#2963): declares ``undo_identity``. The receipt is written empty
+    # before the first write and CO-COMMITTED with each batch, so a partial run
+    # is exactly reversible; the restore refuses any row that has since been
+    # given a real StatPal id, which is the outcome NULLing it was for.
     "statpal-blank-ids": ("scripts.repair_statpal_fixture_id_blanks", "repair"),
     # CAL-P056 (#1852): the BACKWARD half of CAL-P053. Dry-run-ONLY census of the
     # standing all-loser population — Kalshi markets (2+ legs) where every
