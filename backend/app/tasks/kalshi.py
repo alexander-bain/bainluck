@@ -5107,7 +5107,31 @@ async def _create_settled_market(
     else:
         market_name = event.title
 
-    commence_time = min(close_times) if close_times else None
+    # #3511: the THIRD commence writer, and the last one still deriving its own
+    # date. #3433 replaced exactly this `min(close_times)` in both poll branches
+    # with `_kalshi_commence_time`, which prefers the venue's own
+    # `occurrence_datetime` — when the thing happens — bounded by `occ <= close`.
+    # Gap-create kept the old shape, so every settled row it minted was dated by
+    # when Kalshi PAID OUT. Measured at the venue 2026-09-06 (notice 26a:
+    # `/events?status=settled&series_ticker=…&with_nested_markets=true`, which
+    # carries `occurrence_datetime` on every nested market), over a random 24-row
+    # sample of this path's own recent output: 8 move earlier, by 9 minutes to
+    # **32.7 hours**, and none move later — `KXATPEXACTMATCH-26AUG24NARCIN` is
+    # stored at Aug 26 01:40Z for a match the venue times at Aug 24 17:00Z, two
+    # days wrong. It reaches the reader because 260 of the 1,488 linked
+    # gap-created rows have an Event carrying this exact instant as its own
+    # commence_time.
+    #
+    # The `occ <= close` bound is doing real work on settled events, not just
+    # outrights: a settled market's close_time has COLLAPSED to its settlement
+    # instant while `occurrence_datetime` has not, so an occurrence can land
+    # AFTER its own close (`KXLOLGAME-26AUG231900FLYDIG`: occ 03:00Z, close
+    # 00:19Z). Those keep the close, unchanged from today.
+    commence_time = _kalshi_commence_time(
+        event.markets,
+        is_game=bool(game_sport),
+        is_dated_fixture=_is_dated_fixture_ticker(event.event_ticker),
+    )
     # CAL-P989 (#2660/#1818): the SECOND writer. This gap-create path had its own
     # copy of `max(expiration_time)`, so fixing only the poller would have left the
     # codebase with two derivations — one reading the venue's legal backstop and one
