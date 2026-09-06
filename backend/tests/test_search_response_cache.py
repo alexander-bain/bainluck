@@ -784,6 +784,15 @@ def test_the_full_rebuild_budget_is_the_pass_not_one_query():
         "if this module's timeout ever drops below the route deadline it becomes "
         "the binding one and this expression must follow it, not the constant"
     )
+    # 🔴 Drive the `min` in BOTH directions with explicit arguments. At today's
+    # constants (25 vs 20) a `min(a, b)` and a bare `b` are indistinguishable, so
+    # asserting only the shipped value lets the min be deleted — a mutant that
+    # SURVIVED the first battery run and is only caught by exercising both sides.
+    assert effective_per_query_bound_s(per_query_s=10, route_deadline_s=20) == 10, (
+        "when this module's timeout is the tighter bound it must win — a bound "
+        "that always returns the route deadline inflates every derived budget"
+    )
+    assert effective_per_query_bound_s(per_query_s=30, route_deadline_s=20) == 20
     assert full_rebuild_budget_s(head_size=2, concurrency=2, per_query_s=25) == 25.0
     assert full_rebuild_budget_s(head_size=3, concurrency=2, per_query_s=25) == 50.0
 
