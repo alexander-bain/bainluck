@@ -359,6 +359,13 @@ export interface LabeledRow {
    * carried from the market title instead of re-derived from the label.
    */
   setNumber?: number | null;
+  /**
+   * The market's own two side names and its period scope, carried for the same
+   * reason `setNumber` is: the label has been rewritten and no longer contains
+   * the losing side at all. Naming the winner of a set that is over needs both
+   * sides, because only one of them is in the label.
+   */
+  winnerParts?: { scope: string; first: string; second: string } | null;
 }
 
 export interface MergedOutcome {
@@ -375,6 +382,17 @@ export interface MergedOutcome {
   decided?: boolean;
   /** Carried from `LabeledRow`; see the note there. */
   setNumber?: number | null;
+  /** Carried from `LabeledRow`; see the note there. */
+  winnerParts?: { scope: string; first: string; second: string } | null;
+  /**
+   * The set is over AND this view can say who took it — `Noskova won Set 1`.
+   *
+   * When present the row states that and NOTHING else: no bar, and no number.
+   * `decided` alone downgrades the number to a last quote, which is the right
+   * answer while the winner is unknown and the wrong one once it is not. See
+   * `decidedSetResult`.
+   */
+  result?: string;
 }
 
 export interface OutcomeMergeResult {
@@ -425,12 +443,14 @@ export function mergeOutcomes(rows: LabeledRow[]): OutcomeMergeResult {
     // Set only when a row actually carries one, so an outcome's shape is
     // unchanged for every population that never needed it.
     const carried = group.find((r) => r.setNumber != null)?.setNumber;
+    const carriedParts = group.find((r) => r.winnerParts != null)?.winnerParts;
     outcomes.push({
       label,
       prob: probs[0],
       source: group[0].source || "unknown",
       sourceCount: group.length,
       ...(carried != null ? { setNumber: carried } : {}),
+      ...(carriedParts != null ? { winnerParts: carriedParts } : {}),
     });
   }
 
@@ -498,6 +518,128 @@ export function completedSetsForTennis(
   return total > MAX_SETS_IN_A_MATCH ? 0 : total;
 }
 
+/**
+ * The side that has taken EVERY set already played, plus the names to say it
+ * with. Null whenever that side cannot be identified.
+ */
+export interface DecidedSetsWinner {
+  side: "home" | "away";
+  homeTeam: string;
+  awayTeam: string;
+}
+
+/**
+ * Who won the sets that are over — when the score can say so on its own.
+ *
+ * ── WHY THE TEST IS `min === 0` AND NOT SOMETHING CLEVERER ───────────────────
+ *
+ * A tennis event carries SETS WON, not a per-set line: `0` / `1` says Noskova
+ * is a set up, and says nothing about the ORDER. At `1` / `1` either player
+ * could have taken set 1, so no row may name a winner and every decided row
+ * keeps today's `last quote` wording. But while one side is still on zero,
+ * every set that is over went the same way — so set 1, set 2 … set N all have a
+ * winner this function can name without guessing.
+ *
+ * That is not a corner: it is the state a live match is in for most of its
+ * length. Measured on production 2026-09-06, the only live tennis match holding
+ * `Set N Winner` markets (`15304906`, Kostyuk–Noskova) sat at `0` / `1` with
+ * set 1 over and its row reading `Kostyuk wins Set 1 — last quote 0%`.
+ *
+ * `box_score_data.tennis.sets` DOES carry the per-set line and would answer the
+ * mixed case too. It is deliberately not used: it is not on this payload, and
+ * the same read showed it lagging the set score (`[[5, 6]]`, a set still in
+ * progress, while `home_score`/`away_score` had already banked `0` / `1`). A
+ * later fact and an earlier one disagreeing is exactly when to take the fact
+ * that cannot be half-written.
+ */
+export function decidedSetsWinnerFor(
+  sport: string | null | undefined,
+  scores:
+    | {
+        home_score?: number | null;
+        away_score?: number | null;
+        home_team?: string | null;
+        away_team?: string | null;
+      }
+    | null
+    | undefined,
+): DecidedSetsWinner | null {
+  if (completedSetsForTennis(sport, scores) < 1) return null;
+  const home = Math.floor(scores?.home_score as number);
+  const away = Math.floor(scores?.away_score as number);
+  if (Math.min(home, away) !== 0) return null;
+  const homeTeam = (scores?.home_team ?? "").trim();
+  const awayTeam = (scores?.away_team ?? "").trim();
+  if (!homeTeam || !awayTeam) return null;
+  return { side: home > 0 ? "home" : "away", homeTeam, awayTeam };
+}
+
+/** Comparable name tokens — accent-folded, case-folded, punctuation dropped. */
+function nameTokens(value: string): string[] {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+}
+
+/**
+ * Is this market side the same competitor as this event team?
+ *
+ * The market names surnames (`Kostyuk`) and the event names people
+ * (`Marta Kostyuk`), so the test is token CONTAINMENT rather than equality —
+ * every token of the side must appear in the team. Doubles work by the same
+ * door: `Bolelli/Vavassori` tokenises to two surnames, both of which must be
+ * present.
+ */
+function sideMatchesTeam(side: string, team: string): boolean {
+  const sideTokens = nameTokens(side);
+  if (sideTokens.length === 0) return false;
+  const teamTokens = new Set(nameTokens(team));
+  return sideTokens.every((token) => teamTokens.has(token));
+}
+
+/**
+ * `Noskova won Set 1`, or null when this view may not say that.
+ *
+ * **It fails closed at three separate doors**, because a settled row naming the
+ * WRONG player is a far worse render than the frozen quote it replaces:
+ *
+ *   1. The set is not over, or the score cannot name a winner (`min !== 0`).
+ *   2. The market's two sides do not pair one-to-one with the event's two teams
+ *      — a name collision, a mislinked market, or a side we cannot resolve.
+ *   3. Either side matches BOTH teams, or the same team matches both sides.
+ *
+ * Any of those and the caller keeps the `last quote` wording, which is never
+ * wrong, only weak.
+ */
+export function decidedSetResult(
+  parts: { scope: string; first: string; second: string } | null | undefined,
+  winner: DecidedSetsWinner | null | undefined,
+): string | null {
+  if (!parts || !winner) return null;
+  const { first, second } = parts;
+  const firstHome = sideMatchesTeam(first, winner.homeTeam);
+  const firstAway = sideMatchesTeam(first, winner.awayTeam);
+  const secondHome = sideMatchesTeam(second, winner.homeTeam);
+  const secondAway = sideMatchesTeam(second, winner.awayTeam);
+
+  // A clean pairing, in one direction or the other. Each clause demands that
+  // its side match ONE team and not the other, which is what closes door 3: two
+  // Bryans make `firstHome` and `firstAway` both true, so neither pairing forms
+  // and the row keeps its frozen quote. (The two clauses cannot both hold —
+  // they disagree on `firstAway` — so this is an either, not an exclusive or.)
+  const straight = firstHome && !firstAway && secondAway && !secondHome;
+  const swapped = firstAway && !firstHome && secondHome && !secondAway;
+  if (!straight && !swapped) return null;
+
+  const homeSide = straight ? first : second;
+  const awaySide = straight ? second : first;
+  const name = winner.side === "home" ? homeSide : awaySide;
+  return `${name} won ${parts.scope}`;
+}
+
 export interface MarketSectionOptions {
   /**
    * Sets already played out in this match — the caller's number, never read
@@ -506,6 +648,11 @@ export interface MarketSectionOptions {
    * passes nothing and no row is ever marked decided.
    */
   completedSets?: number;
+  /**
+   * Who took those sets, when the score can say. Absent — and for every sport
+   * but tennis it always is — a decided row keeps stating a last quote.
+   */
+  decidedSetsWinner?: DecidedSetsWinner | null;
 }
 
 /**
@@ -605,7 +752,13 @@ export function buildMarketSection(
       draft.cards.set(cardName, card);
       draft.cardOrder.push(cardName);
     }
-    card.push({ label, probability: row.probability ?? null, source: row.source ?? null, setNumber });
+    card.push({
+      label,
+      probability: row.probability ?? null,
+      source: row.source ?? null,
+      setNumber,
+      winnerParts,
+    });
   }
 
   let renderedOutcomes = 0;
@@ -625,9 +778,14 @@ export function buildMarketSection(
           // The carried number wins where it exists; everything else still
           // reads its own label, exactly as before.
           const setNumber = o.setNumber ?? setNumberFromLabel(o.label);
-          return setNumber !== null && setNumber <= completedSets
-            ? { ...o, decided: true }
-            : o;
+          if (setNumber === null || setNumber > completedSets) return o;
+          // And where the score can name the winner, the row says THAT — the
+          // standing "settled means settled" ruling asks cards for results, and
+          // `Kostyuk wins Set 1 — last quote 0%` is a result written as a price.
+          // `decidedSetResult` returns null unless it is certain, so the
+          // fallback below is the only change most decided rows ever see.
+          const result = decidedSetResult(o.winnerParts, options.decidedSetsWinner);
+          return result ? { ...o, decided: true, result } : { ...o, decided: true };
         })
         .sort((a, b) => b.prob - a.prob);
       renderedOutcomes += outcomes.length;
