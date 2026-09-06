@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 from app.utils.name_normalization import (
     _MATCH_STOPWORDS,
     expand_trailing_state_abbrev as _expand_trailing_state_abbrev,
+    normalize_name as _normalize_name,
     normalize_team_name_for_matching as _normalize_for_matching,
 )
 from app.utils.sport_keys import (
@@ -1055,6 +1056,39 @@ def _extract_matchup_impl(market_name: str) -> Optional[MatchupInfo]:
 _ACRONYM_MIN_LEN = 3
 
 
+def _writes_token_as_an_acronym(token: str, source: str) -> bool:
+    """True when ``source`` writes ``token`` in capitals among lowercase words.
+
+    Length alone cannot tell an acronym from a surname: "TCU" and "Gea" are the
+    same shape once normalized — three lowercase characters — so the whole-word
+    test below reads "gea" as a token of "arthur gea" exactly as it reads "tcu"
+    as a token of "tcu horned frogs". It did, and it bound a US Open market to
+    the wrong one of two rows for the same match (golden pair 59720702).
+
+    Case is the signal the sources actually carry: they write an acronym in
+    capitals ("TCU Horned Frogs", "AIK Stockholm") and a surname in title case
+    ("Arthur Gea"). This reads that, against the RAW string, before
+    normalization folds it away.
+
+    The all-caps refusal is the other half and is not decoration. A source that
+    shouts every name ("ARTHUR GEA") would make every word look like an
+    acronym; capitalization only carries information where the rest of the name
+    is not capitalized. So a source with no lowercase letter at all is refused —
+    the rule fails closed, costing a link, never inventing one.
+    """
+    if not any(ch.islower() for ch in source):
+        return False
+    for word in source.split():
+        # Compare identity through the same normalizer the caller used, so the
+        # two can never drift; judge case on the raw word, which still has it.
+        if _normalize_name(word) != token:
+            continue
+        letters = [ch for ch in word if ch.isalpha()]
+        if letters and all(ch.isupper() for ch in letters):
+            return True
+    return False
+
+
 def _fuzzy_team_match(market_team: str, event_team: str) -> bool:
     """
     Check if a team name from a prediction market matches an event team name.
@@ -1112,9 +1146,17 @@ def _fuzzy_team_match(market_team: str, event_team: str) -> bool:
     # floor and bind any two rows that happen to share an English article.
     # Consuming the canonical set means a stopword added later cannot silently
     # become a binding token.
-    short, long_ = (mt, et) if len(mt) <= len(et) else (et, mt)
+    #
+    # And a whole word of three characters is not yet an acronym: a tennis
+    # surname is one too. The long name must WRITE it as one — capitals among
+    # lowercase — or "Gea" reaches "Arthur Gea" and one match's two rows bind to
+    # each other. See _writes_token_as_an_acronym.
+    if len(mt) <= len(et):
+        short, long_, long_raw = mt, et, event_team
+    else:
+        short, long_, long_raw = et, mt, market_team
     if len(short) >= _ACRONYM_MIN_LEN and short not in _MATCH_STOPWORDS:
-        if short in long_.split():
+        if short in long_.split() and _writes_token_as_an_acronym(short, long_raw):
             return True
 
     return False
