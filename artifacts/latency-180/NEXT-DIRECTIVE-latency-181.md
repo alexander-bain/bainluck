@@ -129,6 +129,30 @@ chosen. **`poll_all_odds` itself is the live lane's — hand it over, do not cla
 **Do not ask the bus to re-run M-20260905-A until #3444 lands.** D67 does not go back to Alex until
 the lane is still over capacity *after* ITEM 1 and ITEM 2, with the audit's number.
 
+## ITEM 4b — CERT-2032's remaining follow-up, and why 180 did not build it
+
+CERT-2032 was GREEN with the token granted and named two nonblocking follow-ups.
+
+**`TYPEAHEAD-DEBUG-STATE-OUTSIDE-TIMING-MAP` is DONE** (`c5cbc7af`). The two shed booleans were in
+`debug_timing`, a map of stage milliseconds whose `total_ms` is a sum — and `True` sums as 1. They
+moved to their own `debug_shed` key, with a RED-first guard that also refuses the
+one-level-less-visible version (a `**_ta_stage_ms` spread sharing a dict with the booleans).
+
+**`TYPEAHEAD-SHED-RUNTIME-CACHE-CONTRACT` is OWED.** The ask is an endpoint-level regression: a
+shed answer WRITES and the next request HITS; a full futures-stage timeout writes NOTHING. The
+grader proved both by hand against production; there is no test.
+
+⚠️ **Why 180 did not build it, so 181 does not rediscover the reason.** Three test files already
+drive `typeahead_search` directly (`test_typeahead_trending_cache_hit_2117.py`,
+`test_search_origin_channel_p118.py`, `test_typeahead_eval_calls_do_not_vote.py`) and **all three
+rely on a cache HIT returning before the first query**, so they pass `db=None`. This contract needs
+the MISS path, which means a fake `AsyncSession` that survives every stage of a 1,000-line function.
+That is the real work, and it is worth doing once and sharing — `/search`'s suite has the analogous
+harness in `test_search_response_cache.py::_search` and is the model. Note its warning, which cost
+that file a red run: the debug flags' declared defaults are `Query(...)` marker objects, TRUTHY
+outside FastAPI, so every flag must be passed explicitly or the assertions are made against the
+uncached path.
+
 ## ITEM 5 — carried, unchanged
 
 - **`LAT-P240-PREDICATE-SEMANTICS-GUARD` is still owed.** 179's guard counts emitted writes against
