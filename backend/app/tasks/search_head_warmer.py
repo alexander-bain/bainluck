@@ -130,14 +130,17 @@ rather than promised in prose, and the configurations that read plausible and
 hole — 60/25, 180/90, 180/150-at-a-100s-budget, 180/160-at-a-20s-unit — are each
 refused by name in its test. Note the third and the shipped 180/150: the SAME
 threshold, refused there and certified here, because the budget under it moved
-from 100 to 70. The integer is not the claim; the derivation is.
+from 100 to 70. The integer is not the claim; the derivation is — and the
+threshold has now been 150 under a refused derivation, 130, and 150 again under a
+certified one, which is why `test_the_shipped_threshold_is_the_derived_one` exists
+and why no reader should take the integer as evidence of anything.
 
 THE THREE CONSTANTS ARE ONE DECISION, not three — and the relation binding them
 is `residency_invariant()`, which is executable rather than prose. An entry lives
 `SEARCH_RESPONSE_TTL_SECONDS`; a real pass arrives every
 `effective_pass_period_s()`; a pass rebuilds anything with under
 `REFRESH_AHEAD_SECONDS` left, and that rebuild may take up to
-`full_rebuild_budget_s()`. For the head never to go cold, ALL SIX must hold:
+`full_rebuild_budget_s()`. For the head never to go cold, ALL SEVEN must hold:
 
     REFRESH_AHEAD > TTL - P_effective              (1) the first pass CATCHES it
     REFRESH_AHEAD - P_effective > rebuild_budget   (2) and it SURVIVES the rebuild
@@ -145,16 +148,28 @@ is `residency_invariant()`, which is executable rather than prose. An entry live
     TTL > max_same_query_write_interval_s()        (4) across a RE-RANKED pass
     unit > every cooperative bound inside it       (5) and the budget is ENFORCED
     rebuild_budget < _LOCK_TTL_SECONDS             (6) and (4)'s lock really holds
+    control wall > its own cooperative bound       (7) and so is the OTHER term
 
-At 180 / 130 / 60 / 50: `130 > 120` ✓, `70 > 50` ✓, `130 <= 180` ✓, `180 > 110` ✓,
-`35 > 28.2` ✓, `50 < 180` ✓.
+At 180 / 150 / 60 / 70: `150 > 120` ✓, `90 > 70` ✓, `150 <= 180` ✓, `180 > 150` ✓,
+`35 > 28.2` ✓, `70 < 180` ✓, `5 > 4.1` ✓.
 
 🔴 **`rebuild_budget` IS THE LOCK-HELD INTERVAL, NOT THE WARMING (CERT-2095).** It is
-`setup + waves × unit_worst_case`, where `unit_worst_case` is the wall PLUS the
-rollback that runs after the wall fires. Five presentations priced it as the
-warming alone, so every clause above was certifying an interval shorter than the
-one the lock actually covers. Teardown is no longer in it because teardown is no
-longer under the lock.
+`control + setup + waves × unit_worst_case`, where `unit_worst_case` is the wall
+PLUS the rollback that runs after the wall fires. Five presentations priced it as
+the warming alone, so every clause above was certifying an interval shorter than
+the one the lock actually covers. Teardown is no longer in it because teardown is
+no longer under the lock.
+
+🔴 **AND THE INTERVAL STARTS AT THE `SET NX`, NOT AT ITS RETURN (CERT-2107).** The
+sixth presentation added `control`. Four Redis round-trips bracket every pass —
+acquire, last-pass read, pass-start write, release — the exclusion covers all four
+by definition, and all four were unwalled synchronous calls on the durability-tuned
+background client, outside the budget and outside the reported wall. A grader
+delayed two of them by 80 ms and the pass held the lock at 5.7x its declared budget
+while reporting `seconds_wall=0.0` and a `complete` terminal. `control` is the
+priced term; clause (7) is what makes the term true; and `seconds_wall` is now
+stamped before the acquire and after the release so the number the budget bounds is
+the number the warmer publishes.
 
 **READ (5) FIRST, BECAUSE IT IS WHAT MAKES (1)-(4) MEAN ANYTHING.** All four of the
 earlier clauses are arithmetic over `rebuild_budget`, and a budget is a fact only
@@ -387,6 +402,54 @@ ROLLBACK_BOUND_SECONDS = 5.0
 #: a wall that must not fire on a healthy pass.
 PASS_SETUP_BOUND_SECONDS = 10.0
 
+#: 🔴 THE LOCK-CONTROL OPERATIONS — CERT-2107, AND THE SIXTH INSTANCE OF ONE SHAPE.
+#:
+#: Five grades running found a bound taken from something that is not the thing
+#: that binds; this one found the *interval* taken from something that is not the
+#: thing that binds. `full_rebuild_budget_s()` calls itself "the longest a pass may
+#: hold the RUN LOCK", and clauses (2), (4) and (6) consume it as the whole
+#: exclusion. But four Redis round-trips bracket every pass and NONE of them was
+#: in it:
+#:
+#:     acquire   SET  _LOCK_KEY NX EX          <- the lock exists from HERE
+#:     read      GET  _LAST_PASS_START_KEY
+#:     write     SETEX _LAST_PASS_START_KEY
+#:     release   DEL  _LOCK_KEY                <- the lock exists until HERE
+#:
+#: All four ran on the BACKGROUND client (`get_redis_client()` at its durability
+#: defaults: 4 attempts x 5 s each way plus backoff, ~20 s worst case per op), all
+#: four were synchronous calls issued from inside the event loop, and none had a
+#: wall. The grader delayed only the middle two by 80 ms each and measured the lock
+#: held **0.172 s against a 0.03 s declared budget** while the pass returned
+#: `complete` and reported `seconds_wall=0.0`.
+#:
+#: So the same three-part treatment `_cache_ttl_seconds` already gets (CERT-2089):
+#: a fast-fail client, off the loop in a thread, under an ENFORCED wall — and then
+#: the worst case is a TERM IN THE BUDGET rather than a hope.
+#:
+#: The socket timeout is `TTL_READ_SOCKET_TIMEOUT_SECONDS`' 1.0 s and the wall is
+#: `TTL_READ_BOUND_SECONDS`' 5.0 s **because the shape is identical** — one
+#: round-trip on a fast-fail client — and not because 5.0 produces a width anyone
+#: wanted. `minimum_concurrency_for_residency()` returns 8 at this term and at zero;
+#: the term costs 20 s of budget and 20 s of threshold and moves no width. Picking
+#: the bound that produces the width you already have is the substitution this
+#: chain has been blocked for, so the check runs the other way: the number is
+#: inherited from the identical case and the solver is re-run to see what it does.
+LOCK_CONTROL_SOCKET_TIMEOUT_SECONDS = 1.0
+
+#: The ENFORCED wall on ONE lock-control operation, above the 4.1 s
+#: `lock_control_cooperative_bound_s()` says the fast-fail retry can spend.
+LOCK_CONTROL_BOUND_SECONDS = 5.0
+
+#: How many walled control operations one pass may pay for. FOUR, and the count is
+#: the acquire as well as the release: the lock exists from the instant the server
+#: executes the `SET NX`, which is inside `_acquire_run_lock()`, not after it. A
+#: budget that starts counting at the call's RETURN excludes the round-trip during
+#: which the exclusion is already in force. The `min_period` path pays only three
+#: (no pass-start write), so four is the worst case and the worst case is what a
+#: budget prices.
+LOCK_CONTROL_OPS_PER_PASS = 4
+
 #: Rebuild an entry with less than this much life left. **DERIVED, not chosen**
 #: — `derive_refresh_ahead_s()` below, asserted by `residency_invariant()`.
 #:
@@ -405,6 +468,18 @@ PASS_SETUP_BOUND_SECONDS = 10.0
 #: (2) is what tells the two apart, and the mutation set drives 150 in from both
 #: derivations to prove the test can see the difference.
 #:
+#: ⚠️⚠️ **AND THE PARAGRAPH ABOVE WAS STALE FOR TWO COMMITS, WHICH IS WORTH MORE
+#: THAN THE PARAGRAPH.** It was written against budget 70 / threshold 150. The
+#: CERT-2095 repair moved the budget to 50 and this constant to 130 and left the
+#: prose describing 70/150 — so a reader checking the arithmetic in the comment
+#: against the constant underneath it found two different thresholds and no note
+#: saying which was live. CERT-2107's control term now puts the budget back at 70
+#: and the threshold back at 150, which makes the stale text accidentally true;
+#: it is kept, dated and flagged rather than quietly re-adopted, because "the
+#: comment happens to agree again" is not the same fact as "the comment was
+#: checked". `test_the_shipped_threshold_is_the_derived_one` is what actually
+#: holds these two in agreement, and it is a test precisely because prose drifts.
+#:
 #: The threshold is NOT "a bit less than the TTL". It is
 #: `effective_pass_period_s() + full_rebuild_budget_s() + margin`, because the
 #: number that has to clear the rebuild budget is the life an entry has when its
@@ -414,7 +489,7 @@ PASS_SETUP_BOUND_SECONDS = 10.0
 #: and come back one period later with `REFRESH_AHEAD - P` left. At 150 that was
 #: 90 s against a permitted 100 s rebuild: a 10 s hole, which is what CERT-2084
 #: measured. #3539 wrote `REFRESH_AHEAD - P_effective > D_max` from the start.
-REFRESH_AHEAD_SECONDS = 130
+REFRESH_AHEAD_SECONDS = 150
 
 #: The floor between two real passes, checked UNDER the run lock so two beats
 #: cannot both pass it. This is the load bound: the beat may fire more often,
@@ -666,6 +741,53 @@ def ttl_read_cooperative_bound_s(
     return float(attempts * 2 * socket_s + (attempts - 1) * backoff_cap_s)
 
 
+def lock_control_cooperative_bound_s(
+    *,
+    socket_s: float = LOCK_CONTROL_SOCKET_TIMEOUT_SECONDS,
+    attempts: int = TTL_READ_ATTEMPTS,
+    backoff_cap_s: float = TTL_READ_BACKOFF_CAP_SECONDS,
+) -> float:
+    """The longest ONE lock-control op can cooperatively spend before its wall fires.
+
+    Same arithmetic and same policy as `ttl_read_cooperative_bound_s()` — both
+    describe one round-trip on a `fast_fail=True` client — so it reads the SAME
+    mirrored `_redis_fast_fail_retry()` constants rather than growing a second
+    mirror of one policy. `test_the_ttl_read_retry_mirror_has_not_drifted` is
+    therefore the drift test for this function too, and it now says so.
+
+    At 2 x (1.0 + 1.0) + 0.1 that is **4.1 s**, which is what
+    `LOCK_CONTROL_BOUND_SECONDS` has to sit above — clause (7).
+    """
+    return ttl_read_cooperative_bound_s(
+        socket_s=socket_s, attempts=attempts, backoff_cap_s=backoff_cap_s
+    )
+
+
+def lock_control_budget_s(
+    *,
+    bound_s: float = LOCK_CONTROL_BOUND_SECONDS,
+    ops: int = LOCK_CONTROL_OPS_PER_PASS,
+) -> float:
+    """What the four lock-control round-trips cost the exclusion. **`ops * wall`.**
+
+    🔴 CERT-2107. This is the term `full_rebuild_budget_s()` was missing, and the
+    reason it is a SUM OF ENFORCED WALLS and not a measurement is the same reason
+    every other term here is: the budget is what the code PERMITS. Each op is
+    walled at `LOCK_CONTROL_BOUND_SECONDS` by `_lock_control()`, so four of them
+    can permit 20 s and a pass that spends it is inside its budget rather than
+    silently outside one.
+
+    The wall FIRING does not shorten this: a fired wall abandons the *wait*, not
+    the thread, so the op is still out there — but the lock-held interval ends at
+    the wall either way, which is exactly the property the budget needs. The two
+    fail-open paths (`_acquire_run_lock` runs anyway, `_seconds_since_last_pass`
+    returns `None`) are chosen so that abandoning the wait is safe.
+    """
+    if bound_s <= 0 or ops < 0:
+        raise ValueError("the control wall must be positive and the op count non-negative")
+    return float(ops * bound_s)
+
+
 def worker_unit_bound_s(
     *,
     ttl_read_s: float = TTL_READ_BOUND_SECONDS,
@@ -739,13 +861,30 @@ def full_rebuild_budget_s(
     concurrency: int = WARM_CONCURRENCY,
     per_query_s: float | None = None,
     setup_s: float = PASS_SETUP_BOUND_SECONDS,
+    control_s: float | None = None,
 ) -> float:
-    """The longest a pass may hold the RUN LOCK: setup, head resolution, warming.
+    """The longest a pass may hold the RUN LOCK: **acquire, setup, warming, release**.
 
-        setup + ceil(head_size / concurrency) * worker_unit_worst_case_s()
+        control + setup + ceil(head_size / concurrency) * worker_unit_worst_case_s()
 
-    At 8 terms, concurrency 8, a 40 s worst-case unit and a 10 s setup wall that
-    is **50 s**.
+    At 8 terms, concurrency 8, a 40 s worst-case unit, a 10 s setup wall and 20 s
+    of walled lock-control round-trips that is **70 s**.
+
+    🔴 CERT-2107 ADDED `control`, AND IT IS THE SAME DEFECT AS CERT-2095 ONE
+    BOUNDARY OUTWARD — which is why the fix is a boundary and not another term.
+    CERT-2095 found setup and head resolution inside the exclusion and outside the
+    budget. This function then still began counting at the acquire's RETURN and
+    stopped at the last write, while the lock is actually held from the instant the
+    `SET NX` executes until the `DEL` lands: four Redis round-trips, unwalled, on
+    the durability-tuned background client. The grader delayed two of them by 80 ms
+    and held the lock at 5.7x the declared budget while the pass said `complete`.
+
+    So the interval this function names is now the interval `_warm_search_head`
+    MEASURES — `lock_started` is stamped before `_acquire_run_lock()` and
+    `seconds_wall` is stamped inside `_release_once()` after the `DEL` returns.
+    The budget and the telemetry are the same interval or the budget is a claim
+    about something nobody watches; `test_the_reported_wall_is_the_whole_lock_held_interval`
+    is what keeps the two ends nailed together.
 
     🔴 CERT-2095 CHANGED THIS FUNCTION'S BODY TO MATCH ITS OWN FIRST SENTENCE, and
     that is the shortest true statement of the defect. The docstring has always
@@ -780,18 +919,21 @@ def full_rebuild_budget_s(
     DERIVED FROM THE DECLARED BUDGET, NEVER FROM A SAMPLE. Production walls
     measure 3.3-26.1 s (p50 ~11 s), and sizing this at `measured_max * k` is the
     error this program has already made twice — the next sample refutes it. The
-    budget is what the code PERMITS, and the code permits 50 s.
+    budget is what the code PERMITS, and the code permits 70 s.
 
     `per_query_s` keeps its name for its callers but now means "one whole worker
     unit, worst case"; passing one is how the regressions drive the blocked bounds
-    back in.
+    back in. `control_s` and `setup_s` are the same lever for the two flat terms —
+    `full_rebuild_budget_s(control_s=0)` is how a test proves the term is really in
+    the sum rather than only in this docstring.
     """
     bound = worker_unit_worst_case_s() if per_query_s is None else float(per_query_s)
+    control = lock_control_budget_s() if control_s is None else float(control_s)
     if head_size <= 0 or concurrency <= 0 or bound <= 0:
         raise ValueError("head size, concurrency and unit bound must be positive")
-    if setup_s < 0:
-        raise ValueError("the setup wall may not be negative")
-    return float(setup_s + math.ceil(head_size / concurrency) * bound)
+    if setup_s < 0 or control < 0:
+        raise ValueError("the setup and control walls may not be negative")
+    return float(control + setup_s + math.ceil(head_size / concurrency) * bound)
 
 
 def minimum_concurrency_for_residency(
@@ -806,21 +948,35 @@ def minimum_concurrency_for_residency(
     prose had priced the pass wrong, so the argument is executable now and the
     answer moves with the walls instead of being re-argued each time.
 
-    **The honest walls give 8.** Run the search at the shipped constants and
-    widths 2 and 4 both fail on the write interval; 8 passes with 70 s of room:
+    **The honest walls give 8.** Run the search at the shipped constants — every
+    width below 8 fails, and 8 passes with 30 s of room on the write interval:
 
-        conc 2   warming 160   lock-held 170   interval 350   no
-        conc 4   warming  80   lock-held  90   interval 190   no      <- 10 s over
-        conc 8   warming  40   lock-held  50   interval 110   FITS
+        conc 2   warming 160   lock-held 190   refresh 270   interval 390   no
+        conc 4   warming  80   lock-held 110   refresh 190   interval 230   no
+        conc 8   warming  40   lock-held  70   refresh 150   interval 150   FITS
 
-    ⚠️ **THE 10 s IS THE INTERESTING NUMBER AND IT IS WHY THIS IS A FUNCTION.**
-    Width 4 misses by so little that every constant in the unit is within shaving
-    distance of rescuing it — `ROLLBACK_BOUND_SECONDS` 5 -> 2.5 and
-    `PASS_SETUP_BOUND_SECONDS` 10 -> 5 make width 4 fit exactly, at 80.0 against
-    a ceiling of 80. That is the substitution this chain has been blocked for five
-    times running: picking the bound that produces the width you already wanted.
-    The walls are derived where they are for reasons written at each constant, the
-    solver reads them, and the width is whatever falls out.
+    ⚠️ **WIDTH 4 STILL MISSES BY 10 s, AND IT IS NOW A DIFFERENT CLAUSE'S 10 s.**
+    Before CERT-2107's control term it failed clause (4): a 190 s write interval
+    against a 180 s TTL. With the control term its budget is 110, so its derived
+    threshold is 190 and it fails clause (3) first — a threshold above the TTL, at
+    which no entry is ever `fresh`. Same width, same 10 s, different reason, and
+    the reason moved because a term was added rather than because a bound was
+    tuned. That is the distinction worth keeping: the solver re-derives per
+    candidate width, so a new term relocates the failure instead of hiding it.
+
+    Width 4 missing by so little is exactly why this is a function and not a
+    number. The shave that used to seat it no longer does, and it is worth showing
+    what it does instead: `ROLLBACK_BOUND_SECONDS` 5 -> 2.5 and
+    `PASS_SETUP_BOUND_SECONDS` 10 -> 5 bring width 4's budget to 100 and its
+    threshold to exactly 180, which clears clause (3) by equality and is then
+    refused by clause (4) at a 200 s write interval. The failure walks from clause
+    to clause under shaving rather than disappearing, which is the property that
+    makes the solver worth running. That is the substitution
+    this chain has been blocked for six times running: picking the bound that
+    produces the width you already wanted. The walls are derived where they are for
+    reasons written at each constant, the solver reads them, and the width is
+    whatever falls out — including when a new term leaves it exactly where it was,
+    which is what the control term did.
 
     Returns `None` rather than raising when nothing works: "no width satisfies
     this" is a real answer about the constants and a caller must be able to hold
@@ -923,12 +1079,20 @@ def residency_invariant(
         (4) INTERVAL   ttl > pass_gap + budget                  (CERT-2086)
         (5) WALL       unit > every cooperative bound inside it (CERT-2089)
         (6) LOCKED     budget < lock ttl
+        (7) CONTROLLED control wall > its own cooperative bound  (CERT-2107)
 
-    THE ONE-LINE READING, because four presentations of this have now been
+    THE ONE-LINE READING, because SIX presentations of this have now been
     blocked and each time the sentence that would have caught it was missing:
     **every clause above prices a rebuild at `budget`, and `budget` is only a
-    fact if the unit it multiplies is enforced and enforced from above.** (1)-(4)
-    are arithmetic over `budget`; (5) and (6) are what make `budget` true.
+    fact if every interval it sums is enforced and enforced from above.** (1)-(4)
+    are arithmetic over `budget`; (5), (6) and (7) are what make `budget` true.
+
+    (7) is (5) applied to the term (5) did not know about. Clause (5) makes the
+    WARMING term true by requiring an enforced wall above the cooperative bounds
+    inside a worker unit; CERT-2107 found the same argument owed for the CONTROL
+    term, whose four Redis round-trips had no wall at all and ran on a client
+    tuned for durability rather than latency. A term in a budget with no enforced
+    wall under it is a guess with a unit attached.
 
     Clauses (1)-(4) each carry the cert that added them, in the comment at the
     check. What is worth saying here is only what they have in common: each was
@@ -1034,13 +1198,37 @@ def residency_invariant(
             f"Needs budget < {_LOCK_TTL_SECONDS:g}s."
         )
 
+    # (7) CONTROLLED. 🔴 CERT-2107, and it is clause (5)'s argument owed for the
+    # OTHER term in the budget. The four Redis round-trips that bracket a pass —
+    # the acquire SET, the last-pass GET, the pass-start SETEX and the release DEL
+    # — are inside the exclusion by definition: the lock exists from the first and
+    # until the last. They were unwalled synchronous calls on the background
+    # client, so `control` would have been a number with nothing enforcing it, and
+    # clauses (2), (4) and (6) would have consumed a budget short by whatever
+    # Redis felt like taking. Same strictness and same direction as (5): the wall
+    # must sit ABOVE the retry policy underneath it, or it converts a slow success
+    # into a lost control op rather than bounding anything.
+    control_wall = LOCK_CONTROL_BOUND_SECONDS
+    control_cooperative = lock_control_cooperative_bound_s()
+    if control_wall <= control_cooperative:
+        return False, (
+            f"THE CONTROL WALL IS NOT ABOVE WHAT IT WALLS: one lock-control op is "
+            f"walled at {control_wall:g}s, but the fast-fail retry policy underneath it "
+            f"can cooperatively spend {control_cooperative:g}s. A wall at or below that "
+            f"abandons control ops that were about to answer — and the budget's "
+            f"{lock_control_budget_s():g}s control term is only true because the wall is. "
+            f"Needs the control wall > {control_cooperative:g}s."
+        )
+
     return True, (
         f"resident: caught by {refresh_ahead_s:g}s (warmer phase leaves {warmer_phase:g}s), "
         f"and the worst phase starts its rebuild with {least_life_at_rebuild:g}s against a "
         f"{budget:g}s budget — {least_life_at_rebuild - budget:g}s of margin; and the worst "
         f"same-query write interval is {interval:g}s inside a {ttl_s:g}s life; the "
         f"{unit:g}s worker-unit wall is enforced and sits above the {cooperative:g}s of "
-        f"cooperative bounds inside it; the pass fits in its {_LOCK_TTL_SECONDS:g}s lock"
+        f"cooperative bounds inside it; the pass fits in its {_LOCK_TTL_SECONDS:g}s lock; "
+        f"and each of the {LOCK_CONTROL_OPS_PER_PASS} lock-control round-trips is walled at "
+        f"{control_wall:g}s above its {control_cooperative:g}s cooperative bound"
     )
 
 
@@ -1428,47 +1616,117 @@ async def _safe_rollback(session) -> None:
         logger.warning("search_head_warmer: rollback failed", exc_info=True)
 
 
-def _acquire_run_lock() -> bool:
+def _lock_control_client():
+    """The client the four lock-control round-trips use. **Not the background one.**
+
+    🔴 CERT-2107. These calls used a bare `get_redis_client()` — the durability
+    build: 4 attempts, 5 s connect and 5 s read each, ~20 s worst case for one
+    `GET`. That is the right client for a task that must not lose a write and the
+    wrong one for an operation whose cost is spent out of the residency budget,
+    which is the exact distinction `_ttl_blocking` already draws one function up.
+
+    Losing a control op is cheap and every caller is built so that it is: the
+    acquire fails OPEN, the last-pass read returns `None` ("unknown", which is not
+    `0.0`), the pass-start write is best-effort, and a lost release is collected by
+    `_LOCK_KEY`'s own TTL. Holding the exclusion open is not cheap. So: fast-fail.
+    """
+    from app.tasks.redis_state import get_redis_client
+
+    return get_redis_client(
+        socket_timeout=LOCK_CONTROL_SOCKET_TIMEOUT_SECONDS,
+        socket_connect_timeout=LOCK_CONTROL_SOCKET_TIMEOUT_SECONDS,
+        fast_fail=True,
+    )
+
+
+async def _lock_control(op: str, fn, *, on_lost):
+    """Run one blocking lock-control op off the loop, under the enforced wall.
+
+    The same three-part shape as `_cache_ttl_seconds`, and for the same three
+    reasons (CERT-2089's list, which applies verbatim here): a sync Redis call
+    issued from inside the event loop cannot be bounded by any `wait_for` in the
+    process, because a coroutine that never suspends cannot be cancelled. The
+    thread is what makes the wall real; a socket read releases the GIL for its
+    whole duration, so gotcha #38's warning about `asyncio.to_thread` does not bite
+    (that is about C-level parses, which never yield).
+
+    `on_lost` is returned for BOTH the wall and any exception, because the callers
+    cannot tell the two apart and must not care: each has one safe answer for "the
+    control key did not answer in time", and the wall is only tolerable because
+    that answer exists. On the wall firing the thread is left running — it is
+    itself bounded by `lock_control_cooperative_bound_s()` and touches nothing but
+    a local client, so an orphan costs one socket and no correctness.
+    """
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(fn), timeout=LOCK_CONTROL_BOUND_SECONDS
+        )
+    except asyncio.TimeoutError:
+        # Its own line, and it says something different from a failure: the
+        # ENFORCED wall fired, which means the cooperative bound above it did not,
+        # which is a claim about Redis rather than about this warmer.
+        logger.warning(
+            "search_head_warmer: lock-control %s hit the %ss wall",
+            op,
+            LOCK_CONTROL_BOUND_SECONDS,
+        )
+        return on_lost
+    except Exception:  # noqa: BLE001 — a warmer never takes the app down
+        logger.warning("search_head_warmer: lock-control %s failed", op, exc_info=True)
+        return on_lost
+
+
+def _acquire_blocking() -> bool:
+    return bool(
+        _lock_control_client().set(_LOCK_KEY, "1", nx=True, ex=_LOCK_TTL_SECONDS)
+    )
+
+
+async def _acquire_run_lock() -> bool:
     """True if THIS run owns the lock. Fails OPEN if Redis is unreachable.
 
     The lock stops duplicate work; it does not enforce correctness. A doubled
     warm is wasteful, a warmer that silently stops warming because Redis blinked
     is the defect this whole family of modules is about.
+
+    ⚠️ THE LOCK-HELD CLOCK STARTS BEFORE THIS CALL, NOT AFTER IT (CERT-2107). The
+    exclusion begins the instant the server executes the `SET NX`, which is inside
+    this round-trip; a caller that stamps its start time on the RETURN has already
+    excluded everyone else for a round-trip it does not count. `_warm_search_head`
+    stamps `lock_started` on the line above the call for that reason, and
+    `LOCK_CONTROL_OPS_PER_PASS` counts this op as one of the four it prices.
     """
-    try:
-        from app.tasks.redis_state import get_redis_client
-
-        got = get_redis_client().set(_LOCK_KEY, "1", nx=True, ex=_LOCK_TTL_SECONDS)
-        return bool(got)
-    except Exception:  # noqa: BLE001
-        logger.warning(
-            "search_head_warmer: lock unavailable, running anyway", exc_info=True
-        )
-        return True
+    return bool(await _lock_control("acquire", _acquire_blocking, on_lost=True))
 
 
-def _release_run_lock() -> None:
-    try:
-        from app.tasks.redis_state import get_redis_client
-
-        get_redis_client().delete(_LOCK_KEY)
-    except Exception:  # noqa: BLE001
-        logger.warning("search_head_warmer: lock release failed", exc_info=True)
+def _release_blocking() -> None:
+    _lock_control_client().delete(_LOCK_KEY)
 
 
-def _seconds_since_last_pass(now: float) -> float | None:
+async def _release_run_lock() -> None:
+    """Drop the exclusion. The lock is held until this DELETE lands, so it is priced.
+
+    A lost release is the one control failure with a fallback that is not a
+    fallback in this function: `_LOCK_KEY` carries `_LOCK_TTL_SECONDS`, so the
+    worst case of never releasing is one skipped pass and not a dead warmer.
+    Clause (6) is what keeps that true — it refuses any budget that does not fit
+    inside the lock's own TTL.
+    """
+    await _lock_control("release", _release_blocking, on_lost=None)
+
+
+def _last_pass_blocking() -> str | bytes | None:
+    return _lock_control_client().get(_LAST_PASS_START_KEY)
+
+
+async def _seconds_since_last_pass(now: float) -> float | None:
     """Gap since the last pass STARTED. None when unknown — never 0.0.
 
     Zero would read as two passes starting at the same instant, which is a
-    finding; "we do not know" is a different one (first pass after a restart, or
-    Redis unreadable).
+    finding; "we do not know" is a different one (first pass after a restart,
+    Redis unreadable, or the read hitting its wall).
     """
-    try:
-        from app.tasks.redis_state import get_redis_client
-
-        raw = get_redis_client().get(_LAST_PASS_START_KEY)
-    except Exception:  # noqa: BLE001
-        return None
+    raw = await _lock_control("last_pass_read", _last_pass_blocking, on_lost=None)
     if not raw:
         return None
     try:
@@ -1477,15 +1735,13 @@ def _seconds_since_last_pass(now: float) -> float | None:
         return None
 
 
-def _record_pass_start(now: float) -> None:
-    try:
-        from app.tasks.redis_state import get_redis_client
-
-        get_redis_client().setex(
+async def _record_pass_start(now: float) -> None:
+    def _blocking() -> None:
+        _lock_control_client().setex(
             _LAST_PASS_START_KEY, _LAST_PASS_START_TTL_SECONDS, str(now)
         )
-    except Exception:  # noqa: BLE001
-        logger.warning("search_head_warmer: pass-start write failed", exc_info=True)
+
+    await _lock_control("pass_start_write", _blocking, on_lost=None)
 
 
 #: The head query. Every clause in it is a finding from LAT-P102's census; see
@@ -1607,6 +1863,7 @@ def _summarize(
     seconds_wall: float,
     since_last: float | None,
     width: int,
+    budget_s: float,
     skip_reason: str | None = None,
 ) -> dict:
     """The contract summary. Speaks `task_verdict`'s vocabulary.
@@ -1616,6 +1873,27 @@ def _summarize(
     while it is cold — "it returned" is not "it worked". An empty head means the
     query log had nothing to say, which is a real finding and a broken guarantee,
     not a successful pass over zero items.
+
+    🔴 AND A PASS THAT OUTRAN ITS LOCK-HELD BUDGET IS `partial` TOO (CERT-2107).
+    That is the second load-bearing line and it is newer, so it is worth saying why
+    it is not merely more telemetry. Six presentations of this module have argued
+    about what `full_rebuild_budget_s()` should contain, and on every one of them
+    the budget was a number in a docstring that no pass ever checked itself
+    against. The grader's probe held the lock at 5.7x the declared budget and the
+    pass reported `complete`, which is true of the warming and false of the
+    guarantee: clauses (2), (4) and (6) all certify residency ON THE ASSUMPTION
+    that the exclusion is no longer than `budget_s`, so a pass that exceeds it has
+    invalidated the arithmetic its own summary is published under.
+
+    So the budget becomes a POSTCONDITION rather than a claim. `over_budget` names
+    it — a bare `partial` with no reason is exactly the shape gotcha #53 is about,
+    and this cause is one a reader would otherwise hunt for in the wrong subsystem
+    (no query timed out, nothing errored, every write landed).
+
+    Making it a postcondition is also what closes the loop the repair opened: the
+    honest `seconds_wall` and the priced `budget_s` measure the same interval, so
+    the comparison between them is meaningful — and if a future term goes missing
+    again, the pass that pays for it says so instead of a grader having to.
     """
     warmed = [r for r in results if r["ok"]]
     # #3526 / CERT-2089: BOTH walls count here. `timeout` is the route call
@@ -1643,6 +1921,10 @@ def _summarize(
     # when the pass reached it".
     expired = [r for r in results if r.get("ttl_before") == _TTL_NO_KEY]
     seconds = [r["seconds"] for r in results]
+    # 🔴 CERT-2107. Strictly greater: a pass that lands exactly on its budget spent
+    # what the code permits, and refusing equality would make the budget a bound the
+    # module itself cannot satisfy.
+    over_budget = seconds_wall > budget_s
 
     return {
         "terminal": (
@@ -1651,6 +1933,7 @@ def _summarize(
             else (
                 "complete"
                 if head and not timeouts and not errors and not no_writes
+                and not over_budget
                 else "partial"
             )
         ),
@@ -1682,10 +1965,19 @@ def _summarize(
         "expired": len(expired),
         "seconds_total": round(sum(seconds), 3),
         "seconds_max": round(max(seconds), 3) if seconds else 0.0,
-        # The number the TTL has to be compared against — the pass DURATION, not
-        # the sum of per-query times, which stopped being the same thing the
-        # moment concurrency arrived.
+        # 🔴 THE LOCK-HELD INTERVAL, and CERT-2107 is why the name of the quantity
+        # is written here rather than left to the call site. This is the number
+        # `full_rebuild_budget_s()` is the ceiling for, so it has to measure THE
+        # SAME interval that function prices: from before the acquire round-trip to
+        # after the release round-trip, teardown excluded. It is not the pass
+        # duration and it is not the sum of per-query times — concurrency killed
+        # the second equivalence and CERT-2095's teardown move killed the first.
         "seconds_wall": round(seconds_wall, 3),
+        # The ceiling `seconds_wall` is judged against, published beside it so the
+        # comparison is auditable from one summary rather than from this file. Both
+        # name the same interval: acquire round-trip to release round-trip.
+        "budget_s": round(budget_s, 3),
+        "over_budget": over_budget,
         "concurrency": width,
         "refresh_ahead_s": REFRESH_AHEAD_SECONDS,
         "ttl_s": SEARCH_RESPONSE_TTL_SECONDS,
@@ -1698,6 +1990,7 @@ async def _warm_search_head(
     queries: list[str] | None = None,
     head_size: int = DEFAULT_HEAD_SIZE,
     concurrency: int = WARM_CONCURRENCY,
+    budget_s: float | None = None,
 ) -> dict:
     """Warm the head of the `/search` distribution. Returns a contract summary.
 
@@ -1706,19 +1999,38 @@ async def _warm_search_head(
     absent field and a zero field must not read the same (gotcha #53), and the
     sibling warmer's suite caught exactly this the first time a field was added
     to only one shape.
+
+    `budget_s` is the declared lock-held ceiling this pass judges itself against,
+    and it defaults to the one `full_rebuild_budget_s()` derives for these
+    arguments. It is a parameter for the same reason `full_rebuild_budget_s`'s own
+    terms are: it is how a scaled regression drives the over-budget case without
+    sleeping for a real minute (CERT-2107).
     """
     from app.tasks.base import get_task_session
 
     width = max(1, int(concurrency))
+    budget = (
+        full_rebuild_budget_s(head_size=max(1, int(head_size)), concurrency=width)
+        if budget_s is None
+        else float(budget_s)
+    )
 
-    def _no_work(reason: str, period_s: float | None) -> dict:
+    # 🔴 REQUIRED, NOT DEFAULTED (CERT-2107). Two of the four early exits held the
+    # exclusion and two did not, and a default would have been silently right for
+    # the two and silently wrong for the two — which is exactly what shipped:
+    # `seconds_wall=0.0` was hardcoded here, so a `min_period` or `setup_timeout`
+    # pass reported nothing for an interval it really did hold. An absent field and
+    # a zero field must not read the same (gotcha #53), and neither must a
+    # never-held lock and an unmeasured one. Every caller now says which it was.
+    def _no_work(reason: str, period_s: float | None, wall_s: float) -> dict:
         return _summarize(
             head=[],
             results=[],
             source="none",
-            seconds_wall=0.0,
+            seconds_wall=wall_s,
             since_last=period_s,
             width=width,
+            budget_s=budget,
             skip_reason=reason,
         )
 
@@ -1726,28 +2038,25 @@ async def _warm_search_head(
         # A deliberate operator state, reported as its own skip reason. "Turned
         # off on purpose" and "wedged" must never produce the same summary.
         logger.info("search_head_warmer: disabled by %s", SEARCH_HEAD_WARM_ENV)
-        return _no_work("disabled", None)
+        return _no_work("disabled", None, wall_s=0.0)
 
-    if not _acquire_run_lock():
+    # 🔴 BEFORE THE ACQUIRE, AND THAT IS THE WHOLE OF CERT-2107 IN ONE LINE. The
+    # exclusion starts when the server executes the `SET NX`, which happens inside
+    # the call on the next line. Stamping after it hides a round-trip that the
+    # budget is being asked to certify.
+    lock_started = time.monotonic()
+    if not await _acquire_run_lock():
+        # We never got it, so there is no lock-held interval to report. This is the
+        # one post-`lock_started` path where 0.0 is the honest answer.
         logger.info("search_head_warmer: another run holds the lock, skipping")
-        return _no_work("lock", None)
+        return _no_work("lock", None, wall_s=0.0)
 
-    # THE FLOOR, checked under the lock so two beats cannot both pass it. A
-    # check-then-act outside the lock would race exactly the way the lock exists
-    # to prevent.
-    now = time.time()
-    since_last = _seconds_since_last_pass(now)
-    if since_last is not None and since_last < MIN_PASS_PERIOD_SECONDS:
-        _release_run_lock()
-        logger.info(
-            "search_head_warmer: last pass started %.1fs ago (floor %ds), skipping",
-            since_last,
-            MIN_PASS_PERIOD_SECONDS,
-        )
-        return _no_work("min_period", since_last)
-
-    _record_pass_start(now)
-    wall_started = time.monotonic()
+    # Set once, by `_release_once` and nothing else, at the moment the release
+    # round-trip returns. Every path below reaches a release before it builds a
+    # summary, so by the time this is read it is a float; there is deliberately no
+    # `or 0.0` fallback, because a `None` here would mean the lock was never
+    # released and reporting that as a zero-second pass is the defect being fixed.
+    lock_wall_s: float | None = None
     head, source, results = [], "none", []
     # 🔴 CERT-2095. THE LOCK IS RELEASED AFTER THE LAST WRITE, NOT AFTER TEARDOWN,
     # and this flag is what makes that safe to do twice.
@@ -1766,11 +2075,36 @@ async def _warm_search_head(
     # underneath it. Hence the flag rather than relying on idempotence.
     lock_held = True
 
-    def _release_once() -> None:
-        nonlocal lock_held
+    async def _release_once() -> None:
+        # 🔴 AND IT IS ALSO THE STOPWATCH (CERT-2107). The lock-held interval ends
+        # when the DELETE lands, so the only correct place to stamp it is here,
+        # after the release round-trip returns and inside the same guard that makes
+        # the release happen exactly once. Stamping at the summary instead would
+        # fold teardown back into a number CERT-2095 deliberately took it out of.
+        nonlocal lock_held, lock_wall_s
         if lock_held:
             lock_held = False
-            _release_run_lock()
+            await _release_run_lock()
+            lock_wall_s = time.monotonic() - lock_started
+
+    # THE FLOOR, checked under the lock so two beats cannot both pass it. A
+    # check-then-act outside the lock would race exactly the way the lock exists
+    # to prevent.
+    now = time.time()
+    since_last = await _seconds_since_last_pass(now)
+    if since_last is not None and since_last < MIN_PASS_PERIOD_SECONDS:
+        await _release_once()
+        logger.info(
+            "search_head_warmer: last pass started %.1fs ago (floor %ds), skipping",
+            since_last,
+            MIN_PASS_PERIOD_SECONDS,
+        )
+        # Three control round-trips happened on this path (acquire, read, release)
+        # and the exclusion covered all three. It is the cheapest real pass in the
+        # module and it used to report 0.0 seconds for it.
+        return _no_work("min_period", since_last, wall_s=lock_wall_s)
+
+    await _record_pass_start(now)
 
     try:
         async with AsyncExitStack() as stack:
@@ -1805,28 +2139,35 @@ async def _warm_search_head(
                         "search_head_warmer: setup/head resolution hit the %ss wall",
                         PASS_SETUP_BOUND_SECONDS,
                     )
-                    # No explicit release here: returning runs the `finally` below,
-                    # which releases before the stack unwinds. An extra call was
-                    # here and a mutant proved it dead — removed rather than left
-                    # in with a test written to justify it.
-                    return _no_work("setup_timeout", since_last)
+                    # 🔴 EXPLICIT, AND NO LONGER THE DEAD CALL A MUTANT ONCE PROVED
+                    # IT WAS. It was removed under CERT-2095 because `_release_once`
+                    # is idempotent and the `finally` below would have done it — but
+                    # the `finally` runs AFTER this return expression is evaluated,
+                    # so leaving it there means the summary is built while
+                    # `lock_wall_s` is still `None`. The release has to precede the
+                    # summary, not merely precede the exit. Killed again from the
+                    # other side: delete this line and the setup-timeout arm of
+                    # `test_the_reported_wall_is_the_whole_lock_held_interval` fails.
+                    await _release_once()
+                    return _no_work("setup_timeout", since_last, wall_s=lock_wall_s)
 
                 head = [q for q in head if _MIN_QUERY_CHARS <= len(q) <= _MAX_QUERY_CHARS]
                 results = await _warm_head_concurrently(sessions[:width], head)
             finally:
                 # The last write has landed (or failed). Everything after this is
                 # teardown and belongs outside the exclusion.
-                _release_once()
+                await _release_once()
     finally:
-        _release_once()
+        await _release_once()
 
     summary = _summarize(
         head=head,
         results=results,
         source=source,
-        seconds_wall=time.monotonic() - wall_started,
+        seconds_wall=lock_wall_s,
         since_last=since_last,
         width=width,
+        budget_s=budget,
     )
     logger.info(
         "search_head_warmer: %d/%d warmed from %s (%d rebuilt, %d fresh, %d expired) "
@@ -1843,4 +2184,16 @@ async def _warm_search_head(
         len(summary["timeouts"]),
         len(summary["errors"]),
     )
+    if summary["over_budget"]:
+        # Its own line at WARNING, because the info line above reads like a healthy
+        # pass: nothing timed out, nothing errored, every write landed. The finding
+        # is that the exclusion outlasted the interval every residency clause was
+        # certified over, and it accuses the walls rather than the queries.
+        logger.warning(
+            "search_head_warmer: held the run lock %.3fs against a declared %.3fs "
+            "budget — the pass is `partial` and the residency arithmetic does not "
+            "cover this pass",
+            summary["seconds_wall"],
+            summary["budget_s"],
+        )
     return summary

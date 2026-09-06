@@ -119,7 +119,11 @@ async def test_an_empty_attested_head_is_partial_and_warms_nothing():
     query but one, and the warmer must be honest about it rather than reporting
     a green pass over zero items.
     """
-    from app.tasks.search_head_warmer import _summarize, resolve_head
+    from app.tasks.search_head_warmer import (
+        _summarize,
+        full_rebuild_budget_s,
+        resolve_head,
+    )
 
     class _EmptyResult:
         def all(self):
@@ -148,6 +152,7 @@ async def test_an_empty_attested_head_is_partial_and_warms_nothing():
         seconds_wall=0.0,
         since_last=None,
         width=2,
+        budget_s=full_rebuild_budget_s(),
     )
     assert summary["terminal"] == "partial", (
         "a warmer whose purpose is a hot head reported `complete` while the "

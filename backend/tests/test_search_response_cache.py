@@ -820,17 +820,20 @@ def test_the_full_rebuild_budget_is_the_pass_not_one_query():
     no meaning to fix.
     """
     from app.tasks.search_head_warmer import (
+        LOCK_CONTROL_BOUND_SECONDS,
+        LOCK_CONTROL_OPS_PER_PASS,
         PASS_SETUP_BOUND_SECONDS,
         PER_QUERY_TIMEOUT_SECONDS,
         ROLLBACK_BOUND_SECONDS,
         ROUTE_SEARCH_DEADLINE_SECONDS,
         TTL_READ_BOUND_SECONDS,
         full_rebuild_budget_s,
+        lock_control_budget_s,
         worker_unit_bound_s,
         worker_unit_worst_case_s,
     )
 
-    assert full_rebuild_budget_s() == 50.0
+    assert full_rebuild_budget_s() == 70.0
     assert full_rebuild_budget_s() > worker_unit_worst_case_s(), (
         "the budget must exceed one unit's worst case — the last-written entry "
         "waits out every earlier wave, and the pass pays setup before any of them"
@@ -843,10 +846,26 @@ def test_the_full_rebuild_budget_is_the_pass_not_one_query():
     # each distinguishable from the real one.
     assert worker_unit_worst_case_s() == worker_unit_bound_s() + ROLLBACK_BOUND_SECONDS
     assert worker_unit_worst_case_s() == 40.0
-    assert full_rebuild_budget_s() == PASS_SETUP_BOUND_SECONDS + 1 * 40.0
-    assert full_rebuild_budget_s(setup_s=0) == 40.0, (
+
+    # 🔴 CERT-2107: and the LOCK-HELD interval starts at the acquire round-trip and
+    # ends at the release round-trip, so the four control ops are a term too. Three
+    # terms now, and each one is driven to zero separately — a form that dropped any
+    # single one is a different number from the real budget at the shipped
+    # constants, which is what makes each `== ` below load-bearing rather than
+    # decorative.
+    assert lock_control_budget_s() == LOCK_CONTROL_OPS_PER_PASS * LOCK_CONTROL_BOUND_SECONDS
+    assert lock_control_budget_s() == 20.0
+    assert full_rebuild_budget_s() == 20.0 + PASS_SETUP_BOUND_SECONDS + 1 * 40.0
+    assert full_rebuild_budget_s(setup_s=0) == 60.0, (
         "setup dropped out of the budget — this is the CERT-2095 defect exactly"
     )
+    assert full_rebuild_budget_s(control_s=0) == 50.0, (
+        "the lock-control round-trips dropped out of the budget — this is the "
+        "CERT-2107 defect exactly: the exclusion covers the acquire SET, the "
+        "last-pass GET, the pass-start SETEX and the release DEL, and a budget "
+        "that omits them certifies a shorter interval than the lock holds"
+    )
+    assert full_rebuild_budget_s(control_s=0, setup_s=0) == 40.0
 
     # The unit is the SUM OF ENFORCED WALLS. Driven with explicit arguments in
     # both terms, so a form that dropped either one is visible: at the shipped
@@ -866,13 +885,22 @@ def test_the_full_rebuild_budget_is_the_pass_not_one_query():
         "slow-but-successful rebuild is now an abandonment that writes nothing"
     )
 
-    # Waves, at setup_s=0 so the wave arithmetic is read on its own.
-    assert full_rebuild_budget_s(head_size=2, concurrency=2, per_query_s=25, setup_s=0) == 25.0
-    assert full_rebuild_budget_s(head_size=3, concurrency=2, per_query_s=25, setup_s=0) == 50.0
+    # Waves, at setup_s=0 AND control_s=0 so the wave arithmetic is read on its own.
+    def _waves(**kw):
+        return full_rebuild_budget_s(setup_s=0, control_s=0, **kw)
+
+    assert _waves(head_size=2, concurrency=2, per_query_s=25) == 25.0
+    assert _waves(head_size=3, concurrency=2, per_query_s=25) == 50.0
     # The width is load-bearing in this expression, not incidental to it.
-    assert full_rebuild_budget_s(head_size=8, concurrency=2, per_query_s=40, setup_s=0) == 160.0
-    assert full_rebuild_budget_s(head_size=8, concurrency=4, per_query_s=40, setup_s=0) == 80.0
-    assert full_rebuild_budget_s(head_size=8, concurrency=8, per_query_s=40, setup_s=0) == 40.0
+    assert _waves(head_size=8, concurrency=2, per_query_s=40) == 160.0
+    assert _waves(head_size=8, concurrency=4, per_query_s=40) == 80.0
+    assert _waves(head_size=8, concurrency=8, per_query_s=40) == 40.0
+
+    # The two flat terms are flat: they do not scale with the width, which is why
+    # they cannot be absorbed into the per-query argument.
+    assert _waves(head_size=8, concurrency=8, per_query_s=40) + 20.0 + 10.0 == (
+        full_rebuild_budget_s(head_size=8, concurrency=8, per_query_s=40)
+    )
 
 
 def test_the_message_expiry_is_derived_from_the_lock_ttl_not_the_beat_period():
@@ -1090,9 +1118,10 @@ def test_an_empty_head_is_reported_as_partial_and_never_as_a_clean_pass():
     nothing to say, which is a real finding and a broken guarantee — not a
     successful pass over zero items.
     """
-    from app.tasks.search_head_warmer import _summarize
+    from app.tasks.search_head_warmer import _summarize, full_rebuild_budget_s
 
     empty = _summarize(head=[], results=[], source="db:search_query_logs:30d",
-                       seconds_wall=0.0, since_last=None, width=2)
+                       seconds_wall=0.0, since_last=None, width=2,
+                       budget_s=full_rebuild_budget_s())
     assert empty["terminal"] == "partial"
     assert empty["total"] == 0

@@ -1247,16 +1247,44 @@ def test_every_width_below_the_solution_actually_fails_and_the_next_one_up_passe
     # 🔴 The 10 seconds that decide it, pinned. Width 4 fails by exactly this much,
     # and the two constants that would rescue it are named so that anyone tempted
     # to shave them finds this test first. Shaving a wall to buy a width is the
-    # substitution five BLOCKs in this chain were about.
+    # substitution six BLOCKs in this chain were about.
+    #
+    # CERT-2107 moved WHICH clause refuses width 4 without moving the 10 s: at a
+    # 110 s budget its derived threshold is 190 s against a 180 s TTL, so clause
+    # (3) now fires before clause (4) gets to. Both the size of the miss and the
+    # clause are asserted, because a repair that changed the margin and a repair
+    # that relocated the failure are different events and this test should be able
+    # to say which one happened.
     if solved > 4:
         budget_4 = full_rebuild_budget_s(head_size=DEFAULT_HEAD_SIZE, concurrency=4)
-        assert budget_4 == 90.0, budget_4
+        assert budget_4 == 110.0, budget_4
         _, why4 = _holds(4)
-        assert "WRITE INTERVAL EXCEEDS THE TTL" in why4, why4
+        assert "NOT A THRESHOLD" in why4, why4
         assert "190s" in why4, (
-            f"width 4's write interval should be 190s against a 180s life — a 10s "
+            f"width 4's derived threshold should be 190s against a 180s TTL — a 10s "
             f"miss, not a comfortable one: {why4}"
         )
+
+        # ...and the clause it USED to fail is still the one waiting underneath, so
+        # shaving clause (3) into compliance does not seat width 4 either. Driven at
+        # the exact shave the docstring names: rollback 5 -> 2.5, setup 10 -> 5.
+        from app.tasks.search_head_warmer import worker_unit_worst_case_s
+
+        shaved = full_rebuild_budget_s(
+            head_size=DEFAULT_HEAD_SIZE,
+            concurrency=4,
+            setup_s=5.0,
+            per_query_s=worker_unit_worst_case_s(rollback_s=2.5),
+        )
+        assert shaved == 100.0, shaved
+        ok_shaved, why_shaved = residency_invariant(
+            refresh_ahead_s=derive_refresh_ahead_s(budget_s=shaved), budget_s=shaved
+        )
+        assert not ok_shaved, (
+            "shaving the rollback and setup walls seated width 4 — the failure was "
+            "supposed to walk to the next clause, not disappear"
+        )
+        assert "WRITE INTERVAL EXCEEDS THE TTL" in why_shaved, why_shaved
 
 
 def test_the_wall_sits_strictly_above_every_cooperative_bound_inside_the_unit():
@@ -1420,6 +1448,7 @@ def test_a_unit_that_breaches_the_wall_is_reported_as_a_timeout_and_never_as_a_w
         seconds_wall=1.0,
         since_last=60.0,
         width=warmer.WARM_CONCURRENCY,
+        budget_s=warmer.full_rebuild_budget_s(),
     )
     assert len(summary["timeouts"]) == 1, (
         f"a unit that breached the wall is not in `timeouts`: {summary}"
@@ -1625,17 +1654,28 @@ def test_a_slow_teardown_and_head_resolution_cannot_widen_the_write_interval():
         return {"q": q, "ok": True, "reason": "warmed", "ttl_before": 1,
                 "rebuilt": True, "ttl_after": 99, "seconds": 0.0}
 
-    def _release():
+    # All four lock-control helpers are `async def` since CERT-2107 (walled, and
+    # run off the loop), so their stand-ins have to be too.
+    async def _release():
         events.append("lock_released")
+
+    async def _acquire():
+        return True
+
+    async def _no_last_pass(now):
+        return None
+
+    async def _record(now):
+        return None
 
     from app.tasks import base as task_base
     with patch.object(task_base, "get_task_session", lambda: _SlowCM()), \
          patch.object(warmer, "resolve_head", _fake_resolve_head), \
          patch.object(warmer, "_warm_one", _fake_warm_one), \
-         patch.object(warmer, "_acquire_run_lock", lambda: True), \
+         patch.object(warmer, "_acquire_run_lock", _acquire), \
          patch.object(warmer, "_release_run_lock", _release), \
-         patch.object(warmer, "_seconds_since_last_pass", lambda now: None), \
-         patch.object(warmer, "_record_pass_start", lambda now: None), \
+         patch.object(warmer, "_seconds_since_last_pass", _no_last_pass), \
+         patch.object(warmer, "_record_pass_start", _record), \
          patch.object(warmer, "head_warm_enabled", lambda: True):
         summary = asyncio.run(warmer._warm_search_head(head_size=2))
 
@@ -1660,6 +1700,10 @@ def test_a_slow_teardown_and_head_resolution_cannot_widen_the_write_interval():
     assert warmer.full_rebuild_budget_s(setup_s=0) < warmer.full_rebuild_budget_s(), (
         "the setup wall is not a term in the budget — CERT-2095 exactly"
     )
+    # ...and so are the four lock-control round-trips the exclusion also covers.
+    assert warmer.full_rebuild_budget_s(control_s=0) < warmer.full_rebuild_budget_s(), (
+        "the lock-control round-trips are not a term in the budget — CERT-2107 exactly"
+    )
 
 
 def test_a_setup_that_never_finishes_releases_the_lock_and_says_why():
@@ -1681,13 +1725,25 @@ def test_a_setup_that_never_finishes_releases_the_lock_and_says_why():
         async def __aexit__(self, *a):
             return False
 
+    async def _acquire():
+        return True
+
+    async def _release():
+        released.append(1)
+
+    async def _no_last_pass(now):
+        return None
+
+    async def _record(now):
+        return None
+
     from app.tasks import base as task_base
     with patch.object(task_base, "get_task_session", lambda: _HangingCM()), \
          patch.object(warmer, "PASS_SETUP_BOUND_SECONDS", 0.05), \
-         patch.object(warmer, "_acquire_run_lock", lambda: True), \
-         patch.object(warmer, "_release_run_lock", lambda: released.append(1)), \
-         patch.object(warmer, "_seconds_since_last_pass", lambda now: None), \
-         patch.object(warmer, "_record_pass_start", lambda now: None), \
+         patch.object(warmer, "_acquire_run_lock", _acquire), \
+         patch.object(warmer, "_release_run_lock", _release), \
+         patch.object(warmer, "_seconds_since_last_pass", _no_last_pass), \
+         patch.object(warmer, "_record_pass_start", _record), \
          patch.object(warmer, "head_warm_enabled", lambda: True):
         started = time.monotonic()
         summary = asyncio.run(warmer._warm_search_head(head_size=2))
@@ -1762,3 +1818,555 @@ def test_the_ttl_read_retry_mirror_has_not_drifted():
         f"the backoff cap drifted: warmer says {TTL_READ_BACKOFF_CAP_SECONDS}, "
         f"policy says {cap}"
     )
+
+
+# ===========================================================================
+# CERT-2107's NAMED REGRESSION.
+#
+#   "the promised complete lock-held budget still omits `_seconds_since_last_pass()`,
+#    `_record_pass_start()`, and lock deletion: all are synchronous default-client
+#    Redis operations after acquisition and outside any priced wall. An independent
+#    exact-code scaled probe delayed only the first two controls by 80ms each; the
+#    task returned `complete`, held the lock 0.172s against a 0.03s declared budget,
+#    and reported `seconds_wall=0.0`. Required repair: bound and price every
+#    operation from successful acquisition through completed release, start
+#    lock-held timing at acquisition, and add a scaled entry-point regression
+#    delaying the control read/write/delete that requires an in-budget completion
+#    or non-complete terminal and honest wall telemetry."
+#
+# Three claims, three tests: the ops are BOUNDED (walled, off the loop, on a
+# fast-fail client), the ops are PRICED (a term in the budget, checked by clause
+# (7)), and the reported wall IS the interval the budget bounds — measured from
+# before the acquire round-trip to after the release round-trip.
+# ===========================================================================
+
+
+def _async_lock_stubs(*, since_last=None, on_acquire=None, on_release=None):
+    """Async stand-ins for the four lock-control helpers. All four are coroutines."""
+
+    async def _acquire():
+        if on_acquire is not None:
+            on_acquire()
+        return True
+
+    async def _release():
+        if on_release is not None:
+            on_release()
+
+    async def _since(now):
+        return since_last
+
+    async def _record(now):
+        return None
+
+    return _acquire, _release, _since, _record
+
+
+def test_the_reported_wall_is_the_whole_lock_held_interval():
+    """🔴 THE GRADER'S PROBE, AS A SCALED ENTRY-POINT REGRESSION (CERT-2107).
+
+    On the blocked SHA this delay was invisible three times over: the four control
+    round-trips ran unwalled, sat outside `full_rebuild_budget_s()`, and sat
+    outside `seconds_wall` — which started AFTER `_record_pass_start()` and so
+    reported 0.0 for an interval the probe measured at 0.172 s against a 0.03 s
+    declared budget, with a `complete` terminal on top.
+
+    The blocked shape fails every arm below. The `complete`-and-in-budget arm is
+    what the cert asked for; the wall arms are what make it impossible to satisfy
+    that arm by lying about the wall, which is exactly how the blocked SHA passed
+    every test it had.
+
+    Scaled: 80 ms per control op against a 30 ms declared budget, the grader's own
+    numbers. The delay goes on the BLOCKING halves, so the real thread + `wait_for`
+    path is exercised rather than stubbed past.
+    """
+    import time as _time
+
+    from app.tasks import search_head_warmer as warmer
+
+    DELAY = 0.08
+    SCALED_BUDGET = 0.03
+
+    class _Session:
+        async def rollback(self):
+            pass
+
+    class _CM:
+        async def __aenter__(self):
+            return _Session()
+
+        async def __aexit__(self, *a):
+            return False
+
+    async def _fake_resolve_head(session, limit):
+        return ["aa", "bb"], "test"
+
+    async def _fake_warm_one(session, q):
+        return {"q": q, "ok": True, "reason": "warmed", "ttl_before": 1,
+                "rebuilt": True, "ttl_after": 99, "seconds": 0.0}
+
+    # Every control op slow, including the two the blocked SHA did bound nothing
+    # around and the release the grader named separately.
+    def _slow_acquire():
+        _time.sleep(DELAY)
+        return True
+
+    def _slow_last_pass():
+        _time.sleep(DELAY)
+        return None
+
+    def _slow_release():
+        _time.sleep(DELAY)
+
+    def _slow_record_client():
+        _time.sleep(DELAY)
+        return _RecordingClient()
+
+    class _RecordingClient:
+        def setex(self, *a, **kw):
+            return True
+
+    from app.tasks import base as task_base
+    with patch.object(task_base, "get_task_session", lambda: _CM()), \
+         patch.object(warmer, "resolve_head", _fake_resolve_head), \
+         patch.object(warmer, "_warm_one", _fake_warm_one), \
+         patch.object(warmer, "_acquire_blocking", _slow_acquire), \
+         patch.object(warmer, "_last_pass_blocking", _slow_last_pass), \
+         patch.object(warmer, "_release_blocking", _slow_release), \
+         patch.object(warmer, "_lock_control_client", _slow_record_client), \
+         patch.object(warmer, "head_warm_enabled", lambda: True):
+        started = _time.monotonic()
+        # The scaled DECLARED budget, handed to the pass the same way
+        # `full_rebuild_budget_s(per_query_s=...)` hands the regressions a scaled
+        # wall. The pass judges itself against this number, so the disjunction
+        # below is checked against the ceiling the code used and not one the test
+        # invented afterwards.
+        summary = asyncio.run(
+            warmer._warm_search_head(head_size=2, budget_s=SCALED_BUDGET)
+        )
+        observed = _time.monotonic() - started
+
+    # Four control round-trips at 80 ms. The pass really did hold the exclusion for
+    # about this long — the question the blocked SHA got wrong is whether it says so.
+    assert observed >= 4 * DELAY, (
+        f"the four control ops did not actually run slowly ({observed:.3f}s) — the "
+        f"probe is not reproducing the grader's conditions"
+    )
+
+    # 🔴 (a) HONEST TELEMETRY. `seconds_wall` must contain the control time. The
+    # blocked SHA reported 0.0 here while holding the lock for 0.172 s.
+    assert summary["seconds_wall"] >= 4 * DELAY, (
+        f"`seconds_wall` is {summary['seconds_wall']}s but the pass spent at least "
+        f"{4 * DELAY:.3f}s in lock-control round-trips alone. The clock is not "
+        f"starting at the acquire and stopping at the release — this is CERT-2107's "
+        f"`seconds_wall=0.0` exactly"
+    )
+    # ...and it must not have quietly become the whole-function duration either:
+    # teardown is outside the exclusion (CERT-2095) and must stay out of this number.
+    assert summary["seconds_wall"] <= observed, summary["seconds_wall"]
+
+    # 🔴 (b) IN BUDGET, OR NOT `complete`. The cert's disjunction, checked against
+    # the ceiling the pass published for itself.
+    assert summary["budget_s"] == SCALED_BUDGET, summary
+    in_budget = summary["seconds_wall"] <= summary["budget_s"]
+    assert in_budget or summary["terminal"] != "complete", (
+        f"the pass held the lock {summary['seconds_wall']}s against a declared budget "
+        f"of {summary['budget_s']}s and still reported {summary['terminal']!r}. A pass "
+        f"that outruns its declared lock-held budget may not call itself complete — "
+        f"clauses (2), (4) and (6) all certify residency over that interval, so this "
+        f"pass is outside the arithmetic its own summary is published under"
+    )
+    # At 4 x 80 ms against a 30 ms declared budget it is the SECOND disjunct that
+    # holds, and it is worth pinning which so the test cannot pass by both arms
+    # collapsing into vacuity.
+    assert not in_budget, (
+        f"the scaled probe was supposed to be over budget ({summary['seconds_wall']}s "
+        f"vs {summary['budget_s']}s); if it now fits, the delay or the budget has moved "
+        f"and this test has stopped reproducing the counterexample"
+    )
+    assert summary["over_budget"] is True, summary
+    assert summary["terminal"] == "partial", (
+        f"terminal is {summary['terminal']!r}. Nothing timed out, nothing errored and "
+        f"every write landed, so `partial` here can only come from the budget check — "
+        f"which is the point: the budget is a postcondition, not a docstring"
+    )
+    # ...and the reason is nameable from the summary alone. A bare `partial` with no
+    # cause sends a reader hunting in the query results, where nothing is wrong.
+    assert summary["timeouts"] == [] and summary["errors"] == [], summary
+    assert summary["no_writes"] == [], summary
+
+    # The healthy direction, same pass, same delays: a budget that really does cover
+    # the interval yields `complete`. Without this the rule could be satisfied by a
+    # warmer that never reports complete at all.
+    with patch.object(task_base, "get_task_session", lambda: _CM()), \
+         patch.object(warmer, "resolve_head", _fake_resolve_head), \
+         patch.object(warmer, "_warm_one", _fake_warm_one), \
+         patch.object(warmer, "_acquire_blocking", _slow_acquire), \
+         patch.object(warmer, "_last_pass_blocking", _slow_last_pass), \
+         patch.object(warmer, "_release_blocking", _slow_release), \
+         patch.object(warmer, "_lock_control_client", _slow_record_client), \
+         patch.object(warmer, "head_warm_enabled", lambda: True):
+        roomy = asyncio.run(warmer._warm_search_head(head_size=2, budget_s=30.0))
+
+    assert roomy["over_budget"] is False, roomy
+    assert roomy["terminal"] == "complete", roomy
+    assert roomy["seconds_wall"] >= 4 * DELAY, roomy
+
+    # 🔴 AND THE OTHER END OF THE INTERVAL, which a stopwatch stopped at the summary
+    # would get wrong in the opposite direction. Teardown is outside the exclusion
+    # (CERT-2095), so a slow `__aexit__` must NOT appear in `seconds_wall` — a wall
+    # that swallows teardown re-inflates the number clause (4) is derived from and
+    # would push honest passes over budget for work that writes nothing.
+    TEARDOWN = 0.4
+
+    class _SlowTeardownCM:
+        async def __aenter__(self):
+            return _Session()
+
+        async def __aexit__(self, *a):
+            await asyncio.sleep(TEARDOWN)
+            return False
+
+    with patch.object(task_base, "get_task_session", lambda: _SlowTeardownCM()), \
+         patch.object(warmer, "resolve_head", _fake_resolve_head), \
+         patch.object(warmer, "_warm_one", _fake_warm_one), \
+         patch.object(warmer, "_acquire_blocking", _slow_acquire), \
+         patch.object(warmer, "_last_pass_blocking", _slow_last_pass), \
+         patch.object(warmer, "_release_blocking", _slow_release), \
+         patch.object(warmer, "_lock_control_client", _slow_record_client), \
+         patch.object(warmer, "head_warm_enabled", lambda: True):
+        started = _time.monotonic()
+        torn = asyncio.run(warmer._warm_search_head(head_size=2, budget_s=30.0))
+        torn_observed = _time.monotonic() - started
+
+    assert torn_observed >= TEARDOWN, torn_observed
+    assert torn["seconds_wall"] < torn_observed - TEARDOWN / 2, (
+        f"`seconds_wall` is {torn['seconds_wall']}s out of {torn_observed:.3f}s "
+        f"total with {TEARDOWN}s of that in teardown. The clock is being stopped "
+        f"after the stack unwinds instead of at the release, which puts work that "
+        f"writes no cache entry back inside the interval clause (4) is derived from"
+    )
+
+    # 🔴 (c) AND THE SAME ON THE EARLY EXITS. `min_period` holds the lock for three
+    # control ops and `setup_timeout` for the acquire plus a fired setup wall; both
+    # hardcoded `seconds_wall=0.0` on the blocked SHA.
+    def _slow_recent_pass():
+        # One second ago, read off the real clock — no clock patching, so there is
+        # no anchor to branch on (gotcha #44). The floor is 45 s, so this is under
+        # it however long the suite has been running.
+        _time.sleep(DELAY)
+        return str(_time.time() - 1.0)
+
+    with patch.object(task_base, "get_task_session", lambda: _CM()), \
+         patch.object(warmer, "resolve_head", _fake_resolve_head), \
+         patch.object(warmer, "_warm_one", _fake_warm_one), \
+         patch.object(warmer, "_acquire_blocking", _slow_acquire), \
+         patch.object(warmer, "_last_pass_blocking", _slow_recent_pass), \
+         patch.object(warmer, "_release_blocking", _slow_release), \
+         patch.object(warmer, "_lock_control_client", _slow_record_client), \
+         patch.object(warmer, "head_warm_enabled", lambda: True):
+        floored = asyncio.run(warmer._warm_search_head(head_size=2))
+
+    assert floored["skip_reason"] == "min_period", floored
+    assert floored["seconds_wall"] >= 3 * DELAY, (
+        f"the floor skip held the exclusion for three control round-trips and "
+        f"reported {floored['seconds_wall']}s. It is the cheapest real pass in the "
+        f"module and it still may not report zero for time it held the lock"
+    )
+
+    # The setup-timeout exit, which held the exclusion for the acquire plus a fired
+    # setup wall plus the release. This arm is also what keeps the explicit
+    # `await _release_once()` in that handler alive: without it the summary is built
+    # before the `finally` runs and `lock_wall_s` is still `None`.
+    SETUP_WALL = 0.06
+
+    class _HangingCM:
+        async def __aenter__(self):
+            await asyncio.sleep(30)
+
+        async def __aexit__(self, *a):
+            return False
+
+    with patch.object(task_base, "get_task_session", lambda: _HangingCM()), \
+         patch.object(warmer, "PASS_SETUP_BOUND_SECONDS", SETUP_WALL), \
+         patch.object(warmer, "_acquire_blocking", _slow_acquire), \
+         patch.object(warmer, "_last_pass_blocking", _slow_last_pass), \
+         patch.object(warmer, "_release_blocking", _slow_release), \
+         patch.object(warmer, "_lock_control_client", _slow_record_client), \
+         patch.object(warmer, "head_warm_enabled", lambda: True):
+        timed_out = asyncio.run(warmer._warm_search_head(head_size=2, budget_s=30.0))
+
+    assert timed_out["skip_reason"] == "setup_timeout", timed_out
+    assert timed_out["terminal"] != "complete", timed_out
+    assert timed_out["seconds_wall"] >= 4 * DELAY + SETUP_WALL, (
+        f"the setup wall fired after {4 * DELAY + SETUP_WALL:.3f}s of exclusion and "
+        f"the pass reported {timed_out['seconds_wall']}s. This exit hardcoded 0.0 on "
+        f"the blocked SHA, and it is the exit where a wedged database is holding the "
+        f"lock — the one case where the number is worth having"
+    )
+
+
+def test_a_hung_control_op_cannot_hold_the_exclusion_past_its_wall():
+    """The other half of (a): the wall has to FIRE, not merely be declared.
+
+    An honest `seconds_wall` over an unbounded interval is a better-reported
+    version of the same defect. Each control op is walled at
+    `LOCK_CONTROL_BOUND_SECONDS`, so a Redis that never answers costs the exclusion
+    that wall and not the ~20 s the background client's retry policy would spend.
+
+    Driven at a scaled wall against an op that never returns, and asserted on the
+    fail-open answer each caller is built to accept — because the wall is only
+    tolerable because those answers exist.
+    """
+    import time as _time
+
+    from app.tasks import search_head_warmer as warmer
+
+    # 20x the wall, not 600x — long enough that a wall which did not fire is
+    # unmistakable, short enough that the orphan thread is cheap.
+    HANG = 1.0
+    WALL = 0.05
+
+    def _hangs():
+        _time.sleep(HANG)
+
+    def _measure(target: str, call):
+        """Time the AWAIT, from inside the loop.
+
+        🔴 Not `asyncio.run(...)` with a stopwatch around it, and the difference is
+        the whole subject of this test. `asyncio.run` joins the default executor on
+        close, so a timer around it measures the orphan THREAD finishing — which is
+        precisely the thing `_lock_control` deliberately does not wait for. The
+        first draft of this test measured that and read 1.0 s while the log line
+        showed the wall firing at 0.05 s. What the exclusion pays is how long the
+        coroutine is suspended, so that is what is measured.
+        """
+
+        async def _drive():
+            started = _time.monotonic()
+            out = await call()
+            return out, _time.monotonic() - started
+
+        with patch.object(warmer, "LOCK_CONTROL_BOUND_SECONDS", WALL), \
+             patch.object(warmer, target, _hangs):
+            return asyncio.run(_drive())
+
+    def _assert_walled(elapsed: float, what: str):
+        assert elapsed < HANG / 2, (
+            f"the {what} took {elapsed:.3f}s against a {WALL}s wall and a {HANG}s "
+            f"hung op — the wall did not fire, so the exclusion is bounded by Redis "
+            f"rather than by this module"
+        )
+
+    got, elapsed = _measure("_acquire_blocking", warmer._acquire_run_lock)
+    _assert_walled(elapsed, "acquire")
+    assert got is True, (
+        "the acquire must fail OPEN — a warmer that stops warming because Redis "
+        "blinked is the defect this whole family of modules is about"
+    )
+
+    since, elapsed = _measure(
+        "_last_pass_blocking", lambda: warmer._seconds_since_last_pass(1_000_000.0)
+    )
+    _assert_walled(elapsed, "last-pass read")
+    assert since is None, (
+        f"a control read that hit its wall returned {since!r}. `None` means "
+        f"'unknown' and 0.0 means 'two passes started at the same instant' — an "
+        f"absent value and a zero value must not read the same (gotcha #53)"
+    )
+
+    _, elapsed = _measure("_release_blocking", warmer._release_run_lock)
+    _assert_walled(elapsed, "release")
+    # The release is the one whose fallback lives outside this function: a lost
+    # DELETE is collected by `_LOCK_KEY`'s own TTL, and clause (6) is what keeps
+    # that TTL above the budget so the collection is never the thing that ends a
+    # pass's exclusion.
+    assert warmer.full_rebuild_budget_s() < warmer._LOCK_TTL_SECONDS, (
+        "a lost release is only survivable while the lock's TTL outlasts the budget"
+    )
+
+    # And the pass-start write, for completeness: four ops, four walls. It is the
+    # one with no return value, so the assertion is only about the caller coming
+    # back — which is the assertion that matters, since it runs while the lock is
+    # held and nothing else would notice it hanging.
+    _, elapsed = _measure(
+        "_lock_control_client", lambda: warmer._record_pass_start(1_000_000.0)
+    )
+    _assert_walled(elapsed, "pass-start write")
+
+
+def test_the_lock_control_client_is_built_at_the_bounds_clause_seven_assumes():
+    """Clause (7) compares the wall against CONSTANTS. This is the mirror.
+
+    Exactly `test_the_ttl_read_client_is_built_at_the_bounds_clause_five_assumes`,
+    one term over: `fast_fail=False` or the default 5 s socket timeouts move the
+    cooperative bound from 4.1 s to ~17 s, above the 5 s wall meant to backstop it,
+    and clause (7) would go on reading `5 > 4.1` and passing because nothing
+    checked that the client matches the constants the clause is computed from.
+
+    All four ops share `_lock_control_client()`, so one capture covers the four.
+    """
+    from app.tasks import redis_state
+    from app.tasks.search_head_warmer import (
+        LOCK_CONTROL_BOUND_SECONDS,
+        LOCK_CONTROL_SOCKET_TIMEOUT_SECONDS,
+        _lock_control_client,
+        lock_control_cooperative_bound_s,
+    )
+
+    seen = {}
+
+    def _capture(**kwargs):
+        seen.update(kwargs)
+        return object()
+
+    with patch.object(redis_state, "get_redis_client", _capture):
+        _lock_control_client()
+
+    assert seen.get("fast_fail") is True, (
+        f"the lock-control ops are using the background retry policy ({seen}). That "
+        f"is 4 attempts at up to 5 s each way — a cooperative bound of ~20 s against "
+        f"a {LOCK_CONTROL_BOUND_SECONDS:g}s wall, so the wall fires FIRST and clause "
+        f"(7)'s comparison is against a number the client does not honour. It is also "
+        f"the exact client CERT-2107 found these four calls on"
+    )
+    assert seen.get("socket_timeout") == LOCK_CONTROL_SOCKET_TIMEOUT_SECONDS, seen
+    assert seen.get("socket_connect_timeout") == LOCK_CONTROL_SOCKET_TIMEOUT_SECONDS, seen
+
+    assert LOCK_CONTROL_BOUND_SECONDS > lock_control_cooperative_bound_s(), (
+        "the lock-control wall is not above its own cooperative bound"
+    )
+
+
+def test_the_four_control_ops_run_off_the_event_loop():
+    """A wall around a sync Redis call issued ON the loop bounds nothing.
+
+    CERT-2089's finding, owed again for these four: a coroutine that never suspends
+    cannot be cancelled, so `wait_for` around a blocking call in the loop thread
+    fires only after the call has already returned. The threading is what makes the
+    wall real, and it is asserted by observing the thread rather than by reading the
+    source.
+    """
+    import threading
+
+    from app.tasks import search_head_warmer as warmer
+
+    loop_thread = None
+    ran_on = []
+
+    def _record_thread():
+        ran_on.append(threading.current_thread().ident)
+        return True
+
+    async def _drive():
+        nonlocal loop_thread
+        loop_thread = threading.current_thread().ident
+        with patch.object(warmer, "_acquire_blocking", _record_thread):
+            await warmer._acquire_run_lock()
+
+    asyncio.run(_drive())
+
+    assert ran_on, "the acquire never ran"
+    assert ran_on[0] != loop_thread, (
+        "the acquire ran on the event-loop thread, so its wall cannot fire while it "
+        "is out — and neither can any other wall in the process (gotcha #39)"
+    )
+
+
+def test_clause_seven_refuses_a_control_wall_at_or_below_its_cooperative_bound():
+    """The clause fires, and it fires at equality as well as below it.
+
+    Clause (5)'s lesson, applied: a strict inequality asserted only from the
+    comfortable side is a clause nobody has seen refuse anything.
+    """
+    from app.tasks import search_head_warmer as warmer
+
+    assert warmer.residency_invariant()[0]
+
+    for bad in (4.1, 4.0, 1.0):
+        with patch.object(warmer, "LOCK_CONTROL_BOUND_SECONDS", bad):
+            ok, why = warmer.residency_invariant()
+            assert not ok, (
+                f"a {bad}s control wall against a "
+                f"{warmer.lock_control_cooperative_bound_s()}s cooperative bound was "
+                f"accepted — clause (7) is not enforcing its own inequality"
+            )
+            assert "CONTROL WALL IS NOT ABOVE WHAT IT WALLS" in why, why
+
+    # And it is not simply always-false: one tick above the cooperative bound passes.
+    with patch.object(warmer, "LOCK_CONTROL_BOUND_SECONDS", 4.2):
+        assert warmer.residency_invariant()[0], warmer.residency_invariant()[1]
+
+
+def test_the_shipped_threshold_is_the_derived_one():
+    """`REFRESH_AHEAD_SECONDS` has been 150, then 130, then 150 again.
+
+    The first 150 was refused (CERT-2084, derived from `ttl - period`); the second
+    is certified (derived from `period + budget + margin` over a budget that now
+    includes the control term). The integer carries no information, so the constant
+    is held to the derivation by a test rather than by the comment above it — which
+    was itself stale for two commits and described a threshold the module was not
+    shipping.
+    """
+    from app.tasks.search_head_warmer import (
+        REFRESH_AHEAD_SECONDS,
+        derive_refresh_ahead_s,
+        residency_invariant,
+    )
+
+    assert REFRESH_AHEAD_SECONDS == derive_refresh_ahead_s(), (
+        f"the shipped threshold is {REFRESH_AHEAD_SECONDS} but the derivation gives "
+        f"{derive_refresh_ahead_s()}. One of them moved without the other; the "
+        f"derivation is the claim and the constant is supposed to be its value"
+    )
+    assert residency_invariant()[0], residency_invariant()[1]
+
+
+def test_the_pass_budget_fits_inside_the_workers_own_time_limit():
+    """🔴 THE BOUND OUTSIDE THE MODULE, found while pricing the one inside it.
+
+    `residency_invariant()` reasons entirely in the warmer's own quantities, and
+    every clause is about the CACHE. None of them can see the constraint that ends
+    a pass from above: `warm_search_head` carries `soft_time_limit=120`, and the
+    task has to fit budget PLUS teardown inside it.
+
+    CERT-2107's control term moved the budget 50 -> 70, which is a 40% cut in that
+    headroom in one commit — the same shape as every finding in this chain (a
+    number grew against a ceiling nobody was checking), one layer out. It still
+    fits, comfortably, and the point of the test is that the next term cannot close
+    the gap without saying so.
+
+    A soft-limit breach is not a clean stop: writes are abandoned mid-pass and the
+    exclusion is left for `_LOCK_KEY`'s TTL to collect, so the pass gap that clause
+    (4) derives its write interval from is no longer the one the lock enforces.
+    """
+    from app.tasks import celery_app
+    from app.tasks.search_head_warmer import (
+        _LOCK_TTL_SECONDS,
+        full_rebuild_budget_s,
+    )
+
+    task = celery_app.tasks["app.tasks.warm_search_head"]
+    soft = task.soft_time_limit
+    hard = task.time_limit
+    assert soft and hard, f"the warmer lost its time limits: soft={soft} hard={hard}"
+
+    budget = full_rebuild_budget_s()
+    assert budget < soft, (
+        f"the declared lock-held budget is {budget:g}s against a {soft:g}s soft time "
+        f"limit, so a worst-case pass is killed by the worker before it finishes. "
+        f"Writes are abandoned mid-pass and the run lock is left for its "
+        f"{_LOCK_TTL_SECONDS:g}s TTL to collect — clause (4)'s pass gap stops being "
+        f"the one the lock enforces"
+    )
+    # Teardown is outside the exclusion but INSIDE the task: `width` session exits,
+    # each a commit + close + `engine.dispose()`. Requiring the budget to leave at
+    # least a third of the limit is a coarse bar deliberately — the honest number is
+    # unmeasured, and a bar that pretends otherwise is the substitution this chain
+    # keeps blocking.
+    assert soft - budget >= soft / 3, (
+        f"only {soft - budget:g}s of the {soft:g}s soft limit is left for teardown "
+        f"after a worst-case {budget:g}s pass. Teardown is `width` session exits, "
+        f"all network work and none of it bounded by anything in this module"
+    )
+    assert hard > soft, (hard, soft)

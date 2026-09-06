@@ -3992,12 +3992,21 @@ def warm_search_head(self, head_size: int = None):
     `%winner%` matches 42,336 of 858,938 rows, so the head cannot be fixed by
     any string index — only answered before it is asked.
 
-    Budget: 8 head queries at concurrency 2, one query bounded at
+    Budget: 8 head queries at `WARM_CONCURRENCY` (8, and SOLVED for by
+    `minimum_concurrency_for_residency()` rather than chosen), one query bounded at
     `PER_QUERY_TIMEOUT_SECONDS = 25` INSIDE the task so the longest uninterrupted
     op is bounded and not merely the loop boundary, and a `MIN_PASS_PERIOD_SECONDS
-    = 45` floor bounding how often a pass may start at all. Both limits sit under
-    the 300 s global hard `task_time_limit`, which is a SIGKILL that would be
-    recorded as `no_data` rather than as a failure.
+    = 45` floor bounding how often a pass may start at all.
+
+    🔴 THE `soft_time_limit` ABOVE IS THE OUTER BOUND ON ALL OF IT, and it is worth
+    stating because the numbers have moved toward each other. `full_rebuild_budget_s()`
+    is the LOCK-HELD interval — 70 s since CERT-2107 priced the four lock-control
+    round-trips, up from 50 — and teardown runs after the lock is released but
+    still inside the task. So the soft limit has to cover budget + teardown, and at
+    120/70 that leaves 50 s. A soft-limit breach is not a tidy failure here: it
+    abandons writes mid-pass and leaves `_LOCK_KEY` held until its own 180 s TTL
+    collects it. `test_the_pass_budget_fits_inside_the_workers_own_time_limit`
+    is what refuses the next term that would close the gap silently.
     """
     # NOTE the module is `search_head_warmer`, not `warm_search_head`: a
     # submodule sharing a name with a registered task is shadowed by the task on
