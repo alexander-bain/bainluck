@@ -263,7 +263,47 @@ REJECT_SETTLED = "settled"
 #: finding. Target 0.
 REJECT_LINK_NOT_DURABLE = "link_not_durable"
 
+# ── Container assembly (#2927) ──────────────────────────────────────────────
+# A DIFFERENT DECIDER, THE SAME TABLE, AND DELIBERATELY THE SAME ENUM. Container
+# assembly answers the same shape of question the matcher does — *this candidate
+# is a member / it is not, and here is the test it failed* — and the spec's rule
+# is that membership is never a curated list, the receipt is how that is proved
+# rather than asserted. A parallel `container_match_receipts` would duplicate
+# every column and split the one question the bus asks ("why is this reachable
+# from nowhere") across two tables.
+#
+# Every value is prefixed `container_`, so a `GROUP BY reject_reason` separates
+# the two deciders without a join and neither one's census picks up the other's
+# rows by accident.
+
+#: The candidate names a row id that does not exist, or is not of the type the
+#: edge would declare. This is the check that buys back the integrity the
+#: missing polymorphic FK cannot give (spec §2), and it runs BEFORE the edge is
+#: written rather than as a nightly cleanup — a dangling `contains` edge is a
+#: second place for unreachable ids to hide, and #2914 already shows the cost.
+REJECT_CONTAINER_CHILD_MISSING = "container_child_missing"
+
+#: The candidate resolved, but its evidence put it in no draw and no class the
+#: container could accept — e.g. a market whose sport disagrees with the
+#: container's. NOT the same as unclassifiable: an unclassifiable member is
+#: ADMITTED as `unclassified` and stays visible. This is a genuine non-member.
+REJECT_CONTAINER_NOT_A_MEMBER = "container_not_a_member"
+
+#: The container's own anchors did not resolve, so nothing could be gathered
+#: for it at all. Recorded per candidate that was therefore never tested, so a
+#: silent zero-member pass is distinguishable from a container with no members.
+REJECT_CONTAINER_NO_ANCHOR = "container_no_anchor"
+
+#: The candidate raised while being tested. Per-item try/except (gotcha #42):
+#: one bad candidate must never wipe an assembly pass, and the failure is
+#: recorded rather than swallowed.
+REJECT_CONTAINER_ATTEMPT_ERROR = "container_attempt_error"
+
 REJECT_REASONS: frozenset[str] = frozenset({
+    REJECT_CONTAINER_CHILD_MISSING,
+    REJECT_CONTAINER_NOT_A_MEMBER,
+    REJECT_CONTAINER_NO_ANCHOR,
+    REJECT_CONTAINER_ATTEMPT_ERROR,
     REJECT_PARENT_ROW,
     REJECT_NOT_GAME_LEVEL,
     REJECT_NO_MATCHUP,
@@ -321,11 +361,16 @@ PHASE_TWIN_MERGE = "twin_merge"
 #: because "a person did this on purpose" is the answer, not a detail of it.
 PHASE_ADMIN_REPAIR = "admin_repair"
 
+#: Container assembly (#2927) — the pass that decided membership rather than
+#: linkage. Its own phase so `GROUP BY phase` never mixes the two deciders.
+PHASE_CONTAINER_ASSEMBLY = "container_assembly"
+
 PHASES: frozenset[str] = frozenset({
     PHASE_PASS1_TICKER, PHASE_PASS2_GENERAL, PHASE_PASS3_BACKLOG,
     PHASE_SETTLED_SWEEP,
     PHASE_PHASE15_REVALIDATE, PHASE_PHASE2_LINKED, PHASE_TWIN_MERGE,
     PHASE_ADMIN_REPAIR, PHASE_RELINK_COLLAPSED, PHASE_SEGMENT_RECONCILE,
+    PHASE_CONTAINER_ASSEMBLY,
 })
 
 #: Cap on the candidate trace stored per receipt. The scoring queries take 20
@@ -574,6 +619,10 @@ class MatchReceipt:
     #: One of :data:`ACTORS` — who ended or moved the link. NULL when nothing
     #: was ended or moved.
     actor: Optional[str] = None
+    #: The container this attempt was judged against, when the decider was
+    #: container assembly rather than the matcher (#2927). NULL on every
+    #: receipt the matcher writes, which is all of them today.
+    container_id: Optional[int] = None
     candidates: list[CandidateTrace] = field(default_factory=list)
     detail: dict[str, Any] = field(default_factory=dict)
 
@@ -695,6 +744,7 @@ class MatchReceipt:
             "linked_event_id": self.linked_event_id,
             "previous_event_id": self.previous_event_id,
             "actor": self.actor,
+            "container_id": self.container_id,
             "candidates": self.candidate_payload(),
             "detail": _jsonable(self.detail),
             "first_attempted_at": self.attempted_at,
@@ -1134,6 +1184,15 @@ async def flush_receipts(session, receipts: list[MatchReceipt], chunk: int = 500
                 "linked_event_id": stmt.excluded.linked_event_id,
                 "previous_event_id": stmt.excluded.previous_event_id,
                 "actor": stmt.excluded.actor,
+                # NOT `COALESCE(existing, excluded)`. The receipt is "the last
+                # time somebody looked", and the last look is authoritative
+                # about its own decider: a matcher pass that re-examines a
+                # market previously judged by assembly must clear the container
+                # back to NULL, or the row would claim assembly refused it when
+                # the matcher is what refused it. Whoever wrote last owns the
+                # whole row, which is the invariant every other column here
+                # already keeps.
+                "container_id": stmt.excluded.container_id,
                 "candidates": stmt.excluded.candidates,
                 "detail": stmt.excluded.detail,
                 "last_attempted_at": stmt.excluded.last_attempted_at,

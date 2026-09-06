@@ -894,6 +894,38 @@ jobs:
             exit 1
           }
 
+      - name: "#2927 container assembly writes and re-writes (real Postgres)"
+        # Phase 2. The pure half of assembly — the register gatherer, the class
+        # computation, the cycle guard, the section ordering — is graded in
+        # `tests/test_container_assembly_2927.py` against the real committed US
+        # Open register. This step grades the half only a server can answer.
+        #
+        # The load-bearing one is IDEMPOTENCY. Assembly is `ON CONFLICT
+        # (parent_type, parent_id, child_type, child_id, kind) DO UPDATE`, and a
+        # mock session records the statement the caller built — it agrees with
+        # the caller by construction. Only a server can say whether the second
+        # nightly pass produced 458 members or 916, and that is the difference
+        # between a hub that works and a hub that looks, from outside, like it
+        # is working unusually well. Its companion asserts the harder half: a
+        # member whose class CHANGES must move between sections rather than
+        # appear in both, which `DO NOTHING` would pass while getting wrong.
+        #
+        # Also here because they cannot be anywhere else: `container_id`
+        # surviving the receipt upsert (#2199's lesson — a writer that looked
+        # correct wrote 0 of 10,804 rows with 19,906 tests green), and the
+        # dangling-edge check, whose entire purpose is to notice a row deleted
+        # AFTER its edge was written and which therefore requires deleting one.
+        #
+        # Same skip-detection as every gate in this job, for the same reason.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_container_assembly_real_postgres.py \
+            -v -s -rs 2>&1 | tee /tmp/assembly2927.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/assembly2927.txt; then
+            echo "::error::#2927 container assembly SKIPPED — the gate did not run"
+            exit 1
+          fi
+
   frontend-build:
     runs-on: ubuntu-latest
     defaults:

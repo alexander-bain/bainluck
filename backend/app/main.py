@@ -28,7 +28,7 @@ if os.getenv("DYNO"):
 
 logger = logging.getLogger(__name__)
 
-from app.routes import events, event_stream, sports, health, futures, admin, admin_analytics, admin_backfill_linkage, admin_backfill_odds, admin_judgments, admin_llm_diagnosis, admin_source_health, admin_feed_config, admin_label_pass, admin_team_clusters, admin_cockpit, admin_file_issue, admin_cohort, auth, user, feed, market_moves, oscars, oscars_pool, golf, event, hub, march_madness, playoffs, tournaments, weather, economics, politics, entertainment, league_futures, predictions, og_image, teams, prop_families, feedback, calibration, source_intelligence, notifications, challenges, unsubscribe
+from app.routes import containers, events, event_stream, sports, health, futures, admin, admin_analytics, admin_backfill_linkage, admin_backfill_odds, admin_judgments, admin_llm_diagnosis, admin_source_health, admin_feed_config, admin_label_pass, admin_team_clusters, admin_cockpit, admin_file_issue, admin_cohort, auth, user, feed, market_moves, oscars, oscars_pool, golf, event, hub, march_madness, playoffs, tournaments, weather, economics, politics, entertainment, league_futures, predictions, og_image, teams, prop_families, feedback, calibration, source_intelligence, notifications, challenges, unsubscribe
 from app.services.database import init_db
 
 # Initialize Sentry error tracking
@@ -318,6 +318,11 @@ app.include_router(oscars_pool.router, prefix="/api/oscars", tags=["Oscars Pool"
 app.include_router(golf.router, prefix="/api/golf", tags=["Golf"])
 app.include_router(event.router, prefix="/api/event", tags=["Event Concept"])
 app.include_router(hub.router, prefix="/api/hub", tags=["Competition Hub"])
+# #2927 Phase 4. Behind CONTAINERS_READ_ENABLED (default off) — the route
+# serves 404 until a container is actually assembled, so a half-assembled
+# hub can never be reached. Mounted in BOTH main.py and routes/__init__.py,
+# because a router mounted in only one of them is invisible (gotcha #2).
+app.include_router(containers.router, prefix="/api/containers", tags=["Containers"])
 app.include_router(march_madness.router, prefix="/api/march-madness", tags=["March Madness"])
 app.include_router(playoffs.router, prefix="/api/playoffs", tags=["Playoffs"])
 app.include_router(tournaments.router, prefix="/api/tournaments", tags=["Tournaments"])
