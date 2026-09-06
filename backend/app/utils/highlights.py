@@ -342,6 +342,11 @@ class HighlightResult:
     reasons: list[str] = field(default_factory=list)
     flags: EventFlags = field(default_factory=EventFlags)
     primary_reason: Optional[str] = None
+    # Hours since the game actually ended (None unless status is completed/closed).
+    # Derived ONCE here, off the best finish reference available, so the freshness
+    # decay in `feed_scoring.compute_base_score` ranks off the same clock that set
+    # `is_recently_finished` — one derivation, two consumers, no drift.
+    hours_since_finish: Optional[float] = None
 
 
 # Tour segments that sit between the sport and the tournament in a tennis sport key.
@@ -516,6 +521,9 @@ def compute_highlight(
     importance: Optional[str] = None,
     # Actual end time (from StatPal) for more accurate recently-finished timing
     end_time: Optional[datetime] = None,
+    # When the row was marked final. Used as the finish reference when StatPal
+    # has no end time, which is the overwhelmingly common case.
+    completed_at: Optional[datetime] = None,
     # Game progress (from ESPN period string, e.g. "Q4", "2nd Half", "OT")
     period: Optional[str] = None,
 ) -> HighlightResult:
@@ -582,12 +590,25 @@ def compute_highlight(
             result.score += WEIGHTS["starting_soon_1h"]
             result.reasons.append("starting_very_soon")
 
-    # Recently finished — use actual end time if available, otherwise commence_time
+    # Recently finished — prefer the most accurate end reference available.
+    #
+    # `statpal_end_time` is the authoritative final whistle but is very thinly
+    # populated (measured 2026-09-06: NULL on 13/13 of the completed games then
+    # holding the Sports feed's first page), so the old two-step cascade fell
+    # through to `commence_time` on essentially every row. That measures age from
+    # KICKOFF, which is wrong in both directions: a three-hour baseball game that
+    # ended sixty seconds ago reads as three hours stale, and a game still being
+    # graded reads older than it is. `completed_at` — when the row was actually
+    # marked final — sits between the two in accuracy and is populated on the
+    # rows `statpal_end_time` misses, so it goes in the middle of the cascade.
     if status in ("completed", "closed"):
-        finish_ref = end_time if end_time else commence_time
+        finish_ref = end_time or completed_at or commence_time
         if finish_ref.tzinfo is None:
             finish_ref = finish_ref.replace(tzinfo=timezone.utc)
         hours_since_finish = (now - finish_ref).total_seconds() / 3600
+        # Published for the freshness decay even when the 24h eligibility test
+        # below fails, so a caller never has to re-derive it off a worse clock.
+        result.hours_since_finish = hours_since_finish
         if 0 < hours_since_finish <= 24:
             flags.is_recently_finished = True
             result.score += WEIGHTS["recent_finish"]
