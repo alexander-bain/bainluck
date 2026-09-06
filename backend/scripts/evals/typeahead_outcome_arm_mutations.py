@@ -251,9 +251,26 @@ MUTANTS: list[tuple[str, str, str, str]] = [
     ),
     (
         "M17-SHED-ANSWER-IS-CACHED",
-        "an incomplete dropdown pinned into Redis for 65 s — LAT-P007's exact defect",
-        "            _ta_degraded = True\n        else:\n            _ta_mark(\"futures_outcome_arm\")",
-        "            _ta_degraded = False\n        else:\n            _ta_mark(\"futures_outcome_arm\")",
+        "an incomplete dropdown pinned into Redis for 65 s — LAT-P007's exact defect. "
+        "🔴 RE-AIMED BY LAT-P241/#3399, and the re-aim is not cosmetic. This mutant "
+        "used to flip the OUTCOME-ARM shed branch, because that branch used to set "
+        "`_ta_degraded`. It no longer does: the arm shed is a BONUS lane (market "
+        "name, ticker and alias matches all survive) and its shed is a deterministic "
+        "property of the term — 5/5 or 0/5 across 35 production trials — so there is "
+        "no fuller answer for the cached one to displace, and caching it is now "
+        "correct. The defect this mutant names is still real, but it lives on the "
+        "FUTURES-STAGE timeout, which loses the whole stage. So the mutant is aimed "
+        "there. Re-aiming a needle at the branch that still carries its meaning is "
+        "the honest re-target; leaving it on a branch whose behaviour deliberately "
+        "changed would have made it assert the old ruling forever.",
+        # 🔴 THE ASSIGNMENT, not the mark. A first draft of this re-aim inserted
+        # `_ta_degraded = False` straight after `_ta_mark("futures_query_TIMED_OUT")`
+        # — four lines ABOVE the branch's own `_ta_degraded = True`, which then
+        # overwrote it. The mutant would have been a no-op and reported itself as
+        # a SURVIVOR, i.e. as a missing assertion in the oracle, which is exactly
+        # the false negative this harness exists to avoid.
+        "        futures_result = None\n        _ta_degraded = True",
+        "        futures_result = None\n        _ta_degraded = False",
     ),
     (
         "M18-COMPLETE-ANSWER-MARKED-DEGRADED",
@@ -270,8 +287,12 @@ MUTANTS: list[tuple[str, str, str, str]] = [
     (
         "M20-EVENTS-ASSEMBLE-SWALLOWS-THE-ARM",
         "mark it after the arm and the arm's seconds vanish into the previous stage",
-        '    _ta_degraded = False\n    _ta_mark("events_assemble")\n    if _ta_outcome_arm is not None:',
-        "    _ta_degraded = False\n    if _ta_outcome_arm is not None:",
+        # Re-targeted by LAT-P241/#3399: `_ta_outcome_arm_shed = False` now sits
+        # between the two lines this needle used to span. Mechanical drift — the
+        # mutant's meaning is unchanged.
+        '    _ta_outcome_arm_shed = False\n    _ta_mark("events_assemble")\n'
+        "    if _ta_outcome_arm is not None:",
+        "    _ta_outcome_arm_shed = False\n    if _ta_outcome_arm is not None:",
     ),
     # ------------------------------------------------------------------ #
     # Direction 3: the arm's WALL BUDGET stops binding (CERT-567 / CERT-570).

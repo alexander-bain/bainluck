@@ -6067,7 +6067,14 @@ async def typeahead_search(
     # market) and contributes nothing; `None` means it could not be served in time
     # and the request answers without it — with every other arm intact, which is
     # what it used to lose.
+    # LAT-P241/#3399: TWO shed states, not one, because they lose different
+    # amounts and only one of them is the sticky-wrong-answer LAT-P007 was
+    # written about. `_ta_degraded` means the FUTURES STAGE itself was lost;
+    # `_ta_outcome_arm_shed` means only the bonus outcome-NAME lane was. The
+    # cache write below is gated on the first alone — see the block there for
+    # the measurement that separates them.
     _ta_degraded = False
+    _ta_outcome_arm_shed = False
     _ta_mark("events_assemble")
     if _ta_outcome_arm is not None:
         _ta_outcome_ids = await _resolve_typeahead_outcome_arm(
@@ -6086,7 +6093,11 @@ async def typeahead_search(
                 q,
                 _TYPEAHEAD_OUTCOME_ARM_TIMEOUT_MS,
             )
-            _ta_degraded = True
+            # LAT-P241/#3399: the BONUS-lane flag, not the futures-stage one.
+            # This branch loses outcome-NAME matches and keeps market name,
+            # ticker and alias matches — the log line one line up says exactly
+            # that. It does not make the answer uncacheable.
+            _ta_outcome_arm_shed = True
         else:
             _ta_mark("futures_outcome_arm")
             if _ta_outcome_ids:
@@ -6703,8 +6714,27 @@ async def typeahead_search(
         # debug answer anyway — a timing echo must never be served to a normal
         # user from a warm entry, same rule as `_evidence` (LAT-P050).
         _ta_mark("echo")
+        # LAT-P241/#3399: the two shed states are REPORTED, not inferred from the
+        # presence of a stage label. Deciding "did the arm shed?" by scanning for
+        # a `..._SHED` substring in the stage keys is the reader every probe of
+        # this route has had to write, and it silently answers "no" the day a
+        # label is renamed. Both flags are named so the question has an answer
+        # that does not depend on spelling — and so the residual risk this change
+        # accepts (a term that sheds INTERMITTENTLY) is measurable rather than
+        # only loggable.
+        #
+        # 🔴 THEIR OWN KEY, NOT INSIDE `debug_timing`, and that is CERT-2032's
+        # follow-up `TYPEAHEAD-DEBUG-STATE-OUTSIDE-TIMING-MAP`. The first cut of
+        # this put both booleans into the timing map. Every other entry there is
+        # a stage duration in milliseconds and `total_ms` is a SUM over that
+        # map — and in Python `True` sums as 1 — so a mixed schema there is a
+        # reader waiting to add a boolean to a millisecond total. Two facts of
+        # different kinds do not share a dict just because one caller wants
+        # both.
         result["debug_timing"] = {**_ta_stage_ms,
                                   "total_ms": sum(_ta_stage_ms.values())}
+        result["debug_shed"] = {"outcome_arm_shed": _ta_outcome_arm_shed,
+                                "degraded": _ta_degraded}
 
     # Cache the assembled suggestions (incl. top_outcomes) per query. The read at
     # the top of this endpoint had no matching write — the cache never populated,
@@ -6717,6 +6747,54 @@ async def typeahead_search(
     # prefix gets the wrong answer for the full 45s TTL — a transient becomes a
     # sticky one. Caching an answer you know is incomplete is worse than not
     # caching at all.
+    #
+    # 🔴 LAT-P241/#3399: THE OUTCOME-ARM SHED IS NOT THAT CASE, AND CONFLATING
+    # THE TWO MADE FOUR HEAD TERMS PERMANENTLY UNCACHEABLE.
+    #
+    # `_ta_degraded` used to be set by the bonus outcome-name lane too, so a term
+    # whose arm sheds could never be written here. The warmer then rebuilt it on
+    # every pass and reported it as a `no_write` — its own DEFECT category —
+    # roughly 88 times an hour, and no user ever received a warm answer for it.
+    # Not a transient: a closed loop, because the shed recurs on every request.
+    #
+    # LAT-P007's premise is that a fuller answer exists and a transient is
+    # displacing it. MEASURED ON PRODUCTION, `debug_timing=1` so every probe is a
+    # real miss-path build, 5 trials each — that premise does not hold here:
+    #
+    #     term           shed   arm ms                          total ms
+    #     sta            5/5    2032 2038 2026 2014 2042        5034-7845
+    #     stan           5/5    2054 5648 2034 2026 2034        4214-7860
+    #     ben            5/5    2021 2045 2030 2032 2021        5133-6733
+    #     red            5/5    2264 2007 2203 2120 2043        5931-7243
+    #     stanley cup    0/5      71  134   96   71  102        1408-1741
+    #     carlos         0/5     798  726 1154  519 1235        2196-3701
+    #     alc            0/5    1286  755 1017  648  567        2264-3883
+    #
+    # **5/5 or 0/5, never in between, across 35 trials.** Shedders pin at the
+    # 2,000 ms bound every time; non-shedders finish 15-28x inside it. So there
+    # is no fuller answer for a shedding term to displace — the same request run
+    # again sheds again — and the rule was buying nothing while costing those
+    # terms 4-8 seconds on every keystroke, permanently.
+    #
+    # The reason is already in this file, one lane over: `red` costs 11,660 ms
+    # against `sox`'s 39.6 ms because its trigrams are extractable but not
+    # SELECTIVE. Selectivity lives in the data, not in the string, which is why
+    # this is bimodal and why no static term rule can predict it.
+    #
+    # 🔴 WHAT THIS DOES NOT DO, because it is the half that must not drift: a
+    # `futures_query_TIMED_OUT` still sets `_ta_degraded` and is still never
+    # cached. That branch loses the whole futures stage and IS the sticky-wrong-
+    # answer LAT-P007 describes. The rule is unchanged for the case it was
+    # written for; only the bonus lane is let out from under it.
+    #
+    # 🔴 THE RESIDUAL COST, STATED RATHER THAN WAVED AWAY. If a term that
+    # normally completes ever sheds once, its thinner body is now pinned until
+    # the next request that completes overwrites it — bounded by the warmer's own
+    # pass for a head term (~40 s) and by the 65 s TTL otherwise. Zero such
+    # transients were observed in 35 trials, but "not observed" is not "cannot
+    # happen", and a term that starts shedding intermittently is the state that
+    # would make this trade a bad one. `futures_outcome_arm_SHED` is already a
+    # `logger.error` with the term in it, so the evidence is on the record.
     #
     # LAT-P050: nor is a debug-evidence answer, for the mirror-image reason. It
     # is not incomplete, it is EXTRA — and writing it here would serve

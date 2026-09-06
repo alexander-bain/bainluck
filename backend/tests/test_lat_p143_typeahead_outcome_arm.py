@@ -389,20 +389,43 @@ class TestTheRouteHandlesTheThreeAnswersDifferently:
         start = src.index("if _ta_outcome_ids is None:")
         return src[start : src.index("_ta_arm_selects = [")]
 
-    def test_shedding_marks_the_answer_degraded(self):
-        assert "_ta_degraded = True" in self._shed_branch()
+    def test_shedding_marks_the_answer_shed(self):
+        """AMENDED BY LAT-P241/#3399, and the amendment is the point.
 
-    def test_a_degraded_answer_is_still_never_cached(self):
-        """LAT-P007's rule, inherited: the cache write is gated on _ta_degraded."""
+        This used to assert `_ta_degraded = True`, which made a shed answer
+        uncacheable. Measured on production: the shed is a deterministic property
+        of the TERM (5/5 or 0/5 across 35 trials, 7 terms), so there was never a
+        fuller answer for the cached one to displace — the rule bought nothing
+        and cost four head terms 4-8s on every keystroke, permanently. The shed
+        now sets its OWN flag; the futures-stage timeout keeps `_ta_degraded`.
+        """
+        assert "_ta_outcome_arm_shed = True" in self._shed_branch()
+        assert "_ta_degraded = True" not in self._shed_branch(), (
+            "the bonus outcome-name lane must not set the futures-stage flag — "
+            "that is the conflation LAT-P241 removed"
+        )
+
+    def test_a_futures_stage_timeout_is_still_never_cached(self):
+        """LAT-P007's rule, for the case it was actually written for.
+
+        LAT-P241 narrowed WHAT counts as degraded; it did not weaken this. A
+        `futures_query_TIMED_OUT` loses the whole futures stage and still gates
+        the write.
+        """
         src = _route_source()
         assert "if not _ta_degraded and not debug_evidence and not debug_timing:" in src
+        to_branch = src[src.index('_ta_mark("futures_query_TIMED_OUT")'):]
+        assert "_ta_degraded = True" in to_branch[:800], (
+            "the futures-stage timeout must still mark the answer degraded"
+        )
 
-    def test_an_empty_arm_does_not_mark_the_answer_degraded(self):
+    def test_an_empty_arm_marks_neither_flag(self):
         """Matching no open market is a COMPLETE answer, and must stay cacheable."""
         src = _route_source()
         block = src[src.index("if _ta_outcome_ids is None:") : src.index("_ta_arm_selects = [")]
         else_branch = block[block.index("else:") :]
         assert "_ta_degraded" not in else_branch, else_branch
+        assert "_ta_outcome_arm_shed" not in else_branch, else_branch
 
     def test_shedding_logs_what_the_user_actually_lost(self):
         branch = self._shed_branch()
