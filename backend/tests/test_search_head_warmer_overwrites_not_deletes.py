@@ -784,16 +784,27 @@ def test_the_previous_threshold_holes_when_the_entry_is_seen_at_the_threshold_ed
 def test_an_organic_entry_seen_at_the_threshold_edge_stays_resident_at_the_shipped_threshold():
     """The GREEN half. Same seeding, same full-budget rebuilds, shipped constants.
 
-    At 170 the entry is skipped at 170 s and rebuilt one period later with 110 s
-    left, against a 100 s budget — it survives with 10 s to spare, every cycle.
+    At 150 the entry is skipped at 150 s and rebuilt one period later with 90 s
+    left, against a 70 s budget — it survives with 20 s to spare, every cycle.
+
+    🔴 THE WALL HERE IS `full_rebuild_budget_s()` AND IT USED TO BE A LITERAL 100.
+    That literal was the budget when this test was written, and it stopped being
+    the budget the moment CERT-2089's repair re-derived the budget off the
+    ENFORCED worker unit (70 s). A hardcoded bound in a test whose whole subject
+    is "the code is measured against what it PERMITS, never against a sample" is
+    the same substitution the four BLOCKs in this chain each found in the module:
+    a number that was true once, kept after the thing it named moved.
     """
-    from app.tasks.search_head_warmer import REFRESH_AHEAD_SECONDS
+    from app.tasks.search_head_warmer import (
+        REFRESH_AHEAD_SECONDS,
+        full_rebuild_budget_s,
+    )
     from app.utils.search_cache import SEARCH_RESPONSE_TTL_SECONDS
 
     absent, timeline = _simulate_residency(
         ttl_s=SEARCH_RESPONSE_TTL_SECONDS,
         refresh_ahead_s=REFRESH_AHEAD_SECONDS,
-        rebuild_walls=[100.0] * 20,
+        rebuild_walls=[full_rebuild_budget_s()] * 20,
         horizon_s=1200.0,
         organic_phase=True,
     )
@@ -888,7 +899,9 @@ def _sweep_one_offset(*, offset, ttl_s, refresh_ahead_s, period_s, budget_s):
 # ---------------------------------------------------------------------------
 
 
-def _run_two_pass_reranked(*, ttl_s, per_query_s, head_a, head_b, walls):
+def _run_two_pass_reranked(
+    *, ttl_s, per_query_s, head_a, head_b, walls, concurrency=None
+):
     """Drive the REAL shared-cursor dispatcher twice, re-ranking between passes.
 
     `_warm_head_concurrently` is production's own function — the point of this
@@ -897,12 +910,19 @@ def _run_two_pass_reranked(*, ttl_s, per_query_s, head_a, head_b, walls):
     consumes fake time from `walls` and records the write; the run lock is
     modelled by starting pass two no earlier than pass one's end.
 
+    `per_query_s` is A WHOLE WORKER UNIT, not a route call (CERT-2089): the cursor
+    hands out units, so a wall consumed here has to include the two TTL reads that
+    bracket the route call. `concurrency` defaults to the shipped
+    `WARM_CONCURRENCY` so the harness follows the module rather than pinning the
+    width the module happened to have when it was written.
+
     Returns the write times of query "a" and the absence intervals for its key.
     """
     from unittest.mock import patch
 
     from app.tasks import search_head_warmer as warmer
 
+    width = warmer.WARM_CONCURRENCY if concurrency is None else concurrency
     clock = {"t": 0.0}
     log = _ExpiringWriteLog(ttl_s)
     writes_a = []
@@ -929,7 +949,7 @@ def _run_two_pass_reranked(*, ttl_s, per_query_s, head_a, head_b, walls):
 
     async def _one_pass(head, pass_start):
         clock["t"] = pass_start
-        sessions = [{"free_at": pass_start}, {"free_at": pass_start}]
+        sessions = [{"free_at": pass_start} for _ in range(width)]
         with patch.object(warmer, "_warm_one", _fake_warm_one):
             await warmer._warm_head_concurrently(sessions, head)
         return max(s["free_at"] for s in sessions)      # the pass END = lock release
@@ -971,7 +991,15 @@ def test_the_previous_budget_holes_when_a_query_is_written_first_then_last():
     walls = {q: [25.0] * 4 for q in _HEAD_FIRST}
     walls["a"] = [1.0, 25.0]
     writes, absent = _run_two_pass_reranked(
-        ttl_s=180, per_query_s=25.0, head_a=_HEAD_FIRST, head_b=_HEAD_RERANKED, walls=walls
+        ttl_s=180,
+        per_query_s=25.0,
+        head_a=_HEAD_FIRST,
+        head_b=_HEAD_RERANKED,
+        walls=walls,
+        # The width CERT-2086 was graded at, pinned rather than inherited: this is
+        # a reproduction of a past configuration, so it must not follow the module
+        # when the module's width changes.
+        concurrency=2,
     )
     assert absent, f"the 100s-budget configuration must hole; writes of 'a' = {writes}"
     width = max(b - a for a, b in absent)
@@ -984,13 +1012,14 @@ def test_the_previous_budget_holes_when_a_query_is_written_first_then_last():
 def test_a_reranked_query_written_first_then_last_stays_resident_at_the_shipped_budget():
     """The GREEN half. Same re-ranking, same worst schedule, corrected budget.
 
-    Sized off the route's own 20 s deadline the full pass budget is 80 s, so the
-    worst same-query interval is 80 + 80 = 160 s inside a 180 s life.
+    Sized off the ENFORCED worker unit (35 s) at the shipped width of 4, the full
+    pass budget is 70 s, so the worst same-query interval is 80 + 70 = 150 s
+    inside a 180 s life.
     """
-    from app.tasks.search_head_warmer import effective_per_query_bound_s
+    from app.tasks.search_head_warmer import worker_unit_bound_s
     from app.utils.search_cache import SEARCH_RESPONSE_TTL_SECONDS
 
-    bound = effective_per_query_bound_s()
+    bound = worker_unit_bound_s()
     walls = {q: [bound] * 4 for q in _HEAD_FIRST}
     walls["a"] = [1.0, bound]
     writes, absent = _run_two_pass_reranked(
@@ -1017,4 +1046,474 @@ def test_the_route_deadline_mirror_has_not_drifted():
     assert ROUTE_SEARCH_DEADLINE_SECONDS == events._SEARCH_DEADLINE_MS / 1000.0, (
         "the warmer's copy of the route deadline has drifted from the route. Every "
         "residency budget is derived from it, so the drift silently re-opens the hole."
+    )
+
+
+# ===========================================================================
+# CERT-2089's NAMED REGRESSION — the route's deadline is COOPERATIVE, the two
+# TTL reads are INSIDE the cursor and OUTSIDE the wall, and the unit is neither
+# of the numbers the budget was priced at.
+#
+#   "the new 80-second pass budget treats the route's cooperative 20-second stage
+#    deadline as a hard per-query wall. `_warm_one` still wraps the route at 25
+#    seconds, the route has no whole-call timeout, and synchronous TTL reads that
+#    occupy the cursor sit outside that wrapper. The code therefore still permits
+#    a 100-second-or-longer pass and a >=200-second same-query write interval
+#    against a 180-second TTL. Required repair: derive from and enforce a hard
+#    whole-worker-unit bound, or change width/concurrency/cadence so that real
+#    bound fits D81. Required catching test: real cursor with a route returning
+#    after 20 but before 25 seconds plus TTL-read time must fail this SHA and
+#    remain continuously resident after repair."
+#
+# `_ROUTE_PAST_ITS_DEADLINE` is the grader's own case: 24 s is past the 20 s
+# cooperative deadline and inside the 25 s `wait_for`, so it is a route call the
+# blocked SHA permits and reports as a clean `warmed`.
+# ===========================================================================
+
+_ROUTE_PAST_ITS_DEADLINE = 24.0
+
+
+def _unit_when_the_route_runs_past_its_deadline() -> float:
+    """One worker unit at the grader's case: two TTL reads bracketing a 24 s route."""
+    from app.tasks.search_head_warmer import ttl_read_cooperative_bound_s
+
+    return _ROUTE_PAST_ITS_DEADLINE + 2 * ttl_read_cooperative_bound_s()
+
+
+def test_the_blocked_bound_holes_when_the_route_returns_after_its_cooperative_deadline():
+    """The RED half, on the width and the pricing CERT-2089 blocked.
+
+    The blocked SHA priced a unit at 20 s — `min(25, route_deadline)` — and got a
+    80 s budget and a 160 s worst interval, which cleared the 180 s TTL on paper.
+    The unit it actually permitted is this one: an unbounded TTL read, a route
+    call walled at 25 s whose own 20 s deadline it may overrun, and a second
+    unbounded TTL read. At the grader's 24 s route that is 32.2 s, and driving the
+    REAL shared cursor at the blocked width of 2 puts the two writes of "a" 267.8 s
+    apart against a 180 s life.
+
+    **87.8 s, not the 19 s of CERT-2086 and not the 20 s of CERT-2068.** Worth
+    stating: each repair in this chain closed the hole it was shown and left a
+    wider one behind it, because each was arithmetic over a budget nothing
+    enforced.
+    """
+    unit = _unit_when_the_route_runs_past_its_deadline()
+    walls = {q: [unit] * 4 for q in _HEAD_FIRST}
+    walls["a"] = [1.0, unit]
+    writes, absent = _run_two_pass_reranked(
+        ttl_s=180,
+        per_query_s=unit,
+        head_a=_HEAD_FIRST,
+        head_b=_HEAD_RERANKED,
+        walls=walls,
+        concurrency=2,          # the blocked width, pinned — see CERT-2086's RED half
+    )
+    assert absent, (
+        f"the blocked configuration must hole on a route that overruns its own "
+        f"cooperative deadline; writes of 'a' = {writes}"
+    )
+    widest = max(b - a for a, b in absent)
+    assert 85.0 <= widest <= 90.0, (
+        f"expected ~87.8 s of absence at the blocked width and unit, measured "
+        f"{widest:.1f}s across {absent} (writes of 'a' at {writes})"
+    )
+
+
+def test_the_head_stays_resident_when_the_route_returns_after_its_cooperative_deadline():
+    """The GREEN half. Same route overrun, same re-ranking, the shipped width.
+
+    Nothing about the route changed — it still returns at 24 s, still past its own
+    cooperative deadline. What changed is that the unit containing it is walled at
+    35 s and the width is 4, so the pass budget is 70 s and the worst same-query
+    interval is 150 s inside a 180 s life.
+    """
+    from app.utils.search_cache import SEARCH_RESPONSE_TTL_SECONDS
+
+    unit = _unit_when_the_route_runs_past_its_deadline()
+    walls = {q: [unit] * 4 for q in _HEAD_FIRST}
+    walls["a"] = [1.0, unit]
+    writes, absent = _run_two_pass_reranked(
+        ttl_s=SEARCH_RESPONSE_TTL_SECONDS,
+        per_query_s=unit,
+        head_a=_HEAD_FIRST,
+        head_b=_HEAD_RERANKED,
+        walls=walls,
+    )
+    assert absent == [], (
+        f"'a' went cold on a route past its cooperative deadline: {absent} "
+        f"(writes {writes})"
+    )
+
+
+def test_residency_holds_at_the_full_enforced_unit_wall_across_a_rerank():
+    """And at the WALL, not merely at the grader's case, which is under it.
+
+    The 24 s route above is a sample. The bound is 35 s per unit, and the number
+    the code has to survive is the one it PERMITS. Two methods have to agree here:
+    the real-cursor harness's measured worst interval, and the closed-form
+    `max_same_query_write_interval_s()` that clause (4) checks. If they disagree,
+    one of them is modelling something the other is not.
+    """
+    from app.tasks.search_head_warmer import (
+        max_same_query_write_interval_s,
+        worker_unit_bound_s,
+    )
+    from app.utils.search_cache import SEARCH_RESPONSE_TTL_SECONDS
+
+    unit = worker_unit_bound_s()
+    walls = {q: [unit] * 4 for q in _HEAD_FIRST}
+    walls["a"] = [1.0, unit]
+    writes, absent = _run_two_pass_reranked(
+        ttl_s=SEARCH_RESPONSE_TTL_SECONDS,
+        per_query_s=unit,
+        head_a=_HEAD_FIRST,
+        head_b=_HEAD_RERANKED,
+        walls=walls,
+    )
+    assert absent == [], f"'a' went cold at the full enforced wall: {absent}"
+    measured = writes[-1] - writes[0]
+    closed_form = max_same_query_write_interval_s()
+    assert measured <= closed_form, (
+        f"the real cursor produced a {measured:g}s same-query interval, WIDER than "
+        f"the {closed_form:g}s clause (4) certifies. The closed form is what the "
+        f"invariant checks, so a harness that exceeds it means the invariant is "
+        f"certifying a schedule the dispatcher can beat."
+    )
+
+
+def test_concurrency_two_has_no_solution_and_that_is_why_the_width_moved():
+    """The width is DERIVED. This is the derivation, as an executable claim.
+
+    Doubling concurrency on the heaviest endpoint is a load decision and it must
+    not read as a tuning preference. It is forced: the residency arithmetic admits
+    a budget of at most 80 s, and at width 2 that needs a 20 s worker unit — a
+    wall at or below the 20 s cooperative deadline it is required to sit above,
+    which clause (5) refuses by name.
+    """
+    from app.tasks.search_head_warmer import (
+        DEFAULT_HEAD_SIZE,
+        WARM_CONCURRENCY,
+        full_rebuild_budget_s,
+        residency_invariant,
+        worker_unit_bound_s,
+    )
+
+    unit = worker_unit_bound_s()
+
+    # At the shipped width the whole thing holds...
+    ok, why = residency_invariant()
+    assert ok, why
+
+    # ...and at width 2, with the SAME enforced unit, it does not. The clause that
+    # fires is (4)/(2) — the budget doubles — not (5): the unit is fine, the width
+    # is what cannot carry it.
+    narrow_budget = full_rebuild_budget_s(
+        head_size=DEFAULT_HEAD_SIZE, concurrency=2, per_query_s=unit
+    )
+    ok_narrow, why_narrow = residency_invariant(budget_s=narrow_budget)
+    assert not ok_narrow, (
+        f"width 2 at a {unit:g}s enforced unit gives a {narrow_budget:g}s budget and "
+        f"the invariant accepted it: {why_narrow}"
+    )
+
+    # ...and the only unit that WOULD fit at width 2 is one clause (5) refuses,
+    # which is the whole argument for moving the width rather than the wall.
+    fitting_unit = 80.0 / math.ceil(DEFAULT_HEAD_SIZE / 2)
+    ok_wall, why_wall = residency_invariant(
+        budget_s=full_rebuild_budget_s(concurrency=2, per_query_s=fitting_unit),
+        unit_s=fitting_unit,
+    )
+    assert not ok_wall, (
+        f"a {fitting_unit:g}s unit fits width 2's budget but is not above the "
+        f"cooperative bounds inside it; the invariant accepted it: {why_wall}"
+    )
+    assert "THE WALL IS NOT ABOVE WHAT IT WALLS" in why_wall, why_wall
+    assert WARM_CONCURRENCY == 4, (
+        "the width is derived from the arithmetic above; changing it without "
+        "changing the derivation is how this chain got four BLOCKs"
+    )
+
+
+def test_the_wall_sits_strictly_above_every_cooperative_bound_inside_the_unit():
+    """Clause (5), both directions, because only one of them was ever wrong.
+
+    A wall BELOW the cooperative bounds is not enforcement — it aborts rebuilds
+    that were about to succeed, and an abandoned rebuild writes nothing. A wall
+    AT them is the same thing at the boundary. This is the inequality the previous
+    repair inverted by taking a `min`.
+    """
+    from app.tasks.search_head_warmer import (
+        PER_QUERY_TIMEOUT_SECONDS,
+        ROUTE_SEARCH_DEADLINE_SECONDS,
+        residency_invariant,
+        ttl_read_cooperative_bound_s,
+        worker_unit_bound_s,
+    )
+
+    cooperative = ROUTE_SEARCH_DEADLINE_SECONDS + 2 * ttl_read_cooperative_bound_s()
+    assert worker_unit_bound_s() > cooperative, (
+        f"the enforced {worker_unit_bound_s():g}s unit is not above the {cooperative:g}s "
+        f"of cooperative bounds inside it"
+    )
+    # The route-call wall on its own, which is the sub-claim the module docstring
+    # makes and the one the blocked SHA's `min()` reversed.
+    assert PER_QUERY_TIMEOUT_SECONDS > ROUTE_SEARCH_DEADLINE_SECONDS, (
+        "the route-call wall is at or below the route's own cooperative deadline, "
+        "so it aborts rebuilds the route was about to complete"
+    )
+
+    # Driven from both sides, so a clause that always passed would be visible.
+    assert not residency_invariant(unit_s=cooperative)[0], "AT the bound must fail"
+    assert not residency_invariant(unit_s=cooperative - 0.1)[0], "BELOW must fail"
+    assert residency_invariant(unit_s=cooperative + 0.1)[0], "ABOVE must pass"
+
+
+def test_the_pass_must_fit_inside_the_run_lock_that_bounds_its_gap():
+    """Clause (6), driven where it is reachable rather than asserted as present.
+
+    Clause (4) derives the pass gap from the run lock excluding the next pass. A
+    pass longer than `_LOCK_TTL_SECONDS` releases its own exclusion and the next
+    one starts underneath it, so (4) would be reasoning from a premise that has
+    stopped holding — which is what the blocked SHA's real ~236 s budget did to a
+    180 s lock.
+
+    At D81's TTL of 180 the clause cannot fire: (2) and (3) together already force
+    the budget below 120. That is a fact about today's constants, not about the
+    clause, so it is driven at a raised TTL — the case #3539's remaining options
+    would create — instead of being left as an unreachable branch nobody has run.
+    """
+    from app.tasks.search_head_warmer import _LOCK_TTL_SECONDS, residency_invariant
+
+    over = residency_invariant(
+        ttl_s=600, refresh_ahead_s=560, budget_s=float(_LOCK_TTL_SECONDS) + 20
+    )
+    assert not over[0] and "OUTRUNS ITS OWN LOCK" in over[1], over
+
+    at = residency_invariant(
+        ttl_s=600, refresh_ahead_s=560, budget_s=float(_LOCK_TTL_SECONDS)
+    )
+    assert not at[0] and "OUTRUNS ITS OWN LOCK" in at[1], at
+
+    under = residency_invariant(
+        ttl_s=600, refresh_ahead_s=560, budget_s=float(_LOCK_TTL_SECONDS) - 10
+    )
+    assert under[0], under
+
+
+def test_the_ttl_read_is_awaitable_bounded_and_off_the_event_loop():
+    """The three properties that make the unit wall real, checked as three claims.
+
+    A sync Redis call from inside the loop cannot be cancelled by any `wait_for`
+    (gotcha #39): the coroutine never suspends, so there is no point at which a
+    timer can run. Wrapping `_warm_one` in a timeout while this read stayed
+    synchronous would have produced a wall that reads as enforcement and is not.
+    """
+    import inspect
+    import threading
+    import time as _time
+
+    from app.tasks import search_head_warmer as warmer
+
+    assert inspect.iscoroutinefunction(warmer._cache_ttl_seconds), (
+        "the TTL read is synchronous again — the unit wall around it is decorative"
+    )
+
+    loop_thread = threading.current_thread().ident
+    saw = {}
+    # Released once the wall has fired. `asyncio.run` joins its default executor on
+    # the way out, so a `sleep(30)` here would make the wall's own proof a 30 s
+    # test — the orphan thread outliving the await is the POINT, not an accident.
+    release = threading.Event()
+
+    def _hang(key):
+        saw["thread"] = threading.current_thread().ident
+        assert not release.wait(timeout=30), "the wall never fired"
+        return 1
+
+    async def _drive():
+        # A ticker that can only advance if the loop is actually free while the
+        # read is out. This is the assertion gotcha #39 exists for.
+        ticks = 0
+
+        async def _tick():
+            nonlocal ticks
+            while True:
+                await asyncio.sleep(0.01)
+                ticks += 1
+
+        ticker = asyncio.create_task(_tick())
+        started = _time.monotonic()
+        got = await warmer._cache_ttl_seconds("k")
+        elapsed = _time.monotonic() - started
+        release.set()
+        ticker.cancel()
+        return got, elapsed, ticks
+
+    with patch.object(warmer, "_ttl_blocking", _hang), \
+         patch.object(warmer, "TTL_READ_BOUND_SECONDS", 0.2):
+        got, elapsed, ticks = asyncio.run(_drive())
+
+    assert got is None, "a walled read reports Redis-silent, never a fabricated TTL"
+    assert elapsed < 5.0, f"the wall did not fire: the read took {elapsed:.1f}s"
+    assert saw["thread"] != loop_thread, (
+        "the blocking read ran on the event loop's own thread"
+    )
+    assert ticks > 2, (
+        f"the loop only advanced {ticks} times while a 30 s blocking read was out — "
+        f"the read is blocking the loop, so no wall anywhere in the process can fire"
+    )
+
+
+def test_a_unit_that_breaches_the_wall_is_reported_as_a_timeout_and_never_as_a_warm():
+    """The abandoned-rebuild case, NAMED AND COUNTED rather than modelled away.
+
+    A hard wall means a rebuild can be abandoned, and an abandoned rebuild writes
+    nothing. Clause (5) is why that cannot happen to a rebuild that was going to
+    succeed; this is why it can never be mistaken for one that did.
+    """
+    from app.tasks import search_head_warmer as warmer
+
+    async def _forever(session, q, started):
+        await asyncio.sleep(30)
+        return {"q": q, "ok": True, "reason": "warmed"}
+
+    with patch.object(warmer, "_warm_one_inner", _forever), \
+         patch.object(warmer, "worker_unit_bound_s", lambda: 0.05):
+        result = asyncio.run(warmer._warm_one(_FakeSession(), "patriots"))
+
+    assert result["reason"] == "unit_timeout", result
+    assert result["ok"] is False, "an abandoned rebuild must never report ok"
+    assert result["rebuilt"] is True, (
+        "it DID start a rebuild — reporting rebuilt=False would hide the work the "
+        "pass spent and make an abandoned unit look like a `fresh` skip"
+    )
+
+    summary = warmer._summarize(
+        head=["patriots"],
+        results=[result],
+        source="test",
+        seconds_wall=1.0,
+        since_last=60.0,
+        width=warmer.WARM_CONCURRENCY,
+    )
+    assert len(summary["timeouts"]) == 1, (
+        f"a unit that breached the wall is not in `timeouts`: {summary}"
+    )
+    assert summary["warmed"] == 0, summary
+    assert summary["terminal"] != "complete", (
+        f"a pass that abandoned a rebuild reported {summary['terminal']!r}"
+    )
+
+
+def test_the_unit_wall_is_the_UNIT_bound_and_not_the_route_call():
+    """🔴 A SURVIVING MUTANT, REPORTED AND THEN KILLED, NOT QUIETLY FIXED.
+
+    The first battery run was 37/40 and this was one of the three. Every other
+    test here proves the ARITHMETIC — that `worker_unit_bound_s()` is 35 s and
+    that a 70 s budget fits D81. None of them proved that `_warm_one` passes that
+    number to `wait_for`. Swapping the wall to `PER_QUERY_TIMEOUT_SECONDS` (25 s)
+    left the whole suite green while walling the unit 10 s BELOW the bound every
+    budget is derived from — which is not a smaller version of the same thing, it
+    is clause (5) inverted: a wall under the work it walls abandons rebuilds that
+    were inside budget, and an abandoned rebuild writes nothing.
+
+    Driven behaviourally rather than by reading the source, and from both sides:
+    a unit between the two values must COMPLETE, and one above the unit bound must
+    be abandoned. Asserting only the second would pass under the mutant.
+    """
+    from app.tasks import search_head_warmer as warmer
+
+    async def _takes(seconds):
+        async def _inner(session, q, started):
+            await asyncio.sleep(seconds)
+            return {"q": q, "ok": True, "reason": "warmed", "rebuilt": True}
+
+        return _inner
+
+    def _drive(inner_seconds):
+        with patch.object(warmer, "_warm_one_inner", asyncio.run(_takes(inner_seconds))), \
+             patch.object(warmer, "worker_unit_bound_s", lambda: 0.30), \
+             patch.object(warmer, "PER_QUERY_TIMEOUT_SECONDS", 0.10):
+            return asyncio.run(warmer._warm_one(_FakeSession(), "patriots"))
+
+    # Between the route-call wall and the unit wall: inside budget, must survive.
+    assert _drive(0.20)["reason"] == "warmed", (
+        "a unit longer than the ROUTE-CALL wall but inside the UNIT wall was "
+        "abandoned — the wall is priced at the wrong quantity, and every rebuild "
+        "whose two TTL reads push it past the route wall now writes nothing"
+    )
+    # Above the unit wall: must be abandoned, or the wall is not a wall.
+    assert _drive(0.50)["reason"] == "unit_timeout"
+
+
+def test_the_ttl_read_client_is_built_at_the_bounds_clause_five_assumes():
+    """🔴 THE OTHER TWO SURVIVORS OF THE FIRST BATTERY RUN, killed together.
+
+    `fast_fail=False` and the default 5 s socket timeouts both left the suite
+    green, and both silently move `ttl_read_cooperative_bound_s()` from 4.1 s to
+    ~17 s — above the 5 s wall that is supposed to backstop it. Clause (5) would
+    still read `35 > 28.2` and pass, because it computes the cooperative bound
+    from the CONSTANTS and nothing checked that `_ttl_blocking` builds its client
+    to match them. A mirror in the other direction, and the same bargain: the cost
+    is drift, the payment is this test.
+    """
+    from app.tasks import redis_state
+    from app.tasks.search_head_warmer import (
+        TTL_READ_BOUND_SECONDS,
+        TTL_READ_SOCKET_TIMEOUT_SECONDS,
+        _ttl_blocking,
+        ttl_read_cooperative_bound_s,
+    )
+
+    seen = {}
+
+    class _Client:
+        def ttl(self, key):
+            return 42
+
+    def _capture(**kwargs):
+        seen.update(kwargs)
+        return _Client()
+
+    with patch.object(redis_state, "get_redis_client", _capture):
+        assert _ttl_blocking("k") == 42
+
+    assert seen.get("fast_fail") is True, (
+        f"the TTL read is using the background retry policy ({seen}). That is 3 "
+        f"attempts at up to 5 s each — a cooperative bound of ~17 s against a "
+        f"{TTL_READ_BOUND_SECONDS:g}s wall, so the wall fires FIRST and clause (5)'s "
+        f"comparison is being made against a number the client does not honour"
+    )
+    assert seen.get("socket_timeout") == TTL_READ_SOCKET_TIMEOUT_SECONDS, seen
+    assert seen.get("socket_connect_timeout") == TTL_READ_SOCKET_TIMEOUT_SECONDS, seen
+
+    # The property all three assertions exist to protect, stated once.
+    assert TTL_READ_BOUND_SECONDS > ttl_read_cooperative_bound_s(), (
+        "the TTL read's wall is not above its own cooperative bound"
+    )
+
+
+def test_the_ttl_read_retry_mirror_has_not_drifted():
+    """`TTL_READ_ATTEMPTS`/`_BACKOFF_CAP` mirror `_redis_fast_fail_retry()`.
+
+    `ttl_read_cooperative_bound_s()` is what clause (5) compares the wall against,
+    so if the retry policy grows an attempt the wall silently stops being above
+    what it walls. The cost of a mirror is drift and the payment is this test.
+    """
+    from app.tasks.redis_state import _redis_fast_fail_retry
+    from app.tasks.search_head_warmer import (
+        TTL_READ_ATTEMPTS,
+        TTL_READ_BACKOFF_CAP_SECONDS,
+    )
+
+    retry = _redis_fast_fail_retry()
+    retries = getattr(retry, "_retries", None)
+    assert retries is not None, "redis-py's Retry stopped exposing `_retries`"
+    assert TTL_READ_ATTEMPTS == retries + 1, (
+        f"the warmer models {TTL_READ_ATTEMPTS} attempts but the fast-fail policy "
+        f"allows {retries + 1}; clause (5)'s cooperative bound is now understated"
+    )
+    cap = getattr(getattr(retry, "_backoff", None), "_cap", None)
+    assert cap == TTL_READ_BACKOFF_CAP_SECONDS, (
+        f"the backoff cap drifted: warmer says {TTL_READ_BACKOFF_CAP_SECONDS}, "
+        f"policy says {cap}"
     )

@@ -107,10 +107,14 @@ actually asked and has no opinion about what is popular, so it is
 contamination-proof by construction.
 
 THE COST, STATED, because this lane's own doctrine is that a warmer is not free.
-`/search` is a much heavier call than `/typeahead`, so every knob here is set
-below its sibling's: 8 terms rather than 40, concurrency 2 rather than 4, and a
-45 s floor rather than 30 s. A steady-state pass rebuilds 8 entries at
-concurrency 2, and production measures the pass wall at **3.3-26.1 s, p50
+`/search` is a much heavier call than `/typeahead`, so the knobs that bound TOTAL
+work are set below its sibling's: 8 terms rather than 40, and a 45 s floor rather
+than 30 s. **Concurrency is now the same 4, and that is a change (CERT-2089).**
+It is derived, not preferred — see `WARM_CONCURRENCY` — and what it buys is a
+shorter pass rather than more work: the same eight queries in two waves instead
+of four. Peak concurrent `/search` builds on the background worker go 2 -> 4;
+total database time is unchanged. A steady-state pass rebuilds 8 entries, and
+production measures the pass wall at **3.3-26.1 s, p50
 ~7.9 s** (2026-09-06) — the "~1-2 s per query, ~4-8 s per pass" this paragraph
 used to carry was 3-20x low, and it is corrected rather than quietly dropped
 because it is the number the ENABLED decision was justified on. The load bound
@@ -119,22 +123,32 @@ is `MIN_PASS_PERIOD_SECONDS`: at most one pass per 45 s, whatever the beat does.
 ✅ THE TWO DEFECTS THIS DOCSTRING USED TO NAME AS OPEN ARE CLOSED (#3539, under
 ruling D81 = A). The arithmetic below is now asserted by `residency_invariant()`
 rather than promised in prose, and the configurations that read plausible and
-hole — 60/25, 180/90, 180/150, 180/170-at-a-100s-budget — are each refused by
-name in its test.
+hole — 60/25, 180/90, 180/150-at-a-100s-budget, 180/160-at-a-20s-unit — are each
+refused by name in its test. Note the third and the shipped 180/150: the SAME
+threshold, refused there and certified here, because the budget under it moved
+from 100 to 70. The integer is not the claim; the derivation is.
 
 THE THREE CONSTANTS ARE ONE DECISION, not three — and the relation binding them
 is `residency_invariant()`, which is executable rather than prose. An entry lives
 `SEARCH_RESPONSE_TTL_SECONDS`; a real pass arrives every
 `effective_pass_period_s()`; a pass rebuilds anything with under
 `REFRESH_AHEAD_SECONDS` left, and that rebuild may take up to
-`full_rebuild_budget_s()`. For the head never to go cold, ALL FOUR must hold:
+`full_rebuild_budget_s()`. For the head never to go cold, ALL SIX must hold:
 
     REFRESH_AHEAD > TTL - P_effective              (1) the first pass CATCHES it
     REFRESH_AHEAD - P_effective > rebuild_budget   (2) and it SURVIVES the rebuild
     REFRESH_AHEAD <= TTL                           (3) and it is still a threshold
     TTL > max_same_query_write_interval_s()        (4) across a RE-RANKED pass
+    unit > every cooperative bound inside it       (5) and the budget is ENFORCED
+    rebuild_budget < _LOCK_TTL_SECONDS             (6) and (4)'s lock really holds
 
-At 180 / 160 / 60 / 80: `160 > 120` ✓, `100 > 80` ✓, `160 <= 180` ✓, `180 > 160` ✓.
+At 180 / 150 / 60 / 70: `150 > 120` ✓, `90 > 70` ✓, `150 <= 180` ✓, `180 > 150` ✓,
+`35 > 28.2` ✓, `70 < 180` ✓.
+
+**READ (5) FIRST, BECAUSE IT IS WHAT MAKES (1)-(4) MEAN ANYTHING.** All four of the
+earlier clauses are arithmetic over `rebuild_budget`, and a budget is a fact only
+if the unit it multiplies is enforced. Four presentations of this invariant were
+blocked and every one of them priced the unit off a number nothing enforced.
 
 🔴 CLAUSE (4) IS THE ONE THREE PRESENTATIONS MISSED (CERT-2086). Clauses (1)-(3)
 all reason about a query that holds its POSITION within a pass. It does not:
@@ -143,11 +157,29 @@ through a shared cursor, so one query can be written FIRST in one pass and LAST
 in the next — `pass_gap + budget` apart, which at a 100 s budget is 200 s against
 a 180 s life and a measured 19 s hole.
 
-🔴 AND THE BUDGET ITSELF WAS 25 % HIGH. `full_rebuild_budget_s()` multiplied
-`PER_QUERY_TIMEOUT_SECONDS` (25 s), but the ROUTE degrades and returns at its own
-20 s deadline, so 25 s is a backstop above a bound that already binds. Sized off
-the bound that actually holds, the budget is 80 s, and clause (4) has 20 s of
-room instead of being 20 s short.
+🔴 CLAUSE (5) IS THE ONE FOUR PRESENTATIONS MISSED (CERT-2089), AND IT IS WHY THE
+PARAGRAPH THAT USED TO SIT HERE WAS WRONG. That paragraph said the budget had been
+"25 % high" because it multiplied `PER_QUERY_TIMEOUT_SECONDS` (25 s) where the
+route "degrades and returns at its own 20 s deadline", and it re-sized the budget
+to 80 s off that 20 s. Both halves were wrong, and in the same way:
+
+* `_SEARCH_DEADLINE_MS` is **cooperative**. The route re-reads it between stages
+  and degrades; a stage that overruns it runs to completion. It bounds nothing.
+* And the unit is not the route call. What the shared cursor hands a worker is
+  `TTL read -> route call -> TTL re-read`, and until CERT-2089's repair only the
+  middle third had a wall on it. The two reads were **synchronous Redis calls
+  issued from inside the event loop** — unbounded in the cursor and blocking the
+  loop while they ran (gotcha #39). At the background client's 5 s socket timeout
+  and 3-attempt retry the real enforced unit was nearer **59 s** than 20 s, the
+  real budget nearer **236 s** than 80 s — over `_LOCK_TTL_SECONDS`, so the run
+  lock could expire mid-pass and clause (4)'s premise fail too. Measured on the
+  real cursor: a **87.8 s** hole, wider than any grade before it.
+
+So the budget is now `waves * worker_unit_bound_s()`, the unit is a **sum of
+enforced walls**, and each wall sits strictly ABOVE the cooperative bound it
+backstops. That last direction is the trap: a wall placed AT a cooperative
+deadline does not enforce it, it converts every slow-but-successful rebuild into
+an abandonment that writes nothing.
 
 🔴 CLAUSE (2) IS ABOUT THE **THRESHOLD**, NOT THE TTL, AND CERT-2084 BLOCKED THE
 VERSION THAT CONFUSED THEM. `TTL - P_effective > budget` reads 120 > 100 and
@@ -185,9 +217,10 @@ agree by construction.
 ⚠️ The freshness ceiling (`SEARCH_RESPONSE_TTL_SECONDS` 60 → 180) moved by
 **RULING D81 = A (Alex, 2026-09-06)**, not by this lane. Clause (2) cannot be
 satisfied at 60 s by any choice of the other three — it demands
-`TTL > P_effective + budget` = 160 s — so the ceiling was the binding term and it
-was a product question, not a tuning knob. Do not move it back without reading
-#3539 and D81.
+`TTL > P_effective + budget` = 130 s at the shipped 70 s budget — so the ceiling
+was the binding term and it was a product question, not a tuning knob. Do not
+move it back without reading #3539 and D81. Moving it UP is the one direction
+that makes clause (6) reachable; read that clause before doing it.
 
 🔴 **#3364 — AND UNTIL 2026-09-06 THE PERIOD WAS NOT 60 s EITHER, IT WAS ~576 s.**
 `_EXPIRING_WARMER_BEATS["warm-search-head"]` bounded the beat's messages at one
@@ -225,16 +258,65 @@ logger = logging.getLogger(__name__)
 #: time on queries nobody is asking.
 DEFAULT_HEAD_SIZE = 8
 
-#: One query's hard bound, so the LONGEST UNINTERRUPTED OP is bounded and not
-#: merely the loop boundary (the budget-guard rule). Under the route's own
-#: 20,000 ms deadline, so a query this warmer abandons is one the route would
-#: have degraded anyway.
+#: The ROUTE CALL's hard bound — an `asyncio.wait_for` wall, and therefore the
+#: only bound on the route this module can actually enforce.
+#:
+#: 🔴 IT SITS **ABOVE** THE ROUTE'S OWN 20 s DEADLINE ON PURPOSE, AND CERT-2089
+#: BLOCKED THE READING THAT SAID OTHERWISE. The old text here said this was "under
+#: the route's own 20,000 ms deadline, so a query this warmer abandons is one the
+#: route would have degraded anyway", and `effective_per_query_bound_s()` took the
+#: `min` of the two and priced every budget at 20 s. Both were wrong for the same
+#: reason: `_SEARCH_DEADLINE_MS` is **cooperative** — the route checks it between
+#: stages and degrades — so it bounds nothing that a stage overruns, and a route
+#: that returns at 24 s is a route inside its own contract's failure mode, not an
+#: impossibility. A wall placed AT a cooperative deadline does not enforce it; it
+#: converts every slow-but-successful rebuild into an abandonment that writes
+#: nothing. So the wall goes above it, and clause (5) of `residency_invariant()`
+#: asserts that it stays there.
 PER_QUERY_TIMEOUT_SECONDS = 25
 
 #: Sessions in flight. ONE query per session is an invariant, not a tuning
 #: choice: an `AsyncSession` is not safe for concurrent use, so a second
 #: coroutine on the same session is a corruption bug rather than a slowdown.
-WARM_CONCURRENCY = 2
+#:
+#: **FOUR, AND IT IS DERIVED RATHER THAN CHOSEN (CERT-2089).** The residency
+#: arithmetic admits a full-pass budget of at most 80 s (any higher and
+#: `max_same_query_write_interval_s()` clears D81's 180 s TTL), and the budget is
+#: `ceil(head / concurrency) * worker_unit_bound_s()`. At concurrency 2 that needs
+#: a unit bound of 20 s — a wall at or below the 20 s cooperative deadline it has
+#: to sit above, which is the configuration the paragraph on
+#: `PER_QUERY_TIMEOUT_SECONDS` rules out. **Concurrency 2 has no solution.** At 4
+#: it does: 35 s units, a 70 s budget, a 150 s worst interval inside a 180 s life.
+#:
+#: WHAT IT COSTS, STATED RATHER THAN ELIDED: peak concurrent `/search` builds on
+#: the background worker go 2 -> 4. **Total work is unchanged** — the same eight
+#: queries, in two waves instead of four — so this buys the halved pass duration
+#: that residency needs with peak load, not with more database time. Each session
+#: comes from its own `get_task_session()` engine (`tasks/base.py` builds a fresh
+#: engine per call), so the width is four connections and not four checkouts of
+#: one five-connection pool. It is the request path this endpoint is heavy on, and
+#: this is not the request path.
+WARM_CONCURRENCY = 4
+
+#: Socket + connect bound for ONE TTL read, and the reason it is stated as a
+#: constant is that the two TTL reads are part of the worker unit whose length the
+#: whole residency proof is built on. The default background client is 5 s each
+#: way with the robust 3-attempt retry: a worst case near 17 s **per read**, twice
+#: per query, which is most of where CERT-2089's "100-second-or-longer pass" lives.
+TTL_READ_SOCKET_TIMEOUT_SECONDS = 1.0
+
+#: Attempts (not retries) and the backoff cap of `_redis_fast_fail_retry()`,
+#: mirrored so `ttl_read_cooperative_bound_s()` can be read without that file open.
+#: `Retry(EqualJitterBackoff(cap=0.1, base=0.02), 1)` is one retry, so two attempts.
+#: `test_the_ttl_read_retry_mirror_has_not_drifted` pays for the mirror.
+TTL_READ_ATTEMPTS = 2
+TTL_READ_BACKOFF_CAP_SECONDS = 0.1
+
+#: The ENFORCED wall on one TTL read, above the 4.1 s the retry policy can
+#: cooperatively spend. Same rule as `PER_QUERY_TIMEOUT_SECONDS`: a wall at the
+#: cooperative bound is not an enforcement of it, it is a way of turning slow
+#: successes into losses.
+TTL_READ_BOUND_SECONDS = 5.0
 
 #: Rebuild an entry with less than this much life left. **DERIVED, not chosen**
 #: — `derive_refresh_ahead_s()` below, asserted by `residency_invariant()`.
@@ -242,6 +324,17 @@ WARM_CONCURRENCY = 2
 #: It was 25 s (CERT-2068 blocked #3526 over that), then 150 s — and **150 was
 #: blocked too, by CERT-2084, for deriving this from the wrong quantity.** Both
 #: numbers are kept here because the second mistake is the instructive one.
+#:
+#: ⚠️ **AND IT IS 150 AGAIN, WHICH IS A COINCIDENCE AND NOT A REVERSION.** CERT-2084
+#: blocked 150 because it came out of `ttl - period` (180 - 60 -> a threshold with
+#: no budget term in it at all). This 150 comes out of `period + budget + margin`
+#: = 60 + 70 + 20, over a budget that is itself now derived from an *enforced*
+#: worker-unit bound. Same integer, different quantity, and the difference is
+#: checkable rather than assertable: at the blocked derivation the budget was 100
+#: and `refresh_ahead - period` was 90 (a 10 s hole); here the budget is 70 and
+#: `refresh_ahead - period` is 90 (20 s of margin). `residency_invariant()` clause
+#: (2) is what tells the two apart, and the mutation set drives 150 in from both
+#: derivations to prove the test can see the difference.
 #:
 #: The threshold is NOT "a bit less than the TTL". It is
 #: `effective_pass_period_s() + full_rebuild_budget_s() + margin`, because the
@@ -252,7 +345,7 @@ WARM_CONCURRENCY = 2
 #: and come back one period later with `REFRESH_AHEAD - P` left. At 150 that was
 #: 90 s against a permitted 100 s rebuild: a 10 s hole, which is what CERT-2084
 #: measured. #3539 wrote `REFRESH_AHEAD - P_effective > D_max` from the start.
-REFRESH_AHEAD_SECONDS = 160
+REFRESH_AHEAD_SECONDS = 150
 
 #: The floor between two real passes, checked UNDER the run lock so two beats
 #: cannot both pass it. This is the load bound: the beat may fire more often,
@@ -469,30 +562,76 @@ def effective_pass_period_s(
     return float(beat_s * math.ceil(floor_s / beat_s))
 
 
-#: The ROUTE's own deadline, in seconds. It binds BEFORE this module's
-#: `PER_QUERY_TIMEOUT_SECONDS` (25 s) and is therefore the real per-query bound:
-#: `search_events` degrades and returns at its deadline, so a warming call cannot
-#: run past it and the 25 s timeout is a backstop above a bound that already
-#: exists. Mirrored from the same env var the route reads rather than imported,
-#: because `app.routes.events` importing back into tasks is the circular-import
-#: shape this package avoids — and `test_the_route_deadline_mirror_has_not_drifted`
-#: asserts the two agree, so drift is caught rather than merely hoped against.
+#: The ROUTE's own deadline, in seconds. **COOPERATIVE, AND THEREFORE NOT A
+#: BOUND ON ANYTHING THIS MODULE MAY DERIVE A BUDGET FROM (CERT-2089).**
+#: `search_events` re-reads it *between stages* and degrades; a stage that
+#: overruns it runs to completion, and nothing aborts the call. It is kept here
+#: for exactly one purpose — clause (5) of `residency_invariant()` asserts that
+#: the enforced wall sits above it — and it is mirrored from the same env var the
+#: route reads rather than imported, because `app.routes.events` importing back
+#: into tasks is the circular-import shape this package avoids.
+#: `test_the_route_deadline_mirror_has_not_drifted` pays for the mirror.
 ROUTE_SEARCH_DEADLINE_SECONDS = int(os.getenv("SEARCH_DEADLINE_MS", "20000")) / 1000.0
 
 
-def effective_per_query_bound_s(
+def ttl_read_cooperative_bound_s(
     *,
-    per_query_s: float = PER_QUERY_TIMEOUT_SECONDS,
-    route_deadline_s: float = ROUTE_SEARCH_DEADLINE_SECONDS,
+    socket_s: float = TTL_READ_SOCKET_TIMEOUT_SECONDS,
+    attempts: int = TTL_READ_ATTEMPTS,
+    backoff_cap_s: float = TTL_READ_BACKOFF_CAP_SECONDS,
 ) -> float:
-    """The bound a single warming query can actually reach: `min` of the two.
+    """The longest one TTL read can cooperatively spend before its wall fires.
 
-    Taking this module's own 25 s constant makes every budget derived from it 25 %
-    high, because the route degrades at 20 s and returns. Budgets sized off the
-    looser of two bounds are how `full_rebuild_budget_s` came out at 100 s and put
-    the write interval over D81's ceiling (CERT-2086).
+    Each attempt may pay a connect timeout AND a read timeout — a fresh
+    `get_redis_client()` builds a new pool per call, so a TLS handshake is the
+    normal case rather than the exception — and the attempts are separated by the
+    retry policy's backoff:
+
+        attempts * (connect + read) + (attempts - 1) * backoff_cap
+
+    At 2 x (1.0 + 1.0) + 0.1 that is **4.1 s**, which is what
+    `TTL_READ_BOUND_SECONDS` has to sit above.
     """
-    return float(min(per_query_s, route_deadline_s))
+    if socket_s <= 0 or attempts < 1 or backoff_cap_s < 0:
+        raise ValueError("socket timeout and attempts must be positive")
+    return float(attempts * 2 * socket_s + (attempts - 1) * backoff_cap_s)
+
+
+def worker_unit_bound_s(
+    *,
+    ttl_read_s: float = TTL_READ_BOUND_SECONDS,
+    route_call_s: float = PER_QUERY_TIMEOUT_SECONDS,
+) -> float:
+    """The ENFORCED length of ONE WORKER UNIT — the whole thing the cursor hands out.
+
+    🔴 THIS IS THE QUANTITY CERT-2089 BLOCKED THE ABSENCE OF, and the mistake it
+    replaces is worth naming precisely, because it is the fourth instance of one
+    shape: *a bound taken from something that is not the thing that binds.*
+
+    The unit a worker takes off the shared cursor is **not** the route call. It is:
+
+        TTL read   ->   route call   ->   TTL re-read
+
+    and until this commit only the middle third had a wall on it. The two reads sat
+    OUTSIDE the `wait_for`, occupied the cursor slot for as long as they liked, and
+    — being *synchronous* Redis calls issued from inside the event loop — blocked
+    the loop while they did it (gotcha #39's shape, in a module that already knew
+    the rule). At the background client's 5 s socket timeout and 3-attempt retry,
+    the real enforced unit was nearer **59 s** than the 20 s every budget on the
+    blocked SHA was priced at.
+
+    That mattered twice over. It put the pass budget at `4 * 59 = 236 s`, which
+    is not merely over D81's TTL — it is over `_LOCK_TTL_SECONDS` (180 s), so the
+    run lock could EXPIRE MID-PASS and a second pass start underneath the first.
+    Clause (4)'s whole premise is that the lock bounds the pass gap, and at the
+    blocked numbers the lock did not bound anything. Clause (6) now checks that.
+
+    The bound is the SUM OF ENFORCED WALLS, never a sample and never a cooperative
+    deadline: `2 * TTL_READ_BOUND_SECONDS + PER_QUERY_TIMEOUT_SECONDS` = **35 s**.
+    """
+    if ttl_read_s <= 0 or route_call_s <= 0:
+        raise ValueError("the TTL-read and route-call walls must both be positive")
+    return float(2 * ttl_read_s + route_call_s)
 
 
 def full_rebuild_budget_s(
@@ -503,9 +642,13 @@ def full_rebuild_budget_s(
 ) -> float:
     """The longest a pass may take to reach and write the LAST head entry.
 
-    `ceil(head_size / concurrency) * per_query_s` — the number of waves the
-    semaphore admits, each bounded by the per-query hard timeout. At 8 terms,
-    concurrency 2 and a 25 s bound that is **100 s**.
+    `ceil(head_size / concurrency) * worker_unit_bound_s()` — the number of waves
+    the pool admits, each bounded by the ENFORCED whole-unit wall. At 8 terms,
+    concurrency 4 and a 35 s unit that is **70 s**.
+
+    The multiplicand is the WORKER UNIT and not the route call (CERT-2089): the
+    cursor hands out units, so the wave length is a unit, and the two TTL reads
+    inside one are part of the wave whether or not anything bounds them.
 
     ⚠️ **This is the quantity #3539's option 4 got wrong, and it is why that
     option does not work as written.** It priced the rebuild at
@@ -518,11 +661,14 @@ def full_rebuild_budget_s(
     DERIVED FROM THE DECLARED BUDGET, NEVER FROM A SAMPLE. Production walls
     measure 3.3-26.1 s (p50 ~11 s), and sizing this at `measured_max * k` is the
     error this program has already made twice — the next sample refutes it. The
-    budget is what the code PERMITS, and the code permits 100 s.
+    budget is what the code PERMITS, and the code permits 70 s.
+
+    `per_query_s` keeps its name for its callers but now means "the whole worker
+    unit"; passing one is how the regressions drive the blocked bounds back in.
     """
-    bound = effective_per_query_bound_s() if per_query_s is None else float(per_query_s)
+    bound = worker_unit_bound_s() if per_query_s is None else float(per_query_s)
     if head_size <= 0 or concurrency <= 0 or bound <= 0:
-        raise ValueError("head size, concurrency and per-query bound must be positive")
+        raise ValueError("head size, concurrency and unit bound must be positive")
     return float(math.ceil(head_size / concurrency) * bound)
 
 
@@ -601,24 +747,29 @@ def residency_invariant(
     refresh_ahead_s: float = REFRESH_AHEAD_SECONDS,
     period_s: float | None = None,
     budget_s: float | None = None,
+    unit_s: float | None = None,
 ) -> tuple[bool, str]:
-    """Is the head PROVABLY resident at these four numbers? `(ok, why)`.
-
-    THE THREE CONSTANTS ARE ONE DECISION (that much the old docstring had right).
-    What it got wrong was the relation. Both clauses must hold:
+    """Is the head PROVABLY resident at these constants? `(ok, why)`. Six clauses.
 
         (1) CAUGHT     refresh_ahead > ttl - period
-        (2) SURVIVES   ttl - period  > budget
+        (2) SURVIVES   refresh_ahead - period > budget          (CERT-2084)
+        (3) BOUNDED    refresh_ahead <= ttl
+        (4) INTERVAL   ttl > pass_gap + budget                  (CERT-2086)
+        (5) WALL       unit > every cooperative bound inside it (CERT-2089)
+        (6) LOCKED     budget < lock ttl
 
-    (1) says the first pass that sees the entry rebuilds it rather than walking
-    past it as `fresh`. (2) says that when it does, the life remaining exceeds
-    the time the rebuild can take — which is the grader's sentence in CERT-2068:
-    *"remaining TTL exceeds the full rebuild budget"*.
+    THE ONE-LINE READING, because four presentations of this have now been
+    blocked and each time the sentence that would have caught it was missing:
+    **every clause above prices a rebuild at `budget`, and `budget` is only a
+    fact if the unit it multiplies is enforced and enforced from above.** (1)-(4)
+    are arithmetic over `budget`; (5) and (6) are what make `budget` true.
 
-    The old two-clause form had **no budget term at all**, so it certified a
-    configuration in which the rebuild finishes after the entry it is replacing
-    has already expired. That is the hole, and it is why the relation is checked
-    here rather than left as arithmetic in a comment.
+    Clauses (1)-(4) each carry the cert that added them, in the comment at the
+    check. What is worth saying here is only what they have in common: each was
+    added after a grade found the previous form reasoning about a quantity that
+    was available and plausible and was not the one that binds — the floor rather
+    than the period, the TTL rather than the threshold, a fixed position rather
+    than a re-ranked one, a cooperative deadline rather than a wall.
     """
     period = effective_pass_period_s() if period_s is None else float(period_s)
     budget = full_rebuild_budget_s() if budget_s is None else float(budget_s)
@@ -670,11 +821,60 @@ def residency_invariant(
             f"{ttl_s:g}s life. Needs ttl > {interval:g}s."
         )
 
+    # (5) WALL. 🔴 CERT-2089. Every clause above consumes `budget`, and `budget`
+    # is only meaningful if the unit it multiplies is ENFORCED. A cooperative
+    # deadline is not enforcement: the route re-reads its 20 s deadline between
+    # stages and degrades, so a stage that overruns it simply finishes. Two things
+    # therefore have to hold at once, and they pull in opposite directions —
+    #
+    #   the wall must EXIST   (or the budget is fiction, which is the BLOCK), and
+    #   the wall must sit ABOVE every cooperative bound inside the unit (or it
+    #   stops being a backstop and starts aborting rebuilds that were about to
+    #   succeed — which loses a write and breaks clause (4)'s premise instead).
+    #
+    # So the check is a strict inequality in one direction only, and it is the
+    # direction the previous repair got backwards by taking a `min`.
+    unit = worker_unit_bound_s() if unit_s is None else float(unit_s)
+    cooperative = ROUTE_SEARCH_DEADLINE_SECONDS + 2 * ttl_read_cooperative_bound_s()
+    if unit <= cooperative:
+        return False, (
+            f"THE WALL IS NOT ABOVE WHAT IT WALLS: the enforced worker unit is "
+            f"{unit:g}s, but the cooperative bounds inside one unit (a {ROUTE_SEARCH_DEADLINE_SECONDS:g}s "
+            f"route deadline plus two {ttl_read_cooperative_bound_s():g}s TTL reads) already "
+            f"reach {cooperative:g}s. A wall at or below them does not enforce them — it "
+            f"abandons rebuilds that were about to succeed, and an abandoned rebuild "
+            f"writes nothing. Needs unit > {cooperative:g}s."
+        )
+
+    # (6) LOCKED. Clause (4) says the pass gap is bounded by the run lock. That is
+    # only true while a pass FITS in the lock: `_LOCK_KEY` carries a TTL, so a pass
+    # that outruns it releases its own exclusion and a second pass starts
+    # underneath the first. At the blocked unit bound the budget was ~236s against
+    # a 180s lock, so clause (4) was resting on a premise that did not hold.
+    #
+    # ⚠️ SAID PLAINLY BECAUSE A READER WILL CHECK: at D81's TTL of 180 this clause
+    # cannot fire — clause (3) needs `refresh_ahead <= 180` and clause (2) needs
+    # `refresh_ahead > 60 + budget`, which together already force `budget < 120`.
+    # It is not dead code, it is the clause that keeps (4) honest THE MOMENT THE
+    # TTL MOVES, which is precisely what #3539's remaining options contemplate; at
+    # `ttl=600, budget=200` it is the only clause that fires, and a test drives it
+    # there rather than asserting an unreachable branch is present.
+    if budget >= _LOCK_TTL_SECONDS:
+        return False, (
+            f"THE PASS OUTRUNS ITS OWN LOCK: a pass is permitted {budget:g}s but "
+            f"`{_LOCK_KEY}` expires after {_LOCK_TTL_SECONDS:g}s, so the lock stops "
+            f"excluding the next pass before this one has finished — and the write "
+            f"interval above is derived from an exclusion that is no longer holding. "
+            f"Needs budget < {_LOCK_TTL_SECONDS:g}s."
+        )
+
     return True, (
         f"resident: caught by {refresh_ahead_s:g}s (warmer phase leaves {warmer_phase:g}s), "
         f"and the worst phase starts its rebuild with {least_life_at_rebuild:g}s against a "
         f"{budget:g}s budget — {least_life_at_rebuild - budget:g}s of margin; and the worst "
-        f"same-query write interval is {interval:g}s inside a {ttl_s:g}s life"
+        f"same-query write interval is {interval:g}s inside a {ttl_s:g}s life; the "
+        f"{unit:g}s worker-unit wall is enforced and sits above the {cooperative:g}s of "
+        f"cooperative bounds inside it; the pass fits in its {_LOCK_TTL_SECONDS:g}s lock"
     )
 
 
@@ -731,16 +931,75 @@ def _needs_rebuild(ttl: int | None) -> bool:
     return ttl < REFRESH_AHEAD_SECONDS
 
 
-def _cache_ttl_seconds(key: str) -> int | None:
-    """Remaining life of the cached `/search` answer at `key`. None = Redis silent."""
-    try:
-        from app.tasks.redis_state import get_redis_client
+def _ttl_blocking(key: str) -> int | None:
+    """The blocking half of the TTL read. Runs in a worker thread, never the loop.
 
-        ttl = get_redis_client().ttl(key)
+    `fast_fail=True` and a 1 s socket timeout, NOT the background defaults. The
+    background client is built for durability (3 attempts, 5 s each way) and this
+    read is built for a bound: it is one third of a worker unit, so its worst case
+    is spent out of the residency budget. Failing it costs nothing — `None` means
+    "Redis did not answer", and `_needs_rebuild(None)` does the work anyway.
+    """
+    from app.tasks.redis_state import get_redis_client
+
+    client = get_redis_client(
+        socket_timeout=TTL_READ_SOCKET_TIMEOUT_SECONDS,
+        socket_connect_timeout=TTL_READ_SOCKET_TIMEOUT_SECONDS,
+        fast_fail=True,
+    )
+    ttl = client.ttl(key)
+    return None if ttl is None else int(ttl)
+
+
+async def _cache_ttl_seconds(key: str) -> int | None:
+    """Remaining life of the cached `/search` answer at `key`. None = Redis silent.
+
+    🔴 ASYNC, THREADED AND WALLED, AND ALL THREE ARE CERT-2089 (which found this
+    function sitting outside the only timeout in the unit). It used to be a plain
+    sync call into `get_redis_client().ttl()` issued from inside the event loop.
+    Three separate problems, none of them visible from the call site:
+
+    1. **It held the cursor slot for an unbounded time.** `_warm_head_concurrently`
+       hands out whole units; two of these reads bracket every route call, so the
+       wave length that `full_rebuild_budget_s()` multiplies included them whether
+       or not anything bounded them. At the background client's defaults that is
+       ~17 s each.
+    2. **It blocked the event loop** — gotcha #39 exactly: a sync Redis client
+       called from async code freezes the loop, so no `wait_for` anywhere in the
+       process can fire while it is out. The other worker was not merely waiting
+       for a cursor slot; it was not running.
+    3. **No `wait_for` could have fixed (1) while (2) was true.** A coroutine that
+       never suspends cannot be cancelled. The threading is not a tidiness
+       preference, it is what makes the wall in `_warm_one` real.
+
+    ⚠️ `asyncio.to_thread` DOES free the loop here, and gotcha #38 says it does
+    not — the two are consistent and the distinction matters enough to write down.
+    #38 is about a GIL-holding C-level parse (`json.loads`), where the thread never
+    lets the loop run. A socket read RELEASES the GIL for its whole duration, so
+    this one genuinely yields.
+
+    On the wall firing, the thread is left running: it is bounded by
+    `ttl_read_cooperative_bound_s()` and it touches nothing but a local client, so
+    an orphan costs one socket and no correctness.
+    """
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(_ttl_blocking, key),
+            timeout=TTL_READ_BOUND_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        # Its own log line, not folded into the generic failure: this one says the
+        # ENFORCED wall fired, which means the cooperative bound above it did not,
+        # which is a claim about Redis and not about this warmer.
+        logger.warning(
+            "search_head_warmer: ttl read for %s hit the %ss wall",
+            key,
+            TTL_READ_BOUND_SECONDS,
+        )
+        return None
     except Exception:  # noqa: BLE001 — a warmer never takes the app down
         logger.warning("search_head_warmer: ttl read failed for %s", key, exc_info=True)
         return None
-    return None if ttl is None else int(ttl)
 
 
 def _warm_request():
@@ -765,11 +1024,63 @@ def _warm_request():
 
 
 async def _warm_one(session, q: str) -> dict:
+    """THE WORKER UNIT — the whole thing the shared cursor hands out, hard-walled.
+
+    🔴 CERT-2089. This wrapper is the repair. What the cursor dispatches is a TTL
+    read, a route call and a TTL re-read; before this commit only the route call
+    had a wall on it, and `full_rebuild_budget_s()` was priced as if the unit and
+    the route call were the same length. They are not, and the difference is the
+    whole defect: an unwalled unit makes every number derived from it a guess.
+
+    THE ABANDONED-REBUILD QUESTION, ANSWERED RATHER THAN MODELLED AWAY. A hard
+    wall means a rebuild can be abandoned, and an abandoned rebuild writes
+    nothing, so that key's write interval becomes two pass gaps and the residency
+    arithmetic's premise ("every pass writes every key") does not hold for it.
+    That is real and no choice of constants removes it. What removes it as a
+    *residency* concern is clause (5): the wall sits strictly above every
+    cooperative bound inside the unit, so it cannot fire on a rebuild that was
+    going to succeed. It fires only when the route has already breached its own
+    20 s deadline or Redis has stopped answering — and in both of those states the
+    cache is not being served either, so residency was not available to claim.
+
+    It is therefore **reported, counted and named**, never absorbed: `unit_timeout`
+    is its own reason, distinct from the route-level `timeout`, and `_summarize`
+    counts both into `timeouts` so a pass that abandoned work can never read as
+    `complete`. A residency proof and a liveness failure are different claims and
+    this function must not let them share a return value.
+    """
+    started = time.monotonic()
+    try:
+        return await asyncio.wait_for(
+            _warm_one_inner(session, q, started), timeout=worker_unit_bound_s()
+        )
+    except asyncio.TimeoutError:
+        # Same containment as the route-level timeout: the cancelled route may
+        # have left an aborted transaction on THIS session, and each worker owns
+        # its own (gotcha #42, at session level).
+        await _safe_rollback(session)
+        return {
+            "q": q,
+            "ok": False,
+            "reason": "unit_timeout",
+            "ttl_before": None,
+            "rebuilt": True,
+            "ttl_after": None,
+            "seconds": round(time.monotonic() - started, 3),
+        }
+
+
+async def _warm_one_inner(session, q: str, started: float) -> dict:
     """Run ONE head query through the route's own code path. Never raises.
 
     Running the route rather than a re-implementation is the point: it is what
     makes the warmed body byte-identical to the served one, and it is why there
     is no second assembly path to drift.
+
+    Called only by `_warm_one`, which owns the unit wall. `started` is passed in
+    rather than taken here so a walled unit and a completed one measure the same
+    interval — a wrapper that restarted the clock would under-report exactly the
+    units that ran longest.
     """
     from fastapi import Response
 
@@ -788,9 +1099,8 @@ async def _warm_one(session, q: str) -> dict:
     _suppress_search_log.set(True)
 
     key = search_response_cache_key(q=q, **SEARCH_WARM_SHAPE)
-    started = time.monotonic()
 
-    ttl_before = _cache_ttl_seconds(key)
+    ttl_before = await _cache_ttl_seconds(key)
     if not _needs_rebuild(ttl_before):
         # Reported as its own reason rather than folded into `warmed`: a pass
         # that skipped everything as fresh and a pass that rebuilt everything
@@ -903,7 +1213,7 @@ async def _warm_one(session, q: str) -> dict:
     # and reporting `no_write` on it would turn a Redis blink into a fake defect.
     # It reports `warmed_unverified` so the pass can say how much of its own
     # success it could not check.
-    ttl_after = _cache_ttl_seconds(key)
+    ttl_after = await _cache_ttl_seconds(key)
     if ttl_after is None:
         reason = "warmed_unverified"
     elif ttl_after > (ttl_before if ttl_before is not None and ttl_before >= 0 else -1):
@@ -1119,7 +1429,14 @@ def _summarize(
     not a successful pass over zero items.
     """
     warmed = [r for r in results if r["ok"]]
-    timeouts = [r for r in results if r["reason"] == "timeout"]
+    # #3526 / CERT-2089: BOTH walls count here. `timeout` is the route call
+    # exceeding `PER_QUERY_TIMEOUT_SECONDS`; `unit_timeout` is the WHOLE worker
+    # unit exceeding `worker_unit_bound_s()`, which is the abandoned-rebuild case
+    # the hard wall creates. They are separate reasons because they accuse
+    # different subsystems — the route, and everything in the unit including
+    # Redis — and they are one bucket because a pass that abandoned work must not
+    # be able to report `complete` under either name.
+    timeouts = [r for r in results if r["reason"] in ("timeout", "unit_timeout")]
     errors = [r for r in results if r["reason"] == "error"]
     # #3526: `warmed_unverified` DID rebuild — it is a `warmed` whose TTL
     # re-read came back unreadable, so it belongs in `rebuilt` and is counted

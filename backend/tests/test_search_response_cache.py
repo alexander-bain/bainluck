@@ -532,14 +532,24 @@ def test_the_warmer_passes_every_route_parameter_explicitly():
     from app.tasks import search_head_warmer as w
     from app.utils.search_cache import SEARCH_WARM_SHAPE
 
-    tree = ast.parse(inspect.getsource(w._warm_one).lstrip())
-    call = next(
+    # Parsed over the WHOLE module rather than one function. CERT-2089 split the
+    # worker unit into `_warm_one` (the hard wall) and `_warm_one_inner` (the
+    # route call), and a guard pinned to a function name goes red on the move
+    # instead of on the defect. Requiring EXACTLY ONE call site also keeps the
+    # thing this test is really for: there must be no second assembly path.
+    tree = ast.parse(inspect.getsource(w))
+    calls = [
         node
         for node in ast.walk(tree)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == "search_events"
+    ]
+    assert len(calls) == 1, (
+        f"expected exactly one `search_events(...)` call in the warmer, found "
+        f"{len(calls)} — a second call site is a second thing to drift"
     )
+    call = calls[0]
     passed = {kw.arg for kw in call.keywords if kw.arg is not None}
     # `**SEARCH_WARM_SHAPE` arrives as a keyword with `arg is None`.
     assert any(kw.arg is None for kw in call.keywords), "the warm shape is not splatted"
@@ -756,45 +766,59 @@ def test_the_full_rebuild_budget_is_the_pass_not_one_query():
     """#3539 defect 3: option 4 priced the rebuild at ONE query's timeout.
 
     The entry that has to survive is the one written LAST. At 8 terms and
-    concurrency 2 that entry waits out three full waves before its own rebuild
-    starts, so the budget is `waves * per-query bound`, not the per-query bound.
-    Derived from what the code PERMITS, never from a measured wall — sizing a
-    bound at `measured_max * k` is refuted by the next sample.
+    concurrency 4 that entry waits out one full wave before its own rebuild
+    starts, so the budget is `waves * worker-unit bound`. Derived from what the
+    code PERMITS, never from a measured wall — sizing a bound at `measured_max * k`
+    is refuted by the next sample.
+
+    🔴 CERT-2089 CHANGED THE MULTIPLICAND AND THIS TEST WITH IT. What the shared
+    cursor hands a worker is a whole UNIT — a TTL read, the route call, a TTL
+    re-read — and only the middle third had a wall on it. The previous form of
+    this test asserted `effective_per_query_bound_s() == ROUTE_SEARCH_DEADLINE ==
+    20.0`, i.e. that the budget was priced off the route's own deadline. That is
+    the assertion the BLOCK was about: `_SEARCH_DEADLINE_MS` is cooperative, so it
+    bounds nothing, and a budget derived from it is a budget derived from a number
+    the code cannot enforce. `effective_per_query_bound_s` is gone rather than
+    corrected, because a `min` of one enforced bound and one cooperative one has
+    no meaning to fix.
     """
     from app.tasks.search_head_warmer import (
         PER_QUERY_TIMEOUT_SECONDS,
-        full_rebuild_budget_s,
-    )
-
-    from app.tasks.search_head_warmer import (
         ROUTE_SEARCH_DEADLINE_SECONDS,
-        effective_per_query_bound_s,
+        TTL_READ_BOUND_SECONDS,
+        full_rebuild_budget_s,
+        worker_unit_bound_s,
     )
 
-    assert full_rebuild_budget_s() == 80.0
-    assert full_rebuild_budget_s() > PER_QUERY_TIMEOUT_SECONDS, (
-        "the budget must exceed one query's bound — the last-written entry "
+    assert full_rebuild_budget_s() == 70.0
+    assert full_rebuild_budget_s() > worker_unit_bound_s(), (
+        "the budget must exceed one unit's bound — the last-written entry "
         "waits out every earlier wave"
     )
-    # 🔴 CERT-2086: sized off the bound that ACTUALLY binds. The route degrades
-    # and returns at its own deadline, so this module's looser 25 s timeout is a
-    # backstop, and multiplying by it made every derived budget 25 % high.
-    assert effective_per_query_bound_s() == ROUTE_SEARCH_DEADLINE_SECONDS == 20.0
-    assert effective_per_query_bound_s() < PER_QUERY_TIMEOUT_SECONDS, (
-        "if this module's timeout ever drops below the route deadline it becomes "
-        "the binding one and this expression must follow it, not the constant"
+
+    # The unit is the SUM OF ENFORCED WALLS. Driven with explicit arguments in
+    # both terms, so a form that dropped either one is visible: at the shipped
+    # 5/25/5 a bare `route_call_s` and the real sum differ, and so do a sum with
+    # one read and a sum with two.
+    assert worker_unit_bound_s() == 2 * TTL_READ_BOUND_SECONDS + PER_QUERY_TIMEOUT_SECONDS
+    assert worker_unit_bound_s() == 35.0
+    assert worker_unit_bound_s(ttl_read_s=1, route_call_s=10) == 12.0
+    assert worker_unit_bound_s(ttl_read_s=3, route_call_s=10) == 16.0
+
+    # 🔴 The direction the blocked SHA had backwards. The route-call wall is ABOVE
+    # the route's cooperative deadline, deliberately: a wall placed at a
+    # cooperative deadline does not enforce it, it aborts the rebuilds that were
+    # about to honour it.
+    assert PER_QUERY_TIMEOUT_SECONDS > ROUTE_SEARCH_DEADLINE_SECONDS, (
+        "the route-call wall dropped to or below the route's own deadline — every "
+        "slow-but-successful rebuild is now an abandonment that writes nothing"
     )
-    # 🔴 Drive the `min` in BOTH directions with explicit arguments. At today's
-    # constants (25 vs 20) a `min(a, b)` and a bare `b` are indistinguishable, so
-    # asserting only the shipped value lets the min be deleted — a mutant that
-    # SURVIVED the first battery run and is only caught by exercising both sides.
-    assert effective_per_query_bound_s(per_query_s=10, route_deadline_s=20) == 10, (
-        "when this module's timeout is the tighter bound it must win — a bound "
-        "that always returns the route deadline inflates every derived budget"
-    )
-    assert effective_per_query_bound_s(per_query_s=30, route_deadline_s=20) == 20
+
     assert full_rebuild_budget_s(head_size=2, concurrency=2, per_query_s=25) == 25.0
     assert full_rebuild_budget_s(head_size=3, concurrency=2, per_query_s=25) == 50.0
+    # The width is load-bearing in this expression, not incidental to it.
+    assert full_rebuild_budget_s(head_size=8, concurrency=2, per_query_s=35) == 140.0
+    assert full_rebuild_budget_s(head_size=8, concurrency=4, per_query_s=35) == 70.0
 
 
 def test_the_message_expiry_is_derived_from_the_lock_ttl_not_the_beat_period():
