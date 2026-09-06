@@ -23,6 +23,7 @@ import { eventPath } from "@/lib/eventKey";
 import s from "./politics.module.css";
 import { BORDER_COLOR, SourceBadge } from "@/components/politics/atoms";
 import { CrossSourceSpotlight } from "@/components/politics/CrossSourceSpotlight";
+import { SideMarketCard } from "@/components/politics/SideMarketCard";
 
 // ─────────────────────────────────────────────────────────
 // Constants
@@ -472,27 +473,6 @@ function PresEvolution({ candidates, sourceMode }: {
   );
 }
 
-function SideMarketCard({ market }: { market: PoliticsMarketRow }) {
-  const leader = market.top_outcomes?.[0];
-  const isBinary = market.outcome_count <= 2;
-
-  return (
-    <Link href={`/futures/${market.market_id}`}>
-      <div className={s.sideCard}>
-        <div className={s.sideQ}>{market.q}</div>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-          <span style={{ fontSize: 13, fontWeight: 500, color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {isBinary ? (market.prob >= 50 ? "Yes" : "No") : (leader?.name || "—")}
-          </span>
-          <span className={s.probNum} style={{ fontSize: 16, color: "var(--text-primary)" }}>
-            {Math.round(market.prob)}%
-          </span>
-        </div>
-        <SourceBadge source={market.src} />
-      </div>
-    </Link>
-  );
-}
 
 // ─────────────────────────────────────────────────────────
 // Chamber control cards
