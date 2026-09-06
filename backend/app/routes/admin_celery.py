@@ -215,9 +215,125 @@ def _delivery_age_s(delivery, now_epoch):
     return age if age >= 0 else None
 
 
+def _wall_fields(row):
+    """The three ``wall_ms`` fields for one entry, always all three (LAT-P242).
+
+    Emitted whether or not the task has a row, because a key that appears only
+    when it is interesting makes its absence unreadable — the same rule the
+    ``matched_*`` pair is written under above. ``None`` here says "this task has
+    recorded no wall time", which for a beat entry is a finding: either it has
+    not run inside the current 24h window, or every one of its executions died
+    before ``task_postrun``.
+
+    ``worker_seconds_per_hour`` is withheld when the window is unmeasurable or
+    not yet positive. Dividing by a zero-age window would report an infinite
+    rate, and dividing by a nominal 24h would understate a young counter by up
+    to 24x — LAT-P024 measured both, in both directions, on these same keys.
+    """
+    if not row:
+        return {"wall_ms_24h": None, "wall_window_s": None,
+                "worker_seconds_per_hour": None}
+    ms = row.get("wall_ms")
+    window_s = row.get("window_s")
+    wsec_per_hr = None
+    if ms is not None and window_s is not None and window_s > 0:
+        wsec_per_hr = round(ms / 1000.0 / window_s * 3600.0, 1)
+    return {
+        "wall_ms_24h": ms,
+        "wall_window_s": round(window_s, 1) if window_s is not None else None,
+        "worker_seconds_per_hour": wsec_per_hr,
+    }
+
+
+def queue_demand(queues_by_task, wall_ms, slots):
+    """Worker-seconds/hour DEMANDED per queue, against what each queue HAS.
+
+    LAT-P242 (#3466), and this is the number the latency program has been
+    reaching for since 178. Three sessions ranked the occupants of the
+    ``background`` queue and acted on the ranking; latency/179 took the largest
+    consumer and made it 31.8x faster, and the victim's dead-second share did
+    not fall — it went 37.3% to 43.7%, because relieving one contributor in an
+    OVERSUBSCRIBED queue reallocates the wait rather than removing it. A ranking
+    cannot tell you a queue is oversubscribed. Only a total against a capacity
+    can, and this is that total.
+
+    ``queues_by_task`` is :func:`~app.utils.schedule_adherence.beat_queues`'s
+    output — ``{task: [queues]}``, a LIST because one task can have several beat
+    entries and they need not agree. Every scheduled task contributes, including
+    the ones with no wall time recorded: they contribute 0 to the sum and 1 to
+    ``tasks_unpriced``, which is the honest way to carry them. The alternative,
+    dropping them from the denominator, is exactly the mistake that made a queue
+    measured at 91% occupancy model as having free slots.
+
+    A task whose entries land on MORE THAN ONE queue is counted into neither
+    total. ``wall_ms`` is accumulated per task, not per entry, so its time
+    genuinely cannot be attributed — and splitting it evenly would be inventing
+    a number. Such tasks are listed under ``tasks_split_across_queues`` on each
+    queue they touch, so the unattributed demand is visible rather than lost.
+
+    ⚠️ **Every number here is a LOWER bound on demand, and the payload says so
+    in its own fields rather than in a comment nobody reads:**
+
+    * ``tasks_unpriced`` — scheduled tasks with no wall time in the window. Each
+      is unknown demand, not zero demand.
+    * the hard-kill and in-flight residuals inherited from
+      ``record_task_wall_ms`` — an execution SIGKILLed before ``task_postrun``
+      consumed real slot time and contributes none.
+    * route- and task-dispatched work is invisible here entirely. This iterates
+      the BEAT SCHEDULE, so a task fired by an API route or chained from another
+      task consumes a slot without appearing. latency/180 caught ``refresh_hub``
+      holding a background slot while not being a beat entry at all.
+
+    So ``utilisation`` crossing 1.0 is proof of oversubscription; it sitting
+    below 1.0 is NOT proof of headroom, and the two must not be read with the
+    same confidence.
+    """
+    def _row(queue):
+        return out.setdefault(queue, {
+            "worker_seconds_per_hour": 0.0,
+            "slots": slots.get(queue),
+            "capacity_worker_seconds_per_hour": (
+                slots[queue] * 3600 if queue in slots else None
+            ),
+            "tasks_priced": 0,
+            "tasks_unpriced": 0,
+            "unpriced_tasks": [],
+            "tasks_split_across_queues": [],
+        })
+
+    out = {}
+    for full_name, queues in sorted((queues_by_task or {}).items()):
+        if len(queues) != 1:
+            for queue in queues:
+                _row(queue)["tasks_split_across_queues"].append(full_name)
+            continue
+        row = _row(queues[0])
+        w = wall_ms.get(full_name) or {}
+        ms, window_s = w.get("wall_ms"), w.get("window_s")
+        if ms is None or not window_s or window_s <= 0:
+            row["tasks_unpriced"] += 1
+            row["unpriced_tasks"].append(full_name)
+            continue
+        row["tasks_priced"] += 1
+        row["worker_seconds_per_hour"] += ms / 1000.0 / window_s * 3600.0
+    for row in out.values():
+        row["worker_seconds_per_hour"] = round(row["worker_seconds_per_hour"], 1)
+        capacity = row["capacity_worker_seconds_per_hour"]
+        # Withheld, not defaulted, when the queue's slot count is unknown: a
+        # utilisation figure computed against a guessed denominator is the one
+        # number on this surface that would be acted on directly.
+        row["utilisation"] = (
+            round(row["worker_seconds_per_hour"] / capacity, 3) if capacity else None
+        )
+        row["unpriced_tasks"] = sorted(row["unpriced_tasks"])
+        row["tasks_split_across_queues"] = sorted(row["tasks_split_across_queues"])
+    return out
+
+
 def build_schedule_adherence(
     beat_schedule, metrics, label_map, deliveries=None, now_epoch=None,
-    matched=None, lease_declines=None,
+    matched=None, lease_declines=None, wall_ms=None, task_routes=None,
+    default_queue="background",
 ):
     """Grade every beat entry's schedule adherence. Pure — no Redis, no celery.
 
@@ -248,18 +364,44 @@ def build_schedule_adherence(
     dropped, because "beat is publishing into a void" is the sharpest reading
     that row can carry and it is invisible to every counter taken below the
     delivery boundary.
+
+    ``wall_ms`` (LAT-P242, #3466) is the third celery-name-keyed input and the
+    one that answers a CAPACITY question rather than a schedule one. It rides on
+    every entry — graded *and* unmapped — because the entries that need it most
+    are precisely the ones the label join cannot reach: 32 of the 110
+    ``background`` beats never call ``_tracked_run``, so they carried no
+    duration under any label, and every model built on the label-keyed metrics
+    scored them at zero worker-seconds. That is not a small correction. The
+    largest single occupant of the queue in latency/180's live ``inspect``
+    census is one of the 32.
+
+    The derived ``worker_seconds_per_hour`` is the sum divided by its own
+    window, never by 24h and never by the ``starts`` window beside it, and it is
+    withheld (``None``) when that window is unmeasurable rather than defaulted —
+    a zero-age window reads as an infinitely fast rate. Sum the field across the
+    entries routed to one queue and compare against that queue's slot count ×
+    3600 to size a gap; it is a LOWER bound, by the hard-kill and in-flight
+    residuals named in ``record_task_wall_ms``.
     """
     import time as _time
 
     from app.tasks.redis_state import WINDOW_COUNTER_TTL
-    from app.utils.schedule_adherence import adherence, beat_intervals, find_lapping
+    from app.utils.schedule_adherence import (
+        QUEUE_SLOTS,
+        adherence,
+        beat_intervals,
+        beat_queues,
+        find_lapping,
+    )
 
     now_epoch = _time.time() if now_epoch is None else now_epoch
     intervals = beat_intervals(beat_schedule)
+    queues_by_task = beat_queues(beat_schedule, task_routes, default_queue)
     by_label = {m.get("task"): m for m in metrics if m.get("task")}
     deliveries = deliveries or {}
     matched = matched or {}
     lease_declines = lease_declines or {}
+    wall_ms = wall_ms or {}
 
     graded = {}
     unmapped = []
@@ -269,6 +411,12 @@ def build_schedule_adherence(
         d = deliveries.get(full_name) or {}
         e = matched.get(full_name) or {}
         ld = lease_declines.get(full_name) or {}
+        w = _wall_fields(wall_ms.get(full_name))
+        # A LIST, not a string, and singular entries are not unwrapped: a reader
+        # that sees `["background"]` cannot mistake it for a fact about one beat
+        # entry, and a task on two queues is visible here rather than only in
+        # the totals block.
+        w["queues"] = queues_by_task.get(full_name, [])
         terminal_age, start_age = _stamp_ages_s(m, now_epoch) if m else (None, None)
         if not m and not d:
             # Honest third state. "No label recorded yet" is NOT "behind" and
@@ -290,6 +438,13 @@ def build_schedule_adherence(
                 # unreadable.
                 "matched_emitted": e.get("emitted"),
                 "matched_delivered": e.get("delivered"),
+                # LAT-P242: an unmapped entry is the case this field was built
+                # for. "The health surface cannot see this beat" and "this beat
+                # consumes 426 worker-seconds an hour" are both true of the same
+                # row, and until now only the first was sayable — which is how a
+                # 2-slot queue measured at 91% occupancy could be modelled as
+                # having free capacity.
+                **w,
             })
             continue
         # No metrics row at all means completions are UNKNOWN, not zero. Passing
@@ -344,6 +499,12 @@ def build_schedule_adherence(
             newest_delivery_age_s=_delivery_age_s(d, now_epoch),
             counter_ttl_s=float(WINDOW_COUNTER_TTL),
         )
+        # LAT-P242: attached AFTER grading and never passed into `adherence()`.
+        # Wall time is a capacity fact, not a schedule fact — a task can consume
+        # half a queue while adhering perfectly to its cadence, and letting this
+        # number touch the verdict would conflate "is it running often enough"
+        # with "can this queue afford it".
+        graded[full_name].update(w)
 
     lapping = find_lapping(graded)
     counts = {}
@@ -361,6 +522,12 @@ def build_schedule_adherence(
         # evidence into the stronger one's confidence.
         "arm_counts": _arm_counts(graded),
         "lapping": lapping,
+        # LAT-P242: computed over ALL scheduled entries, graded and unmapped
+        # alike. Restricting it to `graded` would rebuild the exact blind spot
+        # this field exists to remove — the 32 background beats that never call
+        # `_tracked_run` are unmapped by definition, and one of them is the
+        # largest occupant of the queue.
+        "queue_demand": queue_demand(queues_by_task, wall_ms, QUEUE_SLOTS),
         "unmapped": unmapped,
         "all": graded,
     }
@@ -419,6 +586,7 @@ async def celery_schedule_adherence(
         get_all_task_metrics,
         get_matched_emit_delivery,
         get_task_label_map,
+        get_task_wall_ms,
     )
 
     return build_schedule_adherence(
@@ -428,6 +596,14 @@ async def celery_schedule_adherence(
         get_all_task_deliveries(),
         matched=get_matched_emit_delivery(),
         lease_declines=get_all_lease_declines(),
+        wall_ms=get_task_wall_ms(),
+        # LAT-P242: read from the live celery config, never transcribed — the
+        # same rule the beat intervals already follow, and for the same reason.
+        # A queue attribution copied by hand drifts from the routing it
+        # describes, and this one decides which capacity a task is priced
+        # against.
+        task_routes=celery_app.conf.task_routes,
+        default_queue=celery_app.conf.task_default_queue,
     )
 
 
