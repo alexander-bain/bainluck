@@ -3,7 +3,7 @@
 Written by latency/180 at 2026-09-06 ~04:15am PT (11:15Z — PT = local `date` minus 3h, notice 24,
 verified with `TZ=America/Los_Angeles date`). Staged, not consumed.
 
-**PILLAR: DISCOVER.** **SHIP: the search box stops being cold 38% of the time** — the same ship as
+**PILLAR: DISCOVER.** **SHIP: the search box stops being cold 45% of the time** — the same ship as
 178, 179 and 180. 180 found the mechanism end to end; this queue is the one that can act on it.
 
 ## Read first
@@ -26,11 +26,30 @@ and issues **#3444** (label map — blocks any realtime number), **#3440** (sett
 
 ## State on arrival
 
-180's ship merged (#3399, PR #3441). **The post-deploy check may still be owed — check the PR
-before repeating it.** The check is: `GET /api/events/typeahead?q=sta` twice, ~2s apart; the second
+🔴 **180's ship is CERTED GREEN BUT NOT MERGED, and it is blocked on another lane.**
+**CERT-2032 — GREEN, TOKEN GRANTED, exact-SHA CI still required before merge**, at
+`2a28a13f`. The grader independently verified the behaviour on production (first shed request
+writes, second hits) and ran the battery (23/23).
+
+**Exact-sha CI is RED, and not for this ship.** `backend-tests (2)` fails on
+`test_combat_card_rollover_1712.py::...::test_kalshi_and_events_halves_land_on_one_token` —
+`assert [] == ['event:ufc:26sep05']`, a UFC card dated the day before. A clock-dependent anchor
+(gotcha #44). Verified failing identically on pristine `origin/master` in a throwaway worktree, so
+**every branch cut from master currently has a red shard 2**. Already owned:
+`authority/040-the-combat-card-tests-anchor-on-now` @ `f68d4146`, **#3456** (commented there with the
+blast radius; not touching it, notice 6).
+
+**So the sequence is: #3456 lands → rebase → re-stage under a NEW cert id quoting CERT-2032.** A
+rebase changes the sha and breaks the notice-13 token grep, so do NOT try to merge on `2a28a13f`.
+The branch has also moved past the certed sha (docs + the CERT-2032 follow-up fix `c5cbc7af`), which
+the re-stage absorbs.
+
+**The post-deploy check is therefore still OWED and is 180's, not 181's** — unless 180's session is
+gone, in which case take it. It is: `GET /api/events/typeahead?q=sta` twice, ~2s apart; the second
 should be fast (a warm hit) where before the change both were 5–8s. Same for `red`. If it is not
-warm, the first thing to suspect is that `sta` has fallen out of the warmed head, not that the fix
-failed — read `last_outcome.head` from `/api/admin/typeahead-warmer/last`.
+warm, suspect first that `sta` has fallen out of the warmed head rather than that the fix failed —
+read `last_outcome.head` from `/api/admin/typeahead-warmer/last`, and note the ring truncates that
+list to 12 while the task-metrics summary carries all 40.
 
 ## The mechanism, established — build on it, do not re-measure it
 
@@ -42,7 +61,9 @@ failed — read `last_outcome.head` from `/api/admin/typeahead-warmer/last`.
 4. The warmer's skip counters therefore sit **frozen** — `{lock, min_period}` unchanged for 201
    seconds while `last_outcome_age_s` climbed and `read_at_epoch` advanced (so: not a cached
    endpoint, genuinely nothing delivered).
-5. Period stretches to 191–616s, the 65s TTL lapses, head cold **38.5%** of the time.
+5. Period stretches to 191–616s, the 65s TTL lapses, head cold **45.0%** of the time
+   (79 passes / 112.8 min — the longest window 180 could build; shorter windows of the
+   same metric read 38.5% and 41.5%, so quote the long one or quote the range).
 
 ## ITEM 1 — THE PREREQUISITE: give the 32 unlabelled beats a duration
 
