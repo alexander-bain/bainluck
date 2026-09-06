@@ -348,8 +348,21 @@ struct MarketMapView: View {
         // drawn in the sport's unit and a games number on one that is not.
         let axisEnd = formatThreshold(rangeMax)
 
+        // #3630 — ONE selector, both layouts. The column branch used to pin this
+        // to the literal `"Full game margin map"`, so every unit-aware title the
+        // phone had gained since #3509 was invisible on iPad and Mac: the iPad
+        // headed Swiatek–Zheng's ±1.5 SET rungs "Full game margin map" while the
+        // iPhone, on the same payload in the same minute, headed them "Set
+        // margin map". In tennis that is not a synonym — a *game* is a real and
+        // different unit quoted on the same page (`Game Spread ±5.5`), so the
+        // column title named a market the card did not contain.
+        //
+        // The literal's only real job was to separate this card from the half
+        // cards stacked under it in the column, and those already carry their
+        // own `1st Half` / `2nd Half` labels beneath a `MARGIN MAPS` heading —
+        // which is exactly how the phone has always read.
         return mapCard(
-            title: useColumns ? "Full game margin map" : vocab.marginTitle(quotedBy: data.unit),
+            title: vocab.marginTitle(quotedBy: data.unit),
             subtitle: isDone ? "Final margin distribution" : "Projected margin distribution",
             headline: headline,
             density: density,
@@ -469,10 +482,15 @@ struct MarketMapView: View {
 
         let purpleRgb = (r: 124.0, g: 58.0, b: 237.0)
 
+        // #3630 — the margin map's twin, and the more legible of the two: this
+        // branch's SUBTITLE was already unit-aware (`Projected total \(unit)`
+        // two lines down) while its title was pinned, so a bases map on iPad
+        // read "Full game total map" over "Projected total bases". That split is
+        // the precise failure `SportVocab.totalTitle` was written to close — a
+        // title and its subtitle are one sentence to a reader, so they read one
+        // selector.
         return mapCard(
-            title: useColumns
-                ? "Full game total map"
-                : vocab.totalTitle(quotedBy: fullGameTotals.map(\.marketName)),
+            title: vocab.totalTitle(quotedBy: fullGameTotals.map(\.marketName)),
             subtitle: isDone
                 ? "Final \(displayUnit(mapUnit)) distribution"
                 : "Projected total \(displayUnit(mapUnit))",
