@@ -251,6 +251,177 @@ LLM_CATEGORY_TO_SPORT_PREFIX: dict[str, str] = {
 
 
 # =============================================================================
+# 7-pre. _SOCCER_CUP_PROP_TICKER_TO_SPORT_KEY — #3446 / CERT-2043
+#
+# CLASSIFICATION-ONLY. These 73 prefixes are merged into
+# KALSHI_TICKER_TO_SPORT_KEY below (so get_sport_key_from_ticker answers
+# `soccer_*` and _categorize_kalshi_market stops filing them as `legal`), and
+# are then subtracted from KALSHI_GAME_TICKER_PREFIXES so they NEVER become the
+# matcher's hard sport key. Same split #1081 already uses, for a different
+# reason: #1081's leagues have no events at all, whereas these competitions DO
+# have events and have them under a PRECISE key.
+#
+# THE VALUE IS THE BARE PREFIX `soccer`, NOT `soccer_other`, AND THAT IS THE
+# WHOLE REPAIR (CERT-2043 blocked the first attempt, which used `soccer_other`).
+# The matcher scopes candidates with a PREFIX test —
+# `event.sport.key.startswith(sport_prefix)` in `_score_candidates` — so the
+# value here is not a label, it is a filter:
+#
+#     "soccer_uefa_europa_league".startswith("soccer_other")  -> False   ← rejects
+#     "soccer_uefa_europa_league".startswith("soccer")        -> True    ← admits
+#
+# `soccer_other` is a REAL league key (4,752 production events), so using it as
+# the prefix for a competition that is not it silently rejects that
+# competition's own fixtures. Measured against production 2026-09-06, these
+# series' events are keyed `soccer_uefa_europa_league` (18),
+# `soccer_uefa_europa_conference_league` (18), `soccer_italy_coppa_italia` (24),
+# `soccer_england_efl_cup` (81), `soccer_germany_dfb_pokal` (51) and
+# `soccer_fifa_world_cup` (27). A Europa League BTTS market keyed `soccer_other`
+# therefore misses its own fixture — worse than the unmapped parent, which fell
+# back to `llm_sport_category` and scoped nothing at all.
+#
+# `soccer` states exactly what the ticker actually proves — "some soccer
+# competition, and I do not know which" — so it admits every soccer league and
+# still refuses basketball. It is strictly MORE precise than the parent, which
+# applied no sport guard to these rows whatsoever.
+#
+# Naming the exact competition is #3478's job, not this one. It already carries
+# the measured table of 9 correct keys with 6 competitions still unkeyed, and it
+# must not be guessed here: `kxserieccup` is the Coppa Italia SERIE C, a
+# different competition from `soccer_italy_coppa_italia`. A wrong precise key is
+# worse than an honest broad one.
+# =============================================================================
+
+_SOCCER_CUP_PROP_TICKER_TO_SPORT_KEY: dict[str, str] = {
+# ── #3446: the remaining Kalshi soccer-cup and continental series ──────
+# Same hold, same shape, same authoritative step-1 answer as the Slovak and
+# KNVB entries above (#3414) — these are the other 88 prefixes that put 1,615
+# of the 1,908 rows into `llm_sport_category='legal'`. The name says
+# "Regulation Time" and nothing else about the row looks like a sport, so the
+# ticker has to answer it. Every prefix below was confirmed against the venue,
+# not inferred from its letters: Kalshi's own `/series/<ticker>` reports
+# `tags: ["Soccer"]` for all 93 prefixes in the population, zero exceptions
+# (artifact: artifacts-lane1-144/series-tags.json). Leg-level on purpose — a
+# BTTS, a correct score and a total belong TO a fixture, and mapping only some
+# legs is what splits a tie.
+# UEFA Conference League (492 rows)
+"kxueclbtts": "soccer",
+"kxueclscore": "soccer",
+"kxueclspread": "soccer",
+"kxueclteamtotal": "soccer",
+"kxuecltotal": "soccer",
+# UEFA Europa League (207 rows)
+"kxuelbtts": "soccer",
+"kxuelscore": "soccer",
+"kxuelspread": "soccer",
+"kxuelteamtotal": "soccer",
+"kxueltotal": "soccer",
+# Taca de Portugal (163 rows)
+"kxtacaportbtts": "soccer",
+"kxtacaportspread": "soccer",
+"kxtacaporttotal": "soccer",
+# EFL Cup (131 rows)
+"kxeflcupbtts": "soccer",
+"kxeflcupscore": "soccer",
+"kxeflcupspread": "soccer",
+"kxeflcupteamtotal": "soccer",
+"kxeflcuptotal": "soccer",
+# Coppa Italia Serie C (122 rows)
+"kxserieccupbtts": "soccer",
+"kxserieccupspread": "soccer",
+"kxserieccuptotal": "soccer",
+# DFB-Pokal (116 rows)
+"kxdfbpokalbtts": "soccer",
+"kxdfbpokalscore": "soccer",
+"kxdfbpokalspread": "soccer",
+"kxdfbpokalteamtotal": "soccer",
+"kxdfbpokaltotal": "soccer",
+# Coppa Italia (79 rows)
+"kxcoppaitaliabtts": "soccer",
+"kxcoppaitaliascore": "soccer",
+"kxcoppaitaliaspread": "soccer",
+"kxcoppaitaliateamtotal": "soccer",
+"kxcoppaitaliatotal": "soccer",
+# FIFA World Cup (64 rows)
+"kxwcbtts": "soccer",
+"kxwcscore": "soccer",
+# Copa Sudamericana (52 rows)
+"kxconmebolsudbtts": "soccer",
+"kxconmebolsudspread": "soccer",
+"kxconmebolsudtotal": "soccer",
+# Greek Cup (41 rows)
+"kxgrecupbtts": "soccer",
+"kxgrecupspread": "soccer",
+"kxgrecuptotal": "soccer",
+# Israeli Premier League Cup (28 rows)
+"kxisrplcupbtts": "soccer",
+"kxisrplcupspread": "soccer",
+"kxisrplcuptotal": "soccer",
+# Copa do Brasil (22 rows)
+"kxcopadobrasilbtts": "soccer",
+"kxcopadobrasilspread": "soccer",
+"kxcopadobrasiltotal": "soccer",
+# Copa Libertadores (19 rows)
+"kxconmebollibbtts": "soccer",
+"kxconmebollibspread": "soccer",
+"kxconmebollibtotal": "soccer",
+# Scottish Cup (18 rows)
+"kxscocupbtts": "soccer",
+"kxscocupspread": "soccer",
+"kxscocuptotal": "soccer",
+# AFC Champions League (8 rows)
+"kxafcclbtts": "soccer",
+"kxafcclscore": "soccer",
+# ASEAN Championship (6 rows)
+"kxaseanbtts": "soccer",
+"kxaseanspread": "soccer",
+"kxaseantotal": "soccer",
+# USL Cup (5 rows)
+"kxuslcupbtts": "soccer",
+"kxuslcupspread": "soccer",
+# FA Cup (4 rows)
+# Trophee des Champions (3 rows)
+"kxfrasupercupbtts": "soccer",
+"kxfrasupercupspread": "soccer",
+"kxfrasupercupteamtotal": "soccer",
+# FA Community Shield (2 rows)
+"kxengcsbtts": "soccer",
+"kxengcsscore": "soccer",
+# DFL-Supercup (2 rows)
+"kxgerscbtts": "soccer",
+"kxgerscscore": "soccer",
+# UEFA Super Cup (2 rows)
+"kxuefascbtts": "soccer",
+"kxuefascscore": "soccer",
+# Uruguayan Primera Division (1 rows)
+"kxurypdbtts": "soccer",
+}
+
+# ── HELD OUT (lane1/145): the five `kxleaguescup*` prop prefixes ─────────────
+# Mapping these regresses ONE golden-set pair — market 59700871
+# "Toluca vs Leon: Regulation Time Spread", ticker KXLEAGUESCUPSPREAD-26SEP02TOLLEO.
+# With the ticker mapped, the matcher attaches it to event 15293431, "Toluca vs
+# León" @ 2026-08-31 23:00Z, while the ticker's own date reads 26SEP02. The pair
+# is adjudicated `correct_event_id: null` under the note
+# `non-sport-category;cup-ticker` — the same note as the two pairs lane1b/051
+# already amended, where null meant "mislabelled, target unresolved" and NOT
+# "belongs on no event". So this is probably the same improvement-read-as-a-
+# regression. Probably is not good enough to move someone else's baseline on:
+# the two amended pairs matched their ticker date exactly and this one is two
+# days off, which is the one difference that would make it a genuine mis-link.
+#
+# The golden set, its baseline and its amendments are lane1b's under D39. The
+# precedent is in that file's own header: lane1 held four ticker mappings out of
+# #2321 rather than re-record a baseline it does not own. Same here — these five
+# are held, not abandoned, pending lane1b's adjudication of 59700871.
+#
+# DISCLOSED CONSEQUENCE: new `kxleaguescup*` rows keep classifying wrong until
+# that adjudication lands. The 1,908-row data repair already fixed the existing
+# ones, so this is a forward-looking gap in one competition, not a live bucket.
+
+
+
+# =============================================================================
 # 7. KALSHI_TICKER_TO_SPORT_KEY — Kalshi ticker prefix → Odds API sport key
 # =============================================================================
 
@@ -634,6 +805,11 @@ KALSHI_TICKER_TO_SPORT_KEY: dict[str, str] = {
     "kxknvbcupspread": "soccer_other",        # KNVB Cup tie, spread leg
     "kxknvbcupbtts": "soccer_other",          # KNVB Cup tie, both-teams-to-score leg
     "kxncaamsoccergame": "soccer_other",      # NCAA men's soccer
+    # ── #3446 / CERT-2043: 73 soccer cup + continental PROP prefixes.
+    # Defined above as _SOCCER_CUP_PROP_TICKER_TO_SPORT_KEY and merged here so
+    # they classify as soccer; subtracted from KALSHI_GAME_TICKER_PREFIXES below
+    # so they never become the matcher's hard sport key. See that dict's header.
+    **_SOCCER_CUP_PROP_TICKER_TO_SPORT_KEY,
     # Asian basketball
     "kxcbagame": "basketball_other",          # Chinese CBA
     "kxjbleaguegame": "basketball_other",     # Japanese B.League
@@ -704,9 +880,17 @@ _UNSUPPORTED_LEAGUE_PREFIXES = frozenset({
     "kxaflgame", "kxwocurlgame",
 })
 
+# #3446 / CERT-2043: the soccer cup + continental PROP prefixes are evidence for
+# CLASSIFICATION ONLY and must never reach the matcher as a hard sport key. The
+# exclusion is derived from the dict itself rather than restated, so the two can
+# not drift: adding a prefix up there cannot silently arm it down here.
+_CLASSIFICATION_ONLY_PREFIXES: frozenset[str] = (
+    _UNSUPPORTED_LEAGUE_PREFIXES | frozenset(_SOCCER_CUP_PROP_TICKER_TO_SPORT_KEY)
+)
+
 KALSHI_GAME_TICKER_PREFIXES: tuple[str, ...] = tuple(
     k for k in KALSHI_TICKER_TO_SPORT_KEY.keys()
-    if k not in _UNSUPPORTED_LEAGUE_PREFIXES
+    if k not in _CLASSIFICATION_ONLY_PREFIXES
 )
 
 _LINK_RATE_UNSUPPORTED_LEAGUE_PREFIXES = frozenset({
