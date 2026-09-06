@@ -1728,6 +1728,7 @@ def extract_teams_from_ticker(external_id: str) -> Optional[tuple[str, str]]:
 
 def extract_team_codes_from_ticker(
     external_id: str,
+    sport_suffix_override: Optional[str] = None,
 ) -> Optional[tuple[tuple[str, str], tuple[str, str]]]:
     """
     Extract ``((abbrev_a, name_a), (abbrev_b, name_b))`` from a Kalshi game ticker.
@@ -1739,6 +1740,21 @@ def extract_team_codes_from_ticker(
     and `A` is equally consistent with "Angels" and "Astros" — but the codes `laa`
     and `hou` are consistent with exactly one shipped name each. Returning only the
     nicknames threw away the disambiguator (#2060 item 3, gotcha #16).
+
+    ``sport_suffix_override`` resolves the codes in a namespace OTHER than the one
+    this ticker's prefix maps to today. There is exactly one caller — the #3672
+    repair (`scripts/repair_3672_bare_namespace_event_names.py`), which must ask
+    "what did this ticker resolve to BEFORE the default flipped?" to prove a stored
+    name was minted by that bug rather than merely resembling it. It exists so the
+    repair replays THIS function instead of reimplementing the split-point loop: a
+    repair whose parser differs from the fix's either leaves rows behind or eats
+    rows the fix would never have written. Passing ``""`` asks the bare namespace,
+    which is what every unmapped prefix silently got before #3672.
+
+    It is deliberately NOT plumbed through `extract_teams_from_ticker` or
+    `extract_matchup_with_ticker_fallback`: the matching path must always resolve
+    in the asking sport's own namespace, and an override reachable from there is a
+    way to reintroduce #3672 one caller at a time.
     """
     if not external_id:
         return None
@@ -1768,13 +1784,30 @@ def extract_team_codes_from_ticker(
     if len(teams_str) < 4:  # Need at least 2+2 chars for two teams
         return None
 
-    # Determine sport suffix for disambiguation
-    ext_lower = external_id.lower()
-    sport_suffix = ""
-    for prefix, suffix in _SPORT_ABBREV_SUFFIX.items():
-        if ext_lower.startswith(prefix):
-            sport_suffix = suffix
-            break
+    # Determine sport suffix for disambiguation.
+    #
+    # #3672, second half. An UNREGISTERED prefix — one `_SPORT_ABBREV_SUFFIX` has
+    # no entry for at all — used to leave this at `""`, and `""` is the NBA's bare
+    # namespace, not "no namespace". So the exact bug #3672 fixed for registered
+    # prefixes stayed live for unregistered ones: `KXFIBAGAME-26JUL032000CHICOL`
+    # ("Chile vs Colombia") minted **Bulls vs Avalanche**, `KXSQUASHMATCH-…LAKCOL`
+    # ("Lake vs Coll") minted **Kings vs Avalanche**, and `KXUFLTOTAL-…DALSTL`
+    # minted **Mavericks vs Blues** — measured on production 2026-09-06, AFTER the
+    # first half shipped. An unregistered prefix is precisely the "sport added
+    # tomorrow" that acceptance 1 says must inherit "we do not know".
+    #
+    # Nothing legitimate needs the old fallthrough: all 36 prefixes that own the
+    # bare namespace are `kxnba*` and every one of them is registered, so a ticker
+    # reaching this default is by construction a sport we hold no vocabulary for.
+    if sport_suffix_override is not None:
+        sport_suffix = sport_suffix_override
+    else:
+        ext_lower = external_id.lower()
+        sport_suffix = _ABBREV_NAMESPACE_UNKNOWN
+        for prefix, suffix in _SPORT_ABBREV_SUFFIX.items():
+            if ext_lower.startswith(prefix):
+                sport_suffix = suffix
+                break
 
     # Try all possible split points (2+2, 2+3, 3+2, 3+3)
     best_pair = None
