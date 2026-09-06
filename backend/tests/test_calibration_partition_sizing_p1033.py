@@ -50,6 +50,37 @@ not move — partitions above 128 are refused by :func:`min_beats_above_the_mode
 instead, which spends no fit at all, only a completed unit cost and the fact
 that splitting work into more pieces cannot make there be less of it.
 
+**Fourth version — BOTH SIDES of the fence are samples, and the verdict flips
+inside their spread.** The fence asks ``window >= unit * 1.25``. This file wrote
+the unit as a sample (:data:`MEASURED_COMPLETIONS`) and the window as a single
+number, and then asked a boolean question of the pair. Production settled it on
+2026-09-06: at **19:18Z** the build **declined to start a unit at all**, with
+``staged:unit_cost_reason:withdrawn_self_blocked`` and 1,132,886 ms of window
+unused, because the 18:15Z unit had cost 918,454 ms and 918,454 x 1.25 exceeds
+that window by 15,182 ms — 1.3%. The three beats before it banked. Four beats,
+four windows spanning 1,132,886–1,170,007 ms, and the answer changes sign inside
+that 3.3% spread.
+
+Two repairs follow, and they are the whole of this version:
+
+* **A window constant cannot be direction-blind.** A refusal is certain only
+  against the MOST generous window measured; an admission is certain only
+  against the LEAST generous. One number cannot serve both, so
+  :data:`MEASURED_USABLE_WINDOW_S` is gone and every call site now names its
+  direction (:data:`WINDOW_FOR_REFUSAL_S` / :data:`WINDOW_FOR_ADMISSION_S`).
+  Under the old single-window reading every refusal in this file was certain
+  only against one particular hour, which is not what the paragraph above
+  promises.
+* **The answer is a RATE, not a boolean** — :func:`measured_duty_cycle`. At the
+  carried level of 918.5 s exactly half the measured windows admit, and that is
+  the honest replacement for "the page catches up in N clean beats".
+
+The fence is no longer only modelled here, it is CHECKED: it reproduces what
+production did on all four beats, withdrawal included
+(:class:`TestTheFenceReproducesWhatProductionDid`), and the projection formula
+reproduces the ``staged:beats_to_publish`` gauge production wrote at two
+different beats, exactly.
+
 Every constant is a PRODUCTION MEASUREMENT with its source named, and each one
 says whether it COMPLETED or was CENSORED. A guard whose expected value is
 recomputed from the code it guards agrees by construction and proves nothing.
@@ -89,6 +120,14 @@ MEASURED_PARTITION = 128
 #:   excursion was reverted, in a window with zero releases (last release v4220
 #:   at 16:55:33Z). ``read:futures_unit`` 753,280 ms, and
 #:   ``staged:unit_ms_mean_completed`` equal to it because nothing truncated.
+#: * **18:15Z** — 918.5 s, banked unit 4 of 128, and **the dearest yet**.
+#:   ``read:futures_unit`` 918,454 ms. The window was clean: two releases landed
+#:   in the hour (v4222 18:06:04Z, v4223 18:09:37Z) but ``heroku ps`` puts
+#:   worker-heavy up at 18:10:00Z, five minutes BEFORE the beat started — a
+#:   release kills a beat only through the restart it causes, and that restart
+#:   had already happened. This reading is why the next beat withdrew, and
+#:   harvesting it is what moved the anchor 857.0 -> 918.5 and every number
+#:   derived from it.
 #:
 #: **This list is HARVESTED, not commissioned** (CAL-P1036-GENERATION-WIDE-UNIT-
 #: COST-PRECONDITION, the CERT-2098 grader's follow-up). One completed unit cost
@@ -97,7 +136,9 @@ MEASURED_PARTITION = 128
 #: than restated: the fit anchor is its ``max``, the fit-free floor its ``min``,
 #: the spread its range. A new reading cannot be cherry-picked into the flattering
 #: slot — see :class:`TestTheCompletionSampleIsHarvestedNotCurated`.
-MEASURED_COMPLETIONS: dict[int, tuple[float, ...]] = {128: (723.8, 857.0, 753.3)}
+MEASURED_COMPLETIONS: dict[int, tuple[float, ...]] = {
+    128: (723.8, 857.0, 753.3, 918.5)
+}
 
 #: COMPLETED, and the anchor the fit is pinned through.
 #:
@@ -108,7 +149,10 @@ MEASURED_COMPLETIONS: dict[int, tuple[float, ...]] = {128: (723.8, 857.0, 753.3)
 #: pessimistic, never less — the direction a guard should move under new
 #: evidence.
 #:
-#: Today: 857.0 s (the 12:15Z beat), unmoved by the 17:15Z reading.
+#: Today: **918.5 s** (the 18:15Z beat). It was 857.0 s through the 17:15Z
+#: harvest; the fourth reading is the first that moved it, and moving it is what
+#: re-prices the smallest admissible partition, the margin and the beat floor
+#: below. That is the harvest working as designed, not a number to route around.
 MEASURED_UNIT_S_AT_128 = max(MEASURED_COMPLETIONS[MEASURED_PARTITION])
 
 #: CENSORED — a lower bound, NOT a cost. ``read:futures_unit`` from the
@@ -133,14 +177,71 @@ CENSORED_PARTITION = 17
 #: :meth:`TestTheCensoredAnchorIsNotAMeasurement`. It is never fitted through.
 MEASURED_MONOLITH_S_LOWER_BOUND = 1350.0
 
-#: COMPLETED. ``staged:unit_ms_mean`` (857.0 s) + ``staged:window_left_ms``
-#: (287.2 s) off the 12:15Z ledger: what one beat actually had to spend after its
-#: fixed setup — which includes the ~200 s ``read:futures_generation`` freeze it
-#: pays first. Corroborated at B=17: the 15:15Z beat's freeze cost 197,931 ms and
-#: it then handed the unit 1,137,529 ms, i.e. 1,335 s of usable window before the
-#: 30 s bound headroom, against 1,144 s of *admissible* window after the 1.25
-#: fence.
-MEASURED_USABLE_WINDOW_S = 1144.2
+#: COMPLETED, and **a sample, not a constant** — this is the fourth-version
+#: repair. What one beat had to spend after its fixed setup (which includes the
+#: ~200 s ``read:futures_generation`` freeze it pays first), derived off the
+#: ledger as ``staged:unit_ms_mean`` + ``staged:window_left_ms`` for a beat that
+#: banked, and as ``staged:window_left_ms`` alone for a beat that banked nothing.
+#: All 2026-09-06:
+#:
+#: * **12:15Z** — 857,021 + 287,200 = 1,144,221 ms.
+#: * **17:15Z** — 753,280 + 416,727 = 1,170,007 ms. The most generous measured.
+#: * **18:15Z** — 918,454 + 243,455 = 1,161,909 ms.
+#: * **19:18Z** — 1,132,886 ms, no unit run. The least generous, and it is
+#:   least generous for a reason worth keeping: the beat DISPATCHED 3m57s late
+#:   (19:18:57.970Z against a :15 schedule) after the v4227 restart at 19:11:41Z.
+#:   Dispatch lateness is a real, recurring source of window variance and it
+#:   belongs in the sample rather than being excused out of it.
+#:
+#: The spread is only 3.3% (1,132,886–1,170,007) and the admission verdict at
+#: today's anchor flips sign inside it — which is why the two derivations below
+#: exist and why the undirected constant this replaced was a defect.
+#: KEYED BY BEAT, deliberately. Two things in this file need one specific beat's
+#: window rather than an end of the sample — the gauge reconstructions — and the
+#: first draft of this repair let them carry their own copy of the literal, which
+#: is the duplication the harvest doctrine exists to forbid: correcting a reading
+#: here would have left the reconstruction quietly asserting the old one.
+MEASURED_USABLE_WINDOW_MS_BY_BEAT: dict[str, int] = {
+    "12:15Z": 1_144_221,
+    "17:15Z": 1_170_007,
+    "18:15Z": 1_161_909,
+    "19:18Z": 1_132_886,
+}
+
+MEASURED_USABLE_WINDOWS: tuple[float, ...] = tuple(
+    ms / 1000.0 for ms in MEASURED_USABLE_WINDOW_MS_BY_BEAT.values()
+)
+
+#: The window to use when the conclusion is a REFUSAL — the MOST generous hour
+#: measured. This file's founding promise is "if even this model refuses a
+#: partition, the partition is refused", and a refusal only earns that word if it
+#: survives the best window production has actually given a beat. Refusing
+#: against a typical or a worst window would refuse more sizes and prove less.
+#:
+#: Also the right end for every FLOOR on beats or work
+#: (:func:`min_beats_above_the_model_domain`, :func:`units_admitted_per_beat`):
+#: a larger window credits a beat with more progress, so the beat count it
+#: yields stays a lower bound.
+WINDOW_FOR_REFUSAL_S = max(MEASURED_USABLE_WINDOWS)
+
+#: The window to use when the conclusion is an ADMISSION — the LEAST generous
+#: hour measured. Symmetrically: "this partition banks a unit" is only certain if
+#: it holds in the worst window we have seen. Exactly one thing in this file makes
+#: an admission claim (:class:`TestTheConsecutiveBeatRequirementNowFAILS`), and
+#: production falsified it at 19:18Z, which is how the direction split was found.
+WINDOW_FOR_ADMISSION_S = min(MEASURED_USABLE_WINDOWS)
+
+def window_at_beat_s(beat: str) -> float:
+    """One named beat's own usable window, for a HISTORICAL reconstruction.
+
+    Neither end of the sample is right when the question is "what did production
+    compute at 12:15Z" — that beat had one window and it is the only admissible
+    one. Pulling today's anchor or today's extreme into a historical
+    reconstruction is an anachronism that decays silently as the sample widens;
+    :meth:`test_the_historical_value_projects_the_number_production_reported`
+    is the test that caught it doing exactly that.
+    """
+    return MEASURED_USABLE_WINDOW_MS_BY_BEAT[beat] / 1000.0
 
 # --- The budget. This is the ruling, not a measurement. ----------------------
 
@@ -163,20 +264,31 @@ MAX_BEATS_TO_PUBLISH = 24
 #: ``_unit_fits_in_window``: ``remaining_ms >= reference * STAGED_UNIT_WINDOW_SAFETY``.
 #: At the start of a beat ``remaining_ms`` is the whole unit budget and the
 #: reference is the previous beat's measured mean, so a partition is viable iff
-#: ``cost(B) * STAGED_UNIT_WINDOW_SAFETY <= MEASURED_USABLE_WINDOW_S``.
+#: ``cost(B) * STAGED_UNIT_WINDOW_SAFETY <= WINDOW_FOR_REFUSAL_S``.
+#:
+#: Reads the REFUSAL end of the window sample, because every consumer of this
+#: ceiling is refusing something: ``not model_admits(B)`` is the verdict the file
+#: leans on, and a unit cost above this ceiling is one no measured hour could
+#: have admitted.
 #:
 #: The factor is IMPORTED, so it cannot drift from the code it models.
 def admission_ceiling_s() -> float:
-    return MEASURED_USABLE_WINDOW_S / STAGED_UNIT_WINDOW_SAFETY
+    return WINDOW_FOR_REFUSAL_S / STAGED_UNIT_WINDOW_SAFETY
 
 
 #: The measured beat-to-beat spread of ONE unit at a FIXED partition, DERIVED as
 #: the full range of :data:`MEASURED_COMPLETIONS` over its cheapest reading, so
-#: each harvested beat re-prices it. Today +18.4%, from 723.8 s (10:15Z) to
-#: 857.0 s (12:15Z), with 753.3 s (17:15Z) landing inside the existing range —
-#: which is why the third reading moved this number not at all. The spread is
-#: therefore not yet known to be wider than two beats said; it is now known not
-#: to be a trend, because the newest reading is not the largest.
+#: each harvested beat re-prices it. Today **+26.9%**, from 723.8 s (10:15Z) to
+#: 918.5 s (18:15Z).
+#:
+#: It was +18.4% on three readings and the note here said the climb was "variance,
+#: not a trend, because the newest reading is not the largest". The fourth reading
+#: IS the largest, so that sentence is withdrawn: four points ordered
+#: 723.8 / 857.0 / 753.3 / 918.5 are not monotone either, so this is still not a
+#: trend — but it is no longer evidence against one, and the spread it prices has
+#: grown by half. What the spread is FOR is unchanged and is the point:
+#: :class:`TestNoPartitionIsComfortable` asserts it exceeds any margin a partition
+#: can buy, and widening it makes that finding stronger.
 MEASURED_BEAT_TO_BEAT_VARIANCE = (
     max(MEASURED_COMPLETIONS[MEASURED_PARTITION])
     - min(MEASURED_COMPLETIONS[MEASURED_PARTITION])
@@ -254,7 +366,7 @@ def predicted_unit_s(buckets: int) -> float:
 #: The one assumption the fit-free bound below rests on, named so it can be
 #: attacked: that units at a fixed partition cost roughly the same, so a
 #: completed unit's cost stands in for its 127 siblings. The evidence is thin and
-#: stated rather than hidden — three beats at B=128 (:data:`MEASURED_COMPLETIONS`)
+#: stated rather than hidden — four beats at B=128 (:data:`MEASURED_COMPLETIONS`)
 #: and the CHEAPEST of them is used. ``test_the_fit_free_bound_survives_the_
 #: assumption_being_wrong`` prices how wrong it may be: the finding survives until
 #: the true mean unit cost is ~3.5x below the cheapest reading.
@@ -274,7 +386,7 @@ def min_generation_work_s(buckets: int) -> float:
 
     1. A COMPLETED unit cost at B=128 — the CHEAPEST reading in
        :data:`MEASURED_COMPLETIONS`, which today is 723.8 s and rests on a
-       sample of **three** completed units (10:15Z, 12:15Z, 17:15Z on
+       sample of **four** completed units (10:15Z, 12:15Z, 17:15Z, 18:15Z on
        2026-09-06). Cheapest, because the bound must be a floor: a dearer
        anchor would make the refusal stronger than the evidence supports. The
        sample widens by one per clean beat, so this minimum can only fall, and
@@ -302,14 +414,17 @@ def min_beats_above_the_model_domain(buckets: int) -> int:
     """WHOLE beats to publish, a FLOOR, for any partition at or above 128.
 
     Deliberately agnostic to how many units a beat banks: a beat cannot spend
-    more than :data:`MEASURED_USABLE_WINDOW_S` of window whatever it banks, so
+    more than :data:`WINDOW_FOR_REFUSAL_S` of window whatever it banks, so
     ``work / window`` is a floor on beats no matter how the work is sliced. The
     ``+ 1`` is the publish beat, exactly as in :func:`beats_to_publish`, and it
     is not load-bearing here — the floor clears the budget without it.
+
+    The REFUSAL end of the window sample keeps this a floor: a more generous
+    window divides the work into fewer beats, so the count cannot be an
+    overstatement. Reading the worst window instead would inflate the floor and
+    make the budget refusal look stronger than the evidence supports.
     """
-    return (
-        math.ceil(min_generation_work_s(buckets) / MEASURED_USABLE_WINDOW_S) + 1
-    )
+    return math.ceil(min_generation_work_s(buckets) / WINDOW_FOR_REFUSAL_S) + 1
 
 
 def predicted_generation_s(buckets: int) -> float:
@@ -332,8 +447,13 @@ def units_admitted_per_beat(buckets: int) -> int:
 
     The answer is 0 or 1 at every partition (pinned below), which is the whole
     reason the beat budget cannot be a fraction.
+
+    Driven on :data:`WINDOW_FOR_REFUSAL_S`, the generous end: this feeds
+    :func:`beats_to_publish`, which the file uses to REFUSE partitions against
+    the budget, so crediting a beat with the most units any measured hour could
+    hold keeps that refusal certain.
     """
-    remaining_ms = MEASURED_USABLE_WINDOW_S * 1000.0
+    remaining_ms = WINDOW_FOR_REFUSAL_S * 1000.0
     unit_ms = predicted_unit_s(buckets) * 1000.0
     prior_unit_ms = unit_ms
     worst_unit_ms = 0.0
@@ -376,11 +496,64 @@ def gauge_projected_beats(buckets: int) -> float:
     divides the remaining units by it, so a beat that measures 1.3 units of
     window is credited with 1.3 units of progress. It cannot bank 0.3 of a unit.
 
-    Kept, and named for what it is, because it is the quantity the 12:15Z ledger
-    reading of 95 can be checked against. It is NOT the budget: compare it with
-    :func:`beats_to_publish` and the gap is the defect CERT-2074 named.
+    Kept, and named for what it is: it is NOT the budget: compare it with
+    :func:`beats_to_publish` and the gap is the defect CERT-2074 named. Driven on
+    the same generous window as everything else here, so the under-report it
+    demonstrates is a floor on the under-report.
+
+    For checking this file against a gauge production ACTUALLY wrote, use
+    :func:`gauge_at_a_beat` — reading today's anchor into a historical beat is an
+    anachronism.
     """
-    return predicted_generation_s(buckets) / MEASURED_USABLE_WINDOW_S
+    return predicted_generation_s(buckets) / WINDOW_FOR_REFUSAL_S
+
+
+def gauge_at_a_beat(units_banked: int, unit_s: float, window_s: float) -> int:
+    """``staged:beats_to_publish`` as production computed it AT ONE BEAT.
+
+    Production's own formula, from that beat's own contemporaneous readings and
+    nothing else: remaining units divided by the units-of-window the beat
+    measured, rounded up to a whole beat.
+
+    This exists because the check it replaces read
+    :data:`MEASURED_UNIT_S_AT_128` — today's worst-of-sample — into a
+    reconstruction of a beat that ran before that reading existed. It agreed
+    only because the anchor happened to BE the 12:15Z reading, and the fourth
+    harvest broke the coincidence: at the 918.5 s anchor the same expression
+    projects 103 beats against a ledger that said 95, which would have read as
+    the model failing when it was the check that had gone stale.
+    """
+    units_of_window = window_s / unit_s
+    return math.ceil((MEASURED_PARTITION - units_banked) / units_of_window)
+
+
+def measured_duty_cycle(carried_level_s: float) -> float:
+    """The fraction of MEASURED windows in which a beat's FIRST unit is admitted.
+
+    The fourth-version repair, and the honest replacement for asking whether the
+    build "banks". At the start of a beat ``worst_unit_ms`` is 0, so the fence
+    consults only ``prior_unit_ms`` — the level carried from the last beat that
+    completed a unit. That level is fixed for the beat; the WINDOW is not. So the
+    question "will the next beat bank" has no boolean answer, only a rate over
+    the windows production has actually delivered.
+
+    Drives production's own predicate rather than restating its inequality.
+
+    A refused beat starts nothing, so it completes nothing, so ``unit_costs`` is
+    not rewritten and the carried level does not move — the rate below is
+    therefore what the build sustains until some window on the generous side of
+    the spread lets a unit through and re-prices the level.
+    """
+    admitted = sum(
+        1
+        for window_s in MEASURED_USABLE_WINDOWS
+        if _unit_fits_in_window(
+            int(window_s * 1000.0),
+            worst_unit_ms=0.0,
+            prior_unit_ms=carried_level_s * 1000.0,
+        )
+    )
+    return admitted / len(MEASURED_USABLE_WINDOWS)
 
 
 def admission_margin(buckets: int) -> float:
@@ -581,7 +754,7 @@ class TestTheFitIsNotUsedOutsideItsDomain:
         assert (
             min_beats_above_the_model_domain(129)
             == min_beats_above_the_model_domain(1_000_000)
-            == 82
+            == 81
         )
 
     def test_the_fit_free_bound_survives_the_assumption_being_wrong(self):
@@ -600,10 +773,10 @@ class TestTheFitIsNotUsedOutsideItsDomain:
         message below rather than sitting unnoticed in a docstring.
         """
         breakeven_unit_s = (
-            (MAX_BEATS_TO_PUBLISH - 1) * MEASURED_USABLE_WINDOW_S
+            (MAX_BEATS_TO_PUBLISH - 1) * WINDOW_FOR_REFUSAL_S
         ) / MEASURED_PARTITION
         cheapest_measured = min(MEASURED_COMPLETIONS[MEASURED_PARTITION])
-        assert breakeven_unit_s == pytest.approx(205.6, abs=1.0)
+        assert breakeven_unit_s == pytest.approx(210.2, abs=1.0)
         assert cheapest_measured / breakeven_unit_s > 3.0, (
             f"a measured unit at {cheapest_measured:.0f}s is now within 3x of "
             f"the {breakeven_unit_s:.0f}s that would make a finer partition "
@@ -640,7 +813,7 @@ class TestTheCompletionSampleIsHarvestedNotCurated:
         )
 
     def test_the_sample_size_is_pinned_so_a_harvest_is_a_visible_edit(self):
-        """Three completed units as of the 2026-09-06 17:15Z beat.
+        """Four completed units as of the 2026-09-06 18:15Z beat.
 
         Pinned deliberately. Appending a reading is meant to be a deliberate line
         with a beat time on it, not something that happens while editing nearby
@@ -648,15 +821,71 @@ class TestTheCompletionSampleIsHarvestedNotCurated:
         this test in the same commit as the reading.
         """
         sample = MEASURED_COMPLETIONS[MEASURED_PARTITION]
-        assert len(sample) == 3, (
-            f"the B=128 sample now holds {len(sample)} completed units, not 3 — "
+        assert len(sample) == 4, (
+            f"the B=128 sample now holds {len(sample)} completed units, not 4 — "
             f"if that is a harvest, re-quote the count in min_generation_work_s "
             f"and in the report; if it is a curation, revert it"
         )
-        assert sample == (723.8, 857.0, 753.3)
-        assert MEASURED_UNIT_S_AT_128 == 857.0
+        assert sample == (723.8, 857.0, 753.3, 918.5)
+        assert MEASURED_UNIT_S_AT_128 == 918.5
         assert min(sample) == 723.8
-        assert MEASURED_BEAT_TO_BEAT_VARIANCE == pytest.approx(0.184, abs=0.001)
+        assert MEASURED_BEAT_TO_BEAT_VARIANCE == pytest.approx(0.269, abs=0.001)
+
+    def test_the_WINDOW_sample_is_harvested_on_the_same_terms(self):
+        """The second sample, added in the fourth version, held to the same rule.
+
+        Both ends of the fence are now tuples of production readings, and both
+        ends are read off their tuple rather than written down: neither the
+        generous end nor the poor end can be nudged without moving a reading that
+        has a beat time on it. The count is pinned for the same reason as above.
+        """
+        assert len(MEASURED_USABLE_WINDOWS) == 4, (
+            f"the window sample now holds {len(MEASURED_USABLE_WINDOWS)} "
+            f"readings, not 4 — re-quote the duty cycle and the spread"
+        )
+        assert MEASURED_USABLE_WINDOWS == pytest.approx(
+            (1144.221, 1170.007, 1161.909, 1132.886)
+        )
+        assert WINDOW_FOR_REFUSAL_S == max(MEASURED_USABLE_WINDOWS)
+        assert WINDOW_FOR_ADMISSION_S == min(MEASURED_USABLE_WINDOWS)
+
+    def test_every_beat_reading_is_looked_up_never_repeated(self):
+        """One table of raw per-beat readings; nothing carries its own copy.
+
+        The gauge reconstructions and the outcome oracle both need one named
+        beat's window, and both used to hold their own literal — so a corrected
+        reading would have moved the sample and left them asserting the old
+        value. Both now read :data:`MEASURED_USABLE_WINDOW_MS_BY_BEAT`, and this
+        pins that they do.
+        """
+        assert {label for label, *_ in OBSERVED_BEATS} == set(
+            MEASURED_USABLE_WINDOW_MS_BY_BEAT
+        )
+        for label, _carried_ms, window_ms, _banked in OBSERVED_BEATS:
+            assert window_ms == MEASURED_USABLE_WINDOW_MS_BY_BEAT[label]
+            assert window_at_beat_s(label) * 1000.0 == pytest.approx(window_ms)
+
+    def test_the_window_spread_is_narrow_and_that_is_why_it_matters(self):
+        """3.3%, and the admission verdict changes sign inside it.
+
+        A wide spread would be a scheduling problem. A spread this narrow
+        deciding the verdict is the finding: the two quantities the fence
+        compares have converged to within a few percent of each other, so which
+        side of the comparison an hour lands on is close to arbitrary.
+        """
+        spread = (
+            WINDOW_FOR_REFUSAL_S - WINDOW_FOR_ADMISSION_S
+        ) / WINDOW_FOR_ADMISSION_S
+        assert spread == pytest.approx(0.033, abs=0.002)
+
+        bar_s = MEASURED_UNIT_S_AT_128 * STAGED_UNIT_WINDOW_SAFETY
+        assert WINDOW_FOR_ADMISSION_S < bar_s < WINDOW_FOR_REFUSAL_S, (
+            f"the {bar_s:.0f}s the fence requires no longer sits INSIDE the "
+            f"{WINDOW_FOR_ADMISSION_S:.0f}-{WINDOW_FOR_REFUSAL_S:.0f}s window "
+            f"spread. Above it the build is latched and below it the build banks "
+            f"every clean hour — either way the duty-cycle framing is the wrong "
+            f"one and this file should say which of the two it is"
+        )
 
 
 class TestWhatTheFitSaysNowThatItIsHonest:
@@ -691,7 +920,19 @@ class TestWhatTheFitSaysNowThatItIsHonest:
         assert STAGED_FUTURES_BUCKETS * fixed > s_total
 
     def test_the_smallest_partition_the_model_admits_is_itself_a_lower_bound(self):
-        """55, and the true answer is larger because the model is optimistic."""
+        """85, and the true answer is larger because the model is optimistic.
+
+        **It was 55, and the move decomposes into two changes in opposite
+        directions** — worth separating, because attributing it to either alone
+        would be wrong:
+
+        * reading the window at the REFUSAL end (1,170.0 s) instead of the single
+          1,144.2 s constant raises the ceiling and takes 55 -> 46;
+        * harvesting the 918.5 s unit raises the anchor and takes 46 -> 85.
+
+        The anchor dominates by a factor of four. **The D80 scope note quotes 55
+        and is now stale** — see the report for CAL-P1037.
+        """
         smallest = next(
             (b for b in range(1, MODEL_DOMAIN_MAX + 1) if model_admits(b)), None
         )
@@ -699,12 +940,26 @@ class TestWhatTheFitSaysNowThatItIsHonest:
             "the model admits nothing inside its own domain — every statement "
             "below is vacuous and the fit must be re-derived"
         )
-        assert smallest == 55, (
+        assert smallest == 85, (
             f"the optimistic model now admits B={smallest}; the shipping rule "
             f"below is unaffected (it ships only measured sizes) but this number "
             f"is quoted in the D80 scope note and should be re-quoted"
         )
         assert not model_admits(smallest - 1)
+
+    def test_the_admissible_BOUNDARY_is_not_resolved_by_the_evidence(self):
+        """B=84 is refused by 0.1 s in 936. Nobody should read 85 as advice.
+
+        The fitted cost curve is nearly flat up here — ``s_total / B`` moves ~0.1 s
+        per bucket around B=85 — so the "smallest admissible partition" is decided
+        by a margin four orders of magnitude below the beat-to-beat spread of the
+        thing being measured. It is a real output of the rule and it is pinned
+        above, but quoting it as a recommendation would be false precision, and
+        this test exists so a reader meets that caveat next to the number.
+        """
+        overshoot_s = predicted_unit_s(84) - admission_ceiling_s()
+        assert 0.0 < overshoot_s < 1.0
+        assert overshoot_s < MEASURED_BEAT_TO_BEAT_VARIANCE * predicted_unit_s(84)
 
 
 class TestThePartitionInForceHasBeenMeasured:
@@ -730,15 +985,26 @@ class TestThePartitionInForceHasBeenMeasured:
         )
 
     def test_clause_b_is_load_bearing_and_rejects_a_size_the_model_likes(self):
-        """64 passes the model at +1.7% and has never finished a unit.
+        """100 passes the model and has never finished a unit.
 
         Without clause (b) the rule would pick it — an extrapolation, from a
         model whose last extrapolation cost a day of staleness, into a region
         where the only two production readings are a completion at 128 and a
         cancellation at 17.
+
+        This was 64 until the fourth harvest. 64 is now REFUSED (the anchor rose
+        to 918.5 s and took the admissible floor from 55 to 85), so it no longer
+        demonstrates anything — a clause that rejects a size the model already
+        rejects is untested. Re-pointed at a size the model currently likes,
+        which is the only way this test keeps doing its job as the sample widens.
         """
-        assert model_admits(64)
-        assert 64 not in MEASURED_COMPLETIONS
+        assert model_admits(100)
+        assert 100 not in MEASURED_COMPLETIONS
+        assert not model_admits(64), (
+            "B=64 is admissible again — the anchor fell, which is D80 landing or "
+            "a cheap unit harvested; either way re-check which size this clause "
+            "should be demonstrated on"
+        )
 
     def test_clause_a_is_load_bearing_and_rejects_the_size_that_shipped(self):
         assert not model_admits(CENSORED_PARTITION)
@@ -772,10 +1038,13 @@ class TestNoPartitionMeetsTheBeatBudget:
     :data:`MODEL_DOMAIN_MAX`):
 
     * ``B <= 128`` — the optimistic fit, where a refusal is certain. Admissible
-      sizes start at 55 and cost B+1 beats, so the cheapest is 56.
+      sizes start at 85 and cost B+1 beats, so the cheapest is 86.
     * ``B > 128`` — no fit at all. :func:`min_beats_above_the_model_domain`:
       128 completed units of work cannot be spent in fewer than 81 beats of
       window, and splitting them further cannot reduce the work.
+
+    Both halves got FURTHER from the budget with the fourth harvest (56 -> 86),
+    and neither was close. The verdict has never depended on a close call.
 
     The first version searched ``range(1, 513)`` with the fit and called that
     the whole answer. It was the right verdict reached by a method that did not
@@ -810,13 +1079,13 @@ class TestNoPartitionMeetsTheBeatBudget:
             f"WORK has fallen far enough that splitting it finer is viable, "
             f"which means the fixed prefix moved and everything re-derives"
         )
-        assert floor == 82
+        assert floor == 81
 
     def test_the_cheapest_admissible_partition_is_named_not_implied(self):
-        """56 beats at B=55: what the best possible dial setting would cost."""
+        """86 beats at B=85: what the best possible dial setting would cost."""
         admissible = [b for b in range(1, MODEL_DOMAIN_MAX + 1) if model_admits(b)]
         cheapest = min(beats_to_publish(b) for b in admissible)
-        assert cheapest == 56
+        assert cheapest == 86
         assert cheapest > MAX_BEATS_TO_PUBLISH
 
     def test_the_shipping_partition_costs_what_it_costs(self):
@@ -840,18 +1109,46 @@ class TestTheGuardFiresOnTheCodeThatShipped:
         assert not model_admits(buckets)
         assert beats_to_publish(buckets) == math.inf
 
-    def test_the_historical_value_projects_the_number_production_reported(self):
-        """128 -> ~96 beats, which is the gauge production actually wrote.
+    @pytest.mark.parametrize(
+        "label,units_banked,ledger_said",
+        [
+            ("12:15Z", 2, 95),
+            ("18:15Z", 4, 99),
+        ],
+    )
+    def test_the_historical_value_projects_the_number_production_reported(
+        self, label, units_banked, ledger_said
+    ):
+        """The independent check on the whole model, at TWO beats, EXACTLY.
 
-        The independent check on the whole model: ``staged:beats_to_publish``
-        was read off the live 12:15Z ledger as **95** with 2 of 128 units
-        banked, and the fit was built from a unit cost and a window, never from
-        that gauge. Reality at 128 is 129 whole beats, and the 33-beat gap is
-        not rounding — it is the gauge crediting a beat with 1.3 units of
-        progress it cannot bank.
+        ``staged:beats_to_publish`` was read off the live ledger as **95** at
+        12:15Z (2 of 128 banked) and **99** at 18:15Z (4 of 128), and nothing in
+        this file was built from either gauge. Reconstructing production's own
+        formula from each beat's own contemporaneous unit cost and window
+        reproduces both to the beat.
+
+        **This test used to be a range** (``90 <= beats <= 101``) fed by
+        :func:`gauge_projected_beats`, which reads today's worst-of-sample anchor
+        — a reading that did not exist when the 12:15Z beat ran. It agreed only
+        because the anchor happened to BE the 12:15Z unit cost, and the fourth
+        harvest broke that coincidence: the old expression now projects 103
+        against a ledger that said 95, and would have read as the model failing
+        when it was the check that had gone stale. An agreement that decays as
+        the sample widens is not an independent check.
+
+        Reality at 128 is 129 whole beats, and the gap to 95 is not rounding — it
+        is the gauge crediting a beat with 1.3 units of progress it cannot bank.
         """
-        beats = gauge_projected_beats(128)
-        assert 90 <= beats <= 101, f"model projects {beats:.0f} beats, ledger said 95"
+        unit_s = COMPLETED_UNIT_MS_BY_BEAT[label] / 1000.0
+        window_s = window_at_beat_s(label)
+        assert gauge_at_a_beat(units_banked, unit_s, window_s) == ledger_said, (
+            f"the {label} ledger reported {ledger_said} beats to publish and "
+            f"production's formula over that beat's own readings now gives "
+            f"{gauge_at_a_beat(units_banked, unit_s, window_s)} — the projection "
+            f"in _record_convergence_projection has changed shape and this "
+            f"file's reading of it is stale"
+        )
+        assert beats_to_publish(MEASURED_PARTITION) > ledger_said
 
     def test_the_window_ceiling_rejects_a_partition_that_would_deadlock(self):
         """The other direction: too FEW buckets is its own failure mode.
@@ -884,10 +1181,10 @@ class TestABeatBanksAtMostOneUnit:
 
         The cheapest unit anywhere in the domain is the one at ``B = 128``,
         because the fit falls with ``B`` — and that unit is not a projection at
-        all, it is the COMPLETED reading the fit is anchored on. 857 s against
-        the 508 s that two units would need.
+        all, it is the COMPLETED reading the fit is anchored on. 918 s against
+        the 520 s that two units would need.
         """
-        two_unit_ceiling_s = MEASURED_USABLE_WINDOW_S / (1.0 + STAGED_UNIT_WINDOW_SAFETY)
+        two_unit_ceiling_s = WINDOW_FOR_REFUSAL_S / (1.0 + STAGED_UNIT_WINDOW_SAFETY)
         cheapest_in_domain_s = predicted_unit_s(MODEL_DOMAIN_MAX)
         assert cheapest_in_domain_s > two_unit_ceiling_s, (
             f"the cheapest unit in the domain has fallen to "
@@ -916,29 +1213,207 @@ class TestABeatBanksAtMostOneUnit:
         )
 
 
-class TestTwoConsecutiveBeatsEachBankAUnit:
-    """CERT-2071's required regression, driven through the REAL gate.
+#: The four beats of 2026-09-06 at B=128 whose fence inputs AND outcome are both
+#: on the record, as ``(label, carried_level_ms, usable_window_ms, banked)``.
+#:
+#: ``carried_level_ms`` is ``staged:prior_unit_ms`` — the completed cost of the
+#: last beat that banked, which is NOT the previous beat in two of these rows: the
+#: 857,021 ms level set at 12:15Z was still the carried level at 17:15Z, having
+#: survived three intervening beats that completed nothing. The level moves only
+#: when a unit completes, and that is the property the whole duty-cycle argument
+#: rests on, observed rather than assumed.
+#:
+#: In milliseconds, as production records them. The seconds elsewhere in this file
+#: are these values rounded to 0.1 s, and
+#: :meth:`TestTheFenceReproducesWhatProductionDid.test_rounding_to_the_stored_
+#: precision_cannot_flip_a_verdict` checks that the rounding is not load-bearing.
+#: The window is LOOKED UP rather than repeated, so the two tables cannot drift.
+OBSERVED_BEATS: tuple[tuple[str, int, int, bool], ...] = tuple(
+    (label, carried_ms, MEASURED_USABLE_WINDOW_MS_BY_BEAT[label], banked)
+    for label, carried_ms, banked in (
+        ("12:15Z", 723_801, True),
+        ("17:15Z", 857_021, True),
+        ("18:15Z", 753_280, True),
+        ("19:18Z", 918_454, False),
+    )
+)
+
+#: Beat -> the unit cost that beat COMPLETED, in milliseconds, DERIVED rather
+#: than restated: it is the level the NEXT row carried. That identity is the
+#: mechanism the whole duty-cycle argument rests on — ``prior_unit_ms`` is
+#: rewritten only by a completed unit — so deriving it here means the table
+#: cannot assert the mechanism and contradict it at the same time.
+#:
+#: The withdrawal has no entry, because it completed nothing.
+COMPLETED_UNIT_MS_BY_BEAT: dict[str, int] = {
+    OBSERVED_BEATS[i][0]: OBSERVED_BEATS[i + 1][1]
+    for i in range(len(OBSERVED_BEATS) - 1)
+    if OBSERVED_BEATS[i][3]
+}
+
+
+class TestTheFenceReproducesWhatProductionDid:
+    """The fence, checked against an OUTCOME ORACLE instead of only modelled.
+
+    Everything else in this file drives ``_unit_fits_in_window`` with inputs the
+    file itself derives, so it can only ever be self-consistent. These four rows
+    are different: each one is a beat whose carried level, usable window AND
+    observed outcome are all on the ``calibration:main:phase_ledger`` record, so
+    the predicate is being asked a question production has already answered.
+
+    Three banked and one withdrew. If the model of the fence in this file were
+    wrong — wrong reference, wrong factor, wrong window derivation — the odds of
+    it agreeing on all four, including the one that changed sign, are poor.
+    """
+
+    @pytest.mark.parametrize(
+        "label,carried_ms,window_ms,banked",
+        OBSERVED_BEATS,
+        ids=[row[0] for row in OBSERVED_BEATS],
+    )
+    def test_the_fence_agrees_with_the_ledger_on_every_observed_beat(
+        self, label, carried_ms, window_ms, banked
+    ):
+        admitted = _unit_fits_in_window(
+            window_ms, worst_unit_ms=0.0, prior_unit_ms=float(carried_ms)
+        )
+        assert admitted is banked, (
+            f"the {label} beat {'banked' if banked else 'withdrew'} in "
+            f"production, but this file's reading of the fence says it would "
+            f"{'refuse' if banked else 'admit'} "
+            f"({window_ms:,} ms of window against {carried_ms:,} x "
+            f"{STAGED_UNIT_WINDOW_SAFETY} = "
+            f"{carried_ms * STAGED_UNIT_WINDOW_SAFETY:,.0f} ms). Either the "
+            f"predicate moved or the window derivation is wrong; nothing "
+            f"downstream of the fence in this file can be trusted until it agrees"
+        )
+
+    def test_every_carried_level_is_a_reading_the_sample_already_holds(self):
+        """The transcription guard, and it asserts the mechanism as well.
+
+        A carried level is never invented: it is the completed cost of the last
+        beat that banked, so every value in this table must round to a member of
+        :data:`MEASURED_COMPLETIONS`. Without this a mistyped level that happened
+        to land on the same side of the fence would change no outcome and pass
+        unnoticed — which is exactly what a 753,280 -> 700,000 mutation did
+        before this test existed.
+        """
+        sample = MEASURED_COMPLETIONS[MEASURED_PARTITION]
+        for label, carried_ms, _window_ms, _banked in OBSERVED_BEATS:
+            assert round(carried_ms / 1000.0, 1) in sample, (
+                f"the {label} beat carried {carried_ms:,} ms, which is not any "
+                f"completed unit cost this file holds {sample} — either the "
+                f"reading is mistyped or a completed unit is missing from the "
+                f"harvest; a carried level cannot come from anywhere else"
+            )
+
+    def test_the_completed_cost_of_a_beat_is_the_level_the_next_one_carries(self):
+        """The identity the duty-cycle argument depends on, pinned.
+
+        Also the reason the 19:18Z beat could not recover on its own: it
+        completed nothing, so it appears in no row's carried level, so the level
+        stayed at 918,454 for whatever ran next.
+        """
+        assert COMPLETED_UNIT_MS_BY_BEAT == {
+            "12:15Z": 857_021,
+            "17:15Z": 753_280,
+            "18:15Z": 918_454,
+        }
+        assert "19:18Z" not in COMPLETED_UNIT_MS_BY_BEAT
+        for beat, unit_ms in COMPLETED_UNIT_MS_BY_BEAT.items():
+            assert round(unit_ms / 1000.0, 1) in MEASURED_COMPLETIONS[
+                MEASURED_PARTITION
+            ], f"the {beat} beat's completed unit is not in the harvest sample"
+
+    def test_the_oracle_contains_both_outcomes_or_it_proves_nothing(self):
+        """A four-row oracle that all went one way would be satisfied by a stub."""
+        outcomes = {row[3] for row in OBSERVED_BEATS}
+        assert outcomes == {True, False}, (
+            "the observed-beat table no longer holds both a bank and a "
+            "withdrawal, so agreeing with it is no longer evidence the fence is "
+            "modelled correctly — keep the 19:18Z row"
+        )
+
+    def test_the_margin_on_the_withdrawal_is_small_and_named(self):
+        """1.3%. The finding is that this decides it, not that it is large.
+
+        Quoted because the size is the whole character of the problem: the build
+        is not far from banking every hour, it is 15 seconds from it, which is
+        why the answer is a duty cycle rather than a verdict.
+        """
+        _, carried_ms, window_ms, banked = OBSERVED_BEATS[-1]
+        assert banked is False
+        shortfall_ms = carried_ms * STAGED_UNIT_WINDOW_SAFETY - window_ms
+        assert shortfall_ms == pytest.approx(15_181.5, abs=1.0)
+        assert shortfall_ms / window_ms < 0.02
+
+    def test_rounding_to_the_stored_precision_cannot_flip_a_verdict(self):
+        """The 0.1 s readings elsewhere must agree with the raw milliseconds.
+
+        :data:`MEASURED_COMPLETIONS` stores 918.5, not 918.454, and a verdict
+        decided by 1.3% is close enough that the rounding deserves checking
+        rather than assuming. It does not flip any of the four.
+        """
+        for label, carried_ms, window_ms, _banked in OBSERVED_BEATS:
+            raw = _unit_fits_in_window(
+                window_ms, worst_unit_ms=0.0, prior_unit_ms=float(carried_ms)
+            )
+            rounded = _unit_fits_in_window(
+                window_ms,
+                worst_unit_ms=0.0,
+                prior_unit_ms=round(carried_ms / 1000.0, 1) * 1000.0,
+            )
+            assert raw is rounded, (
+                f"the {label} beat's verdict depends on whether the unit cost is "
+                f"read at full precision or at the 0.1 s this file stores — the "
+                f"stored sample must carry more precision before anything here "
+                f"can be quoted"
+            )
+
+
+class TestTheConsecutiveBeatRequirementNowFAILS:
+    """CERT-2071's required regression — and the shipping size now FAILS it.
 
     The BLOCK's finding was not that 5 is slow — it is that the production
     admission rule REFUSES the beat after the first new-size unit completes, so
     the build alternates between a productive beat and a self-blocked one and
-    the "beats to publish" arithmetic silently doubles. A partition is only
-    shippable if TWO CONSECUTIVE beats each admit a unit.
+    the "beats to publish" arithmetic silently doubles. CERT-2071's rule was: a
+    partition is only shippable if TWO CONSECUTIVE beats each admit a unit.
 
-    These call ``_unit_fits_in_window`` itself — production's own predicate,
-    with production's own ``STAGED_UNIT_WINDOW_SAFETY`` — rather than restating
-    its inequality.
+    **B=128 no longer satisfies that rule, and production is the witness, not a
+    model.** At 19:18Z on 2026-09-06 the beat after an 918,454 ms unit started no
+    unit at all and the runtime labelled it itself:
+    ``staged:unit_cost_reason:withdrawn_self_blocked``, ``units_this_beat`` 0,
+    1,132,886 ms of window unspent.
+
+    This class therefore ASSERTS THE FAILURE rather than the requirement. That is
+    not a weakened guard, and the distinction matters: the requirement is
+    unchanged and still the bar, the class still drives production's own
+    predicate, and it now goes red the moment the failure stops reproducing —
+    which is the event worth catching, because it means D80 (or a cheaper unit)
+    has restored the margin and the partition should be re-derived with it.
+
+    **The rule is not thereby satisfied by B=128.** What keeps 128 shipping is
+    the OTHER half of the shipping rule — production has completed a unit at it,
+    four times — plus :func:`measured_duty_cycle` being non-zero. A partition
+    that fails this rule AND has a zero duty cycle is unshippable outright; 128
+    fails the first and passes the second, at exactly 50%.
     """
 
     @staticmethod
-    def _two_beats(buckets: int, carried_level_s: float) -> tuple[bool, bool]:
+    def _two_beats(
+        buckets: int, carried_level_s: float, window_s: float
+    ) -> tuple[bool, bool]:
         """``(beat 1 admitted, beat 2 admitted)`` at a partition.
 
         Beat 1 opens with the level carried from the PREVIOUS partition's beats
         (nothing at this size has run yet) and, if it is admitted, ends having
         measured this size's own cost. Beat 2 opens on that new level.
+
+        ``window_s`` is explicit because the direction is load-bearing here and
+        differs between the two tests below — see :data:`WINDOW_FOR_ADMISSION_S`.
         """
-        window_ms = MEASURED_USABLE_WINDOW_S * 1000.0
+        window_ms = window_s * 1000.0
         new_cost_ms = predicted_unit_s(buckets) * 1000.0
 
         beat1 = _unit_fits_in_window(
@@ -949,19 +1424,64 @@ class TestTwoConsecutiveBeatsEachBankAUnit:
         )
         return beat1, beat2
 
-    def test_the_shipping_partition_admits_a_unit_on_two_consecutive_beats(self):
+    def test_the_shipping_partition_does_NOT_admit_two_consecutive_beats(self):
+        """The claim this file used to assert, now falsified by production.
+
+        Read on :data:`WINDOW_FOR_ADMISSION_S`, the worst measured hour, because
+        the claim being tested is an ADMISSION: "two consecutive beats each bank"
+        only means something if it survives the poorest window the build has
+        actually been given. On the old single 1,144.2 s constant and the old
+        857.0 s anchor this passed; both inputs moved, and the direction split is
+        why the failure is now visible instead of averaged away.
+        """
         assert_the_shipped_partition_can_be_modelled_at_all()
-        beat1, beat2 = self._two_beats(
-            STAGED_FUTURES_BUCKETS, carried_level_s=MEASURED_UNIT_S_AT_128
+        beat1, _beat2 = self._two_beats(
+            STAGED_FUTURES_BUCKETS,
+            carried_level_s=MEASURED_UNIT_S_AT_128,
+            window_s=WINDOW_FOR_ADMISSION_S,
         )
-        assert beat1, "the deploy beat is refused before it measures anything"
-        assert beat2, (
-            f"B={STAGED_FUTURES_BUCKETS} banks a unit and then BLOCKS ITSELF: "
-            f"{predicted_unit_s(STAGED_FUTURES_BUCKETS):.0f}s x "
-            f"{STAGED_UNIT_WINDOW_SAFETY} exceeds the "
-            f"{MEASURED_USABLE_WINDOW_S:.0f}s budget, so beat two refuses its "
-            f"first unit — progress alternates and the beat count doubles"
+        assert not beat1, (
+            f"B={STAGED_FUTURES_BUCKETS} admits its first unit again in the "
+            f"worst measured window ({WINDOW_FOR_ADMISSION_S:.0f}s vs "
+            f"{MEASURED_UNIT_S_AT_128:.0f}s x {STAGED_UNIT_WINDOW_SAFETY}) — the "
+            f"self-blocking production showed at 19:18Z has stopped reproducing. "
+            f"Good news, but it invalidates the duty-cycle arithmetic quoted to "
+            f"Alex; re-derive the partition and the beat count before trusting "
+            f"either"
         )
+
+    def test_the_duty_cycle_is_what_replaced_the_boolean(self):
+        """Half the measured windows admit at today's level. Pinned.
+
+        The number that matters for the ship, because the beats-to-publish
+        arithmetic divides by it: 128 remaining units at a 50% duty cycle is
+        twice the beats that :func:`beats_to_publish` reports, and
+        :func:`beats_to_publish` already says 129.
+        """
+        assert measured_duty_cycle(MEASURED_UNIT_S_AT_128) == 0.5, (
+            f"the duty cycle at the carried level {MEASURED_UNIT_S_AT_128:.1f}s "
+            f"is now {measured_duty_cycle(MEASURED_UNIT_S_AT_128):.0%} over "
+            f"{len(MEASURED_USABLE_WINDOWS)} measured windows — re-quote it in "
+            f"the ledger before the next Alex-facing line, because 'the page "
+            f"catches up in N beats' is derived from it"
+        )
+        assert measured_duty_cycle(MEASURED_UNIT_S_AT_128) > 0.0, (
+            "no measured window admits a unit at the carried level — the build "
+            "is LATCHED, not merely slow, and it cannot escape without a "
+            "window wider than any yet observed; this is an Alex-facing "
+            "escalation, not a ledger row"
+        )
+
+    @pytest.mark.parametrize("level_s", [723.8, 857.0, 753.3])
+    def test_every_CHEAPER_measured_level_kept_the_build_at_full_duty(self, level_s):
+        """The regime changed with one reading, and this dates the change.
+
+        The first three completed units each left a level that every measured
+        window clears. Only the fourth put the requirement inside the window
+        spread. So the build did not degrade gradually — it stepped, on the
+        18:15Z unit, and a single cheaper unit steps it back.
+        """
+        assert measured_duty_cycle(level_s) == 1.0
 
     @pytest.mark.parametrize("buckets", [2, 4, 5, 6, 7, 17])
     def test_it_fails_on_beat_two_for_every_partition_the_block_named(self, buckets):
@@ -971,8 +1491,19 @@ class TestTwoConsecutiveBeatsEachBankAUnit:
         production caught on 2026-09-06 at 15:15Z**, and it belongs here because
         it is the same shape of failure — admitted on beat one against the
         carried 128-era level, refused thereafter on its own measurement.
+
+        Read on :data:`WINDOW_FOR_REFUSAL_S`, the opposite end from the test
+        above, and for the opposite reason: the conclusion here is that beat two
+        is REFUSED, so it is only certain if it holds in the most generous hour
+        measured. Beat one is set up to be admitted, which needs the generous end
+        too — at the 918.5 s carried level the worst window refuses it, and the
+        falsifier would then be testing nothing.
         """
-        beat1, beat2 = self._two_beats(buckets, carried_level_s=MEASURED_UNIT_S_AT_128)
+        beat1, beat2 = self._two_beats(
+            buckets,
+            carried_level_s=MEASURED_UNIT_S_AT_128,
+            window_s=WINDOW_FOR_REFUSAL_S,
+        )
         assert beat1, "setup is wrong: beat one should be admitted on the old level"
         assert not beat2, (
             f"B={buckets} now survives beat two — the model or the gate moved, "
@@ -992,10 +1523,11 @@ class TestNoPartitionIsComfortable:
         """The derived form of "no partition is comfortable".
 
         Every partition's margin is bought out of the gap between the fixed
-        prefix and the admission ceiling — 101 s. One unit at a FIXED partition
-        ranges 723.8 s -> 857.0 s across the three completed readings, which is
-        150 s at the prefix. The spread is larger than the entire budget for
-        margin, so a self-block can happen at any size. Both sides are
+        prefix and the admission ceiling — 51 s. One unit at a FIXED partition
+        ranges 723.8 s -> 918.5 s across the four completed readings, which is
+        238 s at the prefix. The spread is larger than the entire budget for
+        margin, so a self-block can happen at any size — and at 128 it has now
+        happened, which is what the 19:18Z withdrawal was. Both sides are
         measurements; neither is a bar anyone picked.
 
         The prefix appears here as the GENEROUS end of the argument, which is
@@ -1014,7 +1546,7 @@ class TestNoPartitionIsComfortable:
         )
 
     def test_the_margin_ceiling_is_a_MEASURED_point_not_an_unreachable_limit(self):
-        """+6.8% at B=128 — not the +12.5% the ``B -> inf`` prefix would claim.
+        """+1.9% at B=128 — not the +5.8% the ``B -> inf`` prefix would claim.
 
         Pinned to a number so the softer version cannot creep back. The limit
         reading is not just unreachable (everything above 128 is refused by
@@ -1026,7 +1558,7 @@ class TestNoPartitionIsComfortable:
         """
         fixed, _ = fit_cost_model()
         unreachable_limit = admission_ceiling_s() / fixed - 1.0
-        assert max_achievable_margin() == pytest.approx(0.068, abs=0.004)
+        assert max_achievable_margin() == pytest.approx(0.019, abs=0.004)
         assert unreachable_limit > max_achievable_margin()
         assert MEASURED_BEAT_TO_BEAT_VARIANCE > unreachable_limit, (
             f"the measured spread {MEASURED_BEAT_TO_BEAT_VARIANCE:+.1%} no "
