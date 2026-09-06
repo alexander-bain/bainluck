@@ -42,6 +42,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 from app.config.authority_by_sport import (
     AUTHORITY_BY_SPORT,
     ESPN,
@@ -188,19 +190,42 @@ def test_a_second_reporter_would_still_not_be_wiring_but_must_be_declared():
     assert set(SWITCH_CONSUMERS) == set(SWITCH_REPORTERS)
 
 
-def test_the_row_publishes_the_wiring_beside_the_current_authority():
-    """End to end through the route's own module, so the two ends cannot agree
-    while the wiring between them is dead."""
+@pytest.mark.asyncio
+async def test_the_row_publishes_the_wiring_beside_the_current_authority(monkeypatch):
+    """Against the EXECUTED endpoint's payload, not its source.
+
+    `AUTHORITY-038-ROUTE-PAYLOAD-GUARD`, the follow-up CERT-2028 named. The
+    first cut asserted that the strings `switch_wired` and `switch_note` appear
+    somewhere in the route's AST, which is a claim about a file rather than
+    about a response: it would pass on a key built and then dropped, on one
+    spelled into a comment, and on one placed under the wrong object. The
+    endpoint is what an operator reads, so the endpoint is what gets asserted.
+
+    Reuses the running suite's own fixtures rather than a second stub of the
+    route, so a change to how the endpoint is invoked breaks one place.
+    """
+    from tests.test_authority_agreement_endpoint import FakeSession
     import app.routes.admin_providers as route
 
-    source = ast.parse(Path(route.__file__).read_text())
-    published = {
-        node.value
-        for node in ast.walk(source)
-        if isinstance(node, ast.Constant) and isinstance(node.value, str)
-    }
-    assert "switch_wired" in published
-    assert "switch_note" in published
+    monkeypatch.setattr(route, "_check_admin_secret", lambda *a, **k: None)
+    import app.tasks.redis_state as redis_state
+
+    monkeypatch.setattr(redis_state, "get_task_metrics", lambda name: {})
+
+    out = await route.statpal_authority_agreement(
+        request=None, secret="x", db=FakeSession()
+    )
+
+    assert out["sports"], "no rows to inspect — the guard would be vacuous"
+    for entry in out["sports"]:
+        authority = entry["authority"]
+        # Beside `current`, in the same object. A note published one level up
+        # would not travel with the value it qualifies.
+        assert authority["current"] == ESPN
+        assert authority["switch_wired"] is False
+        assert "INERT" in authority["switch_note"]
+        # And it is the derived sentence, not a second copy that could drift.
+        assert authority["switch_note"] == SWITCH_WIRING_NOTE
 
 
 def test_nothing_has_flipped_so_the_note_is_the_only_thing_standing_between():
