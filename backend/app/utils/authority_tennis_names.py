@@ -114,8 +114,14 @@ reduced-fixture trap wearing a new hat: it measures the orders our column
 *happens to hold*, not which re-orderings *mean one player*. ``Shang Juncheng``
 and ``Zheng Qinwen`` are named as one player right here and in the tests, yet
 the register has only ever received one spelling of each, so the sweep cannot
-see them. They are :data:`_ORDER_ALIASES_REVIEWED`, and :data:`ORDER_ALIASES` is
-the union — **9 classes: 7 measured, 2 reviewed.**
+see them. They are :data:`_ORDER_ALIASES_REVIEWED`, and the REVIEW layer is the
+union of the two — **9 classes: 7 measured, 2 reviewed.**
+
+That layer is no longer the whole of :data:`ORDER_ALIASES`. Under Alex's standing
+ruling on names, the authority record proves classes of its own, and both
+reviewed entries turn out to be among them; see the section at the foot of this
+module, and read the counts there rather than here, because they move with every
+capture of the venue.
 
 A reviewed class carries no measurement, so it carries its evidence instead.
 Each is a :class:`ReviewedAlias` — the spelling the register holds, the second
@@ -159,7 +165,10 @@ from __future__ import annotations
 import re
 import unicodedata
 from dataclasses import dataclass
+from itertools import permutations
 from typing import Iterable, Optional
+
+from app.utils import authority_tennis_capture as _capture
 
 #: A join key: the folded surname, and the given-name initial when one is known.
 #: ``None`` in the second slot means "our side has no given name for this player"
@@ -386,10 +395,14 @@ _ORDER_ALIASES_REVIEWED: frozenset[tuple[str, ...]] = frozenset(
     alias.tokens for alias in REVIEWED_ALIASES
 )
 
-#: The token multisets our register spells in more than one order for ONE
-#: player. Keyed on the sorted tokens; membership is what lets
-#: :func:`register_identity` ignore order for that class and only that class.
-#: **Reviewed, never derived** — the sweep proposes, a person disposes.
+#: The token multisets that name ONE player under more than one written order.
+#: Keyed on the sorted tokens; membership is what lets :func:`register_identity`
+#: ignore order for that class and only that class.
+#:
+#: **Rebound at the bottom of this module** to add the classes the AUTHORITY
+#: RECORD proves (D69 = A) — see "WHY NOBODY IS ASKED ABOUT A NAME AGAIN". The
+#: binding here is the pre-D69 set and exists so the functions below can be
+#: defined before the prover that needs them runs.
 ORDER_ALIASES: frozenset[tuple[str, ...]] = (
     _ORDER_ALIASES_MEASURED | _ORDER_ALIASES_REVIEWED
 )
@@ -616,3 +629,297 @@ def resolve_tennis_name(
     if len(distinct) > 1:
         return TennisResolution(AMBIGUOUS, candidates=tuple(sorted(hits)))
     return TennisResolution(MATCHED, matched=hits[0], candidates=tuple(sorted(hits)))
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# WHY NOBODY IS ASKED ABOUT A NAME AGAIN  —  D69 = A (Alex, 2026-09-05 7:16pm PT)
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# Everything above this line decides order by REVIEW: seven classes swept out of
+# the corpus and read by a person, two more attested by this lane and published
+# as unratified. Alex ended that:
+#
+#     "I don't have enough context to know if those are the same people, and you
+#     don't want human in the loop on this, because it's not the last time
+#     this'll happen with names. Sort it out in a scalable way."
+#
+# and, when asked how a machine could know:
+#
+#     "not from Fable's knowledge of Chinese naming — from the authority record:
+#     the same draw slot, opponent and date carry one spelling in one source and
+#     the other in the other. The lane proves it that way, or does not alias."
+#
+# ─── WHAT THE VENUE ACTUALLY SERVES, AND HOW THE PROOF DIFFERS FROM THE ASK ───
+#
+# Measured against StatPal's own tennis endpoints on 2026-09-06 (notice 26a),
+# d-7…d7 plus livescores, 372 fixtures: **StatPal never spells `Zheng Qinwen`.**
+# It serves `Q. Zheng`. The reversed spelling the ruling expected to find on the
+# other side of the slot is not there — and it is not in our register either,
+# over a year of it (7,539 distinct spellings).
+#
+# The slot proves something better. StatPal's singles form is
+# `{initial}. {Surname}`, so a slot does not merely *exhibit* the other ordering,
+# it **names the surname outright** — the one fact our own column never records
+# and the only fact the order question turns on. `Q. Zheng` opposite `M. Keys`
+# on 2026-09-05 in `tennis_wta_us_open`, against our `Qinwen Zheng` opposite
+# `Madison Keys`, says: the surname is `zheng`, the given name starts with `q`.
+# Six such slots over four days and two tour keys, all carrying StatPal player id
+# `43122` — and `M. Zheng`, a different player, carries `126416` throughout, which
+# is the ruling's first clause working: **identity is the id, not the string.**
+#
+# Once the surname is proven, the fold follows without anybody's opinion about
+# how Chinese names are written: `Zheng Qinwen` read surname-first produces the
+# same key `('zheng', 'q')`, so the day that spelling arrives it is the same
+# player, automatically, with this receipt behind it.
+#
+# ─── THE THREE GUARDS, EACH REFUTABLE FROM THE CAPTURE ───
+#
+# A rule that folded every re-ordering it could reach would fuse `Garcia Perez`
+# with `Perez-Garcia`, which in Spanish are two families and, in our register, two
+# people (both spellings in the field on 2026-07-13). So a class folds only when:
+#
+# 1. **A slot joined one of our spellings in the class to an authority id.** Not
+#    "the surname appears somewhere" — a slot, with a date, an opponent and a
+#    stable player id. No slot, no fold; this is the clause that makes
+#    `Garcia Perez` a non-candidate outright today, and the one CERT-2017 found
+#    a second tier quietly evading.
+# 2. **The class's OTHER tokens are not surnames.** `zheng` is in the authority's
+#    surname vocabulary and `qinwen` is not; `shang` is and `juncheng` is not.
+#    Where both tokens are surnames the re-ordering may well be two families, and
+#    the rule declines to guess.
+# 3. **Our register does not already hold the reversed order.** If it does, the
+#    two spellings are in the field together and folding them is the review
+#    question this section exists to retire, not a prediction — those classes
+#    stay with :data:`_ORDER_ALIASES_MEASURED`, which was swept and read. If it
+#    does not, the fold changes nothing today and everything the day the second
+#    spelling arrives, which is exactly the "not the last time this'll happen"
+#    Alex was pointing at.
+#
+# Guard 3 is why the capture reads a YEAR of our spellings while the slots can
+# only ever cover the venue's fifteen-day window: `Perez-Garcia` last appeared
+# eight weeks outside that window, and a guard that could not see it would have
+# folded two people the first time a Garcia slot landed.
+
+#: A slot join: the authority named this player, with an id, opposite an opponent
+#: we also recognised. The strong kind.
+PROOF_SLOT = "slot"
+
+#: There is deliberately no second, weaker kind — see the end of
+#: :func:`slot_proven_order_aliases` for the one that was removed and what it
+#: authorised. Every alias here is `PROOF_SLOT` or does not exist.
+
+
+@dataclass(frozen=True)
+class ProvenSlot:
+    """One side of one fixture where BOTH sides agreed, on one day.
+
+    The opponent fields are not context. They are the proof: a single name
+    agreeing with a single name is a coincidence the field produces 572 ways,
+    and `__post_init__` refuses a record whose opponents do not agree under the
+    same relation the matcher uses. That refusal is what makes this a SLOT.
+    """
+
+    authority: str
+    authority_id: str
+    authority_name: str
+    our_name: str
+    slot_date: str
+    tour: str
+    authority_opponent: str
+    our_opponent: str
+    doubles: bool = False
+
+    def __post_init__(self) -> None:
+        for field in ("authority", "authority_id", "authority_name", "our_name",
+                      "tour", "authority_opponent", "our_opponent"):
+            if not str(getattr(self, field)).strip():
+                raise ValueError(f"proven slot has a blank {field}")
+        if not _ISO_DATE.fullmatch(self.slot_date):
+            raise ValueError(
+                f"proven slot has slot_date={self.slot_date!r}, which is not an ISO date"
+            )
+        if not tennis_names_agree(self.our_name, self.authority_name):
+            raise ValueError(
+                f"proven slot {self.our_name!r} / {self.authority_name!r}: the two "
+                "sides do not agree, so this record proves nothing about our name"
+            )
+        if not tennis_names_agree(self.our_opponent, self.authority_opponent):
+            raise ValueError(
+                f"proven slot {self.our_name!r} / {self.authority_name!r}: the "
+                f"OPPONENTS ({self.our_opponent!r} / {self.authority_opponent!r}) do "
+                "not agree, so this is a name coincidence and not a slot"
+            )
+
+    @property
+    def proven_key(self) -> Optional[TennisKey]:
+        """The (surname, initial) the authority named. ``None`` for doubles."""
+        return None if self.doubles else statpal_tennis_key(self.authority_name)
+
+    @property
+    def proven_surnames(self) -> frozenset[str]:
+        """Every token the authority used AS a surname on this side."""
+        if self.doubles:
+            return frozenset(doubles_key(self.authority_name) or ())
+        key = self.proven_key
+        return frozenset({key[0]}) if key else frozenset()
+
+    @property
+    def tokens(self) -> tuple[str, ...]:
+        """The permutation class of OUR spelling, derived and never declared."""
+        return tuple(sorted(fold_tennis_name(self.our_name).split()))
+
+
+@dataclass(frozen=True)
+class SlotProvenAlias:
+    """One order-alias the authority record proves, with the evidence attached."""
+
+    tokens: tuple[str, ...]
+    kind: str
+    confidence: float
+    surname: str
+    authority_ids: tuple[str, ...]
+    slots: tuple[ProvenSlot, ...]
+
+    def receipt(self) -> dict[str, object]:
+        """What the agreement row publishes. No reviewer field, on purpose."""
+        return {
+            "tokens": list(self.tokens),
+            "kind": self.kind,
+            "confidence": self.confidence,
+            "surname": self.surname,
+            "authority_ids": list(self.authority_ids),
+            "slots": [
+                {
+                    "authority": s.authority,
+                    "authority_id": s.authority_id,
+                    "authority_name": s.authority_name,
+                    "our_name": s.our_name,
+                    "date": s.slot_date,
+                    "tour": s.tour,
+                    "opponent": s.our_opponent,
+                }
+                for s in self.slots
+            ],
+        }
+
+
+def _reversed_orders_in_field(tokens: tuple[str, ...],
+                              written: str,
+                              our_spellings: frozenset[str]) -> tuple[str, ...]:
+    """Orderings of this class our register holds OTHER than the written one.
+
+    Guard 3's evidence. Enumerating permutations is bounded in practice — the
+    classes that reach here are two and three tokens — and a class of five or
+    more is refused by the caller rather than permuted, because 120 lookups to
+    answer a question about a name is a sign the name is not what we think.
+    """
+    return tuple(sorted(
+        candidate
+        for candidate in {" ".join(p) for p in permutations(tokens)}
+        if candidate != written and candidate in our_spellings
+    ))
+
+
+def slot_proven_order_aliases(
+    slots: Iterable[ProvenSlot],
+    authority_surnames: Iterable[str],
+    our_spellings: Iterable[str],
+) -> tuple[SlotProvenAlias, ...]:
+    """Which re-orderings the authority record proves are one player.
+
+    Pure: everything it knows arrives in its arguments, so the same capture
+    always produces the same answer and a test can refute it with a different
+    one. The three guards are in the module comment above; each refusal below
+    names which one refused it.
+    """
+    surnames = frozenset(authority_surnames)
+    spellings = frozenset(our_spellings)
+
+    by_class: dict[tuple[str, ...], list[ProvenSlot]] = {}
+    for slot in slots:
+        if slot.doubles:
+            continue  # a doubles ROW has no singles permutation class of its own
+        if len(slot.tokens) < 2 or len(slot.tokens) > 3:
+            # One token has no order; four or more is a name we do not understand
+            # well enough to permute (`Andre Souza Pinto De Camargo E Silva`).
+            continue
+        by_class.setdefault(slot.tokens, []).append(slot)
+
+    aliases: list[SlotProvenAlias] = []
+    for tokens, class_slots in sorted(by_class.items()):
+        keys = {s.proven_key for s in class_slots if s.proven_key}
+        ids = {s.authority_id for s in class_slots}
+        if len(keys) != 1 or len(ids) != 1:
+            # Two keys or two ids under one token multiset is two people wearing
+            # one spelling. Refusing is the whole reason identity is the id.
+            continue
+        surname = next(iter(keys))[0]
+        if surname not in surnames:
+            continue  # guard 1: the proof has to be in the captured vocabulary
+        others = [t for t in tokens if t != surname]
+        if any(t in surnames for t in others):
+            continue  # guard 2: the other token is a family name somewhere
+        written = fold_tennis_name(class_slots[0].our_name)
+        if _reversed_orders_in_field(tokens, written, spellings):
+            continue  # guard 3: both orders are in the field — a review question
+        aliases.append(SlotProvenAlias(
+            tokens=tokens, kind=PROOF_SLOT, confidence=1.0, surname=surname,
+            authority_ids=tuple(sorted(ids)), slots=tuple(class_slots),
+        ))
+
+    # THERE IS NO WEAKER PATH, and CERT-2017 is why. The first cut also emitted a
+    # class when a surname TOKEN had been proved somewhere — typically by a
+    # doubles pair, which StatPal spells as surnames only — even though no slot
+    # had ever joined that spelling and no player id stood behind it. It read as
+    # a reasonable second tier. It was not:
+    #
+    #   * `Bublik/ Shang` is a doubles TEAM (id 352267). A team id is not a
+    #     person, so the class it authorised was tied to nobody.
+    #   * The same path independently authorised `Alice Shang` — a different
+    #     human who merely shares the surname — which is the substitution this
+    #     whole module is biased against.
+    #   * 175 of 331 classes came out of it, so the majority of the tolerance
+    #     rested on evidence that named no person at all.
+    #
+    # D69's clause is "identity is the id… the lane proves it that way, or does
+    # not alias", and a surname token proves a WORD, never a PERSON. So a class
+    # folds only with a slot behind it and an authority id inside that slot.
+    # `Juncheng Shang` consequently does NOT fold: StatPal served him only in
+    # doubles in the captured window, and declining is the correct answer until
+    # it serves him in singles.
+    return tuple(aliases)
+
+
+def _captured_slots() -> tuple[ProvenSlot, ...]:
+    """The capture's records, refused one by one if they do not prove a slot."""
+    built = []
+    for record in _capture.PROVEN_SIDES:
+        try:
+            built.append(ProvenSlot(authority="statpal", **record))
+        except ValueError:
+            # A capture is a measurement, and a measurement can hold a row that
+            # does not survive the definition. Dropping it is right; dropping it
+            # SILENTLY is not, so the count is published on the agreement row.
+            continue
+    return tuple(built)
+
+
+CAPTURED_SLOTS: tuple[ProvenSlot, ...] = _captured_slots()
+
+#: Derived by running the real prover over the real capture. Not a literal, and
+#: deliberately not one: a hand-written list here would be the reviewed set again
+#: under a new name, and the whole point of D69 is that no hand writes it.
+SLOT_PROVEN_ALIASES: tuple[SlotProvenAlias, ...] = slot_proven_order_aliases(
+    CAPTURED_SLOTS, _capture.AUTHORITY_SURNAMES, _capture.OUR_SPELLINGS
+)
+
+_ORDER_ALIASES_SLOT_PROVEN: frozenset[tuple[str, ...]] = frozenset(
+    alias.tokens for alias in SLOT_PROVEN_ALIASES
+)
+
+#: The final binding — measured by corpus sweep, reviewed by a human (both now
+#: superseded by evidence, see the test that proves the containment), and proven
+#: by the authority record.
+ORDER_ALIASES = (
+    _ORDER_ALIASES_MEASURED | _ORDER_ALIASES_REVIEWED | _ORDER_ALIASES_SLOT_PROVEN
+)
