@@ -1976,13 +1976,16 @@ async def statpal_authority_agreement(
         SWITCH_IS_WIRED,
         SWITCH_WIRING_NOTE,
         authority_for,
+        flip_permitted,
     )
+    from app.services.authority_ledger import read_ledger_days
     from app.tasks.redis_state import get_task_metrics
     from app.utils.authority_agreement import (
         FLIP_GATE_SUMMARY,
         MEASUREMENT_POPULATIONS,
         SHADOW_STAMPERS,
     )
+    from app.utils.authority_failover import would_fail_over_now
     from app.utils.provider_anchor_keys import statpal_id_space
 
     now = datetime.now(timezone.utc)
@@ -2014,6 +2017,32 @@ async def statpal_authority_agreement(
             # condition it describes (`SWITCH_CONSUMERS`).
             "switch_wired": SWITCH_IS_WIRED,
             "switch_note": SWITCH_WIRING_NOTE,
+        }
+
+        # "If ESPN went dark for this sport RIGHT NOW, would anything happen?"
+        # (#3473, program step 7.) The step-7 analogue of `switch_note`: the
+        # person deciding whether to flip on 2026-09-11 is the same person who
+        # needs to know whether the failover behind it can fire, and they must
+        # not have to open a config module to find out.
+        #
+        # Answered by running the REAL decision function against the most
+        # favourable hypothetical — ESPN dark, StatPal holding fixtures — so it
+        # cannot disagree with what would actually happen. A second reading of
+        # the same rules, written here, is a disclosure that drifts.
+        days, ledger_why = await read_ledger_days(sport_key)
+        gate = (False, ledger_why) if days is None else flip_permitted(sport_key, days)
+        hypothetical = would_fail_over_now(sport_key, gate)
+        entry["authority"]["failover"] = {
+            "would_fire_if_espn_went_dark": hypothetical.failed_over,
+            "code": hypothetical.code,
+            "why": hypothetical.why,
+            "note": (
+                "a failover is NOT a flip. It is a per-pass override that lasts "
+                "exactly as long as ESPN is silent and ends by itself on the "
+                "pass ESPN answers — nothing is latched, so there is nothing to "
+                "clear. It fires only on an absence of FIXTURES and can never "
+                "fire on a score, status or period disagreement."
+            ),
         }
 
         metrics = get_task_metrics(task_name) or {}

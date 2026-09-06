@@ -118,6 +118,33 @@ def ledger_identity(sport_key: str) -> str:
     return f"authority-agreement-ledger:{sport_key}"
 
 
+async def read_ledger_days(sport_key: str) -> tuple[Optional[list[dict[str, Any]]], str]:
+    """One sport's recorded days, for a caller that only wants to READ them.
+
+    Returns `(days, why)`. `days` is `None` when the ledger could not be trusted
+    — **not** `[]`, which is a ledger that exists and has never recorded a day.
+    Collapsing the two would hand `compute_streak` an empty list for a read
+    failure, and it would answer `None` ("never measured") for a sport that may
+    well have seven days banked. A read failure must never be able to change a
+    gate's answer; here it makes the caller refuse instead (#3473).
+
+    Added for the failover consumer (`utils/authority_failover`), which needs
+    `flip_permitted`'s input on the rare pass where ESPN is dark for a sport.
+    It reuses `_read_ledger` rather than opening the snapshot itself, so the
+    trust rules the fold path applies are the same ones a reader gets.
+    """
+    read = await _read_ledger(ledger_identity(sport_key))
+    refuse = read.get("refuse")
+    if refuse is not None:
+        return None, (
+            f"{sport_key}'s agreement ledger could not be read "
+            f"({refuse.get('reason')}): {refuse.get('detail') or 'no detail'}"
+        )
+    ledger = read.get("ledger") or {}
+    days = [d for d in (ledger.get("days") or []) if isinstance(d, dict)]
+    return days, f"{sport_key}'s ledger holds {len(days)} recorded day(s)"
+
+
 def _unrecorded(reason: str, *, detail: Optional[str] = None) -> dict[str, Any]:
     return {
         "state": STREAK_UNRECORDED,

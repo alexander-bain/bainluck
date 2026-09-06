@@ -29,9 +29,15 @@ WHAT THIS FILE DOES NOT DO
 It does not resolve anything. `event_registry` and the matcher are lane1's
 (D50), and nothing in this module reads or writes an event. It publishes a
 per-sport setting and the question that has to be answered before that setting
-may change; the consumer that acts on it is lane1's to build, and every sport
-being `ESPN` means the consumer's behaviour today is byte-for-byte what it is
-now.
+may change.
+
+**Amended by program step 7 (#3473):** this file said "the consumer that acts on
+it is lane1's to build", and one now exists that is not lane1's and does not
+need to be. `utils/authority_failover` reads the switch to answer who serves a
+sport on a pass where ESPN went silent — a question about PROVIDER SELECTION,
+which is this lane's, not about event identity, which is lane1's. Every sport
+being `ESPN` still means today's behaviour is byte-for-byte what it was, and the
+failover's own gate (`flip_permitted`) refuses every sport besides.
 
 It also does not count the seven days itself. `authority_streak.compute_streak`
 does that — it shipped with authority/021, it walks the durable ledger's own
@@ -86,25 +92,32 @@ AUTHORITY_BY_SPORT: dict[str, str] = {
     "baseball_mlb": ESPN,
 }
 
-#: Every module under `app/` that reads the switch. **Today: one, and it is the
-#: page that reports the switch's own value.**
+#: Every module under `app/` that reads the switch. **Two: the page that reports
+#: its value, and the failover that acts on it.**
 #:
-#: So the honest statement about a flip right now is that CHANGING A LINE ABOVE
-#: WOULD CHANGE ONE STRING ON AN ADMIN PAGE AND NOTHING ELSE. No ingest task, no
-#: registry path, no route that serves a surface asks `authority_for` anything.
+#: **This set gained its first actor in program step 7 (#3473), and the sentence
+#: it used to carry is retired.** Until then the honest statement was that
+#: changing a line above would change one string on an admin page and nothing
+#: else — no ingest task, no registry path, no serving route asked
+#: `authority_for` anything. That was not a defect in step 6; a dark switch is
+#: what step 6 was for. It was written down because of WHEN it would stop being
+#: harmless: NFL, NBA and NHL were at gate `MEETS`, day 2 of 7 (production,
+#: 2026-09-06 05:44Z), so the earliest a genuine seven existed was around
+#: 2026-09-11, and on that day someone would have read a YOUR-TURN entry, edited
+#: one line, watched the row change from `espn` to `statpal` and reasonably
+#: concluded the site now ran on StatPal. It would not have.
 #:
-#: This is not a defect in step 6 — a dark switch is what step 6 was for, and
-#: `test_a_genuine_seven_now_reaches_the_gate_but_flips_nothing_by_itself`
-#: already pins that opening the gate does not move the switch. It is written
-#: down because of WHEN it stops being harmless. NFL, NBA and NHL are all at
-#: gate `MEETS`, day 2 of 7 (production, 2026-09-06 05:44Z), so the earliest a
-#: genuine seven exists is around 2026-09-11. On that day someone reads a
-#: YOUR-TURN entry, edits one line here, watches the admin row change from
-#: `espn` to `statpal`, and reasonably concludes the site now runs on StatPal
-#: for that sport. It would not. That is the failure this constant exists to
-#: make impossible to walk into, and it is program step 7's job to end — a
-#: switch nothing reads cannot fail over when ESPN goes dark, which is this
-#: lane's whole ship.
+#: It does now, in one specific and bounded way. `utils/authority_failover`
+#: reads `authority_for` to answer "who serves this sport on this pass", and a
+#: sport set to `STATPAL` here is reported as served by StatPal standing rather
+#: than as an outage override. That is a real behavioural difference, so the
+#: row's note no longer says `INERT`.
+#:
+#: What has NOT changed, and must not be read into the above: flipping a line
+#: still does not move the event graph. `event_registry` and the matcher are
+#: lane1's under D50 and neither reads this file. The one thing that acts is the
+#: failover's dispatch of `sync_statpal_schedules`, which is a task that already
+#: runs hourly for these sports.
 #:
 #: Kept as a declared set with an AST guard over `app/` rather than as prose,
 #: because prose about what reads a symbol is exactly the claim that rots the
@@ -118,6 +131,20 @@ SWITCH_CONSUMERS: frozenset[str] = frozenset(
         # Reports `authority_for(sport_key)` as the row's `authority.current`.
         # A reader, not an actor: it changes nothing about what the site serves.
         "app.routes.admin_providers",
+        # ACTS on it (#3473). Decides who serves a sport on a pass where ESPN
+        # went silent, and a sport already flipped here is served by StatPal
+        # standing rather than by an outage override.
+        #
+        # A decision module rather than the task that dispatches — and it counts
+        # as wiring, which is worth stating because the distinction
+        # `SWITCH_REPORTERS` draws is "reports it" against "acts on it" and this
+        # is neither. It DECIDES, and its decision is acted on: the switch is
+        # live through it exactly as if the caller had read the switch directly.
+        # `test_the_decision_module_has_an_actor` is what stops that reasoning
+        # from being a story — it fails if nothing under `app/` calls it, which
+        # is the RIDER RULE ("a pure function nothing calls is architecture-only")
+        # enforced in CI rather than remembered.
+        "app.utils.authority_failover",
     }
 )
 
@@ -146,8 +173,23 @@ def switch_wiring_note(wired: bool) -> str:
     """
     if wired:
         return (
-            "wired: flipping a sport changes what the site serves for it, so "
-            "read the gate below before changing a line."
+            "WIRED, AND NARROWLY — read the second half before flipping. "
+            "`utils/authority_failover` reads this switch (program step 7, "
+            "#3473), so ONE thing changes when a sport is set to `statpal`: on "
+            "a pass where ESPN is silent for it, the sport is reported as "
+            "served by StatPal and is excluded from outage-failover accounting "
+            "rather than counted as a sport that failed over. "
+            "WHAT A FLIP DOES NOT DO, and this is the wrong conclusion to draw "
+            "from the word `statpal` appearing here: it does not suppress the "
+            "ESPN path. A flipped sport still takes its scores, clock, win "
+            "probability, stat model and box scores from ESPN on every pass "
+            "ESPN answers, because `_sync_espn_live_events` selects sports by "
+            "what ESPN returned and not by this switch. Serving a sport "
+            "entirely from StatPal is a further build step and is not this "
+            "one; it would remove an ESPN win-probability source from the "
+            "blend, which is a product decision (PRD: 'the blend is the "
+            "product') and not plumbing. Nor does a flip move the event graph "
+            "— `event_registry` and the matcher do not read this file."
         )
     return (
         "INERT: flipping a sport changes this page's `authority.current` and "
