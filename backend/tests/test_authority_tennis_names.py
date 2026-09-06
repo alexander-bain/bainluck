@@ -399,7 +399,10 @@ def test_every_reviewed_order_alias_folds_in_both_directions(corpus):
     is what being on the list MEANS — and each entry must still be reachable as
     one player through the resolver, not merely equal under `register_identity`.
     """
-    assert ORDER_ALIASES == _ORDER_ALIASES_MEASURED | _ORDER_ALIASES_REVIEWED
+    # The review layer stays disjoint; the set the matcher obeys is now that
+    # layer plus the classes the authority record proves (D69 = A, pinned by
+    # `test_tennis_order_aliases_are_proven_2907.py`).
+    assert _ORDER_ALIASES_MEASURED | _ORDER_ALIASES_REVIEWED <= ORDER_ALIASES
     assert not (_ORDER_ALIASES_MEASURED & _ORDER_ALIASES_REVIEWED)
 
     for multiset in sorted(ORDER_ALIASES):
@@ -478,7 +481,11 @@ def test_the_header_quotes_the_permutation_counts_it_measured(corpus):
         len(_ORDER_ALIASES_MEASURED),  # 7 of them fold
         len(both_ways - ORDER_ALIASES),  # 1 is refused
         len(_ORDER_ALIASES_REVIEWED),  # 2 reviewed but one-directional
-        len(ORDER_ALIASES),  # 9 in total
+        # 9 in the REVIEW layer. Deliberately not `len(ORDER_ALIASES)` any more:
+        # D69 = A added the authority-proven classes, whose count moves with
+        # every capture, and a header sentence that quoted it would be stale the
+        # next time the venue is read. The proven set is pinned by its own suite.
+        len(_ORDER_ALIASES_MEASURED | _ORDER_ALIASES_REVIEWED),
     }
 
     header = authority_tennis_names.__doc__ or ""

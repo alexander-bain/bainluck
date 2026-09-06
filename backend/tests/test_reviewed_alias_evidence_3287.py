@@ -50,6 +50,7 @@ from app.utils.authority_tennis_names import (
     ReviewedAlias,
     _ORDER_ALIASES_MEASURED,
     _ORDER_ALIASES_REVIEWED,
+    _ORDER_ALIASES_SLOT_PROVEN,
     _tokens,
     is_doubles_name,
     looks_like_a_player,
@@ -99,15 +100,27 @@ class TestTheSetIsDerivedFromTheRecords:
         assert _ORDER_ALIASES_REVIEWED == frozenset(a.tokens for a in REVIEWED_ALIASES)
 
     def test_the_union_and_the_disjointness_still_hold(self):
-        assert ORDER_ALIASES == _ORDER_ALIASES_MEASURED | _ORDER_ALIASES_REVIEWED
+        """D69 = A added a third source — classes the AUTHORITY RECORD proves
+        (`test_tennis_order_aliases_are_proven_2907.py`). The union is now over
+        three sets, and the reviewed one is a SUBSET of the proven one, which is
+        the statement that retires it."""
+        assert ORDER_ALIASES == (
+            _ORDER_ALIASES_MEASURED | _ORDER_ALIASES_REVIEWED | _ORDER_ALIASES_SLOT_PROVEN
+        )
         assert not (_ORDER_ALIASES_MEASURED & _ORDER_ALIASES_REVIEWED)
+        assert _ORDER_ALIASES_REVIEWED <= _ORDER_ALIASES_SLOT_PROVEN
 
-    def test_the_counts_the_header_quotes_are_unchanged_by_this_ship(self):
-        """7 measured / 2 reviewed / 9 total — the ship changes the EVIDENCE a
-        reviewed entry carries, never which classes fold. A refactor that
-        quietly admitted or dropped a class would show here."""
+    def test_the_reviewed_records_still_number_two_and_carry_nothing_alone(self):
+        """7 measured / 2 reviewed was the whole set before D69; the reviewed
+        pair is still exactly two records, and now contributes exactly nothing
+        the authority record does not already prove. A refactor that quietly
+        added or dropped a REVIEWED class still shows here — the proven set is
+        pinned by its own suite, not by this count."""
         assert (len(_ORDER_ALIASES_MEASURED), len(_ORDER_ALIASES_REVIEWED)) == (7, 2)
-        assert len(ORDER_ALIASES) == 9
+        assert len(_ORDER_ALIASES_MEASURED | _ORDER_ALIASES_REVIEWED) == 9
+        # Drop the reviewed SOURCE — not its classes, which the authority record
+        # also proves — and the set the matcher obeys does not move.
+        assert _ORDER_ALIASES_MEASURED | _ORDER_ALIASES_SLOT_PROVEN == ORDER_ALIASES
 
     def test_tokens_are_derived_from_the_orderings_not_declared_beside_them(self):
         """So a record cannot name one permutation class and admit another."""
