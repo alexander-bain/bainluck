@@ -406,6 +406,19 @@ ENFORCED_TASKS = frozenset({
     # never re-enumerate one), so a permanently inert beat breaks nothing
     # visible and simply lets dead last-trade prices keep rendering as live.
     "kalshi_resolution_window",        # terminal + candidates + writes_applied
+    # #2927 Phase 2: the event-container assembly pass. Enrolled IN THE SAME
+    # CHANGE that gives it terminals, because this file's own trap is that
+    # either half alone is worthless — and here the empty case is not an edge
+    # case, it is the normal one for as long as the Phase 1 migration is held.
+    # A pass that finds nothing must not bank a success: `skipped` while the
+    # four tables do not exist, `partial` when the pass ran and no member was
+    # found (an anchor whose series went dark, a window that refused
+    # everything), `failed` only when every declared edition raised, and
+    # `complete` only when at least one member was actually edged. Without
+    # enrolment all four read as the non-authoritative legacy unknown and
+    # `_tracked_run` records a bare returning invocation — a hub producer that
+    # has never produced a hub, permanently green.
+    "assemble_containers",             # terminal + members + edges_written
 })
 
 

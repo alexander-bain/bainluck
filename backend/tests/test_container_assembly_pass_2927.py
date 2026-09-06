@@ -283,3 +283,53 @@ async def test_a_ghost_market_id_is_reported_and_never_receipted():
     assert report.rejected["container_child_missing"] == 1
     assert [u["child_id"] for u in report.unresolved] == [999_999_999]
     assert report.unresolved[0]["external_id"] == "KXATPMATCH-26SEP02AUGKHA"
+
+
+# ---------------------------------------------------------------------------
+# The verdict contract (CERT-2011's second required repair)
+# ---------------------------------------------------------------------------
+
+
+def test_the_pass_is_enrolled_so_its_terminal_is_authoritative():
+    """Enrolment without a terminal is a no-op; a terminal without enrolment
+    is ignored. Both halves, or neither is worth anything — and the empty case
+    here is the NORMAL one for as long as the Phase 1 migration is held."""
+    from app.utils.task_verdict import ENFORCED_TASKS
+
+    assert "assemble_containers" in ENFORCED_TASKS
+
+
+@pytest.mark.parametrize(
+    "summary,green,why",
+    [
+        (
+            {"terminal": "skipped", "reason": "containers_tables_absent"},
+            False,
+            "the tables are not there; nothing was produced and nothing may be banked",
+        ),
+        (
+            {"terminal": "partial", "reason": "no_member_found", "members": 0},
+            False,
+            "the pass ran and found no member — an empty hub is not a healthy run",
+        ),
+        (
+            {"terminal": "failed", "reason": "every_edition_failed"},
+            False,
+            "every edition raised",
+        ),
+        (
+            {"terminal": "complete", "members": 61, "edges_written": 61},
+            True,
+            "members were actually edged",
+        ),
+    ],
+)
+def test_only_a_pass_that_edged_a_member_reads_green(summary, green, why):
+    from app.utils.task_verdict import verdict_for
+
+    verdict = verdict_for("assemble_containers", summary)
+    assert verdict.is_green is green, why
+    assert verdict.authoritative is True, (
+        "an unenrolled task falls back to the legacy unknown, whose blocks_success "
+        "is False — which is how an empty producer stays green"
+    )
