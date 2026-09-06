@@ -30,6 +30,32 @@ So the guard bounds **both** ends, not just the late one: `before_start` occurs 
 10 of the 70 events and `past_end` on 3. Bounding only the end — the defect #3348
 headlines — would have left the more common half in place.
 
+**A TIMESTAMP IS NOT A LINE (CERT-1984).** The first cut of this guard defined the
+span from timestamps alone, and that is wrong in a shape production actually
+serves: `routes/events.py` appends a `history` row for every odds bucket whether or
+not `aggregate_bookmaker_odds()` found a probability, so a chart can hold dozens of
+timestamped rows whose `home_probability` is `None`. The chart draws *nothing* for
+those rows — and the old guard read them as a span and kept the chip. The very
+defect, through the guard meant to stop it. A point counts toward a span only when
+it carries a value the renderer can plot; see :func:`renderable_span`.
+
+**ONE ARRAY, TWO RENDERERS.** `period_markers` is a single list, and the event page
+hands the same list to `OddsChart` (win-probability lines) *and* to
+`ScoreDifferentialChart` (projected/actual score lines). Those two draw different
+series: the score chart's `score_history` is a real line, and the first cut left it
+out of the span entirely, so a score-only chart could lose a truthful *measured*
+inning. So the guard now measures each renderer's own span and keeps a marker that
+lands on **either** — a chip is wrong only when no chart has ink under it.
+
+Note this is membership in one span or the other, never the min/max of both: two
+disjoint lines (a prob line on Monday, a score line on Wednesday) must not
+manufacture a Tuesday where neither draws.
+
+The server can only answer "does any chart draw here". Which of the two draws is a
+question only the renderer holds, so `OddsChart` clips the same list to its own
+drawn probability domain (`filteredPeriodBoundaries`); that is what keeps a chip
+off a blank win-prob plot on an event whose score chart is fine.
+
 Why this cannot quietly delete good markers: on a healthy event the odds line
 spans days either side of kickoff (the cohort's in-domain events measure 7-13 day
 spans), so `commence_time` sits comfortably inside it. And the measured tiers
@@ -38,12 +64,9 @@ is a no-op for them by construction. `tests/test_period_markers.py` pins both
 directions — the three production cases drop, and measured markers plus a healthy
 estimated set survive untouched.
 
-One deliberate asymmetry: when there is no series at all the span is undefined and
+One deliberate asymmetry: when no renderer has a line the span is undefined and
 **every** marker is dropped. That is the honest reading of "outside the drawn
-line" — a chart with no line cannot place a boundary on it. Note the web already
-declines to render the chart in that case (`hasAnyWinProbData`, event page
-line 1254), so for that subset this changes the payload and not the pixels; it is
-still the right payload, and iOS has no such gate.
+line" — a chart with no line cannot place a boundary on it.
 """
 
 from __future__ import annotations
@@ -71,21 +94,52 @@ def _parse(ts: Any) -> Optional[datetime]:
         return None
 
 
-def series_span(
-    *series: Optional[Iterable[dict]],
-) -> tuple[Optional[datetime], Optional[datetime]]:
-    """Earliest and latest timestamp across every series the chart draws.
+#: A span is the closed interval one renderer actually draws ink across, or
+#: ``(None, None)`` when it draws nothing at all.
+Span = tuple[Optional[datetime], Optional[datetime]]
 
-    Each argument is a list of points carrying a `timestamp` key (``history``,
-    ``aggregate_line``, ``espn_history``, each ``win_prob_history`` source).
-    Points without a parseable timestamp are ignored. Returns ``(None, None)``
-    when nothing parseable was supplied — the caller must treat that as "there is
-    no line", not as "no bound".
+#: What makes a `history` / `espn_history` / `win_prob_history` point a point on
+#: the win-probability line. `draw_probability` is here because a soccer source
+#: can carry only the draw leg.
+PROBABILITY_KEYS = ("home_probability", "away_probability", "draw_probability")
+
+#: What makes a point a point on the score-differential line. `history` carries
+#: the projected pair; `score_history` and `espn_history` carry the actual one.
+SCORE_KEYS = (
+    "projected_home_score",
+    "projected_away_score",
+    "home_score",
+    "away_score",
+)
+
+
+def renderable_span(
+    *series: tuple[Optional[Iterable[dict]], Iterable[str]],
+) -> Span:
+    """Earliest and latest point ONE renderer can actually plot.
+
+    Each argument pairs a series with the keys that make one of its points
+    drawable by that renderer — ``(history, PROBABILITY_KEYS)``. A point counts
+    only when it has a parseable `timestamp` **and** at least one named key holds
+    a non-null value.
+
+    That second half is the whole point (CERT-1984). `routes/events.py` emits a
+    `history` row per odds bucket even when the aggregate probability came back
+    `None`, so "has a timestamp" and "is on the line" are different questions and
+    production serves payloads where they disagree. Asking the first one keeps a
+    chip over a blank plot, which is the defect, not the fix.
+
+    Returns ``(None, None)`` when this renderer plots nothing — the caller must
+    read that as "there is no line", never as "no bound".
     """
     stamps: list[datetime] = []
-    for points in series:
+    for points, value_keys in series:
+        keys = tuple(value_keys)
         for point in points or ():
-            parsed = _parse((point or {}).get("timestamp"))
+            point = point or {}
+            if not any(point.get(key) is not None for key in keys):
+                continue
+            parsed = _parse(point.get("timestamp"))
             if parsed is not None:
                 stamps.append(parsed)
     if not stamps:
@@ -93,17 +147,35 @@ def series_span(
     return min(stamps), max(stamps)
 
 
-def drop_markers_outside_span(
+def extend_span_to(span: Span, moment: Optional[datetime]) -> Span:
+    """Stretch a span's late end out to `moment` (a live chart is drawn to now).
+
+    A no-op on an empty span: a chart with no line does not acquire one by the
+    clock moving.
+    """
+    lo, hi = span
+    if lo is None or hi is None or moment is None:
+        return span
+    return lo, max(hi, moment)
+
+
+def drop_markers_off_every_line(
     markers: list[dict],
-    lo: Optional[datetime],
-    hi: Optional[datetime],
+    spans: Iterable[Span],
     *,
     tolerance: timedelta = timedelta(minutes=1),
 ) -> list[dict]:
-    """Keep only markers that land on the drawn line.
+    """Keep the markers that land on the line of at least one renderer.
 
-    `lo`/`hi` come from :func:`series_span`. When either is None there is no line
-    to land on and everything is dropped.
+    `spans` are per-renderer, from :func:`renderable_span` — one for the
+    win-probability chart, one for the score-differential chart. A marker is kept
+    when it falls inside ANY of them, because a chip is only wrong when no chart
+    has ink under it. Empty spans contribute nothing, so when no renderer draws,
+    everything is dropped.
+
+    Membership is tested against each span separately and never against the
+    min/max of all of them: two disjoint lines must not manufacture a middle where
+    neither draws.
 
     `tolerance` absorbs the minute-bucket rounding the odds history applies
     (`snapshots_by_time` truncates to the minute), so a marker landing on the
@@ -114,14 +186,19 @@ def drop_markers_outside_span(
     A marker with an unparseable timestamp is dropped — it cannot be placed, so it
     cannot be shown to be on the line.
     """
-    if lo is None or hi is None:
+    bounds = [
+        (lo - tolerance, hi + tolerance)
+        for lo, hi in spans
+        if lo is not None and hi is not None
+    ]
+    if not bounds:
         return []
-    low = lo - tolerance
-    high = hi + tolerance
     kept = []
     for marker in markers:
         parsed = _parse(marker.get("timestamp"))
-        if parsed is not None and low <= parsed <= high:
+        if parsed is None:
+            continue
+        if any(low <= parsed <= high for low, high in bounds):
             kept.append(marker)
     return kept
 

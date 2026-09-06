@@ -12319,17 +12319,36 @@ async def get_event_odds_history(
     # whatever tier answered rather than inside each tier, so an emptied tier does
     # not fall through to a lower-confidence one — dropping a measured marker and
     # replacing it with an estimate is a worse answer than drawing nothing.
-    _pm_lo, _pm_hi = pm_source.series_span(
-        history,
-        espn_history,
-        aggregate_line,
-        *(win_prob_history or {}).values(),
+    #
+    # Two spans, because this ONE array feeds TWO renderers (CERT-1984): the event
+    # page hands `period_markers` to OddsChart and to ScoreDifferentialChart, which
+    # draw different series. A marker survives if either chart has a line under it.
+    # And a span counts VALUES, not timestamps — `history` below appends a row per
+    # odds bucket even when the aggregate probability is None, and those rows draw
+    # nothing.
+    _pm_prob_span = pm_source.renderable_span(
+        (history, pm_source.PROBABILITY_KEYS),
+        (espn_history, pm_source.PROBABILITY_KEYS),
+        (aggregate_line, pm_source.PROBABILITY_KEYS),
+        *(
+            (points, pm_source.PROBABILITY_KEYS)
+            for points in (win_prob_history or {}).values()
+        ),
     )
-    if _pm_hi is not None and not is_finished:
+    # bookmaker_history is deliberately absent: every bucket in `history` aggregates
+    # those same snapshots, so a bookmaker point that plots implies a `history` row
+    # that plots. It would widen nothing but the surface area.
+    _pm_score_span = pm_source.renderable_span(
+        (history, pm_source.SCORE_KEYS),
+        (score_history, pm_source.SCORE_KEYS),
+        (espn_history, pm_source.SCORE_KEYS),
+    )
+    if not is_finished:
         # A live chart is drawn out to the present, past the last banked point.
-        _pm_hi = max(_pm_hi, now)
-    period_markers = pm_source.drop_markers_outside_span(
-        period_markers, _pm_lo, _pm_hi
+        _pm_prob_span = pm_source.extend_span_to(_pm_prob_span, now)
+        _pm_score_span = pm_source.extend_span_to(_pm_score_span, now)
+    period_markers = pm_source.drop_markers_off_every_line(
+        period_markers, (_pm_prob_span, _pm_score_span)
     )
 
     # #240 Item 2a: emit an explicit server-side time domain so clients don't
