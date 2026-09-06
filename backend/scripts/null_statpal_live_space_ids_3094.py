@@ -151,13 +151,20 @@ POPULATION = """
 #: then report those rows as permanently unrestored after a restore that in fact
 #: put them back perfectly, which is the specific way this script would lie
 #: about its own undo. Store a real boolean.
+#: `sources_was_null` records whether the whole JSONB column was NULL, which is
+#: a THIRD state and not the same as "had no key". Subtracting a key from a
+#: formerly-NULL column that the schedule pass has since populated leaves `{{}}`
+#: — an empty object where the row held NULL. `_get_statpal_id` cannot tell the
+#: difference, so nothing breaks, but it is not verbatim, and D51's grant is for
+#: an undo rather than for an approximation of one.
 CREATE_BACKUP = f"""
 CREATE TABLE IF NOT EXISTS {BACKUP_TABLE} AS
 SELECT e.id AS event_id,
        e.statpal_fixture_id,
        COALESCE(e.win_probability_sources ? 'statpal_fixture_id', false)
            AS jsonb_had_key,
-       e.win_probability_sources->>'statpal_fixture_id' AS jsonb_value
+       e.win_probability_sources->>'statpal_fixture_id' AS jsonb_value,
+       (e.win_probability_sources IS NULL) AS sources_was_null
   FROM events e
   JOIN sports s ON s.id = e.sport_id
  WHERE {POPULATION}
@@ -223,6 +230,16 @@ UPDATE events e
                          '{{statpal_fixture_id}}',
                          to_jsonb(b.jsonb_value)
                      )
+                -- Subtract the key, and collapse to NULL only when the row held
+                -- NULL before AND nothing else is left. A formerly-NULL column
+                -- that the schedule pass populated would otherwise come back as
+                -- `{{}}` — benign to `_get_statpal_id`, still not verbatim.
+                -- Guarded on emptiness so a key some OTHER writer added between
+                -- the apply and the undo is never destroyed by this arm.
+                WHEN b.sources_was_null
+                     AND (e.win_probability_sources - 'statpal_fixture_id')
+                         = '{{}}'::jsonb
+                THEN NULL
                 ELSE e.win_probability_sources - 'statpal_fixture_id'
            END
   FROM {BACKUP_TABLE} b
@@ -238,6 +255,12 @@ UPDATE events e
         -- cannot see that, and it is the 21-row case.
         OR e.win_probability_sources->>'statpal_fixture_id'
            IS DISTINCT FROM b.jsonb_value
+        -- The bare-`{{}}` residue. Without this the row disagrees on nothing the
+        -- clauses above can see — right column, no key, no value — so the
+        -- restore declines and the empty object stays forever. Every predicate
+        -- clause here must have a matching clause in `COUNT_UNRESTORED`, or the
+        -- undo reports a shortfall it has no statement able to repair.
+        OR (b.sources_was_null AND e.win_probability_sources = '{{}}'::jsonb)
    )
 """
 
@@ -261,6 +284,13 @@ SELECT count(*) FROM {BACKUP_TABLE} b
               = b.jsonb_had_key
           AND e.win_probability_sources->>'statpal_fixture_id'
               IS NOT DISTINCT FROM b.jsonb_value
+          -- The bare-`{{}}` residue, mirroring the restore's clause of the same
+          -- name. Scoped to the EMPTY object on purpose: a formerly-NULL column
+          -- that now holds real keys some other writer added is not this
+          -- script's to undo, and demanding NULL there would be a shortfall no
+          -- statement may repair — the non-convergence CERT-2147 found, in a
+          -- new place.
+          AND NOT (b.sources_was_null AND e.win_probability_sources = '{{}}'::jsonb)
    )
 """
 
