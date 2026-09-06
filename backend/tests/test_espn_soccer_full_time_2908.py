@@ -83,6 +83,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app.services.espn_api import ESPNAPIService, espn_terminal_state
+from app.utils.event_completion import EVENT_SUSPENDED
 from app.utils.espn_helpers import update_event_fields_from_espn
 
 NOW = datetime(2026, 9, 3, 22, 35, tzinfo=timezone.utc)
@@ -490,11 +491,34 @@ class TestTheLiveNowRailStopsCarryingFinishedMatches:
         "payload", NON_SETTLING_PAYLOADS, ids=lambda p: p["status"]["type"]["name"]
     )
     async def test_a_match_nobody_finished_is_not_given_a_final(self, client, payload):
+        """The subject is the FINAL, and that half is unchanged.
+
+        ⚠️ **The expected status moved `live` → `suspended` (#3397), and the
+        original assertion was pinning a defect.** This test's own name, message
+        and second assertion are all about one thing: a match nobody played out
+        must not be stamped with a result. `== "live"` was never that claim — it
+        was shorthand for "the settle branch did not fire", true only because
+        `live` happened to be the status `_sync` starts the row on and nothing
+        in the helper then touched the column.
+
+        Nothing touching it was the bug. Production 2026-09-05 carried event
+        15291065 `status='live'` / `period='Postponed'`, drawn on the MLS page
+        inside `Live Now` with a green dot; the row read live because this
+        branch was open, exactly as asserted here. So the assertion is now
+        written as what it means — not settled, and not live either — and the
+        no-`completed_at` half below is untouched, which is what keeps the
+        CERT-752 trade (a false LIVE swapped for a false FINAL) refused.
+        """
         event, _stats, session = await _sync(client, payload)
 
-        assert event.status == "live", (
+        assert event.status != "completed", (
             f"{payload['shortName']} was settled — that stamps a Final and a "
             "blank score on a match nobody played out"
+        )
+        assert event.status == EVENT_SUSPENDED, (
+            f"{payload['shortName']} reads {event.status!r} while ESPN says "
+            f"{payload['status']['type']['name']} — a match that stopped "
+            "without a result is being drawn in the Live Now rail (#3397)"
         )
         assert "completed_at" not in _written(session)
 
