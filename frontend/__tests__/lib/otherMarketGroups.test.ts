@@ -15,6 +15,7 @@ import {
   completedSetsForTennis,
   mergeOutcomes,
   parsePropLabel,
+  periodWinnerParts,
   setNumberFromLabel,
   stripCardPrefix,
   type OtherMarketRow,
@@ -567,6 +568,44 @@ describe("buildMarketSection — every row on the card names a side (#3575)", ()
     expect(labels.some((l) => l.includes("wins Match"))).toBe(false);
     // …and the rest of the card is undisturbed.
     expect(labels).toEqual(expect.arrayContaining(["Heads", "Orange", "Judge"]));
+  });
+
+  test("a period winner we CANNOT name stays filtered — no bare Yes/No is un-hidden", () => {
+    // Verbatim from production, 2026-09-06 14:47Z:
+    //     Counter-Strike: G2 vs TYLOO - Map 1 Winner   Yes 0.500 / No 0.500
+    // The words `map 1 winner` are there, but the `vs` comes BEFORE the scope,
+    // so there is no `Winner: A vs B` to read sides out of. An exemption keyed
+    // on the period WORDS un-hid this and left `Yes 50%` / `No 50%` on screen —
+    // the very defect being removed, newly introduced on esports pages. The
+    // exemption is granted by the same function that produces the label, so a
+    // market we cannot name keeps falling through to the `winner` keyword.
+    const rows: OtherMarketRow[] = [
+      { market_name: "Counter-Strike: G2 vs TYLOO - Map 1 Winner", outcome_name: "Yes", probability: 0.5, source: PM },
+      { market_name: "Counter-Strike: G2 vs TYLOO - Map 1 Winner", outcome_name: "No", probability: 0.5, source: PM },
+      { market_name: "Coin Toss", outcome_name: "Heads", probability: 0.5, source: PM },
+      { market_name: "Gatorade Color", outcome_name: "Orange", probability: 0.3, source: PM },
+      { market_name: "Game MVP", outcome_name: "Judge", probability: 0.25, source: PM },
+    ];
+    const labels = labelsOf(buildMarketSection(rows));
+    expect(labels).not.toContain("Yes");
+    expect(labels).not.toContain("No");
+    // …and the rest of the section is undisturbed, so this is a filter and not a wipe.
+    expect(labels).toEqual(expect.arrayContaining(["Heads", "Orange", "Judge"]));
+  });
+
+  test("`Match Winner: A vs B` parses but is refused — that one IS the hero", () => {
+    expect(periodWinnerParts("Match Winner: Swiatek vs Zheng")).toBeNull();
+    expect(periodWinnerParts("Set 1 Winner: Swiatek vs Zheng")).toEqual({
+      scope: "Set 1",
+      first: "Swiatek",
+      second: "Zheng",
+    });
+    expect(periodWinnerParts("Counter-Strike: G2 vs TYLOO - Map 1 Winner")).toBeNull();
+    expect(periodWinnerParts("1st Half Winner: Arsenal vs Chelsea")).toEqual({
+      scope: "1st Half",
+      first: "Arsenal",
+      second: "Chelsea",
+    });
   });
 
   test("a row whose name merely EQUALS its card's keeps rendering", () => {
