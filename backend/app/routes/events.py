@@ -3437,6 +3437,54 @@ _suppress_search_log: contextvars.ContextVar[bool] = contextvars.ContextVar(
 )
 
 
+#: #3526: bypass the `/search` cache READ, keep the `/search` cache WRITE. The
+#: `search_head_warmer`'s way to refresh an entry WITHOUT ever removing it.
+#:
+#: 🔴 WHY IT EXISTS, AND WHY IT IS A SECOND VAR RATHER THAN A REUSE.
+#: `_force_cache_rebuild` two thousand lines below is the SAME fix for
+#: `/typeahead` (LAT-P134/#2304). It is named
+#: `bainluck_typeahead_force_cache_rebuild` and it is read by `typeahead_search`
+#: alone, so it never reached this route — which kept the only lever it had, a
+#: Redis DELETE (`search_head_warmer._drop_cached`), for eight days after the
+#: premise behind that DELETE was refuted in this very file. The two routes get
+#: two vars on purpose: one flag read by both would mean either warmer could
+#: make the OTHER route bypass its cache, and a warmer is the one caller that
+#: must never widen its own blast radius.
+#:
+#: The hole being removed: from `_drop_cached` until this route's `setex` the key
+#: is ABSENT, so a real user searching that term misses too and pays a full
+#: `/search` build. On production `c1ac1d6c` (2026-09-06) the warmer's real
+#: passes ran 3.3-23.8s — that is the width of the window, per term, and
+#: `PER_QUERY_TIMEOUT_SECONDS = 25` is its ceiling. It is the WIDER version of
+#: the hole #2304 measured at 2.0-3.7s on `/typeahead`, for the reason
+#: `search_head_warmer`'s docstring already gives: a `/search` call is the heavy
+#: one (#1866 prices a cold build at 2.8-6.4s).
+#:
+#: With this flag the warmer rebuilds over the live entry: the old answer is
+#: served continuously until the new one replaces it, at the same instant it
+#: would have been written anyway. Max staleness is UNCHANGED at
+#: `SEARCH_RESPONSE_TTL_SECONDS` — this buys latency, not freshness, and it must
+#: not be read as buying freshness.
+#:
+#: 🔴 READ-ONLY IN THIS ROUTE, and that is the load-bearing half. This route's
+#: write condition is `not degraded and not debug_timing`; if this var ever
+#: joined it, the warmer would run the full query path, write nothing, and report
+#: success — a green pass that warmed nothing (gotcha #53). It also means a
+#: DEGRADED rebuild now writes nothing and leaves the PREVIOUS answer alive to
+#: its natural expiry, where the DELETE left a hole.
+#: `test_search_head_warmer_overwrites_not_deletes.py` pins both halves, and
+#: `_warm_one` re-reads the TTL afterwards so a silent no-op becomes a counted
+#: `no_write` rather than a success.
+#:
+#: A ContextVar, not a parameter, for the same reason as the var above: FastAPI
+#: would turn a plain-defaulted argument into a public query parameter, and
+#: `?force_cache_rebuild=1` on the open internet is a self-service way to make
+#: every search pay the miss path — on the endpoint that can spend twenty seconds.
+_force_search_cache_rebuild: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "bainluck_search_force_cache_rebuild", default=False
+)
+
+
 #: The four arrays a `/search` answer can arrive in. Frozen as a literal rather
 #: than "every list in the payload" for the same reason the needle's pool is: a
 #: predicate would silently re-define "answered" the next time this route grows
@@ -3655,8 +3703,16 @@ async def search_events(
         days_back=days_back,
         include_upcoming=include_upcoming,
     )
+    # #3526: `_force_search_cache_rebuild` joins the READ condition and ONLY the
+    # read. The warmer sets it so this call skips the cached body and rebuilds,
+    # while the write below still fires — which is what lets the warmer refresh
+    # an entry without first DELETING it and blanking it for every real user in
+    # the meantime. See the var's own comment for why it must never reach the
+    # write condition.
     _search_cache_readable = (
-        not debug_timing and search_response_cache_enabled()
+        not debug_timing
+        and not _force_search_cache_rebuild.get()
+        and search_response_cache_enabled()
     )
     if _search_cache_readable:
         _hit = None

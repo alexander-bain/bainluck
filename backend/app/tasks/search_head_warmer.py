@@ -80,8 +80,19 @@ THREE LESSONS ARE INHERITED RATHER THAN RE-LEARNED. Each one cost a cycle on
 2. **A pass that hits the cache extends nothing** (hole 2, LAT-P060). The route
    writes its cache only on the MISS path, so a warm read resets no clock and a
    "warm" of a warm entry is a Redis GET that reports success and delivers
-   nothing. The only way to extend an entry's life is to make the entry not be
-   there, so a near-dead entry is DROPPED before the route is called.
+   nothing. A near-dead entry is therefore REBUILT OVER via
+   `_force_search_cache_rebuild`, which makes the route skip the cache READ and
+   keep the cache WRITE.
+
+   🔴 **It used to be DROPPED, and this paragraph used to say deleting was "the
+   only way".** It was not, and #3526 is that correction: the sibling endpoint
+   built the read-only bypass on 2026-08-29 (LAT-P134/#2304) and nothing carried
+   it here. Between the DELETE and the route's `setex` the key was ABSENT, so a
+   real user searching that term paid a full `/search` build — on production
+   `c1ac1d6c` the real passes ran 3.3-23.8s, which is the width of that window
+   per term. Rebuilding over the entry keeps the old answer served continuously
+   until the new one replaces it. **Max staleness is unchanged** — the 60s TTL
+   governs both, so this buys latency, not freshness.
 3. **A warmer must not be able to report success while the head is cold**
    (`app/utils/task_verdict.py`). An empty head is `partial`, never `complete`.
 
@@ -423,31 +434,6 @@ def _cache_ttl_seconds(key: str) -> int | None:
     return None if ttl is None else int(ttl)
 
 
-def _drop_cached(key: str) -> bool:
-    """Force the next route call for `key` to MISS, so it recomputes and re-setexes.
-
-    The whole of hole 2's fix. The route writes its cache only on the miss path,
-    so the sole way a warmer can extend an entry's life is to make the entry not
-    be there.
-
-    THE COST, STATED: between this delete and the route's write there is a
-    window in which a real user asking that question pays a database read. It is
-    bounded by ONE recompute and it is strictly better than the alternative,
-    which is the entry expiring on its own and EVERY user in the following gap
-    paying it.
-    """
-    try:
-        from app.tasks.redis_state import get_redis_client
-
-        get_redis_client().delete(key)
-        return True
-    except Exception:  # noqa: BLE001
-        logger.warning(
-            "search_head_warmer: cache drop failed for %s", key, exc_info=True
-        )
-        return False
-
-
 def _warm_request():
     """A synthetic anonymous ASGI request, the shape the route reads identity from.
 
@@ -478,7 +464,11 @@ async def _warm_one(session, q: str) -> dict:
     """
     from fastapi import Response
 
-    from app.routes.events import _suppress_search_log, search_events
+    from app.routes.events import (
+        _force_search_cache_rebuild,
+        _suppress_search_log,
+        search_events,
+    )
 
     # #1866 ON THIS SURFACE. The route's other job is to write the query into
     # `search_query_logs`, which is the table `_head_from_query_log` reads to
@@ -501,13 +491,42 @@ async def _warm_one(session, q: str) -> dict:
             "ok": True,
             "reason": "fresh",
             "ttl_before": ttl_before,
-            "dropped": False,
+            "rebuilt": False,
+            "ttl_after": ttl_before,
             "seconds": round(time.monotonic() - started, 3),
         }
 
-    # Drop unless we KNOW there is nothing to drop. `None` (Redis silent) falls
-    # through to the drop attempt on purpose.
-    dropped = False if ttl_before == _TTL_NO_KEY else _drop_cached(key)
+    # 🔴 #3526: REBUILD OVER THE ENTRY, NEVER DELETE IT FIRST.
+    #
+    # This used to be `_drop_cached(key)` — a Redis DELETE — because the route
+    # writes its cache only on the miss path, so removing the entry was the only
+    # lever available. That premise was refuted on 2026-08-29 for the sibling
+    # endpoint (LAT-P134/#2304, `_force_cache_rebuild`) and the refutation never
+    # reached this module: for eight days this warmer went on blanking the entry
+    # it was in the middle of refreshing.
+    #
+    # THE COST THE OLD DOCSTRING STATED AND UNDER-PRICED. From the DELETE until
+    # the route's `setex` the key is ABSENT, so a real user searching that term
+    # misses too and pays a full `/search` build of their own. The old text
+    # called that "bounded by ONE recompute" and therefore acceptable. The bound
+    # is real and it is large: `PER_QUERY_TIMEOUT_SECONDS` is 25s, and on
+    # production `c1ac1d6c` (2026-09-06, `task-metrics?task=warm_search_head`)
+    # the real passes ran 3.3-23.8s against ~11-56ms floor-skips. #2304 measured
+    # the same hole at 2.0-3.7s on `/typeahead` and that was enough to fix it;
+    # this endpoint is the heavier one (#1866: a cold `/search` is 2.8-6.4s).
+    #
+    # `_force_search_cache_rebuild` makes the route skip the cache READ and keep
+    # the cache WRITE, so the old answer is served continuously right up to the
+    # instant the new one replaces it. Max staleness is UNCHANGED — the 60s
+    # `SEARCH_RESPONSE_TTL_SECONDS` governs both — and a rebuild that fails or
+    # comes back DEGRADED now leaves the previous answer alive to its natural
+    # expiry instead of leaving a hole.
+    #
+    # Token + reset in `finally`: this flag makes a request BYPASS THE CACHE, so
+    # a leak would be a real user paying a full build on the twenty-second
+    # endpoint. Per-task context copies already make that unreachable; the reset
+    # makes it unreachable without depending on that argument.
+    _force_token = _force_search_cache_rebuild.set(True)
 
     try:
         await asyncio.wait_for(
@@ -529,14 +548,6 @@ async def _warm_one(session, q: str) -> dict:
             ),
             timeout=PER_QUERY_TIMEOUT_SECONDS,
         )
-        return {
-            "q": q,
-            "ok": True,
-            "reason": "warmed",
-            "ttl_before": ttl_before,
-            "dropped": dropped,
-            "seconds": round(time.monotonic() - started, 3),
-        }
     except asyncio.TimeoutError:
         # The route may have left an aborted transaction behind, and the next
         # query on THIS session would fail on a poisoned one. Each worker owns
@@ -548,7 +559,8 @@ async def _warm_one(session, q: str) -> dict:
             "ok": False,
             "reason": "timeout",
             "ttl_before": ttl_before,
-            "dropped": dropped,
+            "rebuilt": True,
+            "ttl_after": None,
             "seconds": round(time.monotonic() - started, 3),
         }
     except Exception:  # noqa: BLE001
@@ -559,9 +571,46 @@ async def _warm_one(session, q: str) -> dict:
             "ok": False,
             "reason": "error",
             "ttl_before": ttl_before,
-            "dropped": dropped,
+            "rebuilt": True,
+            "ttl_after": None,
             "seconds": round(time.monotonic() - started, 3),
         }
+    finally:
+        _force_search_cache_rebuild.reset(_force_token)
+
+    # 🔴 "IT RETURNED" IS NOT "IT WROTE" (`app/utils/task_verdict.py`, gotcha #53).
+    #
+    # This function used to report `warmed` on the strength of the route having
+    # returned, which was survivable only because the DELETE guaranteed a miss.
+    # Rebuilding over a LIVE entry removes that guarantee: if the flag stops
+    # reaching the route — an import that resolves elsewhere, a future edit that
+    # moves it onto the WRITE condition too — the route answers from the very
+    # entry we came to replace, returns in milliseconds, and this function would
+    # report `warmed`. A green pass that warmed nothing, which is exactly what
+    # the `Query(False)` comment above describes. So it gets a check, not a
+    # comment: re-read the TTL and require that it actually moved up.
+    #
+    # `None` (Redis silent) is NOT that failure — it is an unreadable instrument,
+    # and reporting `no_write` on it would turn a Redis blink into a fake defect.
+    # It reports `warmed_unverified` so the pass can say how much of its own
+    # success it could not check.
+    ttl_after = _cache_ttl_seconds(key)
+    if ttl_after is None:
+        reason = "warmed_unverified"
+    elif ttl_after > (ttl_before if ttl_before is not None and ttl_before >= 0 else -1):
+        reason = "warmed"
+    else:
+        reason = "no_write"
+
+    return {
+        "q": q,
+        "ok": reason != "no_write",
+        "reason": reason,
+        "ttl_before": ttl_before,
+        "rebuilt": True,
+        "ttl_after": ttl_after,
+        "seconds": round(time.monotonic() - started, 3),
+    }
 
 
 async def _safe_rollback(session) -> None:
@@ -763,7 +812,16 @@ def _summarize(
     warmed = [r for r in results if r["ok"]]
     timeouts = [r for r in results if r["reason"] == "timeout"]
     errors = [r for r in results if r["reason"] == "error"]
-    rebuilt = [r for r in results if r["reason"] == "warmed"]
+    # #3526: `warmed_unverified` DID rebuild — it is a `warmed` whose TTL
+    # re-read came back unreadable, so it belongs in `rebuilt` and is counted
+    # separately in `unverified`. Folding it into neither is how a pass hides
+    # the half of its success it could not check.
+    rebuilt = [r for r in results if r["reason"] in ("warmed", "warmed_unverified")]
+    unverified = [r for r in results if r["reason"] == "warmed_unverified"]
+    # #3526: the state `_force_search_cache_rebuild` failing to reach the route
+    # produces — the route answered from the entry we came to replace and wrote
+    # nothing. It must never be able to read as `complete`.
+    no_writes = [r for r in results if r["reason"] == "no_write"]
     fresh = [r for r in results if r["reason"] == "fresh"]
     # `_TTL_NO_KEY` exactly — never "falsy", never "<= 0". All three non-positive
     # values mean different things and only this one means "the head was cold
@@ -775,7 +833,11 @@ def _summarize(
         "terminal": (
             "skipped"
             if skip_reason
-            else "complete" if head and not timeouts and not errors else "partial"
+            else (
+                "complete"
+                if head and not timeouts and not errors and not no_writes
+                else "partial"
+            )
         ),
         "skip_reason": skip_reason,
         "completed": len(warmed),
@@ -790,6 +852,14 @@ def _summarize(
         # only their sum is how a pass that rebuilt nothing reads as 8/8.
         "rebuilt": len(rebuilt),
         "fresh": len(fresh),
+        # #3526. `no_writes` NAMES the terms — one term failing every pass and
+        # eight failing once are different defects and a count cannot tell them
+        # apart. `unverified` is a count. The asymmetry is not an oversight: it
+        # is the shape `typeahead_warmer._summarize` already emits, and two
+        # warmers publishing the same field name in two shapes is a trap for
+        # whoever reads both.
+        "no_writes": [r["q"] for r in no_writes],
+        "unverified": len(unverified),
         # `rebuilt` cannot distinguish an entry that was ALIVE-but-stale from one
         # that was ALREADY DEAD, and those are opposite diagnoses: the first says
         # the threshold fired as designed, the second says a user asking that
