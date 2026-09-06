@@ -283,7 +283,7 @@ class TestTheTennisHubDeclaresTheWomensTour:
 
         # `is_prop` accepted because #3640 made the hub pass its own prop
         # predicate here; this test is about the league scopes and ignores it.
-        async def _spy(sport_key, db, *, now=None, also_sport_keys=(), is_prop=None):
+        async def _spy(sport_key, db, *, now=None, also_sport_keys=(), **kwargs):
             seen["sport_key"] = sport_key
             seen["also"] = tuple(also_sport_keys)
             return []

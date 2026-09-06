@@ -306,8 +306,9 @@ class TestTheHubHandsItsOwnPredicateToTheRail:
 
         seen = {}
 
-        async def _spy(sport_key, db, *, now=None, also_sport_keys=(), is_prop=None):
+        async def _spy(sport_key, db, *, now=None, is_prop=None, **kwargs):
             seen["is_prop"] = is_prop
+            seen.update(kwargs)
             return []
 
         monkeypatch.setattr(hub_module, "build_linked_matches", _spy)

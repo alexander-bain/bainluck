@@ -133,6 +133,70 @@ def classify_tennis_prop(external_id: str | None, name: str | None) -> str | Non
     return None
 
 
+#: The feeder circuits, as the VENUES themselves spell them. Kalshi says it in
+#: the ticker (`KXATPCHALLENGERMATCH-…`, `KXWTACHALLENGERMATCH-…`) and, for the
+#: eight rows that carry one, in `market_metadata->>'competition'`
+#: ("ATP Challenger Phan Thiet 3", "ATP Challenger Shanghai"). Nothing here is
+#: inferred — a tour we cannot read as a feeder circuit is simply not one.
+#:
+#: `challenger` is unanchored because it has to match inside a ticker word;
+#: the rest are word-bounded because "itf"/"futures" are short enough to occur
+#: inside an unrelated token.
+_TENNIS_FEEDER_CIRCUIT_RE = re.compile(
+    r"challenger|\bitf\b|\bfutures\b|\bqualif(?:ying|ier|iers)?\b|\butr\b",
+    re.IGNORECASE,
+)
+
+
+def is_tennis_feeder_circuit(
+    external_id: str | None,
+    name: str | None,
+    competition: str | None = None,
+) -> bool:
+    """True when the venue itself says this match is on a feeder circuit.
+
+    #3640, the ordering half. `/hub/tennis` ranks its rail live-first then
+    soonest-first, and on 2026-09-06 that put an ATP Challenger at Phan Thiet at
+    rail position 3 with Swiatek–Zheng at 11 — not because anything was broken,
+    but because the Challengers genuinely started nine hours earlier (06:00Z
+    against 15:00Z). A clock is not a reason to lead the page during a Slam.
+
+    A DISPLAY rule, so it reads only what a venue stated at ingest and never
+    guesses (contrast `tournament_tokens`, which is deliberately permissive
+    because it is a MATCHER). Three fields, all venue-stated: the Kalshi ticker,
+    the market name, and Kalshi's `competition`.
+
+    Measured over the whole tennis population in the rail's window on
+    2026-09-06 (167 Kalshi rows + 692 Polymarket rows): every Challenger row
+    carried `KX{ATP,WTA}CHALLENGERMATCH` in its ticker, and the only 8 rows with
+    a non-null `competition` were the two Challenger draws. It fires on nothing
+    else in that population — no US Open row, from either venue, matches.
+
+    Returns a bool and not a tier, because a tier we cannot measure is a tier we
+    would be inventing: the venues name the feeder circuits and say nothing at
+    all about the rest, so the honest rule demotes what is named and leaves
+    every other match exactly where the clock put it.
+
+    ── why not `highlights.get_league_tier`, which already ranks tennis ──
+
+    It was the first thing tried and it cannot answer this question. It keys on
+    the EVENT's sport key, and in the measured population the Challengers and
+    the regular tour share one key: 116 Kalshi Challenger rows and 36 Polymarket
+    main-tour rows all sit on `tennis_atp`, which has no `LEAGUE_TIERS` entry at
+    all. Promoting the slam keys instead of demoting the feeder circuit fails
+    from the other side — Alex Michelsen's US Open match was linked to a
+    `tennis_atp` event and a `tennis_atp_us_open` one on the same day (a twin,
+    matching's to fix under #2693), so a slam-key promotion would have left one
+    of him behind while the Challenger demotion catches every Challenger however
+    its event is keyed. Reading the sport key would also cost this rail a third
+    query it does not make today.
+    """
+    for text in (competition, external_id, name):
+        if text and _TENNIS_FEEDER_CIRCUIT_RE.search(text):
+            return True
+    return False
+
+
 def is_winner_market(name: str | None) -> bool:
     """True for a tournament-winner field (the parent), not a single match."""
     n = name or ""
