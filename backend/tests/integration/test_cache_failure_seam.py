@@ -280,7 +280,8 @@ async def test_calibration_warm_hit_serves_and_remembers(monkeypatch):
     # to name, so the vocabulary is honestly EMPTY — published anyway, on every
     # answer, because a client that has to test for the block is back to
     # guessing, which is the defect. `{}` costs a name, never the curve.
-    assert out.pop("source_labels") == {}
+    source_labels = out.pop("source_labels")
+    assert source_labels == {}
     assert out == payload
 
 
