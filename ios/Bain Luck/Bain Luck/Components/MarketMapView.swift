@@ -642,15 +642,34 @@ struct MarketMapView: View {
                 markers: markers
             )
 
-            // Axis labels
+            // Axis labels. #3566 — the ends are fixed, but the MIDDLE one is
+            // only at the middle when the rail has no zero on it. On a margin
+            // rail the mid label names zero ("Tie"), so it is drawn where zero
+            // actually falls; `densityRail` no longer draws a second one.
             HStack {
                 Text(axisLeft).foregroundStyle(.secondary)
-                Spacer()
-                Text(axisMid).foregroundStyle(.secondary)
                 Spacer()
                 Text(axisRight).foregroundStyle(.secondary)
             }
             .font(.system(size: 11, weight: .heavy))
+            .overlay {
+                GeometryReader { geo in
+                    switch MarketMapRail.midAxisLabel(zeroPercent: zeroPosition) {
+                    case .centred:
+                        Text(axisMid)
+                            .font(.system(size: 11, weight: .heavy))
+                            .foregroundStyle(.secondary)
+                            .position(x: geo.size.width / 2, y: geo.size.height / 2)
+                    case .at(let percent):
+                        Text(axisMid)
+                            .font(.system(size: 11, weight: .heavy))
+                            .foregroundStyle(.secondary)
+                            .position(x: geo.size.width * percent / 100.0, y: geo.size.height / 2)
+                    case .withheld:
+                        EmptyView()
+                    }
+                }
+            }
 
             // Probability ladder
             if !ladder.isEmpty {
@@ -699,7 +718,12 @@ struct MarketMapView: View {
                 )
                 .shadow(color: .black.opacity(0.06), radius: 2, y: 1)
 
-                // Zero line + label
+                // Zero line. #3566 — the `Text("0")` that used to sit here at
+                // `y: 48` landed in the axis row below (this rail is
+                // `height: 36`, the axis `HStack` follows at `spacing: 10`),
+                // where it either crowded or overprinted the centred "Tie".
+                // The axis row now carries one label for zero and this draws
+                // only the rule itself.
                 if let zeroPct = zeroPosition {
                     Rectangle()
                         .fill(Color.secondary.opacity(0.3))
@@ -707,11 +731,6 @@ struct MarketMapView: View {
                         .offset(x: geo.size.width * zeroPct / 100.0 - 1)
                         .frame(height: 40)
                         .offset(y: -5)
-
-                    Text("0")
-                        .font(.system(size: 11, weight: .heavy))
-                        .foregroundStyle(.secondary)
-                        .position(x: geo.size.width * zeroPct / 100.0, y: 48)
                 }
 
                 // Marker dots — scale radius relative to rail width
