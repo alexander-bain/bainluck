@@ -89,6 +89,8 @@ class _EventsTable:
         self.undo_stages = 0
         # (id, prior_value) for every mutation since the last commit.
         self._pending = []
+        # Optional hook: mutate the table after the blank-id plan is read.
+        self.after_plan_read = None
 
     async def execute(self, stmt, params=None):
         sql = str(stmt)
@@ -115,7 +117,16 @@ class _EventsTable:
             return _Result([])
 
         if "SET statpal_fixture_id = ''" in sql:
-            hit = [i for i in params["ids"] if self.rows.get(i, "sentinel") is None]
+            # The predicate is READ OFF THE SQL, never assumed. A fake that
+            # hard-codes `IS NULL` here cannot see the guard being deleted, and
+            # the deletion is survivable in silence precisely because the
+            # relinked REPORT is computed by a different statement — it would go
+            # on saying "refused 1" while the write clobbered that row.
+            only_null = "statpal_fixture_id IS NULL" in sql
+            hit = [
+                i for i in params["ids"]
+                if i in self.rows and (not only_null or self.rows[i] is None)
+            ]
             for i in hit:
                 self._pending.append((i, self.rows[i]))
                 self.rows[i] = ""
@@ -148,10 +159,17 @@ class _EventsTable:
             ])
 
         if "SELECT id FROM events" in sql:
-            return _Result([
+            out = _Result([
                 SimpleNamespace(id=i)
                 for i in sorted(k for k, v in self.rows.items() if v == "")
             ])
+            # A concurrent writer, fired between the plan read and the first
+            # write. This is the ONLY case that tells a receipt built from
+            # `RETURNING` apart from one built by filtering the planned list.
+            if self.after_plan_read is not None:
+                self.after_plan_read(self)
+                self.after_plan_read = None
+            return out
 
         if "UPDATE events" in sql:
             lo, hi = params["lo"], params["hi"]
@@ -907,3 +925,29 @@ class TestTheRestoreIsReachableOnTheRail:
         cmd = restore_command("repair:statpal_fixture_id_blanks:undo:X:abc")
         assert "--restore repair:statpal_fixture_id_blanks:undo:X:abc" in cmd
         assert cmd.count("--restore") == 1
+
+    @pytest.mark.asyncio
+    async def test_a_row_relinked_between_the_plan_and_the_write_is_not_receipted(
+        self, monkeypatch
+    ):
+        """The case that separates `RETURNING` from filtering the planned list.
+
+        A linker gives id 2 a real StatPal id after the plan is read. The
+        UPDATE's repeated `= ''` predicate correctly skips it — but the PLAN
+        still names it, so a receipt derived from the plan would hand an
+        operator a restore that writes `''` over a real id.
+        """
+        import scripts.repair_statpal_fixture_id_blanks as mod
+
+        s = _EventsTable([(1, ""), (2, ""), (3, "")])
+
+        def _linker_wins_the_race(table):
+            table.rows[2] = "1329200777"
+
+        s.after_plan_read = _linker_wins_the_race
+        res = await mod.repair(s, apply=True, expected_blank=3)
+
+        assert res["rows_nulled"] == 2
+        assert s.committed_receipt["event_ids"] == [1, 3]
+        assert 2 not in s.committed_receipt["event_ids"]
+        assert s.rows[2] == "1329200777"
