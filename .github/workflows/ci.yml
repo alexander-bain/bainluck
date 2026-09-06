@@ -806,6 +806,46 @@ jobs:
             exit 1
           fi
 
+      - name: Tennis commence predicate + reset scope (real Postgres)
+        # TENNIS-COMMENCE-SQL-PREDICATE-GUARD, the follow-up both CERT-2020
+        # graders named independently. `_fix_tennis_commence_times()` re-dates
+        # OPEN Kalshi tennis markets off their ticker instead of Kalshi's +14d
+        # settlement backstop, and its only CI coverage drives it through a
+        # `_FakeSession` that answers ANY statement containing
+        # `futures_markets fm` with a canned row list.
+        #
+        # So none of `source = 'kalshi'`, `llm_sport_category = 'tennis'`,
+        # `status = 'open'` or `commence_time IS NOT NULL` is evaluated by
+        # anything: a row is excluded from the repair only because the test
+        # author left it out of the list. Delete any one clause and every
+        # existing test still passes. The `status = 'open'` clause is the
+        # load-bearing one — the repair's own safety argument is that a resolved
+        # row's close_time has already collapsed to its settlement instant, so
+        # re-dating it would invalidate closing lines calibration has banked.
+        #
+        # Real Postgres because the doubted instrument IS the fake: only a
+        # server decides the WHERE clause, whether `LEFT JOIN events` keeps the
+        # unlinked markets (the common shape) that an INNER JOIN silently drops,
+        # `market_id = ANY(:ids)` over a real array through the real driver, and
+        # whether the UPDATE was COMMITTED — every assertion reads back on a
+        # separate connection.
+        #
+        # Two-armed: `test_the_unpredicated_query_sweeps_up_rows_the_repair_must
+        # _never_touch` and `test_the_unscoped_reset_wipes_calibration_the_repair
+        # _preserves` execute the MUTATED shapes against the same seeded corpus
+        # and require the damage to be observable, so a green run means the
+        # predicate was proved load-bearing rather than that nothing objected.
+        # Its fixture drops and recreates the schema, so it sits beside the other
+        # gate that does. Same skip-detection as every gate in this job.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_tennis_commence_predicate_real_postgres.py \
+            -v -s -rs 2>&1 | tee /tmp/tenniscommence.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/tenniscommence.txt; then
+            echo "::error::tennis commence predicate gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#1852 gap-create grade round trip (real Postgres)"
         # CAL-P1004R, the repair CERT-948 named. `graded_columns()` returns an
         # EMPTY mapping when the venue has not answered — right on an UPDATE,
