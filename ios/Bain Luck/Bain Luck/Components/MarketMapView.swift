@@ -85,7 +85,9 @@ struct MarketMapView: View {
     /// The sentence a suppressed map owes the reader, once the match is under
     /// way and the missing tile would otherwise be conspicuous.
     private var unitMismatchNote: String? {
-        (isLive || isDone) ? vocab.unitMismatchNote : nil
+        // #3465: `isDone` is the same flag that decides the note is owed, so it
+        // is also the flag that decides which tense it is owed in.
+        (isLive || isDone) ? vocab.unitMismatchNote(settled: isDone) : nil
     }
 
     private var hasSpreads: Bool { !(gameMarkets.spreads ?? []).isEmpty }
