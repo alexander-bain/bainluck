@@ -735,6 +735,56 @@ class TestNoQueueWeAlreadyPayForIsAHomeForTheWarmer:
             bs, softs, queues, budget_s=120, slots={"spacious": 1},
             global_hard_limit=300)) == {"spacious"}
 
+    def test_a_hold_of_exactly_the_budget_is_not_over_it(self):
+        """The boundary, matching `fire_isolation_violations`' `<= budget: continue`.
+
+        A resident that returns the slot at exactly the expiry instant has not
+        exceeded the budget, and the two helpers must not disagree about the tie —
+        one of them saying 120s is fine while the other says it is a violation is
+        how a rule becomes two rules.
+        """
+        bs = {
+            "warm-typeahead": {"task": "app.tasks.warm_typeahead",
+                               "options": {"expires": 120}},
+            "exactly-at-budget": {"task": "t.exact"},
+            "one-second-over": {"task": "t.over"},
+        }
+        queues = {"app.tasks.warm_typeahead": ["q"], "t.exact": ["q"], "t.over": ["q"]}
+        over, unbounded = unbudgeted_residents(
+            bs, {"t.exact": 120, "t.over": 121}, queues,
+            queue="q", budget_s=120, global_hard_limit=300)
+        assert over == ["one-second-over"], over
+        assert unbounded == []
+
+    def test_a_resident_with_no_bound_of_any_kind_disqualifies_and_is_reported_apart(self):
+        """The `unbounded` arm has no live examples — the global hard limit covers
+        every task today — so without this it is dead code that the battery walks
+        straight through. It is kept because the global limit is one config edit
+        from being removed, and "no answer at all" must not silently fold into
+        "300s, which is over budget": they are different findings.
+        """
+        bs = {
+            "warm-typeahead": {"task": "app.tasks.warm_typeahead",
+                               "options": {"expires": 120}},
+            "no-bound-a": {"task": "t.a"},
+            "no-bound-b": {"task": "t.b"},
+        }
+        queues = {"app.tasks.warm_typeahead": ["q"], "t.a": ["q"], "t.b": ["q"]}
+        softs = {"t.a": 0, "t.b": None}
+
+        over, unbounded = unbudgeted_residents(
+            bs, softs, queues, queue="q", budget_s=120, global_hard_limit=None)
+        assert over == [], "no declared hold is not an over-budget hold"
+        assert unbounded == ["no-bound-a", "no-bound-b"]
+
+        disqualified = queues_that_cannot_guarantee_a_slot(
+            bs, softs, queues, budget_s=120, slots={"q": 2}, global_hard_limit=None)
+        assert set(disqualified) == {"q"}, (
+            "two residents with no bound at all against two slots must disqualify the "
+            f"queue on the unbounded arm alone: {disqualified}")
+        assert disqualified["q"]["unbounded"] == ["no-bound-a", "no-bound-b"]
+        assert disqualified["q"]["over_budget"] == []
+
     def test_the_warmer_is_never_counted_as_its_own_competitor(self):
         """`warm-typeahead` declares soft 100s, under the budget, so it would not
         land in `over_budget` today anyway — which is exactly why the exclusion
