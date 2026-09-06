@@ -5,6 +5,7 @@ import type { FuturesOutcomeHistory } from "@/lib/types";
 import { canZoomSeries, computeZoomBound, resolveYAxisMax } from "@/lib/chartZoom";
 import { anchorScrollLeft, edgeOverflowFor } from "@/lib/chartScroll";
 import { priceCadenceNote } from "@/lib/priceCadenceCopy";
+import { seriesFreshness } from "@/lib/seriesFreshness";
 import {
   SERIES_COLORS,
   SERIES_COLORS_GOLD,
@@ -208,6 +209,18 @@ export function FuturesChart({
       </div>
     );
   }
+
+  // #2961: what does this chart hold? Computed over the UNION of the displayed
+  // outcomes' stamps, because that is the series the reader actually sees: a
+  // hole in the union is an interval where no plotted line had a reading, which
+  // is the only kind of hole the drawn chart is lying about. A plain
+  // computation, not a hook — it sits below the early returns above, same as
+  // `combinedPoints` and for the same reason.
+  const freshness = seriesFreshness(
+    displayedOutcomes.flatMap((o) =>
+      o.history.filter((p) => p.probability !== null).map((p) => p.timestamp),
+    ),
+  );
 
   // L2-164: the raw series max (before any axis pinning) drives the zoom chip.
   const dataMax = maxProb;
@@ -683,6 +696,33 @@ export function FuturesChart({
           </div>
         )}
       </div>
+
+      {/* #2961 — THE CHART DECLARES WHAT IT HOLDS.
+
+          A flat run is the strongest claim a trend chart can make, and this one
+          was making it by absence. Measured on production 2026-09-06:
+          `/api/futures/16630403/history` served 359 points on a 1.00h median
+          cadence whose newest point was 5.6h old, with a 345.6h hole in the
+          middle — drawn, with no note, as a line indistinguishable from a
+          question nobody has changed their mind about.
+
+          The threshold is read off the series' own gap distribution rather than
+          set here, because there is no hour count that is right for both this
+          chart and the 8-hourly politics rows sharing the rule
+          (`lib/seriesFreshness.ts` carries the measurements).
+
+          Placed under the plot and above the legend so it reads as a caption on
+          the axis it qualifies. Suppressed on `mini`, which has no axes to
+          qualify and no room for a sentence. */}
+      {!mini && freshness.note && (
+        <p
+          className="text-xs text-text-muted"
+          data-testid="futures-chart-freshness"
+          data-series-state={freshness.state}
+        >
+          {freshness.note}
+        </p>
+      )}
 
       {/* Legend — interactive (toggle) when a handler is supplied, otherwise a
           static key so single-question charts (e.g. the settled Path to
