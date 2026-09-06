@@ -112,6 +112,18 @@ async def _seed(session):
             market_tier=5,
             status=status,
             event_id=event.id,
+            # Copied from the specimen's own production row (`futures_markets`
+            # 60280227, read 2026-09-06): `llm_sport_category='mma'`,
+            # `sport_id=29` — the same sport the event carries. Both are
+            # load-bearing on the READ side and neither was here at first, which
+            # is why `test_after_the_pass_...` failed in CI on a green ship:
+            # `_build_related_futures`' game-prop pass requires
+            # `sport_id == event.sport_id` OR (`sport_id IS NULL` AND
+            # `llm_sport_category == 'mma'`), and a NULL satisfies neither arm.
+            # A fixture thinner than production does not prove a smaller thing —
+            # it proves a different one.
+            llm_sport_category="mma",
+            sport_id=sport.id,
         )
         session.add(m)
         return m
@@ -487,9 +499,15 @@ class TestTheReaderCanActuallySeeIt:
         assert not any(
             r.get("market_id") == ids["specimen"] for r in rows
         ), "the legless specimen must be invisible — that is the bug"
-        assert "Ozzy Diaz" not in json.dumps(resp), (
-            "no leg exists yet, so no price for this fight can be on the page"
-        )
+        # NOT a substring test on the payload. The four sibling markets in the
+        # fixture carry the same title, so the fighter's name legitimately
+        # appears in another row's `market_name` while his price does not exist
+        # anywhere. What the reader is missing is a PRICED ROW, and that is what
+        # this asserts — a `json.dumps(resp)` check would fail here for a reason
+        # that has nothing to do with the ship.
+        assert not any(
+            (r.get("outcome_name") or "") == "Ozzy Diaz" for r in rows
+        ), "no leg exists yet, so no priced row for this fighter can be served"
 
     async def test_after_the_pass_the_venues_price_is_on_the_page(self, pg_session):
         """The ship, as a reader meets it: the fight, priced, in the payload
@@ -521,13 +539,13 @@ class TestTheReaderCanActuallySeeIt:
         blob = json.dumps(mine)
         assert "Ozzy Diaz" in blob, "the fighter the price is about must be named"
 
-        priced = [
-            o
-            for r in mine
-            for o in (r.get("outcomes") or [])
-            if (o.get("name") or "") == "Ozzy Diaz"
-        ]
-        assert priced, f"no Ozzy Diaz outcome in {blob}"
+        # `home_team_futures`/`away_team_futures` are FLAT rows — one per
+        # OUTCOME, carrying `outcome_name` and `probability` at the top level.
+        # Only `series_markets` nests an `outcomes` list, and this market is not
+        # one. Reading the wrong shape is how the first version of this arm
+        # would have failed even once the row was surfaced.
+        priced = [r for r in mine if (r.get("outcome_name") or "") == "Ozzy Diaz"]
+        assert priced, f"no Ozzy Diaz row in {blob}"
         assert priced[0]["probability"] == pytest.approx(MONEYLINE_PRICE), (
             "the number on the page must be the number the venue is quoting — "
             "29.5%, not a normalised or invented one"
