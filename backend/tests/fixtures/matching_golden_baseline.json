@@ -1,11 +1,15 @@
 {
  "note": "Which MATCHING-GOLDEN pairs the matcher gets right. A RATCHET floor, not a target: most pairs are the audit's open failure classes. Regenerate with scripts/matching_golden_baseline.py --write, and only ever upward.",
  "source_file": "MATCHING-GOLDEN-2026-09-02.json",
+ "amended_market_ids": [
+  59700960,
+  59701032
+ ],
  "reset_reason": null,
  "anchor": "per-pair decision clock (see pair_as_of)",
  "fallback_as_of": "2026-09-02T20:00:00+00:00",
  "pair_count": 709,
- "passing_count": 649,
+ "passing_count": 647,
  "pairs": {
   "25926130": true,
   "59172944": true,
@@ -226,14 +230,14 @@
   "59700952": true,
   "59700953": true,
   "59700958": true,
-  "59700960": true,
+  "59700960": false,
   "59701002": true,
   "59701006": true,
   "59701008": true,
   "59701016": true,
   "59701028": true,
   "59701031": true,
-  "59701032": true,
+  "59701032": false,
   "59701034": true,
   "59701036": true,
   "59701039": true,

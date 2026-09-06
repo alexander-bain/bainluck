@@ -1,11 +1,15 @@
 {
+ "amended_market_ids": [
+  59700960,
+  59701032
+ ],
  "captured_pairs": 709,
  "dropped": {
   "event_gone": 0,
   "market_gone": 0
  },
  "golden_pairs": 709,
- "negative_pairs": 550,
+ "negative_pairs": 548,
  "pairs": [
   {
    "correct_event_id": 15300763,
@@ -22350,7 +22354,7 @@
    "venue": "kalshi"
   },
   {
-   "correct_event_id": null,
+   "correct_event_id": 15297322,
    "events": [
     {
      "away_team_name": "Roosendaal",
@@ -22633,7 +22637,7 @@
    "venue": "kalshi"
   },
   {
-   "correct_event_id": null,
+   "correct_event_id": 15297301,
    "events": [
     {
      "away_team_name": "FC Ko\u0161ice - Halftime Result",
@@ -60895,6 +60899,6 @@
    "venue": "kalshi"
   }
  ],
- "positive_pairs": 159,
+ "positive_pairs": 161,
  "source_file": "MATCHING-GOLDEN-2026-09-02.json"
 }

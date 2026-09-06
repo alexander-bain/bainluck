@@ -52,6 +52,10 @@ from app.utils.prediction_market_matching import (
 FIXTURES = Path(__file__).parent / "fixtures"
 INPUTS_PATH = FIXTURES / "matching_golden_inputs.json"
 BASELINE_PATH = FIXTURES / "matching_golden_baseline.json"
+#: Corrections to the DATED artifact's adjudications, applied by the capture
+#: script. The artifact is never rewritten; see the file's own
+#: ``why_this_file_exists``.
+AMENDMENTS_PATH = FIXTURES / "matching_golden_adjudication_amendments.json"
 
 
 # =============================================================================
@@ -343,6 +347,10 @@ def load_inputs() -> dict:
     return json.loads(INPUTS_PATH.read_text())
 
 
+def load_amendments() -> dict:
+    return json.loads(AMENDMENTS_PATH.read_text())
+
+
 def evaluate_all() -> dict[str, bool]:
     """Replay every pair at its own decision clock. ``{market_id: passes}``."""
     data = load_inputs()
@@ -362,8 +370,23 @@ def test_the_fixture_covers_the_whole_golden_set():
     data = load_inputs()
     assert data["captured_pairs"] == data["golden_pairs"] == 709
     assert data["dropped"] == {"event_gone": 0, "market_gone": 0}
-    assert data["positive_pairs"] == 159
-    assert data["negative_pairs"] == 550
+    # 159/550 as the artifact adjudicated it, plus the amendments. The split is
+    # asserted against the amendment count rather than as two bare numbers so
+    # that moving a pair across the line REQUIRES a recorded amendment — which
+    # is the only thing standing between "we corrected a wrong adjudication"
+    # and "we edited the answer until the gate went green".
+    amended = data.get("amended_market_ids", [])
+    moved = load_amendments()["amendments"]
+    assert {a["market_id"] for a in moved} == set(amended)
+    # Signed, not counted: an amendment may also retire a positive, and a bare
+    # `+ len(amended)` would be a formula that only happens to be right today.
+    delta = sum(
+        (1 if a["now"] is not None else 0) - (1 if a["was"] is not None else 0)
+        for a in moved
+    )
+    assert data["positive_pairs"] == 159 + delta
+    assert data["negative_pairs"] == 550 - delta
+    assert data["positive_pairs"] + data["negative_pairs"] == 709
 
 
 def test_the_fixture_carries_real_candidate_sets_not_single_answers():
@@ -672,3 +695,84 @@ def test_the_classes_that_should_be_green_today_are_named_in_the_baseline(failur
     ]
     assert pairs, f"no {failure_class} pairs in the fixture"
     assert all(str(p["market_id"]) in baseline for p in pairs)
+
+
+# =============================================================================
+# Amended adjudications (lane1b/051, raised by lane1/137)
+#
+# An adjudication can be wrong, and the commonest way is that it recorded the
+# world as it was on capture day rather than the answer that was always true.
+# Two `d-mislabel` pairs were adjudicated `correct_event_id: null` on
+# 2026-09-02 under the note `non-sport-category;cup-ticker` — i.e. WHILE the
+# Kalshi cup ticker was unmapped and the market's LLM category ('legal') was
+# deciding its sport. Map the ticker and the matcher attaches both to the sole
+# exact-name event for the tie. The ratchet read that improvement as a
+# regression, correctly, and lane1 held four ticker mappings out of #2321
+# rather than re-record a baseline it does not own.
+#
+# The correction is DATA, not a hand-edit, for one reason: the capture script
+# re-derives `correct_event_id` from the dated artifact, so a hand-edit to the
+# fixture survives exactly until the next re-capture and then reverts silently.
+# =============================================================================
+
+
+class TestTheAdjudicationAmendments:
+    def test_every_amendment_names_a_pair_that_exists(self):
+        by_market = {p["market_id"] for p in load_inputs()["pairs"]}
+        for a in load_amendments()["amendments"]:
+            assert a["market_id"] in by_market, a["market_id"]
+
+    def test_the_fixture_actually_carries_the_amended_answer(self):
+        """The mechanism's whole job. If the capture ever stops applying the
+        amendments — a moved path, a swallowed exception — the fixture reverts
+        to the artifact's answer and the ratchet starts crying regression again
+        with nothing in the diff to explain it."""
+        by_market = {p["market_id"]: p for p in load_inputs()["pairs"]}
+        for a in load_amendments()["amendments"]:
+            assert by_market[a["market_id"]]["correct_event_id"] == a["now"], (
+                f"market {a['market_id']} carries "
+                f"{by_market[a['market_id']]['correct_event_id']!r}, amended to "
+                f"{a['now']!r} — was the fixture re-captured without the "
+                "amendments being applied?"
+            )
+
+    def test_an_amended_answer_is_reachable_and_therefore_falsifiable(self):
+        """An amendment pointing at an event the pair's own candidate list does
+        not contain would be a permanent false negative: it can never go green,
+        so it can never be wrong, so it guards nothing."""
+        by_market = {p["market_id"]: p for p in load_inputs()["pairs"]}
+        for a in load_amendments()["amendments"]:
+            if a["now"] is None:
+                continue
+            pair = by_market[a["market_id"]]
+            assert a["now"] in {e["id"] for e in pair["events"]}
+
+    def test_every_amendment_carries_re_runnable_evidence(self):
+        """The bar for changing an adjudicated answer is evidence a reader can
+        re-run, not an assertion that it looked right. Asserted structurally so
+        the next amendment cannot be a bare id swap with a one-word reason."""
+        for a in load_amendments()["amendments"]:
+            for field in ("market_id", "was", "now", "on", "by", "why", "evidence"):
+                assert field in a, f"amendment {a.get('market_id')} lacks {field}"
+            assert len(a["why"]) > 120, "a one-line why is not a why"
+            assert len(a["evidence"]) >= 2, (
+                "one observation is a claim; the second is what makes it "
+                "checkable"
+            )
+            assert a["was"] != a["now"], "an amendment that changes nothing"
+
+    def test_the_baseline_records_which_amendments_it_was_written_against(self):
+        """The re-adjudication exemption in `matching_golden_baseline.py` is
+        one-shot BECAUSE the baseline carries the ids it has already seen. A
+        baseline that forgot them would let the same pair take the exemption
+        every time, which is a laundering channel rather than a correction."""
+        baseline = json.loads(BASELINE_PATH.read_text())
+        assert "amended_market_ids" in baseline, (
+            "re-record with scripts/matching_golden_baseline.py --write"
+        )
+        assert set(baseline["amended_market_ids"]) == set(
+            load_inputs().get("amended_market_ids", [])
+        ), (
+            "the baseline was written against a different set of amendments "
+            "than the fixture carries — re-record"
+        )

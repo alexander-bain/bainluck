@@ -56,12 +56,43 @@ def main() -> int:
     if BASELINE_PATH.exists():
         old = json.loads(BASELINE_PATH.read_text()).get("pairs", {})
 
-    regressions = [m for m in old if old[m] and m in actual and not actual[m]]
+    # A pair whose ADJUDICATION was amended since the baseline was recorded is
+    # not comparable across the amendment: its old entry answered a different
+    # question. So it is re-baselined without a --reset, and the exemption is
+    # one-shot BY CONSTRUCTION — it lasts only until this write records the
+    # amendment id in the baseline, after which the pair is an ordinary member
+    # of the ratchet again and a later regression on it is a regression.
+    #
+    # Without this the only route was `--reset`, which accepts EVERY regression
+    # in the run and writes a reason that says the harness changed. Using it to
+    # land a two-pair re-adjudication would drop the floor for all 709 and
+    # record a false reason for doing it.
+    old_doc = {}
+    if BASELINE_PATH.exists():
+        old_doc = json.loads(BASELINE_PATH.read_text())
+    newly_amended = {
+        str(m) for m in inputs.get("amended_market_ids", [])
+    } - {str(m) for m in old_doc.get("amended_market_ids", [])}
+
+    regressions = [
+        m for m in old
+        if old[m] and m in actual and not actual[m] and m not in newly_amended
+    ]
+    readjudicated = [
+        m for m in sorted(newly_amended)
+        if m in actual and old.get(m) != actual[m]
+    ]
     improvements = [m for m in old if not old[m] and m in actual and actual[m]]
     passing = sorted(m for m, ok in actual.items() if ok)
 
     print(f"pairs: {len(actual)}   passing: {len(passing)}")
-    for label, ids in (("REGRESSED", regressions), ("IMPROVED", improvements)):
+    if newly_amended:
+        print(f"newly amended adjudications: {sorted(newly_amended)}")
+    for label, ids in (
+        ("REGRESSED", regressions),
+        ("RE-ADJUDICATED (exempt, one-shot)", readjudicated),
+        ("IMPROVED", improvements),
+    ):
         if not ids:
             continue
         print(f"\n{label} ({len(ids)}):")
@@ -90,6 +121,9 @@ def main() -> int:
             "--write, and only ever upward."
         ),
         "source_file": inputs["source_file"],
+        # Carried forward so `newly_amended` above can only ever be the
+        # amendments this write is the first to see.
+        "amended_market_ids": sorted(inputs.get("amended_market_ids", [])),
         "reset_reason": args.reset,
         "anchor": "per-pair decision clock (see pair_as_of)",
         "fallback_as_of": GOLDEN_AS_OF.isoformat(),

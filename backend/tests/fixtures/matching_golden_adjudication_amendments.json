@@ -1,0 +1,42 @@
+{
+ "why_this_file_exists": "MATCHING-GOLDEN-2026-09-02.json is a DATED ARTIFACT and is never rewritten. But an adjudication can be wrong, and the commonest way for it to be wrong is that it recorded the world as it was on the day of capture rather than the answer that was always true: a market with no correct event, versus a market whose correct event our own bug hid from us. Correcting that by hand-editing tests/fixtures/matching_golden_inputs.json would work exactly once — capture_matching_golden_fixture.py re-derives correct_event_id straight from the artifact, so the next re-capture would silently revert it and the ratchet would cry regression all over again with nobody able to see why. So corrections live HERE, as data, with their evidence, and the capture script applies them. Every amendment is a claim about truth that a reader can check.",
+ "rules": [
+  "An amendment names the market, what the artifact said, what it should say, and WHY — with evidence that can be re-run, not an assertion.",
+  "It is applied BEFORE the pair is built, so search_surfaced_the_answer and the adjudicated-event-must-be-present guarantee are both recomputed against the corrected answer rather than patched afterwards.",
+  "`was` is asserted against the artifact. If the artifact does not say what the amendment claims it says, the capture FAILS rather than applying a correction to a pair that has already moved underneath it.",
+  "An amendment never turns a FAILING pair green by itself. It changes the adjudicated answer; the baseline is then re-recorded and the ratchet reports the movement in whichever direction it really went.",
+  "Amendments are append-only. Superseding one means adding another that names it."
+ ],
+ "amendments": [
+  {
+   "market_id": 59700960,
+   "was": null,
+   "now": 15297322,
+   "on": "2026-09-05",
+   "by": "lane1b/051",
+   "raised_by": "lane1/137",
+   "artifact_note": "non-sport-category;cup-ticker",
+   "why": "The artifact recorded `correct_event_id: null` for a `d-mislabel` pair, and for that class null never meant 'this market belongs on no event' — all 200 d-mislabel pairs carry null. It meant the market was mislabelled and the target was left unresolved. Here the target exists and is unambiguous: the Kalshi ticker KXKNVBCUPGAME-26SEP02GSVROO names the KNVB cup tie of 2026-09-02, and event 15297322 is 'Gsv 28' vs 'Roosendaal' on 2026-09-02. The reason the matcher could not reach it on the day of capture was that `kxknvbcupgame` was unmapped, so the market's LLM category ('legal') decided its sport. That is our bug, not the market's truth.",
+   "evidence": [
+    "Production census 2026-09-06 00:00Z over every event whose team names match %Roosendaal% or %Gsv%: event 15297322 (Gsv 28 vs Roosendaal, soccer_other, 2026-09-02, scheduled) is the ONLY row for that tie. There is no rival to prefer, so `null` cannot have meant 'it belongs on a different event'.",
+    "The whole soccer_other Slovak/Dutch cup population has external_id NULL — the Odds API does not cover these cups — so 'it was auto-created' cannot be the disqualifier either, or the class has no correct answer at all.",
+    "Replayed with the four cup keys added to KALSHI_TICKER_TO_SPORT_KEY: `replay()` returns (15297322, 'matched'). Without them it returns (None, 'no_match'). The ticker mapping is the whole difference."
+   ]
+  },
+  {
+   "market_id": 59701032,
+   "was": null,
+   "now": 15297301,
+   "on": "2026-09-05",
+   "by": "lane1b/051",
+   "raised_by": "lane1/137",
+   "artifact_note": "non-sport-category;cup-ticker",
+   "why": "Same class and same cause as 59700960. KXSVKCUPGAME-26SEP02PUCTRN names the Slovak cup tie of 2026-09-02; event 15297301 is 'Puchov' vs 'Trnava' on 2026-09-02.",
+   "evidence": [
+    "Production census 2026-09-06 00:00Z over %Trnava% / %Puchov%: 33 events match, and exactly one is the Puchov-Trnava tie — 15297301. The other 32 are Spartak Trnava league fixtures against other opponents.",
+    "This pair is the harder of the two and it is the reason to be confident rather than the reason to hesitate: six candidates are on offer and five of them are decoy `FC Spartak Trnava vs FC Košice - <prop>` rows. The matcher picks 15297301, which is the restraint the fixture exists to test.",
+    "Replayed with the four cup keys added: (15297301, 'matched'). Without them: (None, 'no_match')."
+   ]
+  }
+ ]
+}
