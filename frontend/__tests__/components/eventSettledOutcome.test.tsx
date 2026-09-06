@@ -191,7 +191,11 @@ describe("#2443 — a settled event page states its outcome", () => {
     // The caller feeds the AWAY opening number because the away side won; an
     // 78% favourite is not an upset and must not be dressed as one.
     const text = visibleText(renderHero(outcome, { winnerPregameProb: 0.783 }));
-    expect(text).toContain("were 78% pregame");
+    // #3619 dropped the verb from this line (it was plural, and Berrettini is
+    // one person). What this case is actually about — that the number belongs
+    // to the winner's side, and that a favourite is not badged as an upset —
+    // is unchanged.
+    expect(text).toContain("78% pregame");
     expect(text).not.toContain("Upset");
   });
 
@@ -316,5 +320,106 @@ describe("live/073 — the set score gets the games under it", () => {
     // rather than as a mangled score.
     expect(outcome!.resultLine).toBe("28-24, 30-26, 26-30, 28-28");
     expect(outcome!.winnerName).toBe("Lakers");
+  });
+});
+
+/**
+ * #3619 — THE PREGAME LINE AGREES WITH A SINGLE WINNER.
+ *
+ * Alex, reading `/events/15304445` (Mensik–Tien, US Open FINAL) on
+ * 2026-09-06 at phone width:
+ *
+ *     Tien / WON / 6-3, 1-6, 6-7, 6-3, 6-4 / were 55% pregame
+ *
+ * "Tien … were 55% pregame." The verb was hardcoded plural, which reads
+ * correctly for a team and wrong for every one-on-one sport — tennis, golf,
+ * UFC, F1 — i.e. the whole of the surface during a Slam.
+ *
+ * ═══ WHY THE FIX IS "NO VERB" AND NOT "THE RIGHT VERB" ═══
+ *
+ * The issue suggested agreeing the verb with the subject, off the same signal
+ * that draws the player faces. That signal is `isTournamentSportKey`, which is
+ * `/^tennis_(atp|wta)_/` — it gates a REQUEST and `eventOutcome.ts` documents
+ * it as deliberately over-permissive. Branching the verb on it would have
+ * fixed tennis and left golf, UFC and F1 saying "were", i.e. fixed the
+ * SPECIMEN and not the CLASS. Removing grammatical number from the sentence
+ * fixes it for every sport, including ones not yet added.
+ *
+ * ═══ WHY THESE ARE NOT VACUOUS ═══
+ *
+ * Verified red by restoring `were ` and re-running: the three "does not say
+ * were" arms fail — the single player, the upset prefix (a separate string
+ * concatenation, so the first arm does not cover it) and the team.
+ *
+ * The other two pass in BOTH states, and that is deliberate rather than
+ * sloppy. "Still prints 55% pregame" cannot go red on the old copy, because
+ * "were 55% pregame" contains that substring — it is the REGRESSION half,
+ * pinning that the repair did not delete the line or the number, which is what
+ * every "does not say were" assertion above would happily accept. The control
+ * pins the same thing from the other side: no number in, no line out.
+ */
+describe("#3619 — the settled hero's pregame line has no grammatical number", () => {
+  const MENSIK_TIEN = {
+    isFinished: true,
+    homeTeam: "Jakub Mensik",
+    awayTeam: "Learner Tien",
+    homeScore: 2,
+    awayScore: 3,
+    linescore: { sets: [[3, 6], [6, 1], [7, 6], [3, 6], [4, 6]] as [number, number][] },
+  };
+
+  it("does not say 'were' about a single player", () => {
+    const outcome = resolveEventOutcome(MENSIK_TIEN);
+    expect(outcome!.winnerName).toBe("Tien");
+
+    const text = visibleText(renderHero(outcome, { winnerPregameProb: 0.55 }));
+
+    // The defect, stated the way Alex read it.
+    expect(text).not.toContain("were");
+    expect(text).not.toMatch(/Tien\b[^.]*\bwere\b/);
+  });
+
+  it("still tells the reader the number, which is the point of the line", () => {
+    const outcome = resolveEventOutcome(MENSIK_TIEN);
+    const text = visibleText(renderHero(outcome, { winnerPregameProb: 0.55 }));
+
+    expect(text).toContain("55% pregame");
+  });
+
+  it("keeps the upset prefix, and that arm has no verb either", () => {
+    // < UPSET_THRESHOLD, so the amber branch renders. It prepends to the same
+    // string, so a verb reintroduced here would be missed by the arm above.
+    const outcome = resolveEventOutcome(MENSIK_TIEN);
+    const text = visibleText(renderHero(outcome, { winnerPregameProb: 0.32 }));
+
+    expect(text).toContain("Upset");
+    expect(text).toContain("32% pregame");
+    expect(text).not.toContain("were");
+  });
+
+  it("reads the same for a team, so the copy is not branched by sport", () => {
+    /* The half that stops the next person "fixing" this with a
+       team-vs-individual conditional: one sentence serves both. */
+    const outcome = resolveEventOutcome({
+      isFinished: true,
+      homeTeam: "Los Angeles Lakers",
+      awayTeam: "Boston Celtics",
+      homeScore: 112,
+      awayScore: 108,
+    });
+    expect(outcome!.winnerName).toBe("Lakers");
+
+    const text = visibleText(renderHero(outcome, { winnerPregameProb: 0.55 }));
+    expect(text).toContain("55% pregame");
+    expect(text).not.toContain("were");
+  });
+
+  it("THE CONTROL: no pregame number, no pregame line", () => {
+    // Guards the fix against being read as "always print something".
+    const outcome = resolveEventOutcome(MENSIK_TIEN);
+    const text = visibleText(renderHero(outcome, { winnerPregameProb: null }));
+
+    expect(text).not.toContain("pregame");
+    expect(text).not.toContain("%");
   });
 });

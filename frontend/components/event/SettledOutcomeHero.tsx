@@ -91,13 +91,34 @@ export default function SettledOutcomeHero({
             </span>
           )}
           {winnerPregameProb !== null && (
+            /* #3619: no verb, deliberately. This line used to read "were N%
+               pregame", which is right for a team ("the Yankees were 55%") and
+               wrong for every one-on-one sport — tennis, golf, UFC, F1 — i.e.
+               the whole of the surface during a Slam.
+
+               The obvious repair is to agree the verb with the subject, but
+               this component cannot know the subject's number and neither can
+               the page. `isTournamentSportKey` — the only team-vs-individual
+               signal the hero has, and the one that draws the player faces —
+               is `/^tennis_(atp|wta)_/` and is documented in `eventOutcome.ts`
+               as deliberately over-permissive because it gates a REQUEST.
+               Reusing it here would fix tennis and leave golf, UFC and F1 still
+               saying "were". Enumerating individual sports instead is what the
+               issue explicitly warned against: the list goes stale the day a
+               sport is added, and it fails silently, in copy nobody re-reads.
+
+               Dropping the verb removes grammatical number from the sentence,
+               so the line is correct for one player and eleven of them, now and
+               for any sport added later. It also matches the terse register the
+               rest of the surface already uses — "Opened 72/28", "Proj 18-21".
+               No label is renamed: this is not the #2442/#3563 family. */
             <span
               className={`text-[11px] ${
                 wasUnderdog ? "text-amber-600 font-semibold" : "text-text-muted"
               }`}
             >
               {wasUnderdog ? "Upset · " : ""}
-              were {Math.round(winnerPregameProb * 100)}% pregame
+              {Math.round(winnerPregameProb * 100)}% pregame
             </span>
           )}
         </>
