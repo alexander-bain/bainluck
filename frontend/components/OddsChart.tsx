@@ -22,7 +22,7 @@ import {
 } from "@/lib/chartTimeline";
 // #1003 guard: the single 0–1 ⇄ 0–100 axis conversion (see eventKeyStats).
 import { homeProbToChartAxis, chartAxisToHomeProb } from "@/lib/eventKeyStats";
-import { sourceHex, sourceLabel } from "@/lib/sourceColors";
+import { separateLinesLabel, sourceHex, sourceLabel } from "@/lib/sourceColors";
 import { useAnalyticsContext } from "@/components/Analytics";
 import type {
   OddsHistoryPoint,
@@ -1905,11 +1905,15 @@ export default function OddsChart({
             {/* #2442: ONE name per supplier. This legend said "Individual
                 sportsbooks" while the page footer said "Sportsbooks" and the
                 line itself said "Betting Odds" — three names for one source on
-                one screen. The registry decides the noun; "Each" carries the
-                only thing this legend adds, which is that these are the
-                separate lines rather than their average. */}
+                one screen. The registry decides the noun; the qualifier carries
+                the only thing this legend adds, which is that these are the
+                separate lines rather than their average.
+                #3563: that qualifier used to be `Each {label.toLowerCase()}`,
+                which composed with the registry's plural into the non-sentence
+                "Each sportsbooks" on every sportsbooks-only page. The phrasing
+                now agrees with no number at all — see `separateLinesLabel`. */}
             <span className="text-xs text-text-muted">
-              Each {sourceLabel("betting").toLowerCase()}
+              {separateLinesLabel("betting")}
             </span>
           </div>
         )}
