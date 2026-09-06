@@ -163,3 +163,55 @@ class TestTheGuardFiresOnTheCodeThatShipped:
         """The counter-case. A guard that reds the correct code gets the guard
         deleted, not the code fixed."""
         assert fabricated_id_offenders("claim_id = live_fix.fixture_id") == []
+
+
+class TestTheRefusalPrecedesEveryCreationCounter:
+    """A row that is never created must not be counted as created. #2963 follow-up
+    `STATPAL-NO-ID-PREMATURE-CREATED-COUNTER`, raised by INTEGRATOR-232 against the
+    first version of this fix.
+
+    The refusal originally sat BELOW the Q438 premature-live guard, so a fixture
+    that was both premature AND id-less incremented
+    `premature_live_created_as_scheduled` — "creations this path DOWNGRADED to
+    scheduled" — and then returned without creating anything. The counter named a
+    creation that never happened, in the same result dict that reported
+    `events_created: 0`.
+
+    That is the failure mode this whole file is about, one level up: a number that
+    is wrong in a way no assertion looks at. So the ordering is pinned, not just
+    the behaviour — "no id" is the most fundamental refusal on this path and must
+    be decided before anything downstream records a decision about the row.
+    """
+
+    def _line_of(self, needle: str) -> int:
+        """First line of real CODE containing `needle`.
+
+        Comment lines are skipped, and that is load-bearing rather than tidy: the
+        refusal's own comment block quotes the expression it replaced
+        (`claim_id = live_fix.fixture_id or f"statpal_live_..."`), so a naive
+        substring walk finds the quotation ~30 lines above the statement and
+        reports the ordering backwards. Found by this test failing on its first
+        run, which is the only reason it is written this way.
+        """
+        for i, line in enumerate(SOURCE_PATH.read_text().splitlines(), 1):
+            if line.lstrip().startswith("#"):
+                continue
+            if needle in line:
+                return i
+        raise AssertionError(f"{needle!r} not found as code in {SOURCE_PATH.name}")
+
+    def test_the_id_refusal_comes_before_the_premature_counter(self):
+        refusal = self._line_of("if not statpal_provided_an_id(live_fix.fixture_id):")
+        counter = self._line_of("premature_live_created_as_scheduled += 1")
+        assert refusal < counter, (
+            f"the id refusal is at line {refusal} but "
+            f"`premature_live_created_as_scheduled` increments at line {counter}. "
+            "A fixture that is premature AND id-less would be counted as "
+            "'created as scheduled' and then not created at all."
+        )
+
+    def test_the_id_refusal_comes_before_the_claim_is_built(self):
+        """The ordering that makes the refusal mean anything at all."""
+        assert self._line_of(
+            "if not statpal_provided_an_id(live_fix.fixture_id):"
+        ) < self._line_of("claim_id = live_fix.fixture_id")
