@@ -33,18 +33,36 @@ A guard that only proves the new keys appear is half a guard. Three of the tests
 below pass before the two lines as well as after, and one of them is the reason
 this change is safe to deploy in the order it is being deployed:
 
-* **The 91 live `s6:` MLB anchors keep resolving.** They are still stored under
-  the legacy shape when these two lines go live, and the re-key script runs
-  *after*. `find_event_by_anchor` matches the D55 key OR its legacy equivalent,
-  so there is no dark window. `_LegacyAwareAnchorSession` below exists because
-  the shared `_AnchorSession` double does **not** model that `OR` — it reads
-  `params["source_id"]` only — and a control test that cannot fail is not a
-  control. See `r_getsource_guard_vacuous_when`.
+* **The live MLB anchors keep resolving.** This was the load-bearing one and it
+  is the assertion that has MOVED, so read it before trusting the file. While
+  these two lines were shipping, the rows were still stored as `s6:` and
+  `find_event_by_anchor` matched the D55 key OR its legacy equivalent; the whole
+  no-dark-window claim lived in that `OR`.
 * **Kalshi is not double-qualified.** Kalshi keys are already `sport_key:game_id`
   by Alex's 2026-08-21 ruling; a careless edit that qualified them again would
   produce `baseball_mlb:baseball_mlb:...` and orphan every Kalshi anchor.
 * **ESPN and Odds API are untouched**, because `sport_key` is a StatPal-only
   qualifier and every other provider ignores it.
+
+## Amendment, 2026-09-06 — step 3 landed and two of these tests changed SUBJECT
+
+The re-key ran (94 legacy rows: 29 rewritten, 65 deleted as already superseded,
+0 collisions) and the legacy branch, `statpal_legacy_source_id` and the `OR` were
+deleted together. Two consequences are recorded here rather than only in the
+tests, because both are cases where a green suite would otherwise mean less than
+it looks like:
+
+* `_LegacyAwareAnchorSession` is **gone**. It existed only to model the `OR`,
+  which the shared `_AnchorSession` double does not; with a single equality the
+  shared double is an exact model and a subclass would be a divergent one.
+  A double that still models a deleted predicate is the most expensive kind of
+  green — every test here would keep passing against behaviour production
+  stopped having.
+* The cross-sport refusal changed MECHANISM, not verdict. It used to be
+  `expected_sport_id` refusing a legacy row two sports could both reach; it is
+  now the key not matching at all. The sport guard is still live and still
+  needed — for ESPN and Odds API, whose ids are single global spaces with no
+  qualifier by design — so nothing about it is deleted on the strength of this.
 """
 import logging
 from datetime import datetime, timezone
@@ -61,7 +79,6 @@ from app.services.event_registry import (
 from app.utils.provider_anchor_keys import ANCHOR_KIND_GAME
 from tests.test_anchor_channel_consumer_2213 import (
     _AnchorSession,
-    _FakeExecuteResult,
     _row,
 )
 
@@ -99,34 +116,16 @@ def _seed_sport_cache():
         _sport_id_cache.pop(key, None)
 
 
-class _LegacyAwareAnchorSession(_AnchorSession):
-    """`_AnchorSession` whose Step 2 read models the REAL D55 predicate.
-
-    `_FIND_BY_ANCHOR_SQL` matches `a.source_id = :source_id OR a.source_id =
-    :legacy_source_id`, preferring the D55 shape deterministically. The shared
-    double ignores `legacy_source_id` entirely, which is harmless for the suites
-    that never pass a sport (both parameters carry the same value there) and
-    fatal here: the whole no-dark-window claim lives in that `OR`, so a control
-    test written against the shared double would pass without exercising it.
-    """
-
-    async def execute(self, statement, params=None):
-        sql = str(statement)
-        if "FROM event_provider_anchors a" in sql:
-            self.statements.append(statement)
-            # Preference order copied from the SQL's ORDER BY: the D55 key wins
-            # when both shapes are present, so a re-key in flight cannot flip
-            # the answer depending on insertion order.
-            for candidate in (params["source_id"], params["legacy_source_id"]):
-                hit = self.anchors.get(
-                    (params["source"], candidate, params["id_kind"])
-                )
-                if hit is not None:
-                    return _FakeExecuteResult(
-                        first_row=(hit, self.event_sports.get(hit, MLB_SPORT_ID))
-                    )
-            return _FakeExecuteResult()
-        return await super().execute(statement, params)
+#: `_LegacyAwareAnchorSession` lived here until step 3 (2026-09-06). It was a
+#: `_AnchorSession` subclass that modelled the two-shape Step 2 read — `a.source_id
+#: = :source_id OR a.source_id = :legacy_source_id` — because the shared double
+#: ignores the second parameter and the entire no-dark-window claim lived in that
+#: `OR`. `_FIND_BY_ANCHOR_SQL` is a single equality again, so the shared double is
+#: now an exact model of it and the subclass would be a divergent second one.
+#:
+#: Deleting it is not tidying. A test double that models a predicate the code no
+#: longer has is the most expensive kind of green: every test below would keep
+#: passing against behaviour production stopped having.
 
 
 def _identity(source, source_id, *, sport_key, home, away, commence=GAME_TIME):
@@ -163,7 +162,7 @@ class TestTheWriteSideStopsCollidingAcrossSports:
         names. The assertion is on which EVENTS are anchored, not on the key
         strings, so it fails for the reason that matters rather than on spelling.
         """
-        session = _LegacyAwareAnchorSession(sport_id=MLB_SPORT_ID)
+        session = _AnchorSession(sport_id=MLB_SPORT_ID)
 
         mlb, mlb_created = await find_or_create_event(
             session,
@@ -201,7 +200,7 @@ class TestTheWriteSideStopsCollidingAcrossSports:
         `None`, the channel wrote no row, and the absence looked exactly like a
         provider that had nothing to say.
         """
-        session = _LegacyAwareAnchorSession(sport_id=ATP_SPORT_ID)
+        session = _AnchorSession(sport_id=ATP_SPORT_ID)
 
         event, created = await find_or_create_event(
             session,
@@ -248,7 +247,7 @@ class TestStep1CannotAnswerBeforeTheSportIsKnown:
     async def test_an_nfl_claim_never_absorbs_the_mlb_row_sharing_its_token(self):
         """The exact reproduction CERT-853 blocked on, run end to end."""
         mlb = self._mlb_row_carrying_the_shared_token()
-        session = _LegacyAwareAnchorSession(
+        session = _AnchorSession(
             source_matches={SHARED_SIX_DIGITS: mlb},
             event_sports={MLB_ROW_ID: MLB_SPORT_ID},
             sport_id=NFL_SPORT_ID,
@@ -285,7 +284,7 @@ class TestStep1CannotAnswerBeforeTheSportIsKnown:
         Without this the repair could 'pass' by breaking Step 1 outright.
         """
         mlb = self._mlb_row_carrying_the_shared_token()
-        session = _LegacyAwareAnchorSession(
+        session = _AnchorSession(
             source_matches={SHARED_SIX_DIGITS: mlb},
             event_sports={MLB_ROW_ID: MLB_SPORT_ID},
             sport_id=MLB_SPORT_ID,
@@ -312,7 +311,7 @@ class TestStep1CannotAnswerBeforeTheSportIsKnown:
         (`find_event_by_anchor`); Step 1 now reports it the same way.
         """
         mlb = self._mlb_row_carrying_the_shared_token()
-        session = _LegacyAwareAnchorSession(
+        session = _AnchorSession(
             source_matches={SHARED_SIX_DIGITS: mlb},
             event_sports={MLB_ROW_ID: MLB_SPORT_ID},
             sport_id=NFL_SPORT_ID,
@@ -353,7 +352,7 @@ class TestStep1CannotAnswerBeforeTheSportIsKnown:
             commence=GAME_TIME, status="scheduled",
             espn_id="401872657", commence_time_source="espn",
         )
-        session = _LegacyAwareAnchorSession(
+        session = _AnchorSession(
             source_matches={"401872657": espn_row},
             event_sports={MLB_ROW_ID: MLB_SPORT_ID},
             sport_id=NFL_SPORT_ID,
@@ -386,7 +385,7 @@ class TestTheReadSideAsksForTheKeyTheWriterWrote:
             commence=GAME_TIME, status="scheduled",
             statpal_fixture_id=SHARED_SIX_DIGITS, commence_time_source="statpal",
         )
-        session = _LegacyAwareAnchorSession(
+        session = _AnchorSession(
             anchors={
                 ("statpal", f"americanfootball_nfl:{SHARED_SIX_DIGITS}",
                  ANCHOR_KIND_GAME): NFL_ROW_ID
@@ -415,41 +414,64 @@ class TestTheReadSideAsksForTheKeyTheWriterWrote:
 class TestWhatMustNotChange:
 
     @pytest.mark.asyncio
-    async def test_a_legacy_s6_anchor_is_still_found_once_the_caller_qualifies(self):
-        """The 91 live MLB anchors keep resolving — there is no dark window.
+    async def test_the_rekeyed_mlb_anchor_resolves_and_the_legacy_shape_does_not(
+        self,
+    ):
+        """The live MLB anchors keep resolving — there is no dark window.
 
-        This is the test that licenses the deploy ORDER (#2892 → these two lines
-        → the re-key). The stored row is the pre-D55 `s6:` shape; the caller now
-        derives `baseball_mlb:`; the `OR` in `_FIND_BY_ANCHOR_SQL` bridges them,
-        and `anchor_is_current` re-derives the qualifier off the key it was
-        handed rather than off the event, so corroboration still agrees.
+        This test licensed the deploy ORDER (#2892 → lane1's two lines → the
+        re-key) and it still does, from the far side. Its subject moved with the
+        data: the stored row used to be `s6:` and had to be reachable from a
+        `baseball_mlb:` caller through the `OR`; after the re-key of 2026-09-06
+        the stored row IS `baseball_mlb:` and the `OR` is gone.
 
-        Green before the two lines (direct hit on `s6:`) and after (legacy arm).
+        Both arms are asserted, because the two facts have to hold together for
+        the sequence to have been safe. If only the first were checked, deleting
+        the bridge one deploy early would look identical — and 94 MLB anchors
+        would have gone dark with a green suite.
         """
         row = _row(
             event_id=MLB_ROW_ID, sport_id=MLB_SPORT_ID,
             commence=GAME_TIME, status="scheduled",
             statpal_fixture_id=LIVE_MLB_FIXTURE_ID, commence_time_source="statpal",
         )
-        session = _LegacyAwareAnchorSession(
+        claim = _identity(
+            "statpal", LIVE_MLB_FIXTURE_ID, sport_key="baseball_mlb",
+            home="Miami Marlins", away="Boston Red Sox",
+        )
+
+        rekeyed = _AnchorSession(
             anchors={
-                ("statpal", f"s6:{LIVE_MLB_FIXTURE_ID}", ANCHOR_KIND_GAME): MLB_ROW_ID
+                (
+                    "statpal",
+                    f"baseball_mlb:{LIVE_MLB_FIXTURE_ID}",
+                    ANCHOR_KIND_GAME,
+                ): MLB_ROW_ID
             },
             event_sports={MLB_ROW_ID: MLB_SPORT_ID},
             structured_candidates=[row],
             sport_id=MLB_SPORT_ID,
         )
-
-        found = await _find_by_anchor(
-            session,
-            _identity(
-                "statpal", LIVE_MLB_FIXTURE_ID, sport_key="baseball_mlb",
-                home="Miami Marlins", away="Boston Red Sox",
-            ),
-            MLB_SPORT_ID,
-        )
-
+        found = await _find_by_anchor(rekeyed, claim, MLB_SPORT_ID)
         assert found is not None and found.id == MLB_ROW_ID
+
+        # The same claim against the shape the re-key removed: a miss now, by
+        # design. A row in this shape can only come from the `--rollback`
+        # restore or an un-migrated copy, and resolving it would mean the bridge
+        # is still live under a different name.
+        legacy_only = _AnchorSession(
+            anchors={
+                (
+                    "statpal",
+                    f"s6:{LIVE_MLB_FIXTURE_ID}",
+                    ANCHOR_KIND_GAME,
+                ): MLB_ROW_ID
+            },
+            event_sports={MLB_ROW_ID: MLB_SPORT_ID},
+            structured_candidates=[row],
+            sport_id=MLB_SPORT_ID,
+        )
+        assert await _find_by_anchor(legacy_only, claim, MLB_SPORT_ID) is None
 
     @pytest.mark.asyncio
     async def test_no_cross_sport_absorption_on_a_shared_fixture_id(self):
@@ -465,7 +487,7 @@ class TestWhatMustNotChange:
             commence=GAME_TIME, status="scheduled",
             statpal_fixture_id=SHARED_SIX_DIGITS, commence_time_source="statpal",
         )
-        session = _LegacyAwareAnchorSession(
+        session = _AnchorSession(
             anchors={
                 ("statpal", f"americanfootball_nfl:{SHARED_SIX_DIGITS}",
                  ANCHOR_KIND_GAME): NFL_ROW_ID
@@ -485,49 +507,58 @@ class TestWhatMustNotChange:
         ) is None
 
     @pytest.mark.asyncio
-    async def test_the_legacy_arm_does_not_reopen_the_cross_sport_collision(self):
-        """The transition window's real hazard, and why the guard is NOT dead code.
+    async def test_the_cross_sport_collision_is_now_closed_by_the_KEY(self):
+        """What deleting the legacy arm changed: the MECHANISM of the refusal.
 
-        Sport-qualified keys look like they make `_record_claim_anchor`'s
-        cross-sport early return unreachable by construction: two sports can no
-        longer derive the same `source_id`, so there is no cross-sport incumbent
-        left to find. That is true only AFTER the re-key. Until then
-        `find_event_by_anchor` also matches `statpal_legacy_source_id(key)`, and
-        an NFL claim for `280445` still resolves `s6:280445` — which is an MLB
-        row. The collision the qualifier removes comes straight back through the
-        bridge that keeps the 91 live anchors working.
+        Through the transition this collision was live. An NFL claim for
+        `280445` derived `americanfootball_nfl:280445`, missed, and then the
+        legacy arm resolved `s6:280445` — an MLB row. Only `expected_sport_id`
+        refused it, so `_record_claim_anchor`'s cross-sport early return was
+        load-bearing for StatPal and this test pinned it there.
 
-        What refuses it is `expected_sport_id`, not the key. So the branch stays
-        until the legacy arm is deleted with it, and this pins the refusal for as
-        long as both exist. Green in both arms, by two different mechanisms.
+        With the arm gone the two sports cannot reach one row at all: the key
+        does not match and there is nothing for the sport guard to refuse. That
+        is a strictly better place to stop, and the reason the whole D55
+        sequence was worth running.
+
+        The sport guard is NOT thereby dead code, which is why it is not deleted
+        here — and this is the one thing about the guard worth stating clearly.
+        ESPN and Odds API ids are single global id spaces with no sport
+        qualifier by design (`test_espn_step_1_is_deliberately_not_sport_scoped`
+        pins that on purpose: scoping them would turn a mis-sported row into a
+        silent second create). A mis-sported ESPN row still produces a
+        cross-sport incumbent, and `expected_sport_id` is still the only thing
+        that refuses it. StatPal simply stopped being one of the ways to get
+        there.
         """
-        row = _row(
+        mlb_row = _row(
             event_id=MLB_ROW_ID, sport_id=MLB_SPORT_ID,
             commence=GAME_TIME, status="scheduled",
             statpal_fixture_id=SHARED_SIX_DIGITS, commence_time_source="statpal",
         )
-        session = _LegacyAwareAnchorSession(
+        session = _AnchorSession(
             anchors={
-                ("statpal", f"s6:{SHARED_SIX_DIGITS}", ANCHOR_KIND_GAME): MLB_ROW_ID
+                (
+                    "statpal",
+                    f"baseball_mlb:{SHARED_SIX_DIGITS}",
+                    ANCHOR_KIND_GAME,
+                ): MLB_ROW_ID
             },
             event_sports={MLB_ROW_ID: MLB_SPORT_ID},
-            structured_candidates=[row],
+            structured_candidates=[mlb_row],
             sport_id=MLB_SPORT_ID,
         )
 
-        assert await _find_by_anchor(
-            session,
-            _identity(
-                "statpal", SHARED_SIX_DIGITS, sport_key="americanfootball_nfl",
-                home="Los Angeles Rams", away="San Francisco 49ers",
-            ),
-            NFL_SPORT_ID,
-        ) is None
+        nfl_claim = _identity(
+            "statpal", SHARED_SIX_DIGITS, sport_key="americanfootball_nfl",
+            home="Los Angeles Rams", away="San Francisco 49ers",
+        )
+        assert await _find_by_anchor(session, nfl_claim, NFL_SPORT_ID) is None
 
-        # NON-VACUITY: the refusal above must be the SPORT check, not a miss.
-        # The same legacy row, asked for by the sport that owns it, resolves —
-        # so the bridge is live and the previous assertion actually reached the
-        # guard it claims to be pinning.
+        # NON-VACUITY, and it is doing more work than it looks like. The
+        # refusal above must not be "this session resolves nothing": the SAME
+        # row, asked for by the sport that owns it, still resolves. Without this
+        # arm, deleting the Step 2 read entirely would pass the assertion above.
         reached = await _find_by_anchor(
             session,
             _identity(
@@ -538,6 +569,12 @@ class TestWhatMustNotChange:
         )
         assert reached is not None and reached.id == MLB_ROW_ID
 
+        # And the refusal is the KEY, not the sport guard: hand the NFL claim
+        # the sport its own incumbent is in and it STILL misses, because
+        # `americanfootball_nfl:280445` names no row. A sport-guard-only refusal
+        # would resolve here.
+        assert await _find_by_anchor(session, nfl_claim, MLB_SPORT_ID) is None
+
     @pytest.mark.asyncio
     async def test_kalshi_is_not_double_qualified_by_the_new_argument(self):
         """Kalshi game keys are ALREADY `sport_key:game_id` (Alex, 2026-08-21).
@@ -546,7 +583,7 @@ class TestWhatMustNotChange:
         way these two lines could break a channel that was working: every live
         Kalshi anchor would be orphaned behind `baseball_mlb:baseball_mlb:...`.
         """
-        session = _LegacyAwareAnchorSession(sport_id=MLB_SPORT_ID)
+        session = _AnchorSession(sport_id=MLB_SPORT_ID)
 
         event, created = await find_or_create_event(
             session,
@@ -564,7 +601,7 @@ class TestWhatMustNotChange:
     @pytest.mark.asyncio
     async def test_espn_keys_are_untouched_by_the_sport(self):
         """`sport_key` is a StatPal qualifier; every other provider ignores it."""
-        session = _LegacyAwareAnchorSession(sport_id=NFL_SPORT_ID)
+        session = _AnchorSession(sport_id=NFL_SPORT_ID)
 
         event, created = await find_or_create_event(
             session,

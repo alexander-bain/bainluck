@@ -17,6 +17,24 @@ across sports (`#2213`).
 Backup first, in the same transaction, into a real table. Then re-key. Then
 print the one-line restore. `--rollback` runs that restore.
 
+APPLIED IN PRODUCTION 2026-09-06 ~20:5xZ — READ THIS BEFORE RUNNING IT AGAIN
+-----------------------------------------------------------------------------
+`--apply` has run. Measured before (db-query, reproducing SELECT_LEGACY's plan):
+94 legacy rows, all `s6:`, all `baseball_mlb` — 29 REKEY_ONE, 65
+DELETE_SUPERSEDED, **0 collisions**. Measured after: **zero** legacy-shaped rows;
+`baseball_mlb:` anchors 107 -> 136 (+29, with 65 removed). Backup table
+`event_provider_anchors_backup_2879` holds all 94 verbatim.
+
+A second `--apply` is harmless — it selects zero rows and `CREATE TABLE IF NOT
+EXISTS` deliberately does not refresh the snapshot that predates every change —
+but it is also pointless, and the reason to say so here is `--rollback`: the
+undo is still live and still correct, and it restores 94 rows in a shape that
+`find_event_by_anchor` NO LONGER READS. The legacy branch, the two-shape
+predicate and `statpal_legacy_source_id` were deleted in the same commit as this
+note. So a rollback today is a data undo, not a behaviour undo: it puts the rows
+back where an audit can see them, and it does NOT make them resolve again. Undo
+the code with the code.
+
 DO NOT RUN THIS BEFORE lane1's `event_registry.py` CHANGE IS LIVE
 ------------------------------------------------------------------
 This is the whole of the sequencing and it is not optional:

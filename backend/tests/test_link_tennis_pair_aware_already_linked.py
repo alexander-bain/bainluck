@@ -152,10 +152,18 @@ class TestASportOutsideTennisIsNotOurLink:
     def test_an_unknown_sport_key_is_foreign_rather_than_guessed(self):
         """`statpal_id_space` returning None must not fall through to a link.
 
-        `statpal_anchor_key(id, None)` still takes the legacy digit-derived
-        branch (D55's bridge), so passing an unknown space straight through
-        would silently key the fixture by digit count — the exact inference D55
-        removed. Refused instead.
+        Until step 3 (2026-09-06) `statpal_anchor_key(id, None)` took the legacy
+        digit-derived branch, so passing an unknown space straight through would
+        silently key the fixture by digit count — the exact inference D55
+        removed. That branch is deleted and the key function now refuses too, so
+        this refusal is belt and braces rather than the only guard.
+
+        It is kept, and the reason is that the two refusals are not the same
+        refusal. `statpal_anchor_key` returning `None` means *no anchor row is
+        written*; `PRIOR_FOREIGN_SPORT` means *this holder is reported, by name,
+        as one we could not attribute*. Deleting this one would turn a named
+        finding back into a silent no-op, which is the half of D55 that is about
+        evidence rather than about keys.
         """
         prior = classify_prior(FIXTURE, [_holder(301, "", TENNIS_ANCHOR)])
 
