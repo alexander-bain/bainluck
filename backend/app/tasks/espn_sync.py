@@ -339,66 +339,71 @@ async def _decide_failovers(espn_data: dict, fetch_keys, stats: dict) -> dict:
 
 
 async def _act_on_failovers(decisions: dict, stats: dict) -> None:
-    """Do the thing, and leave a receipt whether or not there was one to do.
+    """Record who is serving each silent sport, and say so loudly when nobody is.
 
-    **The act.** A sport that fails over gets `sync_statpal_schedules` dispatched
-    for it, now, instead of waiting up to an hour for its own beat. That is the
-    whole of it, and it is deliberately the smallest act that delivers the ship:
-    the task already exists, already runs hourly for these sports, already
-    creates their events through the registry's own door under a `statpal`
-    claim, and is already the thing that would have kept the games on the site.
-    What the outage changes is not whether StatPal may write but *when* — an
-    hourly cadence is fine while ESPN is answering every two minutes and is the
-    difference between a fresh slate and a stale one while it is not.
+    **THERE IS NO DISPATCH HERE, AND THAT IS DELIBERATE — TWICE OVER.**
 
-    Nothing in the registry or the matcher is touched, which is D50's line: this
-    lane hands those to lane1.
+    The first cut of this function called `sync_statpal_schedules.delay()` and
+    `sync_statpal_livescores.delay()` when a sport failed over. Two independent
+    reasons that was wrong, and both are worth writing down because the idea is
+    an obvious one to have again:
 
-    **The receipts.** Every decision that is not the ordinary
-    `ESPN_ANSWERED` is published on the task summary, not just the ones that
-    acted — an outage the site rode out silently is indistinguishable from an
-    outage that never happened. They are a per-pass series rather than
-    edge-triggered records, so an activation and a deactivation are both
-    recoverable by differencing consecutive passes, and there is no stored
-    "currently failed over" flag that a lost write could strand in the wrong
-    state.
+      1. **A standing CI guard forbids it.**
+         `test_celery_result_retention.test_no_task_dispatches_another_task`
+         scans every module under `app/tasks/` for `.delay(`/`.apply_async(`/
+         `send_task(` and has no allowlist: an intra-task dispatch could grow a
+         result consumer the route scan would never see.
+      2. **It bought nothing.** lane1/130 measured the outage coverage per sport
+         (`test_espn_dark_fallback_coverage_2867`): for every sport a failover
+         can fire on, StatPal already serves it through beats that do not depend
+         on ESPN — `transition-event-statuses` (60s, no API client),
+         `sync-statpal-livescores` (30s), `sync-statpal-schedules-*` (1h). The
+         dispatch pulled an hourly beat forward and nothing more.
+
+    So the failover is a RECOGNITION that StatPal is serving, not a CAUSE of it,
+    and that is the honest shape: the beats do the serving, and this decides
+    whether they can be trusted to be doing it. Which makes the refusals the
+    valuable half — `LIVE_PATH_DARK` and `LIVE_PATH_SILENT_ON_THE_GAME` are the
+    states where ESPN is silent and StatPal cannot cover for it, so the site
+    genuinely goes blank, and every beat lane1 counted keeps running greenly
+    through them.
+
+    **The receipts.** Every decision that is not the ordinary `ESPN_ANSWERED` is
+    published on the task summary, whether or not anyone is serving — an outage
+    the site rode out is otherwise indistinguishable from one that never
+    happened. They are a per-pass series rather than edge-triggered records, so
+    an activation and a deactivation are both recoverable by differencing
+    consecutive passes, and no stored "currently failed over" flag can be
+    stranded in the wrong state by a lost write.
     """
-    from app.utils.authority_failover import FAILOVER_CODES
+    from app.utils.authority_failover import BLANK_CODES, FAILOVER_CODES
 
     receipts = []
     for sport_key in sorted(decisions):
         decision = decisions[sport_key]
         receipts.append(decision.as_receipt())
 
-        if decision.code not in FAILOVER_CODES:
+        if decision.code in FAILOVER_CODES:
+            stats["failover_serving"] = stats.get("failover_serving", 0) + 1
+            logger.warning(
+                "AUTHORITY FAILOVER for %s (%s): %s",
+                sport_key, decision.code, decision.why,
+            )
+        elif decision.code in BLANK_CODES:
+            # ESPN silent and the standby unable to cover: nobody can say what
+            # is happening in a game that is on. Counted apart from the ordinary
+            # refusals because it is the only one that is a fault rather than a
+            # fact about the day.
+            stats["failover_uncovered"] = stats.get("failover_uncovered", 0) + 1
+            logger.error(
+                "AUTHORITY UNCOVERED for %s (%s): %s",
+                sport_key, decision.code, decision.why,
+            )
+        else:
             logger.info(
                 "ESPN silent for %s — no failover (%s): %s",
                 sport_key, decision.code, decision.why,
             )
-            continue
-
-        stats["failover_activated"] = stats.get("failover_activated", 0) + 1
-        logger.warning(
-            "AUTHORITY FAILOVER for %s (%s): %s",
-            sport_key, decision.code, decision.why,
-        )
-        try:
-            from app.tasks import sync_statpal_livescores, sync_statpal_schedules
-
-            # BOTH halves, matching what readiness proved. Dispatching only the
-            # schedule sync would restore the sport's fixtures while leaving
-            # score and clock to the 30s beat — and would make the readiness
-            # check on the live path a question nothing acted on.
-            sync_statpal_schedules.delay(sport_key)
-            sync_statpal_livescores.delay()
-            stats["failover_dispatched"] = stats.get("failover_dispatched", 0) + 1
-        except Exception as exc:  # noqa: BLE001 — counted, never swallowed
-            # The decision stands and is receipted either way. A dispatch that
-            # failed is a failover that did not happen, and it must not read as
-            # one: it is counted apart from `failover_activated` so the two can
-            # be differenced rather than assumed equal.
-            stats["errors"].append(f"failover_dispatch_{sport_key}: {exc}")
-            logger.warning("failover dispatch failed for %s: %s", sport_key, exc)
 
     if receipts:
         stats["failover"] = receipts
@@ -439,12 +444,12 @@ async def _sync_espn_live_events():
         # separately from an empty slate — a dark sport is skipped, never read
         # as "no games".
         "authority_dark_sports": 0,
-        # #3473. Sports the failover actually moved to StatPal, and the
-        # dispatches that reached the queue. Two counters rather than one: a
-        # dispatch can fail after the decision is made, and a failover that was
-        # decided but never dispatched must not report as one that served.
-        "failover_activated": 0,
-        "failover_dispatched": 0,
+        # #3473. Sports StatPal is serving through the outage, and sports
+        # NOBODY is serving. Two counters, and the second is the alarming one:
+        # `failover_uncovered` is ESPN silent with a standby that cannot cover,
+        # which is the state in which the site actually goes blank.
+        "failover_serving": 0,
+        "failover_uncovered": 0,
         "errors": [],
     }
 

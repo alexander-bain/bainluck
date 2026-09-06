@@ -382,30 +382,31 @@ def test_the_decision_module_has_an_actor():
 # ── The consumer: what the ESPN sync actually does with a decision ──────────
 
 
-class _Dispatches:
-    """Stands in for `sync_statpal_schedules`, recording what was dispatched."""
+class _NoDispatch:
+    """Records any attempt to dispatch a task, so a test can assert there were none.
 
-    def __init__(self, explode: bool = False):
+    There should never be one. `_act_on_failovers` dispatches nothing on
+    purpose: a standing CI guard
+    (`test_celery_result_retention.test_no_task_dispatches_another_task`) bans
+    intra-task dispatch outright, and lane1/130's measurement says it would buy
+    only cadence anyway. This fixture is how the tests below keep that true —
+    if a dispatch is ever reintroduced here, the CI guard catches the code and
+    these catch the behaviour.
+    """
+
+    def __init__(self):
         self.calls: list[str] = []
-        self.explode = explode
 
-    def delay(self, sport_key="<livescores>"):
-        if self.explode:
-            raise RuntimeError("broker unreachable")
+    def delay(self, sport_key="<no-arg>"):
         self.calls.append(sport_key)
 
 
 @pytest.fixture
 def dispatches(monkeypatch):
-    """Both halves are dispatched, so both are recorded.
-
-    `sync_statpal_livescores` takes no sport argument — it sweeps every sport
-    with a live row — so it records the sentinel `<livescores>`.
-    """
     import app.tasks as tasks
 
-    stub = _Dispatches()
-    live = _Dispatches()
+    stub = _NoDispatch()
+    live = _NoDispatch()
     monkeypatch.setattr(tasks, "sync_statpal_schedules", stub, raising=False)
     monkeypatch.setattr(tasks, "sync_statpal_livescores", live, raising=False)
     stub.live = live
@@ -530,7 +531,7 @@ async def test_today_nothing_is_dispatched_and_a_receipt_is_still_written(
     )
 
     assert dispatches.calls == []
-    assert stats.get("failover_activated", 0) == 0
+    assert stats.get("failover_serving", 0) == 0
     assert stats["failover"][0]["code"] == NOT_GATED
     assert stats["failover"][0]["sport_key"] == NFL
 
@@ -561,9 +562,8 @@ async def test_with_a_genuine_seven_the_outage_dispatches_statpal(
         await _decide_failovers({}, {"americanfootball_nfl"}, stats), stats
     )
 
-    assert dispatches.calls == [NFL]
-    assert stats["failover_activated"] == 1
-    assert stats["failover_dispatched"] == 1
+    assert dispatches.calls == [], "the failover must not dispatch anything"
+    assert stats["failover_serving"] == 1
     assert stats["failover"][0]["code"] == FAILOVER_ESPN_DARK
     assert stats["failover"][0]["serving"] == STATPAL
 
@@ -600,47 +600,124 @@ async def test_an_espn_slate_statpal_contradicts_also_dispatches(
         stats,
     )
 
-    assert dispatches.calls == [NFL]
-    assert stats["failover_activated"] == 1
+    assert dispatches.calls == [], "the failover must not dispatch anything"
+    assert stats["failover_serving"] == 1
     assert stats["failover"][0]["code"] == FAILOVER_ESPN_SILENT
     assert stats["failover"][0]["code"] in FAILOVER_CODES
 
 
 @pytest.mark.asyncio
-async def test_a_failed_dispatch_is_not_counted_as_a_failover_that_served(
-    monkeypatch, dispatches
-):
-    """Two counters, because a decision and a dispatch can come apart.
+async def test_a_failover_dispatches_absolutely_nothing(monkeypatch, dispatches):
+    """The failover recognises that StatPal is serving; it does not cause it.
 
-    A broker that refused the job is a failover that did not happen, and
-    reporting `activated == dispatched` by assumption would make an outage the
-    site did NOT ride out look like one it did.
+    An earlier cut dispatched `sync_statpal_schedules` and
+    `sync_statpal_livescores` here. Two independent reasons that was wrong, and
+    this test exists so the idea does not come back through the behaviour after
+    the CI guard has been satisfied by the code:
+
+      1. `test_celery_result_retention.test_no_task_dispatches_another_task`
+         bans intra-task dispatch across `app/tasks/` with no allowlist.
+      2. lane1/130 measured that it bought nothing: StatPal already serves every
+         sport a failover can fire on, through beats that do not depend on ESPN.
+
+    So a full, gated, both-halves-healthy failover fires — `failover_serving` is
+    incremented and the receipt says `serving: statpal` — and the queue stays
+    empty.
     """
-    import app.tasks as tasks
-    import app.tasks.espn_sync as espn_sync
+    import app.services.statpal_api as statpal_api
 
     from app.tasks.espn_sync import _act_on_failovers, _decide_failovers
 
-    monkeypatch.setattr(tasks, "sync_statpal_schedules", _Dispatches(explode=True))
-    monkeypatch.setattr(tasks, "sync_statpal_livescores", _Dispatches(), raising=False)
     _no_ledger(monkeypatch, days=SEVEN_MEETS_DAYS, why="seven")
+    monkeypatch.setattr(statpal_api, "is_available", lambda: True)
 
-    async def _standby(sport_key):
-        return FIXTURES, FIXTURES
+    now = datetime.now(timezone.utc)
 
-    monkeypatch.setattr(espn_sync, "_statpal_standby_reading", _standby)
+    class _Service:
+        async def get_schedule_fixtures(self, sport, day_offset=None):
+            return [_Fx(now - timedelta(hours=1))]
+
+        async def get_live_fixtures(self, sport):
+            return [_live(now - timedelta(hours=1))]
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(statpal_api, "StatPalAPIService", _Service)
 
     stats = {"errors": []}
     await _act_on_failovers(
-        await _decide_failovers({}, {"americanfootball_nfl"}, stats), stats
+        await _decide_failovers(
+            {"americanfootball_nfl": []}, {"americanfootball_nfl"}, stats
+        ),
+        stats,
     )
 
-    assert stats["failover_activated"] == 1
-    assert stats.get("failover_dispatched", 0) == 0
-    assert any("failover_dispatch_" in e for e in stats["errors"])
-    # The receipt still says a failover was decided — the decision is a fact
-    # about the providers, and the broker's mood does not change it.
-    assert stats["failover"][0]["code"] == FAILOVER_ESPN_DARK
+    # It DID fail over — the control, so this is not passing because nothing
+    # happened at all.
+    assert stats["failover_serving"] == 1
+    assert stats["failover"][0]["serving"] == STATPAL
+    assert stats["failover"][0]["failed_over"] is True
+
+    # And it dispatched nothing.
+    assert dispatches.calls == []
+    assert dispatches.live.calls == []
+    assert stats["errors"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_state_nobody_can_serve_is_counted_apart_from_an_ordinary_refusal(
+    monkeypatch, dispatches
+):
+    """`failover_uncovered` is the alarming counter, and it is not the same as
+    "no failover".
+
+    Most refusals are facts about the day: a quiet slate, a sport with no shadow
+    stamper, a streak that has not run. `BLANK_CODES` are the ones where ESPN is
+    silent and the standby cannot cover, so nothing can say what is happening in
+    a game that is on — the state the site actually goes blank in. Counting them
+    together with the benign refusals would bury the only one worth waking up
+    for.
+    """
+    import app.services.statpal_api as statpal_api
+
+    from app.tasks.espn_sync import _act_on_failovers, _decide_failovers
+
+    _no_ledger(monkeypatch, days=SEVEN_MEETS_DAYS, why="seven")
+    monkeypatch.setattr(statpal_api, "is_available", lambda: True)
+
+    now = datetime.now(timezone.utc)
+
+    class _Service:
+        async def get_schedule_fixtures(self, sport, day_offset=None):
+            return [_Fx(now - timedelta(hours=1))]
+
+        async def get_live_fixtures(self, sport):
+            raise statpal_api.StatPalUpstreamError("livescores 503")
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(statpal_api, "StatPalAPIService", _Service)
+
+    stats = {"errors": []}
+    await _act_on_failovers(
+        await _decide_failovers(
+            {"americanfootball_nfl": []}, {"americanfootball_nfl"}, stats
+        ),
+        stats,
+    )
+
+    assert stats["failover_uncovered"] == 1
+    assert stats.get("failover_serving", 0) == 0
+
+    # The control: an ordinary refusal does NOT touch the alarming counter.
+    stats2 = {"errors": []}
+    await _act_on_failovers(
+        await _decide_failovers({}, {"soccer_epl"}, stats2), stats2
+    )
+    assert stats2.get("failover_uncovered", 0) == 0
+    assert stats2["failover"][0]["code"] == NOT_GATED
 
 
 @pytest.mark.asyncio
@@ -847,7 +924,7 @@ async def test_only_future_statpal_fixtures_do_not_dispatch_but_a_started_one_do
         ),
         stats,
     )
-    assert dispatches.calls == [NFL]
+    assert dispatches.calls == [], "the failover must not dispatch anything"
     assert stats["failover"][0]["code"] == FAILOVER_ESPN_SILENT
 
 
@@ -900,7 +977,7 @@ async def test_a_dark_live_endpoint_refuses_by_name_and_dispatches_nothing(
 
     assert dispatches.calls == []
     assert dispatches.live.calls == []
-    assert stats.get("failover_activated", 0) == 0
+    assert stats.get("failover_serving", 0) == 0
     assert stats["failover"][0]["code"] == LIVE_PATH_DARK
     assert stats["failover"][0]["serving"] == ESPN
     assert stats["failover"][0]["failed_over"] is False
@@ -958,8 +1035,8 @@ async def test_a_healthy_live_endpoint_dispatches_both_halves(
         stats,
     )
 
-    assert dispatches.calls == [NFL]
-    assert dispatches.live.calls == ["<livescores>"]
+    assert dispatches.calls == [], "the failover must not dispatch anything"
+    assert dispatches.live.calls == []
     assert stats["failover"][0]["code"] == FAILOVER_ESPN_SILENT
 
 
@@ -1008,7 +1085,7 @@ async def test_an_answering_but_empty_live_board_refuses_when_a_game_is_on(
 
     assert dispatches.calls == []
     assert dispatches.live.calls == []
-    assert stats.get("failover_activated", 0) == 0
+    assert stats.get("failover_serving", 0) == 0
     assert stats["failover"][0]["code"] == LIVE_PATH_SILENT_ON_THE_GAME
     assert stats["failover"][0]["failed_over"] is False
     # Named apart from the transport failure: one is StatPal down, the other is
@@ -1283,7 +1360,7 @@ async def test_a_same_team_row_with_no_state_refuses_and_dispatches_nothing(
 
     assert dispatches.calls == []
     assert dispatches.live.calls == []
-    assert stats.get("failover_activated", 0) == 0
+    assert stats.get("failover_serving", 0) == 0
     assert stats["failover"][0]["code"] == LIVE_PATH_SILENT_ON_THE_GAME
     assert stats["failover"][0]["failed_over"] is False
 

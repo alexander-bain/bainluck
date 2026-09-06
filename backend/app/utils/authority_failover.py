@@ -453,6 +453,17 @@ FAILOVER_ESPN_SILENT = "FAILOVER-ESPN-SILENT"
 #: accidentally include :data:`STANDING_STATPAL`, which is a flip.
 FAILOVER_CODES = frozenset({FAILOVER_ESPN_DARK, FAILOVER_ESPN_SILENT})
 
+#: The refusals that are a FAULT rather than a fact about the day.
+#:
+#: ESPN is silent and the standby cannot cover for it, so nothing can say what
+#: is happening in a game that is on — **the state in which the site actually
+#: goes blank.** Every other refusal is benign: a quiet slate, a sport with no
+#: shadow stamper, a streak that has not run yet.
+#:
+#: Named as a set so the actor can log these at ERROR and count them apart,
+#: instead of a caller re-deciding which refusals are bad news.
+BLANK_CODES = frozenset({LIVE_PATH_DARK, LIVE_PATH_SILENT_ON_THE_GAME, STANDBY_DARK})
+
 
 @dataclass(frozen=True)
 class FailoverDecision:
