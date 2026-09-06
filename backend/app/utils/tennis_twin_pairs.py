@@ -65,19 +65,46 @@ and that holds 240/240 — **only tournament-keyed rows are ever linked** (48/48
 ``tennis_*_us_open`` linked, 192/192 generic-tour-key rows unlinked).
 
 So a pair is only actionable when the two rows disagree in the right direction:
-one carries the tournament key and the substance, the other carries neither. When
-both look like ghosts, or both look canonical, the answer is
+one carries the tournament key and the settled result, the other carries neither.
+When both look like ghosts, or both look canonical, the answer is
 :data:`REFUSE_AMBIGUOUS` — reported, never acted on. Under-tagging is the intended
 failure direction, exactly as in ``_proven_duplicates``: a duplicate we miss stays
 visible and stays fixable; a real match we tag is a match the product stops
 showing.
+
+WHAT "THE SUBSTANCE" IS, AND WHAT IT IS NOT
+════════════════════════════════════════════
+
+**It is the final score and nothing else.** The first draft of this module said
+"any linked prediction market, score, or probability — anything a user could read
+off the row", which is the intuitive reading and is measurably wrong. Running the
+predicate over production's own rows (2026-09-06, 172 candidate pairs) is what
+showed it:
+
+    ghosts carrying a score                    0 / 172
+    ghosts carrying at least one market      110 / 172
+    ghosts carrying MORE markets than their
+      own canonical                           63 / 172
+
+The Kalshi-minted ghost is not an empty row. It has prices, a probability, and
+often a bigger market book than the odds_api row that will actually be settled —
+``Cerundolo/Blockx`` is 17 markets on the ghost against 1 on the canonical. A
+sweep built on the intuitive reading tags **zero of the pairs the tour page is
+blocked on** and reports success, which is gotcha #53 written out in full.
+
+The consequence runs the other way too, and it is the honest limit of this ship:
+because the score is what separates them, **an unsettled pair cannot be
+separated at all** and :func:`plan_twin_tags` refuses it. See
+:func:`row_has_settled_result`.
 """
 
 from __future__ import annotations
 
 import re
+from collections import defaultdict
 from dataclasses import dataclass
-from typing import Optional
+from datetime import datetime, timedelta
+from typing import Iterable, Optional
 
 from app.utils.authority_tennis_names import (
     doubles_key,
@@ -120,6 +147,59 @@ def _generational_suffix(name: object) -> Optional[str]:
     # `our_tennis_keys` already declines to key it and this must not claim
     # otherwise.
     return m.group(1) if m and folded != m.group(1) else None
+
+#: Tennis sport keys that are a TOUR (or the unclassified bucket) rather than a
+#: tournament. Everything else beginning ``tennis_`` is minted per tournament as
+#: the tournament appears (``tennis_atp_us_open``,
+#: ``tennis_wta_monterrey_open``, …), so the tournament set cannot be enumerated
+#: — the bare set can, and it is three long. Measured over the 1,430 tennis rows
+#: in the ±15-day window on 2026-09-06: 637 ``tennis_other``, 375
+#: ``tennis_atp``, 167 ``tennis_wta``, and 251 rows across six tournament keys.
+BARE_TOUR_KEYS = frozenset({"tennis_atp", "tennis_wta", "tennis_other"})
+
+
+def is_tournament_key(sport_key: str) -> bool:
+    """Is this a per-tournament tennis key rather than a bare tour key?
+
+    Stated as "not in the bare set" rather than as a prefix or underscore-count
+    rule, because the tournament keys are minted from tournament names and their
+    shape is not ours to predict — ``tennis_atp_aus_open_singles`` has five
+    segments and ``tennis_atp_dubai`` has three.
+    """
+    return sport_key not in BARE_TOUR_KEYS
+
+
+def row_has_settled_result(*, home_score: object, away_score: object) -> bool:
+    """Has this row been settled — i.e. does it carry a final score?
+
+    **This is the one input a caller gets wrong, so it is a named function and
+    not a lambda at the call site.** The intuitive reading of "substance" — any
+    linked prediction market, any probability, anything a user could read off
+    the row — is measurably WRONG, and building the sweep on it produces a
+    tagger that finds nothing and reports success (gotcha #53).
+
+    Measured on production 2026-09-06 over the 172 candidate ghost→canonical
+    pairs in the ±15-day tennis window:
+
+        ghosts carrying a score                  0 / 172
+        ghosts that ever reached 'completed'     0 / 172
+        canonicals completed or closed         164 / 172   (the other 8 are future)
+        ghosts carrying at least one market    110 / 172
+        ghosts carrying MORE markets than
+          their own canonical                   63 / 172
+
+    So markets and probabilities do not separate the two rows — they point the
+    WRONG WAY two times in five. The Kalshi-minted ghost for
+    ``Cerundolo/Blockx`` carries 17 markets against its canonical's 1. The score
+    separates them 172/172, and it is the only field that does.
+
+    That asymmetry also gives the sweep its refusal for free: before a match is
+    settled NEITHER row has a score, :func:`classify_pair` returns
+    :data:`REFUSE_AMBIGUOUS`, and the pair is left alone. That is the correct
+    answer and not a shortcoming — see :func:`plan_twin_tags`.
+    """
+    return home_score is not None or away_score is not None
+
 
 #: The two rows are one fixture and `ghost_id` is safe to stop printing.
 TWIN_FOUND = "TWIN_FOUND"
@@ -202,11 +282,13 @@ class TwinRow:
     away_team_name: object
     sport_key: str
     #: True when the row carries a tournament sport key (``tennis_*_us_open``)
-    #: rather than a bare tour key (``tennis_atp`` / ``tennis_wta``).
+    #: rather than a bare tour key (``tennis_atp`` / ``tennis_wta`` /
+    #: ``tennis_other``). See :data:`BARE_TOUR_KEYS`.
     is_tournament_keyed: bool
-    #: Any linked prediction market, score, or probability — anything a user
-    #: could read off the row. The caller computes it; see ``_has_substance``.
-    has_substance: bool
+    #: **A FINAL SCORE, AND NOTHING ELSE.** Not markets, not a probability, not
+    #: a status. Read :func:`row_has_settled_result` before you compute this —
+    #: the obvious reading is measurably wrong and silently ships a no-op.
+    has_settled_result: bool
 
 
 @dataclass(frozen=True)
@@ -266,19 +348,176 @@ def classify_pair(a: TwinRow, b: TwinRow) -> TwinVerdict:
             ),
         )
     canonical, ghost = (a, b) if a.is_tournament_keyed else (b, a)
-    if ghost.has_substance:
+    if ghost.has_settled_result:
         return TwinVerdict(
             REFUSE_AMBIGUOUS,
-            reason="the bare-keyed row carries substance; it is not a ghost",
+            reason="the bare-keyed row carries a result; it is not a ghost",
         )
-    if not canonical.has_substance:
+    if not canonical.has_settled_result:
         return TwinVerdict(
             REFUSE_AMBIGUOUS,
-            reason="the tournament-keyed row carries no substance either",
+            reason="neither row has been settled; which is the ghost is not yet decidable",
         )
     return TwinVerdict(
         TWIN_FOUND,
         ghost_id=ghost.event_id,
         canonical_id=canonical.event_id,
         reason="orientation swapped" if swapped and not straight else "participants agree",
+    )
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# The sweep planner — still pure, still no database
+# ════════════════════════════════════════════════════════════════════════════
+
+#: How far apart two rows may be stamped and still be one fixture.
+#:
+#: NOT a precision instrument, and not the 30 minutes ``_proven_duplicates``
+#: uses: the ghost's kickoff is the field that is wrong, so a tight window is
+#: unavailable. 145 of 172 measured ghosts are stamped exactly ``00:00:00`` on
+#: the day the DRAW was published rather than the day the match was played, so
+#: real pairs are legitimately days apart — the measured spread is
+#: min 0.5h / median 25h / p90 67h.
+#:
+#: This is a plan-drift bound, and it is set where it excludes exactly the two
+#: pairs on production that a human should look at rather than tag:
+#:
+#:     fence  72h keeps 164/172      fence 120h keeps 170/172
+#:     fence  96h keeps 170/172      fence 168h keeps 172/172
+#:
+#: The two it excludes are both bare rows dated 2026-08-28 — US Open QUALIFYING
+#: week — pointing at a main-draw match played 2026-09-03 (``15294924`` and
+#: ``15295192`` → ``15301184``, Bonzi/Buse). A qualifying meeting and a
+#: main-draw meeting between the same two players is a REAL pair of distinct
+#: matches, and it has exactly the shape a twin has. The fence does not decide
+#: that case; it declines to, and reports it.
+MAX_TWIN_SEPARATION = timedelta(hours=96)
+
+
+@dataclass(frozen=True)
+class TwinTag:
+    """One reversible label the sweep intends to write."""
+
+    ghost_id: int
+    canonical_id: int
+    reason: str
+
+
+@dataclass(frozen=True)
+class TwinSweepPlan:
+    """What a sweep would do, and everything it declined to do and why.
+
+    ``refusals`` is not diagnostics. Under-tagging is this sweep's intended
+    failure direction, so the refused pairs ARE the population somebody has to
+    look at next, and a plan that dropped them on the floor would make the
+    sweep's own honesty unmeasurable.
+    """
+
+    tags: tuple[TwinTag, ...]
+    refusals: tuple[str, ...]
+    rows_considered: int
+    blocks_examined: int
+
+
+def plan_twin_tags(
+    rows: Iterable[TwinRow],
+    *,
+    commence_times: dict[int, datetime],
+    max_separation: timedelta = MAX_TWIN_SEPARATION,
+) -> TwinSweepPlan:
+    """Decide every ``provenance:duplicate-of:`` label a sweep should write.
+
+    Pure: it takes row snapshots and returns intentions. Nothing here reads or
+    writes a database, so the whole judgement is testable without one.
+
+    Three gates beyond :func:`classify_pair`, each of which exists because the
+    production population showed it was needed:
+
+    1. **The block key groups, it does not decide.** Rows are bucketed by
+       :func:`block_key` — a global ``(surname, surname)`` pair with no time
+       component at all — and every candidate within a bucket is then confirmed
+       pair by pair.
+
+    2. **The separation fence** (:data:`MAX_TWIN_SEPARATION`), because the block
+       key is global: without it, two genuinely different meetings between the
+       same two players are a candidate pair.
+
+    3. **A ghost may be claimed by exactly ONE canonical.** Measured 0 violations
+       on production, and the guard is here anyway — it is the one that catches
+       the block key having fused two real fixtures, and a guard that only exists
+       once it has failed in production is a guard that arrived late. The reverse
+       is NOT refused: one canonical with several ghosts is a real and common
+       shape (12 of them on production; ``Li/Ruzic`` exists as two bare rows and
+       one tournament row), and every ghost in such a star names the same
+       canonical, so the label stays coherent.
+
+    A row that is both a ghost in one pair and a canonical in another is
+    structurally impossible — a ghost has no settled result and a canonical must
+    have one — so there is no chain to unwind, and :func:`classify_pair` is what
+    guarantees that rather than a check here.
+    """
+    rows = list(rows)
+    buckets: dict[tuple[str, ...], list[TwinRow]] = defaultdict(list)
+    for row in rows:
+        key = block_key(row.home_team_name, row.away_team_name)
+        if key is not None:
+            buckets[key].append(row)
+
+    found: list[TwinTag] = []
+    refusals: list[str] = []
+    for bucket in buckets.values():
+        for i in range(len(bucket)):
+            for j in range(i + 1, len(bucket)):
+                a, b = bucket[i], bucket[j]
+                verdict = classify_pair(a, b)
+                if verdict.outcome == REFUSE_AMBIGUOUS:
+                    refusals.append(
+                        f"{a.event_id}/{b.event_id}: {verdict.reason}"
+                    )
+                    continue
+                if verdict.outcome != TWIN_FOUND:
+                    continue
+                ghost_at = commence_times.get(verdict.ghost_id)
+                canon_at = commence_times.get(verdict.canonical_id)
+                if ghost_at is None or canon_at is None:
+                    refusals.append(
+                        f"{verdict.ghost_id}/{verdict.canonical_id}: no kickoff on "
+                        f"record for one side, so the separation fence cannot be applied"
+                    )
+                    continue
+                apart = abs(canon_at - ghost_at)
+                if apart > max_separation:
+                    refusals.append(
+                        f"{verdict.ghost_id}/{verdict.canonical_id}: stamped "
+                        f"{apart.total_seconds() / 3600:.0f}h apart, beyond the "
+                        f"{max_separation.total_seconds() / 3600:.0f}h fence — this is "
+                        f"the shape of a qualifying meeting and a main-draw meeting "
+                        f"between the same two players, and it is not ours to decide"
+                    )
+                    continue
+                found.append(
+                    TwinTag(verdict.ghost_id, verdict.canonical_id, verdict.reason)
+                )
+
+    claimed_by: dict[int, set[int]] = defaultdict(set)
+    for tag in found:
+        claimed_by[tag.ghost_id].add(tag.canonical_id)
+
+    tags: list[TwinTag] = []
+    for tag in found:
+        rivals = claimed_by[tag.ghost_id]
+        if len(rivals) > 1:
+            refusals.append(
+                f"{tag.ghost_id}: claimed as a duplicate by {len(rivals)} different "
+                f"canonicals {sorted(rivals)} — the block key has fused two fixtures "
+                f"and no label can be written without choosing between them"
+            )
+            continue
+        tags.append(tag)
+
+    return TwinSweepPlan(
+        tags=tuple(sorted(tags, key=lambda t: t.ghost_id)),
+        refusals=tuple(sorted(set(refusals))),
+        rows_considered=len(rows),
+        blocks_examined=len(buckets),
     )

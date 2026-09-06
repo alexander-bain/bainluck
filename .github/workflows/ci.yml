@@ -288,6 +288,29 @@ jobs:
             exit 1
           fi
 
+      - name: Tennis twin sweep write/undo contract (real Postgres)
+        # #2878 / CERT-2142. The sweep's whole effect is one jsonb element
+        # appended to `events.event_tags`, and its idempotence claim lives
+        # entirely in a `NOT @>` — both are properties of PostgreSQL. Under
+        # sqlite `event_tags` is shimmed to JSON, `||` and `@>` do not exist,
+        # and gotcha #4 is that a JSONB write which looks right can silently
+        # fail to persist. So the unit suite can prove the judgement and prove
+        # the rails honour the label, but only this can prove the label is ever
+        # written — or that the undo removes exactly one element and leaves the
+        # tags another writer added.
+        #
+        # Same skip detection as every gate in this job: pytest exits 0 when
+        # each test skips, and a gate that silently did not run reads exactly
+        # like one that passed.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_tennis_twin_sweep_pg.py \
+            -v -rs 2>&1 | tee /tmp/twinsweep.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/twinsweep.txt; then
+            echo "::error::tennis twin sweep contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: Provenance enum contract (real Postgres)
         # C-ADHOC-PROV-CORE. The receiver accepted `play` while the migration's
         # enum declared six values without it, and the route specimen STORED it

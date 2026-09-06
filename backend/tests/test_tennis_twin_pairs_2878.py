@@ -52,26 +52,31 @@ from app.utils.tennis_twin_pairs import (  # noqa: E402
 
 
 def ghost(event_id, home, away, sport_key="tennis_atp"):
-    """A bare tour-key row: no tournament key, nothing a user could read."""
+    """A bare tour-key row: no tournament key and never settled.
+
+    Deliberately NOT "an empty row". Measured on production, 110 of 172 ghosts
+    carry prediction markets and 63 carry more of them than their own canonical.
+    What a ghost never carries is a score — see `row_has_settled_result`.
+    """
     return TwinRow(
         event_id=event_id,
         home_team_name=home,
         away_team_name=away,
         sport_key=sport_key,
         is_tournament_keyed=False,
-        has_substance=False,
+        has_settled_result=False,
     )
 
 
 def canonical(event_id, home, away, sport_key="tennis_atp_us_open"):
-    """The tournament-keyed row that carries the links and the probability."""
+    """The tournament-keyed row that got settled and carries the result."""
     return TwinRow(
         event_id=event_id,
         home_team_name=home,
         away_team_name=away,
         sport_key=sport_key,
         is_tournament_keyed=True,
-        has_substance=True,
+        has_settled_result=True,
     )
 
 
@@ -146,21 +151,39 @@ class TestTheGhostIsChosenByStructureNotByTaste:
         assert v.outcome == REFUSE_AMBIGUOUS
         assert v.ghost_id is None
 
-    def test_a_bare_row_carrying_substance_is_not_a_ghost(self):
+    def test_a_bare_row_that_got_settled_is_not_a_ghost(self):
         """The population stopped obeying the asymmetry, so it stops being
-        tagged rather than being tagged wrongly. A bare-keyed row that has
-        acquired a score or a price is something a user can read."""
-        priced = TwinRow(1, "Fritz", "Cerundolo", "tennis_atp", False, True)
-        v = classify_pair(priced, canonical(2, "Taylor Fritz", "Francisco Cerundolo"))
-        assert v.outcome == REFUSE_AMBIGUOUS
-        assert "substance" in v.reason
+        tagged rather than being tagged wrongly.
 
-    def test_a_tournament_row_with_no_substance_cannot_be_the_canonical(self):
-        """If neither row has anything on it, hiding one buys the user nothing
-        and risks hiding the half that is about to be filled in."""
-        empty = TwinRow(2, "Taylor Fritz", "Francisco Cerundolo", "tennis_atp_us_open", True, False)
-        v = classify_pair(ghost(1, "Fritz", "Cerundolo"), empty)
+        A bare-keyed row that carries a final score is a row somebody settled,
+        and the whole basis for calling the other one canonical has gone.
+        Measured 0/172 on production — so if this ever fires in a real sweep,
+        the premise has changed and the refusal is the correct output.
+        """
+        settled = TwinRow(1, "Fritz", "Cerundolo", "tennis_atp", False, True)
+        v = classify_pair(settled, canonical(2, "Taylor Fritz", "Francisco Cerundolo"))
         assert v.outcome == REFUSE_AMBIGUOUS
+        assert "carries a result" in v.reason
+
+    def test_an_unsettled_pair_is_refused_because_nothing_separates_them(self):
+        """🔴 THE LIMIT OF THIS SHIP, pinned so it cannot be lost.
+
+        Before a match is played NEITHER row has a score, so the field that
+        separates ghost from canonical does not exist yet and this refuses. That
+        is why the sweep cannot fix tomorrow's semi-final: on 2026-09-06 the
+        Swiatek–Zheng, Shelton–Tsitsipas and Osaka–Rybakina pairs were all
+        unsettled, and one of them (`Cerundolo/Blockx`) carries 17 markets on the
+        GHOST against 1 on the canonical — hiding the ghost there would take
+        away most of the market coverage, not a duplicate card.
+
+        The fix for that half is market re-attachment (#2693), not a label.
+        """
+        unplayed = TwinRow(
+            2, "Iga Swiatek", "Qinwen Zheng", "tennis_wta_us_open", True, False
+        )
+        v = classify_pair(ghost(1, "Swiatek", "Zheng", "tennis_wta"), unplayed)
+        assert v.outcome == REFUSE_AMBIGUOUS
+        assert "neither row has been settled" in v.reason
 
     def test_a_row_never_twins_with_itself(self):
         g = ghost(1, "Fritz", "Cerundolo")
