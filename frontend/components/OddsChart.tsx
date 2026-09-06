@@ -1512,7 +1512,9 @@ export default function OddsChart({
 
             {/* ── MODE A: Multi-source — individual source lines (near-invisible so
                 the one blended Bain Luck line clearly dominates, per L2-131) ── */}
-            {isMultiSource && resolvedSources.map((source) => (
+            {isMultiSource && resolvedSources.map((source) => {
+              const isPrimarySource = source.dataKey === primarySeriesKey;
+              return (
               <Line
                 key={source.dataKey}
                 type="linear"
@@ -1530,30 +1532,40 @@ export default function OddsChart({
                 // is the product"). Expanding is the reader explicitly asking to
                 // see the spread, so the lines become legible — a deliberate
                 // comparison surface, entered on purpose, not shown by default.
-                strokeWidth={legendExpanded ? 1.75 : 1}
-                strokeOpacity={legendExpanded ? 0.85 : 0.28}
+                //
+                // #3151/#3111: de-emphasis is only correct when something else
+                // DOMINATES. `isMultiSource` is true at ONE non-betting source
+                // (its own comment says so), and `showBlendLine` needs a backend
+                // aggregate — so a Kalshi-only match took this branch with no
+                // blend line above it, and the only line on the plot was a 1px
+                // 28%-opacity dash. Measured in the production DOM for
+                // /events/15300276: 559 points, `stroke-opacity: 0.28`, a
+                // correct 852px path nobody can see. It reads as an empty chart.
+                //
+                // `primarySeriesKey` already names the series the lead-change
+                // count and the current-probability callout are computed from.
+                // Drawing THAT one at full weight is what keeps the line the
+                // reader sees and the numbers printed beside it the same line.
+                // When a blend IS drawn it owns `primarySeriesKey`, no source
+                // matches, and every source stays faint exactly as before.
+                strokeWidth={isPrimarySource ? 2.5 : legendExpanded ? 1.75 : 1}
+                strokeOpacity={isPrimarySource ? 1 : legendExpanded ? 0.85 : 0.28}
                 strokeDasharray={source.dashPattern ?? undefined}
                 dot={false}
-                activeDot={{ r: 3, fill: source.color }}
+                activeDot={{ r: isPrimarySource ? 4 : 3, fill: source.color }}
                 connectNulls
               />
-            ))}
+              );
+            })}
 
-            {/* ── MODE B: Sportsbooks-only — non-betting source lines (when no multi-source) ── */}
-            {!isMultiSource && nonBettingSources.map((source) => (
-              <Line
-                key={source.dataKey}
-                type="linear"
-                dataKey={source.dataKey}
-                name={source.displayName}
-                stroke={source.color}
-                strokeWidth={2.5}
-                strokeDasharray={source.dashPattern ?? undefined}
-                dot={false}
-                activeDot={{ r: 4, fill: source.color }}
-                connectNulls
-              />
-            ))}
+            {/* MODE B's non-betting branch used to stand here, drawing
+                `nonBettingSources` at strokeWidth 2.5 under `!isMultiSource`.
+                It could never run: `isMultiSource` IS `nonBettingSources.length
+                > 0`, so `!isMultiSource` guarantees the array it maps is empty.
+                The single-source case it was written for always fell into MODE
+                A above instead and was drawn faint — which is #3151/#3111.
+                Removed rather than left as a second place to fix the same bug;
+                MODE A now handles the primary source at full weight. */}
 
             {/* Legacy ESPN line (when winProbHistory not available and not multi-source) */}
             {!isMultiSource && !useNewWinProbData && filteredEspnHistory.length > 0 && (
