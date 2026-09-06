@@ -532,14 +532,24 @@ def test_the_warmer_passes_every_route_parameter_explicitly():
     from app.tasks import search_head_warmer as w
     from app.utils.search_cache import SEARCH_WARM_SHAPE
 
-    tree = ast.parse(inspect.getsource(w._warm_one).lstrip())
-    call = next(
+    # Parsed over the WHOLE module rather than one function. CERT-2089 split the
+    # worker unit into `_warm_one` (the hard wall) and `_warm_one_inner` (the
+    # route call), and a guard pinned to a function name goes red on the move
+    # instead of on the defect. Requiring EXACTLY ONE call site also keeps the
+    # thing this test is really for: there must be no second assembly path.
+    tree = ast.parse(inspect.getsource(w))
+    calls = [
         node
         for node in ast.walk(tree)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == "search_events"
+    ]
+    assert len(calls) == 1, (
+        f"expected exactly one `search_events(...)` call in the warmer, found "
+        f"{len(calls)} — a second call site is a second thing to drift"
     )
+    call = calls[0]
     passed = {kw.arg for kw in call.keywords if kw.arg is not None}
     # `**SEARCH_WARM_SHAPE` arrives as a keyword with `arg is None`.
     assert any(kw.arg is None for kw in call.keywords), "the warm shape is not splatted"
@@ -630,21 +640,267 @@ def test_a_fresh_entry_is_left_alone_and_a_near_dead_one_is_rebuilt(rc):
 def test_the_refresh_ahead_window_actually_keeps_the_head_alive():
     """The arithmetic that makes the duty cycle flat instead of a sawtooth.
 
-    An entry lives `TTL`. A pass runs every `MIN_PASS_PERIOD_SECONDS` at worst
-    and rebuilds anything with less than `REFRESH_AHEAD_SECONDS` left. For the
-    entry never to expire, a pass must arrive while it still has life AND find
-    it eligible: `MIN_PASS_PERIOD < TTL` and `TTL - MIN_PASS_PERIOD <=
-    REFRESH_AHEAD`. Tuning one of these three without the other two is how
-    `/typeahead` spent two cycles at a 47% duty cycle while reporting 40/40.
+    🔴 REWRITTEN under #3539 / CERT-2068. This test used to read:
+
+        assert MIN_PASS_PERIOD_SECONDS < SEARCH_RESPONSE_TTL_SECONDS
+        assert SEARCH_RESPONSE_TTL_SECONDS - MIN_PASS_PERIOD_SECONDS <= REFRESH_AHEAD_SECONDS
+
+    and it was GREEN across every configuration that shipped a cold head, for two
+    independent reasons: `MIN_PASS_PERIOD_SECONDS` is the FLOOR (45 s) rather than
+    the achievable period (60 s, the floor quantized up to the 20 s beat), and
+    there was no rebuild-duration term at all, though the replacement entry is
+    written at the END of a pass. Restated with the real period the first clause
+    is `60 < 60` — false.
+
+    It now calls `residency_invariant()` rather than re-deriving the relation.
+    A guard that re-derives production's own expression agrees with it by
+    construction and cannot fail; this one asserts the OUTCOME and prints
+    production's own reason on failure.
     """
     from app.tasks.search_head_warmer import (
-        MIN_PASS_PERIOD_SECONDS,
         REFRESH_AHEAD_SECONDS,
+        effective_pass_period_s,
+        full_rebuild_budget_s,
+        max_same_query_write_interval_s,
+        residency_invariant,
     )
     from app.utils.search_cache import SEARCH_RESPONSE_TTL_SECONDS
 
-    assert MIN_PASS_PERIOD_SECONDS < SEARCH_RESPONSE_TTL_SECONDS
-    assert SEARCH_RESPONSE_TTL_SECONDS - MIN_PASS_PERIOD_SECONDS <= REFRESH_AHEAD_SECONDS
+    ok, why = residency_invariant()
+    assert ok, f"the head is not provably resident at the shipped constants: {why}"
+
+    # Both clauses fire on their own — a single assert on `ok` cannot tell us the
+    # invariant still has two teeth, and a one-toothed invariant is how this
+    # regressed the first time.
+    period = effective_pass_period_s()
+    budget = full_rebuild_budget_s()
+
+    caught, why_caught = residency_invariant(refresh_ahead_s=SEARCH_RESPONSE_TTL_SECONDS - period)
+    assert not caught, "clause (1) is dead: a threshold at exactly TTL - period must NOT pass"
+    assert "NOT CAUGHT" in why_caught
+
+    # 🔴 Clause (2) is about the THRESHOLD, not the TTL. CERT-2084 blocked the
+    # version that read `ttl - period > budget` here; a threshold at exactly
+    # `period + budget` is the boundary it must refuse.
+    #
+    # ⚠️ The boundary has to be driven at a budget where clause (2) is the clause
+    # that FIRES, and at the shipped 50 s budget it is not. `period + budget` is
+    # 110 s, which is below clause (1)'s `ttl - period` = 120 s, so clause (1)
+    # catches it first and this assertion would be testing (1) twice under (2)'s
+    # name. That is not a defect in either clause — CERT-2095 shrank the budget
+    # from 70 to 50 and the two boundaries crossed — but a test that silently
+    # starts checking a different clause is worth less than one that fails, so the
+    # budget is passed explicitly to put (2)'s boundary back above (1)'s.
+    reachable_budget = 80.0
+    assert period + reachable_budget > SEARCH_RESPONSE_TTL_SECONDS - period, (
+        "this fixture must keep clause (2)'s boundary above clause (1)'s, or it is "
+        "asserting on clause (1) while claiming to test clause (2)"
+    )
+    survives, why_survives = residency_invariant(
+        refresh_ahead_s=period + reachable_budget, budget_s=reachable_budget
+    )
+    assert not survives, (
+        "clause (2) is dead: a threshold at exactly period + budget must NOT pass"
+    )
+    assert "DOES NOT SURVIVE" in why_survives, why_survives
+
+    # ...and one second above the boundary it must pass, so the clause is driven
+    # from both sides rather than only convicted.
+    assert residency_invariant(
+        refresh_ahead_s=period + reachable_budget + 1, budget_s=reachable_budget
+    )[0], "clause (2) refuses a threshold that clears period + budget"
+
+    bounded, why_bounded = residency_invariant(ttl_s=REFRESH_AHEAD_SECONDS - 1)
+    assert not bounded, "clause (3) is dead: refresh-ahead above the TTL must NOT pass"
+    assert "NOT A THRESHOLD" in why_bounded
+
+    # Three configurations that all read plausible and all hole. Each must be
+    # refused BY NAME, and each was actually proposed by someone.
+    assert residency_invariant(ttl_s=60, refresh_ahead_s=25)[0] is False, (
+        "the pre-#3526 constants (60/25) must not satisfy the invariant"
+    )
+    assert residency_invariant(ttl_s=180, refresh_ahead_s=90)[0] is False, (
+        "#3539's option 4 (180/90) leaves the entry uncaught at its first "
+        "eligible pass — it must not satisfy the invariant either"
+    )
+    blocked_2084 = residency_invariant(ttl_s=180, refresh_ahead_s=150, budget_s=100.0)
+    assert blocked_2084[0] is False, (
+        "180/150 is the configuration CERT-2084 blocked: an organic entry seen at "
+        "the threshold is rebuilt one period later with 90s against a 100s budget"
+    )
+    assert "DOES NOT SURVIVE" in blocked_2084[1]
+
+    # 🔴 CERT-2086: 180/170 passed clauses (1)-(3) and still holed, because one
+    # query can be written first in one pass and last in the next.
+    blocked_2086 = residency_invariant(ttl_s=180, refresh_ahead_s=170, budget_s=100.0)
+    assert blocked_2086[0] is False, (
+        "180/170 at a 100s budget is the configuration CERT-2086 blocked — the "
+        "re-ranked write interval reaches 200s against a 180s life"
+    )
+    assert "WRITE INTERVAL" in blocked_2086[1]
+
+    # Clause (4) at its exact boundary. ⚠️ It has to be driven at a budget whose
+    # PASS GAP exceeds the period, or the boundary is unreachable: clauses (2) and
+    # (3) together require `period + budget < refresh_ahead <= ttl`, and clause (4)
+    # requires `ttl <= gap + budget`, so a configuration in which (4) is the clause
+    # that fires needs `gap > period`. At the shipped 50 s budget the gap is 60 s
+    # and the period is 60 s, so no such threshold exists and
+    # `residency_invariant(ttl_s=max_same_query_write_interval_s())` would be
+    # asserting on clause (3) under clause (4)'s name. A 100 s budget gives a 100 s
+    # gap and puts the boundary back in reach.
+    wide = 100.0
+    boundary = max_same_query_write_interval_s(budget_s=wide)   # 200
+    interval_dead, why_interval = residency_invariant(
+        ttl_s=boundary, refresh_ahead_s=170, budget_s=wide
+    )
+    assert not interval_dead, "clause (4) is dead: a TTL equal to the interval must NOT pass"
+    assert "WRITE INTERVAL" in why_interval, why_interval
+    # ...and one second of life above it must pass, so (4) is driven both ways.
+    assert residency_invariant(
+        ttl_s=boundary + 1, refresh_ahead_s=170, budget_s=wide
+    )[0], "clause (4) refuses a TTL that clears the write interval"
+
+    # And the shipped threshold is the derived one, not a hand-picked neighbour.
+    from app.tasks.search_head_warmer import derive_refresh_ahead_s
+
+    assert REFRESH_AHEAD_SECONDS == derive_refresh_ahead_s(), (
+        f"REFRESH_AHEAD_SECONDS={REFRESH_AHEAD_SECONDS} has drifted from its "
+        f"derivation {derive_refresh_ahead_s()}"
+    )
+
+
+def test_the_effective_pass_period_is_the_floor_quantized_to_the_beat_not_the_floor():
+    """#3539 defect 1, pinned as its own test because it fooled three readers.
+
+    A pass may start only on a delivered beat fire, and only once the floor has
+    elapsed. 20 s beat + 45 s floor => fires at 20 and 40 both skip, 60 runs.
+    The sibling's `max(beat, floor)` form agrees only because its floor (30 s) is
+    an exact multiple of its beat (10 s); ours is not, and 45 != 60 is the gap.
+    """
+    from app.tasks.search_head_warmer import (
+        BEAT_PERIOD_SECONDS,
+        MIN_PASS_PERIOD_SECONDS,
+        effective_pass_period_s,
+    )
+
+    assert effective_pass_period_s() == 60.0
+    assert effective_pass_period_s() > MIN_PASS_PERIOD_SECONDS, (
+        "the achievable period must be strictly above the floor whenever the "
+        "floor is not a multiple of the beat — that gap is the whole defect"
+    )
+    # The naive forms this replaced, each refused by name.
+    assert effective_pass_period_s() != MIN_PASS_PERIOD_SECONDS, "reads the floor"
+    assert effective_pass_period_s() != max(BEAT_PERIOD_SECONDS, MIN_PASS_PERIOD_SECONDS), (
+        "reads the sibling's max() form, which is wrong for a non-multiple floor"
+    )
+    # Quantization, not rounding: a floor already on a beat multiple stays put.
+    assert effective_pass_period_s(beat_s=10, floor_s=30) == 30.0
+    assert effective_pass_period_s(beat_s=20, floor_s=41) == 60.0
+    assert effective_pass_period_s(beat_s=20, floor_s=60) == 60.0
+
+
+def test_the_full_rebuild_budget_is_the_pass_not_one_query():
+    """#3539 defect 3: option 4 priced the rebuild at ONE query's timeout.
+
+    The entry that has to survive is the one written LAST. At 8 terms and
+    concurrency 4 that entry waits out one full wave before its own rebuild
+    starts, so the budget is `waves * worker-unit bound`. Derived from what the
+    code PERMITS, never from a measured wall — sizing a bound at `measured_max * k`
+    is refuted by the next sample.
+
+    🔴 CERT-2089 CHANGED THE MULTIPLICAND AND THIS TEST WITH IT. What the shared
+    cursor hands a worker is a whole UNIT — a TTL read, the route call, a TTL
+    re-read — and only the middle third had a wall on it. The previous form of
+    this test asserted `effective_per_query_bound_s() == ROUTE_SEARCH_DEADLINE ==
+    20.0`, i.e. that the budget was priced off the route's own deadline. That is
+    the assertion the BLOCK was about: `_SEARCH_DEADLINE_MS` is cooperative, so it
+    bounds nothing, and a budget derived from it is a budget derived from a number
+    the code cannot enforce. `effective_per_query_bound_s` is gone rather than
+    corrected, because a `min` of one enforced bound and one cooperative one has
+    no meaning to fix.
+    """
+    from app.tasks.search_head_warmer import (
+        LOCK_CONTROL_BOUND_SECONDS,
+        LOCK_CONTROL_OPS_PER_PASS,
+        PASS_SETUP_BOUND_SECONDS,
+        PER_QUERY_TIMEOUT_SECONDS,
+        ROLLBACK_BOUND_SECONDS,
+        ROUTE_SEARCH_DEADLINE_SECONDS,
+        TTL_READ_BOUND_SECONDS,
+        full_rebuild_budget_s,
+        lock_control_budget_s,
+        worker_unit_bound_s,
+        worker_unit_worst_case_s,
+    )
+
+    assert full_rebuild_budget_s() == 70.0
+    assert full_rebuild_budget_s() > worker_unit_worst_case_s(), (
+        "the budget must exceed one unit's worst case — the last-written entry "
+        "waits out every earlier wave, and the pass pays setup before any of them"
+    )
+
+    # 🔴 CERT-2095: the budget is the LOCK-HELD interval, so setup is in it and the
+    # multiplicand is the unit's WORST CASE (wall + the rollback that runs after
+    # the wall), not the wall. Both terms driven explicitly — at the shipped
+    # numbers a form that dropped setup and a form that used the bare wall are
+    # each distinguishable from the real one.
+    assert worker_unit_worst_case_s() == worker_unit_bound_s() + ROLLBACK_BOUND_SECONDS
+    assert worker_unit_worst_case_s() == 40.0
+
+    # 🔴 CERT-2107: and the LOCK-HELD interval starts at the acquire round-trip and
+    # ends at the release round-trip, so the four control ops are a term too. Three
+    # terms now, and each one is driven to zero separately — a form that dropped any
+    # single one is a different number from the real budget at the shipped
+    # constants, which is what makes each `== ` below load-bearing rather than
+    # decorative.
+    assert lock_control_budget_s() == LOCK_CONTROL_OPS_PER_PASS * LOCK_CONTROL_BOUND_SECONDS
+    assert lock_control_budget_s() == 20.0
+    assert full_rebuild_budget_s() == 20.0 + PASS_SETUP_BOUND_SECONDS + 1 * 40.0
+    assert full_rebuild_budget_s(setup_s=0) == 60.0, (
+        "setup dropped out of the budget — this is the CERT-2095 defect exactly"
+    )
+    assert full_rebuild_budget_s(control_s=0) == 50.0, (
+        "the lock-control round-trips dropped out of the budget — this is the "
+        "CERT-2107 defect exactly: the exclusion covers the acquire SET, the "
+        "last-pass GET, the pass-start SETEX and the release DEL, and a budget "
+        "that omits them certifies a shorter interval than the lock holds"
+    )
+    assert full_rebuild_budget_s(control_s=0, setup_s=0) == 40.0
+
+    # The unit is the SUM OF ENFORCED WALLS. Driven with explicit arguments in
+    # both terms, so a form that dropped either one is visible: at the shipped
+    # 5/25/5 a bare `route_call_s` and the real sum differ, and so do a sum with
+    # one read and a sum with two.
+    assert worker_unit_bound_s() == 2 * TTL_READ_BOUND_SECONDS + PER_QUERY_TIMEOUT_SECONDS
+    assert worker_unit_bound_s() == 35.0
+    assert worker_unit_bound_s(ttl_read_s=1, route_call_s=10) == 12.0
+    assert worker_unit_bound_s(ttl_read_s=3, route_call_s=10) == 16.0
+
+    # 🔴 The direction the blocked SHA had backwards. The route-call wall is ABOVE
+    # the route's cooperative deadline, deliberately: a wall placed at a
+    # cooperative deadline does not enforce it, it aborts the rebuilds that were
+    # about to honour it.
+    assert PER_QUERY_TIMEOUT_SECONDS > ROUTE_SEARCH_DEADLINE_SECONDS, (
+        "the route-call wall dropped to or below the route's own deadline — every "
+        "slow-but-successful rebuild is now an abandonment that writes nothing"
+    )
+
+    # Waves, at setup_s=0 AND control_s=0 so the wave arithmetic is read on its own.
+    def _waves(**kw):
+        return full_rebuild_budget_s(setup_s=0, control_s=0, **kw)
+
+    assert _waves(head_size=2, concurrency=2, per_query_s=25) == 25.0
+    assert _waves(head_size=3, concurrency=2, per_query_s=25) == 50.0
+    # The width is load-bearing in this expression, not incidental to it.
+    assert _waves(head_size=8, concurrency=2, per_query_s=40) == 160.0
+    assert _waves(head_size=8, concurrency=4, per_query_s=40) == 80.0
+    assert _waves(head_size=8, concurrency=8, per_query_s=40) == 40.0
+
+    # The two flat terms are flat: they do not scale with the width, which is why
+    # they cannot be absorbed into the per-query argument.
+    assert _waves(head_size=8, concurrency=8, per_query_s=40) + 20.0 + 10.0 == (
+        full_rebuild_budget_s(head_size=8, concurrency=8, per_query_s=40)
+    )
 
 
 def test_the_message_expiry_is_derived_from_the_lock_ttl_not_the_beat_period():
@@ -727,15 +983,32 @@ def test_the_ttl_is_declared_once_and_is_the_whole_invalidation_contract():
     A search answer is assembled from live scores, odds, probabilities, futures
     prices and team rows — there is no single write whose commit could invalidate
     it. So the contract is stated as a bound rather than implied: an answer may
-    be up to `SEARCH_RESPONSE_TTL_SECONDS` old. It is deliberately the same order
-    as the two neighbouring bounds the product already accepts — `/typeahead` at
-    65 s and the anonymous Discover feed at 60 s — so nothing here is asking for
-    a new tolerance, and one constant is the only thing to change if that
-    judgement moves.
+    be up to `SEARCH_RESPONSE_TTL_SECONDS` old, and one constant is the only
+    thing to change if that judgement moves.
+
+    🔴 IT MOVED: 60 -> 180 s by **RULING D81 = A (Alex, 2026-09-06)**. The
+    literal is still asserted, because this bound is a PRODUCT judgement and a
+    lane must not be able to drift it silently — but the number it pins is now
+    the ruled one, and the ruling is named here so the next reader can tell a
+    ruling from a tuning. It is no longer "the same order as the neighbours"
+    (`/typeahead` 65 s, anonymous Discover 60 s), and that divergence is the
+    substance of the ruling rather than an oversight: `residency_invariant()`
+    cannot be satisfied below `P_effective + full_rebuild_budget` = 160 s.
     """
     from app.utils.search_cache import SEARCH_RESPONSE_TTL_SECONDS
 
-    assert SEARCH_RESPONSE_TTL_SECONDS == 60
+    assert SEARCH_RESPONSE_TTL_SECONDS == 180, (
+        "the /search freshness ceiling is set by ruling D81 = A, not by a lane. "
+        "Changing it needs Alex's words and a re-check of residency_invariant()."
+    )
+
+    # The ceiling and the residency proof are ONE decision. Pinning the literal
+    # alone would let someone lower it to 60 and satisfy this test's sibling
+    # while re-opening the hole CERT-2068 blocked.
+    from app.tasks.search_head_warmer import residency_invariant
+
+    ok, why = residency_invariant(ttl_s=SEARCH_RESPONSE_TTL_SECONDS)
+    assert ok, f"the declared TTL does not keep the head resident: {why}"
 
     from app.routes import events
 
@@ -845,9 +1118,10 @@ def test_an_empty_head_is_reported_as_partial_and_never_as_a_clean_pass():
     nothing to say, which is a real finding and a broken guarantee — not a
     successful pass over zero items.
     """
-    from app.tasks.search_head_warmer import _summarize
+    from app.tasks.search_head_warmer import _summarize, full_rebuild_budget_s
 
     empty = _summarize(head=[], results=[], source="db:search_query_logs:30d",
-                       seconds_wall=0.0, since_last=None, width=2)
+                       seconds_wall=0.0, since_last=None, width=2,
+                       budget_s=full_rebuild_budget_s())
     assert empty["terminal"] == "partial"
     assert empty["total"] == 0

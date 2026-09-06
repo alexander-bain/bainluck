@@ -77,15 +77,33 @@ SEARCH_RESPONSE_CACHE_PREFIX = "bainluck:search"
 #: invalidation to build. What there is instead is a bound: an answer may be up
 #: to this many seconds old, and nothing in the system pretends otherwise.
 #:
-#: 60 s is not a new tolerance. It is the same order as the two neighbouring
-#: bounds this product already accepts on the same data — ``/typeahead`` at 65 s
-#: (LAT-P075) and the anonymous Discover feed at 60 s
-#: (``FEED_RESPONSE_TTL_ANON_SECONDS``). If that judgement ever moves, it moves
-#: here, once; ``test_the_ttl_is_declared_once_and_is_the_whole_invalidation_
-#: contract`` pins the route to this name rather than to a literal, because
-#: ``/typeahead``'s 45→65 s change had to be made in two places and the drift
-#: between them is a red test there to this day.
-SEARCH_RESPONSE_TTL_SECONDS = 60
+#: It was 60 s, chosen as the same order as the two neighbouring bounds this
+#: product already accepts on the same data — ``/typeahead`` at 65 s (LAT-P075)
+#: and the anonymous Discover feed at 60 s (``FEED_RESPONSE_TTL_ANON_SECONDS``).
+#: That comment also said: *"if that judgement ever moves, it moves here, once"*.
+#:
+#: 🔴 **IT HAS MOVED: 60 → 180 s, by RULING D81 = A (Alex, 2026-09-06), not by a
+#: lane.** CERT-2068 blocked #3526 for extending the cold path and named the
+#: repair as binding refresh eligibility to the real cadence *"without extending
+#: the 60 s freshness ceiling"*. That repair is **arithmetically impossible at
+#: 60 s** — see ``search_head_warmer``'s ``residency_invariant()``: the entry
+#: must outlive one pass period (60 s) *plus* the full rebuild budget (100 s),
+#: which is 160 s of life before any margin. So the ceiling was the binding
+#: term, and it went to Alex as a product question rather than being tuned here.
+#:
+#: What a user actually experiences barely moves, and that is the point: the
+#: head is rebuilt on **every** pass, so a served answer is typically
+#: ``P_effective + wall`` ≈ **71-86 s** old, against 71-86 s before. 180 s is the
+#: CEILING that makes continuous residency provable, not the typical age. What
+#: it buys is the removal of the hole — measured 2026-09-06 at **77 % of
+#: inter-pass gaps exceeding the TTL**, with all three probed head terms
+#: returning ``x-search-cache: miss``.
+#:
+#: ``test_the_ttl_is_declared_once_and_is_the_whole_invalidation_contract`` pins
+#: the route to this name rather than to a literal, because ``/typeahead``'s
+#: 45→65 s change had to be made in two places and the drift between them is a
+#: red test there to this day.
+SEARCH_RESPONSE_TTL_SECONDS = 180
 
 #: Reported on every ``/search`` response so hit and miss are readable from
 #: OUTSIDE the process — which is what makes a production deploy check possible
