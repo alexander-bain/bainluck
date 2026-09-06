@@ -24,6 +24,7 @@ import {
   maxPostStartSeriesPoints,
   computeSharedChartDomain,
 } from "../../lib/eventKeyStats";
+import type { SharedChartDomain } from "../../lib/eventKeyStats";
 import type { EventHistoryResponse } from "../../lib/types";
 
 // --- Arm A: the defect. 15293847, measured 2026-09-01 22:18Z. -------------
@@ -197,5 +198,176 @@ describe("the All-mode pre-game cap cannot clip the window empty", () => {
     expect(new Date(domain!.start).getTime()).toBe(
       new Date("2026-09-01T18:00:00+00:00").getTime(),
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #3419 — the axis must describe the hours the match was PLAYED in.
+//
+// /events/15300276 (Jodar v Bu, US Open, FINAL) rendered two tick labels in
+// DESCENDING order crowded into the left quarter of the plot: "11:00 PM
+// 8:00 PM", over a match played the following afternoon. Two independent
+// defects, both reproduced below against the verbatim production payload
+// (559 Kalshi points, 2026-09-01T15:56Z → 2026-09-02T21:03Z, `history` empty,
+// `completed_at` null, so the commence+duration estimate branch is the one
+// that runs).
+//
+//   1. DOMAIN. commence_time is a ticker-derived midnight (00:00Z); + 180
+//      tennis minutes = an end of 03:00Z, 12h56m BEFORE the first point.
+//      "Since Start" cut to a 3h window containing no data; "All" came out
+//      INVERTED (start 15:56Z, end 03:00Z), where fillMinuteGaps no-ops.
+//   2. AXIS. Even with the domain right, the window spans 45h and the
+//      categorical labels were "h:mm a", which repeats daily: 2,704 minutes
+//      collapsed to 1,440 categories and the ticks resolved to
+//      [1439,359,719,1079,1439,359,719,1079] — day two drawn on top of day one.
+//
+// Asserted structurally (no literal label strings): CI runs TZ=UTC but a
+// developer's machine does not, and these properties hold in every timezone.
+import {
+  makeEnsurePoint,
+  fillMinuteGaps,
+  CATEGORY_LABEL_FORMAT,
+} from "../../lib/chartTimeline";
+
+const JODAR_COMMENCE = "2026-09-01T00:00:00+00:00"; // ticker midnight
+const JODAR_FIRST = "2026-09-01T15:56:00+00:00";
+const JODAR_LAST = "2026-09-02T21:03:00+00:00";
+
+/** The 559-point Kalshi series, thinned to its shape: ends verbatim. */
+function jodarPayload(): EventHistoryResponse {
+  const pts: Array<{ timestamp: string }> = [];
+  const startMs = new Date(JODAR_FIRST).getTime();
+  const endMs = new Date(JODAR_LAST).getTime();
+  for (let t = startMs; t < endMs; t += 15 * 60_000) {
+    pts.push({ timestamp: new Date(t).toISOString() });
+  }
+  pts.push({ timestamp: JODAR_LAST });
+  return {
+    event_id: 15300276,
+    commence_time: JODAR_COMMENCE,
+    completed_at: null,
+    status: "closed",
+    history: [],
+    score_history: [],
+    espn_history: [],
+    win_prob_history: { kalshi: pts },
+  } as unknown as EventHistoryResponse;
+}
+
+/**
+ * Rebuild the categorical XAxis exactly as OddsChart does — the SAME shared
+ * primitives, not a re-derivation — and resolve each tick the way Recharts
+ * does: to the FIRST category string equal to it.
+ */
+function resolveAxis(domain: SharedChartDomain, pts: Array<{ timestamp: string }>) {
+  const map = new Map<string, { timestamp: string; time: string }>();
+  const ensure = makeEnsurePoint<{ timestamp: string; time: string }>(
+    map,
+    () => ({}),
+    domain.labelFormat,
+  );
+  for (const p of pts) ensure(p.timestamp);
+  fillMinuteGaps(new Date(domain.start), new Date(domain.end), ensure);
+  const categories = Array.from(map.values())
+    .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+    .map((p) => p.time);
+  return { categories, resolved: domain.ticks.map((t) => categories.indexOf(t)) };
+}
+
+describe("#3419 the settled chart's axis describes the hours it was played in", () => {
+  test.each(["live", "all"] as const)(
+    "%s: the domain covers the whole series and every tick lands, in order",
+    (mode) => {
+      const payload = jodarPayload();
+      const pts = (payload as unknown as {
+        win_prob_history: { kalshi: Array<{ timestamp: string }> };
+      }).win_prob_history.kalshi;
+
+      const domain = computeSharedChartDomain(
+        payload, mode, "closed", JODAR_COMMENCE, "tennis_atp_us_open",
+      );
+      expect(domain).not.toBeNull();
+      const lo = new Date(domain!.start).getTime();
+      const hi = new Date(domain!.end).getTime();
+
+      // 1. DOMAIN: not inverted, and it ends at or after the last real point.
+      //    Before the fix "all" was inverted by 12h56m and "live" ended 18h
+      //    before the series finished.
+      expect(hi).toBeGreaterThan(lo);
+      expect(hi).toBeGreaterThanOrEqual(new Date(JODAR_LAST).getTime());
+      const drawable = pts.filter((p) => {
+        const t = new Date(p.timestamp).getTime();
+        return t >= lo && t <= hi;
+      });
+      expect(drawable).toHaveLength(pts.length);
+
+      // 2. AXIS: unique categories, every tick on a real column, left to right.
+      const { categories, resolved } = resolveAxis(domain!, pts);
+      expect(new Set(categories).size).toBe(categories.length);
+      expect(resolved).not.toContain(-1);
+      for (let i = 1; i < resolved.length; i++) {
+        expect(resolved[i]).toBeGreaterThan(resolved[i - 1]);
+      }
+      // The end label belongs at the right edge. It used to resolve to
+      // category 307 of 1,748 — the left fifth of the plot.
+      expect(resolved[resolved.length - 1]).toBe(categories.length - 1);
+      expect(resolved[0]).toBe(0);
+    },
+  );
+
+  test("the narrow 12-hour label really is inadequate here (the fix is not redundant)", () => {
+    const payload = jodarPayload();
+    const pts = (payload as unknown as {
+      win_prob_history: { kalshi: Array<{ timestamp: string }> };
+    }).win_prob_history.kalshi;
+    const domain = computeSharedChartDomain(
+      payload, "live", "closed", JODAR_COMMENCE, "tennis_atp_us_open",
+    )!;
+    // Same domain, but formatted the pre-fix way.
+    const asNarrow = resolveAxis(
+      { ...domain, labelFormat: CATEGORY_LABEL_FORMAT },
+      pts,
+    );
+    expect(domain.labelFormat).not.toBe(CATEGORY_LABEL_FORMAT);
+    // 45h of minutes cannot fit in 1,440 distinct 12-hour labels.
+    expect(new Set(asNarrow.categories).size).toBeLessThan(
+      asNarrow.categories.length,
+    );
+    const narrowAscending = asNarrow.resolved.every(
+      (v, i) => i === 0 || v > asNarrow.resolved[i - 1],
+    );
+    expect(narrowAscending).toBe(false);
+  });
+
+  test("control: a same-day game keeps the narrow label and its full tick budget", () => {
+    const commence = "2026-09-01T17:00:00+00:00";
+    const pts: Array<{ timestamp: string }> = [];
+    for (let i = 0; i <= 150; i += 5) {
+      pts.push({
+        timestamp: new Date(
+          new Date(commence).getTime() + i * 60_000,
+        ).toISOString(),
+      });
+    }
+    const payload = {
+      event_id: 1, commence_time: commence, completed_at: null, status: "closed",
+      history: [], score_history: [], espn_history: [],
+      win_prob_history: { kalshi: pts },
+    } as unknown as EventHistoryResponse;
+
+    const domain = computeSharedChartDomain(
+      payload, "all", "closed", commence, "tennis_atp_us_open",
+    )!;
+    // Width is spent only where it buys uniqueness: a 2.5h window keeps the
+    // 12-hour clock, so this fix costs nothing on the overwhelming majority
+    // of charts.
+    expect(domain.labelFormat).toBe(CATEGORY_LABEL_FORMAT);
+    expect(domain.ticks.length).toBeGreaterThan(5);
+    const { categories, resolved } = resolveAxis(domain, pts);
+    expect(new Set(categories).size).toBe(categories.length);
+    expect(resolved).not.toContain(-1);
+    for (let i = 1; i < resolved.length; i++) {
+      expect(resolved[i]).toBeGreaterThan(resolved[i - 1]);
+    }
   });
 });

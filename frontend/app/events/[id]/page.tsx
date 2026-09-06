@@ -1292,6 +1292,7 @@ export default function EventPage({ params }: EventPageProps) {
               chartStartTime={sharedChartDomain?.start}
               chartEndTime={sharedChartDomain?.end}
               sharedTicks={sharedChartDomain?.ticks}
+            chartLabelFormat={sharedChartDomain?.labelFormat}
               externalTimeRange={chartTimeRange}
               onTimeRangeChange={handleChartTimeRangeChange}
             />
@@ -1427,6 +1428,7 @@ export default function EventPage({ params }: EventPageProps) {
             chartStartTime={sharedChartDomain?.start}
             chartEndTime={sharedChartDomain?.end}
             sharedTicks={sharedChartDomain?.ticks}
+            chartLabelFormat={sharedChartDomain?.labelFormat}
             externalTimeRange={chartTimeRange}
             onTimeRangeChange={handleChartTimeRangeChange}
             /* ux/1034 B5: the same key the market maps below already take, so

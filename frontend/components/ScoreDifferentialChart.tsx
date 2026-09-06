@@ -14,7 +14,11 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { format, parseISO } from "date-fns";
-import { makeEnsurePoint, fillMinuteGaps } from "@/lib/chartTimeline";
+import {
+  makeEnsurePoint,
+  fillMinuteGaps,
+  CATEGORY_LABEL_FORMAT,
+} from "@/lib/chartTimeline";
 import { sourceLabel } from "@/lib/sourceColors";
 import { sportVocab, playedCountAbsence, playedUnits, withUnit } from "@/lib/marketMapUtils";
 import type { PlayedLinescore } from "@/lib/marketMapUtils";
@@ -59,6 +63,9 @@ interface ScoreDifferentialChartProps {
   chartStartTime?: string;
   chartEndTime?: string;
   sharedTicks?: string[];
+  /** #3419: the format `sharedTicks` were built with. Categories and period
+   *  markers must use the SAME string or a tick lands on the wrong column. */
+  chartLabelFormat?: string;
   /** External time range from parent — syncs both charts' All/Since Start toggle */
   externalTimeRange?: "all" | "live";
   onTimeRangeChange?: (range: "all" | "live") => void;
@@ -142,6 +149,7 @@ export default function ScoreDifferentialChart({
   chartStartTime,
   chartEndTime,
   sharedTicks,
+  chartLabelFormat,
   externalTimeRange,
   onTimeRangeChange,
   sportKey,
@@ -149,6 +157,8 @@ export default function ScoreDifferentialChart({
   totalsMapPresent = false,
   pmSpreadData,
 }: ScoreDifferentialChartProps) {
+  // #3419: must match the spelling the parent used for `sharedTicks`.
+  const labelFormat = chartLabelFormat ?? CATEGORY_LABEL_FORMAT;
   const isClosed = eventStatus === "closed" || eventStatus === "completed";
 
   const hasPostStartData = useMemo(() => {
@@ -347,7 +357,8 @@ export default function ScoreDifferentialChart({
   })();
 
   // Build chart data by merging projected and actual score data on timeline.
-  // Bucket by minute so each "h:mm a" label is unique — required for
+  // Bucket by minute so each category label is unique (see `labelFormat`,
+  // #3419) — required for
   // ReferenceLine period markers to match categorical XAxis values.
   const chartBuild = useMemo(() => {
     const dataMap = new Map<string, ChartDataPoint>();
@@ -355,7 +366,7 @@ export default function ScoreDifferentialChart({
     const ensurePoint = makeEnsurePoint<ChartDataPoint>(dataMap, () => ({
       projectedDiff: null,
       actualDiff: null,
-    }));
+    }), labelFormat);
 
     // Seed ALL filtered history timestamps so x-axis matches the Win Probability chart.
     // Without this, points lacking projected_home_score would be skipped and the
@@ -555,7 +566,7 @@ export default function ScoreDifferentialChart({
       scoreFrom === null ? null : { from: scoreFrom, to: scoreTo as number };
 
     return { points, scoreSpan };
-  }, [filteredHistory, filteredBookmakerHistory, filteredScoreHistory, filteredEspnHistory, chartStartTime, chartEndTime, pmSpreadData, periodBoundaries, hasProjectedScoreData, hasActualScoreData]);
+  }, [filteredHistory, filteredBookmakerHistory, filteredScoreHistory, filteredEspnHistory, chartStartTime, chartEndTime, pmSpreadData, periodBoundaries, hasProjectedScoreData, hasActualScoreData, labelFormat]);
 
   const chartData = chartBuild.points;
   /** Where this chart's score lines actually start and end — see the build. */
@@ -607,10 +618,10 @@ export default function ScoreDifferentialChart({
 
     return capped.map((b, i) => ({
       ...b,
-      time: format(parseISO(b.timestamp), "h:mm a"),
+      time: format(parseISO(b.timestamp), labelFormat),
       labelPosition: i % 2 === 0 ? "insideTopLeft" : "insideTopRight",
     }));
-  }, [periodBoundaries, chartData, scoreSpan]);
+  }, [periodBoundaries, chartData, scoreSpan, labelFormat]);
 
   // Early returns — show chart if we have ANY data (projected or actual scores)
   if ((!history || history.length === 0) && !hasActualScoreData) return null;

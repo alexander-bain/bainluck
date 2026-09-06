@@ -14,6 +14,10 @@ import type {
   CurrentOdds,
   ScoringPlay,
 } from "@/lib/types";
+import {
+  categoryLabelFormat,
+  CATEGORY_LABEL_FORMAT,
+} from "@/lib/chartTimeline";
 import { shouldWithholdProbability } from "@/lib/probabilityEvidence";
 import { renderedDuelPercents } from "@/lib/renderedPercent";
 
@@ -610,6 +614,13 @@ export interface SharedChartDomain {
   start: string;
   end: string;
   ticks: string[];
+  /**
+   * The date-fns format the `ticks` were built with (#3419). The charts MUST
+   * format their minute categories and period-marker keys with this exact
+   * string: the XAxis is categorical, so a tick only lands on a real column
+   * when the two spellings match character for character.
+   */
+  labelFormat: string;
 }
 
 /**
@@ -652,7 +663,8 @@ export function computeSharedChartDomain(
   if (timestamps.length === 0) return null;
 
   const allStart = new Date(Math.min(...timestamps));
-  let end = new Date(Math.max(...timestamps));
+  const allEnd = new Date(Math.max(...timestamps));
+  let end = new Date(allEnd);
 
   // For completed games, derive end from game-end sources only.
   // If sportsbook data extends slightly beyond (within 10 min), include it
@@ -746,6 +758,25 @@ export function computeSharedChartDomain(
         end = ca;
       }
     }
+
+    // FLOOR (#3419): a completed game's window may not end before its own data
+    // begins. Every branch above derives `end` from a field that can be wrong
+    // in a way `end` cannot absorb — a ticker-derived midnight `commence_time`
+    // plus a flat duration estimate, an inverted `completed_at`, a game-end
+    // source belonging to a different game. When the derived end lands before
+    // the FIRST point we are drawing, it is not trimming a trailing tail (what
+    // this block is for), it is deleting the whole series: "Since Start" cuts
+    // to a window the match was not played in, and "All" comes out INVERTED,
+    // where fillMinuteGaps no-ops and the chart renders empty.
+    //
+    // Measured on /events/15300276 (Jodar v Bu, US Open, FINAL, Kalshi-only):
+    // commence_time 2026-09-01T00:00Z + 180 tennis minutes = an end of 03:00Z,
+    // 12h56m BEFORE the first of its 559 points. Discard a derived end that
+    // fails this test and keep the honest maximum — a visible journey beats a
+    // precisely-trimmed empty one.
+    if (end.getTime() < allStart.getTime()) {
+      end = new Date(allEnd);
+    }
   }
 
   // "Since Start" mode: start from commenceTime
@@ -795,7 +826,12 @@ export function computeSharedChartDomain(
   // window now steps by 5 minutes.
   const durationMs = end.getTime() - start.getTime();
   const durationMin = durationMs / 60000;
-  const MAX_TICKS = 8;
+  // #3419: a window at or beyond a day needs its labels date-qualified to stay
+  // unique, and a date-qualified label is ~40% wider ("Tue 6:00 AM" vs
+  // "6:00 AM"), so it has to buy that width from the tick budget. Same total
+  // ink, fewer and more informative labels.
+  const labelFormat = categoryLabelFormat(start.getTime(), end.getTime());
+  const MAX_TICKS = labelFormat === CATEGORY_LABEL_FORMAT ? 8 : 5;
   const INTERVAL_LADDER_MIN = [1, 2, 5, 10, 15, 30, 60, 120, 180, 360, 720, 1440];
   let intervalMin =
     INTERVAL_LADDER_MIN.find((step) => durationMin / step <= MAX_TICKS) ??
@@ -804,7 +840,7 @@ export function computeSharedChartDomain(
   while (durationMin / intervalMin > MAX_TICKS) intervalMin *= 2;
 
   const ticks: string[] = [];
-  ticks.push(fmtDate(start, "h:mm a"));
+  ticks.push(fmtDate(start, labelFormat));
 
   // A boundary tick landing right next to the end label collides with it and
   // Recharts silently drops one of the pair — which is how a 3-tick axis
@@ -818,17 +854,22 @@ export function computeSharedChartDomain(
   cursor.setMinutes(nextBoundary, 0, 0);
   while (cursor.getTime() < endMs) {
     if (endMs - cursor.getTime() >= minGapMs) {
-      ticks.push(fmtDate(cursor, "h:mm a"));
+      ticks.push(fmtDate(cursor, labelFormat));
     }
     cursor.setMinutes(cursor.getMinutes() + intervalMin);
   }
 
-  const endLabel = fmtDate(end, "h:mm a");
+  const endLabel = fmtDate(end, labelFormat);
   if (ticks[ticks.length - 1] !== endLabel) {
     ticks.push(endLabel);
   }
 
-  return { start: start.toISOString(), end: end.toISOString(), ticks };
+  return {
+    start: start.toISOString(),
+    end: end.toISOString(),
+    ticks,
+    labelFormat,
+  };
 }
 
 // ---------------------------------------------------------------------------
