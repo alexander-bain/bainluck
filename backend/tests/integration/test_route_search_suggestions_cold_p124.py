@@ -746,9 +746,22 @@ class TestSectionsThatHaveNeverRun:
                 status="live",
                 home_team_name="Aces",
                 away_team_name="Liberty",
-                opening_home_probability=0.5,
-                # A tight game, in the blend's own shape.
-                win_probability_sources={"betting": {"home": 0.52}},
+                # 🔴 #3671. BOTH OF THESE LINES ARE THE FIX, AND THE SECOND ONE
+                # IS THE HALF THAT MAKES THE FIRST WORTH ANYTHING.
+                #
+                # This fixture used to read `{"betting": {"home": 0.52}}` with
+                # `opening_home_probability=0.5` beside it. The nested shape is
+                # obsolete — production stores the flat form, verified on a live
+                # event 2026-09-06 — and `compute_aggregate_probability` returns
+                # None for it. So the chip below was produced by the
+                # `opening_home_probability` COALESCE fallback (gotcha #144 /
+                # ruling 103), not by the blend, and a regression in the blend
+                # read this test exists to cover would have left it green.
+                #
+                # Flat shape, and no fallback for the assertion to land on: 0.52
+                # can now only reach the band through `win_probability_sources`.
+                opening_home_probability=None,
+                win_probability_sources={"betting": 0.52},
                 espn_win_prob_home=None,
             )
         ]

@@ -6943,6 +6943,210 @@ _MAX_SUGGESTIONS = 8
 #: against it.
 _SUGGESTION_MOVERS_LIMIT = 5
 
+#: 🔴 #3675: SECTION 3 IS NOW ALLOWED TO CONTRIBUTE NOTHING, AND THAT IS THE
+#: DESIGN RATHER THAN A SIDE EFFECT.
+#:
+#: `_mover_chips` refuses prop rows and rows whose outcome names no entity, and
+#: those rows are not scattered through the ranking — they ARE the top of it,
+#: because `abs(change_24h) DESC` sorts the thinnest markets first. Measured on
+#: production 2026-09-06, the top forty movers: rows 1-21 all refused (map
+#: handicaps, rounds handicaps, O/U totals, map-N winners, and the bare `Yes` /
+#: `Over` / `Match Winner` that #3675 was filed about), first entity at row 22
+#: (`Maayan Laron`), then `Denver`, `Houston`, `Cormac Sharvin` at row 37.
+#:
+#: So on a day like that one, a scan of five yields five refusals and no chips.
+#: The tempting move is to widen the scan until something survives. It was
+#: considered and REJECTED: rows 22, 23 and 37 are thin-market noise too — they
+#: differ from rows 1-21 only in having an entity-shaped name — and #3675's own
+#: reading of the ordering is that "the biggest movers are, structurally, the
+#: least liquid markets". Digging deeper into that ordering finds more of it.
+#:
+#: The slots are better spent downstream. Section 5 ranks by `volume_24h`, i.e.
+#: by what people are actually trading, and its top is the Presidential Election
+#: and the US Open. A quiet section 3 hands its five slots to that, which is the
+#: row a person wants. Widening the scan would also re-open the LAT-P151
+#: superset argument, which is sized against a limit of five.
+#:
+#: What this must NOT become is #2286's disease — a section nobody notices is
+#: dead. It is not dead: it fires the moment a mover names an entity and is not
+#: a prop, and the guard test drives exactly that case.
+
+#: Outcome names that name a SIDE of a market rather than a thing to look up.
+#:
+#: 🔴 #3675 defect 1: production served a chip whose query was the word `Yes`
+#: and one that was `Match Winner`. Tapping them ran `/search?q=Yes`.
+_SUGGESTION_SIDE_LABELS = frozenset(
+    {
+        "yes",
+        "no",
+        "over",
+        "under",
+        "draw",
+        "tie",
+        "even",
+        "odd",
+        "winner",
+        "match winner",
+        "map winner",
+        "series winner",
+        "either",
+        "neither",
+        "both",
+        "other",
+        "any other",
+        "field",
+        "the field",
+    }
+)
+
+#: Substrings that mark a row as a LINE inside a market rather than a market.
+#:
+#: ⚠️ WRITTEN HERE RATHER THAN BORROWED FROM THE MATCHER, DELIBERATELY. There are
+#: prop-detecting helpers in `app/utils/`, and reusing one here would be the wrong
+#: shape of correct: a matcher helper is PERMISSIVE by design — its job is to
+#: accept a prop row so the row can be linked — where a display rule has to REFUSE
+#: exactly the rows the matcher exists to accept. The two rules disagree on
+#: purpose, so they do not get to share a list.
+_SUGGESTION_PROP_MARKERS = (
+    "handicap",
+    "spread",
+    "o/u",
+    "over/under",
+    "total rounds",
+    "total games",
+    "total maps",
+    "total points",
+    "games total",
+    "points total",
+    "rounds total",
+    "asian",
+)
+
+#: `Map 1 Winner`, `Map 2 Rounds Handicap`, `Map 3 Total Rounds: ...` — the map
+#: number is the tell, and it appears in market titles as often as outcome names
+#: (`Counter-Strike: Heroic vs 1WIN - Map 2 Winner` is a MARKET).
+_SUGGESTION_MAP_LINE_RE = re.compile(r"\bmap\s*\d", re.IGNORECASE)
+
+#: A parenthesised signed number — `(-1.5)`, `(+6.5)` — is a betting line and
+#: never part of an entity's name.
+_SUGGESTION_LINE_NUMBER_RE = re.compile(r"\(\s*[-+]\s*\d")
+
+#: An entity chip is short. `Cormac Sharvin` is 14 characters; the market title
+#: that leaked into production as a query,
+#: `Map 1 Rounds Handicap: K27 (-6.5) vs Nordic Partners Gaming  (+6.5)`, is 67
+#: and wrapped to two lines in the row. The bound is generous on purpose: it is
+#: the last of five refusals, not the first.
+_SUGGESTION_ENTITY_MAX_LEN = 40
+
+
+def _suggestion_is_prop_text(text: str) -> bool:
+    """True when `text` names a line inside a market rather than a market.
+
+    Applied to the outcome name AND the market name, because #3675's production
+    sample had it both ways round: outcome `Map Handicap: HERO (-1.5) vs 1WIN
+    (+1.5)` under market `Counter-Strike: Heroic vs 1WIN`, and outcome `Yes`
+    under market `Map Handicap: HERO (-1.5) vs 1WIN (+1.5)`. Checking one side
+    only passes half of them through.
+    """
+    if not text:
+        return False
+    lowered = text.lower()
+    if any(marker in lowered for marker in _SUGGESTION_PROP_MARKERS):
+        return True
+    return bool(
+        _SUGGESTION_MAP_LINE_RE.search(text) or _SUGGESTION_LINE_NUMBER_RE.search(text)
+    )
+
+
+def _suggestion_entity_name(outcome_name: str) -> Optional[str]:
+    """The outcome name if a person could plausibly type it into search, else None.
+
+    This is the "or a market title" half of #3675's acceptance. A market title is
+    long, carries a `:` separator or a ` vs ` fixture, and describes a question;
+    an entity is a short proper noun — `Cormac Sharvin`, `Maayan Laron`,
+    `Denver`. Returning None is a real answer: the caller SKIPS the row rather
+    than falling back to anything, because every available fallback here is a
+    string #3675 exists to keep off the row.
+    """
+    if not outcome_name:
+        return None
+    name = " ".join(outcome_name.split())
+    if not name or len(name) > _SUGGESTION_ENTITY_MAX_LEN:
+        return None
+    if name.casefold() in _SUGGESTION_SIDE_LABELS:
+        return None
+    if ":" in name or " vs " in name.casefold() or " vs. " in name.casefold():
+        return None
+    if not any(ch.isalpha() for ch in name):
+        return None
+    return name
+
+
+def _mover_chips(rows, *, limit: int = _SUGGESTION_MOVERS_LIMIT) -> list[dict]:
+    """Turn ranked mover outcomes into section 3's chips. #3675, all three defects.
+
+    Kept out of `_build_search_suggestions` so the guard test can drive it with
+    the exact eight rows production served on 2026-09-06 — including the three
+    that shared market `60333165`, which is the only way to see defect 3 at all.
+
+    Each row is an outcome carrying `.name`, `.market_id`, `.probability_change_24h`
+    and a loaded `.market`; the market may carry a loaded `.event`.
+    """
+    chips: list[dict] = []
+    seen_market_ids: set = set()
+
+    for outcome in rows:
+        if len(chips) >= limit:
+            break
+
+        market = getattr(outcome, "market", None)
+        market_name = getattr(market, "name", "") or ""
+
+        # 🔴 DEFECT 3. `_add` dedups on the query STRING, which three different
+        # handicap lines off one market trivially defeat — market 60333165 took
+        # chips 4, 5 and 6 of eight. The market id is the thing that has to be
+        # unique, and only this loop knows it.
+        market_id = outcome.market_id
+        if market_id in seen_market_ids:
+            continue
+
+        # 🔴 DEFECT 2. The display rule, before anything else: a prop row is not
+        # a thing to discover whatever else is true about it, including when the
+        # market IS linked to an event and could therefore have named a team.
+        if _suggestion_is_prop_text(outcome.name) or _suggestion_is_prop_text(market_name):
+            continue
+
+        # 🔴 DEFECT 1. The query is the entity, resolved the way sections 1, 2
+        # and 4 resolve theirs — the team, then the outcome if the outcome is
+        # itself a name. There is no third branch on purpose.
+        event = getattr(market, "event", None) if market is not None else None
+        home = getattr(event, "home_team_name", None) if event is not None else None
+        away = getattr(event, "away_team_name", None) if event is not None else None
+        if home and away:
+            query = home if len(home) <= len(away) else away
+        else:
+            query = _suggestion_entity_name(outcome.name)
+        if not query:
+            continue
+
+        change = outcome.probability_change_24h
+        direction = "Surging" if change > 0 else "Falling"
+        pct = f"{'+' if change > 0 else ''}{round(change * 100, 1)}%"
+        short_market = market_name
+        if len(short_market) > 30:
+            short_market = short_market[:27] + "..."
+
+        seen_market_ids.add(market_id)
+        chips.append(
+            {
+                "query": query,
+                "label": f"{direction} {pct} — {short_market}",
+                "market_id": market_id,
+            }
+        )
+
+    return chips
+
 #: The market pool section 3 ranks inside — see `app/utils/movement_pool.py` for
 #: why the pool is a provable SUPERSET of the answer rather than a sample.
 #:
@@ -7053,7 +7257,11 @@ def _build_suggestion_movers_query(*, pooled: bool):
 
     return (
         query.order_by(func.abs(FuturesOutcome.probability_change_24h).desc())
-        .options(selectinload(FuturesOutcome.market))
+        # #3675: the market's EVENT comes along now, because that is where
+        # section 3's chip text comes from when the market has one — the same
+        # team name sections 1, 2 and 4 print. One extra PK-keyed `IN` over at
+        # most five ids, on a path that already pays two.
+        .options(selectinload(FuturesOutcome.market).selectinload(FuturesMarket.event))
         .limit(_SUGGESTION_MOVERS_LIMIT)
     )
 
@@ -7300,8 +7508,34 @@ async def _build_search_suggestions(db: AsyncSession) -> dict:
                 if hp is None:
                     continue
 
-                opponent = ev.away_team_name if hp >= 0.5 else ev.home_team_name
+                # 🔴 #3684. `Live — tight game vs León`, ON A CHIP WHOSE QUERY IS
+                # ALSO `León`. Found by the post-deploy LOOK on this very repair
+                # (2026-09-06 20:50Z), five of the eight chips deep: `AFC
+                # Whyteleafe vs AFC Whyteleafe`, `Durham Bulls vs Durham Bulls`,
+                # `Round Rock Express vs Round Rock Express`, `El Paso Chihuahuas
+                # vs El Paso Chihuahuas`.
+                #
+                # The two lines picked a side by DIFFERENT rules and nothing made
+                # them agree: `opponent` took the underdog by probability, `short`
+                # took the shorter name by length. Whenever those landed on the
+                # same team the chip said a team was playing itself. Pumas (5) vs
+                # León (4) with `hp >= 0.5` is the minimal case — both expressions
+                # return the away team.
+                #
+                # It is not a data bug and it is not new code: `events` holds
+                # `home='Pumas', away='León'` correctly, and these two lines are
+                # untouched since the section was written. They had simply never
+                # RUN — this is the section #2286 resurrected, and the first thing
+                # a LOOK at a section that never ran finds is what it renders.
+                #
+                # The opponent is now DERIVED from the query rather than chosen
+                # beside it, so the two cannot disagree by construction.
                 short = _shorter_team(ev.home_team_name, ev.away_team_name)
+                opponent = (
+                    ev.away_team_name
+                    if short == ev.home_team_name
+                    else ev.home_team_name
+                )
 
                 # Close game: 35-65%
                 if 0.35 <= hp <= 0.65:
@@ -7423,23 +7657,16 @@ async def _build_search_suggestions(db: AsyncSession) -> dict:
         if not _window_full():
             movers_result = await db.execute(movers_q)
             movers_rows = movers_result.scalars().all()
-        for outcome in movers_rows:
+        # 🔴 #3675: THE CHIP IS NO LONGER `outcome.name`. Everything the loop used
+        # to do inline is `_mover_chips` now — the display rule, the entity, and
+        # the one-chip-per-market cap `_add` structurally cannot enforce (it
+        # dedups on the query STRING, and three handicap lines off one market are
+        # three different strings). Extracted rather than inlined so the guard
+        # test can drive it with the eight rows production actually served.
+        for chip in _mover_chips(movers_rows):
             if len(suggestions) >= _MAX_SUGGESTIONS:
                 break
-            change = outcome.probability_change_24h
-            direction = "Surging" if change > 0 else "Falling"
-            pct = f"{'+' if change > 0 else ''}{round(change * 100, 1)}%"
-            market_name = outcome.market.name if outcome.market else ""
-            # Shorten market name
-            short_market = market_name
-            if len(short_market) > 30:
-                short_market = short_market[:27] + "..."
-            _add(
-                outcome.name,
-                f"{direction} {pct} — {short_market}",
-                "futures",
-                market_id=outcome.market_id,
-            )
+            _add(chip["query"], chip["label"], "futures", market_id=chip["market_id"])
     except Exception:
         _log_dead_suggestion_section(3, "futures movers")
 
