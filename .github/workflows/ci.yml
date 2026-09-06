@@ -774,6 +774,38 @@ jobs:
             exit 1
           fi
 
+      - name: "#3094 live-space clear apply/rollback round trip (real Postgres)"
+        # `scripts/null_statpal_live_space_ids_3094.py` runs unattended under
+        # D51 on the same terms as the #2879 re-key above, and CERT-847 is the
+        # precedent for what a restore proves when nothing executes it.
+        #
+        # This repair writes to TWO PLACES ON ONE ROW — the
+        # `statpal_fixture_id` column and the JSONB key `_get_statpal_id` falls
+        # back to — and the two halves fail in opposite directions. Clear only
+        # the column and the getter still returns the stale id, so the row never
+        # re-anchors while the column reads NULL and it LOOKS repaired (21 of
+        # the 364 production rows are in that shape). Restore the JSONB
+        # unconditionally and 343 rows get a key they never had.
+        #
+        # Why the service container and nothing cheaper: `jsonb - 'key'`
+        # removing one key and leaving its siblings, `to_jsonb(text)` putting
+        # back a JSON string rather than raising, and `IS NOT DISTINCT FROM`
+        # over NULLs on both sides of the post-condition are all decided by the
+        # server. A mock has no opinion about any of them.
+        #
+        # The corpus carries a six-digit MLB row and a seven-digit NBA row that
+        # no statement may touch, so a population test that ever loosens to
+        # "not NULL" or "longer than six" fails here. Same skip-detection as
+        # every gate in this job.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_null_statpal_live_space_3094_real_postgres.py \
+            -v -s -rs 2>&1 | tee /tmp/null3094.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/null3094.txt; then
+            echo "::error::#3094 live-space clear round-trip gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#2867 tennis link apply/rollback round trip (real Postgres)"
         # `scripts/link_tennis_statpal_anchors_2867.py` runs unattended under
         # D51 on the same terms as the #2879 re-key above, and CERT-847 is the
