@@ -158,6 +158,7 @@ def test_a_five_hour_kickoff_gap_is_one_game_not_two_misses():
         # the question could not be asked, which is a different fact.
         "ours_only_in_span_composition": {
             "second_row_for_a_matched_game": 0,
+            "second_row_for_an_unmatched_game": 0,
             "our_only_row_for_the_game": 0,
         },
         # D63: NFL is scored on BOTH numbers, because both sides carry the same
@@ -379,6 +380,7 @@ def test_a_contest_we_hold_no_row_for_is_statpal_only():
         # COMPOSITION has an empty bucket to decompose and can say so (#3616).
         "ours_only_in_span_composition": {
             "second_row_for_a_matched_game": 0,
+            "second_row_for_an_unmatched_game": 0,
             "our_only_row_for_the_game": 0,
         },
         # D63 + spec rule 6. `pct` IS scored here (0.0 — StatPal lists a game

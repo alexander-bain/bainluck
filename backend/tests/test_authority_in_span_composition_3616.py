@@ -91,7 +91,97 @@ def test_the_in_span_misses_are_named_as_ours_or_theirs():
     assert identity["ours_only_by_horizon"]["inside_statpal_span"] == 3
     assert identity["ours_only_in_span_composition"] == {
         "second_row_for_a_matched_game": 2,
+        "second_row_for_an_unmatched_game": 0,
         "our_only_row_for_the_game": 1,
+    }
+
+
+def test_two_duplicate_rows_for_a_game_statpal_never_listed_are_one_miss():
+    """CERT-2104's BLOCK, and it was right.
+
+    The first cut compared an in-span miss only against rows that MATCHED
+    StatPal. So two rows of ours for a game StatPal genuinely does not list found
+    no matched twin, both fell to the residue, and the row reported **two holes**
+    where there is one game and one duplicate. Our own duplication inflating the
+    hole count is the exact defect this field was built to remove, in the one
+    corner where it was still doing it.
+
+    The named regression: an unrelated StatPal span, two within-tolerance rows of
+    ours for an unlisted game. One unique miss, one extra row, both ids in a
+    receipt.
+    """
+    fixtures = [
+        _side("s1", "Athletics", "Rangers", _SPAN),
+        _side("s2", "Mets", "Rays", _SPAN + timedelta(days=2)),
+    ]
+    rows = [
+        _side(1, "Athletics", "Rangers", _SPAN, label="closed"),
+        _side(2, "Mets", "Rays", _SPAN + timedelta(days=2), label="closed"),
+        # StatPal lists no Cubs @ Brewers at all. We hold it twice.
+        _side(3, "Cubs", "Brewers", _SPAN + timedelta(days=1), label="closed"),
+        _side(4, "Cubs", "Brewers", _SPAN + timedelta(days=1, minutes=20), label="completed"),
+    ]
+    row = _build(fixtures, rows)
+    identity = row["identity"]
+
+    assert identity["ours_only_by_horizon"]["inside_statpal_span"] == 2
+    assert identity["ours_only_in_span_composition"] == {
+        "second_row_for_a_matched_game": 0,
+        "second_row_for_an_unmatched_game": 1,
+        "our_only_row_for_the_game": 1,
+    }
+
+    receipts = row["receipts"]["ours_only_in_span_duplicates"]
+    assert len(receipts) == 1
+    assert receipts[0]["event_id"] == "4"
+    assert receipts[0]["matched_row"] == "3"
+    assert receipts[0]["duplicate_of"] == "another_unmatched_row_of_ours"
+
+    # And a THIRD copy of the same unlisted game is a third row, not a second
+    # game: the representative is chosen once and every later copy joins it.
+    identity = _build(
+        fixtures,
+        rows + [_side(5, "Cubs", "Brewers", _SPAN + timedelta(days=1, minutes=40), label="live")],
+    )["identity"]
+    assert identity["ours_only_in_span_composition"] == {
+        "second_row_for_a_matched_game": 0,
+        "second_row_for_an_unmatched_game": 2,
+        "our_only_row_for_the_game": 1,
+    }
+
+
+def test_the_matched_and_unmatched_duplicate_buckets_are_not_interchangeable():
+    """The repair must not fix the new class by blurring it into the old one.
+
+    Both buckets are our duplication and both are lane1's, but they are different
+    evidence: one says *we wrote a second row for a game we can see StatPal has*,
+    the other says *we wrote a second row for a game we cannot find at all*. The
+    receipt says which, so a reader is never left inferring it from the counts.
+    """
+    fixtures = [
+        _side("s1", "Athletics", "Rangers", _SPAN),
+        # A second listed fixture, late enough that StatPal's span covers the
+        # unlisted Cubs @ Brewers below. Without it those rows are `beyond
+        # StatPal's last` and never reach the composition at all.
+        _side("s2", "Mets", "Rays", _SPAN + timedelta(days=1)),
+    ]
+    rows = [
+        _side(1, "Athletics", "Rangers", _SPAN, label="closed"),
+        _side(2, "Athletics", "Rangers", _SPAN + timedelta(minutes=20), label="completed"),
+        _side(5, "Mets", "Rays", _SPAN + timedelta(days=1), label="closed"),
+        _side(3, "Cubs", "Brewers", _SPAN + timedelta(hours=6), label="closed"),
+        _side(4, "Cubs", "Brewers", _SPAN + timedelta(hours=6, minutes=20), label="completed"),
+    ]
+    row = _build(fixtures, rows)
+
+    assert row["identity"]["ours_only_in_span_composition"] == {
+        "second_row_for_a_matched_game": 1,
+        "second_row_for_an_unmatched_game": 1,
+        "our_only_row_for_the_game": 1,
+    }
+    assert {r["event_id"]: r["duplicate_of"] for r in row["receipts"]["ours_only_in_span_duplicates"]} == {
+        "2": "a_row_that_matched_statpal",
+        "4": "another_unmatched_row_of_ours",
     }
 
 
@@ -116,6 +206,7 @@ def test_the_composition_sums_to_the_bucket_it_decomposes():
         assert composition is not None, name
         assert (
             composition["second_row_for_a_matched_game"]
+            + composition["second_row_for_an_unmatched_game"]
             + composition["our_only_row_for_the_game"]
             == identity["ours_only_by_horizon"]["inside_statpal_span"]
         ), name
@@ -142,6 +233,7 @@ def test_a_series_is_not_a_duplicate():
     assert identity["ours_only_by_horizon"]["inside_statpal_span"] == 0
     assert identity["ours_only_in_span_composition"] == {
         "second_row_for_a_matched_game": 0,
+        "second_row_for_an_unmatched_game": 0,
         "our_only_row_for_the_game": 0,
     }
 
@@ -153,6 +245,7 @@ def test_a_series_is_not_a_duplicate():
     assert identity["ours_only_by_horizon"]["inside_statpal_span"] == 2
     assert identity["ours_only_in_span_composition"] == {
         "second_row_for_a_matched_game": 0,
+        "second_row_for_an_unmatched_game": 0,
         "our_only_row_for_the_game": 2,
     }
 
@@ -234,6 +327,118 @@ def test_a_side_with_no_span_publishes_none_rather_than_a_split_of_nothing():
     assert identity["ours_only_by_horizon"]["unplaceable"] == 1
 
 
+def test_half_a_same_game_contract_is_refused_at_construction():
+    """A predicate without a bucket key is quadratic, and a cliff ships green.
+
+    Measured before `our_side_bucket_key` existed, on synthetic data at MLB's own
+    shape: one sport's build went 11ms → **867ms at 800 games and 5.5s at
+    2,000**, 99% of it the twin scan, on an endpoint that builds six sports. The
+    fallback that would have absorbed this — scan everything when no bucket key
+    is declared — is exactly why it is refused instead.
+    """
+    import pytest
+
+    common = dict(
+        fixtures=[], rows=[], paired=[], statpal_only=[], ours_only=[],
+        unusable_fixtures=[], unusable_rows=[],
+    )
+    for half in (
+        {"same_game_on_our_side": lambda a, b: True},
+        {"our_side_bucket_key": lambda side: "k"},
+    ):
+        with pytest.raises(ValueError, match="BOTH"):
+            Join(**common, **half)
+
+    # Neither is the tennis case and must construct cleanly; both is the default.
+    Join(**common)
+    Join(
+        **common,
+        same_game_on_our_side=lambda a, b: True,
+        our_side_bucket_key=lambda side: "k",
+    )
+
+
+def test_the_twin_search_does_not_scan_every_matched_row():
+    """The guard the 5.5-second build did not have.
+
+    A timing assertion would be flaky; a CALL COUNT is not. With the bucket key
+    doing its job the predicate is asked once per (miss, row-in-its-own-bucket),
+    and a bucket is one series. Without it the count is misses x every matched
+    row, which this bound rejects by two orders of magnitude.
+    """
+    calls = {"n": 0}
+    real = pair_by_normalized_key
+
+    def counting(fixtures, rows, normalize):
+        join = real(fixtures, rows, normalize)
+        inner = join.same_game_on_our_side
+
+        def counted(a, b):
+            calls["n"] += 1
+            return inner(a, b)
+
+        return Join(
+            fixtures=join.fixtures,
+            rows=join.rows,
+            paired=join.paired,
+            statpal_only=join.statpal_only,
+            ours_only=join.ours_only,
+            unusable_fixtures=join.unusable_fixtures,
+            unusable_rows=join.unusable_rows,
+            same_game_on_our_side=counted,
+            our_side_bucket_key=join.our_side_bucket_key,
+        )
+
+    # 120 games across 12 distinct pairs, every one of them written twice.
+    pairs = [(f"Away{i}", f"Home{i}") for i in range(12)]
+    fixtures, rows = [], []
+    for i in range(120):
+        away, home = pairs[i % len(pairs)]
+        start = _SPAN + timedelta(hours=i * 6)
+        fixtures.append(_side(f"s{i}", away, home, start))
+        rows.append(_side(i, away, home, start, label="closed"))
+        rows.append(_side(f"d{i}", away, home, start + timedelta(minutes=20), label="completed"))
+
+    identity = _build(fixtures, rows, pair_sides=counting)["identity"]
+    misses = identity["ours_only_by_horizon"]["inside_statpal_span"]
+
+    assert identity["ours_only_in_span_composition"] == {
+        "second_row_for_a_matched_game": misses,
+        "second_row_for_an_unmatched_game": 0,
+        "our_only_row_for_the_game": 0,
+    }
+    # One bucket is one pair's ten meetings, so ~10 asks per miss. The unbucketed
+    # scan would be misses x 120 matched rows — over a hundred thousand.
+    assert calls["n"] <= misses * 20, (calls["n"], misses)
+
+
+def test_the_bucket_key_never_separates_two_rows_the_predicate_joins():
+    """The contract `our_side_bucket_key` makes, checked against the real join.
+
+    A bucket that is finer than the predicate silently drops duplicates: the twin
+    is there, the lookup misses it, and the row reports our own second row as
+    StatPal's hole. Nothing else in the pass would notice.
+    """
+    join = pair_by_normalized_key([], [], normalize_team)
+    same_game, bucket = join.same_game_on_our_side, join.our_side_bucket_key
+
+    rows = [
+        _side(1, "Athletics", "Rangers", _SPAN, label="closed"),
+        _side(2, "Athletics", "Rangers", _SPAN + timedelta(minutes=20), label="completed"),
+        # Same clubs, different meeting of the series — same bucket, not the same
+        # game. Coarse is allowed; fine is not.
+        _side(3, "Athletics", "Rangers", _SPAN + timedelta(days=2), label="closed"),
+        _side(4, "Cubs", "Brewers", _SPAN, label="closed"),
+    ]
+    joined = 0
+    for a in rows:
+        for b in rows:
+            if a.ref != b.ref and same_game(a, b):
+                joined += 1
+                assert bucket(a) == bucket(b), (a.ref, b.ref)
+    assert joined == 2, "rows 1 and 2 must join, in both orders, and nothing else"
+
+
 def test_the_field_cannot_move_a_running_clock():
     """Three sports have seven-day clocks running. This field touches none.
 
@@ -260,6 +465,7 @@ def test_the_field_cannot_move_a_running_clock():
     assert identity["governing"]["gate"] == "MEETS"
     assert identity["ours_only_in_span_composition"] == {
         "second_row_for_a_matched_game": 0,
+        "second_row_for_an_unmatched_game": 0,
         "our_only_row_for_the_game": 0,
     }
 
@@ -271,6 +477,7 @@ def test_the_field_cannot_move_a_running_clock():
     identity = _build(fixtures, with_twin)["identity"]
     assert identity["ours_only_in_span_composition"] == {
         "second_row_for_a_matched_game": 1,
+        "second_row_for_an_unmatched_game": 0,
         "our_only_row_for_the_game": 0,
     }
     assert identity["ours_covered_in_span_pct"] == 66.67  # 2 / (2 + 1), undiscounted
