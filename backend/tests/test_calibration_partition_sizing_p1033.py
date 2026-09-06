@@ -443,7 +443,7 @@ def units_admitted_per_beat(buckets: int) -> int:
     Steady state means the carried level IS this partition's own cost — a beat
     that follows a beat at the same size, which is every beat but the first
     after a deploy. The first-after-deploy asymmetry is
-    :class:`TestTwoConsecutiveBeatsEachBankAUnit`'s subject.
+    :class:`TestTheConsecutiveBeatRequirementNowFAILS`'s subject.
 
     The answer is 0 or 1 at every partition (pinned below), which is the whole
     reason the beat budget cannot be a fraction.
