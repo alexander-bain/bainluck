@@ -26,7 +26,7 @@ from typing import Awaitable, Callable
 from fastapi import APIRouter, Depends, HTTPException, Path
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.routes.league_futures import get_league_futures
+from app.routes.league_futures import build_linked_matches, get_league_futures
 from app.services import get_db
 from app.utils.event_boxing import classify_boxing_prop, list_boxing_card_concepts
 from app.utils.event_concept import list_golf_tournament_concepts
@@ -48,7 +48,10 @@ from app.utils.entity_page_tiers import (
     AVAILABILITY_EMPTY,
     conforming_availability,
 )
-from app.utils.event_tennis import list_tennis_tournament_concepts
+from app.utils.event_tennis import (
+    classify_tennis_prop,
+    list_tennis_tournament_concepts,
+)
 from app.utils.event_ufc import classify_ufc_prop, list_ufc_card_concepts
 
 logger = logging.getLogger(__name__)
@@ -133,6 +136,12 @@ _COMBAT_SECTION_LABELS = {
 _PROP_CLASSIFIERS: dict[str, Callable[[str | None, str | None], str | None]] = {
     "ufc": classify_ufc_prop,
     "boxing": classify_boxing_prop,
+    # UX-P180 (#2167): tennis was missing, so every tennis `game_prop` — which
+    # `_assign_section` routes to "matches" for all individual sports — was
+    # stranded there with no way out. That is the half of the lying heading the
+    # linked-matches source does not fix: 55 season-long ranking props sat under
+    # "MATCHES · 56" on production.
+    "tennis": classify_tennis_prop,
 }
 
 
@@ -205,6 +214,11 @@ HUB_CONFIGS: dict[str, HubConfig] = {
         ),
         sport_key="tennis_atp",
         concept_domain="tennis",
+        # UX-P180 (#2167): tennis earns the props split. Registered for ufc and
+        # boxing only until now, which is why tennis ranking props had no route
+        # out of the "matches" section `_assign_section` puts every individual
+        # sport's game_props into.
+        prop_classifier_domain="tennis",
         # No section overrides — tennis takes the neutral defaults. Its `matches`
         # section printed "Fight Markets" over 103 tennis markets during US Open
         # week until UX-P167 (#2167).
@@ -431,6 +445,39 @@ async def build_hub(cfg: HubConfig, db: AsyncSession) -> dict:
         logger.exception("hub league_futures failed for %s", cfg.slug)
         sections = {}
         losses.append(("hub_league_futures_failed", LOSS_DEGRADED))
+
+    # ── UX-P180 (#2167): the matches rail reads the markets that ARE linked ──
+    #
+    # `get_league_futures` filters `event_id IS NULL`, which is right for the
+    # futures/awards sections it also feeds and exactly wrong for `matches`: a
+    # real match is precisely a market with an `event_id`. Composed from that one
+    # source, the rail could only ever show head-to-heads the matcher FAILED to
+    # link, so `/hub/tennis` headed "MATCHES · 56" over zero US Open singles
+    # while 204 linked ones were excluded.
+    #
+    # Additive and unconditional. It is not a tennis fix: MMA and boxing read
+    # 42/42 and 12/12 match-shaped today only because combat markets are not
+    # linked to events, so the same bug is latent on every hub the moment its
+    # sport starts matching. A sport with no linked matches gets an empty list
+    # and an unchanged page.
+    #
+    # Linked rows lead: they are the matches actually being played, ordered
+    # live-first then soonest-first, and the unlinked remainder keeps its own
+    # order behind them.
+    try:
+        linked_matches = await build_linked_matches(cfg.sport_key, db)
+    except Exception:
+        logger.exception("hub linked matches failed for %s", cfg.slug)
+        linked_matches = []
+        # The page keeps its futures sections, but a matches rail missing the
+        # actual matches is the defect this ship removes — declare it.
+        losses.append(("hub_linked_matches_failed", LOSS_PARTIAL))
+    if linked_matches:
+        seen_ids = {m.get("id") for m in linked_matches}
+        existing_matches = [
+            m for m in (sections.get("matches") or []) if m.get("id") not in seen_ids
+        ]
+        sections["matches"] = linked_matches + existing_matches
 
     # Recover a real props section: league_futures lumps combat-sport game_props
     # into "matches" alongside fights. Pull the classifier-tagged ones out.

@@ -11,6 +11,12 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+# UX-P180 (repairing CERT-1987): `import pytest` is BACK, and used. UX-P209
+# removed it as genuinely unused (see its note below); the status-allowlist
+# guards are parametrised, so it earns its place again rather than returning by
+# accident.
+import pytest
+
 # UX-P209: `import pytest` was here and unused — zero `pytest.` references in the
 # file. It predates this branch (proved by re-running ruff on the parent's own
 # bytes), and it was invisible because changed-file Ruff only sees a file
@@ -643,3 +649,392 @@ class TestHubNeutralUpcomingLabel:
         for slug in ("golf", "tennis", "esports"):
             body = (await client.get(f"/api/hub/{slug}")).json()
             assert body["upcoming_label_neutral"] == "Tournaments", slug
+
+
+# ============================================================================
+# UX-P180 (#2167) — the matches rail reads the markets that ARE linked
+# ============================================================================
+
+
+def _linked_market(
+    *, market_id, name, category="championship", market_tier=5,
+    sport_category="tennis", league="atp", external_id=None, outcomes=None,
+):
+    """A market the matcher DID link to an event (`event_id` set)."""
+    m = _mock_market(
+        market_id=market_id,
+        name=name,
+        external_id=external_id or f"KXATPMATCH-{market_id}",
+        category=category,
+        market_tier=market_tier,
+        outcomes=outcomes,
+    )
+    m.event_id = 900 + market_id
+    m.llm_sport_category = sport_category
+    m.llm_league = league
+    return m
+
+
+def _row_result(tuples):
+    """A Result for the events read, which does `.all()` over
+    `(id, commence_time, status)` triples."""
+    result = MagicMock()
+    result.unique.return_value = result
+    result.all.return_value = tuples
+    return result
+
+
+def _sql_dispatching_db(*, unlinked, linked, event_status="scheduled", event_time=None):
+    """A db holding ONE population, answering each statement as the real one would.
+
+    Dispatching on the compiled SQL rather than on call ORDER is deliberate:
+    `build_league` issues several statements of its own, so an ordered
+    `side_effect` list would silently re-pair fixtures with queries the moment
+    anything upstream added one — and the test would keep passing while
+    asserting nothing.
+
+    The no-`event_id`-predicate branch is load-bearing, and it started out wrong.
+    It returned `[]`, which made `test_the_futures_list_does_not_gain_linked_rows`
+    VACUOUS under the exact mutation it exists to catch: delete `build_league`'s
+    `event_id.is_(None)` and its SQL then matches neither branch, so the fake
+    handed back nothing and the assertion passed on an empty list. A query that
+    does not filter on `event_id` must see the WHOLE table — that is what a
+    database does, and modelling it is what makes the guard bite.
+    """
+    from unittest.mock import AsyncMock
+
+    db = AsyncMock()
+    commence = event_time or datetime.now(timezone.utc)
+
+    async def _execute(stmt, *a, **kw):
+        sql = str(stmt)
+        # `build_linked_matches` resolves its events in a second, set-based read.
+        if "FROM events" in sql and "futures_markets" not in sql:
+            return _row_result(
+                [(m.event_id, commence, event_status) for m in linked]
+            )
+        if "event_id IS NULL" in sql:
+            return _scalars_result(unlinked)
+        if "futures_markets" in sql:
+            return _scalars_result(list(unlinked) + list(linked))
+        return _scalars_result([])
+
+    db.execute = _execute
+    return db
+
+
+class TestHubLinkedMatchesRail:
+    """`/hub/tennis` headed a rail "MATCHES · 56" over zero US Open singles.
+
+    `build_hub` filled `matches` from `get_league_futures`, which filters
+    `FuturesMarket.event_id.is_(None)` — so the rail could only ever show the
+    head-to-heads the matcher FAILED to link. The better matching got, the
+    emptier the rail became; 204 correctly-linked, currently-playable US Open
+    matches were excluded on production 2026-09-05 because they were matched.
+    """
+
+    async def test_a_linked_match_reaches_the_matches_rail(self, client, monkeypatch):
+        """Direction 1: a hub whose sport DOES link its markets still serves them."""
+        linked = _linked_market(market_id=1, name="Alcaraz vs Sinner")
+        unlinked = _linked_market(market_id=2, name="Fritz vs Shelton")
+        unlinked.event_id = None
+
+        db = _sql_dispatching_db(unlinked=[unlinked], linked=[linked])
+        monkeypatch.setitem(
+            __import__("app.main", fromlist=["app"]).app.dependency_overrides,
+            _get_db_dep(),
+            lambda: _yield(db),
+        )
+
+        from app.routes.hub import HUB_CONFIGS, build_hub
+
+        body = await build_hub(HUB_CONFIGS["tennis"], db)
+        names = {m["name"] for m in body["sections"].get("matches", [])}
+        assert "Alcaraz vs Sinner" in names, (
+            "a LINKED head-to-head is missing from the matches rail — this is the "
+            "#2167 defect: the rail can only show what the matcher failed to link"
+        )
+
+    async def test_the_futures_list_does_not_gain_linked_rows(self, client):
+        """Direction 2: the fix must NOT be 'delete the event_id filter'.
+
+        `get_league_futures` feeds futures/awards/season_stats too, and a market
+        tied to a game belongs on that game's page. If the linked pool leaked
+        into the league list, every league page would gain its whole schedule.
+        """
+        from app.routes.league_futures import build_league, _league_scope_filters
+
+        scope = " ".join(str(f) for f in _league_scope_filters("tennis_atp", datetime.now(timezone.utc)))
+        assert "event_id" not in scope, (
+            "the SHARED scope helper must not carry an event_id predicate — that is "
+            "exactly how one filter came to govern two opposite questions"
+        )
+
+        linked = _linked_market(market_id=1, name="Alcaraz vs Sinner")
+        db = _sql_dispatching_db(unlinked=[], linked=[linked])
+        league = await build_league("tennis_atp", db)
+        all_rows = [m for rows in league["sections"].values() for m in rows]
+        assert "Alcaraz vs Sinner" not in {m["name"] for m in all_rows}, (
+            "a linked market reached the league futures list"
+        )
+
+    async def test_a_prop_about_a_match_is_not_a_match(self, client):
+        """The linked pool is mostly markets ABOUT a match. Showing those under
+        "MATCHES" would swap one false heading for another.
+
+        They are MOVED, not dropped: a Total Sets line is a real market and
+        belongs on the page under Props. Asserted through `build_hub` because
+        that is where the two halves compose — `build_linked_matches` hands over
+        everything `_assign_section` calls a match (which, for every individual
+        sport, includes `game_prop`) and the classifier table pulls the props
+        back out. Testing the source alone would pass while the page still lied.
+        """
+        from app.routes.hub import HUB_CONFIGS, build_hub
+
+        db = _sql_dispatching_db(
+            unlinked=[],
+            linked=[
+                _linked_market(market_id=1, name="Alcaraz vs Sinner"),
+                _linked_market(
+                    market_id=2,
+                    name="Alcaraz vs. Sinner: Total Sets O/U 3.5",
+                    category="game_prop",
+                ),
+                _linked_market(
+                    market_id=3,
+                    name="Game Spread: Alcaraz (-6.5) vs Sinner (+6.5)",
+                    category="game_prop",
+                ),
+            ],
+        )
+        body = await build_hub(HUB_CONFIGS["tennis"], db)
+        sections = body["sections"]
+
+        assert {m["name"] for m in sections.get("matches", [])} == {"Alcaraz vs Sinner"}
+        prop_names = {m["name"] for m in sections.get("props", [])}
+        assert "Alcaraz vs. Sinner: Total Sets O/U 3.5" in prop_names
+        assert "Game Spread: Alcaraz (-6.5) vs Sinner (+6.5)" in prop_names
+
+    async def test_a_season_ranking_prop_leaves_the_matches_rail(self, client):
+        """The rows Alex actually saw: "MATCHES · 56" whose first five cards were
+        all "Will X Make the Top 10 in the 2026 ATP end of year rankings".
+
+        These are UNLINKED, so they arrive via `get_league_futures` — the half of
+        the defect the linked-matches source does not touch. Tennis had no entry
+        in `_PROP_CLASSIFIERS`, so `_assign_section`'s individual-sport rule
+        (every `game_prop` is a match) was a one-way door.
+        """
+        from app.routes.hub import HUB_CONFIGS, build_hub
+
+        ranking_prop = _linked_market(
+            market_id=7,
+            name="Will Felix Auger-Aliassime Make the Top 10 in the 2026 ATP end of year rankings",
+            category="game_prop",
+        )
+        ranking_prop.event_id = None
+
+        db = _sql_dispatching_db(unlinked=[ranking_prop], linked=[])
+        body = await build_hub(HUB_CONFIGS["tennis"], db)
+        sections = body["sections"]
+
+        assert not any(
+            "end of year rankings" in m["name"] for m in sections.get("matches", [])
+        ), "a season-long ranking prop is still being called a match"
+        assert any(
+            "end of year rankings" in m["name"] for m in sections.get("props", [])
+        )
+
+    @pytest.mark.parametrize("terminal", ["completed", "closed", "voided", "merged"])
+    async def test_a_finished_event_is_not_on_the_rail(self, client, terminal):
+        """Repairing CERT-1987: the rail admitted every status but `completed`.
+
+        A finished event's markets can still be `open` (gotcha #33), and the hub
+        card renders a name and prices with NO date or status — so a finished
+        match is indistinguishable from tonight's.
+
+        `closed` is the one that mattered: 212,289 rows on production against
+        15,731 `completed`, and it is what a definitive StatPal completion
+        writes. `voided`/`merged` are retirement markers. Parametrised so this
+        asserts the ALLOWLIST rather than four hand-picked rejections — the
+        original denylist would pass a test naming only `completed`.
+
+        Driven through `build_hub`, the real composition, per the BLOCK.
+        """
+        from app.routes.hub import HUB_CONFIGS, build_hub
+
+        db = _sql_dispatching_db(
+            unlinked=[],
+            linked=[_linked_market(market_id=1, name="Alcaraz vs Sinner")],
+            event_status=terminal,
+        )
+        body = await build_hub(HUB_CONFIGS["tennis"], db)
+        assert "Alcaraz vs Sinner" not in {
+            m["name"] for m in body["sections"].get("matches", [])
+        }, f"an event with status {terminal!r} rendered as a playable match"
+
+    @pytest.mark.parametrize("playable", ["live", "scheduled", "suspended"])
+    async def test_a_playable_event_IS_on_the_rail(self, client, playable):
+        """The paired positive the BLOCK asked for. Without it, the rejections
+        above all pass on a rail that is simply broken.
+
+        `suspended` is included on purpose: a rain delay is not an ending.
+        """
+        from app.routes.hub import HUB_CONFIGS, build_hub
+
+        db = _sql_dispatching_db(
+            unlinked=[],
+            linked=[_linked_market(market_id=1, name="Alcaraz vs Sinner")],
+            event_status=playable,
+            event_time=datetime.now(timezone.utc) + timedelta(hours=2),
+        )
+        body = await build_hub(HUB_CONFIGS["tennis"], db)
+        assert "Alcaraz vs Sinner" in {
+            m["name"] for m in body["sections"].get("matches", [])
+        }, f"a {playable!r} match is missing from the rail"
+
+    async def test_an_unknown_status_fails_closed(self, client):
+        """The allowlist's whole point: a terminal state added upstream must NOT
+        start rendering as a fixture just because nobody added it to a denylist."""
+        from app.routes.league_futures import build_linked_matches
+
+        db = _sql_dispatching_db(
+            unlinked=[],
+            linked=[_linked_market(market_id=1, name="Alcaraz vs Sinner")],
+            event_status="abandoned_by_organiser",
+        )
+        assert await build_linked_matches("tennis_atp", db) == []
+
+    async def test_a_live_claim_before_its_own_start_does_not_bypass_the_floor(
+        self, client
+    ):
+        """`live` is the one status exempt from the clock floor, which makes a
+        premature `live` row a way to lead the rail from the future — the #1779
+        class (`served_event_status` exists because four MLB rows served `live`
+        with scores 40+ hours before their own start)."""
+        from app.routes.league_futures import build_linked_matches
+
+        now = datetime.now(timezone.utc)
+        db = _sql_dispatching_db(
+            unlinked=[],
+            linked=[_linked_market(market_id=1, name="Alcaraz vs Sinner")],
+            event_status="live",
+            event_time=now + timedelta(days=2),
+        )
+        rows = await build_linked_matches("tennis_atp", db, now=now)
+        # It is read as `scheduled` (not `live`), so it is a future match rather
+        # than one being played — present, but never leading as live.
+        assert len(rows) == 1
+
+    async def test_a_stale_scheduled_row_is_not_on_the_rail(self, client):
+        """Status alone is not enough. Measured on production 2026-09-05: 18
+        head-to-heads dated Sep 2 were still `scheduled` three days after they
+        were played, so the clock floor is what catches them."""
+        from app.routes.league_futures import (
+            LINKED_MATCH_LOOKBACK,
+            build_linked_matches,
+        )
+
+        now = datetime.now(timezone.utc)
+        stale_db = _sql_dispatching_db(
+            unlinked=[],
+            linked=[_linked_market(market_id=1, name="Alcaraz vs Sinner")],
+            event_status="scheduled",
+            event_time=now - LINKED_MATCH_LOOKBACK - timedelta(hours=1),
+        )
+        assert await build_linked_matches("tennis_atp", stale_db, now=now) == []
+
+        # The paired positive: the SAME row inside the window does appear, so the
+        # test above cannot pass by the rail being broken outright.
+        fresh_db = _sql_dispatching_db(
+            unlinked=[],
+            linked=[_linked_market(market_id=1, name="Alcaraz vs Sinner")],
+            event_status="scheduled",
+            event_time=now + timedelta(hours=2),
+        )
+        assert len(await build_linked_matches("tennis_atp", fresh_db, now=now)) == 1
+
+    async def test_a_live_match_leads_the_rail(self, client):
+        """Live first, then soonest — the order a person watching reads it in.
+
+        The live match here started ONE MINUTE ago and the other two hours ago,
+        so sorting by start time alone would put the other one first: the
+        assertion can only pass if live-first is doing the work.
+
+        Its `commence_time` is deliberately in the PAST. The first draft of this
+        test gave the live row a start six hours in the FUTURE, and the
+        premature-`live` guard added when repairing CERT-1987 correctly reduced
+        it to `scheduled` — a fixture asserting an ordering for a state that
+        cannot exist.
+        """
+        from app.routes.league_futures import build_linked_matches
+
+        now = datetime.now(timezone.utc)
+        earlier = _linked_market(market_id=1, name="Fritz vs Shelton")
+        live = _linked_market(market_id=2, name="Alcaraz vs Sinner")
+
+        from unittest.mock import AsyncMock
+
+        db = AsyncMock()
+
+        async def _execute(stmt, *a, **kw):
+            sql = str(stmt)
+            if "FROM events" in sql and "futures_markets" not in sql:
+                return _row_result([
+                    (earlier.event_id, now - timedelta(hours=2), "scheduled"),
+                    (live.event_id, now - timedelta(minutes=1), "live"),
+                ])
+            if "futures_markets" in sql:
+                return _scalars_result([earlier, live])
+            return _scalars_result([])
+
+        db.execute = _execute
+        rows = await build_linked_matches("tennis_atp", db, now=now)
+        assert [r["name"] for r in rows] == ["Alcaraz vs Sinner", "Fritz vs Shelton"], (
+            "the live match must lead even though it started later"
+        )
+
+    async def test_the_pool_read_does_not_pay_for_an_event_id_predicate(self, client):
+        """Spelling `event_id IS NOT NULL` in SQL cost 1.23s on production
+        (2026-09-05, EXPLAIN ANALYZE): the planner ANDs the whole 588,398-row
+        `ix_futures_markets_event_id` bitmap to express a predicate that is free
+        in Python over rows already fetched. Pinned because the obvious tidy-up
+        is to "just put the filter in the query"."""
+        from app.routes.league_futures import build_linked_matches
+
+        seen: list[str] = []
+
+        class _DB:
+            async def execute(self, stmt, *a, **kw):
+                seen.append(str(stmt))
+                return _scalars_result([])
+
+        await build_linked_matches("tennis_atp", _DB())
+        assert seen, "no statement was issued"
+        assert "event_id IS NOT NULL" not in seen[0], (
+            "the pool read regained the predicate that costs 1.23s for no rows"
+        )
+
+
+def _get_db_dep():
+    from app.services.database import get_db
+
+    return get_db
+
+
+def _yield(db):
+    async def _gen():
+        yield db
+
+    return _gen()
+
+
+async def _linked_rows(build_linked_matches, markets):
+    """Drive `build_linked_matches` over a fixed linked population."""
+
+    class _DB:
+        async def execute(self, stmt, *a, **kw):
+            return _row_result(
+                [(m, datetime.now(timezone.utc), "scheduled") for m in markets]
+            )
+
+    return await build_linked_matches("tennis_atp", _DB())

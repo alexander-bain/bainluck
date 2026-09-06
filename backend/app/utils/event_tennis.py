@@ -84,6 +84,55 @@ _MATCHUP_RE = re.compile(r"\b(vs\.?|v\.?|def\.?|beats?)\b", re.IGNORECASE)
 _WINNER_RE = re.compile(r"\b(winner|champion|champ|to win)\b", re.IGNORECASE)
 
 
+# ── UX-P180 (#2167): tennis prop classification for the hub ──
+#
+# `_assign_section` routes EVERY `game_prop` in an individual sport to "matches",
+# and `_PROP_CLASSIFIERS` (routes/hub.py) was registered for ufc and boxing only
+# — so tennis had no way back out. Measured on production 2026-09-05, that put 55
+# season-long ranking props ("Will X Make the Top 10 in the 2026 ATP end of year
+# rankings") under a heading reading "MATCHES · 56".
+#
+# Matched as PHRASES anywhere in the name, never by splitting on the first colon:
+# tennis market names carry a tournament PREFIX ("US Open ATP: A vs B") as often
+# as a prop SUFFIX ("A vs. B: Total Sets O/U 3.5"), so a positional parse assigns
+# the wrong half. A plain moneyline matches none of these and stays a match.
+_TENNIS_PROP_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"\bexact\s+(match\s+)?score\b", re.IGNORECASE), "exact score"),
+    (re.compile(r"\btotal\s+sets\b", re.IGNORECASE), "total sets"),
+    (re.compile(r"\bset\s+\d+\s+games\b", re.IGNORECASE), "set games"),
+    (re.compile(r"\b(match|total)\s+games?\b", re.IGNORECASE), "total games"),
+    (re.compile(r"\bmatch\s+o/u\b", re.IGNORECASE), "total games"),
+    # Prefix-shaped props: "Game Spread: Alcaraz (-6.5) vs Paul (+6.5)". These are
+    # why the patterns are matched anywhere in the name rather than after a colon
+    # — here the prop phrase leads and the players follow, the exact inverse of
+    # "A vs. B: Total Sets O/U 3.5".
+    (re.compile(r"\bhandicap\b", re.IGNORECASE), "handicap"),
+    (re.compile(r"\bspread\b", re.IGNORECASE), "spread"),
+    (re.compile(r"\btie\s?break\b", re.IGNORECASE), "tiebreak"),
+    (re.compile(r"\bstraight\s+sets\b", re.IGNORECASE), "straight sets"),
+    (re.compile(r"\bend[- ]of[- ]year\s+rankings?\b", re.IGNORECASE), "ranking"),
+    (re.compile(r"\bmake\s+the\s+top\s+\d+\b", re.IGNORECASE), "ranking"),
+    (re.compile(r"\bqualify\s+for\b", re.IGNORECASE), "qualification"),
+    (re.compile(r"\bo/u\b", re.IGNORECASE), "over/under"),
+)
+
+
+def classify_tennis_prop(external_id: str | None, name: str | None) -> str | None:
+    """Classify a tennis market as a prop kind, or None if it is a real match.
+
+    Signature matches `classify_ufc_prop` / `classify_boxing_prop` so the hub's
+    `_PROP_CLASSIFIERS` table stays one uniform shape. `external_id` is accepted
+    for that contract and deliberately unused: tennis prop tickers are not a
+    stable family the way `KXUFCMOV` is, and guessing at one would misfile real
+    matches — the names carry the signal.
+    """
+    n = name or ""
+    for pattern, prop_type in _TENNIS_PROP_PATTERNS:
+        if pattern.search(n):
+            return prop_type
+    return None
+
+
 def is_winner_market(name: str | None) -> bool:
     """True for a tournament-winner field (the parent), not a single match."""
     n = name or ""

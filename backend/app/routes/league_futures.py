@@ -32,7 +32,7 @@ from app.utils.event_rails import (
     upcoming_rail_condition,
 )
 from app.utils.game_state import normalize_live_game_state
-from app.utils.lifecycle import served_event_status
+from app.utils.lifecycle import event_is_playable, served_event_status
 from app.utils.entity_page_tiers import (
     AVAILABILITY_DEGRADED,
     AVAILABILITY_EMPTY,
@@ -977,12 +977,8 @@ async def get_league_futures(
     return built
 
 
-async def build_league(sport_key: str, db: AsyncSession) -> dict:
-    """Build one league payload from the database. Does not touch the cache."""
-    now = datetime.now(timezone.utc)
-
-    # Determine the sport category from the key
-    # e.g., basketball_nba → llm_sport_category = "basketball"
+def _sport_category_for(sport_key: str) -> str:
+    """`basketball_nba` → the `llm_sport_category` value ("basketball")."""
     sport_category = sport_key.split("_")[0]
     # Map common prefixes to their llm_sport_category values
     _SPORT_KEY_TO_LLM_CATEGORY: dict[str, str] = {
@@ -990,17 +986,30 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
         "icehockey": "hockey",
         "motorsport": "motorsports",
     }
-    sport_category = _SPORT_KEY_TO_LLM_CATEGORY.get(sport_category, sport_category)
+    return _SPORT_KEY_TO_LLM_CATEGORY.get(sport_category, sport_category)
 
-    # Build query filters
+
+def _league_scope_filters(sport_key: str, now: datetime) -> list:
+    """Everything that scopes a market to THIS league, and nothing else.
+
+    UX-P180 (#2167). Extracted so `build_league` and the hub's linked-matches rail
+    (`build_linked_matches`) cannot drift about what "a tennis_atp market" means.
+
+    Deliberately EXCLUDES the `event_id` predicate. That predicate is the one
+    thing the two callers legitimately disagree about — a futures list wants the
+    markets NOT tied to a game, a matches rail wants precisely the ones that ARE —
+    and it was that single line, applied to both through one shared code path,
+    that made `/hub/tennis` head a rail "MATCHES · 56" over zero matches. Keeping
+    it out of the shared helper is what stops the next caller inheriting it by
+    accident.
+    """
     filters = [
         FuturesMarket.status == "open",
-        FuturesMarket.event_id.is_(None),
         or_(
             FuturesMarket.resolution_date.is_(None),
             FuturesMarket.resolution_date >= now,
         ),
-        FuturesMarket.llm_sport_category == sport_category,
+        FuturesMarket.llm_sport_category == _sport_category_for(sport_key),
     ]
 
     if sport_key in _CATEGORY_WIDE_FUTURES_ONLY:
@@ -1030,6 +1039,64 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
 
     # Exclude game-level matchup markets (vs patterns)
     filters.append(~FuturesMarket.name.ilike("% at %"))
+    return filters
+
+
+def _sorted_outcomes(market: FuturesMarket) -> list:
+    """A market's outcomes, most probable first."""
+    return sorted(
+        market.outcomes,
+        key=lambda o: float(o.current_probability) if o.current_probability else 0,
+        reverse=True,
+    )
+
+
+def _effectively_resolved(sorted_outcomes: list) -> bool:
+    """Has this market already answered itself? (leader ≥97% having opened ≥85%,
+    or every outcome pinned below 3% / above 97%.)"""
+    if not sorted_outcomes:
+        return False
+    leader = sorted_outcomes[0]
+    leader_prob = float(leader.current_probability) if leader.current_probability else 0
+    if leader_prob >= 0.97:
+        leader_opening = (
+            float(leader.opening_probability) if leader.opening_probability else None
+        )
+        if leader_opening is not None and leader_opening >= 0.85:
+            return True
+    # All-settled filter: skip if every outcome is <3% or >97% (post-season resolved)
+    probs = [
+        float(o.current_probability)
+        for o in sorted_outcomes
+        if o.current_probability is not None
+    ]
+    return len(probs) >= 2 and all(p < 0.03 or p > 0.97 for p in probs)
+
+
+def _serialize_outcomes(sorted_outcomes: list) -> list[dict]:
+    """The top ten outcomes in the shape every league/hub card renders."""
+    return [
+        {
+            "id": o.id,
+            "name": o.name,
+            "probability": float(o.current_probability) if o.current_probability else None,
+            "opening_probability": float(o.opening_probability) if o.opening_probability else None,
+            "rank": o.rank,
+            "movement_24h": float(o.probability_change_24h) if o.probability_change_24h else None,
+            "team_id": o.team_id,
+        }
+        for o in sorted_outcomes[:10]
+    ]
+
+
+async def build_league(sport_key: str, db: AsyncSession) -> dict:
+    """Build one league payload from the database. Does not touch the cache."""
+    now = datetime.now(timezone.utc)
+
+    filters = _league_scope_filters(sport_key, now)
+    # A futures/awards list is the markets NOT tied to a game — a market linked to
+    # an event belongs on that event's page. See `_league_scope_filters`.
+    filters.append(FuturesMarket.event_id.is_(None))
 
     query = (
         select(FuturesMarket)
@@ -1137,39 +1204,14 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
                 )
                 continue
 
-        # Sort outcomes by probability descending
-        sorted_outcomes = sorted(
-            market.outcomes,
-            key=lambda o: float(o.current_probability) if o.current_probability else 0,
-            reverse=True,
-        )
+        sorted_outcomes = _sorted_outcomes(market)
 
         # Skip effectively resolved markets (leader ≥97% and opened ≥85%)
-        if sorted_outcomes:
-            leader_prob = float(sorted_outcomes[0].current_probability) if sorted_outcomes[0].current_probability else 0
-            if leader_prob >= 0.97:
-                leader_opening = float(sorted_outcomes[0].opening_probability) if sorted_outcomes[0].opening_probability else None
-                if leader_opening is not None and leader_opening >= 0.85:
-                    resolved_skipped[section] = resolved_skipped.get(section, 0) + 1
-                    continue
-            # All-settled filter: skip if every outcome is <3% or >97% (post-season resolved)
-            probs = [float(o.current_probability) for o in sorted_outcomes if o.current_probability is not None]
-            if len(probs) >= 2 and all(p < 0.03 or p > 0.97 for p in probs):
-                resolved_skipped[section] = resolved_skipped.get(section, 0) + 1
-                continue
+        if _effectively_resolved(sorted_outcomes):
+            resolved_skipped[section] = resolved_skipped.get(section, 0) + 1
+            continue
 
-        outcomes_data = [
-            {
-                "id": o.id,
-                "name": o.name,
-                "probability": float(o.current_probability) if o.current_probability else None,
-                "opening_probability": float(o.opening_probability) if o.opening_probability else None,
-                "rank": o.rank,
-                "movement_24h": float(o.probability_change_24h) if o.probability_change_24h else None,
-                "team_id": o.team_id,
-            }
-            for o in sorted_outcomes[:10]
-        ]
+        outcomes_data = _serialize_outcomes(sorted_outcomes)
 
         market_data = {
             "id": market.id,
@@ -1472,3 +1514,215 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
     )
 
     return response
+
+
+# ---------------------------------------------------------------------------
+# UX-P180 (#2167) — the hub's OWN matches source
+# ---------------------------------------------------------------------------
+#
+# `build_hub` filled its `matches` section from `get_league_futures`, which
+# filters `FuturesMarket.event_id.is_(None)`. That filter is correct for a
+# futures/awards list and exactly wrong for a matches rail, because **a real
+# match is precisely a market that HAS an event_id**. The rail could therefore
+# only ever show the head-to-heads the matcher FAILED to link — the better
+# matching got, the emptier it became.
+#
+# Measured on production 2026-09-05 (`GET /api/hub/tennis`, mid-US-Open): the
+# rail was headed "MATCHES · 56" over 55 season-long ranking props, 7 doubles
+# and one row reading "Ferrari vs Ferrari". Zero singles matches, while 204
+# linked, correctly-classified, currently-playable US Open head-to-heads sat
+# excluded.
+#
+# This is the disjoint second source. It does NOT relax the filter above.
+
+#: How far back a linked match may have started and still be "on now".
+#
+# The event rows carry a `status`, but it is not trustworthy enough to be the
+# only test: measured on production 2026-09-05, 18 head-to-heads dated Sep 2
+# were still `scheduled` three days after they were played. The hub card renders
+# a name and prices and NO date or status (`app/hub/[competition]/page.tsx`), so
+# a finished first-round match is indistinguishable from tonight's quarter-final
+# — which is the same lying-heading defect this ship exists to remove, one row
+# down. A clock floor is the honest test; a tennis match runs to roughly five
+# hours, so twelve gives a completed match room to be reported without admitting
+# yesterday's card.
+LINKED_MATCH_LOOKBACK = timedelta(hours=12)
+
+#: Cap on the linked-matches rail. A Grand Slam main draw plus doubles and
+#: juniors is legitimately large; this bounds the payload without pretending the
+#: remainder does not exist (the count travels in `section_counts`).
+LINKED_MATCH_LIMIT = 200
+
+#: Cap on the market pool read before the event read narrows it. Generous
+#: because it is a per-LEAGUE scope, not a per-sport one: measured on production
+#: 2026-09-05 the whole `tennis_atp` pool was 725 rows mid-US-Open.
+LINKED_MATCH_POOL_LIMIT = 1500
+
+#: Tiers that can never produce a `matches` row — `_assign_section` sends 1, 2
+#: and 4 straight to "championship". Pruned in SQL so the event read below has
+#: fewer rows to resolve. Tier 3 and NULL are NOT pruned: they can still reach
+#: "matches" through the series-keyword and game_prop branches.
+_NON_MATCH_TIERS = (1, 2, 4)
+
+
+async def build_linked_matches(
+    sport_key: str,
+    db: AsyncSession,
+    *,
+    now: datetime | None = None,
+) -> list[dict]:
+    """The head-to-head markets for this league's CURRENTLY PLAYABLE events.
+
+    The mirror image of `build_league`'s pool: same league scope, opposite
+    `event_id` predicate. Returns rows in the section shape every hub/league card
+    already renders, ordered live-first then soonest-first, so a person opening
+    the page during a tournament sees what is on now and next.
+
+    Only rows `_assign_section` calls `matches` survive: the same query also
+    lands hundreds of markets ABOUT a match ("… : Total Sets O/U 3.5"), and a
+    rail that showed those under "MATCHES" would have swapped one false heading
+    for another.
+
+    ── Why this is two reads and not one join ──
+
+    Written first as a single joined query, measured on production, and rewritten
+    — the join cost **5.2s** against `build_league`'s 729ms on the same scope,
+    which is not a price a hub rebuild can pay. Two separate causes, both
+    measured with EXPLAIN (ANALYZE, BUFFERS) on 2026-09-05:
+
+    1. Spelling `event_id IS NOT NULL` in SQL made the planner AND in the whole
+       588,398-row `ix_futures_markets_event_id` bitmap: **1.23s** to express a
+       predicate that costs nothing in Python over rows already fetched.
+    2. The join drove one `events_pkey` probe per MARKET (611 of them) where the
+       distinct event count is 240 — and `events` is currently 437% dead tuples
+       (1,015,682 dead against 231,980 live), so a single-row pkey lookup reads
+       ~400 buffers instead of ~4. Deduplicating the event ids and reading them
+       in one set-based statement removes 60% of the probes.
+
+    The bloat is a production database problem, not this rail's, and it is filed
+    as its own issue — but it is the reason this function is shaped defensively
+    rather than as the obvious join. Net: ~1.4s, behind the hub's 180s cache and
+    background refresh.
+    """
+    now = now or datetime.now(timezone.utc)
+
+    filters = _league_scope_filters(sport_key, now)
+    # NB: no `event_id IS NOT NULL` here — see the docstring. Filtered in Python.
+    filters.append(
+        or_(
+            FuturesMarket.market_tier.is_(None),
+            FuturesMarket.market_tier.notin_(_NON_MATCH_TIERS),
+        )
+    )
+
+    query = (
+        select(FuturesMarket)
+        .options(selectinload(FuturesMarket.outcomes))
+        .where(*filters)
+        .limit(LINKED_MATCH_POOL_LIMIT)
+    )
+
+    try:
+        result = await asyncio.wait_for(db.execute(query), timeout=15)
+    except asyncio.TimeoutError:
+        # The hub is a composition: losing this rail must not cost the page its
+        # futures sections. `build_hub` records the typed loss.
+        logger.warning("linked matches timed out for %s", sport_key)
+        raise
+
+    candidates = [
+        m
+        for m in result.scalars().unique().all()
+        if m.event_id is not None and _assign_section(m, sport_key) == "matches"
+    ]
+    if not candidates:
+        return []
+
+    # One set-based read of the distinct events, then the currency test in
+    # Python. `status` alone is not enough (a stale `scheduled` row outlives the
+    # match it describes), and the clock alone is not enough (a `completed`
+    # event inside the window is still over), so both are applied.
+    event_rows = await asyncio.wait_for(
+        db.execute(
+            select(Event.id, Event.commence_time, Event.status).where(
+                Event.id.in_({m.event_id for m in candidates})
+            )
+        ),
+        timeout=15,
+    )
+    playable: dict[int, tuple] = {}
+    floor = now - LINKED_MATCH_LOOKBACK
+    for event_id, commence_time, raw_status in event_rows.all():
+        # Repairing CERT-1987. This was `raw_status != "completed"` — a DENYLIST,
+        # which admitted every status nobody had thought of. `closed` is the
+        # dominant terminal state on production (212,289 rows against 15,731
+        # `completed`) and is what a definitive StatPal completion writes, so the
+        # rail was rejecting the rare ending and admitting the common one. The
+        # retirement markers `voided` and `merged` walked through too.
+        #
+        # `served_event_status` first, so a row claiming `live` before its own
+        # start time is read as `scheduled` and has to clear the floor like any
+        # other future match (the #1779 class this module exists for) instead of
+        # bypassing it and leading the rail.
+        status = served_event_status(raw_status, commence_time, now)
+        if not event_is_playable(status):
+            continue
+        if status != "live" and (commence_time is None or commence_time < floor):
+            continue
+        playable[event_id] = (commence_time, status)
+
+    if not playable:
+        return []
+
+    # Live first, then soonest — the order a person watching a tournament reads
+    # the rail in. In Python because the currency test it sorts on is.
+    candidates = [m for m in candidates if m.event_id in playable]
+    candidates.sort(
+        key=lambda m: (
+            0 if playable[m.event_id][1] == "live" else 1,
+            playable[m.event_id][0],
+        )
+    )
+
+    rows: list[dict] = []
+    # Same name-normalising dedup `build_league` applies, for the same reason and
+    # by the same rule (keep the row with the most outcomes). Measured on
+    # production 2026-09-05 the raw rail listed "US Open ATP: Ben Shelton vs
+    # Stefanos Tsitsipas" twice and the live Bergs match three times. It does NOT
+    # merge the Kalshi/Polymarket pair for one match ("Bergs vs Van de Zandschulp"
+    # vs "US Open ATP: Zizou Bergs vs Botic van de Zandschulp") — that is
+    # cross-source identity (#2166), not this rail's to decide.
+    by_name: dict[str, dict] = {}
+    for market in candidates:
+        if len(rows) >= LINKED_MATCH_LIMIT:
+            break
+        sorted_outcomes = _sorted_outcomes(market)
+        if _effectively_resolved(sorted_outcomes):
+            continue
+        dedup_key = _normalize_futures_dedup_key(market)
+        prior = by_name.get(dedup_key)
+        if prior is not None:
+            if len(sorted_outcomes[:10]) <= len(prior["top_outcomes"]):
+                continue
+            rows = [r for r in rows if r["id"] != prior["id"]]
+        row = {
+            "id": market.id,
+            "name": market.name,
+            "source": market.source,
+            "external_id": market.external_id,
+            "market_tier": market.market_tier,
+            "category": market.category,
+            "resolution_date": (
+                market.resolution_date.isoformat()
+                if market.resolution_date
+                else None
+            ),
+            "outcome_count": len(market.outcomes),
+            "top_outcomes": _serialize_outcomes(sorted_outcomes),
+            "canonical_market_key": market.canonical_market_key,
+            "group_id": market.group_id,
+            "section": "matches",
+        }
+        by_name[dedup_key] = row
+        rows.append(row)
+    return rows
