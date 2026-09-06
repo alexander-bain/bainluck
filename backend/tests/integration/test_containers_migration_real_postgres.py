@@ -533,29 +533,29 @@ def test_a_doubles_pair_occupies_two_positions_on_one_side(pg):
     refused, so a re-run cannot turn a doubles pair into four.
     """
     with pg.cursor() as cur:
+        # The scratch database is migrated, not seeded, so there are no sports
+        # rows to borrow — make one.
+        #
+        # `active` IS SPELLED OUT ON PURPOSE. `Sport.active` carries a
+        # CLIENT-SIDE ORM default (`default=True`) and no `server_default`, so
+        # the column is NOT NULL with nothing to fill it: the default exists
+        # only inside SQLAlchemy's flush and is invisible to raw SQL. Omitting
+        # it here is a NotNullViolation, and this fixture found that the hard
+        # way. It is the same trap as `futures_outcomes.is_winner` in #2199,
+        # pointing the other direction.
+        cur.execute(
+            "INSERT INTO sports (key, name, active) VALUES "
+            "('tennis_atp_us_open', 'US Open', true) RETURNING id"
+        )
+        sport_id = cur.fetchone()[0]
         cur.execute(
             "INSERT INTO events (sport_id, external_id, home_team_name, "
             "away_team_name, commence_time, status) "
-            "SELECT id, 'containers-test-1', 'A/B', 'C/D', now(), 'scheduled' "
-            "FROM sports LIMIT 1 RETURNING id"
+            "VALUES (%s, 'containers-test-1', 'A/B', 'C/D', now(), "
+            "'scheduled') RETURNING id",
+            (sport_id,),
         )
-        row = cur.fetchone()
-        if row is None:
-            # No sports rows in a freshly migrated database; make one.
-            cur.execute(
-                "INSERT INTO sports (key, name) VALUES "
-                "('tennis_atp_us_open', 'US Open') RETURNING id"
-            )
-            sport_id = cur.fetchone()[0]
-            cur.execute(
-                "INSERT INTO events (sport_id, external_id, home_team_name, "
-                "away_team_name, commence_time, status) "
-                "VALUES (%s, 'containers-test-1', 'A/B', 'C/D', now(), "
-                "'scheduled') RETURNING id",
-                (sport_id,),
-            )
-            row = cur.fetchone()
-        event_id = row[0]
+        event_id = cur.fetchone()[0]
 
         for position, name in ((0, "Player A"), (1, "Player B")):
             cur.execute(
