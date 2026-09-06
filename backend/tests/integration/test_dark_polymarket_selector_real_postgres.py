@@ -31,6 +31,7 @@ CI is the environment that runs this — the `search-recall` job.
 
 from __future__ import annotations
 
+import json
 import os
 from contextlib import ExitStack, asynccontextmanager
 from datetime import datetime, timedelta, timezone
@@ -134,7 +135,61 @@ async def _seed(session):
         )
     )
     await session.commit()
-    return {k: m.id for k, m in ids.items()}
+    out = {k: m.id for k, m in ids.items()}
+    # The event the specimen hangs on, so a test can ask what a READER of that
+    # page would be served rather than only what the table holds.
+    out["_near_event_id"] = near.id
+    return out
+
+
+def _specimen_service():
+    """The venue, answering with the specimen's one real book.
+
+    The nineteen phantom sub-markets are left out here on purpose: which rows
+    the pass REFUSES is proved in `test_polymarket_dark_linked_market_gets_a_
+    price_3613.py`, and repeating it would make this file's failures ambiguous.
+    """
+    from app.services.polymarket_api import PolymarketEvent, PolymarketMarket
+
+    venue = PolymarketEvent(
+        id=SPECIMEN_EXTERNAL_ID,
+        title=SPECIMEN_TITLE,
+        active=True,
+        neg_risk=False,
+        markets=[
+            PolymarketMarket(
+                condition_id=MONEYLINE_CID,
+                question=SPECIMEN_TITLE,
+                outcomes=["Ozzy Diaz", "Ryan Gandra"],
+                outcome_prices=[MONEYLINE_PRICE, 0.705],
+                best_bid=MONEYLINE_BID,
+                best_ask=MONEYLINE_ASK,
+                active=True,
+            ),
+        ],
+    )
+
+    class _Service:
+        async def get_events_by_ids(self, event_ids):
+            return [{"id": i} for i in event_ids]
+
+        def _parse_event(self, raw):
+            return venue if raw["id"] == SPECIMEN_EXTERNAL_ID else None
+
+        async def close(self):
+            return None
+
+    return _Service()
+
+
+def _session_cm_for(session):
+    """`get_task_session` replacement that hands the pass the test's session."""
+
+    @asynccontextmanager
+    async def _cm():
+        yield session
+
+    return _cm
 
 
 async def _select(session):
@@ -373,3 +428,107 @@ class TestThePassWritesToRealPostgres:
             )
         ).scalar()
         assert legs == 1
+
+
+class TestTheReaderCanActuallySeeIt:
+    """CERT-2103's finding, answered on the path that really renders.
+
+    The BLOCK was right that the backend pass alone proves nothing a reader can
+    see, and it named `gameMarkets.other` and its `>= 3` gates as the thing to
+    fix. Measured afterwards, that is the wrong door, twice over:
+
+    1. **A fight moneyline is deliberately excluded from that section.**
+       `findWinProbMarkets` in `lib/otherMarketGroups.ts` classifies any market
+       whose rows sum to ~1.0 as a win-probability market and withholds it,
+       because the hero owns that question. Ozzy Diaz 0.295 + Ryan Gandra 0.705
+       is exactly 1.000. Forcing it into "Additional Markets" would put a
+       moneyline under a junk-drawer heading and duplicate the hero — the
+       opposite of *"the blend is the product"*.
+    2. **These rows already reach the reader by another route.** Measured on the
+       working sibling `/events/15190803` (same card, legs present, screenshot
+       2026-09-06): its fight markets render under **Bigger Picture -> GAME
+       PROPS**, served by `/related-futures`, and its `other` section renders
+       nothing at all — all five of its rows are win-prob shaped and withheld.
+
+    `/related-futures` builds `home_team_futures` by iterating **outcome rows**,
+    so a parent market with zero legs contributes nothing and is structurally
+    invisible. That is the whole bug, and writing the legs is the whole fix.
+    Measured the same day: the dark event returned `home_team_futures: 0`,
+    `away_team_futures: 0`, `series_markets: 0` — an empty page — while the
+    sibling returned 4.
+
+    So this is the one-row display regression the BLOCK asked for, pointed at
+    the door the row actually comes through. It fails if the ship is invisible.
+    """
+
+    async def _related(self, session, event_id):
+        from app.routes.events import _build_related_futures
+
+        resp, _status, _ids, _cacheable = await _build_related_futures(
+            event_id, session, debug=False
+        )
+        return resp
+
+    def _all_rows(self, resp):
+        return (resp.get("home_team_futures") or []) + (
+            resp.get("away_team_futures") or []
+        )
+
+    async def test_before_the_pass_the_page_has_nothing_to_show(self, pg_session):
+        """The state a user actually hit: a linked market, and a blank page.
+
+        This is the guard's own control. Without it, a test that finds the row
+        AFTER the pass cannot tell a fix from a fixture that was always green.
+        """
+        ids = await _seed(pg_session)
+        resp = await self._related(pg_session, ids["_near_event_id"])
+
+        rows = self._all_rows(resp)
+        assert not any(
+            r.get("market_id") == ids["specimen"] for r in rows
+        ), "the legless specimen must be invisible — that is the bug"
+        assert "Ozzy Diaz" not in json.dumps(resp), (
+            "no leg exists yet, so no price for this fight can be on the page"
+        )
+
+    async def test_after_the_pass_the_venues_price_is_on_the_page(self, pg_session):
+        """The ship, as a reader meets it: the fight, priced, in the payload
+        that draws Bigger Picture -> GAME PROPS."""
+        from app.tasks import polymarket as poly
+
+        ids = await _seed(pg_session)
+
+        with ExitStack() as es:
+            es.enter_context(patch("app.tasks.polymarket.get_task_session", _session_cm_for(pg_session)))
+            es.enter_context(
+                patch(
+                    "app.services.polymarket_api.PolymarketAPIService",
+                    lambda *a, **k: _specimen_service(),
+                )
+            )
+            stats = await poly._refresh_linked_polymarket_books()
+        assert stats["outcomes_created"] == 1, stats
+
+        resp = await self._related(pg_session, ids["_near_event_id"])
+        rows = self._all_rows(resp)
+
+        mine = [r for r in rows if r.get("market_id") == ids["specimen"]]
+        assert mine, (
+            "the specimen must now be surfaced — related-futures groups by "
+            "OUTCOME rows, so writing the leg is exactly what makes it visible"
+        )
+
+        blob = json.dumps(mine)
+        assert "Ozzy Diaz" in blob, "the fighter the price is about must be named"
+
+        priced = [
+            o
+            for r in mine
+            for o in (r.get("outcomes") or [])
+            if (o.get("name") or "") == "Ozzy Diaz"
+        ]
+        assert priced, f"no Ozzy Diaz outcome in {blob}"
+        assert priced[0]["probability"] == pytest.approx(MONEYLINE_PRICE), (
+            "the number on the page must be the number the venue is quoting — "
+            "29.5%, not a normalised or invented one"
+        )
