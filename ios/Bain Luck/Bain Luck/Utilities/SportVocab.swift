@@ -31,6 +31,28 @@ struct SportVocab: Equatable {
     /// tennis match is decided by ~6 games in the margin the market quotes; an
     /// NBA game by ~18 points.
     let marginRange: Int
+    /// The span a whole match's TOTAL realistically lands in, in ``unit`` —
+    /// `marginRange`'s counterpart for the totals maps, and nil where we have
+    /// no honest answer.
+    ///
+    /// #3503: the totals rail had no such field, so `MarketMapView` fell back
+    /// to the literals `180` and `230` whenever no market line parsed. Those
+    /// are basketball points, and a live tennis match therefore drew a
+    /// **"Games map"** whose rail read `170 · 205 · 240+` — 170 = 180−10,
+    /// 240 = 230+10, 205 their midpoint — over a sport played in 20–40 games.
+    /// The margin maps never had this bug because they had ``marginRange`` to
+    /// read.
+    ///
+    /// **It is optional on purpose.** An undeclared sport has no span we can
+    /// state, and the whole rule of this type is that a number in the wrong
+    /// unit is worse than an absent one *because it looks sourced*. Encoding
+    /// "we don't know" as a plausible-looking integer is the defect, not the
+    /// fix — so it is `nil`, and the rail is built from whatever the market
+    /// actually quoted instead (see `MarketMapRail.totalBounds`).
+    ///
+    /// Used ONLY as a fallback: a sport whose markets did quote lines keeps
+    /// deriving its rail from those lines, exactly as before.
+    let totalRange: ClosedRange<Int>?
     /// Whether the SCOREBOARD counts ``unit``.
     ///
     /// The default is `true`, deliberately: "the scoreboard counts what the
@@ -58,6 +80,10 @@ extension SportVocab {
         unit: "",
         unitSingular: "",
         marginRange: 6,
+        // Nil, not a guess. Cricket, rugby, MMA, AFL and esports all land here,
+        // and they are not played on one scale — the old literals gave every
+        // one of them basketball's. See the field's own note.
+        totalRange: nil,
         scoreboardCountsTheUnit: true,
         scoreboardUnit: ""
     )
@@ -69,32 +95,57 @@ extension SportVocab {
         (["baseball", "mlb"], SportVocab(
             marginTitle: "Run margin map", totalTitle: "Runs map",
             unit: "runs", unitSingular: "run", marginRange: 5,
+            totalRange: 4...14,
             scoreboardCountsTheUnit: true, scoreboardUnit: "")),
         (["hockey", "nhl"], SportVocab(
             marginTitle: "Goal margin map", totalTitle: "Goals map",
             unit: "goals", unitSingular: "goal", marginRange: 5,
+            totalRange: 2...9,
             scoreboardCountsTheUnit: true, scoreboardUnit: "")),
         (["soccer", "mls", "epl", "uefa", "fifa"], SportVocab(
             marginTitle: "Goal margin map", totalTitle: "Goals map",
             unit: "goals", unitSingular: "goal", marginRange: 5,
+            totalRange: 0...7,
             scoreboardCountsTheUnit: true, scoreboardUnit: "")),
         // A tennis match is scored in GAMES inside SETS; the market quotes a
         // game spread and a game total, and neither is a point. The scoreboard
         // reports sets, which is why this is the one row with
         // `scoreboardCountsTheUnit: false`.
+        //
+        // The total span has to cover BOTH formats the app carries: a
+        // best-of-three is 12 games at the shortest and ~39 at the longest, a
+        // best-of-five US Open men's match runs past 40 (its quoted totals sit
+        // around 36.5–40.5). One span, wide enough to be honest about both.
         (["tennis"], SportVocab(
             marginTitle: "Game margin map", totalTitle: "Games map",
             unit: "games", unitSingular: "game", marginRange: 6,
+            totalRange: 12...48,
             scoreboardCountsTheUnit: false, scoreboardUnit: "sets")),
+        // 180...230 is the literal `MarketMapView` used to hardcode for every
+        // sport on earth. It is kept verbatim HERE, where it is actually true,
+        // so basketball's rail does not move on a fix aimed at everyone else.
         (["basketball", "nba", "wnba", "ncaab"], SportVocab(
             marginTitle: "Margin map", totalTitle: "Points map",
             unit: "points", unitSingular: "point", marginRange: 18,
+            totalRange: 180...230,
             scoreboardCountsTheUnit: true, scoreboardUnit: "")),
         (["americanfootball", "nfl", "ncaaf"], SportVocab(
             marginTitle: "Margin map", totalTitle: "Points map",
             unit: "points", unitSingular: "point", marginRange: 18,
+            totalRange: 28...62,
             scoreboardCountsTheUnit: true, scoreboardUnit: "")),
     ]
+
+    /// The same span for a HALF.
+    ///
+    /// Derived rather than declared: a half is half a match by definition, and
+    /// a second hand-maintained table is a second table to get wrong. Nil
+    /// wherever ``totalRange`` is, for the same reason.
+    var halfTotalRange: ClosedRange<Int>? {
+        guard let full = totalRange else { return nil }
+        let lower = full.lowerBound / 2
+        return lower...Swift.max(lower + 1, full.upperBound / 2)
+    }
 
     /// The vocabulary for a sport key (`tennis_wta_us_open`, `baseball_mlb`, …).
     static func forSport(_ sportKey: String?) -> SportVocab {

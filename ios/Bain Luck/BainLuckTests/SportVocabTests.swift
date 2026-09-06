@@ -71,6 +71,12 @@ final class SportVocabTests: XCTestCase {
             XCTAssertEqual(vocab.unit, "", "an undeclared sport must not be given a unit this table invented")
             XCTAssertEqual(vocab.totalTitle, "Scoring map")
             XCTAssertEqual(vocab.marginRange, 6)
+            // #3503 — and no total span either. The old code gave every one of
+            // these basketball's 180–230; "we don't know" is not expressible as
+            // a plausible integer, so it is nil. Full rail behaviour is pinned
+            // in `MarketMapRailTests`.
+            XCTAssertNil(vocab.totalRange,
+                         "an undeclared sport must not be given a scale this table invented")
         }
     }
 

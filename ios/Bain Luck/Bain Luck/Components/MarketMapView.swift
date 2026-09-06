@@ -91,7 +91,11 @@ struct MarketMapView: View {
     }
 
     private var hasSpreads: Bool { !(gameMarkets.spreads ?? []).isEmpty }
-    private var hasTotals: Bool { !(gameMarkets.totals ?? []).isEmpty }
+    // `hasTotals` used to gate the totals column. It asked whether rows EXIST,
+    // which is a different question from whether any of them draw — the tennis
+    // card in #3503 had a row and drew nothing from it. `showsAnyTotalMap` is
+    // the question the layout actually needs, so the weaker one is gone rather
+    // than left beside it for someone to reach for.
     private var useColumns: Bool {
         #if os(macOS)
         return true
@@ -101,11 +105,11 @@ struct MarketMapView: View {
     }
 
     var body: some View {
-        if !hasSpreads && !hasTotals { EmptyView() }
+        if !showsAnyMap { EmptyView() }
         else if useColumns {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(alignment: .top, spacing: 12) {
-                    if hasSpreads {
+                    if showsAnyMarginMap {
                         VStack(alignment: .leading, spacing: 6) {
                             Text("MARGIN MAPS")
                                 .font(.system(size: 11, weight: .heavy))
@@ -116,7 +120,7 @@ struct MarketMapView: View {
                         }
                         .frame(maxWidth: .infinity)
                     }
-                    if hasTotals {
+                    if showsAnyTotalMap {
                         VStack(alignment: .leading, spacing: 6) {
                             Text("TOTAL MAPS")
                                 .font(.system(size: 11, weight: .heavy))
@@ -132,12 +136,25 @@ struct MarketMapView: View {
             }
         } else {
             VStack(spacing: 12) {
-                if hasSpreads { fullMarginMap; halfMarginMaps }
-                if hasTotals { fullTotalMap; halfTotalMaps }
+                if showsAnyMarginMap { fullMarginMap; halfMarginMaps }
+                if showsAnyTotalMap { fullTotalMap; halfTotalMaps }
                 unitMismatchFootnote
             }
         }
     }
+
+    /// Whether ANY map is on screen — the one selector the footnote and the
+    /// early-out both read.
+    ///
+    /// #3503, caught on the LOOK of the fix itself. Suppressing the tennis
+    /// totals card left `unitMismatchFootnote` rendering alone under the hero:
+    /// *"The scoreboard reports sets, this market quotes games — we do not hold
+    /// the games played yet"*, with no map anywhere on the screen for "this
+    /// market" to refer to. That sentence exists to explain a tile a map has
+    /// suppressed; with no map it explains nothing and reads as a stray fault.
+    /// A pointer and the thing it points at have to be gated by ONE condition,
+    /// or the next person to suppress a card re-orphans it.
+    private var showsAnyMap: Bool { showsAnyMarginMap || showsAnyTotalMap }
 
     /// Said once under the maps, not per card: the suppressed ACTUAL tiles are
     /// all one absence, and four copies of one sentence reads as four faults.
@@ -256,23 +273,45 @@ struct MarketMapView: View {
 
     // MARK: - Full Game Total Map
 
+    /// The full-match totals rows — the halves are the ones with a `":"`.
+    private var fullGameTotals: [GameMarketOutcome] {
+        (gameMarkets.totals ?? []).filter { !$0.outcomeName.contains(":") }
+    }
+
+    /// #3503 — the totals map's counterpart to `marginMapIsEmptyChrome`, which
+    /// it never had. The rule itself lives in `MarketMapRail` so it can be
+    /// asserted without rasterising this view.
+    private var totalMapIsEmptyChrome: Bool {
+        MarketMapRail.totalMapDrawsNothing(
+            hasThresholds: !extractTotalThresholds(fullGameTotals).isEmpty,
+            overUnder: overUnder,
+            isLive: isLive,
+            isDone: isDone,
+            hasScoreboardTotal: scoredHomeScore != nil && scoredAwayScore != nil,
+            hasProjectedTotal: scoredPace?.projectedTotal != nil
+        )
+    }
+
+    @ViewBuilder
     private var fullTotalMap: some View {
-        let totals = gameMarkets.totals ?? []
-        let fullGame = totals.filter { !$0.outcomeName.contains(":") }
-        let thresholds = extractTotalThresholds(fullGame)
+        if totalMapIsEmptyChrome {
+            EmptyView()
+        } else {
+            totalMapCard
+        }
+    }
+
+    private var totalMapCard: some View {
+        let thresholds = extractTotalThresholds(fullGameTotals)
         let allThresh = thresholds.map(\.threshold)
-        // A TOTAL cannot be negative, and the -10 padding put the rail's left
-        // edge at "-7" on the live US Open match (a stray 2.5 threshold among
-        // 21.5/22.5 game lines dragged the minimum down). Padding below zero is
-        // never a real outcome, so the floor is zero on every sport.
-        let rangeMin = max(0, (allThresh.min() ?? 180) - 10)
-        let rangeMax = (allThresh.max() ?? 230) + 10
-        let density = buildDensityFromThresholds(thresholds, rangeMin: rangeMin, rangeMax: rangeMax, segments: 14)
 
         let ladder: [(label: String, prob: Double, color: Color)] = thresholds.prefix(6).map {
             ("Over \(formatThreshold($0.threshold))", $0.overProb, Color(hex: "#7c3aed"))
         }
 
+        // Markers are built BEFORE the rail (#3503): with no line parsed they
+        // are the only real numbers the card has, so the rail has to be able to
+        // see them. Nothing in this block depends on the rail.
         var markers: [MapMarker] = []
         let ouLine = overUnder ?? thresholds.first(where: { abs($0.overProb - 0.5) < 0.1 })?.threshold
         if isDone {
@@ -301,6 +340,25 @@ struct MarketMapView: View {
             }
         }
 
+        // A TOTAL cannot be negative, and the -10 padding put the rail's left
+        // edge at "-7" on the live US Open match (a stray 2.5 threshold among
+        // 21.5/22.5 game lines dragged the minimum down). Padding below zero is
+        // never a real outcome, so the floor is zero on every sport.
+        //
+        // #3503 — the `?? 180` / `?? 230` that used to sit here were basketball
+        // points wearing every sport's title. The sport's own span now comes
+        // from `vocab.totalRange`, exactly as the margin maps have always read
+        // `vocab.marginRange`.
+        let bounds = MarketMapRail.totalBounds(
+            thresholds: allThresh,
+            markerValues: markers.map(\.value),
+            declared: vocab.totalRange,
+            pad: 10
+        )
+        let rangeMin = bounds.min
+        let rangeMax = bounds.max
+        let density = buildDensityFromThresholds(thresholds, rangeMin: rangeMin, rangeMax: rangeMax, segments: 14)
+
         let purpleRgb = (r: 124.0, g: 58.0, b: 237.0)
 
         return mapCard(
@@ -325,29 +383,69 @@ struct MarketMapView: View {
 
     @ViewBuilder
     private var halfMarginMaps: some View {
+        ForEach(halfMarginGroups) { group in
+            halfMarginCard(outcomes: group.outcomes, label: group.id)
+        }
+    }
+
+    /// The half-margin cards that will draw. Extracted from `halfMarginMaps` so
+    /// `showsAnyMarginMap` can ask the question without rendering it; the
+    /// membership rule is copied unchanged — #3503 does not move the margin
+    /// side, it only needs to know whether the margin side is on screen.
+    private var halfMarginGroups: [MapGroup] {
         // Try period_markets first, fall back to filtering spreads by name
         let periodMarkets = gameMarkets.periodMarkets ?? []
         let spreads = gameMarkets.spreads ?? []
         let halfSpreads = periodMarkets.filter { isSpreadMarket($0) } +
             spreads.filter { !isFullGameSpread($0.marketName) }
 
-        let h1 = halfSpreads.filter { derivePeriod($0) == "1H" }
-        let h2 = halfSpreads.filter { derivePeriod($0) == "2H" }
-        if !h1.isEmpty { halfMarginCard(outcomes: h1, label: "1st half margin") }
-        if !h2.isEmpty { halfMarginCard(outcomes: h2, label: "2nd half margin") }
+        return [
+            MapGroup(id: "1st half margin",
+                           outcomes: halfSpreads.filter { derivePeriod($0) == "1H" }),
+            MapGroup(id: "2nd half margin",
+                           outcomes: halfSpreads.filter { derivePeriod($0) == "2H" }),
+        ].filter { !$0.outcomes.isEmpty }
     }
 
-    @ViewBuilder
-    private var halfTotalMaps: some View {
+    /// Whether the MARGIN MAPS column has anything under its heading.
+    private var showsAnyMarginMap: Bool {
+        hasSpreads && (!marginMapIsEmptyChrome || !halfMarginGroups.isEmpty)
+    }
+
+    /// One half-map's worth of outcomes, labelled. Shared by the margin and
+    /// totals halves so both can be counted without being rendered.
+    private struct MapGroup: Identifiable {
+        let id: String
+        let outcomes: [GameMarketOutcome]
+    }
+
+    private var halfTotalGroups: [MapGroup] {
         let periodMarkets = gameMarkets.periodMarkets ?? []
         let totals = gameMarkets.totals ?? []
         let halfTotals = periodMarkets.filter { isTotalMarket($0) } +
             totals.filter { $0.outcomeName.contains(":") }
 
-        let h1 = halfTotals.filter { derivePeriod($0) == "1H" }
-        let h2 = halfTotals.filter { derivePeriod($0) == "2H" }
-        if !h1.isEmpty { halfTotalCard(outcomes: h1, label: "1st half total map") }
-        if !h2.isEmpty { halfTotalCard(outcomes: h2, label: "2nd half total map") }
+        return [
+            MapGroup(id: "1st half total map",
+                           outcomes: halfTotals.filter { derivePeriod($0) == "1H" }),
+            MapGroup(id: "2nd half total map",
+                           outcomes: halfTotals.filter { derivePeriod($0) == "2H" }),
+        ].filter { !extractTotalThresholds($0.outcomes).isEmpty }
+    }
+
+    @ViewBuilder
+    private var halfTotalMaps: some View {
+        ForEach(halfTotalGroups) { group in
+            halfTotalCard(outcomes: group.outcomes, label: group.id)
+        }
+    }
+
+    /// Whether the TOTAL MAPS column has anything under its heading. Without
+    /// this, suppressing an empty-chrome totals card (#3503) would leave the
+    /// iPad/Mac layout printing a bare "TOTAL MAPS" header over nothing —
+    /// trading one piece of empty chrome for another.
+    private var showsAnyTotalMap: Bool {
+        !totalMapIsEmptyChrome || !halfTotalGroups.isEmpty
     }
 
     private func halfMarginCard(outcomes: [GameMarketOutcome], label: String) -> some View {
@@ -377,15 +475,24 @@ struct MarketMapView: View {
     private func halfTotalCard(outcomes: [GameMarketOutcome], label: String) -> some View {
         let thresholds = extractTotalThresholds(outcomes)
         let allThresh = thresholds.map(\.threshold)
-        let rangeMin = (allThresh.min() ?? 90) - 5
-        let rangeMax = (allThresh.max() ?? 120) + 5
-        let density = buildDensityFromThresholds(thresholds, rangeMin: rangeMin, rangeMax: rangeMax, segments: 14)
-        let purpleRgb = (r: 124.0, g: 58.0, b: 237.0)
 
         var markers: [MapMarker] = []
         if let ou = thresholds.first(where: { abs($0.overProb - 0.5) < 0.1 })?.threshold {
             markers.append(MapMarker(id: "pre", value: ou, type: .pre, label: "PRE-GAME", displayValue: formatThreshold(ou)))
         }
+
+        // #3503 — `?? 90` / `?? 120` here were basketball half-points, the same
+        // defect as the full map's `?? 180` / `?? 230` at a smaller scale.
+        let bounds = MarketMapRail.totalBounds(
+            thresholds: allThresh,
+            markerValues: markers.map(\.value),
+            declared: vocab.halfTotalRange,
+            pad: 5
+        )
+        let rangeMin = bounds.min
+        let rangeMax = bounds.max
+        let density = buildDensityFromThresholds(thresholds, rangeMin: rangeMin, rangeMax: rangeMax, segments: 14)
+        let purpleRgb = (r: 124.0, g: 58.0, b: 237.0)
 
         return mapCard(
             title: label, subtitle: "Half \(vocab.unit) distribution", headline: "",
