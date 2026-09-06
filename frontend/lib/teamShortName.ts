@@ -67,6 +67,37 @@ function alphanumeric(token: string): string {
 }
 
 /**
+ * #3110 — a doubles PAIR is one competitor written as two surnames, and the
+ * last-word rule silently deletes the first one: "Siniakova / Townsend" became
+ * "Townsend", so the US Open women's doubles final read as a singles match
+ * between two people who were not playing singles.
+ *
+ * The separator that means "and" is a SPACED slash, and that is the whole test.
+ * Measured on production 2026-09-06 over every name carrying one — 252 distinct
+ * sides across 30 days of events, 0 rows in `teams` — and all 252 are pairs;
+ * none has three parts. Of those, 233 (92.5%) lose a player today; the other 19
+ * survive only by accident, because their trailing token reduces to <= 2 chars
+ * ("Arnaldi / Struff J-L" keeps both players because "J-L" is short, not
+ * because anything here knows it is a pair).
+ *
+ * An UNSPACED slash is a different character in the data and is deliberately
+ * not matched: it is part of one entity's own name. "Bodo/Glimt" (a club, event
+ * 15296763), "Scranton/Wilkes-Barre RailRiders" and "W-B/Scranton Penguins"
+ * (both in the UX-1065 corpus) must keep shortening exactly as they do — and
+ * the pairs ESPN writes without spaces ("Krawietz/Puetz") already survive,
+ * because a name with no whitespace has no last word to fall off.
+ *
+ * The pair is returned WHOLE rather than shortened side-by-side. Two reasons:
+ * the sides are already surname-compact in every one of the 252 (the longest is
+ * 41 characters), and returning the input keeps this module's stated invariant
+ * literally true — every output is the last word or the full name, never a
+ * string the competitor is not called.
+ */
+export function isDoublesPair(name: string): boolean {
+  return / \/ /.test(name);
+}
+
+/**
  * Is this trailing word incapable of identifying the team on its own?
  *
  * The <= 2 character clause is a LENGTH test rather than a list, which is why
@@ -97,6 +128,8 @@ export function teamShortName(
 ): string {
   const full = (name ?? "").trim();
   if (!full) return "";
+  // #3110: both halves of a doubles pair, or neither.
+  if (isDoublesPair(full)) return full;
   const words = full.split(/\s+/);
   if (words.length < 2) return full;
   if (isNonDistinctiveTrailingWord(words[words.length - 1])) return full;
@@ -150,8 +183,15 @@ export function teamShortNames(
 
   // Did the last-word rule have to give up on this side? (A single-word name
   // has nothing to shorten and has not "given up" — it is already compact.)
+  //
+  // #3110: a doubles pair is compact in the same way — "Siniakova / Townsend"
+  // is two surnames and there is nothing left to drop — so it must not reach
+  // for the abbreviation rescue and print the chip's own "S/T" a second time
+  // underneath it. Unreachable on today's data (pairs have no `teams` row, so
+  // no abbreviation exists to rescue with: 0 of 252 measured), and here so it
+  // stays unreachable the day one does.
   const gaveUp = (full: string, short: string) =>
-    short === full && full.split(/\s+/).length >= 2;
+    short === full && full.split(/\s+/).length >= 2 && !isDoublesPair(full);
   const homeGaveUp = gaveUp(homeFull, homeShort);
   const awayGaveUp = gaveUp(awayFull, awayShort);
   const collide =
