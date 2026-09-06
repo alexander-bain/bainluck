@@ -1,14 +1,14 @@
-samples          : 48  (2026-09-06T08:04:47Z -> 2026-09-06T11:33:32Z)
-sampled window   : 08:04:47Z -> 11:33:32Z  (208.8 min)
-distinct passes  : 178 in window (210 incl. ring backfill to 07:35:32Z)
+samples          : 53  (2026-09-06T08:04:47Z -> 2026-09-06T11:55:12Z)
+sampled window   : 08:04:47Z -> 11:55:12Z  (230.4 min)
+distinct passes  : 189 in window (221 incl. ring backfill to 07:35:32Z)
 
 inter-pass gap   : p50=41s p95=184s max=750s
-  gaps > 65s (response TTL lapses) : 46 of 177
-  gaps > 120s (expiry budget blown): 26 of 177
+  gaps > 65s (response TTL lapses) : 49 of 188
+  gaps > 120s (expiry budget blown): 28 of 188
 
 -- Q1: whole-head-cold passes --
-expired == head_n on 34 of 178 passes (19.1%)
-COLD WALL TIME (gap beyond the 65s TTL): 71.0 min of 203.1 min = 34.9% of the window
+expired == head_n on 34 of 189 passes (18.0%)
+COLD WALL TIME (gap beyond the 65s TTL): 77.3 min of 217.8 min = 35.5% of the window
   ^ this is the user-facing number; the pass percentage above understates it.
 
 -- Q2: was a compaction grinder resident? --
@@ -17,7 +17,7 @@ COLD WALL TIME (gap beyond the 65s TTL): 71.0 min of 203.1 min = 34.9% of the wi
 
 -- Q3: does the rate move across the #3399 deploy? --
   pre-#3399  (-> 10:05:31Z): passes=133 whole-head-cold=24 (18.0%)  gap p50=42s p95=170s
-  post-#3399 (10:05:31Z ->): passes=77 whole-head-cold=14 (18.2%)  gap p50=40s p95=196s
+  post-#3399 (10:05:31Z ->): passes=88 whole-head-cold=14 (15.9%)  gap p50=41s p95=196s
 
 -- the cold passes, with the gap that caused each --
    08:07:12Z  expired=40/40  period_s=317.7

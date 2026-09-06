@@ -14,8 +14,8 @@ Written 2026-09-06, session from 11:26Z. Branch
 was *route it, do not repair it*. Routing to Alex was already half-done — 183 put option **D**
 ("land the collision fix on the narrower promise it actually keeps") in front of him. Before
 relaying anything further I checked the premise every queue in this chain has been carrying: **that
-the morning compaction collision is what makes the search box cold.** It is not. Over 208.8 minutes
-in which **no compaction grinder ran at all**, the head was dead **34.9% of the wall clock**. The
+the morning compaction collision is what makes the search box cold.** It is not. Over 230.4 minutes
+in which **no compaction grinder ran at all**, the head was dead **35.5% of the wall clock**. The
 dominant cause is already filed as **#3398** (p1, "entirely cold 43% of the time"), it is a
 different defect from #3480, and #3480 is being held behind an invariant only #3398's fix or a dyno
 could satisfy. That is the routing answer.
@@ -58,40 +58,41 @@ the question it is meant to settle.
 
 ## 3. The measurement
 
-`artifacts/latency-184/cold-head-census.py` over `.lat182-warmer-samples.jsonl` (48 samples,
-08:04:47Z → 11:33:32Z — the sampler 183 left running):
+`artifacts/latency-184/cold-head-census.py` over `.lat182-warmer-samples.jsonl` (53 samples,
+08:04:47Z → 11:55:12Z — the sampler 183 left running):
 
 ```
-sampled window   : 08:04:47Z -> 11:33:32Z  (208.8 min)
-distinct passes  : 178 in window
+sampled window   : 08:04:47Z -> 11:55:12Z  (230.4 min)
+distinct passes  : 189 in window
 
 inter-pass gap   : p50=41s p95=184s max=750s
-  gaps > 65s  (response TTL lapses) : 46 of 177
-  gaps > 120s (expiry budget blown) : 26 of 177
+  gaps > 65s  (response TTL lapses) : 49 of 188
+  gaps > 120s (expiry budget blown) : 28 of 188
 
-Q1 whole-head-cold : expired == head_n on 34 of 178 passes (19.1%)
-     COLD WALL TIME : 71.0 min of 203.1 min = 34.9% of the window
+Q1 whole-head-cold : expired == head_n on 34 of 189 passes (18.0%)
+     COLD WALL TIME : 77.3 min of 217.8 min = 35.5% of the window
 
 Q2 compaction resident?
-  turbo_collapse_futures: NO new start — last_started_at 06:32:20Z (unchanged, 48/48 samples)
-  turbo_collapse_odds   : NO new start — last_started_at 06:46:42Z (unchanged, 48/48 samples)
+  turbo_collapse_futures: NO new start — last_started_at 06:32:20Z (unchanged, 53/53 samples)
+  turbo_collapse_odds   : NO new start — last_started_at 06:46:42Z (unchanged, 53/53 samples)
 
 Q3 across the #3399 deploy
   pre-#3399  : passes=133 whole-head-cold=24 (18.0%)  gap p50=42s p95=170s
-  post-#3399 : passes=77  whole-head-cold=14 (18.2%)  gap p50=40s p95=196s
+  post-#3399 : passes=88  whole-head-cold=14 (15.9%)  gap p50=41s p95=196s
 ```
 
 **Q2 is the load-bearing line.** `last_started_at` is a last-write-wins stamp and cannot be
-differenced — but it can be compared for *change*, and it did not change across any of the 48
+differenced — but it can be compared for *change*, and it did not change across any of the 53
 samples. Neither grinder started during the window; today's compaction ran 06:32–07:11Z, entirely
-before it. So the whole 34.9% accrued with **no compaction resident**.
+before it. So the whole 35.5% accrued with **no compaction resident**.
 
-**Q3 is a stability check**, not a result: the rate is flat across #3399's shed deploy at 10:05:31Z
-(18.0% → 18.2%), which is what it should be, since #3399 fixed the `sta`/`red` *write* path and not
-the pass cadence. A rate that ignores an unrelated deploy is a property of the system rather than an
-artifact of one release.
+**Q3 is a stability check**, not a result: the rate does not move materially across #3399's shed
+deploy at 10:05:31Z (18.0% → 15.9% of passes), which is what it should do, since #3399 fixed the
+`sta`/`red` *write* path and not the pass cadence. A rate that survives an unrelated deploy is a
+property of the system rather than an artifact of one release. The 2-point drop is within the
+variation the window already shows and I am not reading it as an improvement.
 
-**A metric note that matters.** "19.1% of passes" and "34.9% of wall time" measure the same ring and
+**A metric note that matters.** "18.0% of passes" and "35.5% of wall time" measure the same ring and
 differ by a factor of nearly two. The pass count is the wrong one to quote: one 750s gap hurts users
 far more than four 70s gaps, and the pass-based figure scores them the other way round. The census
 script prints both and says which is user-facing; my own first cut quoted only the pass figure and
@@ -126,8 +127,8 @@ diff, and Q2 supplies the missing evidence for it:
    out to be. But it is justified by #3398's all-day tail, not by #3480's one morning window — and
    the note to Alex currently says the opposite. He should have that before he answers.
 
-> ⚠️ **What this does NOT license.** My window is 08:04–11:33Z = **1:04–4:33am Pacific**, the
-> lowest-traffic hours, and contention is traffic-dependent. Do not extrapolate 34.9% to a day-wide
+> ⚠️ **What this does NOT license.** My window is 08:04–11:55Z = **1:04–4:55am Pacific**, the
+> lowest-traffic hours, and contention is traffic-dependent. Do not extrapolate 35.5% to a day-wide
 > cold-minutes figure. What is established is narrower and sufficient for the routing call: *in a
 > no-compaction window the head is dead about a third of the time.* Sizing it across a full day is a
 > separate measurement, parked.
@@ -141,18 +142,41 @@ one-counter finding I ran an independent user-shaped check: `.lat247-headprobe.s
 `sta`/`red`, which #3399's shed makes unrepresentative) at ~23s, so each term is revisited every
 ~9 min — far rarer than the warmer's ~40s pass, so the probe does not warm what it measures.
 
-Output: `artifacts/latency-184/headprobe-output.txt`.
+Output: `artifacts/latency-184/headprobe-output.txt`. 68 probes, 11:31:04Z → 11:55:52Z:
 
-**Its limit, stated because it bounds what the probe can be used for.** A multi-second head response
-has *two* filed causes and the probe cannot tell them apart:
+```
+latency        : p50=2360ms p95=5146ms max=5705ms
+warm (<=500ms) : 25  (36.8%)   band p50   136ms
+cold (>=2000ms): 39  (57.4%)   band p50 2,770ms
+in between     :  4   (5.9%)
+```
 
-- **#3398** — the head is wholly expired, so the term pays a full cold build; and
-- **#2304** — the warmer DELETEs each entry before rebuilding it, so a request landing inside that
-  window pays its own independent build (measured there at 2,000–3,689 ms, 8.6% of requests).
+**The near-empty middle is the substantive part.** A head term is either a cache hit (~136ms) or a
+full build (~2.8s); there is no gradual degradation to tune away. That is the shape of a
+starvation/eviction defect rather than a slow query plan.
 
-My probe's p50 sits squarely in #2304's 2–3.7s band. So it corroborates *the user-visible symptom* —
-head terms cost seconds, often — and must not be quoted as attribution to either issue. The
-attributing instrument is the ring census in §3.
+**Do the two methods agree? Roughly, and I am not going to claim better than that.** Compared
+like-for-like over the window where they overlap (11:31–11:45Z, bounded by the sampler's last ring
+read, so 15.5 of the probe's 24.8 min):
+
+| method | reading |
+|---|---|
+| ring — cold wall time | **40.8%** |
+| probe — responses ≥2s | **57.4%** |
+
+Same order of magnitude, both far from zero, probe higher by ~17 points. About half that residual is
+accounted for by **#2304** — the warmer DELETEs each entry before rebuilding it, so a request landing
+inside that window pays its own build (measured there at 2,000–3,689 ms on 8.6% of requests) *on top
+of* the wholly-cold periods the ring counts. The rest is sampling noise on a partial overlap.
+
+**So the probe corroborates the symptom and must not be quoted as attribution.** A multi-second head
+response has two filed causes — #3398 (wholly expired) and #2304 (delete window) — and this probe
+cannot separate them. The attributing instrument is the ring census in §3.
+
+**An honest note on how this went**, since the chain's failure mode is exactly this: at n=9 the probe
+read 89% slow and at n=43 it read 41.9%, and I briefly took the latter as convergence onto the ring's
+34.9%. It was not converging — it drifted back to 57.4% by n=68 because the last stretch was worse.
+A short probe samples one gap, not a distribution.
 
 ## 6. State at end of session
 
