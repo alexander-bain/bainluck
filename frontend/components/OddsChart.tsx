@@ -1762,13 +1762,33 @@ export default function OddsChart({
                           flipping on a measurement, because there is nothing to
                           measure: the anchor point is the right edge by
                           construction, so the right-hand side is never the
-                          answer. 12px clears the dot's 8px glow. */}
+                          answer. 12px clears the dot's 8px glow.
+
+                          #3561, THE HALO: once the number rendered, it rendered
+                          ON the line. `cy` is the last data point and the series
+                          TERMINATES there, so a label centred on `cy` sits
+                          exactly where the line arrives — a collision by
+                          construction, not a property of one specimen. It
+                          bisected the digits and turned `41%` into `41°`.
+
+                          Lifting it vertically is the obvious answer and is
+                          wrong: on a steeply-arriving series the line just left
+                          of the dot is ABOVE `cy`, so a lift walks the label
+                          into the line instead of out of it, and it would need a
+                          clamp against the plot ceiling as well. The label has
+                          to stay on the dot's row — it is labelling the dot — so
+                          it is made legible OVER ink instead. A painted-under
+                          white stroke is slope-independent and needs no
+                          geometry. */}
                       <text
                         x={cx - 12}
                         y={cy}
                         textAnchor="end"
                         dominantBaseline="central"
                         fill={fillColor}
+                        stroke="#FFFFFF"
+                        strokeWidth={3}
+                        paintOrder="stroke"
                         fontSize={11}
                         fontWeight={700}
                         fontFamily="monospace"

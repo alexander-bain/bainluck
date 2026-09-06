@@ -432,6 +432,36 @@ describe("#3525 — the win-probability chart prints nothing past its own edge",
     expect(html).not.toContain("Final");
   });
 
+  it("keeps the current-probability number legible where the line runs through it", () => {
+    // #3561. #3525 moved this number from `cx + 12` — past the plot's right
+    // rule, so it never rendered — to the left of the dot, where it does. What
+    // it landed on was the line: `cy` is the LAST data point and the series
+    // terminates there, so the 2.5px line arrives exactly through a label
+    // centred on `cy`. On production it bisected the digits and turned `41%`
+    // into `41°` (`artifacts-live-075/crop-callout-3x.png`).
+    //
+    // Both facts are pinned, and the first is why the second is not decoration:
+    // the label sits ON the dot's row BY CONSTRUCTION, at every slope, so it can
+    // only be made legible over ink. A vertical lift was rejected — on a steeply
+    // arriving series the line left of the dot is above `cy`, so lifting walks
+    // into it. If a future change does move the label off the row, the first
+    // assertion fails and the halo can be dropped deliberately rather than
+    // silently.
+    const html = chartHtml();
+    const dot = /<circle cx="([\d.]+)" cy="([\d.]+)" r="5"([^>]*)>/.exec(html);
+    expect(dot).not.toBeNull();
+    const callout = /<text([^>]*font-family="monospace"[^>]*)>(\d+)%<\/text>/.exec(html);
+    expect(callout).not.toBeNull();
+    const attrs = callout![1];
+    // On the dot's row, to the dot's left.
+    expect(/\by="([\d.]+)"/.exec(attrs)?.[1]).toBe(dot![2]);
+    expect(Number(/\bx="([\d.]+)"/.exec(attrs)?.[1])).toBeLessThan(Number(dot![1]));
+    // …and therefore haloed: painted under the glyphs, not over them.
+    expect(attrs).toContain('stroke="#FFFFFF"');
+    expect(attrs).toContain('paint-order="stroke"');
+    expect(Number(/stroke-width="([\d.]+)"/.exec(attrs)?.[1])).toBeGreaterThanOrEqual(2.5);
+  });
+
   it("prints `50%` exactly once, on the axis that owns it", () => {
     // The deleted label was a DUPLICATE as well as a clipped one: `yTicks`
     // includes 50, so the left axis already prints `50%` on this exact line.
