@@ -191,6 +191,28 @@ UPDATE events e
 #: and the row lands in `COUNT_UNRESTORED` as an unexplained shortfall. That
 #: state is not reachable from a clean apply, but the guard must not be the
 #: reason a partial restore cannot be finished by re-running the undo.
+#:
+#: 🔴 THE `ELSE` ARM REMOVES THE KEY. IT MUST NOT PRESERVE IT (CERT-2147).
+#:
+#: The undo does not run against the state the apply left; it runs against the
+#: state the SCHEDULE PASS left, and that pass is the entire point of NULLing.
+#: On a re-anchor `_set_statpal_id` writes BOTH halves — the column AND a fresh
+#: six-digit JSONB key. So a column-only row (343 of the 364, the majority) is
+#: backed up with `jsonb_had_key = false`, gets a JSONB key it never had from the
+#: re-anchor, and an `ELSE e.win_probability_sources` then RESTORES THE OLD
+#: COLUMN WHILE KEEPING THE NEW KEY. The row ends holding a ten-digit column and
+#: a six-digit JSONB key — a state that existed at no point in its history, and
+#: one `_get_statpal_id` resolves to the ten-digit value while the row looks
+#: half-repaired to anything reading the JSONB.
+#:
+#: Worse, it could not be fixed by running the undo again: the predicate fired
+#: forever (presence still disagreed with the backup) and the `ELSE` preserved
+#: the key every time. A restore that cannot converge is not a restore, and D51's
+#: unattended grant is written against one that is.
+#:
+#: So `ELSE` subtracts the key, which is what "the backup says this row had no
+#: JSONB key" actually means. `NULL - 'key'` is NULL, so a row with no
+#: `win_probability_sources` at all stays untouched.
 RESTORE = f"""
 UPDATE events e
    SET statpal_fixture_id = b.statpal_fixture_id,
@@ -201,7 +223,7 @@ UPDATE events e
                          '{{statpal_fixture_id}}',
                          to_jsonb(b.jsonb_value)
                      )
-                ELSE e.win_probability_sources
+                ELSE e.win_probability_sources - 'statpal_fixture_id'
            END
   FROM {BACKUP_TABLE} b
  WHERE e.id = b.event_id
@@ -209,6 +231,13 @@ UPDATE events e
         e.statpal_fixture_id IS DISTINCT FROM b.statpal_fixture_id
         OR COALESCE(e.win_probability_sources ? 'statpal_fixture_id', false)
            IS DISTINCT FROM b.jsonb_had_key
+        -- The VALUE, not just its presence (CERT-2147). A re-anchored row whose
+        -- backup also had a key disagrees on neither the column nor the
+        -- presence — both sides have one — while holding the schedule pass's
+        -- six-digit id where the backup holds the ten-digit one. Presence alone
+        -- cannot see that, and it is the 21-row case.
+        OR e.win_probability_sources->>'statpal_fixture_id'
+           IS DISTINCT FROM b.jsonb_value
    )
 """
 
@@ -386,17 +415,27 @@ def main() -> int:
 
     if args.rollback:
         done = rollback_clear(cur)
+        # COMMIT EVEN ON A PARTIAL RESTORE. Rolling the transaction back would
+        # discard the rows that DID come back and leave strictly more damage
+        # than it repaired; the rows are in the backup either way.
         conn.commit()
         print(f"[rollback] restored {done['restored']} rows from {BACKUP_TABLE}")
+        census(cur, "after")
         if done["unrestored"]:
             print(
                 f"[rollback] WARNING: {done['unrestored']} backed-up row(s) are "
                 f"still NOT present verbatim. This is a PARTIAL restore. Do not "
                 f"treat it as an undo; the rows are in {BACKUP_TABLE}."
             )
-        else:
-            print("[rollback] every backed-up row is present verbatim.")
-        census(cur, "after")
+            # NON-ZERO, and this is the half of CERT-2147 that the SQL fix alone
+            # does not answer. A partial restore that exits 0 is indistinguishable
+            # from a clean undo to anything that reads the status rather than the
+            # stdout — and the stdout of a detached dyno is not reliably readable
+            # from the sandbox at all (gotcha #48), so the exit code is the only
+            # signal an operator is certain to get. `1` is a result: the undo ran
+            # and did not fully succeed.
+            return 1
+        print("[rollback] every backed-up row is present verbatim.")
         return 0
 
     done = apply_clear(cur, dry_run=not args.apply)

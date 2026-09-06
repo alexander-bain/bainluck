@@ -364,6 +364,178 @@ class TestApplyRollbackRoundTrip:
         assert undone["unrestored"] == 0, undone
         assert _rows(cur)[ids["col_and_jsonb"]] == before[ids["col_and_jsonb"]]
 
+    def test_the_undo_survives_the_schedule_re_anchor_it_exists_to_enable(self, conn):
+        """CERT-2147. The undo runs against the state the SCHEDULE PASS left.
+
+        This is the sequence that actually happens in production, and the one
+        the first version of this gate never executed:
+
+            apply  →  the schedule pass re-anchors  →  rollback
+
+        NULLing a row is not the end state; it is what makes the row *eligible*
+        again, and the whole justification for choosing NULL over a re-key. On
+        the re-anchor `_set_statpal_id` writes BOTH halves — the column AND a
+        fresh six-digit JSONB key.
+
+        So a column-only row (343 of the 364, the MAJORITY) is backed up with
+        `jsonb_had_key = false` and then acquires a JSONB key it never had. The
+        original `ELSE e.win_probability_sources` restored the old ten-digit
+        column while KEEPING the new six-digit key — leaving the row in a state
+        it had never been in, with `_get_statpal_id` resolving to the ten-digit
+        column and the JSONB disagreeing with it.
+
+        Nothing else in this file could see it: every other test rolls back
+        against the state the apply left, where the re-anchor has not happened.
+        """
+        from scripts.null_statpal_live_space_ids_3094 import (
+            apply_clear,
+            rollback_clear,
+        )
+
+        cur = conn.cursor()
+        ids = _seed(cur)
+        before = _rows(cur)
+
+        apply_clear(cur, dry_run=False)
+        conn.commit()
+
+        # The schedule pass, exactly as `_set_statpal_id` writes it: the column
+        # AND the JSONB key, with the correct six-digit schedule-space id.
+        for label in ("col_only", "col_and_jsonb"):
+            cur.execute(
+                "UPDATE events SET statpal_fixture_id = %s, "
+                "win_probability_sources = "
+                "  jsonb_set(COALESCE(win_probability_sources, '{}'::jsonb), "
+                "            '{statpal_fixture_id}', to_jsonb(%s::text)) "
+                "WHERE id = %s",
+                (SCHEDULE_ID, SCHEDULE_ID, ids[label]),
+            )
+        conn.commit()
+
+        undone = rollback_clear(cur)
+        conn.commit()
+
+        assert undone["unrestored"] == 0, undone
+
+        restored = _rows(cur)
+        # The column-only row comes back column-only. The re-anchor's JSONB key
+        # must be GONE, not preserved beside a restored ten-digit column.
+        assert restored[ids["col_only"]] == before[ids["col_only"]]
+        assert restored[ids["col_only"]][1] is None
+        # And the row that legitimately had a key gets its OWN value back, not
+        # the schedule pass's — presence agreed on both sides here, so only a
+        # predicate that compares the VALUE can tell these apart.
+        assert restored[ids["col_and_jsonb"]] == before[ids["col_and_jsonb"]]
+
+        for label in ("six_digit", "nba_seven", "already_null"):
+            assert restored[ids[label]] == before[ids[label]], label
+
+    def test_the_preserving_else_arm_cannot_pass_this(self, conn):
+        """The BLOCKED statement, executed, and required to fail.
+
+        Following `test_rekey_statpal_anchors_real_postgres.py`'s two-armed
+        shape: a green run above means the repair was proved NECESSARY, not that
+        nothing objected. This drives the ORIGINAL `ELSE e.win_probability_sources`
+        against the same re-anchor sequence and asserts it leaves the row wrong —
+        so if someone reverts the arm, the test above fails and this one starts
+        failing too, and neither can be satisfied by weakening the other.
+        """
+        from scripts.null_statpal_live_space_ids_3094 import (
+            BACKUP_TABLE,
+            apply_clear,
+        )
+
+        cur = conn.cursor()
+        ids = _seed(cur)
+        before = _rows(cur)
+
+        apply_clear(cur, dry_run=False)
+        conn.commit()
+        cur.execute(
+            "UPDATE events SET statpal_fixture_id = %s, "
+            "win_probability_sources = "
+            "  jsonb_set(COALESCE(win_probability_sources, '{}'::jsonb), "
+            "            '{statpal_fixture_id}', to_jsonb(%s::text)) "
+            "WHERE id = %s",
+            (SCHEDULE_ID, SCHEDULE_ID, ids["col_only"]),
+        )
+        conn.commit()
+
+        # Verbatim the shipped-and-blocked restore: presence-only predicate,
+        # and an ELSE that keeps whatever JSONB the row currently holds.
+        cur.execute(
+            f"""
+            UPDATE events e
+               SET statpal_fixture_id = b.statpal_fixture_id,
+                   win_probability_sources =
+                       CASE WHEN b.jsonb_had_key
+                            THEN jsonb_set(
+                                     COALESCE(e.win_probability_sources, '{{}}'::jsonb),
+                                     '{{statpal_fixture_id}}',
+                                     to_jsonb(b.jsonb_value)
+                                 )
+                            ELSE e.win_probability_sources
+                       END
+              FROM {BACKUP_TABLE} b
+             WHERE e.id = b.event_id
+               AND (
+                    e.statpal_fixture_id IS DISTINCT FROM b.statpal_fixture_id
+                    OR COALESCE(e.win_probability_sources ? 'statpal_fixture_id', false)
+                       IS DISTINCT FROM b.jsonb_had_key
+               )
+            """
+        )
+        conn.commit()
+
+        fixture_id, sources = _rows(cur)[ids["col_only"]]
+        # The column came back...
+        assert fixture_id == before[ids["col_only"]][0]
+        # ...and the re-anchor's key is still sitting beside it. A state the row
+        # was never in, and the reason CERT-2147 withheld the token.
+        assert sources is not None and sources.get("statpal_fixture_id") == SCHEDULE_ID
+        assert (fixture_id, sources) != before[ids["col_only"]]
+
+    def test_a_second_rollback_after_a_re_anchor_converges(self, conn):
+        """A restore that cannot be re-run is not a restore.
+
+        The original predicate fired forever on the re-anchored row — presence
+        still disagreed with the backup — while the `ELSE` arm preserved the
+        offending key every time, so `unrestored` never reached 0 no matter how
+        often the operator ran the undo. Running it twice must be a no-op the
+        second time, and must still report a clean undo.
+        """
+        from scripts.null_statpal_live_space_ids_3094 import (
+            apply_clear,
+            rollback_clear,
+        )
+
+        cur = conn.cursor()
+        ids = _seed(cur)
+        before = _rows(cur)
+
+        apply_clear(cur, dry_run=False)
+        conn.commit()
+        cur.execute(
+            "UPDATE events SET statpal_fixture_id = %s, "
+            "win_probability_sources = "
+            "  jsonb_set(COALESCE(win_probability_sources, '{}'::jsonb), "
+            "            '{statpal_fixture_id}', to_jsonb(%s::text)) "
+            "WHERE id = %s",
+            (SCHEDULE_ID, SCHEDULE_ID, ids["col_only"]),
+        )
+        conn.commit()
+
+        first = rollback_clear(cur)
+        conn.commit()
+        assert first["unrestored"] == 0, first
+
+        second = rollback_clear(cur)
+        conn.commit()
+        # Nothing left to move, and still a clean verdict.
+        assert second["restored"] == 0, second
+        assert second["unrestored"] == 0, second
+        assert _rows(cur)[ids["col_only"]] == before[ids["col_only"]]
+
     def test_apply_is_idempotent_and_keeps_the_first_snapshot(self, conn):
         """A second `--apply` must find nothing to do and must NOT refresh the
         backup — the first run's snapshot is the one that predates every change.
