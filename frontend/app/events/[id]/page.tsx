@@ -11,6 +11,7 @@ import { EVENT_BOOT_HISTORY_HOURS } from "@/lib/event/detailBoot";
 import { canonicalEventHref } from "@/lib/canonicalEventUrl";
 import { useLiveEventStream } from "@/hooks/useLiveEventStream";
 import FreshnessChip from "@/components/event/FreshnessChip";
+import { applyLiveFrame, eventRefreshInterval } from "@/lib/eventLivePush";
 import LiveAgeStamp from "@/components/event/LiveAgeStamp";
 import LiveSparkline from "@/components/event/LiveSparkline";
 import {
@@ -158,22 +159,32 @@ export default function EventPage({ params }: EventPageProps) {
     ["event", eventId],
     () => fetchEvent(eventId),
     {
-      // live/034 S2 — when the SSE stream is delivering, polling stops. That is
-      // the whole ship: the same number, arriving instead of being waited for.
-      // The instant the stream stops delivering — errored, refused, closed, or
-      // silently dead — `streamConnected` goes false and the 32s poll comes
-      // straight back. A push path that dies must degrade to polling, never to
-      // a frozen number.
+      // live/034 S2 — when the SSE stream is delivering, the 32s poll stands
+      // down. That is the ship: the same number, arriving instead of being
+      // waited for. The instant the stream stops delivering — errored, refused,
+      // closed, or silently dead — `streamConnected` goes false and the 32s
+      // poll comes straight back. A push path that dies must degrade to
+      // polling, never to a frozen number.
+      //
+      // CERT-1994: "stands down" is not "stops". It used to be 0, and a frame
+      // carries ONE probability, so every other field on a page somebody left
+      // open was frozen at first fetch — including the tennis games line and the
+      // `observed_at` its freshness chip counts from, which the server
+      // re-confirms every ~10 minutes. The chip then said `Stale · 40m ago`
+      // about a number re-confirmed a minute earlier: the honesty mechanism
+      // itself lying, which is worse than the staleness it exists to disclose.
+      // See `eventRefreshInterval` for why the pushed cadence is 120s and not a
+      // taste — it is derived from the chip's own stale threshold.
+      //
       // Read through a REF, not the state value: `streamConnected` is derived
       // from `event`, which is what this very call produces, so naming it here
       // would be a use-before-declare. The ref is written just after the hook
       // below, and SWR only ever invokes this after a render has completed.
       refreshInterval: (data) =>
-        streamConnectedRef.current
-          ? 0
-          : data?.status === "live"
-            ? LIVE_REFRESH_INTERVAL
-            : SCHEDULED_REFRESH_INTERVAL,
+        eventRefreshInterval(data?.status, streamConnectedRef.current, {
+          live: LIVE_REFRESH_INTERVAL,
+          scheduled: SCHEDULED_REFRESH_INTERVAL,
+        }),
       onSuccess: () => setLastRefresh(Date.now()),
     }
   );
@@ -245,27 +256,12 @@ export default function EventPage({ params }: EventPageProps) {
   // consistent and nothing downstream needs to know push exists.
   useEffect(() => {
     if (!liveFrame || liveFrame.p === null || liveFrame.p === undefined) return;
-    const p = liveFrame.p;
+    const frame = { ...liveFrame, p: liveFrame.p };
     refreshEvent(
-      (prev) =>
-        prev
-          ? {
-              ...prev,
-              // `resolveProbability` reads `hero_probability` first on the live
-              // branch, so this is the number the hero actually renders.
-              hero_probability: p,
-              hero_probability_away: 1 - p,
-              win_probability_sources: {
-                ...(prev.win_probability_sources ?? {}),
-                [liveFrame.source]: {
-                  ...(prev.win_probability_sources?.[liveFrame.source] ??
-                    ({} as never)),
-                  value: liveFrame.source_value ?? p,
-                  updated_at: liveFrame.updated_at,
-                },
-              },
-            }
-          : prev,
+      // `applyLiveFrame` spreads `prev` FIRST and then only the fields a frame
+      // speaks for, so a frame arriving after the background poll carries the
+      // newer games line forward instead of reverting it (CERT-1994).
+      (prev) => applyLiveFrame(prev, frame),
       // No revalidate: the frame IS the new value. Refetching here would put a
       // request on every tick and undo the point of pushing.
       { revalidate: false },
