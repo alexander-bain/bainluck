@@ -143,6 +143,28 @@ function nameLinkClass(html: string, team: string): string {
   return m[1];
 }
 
+/**
+ * The visible text of an HTML fragment.
+ *
+ * A character walk rather than `.replace(/<[^>]*>/g, "")`, and not for style:
+ * CodeQL flags that regex as `js/incomplete-multi-character-sanitization` at
+ * HIGH severity, and it is right about the shape even though nothing here is
+ * sanitizing anything — a single pass that deletes `<...>` spans can leave a
+ * `<script` behind when the input is adversarial, so the pattern is worth not
+ * having in the codebase at all. This is exact for the markup we control and
+ * carries no such claim.
+ */
+function visibleText(fragment: string): string {
+  let out = "";
+  let inTag = false;
+  for (const ch of fragment) {
+    if (ch === "<") inTag = true;
+    else if (ch === ">") inTag = false;
+    else if (!inTag) out += ch;
+  }
+  return out;
+}
+
 /** The rendered text of the element carrying `data-testid`, tags stripped. */
 function testid(html: string, id: string): string | null {
   const at = html.indexOf(`data-testid="${id}"`);
@@ -157,11 +179,7 @@ function testid(html: string, id: string): string | null {
       depth -= 1;
       if (depth === 0) {
         const end = html.indexOf(">", i) + 1;
-        return html
-          .slice(open, end)
-          .replace(/<[^>]*>/g, "")
-          .replace(/\s+/g, " ")
-          .trim();
+        return visibleText(html.slice(open, end)).replace(/\s+/g, " ").trim();
       }
       i = html.indexOf(">", i) + 1;
       continue;
