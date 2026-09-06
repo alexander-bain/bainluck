@@ -37,6 +37,10 @@ from app.utils.kalshi_market_status import (  # noqa: E402
 from app.utils.kalshi_resolution_window import (  # noqa: E402  # CAL-P989 #2660
     derive_resolution_window,
 )
+from app.utils.event_completion import (  # noqa: E402  # #3544
+    DERIVED_COMMENCE_SOURCES,
+    KALSHI_OCCURRENCE_COMMENCE_SOURCE,
+)
 from app.utils.price_change_stamp import price_changed_at_value  # #2024
 from app.utils.futures_liveness import preserve_venue_settled  # noqa: E402  # #2222
 # #2927: imports nothing but stdlib (same rule as sport_keys.py), so it is safe
@@ -78,7 +82,7 @@ def _is_kalshi_game_ticker(event_ticker: str) -> Optional[str]:
     return best_label
 
 
-def _kalshi_commence_time(markets, *, is_game: bool):
+def _kalshi_commence_time(markets, *, is_game: bool, is_dated_match: bool = False):
     """The start time to store for a Kalshi event's markets.
 
     #3433. Gotcha #14 says a Kalshi market's ``commence_time`` is often its
@@ -95,14 +99,33 @@ def _kalshi_commence_time(markets, *, is_game: bool):
     ``expected_expiration_time``): when the thing actually happens. It was read
     by zero lines of our code.
 
-    Deliberately scoped to GAME tickers. ``occurrence_datetime`` is populated on
-    outrights too, where it means something else and is not always earlier than
-    close — ``KXHONEYDEUCE-01JAN27`` has occurrence 15:00Z against a 04:59Z
-    close — so preferring it everywhere would re-time markets that are not
-    broken. ``is_game`` is ``_is_kalshi_game_ticker``'s verdict, the repo's own
-    definition of a game, and the ``occ <= close`` check is the second bound:
-    an occurrence AFTER its own settlement backstop is not an occurrence we
-    understand, so we keep the close time rather than guess.
+    Deliberately scoped to tickers whose occurrence we can read as a start.
+    ``occurrence_datetime`` is populated on outrights too, where it means
+    something else and is not always earlier than close —
+    ``KXHONEYDEUCE-01JAN27`` has occurrence 15:00Z against a 04:59Z close — so
+    preferring it everywhere would re-time markets that are not broken. The
+    ``occ <= close`` check is the second bound: an occurrence AFTER its own
+    settlement backstop is not an occurrence we understand, so we keep the
+    close time rather than guess.
+
+    TWO gates open that preference, and they are separate on purpose:
+
+    * ``is_game`` — ``_is_kalshi_game_ticker``'s verdict, the repo's own
+      definition of a game. It also arms ``_build_game_market_name`` at the
+      call site, which RENAMES the market.
+    * ``is_dated_match`` — #3488. ``_is_dated_match_ticker``: a dated
+      per-match ticker (tennis and 16 non-tennis series that wear the same
+      shape — see that function; the reach is measured and pinned, not
+      incidental). Classification only; it opens this preference and nothing
+      else. ITF (``KXITFMATCH``, ``KXITFWMATCH``, the DOUBLES variants) is
+      deliberately absent from ``_KALSHI_GAME_TICKERS`` — we do not ingest ITF
+      events — so ``is_game`` is False for 138 open ITF match markets and
+      every one of them kept Kalshi's +14d settlement close. The
+      fix is NOT to call them games: that would send a satellite-tour market
+      through the matchup renamer and arm auto-create, which is the shape
+      CERT-2043 blocked. It is to say the narrower true thing — this ticker's
+      occurrence IS its start — which is the same split CERT-2060 made for
+      soccer cup props (``is_classification_only_soccer_prop_ticker``).
 
     Note what this does NOT do: no ticker parsing. ``extract_game_date_from_ticker``
     backtracks its 1-2 digit day (``KXATP1RANK-26DEC31`` -> Dec 3), which is why
@@ -115,7 +138,9 @@ def _kalshi_commence_time(markets, *, is_game: bool):
     for m in markets:
         close = getattr(m, "close_time", None)
         occ = getattr(m, "occurrence_datetime", None)
-        if is_game and occ is not None and (close is None or occ <= close):
+        if (is_game or is_dated_match) and occ is not None and (
+            close is None or occ <= close
+        ):
             starts.append(occ)
         elif close is not None:
             starts.append(close)
@@ -840,7 +865,11 @@ async def _poll_kalshi_markets():
                     if len(event.markets) == 1:
                         market = event.markets[0]
                         commence_time = _kalshi_commence_time(
-                            [market], is_game=bool(game_sport)
+                            [market],
+                            is_game=bool(game_sport),
+                            is_dated_match=_is_dated_match_ticker(
+                                event.event_ticker
+                            ),
                         )
 
                         # For game-level events, construct the best possible name
@@ -861,7 +890,11 @@ async def _poll_kalshi_markets():
                         market_name = event.title
                         # Use the earliest start across the event's markets
                         commence_time = _kalshi_commence_time(
-                            event.markets, is_game=bool(game_sport)
+                            event.markets,
+                            is_game=bool(game_sport),
+                            is_dated_match=_is_dated_match_ticker(
+                                event.event_ticker
+                            ),
                         )
 
                     # Compute market tier for relevance ranking
@@ -1547,6 +1580,16 @@ async def _poll_kalshi_markets():
             except Exception as e:
                 logger.warning("Tennis commence_time fix failed: %s", e)
                 stats["tennis_commence_fixed"] = 0
+
+            # #3544: the market now holds the venue's published hour, but the
+            # page renders the EVENT. Ordered AFTER the tennis fix-up on
+            # purpose — it must read markets already on their honest hour.
+            try:
+                starts_refined = await _refine_stand_in_event_starts()
+                stats["stand_in_event_starts_refined"] = starts_refined
+            except Exception as e:
+                logger.warning("Stand-in event start refinement failed: %s", e)
+                stats["stand_in_event_starts_refined"] = 0
         else:
             stats["post_loop_skipped_deadline"] = True
 
@@ -2011,9 +2054,51 @@ _TENNIS_MATCH_SERIES_RE = _re.compile(
 )
 
 
+def _is_dated_match_ticker(event_ticker: Optional[str]) -> bool:
+    """#3488. Is this a dated per-match ticker — one match, on a known day?
+
+    CLASSIFICATION ONLY. It answers "does this ticker's occurrence_datetime
+    mean the start of the thing" and feeds exactly one decision —
+    ``_kalshi_commence_time``'s occurrence preference. It is NOT a game
+    verdict: it never renames a market and never arms auto-create. Same split
+    CERT-2060 made for soccer cup props, for the same reason.
+
+    Shares ``_TENNIS_MATCH_SERIES_RE`` with ``_tennis_commence_target`` on
+    purpose — one definition of the row shape, so the writer that stores the
+    hour and the fix-up that must not overwrite it can never disagree about
+    which rows they mean.
+
+    **NOT TENNIS-ONLY, and that is deliberate — the shared constant's name is
+    the misleading part, not this function.** ``_TENNIS_MATCH_SERIES_RE`` is a
+    SHAPE (``KX<anything>MATCH|DOUBLES-<2-digit day><MON><2-digit day><tail>``)
+    and 16 non-tennis series wear it. Measured on production 2026-09-06, every
+    one of them is a per-match dated ticker and none is a game ticker, so all
+    618 of their rows change behaviour here:
+
+        kxrugbynrlmatch (204 rows, 3 open) · kxsquashmatch (170) ·
+        kxrugbyeslmatch (128) · kxpplmatch · kxvolleyballmatch · kxchessmatch ·
+        kxcricketodimatch · kxtglmatch · kxdartsmatch · kxcountychampmatch ·
+        kxsixnationsmatch · kxrugbymlrmatch · kxsshieldmatch ·
+        kxcrickettestmatch · kxpickleballmatch · kxwrestlingmatch
+
+    They have the SAME bug, confirmed at the venue rather than assumed:
+    ``KXRUGBYNRLMATCH-26SEP13PENSYD`` has occurrence 2026-09-13T09:05Z against
+    a close of 2026-09-27T06:05Z — the identical +14d settlement backstop — and
+    ``occ <= close`` holds. Narrowing this to tennis would leave them broken
+    for no reason. The bound that keeps it safe is the ``occ <= close`` check
+    in ``_kalshi_commence_time``, not the sport.
+
+    The reach is pinned by a test so it stays a decision and never becomes an
+    accident: a 17th series joining the shape is a test failure, not a silent
+    re-timing.
+    """
+    return bool(event_ticker) and bool(_TENNIS_MATCH_SERIES_RE.match(event_ticker))
+
+
 def _tennis_commence_target(
     external_id: str,
     event_commence: datetime | None,
+    current_commence: datetime | None = None,
 ) -> datetime | None:
     """The honest commence_time for a Kalshi tennis market, or None to leave it.
 
@@ -2034,6 +2119,23 @@ def _tennis_commence_target(
 
     ticker_date = extract_game_date_from_ticker(external_id)
     if ticker_date is None:
+        return None
+    # #3488. This fix-up exists to move a market OFF the +14d settlement
+    # backstop. A market already dated on its own ticker day is not on the
+    # backstop, and re-dating it can only LOSE information: since #3433 the
+    # poll stores the venue's own `occurrence_datetime` — a real kick-off hour
+    # — and the ticker knows nothing finer than the day, so every such rewrite
+    # replaced 18:00Z with 00:00Z. Measured 2026-09-06, that is what had
+    # happened to 426 of 471 open tennis match markets, KXATPMATCH-26SEP07ZVEDAR
+    # (Zverev vs Darderi, a US Open match the venue times at 18:00Z) among them:
+    # the page read "Sep 6, 8:00 PM EDT" for a match starting Sep 7 at 2:00 PM.
+    # Checked BEFORE the linked-event branch because the event is the weaker
+    # authority here and was itself poisoned to midnight by this same rewrite —
+    # a loop that re-confirmed its own bad answer every poll.
+    if (
+        current_commence is not None
+        and abs(current_commence - ticker_date) <= _TENNIS_EVENT_AGREEMENT_WINDOW
+    ):
         return None
     if (
         event_commence is not None
@@ -2068,7 +2170,9 @@ async def _fix_tennis_commence_times() -> int:
 
         fixed_ids = []
         for m in rows:
-            target = _tennis_commence_target(m.external_id, m.event_commence)
+            target = _tennis_commence_target(
+                m.external_id, m.event_commence, m.commence_time
+            )
             if target is None:
                 continue
             if abs((m.commence_time - target).total_seconds()) <= 1800:
@@ -2098,6 +2202,178 @@ async def _fix_tennis_commence_times() -> int:
             )
 
         return len(fixed_ids)
+
+
+#: How far FORWARD of a derived midnight stand-in a published start may sit and
+#: still be the same fixture. Two independent bounds, neither a taste call:
+#:
+#: (a) MEASURED AT THE VENUE (notice 26), 2026-09-06, Kalshi `/markets`
+#:     `status=open` across KXATPMATCH / KXWTAMATCH / KXITFMATCH / KXITFWMATCH /
+#:     KXRUGBYNRLMATCH / KXSQUASHMATCH — 212 dated-match markets carrying an
+#:     `occurrence_datetime`. Every one sits between **+9h and +34h** of its own
+#:     ticker-day midnight UTC and **none is negative**: a stand-in IS midnight,
+#:     so a real start on that fixture cannot precede it. The tail past +24h is
+#:     not noise — it is the Asian ITF morning draw (`KXITFMATCH-26SEP06STOISH`
+#:     occurs 2026-09-07T09:30Z), so a "same UTC day" rule would refuse 56 of
+#:     the 212 and was rejected on this evidence.
+#:
+#: (b) BOUNDED BY THE LINKAGE GUARD, which is the property that must actually
+#:     hold. `prediction_market_matching._ticker_date_conflicts_with_event`
+#:     refuses a date-only ticker at >=2 EASTERN days. A stand-in at midnight
+#:     UTC of ticker-day D is D-1 20:00 ET; +36h is D+1 08:00 ET — one ET day
+#:     from the ticker, still accepted; the guard does not refuse until ~+52h.
+#:     So a write inside this window provably cannot manufacture a link this
+#:     pipeline's own guard would then refuse, which is the #2020 loop and the
+#:     entire reason that guard exists. 16h of margin over the observed max.
+#:
+#: A single measured maximum would not justify a bound on its own — the next
+#: sample refutes it. (b) is what makes 36h safe; (a) is what makes it enough.
+_STAND_IN_REFINEMENT_MAX = timedelta(hours=36)
+
+#: Below this, the move is not worth a write (matches the market-side fix-up).
+_STAND_IN_REFINEMENT_MIN_MOVE = timedelta(minutes=30)
+
+
+def _stand_in_refinement_target(
+    external_id: Optional[str],
+    event_commence: datetime | None,
+    event_commence_source: Optional[str],
+    market_commence: datetime | None,
+):
+    """The published start to write onto a linked Event, or None to leave it.
+
+    #3544, and the second half of #3488. Pure: no DB, no clock.
+
+    `_kalshi_commence_time` now stores the venue's published hour on the MARKET
+    for a dated per-match ticker. The user does not read the market — the event
+    page renders ``events.commence_time`` — and for 185 tennis events that
+    field is a midnight stand-in that nothing existing will ever correct:
+
+    * the auto-create path is the only writer that offers this event a Kalshi
+      claim, and it runs ONLY for an UNLINKED market (gotcha #15). These
+      markets are linked, so `find_or_create_event` is never called for them
+      again and no amount of authority-rule loosening would reach them;
+    * `commence_time_write_authorized` refuses `kalshi` over `kalshi_ticker`
+      anyway — both rank 0 and a tie loses — and even the q066b same-record
+      revision clause misses, because it compares source STRINGS and Kalshi
+      writes itself under two names. Only `odds_api`/`espn` outrank, and tennis
+      has no ESPN anchor. So the stand-in is permanent by construction.
+
+    THE THREE GATES, all three required:
+
+    1. **The event's start must be a derived stand-in.** This is the
+       non-overwrite control and it fails CLOSED: only the named
+       `DERIVED_COMMENCE_SOURCES` provenance qualifies. An `espn`, `odds_api`,
+       `statpal`, `mlb_schedule_repair` or unknown/None start is never touched
+       — including None, which is most of the table.
+    2. **The ticker must be a dated per-match ticker** (`_is_dated_match_ticker`
+       — the same pinned predicate that armed the market-side write). This is
+       what keeps gotcha #14 out: for any OTHER Kalshi ticker the market's
+       `commence_time` is still a +14d settlement close, and copying that onto
+       an event would replace a right-day midnight with a fortnight-out date —
+       strictly worse than the bug being fixed.
+    3. **The move must be FORWARD and within `_STAND_IN_REFINEMENT_MAX`.** See
+       that constant: it is what proves this write cannot re-open #2020.
+
+    Returns the market's own published start. It never invents a value and
+    never moves a start earlier.
+    """
+    if event_commence_source not in DERIVED_COMMENCE_SOURCES:
+        return None
+    if not _is_dated_match_ticker(external_id):
+        return None
+    if event_commence is None or market_commence is None:
+        return None
+
+    ec = _as_utc(event_commence)
+    mc = _as_utc(market_commence)
+    delta = mc - ec
+    if delta < timedelta(0) or delta > _STAND_IN_REFINEMENT_MAX:
+        return None
+    if delta < _STAND_IN_REFINEMENT_MIN_MOVE:
+        return None
+    return mc
+
+
+def _as_utc(dt: datetime) -> datetime:
+    """Coerce to tz-aware UTC (naive -> assume UTC), so the window arithmetic
+    cannot raise on a driver that hands back a naive column."""
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+async def _refine_stand_in_event_starts() -> int:
+    """Give every stand-in Event the published hour its own Kalshi market holds.
+
+    #3544. The rail for `_stand_in_refinement_target`, which carries the rules
+    and the evidence. Runs beside the market-side fix-ups in the same post-loop
+    block, AFTER `_fix_tennis_commence_times`, so it reads markets that are
+    already on their honest hour rather than racing the writer that puts them
+    there — the composition hazard #3532 was filed for.
+
+    Scoped to OPEN markets: a settled market's `close_time` has collapsed to its
+    real settlement instant (gotcha, `_fix_tennis_commence_times`), and a
+    finished match's start is not worth re-dating. `status` is deliberately NOT
+    touched — whether a row with a now-correct start may be promoted to live is
+    the promotion gate's question, asked of a real time instead of a midnight.
+
+    ONE WRITE PER EVENT. An event can hold more than one open Kalshi market
+    (production 2026-09-06: **200** open markets across **185** tennis stand-in
+    events), and two markets can disagree about the hour. Writing per ROW would
+    make the surviving value depend on the order the server happened to return
+    — so the join is ordered and the first market to yield a target wins, once.
+    The count returned is therefore events moved, not rows examined.
+    """
+    async with get_task_session() as session:
+        result = await session.execute(text("""
+                SELECT e.id            AS event_id,
+                       e.commence_time AS event_commence,
+                       e.commence_time_source AS event_source,
+                       fm.external_id,
+                       fm.commence_time AS market_commence
+                FROM events e
+                JOIN futures_markets fm ON fm.event_id = e.id
+                WHERE e.commence_time_source = ANY(:derived)
+                  AND fm.source = 'kalshi'
+                  AND fm.status = 'open'
+                  AND fm.commence_time IS NOT NULL
+                ORDER BY e.id, fm.external_id
+            """), {"derived": sorted(DERIVED_COMMENCE_SOURCES)})
+        rows = result.fetchall()
+
+        moved = 0
+        seen: set = set()
+        for r in rows:
+            if r.event_id in seen:
+                continue
+            target = _stand_in_refinement_target(
+                r.external_id, r.event_commence, r.event_source, r.market_commence,
+            )
+            if target is None:
+                continue
+            seen.add(r.event_id)
+            await session.execute(
+                text("""
+                    UPDATE events
+                    SET commence_time = :dt,
+                        commence_time_source = :src
+                    WHERE id = :id
+                """),
+                {
+                    "dt": target,
+                    "src": KALSHI_OCCURRENCE_COMMENCE_SOURCE,
+                    "id": r.event_id,
+                },
+            )
+            moved += 1
+
+        if moved:
+            await session.commit()
+            logger.info(
+                "Refined commence_time for %d stand-in events off their own "
+                "Kalshi market's published start (of %d scanned)",
+                moved, len(rows),
+            )
+        return moved
 
 
 async def _link_sports_props_to_events() -> dict:

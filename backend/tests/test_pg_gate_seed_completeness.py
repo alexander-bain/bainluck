@@ -62,6 +62,7 @@ COVERED = (
     "test_link_tennis_statpal_real_postgres.py",
     "test_rekey_statpal_anchors_real_postgres.py",
     "test_restore_3026_jsonb_roundtrip_pg.py",
+    "test_stand_in_event_starts_real_postgres.py",
     "test_tennis_commence_predicate_real_postgres.py",
 )
 

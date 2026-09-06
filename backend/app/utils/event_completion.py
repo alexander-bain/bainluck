@@ -60,6 +60,15 @@ TICKER_DERIVED_COMMENCE_SOURCE = "kalshi_ticker"
 #: inheriting the clock by omission.
 DERIVED_COMMENCE_SOURCES = frozenset({TICKER_DERIVED_COMMENCE_SOURCE})
 
+#: #3488/#3544. What Kalshi's `/markets` calls ``occurrence_datetime``: the hour
+#: the venue says the thing STARTS, as opposed to ``close_time``, which is when
+#: the market settles (gotcha #14). Deliberately NOT in
+#: ``DERIVED_COMMENCE_SOURCES`` — that set means "nothing published one", and
+#: here something did. The contrast is the whole point of naming it separately
+#: from ``kalshi_ticker``: same provider, same row, but a published hour instead
+#: of a day parsed out of a ticker, so a clock MAY be run from it.
+KALSHI_OCCURRENCE_COMMENCE_SOURCE = "kalshi_occurrence"
+
 
 def commence_time_is_a_reported_start(commence_time_source) -> bool:
     """May a clock be run from this event's ``commence_time``?
