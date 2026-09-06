@@ -34,6 +34,7 @@ from app.utils.event_rails import (
     upcoming_rail_condition,
 )
 from app.utils.game_state import normalize_live_game_state
+from app.utils.matchup_sides import sided_yes_no_labels
 from app.utils.lifecycle import event_is_playable, served_event_status
 from app.utils.entity_page_tiers import (
     AVAILABILITY_DEGRADED,
@@ -1112,12 +1113,30 @@ def _effectively_resolved(sorted_outcomes: list) -> bool:
     return len(probs) >= 2 and all(p < 0.03 or p > 0.97 for p in probs)
 
 
-def _serialize_outcomes(sorted_outcomes: list) -> list[dict]:
-    """The top ten outcomes in the shape every league/hub card renders."""
+def _serialize_outcomes(sorted_outcomes: list, market=None) -> list[dict]:
+    """The top ten outcomes in the shape every league/hub card renders.
+
+    ``market`` is what lets a bare "Yes" name its side (#3089): the side lives
+    only in the market's NAME, and an outcome row cannot see it. Passing None
+    keeps the raw venue labels — the pre-#3089 behaviour — so a caller that has
+    no market in hand degrades to the status quo rather than guessing.
+    """
+    labels = (
+        sided_yes_no_labels(
+            getattr(market, "name", None),
+            getattr(market, "llm_sport_category", None),
+            [o.name for o in sorted_outcomes],
+        )
+        if market is not None
+        else None
+    )
     return [
         {
             "id": o.id,
-            "name": o.name,
+            # Renamed for READING only. The row keeps its id, so anything that
+            # resolves, settles or charts this outcome still addresses it by id
+            # and is untouched by the label.
+            "name": (labels or {}).get(o.name, o.name),
             "probability": float(o.current_probability) if o.current_probability else None,
             "opening_probability": float(o.opening_probability) if o.opening_probability else None,
             "rank": o.rank,
@@ -1307,7 +1326,7 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
             resolved_skipped[section] = resolved_skipped.get(section, 0) + 1
             continue
 
-        outcomes_data = _serialize_outcomes(sorted_outcomes)
+        outcomes_data = _serialize_outcomes(sorted_outcomes, market)
 
         market_data = {
             "id": market.id,
@@ -1911,7 +1930,7 @@ async def build_linked_matches(
                 else None
             ),
             "outcome_count": len(market.outcomes),
-            "top_outcomes": _serialize_outcomes(sorted_outcomes),
+            "top_outcomes": _serialize_outcomes(sorted_outcomes, market),
             "canonical_market_key": market.canonical_market_key,
             "group_id": market.group_id,
             "section": "matches",
