@@ -37,6 +37,19 @@ from one side. It may never be an equality anchor again. Every prediction below
 is consequently a LOWER BOUND on cost and an OPTIMISTIC verdict on viability: if
 even this model refuses a partition, the partition is refused.
 
+**Third version — the domain.** That last sentence has a domain, and the first
+draft of this file did not say so: it searched B in [1, 512] while the fit is
+pinned to a completed point at 128 and a floor at 17. Constraining a curve from
+one side only fixes the SIGN of the error on one side of the anchor
+(:data:`MODEL_DOMAIN_MAX` derives it): below 128 a prediction is a lower bound
+and a refusal is certain, **above 128 the same prediction is an UPPER bound**
+and refusing on it is the censored-anchor sin committed inside the guard that
+exists to prevent it. Caught as ``CAL-P1035-CENSORED-MODEL-DOMAIN``, the
+grader's nonblocking follow-up on CERT-2093, and repaired here. The verdict does
+not move — partitions above 128 are refused by :func:`min_beats_above_the_model_domain`
+instead, which spends no fit at all, only a completed unit cost and the fact
+that splitting work into more pieces cannot make there be less of it.
+
 Every constant is a PRODUCTION MEASUREMENT with its source named, and each one
 says whether it COMPLETED or was CENSORED. A guard whose expected value is
 recomputed from the code it guards agrees by construction and proves nothing.
@@ -151,9 +164,12 @@ def fit_cost_model() -> tuple[float, float]:
     the flattest one consistent with the evidence: the real ``s_total`` is larger
     and the real ``P`` smaller than what comes back here.
 
-    That asymmetry is the whole design. Every cost this model predicts is a
-    LOWER bound, so every "this partition fits" is optimistic and every "this
-    partition does not fit" is certain. The file only ever leans on the second.
+    That asymmetry is the whole design, and it has a domain. **At or below the
+    completed anchor** every cost this model predicts is a LOWER bound, so every
+    "this partition fits" is optimistic and every "this partition does not fit"
+    is certain; the file only ever leans on the second. Above the anchor the
+    asymmetry reverses and the model is inadmissible — :data:`MODEL_DOMAIN_MAX`
+    derives it and :func:`predicted_unit_s` enforces it.
 
     Pure arithmetic over the measurements above — it never reads
     ``STAGED_FUTURES_BUCKETS``, so it cannot quietly agree with whatever that
@@ -166,10 +182,93 @@ def fit_cost_model() -> tuple[float, float]:
     return fixed, s_total
 
 
+#: The largest partition at which the fit may be used to REFUSE anything.
+#:
+#: DERIVED, not chosen, and the derivation is the whole point. Write the true
+#: curve as ``cost'(B) = P' + s' / B``. It passes through the COMPLETED point at
+#: 128 exactly, and it lies on or above the CENSORED floor at 17, so
+#: ``s' >= s_total`` and ``P' = 857 - s'/128``. Subtract:
+#:
+#:     cost'(B) - predicted(B) = (s' - s_total) * (1/B - 1/128)
+#:
+#: which is ``>= 0`` for every ``B <= 128`` and ``<= 0`` for every ``B > 128``.
+#: So this file's founding property — every prediction is a lower bound, so
+#: every refusal is certain — **holds below the completed anchor and inverts
+#: above it**. Above 128 the fit is an UPPER bound on cost, and a refusal built
+#: on it is worth nothing.
+#:
+#: Note the domain is ``B <= 128``, NOT ``17 <= B <= 128``. Extrapolating BELOW
+#: the censored point is sound in the one direction this file uses: 17 is a
+#: floor the curve passes through from above, so for B < 17 the true cost is
+#: still at or above the prediction. It is the completed anchor, not the
+#: censored one, that bounds the safe domain.
+MODEL_DOMAIN_MAX = MEASURED_PARTITION
+
+
 def predicted_unit_s(buckets: int) -> float:
-    """A LOWER BOUND on what one unit costs at this partition. Never a cost."""
+    """A LOWER BOUND on what one unit costs at this partition. Never a cost.
+
+    Refuses outright above :data:`MODEL_DOMAIN_MAX`, where that guarantee
+    inverts. Partitions above the completed anchor are not thereby endorsed —
+    they are refused by :func:`min_beats_above_the_model_domain`, which spends
+    no fit.
+    """
+    if buckets > MODEL_DOMAIN_MAX:
+        raise ValueError(
+            f"the fit is an UPPER bound on cost above B={MODEL_DOMAIN_MAX} "
+            f"(see MODEL_DOMAIN_MAX), so it cannot refuse B={buckets}; use "
+            f"min_beats_above_the_model_domain, which does not use the fit"
+        )
     fixed, s_total = fit_cost_model()
     return fixed + s_total / buckets
+
+
+#: The one assumption the fit-free bound below rests on, named so it can be
+#: attacked: that units at a fixed partition cost roughly the same, so a
+#: completed unit's cost stands in for its 127 siblings. The evidence for it is
+#: thin and stated rather than hidden — two beats at B=128 measured 723.8 s and
+#: 857.0 s, and the CHEAPER is used. ``test_the_fit_free_bound_survives_the_
+#: assumption_being_wrong`` prices how wrong it may be: the finding survives
+#: until the true mean unit cost is ~3.5x below the cheaper reading.
+FIT_FREE_BOUND_ASSUMES_UNIFORM_UNITS = True
+
+
+def min_generation_work_s(buckets: int) -> float:
+    """A LOWER bound on the WORK one whole generation costs, WITHOUT the fit.
+
+    Only two things go in, and neither is a fitted parameter:
+
+    1. A COMPLETED unit cost at B=128 — the cheaper of the two, 723.8 s.
+    2. The SHAPE of the runtime, which is not in dispute and is visible in the
+       code rather than in a curve: every unit re-pays a fixed prefix and then
+       reads its own share, so a generation costs ``B * P' + s'`` with
+       ``P' >= 0``. That is non-decreasing in ``B``. **Splitting the work into
+       more pieces cannot make there be less of it.**
+
+    So for any ``B >= 128`` the generation costs at least what it costs at 128,
+    and what it costs at 128 is 128 completed units. Flat in ``buckets`` by
+    construction — the argument is a floor at the anchor, not a curve.
+    """
+    if buckets < MEASURED_PARTITION:
+        raise ValueError(
+            f"this bound only holds at or above the completed anchor "
+            f"B={MEASURED_PARTITION}; below it, use the fit"
+        )
+    return MEASURED_PARTITION * min(MEASURED_COMPLETIONS[MEASURED_PARTITION])
+
+
+def min_beats_above_the_model_domain(buckets: int) -> int:
+    """WHOLE beats to publish, a FLOOR, for any partition at or above 128.
+
+    Deliberately agnostic to how many units a beat banks: a beat cannot spend
+    more than :data:`MEASURED_USABLE_WINDOW_S` of window whatever it banks, so
+    ``work / window`` is a floor on beats no matter how the work is sliced. The
+    ``+ 1`` is the publish beat, exactly as in :func:`beats_to_publish`, and it
+    is not load-bearing here — the floor clears the budget without it.
+    """
+    return (
+        math.ceil(min_generation_work_s(buckets) / MEASURED_USABLE_WINDOW_S) + 1
+    )
 
 
 def predicted_generation_s(buckets: int) -> float:
@@ -253,12 +352,43 @@ def admission_margin(buckets: int) -> float:
 
 
 def max_achievable_margin() -> float:
-    """The best any partition can do — the B -> inf limit, i.e. the fixed prefix.
+    """The best margin any partition in the model's domain can have.
 
     Derived, not chosen. It is the ceiling on every safety argument in this file.
+
+    It is ``admission_margin(128)`` because the fit falls with ``B``, so inside
+    ``B <= MODEL_DOMAIN_MAX`` the biggest partition is the roomiest — and that
+    end of the domain is the COMPLETED point, so this number rests on a measured
+    unit cost rather than on the fit's shape.
+
+    It used to be the ``B -> inf`` limit, i.e. the fixed prefix, and that was a
+    third out-of-domain reading: the honest fit's prefix is an UPPER bound on
+    the true one, so a margin computed from it is a LOWER bound on the true
+    ``B -> inf`` margin — which is the unsafe direction for the one assertion
+    that consumes this (``variance > margin`` would be easier to pass, not
+    harder). The limit is also unreachable: everything above 128 is refused by
+    :func:`min_beats_above_the_model_domain`.
     """
-    fixed, _ = fit_cost_model()
-    return admission_ceiling_s() / fixed - 1.0
+    return admission_margin(MODEL_DOMAIN_MAX)
+
+
+def assert_the_shipped_partition_can_be_modelled_at_all() -> None:
+    """Precondition for every test that costs :data:`STAGED_FUTURES_BUCKETS`.
+
+    Without it, shipping a partition above the domain makes five tests die
+    inside :func:`predicted_unit_s` with a ValueError about a fit, when what the
+    reader needs to be told is that the size is unshippable and which test says
+    so. A guard that fails obscurely on the mutation it exists to catch has done
+    half a job.
+    """
+    assert STAGED_FUTURES_BUCKETS <= MODEL_DOMAIN_MAX, (
+        f"B={STAGED_FUTURES_BUCKETS} ships ABOVE the model's domain "
+        f"(max {MODEL_DOMAIN_MAX}), so nothing here can cost it — and the "
+        f"shipping rule refuses it outright, since production has completed a "
+        f"unit only at {sorted(MEASURED_COMPLETIONS)}. See "
+        f"test_the_shipped_value_is_the_ONE_THE_RULE_PICKS for the real failure "
+        f"and min_beats_above_the_model_domain for what such a size would cost."
+    )
 
 
 def model_admits(buckets: int) -> bool:
@@ -331,6 +461,110 @@ class TestTheCensoredAnchorIsNotAMeasurement:
         )
 
 
+class TestTheFitIsNotUsedOutsideItsDomain:
+    """CAL-P1035-CENSORED-MODEL-DOMAIN: a one-sided constraint has one side.
+
+    The grader's follow-up on CERT-2093. The verdict it questions does not
+    change; what changes is that the file now says which evidence licences which
+    half of it, and cannot silently spend the fit where the fit does not pay.
+    """
+
+    @staticmethod
+    def _a_steeper_curve_the_evidence_also_permits() -> tuple[float, float]:
+        """``(P', s')`` for a curve that fits every measurement just as well.
+
+        Twice the scalable term, re-pinned through the COMPLETED point at 128.
+        Nothing rules it out: it passes through 128 exactly and sits above the
+        censored floor at 17 (asserted below, so the specimen cannot rot).
+        """
+        _, s_total = fit_cost_model()
+        s_prime = 2.0 * s_total
+        return MEASURED_UNIT_S_AT_128 - s_prime / MEASURED_PARTITION, s_prime
+
+    def test_the_alternative_curve_is_genuinely_admissible(self):
+        p_prime, s_prime = self._a_steeper_curve_the_evidence_also_permits()
+        assert p_prime + s_prime / MEASURED_PARTITION == pytest.approx(
+            MEASURED_UNIT_S_AT_128, abs=0.5
+        ), "the specimen no longer passes through the completed point"
+        assert (
+            p_prime + s_prime / CENSORED_PARTITION
+            >= MEASURED_UNIT_S_AT_17_LOWER_BOUND
+        ), "the specimen has fallen below the censored floor and proves nothing"
+
+    def test_the_lower_bound_holds_BELOW_the_completed_anchor(self):
+        """Where the file leans on the fit, the fit is on the safe side."""
+        p_prime, s_prime = self._a_steeper_curve_the_evidence_also_permits()
+        for buckets in (1, 5, 17, 55, 64, 127):
+            assert p_prime + s_prime / buckets >= predicted_unit_s(buckets), (
+                f"at B={buckets} an admissible curve is CHEAPER than the "
+                f"prediction — the refusals below B={MODEL_DOMAIN_MAX} are no "
+                f"longer certain and the whole file must be re-derived"
+            )
+
+    def test_the_lower_bound_INVERTS_above_the_completed_anchor(self):
+        """And where it does not, the guard must refuse rather than extrapolate.
+
+        This is the finding, executable: at B=256 an equally admissible curve
+        costs LESS than the fit predicts, so "the fit says 256 does not fit" is
+        an upper bound masquerading as a floor — the same censored-anchor error
+        the file was written to catch, one anchor along.
+        """
+        fixed, s_total = fit_cost_model()
+        p_prime, s_prime = self._a_steeper_curve_the_evidence_also_permits()
+        for buckets in (129, 256, 512):
+            fit_says = fixed + s_total / buckets
+            also_admissible = p_prime + s_prime / buckets
+            assert also_admissible < fit_says, (
+                f"at B={buckets} the inversion has stopped — if that is real "
+                f"the domain rule can be relaxed, but derive it before doing so"
+            )
+
+    def test_the_fit_refuses_to_answer_outside_its_domain(self):
+        """Enforced, not merely documented: the search cannot wander again."""
+        assert predicted_unit_s(MODEL_DOMAIN_MAX) > 0
+        with pytest.raises(ValueError, match="UPPER bound"):
+            predicted_unit_s(MODEL_DOMAIN_MAX + 1)
+        with pytest.raises(ValueError, match="completed anchor"):
+            min_beats_above_the_model_domain(MEASURED_PARTITION - 1)
+
+    def test_the_two_halves_overlap_and_leave_no_partition_unjudged(self):
+        """Every B >= 1 is answered by one argument or the other, and 128 by both."""
+        assert MODEL_DOMAIN_MAX == MEASURED_PARTITION
+        assert beats_to_publish(MEASURED_PARTITION) > MAX_BEATS_TO_PUBLISH
+        assert min_beats_above_the_model_domain(MEASURED_PARTITION) > (
+            MAX_BEATS_TO_PUBLISH
+        )
+
+    def test_the_fit_free_bound_is_flat_above_the_anchor(self):
+        """It is a floor at the anchor, so a bigger partition cannot dodge it."""
+        assert (
+            min_beats_above_the_model_domain(129)
+            == min_beats_above_the_model_domain(1_000_000)
+            == 82
+        )
+
+    def test_the_fit_free_bound_survives_the_assumption_being_wrong(self):
+        """Price the one assumption instead of hiding it.
+
+        The bound treats a completed unit's cost as standing in for its 127
+        siblings. Suppose it does not. The budget is only reachable if the true
+        mean unit cost at 128 is under ~206 s — **3.5x cheaper than the cheaper
+        of the two readings we have**, and cheaper than any unit ever measured
+        at any partition. That is the size of the error the finding would need.
+        """
+        breakeven_unit_s = (
+            (MAX_BEATS_TO_PUBLISH - 1) * MEASURED_USABLE_WINDOW_S
+        ) / MEASURED_PARTITION
+        cheapest_measured = min(MEASURED_COMPLETIONS[MEASURED_PARTITION])
+        assert breakeven_unit_s == pytest.approx(205.6, abs=1.0)
+        assert cheapest_measured / breakeven_unit_s > 3.0, (
+            f"a measured unit at {cheapest_measured:.0f}s is now within 3x of "
+            f"the {breakeven_unit_s:.0f}s that would make a finer partition "
+            f"viable — the uniform-unit assumption has become load-bearing and "
+            f"needs measuring rather than pricing"
+        )
+
+
 class TestWhatTheFitSaysNowThatItIsHonest:
     """The corrected finding, which is not the one the first version asserted."""
 
@@ -364,7 +598,13 @@ class TestWhatTheFitSaysNowThatItIsHonest:
 
     def test_the_smallest_partition_the_model_admits_is_itself_a_lower_bound(self):
         """55, and the true answer is larger because the model is optimistic."""
-        smallest = next(b for b in range(1, 1025) if model_admits(b))
+        smallest = next(
+            (b for b in range(1, MODEL_DOMAIN_MAX + 1) if model_admits(b)), None
+        )
+        assert smallest is not None, (
+            "the model admits nothing inside its own domain — every statement "
+            "below is vacuous and the fit must be re-derived"
+        )
         assert smallest == 55, (
             f"the optimistic model now admits B={smallest}; the shipping rule "
             f"below is unaffected (it ships only measured sizes) but this number "
@@ -410,6 +650,7 @@ class TestThePartitionInForceHasBeenMeasured:
         assert not model_admits(CENSORED_PARTITION)
 
     def test_one_unit_still_fits_one_beat(self):
+        assert_the_shipped_partition_can_be_modelled_at_all()
         unit_s = predicted_unit_s(STAGED_FUTURES_BUCKETS)
         ceiling = admission_ceiling_s()
         assert unit_s <= ceiling, (
@@ -428,15 +669,29 @@ class TestNoPartitionMeetsTheBeatBudget:
     """The headline finding, and the assertion that will go red when D80 lands.
 
     The budget is the ship's freshness promise: one generation inside 24 whole
-    beats. Under an honest fit NOTHING reaches it — the admissible sizes all
-    start at 55 and cost B+1 beats. The dial is exhausted. Only bringing the
-    fixed prefix down can satisfy the promise, and that lives in
+    beats. NOTHING reaches it. The dial is exhausted. Only bringing the fixed
+    prefix down can satisfy the promise, and that lives in
     ``_futures_population_sql`` in ruling-D45-frozen ``precompute_calibration.py``.
+
+    **"Nothing" is now proved in two halves, on two different kinds of
+    evidence**, because one argument cannot honestly cover both (see
+    :data:`MODEL_DOMAIN_MAX`):
+
+    * ``B <= 128`` — the optimistic fit, where a refusal is certain. Admissible
+      sizes start at 55 and cost B+1 beats, so the cheapest is 56.
+    * ``B > 128`` — no fit at all. :func:`min_beats_above_the_model_domain`:
+      128 completed units of work cannot be spent in fewer than 81 beats of
+      window, and splitting them further cannot reduce the work.
+
+    The first version searched ``range(1, 513)`` with the fit and called that
+    the whole answer. It was the right verdict reached by a method that did not
+    licence it above 128.
     """
 
-    def test_every_partition_misses_the_budget(self):
+    def test_every_partition_IN_THE_DOMAIN_misses_the_budget(self):
         best = min(
-            (beats_to_publish(b) for b in range(1, 513)), default=math.inf
+            (beats_to_publish(b) for b in range(1, MODEL_DOMAIN_MAX + 1)),
+            default=math.inf,
         )
         assert best > MAX_BEATS_TO_PUBLISH, (
             f"some partition now publishes in {best} whole beats, inside the "
@@ -445,14 +700,33 @@ class TestNoPartitionMeetsTheBeatBudget:
             f"should be re-derived with the new headroom"
         )
 
+    @pytest.mark.parametrize("buckets", [129, 160, 256, 512, 4096])
+    def test_no_partition_ABOVE_the_domain_reaches_the_budget_either(self, buckets):
+        """The other half, and it never touches the fit.
+
+        A bigger partition is the one direction the dial has left once 128 is
+        shipping, and it is the direction the old search covered least honestly.
+        The floor is flat — the answer is the same at 129 and at 4,096 — because
+        the work is the same or greater and the window per beat is fixed.
+        """
+        floor = min_beats_above_the_model_domain(buckets)
+        assert floor > MAX_BEATS_TO_PUBLISH, (
+            f"B={buckets} could now publish in {floor} whole beats against a "
+            f"{MAX_BEATS_TO_PUBLISH}-beat budget — a completed generation's "
+            f"WORK has fallen far enough that splitting it finer is viable, "
+            f"which means the fixed prefix moved and everything re-derives"
+        )
+        assert floor == 82
+
     def test_the_cheapest_admissible_partition_is_named_not_implied(self):
         """56 beats at B=55: what the best possible dial setting would cost."""
-        admissible = [b for b in range(1, 513) if model_admits(b)]
+        admissible = [b for b in range(1, MODEL_DOMAIN_MAX + 1) if model_admits(b)]
         cheapest = min(beats_to_publish(b) for b in admissible)
         assert cheapest == 56
         assert cheapest > MAX_BEATS_TO_PUBLISH
 
     def test_the_shipping_partition_costs_what_it_costs(self):
+        assert_the_shipped_partition_can_be_modelled_at_all()
         assert beats_to_publish(STAGED_FUTURES_BUCKETS) == 129
 
 
@@ -500,37 +774,46 @@ class TestTheGuardFiresOnTheCodeThatShipped:
 class TestABeatBanksAtMostOneUnit:
     """CERT-2074's follow-up: the budget counts WHOLE beats, because runtime does.
 
-    Two units never fit one beat at ANY partition, so a generation costs B
-    productive beats and then the publish beat: **B + 1**.
+    Two units never fit one beat at any partition in the model's domain, so a
+    generation costs B productive beats and then the publish beat: **B + 1**.
 
     Derived here, not asserted: the count comes from driving production's own
     fence, so if the fence or the cost model moves, the ``+ 1`` moves with it.
+
+    Above the domain the question is not asked and does not need to be:
+    :func:`min_beats_above_the_model_domain` floors the beat count from total
+    work, which is indifferent to how many units a beat manages to bank.
     """
 
-    def test_no_partition_ever_fits_two_units_in_one_beat(self):
-        """Two units need ``window >= 2.25 x unit``. Even the B -> inf floor on
-        unit cost — the fixed prefix, which no partition can go below — is far
-        above the ``window / 2.25`` that would allow it.
+    def test_no_partition_IN_THE_DOMAIN_fits_two_units_in_one_beat(self):
+        """Two units need ``window >= 2.25 x unit``.
+
+        The cheapest unit anywhere in the domain is the one at ``B = 128``,
+        because the fit falls with ``B`` — and that unit is not a projection at
+        all, it is the COMPLETED reading the fit is anchored on. 857 s against
+        the 508 s that two units would need.
         """
-        fixed, _ = fit_cost_model()
         two_unit_ceiling_s = MEASURED_USABLE_WINDOW_S / (1.0 + STAGED_UNIT_WINDOW_SAFETY)
-        assert fixed > two_unit_ceiling_s, (
-            f"the fixed prefix has fallen to {fixed:.0f}s, under the "
-            f"{two_unit_ceiling_s:.0f}s at which a beat could bank two units — "
-            f"the +1-per-unit beat model no longer holds and every projection "
-            f"in this file must be re-derived"
+        cheapest_in_domain_s = predicted_unit_s(MODEL_DOMAIN_MAX)
+        assert cheapest_in_domain_s > two_unit_ceiling_s, (
+            f"the cheapest unit in the domain has fallen to "
+            f"{cheapest_in_domain_s:.0f}s, under the {two_unit_ceiling_s:.0f}s "
+            f"at which a beat could bank two units — the +1-per-unit beat model "
+            f"no longer holds and every projection in this file must be re-derived"
         )
         worst = max(
-            (units_admitted_per_beat(b) for b in range(1, MEASURED_PARTITION + 1)),
+            (units_admitted_per_beat(b) for b in range(1, MODEL_DOMAIN_MAX + 1)),
             default=0,
         )
         assert worst <= 1, f"some partition banks {worst} units in one beat"
 
     def test_the_shipping_partition_costs_one_beat_per_unit_plus_the_publish_beat(self):
+        assert_the_shipped_partition_can_be_modelled_at_all()
         assert units_admitted_per_beat(STAGED_FUTURES_BUCKETS) == 1
         assert beats_to_publish(STAGED_FUTURES_BUCKETS) == STAGED_FUTURES_BUCKETS + 1
 
     def test_the_gauge_under_reports_what_the_shipped_partition_costs(self):
+        assert_the_shipped_partition_can_be_modelled_at_all()
         gauge = gauge_projected_beats(STAGED_FUTURES_BUCKETS)
         real = beats_to_publish(STAGED_FUTURES_BUCKETS)
         assert gauge < real, (
@@ -573,6 +856,7 @@ class TestTwoConsecutiveBeatsEachBankAUnit:
         return beat1, beat2
 
     def test_the_shipping_partition_admits_a_unit_on_two_consecutive_beats(self):
+        assert_the_shipped_partition_can_be_modelled_at_all()
         beat1, beat2 = self._two_beats(
             STAGED_FUTURES_BUCKETS, carried_level_s=MEASURED_UNIT_S_AT_128
         )
@@ -619,6 +903,12 @@ class TestNoPartitionIsComfortable:
         The spread is larger than the entire budget for margin, so a self-block
         can happen at any size. Both sides are measurements; neither is a bar
         anyone picked.
+
+        The prefix appears here as the GENEROUS end of the argument, which is
+        why it is admissible where :func:`max_achievable_margin` no longer uses
+        it: the honest fit's prefix is an upper bound on the true one, so this
+        headroom is an upper bound on the true headroom, and asserting that even
+        the generous headroom loses to the spread is the conservative direction.
         """
         fixed, _ = fit_cost_model()
         headroom_s = admission_ceiling_s() - fixed
@@ -627,6 +917,28 @@ class TestNoPartitionIsComfortable:
             f"headroom above the prefix is now {headroom_s:.0f}s against a "
             f"measured spread of {spread_s:.0f}s — the build has become "
             f"schedulable and this file's pessimism should be revisited"
+        )
+
+    def test_the_margin_ceiling_is_a_MEASURED_point_not_an_unreachable_limit(self):
+        """+6.8% at B=128 — not the +12.5% the ``B -> inf`` prefix would claim.
+
+        Pinned to a number so the softer version cannot creep back. The limit
+        reading is not just unreachable (everything above 128 is refused by
+        :func:`min_beats_above_the_model_domain`); it is unsound in the
+        direction that matters, because the honest fit's prefix is an UPPER
+        bound on the true one, so the margin computed from it is a LOWER bound
+        on the true limit — and this class's whole assertion is that variance
+        BEATS the margin. Understating the margin makes that too easy.
+        """
+        fixed, _ = fit_cost_model()
+        unreachable_limit = admission_ceiling_s() / fixed - 1.0
+        assert max_achievable_margin() == pytest.approx(0.068, abs=0.004)
+        assert unreachable_limit > max_achievable_margin()
+        assert MEASURED_BEAT_TO_BEAT_VARIANCE > unreachable_limit, (
+            f"the measured spread {MEASURED_BEAT_TO_BEAT_VARIANCE:+.1%} no "
+            f"longer clears even the unreachable {unreachable_limit:+.1%} "
+            f"limit — the prefix has fallen, which is D80 landing, and this "
+            f"file's pessimism should be revisited from the top"
         )
 
     def test_beat_to_beat_variance_exceeds_the_best_achievable_margin(self):
