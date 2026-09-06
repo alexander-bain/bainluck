@@ -893,6 +893,40 @@ jobs:
             exit 1
           fi
 
+      - name: "#3433 Kalshi game commence wiring (real Postgres)"
+        # KALSHI-GAME-COMMENCE-WIRING-GUARD, the nonblocking follow-up CERT-2026
+        # named. #3433 taught the poll to store a game's `occurrence_datetime`
+        # instead of `close_time`, which for a game market is a multi-day
+        # settlement backstop (measured: NFL +3d, MLB +4d, UFC and tennis +14d;
+        # a Sep 8 fight was dated Sep 22). The repair is one helper consumed at
+        # TWO call sites, and every test shipped with it calls that helper
+        # directly — so the helper was proved and its wiring was not. Revert
+        # either call site to `close_time`, or drop `commence_time` from
+        # `update_set`, and all 13 of those assertions stay green.
+        #
+        # Why the server: `commence_time` is written in both halves of one
+        # statement — the INSERT arm and the `on_conflict_do_update` arm, the
+        # latter running on every beat after the first — and a statement-shape
+        # assertion records what the caller passed, agreeing with it by
+        # construction.
+        #
+        # Two arms patch the helper to return a 2031 sentinel no fixture carries
+        # and require it back out of the server, which states the wiring claim
+        # directly rather than inferring it from a value that a call site could
+        # have computed itself; each also reads the call's own arguments to pin
+        # WHICH branch ran. The non-game control keeps the file from passing
+        # against "always prefer the occurrence", a different and wrong repair.
+        # Runs after the #1852 step because its fixture also drops and recreates
+        # the schema. Same skip-detection as every gate here.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_kalshi_game_commence_wiring_real_postgres.py \
+            -v -s -rs 2>&1 | tee /tmp/commencewiring3433.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/commencewiring3433.txt; then
+            echo "::error::#3433 Kalshi commence wiring gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
   frontend-build:
     runs-on: ubuntu-latest
     defaults:
