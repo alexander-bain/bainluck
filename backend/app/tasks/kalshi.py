@@ -4,7 +4,7 @@ Kalshi prediction market polling task.
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import httpx
@@ -1485,6 +1485,16 @@ async def _poll_kalshi_markets():
             except Exception as e:
                 logger.warning("Hockey commence_time fix failed: %s", e)
                 stats["hockey_commence_fixed"] = 0
+
+            # #3403: same class as the golf/hockey fix-ups above — an OPEN
+            # tennis match market's close_time is a ~14-day settlement
+            # backstop, so its date is two weeks out until it settles.
+            try:
+                tennis_fixed = await _fix_tennis_commence_times()
+                stats["tennis_commence_fixed"] = tennis_fixed
+            except Exception as e:
+                logger.warning("Tennis commence_time fix failed: %s", e)
+                stats["tennis_commence_fixed"] = 0
         else:
             stats["post_loop_skipped_deadline"] = True
 
@@ -1923,6 +1933,119 @@ async def _fix_hockey_commence_times() -> int:
             )
 
         return linked_fixed + ticker_fixed
+
+
+# #3403 (gotcha #14): a Kalshi tennis match market is stamped with its
+# close_time, and while the market is OPEN that close_time is a ~14-day
+# settlement backstop, not the match start — Kalshi's own API gives
+# KXWTAMATCH-26SEP07OSARYB a close_time of 2026-09-21T15:00Z. Measured
+# 2026-09-06: 408/408 open tennis markets carrying a ticker date were dated
+# +14/+15 days, every series, no exceptions. It heals on settlement (Kalshi
+# collapses close_time to the real settlement instant), so only matches a user
+# could actually watch ever showed the wrong date, and the history looked fine
+# afterwards. The honest start is the date Kalshi encodes in the ticker,
+# refined to the true kick-off when a linked Event agrees on the day.
+_TENNIS_EVENT_AGREEMENT_WINDOW = timedelta(hours=36)
+
+# An ALLOWLIST of per-match series, deliberately not a denylist: a series we
+# have not seen keeps its close_time (the status quo), where a denylist would
+# re-date whatever nobody thought of. Two outright tickers prove why the shape
+# alone cannot be trusted — `KXATP1RANK-26DEC31` ("ATP #1 on Dec 31") has no
+# team tail, so extract_game_date_from_ticker BACKTRACKS its `\d{1,2}` day and
+# reads "26DEC3" + rest "1", silently re-dating a year-end outright to Dec 3.
+# Requiring both a match/doubles series AND a full 2-digit day closes that.
+_TENNIS_MATCH_SERIES_RE = _re.compile(
+    r"^KX[A-Z]*(?:MATCH|DOUBLES)-\d{2}[A-Z]{3}\d{2}[A-Z]", _re.I
+)
+
+
+def _tennis_commence_target(
+    external_id: str,
+    event_commence: datetime | None,
+) -> datetime | None:
+    """The honest commence_time for a Kalshi tennis market, or None to leave it.
+
+    Returns None for anything that is not a dated per-match ticker — outrights
+    such as ``KXWTA-26USO``, ``KXATPADVANCE-26USOSEMI`` or
+    ``KXATP1RANK-26DEC31``, whose close_time IS their horizon and must never be
+    re-dated to a match day.
+
+    When a linked Event lands within a day-and-a-half of the ticker date its
+    kick-off is preferred (ESPN/odds_api know the hour; the ticker only knows
+    the day). The window is what stops a poisoned Event date — one itself
+    derived from the same +14d close_time — being copied back onto the market.
+    """
+    from app.utils.prediction_market_matching import extract_game_date_from_ticker
+
+    if not external_id or not _TENNIS_MATCH_SERIES_RE.match(external_id):
+        return None
+
+    ticker_date = extract_game_date_from_ticker(external_id)
+    if ticker_date is None:
+        return None
+    if (
+        event_commence is not None
+        and abs(event_commence - ticker_date) <= _TENNIS_EVENT_AGREEMENT_WINDOW
+    ):
+        return event_commence
+    return ticker_date
+
+
+async def _fix_tennis_commence_times() -> int:
+    """Re-date OPEN Kalshi tennis markets off the ticker, not the close_time.
+
+    Scoped to open markets: a resolved row's close_time has already collapsed
+    to its real settlement instant, and re-dating it would invalidate closing
+    lines that calibration has already banked. Mirrors the hockey fix-up, and
+    like it resets calibration_probability on the outcomes it moves.
+    """
+    async with get_task_session() as session:
+        result = await session.execute(text("""
+                SELECT fm.id,
+                       fm.external_id,
+                       fm.commence_time,
+                       e.commence_time AS event_commence
+                FROM futures_markets fm
+                LEFT JOIN events e ON e.id = fm.event_id
+                WHERE fm.source = 'kalshi'
+                  AND fm.llm_sport_category = 'tennis'
+                  AND fm.status = 'open'
+                  AND fm.commence_time IS NOT NULL
+            """))
+        rows = result.fetchall()
+
+        fixed_ids = []
+        for m in rows:
+            target = _tennis_commence_target(m.external_id, m.event_commence)
+            if target is None:
+                continue
+            if abs((m.commence_time - target).total_seconds()) <= 1800:
+                continue
+            await session.execute(
+                text("UPDATE futures_markets SET commence_time = :dt WHERE id = :id"),
+                {"dt": target, "id": m.id},
+            )
+            fixed_ids.append(m.id)
+
+        if fixed_ids:
+            await session.execute(
+                text("""
+                    UPDATE futures_outcomes fo
+                    SET calibration_probability = NULL
+                    WHERE fo.market_id = ANY(:ids)
+                      AND fo.calibration_probability IS NOT NULL
+                """),
+                {"ids": fixed_ids},
+            )
+            await session.commit()
+            logger.info(
+                "Fixed commence_time for %d open Kalshi tennis markets "
+                "(of %d scanned)",
+                len(fixed_ids),
+                len(rows),
+            )
+
+        return len(fixed_ids)
 
 
 async def _link_sports_props_to_events() -> dict:
