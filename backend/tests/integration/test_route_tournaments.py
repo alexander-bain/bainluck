@@ -526,3 +526,148 @@ class TestEventTournamentExtensions:
             "staleness: %r" % (anchored.get("dropped"),)
         )
         check(anchored["matches"])
+
+
+class TestTheContainerIsNamedEvenWhenTheFixtureIsNot:
+    """#3697 — a US Open match page must always know it is a US Open match page.
+
+    ═══ WHAT A READER SAW ═══
+
+    Production, 2026-09-06 21:31Z, `/events/15304939` — Medvedev vs Tiafoe, on
+    court, round of 16. The top of the page:
+
+        ‹ ← Back to events                          live · 24s ago
+
+    "Back to events" goes to Discover. The tournament back link Alex asked for
+    in #2448 (*"no link back to the tournament (only Back to events)"*) rendered
+    nothing, because `/api/tournaments/by-event/15304939` answered
+    `{"tournament": null, "reason": "NOT_IN_REGISTER"}`.
+
+    Measured the same minute: 245 `tennis_atp_us_open` + `tennis_wta_us_open`
+    events exist and `event_links.by_event` held 104, every id `<= 15302911` —
+    the R128 draw sheet. **141 match pages, every remaining round including the
+    final, had no way back to the tournament**, and the failure got worse as the
+    tournament got more important.
+
+    ═══ WHY THE ROUTE HAD THE ANSWER AND DISCARDED IT ═══
+
+    Two different questions were being answered with one null. The CONTAINER is
+    settled by the sport key — `tennis_atp_us_open` is claimed by exactly one
+    registered tournament, and the route resolves `slug` from it before it ever
+    looks at the register. The FIXTURE is what the register pins, and for a
+    second-week match it pins nothing: `tournament_slate` mints
+    `matchup_key = f"espn:{comp_id}"` PRECISELY when `matchup_by_pair` misses,
+    so a R16 event is linked through `event_links.by_espn` (224 entries,
+    `'182744' -> 15304939`) and absent from `by_event` **by design**.
+
+    ═══ WHAT IS PINNED HERE, AND WHAT DELIBERATELY IS NOT ═══
+
+    Naming the container is not the name-matching shortcut this route refuses
+    elsewhere: it rests on the sport key, with the ESPN competition id agreeing
+    through a second independent channel. So `tournament` rides every answer.
+
+    `advancement` and `props` do NOT, and the second test is the one that keeps
+    this fix honest — restoring the back link must not become a licence to
+    render an advancement strip or a props list for a fixture the register
+    cannot pin. Both tests fail against the pre-#3697 route, in opposite
+    directions.
+    """
+
+    SPORT_KEY = "tennis_atp_us_open"
+
+    class _Row:
+        """The one indexed read the route makes before anything else."""
+
+        def __init__(self, sport_key):
+            self._v = (sport_key, "Daniil Medvedev", "Frances Tiafoe")
+
+        def first(self):
+            return self._v
+
+    class _Db:
+        def __init__(self, sport_key):
+            self._sport_key = sport_key
+
+        async def execute(self, *_a, **_kw):
+            return TestTheContainerIsNamedEvenWhenTheFixtureIsNot._Row(
+                self._sport_key
+            )
+
+    async def _answer(self, monkeypatch, *, by_event):
+        """The route's answer for an event whose fixture the register may not pin.
+
+        `_hub_payload` is stubbed rather than built: what is under test is the
+        route's own branch, and a real hub build would make the test depend on
+        whether the committed register happens to link this id today.
+        """
+        async def _stub_hub(_slug, _spec, _db, **_kw):
+            return {"event_links": {"by_event": by_event}}
+
+        monkeypatch.setattr(tournaments, "_hub_payload", _stub_hub)
+        return await tournaments.get_event_tournament(
+            15304939, db=self._Db(self.SPORT_KEY)
+        )
+
+    async def test_a_second_week_match_still_names_its_tournament(self, monkeypatch):
+        """The ship. Red before #3697, which returned `tournament: None` here."""
+        body = await self._answer(monkeypatch, by_event={})
+
+        assert body["reason"] == "NOT_IN_REGISTER", (
+            "the diagnostic must survive the fix — it is how the register gap "
+            "itself stays visible"
+        )
+        assert body["tournament"] is not None, (
+            "the sport key already proved which tournament this is; a null here "
+            "is the route discarding a fact it holds"
+        )
+        assert body["tournament"]["slug"] == "us-open"
+        assert body["tournament"]["url"] == "/tournaments/us-open"
+        assert body["tournament"]["title"]
+
+    async def test_it_names_the_container_without_inventing_the_fixture(
+        self, monkeypatch
+    ):
+        """The honesty half: a back link is not a licence to render a fixture.
+
+        Advancement and the match's other questions genuinely need the pinned
+        register matchup. If a later change starts filling them in from the
+        slate's ESPN row instead, a reader gets a reach board for a matchup
+        nobody quoted — and this goes red.
+        """
+        body = await self._answer(monkeypatch, by_event={})
+
+        assert not body.get("advancement")
+        assert not body.get("props")
+        assert not body.get("matchup_key")
+
+    async def test_an_event_outside_every_tournament_is_still_a_plain_null(
+        self, monkeypatch
+    ):
+        """A Lakers game gains nothing from this. The sport-key gate is the gate.
+
+        Guards the blast radius: #3697 widened what a REGISTERED tournament's
+        event is told, and must not have widened WHICH events are claimed.
+        """
+        async def _explode(*_a, **_kw):  # pragma: no cover - must not be reached
+            raise AssertionError("a non-tournament event must not build a hub")
+
+        monkeypatch.setattr(tournaments, "_hub_payload", _explode)
+        body = await tournaments.get_event_tournament(
+            15304939, db=self._Db("basketball_nba")
+        )
+        assert body["tournament"] is None
+        assert "reason" not in body
+
+    async def test_all_three_answers_share_one_container_object(self):
+        """One URL, three code paths. They cannot be allowed to drift.
+
+        A back link that pointed at `/tournaments/us-open` from the draw sheet
+        and somewhere else from the second week would be a worse bug than the
+        missing link, and it is the ordinary consequence of three literals.
+        """
+        source = inspect.getsource(tournaments.get_event_tournament)
+        assert source.count('"url": f"/tournaments/{slug}"') == 1, (
+            "the tournament URL is built once, into `container`, and every "
+            "return reads that object"
+        )
+        assert source.count('"tournament": container') == 3

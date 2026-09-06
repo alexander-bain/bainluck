@@ -795,6 +795,25 @@ async def get_event_tournament(
         return {"event_id": event_id, "tournament": None}
 
     spec = REGISTERED_TOURNAMENTS[slug]
+
+    # THE CONTAINER AND THE FIXTURE ARE TWO DIFFERENT QUESTIONS (#3697).
+    #
+    # *Which container is this event in?* is answered by the sport key, three
+    # lines up: `tennis_atp_us_open` is claimed by exactly one registered
+    # tournament and `slug` is already in hand. *Which registered fixture is
+    # it?* is what the register pins, below. Until #3697 both bail-outs below
+    # returned `tournament: None` — throwing away the fact that WAS proven in
+    # order to report the one that was not — and the cost was that 141 of the
+    # 245 US Open match pages, every remaining round including the final, lost
+    # the back link #2448 shipped. `tournament` therefore rides every answer
+    # from here on; `advancement` and `props` do not, because those really do
+    # need the pinned matchup.
+    container = {
+        "slug": slug,
+        "title": spec["title"],
+        "url": f"/tournaments/{slug}",
+    }
+
     hub = await _hub_payload(slug, spec, db)
 
     matchup_key = ((hub.get("event_links") or {}).get("by_event") or {}).get(
@@ -802,11 +821,22 @@ async def get_event_tournament(
     )
     if not matchup_key:
         # The tournament is on and this event is one of its sport keys, but no
-        # registered fixture dereferences to it. An honest null: the register
-        # pins identity and this event is not one of the things it pins. Never
-        # a name match on the two player names sitting right there — that is
-        # precisely the shortcut `tournament_event_link` exists to refuse.
-        return {"event_id": event_id, "tournament": None, "reason": "NOT_IN_REGISTER"}
+        # registered fixture dereferences to it — which for a second-week match
+        # is the ordinary state of affairs, not a fault: `tournament_slate`
+        # mints `espn:{competition_id}` as the matchup key PRECISELY when the
+        # register no longer holds the pairing, so a R16 event is linked
+        # through `event_links.by_espn` and absent from `by_event` by design.
+        #
+        # Naming the container here is still not a guess. It rests on the sport
+        # key alone, and the slate's ESPN-competition-id channel agrees through
+        # a second, independent id. Never a name match on the two player names
+        # sitting right there — that is precisely the shortcut
+        # `tournament_event_link` exists to refuse, and it is not what this is.
+        return {
+            "event_id": event_id,
+            "tournament": container,
+            "reason": "NOT_IN_REGISTER",
+        }
 
     register = load_register(slug, spec["season"])
     if register is None:
@@ -825,7 +855,13 @@ async def get_event_tournament(
             "event %s maps to matchup %s which the register no longer holds",
             event_id, matchup_key,
         )
-        return {"event_id": event_id, "tournament": None, "reason": "REGISTER_MOVED"}
+        # Same split as above (#3697): the register moved under the fixture, not
+        # under the container. The sport key still says which tournament this is.
+        return {
+            "event_id": event_id,
+            "tournament": container,
+            "reason": "REGISTER_MOVED",
+        }
 
     # ── EACH PLAYER'S CHANCE OF REACHING EACH LATER ROUND (Alex's item 2) ──
     # A slice of the hub's own `grids`, so this strip and the tournament page's
@@ -894,11 +930,10 @@ async def get_event_tournament(
 
     return {
         "event_id": event_id,
-        "tournament": {
-            "slug": slug,
-            "title": spec["title"],
-            "url": f"/tournaments/{slug}",
-        },
+        # The SAME object the two bail-outs return (#3697), so the back link a
+        # reader gets on a second-week match and the one they get on a R128
+        # match cannot drift apart into two different URLs.
+        "tournament": container,
         "matchup_key": matchup_key,
         "round": matchup.get("round"),
         "draw_label": (hub.get("grids") or {}).get(matchup.get("draw"), {}).get("label"),
