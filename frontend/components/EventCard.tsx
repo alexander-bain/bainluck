@@ -16,6 +16,7 @@ import { teamColorStyle } from "@/lib/teamColors";
 import TeamNameLink from "./TeamNameLink";
 import { shouldWithholdProbability } from "@/lib/probabilityEvidence";
 import { renderedDuelPercents } from "@/lib/renderedPercent";
+import { PREMATCH_SAID, prematchReading } from "@/lib/prematchReading";
 import { teamCrestInitials, teamShortNames } from "@/lib/teamShortName";
 import { formatFinishedGameLabel, formatLiveClockLabel } from "@/lib/gameTimeLabel";
 import {
@@ -190,10 +191,69 @@ export default function EventCard({
   // `text-text-secondary` — the card naming a favourite off a coin it never
   // flipped. Equal weight is the only honest pair when the number is missing.
   const homeFavorite = (homeProb ?? 0) >= (awayProb ?? 0);
-  const homeNameClass =
-    noReading || homeFavorite ? "text-text-primary" : "text-text-secondary";
-  const awayNameClass =
-    noReading || !homeFavorite ? "text-text-primary" : "text-text-secondary";
+
+  // #2764 — WHAT THE MARKET GAVE EACH TEAM, ON THE LEAGUE/TEAM/SEARCH CARD.
+  //
+  // Alex, on /sports at phone width: *"How come none of these show pre-event
+  // probability?"* ux/1036 answered that for `FeedCard`, Discover's
+  // `components/discover/EventCard.tsx` and the tennis hub. THIS component —
+  // the shared card on `/sport/[sport]/[league]`, team pages and search — is a
+  // different file and never got it, so it arrived at the same gap from the
+  // other direction: `homeProb`/`awayProb` ARE computed from `opening` for a
+  // finished event above, and then BOTH probability chips are gated
+  // `!isFinished`, so nothing is printed. Its `Opened X/Y` footer is live-only.
+  // Net today: a FINAL card here shows a score block and no pre-match figure.
+  //
+  // Read through `lib/prematchReading.ts` so the ladder, the rounding and the
+  // label are one decision rather than a fourth copy of it. `Event` carries no
+  // `prematch_odds` key — only `/api/feed` resolves the server-side ladder —
+  // so this surface knowingly takes the module's `opening_odds` fallback and
+  // wears its `books` label. That is honest rather than lossy: the sole writer
+  // of `Event.opening_*` is `_maybe_set_opening_odds`, a sportsbook median
+  // (#1841), so `books` is exactly what this number has always been. Passing
+  // the key explicitly as `undefined` states that absence rather than letting a
+  // future `Event` field silently start feeding an unlabelled rung.
+  const prematch = isFinished
+    ? prematchReading({ prematch_odds: undefined, opening_odds: event.opening_odds })
+    : null;
+
+  // On FINAL the emphasis follows WHO WON, not who was favoured. Everywhere
+  // else on this card `homeFavorite` is the right question, but on a settled
+  // card it reads `homeProb`/`awayProb` — which the branch above has already
+  // swapped to the OPENING line. So a FINAL card was bolding the pre-match
+  // favourite's name while the score block three lines up bolded the winner's,
+  // and the card disagreed with itself whenever an underdog won. Printing the
+  // prior beside each name makes that contradiction louder, so it is fixed
+  // here: the names say what happened, the grey numbers say what was thought.
+  //
+  // A finished card we cannot name a winner on — either score absent, or a
+  // genuine draw — emphasises NEITHER side. Muting both would say "they both
+  // lost"; that is the same mistake `noReading` exists to stop one line up, so
+  // it gets the same answer: equal weight is the only honest pair when the
+  // answer is missing. This is also the state the score block itself declines
+  // to render (it is gated on both scores being non-null).
+  const winnerKnown =
+    event.home_score !== null &&
+    event.away_score !== null &&
+    event.home_score !== event.away_score;
+  const homeWon = winnerKnown && event.home_score! > event.away_score!;
+  const awayWon = winnerKnown && event.away_score! > event.home_score!;
+  const finishedNameClass = (won: boolean) =>
+    !winnerKnown
+      ? "text-text-primary"
+      : won
+        ? "font-semibold text-text-primary"
+        : "text-text-muted";
+  const homeNameClass = isFinished
+    ? finishedNameClass(homeWon)
+    : noReading || homeFavorite
+      ? "text-text-primary"
+      : "text-text-secondary";
+  const awayNameClass = isFinished
+    ? finishedNameClass(awayWon)
+    : noReading || !homeFavorite
+      ? "text-text-primary"
+      : "text-text-secondary";
 
   // Format time and date compactly
   const gameTime = new Date(event.commence_time);
@@ -416,6 +476,25 @@ export default function EventCard({
                     homeNameClass,
                   )}
                 />
+                {/* #2764 — the prior, beside the name it is about. Grey on BOTH
+                    rows, winner included: bold on this card means "this is what
+                    happened", and the pre-match number is the opposite of that.
+                    The `sr-only` prefix names the team because the layout is the
+                    only thing pairing a bare percent to a side, and a reader who
+                    cannot see the layout has nothing. */}
+                {prematch && prematch.homePercent !== null && (
+                  <span
+                    className="flex-shrink-0 font-mono text-[11px] tabular-nums text-text-muted"
+                    data-testid="event-card-prematch-home"
+                    data-prematch={prematch.homeProbability}
+                    data-prematch-source={prematch.source}
+                  >
+                    <span className="sr-only">
+                      {PREMATCH_SAID} {event.home_team}{" "}
+                    </span>
+                    {prematch.homePercent}%
+                  </span>
+                )}
                 {/* Inline live score */}
                 {isLive && event.home_score !== null && (
                   <span className="font-mono text-sm font-bold text-accent-live ml-auto" aria-label={`${event.home_team} score: ${event.home_score}`}>{event.home_score}</span>
@@ -511,6 +590,20 @@ export default function EventCard({
                     awayNameClass,
                   )}
                 />
+                {/* #2764 — the away side's prior (see the home row above). */}
+                {prematch && prematch.awayPercent !== null && (
+                  <span
+                    className="flex-shrink-0 font-mono text-[11px] tabular-nums text-text-muted"
+                    data-testid="event-card-prematch-away"
+                    data-prematch={prematch.awayProbability}
+                    data-prematch-source={prematch.source}
+                  >
+                    <span className="sr-only">
+                      {PREMATCH_SAID} {event.away_team}{" "}
+                    </span>
+                    {prematch.awayPercent}%
+                  </span>
+                )}
                 {/* Inline live score */}
                 {isLive && event.away_score !== null && (
                   <span className="font-mono text-sm font-bold text-accent-live ml-auto" aria-label={`${event.away_team} score: ${event.away_score}`}>{event.away_score}</span>
@@ -534,6 +627,28 @@ export default function EventCard({
               )}
             </div>
           </div>
+
+          {/* #2764 — ONE label for the pair, never one per row: both grey
+              numbers always come off the same rung, so saying it twice on one
+              card is noise. Alex's rule is "labelled when not a prediction
+              market", and `prematchReading` returns `label: null` for a
+              prediction-market rung, so this renders only for the books
+              reading — which, on this surface, is every reading (`Event`
+              carries no `prematch_odds`). It sits outside the footer above
+              deliberately: that footer is gated `!isFinished`, and un-gating it
+              to host this would also bring back `Proj 6-4` and `Opened X/Y` on
+              a settled card. */}
+          {prematch?.label && (
+            <div className="mt-2 pt-2 border-t border-surface-border/50 text-micro">
+              <span
+                className="text-[11px] text-text-muted"
+                data-testid="event-card-prematch-label"
+                data-prematch-source={prematch.source}
+              >
+                Pre-match · {prematch.label}
+              </span>
+            </div>
+          )}
 
           {/* Footer — contextual info (hide for finished games, and for
               suspended ones: "Proj 6-4" is a pregame promise and the match is
