@@ -2736,6 +2736,80 @@ _SEARCH_MIN_STAGE_TIMEOUT_MS = int(os.getenv("SEARCH_MIN_STAGE_TIMEOUT_MS", "200
 # original comment wanted and could not get.
 _SEARCH_STATEMENT_TIMEOUT_MS = int(os.getenv("SEARCH_STATEMENT_TIMEOUT_MS", "0")) or None
 
+
+def _headline_arm_bound_ms(deadline: float | None, budget_ms: int) -> int | None:
+    """A bonus lane's own statement bound, or ``None`` to shed it untouched.
+
+    🔴 `statement_timeout = 0` MEANS NO TIMEOUT IN POSTGRES, which is why this
+    returns a shed rather than clamping to whatever is left. The naive form —
+    `min(budget, int(remaining_ms))` — evaluates to `0` for any request entering
+    the lane with under a millisecond to spare, and `SET LOCAL statement_timeout
+    = 0` would then hand the most degenerate case in the system an UNBOUNDED
+    query. A bound that inverts to "no bound" precisely at the deadline is worse
+    than no bound at all, because the deadline arithmetic upstream keeps trusting
+    it — the clause `_resolve_typeahead_outcome_arm` states for its sibling.
+
+    Below the stage floor there is no query worth starting, so the lane sheds
+    without touching the database — an honest "we ran out of time" rather than a
+    statement issued in order to be cancelled.
+
+    ONE function for both headline lanes (LAT-P255/#3731). `/search` and
+    `/typeahead` run the same statement against the same corpus and differ only
+    in their request deadline, so the two bounds are the same arithmetic over
+    different budgets. Written twice, the second copy is where the `0`-means-
+    unbounded trap comes back.
+    """
+    remaining_ms = (
+        _SEARCH_DEADLINE_MS
+        if deadline is None
+        else int((deadline - time.monotonic()) * 1000)
+    )
+    bound_ms = min(budget_ms, remaining_ms)
+    return None if bound_ms < _SEARCH_MIN_STAGE_TIMEOUT_MS else bound_ms
+
+
+# LAT-P255/#3731: `/api/events/search`'s headline-contender lane bound, the
+# sibling of `_TYPEAHEAD_HEADLINE_ARM_TIMEOUT_MS` below. #3394 gave the DROPDOWN
+# this bound and a savepoint; the RESULTS endpoint runs the identical lane and
+# got neither, so it kept the defect for another day and at twice the wall — its
+# deadline is 20s, not 10s, and the lane was handed all of it.
+#
+# MEASURED ON PRODUCTION 2026-09-06, `GET /api/events/search`, each query cold:
+#
+#     Red Sox           HTTP 500 at 20.28s   (reproduced 2/2)
+#     Boston Red Sox    HTTP 500 at 20.34s
+#     Red               HTTP 500 at 20.26s
+#     red+sox           HTTP 200 at 20.17s   — squeaked under the deadline
+#     Sox               HTTP 200 at  3.70s
+#     Yankees           HTTP 200 at  3.87s
+#
+# and with `debug_timing=true`, the lane's own share of a request that survives:
+# `Boston` 2,365 ms of 4,834 ms total, `Yankees` 1 ms of 2,643 ms.
+#
+# 🔴 WHAT THIS COSTS, STATED FIRST, because a bound on a recall lane is a recall
+# change and this file's rule is that those are argued, not slipped in. The lane
+# promotes ONE tier-1 market whose outcome names the person typed (`Boston Red
+# Sox` -> `MLB World Series Champion 2026`). A shed loses that one row. At 2,000
+# ms `Boston` is the realistic loss — it costs 2,365 ms today and would shed.
+# What `Red Sox` loses is nothing, because today that request does not answer at
+# all. The per-pattern plan #3394 measured is why no smaller predicate helps:
+# `\mred\M` 11,660 ms / 1,006,223 GIN candidate rows / 116,342 buffers, against
+# `\msox\M` 39.6 ms, `\malcaraz\M` 169.4 ms, `\myankees\M` 52.1 ms. Extractable
+# trigrams are not SELECTIVE trigrams, and the selectivity lives in the data, not
+# in the string — so this is a timeout, not a term rule.
+#
+# 2,000 ms, the same number as the dropdown's, deliberately: the two lanes issue
+# the same statement, so a term this one can serve is a term that one can serve,
+# and a divergence between them would be a difference nobody could defend.
+_SEARCH_HEADLINE_ARM_TIMEOUT_MS = int(
+    os.getenv("SEARCH_HEADLINE_ARM_TIMEOUT_MS", "2000")
+)
+
+
+def _search_headline_bound_ms(deadline: float | None) -> int | None:
+    """`/search`'s headline-lane bound. ``None`` = shed it. See the constant."""
+    return _headline_arm_bound_ms(deadline, _SEARCH_HEADLINE_ARM_TIMEOUT_MS)
+
 # LAT-P007/#1494: /typeahead had NO bound of any kind — no deadline, no statement
 # timeout, no degraded reporting — and measured 12.06s for `q=re` in production
 # on 2026-08-08. Nothing stopped it riding to Heroku's 30s H12.
@@ -2955,14 +3029,14 @@ def _typeahead_headline_bound_ms(deadline: float | None) -> int | None:
     without touching the database — an honest "we ran out of time" rather than a
     statement issued in order to be cancelled. Same rule, same floor, and the
     same `None`-means-shed contract as the outcome arm.
+
+    LAT-P255/#3731 moved the arithmetic into `_headline_arm_bound_ms` when the
+    `/search` sibling needed the identical rule over a different budget. This
+    function's contract is unchanged, and the reason it still exists rather than
+    being inlined at the call site is that its name is what the #3394 guard suite
+    tests.
     """
-    remaining_ms = (
-        _SEARCH_DEADLINE_MS
-        if deadline is None
-        else int((deadline - time.monotonic()) * 1000)
-    )
-    bound_ms = min(_TYPEAHEAD_HEADLINE_ARM_TIMEOUT_MS, remaining_ms)
-    return None if bound_ms < _SEARCH_MIN_STAGE_TIMEOUT_MS else bound_ms
+    return _headline_arm_bound_ms(deadline, _TYPEAHEAD_HEADLINE_ARM_TIMEOUT_MS)
 
 # The futures pool the dropdown ranks from. ONE constant, used by both the final
 # `LIMIT` and the outcome arm's own `LIMIT`, because the two being equal is what
@@ -4804,6 +4878,21 @@ async def search_events(
             q, len(futures_markets_raw), len(deduped_futures), _SEARCH_FUTURES_WINDOW,
         )
         await _apply_search_statement_timeout(db, _deadline)
+        # A SAVEPOINT, for the same reason the headline lane below has one
+        # (LAT-P255/#3731). This lane also runs while `deduped_futures` is live
+        # and read afterwards by `_formatted_by_id`, so a session `rollback()`
+        # on its shed path would expire those rows and 500 the request exactly
+        # as the headline lane did on production. It is fixed here on the
+        # evidence of the sibling rather than waiting for its own outage: the two
+        # lanes hold the same rows across the same kind of failure, and the only
+        # reason this one has not been seen is that a paged re-read of a query
+        # that already ran is far cheaper than an unselective regex.
+        #
+        # No bound of its own: unlike the headline lane this is the SAME query
+        # already executed once, one page further in, so the request deadline is
+        # the right budget for it and a second constant would be a number with no
+        # measurement behind it.
+        _refill_savepoint = await db.begin_nested()
         try:
             refill_result = await db.execute(
                 futures_query.offset(_SEARCH_FUTURES_WINDOW).limit(
@@ -4812,14 +4901,20 @@ async def search_events(
             )
             refill_rows = refill_result.scalars().unique().all()
         except Exception as exc:  # noqa: BLE001
+            await _refill_savepoint.rollback()
             if not _is_query_timeout(exc):
                 raise
             logger.error(
                 "search futures REFILL timed out for %r — shipping the short "
                 "page rather than nothing", q
             )
-            await _recover_search_session(db, _deadline)
+            # The savepoint rollback restored the transaction; re-arm the
+            # statement timeout for the stages that follow and leave the
+            # session — and the futures rows it holds — alone.
+            await _apply_search_statement_timeout(db, _deadline)
             refill_rows = []
+        else:
+            await _refill_savepoint.commit()
         for m in _rerank_search_futures(refill_rows, expanded):
             dkey = _normalize_futures_dedup_key(m)
             if dkey in seen_search_keys:
@@ -4865,14 +4960,70 @@ async def search_events(
     # at 7,384 blocks, 69% of everything that query touched.
     _headline_patterns = contender_patterns(expanded)
     _headline_promoted = 0
+    # Resolved ONCE and reused. Calling the helper in the condition and again for
+    # the value would read the clock twice, and the two reads can disagree across
+    # the stage floor — the gate passes, the value comes back `None`, and the
+    # arming line raises `TypeError` on the rarest request in the system.
+    _headline_bound_ms = _search_headline_bound_ms(_deadline)
     if (
         _headline_patterns
         and len(futures_markets_raw) >= _SEARCH_FUTURES_WINDOW
         and futures_markets
         and all(_query_name_match(m, expanded) for m in futures_markets)
-        and time.monotonic() < _deadline
+        and _headline_bound_ms is not None
     ):
-        await _apply_search_statement_timeout(db, _deadline)
+        # THE LANE'S OWN BOUND, not the request's remainder — see
+        # `_SEARCH_HEADLINE_ARM_TIMEOUT_MS` for the production measurement that
+        # made this necessary. Armed BEFORE the savepoint on purpose: `SET LOCAL`
+        # issued inside a subtransaction is reverted by its rollback, so arming
+        # it inside would leave the recovery path re-arming a timeout that had
+        # already vanished.
+        try:
+            await db.execute(
+                text(f"SET LOCAL statement_timeout = {int(_headline_bound_ms)}")
+            )
+        except Exception as exc:  # noqa: BLE001 — never fail the page on the guard
+            logger.warning("search headline bound not applied: %s", exc)
+        # 🔴 A SAVEPOINT, AND THE SAVEPOINT IS THE FIX (LAT-P255/#3731).
+        #
+        # This lane runs while LIVE ORM ROWS are held: `deduped_futures` and
+        # `futures_markets` were materialised above and are read again below, at
+        # the `_formatted_by_id` dict comprehension.
+        #
+        # The old recovery here was `_recover_search_session`, i.e. a session
+        # `rollback()`. That call is correct for the stages that hold nothing and
+        # CATASTROPHIC here: an async rollback EXPIRES every ORM object in the
+        # session (gotcha #6 — `expire_on_commit=False` does not prevent it), so
+        # the very next attribute read below — `m.id` in `_formatted_by_id` —
+        # tried to lazy-refresh an expired row from inside a sync greenlet
+        # context and raised `MissingGreenlet`. The user got an HTTP 500.
+        #
+        # MEASURED, production 2026-09-06: `GET /api/events/search?q=Red Sox`
+        # returned 500 at 20.28s, reproduced 2/2, as did `Boston Red Sox` and
+        # `Red`. The dyno log carries both halves 70 ms apart —
+        #
+        #     23:38:16.412 WARNING search headline-contender lane timed out for
+        #                  'Boston Red Sox' — shipping the page unchanged
+        #     23:38:16.426 INFO    GET /api/events/search?q=Boston%20Red%20Sox
+        #                          500 Internal Server Error
+        #
+        # — so the lane that logs "shipping the page unchanged" is the lane that
+        # ships a 500. Sentry BAINLUCK-16P. This is #3394 exactly, one endpoint
+        # over: that fix landed on `/typeahead` and the identical lane here was
+        # left alone, which is why the same query broke the same way the day
+        # after it was declared fixed.
+        #
+        # A SAVEPOINT rolls back only this statement. Nothing outside it was
+        # modified (this lane is read-only), so SQLAlchemy expires nothing and
+        # the futures rows survive intact.
+        #
+        # AWAITED, not `async with`. `AsyncSession.begin_nested()` supports both,
+        # and only this form survives contact with the route's own test doubles:
+        # a session mocked as `AsyncMock` returns a COROUTINE from every method,
+        # and a coroutine is not an async context manager (#3394 measured 56
+        # existing tests broken by the `async with` spelling, with the production
+        # path correct in both).
+        _headline_savepoint = await db.begin_nested()
         try:
             _headline_result = await db.execute(
                 select(FuturesMarket)
@@ -4904,6 +5055,10 @@ async def search_events(
             )
             _headline_rows = _headline_result.scalars().unique().all()
         except Exception as exc:  # noqa: BLE001
+            # THE SAVEPOINT ROLLBACK, and it comes before the re-raise decision
+            # on purpose: an unclassified exception leaves the request to fail,
+            # but it must not also leave an open savepoint behind it.
+            await _headline_savepoint.rollback()
             if not _is_query_timeout(exc):
                 raise
             # A bonus lane must never cost the page it was meant to improve.
@@ -4911,8 +5066,19 @@ async def search_events(
                 "search headline-contender lane timed out for %r — shipping the "
                 "page unchanged", q
             )
-            await _recover_search_session(db, _deadline)
+            # NO `_recover_search_session` HERE — that is the 500 (see the block
+            # comment above). The savepoint's own rollback has already restored
+            # the transaction, so the session needs no rollback and the futures
+            # rows the formatter reads below are still live. What DOES need
+            # restoring is the statement timeout: the lane's bound was armed for
+            # this lane only, and the stages after it must run against the
+            # request deadline, not against a 2s budget left lying around.
+            await _apply_search_statement_timeout(db, _deadline)
             _headline_rows = []
+        else:
+            # RELEASE the savepoint on the happy path. Not cosmetic: an
+            # unreleased savepoint is held for the rest of the transaction.
+            await _headline_savepoint.commit()
 
         # Outcome-only by the route's OWN definition, so a market whose name
         # already matches cannot spend a reserved slot on a row the page holds

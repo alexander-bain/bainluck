@@ -52,6 +52,7 @@ from app.routes.events import (
     _TYPEAHEAD_DEADLINE_MS,
     _TYPEAHEAD_HEADLINE_ARM_TIMEOUT_MS,
     _TYPEAHEAD_OUTCOME_ARM_TIMEOUT_MS,
+    _headline_arm_bound_ms,
     _typeahead_headline_bound_ms,
     typeahead_search,
 )
@@ -68,9 +69,20 @@ def _route_ast() -> ast.AST:
 
 
 def _bound_helper_ast() -> ast.AST:
-    """The bound resolver's own tree."""
+    """The bound resolver's own tree.
+
+    LAT-P255/#3731 gave `/api/events/search` the same lane and the same bound, so
+    the arithmetic moved into `_headline_arm_bound_ms` and this function became a
+    one-line delegate carrying its own budget. The resolver is therefore the PAIR,
+    and the tree this returns is both — otherwise the clamp assertion below would
+    have gone green on a function that no longer contains a clamp, which is a
+    guard passing because it stopped looking rather than because the property
+    holds.
+    """
     return ast.parse(
         textwrap.dedent(inspect.getsource(_typeahead_headline_bound_ms))
+        + "\n"
+        + textwrap.dedent(inspect.getsource(_headline_arm_bound_ms))
     )
 
 
@@ -360,6 +372,11 @@ class TestTheHeadlineLaneCannotPoisonTheSession:
         Asserted on the resolver rather than behaviourally because the failing
         direction needs a deadline further out than the lane budget AND a clock
         that does not move between the two, which a behavioural test cannot pin.
+
+        Two halves since LAT-P255/#3731 split the resolver in two: the clamp has
+        to EXIST, and this lane's budget has to REACH it. Either half alone is
+        satisfiable by a broken pair — a shared helper that clamps something the
+        delegate never hands it is exactly the unbounded lane this guards.
         """
         tree = _bound_helper_ast()
         mins = [
@@ -368,16 +385,39 @@ class TestTheHeadlineLaneCannotPoisonTheSession:
             if isinstance(node, ast.Call)
             and isinstance(node.func, ast.Name)
             and node.func.id == "min"
-            and any(
-                isinstance(a, ast.Name)
-                and a.id == "_TYPEAHEAD_HEADLINE_ARM_TIMEOUT_MS"
-                for a in ast.walk(node)
-            )
         ]
         assert mins, (
             "the headline bound is not clamped by `min(...)` against the "
             "remaining request budget, so a lane entered late can outlive the "
             "request deadline"
+        )
+
+        clamped_names = {
+            arg.id
+            for node in mins
+            for arg in ast.walk(node)
+            if isinstance(arg, ast.Name)
+        }
+        reaches_the_clamp = "_TYPEAHEAD_HEADLINE_ARM_TIMEOUT_MS" in clamped_names or (
+            # The delegated spelling: this lane's constant is passed in as the
+            # shared resolver's budget parameter, and THAT is what `min` clamps.
+            any(
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "_headline_arm_bound_ms"
+                and any(
+                    isinstance(a, ast.Name)
+                    and a.id == "_TYPEAHEAD_HEADLINE_ARM_TIMEOUT_MS"
+                    for a in node.args
+                )
+                for node in ast.walk(tree)
+            )
+            and "budget_ms" in clamped_names
+        )
+        assert reaches_the_clamp, (
+            "`_TYPEAHEAD_HEADLINE_ARM_TIMEOUT_MS` does not reach the `min(...)` "
+            "clamp — either directly or as the budget handed to "
+            "`_headline_arm_bound_ms`. The lane has a constant nobody applies."
         )
 
     def test_the_bound_really_is_clamped_by_the_remaining_budget(self):
