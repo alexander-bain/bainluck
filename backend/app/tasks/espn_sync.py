@@ -349,6 +349,13 @@ async def _act_on_failovers(decisions: dict, stats: dict) -> None:
     stopped reporting. That is the ship: the site keeps showing that sport's
     games instead of freezing on last-known state.
 
+    **ONE OF THE TWO WRITERS IS PER SPORT AND THE OTHER IS PER PASS**, because
+    that is what their signatures mean. The schedule writer takes a sport key
+    and runs once per served sport; the livescore writer takes none, covers
+    every live sport in one call, and so runs **once for the whole pass** no
+    matter how many sports failed over (`_serve_live_from_statpal`, paying
+    CERT-2052's `STANDING-STATPAL-FAILOVER-COALESCING`).
+
     **WHY THE IMPLEMENTATIONS AND NOT THE TASKS.** An earlier cut called
     `.delay()` on the two Celery tasks and went straight through
     `test_celery_result_retention.test_no_task_dispatches_another_task`, which
@@ -382,6 +389,7 @@ async def _act_on_failovers(decisions: dict, stats: dict) -> None:
     from app.utils.authority_failover import BLANK_CODES, FAILOVER_CODES
 
     receipts = []
+    served: list[str] = []
     for sport_key in sorted(decisions):
         decision = decisions[sport_key]
         receipts.append(decision.as_receipt())
@@ -392,7 +400,8 @@ async def _act_on_failovers(decisions: dict, stats: dict) -> None:
                 "AUTHORITY FAILOVER for %s (%s): %s",
                 sport_key, decision.code, decision.why,
             )
-            await _serve_from_statpal(sport_key, stats)
+            served.append(sport_key)
+            await _serve_schedule_from_statpal(sport_key, stats)
         elif decision.code in BLANK_CODES:
             stats["failover_uncovered"] = stats.get("failover_uncovered", 0) + 1
             logger.error(
@@ -405,27 +414,29 @@ async def _act_on_failovers(decisions: dict, stats: dict) -> None:
                 sport_key, decision.code, decision.why,
             )
 
+    # ONE live write for the whole pass, however many sports failed over.
+    # `STANDING-STATPAL-FAILOVER-COALESCING` (CERT-2052), paid before it could
+    # bite: see `_serve_live_from_statpal`.
+    if served:
+        await _serve_live_from_statpal(served, stats)
+
     if receipts:
         stats["failover"] = receipts
 
 
-async def _serve_from_statpal(sport_key: str, stats: dict) -> None:
-    """Run StatPal's own writers for one sport, now, inside this pass.
+async def _serve_schedule_from_statpal(sport_key: str, stats: dict) -> None:
+    """Run StatPal's schedule writer for ONE sport, now, inside this pass.
 
-    Both halves, matching what readiness proved: the schedule writer so the
-    sport's fixtures keep landing, and the livescore writer so score, period and
-    status keep moving on the ones already under way. Readiness checked both
-    endpoints; serving only one would have made half that check a question
-    nothing acted on.
+    The per-sport half of serving. `_sync_statpal_schedules` takes a sport key
+    and writes that sport's fixtures, so it is called once per failed-over
+    sport and there is nothing to coalesce here — three dark sports need three
+    schedule writes because they are three different reads.
 
-    Each is separately guarded and separately counted. A schedule write that
-    worked and a live write that failed is a real, partial outcome and must not
-    be reported as either a clean serve or a total failure.
+    Guarded and counted on its own. A schedule write that worked and a live
+    write that failed is a real, partial outcome and must not be reported as
+    either a clean serve or a total failure.
     """
-    from app.tasks.statpal_sync import (
-        _sync_statpal_livescores,
-        _sync_statpal_schedules,
-    )
+    from app.tasks.statpal_sync import _sync_statpal_schedules
 
     try:
         result = await _sync_statpal_schedules(sport_key)
@@ -437,13 +448,52 @@ async def _serve_from_statpal(sport_key: str, stats: dict) -> None:
         stats["errors"].append(f"failover_schedule_{sport_key}: {exc}")
         logger.warning("failover schedule write failed for %s: %s", sport_key, exc)
 
+
+async def _serve_live_from_statpal(sports: list[str], stats: dict) -> None:
+    """Run StatPal's livescore writer ONCE for every sport this pass served.
+
+    **`_sync_statpal_livescores()` takes no sport key.** It looks up every sport
+    that currently has a live event in our database and advances all of them, so
+    one call already covers every failed-over sport. The first cut called it
+    from inside the per-sport loop, which was harmless while at most one sport
+    could ever be permitted and became N identical full passes over every live
+    sport the moment two could — N times the StatPal calls and N times the
+    writes, inside a beat that already runs every 30 seconds.
+
+    That is CERT-2052's `STANDING-STATPAL-FAILOVER-COALESCING`: *"before multiple
+    sports flip, call the global livescore writer once per pass or prove
+    300-second runtime and concurrent-write idempotence against its 30-second
+    beat."* This is the first branch, taken deliberately — the cheap fix, made
+    before the condition that needs it (NFL, NBA and NHL are all at day 2 of
+    D50's seven as of 2026-09-06, so they can first flip together).
+
+    WHAT IS NOT PRESERVED, said out loud: calling it N times used to mean N-1
+    incidental retries if the first call raised. That was never a designed
+    retry and it is not one worth buying at this price — the livescore beat's
+    own 30-second cadence is the retry, and a failure here is recorded rather
+    than swallowed.
+
+    Counted so the summary cannot be misread. `failover_live_writes` counts
+    CALLS (0 or 1 per pass, unchanged for the one-sport case that is all
+    production can reach today) and `failover_live_sports_covered` counts the
+    sports that call served — because "one live write" beside "three sports
+    served" is otherwise indistinguishable from two sports going unserved.
+    """
+    from app.tasks.statpal_sync import _sync_statpal_livescores
+
+    covered = ",".join(sports)
     try:
         result = await _sync_statpal_livescores()
         stats["failover_live_writes"] = stats.get("failover_live_writes", 0) + 1
-        logger.info("failover live write (for %s): %s", sport_key, result)
+        stats["failover_live_sports_covered"] = (
+            stats.get("failover_live_sports_covered", 0) + len(sports)
+        )
+        logger.info("failover live write (for %s): %s", covered, result)
     except Exception as exc:  # noqa: BLE001 — counted, never swallowed
-        stats["errors"].append(f"failover_live_{sport_key}: {exc}")
-        logger.warning("failover live write failed for %s: %s", sport_key, exc)
+        # One error for one failed call, naming every sport it left uncovered.
+        # Byte-identical to the old per-sport string when one sport served.
+        stats["errors"].append(f"failover_live_{covered}: {exc}")
+        logger.warning("failover live write failed for %s: %s", covered, exc)
 
 
 async def _sync_espn_live_events():
