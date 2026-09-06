@@ -138,3 +138,39 @@ export function sourceLabel(source: string, fallback?: string | null): string {
   const known = SOURCE_COLORS[key];
   return known ? known.label : (fallback || source);
 }
+
+/**
+ * THE NAME FOR A SOURCE'S SEPARATE LINES — the faint per-member lines a chart
+ * draws behind the source's own line (#3563).
+ *
+ * The chart legend needs to say two different things about one supplier: the
+ * source's line, and the individual lines it is the average of. Naming the
+ * second one is where #2442's rule — ONE name per supplier, decided by the
+ * registry — collides with English, because the qualifier has to agree with a
+ * noun this function does not choose:
+ *
+ *     `Each ${sourceLabel("betting").toLowerCase()}`  ->  "Each sportsbooks"
+ *
+ * That was live on every sportsbooks-only event page. The tempting repair is to
+ * singularise the noun, but the noun is the registry's and re-spelling it here
+ * is exactly the second-name-by-the-back-door that #2442 exists to stop.
+ *
+ * ═══ WHY AN APPOSITIVE AND NOT A DETERMINER ═══
+ *
+ * `Each of the {label}` is grammatical today and fragile forever: it reads only
+ * while the label stays plural. This registry holds labels of BOTH numbers —
+ * "Sportsbooks" beside "Kalshi", "DataGolf" and "Bain Luck Model" — so any
+ * determiner just relocates the same defect to the next source that wants this
+ * legend. A trailing appositive agrees with nothing, so it composes with every
+ * label the registry has or will have:
+ *
+ *     "Sportsbooks, separately"   "Kalshi, separately"   "ESPN, separately"
+ *
+ * The label is passed through EXACTLY as the registry spells it — same casing,
+ * no re-wording — so the two legend entries read "Sportsbooks" and
+ * "Sportsbooks, separately": one name for the supplier, visibly, with the
+ * qualifier carrying the only thing the second entry adds.
+ */
+export function separateLinesLabel(source: string, fallback?: string | null): string {
+  return `${sourceLabel(source, fallback)}, separately`;
+}
