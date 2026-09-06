@@ -989,7 +989,15 @@ export default function ScoreDifferentialChart({
               one supplier on the same screen and my sweep never reached it,
               because the guard rendered `MarketMapSection` and `OddsChart` and
               never this component. Through the registry like the other two. */}
-          Gray lines show each {sourceLabel("betting").toLowerCase()}
+          {/* #3635. "show each" + the registry's label read "Gray lines show
+              each sportsbooks" on every screen it ever drew. The registry is a
+              LEGEND vocabulary, so `betting` is the PLURAL "Sportsbooks" and has
+              to stay that way; the determiner was what was wrong. The sentence
+              is rebuilt so the plural is the thing being counted rather than the
+              thing being determined — and it deliberately avoids the literal
+              `individual sportsbooks`, which is the pre-registry hardcode
+              CERT-642 removed and `eventPriceFormats` still bans by name. */}
+          Each gray line is one of the {sourceLabel("betting").toLowerCase()}
         </p>
       )}
     </div>

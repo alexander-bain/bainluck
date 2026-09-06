@@ -305,10 +305,17 @@ describe("#2442 — the market maps speak in margins, not handicaps", () => {
     );
     const text = visibleText(html);
     // The caption rendered — the `bookmakers.length > 0` branch is reached.
-    expect(text).toMatch(/Gray lines show/);
+    expect(text).toMatch(/gray line/i);
     // ...and says it through the registry, like every other surface.
     expect(text).toContain("sportsbooks");
     expect(text).not.toContain("individual sportsbooks");
+    // #3635, and it is the general form of the bug rather than this sentence:
+    // the registry's labels are LEGEND vocabulary and therefore plural, so a
+    // singular determiner in front of one is ungrammatical wherever it appears.
+    // `Gray lines show each sportsbooks` shipped and drew for weeks, on a
+    // caption a guard already rendered — the guard was checking the SPELLING of
+    // the supplier and never the sentence around it.
+    expect(text).not.toMatch(/\b(each|every|a|an|one)\s+sportsbooks\b/i);
     expect(text).not.toContain("Projected Spread");
     expect(bannedIn(text)).toEqual([]);
   });
