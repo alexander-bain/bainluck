@@ -324,12 +324,16 @@ class TestNonWillInterrogatives:
         "Would a recession start before July?",
     ]
 
+    # #3491 — the eight now reach the same sentence down TWO different roads.
+    # Listed as data so the split itself is asserted rather than assumed; see
+    # `test_only_an_unfittable_label_collapses_to_the_bare_side`.
+    BARE_SIDE_MARKETS = {"Is the Fed cutting rates in September?"}
+
     @pytest.mark.parametrize("market", NON_WILL_MARKETS)
     def test_the_producers_own_no_label_never_reaches_the_reader(self, market):
         # Exactly the path that served the defect: the producer makes the label,
         # the generator renders it.
         label = humanize_binary_outcome_name("No", market)
-        assert label != "No", "precondition: the producer must manufacture a label"
 
         summary = generate_futures_context_summary(
             highlight_reasons=[],
@@ -339,8 +343,33 @@ class TestNonWillInterrogatives:
             headline="",
         )
         assert summary == "No leads at 72%"
-        # Scoped per UX-P238-5: "No" alone is a substring of the defect.
-        assert label not in summary
+        assert "..." not in summary
+
+        if market in self.BARE_SIDE_MARKETS:
+            # #3491: the producer refuses to manufacture a label it would have
+            # to chop, so there is nothing for the collapse to catch. The
+            # defect cannot exist upstream of the predicate here.
+            assert label == "No"
+        else:
+            # Unchanged road: the producer still manufactures a restatement and
+            # `_answering_side_label` is what keeps it off the page.
+            assert label != "No", "precondition: the producer must manufacture a label"
+            # Scoped per UX-P238-5: "No" alone is a substring of the defect.
+            assert label not in summary
+
+    def test_only_an_unfittable_label_collapses_to_the_bare_side(self):
+        """#3491 must fire on the echo and on NOTHING else in this set.
+
+        Both directions in one assertion: a rule that collapsed everything, or
+        collapsed nothing, fails here. Seven of these eight still carry a
+        manufactured label after the change.
+        """
+        collapsed = {
+            market
+            for market in self.NON_WILL_MARKETS
+            if humanize_binary_outcome_name("No", market) == "No"
+        }
+        assert collapsed == self.BARE_SIDE_MARKETS
 
     def test_the_exact_cert_624_sentence_is_gone(self):
         label = humanize_binary_outcome_name("No", self.ALCARAZ_MARKET)
@@ -409,8 +438,18 @@ class TestMidWordTruncation:
 
     def test_a_fragment_final_token_still_counts_as_restating(self):
         market = "Is the Fed cutting rates in September?"
-        label = humanize_binary_outcome_name("No", market)
-        assert label.endswith("..."), "precondition: this label must be truncated"
+
+        # #3491 CHANGED WHO PRODUCES THIS STRING, NOT WHETHER IT MUST COLLAPSE.
+        # The producer no longer manufactures a chopped label at all — it
+        # answers with the bare side — so this can no longer be sourced from
+        # `humanize_binary_outcome_name` the way the rest of this file is.
+        assert humanize_binary_outcome_name("No", market) == "No"
+
+        # The prefix-tolerant branch still has to work: Redis serves feed
+        # payloads built before that change, and this predicate is the only
+        # thing between those labels and the reader. VERBATIM the bytes the
+        # producer emitted for this market up to 2026-09-06.
+        label = "No: Is the Fed cutting rates in Septe..."
         assert "Septe" in label and "September" not in label
 
         assert _negates_market_question(label, market) is True
@@ -463,11 +502,13 @@ class TestLiveNonWillMarkets:
         ),
     ]
 
+    # #3491 — of the three real rows, the two long ones no longer get a
+    # manufactured label at all. Pinned as data; asserted below.
+    BARE_SIDE_IDS = {58945765, 58948958}
+
     @pytest.mark.parametrize("market_id,market,probability", LIVE)
     def test_live_no_side_leader_names_the_side(self, market_id, market, probability):
         label = humanize_binary_outcome_name("No", market)
-        # Precondition: the producer really does manufacture the mangled label.
-        assert label not in ("No", "Yes"), market_id
 
         summary = generate_futures_context_summary(
             highlight_reasons=[],
@@ -476,8 +517,34 @@ class TestLiveNonWillMarkets:
             leader_probability=probability,
             headline="",
         )
+        # The reader-facing contract is identical down both roads.
         assert summary == f"No leads at {round(probability * 100)}%"
-        assert label not in summary
+        assert "..." not in summary
+
+        if market_id in self.BARE_SIDE_IDS:
+            assert label == "No", market_id
+        else:
+            # Precondition: the producer really does manufacture the label.
+            assert label not in ("No", "Yes"), market_id
+            assert label not in summary
+
+    def test_the_two_long_live_rows_are_the_ones_that_collapse(self):
+        """Pins the #3491 split across the three real production rows.
+
+        `Is Earth flat?` is short enough to keep `Not: Is Earth flat`, so this
+        also proves the change is length-driven and not a blanket collapse of
+        every non-"Will" question.
+        """
+        collapsed = {
+            market_id
+            for market_id, market, _ in self.LIVE
+            if humanize_binary_outcome_name("No", market) == "No"
+        }
+        assert collapsed == self.BARE_SIDE_IDS
+        assert (
+            humanize_binary_outcome_name("No", "Is Earth flat?")
+            == "Not: Is Earth flat"
+        )
 
     def test_a_team_abbreviation_is_not_an_auxiliary(self):
         """`WAS Commanders vs DAL Cowboys` — a real open row, id 59659430.
