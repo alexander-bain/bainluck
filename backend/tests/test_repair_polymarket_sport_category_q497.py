@@ -838,13 +838,13 @@ def test_the_client_bound_not_just_the_write_budget_fits_inside_the_reserve():
     """
     charged = (
         rail.client_db_budget_seconds(rail.WRITE_BUDGET_SECONDS)
-        + rail.ROLLBACK_BUDGET_SECONDS
+        + rail.cleanup_budget_seconds()
     )
     assert 0 < charged < rail.POST_LOOP_NON_COUNT_RESERVE_SECONDS, (
         f"a failing write can now occupy {charged}s (a "
         f"{rail.WRITE_BUDGET_SECONDS}s server bound, plus "
-        f"{rail.POOL_ACQUIRE_SLACK_SECONDS}s of client slack, plus a "
-        f"{rail.ROLLBACK_BUDGET_SECONDS}s cleanup rollback) out of a "
+        f"{rail.POOL_ACQUIRE_SLACK_SECONDS}s of client slack, plus "
+        f"{rail.cleanup_budget_seconds()}s of cleanup) out of a "
         f"{rail.POST_LOOP_NON_COUNT_RESERVE_SECONDS}s reserve that also has to "
         "cover serialization and the dependency's own commit"
     )
@@ -856,7 +856,7 @@ def test_the_client_bound_on_the_page_select_cannot_widen_the_worst_case():
     starved SELECT — that has to fit under it."""
     charged = (
         rail.client_db_budget_seconds(rail.TARGET_SELECT_BUDGET_SECONDS)
-        + rail.ROLLBACK_BUDGET_SECONDS
+        + rail.cleanup_budget_seconds()
     )
     assert charged <= rail.DEADLINE_SECONDS, (
         f"a failing page SELECT can now occupy {charged}s against a "
@@ -871,7 +871,7 @@ def test_the_census_still_fits_under_the_wall_once_both_queries_are_wrapped():
     that actually elapses is `2 * client_bound`."""
     charged = (
         2 * rail.client_db_budget_seconds(rail.CENSUS_STATEMENT_TIMEOUT_SECONDS)
-        + rail.ROLLBACK_BUDGET_SECONDS
+        + rail.cleanup_budget_seconds()
     )
     assert charged < rail.ROUTER_WALL_SECONDS, (
         f"the census's permitted worst case is now {charged}s against a "
