@@ -193,9 +193,12 @@ final class CalibrationAvailabilityTests: XCTestCase {
         for row in rows {
             let expected = try XCTUnwrap(Prod.sourceRows[row.source], "unexpected source \(row.source)")
             XCTAssertEqual(row.n, expected.n, "n for \(row.source)")
-            XCTAssertEqual(row.ece, expected.ece, accuracy: 1e-12, "ECE for \(row.source)")
-            XCTAssertEqual(row.mce, expected.mce, accuracy: 1e-12, "MCE for \(row.source)")
-            XCTAssertEqual(row.brier, expected.brier, accuracy: 1e-12, "Brier for \(row.source)")
+            // #3650: metrics are optional now — every source in this frozen
+            // payload has cohort outcomes, so every one must unwrap.
+            XCTAssertEqual(row.state, .measured, "state for \(row.source)")
+            XCTAssertEqual(try XCTUnwrap(row.ece), expected.ece, accuracy: 1e-12, "ECE for \(row.source)")
+            XCTAssertEqual(try XCTUnwrap(row.mce), expected.mce, accuracy: 1e-12, "MCE for \(row.source)")
+            XCTAssertEqual(try XCTUnwrap(row.brier), expected.brier, accuracy: 1e-12, "Brier for \(row.source)")
         }
         // Rows are the cohort's, so they must add up to the cohort, not the total.
         XCTAssertEqual(rows.reduce(0) { $0 + $1.n }, vm.cohortN)
