@@ -45,6 +45,31 @@ final class OddsChartAxisFitTests: XCTestCase {
         ISO8601DateFormatter().date(from: iso)!
     }
 
+    /// The spacing an axis of this stride needs at the WORST of the tick counts it
+    /// can actually draw.
+    ///
+    /// **Never write `Int(intervals.rounded(.down)) + 1` in this file (#3400).**
+    /// That is production's own count expression, and three tests here quoted it.
+    /// A guard that re-derives the value under test agrees with production by
+    /// construction: when the count was wrong, every one of them stayed green
+    /// while two live US Open charts printed their labels on top of each other.
+    ///
+    /// A stride draws `floor(intervals)` ticks or one more, depending on where its
+    /// origin falls relative to the domain's edges. `xAxisRequiredSpacing` is not
+    /// monotone in the reader's favour — two labels are both END labels and cost
+    /// `2 × width`, three include a centred one and cost `1.5 × width` — so the
+    /// axis clears only if it clears at BOTH counts. Asking for both is what makes
+    /// this independent of whichever one production picks.
+    private func worstCaseRequiredSpacing(
+        intervals: Double, style: OddsChartView.XAxisPlan.LabelStyle
+    ) -> CGFloat {
+        let width = OddsChartView.xAxisLabelWidth(for: style)
+        let fewest = Int(intervals.rounded(.down))
+        return max(
+            OddsChartView.xAxisRequiredSpacing(labelWidth: width, labelCount: fewest),
+            OddsChartView.xAxisRequiredSpacing(labelWidth: width, labelCount: fewest + 1))
+    }
+
     private func strideSeconds(_ plan: OddsChartView.XAxisPlan) -> TimeInterval {
         let unit: TimeInterval
         switch plan.component {
@@ -76,9 +101,7 @@ final class OddsChartAxisFitTests: XCTestCase {
         let intervals = ohioStateDomain.upperBound
             .timeIntervalSince(ohioStateDomain.lowerBound) / strideSeconds(plan)
         let spacing = phonePlotWidth / CGFloat(intervals)
-        let required = OddsChartView.xAxisRequiredSpacing(
-            labelWidth: OddsChartView.xAxisLabelWidth(for: plan.labelStyle),
-            labelCount: Int(intervals.rounded(.down)) + 1)
+        let required = worstCaseRequiredSpacing(intervals: intervals, style: plan.labelStyle)
         XCTAssertGreaterThanOrEqual(
             spacing, required,
             "chose \(Int(strideSeconds(plan)))s ticks: \(spacing)pt apart, needs \(required)pt")
@@ -114,6 +137,131 @@ final class OddsChartAxisFitTests: XCTestCase {
         XCTAssertEqual(plan.labelStyle, .timeOfDay, "a 2½-hour game still reads in minutes")
         let labels = range.upperBound.timeIntervalSince(range.lowerBound) / strideSeconds(plan)
         XCTAssertGreaterThanOrEqual(labels, 3, "two labels is not an axis for a whole game")
+    }
+
+    // MARK: - #3400: the count charged must be the count drawn
+
+    /// The three LIVE charts photographed on master `79f34e4e` (iPhone 17
+    /// simulator against production, 2026-09-06 00:00 EDT), to the minute.
+    ///
+    /// Each domain starts at the event's real `commence_time` and runs for the
+    /// duration measured off its own PNG — tick spacing against plot width, at
+    /// exactly 3.0px/pt (402x874 @3x). All three are read in EASTERN, because
+    /// that is the zone the phone drew them in and all three cross midnight
+    /// there: in UTC they are same-day, `spansMultipleDays` goes false, the style
+    /// drops to `.timeOfDay` and the defect evaporates untested (gotcha #44).
+    private var eastern: Calendar = {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "America/New_York")!
+        return cal
+    }()
+
+    /// The drawn 0% axis line in all three shots: px 201..1109 = 302.7pt.
+    private let measuredPlotWidth: CGFloat = 302.7
+
+    /// 15304537, Tabilo v Zverev. 10:38:55 PM - 12:06 AM, 87.6 minutes.
+    /// Took the 30-minute stride at 103.7pt and printed `Sat 11:08SPaMt 11:38 PM`.
+    private var zverevDomain: ClosedRange<Date> {
+        date("2026-09-06T02:38:55Z")...date("2026-09-06T04:06:31Z")
+    }
+
+    /// 15304445, Tien v Mensik. 10:07:01 PM - 12:01 AM, 114.1 minutes.
+    /// Took the 45-minute stride at 119.3pt and printed `Sat 10:52 PMSat 11:37 PM`.
+    private var tienDomain: ClosedRange<Date> {
+        date("2026-09-06T02:07:01Z")...date("2026-09-06T04:01:07Z")
+    }
+
+    /// 15293316, Atlante v Atlas. 11:03 PM - 12:05 AM, 62.5 minutes. The CONTROL:
+    /// same style, same plot, 145.3pt of spacing, and it drew cleanly with a
+    /// 27.7pt gap. The fix must leave it exactly where it is.
+    private var ligaMXDomain: ClosedRange<Date> {
+        date("2026-09-06T03:03:00Z")...date("2026-09-06T04:05:30Z")
+    }
+
+    /// Neither live US Open chart may choose the stride it collided on.
+    func testTheLiveUSOpenChartsNoLongerChooseACollidingStride() {
+        let zverev = OddsChartView.xAxisPlan(
+            for: zverevDomain, plotWidth: measuredPlotWidth, calendar: eastern)
+        XCTAssertGreaterThan(
+            strideSeconds(zverev), 1800,
+            "15304537 collided on the 30-minute stride at 103.7pt of 132pt needed")
+
+        let tien = OddsChartView.xAxisPlan(
+            for: tienDomain, plotWidth: measuredPlotWidth, calendar: eastern)
+        XCTAssertGreaterThan(
+            strideSeconds(tien), 2700,
+            "15304445 collided on the 45-minute stride at 119.3pt of 132pt needed")
+
+        for (name, domain, plan) in [
+            ("15304537", zverevDomain, zverev), ("15304445", tienDomain, tien),
+        ] {
+            let intervals = domain.upperBound
+                .timeIntervalSince(domain.lowerBound) / strideSeconds(plan)
+            let spacing = measuredPlotWidth / CGFloat(intervals)
+            let required = worstCaseRequiredSpacing(intervals: intervals, style: plan.labelStyle)
+            XCTAssertGreaterThanOrEqual(
+                spacing, required,
+                "\(name) landed on \(Int(strideSeconds(plan)))s ticks: "
+                    + "\(spacing)pt apart, needs \(required)pt")
+        }
+    }
+
+    /// The chart that was ALREADY fine stays fine. Coarsening every axis would
+    /// also stop the collision, and would be a worse chart — this is the test that
+    /// says so.
+    func testTheChartThatAlreadyClearedKeepsItsStride() {
+        let plan = OddsChartView.xAxisPlan(
+            for: ligaMXDomain, plotWidth: measuredPlotWidth, calendar: eastern)
+        XCTAssertEqual(
+            strideSeconds(plan), 1800,
+            "15293316 drew 30-minute ticks with a 27.7pt gap and must keep them")
+        XCTAssertEqual(plan.labelStyle, .dayAndTime, "same style as the two that collided")
+    }
+
+    /// The guard is proved to FIRE, not merely to pass: the expression this fix
+    /// removed still accepts the stride the phone collided on.
+    ///
+    /// Both counts are charged against the SAME measured spacing, so the only
+    /// thing separating them is which count the rule believes.
+    func testTheOldOptimisticCountWouldStillHaveAcceptedTheCollidingStride() {
+        let duration = zverevDomain.upperBound.timeIntervalSince(zverevDomain.lowerBound)
+        let intervals = duration / 1800          // the 30-minute stride it took
+        let spacing = measuredPlotWidth / CGFloat(intervals)
+        let width = OddsChartView.xAxisLabelWidth(for: .dayAndTime)
+
+        XCTAssertGreaterThanOrEqual(
+            spacing,
+            OddsChartView.xAxisRequiredSpacing(
+                labelWidth: width, labelCount: Int(intervals.rounded(.down)) + 1),
+            "floor+1 charged the interior rate — that is why it shipped")
+        XCTAssertLessThan(
+            spacing,
+            OddsChartView.xAxisRequiredSpacing(
+                labelWidth: width, labelCount: Int(intervals.rounded(.down))),
+            "…and the two end labels it actually drew never had the room")
+        XCTAssertFalse(
+            OddsChartView.xAxisFits(
+                intervals: intervals, plotWidth: measuredPlotWidth, style: .dayAndTime),
+            "the fit must now reject it")
+    }
+
+    /// The band the change is confined to. Outside `[2, 3)` intervals the drawn
+    /// count is not ambiguous and the charge is identical either way, so this
+    /// pins the blast radius rather than trusting that it is small.
+    func testOnlyTheAmbiguousTwoToThreeBandChangesWhatIsCharged() {
+        let width: CGFloat = 63
+        for intervals in [0.4, 1.0, 1.7, 3.0, 3.9, 7.2, 41.0] {
+            XCTAssertEqual(
+                OddsChartView.xAxisRequiredSpacing(
+                    labelWidth: width, labelCount: Int(intervals.rounded(.down))),
+                OddsChartView.xAxisRequiredSpacing(
+                    labelWidth: width, labelCount: Int(intervals.rounded(.down)) + 1),
+                "\(intervals) intervals: the two counts must charge the same")
+        }
+        XCTAssertNotEqual(
+            OddsChartView.xAxisRequiredSpacing(labelWidth: width, labelCount: 2),
+            OddsChartView.xAxisRequiredSpacing(labelWidth: width, labelCount: 3),
+            "…and [2, 3) is the one band where they differ")
     }
 
     // MARK: - The rule
@@ -170,9 +318,8 @@ final class OddsChartAxisFitTests: XCTestCase {
             let intervals = span / strideSeconds(plan)
             if intervals > 0 {
                 let spacing = phonePlotWidth / CGFloat(intervals)
-                let required = OddsChartView.xAxisRequiredSpacing(
-                    labelWidth: OddsChartView.xAxisLabelWidth(for: plan.labelStyle),
-                    labelCount: Int(intervals.rounded(.down)) + 1)
+                let required = worstCaseRequiredSpacing(
+                    intervals: intervals, style: plan.labelStyle)
                 XCTAssertGreaterThanOrEqual(
                     spacing, required,
                     "span \(Int(span))s: \(plan.labelStyle) labels \(spacing)pt apart")

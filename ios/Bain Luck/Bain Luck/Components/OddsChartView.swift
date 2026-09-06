@@ -1878,16 +1878,38 @@ struct OddsChartView: View {
     /// Does a stride's labels clear each other across a plot this wide?
     ///
     /// `intervals` is the nominal tick count (`duration / strideSeconds`), the
-    /// same estimate the stride ladder uses; the label count is one more than the
-    /// intervals that fit. Nothing here moves a tick or a domain — it only
-    /// decides which stride is coarse enough to label.
+    /// same estimate the stride ladder uses. Nothing here moves a tick or a
+    /// domain — it only decides which stride is coarse enough to label.
+    ///
+    /// **The count charged here is the SMALLEST the stride can draw, and #3400 is
+    /// why.** `xAxisRequiredSpacing` gets *cheaper* as the count grows: three
+    /// labels have a centred interior one and cost `1.5 × width`, two are both
+    /// end labels growing towards each other and cost `2 × width`. So the
+    /// optimistic count is the unsafe one, and a nominal `intervals` in **[2, 3)**
+    /// is exactly where the drawn count is genuinely ambiguous — the axis draws
+    /// two ticks or three depending on where the stride's origin falls relative
+    /// to the domain's edges, which is the charting framework's business, not
+    /// ours. `floor(intervals) + 1` assumed three every time and charged the
+    /// interior rate for an axis that drew two.
+    ///
+    /// MEASURED on two LIVE US Open charts, master `79f34e4e`, iPhone 17 at
+    /// 3.0px/pt, plot width 302.7pt: 15304537 (Tabilo v Zverev) took the
+    /// 30-minute stride at 103.7pt of spacing and 15304445 (Tien v Mensik) the
+    /// 45-minute stride at 119.3pt, both against the 132pt an end pair needs.
+    /// Both drew two ticks and printed `Sat 11:08SPaMt 11:38 PM` — one smear
+    /// where two times belong. On the same build 15293316 (Atlante v Atlas) had
+    /// 145.3pt and cleared, so the requirement was never wrong; the count was.
+    ///
+    /// Charging `floor` costs at most half a label width on a domain that would
+    /// have drawn three, and only inside that one band — the conservative
+    /// direction, for the same reason `xAxisLabelWidth` pins the widest locale.
     static func xAxisFits(
         intervals: Double, plotWidth: CGFloat, style: XAxisPlan.LabelStyle
     ) -> Bool {
         guard plotWidth > 0 else { return false }
         guard intervals > 0 else { return true }
         let spacing = plotWidth / CGFloat(intervals)
-        let labelCount = Int(intervals.rounded(.down)) + 1
+        let labelCount = Int(intervals.rounded(.down))
         return spacing >= xAxisRequiredSpacing(
             labelWidth: xAxisLabelWidth(for: style), labelCount: labelCount)
     }
