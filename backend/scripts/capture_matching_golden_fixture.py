@@ -174,7 +174,7 @@ AMENDMENTS_PATH = (
 )
 
 
-def apply_adjudication_amendments(golden: list[dict]) -> list[int]:
+def apply_adjudication_amendments(golden: list[dict]) -> list[str]:
     """Rewrite adjudicated answers in place, BEFORE any pair is built.
 
     Before, not after, because two of the fixture's own guarantees are derived
@@ -192,14 +192,22 @@ def apply_adjudication_amendments(golden: list[dict]) -> list[int]:
         return []
     doc = json.loads(AMENDMENTS_PATH.read_text())
     by_market = {int(p["market_id"]): p for p in golden}
-    applied: list[int] = []
+    applied: list[str] = []
+    revisions = [a["revision"] for a in doc.get("amendments", [])]
+    if len(set(revisions)) != len(revisions):
+        raise SystemExit(
+            "duplicate amendment revisions: two corrections sharing one identity "
+            "collapse into one for every reader downstream"
+        )
     for a in doc.get("amendments", []):
         mid = int(a["market_id"])
         pair = by_market.get(mid)
         if pair is None:
             # Not an error: --limit truncates the set, and a market can leave
             # the artifact. Silence would be, so it says so.
-            print(f"  amendment for market {mid}: not in this golden set, skipped")
+            print(
+                f"  amendment {a['revision']}: market not in this golden set, skipped"
+            )
             continue
         current = pair.get("correct_event_id")
         current = int(current) if current is not None else None
@@ -212,7 +220,7 @@ def apply_adjudication_amendments(golden: list[dict]) -> list[int]:
                 f"the amendment — re-check the evidence before re-capturing."
             )
         pair["correct_event_id"] = a["now"]
-        applied.append(mid)
+        applied.append(a["revision"])
     return applied
 
 
@@ -367,7 +375,13 @@ def main() -> int:
         "source_file": Path(args.golden).name,
         # Recorded in the header so a reader of the fixture can see that its
         # adjudications are not verbatim the artifact's, and which ones are not.
-        "amended_market_ids": sorted(amended),
+        # REVISIONS, not market ids: a second correction to the same market is a
+        # different fact, and a set of market ids cannot represent it (see
+        # `L1B-052-AMENDMENT-REVISION-IDENTITY`).
+        "amended_revisions": sorted(amended),
+        "amended_market_ids": sorted(
+            {int(r.split("@", 1)[0]) for r in amended}
+        ),
         "golden_pairs": len(golden),
         "captured_pairs": len(pairs),
         "positive_pairs": sum(1 for p in pairs if p["correct_event_id"] is not None),

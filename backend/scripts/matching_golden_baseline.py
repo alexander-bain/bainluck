@@ -32,6 +32,25 @@ from tests.test_matching_golden_set_2706 import (  # noqa: E402
 )
 
 
+def markets_with_a_new_exemption(inputs: dict, old_baseline: dict) -> set[str]:
+    """Which markets may be re-baselined without a ``--reset``, as a pure function.
+
+    BY REVISION, not by market id (`L1B-052-AMENDMENT-REVISION-IDENTITY`). A
+    second correction to the same market is a different fact and needs its own
+    one-shot exemption; a set of market ids would already contain that market
+    from the first correction, so the difference would be empty and the second
+    correction would be refused forever as a plain regression.
+
+    Extracted from ``main`` so it can be tested rather than described. The
+    market-keyed version of this was a comment claiming a property no test
+    could see, which is how it would have survived being reverted.
+    """
+    new_revisions = set(inputs.get("amended_revisions", [])) - set(
+        old_baseline.get("amended_revisions", [])
+    )
+    return {r.split("@", 1)[0] for r in new_revisions}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--write", action="store_true")
@@ -70,9 +89,7 @@ def main() -> int:
     old_doc = {}
     if BASELINE_PATH.exists():
         old_doc = json.loads(BASELINE_PATH.read_text())
-    newly_amended = {
-        str(m) for m in inputs.get("amended_market_ids", [])
-    } - {str(m) for m in old_doc.get("amended_market_ids", [])}
+    newly_amended = markets_with_a_new_exemption(inputs, old_doc)
 
     regressions = [
         m for m in old
@@ -121,8 +138,9 @@ def main() -> int:
             "--write, and only ever upward."
         ),
         "source_file": inputs["source_file"],
-        # Carried forward so `newly_amended` above can only ever be the
+        # Carried forward so `new_revisions` above can only ever be the
         # amendments this write is the first to see.
+        "amended_revisions": sorted(inputs.get("amended_revisions", [])),
         "amended_market_ids": sorted(inputs.get("amended_market_ids", [])),
         "reset_reason": args.reset,
         "anchor": "per-pair decision clock (see pair_as_of)",

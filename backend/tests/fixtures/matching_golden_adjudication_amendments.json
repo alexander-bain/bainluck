@@ -5,10 +5,12 @@
   "It is applied BEFORE the pair is built, so search_surfaced_the_answer and the adjudicated-event-must-be-present guarantee are both recomputed against the corrected answer rather than patched afterwards.",
   "`was` is asserted against the artifact. If the artifact does not say what the amendment claims it says, the capture FAILS rather than applying a correction to a pair that has already moved underneath it.",
   "An amendment never turns a FAILING pair green by itself. It changes the adjudicated answer; the baseline is then re-recorded and the ratchet reports the movement in whichever direction it really went.",
-  "Amendments are append-only. Superseding one means adding another that names it."
+  "Amendments are append-only. Superseding one means adding another that names it.",
+  "Every amendment carries a `revision` — a stable identity for THIS correction, not for the market. The market id is not enough: a later amendment superseding an earlier one on the SAME market is a second correction and must get its own one-shot baseline exemption, and a set of market ids cannot tell the two apart. Format `<market_id>@<on>`; asserted unique."
  ],
  "amendments": [
   {
+   "revision": "59700960@2026-09-05",
    "market_id": 59700960,
    "was": null,
    "now": 15297322,
@@ -24,6 +26,7 @@
    ]
   },
   {
+   "revision": "59701032@2026-09-05",
    "market_id": 59701032,
    "was": null,
    "now": 15297301,

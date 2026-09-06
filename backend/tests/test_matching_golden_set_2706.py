@@ -378,6 +378,7 @@ def test_the_fixture_covers_the_whole_golden_set():
     amended = data.get("amended_market_ids", [])
     moved = load_amendments()["amendments"]
     assert {a["market_id"] for a in moved} == set(amended)
+    assert {a["revision"] for a in moved} == set(data.get("amended_revisions", []))
     # Signed, not counted: an amendment may also retire a positive, and a bare
     # `+ len(amended)` would be a formula that only happens to be right today.
     delta = sum(
@@ -767,12 +768,159 @@ class TestTheAdjudicationAmendments:
         baseline that forgot them would let the same pair take the exemption
         every time, which is a laundering channel rather than a correction."""
         baseline = json.loads(BASELINE_PATH.read_text())
-        assert "amended_market_ids" in baseline, (
+        assert "amended_revisions" in baseline, (
             "re-record with scripts/matching_golden_baseline.py --write"
         )
-        assert set(baseline["amended_market_ids"]) == set(
-            load_inputs().get("amended_market_ids", [])
+        assert set(baseline["amended_revisions"]) == set(
+            load_inputs().get("amended_revisions", [])
         ), (
             "the baseline was written against a different set of amendments "
             "than the fixture carries — re-record"
         )
+
+
+class TestTheAmendmentMechanismFailsClosed:
+    """CERT-1983's two named follow-ups, built rather than carried.
+
+    `L1B-052-WAS-GUARD-REGRESSION` — the stale-`was` refusal was exercised by
+    hand at review time and by nothing afterwards. A guard proved once in a
+    scratch script is a guard that is not there: the next person to touch
+    `apply_adjudication_amendments` has no way to find out they removed it.
+
+    `L1B-052-AMENDMENT-REVISION-IDENTITY` — the one-shot baseline exemption was
+    keyed on the MARKET. A second correction to the same market is a different
+    fact, and under a market-keyed set it would be refused forever: the id is
+    already in the baseline, so `newly_amended` would be empty and the recorder
+    would read the re-adjudication as a plain regression. Amendments now carry a
+    `revision`.
+    """
+
+    def _capture(self):
+        import importlib.util
+
+        path = Path(__file__).resolve().parents[1] / "scripts" / \
+            "capture_matching_golden_fixture.py"
+        spec = importlib.util.spec_from_file_location("_cap", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_a_stale_was_refuses_rather_than_correcting_a_moved_pair(self):
+        """The whole reason `was` is in the file.
+
+        An amendment is a correction to a SPECIFIC recorded answer. If the
+        artifact no longer says what the amendment claims it said, applying the
+        `now` anyway is not correcting — it is overwriting an answer nobody
+        checked, which is the failure the amendment mechanism exists to make
+        impossible.
+        """
+        cap = self._capture()
+        amendments = load_amendments()["amendments"]
+        moved = [
+            {"market_id": a["market_id"], "correct_event_id": 999_999_001}
+            for a in amendments
+        ]
+        with pytest.raises(SystemExit) as exc:
+            cap.apply_adjudication_amendments(moved)
+        assert "moved under the amendment" in str(exc.value)
+        assert str(amendments[0]["market_id"]) in str(exc.value)
+
+    def test_the_happy_path_still_applies_so_the_refusal_is_not_blanket(self):
+        """A guard that refuses everything passes the test above and ships
+        nothing. The control belongs beside it."""
+        cap = self._capture()
+        amendments = load_amendments()["amendments"]
+        golden = [
+            {"market_id": a["market_id"], "correct_event_id": a["was"]}
+            for a in amendments
+        ]
+        applied = cap.apply_adjudication_amendments(golden)
+        assert applied == [a["revision"] for a in amendments]
+        assert [g["correct_event_id"] for g in golden] == [
+            a["now"] for a in amendments
+        ]
+
+    def test_a_duplicate_revision_is_refused(self):
+        """Two corrections sharing one identity collapse into one for every
+        reader downstream — the baseline would grant a single exemption for
+        both, which is the market-keyed bug wearing a new field name."""
+        cap = self._capture()
+        doc = load_amendments()
+        dupe = json.loads(json.dumps(doc))
+        dupe["amendments"].append(json.loads(json.dumps(dupe["amendments"][0])))
+        tmp = Path(__file__).parent / "fixtures" / "_dupe_amendments.json"
+        tmp.write_text(json.dumps(dupe))
+        try:
+            cap.AMENDMENTS_PATH = tmp
+            with pytest.raises(SystemExit) as exc:
+                cap.apply_adjudication_amendments(
+                    [
+                        {"market_id": a["market_id"], "correct_event_id": a["was"]}
+                        for a in doc["amendments"]
+                    ]
+                )
+            assert "duplicate amendment revision" in str(exc.value)
+        finally:
+            tmp.unlink()
+
+    def test_every_amendment_has_a_revision_and_it_is_unique(self):
+        revisions = [a["revision"] for a in load_amendments()["amendments"]]
+        assert all(revisions)
+        assert len(set(revisions)) == len(revisions)
+        # The market alone is NOT the identity, and the format says so.
+        for a in load_amendments()["amendments"]:
+            assert a["revision"] == f"{a['market_id']}@{a['on']}"
+
+    def _recorder(self):
+        import importlib.util
+
+        path = Path(__file__).resolve().parents[1] / "scripts" / \
+            "matching_golden_baseline.py"
+        spec = importlib.util.spec_from_file_location("_rec", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_a_second_correction_to_one_market_gets_its_own_exemption(self):
+        """The follow-up's actual payload, asserted against THE RECORDER'S OWN
+        FUNCTION rather than against arithmetic re-typed in the test.
+
+        Under the market-keyed set this is exactly the case that broke: the
+        market id is already recorded from correction one, so the difference is
+        empty and correction two is read as a plain regression, forever. A test
+        that recomputed the set itself would agree with whichever version it was
+        written beside and would not notice the revert.
+        """
+        rec = self._recorder()
+        first = "59700960@2026-09-05"
+        second = "59700960@2026-11-01"
+
+        # First correction: nothing recorded yet, so it is exempt.
+        assert rec.markets_with_a_new_exemption(
+            {"amended_revisions": [first], "amended_market_ids": [59700960]},
+            {},
+        ) == {"59700960"}
+
+        # SECOND correction to the SAME market, with the first already banked.
+        # This is the one the market-keyed form cannot express.
+        assert rec.markets_with_a_new_exemption(
+            {
+                "amended_revisions": [first, second],
+                "amended_market_ids": [59700960],
+            },
+            {
+                "amended_revisions": [first],
+                "amended_market_ids": [59700960],
+            },
+        ) == {"59700960"}
+
+    def test_the_exemption_is_still_one_shot_per_revision(self):
+        """The other half, and the reason the first half is safe: a baseline
+        that has already seen every revision grants NOTHING, so a later
+        regression on an amended pair is an ordinary regression."""
+        rec = self._recorder()
+        both = {
+            "amended_revisions": ["59700960@2026-09-05", "59701032@2026-09-05"],
+            "amended_market_ids": [59700960, 59701032],
+        }
+        assert rec.markets_with_a_new_exemption(both, both) == set()
