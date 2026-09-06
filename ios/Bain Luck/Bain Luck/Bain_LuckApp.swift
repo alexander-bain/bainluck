@@ -139,6 +139,19 @@ struct Bain_LuckApp: App {
                         )
                         _ = navCoordinator.handleURL(route)
                     }
+                    // …and then, if asked, put that screen below its own fold so
+                    // the camera can see the maps (`-launch_scroll`). Separate
+                    // wait, because this one is for the screen's network loads
+                    // rather than for the app to mount. Works with or without a
+                    // route: the default tab is scrollable too.
+                    #if os(iOS)
+                    if let points = LaunchRig.scrollOffset() {
+                        try? await Task.sleep(
+                            nanoseconds: UInt64(LaunchRig.scrollDelay * 1_000_000_000)
+                        )
+                        LaunchRigScroll.scrollPage(to: points)
+                    }
+                    #endif
                 }
                 #if os(iOS)
                 .onReceive(NotificationCenter.default.publisher(for: UIScene.didActivateNotification)) { _ in

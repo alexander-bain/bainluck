@@ -160,3 +160,82 @@ nonisolated func formatDateRange(start: String?, end: String?) -> String? {
         return nil
     }
 }
+
+// MARK: - Not saying the same thing twice (#3550)
+
+/// An outcome's label with the heading directly above it removed.
+///
+/// Kalshi names a tennis outcome by restating its whole market and appending
+/// the bit that differs: market `"US Open ATP: Francisco Cerundolo vs Alexander
+/// Blockx"`, outcome `"US Open ATP: Francisco Cerundolo vs Alexander Blockx
+/// Total Sets: O/U 3.5"`. `SpecialEventMarketsView` prints the market name as
+/// the mini-card's heading and then prints each outcome underneath it, so on a
+/// page already titled *Blockx vs Cerundolo* the reader gets those 52 characters
+/// a fifteenth time, and the three words that actually distinguish the row —
+/// `Match O/U 36.5` from `Set 1 O/U 9.5` from `Set Handicap +/-1.5` — arrive at
+/// the end of a wrapped second line. Every such row is twice as tall as it
+/// needs to be, for nothing.
+///
+/// Measured on production 2026-09-06 over open markets on events in
+/// −1d…+7d: **260 outcome rows across 25 events** restate their own market
+/// name, in six shapes (`Set N O/U N`, `Set N Winner`, `Match O/U N`,
+/// `Total Sets: O/U N`, `Set Handicap +/-N`, `Game Spread +/-N`) — and **every
+/// one of them is tennis**. No other sport has a single row like it, which is
+/// why this is a display rule about a heading rather than a venue quirk worth
+/// special-casing by name.
+///
+/// **Two guards, both of which turn a tidy-up into a defect if omitted:**
+/// 1. The remainder must begin at a WORD BOUNDARY. A heading `"Set 1"` against
+///    an outcome `"Set 10 Winner"` would otherwise leave `"0 Winner"` — a label
+///    that is not merely ugly but says a different, wrong thing.
+/// 2. A remainder that is empty gives back the ORIGINAL. An outcome named
+///    exactly its market renders as a blank row otherwise, and a blank row
+///    beside a live percentage reads as data we failed to load.
+///
+/// Anything that does not match is returned untouched, which is the common case
+/// across every other sport.
+///
+/// **This is the Swift half of `frontend/lib/otherMarketGroups.ts`
+/// (`stripCardPrefix`), which fixed the same rows on web in live/065 (#2746)
+/// after Alex hit them on the Pegula–Fernandez match.** The two must print the
+/// same string for the same row — including the colon that `Total Sets: O/U
+/// 2.5` drops — because they are two pictures of one question, and #3503 is
+/// this codebase's standing receipt for what happens when one surface's copy
+/// rule moves and the other's does not.
+///
+/// It diverges from web in exactly one way, deliberately: web anchors a regex
+/// built from the market's tokens and has no word-boundary check, so a heading
+/// `"Set 1"` over an outcome `"Set 10 Winner"` yields `"0 Winner"` there. That
+/// is latent rather than live (no venue serves that pair today) and is filed
+/// against web, not worked around here — guard 1 below is the behaviour both
+/// surfaces should end up with.
+nonisolated func labelWithoutRedundantHeading(_ outcomeName: String, under heading: String) -> String {
+    let outcome = outcomeName.trimmingCharacters(in: .whitespacesAndNewlines)
+    let head = heading.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !head.isEmpty, outcome.count > head.count,
+          outcome.lowercased().hasPrefix(head.lowercased())
+    else { return outcomeName }
+
+    let remainder = outcome.dropFirst(head.count)
+    // Guard 1 — the heading has to have ended on a whole word.
+    guard let boundary = remainder.first, !boundary.isLetter, !boundary.isNumber else {
+        return outcomeName
+    }
+
+    // Web's `PREFIX_JOINERS`, same character set: a venue joins parent to child
+    // with a bare space (tennis), a colon, a middot or a pipe.
+    let trimmed = remainder
+        .trimmingCharacters(in: CharacterSet(charactersIn: " :·-|\u{2013}\u{2014}"))
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    // Guard 2 — never hand back a blank row.
+    guard !trimmed.isEmpty else { return outcomeName }
+
+    // Web's `COLON_BEFORE_OU`: `Total Sets: O/U 2.5` → `Total Sets O/U 2.5`.
+    // The colon was punctuation joining the venue's own two halves; with the
+    // heading gone it reads as a label introducing a value, which it is not.
+    return trimmed.replacingOccurrences(
+        of: #":\s+(?=O/U\b)"#,
+        with: " ",
+        options: .regularExpression
+    )
+}

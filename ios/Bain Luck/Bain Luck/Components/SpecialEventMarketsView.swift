@@ -138,10 +138,15 @@ struct SpecialEventMarketsView: View {
                     Text("Additional Markets")
                         .font(.subheadline)
                         .fontWeight(.semibold)
+                    // #3550 — "1 markets grouped by category" is what every US
+                    // Open page printed, because a tennis event's props all
+                    // arrive under one market name. The count is right; the
+                    // noun was not agreeing with it.
+                    let noun = totalItems == 1 ? "market" : "markets"
                     Text(
                         isGameFinished
-                            ? "\(totalItems) markets grouped by category · \(SettledQuote.sectionNote)"
-                            : "\(totalItems) markets grouped by category"
+                            ? "\(totalItems) \(noun) grouped by category · \(SettledQuote.sectionNote)"
+                            : "\(totalItems) \(noun) grouped by category"
                     )
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -189,11 +194,20 @@ struct SpecialEventMarketsView: View {
     /// `PropTravelBar.ResolvedMark` takes. A filled bar is a picture of a live
     /// distribution, and re-wording the label while leaving it up keeps the lie
     /// in the part of the row a reader actually looks at.
+    ///
+    /// #3550 — the label drops whatever the mini-card's own heading already
+    /// says (`labelWithoutRedundantHeading`). Done HERE, at display, and not
+    /// where `OutcomeEntry` is built, because the label is also this type's
+    /// `id` and the key rows are deduplicated on: stripping is injective within
+    /// one card (every row there shares the one heading), but making a
+    /// venue-supplied identity depend on a presentation rule is how two rows
+    /// quietly become one the day a venue names an outcome after a sibling
+    /// market. The identity stays the venue's; only the printing changes.
     @ViewBuilder
-    private func outcomeRow(_ o: OutcomeEntry, rank i: Int) -> some View {
+    private func outcomeRow(_ o: OutcomeEntry, rank i: Int, under heading: String) -> some View {
         let percent = Int((o.prob * 100).rounded())
         HStack(spacing: 6) {
-            Text(o.label)
+            Text(labelWithoutRedundantHeading(o.label, under: heading))
                 .font(.system(size: 11))
                 .foregroundStyle(i == 0 ? .primary : .secondary)
                 .lineLimit(2)
@@ -234,7 +248,7 @@ struct SpecialEventMarketsView: View {
                 }
             }
             ForEach(sorted.indices, id: \.self) { i in
-                outcomeRow(sorted[i], rank: i)
+                outcomeRow(sorted[i], rank: i, under: item.name)
             }
         }
         .padding(8)

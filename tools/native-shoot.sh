@@ -7,17 +7,28 @@
 # LaunchRigContractTests), hands it to the one router, and lands on the screen.
 #
 # Usage:
-#   tools/native-shoot.sh <label> [route] [--counts] [--cooled]
+#   tools/native-shoot.sh <label> [route] [--counts] [--cooled] [--scroll N]
 #
 #   tools/native-shoot.sh discover
 #   tools/native-shoot.sh g1 '' --counts --cooled
 #   tools/native-shoot.sh search 'bainluck://search?q=US%20Open'
 #   tools/native-shoot.sh browse bainluck://playoffs
 #   tools/native-shoot.sh event bainluck://events/9001
+#   tools/native-shoot.sh maps bainluck://events/9001 --scroll 1600
 #
 #   --counts   draw Discover's SERVED/DRAWN card counter (SHOWABLE-1 G1's number)
 #   --cooled   seed the 11-category cooled interaction profile #1221 needs to be
 #              visible at all — on a clean install the defect does not appear
+#   --scroll N photograph N POINTS down the page instead of the top viewport
+#
+# ONE SHOT IS ONE VIEWPORT. iPhone 17 is 402×874 points, and an event page runs
+# past 3,000 — so until `--scroll` existed, the margin maps, the half maps and
+# every probability ladder had never been photographed by this rig at all, and
+# #3533 had to be filed with "its rendering is unverified" in the issue body.
+# When you shoot a card that lives below the hero, shoot it with --scroll or say
+# in your write-up that you did not see it. Over-asking is safe: the app clamps
+# to the bottom of the page rather than photographing past the end of it (which
+# would be a blank shot, and a blank shot reads as a missing card).
 #
 # Build first, and NEVER with -derivedDataPath: a fresh path forces SPM
 # resolution and the sandbox cannot reach dl.google.com. The OTHER_SWIFT_FLAGS
@@ -52,12 +63,18 @@ ROUTE="${2:-}"
 shift $(( $# > 2 ? 2 : $# ))
 COUNTS=""
 COOLED=""
-for flag in "$@"; do
-  case "$flag" in
+SCROLL=""
+while [ $# -gt 0 ]; do
+  case "$1" in
     --counts) COUNTS=1 ;;
     --cooled) COOLED=1 ;;
-    *) echo "unknown flag: $flag" >&2; exit 2 ;;
+    --scroll)
+      SCROLL="${2:?--scroll needs a point count, e.g. --scroll 1600}"
+      shift
+      ;;
+    *) echo "unknown flag: $1" >&2; exit 2 ;;
   esac
+  shift
 done
 
 mkdir -p "$OUT"
@@ -93,12 +110,19 @@ fi
 ARGS=(-suppress_notification_prompt YES -bainluck_telemetry_consent none -discover_onboarded YES)
 [ -n "$ROUTE" ]  && ARGS+=(-launch_route "$ROUTE")
 [ -n "$COUNTS" ] && ARGS+=(-launch_debug_counts YES)
+[ -n "$SCROLL" ] && ARGS+=(-launch_scroll "$SCROLL")
 
 xcrun simctl launch "$SIM" "$BUNDLE" "${ARGS[@]}" >/dev/null 2>&1
 
 # The app hands the route to the router after LaunchRig.routeDelay (2.5s), and
 # the destination screen then loads. 18s covers a cold feed on a cold sim.
+#
+# A scroll waits LaunchRig.scrollDelay (8s) AFTER the route before it moves, so
+# the camera has to wait that out too or it photographs the page pre-scroll —
+# which is a shot of the top with a scrolled label on it, the worst kind of
+# wrong evidence. +4s of slack for the scrolled content's own lazy loads.
 sleep 18
+[ -n "$SCROLL" ] && sleep 12
 SHOT="$OUT/$LABEL.png"
 xcrun simctl io "$SIM" screenshot "$SHOT" >/dev/null 2>&1 \
   && echo "  shot $SHOT" \
