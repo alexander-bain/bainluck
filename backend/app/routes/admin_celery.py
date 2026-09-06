@@ -217,7 +217,7 @@ def _delivery_age_s(delivery, now_epoch):
 
 def build_schedule_adherence(
     beat_schedule, metrics, label_map, deliveries=None, now_epoch=None,
-    matched=None,
+    matched=None, lease_declines=None,
 ):
     """Grade every beat entry's schedule adherence. Pure — no Redis, no celery.
 
@@ -259,6 +259,7 @@ def build_schedule_adherence(
     by_label = {m.get("task"): m for m in metrics if m.get("task")}
     deliveries = deliveries or {}
     matched = matched or {}
+    lease_declines = lease_declines or {}
 
     graded = {}
     unmapped = []
@@ -267,6 +268,7 @@ def build_schedule_adherence(
         m = by_label.get(label) if label else None
         d = deliveries.get(full_name) or {}
         e = matched.get(full_name) or {}
+        ld = lease_declines.get(full_name) or {}
         terminal_age, start_age = _stamp_ages_s(m, now_epoch) if m else (None, None)
         if not m and not d:
             # Honest third state. "No label recorded yet" is NOT "behind" and
@@ -320,6 +322,11 @@ def build_schedule_adherence(
             # for the bucket in which either writer first activates, and every
             # derived number is withheld until it is true.
             matched_coverage_proven=e.get("coverage_proven", False),
+            # LAT-P238 ITEM 3. Keyed by the celery name like the counters above
+            # it — `single_flight` is called with the fully-qualified name, so
+            # this join needs no label map either.
+            lease_declines=ld.get("declines"),
+            lease_declines_window_s=ld.get("window_s"),
             # LAT-P040 (#835): the duration sample's own span, so the p95 is not
             # read against `window_s` (which ages the starts counter and is up
             # to ~23x longer — measured on `poll_odds`, 2026-08-11).
@@ -407,6 +414,7 @@ async def celery_schedule_adherence(
 
     from app.tasks import celery_app
     from app.tasks.redis_state import (
+        get_all_lease_declines,
         get_all_task_deliveries,
         get_all_task_metrics,
         get_matched_emit_delivery,
@@ -419,6 +427,7 @@ async def celery_schedule_adherence(
         get_task_label_map(),
         get_all_task_deliveries(),
         matched=get_matched_emit_delivery(),
+        lease_declines=get_all_lease_declines(),
     )
 
 

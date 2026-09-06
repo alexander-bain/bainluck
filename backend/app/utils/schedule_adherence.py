@@ -479,6 +479,8 @@ def adherence(
     matched_bucket_s=None,
     matched_bucket_start=None,
     matched_coverage_proven=False,
+    lease_declines=None,
+    lease_declines_window_s=None,
     durations_window_s=None,
     durations_saturated=None,
     newest_terminal_age_s=None,
@@ -536,6 +538,17 @@ def adherence(
     counter one line up — is CERT-1966's defect exactly: that counter survives
     deploys and holds pre-change history, so the quotient cannot distinguish a
     healthy current hour from one losing half its fires.
+
+    ``lease_declines`` is reported and never graded on either, for a reason
+    that is NOT the same as the emit counter's. It is not a schedule fact at
+    all: a tick that found ``single_flight``'s lease held was delivered, ran,
+    and declined — the beat was perfect. It is on the row because it splits a
+    number that was already there. ``self_gated_fires`` is
+    ``max(0, deliveries - starts)``, i.e. everything that drops between
+    ``task_prerun`` and ``_tracked_run``, and on ``poll_all_odds`` that is two
+    gates in series (the lease, then ``should_poll_now()``). Publishing the
+    lease's share makes the cadence gate's share readable by subtraction; folded
+    together neither number means anything.
 
     ``terminals`` is still reported rather than graded — whether adherence
     should own completion is an open product question (#1716) and inventing a
@@ -601,6 +614,19 @@ def adherence(
         # CERT-1969: which end, decided on the SAME bucket as the two
         # counts above — never inherited from the 24h verdict.
         "bucket_attribution": None,
+        # LAT-P238 ITEM 3, on lane1b's spec and under its three constraints:
+        # its OWN field (never folded into `self_gated_fires`, which is a
+        # superset counting the lease gate AND the cadence gate), never a
+        # numerator, and carrying its own window — because a count without its
+        # age is not a rate, and this counter's age was previously unreadable
+        # through the only surface that exposed it.
+        #
+        # On EVERY row, not only `lapping[]` as originally specified. A task
+        # that declines its lease on every tick and is therefore NOT lapping is
+        # precisely the row a reader needs this number on, and `lapping[]`
+        # filters it out.
+        "lease_declines": lease_declines,
+        "lease_declines_window_s": lease_declines_window_s,
         "numerator": "deliveries" if use_deliveries else "starts",
         "self_gated_fires": None,
         # Both default to None on EVERY row so the payload shape does not depend

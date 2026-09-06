@@ -1175,6 +1175,71 @@ def get_matched_emit_delivery(now_s=None) -> dict:
         return {}
 
 
+def get_all_lease_declines() -> dict:
+    """``{name: {"declines": int, "window_s": float|None}}`` — LAT-P238 ITEM 3.
+
+    THE COUNTER IS NOT NEW; THIS READER IS. ``single_flight._record_skip``
+    already counts every tick that found the in-flight lease held, under
+    ``SKIP_COUNTER_PREFIX``, using ``_bump_window_counter``'s exact
+    ``SET … NX EX`` idiom — including the ``NX``, which is the half that stops a
+    24h window becoming a lifetime total. What was missing is the same half
+    LAT-P024 found missing everywhere else: the only way to read it was
+    ``/api/admin/redis-read``, which returns the VALUE and no TTL. So the count
+    had no age, and a count without its age is not a rate — 346 declines could
+    be 346 in eight minutes or 346 in twenty-four hours, and the reader had to
+    difference two samples by hand to tell.
+
+    The key is eligible for ``_window_age_s`` today and needs no change to do
+    it: ``SKIP_COUNTER_TTL_SECONDS`` is 86400, the same value ``_window_age_s``
+    derives against, and the TTL was stamped under the same ``NX`` as the
+    counter. Reading it here rather than teaching ``redis-read`` about TTLs puts
+    the number on the row it will be compared against.
+
+    WHY IT IS ITS OWN FIELD AND NOT PART OF ``self_gated_fires``, which is the
+    constraint lane1b's offer was accepted under. ``self_gated_fires`` is
+    ``max(0, deliveries − starts)``: everything that drops between
+    ``task_prerun`` and ``_tracked_run``. On ``poll_all_odds`` that is TWO gates
+    in series — the lease, then ``should_poll_now()``'s cadence check — so the
+    difference is a SUPERSET, not a synonym. Published beside it, the cadence
+    gate's share becomes readable by subtraction and both numbers mean
+    something; folded together, neither does. It is the same argument that makes
+    ``deliveries`` and ``starts`` two fields instead of one.
+
+    Diagnostic only. It is never a numerator and never feeds a verdict.
+
+    ONE HAZARD FOR ANY READER DIFFERENCING TWO SAMPLES, inherited from the
+    tumbling window: at expiry the value drops to 0 and a fresh window opens, so
+    a difference across that boundary is NEGATIVE. The tell is
+    ``window_s`` going DOWN between two reads — which is exactly why it is
+    published beside the count rather than left to be assumed.
+    """
+    try:
+        from app.utils.single_flight import SKIP_COUNTER_PREFIX
+    except Exception:
+        return {}
+    try:
+        r = get_redis_client()
+        out = {}
+        for key in r.keys(f"{SKIP_COUNTER_PREFIX}*"):
+            key_str = key.decode() if isinstance(key, bytes) else key
+            if not key_str.startswith(SKIP_COUNTER_PREFIX):
+                continue
+            name = key_str[len(SKIP_COUNTER_PREFIX):]
+            if not name:
+                continue
+            try:
+                declines = int(r.get(key_str) or 0)
+            except (TypeError, ValueError):
+                continue
+            out[name] = {
+                "declines": declines,
+                "window_s": _window_age_s(r, key_str),
+            }
+        return out
+    except Exception:
+        return {}
+
+
 #: Execution lifecycle, counted at celery's OWN signals and keyed by the
 #: fully-qualified task name — #1501 item 2, from codex C-CERT-SENTRY-R2.
 #:
