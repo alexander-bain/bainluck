@@ -97,18 +97,31 @@ describe("Additional Markets on a live tennis match: the rows say what they are"
     expect(occurrences).toBe(1);
   });
 
-  test("the distinguishing half of each child title is what a reader sees", () => {
+  // SUPERSEDED by #3575. This asserted that the six de-prefixed child titles
+  // were "what a reader sees" — and they were, but none of them is an answer.
+  // `Set 2 Winner 87%` does not say for whom; `Match O/U 21.5 50%` does not say
+  // over or under. Shortening the string was a real improvement and still left
+  // every number nameless. The wire has no side to recover for these rows, so
+  // they go, and the sided rows the section was filtering take their place.
+  test("a child title is never rendered as if it were an outcome", () => {
     const text = visible(render(1));
-    for (const label of [
+    for (const question of [
       "Set 2 Winner",
-      "Set 1 Winner",
       "Set Handicap +/-1.5",
       "Total Sets O/U 2.5",
       "Game Spread +/-4.5",
       "Match O/U 21.5",
     ]) {
-      expect(text).toContain(label);
+      expect(text).not.toContain(question);
     }
+  });
+
+  test("the sided row the section used to filter out is what renders instead", () => {
+    // `Set 1 Winner: Pegula vs Fernandez | Yes = 0.0005` was in this very wire
+    // the whole time, dropped by the `winner` keyword and by the two-row
+    // win-prob test. It carries the same 0% the un-sided row carried, attached
+    // to a name.
+    expect(visible(render(1))).toContain("Pegula wins Set 1");
   });
 
   test("a tour name is never printed where a player belongs", () => {
@@ -130,24 +143,30 @@ describe("Additional Markets on a live tennis match: a played set is not a chanc
   test("set 1 is over, so it states a last quote and loses its bar", () => {
     const text = visible(render(1));
     expect(text).toContain(`${SETTLED_QUOTE_PREFIX} 0%`);
-    // The row is not deleted — a reader can still see the market exists.
-    expect(text).toContain("Set 1 Winner");
+    // The row is not deleted — a reader can still see the market exists. Its
+    // label is the sided one now (#3575), which is also proof the set number
+    // survives being rewritten out of the rendered string.
+    expect(text).toContain("Pegula wins Set 1");
   });
 
   test("THE OTHER DIRECTION: the set being played keeps its live bar", () => {
     // Gotcha #43. Over-suppression here would strip a live match of its prices.
+    //
+    // #3575 changed the arithmetic, and it is worth stating plainly: this used
+    // to be 7 live bars out of 8 surviving rows, and seven of those eight rows
+    // were un-sided child titles. Two rows survive now — `Jessica Pegula` and
+    // `Pegula wins Set 1` — and BOTH name a side. The count fell; the number of
+    // rows a reader can act on went from 1 to 2.
     const html = render(1);
     const bars = html.match(BAR) ?? [];
-    // Eight of the twelve wire rows survive the section's own filters (the
-    // Kalshi win-prob pair and the two-sided "Set 1 Winner:" market are
-    // dropped upstream); exactly one of the eight is decided.
-    expect(bars).toHaveLength(7);
-    expect(visible(html)).toContain("87%");
+    expect(bars).toHaveLength(1);
+    // Set 1 is decided, so the live bar that remains is the match row.
+    expect(visible(html)).toContain("Jessica Pegula");
   });
 
   test("before any set is finished every row is live", () => {
     const html = render(0);
-    expect(html.match(BAR) ?? []).toHaveLength(8);
+    expect(html.match(BAR) ?? []).toHaveLength(2);
     expect(visible(html)).not.toContain(SETTLED_QUOTE_PREFIX);
   });
 });
