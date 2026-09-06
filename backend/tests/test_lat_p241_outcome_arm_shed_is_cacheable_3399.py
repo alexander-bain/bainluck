@@ -190,20 +190,49 @@ class TestTheShedStateIsReportable:
     """The residual risk this change accepts is a term that sheds
     INTERMITTENTLY. That has to be measurable, not merely loggable."""
 
-    def test_debug_timing_reports_both_flags_by_name(self):
-        fn = _typeahead_fn()
-        keys: set[str] = set()
-        for n in ast.walk(fn):
-            if isinstance(n, ast.Dict):
-                for k, v in zip(n.keys, n.values):
-                    if (isinstance(k, ast.Constant) and isinstance(v, ast.Name)
-                            and v.id in (SHED_FLAG, STAGE_FLAG)):
-                        keys.add(k.value)
-        assert keys, (
-            "neither shed flag is reported under a key of its own, so a probe "
-            "has to infer the state by substring-matching stage labels — which "
-            "silently answers 'no' the day a label is renamed"
+    @staticmethod
+    def _dicts_holding_the_flags() -> list[ast.Dict]:
+        out = []
+        for n in ast.walk(_typeahead_fn()):
+            if isinstance(n, ast.Dict) and any(
+                isinstance(v, ast.Name) and v.id in (SHED_FLAG, STAGE_FLAG)
+                for v in n.values
+            ):
+                out.append(n)
+        return out
+
+    def test_both_flags_are_reported_under_keys_of_their_own(self):
+        keys = {k.value
+                for d in self._dicts_holding_the_flags()
+                for k, v in zip(d.keys, d.values)
+                if isinstance(k, ast.Constant) and isinstance(v, ast.Name)
+                and v.id in (SHED_FLAG, STAGE_FLAG)}
+        assert len(keys) == 2, (
+            "both shed flags must be reported under a key of their own, so a "
+            "probe need not infer the state by substring-matching stage labels "
+            f"— which silently answers 'no' the day a label is renamed. Got: {keys}"
         )
+
+    def test_the_flags_do_not_live_in_the_numeric_timing_map(self):
+        """CERT-2032 follow-up `TYPEAHEAD-DEBUG-STATE-OUTSIDE-TIMING-MAP`.
+
+        Every other entry in `debug_timing` is a stage duration in milliseconds
+        and `total_ms` is a SUM over that map. In Python `True` sums as 1, so a
+        boolean in there is a reader waiting to add a flag to a millisecond
+        total. Two facts of different kinds do not share a dict.
+        """
+        for d in self._dicts_holding_the_flags():
+            literal_keys = {k.value for k in d.keys
+                            if isinstance(k, ast.Constant) and isinstance(k.value, str)}
+            assert "total_ms" not in literal_keys, (
+                "a shed BOOLEAN is in the same dict as `total_ms`, which is a "
+                "sum over the millisecond stage map — give it its own key"
+            )
+            # Nor may it ride in via `**_ta_stage_ms` alongside the booleans.
+            assert not any(k is None for k in d.keys), (
+                "a shed boolean shares a dict with a `**` spread of the stage "
+                "timings — same mixed schema, one level less visible"
+            )
 
 
 @pytest.mark.parametrize("flag", [SHED_FLAG, STAGE_FLAG])

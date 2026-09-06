@@ -6718,14 +6718,23 @@ async def typeahead_search(
         # presence of a stage label. Deciding "did the arm shed?" by scanning for
         # a `..._SHED` substring in the stage keys is the reader every probe of
         # this route has had to write, and it silently answers "no" the day a
-        # label is renamed. Both flags are named here so the question has an
-        # answer that does not depend on spelling — and so the residual risk this
-        # change accepts (a term that sheds INTERMITTENTLY) is measurable rather
-        # than only loggable.
+        # label is renamed. Both flags are named so the question has an answer
+        # that does not depend on spelling — and so the residual risk this change
+        # accepts (a term that sheds INTERMITTENTLY) is measurable rather than
+        # only loggable.
+        #
+        # 🔴 THEIR OWN KEY, NOT INSIDE `debug_timing`, and that is CERT-2032's
+        # follow-up `TYPEAHEAD-DEBUG-STATE-OUTSIDE-TIMING-MAP`. The first cut of
+        # this put both booleans into the timing map. Every other entry there is
+        # a stage duration in milliseconds and `total_ms` is a SUM over that
+        # map — and in Python `True` sums as 1 — so a mixed schema there is a
+        # reader waiting to add a boolean to a millisecond total. Two facts of
+        # different kinds do not share a dict just because one caller wants
+        # both.
         result["debug_timing"] = {**_ta_stage_ms,
-                                  "total_ms": sum(_ta_stage_ms.values()),
-                                  "outcome_arm_shed": _ta_outcome_arm_shed,
-                                  "degraded": _ta_degraded}
+                                  "total_ms": sum(_ta_stage_ms.values())}
+        result["debug_shed"] = {"outcome_arm_shed": _ta_outcome_arm_shed,
+                                "degraded": _ta_degraded}
 
     # Cache the assembled suggestions (incl. top_outcomes) per query. The read at
     # the top of this endpoint had no matching write — the cache never populated,
