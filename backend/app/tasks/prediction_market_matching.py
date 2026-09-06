@@ -2605,6 +2605,15 @@ def _is_cross_sport_link(
 #     a budget with nor permanently strand a tail (gotcha #41).
 _RESOLVED_CROSS_SPORT_SCAN_LIMIT = 200
 
+# The budget floor the resolved-row sweep needs before it is worth running its
+# own selector. Sized from the two numbers around it, not picked: the scan costs
+# 9-15s (it is a heap scan of ~132k rows — see the comment at its call site),
+# and the revalidation loop stops at 60s, so 150s leaves ~75s of processing
+# after the scan. That is ample for a slice whose *candidates* are a handful
+# even when its *scan* is capped at 200. Below this floor the pass spends its
+# last seconds on the fresh slice instead, which is the better trade.
+_PHASE15_RESOLVED_SWEEP_FLOOR = 150
+
 
 def _resolved_cross_sport_candidate_query(limit: int = _RESOLVED_CROSS_SPORT_SCAN_LIMIT):
     """Resolved, linked cup-moneyline rows — the population Phase 1.5 cannot see.
@@ -2743,42 +2752,72 @@ async def _phase15_revalidate(
         _PHASE15_FRESH_SLICE, shard_index, shards, total_eligible, shards,
     )
 
+    # The resolved-row cross-sport sweep. Selected separately because these rows
+    # fail `_phase15_eligible_where` by design, and pre-filtered to confirmed
+    # mismatches so the loop's `completed`-relink arm never sees a correct row.
+    #
+    # It runs FIRST and its rows LEAD the queue. Appending them — which is how
+    # this shipped — made the sweep a measured no-op: `all_linked_rows` holds up
+    # to `_PHASE15_SCAN_LIMIT` (1,000) fresh + rotation rows, the loop below
+    # breaks on `_time_remaining() < 60`, and a 1,000-row revalidation does not
+    # finish inside what is left of a 780s pass. Position 1,001 is not "checked
+    # late", it is never checked. Measured 2026-09-06: the 15 mislinked cup rows
+    # did not move on any beat after the fix meant to move them went live.
+    #
+    # Leading is bounded, not greedy: the slice is capped at
+    # `_RESOLVED_CROSS_SPORT_SCAN_LIMIT` (200) against a 1,000-row queue, so the
+    # fresh slice is delayed by at most a fifth of a beat's work, never dropped.
+    resolved_rows: list = []
+    resolved_scanned = 0
+    if _time_remaining() < _PHASE15_RESOLVED_SWEEP_FLOOR:
+        # The selector cannot use an index — a prefix `ilike` is unindexable
+        # under this database's en_US collation, and the range rewrite that
+        # would be indexable does not mean the same thing there (it returns
+        # nothing, because en_US ignores the `-`). So it heap-scans ~132k linked
+        # Kalshi rows: 9-15s, measured on production 2026-09-06. Buying rows the
+        # loop then has no budget left to process is how this phase starves.
+        stats["funnel"]["phase15_resolved_sweep_skipped_budget"] = True
+        logger.info(
+            "Skipping the resolved-row cross-sport sweep — only %.0fs left, "
+            "below the %ds floor its own scan costs",
+            _time_remaining(), _PHASE15_RESOLVED_SWEEP_FLOOR,
+        )
+    else:
+        stats["funnel"]["phase15_resolved_sweep_skipped_budget"] = False
+        resolved_candidates = (
+            await session.execute(_resolved_cross_sport_candidate_query())
+        ).all()
+        resolved_scanned = len(resolved_candidates)
+        _resolved_seen: set[int] = set()
+        for market, linked_event, event_sport_key in resolved_candidates:
+            if not _is_cross_sport_link(_market_sport_prefix(market), event_sport_key):
+                continue  # a cup ticker on a `soccer_*` event — correct, leave it
+            if market.id in _resolved_seen:
+                continue
+            _resolved_seen.add(market.id)
+            resolved_rows.append((market, linked_event))
+    stats["funnel"]["phase15_resolved_cross_sport_scanned"] = resolved_scanned
+    stats["funnel"]["phase15_resolved_cross_sport_candidates"] = len(resolved_rows)
+    if resolved_rows:
+        logger.info(
+            "Resolved-row cross-sport sweep: %d of %d resolved cup rows are "
+            "linked to the wrong sport and lead this beat's revalidation queue",
+            len(resolved_rows), resolved_scanned,
+        )
+
     fresh_rows = (await session.execute(_phase15_fresh_query())).all()
     rotation_rows = (
         await session.execute(_phase15_rotation_query(shards, shard_index))
     ).all()
 
-    # Fresh first, then the shard, deduped — a row in both is checked once.
-    all_linked_rows = list(fresh_rows)
-    _seen_market_ids = {market.id for market, _ in fresh_rows}
-    for market, linked_event in rotation_rows:
+    # Resolved slice first, then fresh, then the shard, deduped — a row in more
+    # than one is checked once, at its earliest position.
+    all_linked_rows = list(resolved_rows)
+    _seen_market_ids = {market.id for market, _ in resolved_rows}
+    for market, linked_event in list(fresh_rows) + list(rotation_rows):
         if market.id not in _seen_market_ids:
             _seen_market_ids.add(market.id)
             all_linked_rows.append((market, linked_event))
-
-    # The resolved-row cross-sport sweep. Selected separately because these rows
-    # fail `_phase15_eligible_where` by design, and pre-filtered to confirmed
-    # mismatches so the loop's `completed`-relink arm never sees a correct row.
-    resolved_candidates = (
-        await session.execute(_resolved_cross_sport_candidate_query())
-    ).all()
-    resolved_cross_sport = 0
-    for market, linked_event, event_sport_key in resolved_candidates:
-        if not _is_cross_sport_link(_market_sport_prefix(market), event_sport_key):
-            continue  # a cup ticker on a `soccer_*` event — correct, leave it
-        if market.id in _seen_market_ids:
-            continue
-        _seen_market_ids.add(market.id)
-        all_linked_rows.append((market, linked_event))
-        resolved_cross_sport += 1
-    stats["funnel"]["phase15_resolved_cross_sport_scanned"] = len(resolved_candidates)
-    stats["funnel"]["phase15_resolved_cross_sport_candidates"] = resolved_cross_sport
-    if resolved_cross_sport:
-        logger.info(
-            "Resolved-row cross-sport sweep: %d of %d resolved cup rows are "
-            "linked to the wrong sport and are queued for revalidation",
-            resolved_cross_sport, len(resolved_candidates),
-        )
 
     for market, linked_event in all_linked_rows:
         if _time_remaining() < 60:
