@@ -461,7 +461,16 @@ def _soon(n):
 
 
 def _full_db():
-    return _DB([_Rows([]), _Rows(_soon(8))])
+    """A build that reaches every section.
+
+    🔴 #3685: this used to queue TWO result sets, because section 2's eight rows
+    filled the window and sections 3-5 were skipped. Section 2 now owns at most
+    its budget, so the later sections run — and an unqueued statement here does
+    not fail loudly, it raises inside the section's own try/except and is
+    swallowed as a dead section. Queue all five, or these tests quietly stop
+    describing a build.
+    """
+    return _DB([_Rows([]), _Rows(_soon(8)), _Rows([]), _Rows([]), _Rows([])])
 
 
 @pytest.fixture
@@ -536,7 +545,12 @@ class TestTheRoutesServeDecision:
         resp = await events_routes.search_suggestions(db=db)
 
         assert db.executed, "the route must have built"
-        assert len(resp["suggestions"]) == events_routes._MAX_SUGGESTIONS
+        # #3685: the built row is section 2's budget, not the whole window — the
+        # subject here is that a build HAPPENED and the mirror was not served.
+        assert [s["query"] for s in resp["suggestions"]] == ["Aces", "Sky"]
+        assert (
+            len(resp["suggestions"]) == events_routes._SUGGESTION_SECTION_BUDGETS[2]
+        )
 
     async def test_a_too_old_mirror_makes_the_reader_build(self, redis_double):
         redis_double(
@@ -554,7 +568,11 @@ class TestTheRoutesServeDecision:
         db = _full_db()
         resp = await events_routes.search_suggestions(db=db)
         assert db.executed, "past the ceiling the reader blocks and rebuilds"
-        assert len(resp["suggestions"]) == events_routes._MAX_SUGGESTIONS
+        # #3685, as above: a fresh build, not the two-hour-old mirror.
+        assert [s["query"] for s in resp["suggestions"]] == ["Aces", "Sky"]
+        assert (
+            len(resp["suggestions"]) == events_routes._SUGGESTION_SECTION_BUDGETS[2]
+        )
 
     async def test_the_tier_has_exactly_one_writer(self):
         """🔴 LAT-P001's DEFECT, PINNED. A build reached through the request path

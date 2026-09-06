@@ -498,18 +498,39 @@ def test_no_section_1_chip_says_a_team_is_playing_itself():
     lines: a test that recomputes `short` and `opponent` itself would stay green
     no matter what the route went on to render, which is the failure mode that
     let this ship in the first place.
+
+    🔴 #3685 CHANGED HOW THIS TEST HAS TO BE DRIVEN, AND NOT WHAT IT ASSERTS.
+    Section 1 may now contribute at most `_SUGGESTION_SECTION_BUDGETS[1]` chips,
+    so one run of the eight-row fixture only ever renders the first three — and
+    a self-naming chip in row four would go unseen. The property is per ROW, so
+    each row is now driven through the route on its own AND the whole fixture is
+    run once, which also pins the budget against the exact production row that
+    motivated it.
     """
+    from app.routes.events import _SUGGESTION_SECTION_BUDGETS
+
+    def _no_chip_names_itself(resp):
+        for chip in resp["suggestions"]:
+            opponent = chip["label"].split(" vs ", 1)[1]
+            assert opponent != chip["query"], (
+                f"chip reads {chip['query']!r} — {chip['label']!r}: a team "
+                "playing itself"
+            )
+
+    for pair in _PRODUCTION_LIVE_ROW:
+        resp = _run_route([pair])
+        assert len(resp["suggestions"]) == 1, (
+            f"a single tight game must still produce its chip: {pair}"
+        )
+        _no_chip_names_itself(resp)
+
     resp = _run_route(_PRODUCTION_LIVE_ROW)
     labels = [s["label"] for s in resp["suggestions"]]
-    assert len(labels) == len(_PRODUCTION_LIVE_ROW), (
-        f"section 1 must produce a chip per tight game: {labels}"
+    assert len(labels) == _SUGGESTION_SECTION_BUDGETS[1], (
+        f"section 1 may own only {_SUGGESTION_SECTION_BUDGETS[1]} of the eight "
+        f"slots (#3685) — got {len(labels)}: {labels}"
     )
-    for chip in resp["suggestions"]:
-        opponent = chip["label"].split(" vs ", 1)[1]
-        assert opponent != chip["query"], (
-            f"chip reads {chip['query']!r} — {chip['label']!r}: a team playing "
-            "itself"
-        )
+    _no_chip_names_itself(resp)
 
 
 def test_an_ordinary_market_name_is_not_mistaken_for_a_prop():

@@ -272,13 +272,78 @@ def _db_with_soon(n, *, extra_sections):
 
 
 def _full_window_db():
-    """Section 2 fills all eight slots; nothing after it should be queried."""
-    return _db_with_soon(8, extra_sections=0)
+    """Section 2 is OFFERED all eight; #3685 says it may keep two.
+
+    🔴 THIS FIXTURE USED TO QUEUE NOTHING AFTER SECTION 2, because eight rows
+    filled the window and the later sections were skipped. Section 2's budget is
+    now 2 (`_SUGGESTION_SECTION_BUDGETS`), so sections 3, 4 and 5 all run — and
+    an unqueued statement does NOT fail loudly here, it raises inside the
+    section's own try/except and is swallowed as a dead section. Queue all five.
+    """
+    return _db_with_soon(8, extra_sections=3)
 
 
 def _open_window_db():
     """Section 2 fills two slots; sections 3, 4 and 5 must all still run."""
     return _db_with_soon(2, extra_sections=3)
+
+
+def _live_events(pairs):
+    """Live rows section 1 will read the blend off — all inside the tight band."""
+    return [
+        SimpleNamespace(
+            id=900 + i,
+            status="live",
+            home_team_name=home,
+            away_team_name=away,
+            win_probability_sources={"betting": 0.5},
+            opening_home_probability=None,
+            espn_win_prob_home=None,
+        )
+        for i, (home, away) in enumerate(pairs)
+    ]
+
+
+def _allowance_spent_db():
+    """Sections 1 and 2 between them spend the whole TIMELY allowance.
+
+    🔴 THIS IS WHAT MAKES THE LAT-P124 SKIP TAKEABLE IN THE SHIPPED SHAPE, and
+    it is the second thing CERT-2138's repair bought. The first presentation
+    capped sections 1-4 at 7 of 8 slots, which meant no section was ever ENTERED
+    with the window full and the skip became an untakeable branch — worse than no
+    branch, by this file's own doctrine. `_SUGGESTION_BACKFILL_RESERVE` stops the
+    timely sections at five between them, so section 1 at budget plus section 2
+    at budget closes their allowance and sections 3 and 4 are skipped OUTRIGHT.
+
+    Three statements: sections 1, 2 and 5. The 588 ms pooled movers sort is not
+    one of them.
+    """
+    return _RecordingDB(
+        [
+            _Rows(
+                _live_events(
+                    # Deliberately disjoint from `_PAIRS`, which section 2's rows
+                    # come from: `_add` dedups on the query string, so a shared
+                    # shorter name would silently give section 2 nothing and the
+                    # allowance would never be spent.
+                    [("Fire", "Whitecaps"), ("Platense", "Riestra"), ("Pumas", "Tigres")]
+                )
+            ),
+            _Rows(_soon_events(2)),
+            _Rows(
+                [
+                    SimpleNamespace(id=300 + i, name=name, status="open", market_tier=1)
+                    for i, name in enumerate(
+                        [
+                            "Presidential Election Winner 2028",
+                            "US Open Men's Singles Winner",
+                            "College Football National Championship",
+                        ]
+                    )
+                ]
+            ),
+        ]
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -287,24 +352,100 @@ def _open_window_db():
 
 
 class TestTheWindowFullSkip:
-    async def test_a_full_window_issues_exactly_two_statements(self, redis_double):
+    async def test_the_skip_still_fires_when_the_timely_allowance_is_spent(
+        self, redis_double
+    ):
         """The 1.14 GB sort does not run when its rows cannot reach the page.
 
-        Before this change the route always issued four statements once section
-        2 was reached. Section 3 — 146,437 shared blocks of the route's ~147,100
-        — was the third of them.
+        Before LAT-P124 the route always issued four statements once section 2
+        was reached. Section 3 — 146,437 shared blocks of the route's ~147,100,
+        588 ms and 3,629 blocks in the pooled form LAT-P151 shipped — was the
+        third of them.
+
+        🔴 #3685 NEARLY SPENT THIS SHIP AND THEN GOT IT BACK. Its first
+        presentation capped sections 1-4 at seven of the eight slots, which meant
+        no section could ever be entered with the window full and this branch
+        became untakeable. CERT-2138's repair replaced that remainder with a
+        named reserve, and the reserve fires HERE: sections 1 and 2 at budget
+        spend the whole timely allowance of five, so sections 3 and 4 are skipped
+        outright and the build issues three statements, not five.
+        """
+        redis_double(_FakeRedis())
+        db = _allowance_spent_db()
+
+        resp = await search_suggestions(db=db)
+
+        assert len(db.executed) == 3, (
+            f"expected sections 1, 2 and 5 only, got {len(db.executed)}. A "
+            "fourth means a timely section ran with its allowance spent — the "
+            "movers sort is back on every build."
+        )
+        assert len(resp["suggestions"]) == _MAX_SUGGESTIONS
+        assert [s["query"] for s in resp["suggestions"]][-3:] == [
+            "Presidential Election Winner 2028",
+            "US Open Men's Singles Winner",
+            "College Football National Championship",
+        ], "the reserved slots must hold the volume-ordered markets"
+
+    async def test_no_single_section_can_close_the_window(self, redis_double):
+        """🔴 #3685, THE SHIP: eight chips from one section is what the row was.
+
+        Production 20:50Z on a US Open Saturday: all eight chips were section 1
+        — four AAA baseball games and an English ninth-tier match — and section
+        5, ordered by real `volume_24h`, could not reach the row at all.
+
+        Offered eight rows, a budgeted section keeps its budget and the rest of
+        the window stays open for sections that have something better to say.
         """
         redis_double(_FakeRedis())
         db = _full_window_db()
 
         resp = await search_suggestions(db=db)
 
-        assert len(db.executed) == 2, (
-            f"expected only section 1's live-event probe and section 2's, got "
-            f"{len(db.executed)}. A third means a later section ran with the "
-            "window already full — the movers seq-scan is back."
+        assert len(resp["suggestions"]) == (
+            events_routes._SUGGESTION_SECTION_BUDGETS[2]
+        ), (
+            "section 2 was offered eight rows and kept more than its budget: "
+            f"{[s['query'] for s in resp['suggestions']]}"
         )
-        assert len(resp["suggestions"]) == _MAX_SUGGESTIONS
+        assert len(db.executed) == 5, (
+            "every later section must still be consulted — the whole point is "
+            "that the window is no longer closed by section 2"
+        )
+
+    def test_sections_one_to_four_cannot_between_them_close_the_window(self):
+        """🔴 THE INVARIANT THE BUDGET TABLE AND THE RESERVE EXIST TO CARRY.
+
+        Section 5 is the only section ordered by what people actually trade, and
+        #2286 had just brought it back from the dead when #3685 found that
+        nothing it produced could ever be seen.
+
+        The first version of this test asserted only that the budgets sum to less
+        than the window — "the backfill gets at least one slot". CERT-2138 showed
+        that one slot is not the ship: with all four budgets saturated the row
+        reached `Presidential Election Winner 2028` and stopped, one short of the
+        US Open market the ship is named after. The guarantee is a NAMED FLOOR
+        now, and it is asserted as one.
+        """
+        budgets = events_routes._SUGGESTION_SECTION_BUDGETS
+        reserve = events_routes._SUGGESTION_BACKFILL_RESERVE
+
+        assert set(budgets) == {1, 2, 3, 4}, (
+            "section 5 must stay OUT of the table — it is the uncapped backfill "
+            "that fills the row on a quiet night"
+        )
+        assert all(v >= 1 for v in budgets.values()), (
+            "a budget of zero is a deleted section wearing a number"
+        )
+        assert reserve >= 2, (
+            f"a reserve of {reserve} is sized to today's exact volume ranking — "
+            "the marquee chip is rank 2, so one new market outranking it puts "
+            "the ship back where CERT-2138 found it"
+        )
+        assert _MAX_SUGGESTIONS - reserve >= max(budgets.values()), (
+            "the timely allowance is smaller than one section's budget, so a "
+            "section can no longer spend what it was given"
+        )
 
     async def test_an_open_window_still_runs_every_live_section(self, redis_double):
         """🔴 The mirror direction, and the one that matters for recall.
@@ -345,24 +486,48 @@ class TestTheWindowFullSkip:
         # `TestSectionsThatHaveNeverRun`.
         assert len(db.executed) == 5
 
-    async def test_at_exactly_the_window_the_later_sections_stop(self, redis_double):
-        """8 filled is the first value at which the skip is allowed to fire."""
+    async def test_at_exactly_the_allowance_the_later_timely_sections_stop(
+        self, redis_double
+    ):
+        """Five filled by sections 1-2 is the first value at which the skip may
+        fire, and it is the value the reserve chooses."""
         redis_double(_FakeRedis())
-        db = _full_window_db()
+        db = _allowance_spent_db()
 
         await search_suggestions(db=db)
 
-        assert len(db.executed) == 2
+        assert len(db.executed) == 3
 
-    async def test_the_skip_changes_the_cost_and_not_the_content(self, redis_double):
-        """The skip is a COST change. These eight values are what the old code
-        returned for this fixture too, because the loops it skipped broke on
-        their first iteration and added nothing."""
+    async def test_the_skip_changes_the_cost_and_not_the_content(
+        self, redis_double
+    ):
+        """The skip is a COST change. These values are what the unskipped code
+        returns for this fixture too, because the loops it skips break on their
+        first iteration and add nothing."""
+        redis_double(_FakeRedis())
+        resp = await search_suggestions(db=_allowance_spent_db())
+
+        assert [s["query"] for s in resp["suggestions"]] == [
+            "Fire",
+            "Riestra",   # the SHORTER of the pair, as every section renders it
+            "Pumas",
+            _EXPECTED_QUERIES[0],
+            _EXPECTED_QUERIES[1],
+            "Presidential Election Winner 2028",
+            "US Open Men's Singles Winner",
+            "College Football National Championship",
+        ]
+
+    async def test_the_budget_changes_the_content_and_says_which_rows_survive(
+        self, redis_double
+    ):
+        """The budget's mirror of the test above: it IS a content change, and the
+        rows it keeps are the first ones the section offered, in order."""
         redis_double(_FakeRedis())
         resp = await search_suggestions(db=_full_window_db())
 
-        assert [s["query"] for s in resp["suggestions"]] == _EXPECTED_QUERIES
-        assert all(s["type"] == "event" for s in resp["suggestions"])
+        kept = events_routes._SUGGESTION_SECTION_BUDGETS[2]
+        assert [s["query"] for s in resp["suggestions"]] == _EXPECTED_QUERIES[:kept]
 
 
 # ---------------------------------------------------------------------------
@@ -459,7 +624,10 @@ class TestTheCache:
         redis_double(_FakeRedis(get_raises=True, setex_raises=True))
         resp = await search_suggestions(db=_full_window_db())
 
-        assert len(resp["suggestions"]) == _MAX_SUGGESTIONS
+        assert resp["suggestions"], "a dead cache must still serve a built row"
+        assert len(resp["suggestions"]) == (
+            events_routes._SUGGESTION_SECTION_BUDGETS[2]
+        ), "#3685: this fixture only feeds section 2, so the row is its budget"
 
     async def test_a_truthy_but_unparseable_slot_falls_through_to_a_build(
         self, redis_double
@@ -474,7 +642,9 @@ class TestTheCache:
         redis_double(_FakeRedis(stored=b"\xff not json"))
         resp = await search_suggestions(db=_full_window_db())
 
-        assert len(resp["suggestions"]) == _MAX_SUGGESTIONS
+        assert [s["query"] for s in resp["suggestions"]] == (
+            _EXPECTED_QUERIES[: events_routes._SUGGESTION_SECTION_BUDGETS[2]]
+        ), "the unparseable slot must be replaced by a real build, not returned"
 
 
 # ---------------------------------------------------------------------------
@@ -535,35 +705,57 @@ class TestTheWindowConstantIsSingleSourced:
         )
 
     def test_the_predicate_is_used_by_every_later_section(self):
-        """Sections 2-5 are guarded; section 1 is deliberately not.
+        """Every section's SKIP and its loop's BREAK are the same call.
 
-        Section 1 runs against an empty `suggestions`, so a guard there is a
-        branch that can never be taken — and an untakeable branch is worse than
-        no branch, because it reads as coverage.
+        🔴 #3685 MADE THIS STRUCTURAL RATHER THAN COINCIDENTAL. LAT-P124 wrote
+        the identity as two expressions that happened to compare the same
+        number — `_window_full()` at the skip, `len(suggestions) >=
+        _MAX_SUGGESTIONS` at the break. There are now two ways for a section to
+        be finished (the shared window and its own budget), so "the same number"
+        is no longer enough and both sites call `_section_full(n)` with the same
+        `n`.
+
+        Sections 2-5 are skipped AND broken; section 1 is broken but not
+        skipped, because it runs against an empty `suggestions` and a skip there
+        is a branch that can never be taken — and an untakeable branch is worse
+        than no branch, because it reads as coverage.
         """
         fn = _search_suggestions_source()
-        calls = [
-            n
+        args = [
+            n.args[0].value
             for n in ast.walk(fn)
             if isinstance(n, ast.Call)
             and isinstance(n.func, ast.Name)
-            and n.func.id == "_window_full"
+            and n.func.id == "_section_full"
+            and n.args
+            and isinstance(n.args[0], ast.Constant)
         ]
-        assert len(calls) == 4, (
-            f"expected _window_full() at sections 2, 3, 4 and 5 — found "
-            f"{len(calls)} call sites"
+        assert sorted(args) == [1, 2, 2, 3, 3, 4, 4, 5, 5], (
+            "expected a `_section_full(n)` skip AND break for sections 2-5 and a "
+            f"break for section 1 — found call sites for {sorted(args)}"
         )
 
-    def test_the_predicate_reads_the_named_constant(self):
+    def test_the_predicate_reads_the_named_constants(self):
         fn = _search_suggestions_source()
-        inner = [
-            n
+        inner = {
+            n.name: n
             for n in ast.walk(fn)
-            if isinstance(n, ast.FunctionDef) and n.name == "_window_full"
-        ]
-        assert len(inner) == 1
-        names = {n.id for n in ast.walk(inner[0]) if isinstance(n, ast.Name)}
-        assert "_MAX_SUGGESTIONS" in names
+            if isinstance(n, ast.FunctionDef)
+            and n.name in {"_window_full", "_section_full"}
+        }
+        assert set(inner) == {"_window_full", "_section_full"}
+        window_names = {n.id for n in ast.walk(inner["_window_full"]) if isinstance(n, ast.Name)}
+        assert "_MAX_SUGGESTIONS" in window_names
+        section_names = {
+            n.id for n in ast.walk(inner["_section_full"]) if isinstance(n, ast.Name)
+        }
+        assert "_SUGGESTION_SECTION_BUDGETS" in section_names, (
+            "the per-section half must read the budget table, not a literal"
+        )
+        assert "_window_full" in section_names, (
+            "the per-section half must defer to the shared window rather than "
+            "re-deriving it — two window tests are two chances to diverge"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -765,14 +957,20 @@ class TestSectionsThatHaveNeverRun:
                 espn_win_prob_home=None,
             )
         ]
-        db = _RecordingDB([_Rows(live), _Rows(_soon_events(8))])
+        db = _RecordingDB(
+            [_Rows(live), _Rows(_soon_events(8))] + [_Rows([]) for _ in range(3)]
+        )
 
         resp = await search_suggestions(db=db)
 
-        assert len(db.executed) == 2, (
+        # ONE STATEMENT PER SECTION, and five sections run under #3685's budgets
+        # (nothing here can close the window). The claim is unchanged: section 1
+        # reads the blend off the rows it already fetched, so no section issues a
+        # second round trip. Six would be the odds query back.
+        assert len(db.executed) == 5, (
             f"section 1 must issue exactly one statement (the live-event probe) and "
-            f"read the blend off its rows; section 2 issues the other. "
-            f"{len(db.executed)} means the odds round trip is back"
+            f"read the blend off its rows; sections 2-5 issue one each. "
+            f"{len(db.executed)} means a section round-tripped twice"
         )
         labels = [s["label"] for s in resp["suggestions"]]
         assert any("Live" in lbl for lbl in labels), (

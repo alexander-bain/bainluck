@@ -6943,6 +6943,71 @@ _MAX_SUGGESTIONS = 8
 #: against it.
 _SUGGESTION_MOVERS_LIMIT = 5
 
+
+#: 🔴 #3685: HOW MANY OF THE EIGHT CHIPS ONE SECTION MAY OWN.
+#:
+#: Production, 2026-09-06 20:50Z, the first row of `/search`: all eight chips
+#: came from section 1 — four AAA baseball games, an English NINTH-TIER
+#: non-league match, and three others — on a Saturday with the US Open and a
+#: full college-football slate. Section 5, which #2286 had just brought back
+#: from the dead and which orders by real `volume_24h` (`Presidential Election
+#: Winner 2028`, `US Open Men's Singles Winner`, `College Football National
+#: Championship`), could not reach the row AT ALL: section 1 runs first, filled
+#: the window, and `_section_full` skipped every later section. #2286 shipped
+#: and half of it was invisible.
+#:
+#: Two things fix that and they are not alternatives. The tier gate (below, in
+#: the sections themselves) stops minor-league rows being candidates; this table
+#: stops any ONE section owning the row even when every candidate is legitimate.
+#: #3675 gave section 3 a per-MARKET cap for the same reason one section over.
+#:
+#: Section 5 is deliberately ABSENT, i.e. uncapped: it is the backfill. On a
+#: quiet Tuesday with no live tier-1/2 game, nothing else has anything to say and
+#: a row of the eight most-traded championship markets is a good row, not a
+#: failure. Capping it would leave the window half empty to no one's benefit.
+#:
+#: Slack flows forward on its own: a section that under-delivers leaves the
+#: global window open and the next section takes what it can use.
+_SUGGESTION_SECTION_BUDGETS = {1: 3, 2: 2, 3: 1, 4: 1}
+
+
+#: 🔴 #3685, CERT-2138's REPAIR (`LAT-P253-RESERVE-THE-MARQUEE-SLOT`): SLOTS THE
+#: TIMELY SECTIONS MAY NOT TAKE, HOWEVER MUCH THEY HAVE TO SAY.
+#:
+#: The first presentation relied on the budgets summing to 7 — one short of the
+#: window — so section 5 always got "at least one slot". The grader saturated all
+#: four budgets and showed that ONE slot is not the declared ship: the row came
+#: back with the seven timely chips and `Presidential Election Winner 2028`,
+#: and `US Open Men's Singles Winner` — the SECOND row of the measured volume
+#: order, and the actual thing a person opens Search for on that Saturday — was
+#: still absent. "Reachable" and "reaches the marquee" are different claims and
+#: the arithmetic only bought the first.
+#:
+#: So the guarantee is now a floor with a name instead of a remainder: sections
+#: 1-4 may fill at most `_MAX_SUGGESTIONS - _SUGGESTION_BACKFILL_RESERVE` slots
+#: between them, and the volume-ordered section gets the rest. THREE, not two:
+#: the named marquee chip is rank 2 today, and a reserve sized exactly to
+#: today's ranking dies the first time one new market outranks it. Three covers
+#: `Presidential Election Winner 2028`, `US Open Men's Singles Winner` and
+#: `College Football National Championship` on the measured order, and keeps a
+#: slot of headroom over the one that matters.
+#:
+#: The two mechanisms are not redundant. Without the per-section budgets, section
+#: 1 alone would take all five of the timely slots; without this reserve, the
+#: four of them together squeeze the marquee off the row. Each is the other's
+#: blind spot.
+#:
+#: ⚠️ WHAT IT COSTS, SAID OUT LOUD: if section 5 returns FEWER rows than the
+#: reserve, the row is short by the difference — sections 1-4 have already
+#: finished by then and nothing re-opens them. On production that is a
+#: hypothetical (3,126 tier-1 open markets, 1,024 with positive `volume_24h`),
+#: and the honest failure of a dead section 5 is a five-chip row plus the
+#: `_log_dead_suggestion_section` line that says which section died. A spillover
+#: pass would fix the hypothetical and would mean holding every section's
+#: rejected candidates for a re-run; it is not worth that, and this note is here
+#: so the next author decides that with the trade in front of them.
+_SUGGESTION_BACKFILL_RESERVE = 3
+
 #: 🔴 #3675: SECTION 3 IS NOW ALLOWED TO CONTRIBUTE NOTHING, AND THAT IS THE
 #: DESIGN RATHER THAN A SIDE EFFECT.
 #:
@@ -7412,14 +7477,15 @@ async def _build_search_suggestions(db: AsyncSession) -> dict:
     recent upsets, popular championship markets — two of which have never run
     (#2286, and `TestSectionsThatHaveNeverRun` pins both).
     """
-    from app.utils.highlights import LEAGUE_TIERS
+    from app.utils.highlights import tier_12_sport_keys
     from app.utils import search_suggestions_cache as ssc
 
     now = datetime.now(timezone.utc)
     suggestions: list[dict] = []
     seen_queries: set[str] = set()
+    section_used: dict[int, int] = {n: 0 for n in _SUGGESTION_SECTION_BUDGETS}
 
-    def _add(query: str, label: str, type_: str, **kwargs):
+    def _add(query: str, label: str, type_: str, *, section: int, **kwargs):
         key = query.lower().strip()
         if key in seen_queries:
             return
@@ -7427,26 +7493,62 @@ async def _build_search_suggestions(db: AsyncSession) -> dict:
         item = {"query": query, "label": label, "type": type_}
         item.update(kwargs)
         suggestions.append(item)
+        # 🔴 #3685: counted on the ADD, not on the candidate. A row the dedup
+        # above threw away cost the section nothing, so it must not spend a
+        # budget slot — otherwise two live games with the same shorter team name
+        # silently shrink the section to two chips.
+        if section in section_used:
+            section_used[section] += 1
 
     def _shorter_team(home: str, away: str) -> str:
         return home if len(home) <= len(away) else away
 
     def _window_full() -> bool:
-        """True once no later section can change the response.
-
-        🔴 THIS PREDICATE AND THE ``break`` INSIDE EVERY SECTION'S LOOP MUST BE
-        THE SAME TEST, and that identity is what makes the skips below
-        answer-identical rather than answer-similar. Each section's only effect
-        on the response is a ``_add`` call inside a ``for`` whose FIRST
-        statement is this same comparison; when it already holds on entry, the
-        loop breaks on its first iteration and the section's rows are read,
-        discarded, and paid for. Pinned in both directions by
-        ``test_route_search_suggestions_cold_p124.py``.
-        """
+        """True once no section can change the response."""
         return len(suggestions) >= _MAX_SUGGESTIONS
 
-    # Helper: tier 1-2 sport keys
-    tier_12_keys = {k for k, t in LEAGUE_TIERS.items() if t <= 2}
+    def _section_full(section: int) -> bool:
+        """True once THIS section can no longer change the response.
+
+        🔴 THIS PREDICATE AND THE ``break`` INSIDE THE SECTION'S LOOP MUST BE
+        THE SAME TEST, and that identity is what makes the skips below
+        answer-identical rather than answer-similar. Each section's only effect
+        on the response is an ``_add`` call inside a ``for`` whose FIRST
+        statement is this same call with this same section number; when it
+        already holds on entry, the loop breaks on its first iteration and the
+        section's rows are read, discarded, and paid for. Pinned in both
+        directions by ``test_route_search_suggestions_cold_p124.py``.
+
+        LAT-P124 wrote that identity as two expressions that happened to compare
+        the same number. #3685 makes it one call, because there are now three
+        ways for a section to be finished — the shared window, its own budget,
+        and the backfill reserve — and a skip that consulted one while its loop
+        consulted another would delete suggestions silently.
+
+        🔴 THE RESERVE MAKES THE LAT-P124 SKIP FIRE AGAIN, AND EARLIER THAN IT
+        USED TO. A budgeted section is entered with its own counter at zero, so
+        the budget clause cannot fire on entry — but the reserve clause can, and
+        does: sections 1 and 2 at full budget put five chips on the row, which is
+        the whole timely allowance, so sections 3 and 4 are skipped outright on a
+        busy evening and the 588 ms movers statement is never issued. That is the
+        same cost ship LAT-P124 bought, restored by the repair that was supposed
+        to spend it.
+        """
+        budget = _SUGGESTION_SECTION_BUDGETS.get(section)
+        if budget is None:
+            # Section 5: the backfill. Bounded only by the window it is here to
+            # fill — the reserve exists FOR it and must not be applied TO it.
+            return _window_full()
+        if section_used[section] >= budget:
+            return True
+        if len(suggestions) >= _MAX_SUGGESTIONS - _SUGGESTION_BACKFILL_RESERVE:
+            return True
+        return _window_full()
+
+    # Helper: tier 1-2 sport keys, tour-prefixed tennis spellings included —
+    # `tier_12_sport_keys` exists because the obvious comprehension over
+    # LEAGUE_TIERS drops every Grand Slam match (#2552's defect in set form).
+    tier_12_keys = tier_12_sport_keys()
 
     # --- 1. Live close games (home prob 35-65%) ---
     try:
@@ -7457,9 +7559,27 @@ async def _build_search_suggestions(db: AsyncSession) -> dict:
         # cannot reach a tagged row anyway" is a local argument about today's
         # twins — bare, score-less, source-less — and the tag is not a statement
         # about a row's shape. It says this row is not a game to print.
+        # 🔴 #3685: THE TIER GATE SECTION 2 HAS ALWAYS HAD AND THIS SECTION
+        # NEVER DID. Without it the row was fed by whatever fifty live rows the
+        # planner returned first, in no order at all: on 2026-09-06 that was four
+        # AAA baseball games and AFC Whyteleafe vs Crowborough Athletic (English
+        # ninth tier) while the US Open was on. Nothing a person opening Search
+        # is plausibly looking for, and it ran FIRST, so it filled the window
+        # before any better section was consulted.
+        #
+        # Same predicate as section 2, from the same helper, so the two cannot
+        # drift — and the helper is why this can be shipped at all: built as a
+        # bare comprehension it would have excluded live US Open matches, which
+        # on this Saturday is the one thing the row must never do (the marquee
+        # rule: a Slam match always exists, so if it is missing that is our bug).
         live_events_q = (
             select(Event)
-            .where(Event.status == "live", not_a_proven_duplicate())
+            .join(Sport)
+            .where(
+                Event.status == "live",
+                Sport.key.in_(tier_12_keys),
+                not_a_proven_duplicate(),
+            )
             .options(selectinload(Event.sport))
             .limit(50)
         )
@@ -7502,7 +7622,7 @@ async def _build_search_suggestions(db: AsyncSession) -> dict:
             from app.utils.aggregation import compute_aggregate_probability
 
             for ev in live_events:
-                if len(suggestions) >= _MAX_SUGGESTIONS:
+                if _section_full(1):
                     break
                 hp = compute_aggregate_probability(ev, ev.status)
                 if hp is None:
@@ -7543,6 +7663,7 @@ async def _build_search_suggestions(db: AsyncSession) -> dict:
                         short,
                         f"Live — tight game vs {opponent}",
                         "event",
+                        section=1,
                         event_id=ev.id,
                     )
                 # Upset check: opening favorite flipped
@@ -7557,6 +7678,7 @@ async def _build_search_suggestions(db: AsyncSession) -> dict:
                             underdog,
                             "Upset brewing",
                             "event",
+                            section=1,
                             event_id=ev.id,
                         )
     except Exception:
@@ -7594,15 +7716,15 @@ async def _build_search_suggestions(db: AsyncSession) -> dict:
             .order_by(Event.commence_time.asc())
             .limit(10)
         )
-        # LAT-P124: skipped when the window is already full — see `_window_full`.
+        # LAT-P124: skipped when the window is already full — see `_section_full`.
         # Section 1 is deliberately NOT guarded: it runs against an empty
         # `suggestions`, so a guard there is a branch that can never be taken.
         soon_rows = []
-        if not _window_full():
+        if not _section_full(2):
             soon_result = await db.execute(soon_q)
             soon_rows = soon_result.scalars().all()
         for ev in soon_rows:
-            if len(suggestions) >= _MAX_SUGGESTIONS:
+            if _section_full(2):
                 break
             # 🔴 LAT-P139: THE ONLY CLOCK-RELATIVE TEXT THIS ROUTE PRODUCES, AND
             # IT NO LONGER STOPS THE PAYLOAD BEING CACHED PAST A MINUTE.
@@ -7628,6 +7750,7 @@ async def _build_search_suggestions(db: AsyncSession) -> dict:
                 short,
                 time_label,
                 "event",
+                section=2,
                 event_id=ev.id,
                 **{ssc.COUNTDOWN_FIELD: ev.commence_time},
             )
@@ -7654,7 +7777,7 @@ async def _build_search_suggestions(db: AsyncSession) -> dict:
         # covers the reads where they do not, which is the case the person who
         # waited nine seconds was in.
         movers_rows = []
-        if not _window_full():
+        if not _section_full(3):
             movers_result = await db.execute(movers_q)
             movers_rows = movers_result.scalars().all()
         # 🔴 #3675: THE CHIP IS NO LONGER `outcome.name`. Everything the loop used
@@ -7664,45 +7787,70 @@ async def _build_search_suggestions(db: AsyncSession) -> dict:
         # three different strings). Extracted rather than inlined so the guard
         # test can drive it with the eight rows production actually served.
         for chip in _mover_chips(movers_rows):
-            if len(suggestions) >= _MAX_SUGGESTIONS:
+            if _section_full(3):
                 break
-            _add(chip["query"], chip["label"], "futures", market_id=chip["market_id"])
+            _add(
+                chip["query"],
+                chip["label"],
+                "futures",
+                section=3,
+                market_id=chip["market_id"],
+            )
     except Exception:
         _log_dead_suggestion_section(3, "futures movers")
 
     # --- 4. Recent upsets (completed last 24h, opening underdog won) ---
     try:
+        # 🔴 #3685, the same gate as section 1 and for the same reason: this is
+        # the other unfiltered EVENT source feeding the same eight-slot row, and
+        # an upset in AAA baseball is exactly as uninteresting as a live AAA
+        # game. Filtering one and not the other would fix the row for as long as
+        # it took the next minor-league blowout to finish.
         upsets_q = (
             select(Event)
+            .join(Sport)
             .where(
                 Event.status.in_(["completed", "closed"]),
                 Event.commence_time >= now - timedelta(hours=24),
                 Event.opening_home_probability.isnot(None),
                 Event.home_score.isnot(None),
                 Event.away_score.isnot(None),
+                Sport.key.in_(tier_12_keys),
                 not_a_proven_duplicate(),  # #2263 / CERT-439, as above
             )
             .options(selectinload(Event.sport))
             .order_by(Event.commence_time.desc())
             .limit(20)
         )
-        # LAT-P124: skipped when the window is already full — see `_window_full`.
+        # LAT-P124: skipped when the window is already full — see `_section_full`.
         upsets_rows = []
-        if not _window_full():
+        if not _section_full(4):
             upsets_result = await db.execute(upsets_q)
             upsets_rows = upsets_result.scalars().all()
         for ev in upsets_rows:
-            if len(suggestions) >= _MAX_SUGGESTIONS:
+            if _section_full(4):
                 break
             home_won = ev.home_score > ev.away_score
             if home_won and ev.opening_home_probability < 0.40:
                 # Home was underdog and won
                 loser = ev.away_team_name
-                _add(ev.home_team_name, f"Pulled the upset vs {loser}", "event", event_id=ev.id)
+                _add(
+                    ev.home_team_name,
+                    f"Pulled the upset vs {loser}",
+                    "event",
+                    section=4,
+                    event_id=ev.id,
+                )
             elif not home_won and ev.opening_home_probability > 0.60:
                 # Away was underdog and won
                 loser = ev.home_team_name
-                _add(ev.away_team_name, f"Pulled the upset vs {loser}", "event", event_id=ev.id)
+                _add(
+                    ev.away_team_name,
+                    f"Pulled the upset vs {loser}",
+                    "event",
+                    section=4,
+                    event_id=ev.id,
+                )
     except Exception:
         _log_dead_suggestion_section(4, "recent upsets")
 
@@ -7747,19 +7895,24 @@ async def _build_search_suggestions(db: AsyncSession) -> dict:
                 FuturesMarket.volume_24h.desc().nulls_last(),
                 FuturesMarket.volume.desc().nulls_last(),
             )
-            .limit(5)
+            # 🔴 #3685: was `.limit(5)`, which is fewer rows than the window it
+            # may now have to fill on its own. This section is the uncapped
+            # backfill (see `_SUGGESTION_SECTION_BUDGETS`), so its scan has to be
+            # able to reach `_MAX_SUGGESTIONS` or the cap would be the limit
+            # clause rather than the policy.
+            .limit(_MAX_SUGGESTIONS)
         )
         champ_rows = []
-        if not _window_full():
+        if not _section_full(5):
             champ_result = await db.execute(champ_q)
             champ_rows = champ_result.scalars().all()
         for market in champ_rows:
-            if len(suggestions) >= _MAX_SUGGESTIONS:
+            if _section_full(5):
                 break
             # Extract a short query from the market name
             name = market.name
             # Try to get just the league championship part
-            _add(name, "Championship odds", "futures", market_id=market.id)
+            _add(name, "Championship odds", "futures", section=5, market_id=market.id)
     except Exception:
         _log_dead_suggestion_section(5, "popular championship markets")
 
@@ -7767,7 +7920,18 @@ async def _build_search_suggestions(db: AsyncSession) -> dict:
     # (`_publish_search_suggestions`), so that a build reached through the
     # stale-refresh path publishes through exactly the same writer as one
     # reached through a request. Two writers for one tier is LAT-P001's defect.
-    return {"suggestions": suggestions[:_MAX_SUGGESTIONS]}
+    #
+    # 🔴 THE `[:_MAX_SUGGESTIONS]` SLICE IS GONE, AND A SURVIVING MUTANT IS WHY.
+    # `_section_full` already bounds every section — each loop tests it before
+    # each row and `_add` appends at most once per row — so the slice was a
+    # SECOND authority on the same number. The battery proved it was worse than
+    # redundant: M6 (`_window_full` goes strict, `>` for `>=`) SURVIVED, because
+    # the ninth chip it lets through was silently truncated here and no
+    # assertion could see the predicate had stopped working. Two bounds is two
+    # chances to diverge and one of them hiding the other; this file's whole
+    # doctrine is one authority per number. The overrun case is now pinned by a
+    # test instead of absorbed by a slice.
+    return {"suggestions": suggestions}
 
 
 @router.get("/debug/sport-keys")
