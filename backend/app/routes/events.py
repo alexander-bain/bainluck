@@ -12360,14 +12360,24 @@ def _extend_win_prob_history_to_live_edge(
     return extended
 
 
-def _pin_live_blend_edge(
+# A PRE-MATCH line's right edge is only "now" if it is younger than one live
+# price poll. `poll_live_prediction_markets` runs every 2 minutes on the realtime
+# queue and is the fastest writer into these series, so a bucket older than that
+# is a genuine past reading and the chart is right to keep it: pinning there
+# would stamp the current blend onto an old minute, which is #1561's
+# stale-rendered-as-fresh failure pointed the other way. See `_pin_blend_edge`.
+_PREMATCH_EDGE_MAX_AGE = timedelta(minutes=2)
+
+
+def _pin_blend_edge(
     aggregate_line: list,
     event,
     *,
     is_live: bool,
+    is_finished: bool = False,
     now: datetime,
 ) -> bool:
-    """Pin a live game's blend-line right edge to the point-in-time blend (UX-P003).
+    """Pin the blend line's right edge to the point-in-time blend (UX-P003).
 
     Standing ruling #1 is card == hero == chart: one number per question. The
     Discover card and the backend ``hero_probability`` both render
@@ -12390,8 +12400,46 @@ def _pin_live_blend_edge(
     untouched (honest movement stays honest), and no weight and no blend math
     changes — this only selects which already-computed blend the right edge
     reports. Mutates ``aggregate_line`` in place; returns whether it pinned.
+
+    #3714 widens this from live games to PRE-MATCH ones, because production shows
+    the identical split before first ball. Ben Shelton v Stefanos Tsitsipas
+    (15305016, "Starts in 6m"), read at 22:56Z on 2026-09-06: hero 0.7147 — the
+    weighted median, which betting at weight 3.0 wins — against an
+    ``aggregate_line`` ending 0.725, because only Polymarket wrote the last ten
+    buckets. The page rendered a 71% headline over a curve labelled 73%. Three of
+    the eleven drawable US Open lines disagreed by a rendered point at that read.
+
+    The pre-match arm is deliberately weaker than the live one: it OVERWRITES the
+    right edge, and never APPENDS. Nothing carries a pre-match series forward to
+    the clock, so appending a "now" point to a quiet line would draw a fresh-
+    looking reading out of a stale one — #1561 rebuilt. It therefore fires only
+    while the edge is younger than ``_PREMATCH_EDGE_MAX_AGE``; past that the chart
+    keeps its own last real bucket, which contradicts nothing (it says "at 8:34 PM
+    it was 38%", not "38% now"). Live and finished behaviour is unchanged.
+
+    The pre-match arm stands down for a settled row, and it takes TWO tests to
+    say so because the right edge has two other owners and they do not agree on
+    which rows they hold. ``is_finished`` is the terminal-point injection's own
+    gate (it appends the resolved 100%/0% below), and ``resolve_settled_hero`` is
+    the hero's. Neither implies the other: a row with scores but no
+    ``completed_at`` is terminal to the chart and unresolvable to the hero, while
+    a ``completed`` row whose commence_time is still in the future (gotcha #32
+    family) is the reverse — not finished, so it draws a live chart, yet settled
+    to the hero. Asking only one of them would pin against whichever owner the
+    other admits. Both are asked; the live arm is untouched by both.
     """
-    if not is_live or not aggregate_line:
+    if not aggregate_line:
+        return False
+    if not is_live and (
+        is_finished
+        or resolve_settled_hero(
+            status=getattr(event, "status", None),
+            home_score=getattr(event, "home_score", None),
+            away_score=getattr(event, "away_score", None),
+            completed_at=getattr(event, "completed_at", None),
+        )
+        is not None
+    ):
         return False
     try:
         from app.utils.aggregation import compute_aggregate_probability
@@ -12415,11 +12463,18 @@ def _pin_live_blend_edge(
 
         if last_ts is not None and last_ts >= edge_ts:
             aggregate_line[-1]["home_probability"] = live_edge
-        else:
+        elif is_live:
             aggregate_line.append({
                 "timestamp": edge_ts.isoformat(),
                 "home_probability": live_edge,
             })
+        elif last_ts is not None and edge_ts - last_ts <= _PREMATCH_EDGE_MAX_AGE:
+            aggregate_line[-1]["home_probability"] = live_edge
+        else:
+            # A pre-match line whose newest bucket is genuinely in the past, or
+            # one whose timestamp would not parse. Either way there is no edge
+            # here that claims to be now, so there is nothing to reconcile.
+            return False
         return True
     except Exception:
         # Never let the pin break the chart — fall back to the unpinned line.
@@ -13142,11 +13197,12 @@ async def get_event_odds_history(
         # Graceful degradation — frontend falls back to naive averaging
         pass
 
-    # ── UX-P003: pin the LIVE edge of the blend line to the point-in-time blend ──
-    _pin_live_blend_edge(
+    # ── UX-P003 / #3714: pin the blend line's right edge to the point-in-time blend ──
+    _pin_blend_edge(
         aggregate_line,
         event,
         is_live=(not is_finished and (event.status or "").lower() == "live"),
+        is_finished=is_finished,
         now=now,
     )
 

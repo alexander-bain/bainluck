@@ -175,7 +175,7 @@ class TestSameNumberInvariant:
 class TestTheResidualContradiction:
     """What this queue could NOT close, held as a fact rather than a note.
 
-    ``_pin_live_blend_edge`` (UX-P003) already forces the chart's LAST point to
+    ``_pin_blend_edge`` (UX-P003) already forces the chart's LAST point to
     equal the hero. Alex still saw the contradiction, because pinning one
     endpoint reconciles a NUMBER while leaving the PICTURE saying something else:
     on 15192596 the hero read 13% while the blend line had sat at ~0.1% for the

@@ -13,7 +13,7 @@ The three surfaces and where their number comes from:
                   = compute_aggregate_probability(event)
   Chart live edge last point of `aggregate_line`
                   = compute_aggregated_probability(...) → pinned by
-                    _pin_live_blend_edge() on a live game
+                    _pin_blend_edge() on a live game
 
 Card and hero were already the same function. The chart's live edge was not: the
 time-series blend reads the odds-snapshot consensus history and applies staleness
@@ -32,7 +32,7 @@ from datetime import datetime, timezone, timedelta
 
 import pytest
 
-from app.routes.events import _pin_live_blend_edge
+from app.routes.events import _pin_blend_edge
 from app.utils.aggregation import (
     TimestampedProb,
     compute_aggregate_probability,
@@ -42,13 +42,22 @@ from app.utils.aggregation import (
 NOW = datetime(2026, 8, 5, 18, 5, 0, tzinfo=timezone.utc)
 
 
-def _event(status="live", **sources):
-    """An Event-shaped stand-in carrying the fields the blend reads."""
+def _event(status="live", *, home_score=None, away_score=None, completed_at=None,
+           **sources):
+    """An Event-shaped stand-in carrying the fields the blend reads.
+
+    The three score/settlement fields are what ``resolve_settled_hero`` reads —
+    the pin asks it before touching a non-live line, so a test that means
+    "settled" has to say so with a real result, not just a terminal status.
+    """
     return type("Event", (), {
         "status": status,
         "win_probability_sources": dict(sources),
         "espn_win_prob_home": None,
         "opening_home_probability": 0.5,
+        "home_score": home_score,
+        "away_score": away_score,
+        "completed_at": completed_at,
     })()
 
 
@@ -90,7 +99,7 @@ class TestLiveSurfaceParity:
         # A blend line whose last bucket has drifted well away from the blend.
         line = _line((3, 0.81), (2, 0.80), (1, 0.7837))
 
-        _pin_live_blend_edge(line, event, is_live=True, now=NOW)
+        _pin_blend_edge(line, event, is_live=True, now=NOW)
 
         card = _card_probability(event)
         hero = _hero_probability(event)
@@ -106,7 +115,7 @@ class TestLiveSurfaceParity:
                        stat_model=0.999)
         line = _line((2, 0.999), (1, 0.9927))
 
-        _pin_live_blend_edge(line, event, is_live=True, now=NOW)
+        _pin_blend_edge(line, event, is_live=True, now=NOW)
 
         card = round(_card_probability(event) * 100)
         hero = round(_hero_probability(event) * 100)
@@ -130,7 +139,7 @@ class TestLiveSurfaceParity:
         card = _card_probability(event)
         assert abs(unpinned_edge - card) > 0.05, "the residual gap this pin closes"
 
-        _pin_live_blend_edge(line, event, is_live=True, now=NOW)
+        _pin_blend_edge(line, event, is_live=True, now=NOW)
         assert _chart_live_edge(line) == card
 
     def test_pin_replaces_current_minute_rather_than_duplicating_it(self):
@@ -138,7 +147,7 @@ class TestLiveSurfaceParity:
         line = _line((1, 0.30), (0, 0.31))
         before = len(line)
 
-        assert _pin_live_blend_edge(line, event, is_live=True, now=NOW) is True
+        assert _pin_blend_edge(line, event, is_live=True, now=NOW) is True
         assert len(line) == before, "must not append a second point for this minute"
         assert _chart_live_edge(line) == _card_probability(event)
 
@@ -146,7 +155,7 @@ class TestLiveSurfaceParity:
         event = _event(betting=0.60, espn=0.40)
         line = _line((7, 0.30))
 
-        assert _pin_live_blend_edge(line, event, is_live=True, now=NOW) is True
+        assert _pin_blend_edge(line, event, is_live=True, now=NOW) is True
         assert len(line) == 2
         assert line[-1]["timestamp"] == NOW.isoformat()
         assert line[-1]["home_probability"] == _card_probability(event)
@@ -162,43 +171,151 @@ class TestLiveSurfaceParity:
         line = _line((5, 0.10), (4, 0.90), (3, 0.20), (1, 0.55))
         original = [dict(p) for p in line]
 
-        _pin_live_blend_edge(line, event, is_live=True, now=NOW)
+        _pin_blend_edge(line, event, is_live=True, now=NOW)
 
         assert line[: len(original)] == original
         assert len(line) == len(original) + 1
         assert _chart_live_edge(line) == _card_probability(event)
 
 
-class TestNonLiveUnaffected:
-    """Scheduled and finished surfaces are explicitly out of scope — no regression."""
+class TestPreMatchSurfaceParity:
+    """#3714: the same split, before first ball.
 
-    def test_scheduled_line_is_not_pinned(self):
+    Ben Shelton v Stefanos Tsitsipas (15305016), read on production at 22:56Z on
+    2026-09-06 while the page said "Starts in 6m": hero 0.7147, ``aggregate_line``
+    ending 0.725 one minute earlier, because only Polymarket wrote the last ten
+    buckets. 71% headline, 73% curve, one screen. Three of the eleven drawable US
+    Open lines disagreed by a rendered point at that read.
+
+    The pre-match arm is weaker than the live one on purpose — overwrite only,
+    and only while the edge is still "now" — so the two halves are asserted
+    separately below.
+    """
+
+    def test_the_shelton_specimen_reconciles(self):
+        event = _event(status="scheduled", betting=0.7147, polymarket=0.725)
+        line = _line((2, 0.6889), (1, 0.725))
+
+        assert _pin_blend_edge(line, event, is_live=False, now=NOW) is True
+
+        hero = _hero_probability(event)
+        assert _chart_live_edge(line) == hero
+        # The number the reader sees, not just the float.
+        assert round(hero * 100) == round(_chart_live_edge(line) * 100) == 71
+
+    def test_pre_match_overwrites_and_never_appends(self):
+        """#1561 inverted: a pre-match series is not carried forward to the clock,
+        so inventing a "now" point would render a stale reading as a fresh one."""
         event = _event(status="scheduled", betting=0.60, espn=0.40)
         line = _line((1, 0.30))
-        assert _pin_live_blend_edge(line, event, is_live=False, now=NOW) is False
+        before = len(line)
+
+        assert _pin_blend_edge(line, event, is_live=False, now=NOW) is True
+        assert len(line) == before
+        assert line[-1]["timestamp"] == (NOW - timedelta(minutes=1)).isoformat()
+
+    def test_a_stale_pre_match_edge_is_left_alone(self):
+        """Past the freshness window the chart is not contradicting anything: it
+        says "at that minute it was 30%", which a hero saying "now, 50%" does not
+        argue with. Pinning there would stamp today's blend onto an old minute."""
+        event = _event(status="scheduled", betting=0.60, espn=0.40)
+        line = _line((30, 0.30))
+
+        assert _pin_blend_edge(line, event, is_live=False, now=NOW) is False
         assert _chart_live_edge(line) == 0.30
+        assert len(line) == 1
+
+    def test_the_window_boundary_is_the_live_price_poll(self):
+        """Two minutes — one `poll_live_prediction_markets` cycle — is inside."""
+        for minutes, pinned in ((2, True), (3, False)):
+            event = _event(status="scheduled", betting=0.60, espn=0.40)
+            line = _line((minutes, 0.30))
+            assert _pin_blend_edge(line, event, is_live=False, now=NOW) is pinned
+
+    def test_history_before_a_pinned_pre_match_edge_survives(self):
+        event = _event(status="scheduled", betting=0.60, espn=0.40)
+        line = _line((9, 0.10), (5, 0.90), (1, 0.30))
+        original = [dict(p) for p in line[:-1]]
+
+        _pin_blend_edge(line, event, is_live=False, now=NOW)
+
+        assert line[:-1] == original
+
+
+class TestSettledLinesStayOut:
+    """The right edge of a settled row has two other owners, and they disagree
+    about which rows they hold — so the pin asks both before standing down."""
 
     def test_finished_line_is_not_pinned(self):
         """A settled game's chart converges to the resolved winner (ruling #2),
         which the terminal-point injection owns — the pin must stay out of it."""
-        event = _event(status="completed", betting=0.60, espn=0.40)
+        event = _event(
+            status="completed",
+            home_score=7,
+            away_score=0,
+            completed_at=NOW - timedelta(minutes=20),
+            betting=0.60,
+            espn=0.40,
+        )
         line = _line((1, 1.0))
-        assert _pin_live_blend_edge(line, event, is_live=False, now=NOW) is False
+        assert (
+            _pin_blend_edge(line, event, is_live=False, is_finished=True, now=NOW)
+            is False
+        )
         assert _chart_live_edge(line) == 1.0
+
+    def test_terminal_scores_without_a_completed_at_still_stand_down(self):
+        """`is_finished` holds this row and `resolve_settled_hero` does not (it
+        requires completed_at). The terminal injection is about to append the
+        resolved point; overwriting the bucket underneath it is not the pin's
+        business."""
+        event = _event(
+            status="completed", home_score=7, away_score=0, betting=0.60, espn=0.40
+        )
+        line = _line((1, 0.93))
+        assert (
+            _pin_blend_edge(line, event, is_live=False, is_finished=True, now=NOW)
+            is False
+        )
+        assert _chart_live_edge(line) == 0.93
+
+    def test_a_settled_hero_over_a_future_commence_still_stands_down(self):
+        """The mirror row: status `completed` with a commence_time still in the
+        future is corrupt (gotcha #32 family), so `_event_is_really_finished` says
+        NOT finished and the chart renders live — but the hero resolves it to a
+        winner. Pinning to the blend would put 60% under a 100% headline."""
+        event = _event(
+            status="completed",
+            home_score=3,
+            away_score=0,
+            completed_at=NOW - timedelta(hours=2),
+            betting=0.60,
+            espn=0.40,
+        )
+        line = _line((1, 0.93))
+        assert (
+            _pin_blend_edge(line, event, is_live=False, is_finished=False, now=NOW)
+            is False
+        )
+        assert _chart_live_edge(line) == 0.93
+
+
+class TestNonLiveUnaffected:
+    """The remaining stand-down arms, live and pre-match alike."""
 
     def test_empty_line_is_left_empty(self):
         """No blend line → the frontend falls back to hero_probability, which is
         the same number anyway. The pin must not invent a one-point chart."""
         event = _event(betting=0.60, espn=0.40)
         line = []
-        assert _pin_live_blend_edge(line, event, is_live=True, now=NOW) is False
+        assert _pin_blend_edge(line, event, is_live=True, now=NOW) is False
         assert line == []
 
     def test_no_sources_means_no_pin(self):
         event = _event()
         event.opening_home_probability = None
         line = _line((1, 0.30))
-        assert _pin_live_blend_edge(line, event, is_live=True, now=NOW) is False
+        assert _pin_blend_edge(line, event, is_live=True, now=NOW) is False
         assert _chart_live_edge(line) == 0.30
 
 
