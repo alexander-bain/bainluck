@@ -98,6 +98,10 @@ _EPOCH = datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc)
 #: identity: this row must survive the ledger being overwritten, which is the
 #: entire point.
 HISTORY_IDENTITY = "calibration:beat_gauge_history"
+#: ⚠️ DO NOT BUMP THIS TO DESCRIBE A NEW FIELD ON A ROW. It is the envelope's
+#: ``expected_version``, so a bump makes the whole banked ring unreadable in one
+#: deploy and throws away the seven days of history the ring exists to hold. Row
+#: shape is versioned per row instead — :data:`GAUGE_CAPTURE_VERSION`.
 HISTORY_SCHEMA = "calibration-beat-gauge-history/v1"
 
 #: How many beat observations the ring keeps. 168 = 7 days at the hourly beat.
@@ -196,6 +200,91 @@ CURSOR_PREFIX = "staged:cursor_"
 #: line here and nowhere else.
 CAPTURED_PREFIXES = (CONVERGENCE_REASON_PREFIX, CANCEL_CAUSE_PREFIX, CURSOR_PREFIX)
 
+#: The FOURTH capture rule, added by CAL-P1030 (#3454) — and the first one that
+#: is not a prefix, because a prefix cannot express it.
+#:
+#: 🔴 WHY A BEAT STOPPED EARLY WAS THE ONE THING THE RING COULD NOT SAY. The
+#: producer records a stage the moment it gives up, every time, under a name
+#: built from a stem and a reason — ``staged:window_stop:deadline``,
+#: ``staged:window_stop:unit_too_large``, ``staged:window_stop:units_cancelling``,
+#: ``staged:rebuild_stop:interrupted``, ``staged:rebuild_stop:overlap_lock``,
+#: ``staged:rebuild_stop:no_window_after_publish``, ``staged:rebuild_stop:error``.
+#: **Not one of them was captured**: measured 2026-09-06 over all 168 banked
+#: observations, no ``*_stop:*`` key occurs once. So the three most recent beats
+#: at the time of writing ended with ~19 of their 23 minutes unused and zero
+#: units done, and the ring could show that they stopped but never why.
+#:
+#: TWO STEMS, SO NOT ONE PREFIX. ``window_stop`` and ``rebuild_stop`` share no
+#: prefix beyond ``staged:``, which would sweep in every other staged gauge, and
+#: the reason half is interpolated so no fixed name can reach it either. Matching
+#: the INFIX is what the producer's own naming convention actually guarantees,
+#: and it is the only rule here that a third stem cannot silently escape — which
+#: is the defect this file has now recorded four times.
+STOP_REASON_INFIX = "_stop:"
+
+#: The namespace the infix is qualified by, so ``_stop:`` cannot match a key
+#: belonging to some unrelated producer.
+STAGED_PREFIX = "staged:"
+
+
+def is_stop_key(key: Any) -> bool:
+    """True for a ``staged:<stem>_stop:<reason>`` key, whatever the stem. Pure."""
+    return (
+        isinstance(key, str)
+        and key.startswith(STAGED_PREFIX)
+        and STOP_REASON_INFIX in key[len(STAGED_PREFIX):]
+    )
+
+
+#: WHAT THE SAMPLER THAT BANKED A ROW WAS ABLE TO RETAIN — stamped onto every
+#: observation by :func:`build_observation`, and the reason CERT-2051 blocked the
+#: first version of this change.
+#:
+#: 🔴 A CAPTURE RULE CHANGES WHAT ABSENCE MEANS, AND THE RING OUTLIVES THE CHANGE.
+#: The ring holds 168 rows — seven days — so it spans every deploy that edits
+#: :func:`select_gauges`, and a row banked by an OLDER sampler has a gauge map
+#: from which today's keys were discarded **at capture time**. Re-deriving
+#: :func:`bank_drop` from such a map reads "the drop key is absent" as "the drop
+#: path ran and dropped zero", because the cursor key it disambiguates against
+#: HAS been captured since CAL-P1002. Measured on the live ring: the 6-banked-
+#: units → 0 wipe of 2026-09-06 04:16Z was served as ``units_dropped: 0,
+#: units_dropped_measured: true`` — gotcha #53 arriving one layer above the field
+#: added to end it, with the instrument's authority behind it.
+#:
+#: So the row says what it could see, and a row that does not say is UNKNOWN. A
+#: version is the only marker that works here: the fields themselves are absent
+#: on a legacy row, and "absent" is precisely the value that must not be read.
+GAUGE_CAPTURE_VERSION = 2
+
+#: The first capture version whose :func:`select_gauges` retains
+#: ``staged:units_dropped`` and every ``staged:<stem>_stop:<reason>`` key —
+#: i.e. the first version on which their absence from a gauge map is a fact about
+#: the BEAT rather than a fact about the sampler. Separate from
+#: :data:`GAUGE_CAPTURE_VERSION` so a later capture rule can bump the stamp
+#: without silently re-dating this floor.
+DROP_AND_STOP_CAPTURE_VERSION = 2
+
+#: A row banked before CAL-P1030 carries no version at all. Zero, so the
+#: comparison against the floor is an ordinary ``<`` and an unparseable or
+#: hostile value lands here too — absence fails to unknown, never to a number.
+UNVERSIONED_CAPTURE = 0
+
+
+def capture_version(row: Any) -> int:
+    """The capture version of one banked observation. Pure.
+
+    :data:`UNVERSIONED_CAPTURE` for anything that does not carry a plain integer
+    — a legacy row, a non-dict, a ``bool`` (which ``isinstance(x, int)`` would
+    otherwise wave through as 1 and 0), a string ``"2"``. Every one of those is a
+    row whose capture support is unproven, and unproven is unknown.
+    """
+    if not isinstance(row, dict):
+        return UNVERSIONED_CAPTURE
+    raw = row.get("gauge_capture_version")
+    if isinstance(raw, int) and not isinstance(raw, bool):
+        return raw
+    return UNVERSIONED_CAPTURE
+
 
 def _required_disclosure_gauges() -> tuple[str, ...]:
     """Every gauge ``build_disclosure`` consumes, read off that module.
@@ -236,6 +325,20 @@ OPERATIONAL_GAUGES = (
     "staged:window_left_ms",
     "staged:cursor_resume",
     "staged:units_cancelled",
+    # CAL-P1030 (#3454). The rebuild's most destructive event, and the one its
+    # telemetry could not show. ``retain_planned_units``' CAL-P034 FAIL-CLOSED
+    # arm discards EVERY banked unit — building bank AND serving bank — when any
+    # one banked unit is not in the current plan ("Everything goes, and the walk
+    # restarts"), and this stage is its only signal. Measured: the live
+    # generation ``c1d6afbc16`` went 6 banked units → 0 between 03:16Z and 04:16Z
+    # on 2026-09-06 with every ``staged:cursor_reason:*`` at 0, i.e. with no
+    # recorded cause at all, and the one path that produces exactly that shape
+    # was unobservable by construction.
+    #
+    # This entry is the one place the tuple's own "forgetting one costs a column
+    # in a report" licence does not hold, and the comment stays so the next
+    # editor does not prune it as a report column.
+    "staged:units_dropped",
 )
 
 
@@ -260,9 +363,11 @@ def select_gauges(stages: Any) -> tuple[dict, list[str]]:
         if name in stages:
             captured[name] = stages[name]
 
-    # The prefix half. Never a fixed name, so never in the tuples above.
+    # The pattern half. Never a fixed name, so never in the tuples above.
     for key, value in stages.items():
-        if isinstance(key, str) and key.startswith(CAPTURED_PREFIXES):
+        if not isinstance(key, str):
+            continue
+        if key.startswith(CAPTURED_PREFIXES) or is_stop_key(key):
             captured[key] = value
 
     missing = [n for n in REQUIRED_DISCLOSURE_GAUGES if n not in captured]
@@ -306,6 +411,126 @@ def cursor_decision(gauges: Any) -> dict:
         elif suffix in CURSOR_ACTIONS:
             action = suffix
     return {"action": action, "reason": reason}
+
+
+def stop_reasons(gauges: Any) -> list[str]:
+    """Every stop reason the beat recorded, as ``<stem>:<reason>``. Pure, sorted.
+
+    CAL-P1030 (#3454). ``[]`` means the beat recorded no stop reason — it ran to
+    the end of its work, or it died before it could say anything, which the
+    ``terminal`` field beside this one distinguishes. It never means "stopped for
+    an unknown reason", because the producer writes one of these on every path
+    that gives up early.
+
+    The VALUE of a stop stage is always ``0``; presence is the flag. So this
+    returns names, not a map — reporting the zeros would invite a reader to treat
+    the most important field on the row as "nothing happened".
+    """
+    if not isinstance(gauges, dict):
+        return []
+    # The ``staged:`` namespace is stripped and the rest kept verbatim, including
+    # a stem whose reason half is empty: that is still a stop, and dropping it
+    # would let a malformed key read as "did not stop".
+    return sorted(
+        {key[len(STAGED_PREFIX):] for key in gauges if is_stop_key(key)}
+    )
+
+
+def bank_drop(gauges: Any) -> dict:
+    """``{"units_dropped": int|None, "measured": bool}`` off one banked row. Pure.
+
+    CAL-P1030 (#3454), and the shape is gotcha #53 in miniature: the producer
+    writes ``staged:units_dropped`` **only inside** ``if dropped:``, so absence
+    carries two different facts and this function's job is to refuse to merge
+    them.
+
+    The disambiguating second signal is already on the row.
+    ``record_stage(f"staged:cursor_{action}")`` fires unconditionally three lines
+    ABOVE the ``retain_planned_units`` call that can drop, so:
+
+    * a cursor action present and no drop key ⇒ the drop path ran and dropped
+      **zero** — ``{"units_dropped": 0, "measured": True}``;
+    * no cursor action ⇒ the beat refused its lease or died before reaching the
+      drop path, and how many units it would have dropped is **unknown** —
+      ``{"units_dropped": None, "measured": False}``. Reporting that as ``0``
+      would be the CAL-P028 collapse ("nothing dropped" vs "we never looked")
+      arriving through the one field added to end it.
+
+    ⚠️ THIS FUNCTION IS ONLY SOUND OVER A GAUGE MAP CAPTURED AT
+    :data:`DROP_AND_STOP_CAPTURE_VERSION` OR LATER. Its whole inference is "the
+    key is absent, therefore the writer did not write it" — and on a row banked
+    by an older sampler the key is absent because the SAMPLER dropped it, so this
+    returns a confident, wrong zero. Never call it on a raw ring row; call
+    :func:`row_stop_and_drop`, which checks the version first. CERT-2051.
+    """
+    if not isinstance(gauges, dict):
+        return {"units_dropped": None, "measured": False}
+    raw = gauges.get("staged:units_dropped")
+    if isinstance(raw, int) and not isinstance(raw, bool):
+        return {"units_dropped": raw, "measured": True}
+    if cursor_decision(gauges)["action"] is None:
+        return {"units_dropped": None, "measured": False}
+    return {"units_dropped": 0, "measured": True}
+
+
+def row_stop_and_drop(row: Any) -> dict:
+    """Why one banked beat stopped and what it cost, gated on capture. Pure.
+
+    ``{"capture_version": int, "stop_reasons": list[str]|None,
+    "stop_reasons_measured": bool, "units_dropped": int|None,
+    "units_dropped_measured": bool}``.
+
+    THE ONLY PLACE THE VERSION GATE LIVES, so a second reader cannot re-open
+    CERT-2051's hole by calling the pure readers directly. Two arms:
+
+    * **Below** :data:`DROP_AND_STOP_CAPTURE_VERSION` — the sampler that banked
+      this row discarded the drop and stop keys, so the row cannot speak to
+      either question and says so: ``None`` / ``False`` on both. Not ``0``, and
+      not ``[]``. **A null and an empty list must not share a value domain**:
+      ``[]`` is :func:`stop_reasons`' own word for "recorded no stop reason",
+      which is a measurement, and serving it for a row that was never able to
+      record one is the false statement this repair exists to remove.
+    * **At or above it** — the row's own banked fields, which
+      :func:`build_observation` derived from a capture that DID retain the keys.
+      A same-version row missing them falls back to re-deriving from its gauge
+      map, which is sound at that version and keeps the row replayable.
+    """
+    version = capture_version(row)
+    if version < DROP_AND_STOP_CAPTURE_VERSION:
+        return {
+            "capture_version": version,
+            "stop_reasons": None,
+            "stop_reasons_measured": False,
+            "units_dropped": None,
+            "units_dropped_measured": False,
+        }
+
+    banked_stops = row.get("stop_reasons")
+    stops = (
+        [s for s in banked_stops if isinstance(s, str)]
+        if isinstance(banked_stops, list)
+        else stop_reasons(row.get("gauges"))
+    )
+
+    # ``units_dropped`` is legitimately ``None`` on a versioned row (the beat
+    # refused before reaching the drop path), so presence of the KEY is the test,
+    # paired with a well-typed measured flag — a row carrying one without the
+    # other is malformed and is re-derived rather than half-trusted.
+    if "units_dropped" in row and isinstance(row.get("units_dropped_measured"), bool):
+        dropped = row["units_dropped"]
+        measured = row["units_dropped_measured"]
+    else:
+        drop = bank_drop(row.get("gauges"))
+        dropped = drop["units_dropped"]
+        measured = drop["measured"]
+
+    return {
+        "capture_version": version,
+        "stop_reasons": stops,
+        "stop_reasons_measured": True,
+        "units_dropped": dropped,
+        "units_dropped_measured": measured,
+    }
 
 
 def _parse_stamp(value):
@@ -355,6 +580,7 @@ def build_observation(
     payload = payload if isinstance(payload, dict) else {}
     stages = payload.get("stages")
     captured, missing = select_gauges(stages)
+    drop = bank_drop(captured)
     stamp = _parse_stamp(generated_at)
 
     # 🔴 THE WALL CLOCK GETS IN HERE IF YOU LET IT, AND THIS SUITE CAUGHT IT.
@@ -411,6 +637,23 @@ def build_observation(
         # -- the fixed gauge set, verbatim ------------------------------------
         "gauges": captured,
         "gauges_missing_required": missing,
+        # -- CAL-P1030 (#3454): why the beat stopped, and what it cost ---------
+        # Derived here as well as capturable from ``gauges`` for the CAL-P1002
+        # reason: the question "did a finished bank get thrown away, and why did
+        # this beat end with 19 minutes unused" is the one a reader arrives with,
+        # and making them substring-search a 30-key map to reach it is how it
+        # went unasked for two nights. ``[]`` is "recorded no stop reason", never
+        # "stopped for an unknown reason" — see :func:`stop_reasons`.
+        "stop_reasons": stop_reasons(captured),
+        "units_dropped": drop["units_dropped"],
+        "units_dropped_measured": drop["measured"],
+        # What THIS row's capture was able to retain (CERT-2051). Stamped on the
+        # row rather than on the ring because the ring spans seven days and
+        # therefore every deploy that edits ``select_gauges``: the versions are
+        # mixed inside one artifact, and only the row knows which one it is. Any
+        # reader of the three fields above must go through
+        # :func:`row_stop_and_drop`, which reads this first.
+        "gauge_capture_version": GAUGE_CAPTURE_VERSION,
         # -- derived, through production ---------------------------------------
         "disclosure": disclosure,
         "tolerance_pp": bound,
@@ -639,6 +882,12 @@ async def run_beat_gauge_sample() -> dict:
     artifact["tolerance_pp"] = observation["tolerance_pp"]
     artifact["beat_terminal"] = observation["terminal"]
     artifact["gauges_missing_required"] = observation["gauges_missing_required"]
+    # CAL-P1030 (#3454). On the run artifact too, not only in the ring: the
+    # sampler's own terminal is read by whoever is watching a stalled rebuild
+    # tonight, and "the beat stopped because a deploy took the worker away"
+    # should not require a second call to the ring to find out.
+    artifact["beat_stop_reasons"] = observation["stop_reasons"]
+    artifact["beat_units_dropped"] = observation["units_dropped"]
 
     stamp = _parse_stamp(ledger["generated_at"])
     ledger_age_s = (started - stamp).total_seconds() if stamp is not None else None

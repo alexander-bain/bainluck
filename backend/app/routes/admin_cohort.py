@@ -653,6 +653,22 @@ async def calibration_beat_gauges(request: Request, limit: int = 24, full: bool 
     what the beat did with its checkpoint and why. Both ``null`` means the row
     carries no cursor key, which is a real state (refused, or died before the
     write) and, on rows banked before CAL-P1002, means only "not a resume".
+
+    CAL-P1030 (#3454) adds ``stop_reasons`` — why the beat gave up early, which
+    the ring dropped entirely until now — and ``units_dropped`` /
+    ``units_dropped_measured``, the fail-closed full-bank wipe and whether the
+    row can speak to it at all. **A drop of zero and a drop nobody measured are
+    never the same value**: ``units_dropped: 0`` is only ever served with
+    ``units_dropped_measured: true``, and ``stop_reasons: []`` — "this beat
+    recorded no stop reason" — only ever with ``stop_reasons_measured: true``.
+
+    Two things make a row unable to answer, and ``capture_version`` (CERT-2051)
+    tells them apart from a real zero. Either the beat never reached the drop
+    path (it refused its lease or died first), or the row was banked before
+    CAL-P1030 by a sampler that discarded those keys — a capture rule changes
+    what ABSENCE means, and this ring holds seven days, so it spans the change.
+    On a row below the capture floor all four fields answer ``null`` / ``false``,
+    because ``0`` or ``[]`` there would be a measurement that row never made.
     """
     _check_admin_secret(request=request)
 
@@ -661,6 +677,7 @@ async def calibration_beat_gauges(request: Request, limit: int = 24, full: bool 
         HISTORY_IDENTITY,
         HISTORY_SCHEMA,
         cursor_decision,
+        row_stop_and_drop,
         summarise,
     )
 
@@ -711,6 +728,14 @@ async def calibration_beat_gauges(request: Request, limit: int = 24, full: bool 
     # it, and on rows banked BEFORE CAL-P1002 it means only "not a resume". It is
     # never rendered as a decision that was made.
     cursors = [cursor_decision(r.get("gauges")) for r in bounded]
+    # CAL-P1030 (#3454), gated per row by CERT-2051. ``row_stop_and_drop`` is the
+    # only reader of the drop/stop fields anywhere: it reads the row's capture
+    # version FIRST, so a row banked by a sampler that could not retain those
+    # keys answers unknown instead of having its silence re-derived into a
+    # measured zero. Deriving them here rather than only under ``full=true`` is
+    # the CAL-P1002 precedent — making a reader pull ~200 KB to reach the answer
+    # is how the question went unasked for two nights.
+    drops = [row_stop_and_drop(r) for r in bounded]
     out["observations"] = [
         {
             "generation": r.get("generation"),
@@ -730,8 +755,13 @@ async def calibration_beat_gauges(request: Request, limit: int = 24, full: bool 
             "gauges_missing_required": r.get("gauges_missing_required"),
             "cursor_action": c["action"],
             "cursor_reason": c["reason"],
+            "capture_version": d["capture_version"],
+            "stop_reasons": d["stop_reasons"],
+            "stop_reasons_measured": d["stop_reasons_measured"],
+            "units_dropped": d["units_dropped"],
+            "units_dropped_measured": d["units_dropped_measured"],
         }
-        for r, c in zip(bounded, cursors)
+        for r, c, d in zip(bounded, cursors, drops)
     ]
     out["observations_returned"] = len(out["observations"])
     out["observations_retained"] = len(rows)
