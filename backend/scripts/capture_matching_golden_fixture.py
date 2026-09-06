@@ -52,10 +52,28 @@ MARKET_CHUNK = 120
 #: trades request count against per-request cost; 6 keeps every page under the
 #: db-query row path's hard 10s bound.
 CANDIDATE_BATCH = 6
-#: Candidates kept per market. The matcher's own scoring query takes 20; the
-#: fixture keeps the nearest 10 by commence_time, which is the same ordering the
-#: matcher applies, so truncation drops the rows it would have scored last.
-MAX_CANDIDATES = 10
+#: Candidates kept per market, and it MUST equal the matcher's own limit —
+#: `test_golden_capture_cap_matches_production_3564.py` fails if the two drift.
+#:
+#: This was 10 while the matcher took 20 (#3564). The old note beside it said so
+#: out loud and treated it as harmless truncation "of the rows it would have
+#: scored last". It is not harmless, because the cap does not just shorten the
+#: candidate list — it changes the QUESTION the fixture asks. 327 of 709 pairs
+#: sit exactly at the cap, so for 46% of the corpus the matcher is handed a
+#: different population than production hands it, and which rows survive depends
+#: on what production had ingested at capture time. Measured across two captures
+#: four days apart: of the 207 pairs at the cap in both, the candidate id set
+#: changed in 141 (68%), and of 69 regressions, 40 were at the cap in both with
+#: not one keeping its candidate set. A ratchet whose question moves is not a
+#: ratchet.
+#:
+#: NOTE for whoever re-captures (this ship does not): doubling the rows per
+#: block also doubles what each UNION ALL page returns, 6*10+10=70 -> 6*20+10=130.
+#: Both are far under db-query's 1,000-row page cap, and the cost here is the
+#: per-block ILIKE scan rather than the rows returned, so `CANDIDATE_BATCH` is
+#: deliberately left at 6 rather than halved on a guess. Watch the 10s row-path
+#: bound on the first real run and lower the batch if a page times out.
+MAX_CANDIDATES = 20
 
 
 def db_query(sql: str, limit: int = 1000) -> list[list]:
