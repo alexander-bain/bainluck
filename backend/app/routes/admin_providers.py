@@ -1971,7 +1971,12 @@ async def statpal_authority_agreement(
     """
     _check_admin_secret(secret, request=request)
 
-    from app.config.authority_by_sport import STATPAL, authority_for
+    from app.config.authority_by_sport import (
+        STATPAL,
+        SWITCH_IS_WIRED,
+        SWITCH_WIRING_NOTE,
+        authority_for,
+    )
     from app.tasks.redis_state import get_task_metrics
     from app.utils.authority_agreement import (
         FLIP_GATE_SUMMARY,
@@ -2000,6 +2005,15 @@ async def statpal_authority_agreement(
                 "consecutive daily gate states AND a YOUR-TURN entry Alex has "
                 "seen (D50)."
             ),
+            # Beside `current`, never folded into its note, because it qualifies
+            # what `current` MEANS rather than adding detail to it. NFL/NBA/NHL
+            # reach a genuine seven around 2026-09-11; on that day someone flips
+            # a line, watches `current` change, and would otherwise conclude the
+            # site had changed provider. It has not: nothing reads the switch.
+            # Derived from the declared consumer set, so it cannot outlive the
+            # condition it describes (`SWITCH_CONSUMERS`).
+            "switch_wired": SWITCH_IS_WIRED,
+            "switch_note": SWITCH_WIRING_NOTE,
         }
 
         metrics = get_task_metrics(task_name) or {}
