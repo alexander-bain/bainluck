@@ -49,15 +49,27 @@ cleaned up**, and if it is gone, the sampler is `.lat182-sampler.sh` beside it.
 ## 2. State on arrival — READ BOTH, they will have moved
 
 **1. #3480 / PR #3483 (182's stagger).** `program/latency-247-the-search-box-stops-going-cold-at-dawn`
-@ `22bed49c`. Five compaction beats stop sharing two `background` slots; 29 tests, guard
-fails 5/29 against the exact parent schedule, 13/13 mutants, 585 green, no alembic. Carries
-LAT-P242 (#3466) as its rider, which discharges CERT-2038's restage condition. **Check the
-ledger for its grade and the exact-sha CI (notice 13b) before assuming anything.**
+@ **`51e9079e`**. CERT-2045 BLOCKed the first presentation at `22bed49c` and was right;
+repaired and **restaged as CERT-2053**. Two invariants now — pairwise long-hold non-overlap,
+and a budget-derived rule that no compaction beat fires within `warm-typeahead`'s own
+`expires` of other long-holding work. 52 tests, fails 5/52 against the blocked sha and 10/52
+against the original parent, 22/22 mutants, 607 green, no alembic. Carries LAT-P242 (#3466)
+as its rider, discharging CERT-2038's restage condition. Exact-sha CI `completed/success`
+(run `34025029657`). **Check the ledger for CERT-2053's grade before assuming anything.**
+
+⚠️ **A large part of the required repair was declined with a measurement, not delivered**:
+"a slot opportunity throughout every compaction window" is not schedulable (59 beat entries
+over budget, 1,222 fires/day, 7 clean minutes in 1,440). The remaining path is a dedicated
+worker, which is in `alex-inbox` as a spend decision with a stated default of "measure for a
+week first". **Do not decide it in a lane, and do not re-derive the table — it is asserted
+by `TestTheClaimThatIsolationIsTheOnlyRemainingPath`, which is written so failing is good
+news.**
 
 If it landed, **the post-deploy proof is yours and it is time-boxed**: the first
 single-grinder window under the new schedule is `turbo-collapse-futures` alone at
 **13:40Z**, then `turbo-collapse-odds` alone at **15:30Z**, then 19:40Z. Compare against
 12:30Z/12:45Z in the sampler file, which is the last two-grinder window under the parent.
+The sampler runs to 16:40Z, so both solo windows are covered.
 What to show: `warm_typeahead` **delivered** inside its 120s expiry through the window, and
 the warmer's `period_s` p95 staying under the 65s `response_cache_ttl_s` instead of the
 116–318s it reads today.

@@ -5,8 +5,12 @@
 Written 2026-09-06, session start 08:03Z / 01:03 PT (PT = local `date` minus 3h, notice 24,
 verified with `TZ=America/Los_Angeles date`).
 
-Branch `program/latency-247-the-search-box-stops-going-cold-at-dawn`, PR **#3483**,
-issue **#3480**. Two commits: the LAT-P242 rider (#3466), then the stagger.
+Branch `program/latency-247-the-search-box-stops-going-cold-at-dawn` @ **`51e9079e`**,
+PR **#3483**, issue **#3480**. The LAT-P242 rider (#3466) is its first commit.
+
+**Status at close: CERT-2045 BLOCK (correct — §4b), repaired, restaged as CERT-2053.**
+Exact-sha CI `completed/success` (run `34025029657`, all 9 jobs), CodeQL and gitleaks green,
+PR MERGEABLE/CLEAN at master `138fc435`. 52 tests, 22/22 mutants, no alembic, no frontend.
 
 ---
 
