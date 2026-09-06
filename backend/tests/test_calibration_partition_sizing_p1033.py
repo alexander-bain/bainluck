@@ -1,33 +1,45 @@
-"""The staged futures partition must be small enough to finish (CAL-P1033, #3536).
+"""The staged futures partition may only be a size production has FINISHED a unit at
+(CAL-P1035, #3536).
 
-THE CLASS OF DEFECT, which is not "128 is the wrong number".
+THE CLASS OF DEFECT, and this file has now made it twice, in opposite directions.
 
-``STAGED_FUTURES_BUCKETS`` carried a *reasoned* sizing argument — units get
-cheaper as they get smaller, so a larger count is the safer direction — and that
-argument was never checked against a measured unit cost. It was wrong in the one
-way that matters: per-unit cost is almost entirely a FIXED prefix, so raising the
-bucket count multiplies the total work instead of dividing it. At 128 the build's
-own gauge reported ``staged:beats_to_publish`` = 81 and then 95, and
+**First version.** ``STAGED_FUTURES_BUCKETS`` carried a *reasoned* sizing argument
+— units get cheaper as they get smaller, so a larger count is the safer direction
+— and that argument was never checked against a measured unit cost. At 128 the
+build's own gauge reported ``staged:beats_to_publish`` = 81 and then 95, and
 ``/api/calibration`` served a 29-hour-old ``generated_at`` while the task ran
-every hour. The 12:15Z beat on 2026-09-06 is the clean proof: a deliberate
-repo-wide merge freeze bought it a full uninterrupted 1,094 s, it resumed its
-cursor without a wipe, it banked ONE unit — and its own ETA got worse.
+every hour.
 
-So the invariant this file pins is not a number. It is:
+**Second version — the one being repaired here.** The replacement fitted
+``cost(B) = P + s_total / B`` through two points and cut the partition to 17. One
+of those two points was ``MEASURED_MONOLITH_S = 1350 s``, and this file's own
+comment recorded, in the same breath, that the statement it came from was
+**cancelled by Postgres** at 1,351,525 ms. A cancellation is not a duration. It is
+a *censored* observation: the true cost is that number **or more**, and nobody
+knows how much more. Fitting an equality through it pulled the whole curve down,
+which understated ``s_total``, overstated the fixed prefix, and therefore
+recommended a partition far smaller than anything the measurements supported.
 
-    **the partition must be small enough that one whole generation publishes
-    inside a stated budget of beats, under the cost model production measured** —
+Production refuted it on the first clean beat. **2026-09-06 15:15:00Z**, at B=17,
+in an unkilled window (``beat:cancel_cause:incomplete``, elapsed 1,350,702 ms):
+one unit was given essentially the entire beat — a 1,137,529 ms statement bound
+after a 197,931 ms generation freeze — and **did not finish**. Predicted 882 s;
+cancelled still running at 1,138 s. The dial did not merely fail to help, it made
+the build unable to bank anything at all.
 
-and, separately, that a single unit still FITS one beat's usable window, because
-a unit that does not fit is refused by the admission fence permanently
-(``staged:window_stop:unit_too_large``; see ``_level_self_blocked``). Those two
-pull in opposite directions and a partition is only correct between them.
+So the invariant this file pins is not a number, and no longer a model either:
 
-Every constant below is a PRODUCTION MEASUREMENT, not a re-derivation of the
-value under test. That is deliberate: a guard whose expected value is recomputed
-from the code it guards agrees by construction and proves nothing. If someone
-raises the bucket count again, they must first change a measurement here and say
-where they measured it.
+    **a partition may ship only if production has COMPLETED a unit at it**, and
+    the model may be used to REJECT sizes, never to endorse one it has not seen.
+
+A censored reading may enter this file as a lower bound and constrain the fit
+from one side. It may never be an equality anchor again. Every prediction below
+is consequently a LOWER BOUND on cost and an OPTIMISTIC verdict on viability: if
+even this model refuses a partition, the partition is refused.
+
+Every constant is a PRODUCTION MEASUREMENT with its source named, and each one
+says whether it COMPLETED or was CENSORED. A guard whose expected value is
+recomputed from the code it guards agrees by construction and proves nothing.
 """
 
 from __future__ import annotations
@@ -42,56 +54,77 @@ from app.tasks.precompute_calibration import (
     _unit_fits_in_window,
 )
 
-# --- Production measurements. Source is named for every one. -----------------
+# --- Production measurements. Source AND completion status named for each. ---
 
-#: ``staged:unit_ms_mean`` from the ``calibration:main:phase_ledger`` durable
-#: snapshot written at the end of the 2026-09-06 **12:15Z** beat. That beat ran
-#: 1,094 s uninterrupted inside a deliberately quiet merge window, resumed its
-#: cursor cleanly, and banked its second unit of 128.
+#: COMPLETED. ``staged:unit_ms_mean`` from the ``calibration:main:phase_ledger``
+#: durable snapshot written at the end of the 2026-09-06 **12:15Z** beat. That
+#: beat ran 1,094 s uninterrupted inside a deliberately quiet merge window,
+#: resumed its cursor cleanly, and banked its second unit of 128.
 #:
-#: This is the WORSE of two readings — the 10:15Z beat measured 723.8 s — and
+#: This is the WORSE of two completions — the 10:15Z beat measured 723.8 s — and
 #: the worse one is used deliberately. The fit sizes a partition against a
-#: deadline, so an optimistic unit cost buys a unit that does not fit, and a
-#: unit that does not fit banks nothing at all.
+#: deadline, so an optimistic unit cost buys a unit that does not fit, and a unit
+#: that does not fit banks nothing at all.
 MEASURED_UNIT_S_AT_128 = 857.0
 
 #: The partition in force when the reading above was taken.
 MEASURED_PARTITION = 128
 
-#: The pre-staging monolith over the whole ~110K-market roster: one statement,
-#: no banking. Recorded in this module's own history (the 300E rollback notes)
-#: and again on #2052, where the same statement was cancelled by Postgres at
-#: 1,351,525 ms.
-MEASURED_MONOLITH_S = 1350.0
+#: Partition -> the COMPLETED unit costs production has actually observed at it,
+#: in seconds. **This is the ship list.** A partition absent from here has never
+#: finished a unit in production, so nothing in this file may endorse it,
+#: whatever the model says. Both entries are ``staged:unit_ms_mean`` off the
+#: phase ledger on 2026-09-06 (10:15Z and 12:15Z), and both are beats whose
+#: ``staged:units_completed_this_beat`` was non-zero.
+MEASURED_COMPLETIONS: dict[int, tuple[float, ...]] = {128: (723.8, 857.0)}
 
-#: ``staged:unit_ms_mean`` (857.0 s) + ``staged:window_left_ms`` (287.2 s) off
-#: the same ledger: what one beat actually had to spend after its fixed setup —
-#: which includes the ~220 s ``read:futures_generation`` freeze it pays first.
+#: CENSORED — a lower bound, NOT a cost. ``read:futures_unit`` from the
+#: 2026-09-06 **15:15:00Z** beat, the first beat to run at B=17 in a window no
+#: release interrupted. The unit was cancelled at its own statement bound after
+#: 1,137,955 ms with ``staged:units_completed_this_beat`` = 0,
+#: ``staged:units_cancelled`` = 1 and ``staged:window_stop:unit_too_large``.
+#:
+#: cost(17) > this. How much more is unknown and unknowable from that beat: the
+#: bound it hit (1,137,529 ms) was the whole rest of the beat, so B=17 cannot be
+#: measured by giving it a longer window — there is no longer window to give.
+MEASURED_UNIT_S_AT_17_LOWER_BOUND = 1137.955
+
+#: The partition the reading above was taken at.
+CENSORED_PARTITION = 17
+
+#: CENSORED — a lower bound, NOT a cost, and the anchor that caused the defect
+#: this file is repairing. The pre-staging monolith over the whole ~110K-market
+#: roster: one statement, no banking, **cancelled** by Postgres at 1,351,525 ms
+#: (#2052, and this module's own 300E rollback notes). It is kept only so the
+#: refit can be checked for consistency against it — see
+#: :meth:`TestTheCensoredAnchorIsNotAMeasurement`. It is never fitted through.
+MEASURED_MONOLITH_S_LOWER_BOUND = 1350.0
+
+#: COMPLETED. ``staged:unit_ms_mean`` (857.0 s) + ``staged:window_left_ms``
+#: (287.2 s) off the 12:15Z ledger: what one beat actually had to spend after its
+#: fixed setup — which includes the ~200 s ``read:futures_generation`` freeze it
+#: pays first. Corroborated at B=17: the 15:15Z beat's freeze cost 197,931 ms and
+#: it then handed the unit 1,137,529 ms, i.e. 1,335 s of usable window before the
+#: 30 s bound headroom, against 1,144 s of *admissible* window after the 1.25
+#: fence.
 MEASURED_USABLE_WINDOW_S = 1144.2
 
-# --- The budget. These are the ruling, not a measurement. --------------------
+# --- The budget. This is the ruling, not a measurement. ----------------------
 
 #: Beats to publish one generation, counted the way the runtime counts them:
 #: whole beats, including the following publish beat (see :func:`beats_to_publish`).
 #:
-#: 8 → 16 by CERT-2071's repair, 16 → 24 by CERT-2074's follow-up
-#: ``CAL-P1033-WHOLE-UNIT-PUBLISH-BUDGET``. The first raise was because the real
-#: admission gate leaves so little headroom (see :func:`admission_ceiling_s`)
-#: that every partition fast enough for 8 beats has an admission margin under
-#: 1%, which is not a margin. The second is because 16 was being compared
-#: against a FRACTIONAL projection (13.1 at B=17) that the runtime cannot
-#: deliver: one unit per beat is the measured reality at every partition, so
-#: B=17 costs 18 whole beats and the assertion was quietly false. 24 is "within
-#: a day of productive beats" — the freshness promise the ship is written
-#: against.
+#: 8 -> 16 by CERT-2071's repair, 16 -> 24 by CERT-2074's follow-up
+#: ``CAL-P1033-WHOLE-UNIT-PUBLISH-BUDGET``. 24 is "within a day of productive
+#: beats" — the freshness promise the ship is written against.
 #:
-#: WALL CLOCK WILL EXCEED THIS AND THAT IS NOT A BUG IN THE BUDGET. Self-blocked
-#: beats are structural (see :class:`TestNoPartitionIsComfortable`) and every
-#: master merge restarts ``worker-heavy`` mid-beat, so 18 productive beats are
-#: spread over more than 18 hours. This bounds the WORK a generation costs, not
-#: the clock it costs it on. 95.9 was the number that made the page 29 hours
-#: stale.
+#: **UNDER THE REFIT NO PARTITION REACHES IT**, and that is the headline finding
+#: rather than a reason to raise it again — see
+#: :class:`TestNoPartitionMeetsTheBeatBudget`. The budget stays where the ship's
+#: promise put it so that the day the frozen-file repair lands and the fixed
+#: prefix falls, that class goes red and says so.
 MAX_BEATS_TO_PUBLISH = 24
+
 
 #: THE ADMISSION CEILING IS NOT OURS TO PICK (CERT-2071's repair). It is
 #: ``_unit_fits_in_window``: ``remaining_ms >= reference * STAGED_UNIT_WINDOW_SAFETY``.
@@ -99,35 +132,42 @@ MAX_BEATS_TO_PUBLISH = 24
 #: reference is the previous beat's measured mean, so a partition is viable iff
 #: ``cost(B) * STAGED_UNIT_WINDOW_SAFETY <= MEASURED_USABLE_WINDOW_S``.
 #:
-#: This file first wrote ``MAX_WINDOW_FRACTION = 0.85`` here, by hand. The
-#: production rule is 1/1.25 = 0.80, and the 5 percentage points of difference
-#: are exactly the ones that let B=5 through a guard the real gate refuses. The
-#: factor is now IMPORTED, so it cannot drift from the code it models.
+#: The factor is IMPORTED, so it cannot drift from the code it models.
 def admission_ceiling_s() -> float:
     return MEASURED_USABLE_WINDOW_S / STAGED_UNIT_WINDOW_SAFETY
 
 
 #: The measured beat-to-beat spread of ONE unit at a FIXED partition: 723.8 s
-#: (10:15Z) then 857.0 s (12:15Z), both at 128. +18.4%.
+#: (10:15Z) then 857.0 s (12:15Z), both at 128, both completed. +18.4%.
 MEASURED_BEAT_TO_BEAT_VARIANCE = (857.0 - 723.8) / 723.8
 
 
 def fit_cost_model() -> tuple[float, float]:
-    """``(fixed_prefix_s, scalable_total_s)`` from the two measured points.
+    """``(fixed_prefix_s, scalable_total_s)``, fitted so that it CANNOT overstate.
 
-    ``cost(B) = P + s_total / B``. Two points determine it. Pure arithmetic over
-    the measurements above — it never reads ``STAGED_FUTURES_BUCKETS``, so it
-    cannot quietly agree with whatever that constant happens to be.
+    ``cost(B) = P + s_total / B``. Two points determine it, and the two used are
+    the completed reading at B=128 and the **censored** reading at B=17 taken at
+    its lower bound. Because the B=17 point is a floor, the curve through it is
+    the flattest one consistent with the evidence: the real ``s_total`` is larger
+    and the real ``P`` smaller than what comes back here.
+
+    That asymmetry is the whole design. Every cost this model predicts is a
+    LOWER bound, so every "this partition fits" is optimistic and every "this
+    partition does not fit" is certain. The file only ever leans on the second.
+
+    Pure arithmetic over the measurements above — it never reads
+    ``STAGED_FUTURES_BUCKETS``, so it cannot quietly agree with whatever that
+    constant happens to be.
     """
-    # cost(1) = P + s_total ; cost(128) = P + s_total/128
-    s_total = (MEASURED_MONOLITH_S - MEASURED_UNIT_S_AT_128) / (
-        1.0 - 1.0 / MEASURED_PARTITION
+    s_total = (MEASURED_UNIT_S_AT_17_LOWER_BOUND - MEASURED_UNIT_S_AT_128) / (
+        1.0 / CENSORED_PARTITION - 1.0 / MEASURED_PARTITION
     )
-    fixed = MEASURED_MONOLITH_S - s_total
+    fixed = MEASURED_UNIT_S_AT_128 - s_total / MEASURED_PARTITION
     return fixed, s_total
 
 
 def predicted_unit_s(buckets: int) -> float:
+    """A LOWER BOUND on what one unit costs at this partition. Never a cost."""
     fixed, s_total = fit_cost_model()
     return fixed + s_total / buckets
 
@@ -148,8 +188,7 @@ def units_admitted_per_beat(buckets: int) -> int:
     Steady state means the carried level IS this partition's own cost — a beat
     that follows a beat at the same size, which is every beat but the first
     after a deploy. The first-after-deploy asymmetry is
-    :class:`TestTwoConsecutiveBeatsEachBankAUnit`'s subject and is not repeated
-    here.
+    :class:`TestTwoConsecutiveBeatsEachBankAUnit`'s subject.
 
     The answer is 0 or 1 at every partition (pinned below), which is the whole
     reason the beat budget cannot be a fraction.
@@ -180,7 +219,9 @@ def beats_to_publish(buckets: int) -> float:
 
     ``inf`` when a beat banks nothing: the build never publishes at all, which
     is a different and worse fact than a large count (production's own gauge
-    says ``-1`` for the same case, and for the same reason).
+    says ``-1`` for the same case, and for the same reason). **B=17 is ``inf``,
+    and that is not a projection — production spent a whole clean beat proving
+    it on 2026-09-06 at 15:15Z.**
     """
     per_beat = units_admitted_per_beat(buckets)
     if per_beat < 1:
@@ -196,10 +237,8 @@ def gauge_projected_beats(buckets: int) -> float:
     window is credited with 1.3 units of progress. It cannot bank 0.3 of a unit.
 
     Kept, and named for what it is, because it is the quantity the 12:15Z ledger
-    reading of 95 can be checked against — see
-    :meth:`TestTheGuardFiresOnTheCodeThatShipped.test_the_historical_value_projects_the_number_production_reported`.
-    It is NOT the budget: compare it with :func:`beats_to_publish` and the gap
-    is the defect CERT-2074 named.
+    reading of 95 can be checked against. It is NOT the budget: compare it with
+    :func:`beats_to_publish` and the gap is the defect CERT-2074 named.
     """
     return predicted_generation_s(buckets) / MEASURED_USABLE_WINDOW_S
 
@@ -207,109 +246,177 @@ def gauge_projected_beats(buckets: int) -> float:
 def admission_margin(buckets: int) -> float:
     """How far a partition sits under the production gate, as a fraction.
 
-    Negative means the gate refuses the next beat's first unit. This is also
-    the fraction by which the true unit cost may exceed the model before that
-    happens, which is the number that matters when the model is a two-point fit.
+    Negative means the gate refuses the next beat's first unit. Optimistic, like
+    everything derived from the fit: the true margin is smaller.
     """
     return admission_ceiling_s() / predicted_unit_s(buckets) - 1.0
 
 
 def max_achievable_margin() -> float:
-    """The best any partition can do — the B → ∞ limit, i.e. the fixed prefix.
+    """The best any partition can do — the B -> inf limit, i.e. the fixed prefix.
 
-    Derived, not chosen. It is the ceiling on every safety argument in this
-    file, and it is small (see the variance test below).
+    Derived, not chosen. It is the ceiling on every safety argument in this file.
     """
     fixed, _ = fit_cost_model()
     return admission_ceiling_s() / fixed - 1.0
 
 
-class TestTheFitIsTheOneProductionMeasured:
-    """The model has to reproduce its own inputs, or it is not a fit."""
+def model_admits(buckets: int) -> bool:
+    """Whether the OPTIMISTIC model lets a unit of this size through the gate.
 
-    def test_reproduces_both_measured_points(self):
-        assert predicted_unit_s(1) == pytest.approx(MEASURED_MONOLITH_S, abs=0.5)
+    A necessary condition for shipping a partition, never a sufficient one —
+    :data:`MEASURED_COMPLETIONS` supplies the sufficient half.
+    """
+    return predicted_unit_s(buckets) <= admission_ceiling_s()
+
+
+class TestTheCensoredAnchorIsNotAMeasurement:
+    """The defect class, pinned: never fit an equality through a cancellation.
+
+    This is the guard firing on the code that shipped. B=17 was live in master
+    from 14:12Z to the next release on 2026-09-06, chosen by a search over a fit
+    anchored on a cancelled statement. Every assertion here would have been red
+    on that tree.
+    """
+
+    @staticmethod
+    def _refuted_fit() -> tuple[float, float]:
+        """The fit exactly as CAL-P1033 wrote it, reproduced to be refuted."""
+        s_total = (MEASURED_MONOLITH_S_LOWER_BOUND - MEASURED_UNIT_S_AT_128) / (
+            1.0 - 1.0 / MEASURED_PARTITION
+        )
+        return MEASURED_MONOLITH_S_LOWER_BOUND - s_total, s_total
+
+    def test_production_refutes_the_monolith_anchored_fit(self):
+        """882 s predicted; still running, and cancelled, at 1,138 s."""
+        fixed, s_total = self._refuted_fit()
+        refuted_prediction = fixed + s_total / CENSORED_PARTITION
+        assert refuted_prediction < MEASURED_UNIT_S_AT_17_LOWER_BOUND, (
+            f"the monolith-anchored fit predicts {refuted_prediction:.0f}s at "
+            f"B={CENSORED_PARTITION}, which production has NOT exceeded — the "
+            f"refutation this file is built on has stopped holding, so re-derive "
+            f"before trusting anything below"
+        )
+
+    def test_the_refutation_is_large_enough_to_be_a_finding(self):
+        """Not a rounding gap: the floor alone is 29% above the prediction."""
+        fixed, s_total = self._refuted_fit()
+        refuted_prediction = fixed + s_total / CENSORED_PARTITION
+        understatement = MEASURED_UNIT_S_AT_17_LOWER_BOUND / refuted_prediction - 1.0
+        assert understatement > 0.20, (
+            f"the old fit understates the B={CENSORED_PARTITION} floor by only "
+            f"{understatement:+.1%}; below 20% this stops being a modelling "
+            f"defect and starts being beat-to-beat noise"
+        )
+
+    def test_the_refit_is_consistent_with_every_censored_reading(self):
+        """A lower bound constrains from one side only — and both are satisfied.
+
+        The refit predicts 6,322 s for the monolith. That is not a claim the
+        monolith takes 6,322 s; it is the statement that a cancellation at
+        1,350 s tells us nothing that contradicts it, which is precisely what
+        the first version of this file forgot.
+        """
+        assert predicted_unit_s(1) > MEASURED_MONOLITH_S_LOWER_BOUND
+        # The B=17 floor is an ANCHOR, so the curve passes exactly through it.
+        # That is the flattest curve the evidence permits, not a claim that 17
+        # costs 1,138 s — it costs that or more.
+        assert predicted_unit_s(CENSORED_PARTITION) == pytest.approx(
+            MEASURED_UNIT_S_AT_17_LOWER_BOUND, abs=0.5
+        )
+
+    def test_the_refit_still_reproduces_the_one_completed_point(self):
         assert predicted_unit_s(MEASURED_PARTITION) == pytest.approx(
             MEASURED_UNIT_S_AT_128, abs=0.5
         )
 
-    def test_cost_is_dominated_by_the_fixed_prefix(self):
-        """The finding itself, stated as an assertion.
 
-        If this ever fails, the whole sizing argument in this file is void and
-        the constant should be re-derived from scratch — because a scalable-cost
-        world is the one the ORIGINAL "larger is safer" reasoning assumed, and
-        in that world it was right.
+class TestWhatTheFitSaysNowThatItIsHonest:
+    """The corrected finding, which is not the one the first version asserted."""
+
+    def test_the_per_unit_cost_is_NOT_prefix_dominated(self):
+        """The claim that produced B=17, stated so its failure is visible.
+
+        CAL-P1033 asserted ``fixed > s_total`` and called it "the finding
+        itself". Under the censored anchor that was 853 vs 497. Honestly fitted
+        it is 814 vs 5,508 — the scalable term is nearly seven times the prefix,
+        so shrinking the partition buys a great deal more work per unit, which
+        is exactly what the 15:15Z beat felt.
         """
         fixed, s_total = fit_cost_model()
-        assert fixed > s_total, (
-            f"fixed prefix {fixed:.0f}s no longer dominates the scalable part "
-            f"{s_total:.0f}s — re-open #3536 before trusting this file"
+        assert s_total > fixed, (
+            f"the scalable term {s_total:.0f}s has fallen back under the fixed "
+            f"prefix {fixed:.0f}s — the pre-CAL-P1035 sizing argument would be "
+            f"live again and the partition must be re-derived from scratch"
         )
 
+    def test_the_AGGREGATE_work_is_prefix_dominated_at_the_shipping_size(self):
+        """Both things are true at once, and conflating them is what went wrong.
 
-class TestThePartitionInForcePublishes:
-    """Both halves of the invariant, against the constant that actually ships."""
+        Per unit the prefix is the smaller half. Across a whole generation it is
+        paid B times over, so at the shipping partition it is the overwhelming
+        majority of the total — 104,000 s against 5,500 s. That is the fact that
+        makes the frozen-file repair the only real lever, and it is a statement
+        about the GENERATION, never about one unit.
+        """
+        fixed, s_total = fit_cost_model()
+        assert STAGED_FUTURES_BUCKETS * fixed > s_total
 
-    def test_a_generation_publishes_within_the_beat_budget(self):
-        beats = beats_to_publish(STAGED_FUTURES_BUCKETS)
-        assert beats <= MAX_BEATS_TO_PUBLISH, (
-            f"STAGED_FUTURES_BUCKETS={STAGED_FUTURES_BUCKETS} needs {beats} whole "
-            f"beats to publish one generation "
-            f"({units_admitted_per_beat(STAGED_FUTURES_BUCKETS)} unit(s) per beat "
-            f"plus the publish beat), budget is {MAX_BEATS_TO_PUBLISH}"
+    def test_the_smallest_partition_the_model_admits_is_itself_a_lower_bound(self):
+        """55, and the true answer is larger because the model is optimistic."""
+        smallest = next(b for b in range(1, 1025) if model_admits(b))
+        assert smallest == 55, (
+            f"the optimistic model now admits B={smallest}; the shipping rule "
+            f"below is unaffected (it ships only measured sizes) but this number "
+            f"is quoted in the D80 scope note and should be re-quoted"
         )
+        assert not model_admits(smallest - 1)
+
+
+class TestThePartitionInForceHasBeenMeasured:
+    """THE SHIPPING RULE. Both clauses, and each one rejects something.
+
+    Ship the smallest partition that (a) the optimistic model admits AND (b)
+    production has COMPLETED a unit at. (a) alone is what shipped B=17 and lost
+    a day. (b) alone would let a size through that provably cannot be admitted.
+    """
+
+    def test_the_shipped_value_is_the_ONE_THE_RULE_PICKS(self):
+        picked = next(
+            (b for b in sorted(MEASURED_COMPLETIONS) if model_admits(b)), None
+        )
+        assert picked is not None, (
+            "no partition with a measured completion is admissible — the build "
+            "cannot bank at ANY size we have evidence for; this is the "
+            "frozen-file repair (D80), not a dial"
+        )
+        assert STAGED_FUTURES_BUCKETS == picked, (
+            f"the rule picks {picked} (margin {admission_margin(picked):+.2%}), "
+            f"but {STAGED_FUTURES_BUCKETS} ships"
+        )
+
+    def test_clause_b_is_load_bearing_and_rejects_a_size_the_model_likes(self):
+        """64 passes the model at +1.7% and has never finished a unit.
+
+        Without clause (b) the rule would pick it — an extrapolation, from a
+        model whose last extrapolation cost a day of staleness, into a region
+        where the only two production readings are a completion at 128 and a
+        cancellation at 17.
+        """
+        assert model_admits(64)
+        assert 64 not in MEASURED_COMPLETIONS
+
+    def test_clause_a_is_load_bearing_and_rejects_the_size_that_shipped(self):
+        assert not model_admits(CENSORED_PARTITION)
 
     def test_one_unit_still_fits_one_beat(self):
         unit_s = predicted_unit_s(STAGED_FUTURES_BUCKETS)
         ceiling = admission_ceiling_s()
         assert unit_s <= ceiling, (
-            f"a unit at {STAGED_FUTURES_BUCKETS} buckets costs {unit_s:.0f}s "
-            f"against the production gate's {ceiling:.0f}s ceiling — the fence "
-            f"will refuse the next beat's FIRST unit and the build alternates "
-            f"between progress and self-blocked beats"
-        )
-
-    def test_the_shipped_value_is_the_ONE_THE_RULE_PICKS(self):
-        """The choice is searched, not asserted — that is what caught 5 and 6.
-
-        THE RULE. Take the smallest partition whose admission margin reaches
-        HALF the maximum margin any partition can reach, subject to the beat
-        budget. Every term is derived:
-
-        * the margin is against the production gate, not a chosen fraction;
-        * "half the maximum" is a bar computed from the fit, not picked — it
-          says "do not sit in the bottom half of the achievable range", which is
-          a statement about the shape of the cost curve rather than a taste;
-        * smallest-that-qualifies, because publishing sooner is the whole point
-          and margin past the bar is bought with beats.
-
-        Under the fit in force it lands on 17 (+3.74% against a +7.30% ceiling).
-        B=8 is the first partition that ADMITS AT ALL, at +0.01%. The margin bar
-        binds from below at B >= 17 and the beat budget from above at B <= 23,
-        so 17 is the smallest of a narrow qualifying band — and it stayed 17
-        when CERT-2074's follow-up made the budget count whole beats, because
-        the bar it is picked BY is the margin one.
-        """
-        margin_ceiling = max_achievable_margin()
-
-        def qualifies(b: int) -> bool:
-            return (
-                admission_margin(b) >= 0.5 * margin_ceiling
-                and beats_to_publish(b) <= MAX_BEATS_TO_PUBLISH
-            )
-
-        picked = next(
-            (b for b in range(1, MEASURED_PARTITION + 1) if qualifies(b)), None
-        )
-        assert picked is not None, (
-            "no partition satisfies the rule — the fixed prefix has grown past "
-            "what any partition can absorb; this is the #3536 repair, not a dial"
-        )
-        assert STAGED_FUTURES_BUCKETS == picked, (
-            f"the rule picks {picked} (margin {admission_margin(picked):+.2%}), "
-            f"but {STAGED_FUTURES_BUCKETS} ships "
-            f"(margin {admission_margin(STAGED_FUTURES_BUCKETS):+.2%})"
+            f"a unit at {STAGED_FUTURES_BUCKETS} buckets costs at least "
+            f"{unit_s:.0f}s against the production gate's {ceiling:.0f}s ceiling "
+            f"— the fence will refuse the next beat's FIRST unit and the build "
+            f"banks nothing, which is the 15:15Z state"
         )
 
     def test_the_partition_is_a_usable_count(self):
@@ -317,43 +424,63 @@ class TestThePartitionInForcePublishes:
         assert STAGED_FUTURES_BUCKETS >= 1
 
 
-class TestTheGuardFiresOnTheCodeThatShipped:
-    """A guard that cannot fail the historical value is not a guard.
+class TestNoPartitionMeetsTheBeatBudget:
+    """The headline finding, and the assertion that will go red when D80 lands.
 
-    #3536 was live for weeks with 128 in the tree. If this file had existed then,
-    it had to go red. Asserting that here is the only way to know the predicate
-    is load-bearing rather than trivially satisfied by whatever is checked in.
+    The budget is the ship's freshness promise: one generation inside 24 whole
+    beats. Under an honest fit NOTHING reaches it — the admissible sizes all
+    start at 55 and cost B+1 beats. The dial is exhausted. Only bringing the
+    fixed prefix down can satisfy the promise, and that lives in
+    ``_futures_population_sql`` in ruling-D45-frozen ``precompute_calibration.py``.
     """
 
-    @pytest.mark.parametrize("buckets", [128, 64, 32, 24])
-    def test_the_budget_rejects_every_partition_that_was_too_large(self, buckets):
-        # 16 came off this list when CERT-2071's repair raised the budget: at 17
-        # whole beats it is inside it, and what rejects it is the SELECTION
-        # RULE's margin bar, not the budget. The two bounds reject different
-        # things on purpose and neither is redundant. 24 is the tightest member
-        # here — 25 whole beats against a budget of 24 — and it is kept for
-        # exactly that reason.
-        beats = beats_to_publish(buckets)
-        assert beats > MAX_BEATS_TO_PUBLISH, (
-            f"{buckets} buckets costs {beats} whole beats, which the budget "
-            f"would ACCEPT — the budget has been loosened past the bug it exists "
-            f"to catch"
+    def test_every_partition_misses_the_budget(self):
+        best = min(
+            (beats_to_publish(b) for b in range(1, 513)), default=math.inf
+        )
+        assert best > MAX_BEATS_TO_PUBLISH, (
+            f"some partition now publishes in {best} whole beats, inside the "
+            f"{MAX_BEATS_TO_PUBLISH}-beat budget — the fixed prefix has come "
+            f"down, the D80 repair has effectively landed, and the partition "
+            f"should be re-derived with the new headroom"
         )
 
+    def test_the_cheapest_admissible_partition_is_named_not_implied(self):
+        """56 beats at B=55: what the best possible dial setting would cost."""
+        admissible = [b for b in range(1, 513) if model_admits(b)]
+        cheapest = min(beats_to_publish(b) for b in admissible)
+        assert cheapest == 56
+        assert cheapest > MAX_BEATS_TO_PUBLISH
+
+    def test_the_shipping_partition_costs_what_it_costs(self):
+        assert beats_to_publish(STAGED_FUTURES_BUCKETS) == 129
+
+
+class TestTheGuardFiresOnTheCodeThatShipped:
+    """A guard that cannot fail a historical value is not a guard."""
+
+    def test_the_partition_that_shipped_this_morning_banks_nothing(self):
+        """B=17 is ``inf``, matching what the 15:15Z beat did in production."""
+        assert units_admitted_per_beat(CENSORED_PARTITION) == 0
+        assert beats_to_publish(CENSORED_PARTITION) == math.inf
+
+    @pytest.mark.parametrize("buckets", [2, 5, 8, 17, 32, 54])
+    def test_the_gate_refuses_every_partition_below_the_admissible_floor(
+        self, buckets
+    ):
+        """8 and 17 are the two the refuted fit endorsed; 54 is the boundary."""
+        assert not model_admits(buckets)
+        assert beats_to_publish(buckets) == math.inf
+
     def test_the_historical_value_projects_the_number_production_reported(self):
-        """128 → ~95 beats, which is the gauge production actually wrote.
+        """128 -> ~96 beats, which is the gauge production actually wrote.
 
         The independent check on the whole model: ``staged:beats_to_publish``
         was read off the live 12:15Z ledger as **95** with 2 of 128 units
         banked, and the fit was built from a unit cost and a window, never from
-        that gauge. (The 10:15Z pair was 724 s → 81, and the model reproduces
-        that one too when fed 724.)
-
-        This is the ONE place :func:`gauge_projected_beats` belongs, because the
-        thing being reproduced is production's gauge and the gauge is
-        fractional. Reality at 128 is 129 whole beats, and the 34-beat gap
-        between the two is not rounding — it is the gauge crediting a beat with
-        1.3 units of progress it cannot bank.
+        that gauge. Reality at 128 is 129 whole beats, and the 33-beat gap is
+        not rounding — it is the gauge crediting a beat with 1.3 units of
+        progress it cannot bank.
         """
         beats = gauge_projected_beats(128)
         assert 90 <= beats <= 101, f"model projects {beats:.0f} beats, ledger said 95"
@@ -361,44 +488,29 @@ class TestTheGuardFiresOnTheCodeThatShipped:
     def test_the_window_ceiling_rejects_a_partition_that_would_deadlock(self):
         """The other direction: too FEW buckets is its own failure mode.
 
-        B=1 is the monolith — one 1,350 s unit against a 1,141 s window. It never
-        completes, banks nothing, and is the state #2052 recorded as a Postgres
-        statement timeout.
-
-        The gauge would happily accept it at 1.18 beats, which is what made this
-        test necessary. Counting whole beats (CERT-2074) catches it too — a beat
-        banking nothing is ``inf`` — so the two now agree, and the ceiling
-        assertion is kept because it says WHY in one line instead of leaving a
-        reader to infer it from an infinity.
+        B=1 is the monolith. The gauge would happily accept it at 5.5 beats,
+        which is what made this test necessary. Counting whole beats (CERT-2074)
+        catches it — a beat banking nothing is ``inf``.
         """
-        ceiling = admission_ceiling_s()
-        assert predicted_unit_s(1) > ceiling
+        assert predicted_unit_s(1) > admission_ceiling_s()
         assert gauge_projected_beats(1) <= MAX_BEATS_TO_PUBLISH
         assert beats_to_publish(1) == math.inf
+
 
 class TestABeatBanksAtMostOneUnit:
     """CERT-2074's follow-up: the budget counts WHOLE beats, because runtime does.
 
-    ``CAL-P1033-WHOLE-UNIT-PUBLISH-BUDGET``. Every projection in this file's
-    first two presentations was fractional — 13.1 beats at B=17 — and the
-    runtime cannot spend 0.1 of a beat. Two units never fit one beat at ANY
-    partition, so a generation costs B productive beats and then the publish
-    beat: **B + 1**, which at B=17 is 18 against a budget the file asserted as
-    16. The number under test did not move; the arithmetic under it was false,
-    and a false projection whose next honest correction fires the search's
-    ``"no partition satisfies the rule"`` arm is a landmine for the next reader.
+    Two units never fit one beat at ANY partition, so a generation costs B
+    productive beats and then the publish beat: **B + 1**.
 
     Derived here, not asserted: the count comes from driving production's own
     fence, so if the fence or the cost model moves, the ``+ 1`` moves with it.
     """
 
     def test_no_partition_ever_fits_two_units_in_one_beat(self):
-        """The structural fact the whole-beat budget rests on.
-
-        Two units need ``window >= 2.25 x unit`` (spend one, then clear the
-        1.25x fence with what is left). Even the B → ∞ floor on unit cost — the
-        fixed prefix, which no partition can go below — is far above the
-        ``window / 2.25`` that would allow it.
+        """Two units need ``window >= 2.25 x unit``. Even the B -> inf floor on
+        unit cost — the fixed prefix, which no partition can go below — is far
+        above the ``window / 2.25`` that would allow it.
         """
         fixed, _ = fit_cost_model()
         two_unit_ceiling_s = MEASURED_USABLE_WINDOW_S / (1.0 + STAGED_UNIT_WINDOW_SAFETY)
@@ -419,22 +531,11 @@ class TestABeatBanksAtMostOneUnit:
         assert beats_to_publish(STAGED_FUTURES_BUCKETS) == STAGED_FUTURES_BUCKETS + 1
 
     def test_the_gauge_under_reports_what_the_shipped_partition_costs(self):
-        """The defect itself, pinned so nobody re-reads the gauge as a budget.
-
-        This is also the guard firing on the code that shipped: at B=17 the
-        honest cost is 18 whole beats, which the pre-repair budget of 16 would
-        have REJECTED — the assertion passed only because it was comparing
-        against 13.1.
-        """
         gauge = gauge_projected_beats(STAGED_FUTURES_BUCKETS)
         real = beats_to_publish(STAGED_FUTURES_BUCKETS)
         assert gauge < real, (
             "the gauge no longer under-reports — production's projection has "
             "been made whole-unit and this file should read it directly"
-        )
-        assert real > 16, (
-            "the honest cost now fits the pre-CERT-2074 budget of 16; the "
-            "follow-up's premise has expired and the budget should come back down"
         )
 
 
@@ -449,8 +550,7 @@ class TestTwoConsecutiveBeatsEachBankAUnit:
 
     These call ``_unit_fits_in_window`` itself — production's own predicate,
     with production's own ``STAGED_UNIT_WINDOW_SAFETY`` — rather than restating
-    its inequality. A guard that re-derives the rule it is checking agrees by
-    construction; this one can only pass if the shipped code says so.
+    its inequality.
     """
 
     @staticmethod
@@ -459,8 +559,7 @@ class TestTwoConsecutiveBeatsEachBankAUnit:
 
         Beat 1 opens with the level carried from the PREVIOUS partition's beats
         (nothing at this size has run yet) and, if it is admitted, ends having
-        measured this size's own cost. Beat 2 opens on that new level. That
-        second opening is the one the BLOCK caught.
+        measured this size's own cost. Beat 2 opens on that new level.
         """
         window_ms = MEASURED_USABLE_WINDOW_S * 1000.0
         new_cost_ms = predicted_unit_s(buckets) * 1000.0
@@ -486,15 +585,14 @@ class TestTwoConsecutiveBeatsEachBankAUnit:
             f"first unit — progress alternates and the beat count doubles"
         )
 
-    @pytest.mark.parametrize("buckets", [2, 4, 5, 6, 7])
+    @pytest.mark.parametrize("buckets", [2, 4, 5, 6, 7, 17])
     def test_it_fails_on_beat_two_for_every_partition_the_block_named(self, buckets):
         """The falsifier, run against the values this guard must reject.
 
-        5 is the one CERT-2071 caught on the exact SHA. Each of these is
-        admitted on beat one — the carried 128-era level is small enough to let
-        it through — and refused on beat two by its own measurement. That
-        asymmetry is precisely why a one-beat check could not see the defect,
-        and why this class exists.
+        5 is the one CERT-2071 caught on the exact SHA; **17 is the one
+        production caught on 2026-09-06 at 15:15Z**, and it belongs here because
+        it is the same shape of failure — admitted on beat one against the
+        carried 128-era level, refused thereafter on its own measurement.
         """
         beat1, beat2 = self._two_beats(buckets, carried_level_s=MEASURED_UNIT_S_AT_128)
         assert beat1, "setup is wrong: beat one should be admitted on the old level"
@@ -508,34 +606,31 @@ class TestNoPartitionIsComfortable:
     """The finding that outlives whatever number ships, stated as assertions.
 
     It is the reason CERT-2071's "choose a partition with defensible real
-    margin" cannot be fully satisfied by a dial, and the reason the frozen-file
-    repair is required rather than optional. Anyone who reads a self-blocked
-    beat as evidence against the shipped partition should meet this first.
+    margin" cannot be satisfied by a dial at all, and the reason the frozen-file
+    repair is required rather than optional.
     """
 
-    def test_the_fixed_prefix_alone_nearly_fills_the_window(self):
-        fixed, _ = fit_cost_model()
-        share = fixed * STAGED_UNIT_WINDOW_SAFETY / MEASURED_USABLE_WINDOW_S
-        assert share > 0.9, (
-            f"the fixed prefix at the safety factor is {share:.1%} of the unit "
-            f"budget — if this has fallen below 90% the repair has landed and "
-            f"the partition should be re-derived with the new headroom"
-        )
+    def test_the_headroom_above_the_prefix_is_smaller_than_the_measured_spread(self):
+        """The derived form of "no partition is comfortable".
 
-    def test_the_best_margin_any_partition_can_reach_is_small(self):
-        assert max_achievable_margin() < 0.10, (
-            "more than 10% headroom is now reachable — re-derive the partition"
+        Every partition's margin is bought out of the gap between the fixed
+        prefix and the admission ceiling — 101 s. One unit at a FIXED partition
+        was measured moving 723.8 s -> 857.0 s, which is 150 s at the prefix.
+        The spread is larger than the entire budget for margin, so a self-block
+        can happen at any size. Both sides are measurements; neither is a bar
+        anyone picked.
+        """
+        fixed, _ = fit_cost_model()
+        headroom_s = admission_ceiling_s() - fixed
+        spread_s = MEASURED_BEAT_TO_BEAT_VARIANCE * fixed
+        assert headroom_s < spread_s, (
+            f"headroom above the prefix is now {headroom_s:.0f}s against a "
+            f"measured spread of {spread_s:.0f}s — the build has become "
+            f"schedulable and this file's pessimism should be revisited"
         )
 
     def test_beat_to_beat_variance_exceeds_the_best_achievable_margin(self):
-        """The structural statement: self-blocked beats are not a partition bug.
-
-        One unit measured 723.8 s and then 857.0 s on consecutive beats at the
-        SAME partition — +18.4%, against a best-case margin of +7.3%. No value
-        of ``STAGED_FUTURES_BUCKETS`` can absorb that, including the 128 that
-        shipped for weeks. The dial changes how often a self-block costs
-        something, never whether one can happen.
-        """
+        """The same statement as a ratio, against the B -> inf margin ceiling."""
         assert MEASURED_BEAT_TO_BEAT_VARIANCE > max_achievable_margin(), (
             f"variance {MEASURED_BEAT_TO_BEAT_VARIANCE:+.1%} is now inside the "
             f"achievable margin {max_achievable_margin():+.1%} — the build has "
