@@ -23,6 +23,7 @@ from sqlalchemy import select, update, and_, or_, func
 
 from app.tasks.base import get_task_session
 from app.tasks.config import STATPAL_SPORT_MAPPING
+from app.utils.sport_keys import STATPAL_LIVE_ANCHOR_FIELD
 from app.utils.team_binding_invariant import accept_team_binding
 from app.utils.game_pairing import Pairing, live_write_is_premature, pair_verdict
 
@@ -1117,6 +1118,7 @@ async def _sync_statpal_livescores() -> dict:
 
                 sport_updated = 0
                 sport_snaps = 0
+                sport_anchor_skips = 0
 
                 for event in live_events:
                     match_key = _fixture_match_key(
@@ -1183,22 +1185,57 @@ async def _sync_statpal_livescores() -> dict:
                             ))
                             sport_snaps += 1
 
-                    # Link StatPal fixture ID if not already linked
-                    if fixture.fixture_id and not _get_statpal_id(event):
-                        _set_statpal_id(event, fixture.fixture_id)
+                    # Link StatPal fixture ID if not already linked.
+                    #
+                    # #3094: from the LIVE endpoint, and for MLB the live `id` is
+                    # a third id space that dereferences to nothing on the
+                    # schedule — see `STATPAL_LIVE_ANCHOR_FIELD`. Take the field
+                    # that sport declares, not the one the parser happened to
+                    # find first. The SCHEDULE writer above is deliberately NOT
+                    # changed: `get_fixtures` reads `season-schedule` for MLB,
+                    # whose `id` already IS the anchor.
+                    anchor_id = _live_anchor_id(fixture, statpal_sport)
+                    if anchor_id and not _get_statpal_id(event):
+                        _set_statpal_id(event, anchor_id)
                         updated = True
+                    elif (
+                        not anchor_id
+                        and fixture.fixture_id
+                        and not _get_statpal_id(event)
+                    ):
+                        # The sport declares an anchor field and this row does
+                        # not carry it — 3 of 16 live MLB rows have `oddsid: ""`.
+                        # Leave the column NULL rather than filling it with the
+                        # live id: an empty column is a row the schedule pass can
+                        # still anchor correctly, while a wrong-space id is a
+                        # linkage that reads as authoritative and joins to
+                        # nothing. Counted, because a silent skip is how 364 rows
+                        # accumulated in the first place.
+                        sport_anchor_skips += 1
 
                     if updated:
                         sport_updated += 1
 
                 total_updated += sport_updated
                 total_score_snaps += sport_snaps
-                details.append({
+                detail = {
                     "sport": statpal_sport,
                     "live_fixtures": len(live_fixtures),
                     "events_updated": sport_updated,
                     "score_snapshots": sport_snaps,
-                })
+                }
+                # #3094: reported only for the sports that declare an anchor
+                # field, so the key's presence says "this sport has a second id
+                # space" and its value says how many live rows could not be
+                # anchored from it this pass. Emitting a 0 for every other sport
+                # would make the number look like a general health metric it is
+                # not. The residue is expected and bounded — 3 of 16 live MLB
+                # rows carried `oddsid: ""` when it was measured — so this is a
+                # figure to watch, not an error to raise.
+                if statpal_sport in STATPAL_LIVE_ANCHOR_FIELD:
+                    detail["anchor_field"] = STATPAL_LIVE_ANCHOR_FIELD[statpal_sport]
+                    detail["anchor_skipped_no_field"] = sport_anchor_skips
+                details.append(detail)
 
     finally:
         await service.close()
@@ -1497,6 +1534,28 @@ def _get_statpal_id(event) -> Optional[str]:
         return event.statpal_fixture_id
     sources = event.win_probability_sources or {}
     return sources.get("statpal_fixture_id")
+
+
+def _live_anchor_id(fixture, statpal_sport: str) -> Optional[str]:
+    """The id a LIVE StatPal fixture may be anchored by, for this sport (#3094).
+
+    Returns `None` when the sport declares an anchor field and this row does not
+    carry it. `None` means *write nothing*, and that is the point: the caller
+    must not fall back to `fixture.fixture_id`, because for a sport in
+    `STATPAL_LIVE_ANCHOR_FIELD` that value is the id space the anchor must not
+    be in. An empty column is a row the schedule pass can still anchor
+    correctly; a wrong-space id is a linkage that reads as authoritative and
+    dereferences to nothing.
+
+    Sports not in the map keep the parser's answer unchanged — this is a
+    declaration for the measured exception, not a new rule for everyone. See
+    `STATPAL_LIVE_ANCHOR_FIELD` for why MLB is that exception and why the space
+    cannot be told from the number's shape.
+    """
+    field = STATPAL_LIVE_ANCHOR_FIELD.get(statpal_sport)
+    if field is None:
+        return str(getattr(fixture, "fixture_id", "") or "").strip() or None
+    return str(getattr(fixture, field, "") or "").strip() or None
 
 
 def _set_statpal_id(event, fixture_id: str):
