@@ -377,6 +377,54 @@ RETIRED_TASK_LABELS = frozenset({
 # recorded as before, but stamped so nothing mistakes it for proof).
 _NOT_GREEN_VERDICTS = frozenset({"partial", "unknown", "failed"})
 
+# ── #3665: the incomplete SHARE band ───────────────────────────────────────
+# An incomplete is a run that started, was torn down mid-task, and reached the
+# interrupt handler on the way out — a release cycling `worker-heavy`, most
+# often. It is deliberately NOT a failure: nothing threw, nothing is broken, and
+# `consecutive_failures` stays at zero. That is correct for ONE interrupt and
+# wrong for a task that loses half of its passes, which is what
+# `prediction_market_match` was measured doing on 2026-09-06 — 24 incompletes
+# against 20 successes over 11.7h, reading `healthy` whenever the most recent
+# run happened to be one of the survivors.
+#
+# The `_NOT_GREEN_VERDICTS` band below already catches the last run, and that is
+# exactly its limit: it is a SAMPLE OF ONE. On a task alternating between
+# survival and teardown it flips with whichever pass finished most recently, so
+# the surface says "degraded" or "healthy" about the same steady state depending
+# on when you look. A rate cannot flip like that.
+#
+# 🔴 THE SHARE IS COMPUTED FROM RATES, NOT FROM THE RAW COUNTS, AND THAT IS
+# LOAD-BEARING. The four `_24h` counters do not share a window — each opens at
+# its own first increment (see `_window_age_s`) — so dividing one count by
+# another compares two different spans of history. Measured on production the
+# same afternoon: `precompute_discover_candidate_base` read 22 successes over a
+# 2.0h window against 24 incompletes over a 23.8h one. The raw quotient is 0.52
+# and would have called a healthy task half-dead; normalising each count by its
+# own window gives 10.8 successes/h against 1.0 incompletes/h — a share of 0.09,
+# which is the truth. `prediction_market_match` survives the same normalisation
+# at 0.51, which is how we know the reading is about the task and not about the
+# arithmetic. Windows that cannot be measured produce NO share and NO band; a
+# fallback to raw counts here would reintroduce precisely the reading this
+# paragraph exists to refuse.
+#
+#: Below this many incompletes the share is published but never bands: one
+#: deploy landing on a task that runs four times a day is not a pattern, and at
+#: n=1 the share is an artifact of which counter happened to open first.
+_INCOMPLETE_BAND_MIN_INCOMPLETES = 5
+#: A window younger than this is not a rate. Without it a counter that opened
+#: ninety seconds ago reports an enormous incompletes/h and outvotes a success
+#: counter with a full day behind it.
+_INCOMPLETE_BAND_MIN_WINDOW_S = 3600.0
+#: Losing one pass in four is the band. Deliberately `degraded` and not
+#: `critical`: teardown is not breakage, the work is re-attempted on the next
+#: beat, and `critical` feeds paging rollups that should stay reserved for a
+#: task that is actually failing. Measured against all 126 tracked tasks on
+#: 2026-09-06, this band moves exactly three of them off green —
+#: `prediction_market_match` (0.51), `precompute_backfill_progress` (0.25) and
+#: `discover_events` (0.29) — each of which is genuinely losing that share of
+#: its passes.
+_INCOMPLETE_BAND_DEGRADED_SHARE = 0.25
+
 
 #: LAT-P070 (#1609, #1501): terminal fields a run can only have written from an
 #: END handler. If any of them post-dates the last start, that run reached a
@@ -1653,6 +1701,49 @@ def _window_age_s(r, counter_key: str):
         return None
 
 
+def _incomplete_share(counts: dict, windows: dict):
+    """The share of this task's terminal outcomes that were teardowns — #3665.
+
+    Returns ``(share, basis)``. ``share`` is ``None`` whenever the question
+    cannot be answered from measurable windows, and ``basis`` then says which
+    counter refused — an unmeasurable share is a different fact from a share of
+    zero and the caller must not band on it either way.
+
+    Each count is divided by ITS OWN window before the quotient is taken, for
+    the reason `_INCOMPLETE_BAND_MIN_INCOMPLETES` argues above: the counters are
+    four independent 24h windows that open at their own first increment, so raw
+    ``incompletes / (successes + incompletes)`` is a quotient of two different
+    spans of history. A count of zero needs no window — nothing has opened one
+    and none is required to say the rate is zero — so a task with no failures
+    all day is graded on its successes and incompletes alone rather than being
+    refused for a window that does not exist.
+    """
+    incompletes = counts.get("incompletes", 0)
+    incompletes_window = windows.get("incompletes_window_s")
+    if incompletes <= 0:
+        # No teardowns is a measured zero, not an unmeasurable one, and it needs
+        # no window: the numerator is absent, so no span can change it.
+        return 0.0, "no incompletes in window"
+    if not incompletes_window or incompletes_window <= 0:
+        return None, "incompletes window unmeasurable"
+
+    rates = []
+    for label in ("successes", "failures", "incompletes"):
+        count = counts.get(label, 0)
+        if count <= 0:
+            rates.append(0.0)
+            continue
+        window = windows.get(f"{label}_window_s")
+        if not window or window <= 0:
+            return None, f"{label} window unmeasurable"
+        rates.append(count / window)
+
+    denominator = sum(rates)
+    if denominator <= 0:
+        return None, "no terminal rate to divide"
+    return rates[-1] / denominator, "window-normalised terminal rates"
+
+
 def get_task_metrics(task_name: str) -> dict:
     """Get metrics for a specific task."""
     try:
@@ -1769,6 +1860,25 @@ def get_task_metrics(task_name: str) -> dict:
             **windows,
         }
 
+        # #3665: published on every payload, banded on only some. A reader
+        # asking "how much of this task's work is being thrown away?" was
+        # previously left to divide two counters that do not share a window, and
+        # the whole point of the module docstring above is that the division is
+        # wrong. Publishing the answer next to the counters is what stops the
+        # next reader recomputing it badly.
+        incomplete_share, incomplete_share_basis = _incomplete_share(
+            {
+                "successes": successes_24h,
+                "failures": failures_24h,
+                "incompletes": incompletes_24h,
+            },
+            windows,
+        )
+        result["incomplete_share"] = (
+            None if incomplete_share is None else round(incomplete_share, 4)
+        )
+        result["incomplete_share_basis"] = incomplete_share_basis
+
         for k, v in data.items():
             k_str = k.decode() if isinstance(k, bytes) else k
             v_str = v.decode() if isinstance(v, bytes) else v
@@ -1847,6 +1957,26 @@ def get_task_metrics(task_name: str) -> dict:
             result["health"] = "critical"
         elif consecutive >= 2:
             result["health"] = "degraded"
+        elif (
+            incomplete_share is not None
+            and incompletes_24h >= _INCOMPLETE_BAND_MIN_INCOMPLETES
+            and (windows.get("incompletes_window_s") or 0.0)
+            >= _INCOMPLETE_BAND_MIN_WINDOW_S
+            and incomplete_share >= _INCOMPLETE_BAND_DEGRADED_SHARE
+        ):
+            # #3665. ABOVE the last-verdict band on purpose, even though both
+            # publish "degraded": a sustained share is the better description of
+            # the same surface, and whichever band runs first owns
+            # `health_reason`. A task alternating between survival and teardown
+            # would otherwise explain itself as "the last run was partial",
+            # which is true of one pass and silent about the other twenty-three.
+            result["health"] = "degraded"
+            result["health_reason"] = (
+                f"{incompletes_24h} of this task's passes were torn down "
+                f"mid-run — {incomplete_share:.0%} of its terminal outcomes "
+                "(window-normalised), which no consecutive-failure band can see "
+                "because a teardown is not a failure"
+            )
         elif result.get("last_verdict") in _NOT_GREEN_VERDICTS:
             # Queue 300H: the most recent run returned without completing its
             # work (partial sweep, unpublished build, refused overlap lease).
