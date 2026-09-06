@@ -128,6 +128,13 @@ MEASURED_PARTITION = 128
 #:   had already happened. This reading is why the next beat withdrew, and
 #:   harvesting it is what moved the anchor 857.0 -> 918.5 and every number
 #:   derived from it.
+#: * **20:15Z** — 901.6 s, banked unit 5 of 128. ``read:futures_unit`` 901,551 ms,
+#:   in a window of 1,152,288 ms with no release inside it (worker-heavy last up
+#:   at 20:05:41Z, ten minutes before the beat started). It moves NO anchor —
+#:   it is inside the existing 723.8–918.5 range — but it is the beat that
+#:   falsified the carried-level mechanism this file had written down, because it
+#:   ran with ``staged:prior_unit_reason:unmeasured`` = 1 and no carried level at
+#:   all. See :class:`TestAWithdrawalClearsTheBarSoTheBuildCannotLatch`.
 #:
 #: **This list is HARVESTED, not commissioned** (CAL-P1036-GENERATION-WIDE-UNIT-
 #: COST-PRECONDITION, the CERT-2098 grader's follow-up). One completed unit cost
@@ -137,7 +144,7 @@ MEASURED_PARTITION = 128
 #: the spread its range. A new reading cannot be cherry-picked into the flattering
 #: slot — see :class:`TestTheCompletionSampleIsHarvestedNotCurated`.
 MEASURED_COMPLETIONS: dict[int, tuple[float, ...]] = {
-    128: (723.8, 857.0, 753.3, 918.5)
+    128: (723.8, 857.0, 753.3, 918.5, 901.6)
 }
 
 #: COMPLETED, and the anchor the fit is pinned through.
@@ -206,6 +213,7 @@ MEASURED_USABLE_WINDOW_MS_BY_BEAT: dict[str, int] = {
     "17:15Z": 1_170_007,
     "18:15Z": 1_161_909,
     "19:18Z": 1_132_886,
+    "20:15Z": 1_152_288,
 }
 
 MEASURED_USABLE_WINDOWS: tuple[float, ...] = tuple(
@@ -443,7 +451,7 @@ def units_admitted_per_beat(buckets: int) -> int:
     Steady state means the carried level IS this partition's own cost — a beat
     that follows a beat at the same size, which is every beat but the first
     after a deploy. The first-after-deploy asymmetry is
-    :class:`TestTwoConsecutiveBeatsEachBankAUnit`'s subject.
+    :class:`TestTheConsecutiveBeatRequirementNowFAILS`'s subject.
 
     The answer is 0 or 1 at every partition (pinned below), which is the whole
     reason the beat budget cannot be a fraction.
@@ -539,10 +547,16 @@ def measured_duty_cycle(carried_level_s: float) -> float:
 
     Drives production's own predicate rather than restating its inequality.
 
-    A refused beat starts nothing, so it completes nothing, so ``unit_costs`` is
-    not rewritten and the carried level does not move — the rate below is
-    therefore what the build sustains until some window on the generous side of
-    the spread lets a unit through and re-prices the level.
+    **This rate is conditional on the beat HAVING a carried level, and a beat
+    that follows a withdrawal does not.** An earlier version of this docstring
+    said a refused beat "completes nothing, so ``unit_costs`` is not rewritten
+    and the carried level does not move". That is wrong and production falsified
+    it at 20:15Z — the withdrawn beat rewrites ``unit_costs`` to **null**, so the
+    next beat reads no carried level and is admitted unconditionally. See
+    :class:`TestAWithdrawalClearsTheBarSoTheBuildCannotLatch`.
+
+    So this rate describes the beat after a beat that BANKED. It is the right
+    number for that case and it is not the whole dynamic.
     """
     admitted = sum(
         1
@@ -821,15 +835,28 @@ class TestTheCompletionSampleIsHarvestedNotCurated:
         this test in the same commit as the reading.
         """
         sample = MEASURED_COMPLETIONS[MEASURED_PARTITION]
-        assert len(sample) == 4, (
-            f"the B=128 sample now holds {len(sample)} completed units, not 4 — "
+        assert len(sample) == 5, (
+            f"the B=128 sample now holds {len(sample)} completed units, not 5 — "
             f"if that is a harvest, re-quote the count in min_generation_work_s "
             f"and in the report; if it is a curation, revert it"
         )
-        assert sample == (723.8, 857.0, 753.3, 918.5)
+        assert sample == (723.8, 857.0, 753.3, 918.5, 901.6)
         assert MEASURED_UNIT_S_AT_128 == 918.5
         assert min(sample) == 723.8
         assert MEASURED_BEAT_TO_BEAT_VARIANCE == pytest.approx(0.269, abs=0.001)
+
+    def test_the_fifth_reading_moved_no_anchor_and_that_is_worth_stating(self):
+        """901.6 s (20:15Z) landed inside the range, so nothing derived moved.
+
+        Recorded because the harvest's value is not only in the readings that
+        move a number. Five readings ordered 723.8 / 857.0 / 753.3 / 918.5 / 901.6
+        are not monotone and the newest is not the largest, so the climb that
+        looked like a slope at three readings still is not one at five.
+        """
+        sample = MEASURED_COMPLETIONS[MEASURED_PARTITION]
+        assert min(sample) < 901.6 < max(sample)
+        assert MEASURED_UNIT_S_AT_128 == 918.5, "the 18:15Z reading is still worst"
+        assert sample[-1] != max(sample), "the newest reading is not the largest"
 
     def test_the_WINDOW_sample_is_harvested_on_the_same_terms(self):
         """The second sample, added in the fourth version, held to the same rule.
@@ -839,12 +866,12 @@ class TestTheCompletionSampleIsHarvestedNotCurated:
         generous end nor the poor end can be nudged without moving a reading that
         has a beat time on it. The count is pinned for the same reason as above.
         """
-        assert len(MEASURED_USABLE_WINDOWS) == 4, (
+        assert len(MEASURED_USABLE_WINDOWS) == 5, (
             f"the window sample now holds {len(MEASURED_USABLE_WINDOWS)} "
-            f"readings, not 4 — re-quote the duty cycle and the spread"
+            f"readings, not 5 — re-quote the duty cycle and the spread"
         )
         assert MEASURED_USABLE_WINDOWS == pytest.approx(
-            (1144.221, 1170.007, 1161.909, 1132.886)
+            (1144.221, 1170.007, 1161.909, 1132.886, 1152.288)
         )
         assert WINDOW_FOR_REFUSAL_S == max(MEASURED_USABLE_WINDOWS)
         assert WINDOW_FOR_ADMISSION_S == min(MEASURED_USABLE_WINDOWS)
@@ -861,7 +888,7 @@ class TestTheCompletionSampleIsHarvestedNotCurated:
         assert {label for label, *_ in OBSERVED_BEATS} == set(
             MEASURED_USABLE_WINDOW_MS_BY_BEAT
         )
-        for label, _carried_ms, window_ms, _banked in OBSERVED_BEATS:
+        for label, _carried, window_ms, _completed, _banked in OBSERVED_BEATS:
             assert window_ms == MEASURED_USABLE_WINDOW_MS_BY_BEAT[label]
             assert window_at_beat_s(label) * 1000.0 == pytest.approx(window_ms)
 
@@ -1213,42 +1240,56 @@ class TestABeatBanksAtMostOneUnit:
         )
 
 
-#: The four beats of 2026-09-06 at B=128 whose fence inputs AND outcome are both
-#: on the record, as ``(label, carried_level_ms, usable_window_ms, banked)``.
+#: The FIVE beats of 2026-09-06 at B=128 whose fence inputs AND outcome are both
+#: on the ``calibration:main:phase_ledger`` record. In milliseconds, as production
+#: records them; the seconds elsewhere in this file are these rounded to 0.1 s,
+#: and :meth:`TestTheFenceReproducesWhatProductionDid.
+#: test_rounding_to_the_stored_precision_cannot_flip_a_verdict` checks that the
+#: rounding is not load-bearing.
 #:
-#: ``carried_level_ms`` is ``staged:prior_unit_ms`` — the completed cost of the
-#: last beat that banked, which is NOT the previous beat in two of these rows: the
-#: 857,021 ms level set at 12:15Z was still the carried level at 17:15Z, having
-#: survived three intervening beats that completed nothing. The level moves only
-#: when a unit completes, and that is the property the whole duty-cycle argument
-#: rests on, observed rather than assumed.
+#: ``(label, carried_ms | None, completed_unit_ms | None, banked)``. The window
+#: is LOOKED UP rather than repeated, so the two tables cannot drift.
 #:
-#: In milliseconds, as production records them. The seconds elsewhere in this file
-#: are these values rounded to 0.1 s, and
-#: :meth:`TestTheFenceReproducesWhatProductionDid.test_rounding_to_the_stored_
-#: precision_cannot_flip_a_verdict` checks that the rounding is not load-bearing.
-#: The window is LOOKED UP rather than repeated, so the two tables cannot drift.
-OBSERVED_BEATS: tuple[tuple[str, int, int, bool], ...] = tuple(
-    (label, carried_ms, MEASURED_USABLE_WINDOW_MS_BY_BEAT[label], banked)
-    for label, carried_ms, banked in (
-        ("12:15Z", 723_801, True),
-        ("17:15Z", 857_021, True),
-        ("18:15Z", 753_280, True),
-        ("19:18Z", 918_454, False),
+#: ``carried_ms`` is ``staged:prior_unit_ms``, and ``None`` means the beat ran
+#: with ``staged:prior_unit_reason:unmeasured`` — no carried level at all, which
+#: the fence treats as "admit" (``reference <= 0`` returns True).
+#:
+#: **The completed cost is stored, not derived.** An earlier version read it as
+#: the level the NEXT row carried, which was circular the moment a row's carried
+#: level could legitimately be ``None``, and which CERT-2125's grader flagged
+#: independently as ``CAL-P1038-CARRIED-LEVEL-BEAT-KEY``: a carried level checked
+#: only for membership of the completion sample would accept a different existing
+#: reading without changing any fence outcome. Storing both columns lets the
+#: predecessor relation be asserted exactly — see
+#: :meth:`TestAWithdrawalClearsTheBarSoTheBuildCannotLatch.
+#: test_every_carried_level_is_exactly_its_predecessors_completed_cost`.
+#:
+#: **Adjacent rows here are not always adjacent beats**, and the relation still
+#: holds: a beat KILLED by a release writes no terminal row at all, so it can
+#: neither set nor clear the level. 12:15Z -> 17:15Z spans three such beats.
+OBSERVED_BEATS: tuple[tuple[str, int | None, int, int | None, bool], ...] = tuple(
+    (
+        label,
+        carried_ms,
+        MEASURED_USABLE_WINDOW_MS_BY_BEAT[label],
+        completed_ms,
+        completed_ms is not None,
+    )
+    for label, carried_ms, completed_ms in (
+        ("12:15Z", 723_801, 857_021),
+        ("17:15Z", 857_021, 753_280),
+        ("18:15Z", 753_280, 918_454),
+        ("19:18Z", 918_454, None),
+        ("20:15Z", None, 901_551),
     )
 )
 
-#: Beat -> the unit cost that beat COMPLETED, in milliseconds, DERIVED rather
-#: than restated: it is the level the NEXT row carried. That identity is the
-#: mechanism the whole duty-cycle argument rests on — ``prior_unit_ms`` is
-#: rewritten only by a completed unit — so deriving it here means the table
-#: cannot assert the mechanism and contradict it at the same time.
-#:
-#: The withdrawal has no entry, because it completed nothing.
+#: Beat -> the unit cost that beat COMPLETED, in milliseconds. The withdrawal has
+#: no entry, because it completed nothing — and that absence is the mechanism.
 COMPLETED_UNIT_MS_BY_BEAT: dict[str, int] = {
-    OBSERVED_BEATS[i][0]: OBSERVED_BEATS[i + 1][1]
-    for i in range(len(OBSERVED_BEATS) - 1)
-    if OBSERVED_BEATS[i][3]
+    label: completed_ms
+    for label, _carried, _window, completed_ms, _banked in OBSERVED_BEATS
+    if completed_ms is not None
 }
 
 
@@ -1256,68 +1297,76 @@ class TestTheFenceReproducesWhatProductionDid:
     """The fence, checked against an OUTCOME ORACLE instead of only modelled.
 
     Everything else in this file drives ``_unit_fits_in_window`` with inputs the
-    file itself derives, so it can only ever be self-consistent. These four rows
+    file itself derives, so it can only ever be self-consistent. These five rows
     are different: each one is a beat whose carried level, usable window AND
     observed outcome are all on the ``calibration:main:phase_ledger`` record, so
     the predicate is being asked a question production has already answered.
 
-    Three banked and one withdrew. If the model of the fence in this file were
-    wrong — wrong reference, wrong factor, wrong window derivation — the odds of
-    it agreeing on all four, including the one that changed sign, are poor.
+    Four banked and one withdrew, and the withdrawal is the load-bearing row. If
+    the model of the fence in this file were wrong — wrong reference, wrong
+    factor, wrong window derivation, wrong handling of an absent level — the odds
+    of it agreeing on all five, including the one that changed sign, are poor.
     """
 
     @pytest.mark.parametrize(
-        "label,carried_ms,window_ms,banked",
+        "label,carried_ms,window_ms,_completed_ms,banked",
         OBSERVED_BEATS,
         ids=[row[0] for row in OBSERVED_BEATS],
     )
     def test_the_fence_agrees_with_the_ledger_on_every_observed_beat(
-        self, label, carried_ms, window_ms, banked
+        self, label, carried_ms, window_ms, _completed_ms, banked
     ):
         admitted = _unit_fits_in_window(
-            window_ms, worst_unit_ms=0.0, prior_unit_ms=float(carried_ms)
+            window_ms,
+            worst_unit_ms=0.0,
+            # None is `staged:prior_unit_reason:unmeasured`, which reaches the
+            # predicate as the 0.0 default and short-circuits it to True.
+            prior_unit_ms=0.0 if carried_ms is None else float(carried_ms),
+        )
+        required = "no carried level" if carried_ms is None else (
+            f"{carried_ms:,} x {STAGED_UNIT_WINDOW_SAFETY} = "
+            f"{carried_ms * STAGED_UNIT_WINDOW_SAFETY:,.0f} ms"
         )
         assert admitted is banked, (
             f"the {label} beat {'banked' if banked else 'withdrew'} in "
             f"production, but this file's reading of the fence says it would "
             f"{'refuse' if banked else 'admit'} "
-            f"({window_ms:,} ms of window against {carried_ms:,} x "
-            f"{STAGED_UNIT_WINDOW_SAFETY} = "
-            f"{carried_ms * STAGED_UNIT_WINDOW_SAFETY:,.0f} ms). Either the "
+            f"({window_ms:,} ms of window against {required}). Either the "
             f"predicate moved or the window derivation is wrong; nothing "
             f"downstream of the fence in this file can be trusted until it agrees"
         )
 
-    def test_every_carried_level_is_a_reading_the_sample_already_holds(self):
-        """The transcription guard, and it asserts the mechanism as well.
+    def test_every_carried_level_is_exactly_its_predecessors_completed_cost(self):
+        """``CAL-P1038-CARRIED-LEVEL-BEAT-KEY``, CERT-2125's grader's follow-up.
 
-        A carried level is never invented: it is the completed cost of the last
-        beat that banked, so every value in this table must round to a member of
-        :data:`MEASURED_COMPLETIONS`. Without this a mistyped level that happened
-        to land on the same side of the fence would change no outcome and pass
-        unnoticed — which is exactly what a 753,280 -> 700,000 mutation did
-        before this test existed.
+        The previous version of this test only checked that a carried level was
+        *some* member of :data:`MEASURED_COMPLETIONS`, which the grader correctly
+        called out: that accepts a different existing reading — 857.0 where 753.3
+        belongs — without changing any fence outcome, so the guard would pass on
+        a mis-keyed table.
+
+        Bound to provenance instead: each row's carried level must be **exactly**
+        the completed cost of the row before it, and a row after a beat that
+        completed nothing must carry **nothing**. That is the mechanism, so a
+        mis-keyed level can no longer satisfy it.
         """
-        sample = MEASURED_COMPLETIONS[MEASURED_PARTITION]
-        for label, carried_ms, _window_ms, _banked in OBSERVED_BEATS:
-            assert round(carried_ms / 1000.0, 1) in sample, (
-                f"the {label} beat carried {carried_ms:,} ms, which is not any "
-                f"completed unit cost this file holds {sample} — either the "
-                f"reading is mistyped or a completed unit is missing from the "
-                f"harvest; a carried level cannot come from anywhere else"
+        for previous, current in zip(OBSERVED_BEATS, OBSERVED_BEATS[1:]):
+            prev_label, _pc, _pw, prev_completed_ms, _pb = previous
+            label, carried_ms, _w, _c, _b = current
+            assert carried_ms == prev_completed_ms, (
+                f"the {label} beat carried {carried_ms!r}, but the {prev_label} "
+                f"beat before it completed {prev_completed_ms!r}. The carried "
+                f"level is the predecessor's completed cost and nothing else — "
+                f"either a reading is mis-keyed, or a beat that wrote a terminal "
+                f"row is missing from this table"
             )
 
-    def test_the_completed_cost_of_a_beat_is_the_level_the_next_one_carries(self):
-        """The identity the duty-cycle argument depends on, pinned.
-
-        Also the reason the 19:18Z beat could not recover on its own: it
-        completed nothing, so it appears in no row's carried level, so the level
-        stayed at 918,454 for whatever ran next.
-        """
+    def test_the_completed_costs_are_exactly_the_harvested_sample(self):
         assert COMPLETED_UNIT_MS_BY_BEAT == {
             "12:15Z": 857_021,
             "17:15Z": 753_280,
             "18:15Z": 918_454,
+            "20:15Z": 901_551,
         }
         assert "19:18Z" not in COMPLETED_UNIT_MS_BY_BEAT
         for beat, unit_ms in COMPLETED_UNIT_MS_BY_BEAT.items():
@@ -1326,8 +1375,8 @@ class TestTheFenceReproducesWhatProductionDid:
             ], f"the {beat} beat's completed unit is not in the harvest sample"
 
     def test_the_oracle_contains_both_outcomes_or_it_proves_nothing(self):
-        """A four-row oracle that all went one way would be satisfied by a stub."""
-        outcomes = {row[3] for row in OBSERVED_BEATS}
+        """An oracle that all went one way would be satisfied by a stub."""
+        outcomes = {row[4] for row in OBSERVED_BEATS}
         assert outcomes == {True, False}, (
             "the observed-beat table no longer holds both a bank and a "
             "withdrawal, so agreeing with it is no longer evidence the fence is "
@@ -1338,10 +1387,10 @@ class TestTheFenceReproducesWhatProductionDid:
         """1.3%. The finding is that this decides it, not that it is large.
 
         Quoted because the size is the whole character of the problem: the build
-        is not far from banking every hour, it is 15 seconds from it, which is
-        why the answer is a duty cycle rather than a verdict.
+        is not far from banking every hour, it is 15 seconds from it.
         """
-        _, carried_ms, window_ms, banked = OBSERVED_BEATS[-1]
+        by_label = {row[0]: row for row in OBSERVED_BEATS}
+        _, carried_ms, window_ms, _completed, banked = by_label["19:18Z"]
         assert banked is False
         shortfall_ms = carried_ms * STAGED_UNIT_WINDOW_SAFETY - window_ms
         assert shortfall_ms == pytest.approx(15_181.5, abs=1.0)
@@ -1352,9 +1401,11 @@ class TestTheFenceReproducesWhatProductionDid:
 
         :data:`MEASURED_COMPLETIONS` stores 918.5, not 918.454, and a verdict
         decided by 1.3% is close enough that the rounding deserves checking
-        rather than assuming. It does not flip any of the four.
+        rather than assuming. It does not flip any of them.
         """
-        for label, carried_ms, window_ms, _banked in OBSERVED_BEATS:
+        for label, carried_ms, window_ms, _completed, _banked in OBSERVED_BEATS:
+            if carried_ms is None:
+                continue
             raw = _unit_fits_in_window(
                 window_ms, worst_unit_ms=0.0, prior_unit_ms=float(carried_ms)
             )
@@ -1369,6 +1420,105 @@ class TestTheFenceReproducesWhatProductionDid:
                 f"stored sample must carry more precision before anything here "
                 f"can be quoted"
             )
+
+
+class TestAWithdrawalClearsTheBarSoTheBuildCannotLatch:
+    """The correction production forced at 20:15Z, and the best news of the day.
+
+    **What this file said, and what CAL-P1037's report and ledger Row 6 told
+    Alex:** a refused beat starts nothing, so it completes nothing, so
+    ``unit_costs`` is not rewritten, so the carried level stays where it is and
+    every later beat faces identical arithmetic — a self-referential state that
+    could tighten but never loosen.
+
+    **The second clause is false.** A withdrawn beat DOES rewrite ``unit_costs``,
+    to null. The chain, read in the code rather than inferred:
+
+    * ``_unit_fits_in_window``: ``reference = max(worst, prior)``, and
+      ``if reference <= 0: return True``.
+    * ``PhaseLedger.measured_unit_ms`` returns ``None`` when the plan carries no
+      ``unit_ms`` or ``units_done`` — "no measured unit cost", explicitly not
+      "a cost of zero".
+    * The 19:18Z withdrawal's ledger row carries ``unit_costs = null``, written
+      at 19:23Z, **before** all four intervening releases (v4228 19:30Z, v4229
+      19:32Z, v4230 19:50Z, v4231 20:05Z) — so a restart did not cause it.
+    * The 20:15Z beat then ran with ``staged:prior_unit_reason:unmeasured`` = 1
+      and banked unit 5.
+
+    **So the self-blocking clears itself after exactly one beat and the build
+    cannot latch.** The worst it can do is alternate. That is a materially better
+    state than this file described an hour earlier, and it is worth having as
+    assertions rather than prose because it is the thing Alex was told wrongly.
+
+    It does NOT make the build fast, and nothing here should be read as saying
+    so: a cheaper unit is still the only real repair, which is D80.
+    """
+
+    def test_the_fence_admits_unconditionally_with_no_carried_level(self):
+        """``reference <= 0`` short-circuits to True. The whole mechanism.
+
+        Checked at a window far too small to hold any unit this file has ever
+        measured, because the point is that the fence does not look.
+        """
+        assert _unit_fits_in_window(1, worst_unit_ms=0.0, prior_unit_ms=0.0)
+        assert not _unit_fits_in_window(0, worst_unit_ms=0.0, prior_unit_ms=0.0), (
+            "the fence now admits a unit into a beat with no window left at all "
+            "— the remaining_ms <= 0 guard has gone and the 'no level means "
+            "admit' rule has become unbounded"
+        )
+
+    def test_the_beat_after_a_withdrawal_carries_nothing_and_is_admitted(self):
+        """The observed instance, end to end: 18:15Z -> 19:18Z -> 20:15Z."""
+        by_label = {row[0]: row for row in OBSERVED_BEATS}
+
+        _, _, _, dear_unit_ms, dear_banked = by_label["18:15Z"]
+        assert dear_banked and dear_unit_ms == 918_454
+
+        _, withdrew_carrying, _, withdrew_completed, withdrew_banked = by_label[
+            "19:18Z"
+        ]
+        assert withdrew_banked is False
+        assert withdrew_carrying == dear_unit_ms, "it withdrew ON the dear unit"
+        assert withdrew_completed is None, "a withdrawal completes nothing"
+
+        _, after_carried, _, _, after_banked = by_label["20:15Z"]
+        assert after_carried is None, (
+            "the beat after the withdrawal carried a level — the withdrawal no "
+            "longer clears unit_costs, so the build CAN latch after all and the "
+            "duty-cycle framing understates the risk. Escalate, do not adjust"
+        )
+        assert after_banked is True
+
+    def test_two_consecutive_withdrawals_are_impossible(self):
+        """The alarm CAL-P1037 asked for cannot fire by this route.
+
+        CAL-P1037 said to watch for "two consecutive unkilled beats that bank
+        nothing". Via self-blocking that cannot happen: the first withdrawal
+        clears the level and the second beat is admitted unconditionally. If two
+        consecutive withdrawals are ever observed, the cause is something else
+        and this file does not describe it.
+
+        Stated over the recorded beats, so it is a property of the data and not
+        only of the argument. A KILLED beat writes no terminal row and so never
+        appears here — it can sit between two withdrawals without contradicting
+        this.
+        """
+        outcomes = [row[4] for row in OBSERVED_BEATS]
+        for first, second in zip(outcomes, outcomes[1:]):
+            assert first or second, (
+                "two consecutive recorded beats both banked nothing — the "
+                "self-clearing property has broken and the build can now stall "
+                "indefinitely; this is an Alex-facing escalation"
+            )
+
+    def test_the_duty_cycle_still_describes_the_beat_after_a_BANKING_beat(self):
+        """The rate is not withdrawn, it is scoped — and it moved with the harvest.
+
+        Conditional on a carried level existing, which is the case after any beat
+        that banked. Three of the five measured windows clear the bar at today's
+        level; it was two of four before the 20:15Z window was harvested.
+        """
+        assert measured_duty_cycle(MEASURED_UNIT_S_AT_128) == pytest.approx(0.6)
 
 
 class TestTheConsecutiveBeatRequirementNowFAILS:
@@ -1458,7 +1608,7 @@ class TestTheConsecutiveBeatRequirementNowFAILS:
         twice the beats that :func:`beats_to_publish` reports, and
         :func:`beats_to_publish` already says 129.
         """
-        assert measured_duty_cycle(MEASURED_UNIT_S_AT_128) == 0.5, (
+        assert measured_duty_cycle(MEASURED_UNIT_S_AT_128) == pytest.approx(0.6), (
             f"the duty cycle at the carried level {MEASURED_UNIT_S_AT_128:.1f}s "
             f"is now {measured_duty_cycle(MEASURED_UNIT_S_AT_128):.0%} over "
             f"{len(MEASURED_USABLE_WINDOWS)} measured windows — re-quote it in "
