@@ -27,6 +27,7 @@ import {
 import { fetchHub, formatProbability } from "@/lib/api";
 import type { HubResponse, LeagueMarket, LeagueMarketOutcome } from "@/lib/api";
 import { toTitleCaseAcronymSafe } from "@/lib/titleCase";
+import { outcomeDisplayNames } from "@/lib/outcomeLabels";
 // UX-P209: the pill lives outside this route file so a guard can render it and
 // so a second copy cannot quietly become the one that ships. See its header.
 // UX-P210 (CERT-525): and so does the whole rail, for the same reason one level
@@ -96,7 +97,7 @@ function orderedSections(sections: Record<string, LeagueMarket[]>): [string, Lea
 // Small presentational helpers
 // ---------------------------------------------------------------------------
 
-function OutcomeRow({ o }: { o: LeagueMarketOutcome }) {
+function OutcomeRow({ o, label }: { o: LeagueMarketOutcome; label: string }) {
   // UX-P061 (#1742), register E2: this was `width: ${pct ?? 0}%`, which renders a
   // NULL probability as a 0%-wide bar — a claim that we measured this and it is
   // zero, about something we did not measure (doctrine A3, honest or absent).
@@ -118,7 +119,13 @@ function OutcomeRow({ o }: { o: LeagueMarketOutcome }) {
           edge is where the probability lives — `Kevin Krawietz / Tim Putz` and
           its `72%` were both in the DOM, and only the name was on the screen.
           A card that prints one number printed none of it. */}
-      <span className="flex-1 min-w-0 text-[13px] text-text-secondary truncate">{o.name}</span>
+      {/* #3538: the label is computed by the CARD, not here, because the rule
+          is a property of the whole outcome set (`outcomeDisplayNames` no-ops a
+          single-outcome market) and computing it per row would re-acquire
+          exactly the per-row application #2662's docstring warns against. */}
+      <span className="flex-1 min-w-0 text-[13px] text-text-secondary truncate">
+        {label}
+      </span>
       {pct !== null && (
         <div className="w-20 h-1.5 rounded-full bg-surface-elevated overflow-hidden">
           <div className="h-full rounded-full bg-accent-brand" style={{ width: `${pct}%` }} />
@@ -135,6 +142,26 @@ const OUTCOME_DISPLAY_CAP = 4;
 
 function MarketCard({ market }: { market: LeagueMarket }) {
   const outcomeCap = applyCountedCap(market.outcome_count, OUTCOME_DISPLAY_CAP);
+  // #3538: a Polymarket grouped event names every market in the group
+  // `<event title> <distinguishing suffix>`, and the row below truncates from
+  // the RIGHT — so four markets on one card drew four identical
+  // `US Open ATP: Karen Khacha…` labels against four different prices, keeping
+  // the redundant half of the string and discarding the only part that
+  // differed. 31 of 62 rows on the tennis rail, measured.
+  //
+  // This joins `lib/outcomeLabels.ts`, which already owned this exact rule for
+  // `/search`'s FuturesCard (#2662), rather than adding a second copy of it to
+  // the hub. The reason the hub saw no benefit until now is in that file's
+  // #3538 block: its all-or-nothing gate excluded every affected hub card.
+  //
+  // Computed over the FULL served set, then sliced — not over the visible four.
+  // The rule's own no-op ("a single-outcome market has nothing to disambiguate")
+  // is a fact about the market, and asking it about a truncated list would let
+  // the display cap change the labels.
+  const outcomeLabels = outcomeDisplayNames(
+    market.name,
+    market.top_outcomes.map((o) => o.name),
+  );
   return (
     <Link
       href={`/futures/${market.id}`}
@@ -171,8 +198,8 @@ function MarketCard({ market }: { market: LeagueMarket }) {
         )}
       </div>
       <div className="divide-y divide-surface-border">
-        {market.top_outcomes.slice(0, outcomeCap.shown).map((o) => (
-          <OutcomeRow key={o.id} o={o} />
+        {market.top_outcomes.slice(0, outcomeCap.shown).map((o, i) => (
+          <OutcomeRow key={o.id} o={o} label={outcomeLabels[i]} />
         ))}
       </div>
       {/* UX-P061 (#1742), register E1: `+{n} more` fired at n=1, which costs the

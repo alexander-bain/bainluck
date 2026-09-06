@@ -213,7 +213,7 @@ describe("#2662 controls — every market outside the population renders byte-id
 // THE RULE ITSELF
 // ───────────────────────────────────────────────────────────────────────────
 
-describe("outcomeDisplayNames — the all-or-nothing predicate", () => {
+describe("outcomeDisplayNames — the per-row prefix rule (#2662, gate reversed by #3538)", () => {
   it("strips when EVERY name is prefixed", () => {
     expect(outcomeDisplayNames("Match", ["Match Set 1", "Match Set 2"])).toEqual([
       "Set 1",
@@ -221,12 +221,49 @@ describe("outcomeDisplayNames — the all-or-nothing predicate", () => {
     ]);
   });
 
-  it("COUNTER-CASE: leaves a market alone when only SOME names are prefixed", () => {
-    // A partial strip makes rows less comparable, not more — one row would lose its
-    // context while its sibling kept it. This is the assertion that fails if someone
-    // reimplements the fix per-row instead of per-market.
-    const names = ["Match Set 1", "Somebody Else"];
-    expect(outcomeDisplayNames("Match", names)).toEqual(names);
+  // ── REVERSED BY #3538 (ux/1097), deliberately, with the measurement below ──
+  //
+  // 🔴 This assertion used to read `toEqual(names)` — leave a partly-prefixed market
+  // completely alone — on the reasoning that "a partial strip makes rows less
+  // comparable, not more". That reasoning was never measured: #2662's population was
+  // defined by a HAVING clause that admits only all-prefixed markets, so the partial
+  // case was not in the data behind it.
+  //
+  // It is the larger half of the defect. Measured over every open market resolving in
+  // the next 7 days (`POST /api/admin/db-query`, 2026-09-06):
+  //
+  //     all-prefixed  (this file's original population)   238 markets /  1,348 outcomes
+  //     PARTLY prefixed (refused by the old gate)         446 markets /  2,216 outcomes
+  //
+  // and over those 446, applying the per-row rule: **0 lose label distinctness**, and
+  // 15 contain a row that strips to "" — already covered by the `|| name` fallback
+  // this file's next test pins.
+  //
+  // The rendered case that forced it: `/hub/tennis` drew four different prices under
+  // four identical `US Open ATP: Karen Khacha…` labels, and the gate was what withheld
+  // the fix, because a tenth outcome on that card is the unprefixed match-winner leg
+  // `Karen Khachanov`. 0 of the 4 affected hub cards were all-prefixed.
+  //
+  // The case is KEPT, not deleted, because the property that matters is unchanged and
+  // is what the next line asserts: the UNPREFIXED row is still returned untouched.
+  it("strips the prefixed rows and leaves the unprefixed ones exactly as served", () => {
+    expect(outcomeDisplayNames("Match", ["Match Set 1", "Somebody Else"])).toEqual([
+      "Set 1",
+      "Somebody Else",
+    ]);
+  });
+
+  it("🔴 the real match-winner leg survives beside its prefixed siblings", () => {
+    // The production shape from `/hub/tennis` in miniature, and the reason the gate
+    // could not simply be kept: strip nothing and the card is unreadable, strip the
+    // unprefixed row too and a genuine outcome name is destroyed.
+    expect(
+      outcomeDisplayNames("US Open ATP: Karen Khachanov vs Learner Tien", [
+        "US Open ATP: Karen Khachanov vs Learner Tien Total Sets: O/U 3.5",
+        "US Open ATP: Karen Khachanov vs Learner Tien Set 1 Winner",
+        "Karen Khachanov",
+      ]),
+    ).toEqual(["Total Sets: O/U 3.5", "Set 1 Winner", "Karen Khachanov"]);
   });
 
   it("COUNTER-CASE: an outcome named exactly the market name keeps its full name", () => {
@@ -286,9 +323,16 @@ describe("outcomeDisplayNames — the all-or-nothing predicate", () => {
   });
 
   it("is case-sensitive, mirroring the SQL LIKE that defines the population", () => {
+    // 🔴 REWRITTEN BY #3538, and the rewrite makes it a stronger test than it was.
+    // It used to expect BOTH names back unchanged — but under the old all-or-nothing
+    // gate that happened because one name was unprefixed, so the market was skipped
+    // wholesale. Case sensitivity was never what the assertion exercised; the gate
+    // was. Now the two rows are judged independently, so the lowercase row coming
+    // back untouched WHILE its exact-case sibling strips is a direct reading of the
+    // property this test is named for.
     expect(outcomeDisplayNames("Match", ["match Set 1", "Match Set 2"])).toEqual([
       "match Set 1",
-      "Match Set 2",
+      "Set 2",
     ]);
   });
 });
