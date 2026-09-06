@@ -161,6 +161,32 @@ final class PeriodColumnLabelTests: XCTestCase {
         XCTAssertEqual(point.timeDisplay, "HT · 0:00")
     }
 
+    // MARK: - The live status badge (hero + every sports feed card)
+
+    func testTheLiveBadgeDoesNotPrintTheClockTwice() {
+        // Photographed on Michigan @ Western Michigan, 2026-09-05: the hero
+        // capsule read "5:11 - 1st Quarter 5:11".
+        XCTAssertEqual(PeriodLabel.liveBadgeLabel("5:11 - 1st Quarter"), "Q1")
+        XCTAssertEqual(PeriodLabel.liveBadgeLabel("12:43 - 2nd Quarter"), "Q2")
+        XCTAssertEqual(PeriodLabel.liveBadgeLabel("7:56 - 1st Half"), "1H")
+    }
+
+    func testTheLiveBadgeKeepsBaseballsHalfInning() {
+        // "Bottom 7th" says which half; "7th" does not, and the capsule has the
+        // room the 22pt scoreboard column does not. This is the one place the
+        // badge vocabulary deliberately differs from the column's.
+        XCTAssertEqual(PeriodLabel.liveBadgeLabel("Bottom 7th"), "Bottom 7th")
+        XCTAssertEqual(PeriodLabel.liveBadgeLabel("Top 9th"), "Top 9th")
+        XCTAssertEqual(PeriodLabel.liveBadgeLabel("End 8th"), "End 8th")
+    }
+
+    func testTheLiveBadgeStillShortensEndOfQuarter() {
+        // "End of 1st Quarter" must NOT be caught by the half-inning branch —
+        // the digit requirement is what separates it from "End 8th".
+        XCTAssertEqual(PeriodLabel.liveBadgeLabel("End of 1st Quarter"), "Q1")
+        XCTAssertEqual(PeriodLabel.liveBadgeLabel("Halftime"), "HT")
+    }
+
     // MARK: - The closed vocabulary
 
     func testEveryLabelComesFromTheLegalSet() {

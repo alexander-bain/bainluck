@@ -161,6 +161,39 @@ enum PeriodLabel {
         return ""
     }
 
+    /// The label for the live **status badge** — the red capsule on the event
+    /// hero and on every sports feed card.
+    ///
+    /// #3273, found shooting the live Michigan game while fixing the card below
+    /// it: the badge read **"5:11 - 1st Quarter 5:11"**. `StatusBadge` joined the
+    /// raw ESPN period to `game_clock`, and the period embeds that same clock —
+    /// the third consumer of this string to print it verbatim.
+    ///
+    /// Differs from `columnLabel` in one deliberate way: **baseball keeps its
+    /// half-inning.** "Bottom 7th" tells a reader something "7th" does not, and a
+    /// capsule has room for it, where a 22pt scoreboard column does not. That is
+    /// also why this is not just `normalize`, which drops the qualifier.
+    static func liveBadgeLabel(_ raw: String) -> String {
+        var body = raw.trimmingCharacters(in: .whitespaces)
+
+        // The badge prints the clock itself, beside this. Printing it here too is
+        // the whole defect.
+        if let clock = body.range(of: #"^[\d.:]+\s*-\s*"#, options: .regularExpression) {
+            body = String(body[clock.upperBound...])
+        }
+
+        // "Bottom 7th" / "End 8th" — kept whole. The `\d` is what keeps
+        // "End of 1st Quarter" out of this branch and on the shortening path.
+        if body.range(
+            of: #"^(?:top|bottom|mid|middle|end)\s+\d+"#,
+            options: [.regularExpression, .caseInsensitive]
+        ) != nil {
+            return body
+        }
+
+        return normalize(body)
+    }
+
     /// Render an inning number as a self-explaining ordinal. A non-positive or
     /// unparseable inning is not a period and yields `""` (no chip).
     static func inning<S: StringProtocol>(_ digits: S) -> String {

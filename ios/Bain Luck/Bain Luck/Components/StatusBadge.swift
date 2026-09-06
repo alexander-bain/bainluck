@@ -6,15 +6,25 @@ struct StatusBadge: View {
     var commenceTime: String? = nil
     /// ESPN game clock, e.g., "5:42"
     var gameClock: String? = nil
-    /// ESPN period/quarter, e.g., "Q3", "2nd", "3rd Period"
+    /// RAW ESPN period. The comment here used to claim `"Q3"` / `"3rd Period"`,
+    /// and that is not what arrives: the real value is `"5:11 - 1st Quarter"`,
+    /// with the clock on the FRONT (#3273). Both call sites pass
+    /// `event.espn?.period` straight through.
     var period: String? = nil
 
-    /// Formatted live text: "Q3 5:42", "Top 5th", or "LIVE"
+    /// Formatted live text: "Q1 5:11", "Bottom 7th", or "LIVE".
+    ///
+    /// #3273 — this read **"5:11 - 1st Quarter 5:11"** on the live Michigan game
+    /// (photographed 2026-09-05), on the event hero AND on every sports feed
+    /// card, because the raw period was joined to the clock it already contains.
+    /// `PeriodLabel.liveBadgeLabel` shortens it while keeping baseball's
+    /// half-inning, which is why "Bottom 7th" below is still whole.
     private var liveText: String {
-        var parts = [period, gameClock].compactMap { $0 }.filter { !$0.isEmpty }
+        let label = period.map(PeriodLabel.liveBadgeLabel)
+        var parts = [label, gameClock].compactMap { $0 }.filter { !$0.isEmpty }
         // Baseball has no game clock — "0:00" is meaningless
         if let clock = gameClock, clock == "0:00" || clock == "0" {
-            parts = [period].compactMap { $0 }.filter { !$0.isEmpty }
+            parts = [label].compactMap { $0 }.filter { !$0.isEmpty }
         }
         return parts.isEmpty ? "LIVE" : parts.joined(separator: " ")
     }
