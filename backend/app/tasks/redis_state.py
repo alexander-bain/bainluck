@@ -393,36 +393,52 @@ _NOT_GREEN_VERDICTS = frozenset({"partial", "unknown", "failed"})
 # the surface says "degraded" or "healthy" about the same steady state depending
 # on when you look. A rate cannot flip like that.
 #
-# 🔴 THE SHARE IS COMPUTED FROM RATES, NOT FROM THE RAW COUNTS, AND THAT IS
-# LOAD-BEARING. The four `_24h` counters do not share a window — each opens at
-# its own first increment (see `_window_age_s`) — so dividing one count by
-# another compares two different spans of history. Measured on production the
-# same afternoon: `precompute_discover_candidate_base` read 22 successes over a
-# 2.0h window against 24 incompletes over a 23.8h one. The raw quotient is 0.52
-# and would have called a healthy task half-dead; normalising each count by its
-# own window gives 10.8 successes/h against 1.0 incompletes/h — a share of 0.09,
-# which is the truth. `prediction_market_match` survives the same normalisation
-# at 0.51, which is how we know the reading is about the task and not about the
-# arithmetic. Windows that cannot be measured produce NO share and NO band; a
-# fallback to raw counts here would reintroduce precisely the reading this
-# paragraph exists to refuse.
+# 🔴 THE SHARE IS COMPUTED FROM RATES, NOT FROM THE RAW COUNTS. The four `_24h`
+# counters do not share a window — each opens at its own first increment (see
+# `_bump_window_counter`: `SET NX EX`, never refreshed) — so dividing one count
+# by another compares two different spans of history. Measured on production:
+# `precompute_discover_candidate_base` read 22 successes over a 2.0h window
+# against 24 incompletes over a 23.8h one. Two counts, two different days.
+#
+# 🔴 AND THE DENOMINATOR IS `starts`, NOT THE SUM OF THE TERMINAL RATES. This is
+# CERT-2127's BLOCK and it is the sharper half. Summing successes + failures +
+# incompletes puts three independently-rolling windows in one denominator, and
+# an ordinary rollover then silences the band: 24 incompletes over 42,176s plus
+# ONE success over a 60-second-old counter normalises to 1 success/minute
+# against 2 incompletes/hour — a share of 0.033, green, on a task losing half
+# its passes. A 60-second window is not a slow success rate, it is NO
+# MEASUREMENT of the success rate, and the sum silently read it as the first.
+#
+# `starts` is the denominator every other reading of this question already
+# wants: it is incremented once per run by the same `_tracked_run` wrapper that
+# writes the incomplete, so numerator and denominator are the same population
+# counted at two ends of the same run, and their windows open within seconds of
+# each other. "What share of this task's runs were torn down?" is then one
+# division instead of three.
+#
+# The stability floor applies to EVERY positive count that reaches a
+# denominator, which is the other half of the BLOCK. Where a term cannot be
+# turned into a rate it is DROPPED and named in the basis rather than counted as
+# a small one — an unmeasurable success rate read as a low one understates the
+# share, which is the exact direction that hides the bug.
 #
 #: Below this many incompletes the share is published but never bands: one
 #: deploy landing on a task that runs four times a day is not a pattern, and at
 #: n=1 the share is an artifact of which counter happened to open first.
 _INCOMPLETE_BAND_MIN_INCOMPLETES = 5
-#: A window younger than this is not a rate. Without it a counter that opened
-#: ninety seconds ago reports an enormous incompletes/h and outvotes a success
-#: counter with a full day behind it.
-_INCOMPLETE_BAND_MIN_WINDOW_S = 3600.0
+#: A window younger than this is not a rate — it is a counter that has just
+#: rolled. Applied to every positive count on both sides of the division
+#: (CERT-2127): a 60-second-old counter reports a rate two orders of magnitude
+#: off and, in a denominator, does it silently.
+_TERMINAL_RATE_MIN_WINDOW_S = 3600.0
 #: Losing one pass in four is the band. Deliberately `degraded` and not
 #: `critical`: teardown is not breakage, the work is re-attempted on the next
 #: beat, and `critical` feeds paging rollups that should stay reserved for a
 #: task that is actually failing. Measured against all 126 tracked tasks on
-#: 2026-09-06, this band moves exactly three of them off green —
-#: `prediction_market_match` (0.51), `precompute_backfill_progress` (0.25) and
-#: `discover_events` (0.29) — each of which is genuinely losing that share of
-#: its passes.
+#: 2026-09-06 with the `starts` denominator, this band moves exactly three of
+#: them off green — `discover_events` (0.30), `enrich_taxonomy_llm` (0.33) and
+#: `kalshi_cliff_drain` (0.49) — alongside `prediction_market_match` itself at
+#: 0.51, which the last-verdict band was already catching half the time.
 _INCOMPLETE_BAND_DEGRADED_SHARE = 0.25
 
 
@@ -1701,47 +1717,86 @@ def _window_age_s(r, counter_key: str):
         return None
 
 
+def _stable_rate(count: int, window):
+    """``count`` per second over its own window, or ``None`` if that is not a
+    rate — #3665, tightened by CERT-2127.
+
+    Three answers, and the caller must keep them apart. ``0.0`` for a count of
+    zero: nothing has opened a window and none is needed to say the rate is
+    zero. ``None`` for a window that is unmeasurable (`_window_age_s`'s three
+    refusals) or younger than `_TERMINAL_RATE_MIN_WINDOW_S` — a counter that
+    rolled a minute ago carries a real count over a span too short to divide by,
+    and the quotient is off by whatever ratio the true window bears to that
+    minute. Otherwise the rate.
+    """
+    if count <= 0:
+        return 0.0
+    if not window or window < _TERMINAL_RATE_MIN_WINDOW_S:
+        return None
+    return count / window
+
+
 def _incomplete_share(counts: dict, windows: dict):
-    """The share of this task's terminal outcomes that were teardowns — #3665.
+    """The share of this task's runs that were torn down mid-task — #3665.
 
     Returns ``(share, basis)``. ``share`` is ``None`` whenever the question
-    cannot be answered from measurable windows, and ``basis`` then says which
-    counter refused — an unmeasurable share is a different fact from a share of
-    zero and the caller must not band on it either way.
+    cannot be answered, and ``basis`` then says why — an unmeasurable share is a
+    different fact from a share of zero and the caller must not band on either
+    as if it were the other.
 
-    Each count is divided by ITS OWN window before the quotient is taken, for
-    the reason `_INCOMPLETE_BAND_MIN_INCOMPLETES` argues above: the counters are
-    four independent 24h windows that open at their own first increment, so raw
-    ``incompletes / (successes + incompletes)`` is a quotient of two different
-    spans of history. A count of zero needs no window — nothing has opened one
-    and none is required to say the rate is zero — so a task with no failures
-    all day is graded on its successes and incompletes alone rather than being
-    refused for a window that does not exist.
+    The denominator is ``starts``. It is incremented once per run by the same
+    ``_tracked_run`` wrapper that writes the incomplete, so numerator and
+    denominator count the same population at two ends of the same run and their
+    windows open within seconds of each other. Summing the three terminal rates
+    instead — the first form of this function — put three independently-rolling
+    windows in one denominator, and CERT-2127 showed an ordinary rollover then
+    silences the band: 24 incompletes over 42,176s plus one success over a
+    60-second-old counter reads as 1 success/minute and scores 0.033.
+
+    The fallback exists for a task whose ``starts`` counter is missing or has
+    just rolled. It sums the terminal rates as before, but a positive term that
+    `_stable_rate` refuses is DROPPED and named in the basis rather than
+    contributing a small number: an unmeasurable success rate read as a low one
+    understates the share, which is the direction that hides the bug. Dropping
+    it can only overstate, and overstating says "look at this task", which is
+    what the surface is for.
+
+    Clamped at 1.0. Skewed windows can put the numerator's rate above the
+    denominator's, and a share above one is not a fact about the task.
     """
     incompletes = counts.get("incompletes", 0)
-    incompletes_window = windows.get("incompletes_window_s")
     if incompletes <= 0:
         # No teardowns is a measured zero, not an unmeasurable one, and it needs
         # no window: the numerator is absent, so no span can change it.
         return 0.0, "no incompletes in window"
-    if not incompletes_window or incompletes_window <= 0:
-        return None, "incompletes window unmeasurable"
 
-    rates = []
-    for label in ("successes", "failures", "incompletes"):
+    incomplete_rate = _stable_rate(incompletes, windows.get("incompletes_window_s"))
+    if not incomplete_rate:
+        return None, "incompletes window is too young or unmeasurable"
+
+    starts_rate = _stable_rate(counts.get("starts", 0), windows.get("starts_window_s"))
+    if starts_rate:
+        return (
+            min(1.0, incomplete_rate / starts_rate),
+            "incompletes vs starts, each over its own window",
+        )
+
+    denominator = incomplete_rate
+    dropped = []
+    for label in ("successes", "failures"):
         count = counts.get(label, 0)
         if count <= 0:
-            rates.append(0.0)
             continue
-        window = windows.get(f"{label}_window_s")
-        if not window or window <= 0:
-            return None, f"{label} window unmeasurable"
-        rates.append(count / window)
+        rate = _stable_rate(count, windows.get(f"{label}_window_s"))
+        if rate is None:
+            dropped.append(label)
+            continue
+        denominator += rate
 
-    denominator = sum(rates)
-    if denominator <= 0:
-        return None, "no terminal rate to divide"
-    return rates[-1] / denominator, "window-normalised terminal rates"
+    basis = "terminal rates, no usable starts counter"
+    if dropped:
+        basis += f" (dropped {', '.join(dropped)}: window too young to be a rate)"
+    return min(1.0, incomplete_rate / denominator), basis
 
 
 def get_task_metrics(task_name: str) -> dict:
@@ -1871,6 +1926,7 @@ def get_task_metrics(task_name: str) -> dict:
                 "successes": successes_24h,
                 "failures": failures_24h,
                 "incompletes": incompletes_24h,
+                "starts": starts_24h,
             },
             windows,
         )
@@ -1960,8 +2016,6 @@ def get_task_metrics(task_name: str) -> dict:
         elif (
             incomplete_share is not None
             and incompletes_24h >= _INCOMPLETE_BAND_MIN_INCOMPLETES
-            and (windows.get("incompletes_window_s") or 0.0)
-            >= _INCOMPLETE_BAND_MIN_WINDOW_S
             and incomplete_share >= _INCOMPLETE_BAND_DEGRADED_SHARE
         ):
             # #3665. ABOVE the last-verdict band on purpose, even though both
@@ -1973,9 +2027,9 @@ def get_task_metrics(task_name: str) -> dict:
             result["health"] = "degraded"
             result["health_reason"] = (
                 f"{incompletes_24h} of this task's passes were torn down "
-                f"mid-run — {incomplete_share:.0%} of its terminal outcomes "
-                "(window-normalised), which no consecutive-failure band can see "
-                "because a teardown is not a failure"
+                f"mid-run — {incomplete_share:.0%} of its runs, each side of "
+                "the division over its own window — which no consecutive-failure "
+                "band can see because a teardown is not a failure"
             )
         elif result.get("last_verdict") in _NOT_GREEN_VERDICTS:
             # Queue 300H: the most recent run returned without completing its

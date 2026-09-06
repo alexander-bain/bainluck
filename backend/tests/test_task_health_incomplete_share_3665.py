@@ -8,15 +8,21 @@ On a task that alternates between finishing and being torn down by a release,
 that last band is a coin flip: it says "degraded" or "healthy" about one
 unchanging steady state depending on which pass happened to end last.
 
-These tests pin the two halves of the repair:
+These tests pin three things:
 
 * the share is computed from WINDOW-NORMALISED rates, because the four `_24h`
-  counters each open at their own first increment and a raw quotient compares
-  two different spans of history (`precompute_discover_candidate_base`, same
-  afternoon: 22 successes over 2.0h against 24 incompletes over 23.8h — raw
-  0.52, normalised 0.09, and only the second is true); and
-* an unmeasurable window produces no share and no band, rather than falling
-  back to the raw counts this module refuses.
+  counters each open at their own first increment (`SET NX EX`, never
+  refreshed) and a raw quotient compares two different spans of history;
+* **the denominator is `starts`** — CERT-2127's BLOCK. Summing the three
+  terminal rates instead lets an ordinary rollover silence the band: 24
+  incompletes over 42,176s plus ONE success over a 60-second-old counter reads
+  as 1 success/minute against 2 incompletes/hour, scores 0.033, and returns
+  green on a task losing half its passes. `starts` is written once per run by
+  the same `_tracked_run` wrapper that writes the incomplete; and
+* the stability floor applies to EVERY positive count that reaches a
+  denominator, and a term it refuses is DROPPED and named rather than counted
+  as a small one — reading an unmeasurable success rate as a low one
+  understates the share, which is the direction that hides the bug.
 """
 
 import pytest
@@ -84,21 +90,37 @@ def _metrics(monkeypatch, task, counters, hash_fields=None):
 
 
 #: The production specimen: `prediction_market_match`, read 2026-09-06 20:15Z.
-#: Both counters carry nearly a full day, so normalising barely moves the raw
-#: quotient (0.545 → 0.505) — which is exactly why this task is the real finding
-#: and `precompute_discover_candidate_base` below is not.
+#: 24 of 44 runs torn down; the two counters that matter carry nearly a full day
+#: each and open within four minutes of one another.
 _MATCHER = {
     "successes": (20, 35888.0),
     "incompletes": (24, 42176.0),
     "starts": (44, 41914.0),
 }
 
-#: Same afternoon, same surface, opposite verdict: a task whose success counter
-#: had rolled two hours earlier. Raw share 0.52, normalised 0.09.
-_ROLLED_SUCCESS_WINDOW = {
-    "successes": (22, 7353.0),
-    "incompletes": (24, 85653.0),
-    "starts": (46, 85653.0),
+#: CERT-2127's counterexample, and the reason the denominator is `starts`.
+#: The same 24 incompletes, plus a success counter that rolled sixty seconds
+#: ago. Summed as three terminal rates this reads 1 success/minute against 2
+#: incompletes/hour — share 0.033, green, on a task losing half its passes.
+_ROLLED_SUCCESS_COUNTER = {
+    "successes": (1, 60.0),
+    "incompletes": (24, 42176.0),
+    "starts": (44, 41914.0),
+}
+
+#: The same rollover on a task with no usable `starts` counter at all, so the
+#: fallback runs. The 60-second success term is DROPPED, not counted small.
+_ROLLED_SUCCESS_NO_STARTS = {
+    "successes": (1, 60.0),
+    "incompletes": (24, 42176.0),
+}
+
+#: A mature healthy control, `espn_sync` on the same reading: every window a
+#: full day old, 36 teardowns against 810 runs.
+_MATURE_HEALTHY = {
+    "successes": (774, 57960.0),
+    "incompletes": (36, 46313.0),
+    "starts": (810, 57960.0),
 }
 
 
@@ -128,35 +150,93 @@ class TestTheMatcherStopsReadingGreen:
         )
         reason = result["health_reason"]
         assert "24" in reason and "torn down" in reason
-        assert "51%" in reason  # window-normalised, not the raw 55%
+        assert "54%" in reason  # 24 incompletes/42,176s over 44 starts/41,914s
 
     def test_a_healthy_task_with_one_interrupt_stays_green(self, monkeypatch):
-        result = _metrics(
-            monkeypatch, "espn_sync",
-            {"successes": (774, 57960.0), "incompletes": (36, 46313.0),
-             "starts": (810, 57960.0)},
-        )
+        result = _metrics(monkeypatch, "espn_sync", _MATURE_HEALTHY)
         assert result["health"] == "healthy"
         assert result["incomplete_share"] < 0.1
 
 
-class TestTheShareIsNormalisedByEachCountersOwnWindow:
-    def test_a_rolled_success_window_is_not_slander(self, monkeypatch):
-        """Raw arithmetic calls this task half-dead. It is not: its success
-        counter rolled two hours ago and it has been finishing ~11 passes an
-        hour ever since."""
-        result = _metrics(
-            monkeypatch, "precompute_discover_candidate_base",
-            _ROLLED_SUCCESS_WINDOW,
-        )
-        raw = 24 / (22 + 24)
-        assert raw > redis_state._INCOMPLETE_BAND_DEGRADED_SHARE
-        assert result["incomplete_share"] < 0.15
-        assert result["health"] == "healthy"
+class TestCert2127TheRolloverThatSilencedTheBand:
+    """CERT-2127's BLOCK, which is the required regression.
 
+    A denominator summing three independently-rolling terminal counters lets an
+    ordinary rollover silence the band: 24 incompletes over 42,176s plus ONE
+    success over a 60-second-old counter is 1 success/minute against 2
+    incompletes/hour — 0.033, green. The denominator is now `starts`, which the
+    same `_tracked_run` wrapper writes once per run alongside the incomplete.
+    """
+
+    def test_a_success_counter_that_rolled_a_minute_ago_cannot_hide_it(
+        self, monkeypatch,
+    ):
+        result = _metrics(
+            monkeypatch, "prediction_market_match", _ROLLED_SUCCESS_COUNTER,
+            hash_fields={"last_verdict": "success", "consecutive_failures": "0"},
+        )
+        summed_terminal_rates = (24 / 42176.0) / (1 / 60.0 + 24 / 42176.0)
+        assert summed_terminal_rates < 0.05  # the reading that was green
+        assert result["incomplete_share"] > 0.5
+        assert result["health"] == "degraded"
+
+    def test_the_same_rollover_with_no_starts_counter_drops_the_term(
+        self, monkeypatch,
+    ):
+        """The fallback must DROP a term it cannot rate, not count it as a
+        small one. Counting it small is what produced the green reading."""
+        result = _metrics(
+            monkeypatch, "prediction_market_match", _ROLLED_SUCCESS_NO_STARTS,
+            hash_fields={"last_verdict": "success", "consecutive_failures": "0"},
+        )
+        assert "dropped successes" in result["incomplete_share_basis"]
+        assert result["incomplete_share"] == 1.0
+        assert result["health"] == "degraded"
+
+    def test_the_mature_rolled_healthy_control_stays_green(self, monkeypatch):
+        """The other half of the required regression: the repair must not buy
+        the rollover case by degrading everything with a stale window."""
+        result = _metrics(
+            monkeypatch, "espn_sync", _MATURE_HEALTHY,
+            hash_fields={"last_verdict": "success", "consecutive_failures": "0"},
+        )
+        assert result["health"] == "healthy"
+        assert "health_reason" not in result
+
+    def test_the_stability_floor_covers_every_positive_count(self, monkeypatch):
+        for label in ("successes", "failures", "incompletes", "starts"):
+            assert redis_state._stable_rate(5, 60.0) is None, label
+        assert redis_state._stable_rate(0, 60.0) == 0.0  # zero needs no window
+        assert redis_state._stable_rate(5, None) is None
+        assert redis_state._stable_rate(
+            5, redis_state._TERMINAL_RATE_MIN_WINDOW_S,
+        ) is not None
+
+
+class TestTheShareIsNormalisedByEachCountersOwnWindow:
     def test_the_basis_is_stated_on_the_payload(self, monkeypatch):
         result = _metrics(monkeypatch, "prediction_market_match", _MATCHER)
-        assert result["incomplete_share_basis"] == "window-normalised terminal rates"
+        assert result["incomplete_share_basis"] == (
+            "incompletes vs starts, each over its own window"
+        )
+
+    def test_the_raw_quotient_is_not_what_is_published(self, monkeypatch):
+        """Both sides are divided by their own window before the quotient. On
+        this specimen the two windows are close, so raw and normalised nearly
+        agree — the point is that the arithmetic does not depend on that."""
+        result = _metrics(monkeypatch, "prediction_market_match", _MATCHER)
+        assert result["incomplete_share"] == pytest.approx(
+            (24 / 42176.0) / (44 / 41914.0), rel=1e-3,
+        )
+
+    def test_a_share_above_one_is_clamped(self, monkeypatch):
+        """Skewed windows can put the numerator's rate above the
+        denominator's. A share above one is not a fact about the task."""
+        result = _metrics(
+            monkeypatch, "prediction_market_match",
+            {"incompletes": (24, 4000.0), "starts": (26, 80000.0)},
+        )
+        assert result["incomplete_share"] == 1.0
 
     def test_no_incompletes_is_a_measured_zero(self, monkeypatch):
         result = _metrics(
@@ -169,40 +249,46 @@ class TestTheShareIsNormalisedByEachCountersOwnWindow:
 
 
 class TestAnUnmeasurableWindowRefusesToBand:
-    @pytest.mark.parametrize("rolled", ["successes", "incompletes"])
-    def test_a_window_with_no_expiry_produces_no_share(self, monkeypatch, rolled):
+    @pytest.mark.parametrize("rolled", ["incompletes", "starts"])
+    def test_a_window_with_no_expiry_produces_no_usable_share(
+        self, monkeypatch, rolled,
+    ):
         counters = dict(_MATCHER)
         counters[rolled] = (counters[rolled][0], None)  # ttl -1: no expiry
         result = _metrics(monkeypatch, "prediction_market_match", counters)
-        assert result["incomplete_share"] is None
-        assert "unmeasurable" in result["incomplete_share_basis"]
-        # No share, so no band — and specifically not a band derived from the
-        # raw counts, which here would read 0.55 and degrade the task.
-        assert result["health"] == "healthy"
-        assert "health_reason" not in result
+        if rolled == "incompletes":
+            # The numerator cannot be rated, so there is no share at all.
+            assert result["incomplete_share"] is None
+            assert result["health"] == "healthy"
+            assert "health_reason" not in result
+        else:
+            # The denominator falls back to the terminal rates, all mature.
+            assert "no usable starts counter" in result["incomplete_share_basis"]
+            assert result["health"] == "degraded"
 
-    def test_a_young_window_is_not_yet_a_rate(self, monkeypatch):
+    def test_a_young_incompletes_window_is_not_yet_a_rate(self, monkeypatch):
         """Five teardowns inside twenty minutes is a deploy, not a steady
-        state. The share is published; the band is not applied."""
+        state, and twenty minutes is too short to divide by."""
         result = _metrics(
             monkeypatch, "prediction_market_match",
             {"successes": (20, 35888.0), "incompletes": (5, 1200.0),
              "starts": (25, 35888.0)},
         )
-        assert result["incomplete_share"] > 0.25
+        assert result["incomplete_share"] is None
         assert result["health"] == "healthy"
 
     def test_below_the_evidence_floor_the_share_is_published_not_banded(
         self, monkeypatch,
     ):
-        """`espn_win_prob_backfill`, same afternoon: 2 successes, 2 incompletes.
-        A share of 0.33 over four runs is one release, and banding it would put
-        a quarter of the beat schedule permanently amber."""
+        """`espn_win_prob_backfill`, same afternoon: 2 incompletes over 4 runs.
+        A share over four runs is one release, and banding it would put a
+        quarter of the beat schedule permanently amber."""
         result = _metrics(
             monkeypatch, "espn_win_prob_backfill",
-            {"successes": (2, 29525.0), "incompletes": (2, 60748.0),
+            {"successes": (2, 29525.0), "incompletes": (2, 40000.0),
              "starts": (4, 29525.0)},
         )
+        # Above the band, so the EVIDENCE FLOOR is what stops it, not the share.
         assert result["incomplete_share"] > 0.25
         assert result["health"] == "healthy"
 
