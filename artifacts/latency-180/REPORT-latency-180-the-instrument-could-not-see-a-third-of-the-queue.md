@@ -455,6 +455,52 @@ branch still carries its MEANING, or it will assert a superseded ruling forever.
 re-aim actually mutates: a flip inserted upstream of the assignment it targets is overwritten, and
 reports itself as a survivor — a false missing-assertion in the oracle.
 
+### The production AFTER-measurement — the post-deploy check, PAID
+
+`7cb6531d` merged 08:59:51Z but could not deploy: master CI at that sha went `completed/failure` on
+the decayed shard-hints gate that redded every branch and skipped every deploy from 09:07Z.
+`138fc435` repaired it and the backlog rode one deploy at **10:03:13Z**. Verified BY ANCESTRY, not
+equality — `7cb6531d` never deployed and never will; `138fc435` overtook it in the queue and carries
+it.
+
+**Signal 1 — the warmer's own defect category, which is the categorical one.** Before:
+`terminal: partial, completed 38/40, no_writes: ['sta','red']`. `no_write` means the route ran and
+Redis still holds nothing; those two terms were the entire reason every pass was partial.
+
+| | before | after |
+|---|---|---|
+| `no_writes` | `['sta','red']` on every real pass | **`[]` on 12/12 real passes sampled** |
+| passes reaching `terminal: complete` | **0 of 11** ring records 09:46–10:02Z | **7 of 21** ring records 10:05–10:26Z |
+
+⚠️ READ ONLY THE REAL PASSES. Finding (yy) above is the reason: `last_result_summary` is overwritten
+by every pass INCLUDING the ~85,000 skips per real pass, so `no_writes: []` at a random moment is
+the no-op's reading and not a result. The 12 above are terminal-filtered from a 20s-cadence sampler
+run faster than the ~40s work path; 3 further reads were skips and are discarded, not counted.
+
+**Signal 2 — the request timings, as corroboration.** Same protocol as the BEFORE above, five
+sampler passes 10:06–10:26Z, two requests per term per pass:
+
+| term | before (p50) | after (p50) | after range |
+|---|---|---|---|
+| `stanley cup` — the CONTROL | 0.15s | 0.21s | 0.14–0.60s |
+| `red` | 7.20s | **0.17s** | 0.13–0.38s |
+| `sta` | 6.53s | **0.20s** | 0.12–0.36s |
+| `/api/health` — network floor | — | 0.17s | 0.13–0.23s |
+
+`red` and `sta` now sit AT the network floor: their p50 equals `/api/health`'s. The ~45x gap between
+a warm term and a permanently cold one is closed.
+
+**NOT FIXED, and not caused by this ship.** Two residues, both named so neither is read as new:
+
+*   **Per-term `errors`, 1-6 a pass, on BOTH sides of the deploy** (before: 8 of 11 ring records
+    carry ≥1, including a 6; after: 12 of 21). They are why most passes still read `partial` rather
+    than `complete`. Filed separately — this ship's category was `no_write`, and `error` is a
+    different one that happens to share a summary.
+*   **The period tail.** `period_s` p50 44.1s, p95 **189.0s**, max **316.4s** over the 32-deep ring.
+    Inside the 65s TTL most of the time and far outside it in the tail — which is the mechanism
+    CERT-2045/2053 are about and the dedicated-worker question in `alex-inbox`. Untouched by this
+    ship, which fixed a cacheability defect, not a scheduling one.
+
 ---
 
 ## Next: `NEXT-DIRECTIVE-latency-181.md` in this directory.
