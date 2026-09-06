@@ -1052,6 +1052,23 @@ jobs:
             exit 1
           fi
 
+      - name: "#3613 The dark-Polymarket selector, executed (real Postgres)"
+        # The unit file drives the whole pass but its recording session ANSWERS
+        # the selector rather than running it, so every claim about WHICH
+        # markets get picked is a claim about SQL nothing has executed. Five
+        # rows, four excluded for four different reasons, then one end-to-end
+        # write — which is also the only place `is_winner`'s `DEFAULT false`
+        # can bite, because only Postgres applies a column default.
+        # Same skip-detection as every gate here.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_dark_polymarket_selector_real_postgres.py \
+            -v -s -rs 2>&1 | tee /tmp/darkpoly3613.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/darkpoly3613.txt; then
+            echo "::error::#3613 dark-Polymarket selector gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
   frontend-build:
     runs-on: ubuntu-latest
     defaults:
