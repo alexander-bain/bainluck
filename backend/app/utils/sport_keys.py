@@ -634,6 +634,114 @@ KALSHI_TICKER_TO_SPORT_KEY: dict[str, str] = {
     "kxknvbcupspread": "soccer_other",        # KNVB Cup tie, spread leg
     "kxknvbcupbtts": "soccer_other",          # KNVB Cup tie, both-teams-to-score leg
     "kxncaamsoccergame": "soccer_other",      # NCAA men's soccer
+    # ── #3446: the remaining Kalshi soccer-cup and continental series ──────
+    # Same hold, same shape, same authoritative step-1 answer as the Slovak and
+    # KNVB entries above (#3414) — these are the other 88 prefixes that put 1,615
+    # of the 1,908 rows into `llm_sport_category='legal'`. The name says
+    # "Regulation Time" and nothing else about the row looks like a sport, so the
+    # ticker has to answer it. Every prefix below was confirmed against the venue,
+    # not inferred from its letters: Kalshi's own `/series/<ticker>` reports
+    # `tags: ["Soccer"]` for all 93 prefixes in the population, zero exceptions
+    # (artifact: artifacts-lane1-144/series-tags.json). Leg-level on purpose — a
+    # BTTS, a correct score and a total belong TO a fixture, and mapping only some
+    # legs is what splits a tie.
+    # UEFA Conference League (492 rows)
+    "kxueclbtts": "soccer_other",
+    "kxueclscore": "soccer_other",
+    "kxueclspread": "soccer_other",
+    "kxueclteamtotal": "soccer_other",
+    "kxuecltotal": "soccer_other",
+    # UEFA Europa League (207 rows)
+    "kxuelbtts": "soccer_other",
+    "kxuelscore": "soccer_other",
+    "kxuelspread": "soccer_other",
+    "kxuelteamtotal": "soccer_other",
+    "kxueltotal": "soccer_other",
+    # Taca de Portugal (163 rows)
+    "kxtacaportbtts": "soccer_other",
+    "kxtacaportspread": "soccer_other",
+    "kxtacaporttotal": "soccer_other",
+    # EFL Cup (131 rows)
+    "kxeflcupbtts": "soccer_other",
+    "kxeflcupscore": "soccer_other",
+    "kxeflcupspread": "soccer_other",
+    "kxeflcupteamtotal": "soccer_other",
+    "kxeflcuptotal": "soccer_other",
+    # Coppa Italia Serie C (122 rows)
+    "kxserieccupbtts": "soccer_other",
+    "kxserieccupspread": "soccer_other",
+    "kxserieccuptotal": "soccer_other",
+    # DFB-Pokal (116 rows)
+    "kxdfbpokalbtts": "soccer_other",
+    "kxdfbpokalscore": "soccer_other",
+    "kxdfbpokalspread": "soccer_other",
+    "kxdfbpokalteamtotal": "soccer_other",
+    "kxdfbpokaltotal": "soccer_other",
+    # Coppa Italia (79 rows)
+    "kxcoppaitaliabtts": "soccer_other",
+    "kxcoppaitaliascore": "soccer_other",
+    "kxcoppaitaliaspread": "soccer_other",
+    "kxcoppaitaliateamtotal": "soccer_other",
+    "kxcoppaitaliatotal": "soccer_other",
+    # FIFA World Cup (64 rows)
+    "kxwcbtts": "soccer_other",
+    "kxwcscore": "soccer_other",
+    # Copa Sudamericana (52 rows)
+    "kxconmebolsudbtts": "soccer_other",
+    "kxconmebolsudspread": "soccer_other",
+    "kxconmebolsudtotal": "soccer_other",
+    # Greek Cup (41 rows)
+    "kxgrecupbtts": "soccer_other",
+    "kxgrecupspread": "soccer_other",
+    "kxgrecuptotal": "soccer_other",
+    # Israeli Premier League Cup (28 rows)
+    "kxisrplcupbtts": "soccer_other",
+    "kxisrplcupspread": "soccer_other",
+    "kxisrplcuptotal": "soccer_other",
+    # Leagues Cup (28 rows)
+    "kxleaguescupbtts": "soccer_other",
+    "kxleaguescupscore": "soccer_other",
+    "kxleaguescupspread": "soccer_other",
+    "kxleaguescupteamtotal": "soccer_other",
+    "kxleaguescuptotal": "soccer_other",
+    # Copa do Brasil (22 rows)
+    "kxcopadobrasilbtts": "soccer_other",
+    "kxcopadobrasilspread": "soccer_other",
+    "kxcopadobrasiltotal": "soccer_other",
+    # Copa Libertadores (19 rows)
+    "kxconmebollibbtts": "soccer_other",
+    "kxconmebollibspread": "soccer_other",
+    "kxconmebollibtotal": "soccer_other",
+    # Scottish Cup (18 rows)
+    "kxscocupbtts": "soccer_other",
+    "kxscocupspread": "soccer_other",
+    "kxscocuptotal": "soccer_other",
+    # AFC Champions League (8 rows)
+    "kxafcclbtts": "soccer_other",
+    "kxafcclscore": "soccer_other",
+    # ASEAN Championship (6 rows)
+    "kxaseanbtts": "soccer_other",
+    "kxaseanspread": "soccer_other",
+    "kxaseantotal": "soccer_other",
+    # USL Cup (5 rows)
+    "kxuslcupbtts": "soccer_other",
+    "kxuslcupspread": "soccer_other",
+    # FA Cup (4 rows)
+    # Trophee des Champions (3 rows)
+    "kxfrasupercupbtts": "soccer_other",
+    "kxfrasupercupspread": "soccer_other",
+    "kxfrasupercupteamtotal": "soccer_other",
+    # FA Community Shield (2 rows)
+    "kxengcsbtts": "soccer_other",
+    "kxengcsscore": "soccer_other",
+    # DFL-Supercup (2 rows)
+    "kxgerscbtts": "soccer_other",
+    "kxgerscscore": "soccer_other",
+    # UEFA Super Cup (2 rows)
+    "kxuefascbtts": "soccer_other",
+    "kxuefascscore": "soccer_other",
+    # Uruguayan Primera Division (1 rows)
+    "kxurypdbtts": "soccer_other",
     # Asian basketball
     "kxcbagame": "basketball_other",          # Chinese CBA
     "kxjbleaguegame": "basketball_other",     # Japanese B.League
