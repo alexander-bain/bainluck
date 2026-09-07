@@ -85,4 +85,35 @@ enum EventState {
     static func liveSectionTitle(hasSuspended: Bool) -> String {
         hasSuspended ? "Live & Paused" : "Live Now"
     }
+
+    /// The line an event page prints where its market sections would have been.
+    ///
+    /// #3821 — THE SENTENCE IS TENSED, and it was written only for a game that
+    /// had not started. On the FINAL Cardinals 10 — Rockies 8 (15305472) it read
+    /// *"No prediction markets for this game YET"* under a hero saying
+    /// `FINAL · Cardinals Win`, promising a market that can never arrive. That is
+    /// #3465's defect exactly, one card lower on the same page: #3465 tensed the
+    /// score chart's unit-mismatch note on the same question and this sentence
+    /// was missed. Alex's standing ruling is that settled means settled, and it
+    /// binds an empty state's copy as tightly as it binds a hero.
+    ///
+    /// 🔴 THE SETTLED LINE DELIBERATELY DOES NOT SAY WHY, and that is the whole
+    /// of the wording decision. This empty state covers two populations that the
+    /// view cannot tell apart: a game no venue ever listed, and — per
+    /// `EventDetailView`'s own note on the branch (#1092) — "an aged-out closed
+    /// game whose Kalshi/odds markets have expired". "No venue covered this game"
+    /// is false for the second, which HAD markets that we no longer hold. So the
+    /// settled reading drops the false promise and claims nothing in its place.
+    /// Trading a sentence that is wrong for a sentence that is merely quiet is
+    /// the trade; inventing a cause we did not measure would be a new #3821.
+    ///
+    /// Takes the raw status rather than a `settled` flag so the status test stays
+    /// in this file. Every other reading of "is it over?" on native already comes
+    /// from ``isFinished``, and a caller that computes the boolean itself is one
+    /// more place the app can disagree with itself about what `closed` means.
+    static func noGameMarketsLine(status: String?) -> String {
+        isFinished(status)
+            ? "No prediction markets for this game."
+            : "No prediction markets for this game yet."
+    }
 }
