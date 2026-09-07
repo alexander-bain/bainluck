@@ -67,6 +67,7 @@ from app.utils.sports_first_page_rails import (
     CLIENT_COMPLETED_MAX_AGE_HOURS,
     FINISHED_RAIL_FIRST_PAGE_CAP,
     client_deletes_finished_card,
+    finished_rail_key,
     swap_client_deleted_finished_off_first_page,
 )
 
@@ -618,3 +619,144 @@ class TestWiring:
             if (it.get("data") or {}).get("status") == "live"
         }
         assert 1 in live_ids
+
+
+class TestThinTailRailAccounting3853:
+    """#3853 — why the pass counts a DOOMED card's rail as freed even when that
+    card will not actually be swapped away.
+
+    `swaps = min(len(doomed), len(replacements))`, so on a thin tail some doomed
+    cards stay on page one while `kept_counts` has already written their rails
+    off as free. CERT-2204's grader found this by adversarial probe and it looks
+    exactly like a bug: four doomed "Recent upset" cards, one admissible tail
+    card which is itself a fresh "Recent upset", and page one ends up *carrying*
+    four cards on one rail — one over `FINISHED_RAIL_FIRST_PAGE_CAP`, apparently
+    recreating #3805 one pass after its fix.
+
+    IT IS NOT A BUG, AND THE PROPOSED REPAIR INVERTS THE SHIP. The cap protects
+    the reader from repetition, and the reader never sees a doomed card — that
+    is what doomed MEANS. Counting the three stayers' rail as occupied would
+    refuse the fresh upset, and refusing it is strictly worse on both axes:
+
+      * It costs a renderable slot. #3836's entire ship is "stop spending page-one
+        slots on cards the client deletes"; declining the one card the client
+        WOULD paint spends four slots instead of three.
+      * It causes the very repetition it is trying to prevent. With the fresh
+        upset admitted there is a non-stale game on the page, so the client's
+        `keptToAvoidEmptyGames` reprieve does not fire and the three doomed
+        cards are dropped — the reader sees ONE "Recent upset". With it refused
+        there is no non-stale game left, the reprieve DOES fire
+        (`frontend/lib/sports/finishedCardGuard.ts`: `hadGames && !keepsAGame`),
+        and every stale game is kept — the reader sees FOUR.
+
+    So the as-served count the probe measured and the as-rendered count the cap
+    exists to bound move in OPPOSITE directions here. These tests pin the
+    as-rendered behaviour, and they are written to go RED if someone later
+    implements #3853 as originally specified.
+    """
+
+    def _thin_tail_pool(self) -> list[dict]:
+        """Four doomed same-rail cards, and a tail of exactly ONE admissible
+        card which is itself on that rail.
+
+        The tail is length 1 on purpose: with four or more admissible tail cards
+        every doomed card departs, `doomed[swaps:]` is empty and the question
+        does not arise. Thinness IS the precondition.
+        """
+        window: list[dict] = []
+        score = 100.0
+        for i in range(16):
+            window.append(_market(i, score))
+            score -= 1
+        for i in range(4):
+            window.append(_finished(300 + i, score, "Recent upset", 30.0 + i))
+            score -= 1
+        return window + [_finished(600, score, "Recent upset", 1.0)]
+
+    def test_the_premise(self):
+        """Guard the fixture. If a later edit thickens the tail or moves a card
+        to another rail, the tests below would pass for the wrong reason."""
+        pool = self._thin_tail_pool()
+        assert len(_doomed_on_page(pool)) == 4
+        assert len(pool[20:]) == 1
+        rails = [finished_rail_key(it) for it in pool[:20]]
+        assert rails.count("Recent upset") == 4
+        assert finished_rail_key(pool[20]) == "Recent upset"
+        assert not client_deletes_finished_card(pool[20], now=NOW)
+
+    def test_the_one_card_the_client_would_paint_is_admitted(self):
+        """The load-bearing assertion, and the one that goes red if #3853 is
+        implemented as specified."""
+        pool = self._thin_tail_pool()
+        out, meta = swap_client_deleted_finished_off_first_page(
+            pool, first_page_size=20, now=NOW
+        )
+        page_ids = {(it.get("data") or {}).get("id") for it in out[:20]}
+        assert 600 in page_ids, (
+            "the fresh 'Recent upset' is the only card on this page the reader "
+            "would ever see; refusing it to protect a rail occupied only by "
+            "cards the client deletes spends a slot to prevent nothing"
+        )
+        assert meta["swapped"] == 1
+        assert meta["unswapped"] == 3, (
+            "three doomed cards had no replacement and stayed — reported "
+            "loudly (gotcha #53) rather than rounded off as success"
+        )
+
+    def test_the_reader_sees_one_card_on_the_rail_not_four(self):
+        """The probe counted cards AS SERVED. This counts them as RENDERED,
+        which is the unit the cap is denominated in."""
+        pool = self._thin_tail_pool()
+        out, _meta = swap_client_deleted_finished_off_first_page(
+            pool, first_page_size=20, now=NOW
+        )
+        rendered = [
+            it
+            for it in out[:20]
+            if not client_deletes_finished_card(it, now=NOW)
+        ]
+        rails = [finished_rail_key(it) for it in rendered]
+        assert rails.count("Recent upset") == 1
+        assert rails.count("Recent upset") <= FINISHED_RAIL_FIRST_PAGE_CAP
+
+    def test_the_page_keeps_a_game_so_the_clients_reprieve_stays_disarmed(self):
+        """The mechanism behind the test above, pinned on its own so a future
+        reader does not have to rediscover why admitting the card matters.
+
+        `applyFinishedCardGuard` keeps every stale game when NO non-stale game
+        survives. The swapped-in fresh result is that non-stale game.
+        """
+        pool = self._thin_tail_pool()
+        out, _meta = swap_client_deleted_finished_off_first_page(
+            pool, first_page_size=20, now=NOW
+        )
+        non_stale_games = [
+            it
+            for it in out[:20]
+            if it.get("type") == "event"
+            and not client_deletes_finished_card(it, now=NOW)
+        ]
+        assert non_stale_games, (
+            "with zero non-stale games the client reprieves ALL the stale ones "
+            "and the reader gets four identical headlines — the outcome #3853's "
+            "proposed repair would produce"
+        )
+
+    def test_a_thin_tail_on_a_different_rail_is_swapped_too(self):
+        """Complement: nothing about a thin tail suppresses an ordinary swap."""
+        window: list[dict] = []
+        score = 100.0
+        for i in range(16):
+            window.append(_market(i, score))
+            score -= 1
+        for i in range(4):
+            window.append(_finished(300 + i, score, "Recent upset", 30.0 + i))
+            score -= 1
+        out, meta = swap_client_deleted_finished_off_first_page(
+            window + [_finished(700, score, "Line moving", 1.0)],
+            first_page_size=20,
+            now=NOW,
+        )
+        assert 700 in {(it.get("data") or {}).get("id") for it in out[:20]}
+        assert meta["swapped"] == 1
+        assert meta["unswapped"] == 3
