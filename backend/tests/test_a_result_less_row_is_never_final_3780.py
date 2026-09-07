@@ -45,7 +45,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
-from sqlalchemy import create_engine, select, text
+from sqlalchemy import create_engine, select
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session
@@ -240,14 +240,24 @@ def _rails_holding(session, eid):
     return sorted(held)
 
 
+def _run_shipped_update(session, eid):
+    """The SHIPPED statement, for one row, with the plan's own frozen floor."""
+    return session.execute(
+        statement(_UNSETTLE_SQL),
+        {
+            "suspended": UNSETTLED_STATUS,
+            "closed": TARGET_STATUS,
+            "floor": FLOOR,
+            "eid": eid,
+        },
+    )
+
+
 def _apply_the_repair(session):
     """Run the SHIPPED UPDATE over the SHIPPED plan. No re-implementation."""
     ids = sorted(_sql_ids(session))
     for eid in ids:
-        session.execute(
-            text(_UNSETTLE_SQL),
-            {"suspended": UNSETTLED_STATUS, "closed": TARGET_STATUS, "eid": eid},
-        )
+        _run_shipped_update(session, eid)
     session.commit()
     return ids
 
@@ -415,6 +425,112 @@ class TestTheShip:
         first = _apply_the_repair(session)
         assert first
         assert _apply_the_repair(session) == []
+
+
+class TestAResultArrivingAfterThePlanIsNeverUnsettled:
+    """🔴 CERT-2181. THE PLAN AND THE WRITE ARE MINUTES APART, ON A WRITE-HOT TABLE.
+
+    The plan is built once; the sweep then walks 8,282 rows one transaction at a
+    time and is deliberately slow (see `unsettle_rows` on why a batch UPDATE is
+    wrong here). Anything can land in that window — and the things most likely
+    to are exactly the ones this repair treats as disqualifying, because a
+    result-less row is precisely the row a backfill is chasing.
+
+    The first version re-checked only `id` and `status='closed'`, which is a
+    DIFFERENT predicate from the one the plan was built on. The grader
+    reproduced it: plan an empty-result row, add a 3-1 score, run the shipped
+    update — it still wrote `suspended`, kept the score, and cleared
+    `completed_at`. A match that had just been reported on was relabelled "No
+    result reported", which is the exact lie this whole change exists to remove,
+    manufactured by the removal of it.
+
+    So the write spends `_TARGET_WHERE` verbatim and the plan's own frozen
+    floor, and this class is the test that says so — parameterized over every
+    rung, because a repair that re-checks the score and forgets the box score is
+    the same defect with a smaller window.
+    """
+
+    @pytest.mark.parametrize(
+        "rung,mutation",
+        [
+            ("a score on both sides", {"home_score": 3, "away_score": 1}),
+            ("a score on one side", {"home_score": 3}),
+            ("a statpal end time", {"statpal_end_time": NOW - timedelta(hours=2)}),
+            ("an espn id", {"espn_id": "401799999"}),
+            ("a box score", {"box_score_data": {"players": {}}}),
+            ("a terminal settlement", {"status": "completed"}),
+        ],
+    )
+    def test_the_shipped_update_refuses_a_row_the_ladder_has_spoken_about(
+        self, corpus, rung, mutation
+    ):
+        session, _ = corpus
+
+        # 1. PLAN — while the row is still a clean target.
+        planned = _sql_ids(session)
+        assert SPECIMEN_ID in planned, "the specimen must be in the plan to start"
+
+        # 2. INTERLEAVE — a source reports on the match after planning.
+        row = session.get(Event, SPECIMEN_ID)
+        for field, value in mutation.items():
+            setattr(row, field, value)
+        session.flush()
+        status_before = row.status
+        completed_at_before = row.completed_at
+
+        # 3. WRITE — the shipped statement, on the id the plan handed us.
+        result = _run_shipped_update(session, SPECIMEN_ID)
+        session.commit()
+
+        assert result.rowcount == 0, (
+            f"the sweep wrote a row that acquired {rung} after it was planned — "
+            "the update's WHERE is narrower than the plan's predicate"
+        )
+        session.expire_all()
+        after = session.get(Event, SPECIMEN_ID)
+        assert after.status == status_before
+        assert after.completed_at == completed_at_before
+
+    def test_the_control_still_moves(self, corpus):
+        """Retained on purpose. An UPDATE whose WHERE never matches would pass
+        every assertion above and repair nothing — the refusal has to be about
+        the interleaving, not about the statement being broken."""
+        session, _ = corpus
+        assert SPECIMEN_ID in _sql_ids(session)
+        result = _run_shipped_update(session, SPECIMEN_ID)
+        session.commit()
+        assert result.rowcount == 1
+        session.expire_all()
+        after = session.get(Event, SPECIMEN_ID)
+        assert after.status == UNSETTLED_STATUS
+        assert after.completed_at is None
+
+    def test_the_write_asks_the_planners_question_verbatim(self):
+        """The structural half: the two are ONE string, so they cannot drift
+        apart again by an edit to only one of them."""
+        from scripts.repair_3780_stale_closed_without_a_result import _TARGET_WHERE
+
+        assert _TARGET_WHERE in _UNSETTLE_SQL
+
+    def test_the_write_uses_the_plans_frozen_floor(self, corpus):
+        """A re-read clock at write time would make the horizon clause mean
+        something different than it did at plan time — the same drift one level
+        down. The floor is a bind, so passing a LATER one must be able to change
+        the answer; if it cannot, the clause is not really in the statement."""
+        session, _ = corpus
+        row = session.get(Event, SPECIMEN_ID)
+        moved_floor = row.commence_time.replace(tzinfo=timezone.utc) + timedelta(days=1)
+        result = session.execute(
+            statement(_UNSETTLE_SQL),
+            {
+                "suspended": UNSETTLED_STATUS,
+                "closed": TARGET_STATUS,
+                "floor": moved_floor,
+                "eid": SPECIMEN_ID,
+            },
+        )
+        session.commit()
+        assert result.rowcount == 0
 
 
 class TestNoTaskEndsAMatchOnAWallClock:

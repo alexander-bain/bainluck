@@ -323,9 +323,26 @@ _TARGET_IDS_SQL = f"SELECT id FROM events WHERE {_TARGET_WHERE} ORDER BY id"
 #: of production's 2,268 `suspended` rows carries `completed_at IS NULL`; a
 #: suspended row holding a game-end time is the contradiction CERT-752 was filed
 #: about, wearing a different status.
+#:
+#: 🔴 IT RE-CHECKS THE WHOLE LADDER, NOT JUST THE STATUS — CERT-2181's repair,
+#: and the reason is a live interleaving rather than a tidiness argument. This
+#: read `WHERE id = :eid AND status = :closed`, which is a DIFFERENT predicate
+#: from the one the plan was built on. The plan is built once and the sweep then
+#: takes minutes, one transaction per row, on a write-hot table; a score, an
+#: ESPN id, a StatPal end time or a box score arriving in that window left the
+#: row still `closed`, so the narrow WHERE matched and relabelled a match that
+#: HAD just been reported on as "No result reported" — and cleared the
+#: `completed_at` that arrived with it. Reproduced by the grader: plan an
+#: empty-result row, add a 3-1 score, run this statement, and the old form still
+#: wrote `suspended`.
+#:
+#: So the UPDATE spends `_TARGET_WHERE` verbatim, and the FROZEN floor the plan
+#: used rather than a re-read clock: two clocks would make the horizon clause
+#: mean something different at write time than it did at plan time, which is the
+#: same class of drift one level down.
 _UNSETTLE_SQL = (
     "UPDATE events SET status = :suspended, completed_at = NULL "
-    "WHERE id = :eid AND status = :closed"
+    f"WHERE id = :eid AND {_TARGET_WHERE}"
 )
 
 
@@ -482,7 +499,7 @@ async def ensure_backup(session, *, floor) -> int:
 
 
 async def unsettle_rows(
-    session, event_ids: list[int], *, progress_every: int = 500
+    session, event_ids: list[int], *, floor, progress_every: int = 500
 ) -> tuple[int, list[int]]:
     """Write `suspended` and clear `completed_at`, ONE ROW PER TRANSACTION.
 
@@ -491,9 +508,14 @@ async def unsettle_rows(
     and a batched or lock-impatient one-off rolls back on every row. A
     single-row UPDATE willing to WAIT for the lock succeeds. Slow is the point.
 
-    The `AND status = :closed` in the WHERE is what makes a re-run safe and what
-    makes a concurrent poller's write win: if something with standing has settled
-    the row since the plan was built, this touches nothing.
+    ``floor`` is the plan's OWN horizon bound, passed down rather than re-derived,
+    so the statement asks the identical question the plan asked.
+
+    Re-checking `_TARGET_WHERE` in the WHERE is what makes a re-run safe and what
+    makes a concurrent poller's write win: if ANY rung of the ladder has spoken
+    since the plan was built — a score, an ESPN id, a StatPal end time, a box
+    score — or the row has been settled, this touches nothing and returns
+    rowcount 0. CERT-2181; see `_UNSETTLE_SQL`.
 
     Returns ``(written, failed_ids)``. Failed ids are RETAINED rather than only
     printed: on a detached dyno whose stdout nobody reads, a printed FAILED line
@@ -506,10 +528,11 @@ async def unsettle_rows(
         for attempt in (1, 2, 3):
             try:
                 result = await session.execute(
-                    text(_UNSETTLE_SQL),
+                    statement(_UNSETTLE_SQL),
                     {
                         "suspended": UNSETTLED_STATUS,
                         "closed": TARGET_STATUS,
+                        "floor": floor,
                         "eid": event_id,
                     },
                 )
@@ -583,7 +606,7 @@ async def run(*, backup: bool, apply: bool, lookback_days: int) -> None:
             for r in (await session.execute(statement(_TARGET_IDS_SQL), params)).all()
         ]
         print(f"\nUNSETTLING {len(event_ids)} rows, one transaction each …")
-        written, failed = await unsettle_rows(session, event_ids)
+        written, failed = await unsettle_rows(session, event_ids, floor=floor)
 
         after = await measure(session, floor=floor)
         print(f"\nCOMMITTED: {written} rows {TARGET_STATUS!r} → {UNSETTLED_STATUS!r}.")
