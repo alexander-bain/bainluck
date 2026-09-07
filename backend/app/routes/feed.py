@@ -66,6 +66,7 @@ from app.models.models import (
 )
 from app.services import get_db, get_db_rw
 from app.utils.live_first_page import hoist_live_events_into_first_page
+from app.utils.sports_first_page_rails import cap_repeated_finished_rails
 from app.utils.tonights_games import compose_lead
 from app.utils.aggregation import (
     SOURCE_WEIGHTS,
@@ -1278,6 +1279,7 @@ def apply_discover_display_chain(
     event_pct: float | None,
     include_events: bool = True,
     my_teams_only: bool = False,
+    sports_mode: bool = False,
     cold_start: bool | None = None,
     reviewed_keys: set | None = None,
     timing_cb=None,
@@ -1330,13 +1332,25 @@ def apply_discover_display_chain(
         include_events: whether an events pool was built at all.
         my_teams_only: My Stuff mode shows everything matching and skips the
             diversity work entirely.
+        sports_mode: the games-led ``/sports`` surface — the caller's own
+            ``mode=sports`` query value, passed in rather than derived. There
+            are three surfaces here, not two, and they are NOT complements:
+            ``not discover_mode`` is also true for My Stuff, so a Sports-only
+            pass gated on it silently reorders My Stuff as well (CERT-2190).
+            Defaults to ``False``, so the admin ratification caller and the
+            disposition probe — both Discover-shaped — are unaffected.
         cold_start: override the derived cold-start flag. ``None`` derives it.
         reviewed_keys: when not ``None``, drop items whose ranking key is in this
             set at the same point ``get_feed`` does. The set must be loaded by
             the caller — this function does no I/O.
         timing_cb: optional ``fn(stage_name)`` called after ``ranking``,
-            ``reviewed_filter``, ``bundles`` and ``lead_composition`` so
-            ``get_feed`` keeps its per-stage timings.
+            ``reviewed_filter``, ``bundles``, ``lead_composition``,
+            ``first_page_quality_floor``, ``finished_rail_cap`` and
+            ``live_first_page`` so ``get_feed`` keeps its per-stage timings. The
+            exact list and its ORDER are pinned by
+            ``test_discover_display_chain_shared.py`` —
+            ``test_timing_callback_fires_for_every_recorded_stage`` is what
+            catches a new stage added here and nowhere else.
 
     Returns:
         ``(items, meta)``. ``meta['reviewed_filtered_count']`` is ``None`` when
@@ -1480,6 +1494,61 @@ def apply_discover_display_chain(
             )
     _tick("first_page_quality_floor")
 
+    # === ONE STORY, NOT NINE CARDS, ON THE SPORTS FIRST PAGE (#3511) ===
+    #
+    # `diversify_discover_first_page` caps repeated archetypes at 3 and runs
+    # under `if discover_mode:` only, so the games-led surface — whose cards are
+    # ALL `sports_story`, i.e. all one archetype — has never had a repeat-rail
+    # cap. On 2026-09-07 04:40Z that showed: ten finished games in twenty slots
+    # and NINE of them headlined "Recent upset" over "Won as 33% underdog",
+    # "Won as 17% underdog", and seven more of the same sentence.
+    #
+    # It is a swap, not a filter, and it counts only FINISHED cards — a live or
+    # upcoming game is never counted and never displaced, so this cannot spend a
+    # slot the hoist below is about to need. See the module docstring for the
+    # three causes that were measured and cleared first (cache, decay, hoist).
+    #
+    # BEFORE the hoist, deliberately: that pass is Alex's P1 acceptance
+    # criterion and must have the last word on first-page membership. It
+    # displaces the worst window slots for live games, so running it after this
+    # can only improve on what this leaves; running it first would let this
+    # trade a hoisted live game away. `test_sports_first_page_rails_wiring_3511`
+    # asserts the order rather than trusting this comment.
+    # GATED ON THE CALLER'S OWN `mode=sports`, NOT ON `not discover_mode`
+    # (CERT-2190). The three surfaces this function serves are Discover, Sports
+    # and My Stuff, and they are not two complements: `discover_mode` is itself
+    # `not my_teams_only and (...)`, so `not discover_mode` is TRUE for My
+    # Stuff. Gated that way, this pass reordered My Stuff — six of nine
+    # followed-team results moved behind later items — against the contract
+    # spelled a hundred lines up that My Stuff "shows everything matching and
+    # skips the diversity work entirely".
+    #
+    # `and not my_teams_only` is not redundant with the explicit signal. `mode`
+    # and `my_teams_only` are INDEPENDENT query parameters, so
+    # `?mode=sports&my_teams_only=true` is a reachable request, and it is a My
+    # Stuff request. My Stuff's exemption from diversity work is absolute and is
+    # spelled the same way everywhere else in this function, so it is spelled
+    # that way here too rather than resting on the caller never combining them.
+    finished_rail_cap_meta = None
+    if sports_mode and not my_teams_only:
+        items, finished_rail_cap_meta = cap_repeated_finished_rails(
+            items, first_page_size=min(20, limit)
+        )
+        if finished_rail_cap_meta["unswapped"]:
+            # Not a silent cap (gotcha #53). A page that kept a repeat because
+            # the pool had nothing left to trade is a thin-slate fact about the
+            # data, and it must not log the same as a page with no repeats.
+            logger.warning(
+                "Sports first-page rail cap: %d repeated finished card(s) kept "
+                "— no admissible replacement beyond the window (%d swapped, "
+                "%d replacements available, cap %d)",
+                finished_rail_cap_meta["unswapped"],
+                finished_rail_cap_meta["swapped"],
+                finished_rail_cap_meta["replacements_available"],
+                finished_rail_cap_meta["cap"],
+            )
+    _tick("finished_rail_cap")
+
     # === LIVE COMPLETENESS ON THE GAMES-LED SURFACES (#2709, Alex P1) ===
     #
     # The `include_tonights_games=discover_mode` gate above is correct and stays:
@@ -1524,6 +1593,7 @@ def apply_discover_display_chain(
     return items, {
         "reviewed_filtered_count": reviewed_filtered_count,
         "first_page_quality_floor": first_page_floor_meta,
+        "finished_rail_cap": finished_rail_cap_meta,
         "live_first_page": live_first_page_meta,
     }
 
@@ -3253,6 +3323,7 @@ async def get_feed(
             event_pct=event_pct,
             include_events=include_events,
             my_teams_only=my_teams_only,
+            sports_mode=_is_sports_mode,
             reviewed_keys=reviewed_keys,
             timing_cb=_chain_timing,
         )
