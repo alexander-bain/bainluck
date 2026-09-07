@@ -181,6 +181,63 @@ export function formatSpan(ms: number): string {
 }
 
 /**
+ * "29d" / "6h" / "20m" — the window a COLUMN of series actually covers, or
+ * `null` when nothing in it can be dated.
+ *
+ * #3710. A column header that names a window is a claim about the data under
+ * it, and `/politics` was making that claim as a literal: the sparkline column
+ * was headed "7d trend" over a 29-day series in which only 2 of 51 points fell
+ * inside 7 days. The header was not stale — it had never been true — and the
+ * adjacent `Δ 7d` column, which IS a genuine 7-day figure, is where the string
+ * came from. Two columns described different windows and only one said so.
+ *
+ * So the label is derived rather than written down. A literal can drift from
+ * the served window silently and did; a header computed from the timestamps it
+ * sits above cannot, and the day the channel really does serve a week it will
+ * say "7d" on its own.
+ *
+ * Takes GROUPS, not one series, because a column draws a row per candidate and
+ * the header speaks for all of them. It reports the widest span in the column —
+ * the outer edges of everything drawn — since that is the window a reader
+ * scanning the column is actually being shown.
+ *
+ * Rounds DOWN, the same rule `formatSpan` documents, and here the direction is
+ * load-bearing rather than tidy: rounding up would let a 29.6-day series be
+ * headed "30d", which is the overstatement this whole function exists to stop.
+ * Compact units because it renders inside a table heading, not a sentence.
+ */
+export function seriesWindowLabel(
+  groups: readonly (readonly unknown[] | null | undefined)[],
+): string | null {
+  let earliest = Infinity;
+  let latest = -Infinity;
+
+  for (const group of groups) {
+    for (const value of group ?? []) {
+      const t = asInstant(value);
+      if (t === null) continue;
+      if (t < earliest) earliest = t;
+      if (t > latest) latest = t;
+    }
+  }
+
+  // No datable point anywhere in the column. Never guess a window — the caller
+  // drops the number and heads the column with the bare noun.
+  if (earliest === Infinity) return null;
+
+  const spanMs = latest - earliest;
+  const hours = spanMs / HOUR_MS;
+
+  if (hours >= 48) return `${Math.floor(hours / 24)}d`;
+  if (hours >= 1) return `${Math.floor(hours)}h`;
+  // A single dated point spans nothing, and so does a column served twice in
+  // one minute. "0m" is a true statement about the window and a useless header,
+  // so it reads as unlabellable rather than as a zero.
+  const minutes = Math.floor(hours * 60);
+  return minutes >= 1 ? `${minutes}m` : null;
+}
+
+/**
  * What must a reader be told about this series?
  *
  * `timestamps` may be anything a payload carries — ISO strings, epoch numbers,
