@@ -202,11 +202,23 @@ def cap_repeated_finished_rails(
 
         new_window = list(window)
         new_tail = list(tail)
-        # Worst surplus card pairs with the best available replacement: walk the
-        # over-cap list from the BACK (weakest slot first) and the tail from the
-        # front (the tail is already in served order, so "first" IS "best").
+        # Both lists are walked FRONT to front, and the pairing is index-for-
+        # index. `over_cap` is ascending window slots; `replacements` is
+        # ascending tail slots, and the tail is already in served order, so its
+        # front IS its best. Earliest surplus slot therefore takes the best
+        # replacement, and the page keeps descending rank.
+        #
+        # This used to walk `over_cap` from the BACK, on the reasoning that the
+        # weakest slot should get the best card. That inverts the page: with
+        # replacements scoring 80, 78, 75 the reader got 75 then 78 then 80
+        # going DOWN, each swapped card outranking the one above it. Reading
+        # order is the whole point of a ranked page, and the two objectives are
+        # not in tension anyway — when there are fewer replacements than
+        # surplus cards, fixing the EARLIEST repeats is also what the reader
+        # notices, because a fourth "Recent upset" at slot 6 is more obvious
+        # than one at slot 19.
         for pair in range(swaps):
-            w_idx = over_cap[len(over_cap) - 1 - pair]
+            w_idx = over_cap[pair]
             t_idx = replacements[pair]
             new_window[w_idx], new_tail[t_idx] = new_tail[t_idx], new_window[w_idx]
 

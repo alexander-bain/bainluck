@@ -1279,6 +1279,7 @@ def apply_discover_display_chain(
     event_pct: float | None,
     include_events: bool = True,
     my_teams_only: bool = False,
+    sports_mode: bool = False,
     cold_start: bool | None = None,
     reviewed_keys: set | None = None,
     timing_cb=None,
@@ -1331,6 +1332,13 @@ def apply_discover_display_chain(
         include_events: whether an events pool was built at all.
         my_teams_only: My Stuff mode shows everything matching and skips the
             diversity work entirely.
+        sports_mode: the games-led ``/sports`` surface — the caller's own
+            ``mode=sports`` query value, passed in rather than derived. There
+            are three surfaces here, not two, and they are NOT complements:
+            ``not discover_mode`` is also true for My Stuff, so a Sports-only
+            pass gated on it silently reorders My Stuff as well (CERT-2190).
+            Defaults to ``False``, so the admin ratification caller and the
+            disposition probe — both Discover-shaped — are unaffected.
         cold_start: override the derived cold-start flag. ``None`` derives it.
         reviewed_keys: when not ``None``, drop items whose ranking key is in this
             set at the same point ``get_feed`` does. The set must be loaded by
@@ -1506,8 +1514,23 @@ def apply_discover_display_chain(
     # can only improve on what this leaves; running it first would let this
     # trade a hoisted live game away. `test_sports_first_page_rails_wiring_3511`
     # asserts the order rather than trusting this comment.
+    # GATED ON THE CALLER'S OWN `mode=sports`, NOT ON `not discover_mode`
+    # (CERT-2190). The three surfaces this function serves are Discover, Sports
+    # and My Stuff, and they are not two complements: `discover_mode` is itself
+    # `not my_teams_only and (...)`, so `not discover_mode` is TRUE for My
+    # Stuff. Gated that way, this pass reordered My Stuff — six of nine
+    # followed-team results moved behind later items — against the contract
+    # spelled a hundred lines up that My Stuff "shows everything matching and
+    # skips the diversity work entirely".
+    #
+    # `and not my_teams_only` is not redundant with the explicit signal. `mode`
+    # and `my_teams_only` are INDEPENDENT query parameters, so
+    # `?mode=sports&my_teams_only=true` is a reachable request, and it is a My
+    # Stuff request. My Stuff's exemption from diversity work is absolute and is
+    # spelled the same way everywhere else in this function, so it is spelled
+    # that way here too rather than resting on the caller never combining them.
     finished_rail_cap_meta = None
-    if not discover_mode:
+    if sports_mode and not my_teams_only:
         items, finished_rail_cap_meta = cap_repeated_finished_rails(
             items, first_page_size=min(20, limit)
         )
@@ -3300,6 +3323,7 @@ async def get_feed(
             event_pct=event_pct,
             include_events=include_events,
             my_teams_only=my_teams_only,
+            sports_mode=_is_sports_mode,
             reviewed_keys=reviewed_keys,
             timing_cb=_chain_timing,
         )

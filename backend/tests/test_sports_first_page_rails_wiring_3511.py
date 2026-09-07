@@ -41,14 +41,44 @@ from __future__ import annotations
 import ast
 import inspect
 
+from app.routes import feed as feed_module
 from app.routes.feed import PersonalizationContext, apply_discover_display_chain
 from app.utils.sports_first_page_rails import (
     FINISHED_RAIL_FIRST_PAGE_CAP,
+    cap_repeated_finished_rails,
     finished_rail_key,
 )
 
-SPORTS = {"event_pct": 0.6, "include_events": True, "my_teams_only": False}
-DISCOVER = {"event_pct": 0.15, "include_events": True, "my_teams_only": False}
+
+def _ids(items: list[dict]) -> list:
+    """Identity of each card, in order — the cheapest 'nothing moved' witness."""
+    return [(it.get("type"), (it.get("data") or {}).get("id")) for it in items]
+
+SPORTS = {
+    "event_pct": 0.6,
+    "include_events": True,
+    "my_teams_only": False,
+    "sports_mode": True,
+}
+DISCOVER = {
+    "event_pct": 0.15,
+    "include_events": True,
+    "my_teams_only": False,
+    "sports_mode": False,
+}
+#: The real My Stuff call shape. `event_pct` matches SPORTS deliberately: My
+#: Stuff is games-led too, which is exactly why the first gate (`not
+#: discover_mode`) caught it — the two surfaces are indistinguishable by
+#: `event_pct` and differ only in `my_teams_only`.
+MY_STUFF = {
+    "event_pct": 0.6,
+    "include_events": True,
+    "my_teams_only": True,
+    "sports_mode": False,
+}
+#: `mode` and `my_teams_only` are independent query parameters, so
+#: `?mode=sports&my_teams_only=true` is a request a client can actually send.
+MY_STUFF_VIA_SPORTS_MODE = {**MY_STUFF, "sports_mode": True}
 
 
 def _finished(i: int, score: float, headline: str) -> dict:
@@ -284,6 +314,141 @@ class TestDiscoverIsUnchanged:
             _reported_pool(), limit=20, ctx=PersonalizationContext(), **SPORTS
         )
         assert meta["first_page_quality_floor"] is None
+
+
+class TestMyStuffIsUntouched:
+    """CERT-2190's BLOCK. The first cut gated this pass on `not discover_mode`,
+    and `discover_mode` is itself `not my_teams_only and (...)` — so
+    `not discover_mode` is unconditionally TRUE for My Stuff. The pass ran on a
+    surface whose contract, spelled in this very function's docstring, is that
+    it "shows everything matching and skips the diversity work entirely": six of
+    nine followed-team results moved behind later items.
+
+    These are the discriminators. Restore the old gate and both go red.
+    """
+
+    def test_the_cap_is_never_even_CALLED_on_my_stuff(self, monkeypatch):
+        """Asserting My Stuff's output against another My Stuff call would be
+        vacuous — both sides would carry the same defect. So replace the pass
+        with a stub that REFUSES to run: if the gate lets My Stuff through, this
+        raises, and the order comparison below never gets the chance to agree
+        with itself."""
+
+        def _refuse(*_a, **_k):
+            raise AssertionError("the rail cap ran on a My Stuff request")
+
+        monkeypatch.setattr(feed_module, "cap_repeated_finished_rails", _refuse)
+        out, meta = apply_discover_display_chain(
+            _reported_pool(), limit=20, ctx=PersonalizationContext(), **MY_STUFF
+        )
+        assert meta["finished_rail_cap"] is None, (
+            "None means the pass never ran; a dict — even an all-zero one — "
+            "means it ran on My Stuff, which is the defect CERT-2190 blocked"
+        )
+        # And the surviving order is byte-for-byte the one the unstubbed chain
+        # produces, so "never called" and "never reordered" are both shown.
+        live, _ = apply_discover_display_chain(
+            _reported_pool(), limit=20, ctx=PersonalizationContext(), **MY_STUFF
+        )
+        assert _ids(out) == _ids(live)
+
+    def test_CONTROL_that_stub_really_does_fire_on_the_sports_surface(self):
+        """The positive control for the stub above: it is only evidence that My
+        Stuff is exempt if the same stub WOULD have been reached by Sports."""
+        import pytest as _pytest
+
+        def _refuse(*_a, **_k):
+            raise AssertionError("reached")
+
+        with _pytest.MonkeyPatch.context() as mp:
+            mp.setattr(feed_module, "cap_repeated_finished_rails", _refuse)
+            with _pytest.raises(AssertionError, match="reached"):
+                apply_discover_display_chain(
+                    _reported_pool(),
+                    limit=20,
+                    ctx=PersonalizationContext(),
+                    **SPORTS,
+                )
+
+    def test_my_stuff_keeps_all_nine_repeats_where_the_ranker_put_them(self):
+        """The positive control for the test above: the pool really is one the
+        cap WOULD have reordered, so 'unchanged' is a fact about the gate and
+        not about a pool with nothing to cap."""
+        out, meta = apply_discover_display_chain(
+            _reported_pool(), limit=20, ctx=PersonalizationContext(), **MY_STUFF
+        )
+        assert meta["finished_rail_cap"] is None
+        assert _rail_counts(out)["Recent upset"] == 9
+
+        capped, cap_meta = apply_discover_display_chain(
+            _reported_pool(), limit=20, ctx=PersonalizationContext(), **SPORTS
+        )
+        assert cap_meta["finished_rail_cap"] is not None
+        assert _rail_counts(capped)["Recent upset"] == FINISHED_RAIL_FIRST_PAGE_CAP
+
+    def test_my_stuff_is_exempt_even_when_the_caller_also_sends_mode_sports(self):
+        """`mode` and `my_teams_only` are independent query parameters, so this
+        combination is reachable from a client. My Stuff's exemption does not
+        depend on the caller never sending both."""
+        out, meta = apply_discover_display_chain(
+            _reported_pool(),
+            limit=20,
+            ctx=PersonalizationContext(),
+            **MY_STUFF_VIA_SPORTS_MODE,
+        )
+        assert meta["finished_rail_cap"] is None
+        assert _rail_counts(out)["Recent upset"] == 9
+
+    def test_the_gate_reads_the_explicit_signal_and_not_the_discover_negation(self):
+        """A source assertion, because the two gates are behaviourally
+        identical on every surface EXCEPT My Stuff — which is precisely how the
+        defect shipped green."""
+        src = inspect.getsource(apply_discover_display_chain)
+        cap_call = src.index("cap_repeated_finished_rails(")
+        gate = src.rindex("if ", 0, cap_call)
+        gate_line = src[gate : src.index("\n", gate)]
+        assert "sports_mode" in gate_line, gate_line
+        assert "not my_teams_only" in gate_line, gate_line
+        assert "discover_mode" not in gate_line, gate_line
+
+
+class TestReplacementsKeepDescendingRank:
+    """CERT-2190's named follow-up. The swap loop walked `over_cap` from the
+    BACK, pairing the weakest surplus slot with the best replacement, so the
+    cards it swapped in read 75, 78, 80 going DOWN the page — each one
+    outranking the card above it.
+    """
+
+    # Asserted on the pure pass, NOT through the whole chain: later stages
+    # (`_ensure_feed_diversity`) interleave events and futures on purpose, so a
+    # served first page is legitimately not globally descending and a
+    # chain-level assertion here would be testing the wrong contract.
+
+    def test_swapped_in_cards_descend_the_page(self):
+        upsets = [_finished(100 + i, 98.0 - i, "Recent upset") for i in range(9)]
+        tail = [_market(i, 80.0 - i) for i in range(6)]
+        out, meta = cap_repeated_finished_rails(upsets + tail, first_page_size=9)
+
+        assert meta["swapped"] == 6, meta
+        page = [it["_rank_score"] for it in out[:9]]
+        assert page == [98.0, 97.0, 96.0, 80.0, 79.0, 78.0, 77.0, 76.0, 75.0], page
+        # The exact inversion the follow-up names: the old back-to-front walk
+        # produced 75, 76, 77, 78, 79, 80 in those six slots.
+        assert page == sorted(page, reverse=True)
+
+    def test_the_earliest_surplus_slot_is_the_one_repaired_first(self):
+        """When there are fewer replacements than surplus cards, the repeats
+        traded away are the ones highest on the page — the ones the reader hits
+        first. The old walk spent its single replacement on slot 8."""
+        upsets = [_finished(100 + i, 98.0 - i, "Recent upset") for i in range(9)]
+        out, meta = cap_repeated_finished_rails(
+            upsets + [_market(0, 50.0)], first_page_size=9
+        )
+        assert meta["swapped"] == 1
+        # Slots 0-2 are the three kept; slot 3 is the first over-cap slot.
+        assert [it["_rank_score"] for it in out[:3]] == [98.0, 97.0, 96.0]
+        assert out[3].get("type") == "futures", [it.get("type") for it in out[:9]]
+        assert out[8].get("headline") == "Recent upset"
 
 
 class TestChainContract:
