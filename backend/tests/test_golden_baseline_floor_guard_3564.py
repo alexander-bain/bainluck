@@ -337,6 +337,18 @@ def test_the_repaired_blob_is_accepted():
 #: the incident is also pinned as data above rather than only as a git read.
 BOUNCED_SHA = "7bf301b9"
 
+#: The floor the bounce was actually measured against: the last master commit to
+#: write the baseline before it, holding ``passing_count`` 668.
+#:
+#: This is pinned, and NOT read from ``origin/master``, because ``origin/master``
+#: is a MOVING floor. CERT-2163 (#3706) replaces the baseline with the 665 blob,
+#: whose pairs are byte-identical to the bounced blob's -- the two differ only in
+#: ``reset_reason``. Against that master the comparator correctly reports no
+#: movement, and an assertion of "must still be refused" flips from pass to FAIL
+#: for a reason that has nothing to do with the rule under test. Anchoring the
+#: archaeology to a moving ref is the very defect this module exists to catch.
+FLOOR_OF_RECORD_SHA = "2825151d"
+
 
 def _git_show(ref: str):
     proc = subprocess.run(
@@ -355,14 +367,52 @@ def test_the_recorded_bounced_blob_really_did_omit_the_floor_it_replaced():
     the rule itself is pinned on data that needs no git.
     """
     blob = _git_show(BOUNCED_SHA)
-    master = _git_show("origin/master")
-    if blob is None or master is None:
-        pytest.skip(f"{BOUNCED_SHA} or origin/master not present in this checkout")
+    floor = _git_show(FLOOR_OF_RECORD_SHA)
+    if blob is None or floor is None:
+        pytest.skip(
+            f"{BOUNCED_SHA} or {FLOOR_OF_RECORD_SHA} not present in this checkout"
+        )
 
-    v = compare_baselines(master, blob)
+    assert floor["passing_count"] == 668, (
+        f"{FLOOR_OF_RECORD_SHA} is pinned as the 668 floor the bounce was measured "
+        "against; if it no longer holds 668 the anchor is wrong, not the rule"
+    )
+    v = compare_baselines(floor, blob)
     assert not v.ok, "the real bounced blob must still be refused"
     assert "never mentions" in "\n".join(v.problems)
     assert sorted(v.fell) == FELL
+
+
+#: CERT-2163's repaired blob (#3706). Becomes ``origin/master``'s baseline the
+#: moment that PR lands.
+REPAIRED_SHA = "4f3ce944180741482c98ad3ad77bd3c89aebaa7b"
+
+
+def test_the_archaeology_is_anchored_to_a_fixed_floor_not_to_moving_master():
+    """The regression that anchoring on ``origin/master`` would have caused.
+
+    Reading the anchor from ``origin/master`` passes today only because master
+    still holds 668. Once #3706 lands, master holds the 665 blob, whose pairs are
+    identical to the bounced blob's -- so the comparator sees NO movement and the
+    archaeology test above would have failed on an anchor bug rather than on the
+    rule it guards. This pins that, so nobody re-points the anchor at a ref that
+    moves.
+    """
+    bounced = _git_show(BOUNCED_SHA)
+    repaired = _git_show(REPAIRED_SHA)
+    if bounced is None or repaired is None:
+        skipped = BOUNCED_SHA if bounced is None else REPAIRED_SHA
+        pytest.skip(f"{skipped} not present in this checkout")
+
+    assert repaired["pairs"] == bounced["pairs"], (
+        "the bounce and its repair differ only in reset_reason -- if that stops "
+        "being true this test is no longer describing the hazard it pins"
+    )
+    moving = compare_baselines(repaired, bounced)
+    assert moving.ok and not moving.fell, (
+        "against post-#3706 master the bounced blob reads as clean; an anchor "
+        "that moves therefore inverts the archaeology test's verdict"
+    )
 
 
 # =============================================================================
