@@ -18,8 +18,22 @@ enum SettledQuote {
     /// Prefix for a frozen price on a finished game: "last quote 99%".
     static let prefix = "last quote"
 
-    /// The section-level sentence, said once per section.
-    static let sectionNote = "settled — showing each market's last quote"
+    /// The section-level sentence for a settled section that shows a number,
+    /// said once per section.
+    ///
+    /// #3752 moved it off "showing each market's last quote". Web renders a
+    /// decided row as its RESULT (`Shelton won Set 1`) with no number at all,
+    /// so "each" was false for 6 of 6 rows on `/events/15305016`. Native does
+    /// not have that treatment yet — every row here still prints a quote when
+    /// the game is finished, so the old wording was not false ON THIS RUNTIME —
+    /// but the phrase is one string across both by construction
+    /// (`SettledQuoteParityTests`), and the new wording is true in both.
+    ///
+    /// Web's companion `SETTLED_SECTION_NOTE_NO_QUOTES` ("settled", used when
+    /// nothing under the header shows a percentage) has NO twin here on
+    /// purpose: this view cannot reach that state, and an unused constant would
+    /// be a claim that it can. Filed as the native gap: see #3752's thread.
+    static let sectionNote = "settled — any percentage is a last quote"
 
     /// Spelled as web's `propDivergence.isSettledStatus` spells it. Wider than
     /// the `completed`/`closed` pair native used to hard-code, and in practice

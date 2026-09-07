@@ -91,14 +91,58 @@
 export const SETTLED_QUOTE_PREFIX = "last quote";
 
 /**
- * The section-level sentence, said ONCE per section.
+ * The section-level sentence for a settled section that still shows a number,
+ * said ONCE per section.
  *
  * `PropDivergenceDetail` sets the precedent for a uniformly ungraded set: name
  * the state once for the group. `PropTravelBar` labels every row instead, and
- * correctly so — its rows differ, so the label discriminates. Every row here is
- * in the same state, so per-row repetition discriminates nothing.
+ * correctly so — its rows differ, so the label discriminates. Repeating this on
+ * every row would discriminate nothing.
+ *
+ * ── #3752: IT USED TO SAY "showing each market's last quote" ─────────────────
+ *
+ * That wording made a promise about EVERY row, and by the time it was written
+ * the rows had stopped agreeing with each other. `buildMarketSection` now
+ * renders a decided row as its RESULT — `Shelton won Set 1`, deliberately with
+ * no bar and no number — and an impossible one struck through, so a settled
+ * tennis page holds three row shapes at once and only one of them is a quote.
+ *
+ * Measured on production 2026-09-07, `/events/15305016` (Shelton d. Tsitsipas,
+ * `completed`): the header read "6 markets grouped by category · settled —
+ * showing each market's last quote" over **six rows carrying zero quotes**.
+ * "each" was false for 6 of 6.
+ *
+ * The replacement is quantified the other way round, so it stays true whether
+ * one row is quoted or all of them are, and never promises a number a reader
+ * cannot find. When NO row quotes, the clause is dropped for
+ * `SETTLED_SECTION_NOTE_NO_QUOTES` — see `settledSectionNote`.
  */
-export const SETTLED_QUOTE_SECTION_NOTE = "settled — showing each market's last quote";
+export const SETTLED_QUOTE_SECTION_NOTE = "settled — any percentage is a last quote";
+
+/**
+ * The section-level sentence when the section is settled and NOTHING under it
+ * shows a percentage — every row states a result or is struck as impossible.
+ *
+ * It names the state and stops. The alternative considered and rejected was
+ * saying nothing at all: the rows do carry the settlement in their own words,
+ * but the header is where the other two states announce themselves, and a
+ * heading that goes quiet in one state only is how a reader learns to stop
+ * reading it.
+ */
+export const SETTLED_SECTION_NOTE_NO_QUOTES = "settled";
+
+/**
+ * Pick the section sentence from what the section will actually render.
+ *
+ * `quotedOutcomes` is counted by `buildMarketSection` off the very array the
+ * renderer maps over, which is the point: the note is chosen from the rows, not
+ * from an intention about them. A predicate derived some other way would drift
+ * the first time a new row shape learns to suppress its number, which is
+ * exactly how #3752 happened.
+ */
+export function settledSectionNote(quotedOutcomes: number): string {
+  return quotedOutcomes > 0 ? SETTLED_QUOTE_SECTION_NOTE : SETTLED_SECTION_NOTE_NO_QUOTES;
+}
 
 /**
  * ── THE LIFECYCLE PREDICATE, AND WHY IT LIVES HERE RATHER THAN IN THE RAIL ───
