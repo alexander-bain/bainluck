@@ -14,6 +14,13 @@ API versions:
 - v1: NFL, NBA, MLB, NHL, PGA, Cricket, Esports, F1, etc.
 - v2: Soccer only
 
+The version is a property of the SPORT, but the endpoint NAME is not: on v2 the
+soccer paths are `matches/daily`, `matches/live` and `injuries-suspensions`
+where v1 calls the same products `season-schedule`, `livescores` and `injuries`.
+Ask through `LIVE_SCORE_ENDPOINTS` / `INJURY_ENDPOINTS` / `_SCHEDULE_ENDPOINTS`
+rather than hard-coding a v1 name; a v1 name on v2 is a 404, and a 404 arrives
+as an empty list that reads exactly like "nothing is being played" (#3366).
+
 Auth: access_key query parameter on every request.
 Rate limits: up to 300k calls/day depending on plan.
 Docs: https://statpal.io/quick-start-tutorial/
@@ -21,6 +28,7 @@ Docs: https://statpal.io/quick-start-tutorial/
 
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional
@@ -165,6 +173,67 @@ INJURY_BUCKET_STATUS: dict[str, str] = {
 INJURY_ENDPOINTS: dict[str, str] = {
     "soccer": "injuries-suspensions",
 }
+
+#: StatPal sport -> the endpoint that serves live scores for it, where the name
+#: is NOT the default `livescores`. Same shape of fact as `INJURY_ENDPOINTS`
+#: above, discovered the same way and for the same reason.
+#:
+#: #3366 filed this as a VERSION defect — "the client routes soccer to v2, but
+#: `livescores` only exists on v1" — and the version table it measured is real
+#: and still true (re-probed with the production key 2026-09-07 04:22Z):
+#:
+#:     GET /api/v1/soccer/livescores          200  150,595 B
+#:     GET /api/v2/soccer/livescores          404      179 B
+#:     GET /api/v1/soccer/matches/daily       404      179 B
+#:     GET /api/v2/soccer/matches/daily       200  161,653 B
+#:
+#: But crossing the versions is the WRONG REPAIR, and the working sibling in
+#: this very file says why: on v2 the injury path is not `injuries` either, it
+#: is `injuries-suspensions`. Soccer's live board is the same story. The
+#: vendor's compiled spec (`statpal.io/static/openapi/openapi-compiled.yaml`,
+#: read 04:24Z, 16 soccer paths) publishes `/soccer/matches/live` beside
+#: `/soccer/matches/daily`, and it answers on v2 and only on v2:
+#:
+#:     GET /api/v1/soccer/matches/live        404      179 B
+#:     GET /api/v2/soccer/matches/live        200  188,954 B
+#:
+#: The two boards are the same 195 games one minute apart, so nothing is lost by
+#: staying on v2 — and three things are gained. Soccer keeps ONE base URL, so
+#: the version stays a property of the sport and `_base_url` does not have to
+#: become a per-endpoint table. The envelope is `live_matches -> league[] ->
+#: match[]`, which `_extract_match_items` was already written for. And the ids
+#: are v2's `main_id` + `fallback_id_1..3` — the SAME four id spaces, under the
+#: same names, that `StatPalInjury` already carries. v1's board serves those
+#: four as `id` / `alternate_id` / `alternate_id_2` / `static_id`: a fifth
+#: vocabulary for an id set we can already name, on the endpoint the vendor's
+#: own spec files under "Legacy".
+LIVE_SCORE_ENDPOINTS: dict[str, str] = {
+    "soccer": "matches/live",
+}
+
+#: Sports whose live board the INGESTION path does not read, even though the
+#: venue serves one. Not a gap — a fence, and it holds today's behaviour still.
+#:
+#: `sync_statpal_schedules` calls `get_live_scores(sport)` once per OUR sport
+#: key and keys the rows to events by team pair; seven of the fourteen keys in
+#: `STATPAL_SPORT_MAPPING` are soccer. Today every one of those calls 404s and
+#: returns `[]`, so pointing them at `matches/live` would hand that writer 195
+#: rows across 113 leagues on the next beat — a live-ingestion change over the
+#: widest team-name space we have, arriving as a side effect of a routing fix.
+#:
+#: And they would arrive WRONG, which is measured, not feared. Replaying the
+#: real `_parse_fixtures` over the real 04:25Z payload:
+#:   * soccer scores live under `home.goals`, not `home.totalscore`, so all 195
+#:     rows parse with `home_score is None`;
+#:   * an unplayed match carries its KICKOFF CLOCK in `status` (`"22:00"`,
+#:     equal to its own `time` field on 172 of 172 such rows), which
+#:     `_normalize_status` passes through verbatim — so the shared parser would
+#:     report a game whose status is a wall clock.
+#: The authority door (`get_live_fixtures`) reads both correctly through
+#: `_parse_soccer_live_matches`. Teaching the LIVE WRITER soccer is #3348's
+#: change and gets its own review; this constant is where that decision is
+#: recorded rather than implied by a 404.
+LIVESCORES_INGESTION_DARK_SPORTS: frozenset[str] = frozenset({"soccer"})
 
 
 @dataclass
@@ -420,19 +489,38 @@ class StatPalAPIService(BaseAPIClient):
         return self._parse_fixtures(data, sport)
 
     async def get_live_scores(self, sport: str) -> list[StatPalFixture]:
-        """Fetch live/in-progress games.
+        """Fetch live/in-progress games — the INGESTION door.
 
         Args:
             sport: Sport identifier
 
         Returns:
-            List of currently live games as StatPalFixture objects.
+            List of currently live games as StatPalFixture objects. `[]` for a
+            sport in `LIVESCORES_INGESTION_DARK_SPORTS`, by decision rather than
+            by a 404 — read that constant for which sports and why.
         """
-        data = await self._get(sport, "livescores")
+        if sport in LIVESCORES_INGESTION_DARK_SPORTS:
+            # Says out loud, once per call, what a 404 used to say by accident.
+            # The authority door reads this sport; the live writer does not.
+            logger.info(
+                "StatPal %s: live board not read on the ingestion path "
+                "(LIVESCORES_INGESTION_DARK_SPORTS) — the authority door "
+                "`get_live_fixtures` reads it; teaching the live writer this "
+                "sport is #3348's change, not a routing side effect",
+                sport,
+            )
+            return []
+
+        data = await self._get(sport, self._live_endpoint(sport))
         if not data:
             return []
 
         return self._parse_fixtures(data, sport)
+
+    @staticmethod
+    def _live_endpoint(sport: str) -> str:
+        """The live-board path for a sport. `livescores` unless measured otherwise."""
+        return LIVE_SCORE_ENDPOINTS.get(sport, "livescores")
 
     # -------------------------------------------------------------------------
     # Authority schedules (D50) — a DARK read path
@@ -553,16 +641,30 @@ class StatPalAPIService(BaseAPIClient):
         argument that gave `get_schedule_fixtures` its own door applies here
         unchanged.
 
+        **Soccer joined on 2026-09-07 (#3366), and it is half this door's job.**
+        `STATPAL_SPORT_MAPPING` has fourteen keys and SEVEN of them are soccer,
+        so `espn_sync._read_statpal_standby` — the only caller that asks whether
+        the standby could carry a sport ESPN went dark on — read a
+        `StatPalUpstreamError` for half its map on every pass, and the live half
+        of soccer's readiness could never be anything but DARK. It was not an
+        outage: the live board is `matches/live`, not `livescores`
+        (`LIVE_SCORE_ENDPOINTS`), and this door reads it through
+        `_parse_soccer_live_matches`. The INGESTION door stays dark for soccer
+        on purpose (`LIVESCORES_INGESTION_DARK_SPORTS`).
+
         Raises:
             StatPalUpstreamError: the read failed. "No games are live" and "we
                 could not ask" must not arrive as the same empty list (gotcha
                 #53) — a linker that treats a 500 as an empty slate reports a
                 clean run in which nothing was linked.
         """
-        data = await self._get(sport, "livescores")
-        self._require_answer(sport, "livescores", data)
+        endpoint = self._live_endpoint(sport)
+        data = await self._get(sport, endpoint)
+        self._require_answer(sport, endpoint, data)
         if sport == "tennis":
             return self._parse_tennis_daily(data)
+        if sport == "soccer":
+            return self._parse_soccer_live_matches(data)
         return self._parse_fixtures(data, sport)
 
     @staticmethod
@@ -579,6 +681,173 @@ class StatPalAPIService(BaseAPIClient):
                 f"StatPal {sport}/{endpoint} did not answer with data "
                 f"(see the preceding StatPal API log line for the cause)"
             )
+
+    #: A soccer live status that is a wall clock is the KICKOFF TIME, not a
+    #: period. Measured over the whole 04:25Z board: 172 of 195 rows carry one,
+    #: and on 172 of 172 it is character-for-character the row's own `time`.
+    _SOCCER_KICKOFF_CLOCK = re.compile(r"^\d{1,2}:\d{2}$")
+    #: A bare minute, optionally with stoppage time. INFERRED, not measured —
+    #: see `_normalize_soccer_status`.
+    _SOCCER_MINUTE = re.compile(r"^(\d{1,3})(\+\d{1,2})?'?$")
+
+    @classmethod
+    def _normalize_soccer_status(
+        cls, raw: str, kickoff_clock: str
+    ) -> tuple[str, Optional[str]]:
+        """Soccer's live status vocabulary -> (our status, raw_status).
+
+        Returns `raw_status` on the same rule `_parse_single_fixture` uses: it
+        is set only when the row is live, because the live writer copies it into
+        `event.period` and a period is a thing only a live game has.
+
+        Three tokens, and they are not equally well established — which is said
+        here rather than left for a reader to assume:
+
+          * ``FT`` / ``AET`` / ``Pen.`` — MEASURED (23 of 195 rows at 04:25Z).
+            Handled by the shared `_normalize_status`, which already knows them.
+          * a wall clock — MEASURED, 172 of 195, and it is the kickoff time, not
+            a period. Passing it through would report a game whose status is
+            ``"22:00"``; reading it as live would put a not-yet-started match on
+            the live board. It is `scheduled`, and it carries no `raw_status`.
+          * a bare minute (``67``, ``90+3``) — **INFERRED, NOT MEASURED.** The
+            04:25Z board had no match in play (Sunday night UTC; the census was
+            23 FT and 172 unplayed), so this shape was never seen. It is treated
+            as live because the vendor's own siblings say so — every event in
+            the payload is keyed by ``minute``, and each match carries
+            ``inj_minute``/``inj_time`` — and because #3366's measurement on
+            2026-09-05 recorded ``status = "HT"`` on an in-play match, which the
+            shared map already reads as live. Should the real token turn out to
+            be something else, it falls through to the shared map and passes
+            through unchanged, which is the same answer this parser gave before.
+        """
+        token = (raw or "").strip()
+        if not token:
+            return "", None
+        if cls._SOCCER_KICKOFF_CLOCK.match(token):
+            if kickoff_clock and token != kickoff_clock.strip():
+                # The invariant that makes a clock readable as a kickoff time.
+                # Still scheduled — a clock is not a period either way — but a
+                # disagreement is a finding about the venue, so it is said.
+                logger.warning(
+                    "StatPal soccer: live status %r is a clock but the row's "
+                    "own time is %r — reading it as scheduled",
+                    token, kickoff_clock,
+                )
+            return "scheduled", None
+        if cls._SOCCER_MINUTE.match(token):
+            return "live", token
+        status = _normalize_status(token)
+        return status, (token if status == "live" else None)
+
+    def _parse_soccer_live_matches(self, data: dict) -> list[StatPalFixture]:
+        """Parse a v2 soccer `matches/live` payload for the authority program.
+
+        Shape (measured 2026-09-07 04:25Z — 113 leagues, 195 matches)::
+
+            {"live_matches": {
+                "updated": "07.09.2026 04:25:00", "updated_ts": 1788755100,
+                "league": [{"id": "2914", "name": "Argentina: Liga …",
+                            "country": "argentina", "cup": "False",
+                            "match": [ … ] }]}}
+
+        Why this sport gets its own parser rather than a fix to the shared one:
+        the same argument `get_live_fixtures` makes for tennis, and for the same
+        reason. `_extract_match_items` DOES reach these rows — its generic
+        ``"league" in val`` branch matches `live_matches` — so a shared-parser
+        change would not add a reader, it would hand 195 rows to
+        `sync_statpal_schedules` on the next beat. See
+        `LIVESCORES_INGESTION_DARK_SPORTS`.
+
+        And the shared parser reads two fields of this shape wrong, both
+        measured over the full board:
+
+          * **scores are `goals`, not `totalscore`** — all 195 rows parse
+            scoreless through `_parse_single_fixture`. An unplayed match serves
+            the literal string ``"?"`` here, which `_safe_int` correctly refuses;
+            a reader that took it for 0 would print 0-0 over a game nobody has
+            kicked off.
+          * **status is the kickoff clock until the game starts** — see
+            `_normalize_soccer_status`.
+
+        Ids are carried, never substituted (D55). `main_id` is StatPal's own
+        primary key for the fixture and it is **blank on 7 of the 195 rows**,
+        with `fallback_id_1..3` blank on 12 — the same four id spaces
+        `StatPalInjury` names. A blank id is emitted as a blank, because this
+        door feeds a live READING keyed on the team pair (`espn_sync`'s standby
+        check), and dropping the row would under-report StatPal's coverage of
+        exactly the games ESPN went dark on. It must never become an anchor:
+        #2963 is the 8,272-row repair that happens when a blank id is written as
+        one, and no soccer writer exists to do it.
+        """
+        section = data.get("live_matches") if isinstance(data, dict) else None
+        if not isinstance(section, dict):
+            return []
+
+        fixtures: list[StatPalFixture] = []
+        for league in _as_list(section.get("league")):
+            if not isinstance(league, dict):
+                continue
+            league_name = league.get("name") or None
+            # `match` is a bare dict when the league has exactly one game — the
+            # same one-item collapse `_extract_match_items` handles for v1.
+            for item in _as_list(league.get("match")):
+                if not isinstance(item, dict):
+                    continue
+                try:
+                    fixture = self._parse_soccer_live_match(item, league_name)
+                except Exception as exc:  # noqa: BLE001 — one bad row, not the board
+                    logger.debug("StatPal soccer: skipping live row: %s", exc)
+                    continue
+                if fixture:
+                    fixtures.append(fixture)
+        return fixtures
+
+    def _parse_soccer_live_match(
+        self, item: dict, league_name: Optional[str]
+    ) -> Optional[StatPalFixture]:
+        """One row of `live_matches`. See `_parse_soccer_live_matches`."""
+        home = item.get("home") if isinstance(item.get("home"), dict) else {}
+        away = item.get("away") if isinstance(item.get("away"), dict) else {}
+        home_team = str(home.get("name") or "").strip()
+        away_team = str(away.get("name") or "").strip()
+        if not home_team or not away_team:
+            return None
+
+        kickoff_clock = str(item.get("time") or "").strip()
+        status, raw_status = self._normalize_soccer_status(
+            str(item.get("status") or ""), kickoff_clock
+        )
+
+        # `date` + `time` with no `timezone` and no `datetime_utc` sibling is
+        # UTC — the tell measured across the v1 endpoints and written up at
+        # `_parse_single_fixture`'s start-time block. Confirmed on this board:
+        # Racing Club v Atl. Tucuman reads 00:30 on 07.09, and 21:30 Argentine
+        # time on the 6th is 00:30Z on the 7th.
+        date_str = str(item.get("date") or "").strip()
+        start_time = None
+        if date_str and kickoff_clock:
+            start_time = _parse_datetime(f"{date_str} {kickoff_clock}")
+        if not start_time and date_str:
+            start_time = _parse_datetime(date_str)
+
+        venue = item.get("venue")
+        if isinstance(venue, dict):
+            venue = venue.get("name")
+
+        return StatPalFixture(
+            fixture_id=str(item.get("main_id") or ""),
+            home_team=home_team,
+            away_team=away_team,
+            home_team_id=str(home.get("id") or "") or None,
+            away_team_id=str(away.get("id") or "") or None,
+            start_time=start_time,
+            status=status,
+            raw_status=raw_status,
+            home_score=_safe_int(home.get("goals")),
+            away_score=_safe_int(away.get("goals")),
+            venue=str(venue).strip() or None if venue else None,
+            league=league_name,
+        )
 
     def _parse_v1_season_schedule(self, data: dict, sport: str) -> list[StatPalFixture]:
         """Parse an NBA/NHL season-schedule payload for the authority program.

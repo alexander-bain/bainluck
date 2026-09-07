@@ -1,0 +1,173 @@
+{
+ "live_matches": {
+  "updated": "07.09.2026 04:25:00",
+  "updated_ts": 1788755100,
+  "league": [
+   {
+    "id": "2914",
+    "name": "Argentina: Liga Profesional - Clausura",
+    "country": "argentina",
+    "cup": "False",
+    "match": [
+     {
+      "main_id": "2026090711955",
+      "fallback_id_1": "6136522",
+      "fallback_id_2": "6643936",
+      "fallback_id_3": "9543739",
+      "status": "FT",
+      "date": "07.09.2026",
+      "time": "00:30",
+      "inj_time": "",
+      "inj_minute": "",
+      "venue": "",
+      "home": {
+       "id": "2337869",
+       "name": "Racing Club",
+       "goals": "1"
+      },
+      "away": {
+       "id": "2337752",
+       "name": "Atl. Tucuman",
+       "goals": "2"
+      },
+      "events": {
+       "event": [
+        {
+         "id": "74450894",
+         "type": "yellowcard",
+         "team": "home",
+         "minute": "13",
+         "extra_min": "",
+         "player": "U. Ortegoza",
+         "player_id": "2926724",
+         "assist_player": "Foul",
+         "assist_id": "",
+         "result": ""
+        },
+        {
+         "id": "74450895",
+         "type": "pen miss",
+         "team": "away",
+         "minute": "14",
+         "extra_min": "",
+         "player": "L. Diaz",
+         "player_id": "2447981",
+         "assist_player": "L. Diaz",
+         "assist_id": "2447981",
+         "result": ""
+        },
+        {
+         "id": "74450896",
+         "type": "goal",
+         "team": "away",
+         "minute": "24",
+         "extra_min": "",
+         "player": "L. Godoy",
+         "player_id": "3308121",
+         "assist_player": "N. Lamendola",
+         "assist_id": "2985723",
+         "result": "[0 - 1]"
+        }
+       ]
+      },
+      "ht": {
+       "home_goals": 0,
+       "away_goals": 1
+      },
+      "ft": {
+       "home_goals": 1,
+       "away_goals": 2
+      },
+      "et": null,
+      "penalties": null,
+      "has_live_stats": "True",
+      "inplay_odds_running": "False",
+      "groupid": "157",
+      "match_context": {
+       "live_storylines": true,
+       "weather_forecast": true,
+       "team_lineups": true,
+       "predictions": true
+      }
+     },
+     {
+      "main_id": "2026090711830",
+      "fallback_id_1": "6136514",
+      "fallback_id_2": "6643928",
+      "fallback_id_3": "9544920",
+      "status": "22:00",
+      "date": "07.09.2026",
+      "time": "22:00",
+      "inj_time": "",
+      "inj_minute": "",
+      "venue": "",
+      "home": {
+       "id": "2337755",
+       "name": "Barracas Central",
+       "goals": "?"
+      },
+      "away": {
+       "id": "2337741",
+       "name": "Argentinos Jrs",
+       "goals": "?"
+      },
+      "events": null,
+      "ht": null,
+      "ft": null,
+      "et": null,
+      "penalties": null,
+      "has_live_stats": "True",
+      "inplay_odds_running": "True",
+      "match_context": {
+       "live_storylines": true,
+       "weather_forecast": true,
+       "team_lineups": true,
+       "predictions": true
+      }
+     }
+    ]
+   },
+   {
+    "id": "21076",
+    "name": "Brazil: Copa Parana",
+    "country": "brazil",
+    "cup": "True",
+    "match": {
+     "main_id": "",
+     "fallback_id_1": "",
+     "fallback_id_2": "",
+     "fallback_id_3": "9456476",
+     "status": "19:00",
+     "date": "07.09.2026",
+     "time": "19:00",
+     "inj_time": "",
+     "inj_minute": "",
+     "venue": "",
+     "home": {
+      "id": "",
+      "name": "Londrina B",
+      "goals": "?"
+     },
+     "away": {
+      "id": "2361031",
+      "name": "Sao Joseense",
+      "goals": "?"
+     },
+     "events": null,
+     "ht": null,
+     "ft": null,
+     "et": null,
+     "penalties": null,
+     "has_live_stats": "False",
+     "inplay_odds_running": "False",
+     "match_context": {
+      "live_storylines": false,
+      "weather_forecast": false,
+      "team_lineups": false,
+      "predictions": false
+     }
+    }
+   }
+  ]
+ }
+}
