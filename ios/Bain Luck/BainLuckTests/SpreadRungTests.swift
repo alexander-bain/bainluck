@@ -609,6 +609,12 @@ final class SpreadRungTests: XCTestCase {
             "Seattle -3.5",
             "Seattle wins by 6 points",
             "",
+            // 🔴 THE `by` ANCHOR, and the mutation battery is the only reason
+            // it is pinned: dropping it leaves `\d+ [-–—] \d+`, which any date
+            // or score sitting anywhere in an outcome name satisfies. Both of
+            // these are cover lines and both would be silently refused.
+            "Seattle wins by over 3.5 points on 2026-09-07",
+            "Seattle 7-3 wins by over 3.5 points",
         ] {
             XCTAssertFalse(SpreadRungs.namesARange(cover), "should be kept: \(cover)")
         }
