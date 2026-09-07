@@ -7738,11 +7738,30 @@ async def _build_search_suggestions(db: AsyncSession) -> dict:
         # bare comprehension it would have excluded live US Open matches, which
         # on this Saturday is the one thing the row must never do (the marquee
         # rule: a Slam match always exists, so if it is missing that is our bug).
+        # 🔴 #3728: THE ONE EVENT PATH THAT SKIPPED `served_event_status`. Every
+        # other public serializer of `event.status` — six in this file, two in
+        # `league_futures.py` — rewrites a row that claims `live` while its own
+        # `commence_time` is still in the future back to `scheduled`. This
+        # section read the raw column, so on 2026-09-06 `/api/events/14969919`
+        # printed `scheduled` and the first chip of `/search` said **"Live"**,
+        # in the same minute, off the same row.
+        #
+        # The clock floor is in the STATEMENT for the reason the tier gate above
+        # is: `.limit(50)` has no ordering, so a row filtered after the read has
+        # already spent one of the fifty. It is not the rule, though — the rule
+        # is `served_event_status`, applied per row below. A SQL predicate
+        # cannot call it (`lifecycle.py` is stdlib-only on purpose, so every
+        # classifier and the Flow Sentinel can share it), and a predicate lifted
+        # into SQL loses the function's fallbacks. This one happens to agree on
+        # the NULL case — `NULL <= now` is NULL, so a start-less row is dropped
+        # exactly as `live_start_satisfied` drops it — but "happens to agree" is
+        # why the function still runs on every row that survives.
         live_events_q = (
             select(Event)
             .join(Sport)
             .where(
                 Event.status == "live",
+                Event.commence_time <= now,
                 Sport.key.in_(tier_12_keys),
                 not_a_proven_duplicate(),
             )
@@ -7790,6 +7809,15 @@ async def _build_search_suggestions(db: AsyncSession) -> dict:
             for ev in live_events:
                 if _section_full(1):
                     break
+                # 🔴 #3728, and this is the rule rather than the floor above.
+                # `served_event_status` is what every other event path serves,
+                # so a row it does not call `live` has no business on a chip
+                # that says "Live —". It runs even though the statement already
+                # filtered, because the statement is an optimisation of the
+                # budget and this is the invariant; if they ever disagree, the
+                # function wins and the chip is dropped.
+                if served_event_status(ev.status, ev.commence_time, now) != "live":
+                    continue
                 hp = compute_aggregate_probability(ev, ev.status)
                 if hp is None:
                     continue
@@ -7869,7 +7897,27 @@ async def _build_search_suggestions(db: AsyncSession) -> dict:
             select(Event, Sport.key)
             .join(Sport)
             .where(
-                Event.status == "scheduled",
+                # 🔴 #3728's OTHER HALF. Section 1 now refuses a premature-live
+                # row; without this the game would fall out of the row
+                # altogether, because this section asked for the RAW `scheduled`
+                # too. What it asks for now is "`served_event_status` reads
+                # `scheduled`", spelled out: either the row says so itself, or
+                # it claims `live` and its start is STILL IN THE FUTURE, which
+                # is the one case that function rewrites.
+                #
+                # `> now`, not the window's own `>= now` lower bound, because
+                # they differ at exactly one instant and the difference is the
+                # whole rule: a `live` row commencing exactly `now` HAS started
+                # and `served_event_status` leaves it `live` — section 1's floor
+                # is `<= now`, so that row is section 1's and this section must
+                # not also claim it.
+                #
+                # The game keeps its chip and the chip tells the truth:
+                # "Tips off in 40 min" instead of "Live — tight game".
+                or_(
+                    Event.status == "scheduled",
+                    and_(Event.status == "live", Event.commence_time > now),
+                ),
                 Event.commence_time.between(now, now + timedelta(hours=3)),
                 Sport.key.in_(tier_12_keys),
                 # #2263 / CERT-439. THE ONE OF THESE THREE A TWIN REACHES TODAY:
