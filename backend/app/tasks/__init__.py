@@ -727,12 +727,43 @@ celery_app.conf.task_routes = {
     "app.tasks.stamp_mlb_statpal_fixtures": {"queue": "background"},
     "app.tasks.heartbeat": {"queue": "realtime"},
     "app.tasks.transition_event_statuses": {"queue": "realtime"},
-    # #2236 (LAT-P101) put `prewarm_live_feed_shapes` HERE, on `realtime`, and
-    # D68-next (#3060, L1B-050) MOVED IT TO `heavy`. It is listed in HEAVY_TASKS
-    # below with the measurement that moved it; this breadcrumb stays because the
-    # #2236 argument is still correct and is the thing a future reader will find
-    # first. Its premise — "realtime is the lane that is never blocked by batch
-    # jobs" — is what stopped being true, not its reasoning.
+    # #3765 (LAT-P179, Fable D51). BACK ON `realtime`, where #2236 (LAT-P101) put
+    # it. D68-next (#3060, L1B-050) moved it to `heavy` on a real measurement;
+    # this moves it back on another one, and the honest summary is that NEITHER
+    # LANE HAS A FREE SLOT RESERVED FOR IT — it goes to whichever lane is measured
+    # idle, and it will move again when that flips. The undo is this line plus the
+    # beat literal, nothing else.
+    #
+    #     measured 2026-09-07 03:47Z, `GET /api/admin/celery/schedule-adherence`
+    #     ------------------------------------------------------------------
+    #     on `heavy` (now):        deliveries 187 / 628.4 expected = 0.30, `behind`
+    #                              over a 25,137 s window. `heavy` is concurrency 2
+    #                              and its two residents (precompute_calibration_main,
+    #                              match_prediction_markets) hold both slots for
+    #                              minutes at a time; a 40 s beat cannot start.
+    #     the `realtime` co-tenants that D68-next disqualified this lane over:
+    #                              poll_all_odds 0.99 on_schedule
+    #                              sync_espn_live_events 0.98 on_schedule
+    #                              poll_live_prediction_markets 0.97 on_schedule
+    #                              sync_statpal_livescores 0.99 on_schedule
+    #                              poll_datagolf_inplay 0.98 overruns
+    #     `realtime` queue depth 0, and its worker read 1 of 4 slots active with
+    #     0 reserved at the same minute.
+    #
+    # WHAT CHANGED SINCE D68-next, stated so this is not read as a reversal of its
+    # reasoning: D68-next measured all four `realtime` co-tenants `overruns` with a
+    # ~9.09-slot standing demand against 4. Four of five now grade `on_schedule`.
+    # #3251's single-flight lease is what capped them at one copy each; that lease
+    # was days old when D68-next measured and its effect is now in the numbers.
+    #
+    # WHY THIS IS SAFE TO DO ON ONE READING, when the file above says a snapshot is
+    # not an occupancy series: the adherence ratios are a 2.6-HOUR window, not a
+    # snapshot, and the move is guarded rather than assumed. The rail's cost is
+    # bounded by construction (`_LIVE_PREWARM_HARD_LIMIT_S` < the 40 s period, a
+    # 20 s pass budget, `expires` at exactly one period) so its worst case is <=0.5
+    # of one slot, and this lane has 4. If live scores fall behind by >60 s the
+    # move is reverted the same hour — see the LAT-P179 receipt.
+    "app.tasks.prewarm_live_feed_shapes": {"queue": "realtime"},
     # --- Everything else routes to background (default queue) ---
     # --- 600s-class grinders route to `heavy` (applied below) ---
 }
@@ -899,7 +930,16 @@ HEAVY_TASKS = {
     # placing it there would close the queue rather than share it. It cannot
     # collide with the :15 precompute, and it is the only heavy beat at :50.
     "app.tasks.refresh_stale_futures_prices",
-    # --- D68-next = B (#3060, #3251, L1B-050). The front-page pre-builder, moved
+    # --- 🔄 `prewarm_live_feed_shapes` IS NO LONGER A MEMBER OF THIS SET. It was
+    # added by D68-next below and REMOVED by #3765 (LAT-P179, Fable D51) on
+    # 2026-09-07; it routes to `realtime` from `task_routes` above, where the
+    # measurement that moved it back is written out in full. This block is kept
+    # verbatim as the history, because a future reader deciding where this beat
+    # belongs needs BOTH readings, and because the move it argues for is the undo:
+    # re-adding the member line at the bottom of this comment and flipping the beat
+    # literal back to `heavy` is the whole revert.
+    #
+    # D68-next = B (#3060, #3251, L1B-050). The front-page pre-builder, moved
     # off `realtime`. This is the ONE task on this lane that a user waits on, so
     # the reason is written out rather than left to the class rule above.
     #
@@ -952,7 +992,10 @@ HEAVY_TASKS = {
     # tasks, so a REVERT verdict will prescribe reverting THOSE. If it fires after
     # this change, this line is the first thing to try — deleting it and restoring
     # the beat literal to "realtime" is the whole undo.
-    "app.tasks.prewarm_live_feed_shapes",
+    #
+    # 🔄 AND THAT IS EXACTLY WHAT #3765 DID. The member line that stood here —
+    # `"app.tasks.prewarm_live_feed_shapes",` — is deleted, and the beat literal is
+    # `realtime`. Restoring both is the revert; nothing else in this file changed.
 }
 
 for _heavy_task in HEAVY_TASKS:
@@ -5192,19 +5235,25 @@ celery_app.conf.beat_schedule = {
         # case, and the reason a 40s beat is affordable at all), otherwise one
         # feed build per LIVE shape inside a 20s pass budget.
         #
-        # `heavy` since D68-next (#3060, L1B-050) — it was `realtime` under #2236
-        # until `realtime` was measured at ~4 of 4 slots permanently occupied and
-        # this beat at 7.0 % adherence. Still NOT `background`: #2236's argument
-        # against it (one effective slot, multi-minute co-tenant waits) stands.
+        # `realtime` under #2236, `heavy` under D68-next (#3060, L1B-050), and
+        # `realtime` again under #3765 (LAT-P179) on 2026-09-07: `heavy` delivered
+        # 0.30 of this beat's fires over 25,137 s because its 2 slots are held by
+        # the calibration rebuild and the matching pass, while four of five
+        # `realtime` co-tenants now grade `on_schedule` and that lane's depth is 0.
+        # The measurement, and why it does not contradict D68-next's reasoning, is
+        # at the `task_routes` entry in this file. Still NOT `background`: #2236's
+        # argument against it (one effective slot, multi-minute co-tenant waits)
+        # is untouched by either move and disqualifies it in both directions.
         #
-        # Both routing surfaces must say `heavy`, since beat options override
+        # Both routing surfaces must agree, since beat options override
         # `task_routes` and a disagreement would make the queue depend on whether
-        # the task was published by beat or by hand —
-        # `test_heavy_beat_literals_match_their_effective_queue` reads this
-        # literal out of the SOURCE, so the HEAVY_TASKS loop cannot paper over it.
-        # The full measurement and the undo are at the HEAVY_TASKS entry.
+        # the task was published by beat or by hand. This literal is no longer
+        # policed by `test_heavy_beat_literals_match_their_effective_queue` — that
+        # guard keys off HEAVY_TASKS membership and this task is no longer a
+        # member — so `test_the_pass_runs_on_realtime_and_not_on_background`
+        # asserts the pair directly instead.
         "schedule": float(FEED_LIVE_REPUBLISH_PERIOD_S),
-        "options": {"queue": "heavy"},
+        "options": {"queue": "realtime"},
     },
     "precompute-backfill-winners-status": {
         "task": "app.tasks.precompute_backfill_winners_status",

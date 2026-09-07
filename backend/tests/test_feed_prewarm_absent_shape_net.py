@@ -526,11 +526,31 @@ def test_the_net_rides_a_different_queue_from_the_rail_it_covers():
     the 2026-08-29 baseline the post-move re-measurement is compared against —
     they are history now, not a current claim.
 
+    🔄 AMENDED AGAIN by #3765 (LAT-P179): the net moved `heavy` -> `realtime`,
+    and THE INVARIANT IS STILL UNCHANGED — the host is still on `background`, so
+    the two still do not share a queue. This is the net's THIRD queue in a
+    fortnight and that is worth saying plainly rather than burying in a diff: the
+    net has no lane of its own, it rides whichever lane is currently measured
+    idle, and the only property this test defends is that the lane is never the
+    host's. On 2026-09-07 03:47Z the net was landing 0.30 of its fires on `heavy`
+    (concurrency 2, both slots under the calibration rebuild and the matching
+    pass) while four of five `realtime` co-tenants graded `on_schedule` and that
+    queue's depth was 0 — #3251's single-flight lease had done its work in the
+    time since D68-next measured. The full reading is in
+    `app/tasks/__init__.py`'s `task_routes` entry.
+
     The assertion order below is deliberate: the queue is pinned BY NAME first,
     so a silent drift to `background` (the default, and the one queue that would
     make this net inert) fails loudly rather than sliding past a `!=` that any
     two distinct wrong values would satisfy. The structural host != net invariant
     is asserted last, as the thing that actually carries the claim.
+
+    **THE NAME PIN IS WHAT CAUGHT #3765'S FIRST HEAD, and it earned its keep.**
+    That change moved the net and updated every guard that greps for the task's
+    own name — this one asserts on the beat-schedule KEY and the route dict, so
+    it scrolled past a truncated grep and CI shard 1 found it instead. A `!=`-only
+    test would have passed silently through the move and told nobody the pin had
+    gone stale.
     """
     from app.tasks import celery_app
 
@@ -538,9 +558,9 @@ def test_the_net_rides_a_different_queue_from_the_rail_it_covers():
     host = conf.beat_schedule["precompute-discover-candidate-base"]
     net = conf.beat_schedule["prewarm-live-feed-shapes"]
 
-    assert net["options"]["queue"] == "heavy"
+    assert net["options"]["queue"] == "realtime"
     assert conf.task_routes["app.tasks.prewarm_live_feed_shapes"] == {
-        "queue": "heavy"
+        "queue": "realtime"
     }
     host_queue = host.get("options", {}).get("queue", conf.task_default_queue)
     assert host_queue == "background", (

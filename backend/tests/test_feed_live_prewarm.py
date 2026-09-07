@@ -171,7 +171,7 @@ def test_the_beat_carries_an_expires_bound_of_exactly_one_period():
     ), "the bound must be exactly one period — the flat #1609 rule"
 
 
-def test_the_pass_runs_on_heavy_and_not_on_background():
+def test_the_pass_runs_on_realtime_and_not_on_background():
     """A queue choice that is part of the correctness argument, not of the cost one.
 
     `PERIOD + BUDGET <= 60` assumes the pass STARTS at its period. `background`
@@ -185,35 +185,50 @@ def test_the_pass_runs_on_heavy_and_not_on_background():
     inert in the silent way — the beat would report success on every pass it
     eventually ran. That is why this is a test and not a comment.
 
-    🔄 AMENDED by D68-next (#3060, L1B-050): `realtime` -> `heavy`. This test
-    used to read `test_the_pass_runs_on_realtime_and_not_on_background`, and the
-    half it was actually defending — NOT `background` — is unchanged and is the
-    half asserted last. What changed is a measurement, not the reasoning: on
-    2026-09-05 all four `realtime` co-tenants graded `overruns`
+    🔄 AMENDED by D68-next (#3060, L1B-050): `realtime` -> `heavy`. On 2026-09-05
+    all four `realtime` co-tenants graded `overruns`
     (`GET /api/admin/celery/schedule-adherence`), single-flight caps them at ~4
     of 4 slots, and this beat completed 50 passes in 7.97 h — **7.0 % of its
     scheduled fires** — while `heavy`'s census depth read 0. `realtime` had
     become the exact lane #2236 was written to keep this task out of.
 
+    🔄 AMENDED AGAIN by #3765 (LAT-P179, Fable D51): `heavy` -> `realtime`, and
+    the two amendments together are the point of this docstring. On 2026-09-07 at
+    03:47Z the same endpoint reported this beat at **0.30 deliveries per scheduled
+    fire over a 25,137 s window, verdict `behind`** — `heavy` is concurrency 2 and
+    both slots sit under `precompute_calibration_main` and
+    `match_prediction_markets` for minutes at a time — while four of five
+    `realtime` co-tenants graded `on_schedule` (0.97–0.99; only
+    `poll_datagolf_inplay` still `overruns`) and `realtime`'s queue depth was 0.
+
+    **NEITHER LANE RESERVES THIS BEAT A SLOT.** That is the durable finding, and
+    it is why this test asserts a specific lane rather than a principle: the beat
+    goes to whichever lane is currently measured idle, and the assertion is a pin
+    on the last measurement, not a law. What is a law is the half asserted last —
+    NOT `background` — which is unchanged across both moves and both readings.
+
     Both surfaces are asserted because beat `options` override `task_routes`; a
     disagreement makes the queue depend on whether the task was published by the
-    beat or by hand.
+    beat or by hand. Since this task left `HEAVY_TASKS`, nothing else checks that
+    pair for it — `test_heavy_beat_literals_match_their_effective_queue` iterates
+    HEAVY_TASKS members — so this assertion IS the agreement guard now.
     """
     from app.tasks import HEAVY_TASKS, celery_app
 
     conf = celery_app.conf
     entry = conf.beat_schedule["prewarm-live-feed-shapes"]
-    assert entry["options"]["queue"] == "heavy", entry["options"]
+    assert entry["options"]["queue"] == "realtime", entry["options"]
     assert conf.task_routes["app.tasks.prewarm_live_feed_shapes"] == {
-        "queue": "heavy"
+        "queue": "realtime"
     }
-    # Membership in HEAVY_TASKS is what makes the two surfaces agree by
-    # construction (the loop under the set writes `task_routes`), and it is what
-    # `test_heavy_beat_literals_match_their_effective_queue` keys off to check
-    # the beat's SOURCE literal. Assert it directly: routing correctly by
-    # accident, off a hand-written pair, is the arrangement that guard exists to
-    # forbid.
-    assert "app.tasks.prewarm_live_feed_shapes" in HEAVY_TASKS
+    # Non-membership asserted directly, not left implicit. The loop under
+    # HEAVY_TASKS OVERWRITES `task_routes` for every member, so a re-added member
+    # line would silently win over the `realtime` route above and the beat literal
+    # would be the only surface still saying `realtime` — the exact
+    # two-surfaces-disagree arrangement the block comment forbids. Without this
+    # line the `task_routes` assertion above would catch it, but only by accident
+    # of ordering; this says what is actually required.
+    assert "app.tasks.prewarm_live_feed_shapes" not in HEAVY_TASKS
 
     # And the surviving half of the original guard, unchanged: `background` is
     # still disqualified, and the fall-through hazard is still that deleting the
