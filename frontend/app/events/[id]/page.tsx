@@ -746,6 +746,14 @@ export default function EventPage({ params }: EventPageProps) {
           sportKey={event.sport}
           onNavigate={(href) => trackNavigationClick('back', `/events/${eventId}`, href)}
         />
+        {/* #3702: NO ARROW GLYPH IN THE LABEL — the <svg> below is the arrow.
+            This link used to draw the chevron AND carry a literal arrow
+            character in its text, so one link rendered two arrows. Next to the
+            #2448 tournament link above, which has the identical chevron and no
+            glyph, the header read "US Open 2026 / Back to events" with three
+            arrows across two links. The chevron is the shared affordance both
+            links use; the label is words. Guarded by
+            __tests__/backLinkSingleArrow3702.test.tsx, over BOTH links. */}
         <Link
           href="/"
           onClick={() => trackNavigationClick('back', `/events/${eventId}`, '/')}
@@ -764,7 +772,7 @@ export default function EventPage({ params }: EventPageProps) {
               d="M15 19l-7-7 7-7"
             />
           </svg>
-          ← Back to events
+          Back to events
         </Link>
         </div>
 
