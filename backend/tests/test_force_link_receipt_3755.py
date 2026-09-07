@@ -31,7 +31,6 @@ THE FOUR LINES THESE TESTS HOLD:
    than becoming three free-text strings.
 """
 
-import asyncio
 from datetime import datetime, timezone
 
 import pytest
@@ -217,10 +216,10 @@ class _FakeDB:
         market = self._market
 
         class _R:
-            def scalars(self_inner):
-                return self_inner
+            def scalars(self):
+                return self
 
-            def first(self_inner):
+            def first(self):
                 return market
 
         return _R()
@@ -349,16 +348,46 @@ async def test_the_receipt_reads_the_market_before_the_commit_expires_it(
     """
     _configure(monkeypatch, matchup=("a", "b"), matched=MATCHED, refusal=None)
 
-    class _ExpiringMarket(_FakeMarket):
+    class _ExpiringMarket:
+        """``_FakeMarket`` whose identity reads raise once ``expire()`` has run.
+
+        Explicit properties rather than ``__getattribute__`` on purpose. The
+        endpoint reads some fields through ``getattr(row, "x", None)``, which
+        swallows an ``AttributeError`` and would let this test pass without
+        proving anything — so the raise must NOT be an ``AttributeError``, and a
+        special method raising anything else is itself a CodeQL finding
+        (``py/unexpected-raise-in-special-method``). A property raising
+        ``RuntimeError`` propagates through ``getattr``'s default and trips no
+        rule. ``event_id`` stays a plain attribute: the endpoint writes it.
+        """
+
+        def __init__(self):
+            self._expired = False
+            self.event_id = None
+
         def expire(self):
             self._expired = True
 
-        def __getattribute__(self, item):
-            if item not in ("expire", "_expired", "event_id") and object.__getattribute__(
-                self, "__dict__"
-            ).get("_expired"):
+        def _read(self, item):
+            if self._expired:
                 raise RuntimeError(f"instance is expired; {item} would lazy-load")
-            return object.__getattribute__(self, item)
+            return MARKET_ROW[item]
+
+        @property
+        def id(self):
+            return self._read("id")
+
+        @property
+        def source(self):
+            return self._read("source")
+
+        @property
+        def external_id(self):
+            return self._read("external_id")
+
+        @property
+        def name(self):
+            return self._read("name")
 
     market = _ExpiringMarket()
 
