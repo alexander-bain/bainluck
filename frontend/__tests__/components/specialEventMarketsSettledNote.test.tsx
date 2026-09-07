@@ -180,6 +180,42 @@ describe("the other direction: a quote on screen keeps the promise", () => {
   });
 });
 
+describe("the MIXED section — #3645's acceptance criterion, and the hard case", () => {
+  /**
+   * The same match stopped at two sets to love. Sets 1 and 2 are decided AND
+   * the score can name who took them, so those rows state results; set 3 is
+   * still open, so its row quotes. On the exact-score ladder `Tsitsipas 3-2` is
+   * still reachable from 0-2 and prices, while `3-1` and `3-0` are struck.
+   *
+   * One section, both row shapes at once. This is the state a match spends real
+   * time in, and it is why the replacement sentence is quantified as "any"
+   * rather than "each": neither a universal claim nor silence is true here.
+   */
+  const twoSetsToLove = payload({ home_score: 2, away_score: 0 });
+
+  test("the fixture really is mixed (not vacuous)", () => {
+    const section = buildMarketSection(twoSetsToLove.other, {
+      completedSets: completedSetsForTennis(SPORT, twoSetsToLove),
+      decidedSetsWinner: decidedSetsWinnerFor(SPORT, twoSetsToLove),
+      setsWon: tennisSetsWonFor(SPORT, twoSetsToLove),
+    });
+    expect(section.quotedOutcomes).toBeGreaterThan(0);
+    expect(section.quotedOutcomes).toBeLessThan(section.renderedOutcomes);
+  });
+
+  test("both shapes are on screen, and the sentence is true of both", () => {
+    const text = visible(render(twoSetsToLove, "completed"));
+    // a stated result...
+    expect(text).toMatch(/won Set [12]/);
+    // ...and a quote, under one header.
+    expect(text).toContain(SETTLED_QUOTE_PREFIX);
+    expect(text).toContain(SETTLED_QUOTE_SECTION_NOTE);
+    // The old sentence would have been false here too: it promised a quote for
+    // EVERY market, and the result rows are markets with none.
+    expect(text).not.toContain("showing each market's last quote");
+  });
+});
+
 describe("the chooser is total, and settlement still gates the whole clause", () => {
   test.each([0, 1, 6, 99])("%i quoted outcomes maps to a sentence", (n) => {
     const note = settledSectionNote(n);
