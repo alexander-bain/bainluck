@@ -105,6 +105,22 @@ const visible = (html: string) =>
     .replace(/&amp;/g, "&")
     .replace(/\s+/g, " ");
 
+/**
+ * The text of each result row, read off the ROW ELEMENT rather than off a
+ * window of characters following its label.
+ *
+ * It was the window before, and the window silently depended on the decided row
+ * rendering LAST on its card: once sets were ordered 1, 2, 3 instead of by
+ * price (#3861), `Noskova won Set 1` was followed by the live `Kostyuk wins
+ * Set 2 56%` and the scrape captured a SIBLING's percentage. `OutcomeBar`'s
+ * result branch renders `outcome.result` and nothing else, so the element is
+ * the honest boundary and the row's whole text can be asserted exactly.
+ */
+const resultRows = (html: string): string[] =>
+  [...html.matchAll(/<div[^>]*data-testid="special-markets-result"[\s\S]*?<\/div><\/div>/g)].map(
+    (m) => visible(m[0]).trim(),
+  );
+
 describe("a decided set states its result", () => {
   test("THE SHIP: the row names the winner, on the page's own wiring", () => {
     const text = visible(renderAsPage(payload()));
@@ -117,9 +133,24 @@ describe("a decided set states its result", () => {
     const html = renderAsPage(payload());
     // Set 2 is still being played and keeps its 56%, so the assertion has to be
     // about the decided ROW rather than about the card.
-    const row = /Noskova won Set 1[\s\S]{0,120}/.exec(visible(html))?.[0] ?? "";
+    const row = resultRows(html).find((r) => r.includes("Noskova won Set 1")) ?? "";
     expect(row).not.toMatch(/\d+%/);
     expect(row).not.toContain(SETTLED_QUOTE_PREFIX);
+    // The row is the result and NOTHING else — stronger than "no number
+    // nearby", and it cannot be satisfied by a row that happens to be last.
+    expect(row).toBe("Noskova won Set 1");
+  });
+
+  test("the decided set LEADS the card, because sets read in order (#3861)", () => {
+    // Set 1 is over and Set 2 is being played, so the card is the story of the
+    // match in sequence: the result, then the live question. Under the old
+    // price order the finished set sank to the bottom at 0.05% — the reader met
+    // set 2 first and the completed one last, which is neither chronological
+    // nor ranked by anything the page shows.
+    const text = visible(renderAsPage(payload()));
+    expect(text.indexOf("Noskova won Set 1")).toBeGreaterThan(-1);
+    expect(text.indexOf("Kostyuk wins Set 2")).toBeGreaterThan(-1);
+    expect(text.indexOf("Noskova won Set 1")).toBeLessThan(text.indexOf("Kostyuk wins Set 2"));
   });
 
   test("THE REGRESSION GUARD: with and without the winner must differ", () => {

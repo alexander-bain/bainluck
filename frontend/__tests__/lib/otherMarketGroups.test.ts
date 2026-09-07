@@ -17,6 +17,7 @@ import {
   mergeOutcomes,
   parseMatchScoreOutcome,
   parsePropLabel,
+  periodSequenceFromScope,
   periodWinnerParts,
   setNumberFromLabel,
   stripCardPrefix,
@@ -806,5 +807,177 @@ describe("buildMarketSection — the struck exact-score row (#3703)", () => {
     const before = buildMarketSection(USO_WIRE, { completedSets: 1 });
     const after = buildMarketSection(USO_WIRE, { completedSets: 1, setsWon: null });
     expect(after).toEqual(before);
+  });
+});
+
+// ─── #3861: an enumeration goes in its own order ────────────────────────────
+//
+// The `other` array of GET /api/events/15306225/game-markets, production,
+// 2026-09-07 02:20 PT — Tiafoe v Michelsen, a US Open quarter-final. Trimmed
+// to the rows that reach a card; every probability is the wire's own.
+//
+// What it rendered: `Tiafoe wins Set 3` / `Set 1` / `Set 2`, all three reading
+// 56%. Not a sorting bug — a correct price sort on 0.565 / 0.565 / 0.560,
+// where the display rounds the whole sort key away.
+const USO_QF_WIRE: OtherMarketRow[] = [
+  { market_name: "Set 3 Winner: Tiafoe vs Michelsen", outcome_name: "Yes", probability: 0.565, source: PM },
+  { market_name: "Set 3 Winner: Tiafoe vs Michelsen", outcome_name: "No", probability: 0.435, source: PM },
+  { market_name: "Set 2 Winner: Tiafoe vs Michelsen", outcome_name: "Yes", probability: 0.56, source: PM },
+  { market_name: "Set 2 Winner: Tiafoe vs Michelsen", outcome_name: "No", probability: 0.44, source: PM },
+  { market_name: "Set 1 Winner: Tiafoe vs Michelsen", outcome_name: "Yes", probability: 0.565, source: PM },
+  { market_name: "Set 1 Winner: Tiafoe vs Michelsen", outcome_name: "No", probability: 0.435, source: PM },
+  { market_name: "Frances Tiafoe vs Alex Michelsen: Exact Match Score", outcome_name: "Frances Tiafoe wins 3-0", probability: 0.22, source: "kalshi" },
+  { market_name: "Frances Tiafoe vs Alex Michelsen: Exact Match Score", outcome_name: "Frances Tiafoe wins 3-1", probability: 0.205, source: "kalshi" },
+  { market_name: "Frances Tiafoe vs Alex Michelsen: Exact Match Score", outcome_name: "Alex Michelsen wins 3-1", probability: 0.145, source: "kalshi" },
+];
+
+const labelsOfCard = (rows: OtherMarketRow[], cardName: string): string[] => {
+  const section = buildMarketSection(rows);
+  const card = section.categories.flatMap((c) => c.cards).find((c) => c.name === cardName);
+  expect(card).toBeDefined();
+  return card!.outcomes.map((o) => o.label);
+};
+
+describe("periodSequenceFromScope", () => {
+  test("it reads the position off either side of the period word", () => {
+    expect(periodSequenceFromScope("Set 3")).toBe(3);
+    expect(periodSequenceFromScope("set 1")).toBe(1);
+    expect(periodSequenceFromScope("1st Half")).toBe(1);
+    expect(periodSequenceFromScope("2nd Quarter")).toBe(2);
+    expect(periodSequenceFromScope("Map 2")).toBe(2);
+    expect(periodSequenceFromScope("Inning 9")).toBe(9);
+  });
+
+  test("a period that names no position returns null rather than guessing one", () => {
+    // `Half` is a period. WHICH half is not in the string, and inventing a
+    // position for it would order two rows by a fact neither one carries.
+    for (const scope of ["Half", "Period", "Overtime", "Match", "", "Set"]) {
+      expect(periodSequenceFromScope(scope)).toBeNull();
+    }
+    expect(periodSequenceFromScope(null)).toBeNull();
+    expect(periodSequenceFromScope(undefined)).toBeNull();
+  });
+
+  test("the two period regexes cannot drift apart", () => {
+    // `PERIOD_SCOPE` decides what becomes a period-winner row at all;
+    // `PERIOD_SEQUENCE` decides where that row sits. A word added to the first
+    // and forgotten in the second silently returns those rows to price order,
+    // which is the defect this block exists to prevent — so every word in the
+    // vocabulary is walked through BOTH, via the exported callers.
+    for (const word of ["Set", "Period", "Quarter", "Inning", "Frame", "Half", "Map", "Leg"]) {
+      expect(periodWinnerParts(`${word} 2 Winner: A vs B`)).not.toBeNull();
+      expect(periodSequenceFromScope(`${word} 2`)).toBe(2);
+    }
+  });
+});
+
+describe("buildMarketSection — an enumeration is ordered by its sequence (#3861)", () => {
+  test("today's render, reproduced: sets 1, 2 and 3 come out 3, 1, 2", () => {
+    // The guard's own positive control. Price order on this wire genuinely
+    // produces the scrambled sequence, so the fix below is answering a real
+    // input and not a hypothetical one.
+    const byPrice = [...USO_QF_WIRE]
+      .filter((r) => r.outcome_name === "Yes")
+      .sort((a, b) => (b.probability as number) - (a.probability as number))
+      .map((r) => r.market_name);
+    expect(byPrice).toEqual([
+      "Set 3 Winner: Tiafoe vs Michelsen",
+      "Set 1 Winner: Tiafoe vs Michelsen",
+      "Set 2 Winner: Tiafoe vs Michelsen",
+    ]);
+  });
+
+  test("the ship: the card reads 1, 2, 3", () => {
+    expect(labelsOfCard(USO_QF_WIRE, "Tiafoe vs Michelsen")).toEqual([
+      "Tiafoe wins Set 1",
+      "Tiafoe wins Set 2",
+      "Tiafoe wins Set 3",
+    ]);
+  });
+
+  test("and it no longer depends on the order the rows arrive in", () => {
+    // Set 1 and Set 3 are the same price to the digit, so before this the tie
+    // fell through to `Array.sort`'s stability and the WIRE decided — and the
+    // wire reorders on its own, which is how the top two rows swapped between
+    // two loads of the same page 45 minutes apart. Every rotation of the
+    // payload must now give one answer.
+    const expected = ["Tiafoe wins Set 1", "Tiafoe wins Set 2", "Tiafoe wins Set 3"];
+    for (let i = 0; i < USO_QF_WIRE.length; i++) {
+      const rotated = [...USO_QF_WIRE.slice(i), ...USO_QF_WIRE.slice(0, i)];
+      expect(labelsOfCard(rotated, "Tiafoe vs Michelsen")).toEqual(expected);
+    }
+    expect(labelsOfCard([...USO_QF_WIRE].reverse(), "Tiafoe vs Michelsen")).toEqual(expected);
+  });
+
+  test("a field of rival candidates on the SAME page keeps its price order", () => {
+    // The other direction, and the one that matters most: sorting by price is
+    // right for six exact scores, which have no sequence. They share the
+    // payload with the set card, so this proves the change is scoped to the
+    // enumeration and not to the section.
+    expect(labelsOfCard(USO_QF_WIRE, "Frances Tiafoe vs Alex Michelsen: Exact Match Score")).toEqual([
+      "Frances Tiafoe wins 3-0",
+      "Frances Tiafoe wins 3-1",
+      "Alex Michelsen wins 3-1",
+    ]);
+  });
+
+  test("quarters and maps get the same treatment, not just tennis sets", () => {
+    const nba: OtherMarketRow[] = [
+      { market_name: "Quarter 3 Winner: Celtics vs Knicks", outcome_name: "Yes", probability: 0.6, source: PM },
+      { market_name: "Quarter 3 Winner: Celtics vs Knicks", outcome_name: "No", probability: 0.4, source: PM },
+      { market_name: "Quarter 1 Winner: Celtics vs Knicks", outcome_name: "Yes", probability: 0.55, source: PM },
+      { market_name: "Quarter 1 Winner: Celtics vs Knicks", outcome_name: "No", probability: 0.45, source: PM },
+      { market_name: "Quarter 2 Winner: Celtics vs Knicks", outcome_name: "Yes", probability: 0.58, source: PM },
+      { market_name: "Quarter 2 Winner: Celtics vs Knicks", outcome_name: "No", probability: 0.42, source: PM },
+    ];
+    expect(labelsOfCard(nba, "Celtics vs Knicks")).toEqual([
+      "Celtics wins Quarter 1",
+      "Celtics wins Quarter 2",
+      "Celtics wins Quarter 3",
+    ]);
+  });
+
+  test("a card that is only PARTLY a sequence keeps price order", () => {
+    // `Half Winner` names a period but not which one, so this card is not an
+    // enumeration and must not be reordered on a position two of its three
+    // rows do not have. Falling back is the conservative answer: it leaves the
+    // card exactly as it renders today.
+    const mixed: OtherMarketRow[] = [
+      { market_name: "Half Winner: Arsenal vs Chelsea", outcome_name: "Yes", probability: 0.62, source: PM },
+      { market_name: "Half Winner: Arsenal vs Chelsea", outcome_name: "No", probability: 0.38, source: PM },
+      { market_name: "Quarter 1 Winner: Arsenal vs Chelsea", outcome_name: "Yes", probability: 0.71, source: PM },
+      { market_name: "Quarter 1 Winner: Arsenal vs Chelsea", outcome_name: "No", probability: 0.29, source: PM },
+      { market_name: "Quarter 2 Winner: Arsenal vs Chelsea", outcome_name: "Yes", probability: 0.44, source: PM },
+      { market_name: "Quarter 2 Winner: Arsenal vs Chelsea", outcome_name: "No", probability: 0.56, source: PM },
+    ];
+    expect(labelsOfCard(mixed, "Arsenal vs Chelsea")).toEqual([
+      "Arsenal wins Quarter 1",
+      "Arsenal wins Half",
+      "Arsenal wins Quarter 2",
+    ]);
+  });
+
+  test("a one-row card is never treated as a sequence", () => {
+    const single: OtherMarketRow[] = [
+      { market_name: "Set 2 Winner: Alcaraz vs Sinner", outcome_name: "Yes", probability: 0.51, source: PM },
+      { market_name: "Set 2 Winner: Alcaraz vs Sinner", outcome_name: "No", probability: 0.49, source: PM },
+      { market_name: "Coin Toss", outcome_name: "Heads", probability: 0.5, source: "kalshi" },
+      { market_name: "Gatorade Color", outcome_name: "Orange", probability: 0.3, source: "kalshi" },
+    ];
+    expect(labelsOfCard(single, "Alcaraz vs Sinner")).toEqual(["Alcaraz wins Set 2"]);
+  });
+
+  test("tied prices on a NON-sequenced card also stop depending on the wire", () => {
+    // The second half of #3861: a tie broken by arrival order reshuffles
+    // between loads wherever it occurs, not only on set cards.
+    const tied: OtherMarketRow[] = [
+      { market_name: "First Touchdown", outcome_name: "Kelce", probability: 0.2, source: "kalshi" },
+      { market_name: "First Touchdown", outcome_name: "Rice", probability: 0.2, source: "kalshi" },
+      { market_name: "First Touchdown", outcome_name: "Pacheco", probability: 0.2, source: "kalshi" },
+      { market_name: "Coin Toss", outcome_name: "Heads", probability: 0.5, source: "kalshi" },
+    ];
+    const expected = ["Kelce", "Pacheco", "Rice"];
+    expect(labelsOfCard(tied, "First Touchdown")).toEqual(expected);
+    expect(labelsOfCard([...tied].reverse(), "First Touchdown")).toEqual(expected);
   });
 });
