@@ -60,6 +60,12 @@ class _Result:
         return iter(self._rows)
 
 
+# #3810: the fold adds a second read of `events`; `is_series_fold` tells it
+# apart from the route's own entity lookup. See `tests/test_series_fold_3810`.
+from tests.test_series_fold_3810 import fold_row as _fold_row  # noqa: E402
+from tests.test_series_fold_3810 import is_series_fold as _is_series_fold  # noqa: E402
+
+
 class _DispatchingSession:
     """Answers each query by the table named in its SQL. Everything else is empty.
 
@@ -75,6 +81,8 @@ class _DispatchingSession:
 
     async def execute(self, statement, *_a, **_kw):
         sql = str(statement)
+        if _is_series_fold(sql):
+            return _Result([_fold_row(self.event)])
         if "FROM events" in sql:
             return _Result([self.event])
         if "odds_snapshots" in sql:

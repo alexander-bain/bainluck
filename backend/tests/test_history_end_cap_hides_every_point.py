@@ -135,13 +135,27 @@ class _DispatchingSession:
             seen.append(upper)
             return _Result(self._apply(rows, lower, upper))
 
+        if _is_series_fold(sql):
+            return _Result([_fold_row(self.event)])
         if "FROM events" in sql:
             return _Result([self.event])
         return _Result([])
 
 
+# #3810: the fold adds a second read of `events`; `is_series_fold` tells it
+# apart from the route's own entity lookup. See `tests/test_series_fold_3810`.
+from tests.test_series_fold_3810 import fold_row as _fold_row  # noqa: E402
+from tests.test_series_fold_3810 import is_series_fold as _is_series_fold  # noqa: E402
+
+#: The specimen's own id, carried by every fake snapshot below. #3810 picks ONE
+#: event row per source, so a row with no `event_id` cannot be attributed and its
+#: whole series is dropped from the chart.
+_SPECIMEN_ID = 15300276
+
+
 def _wp(when, home_prob):
     return SimpleNamespace(
+        event_id=_SPECIMEN_ID,
         captured_at=when,
         source="kalshi",
         home_win_probability=home_prob,
@@ -163,7 +177,7 @@ def _odds(when, home_prob):
 
 def _specimen_event(**overrides):
     event = SimpleNamespace(
-        id=15300276,
+        id=_SPECIMEN_ID,
         status="closed",
         commence_time=COMMENCE,
         completed_at=None,
