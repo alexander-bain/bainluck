@@ -397,17 +397,60 @@ export function registerFace(
 }
 
 /**
- * The event hero's avatar slot for ONE player (#2447).
+ * The event payload's own pinned image for one participant, or `null` (#3787).
+ *
+ * #3784 gave `_format_event` the four keys `/api/feed` has served since #2919,
+ * so the detail route now carries `home_image_url` / `home_flag_url` for every
+ * INDIVIDUAL-sport event. This packs that pair into the `{url, flag_url}` block
+ * `PlayerAvatar` already reads, and returns `null` when neither is there so the
+ * caller falls to the next rung rather than rendering an empty `<img>`.
+ *
+ * `undefined` (team sport — the formatter omits the keys) and `null` ("we
+ * looked and this player has no photo") both mean "not this rung", which is the
+ * same answer, so they are deliberately not distinguished here.
+ */
+export function servedParticipantImage(
+  url?: string | null,
+  flagUrl?: string | null
+): PlayerImage | null {
+  if (!url && !flagUrl) return null;
+  return { url: url ?? null, flag_url: flagUrl ?? null };
+}
+
+/**
+ * The event hero's avatar slot for ONE player (#2447, extended by #3787).
  *
  * A component rather than a call to `useTournamentPlayerFaces` inside the page,
  * for the ordinary reason: the hero sits below the page's loading and error
  * returns, and a hook called there would change hook order between renders.
  * Wrapping it means the page passes props and this decides.
  *
- * `fallback` is the hero's existing team-logo-then-initials markup, untouched
- * and still the answer for every non-tournament event and for any player the
- * register holds no image for. This adds a step to the FRONT of that ladder; it
- * does not replace it.
+ * ═══ THE LADDER, AND WHY THE SERVED PAIR GOES IN FRONT (#3787) ═══
+ *
+ * #2447 put the TOURNAMENT REGISTER in front of the hero's team-logo ladder.
+ * That register is keyed to the BRACKET, and the bracket is not the whole
+ * tournament: read live on 2026-09-07, `/api/tournaments/by-event/15304939`
+ * (Medvedev v Tiafoe, a completed US Open round-of-16) answers
+ * `reason: NOT_IN_REGISTER` — no `result`, no `advancement`. So the rung fired,
+ * found nothing, and the hero drew `DM` and `FT` while the feed drew both
+ * faces. The rung was never missing; it was answering a narrower question.
+ *
+ * The served pair is keyed by NAME against the same censused register, so it
+ * answers for any player in it whether or not they are on this bracket:
+ * replayed for those two names it returns both Wikipedia headshots AND both
+ * ESPN country flags. It therefore goes in FRONT, which also makes this hero
+ * agree with `FeedCard` and `EventCard` — the point of #3787 being that four
+ * renderers answer one question and had drifted apart.
+ *
+ * The register rung STAYS behind it, and is not redundant: it covers a bracket
+ * player the name register has no row for. `fallback` — the hero's existing
+ * team-logo-then-initials markup — is untouched and is still the answer for
+ * every team sport and for a player neither register holds.
+ *
+ * Geometry is not decided here. `PlayerAvatar` already draws a face
+ * `object-cover` and a flag `object-contain`, at whatever `size` it is given,
+ * which is why this hero can pass 56 where a match row passes 26 and neither
+ * squashes a flag into a square.
  */
 export function TournamentPlayerFace({
   eventId,
@@ -416,6 +459,7 @@ export function TournamentPlayerFace({
   awayName,
   side,
   size,
+  servedImage,
   fallback,
 }: {
   eventId: number;
@@ -424,10 +468,16 @@ export function TournamentPlayerFace({
   awayName: string;
   side: "home" | "away";
   size: number;
+  /**
+   * The event payload's pinned image for THIS side, via
+   * `servedParticipantImage`. Optional so the two existing call sites and the
+   * #2447 guards keep their meaning: absent means "ask the register only".
+   */
+  servedImage?: PlayerImage | null;
   fallback: React.ReactNode;
 }) {
   const faces = useTournamentPlayerFaces(eventId, sportKey, homeName, awayName);
-  const image = side === "home" ? faces.home : faces.away;
+  const image = servedImage ?? (side === "home" ? faces.home : faces.away);
   if (!image) return <>{fallback}</>;
   return (
     <PlayerAvatar name={side === "home" ? homeName : awayName} image={image} size={size} />
