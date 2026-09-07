@@ -10274,7 +10274,20 @@ async def _build_game_markets(
     # mislinkage (e.g., baseball World Series market linked to a cricket event).
     # Sport filtering uses sport_id OR llm_sport_category — either must match.
     event_is_finished = _event_is_really_finished(event, datetime.now(timezone.utc))
-    linked_filters = [FuturesMarket.event_id == event_id]
+
+    # #2693 — read the markets of the rows we have declined to PRINT as well as
+    # our own. `not_a_proven_duplicate` suppresses a second card for one match;
+    # on this population the suppressed row is usually the one holding the
+    # prices (Andreeva/Potapova: 13 markets on the ghost, 0 on this row), so
+    # hiding it without folding it here removes the prices, not a duplicate.
+    # One indexed lookup, ~0.06 ms; `folded_event_ids` always returns at least
+    # `[event_id]`, so an untagged event compiles to the identical query it had
+    # before. Nothing is merged, deleted or repointed — see
+    # `utils/proven_duplicates.py`.
+    from app.utils.proven_duplicates import folded_event_ids
+
+    market_event_ids = await folded_event_ids(db, event_id)
+    linked_filters = [FuturesMarket.event_id.in_(market_event_ids)]
     if event.sport_id and expected_category:
         # Safety net: only show markets whose sport matches the event's sport.
         # Uses OR(sport_id match, llm_sport_category match, both NULL) to avoid

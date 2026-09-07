@@ -92,8 +92,14 @@ async def pg_session():
     await engine.dispose()
 
 
-async def _seed(session, *, ghost_tags=None):
-    """The Etcheverry–Michelsen pair exactly as #3677 published it."""
+async def _seed(session, *, ghost_tags=None, canonical_settled=True):
+    """The Etcheverry–Michelsen pair exactly as #3677 published it.
+
+    ``canonical_settled=False`` gives the #2693 shape: neither row has a score,
+    and the ghost/canonical call is made on the provider id instead. The
+    canonical carries `espn_id` in both shapes because 250/250 tournament-keyed
+    rows on production do.
+    """
     from sqlalchemy import text
 
     await session.execute(
@@ -110,11 +116,12 @@ async def _seed(session, *, ghost_tags=None):
     await session.execute(
         text(
             "INSERT INTO events (id, sport_id, home_team_name, away_team_name, "
-            "                    commence_time, status, home_score, away_score, event_tags) "
+            "                    commence_time, status, home_score, away_score, "
+            "                    espn_id, event_tags) "
             "VALUES (:gid, :gs, 'Michelsen', 'Etcheverry', :gt, 'scheduled', "
-            "        NULL, NULL, CAST(:gtags AS jsonb)), "
+            "        NULL, NULL, NULL, CAST(:gtags AS jsonb)), "
             "       (:cid, :cs, 'Alex Michelsen', 'Tomas Martin Etcheverry', :ct, "
-            "        'completed', 1, 3, NULL)"
+            "        :cstatus, :chs, :caws, '182738', NULL)"
         ),
         {
             "gid": GHOST_ID,
@@ -124,6 +131,9 @@ async def _seed(session, *, ghost_tags=None):
             "cid": CANON_ID,
             "cs": S_ATP_US_OPEN,
             "ct": CANON_TIME,
+            "cstatus": "completed" if canonical_settled else "scheduled",
+            "chs": 1 if canonical_settled else None,
+            "caws": 3 if canonical_settled else None,
         },
     )
     await session.commit()
@@ -184,6 +194,53 @@ class TestTheWriteActuallyLands:
         assert (written, failed) == (1, [])
         assert await _tags(pg_session, GHOST_ID) == [duplicate_tag(CANON_ID)]
         assert await _tour_page_ids(pg_session) == [CANON_ID]
+
+    async def test_an_unplayed_pair_lands_too_and_the_id_column_is_what_decides(
+        self, pg_session
+    ):
+        """#2693, against real Postgres: no score on either row, one card.
+
+        🔴 This is the case the SQLite suite cannot fully prove, because what is
+        being exercised here is that ``load_rows``' SELECT actually PROJECTS
+        `external_id` / `espn_id` / `statpal_fixture_id`. A planner that reads a
+        column the query forgot to select does not raise on a SQLAlchemy Row —
+        it is an AttributeError only if the attribute is missing, and the far
+        worse outcome is a projection that silently returns NULL for every row
+        and turns the whole unplayed arm into a no-op that exits 0 (gotcha #53).
+        """
+        from app.services.anchor_channel import duplicate_tag
+        from scripts.repair_2878_tennis_twin_ghosts import write_tags
+
+        await _seed(pg_session, canonical_settled=False)
+        assert await _tour_page_ids(pg_session) == sorted([GHOST_ID, CANON_ID])
+
+        plan = await _plan(pg_session)
+        assert [(t.ghost_id, t.canonical_id) for t in plan.tags] == [
+            (GHOST_ID, CANON_ID)
+        ]
+        written, failed = await write_tags(pg_session, plan.tags)
+        assert (written, failed) == (1, [])
+        assert await _tags(pg_session, GHOST_ID) == [duplicate_tag(CANON_ID)]
+        assert await _tour_page_ids(pg_session) == [CANON_ID]
+
+    async def test_an_unplayed_pair_with_no_provider_id_is_refused_on_postgres(
+        self, pg_session
+    ):
+        """The other direction of the same projection: strip the canonical's
+        `espn_id` and the sweep declines. If the SELECT stopped projecting the
+        column, this test and its sibling above would BOTH pass on the refusal
+        branch — so they are only meaningful as a pair (gotcha #43)."""
+        from sqlalchemy import text
+
+        await _seed(pg_session, canonical_settled=False)
+        await pg_session.execute(
+            text("UPDATE events SET espn_id = NULL WHERE id = :i"), {"i": CANON_ID}
+        )
+        await pg_session.commit()
+
+        plan = await _plan(pg_session)
+        assert plan.tags == ()
+        assert await _tour_page_ids(pg_session) == sorted([GHOST_ID, CANON_ID])
 
     async def test_a_second_run_writes_nothing(self, pg_session):
         """Idempotence lives in the `NOT @>`, which is a property of the
