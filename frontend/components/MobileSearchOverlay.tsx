@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { fetchTypeahead } from "@/lib/api";
 import type { TypeaheadSuggestion } from "@/lib/api";
@@ -41,6 +42,22 @@ export default function MobileSearchOverlay({ isOpen, onClose }: Props) {
   // publish any request that no longer owns the gate. See lib/typeaheadRace.ts.
   const gate = useRef(new TypeaheadRequestGate()).current;
   const recentSearches = getRecentSearches();
+  // LAT-P178: the overlay MUST be portalled out of the header subtree.
+  //
+  // `MobileSearchTrigger` renders this component as a sibling of the search
+  // button, i.e. inside `<header class="... backdrop-blur-lg">`. A non-`none`
+  // `backdrop-filter` makes that element the CONTAINING BLOCK for every
+  // `position: fixed` descendant, so the root `fixed inset-0` below resolved
+  // against the 57px-tall header instead of the viewport: the overlay computed
+  // to 56px, its `flex-1` results list to height 0, and the suggestions painted
+  // clipped underneath the page. They were in the DOM and Playwright called
+  // them "visible", but `elementFromPoint` at their centre returned the page
+  // header — so on a phone the box looked empty and nothing was tappable.
+  // Alex hit exactly this ("attempted a search but typeahead never appeared").
+  // Portalling to `document.body` leaves the header's containing block behind
+  // and is invisible to the design system; removing the blur would not be.
+  const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null);
+  useEffect(() => setPortalTarget(document.body), []);
 
   useEffect(() => {
     if (isOpen) {
@@ -157,11 +174,11 @@ export default function MobileSearchOverlay({ isOpen, onClose }: Props) {
     }
   };
 
-  if (!isOpen) return null;
+  if (!isOpen || !portalTarget) return null;
 
   const showRecent = !query && recentSearches.length > 0;
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-[100] bg-surface-deep flex flex-col" role="dialog" aria-label="Search" aria-modal="true">
       {/* Header */}
       <div className="flex items-center gap-3 px-4 pt-safe-top pb-3 border-b border-surface-border bg-surface-card" role="search">
@@ -297,6 +314,7 @@ export default function MobileSearchOverlay({ isOpen, onClose }: Props) {
           </button>
         )}
       </div>
-    </div>
+    </div>,
+    portalTarget
   );
 }
