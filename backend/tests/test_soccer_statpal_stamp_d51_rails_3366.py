@@ -58,7 +58,9 @@ class TestTheUndoSelectsWhatTheWriterWrites:
         assert SOURCE_STATPAL == rails.ANCHOR_SOURCE
         assert f"{statpal_id_space('soccer')}:" == rails.ANCHOR_SOURCE_ID_PREFIX
 
-    def test_a_drifted_namespace_refuses_rather_than_matching_nothing(self, monkeypatch):
+    def test_a_drifted_namespace_refuses_rather_than_matching_nothing(
+        self, monkeypatch
+    ):
         monkeypatch.setattr(rails, "ANCHOR_SOURCE_ID_PREFIX", "football:")
         with pytest.raises(SystemExit) as exc:
             rails._assert_namespace()
@@ -82,9 +84,7 @@ class TestThePlannerOnlyUndoesWhatTheApplyCouldHaveWritten:
     def test_a_column_that_already_held_an_id_is_never_touched(self):
         """`SET_FIXTURE_ID` is guarded by `IS NULL`, so this cannot be ours —
         whatever it holds now, and even if it holds something different."""
-        got = rails.plan_restore(
-            _preimage({"11": "999999"}), [(11, "1043639")], []
-        )
+        got = rails.plan_restore(_preimage({"11": "999999"}), [(11, "1043639")], [])
         assert got["to_clear"] == []
 
     def test_a_column_empty_before_and_empty_now_is_a_no_op(self):
@@ -241,8 +241,6 @@ async def _apply_with_stubs(mod, monkeypatch, latest_backup, run_pass, bank=True
 
     stamper = types.ModuleType("app.tasks.stamp_v1_statpal_fixtures")
     stamper._run_stamp_soccer_statpal_fixtures = run_pass
-    monkeypatch.setitem(
-        sys.modules, "app.tasks.stamp_v1_statpal_fixtures", stamper
-    )
+    monkeypatch.setitem(sys.modules, "app.tasks.stamp_v1_statpal_fixtures", stamper)
 
     return await mod.cmd_apply(datetime.now(timezone.utc))
