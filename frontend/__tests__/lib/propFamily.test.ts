@@ -11,6 +11,7 @@ import {
   sharedFamilyPrefix,
   stripSharedFamilyPrefix,
   groupByPropFamily,
+  isChildTitleMark,
 } from "@/lib/propFamily";
 
 describe("propFamilyName", () => {
@@ -132,5 +133,77 @@ describe("groupByPropFamily", () => {
     }));
     const groups = groupByPropFamily(items, keyOf);
     expect(groups.flatMap((g) => g.items)).toHaveLength(81);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #3874 — isChildTitleMark: the undecomposed-child-title row class.
+//
+// THE SCRIPT · Props rendered nine rows all reading "US Open WTA: Mirra Andreeva
+// vs Anasta…" against nine different percentages. These pin BOTH directions: the
+// child titles are recognised, and every real outcome — most importantly the
+// ordinary MLB/NFL props this filter runs over on every other game page — is not.
+// ---------------------------------------------------------------------------
+
+describe("isChildTitleMark (#3874)", () => {
+  const MATCH = "US Open WTA: Mirra Andreeva vs Anastasia Potapova";
+
+  test("the nine measured production child titles are ALL recognised", () => {
+    const children = [
+      "Set 1 Winner",
+      "Set Handicap +/-1.5",
+      "Set 2 Winner",
+      "Total Sets: O/U 2.5",
+      "Game Spread +/-5.5",
+      "Set 1 O/U 8.5",
+      "Set 1 O/U 9.5",
+      "Set 1 O/U 10.5",
+      "Match O/U 21.5",
+    ];
+    for (const child of children) {
+      expect(
+        isChildTitleMark({ key: `${MATCH}|${MATCH} ${child}`, label: `${MATCH} ${child}` }),
+      ).toBe(true);
+    }
+  });
+
+  test("a real outcome on the SAME card is kept — the row that carries the answer", () => {
+    // These three are what survived the filter on the measured payload.
+    for (const outcome of ["Mirra Andreeva", "Yes", "No"]) {
+      expect(
+        isChildTitleMark({ key: `${MATCH}|${outcome}`, label: outcome }),
+      ).toBe(false);
+    }
+  });
+
+  test("ordinary MLB props are NEVER dropped — the blast-radius control", () => {
+    // This filter runs on every game page. A label that does not begin with its
+    // own market's name is a real outcome and must come through untouched.
+    expect(
+      isChildTitleMark({
+        key: "Boston vs A's: Hits + Runs + RBIs|Carlos Cortes: 3+",
+        label: "Carlos Cortes: 3+",
+      }),
+    ).toBe(false);
+    expect(
+      isChildTitleMark({ key: "Boston vs A's: Hits|Tommy White: 4+", label: "Tommy White: 4+" }),
+    ).toBe(false);
+  });
+
+  test("a NUMERIC key can never match — the concept page renders unchanged", () => {
+    expect(isChildTitleMark({ key: 90210, label: `${MATCH} Set 1 Winner` })).toBe(false);
+  });
+
+  test("a label that is EXACTLY its family is kept, not dropped", () => {
+    // childTitleRemainder's rule: nothing but the parent's own name is a row
+    // whose name happens to equal its card's, not a child market's title. A
+    // blank label is worse than a repetitive one — and dropping it would delete
+    // a real outcome.
+    expect(isChildTitleMark({ key: `${MATCH}|${MATCH}`, label: MATCH })).toBe(false);
+  });
+
+  test("a missing or empty label is kept", () => {
+    expect(isChildTitleMark({ key: `${MATCH}|x`, label: null })).toBe(false);
+    expect(isChildTitleMark({ key: `${MATCH}|x`, label: "   " })).toBe(false);
   });
 });
