@@ -867,6 +867,95 @@ async def record_link_change_receipts(
         return 0
 
 
+async def record_out_of_band_attempt(
+    market_row,
+    *,
+    phase: str,
+    linked_event_id: Optional[int] = None,
+    reject_reason: Optional[str] = None,
+    detail: Optional[dict[str, Any]] = None,
+    now: Optional[datetime] = None,
+    session_factory=None,
+) -> int:
+    """Receipt ONE matching attempt made outside the matcher's own passes.
+
+    :func:`record_link_change_receipts` covers the writers that END or MOVE a
+    link, and requires a ``previous_event_id`` to say what changed. A hand-run
+    attach has no previous id — the market was unlinked and now is not — so it
+    fits none of those signatures and, until #3755, was written by nobody. The
+    result was that the admin tool recorded its rejections nowhere and its
+    SUCCESSES nowhere either: a correct link with no phase, no candidate list
+    and no score, invisible to ``/api/admin/match-receipts`` and to the
+    link-change history, and indistinguishable afterwards from a market the
+    matcher never reached.
+
+    Exactly one of ``linked_event_id`` / ``reject_reason`` must be given; both
+    or neither is a caller bug and raises, because "an attempt happened and we
+    are not saying what it decided" is the row this table exists to prevent.
+
+    NO ACTOR IS SET ON AN ATTACH, deliberately, and this is not an oversight to
+    be fixed later. ``actor`` in this module means *who ended or moved a link*
+    — :func:`link_change_row` keys the append-only history off exactly that,
+    and :meth:`MatchReceipt.reject` clears it so that a row carrying one is
+    always a change that really happened. A fresh attach changed nothing, so
+    stamping it with an actor would put a phantom row in the link-change
+    history and make an attach read as a departure from somewhere. The
+    provenance a reader wants — *a human did this by hand* — is carried by
+    ``phase`` (``admin_repair``), which is what the two existing admin call
+    sites already use.
+
+    CALL AFTER THE CHANGE HAS COMMITTED and NEVER RAISES, both for the reasons
+    spelled out on :func:`record_link_change_receipts`: the claim is re-read on
+    a fresh session by :func:`verify_links_are_durable`, and the record must
+    never be able to cost the thing it records. Returns rows written — 0 means
+    the explanation failed, never that the link did.
+    """
+    if (linked_event_id is None) == (reject_reason is None):
+        raise ValueError(
+            "record_out_of_band_attempt needs exactly one of linked_event_id / "
+            f"reject_reason (got {linked_event_id!r} / {reject_reason!r})"
+        )
+
+    import logging
+
+    from app.tasks.base import get_task_session
+
+    logger = logging.getLogger(__name__)
+
+    receipt = MatchReceipt(
+        market_id=market_row["id"],
+        source=market_row.get("source") or "",
+        external_id=market_row.get("external_id"),
+        market_name=market_row.get("name"),
+        phase=phase,
+        attempted_at=now or datetime.now(timezone.utc),
+    )
+    if linked_event_id is not None:
+        receipt.link(linked_event_id, **(detail or {}))
+    else:
+        # An unknown reason raises inside ``reject`` — on purpose, and left to
+        # propagate rather than swallowed by the guard below, because a typo'd
+        # reason is a caller bug that must surface in tests, not a runtime
+        # failure of the recording path.
+        receipt.reject(reject_reason, **(detail or {}))
+
+    factory = session_factory or get_task_session
+    try:
+        async with factory() as session:
+            await verify_links_are_durable(session, [receipt])
+            written = await flush_receipts(session, [receipt])
+            await session.commit()
+        return written
+    except Exception as exc:  # pragma: no cover - defensive, see docstring
+        logger.warning(
+            "Out-of-band match receipt failed for market %s (%s, %s): %s",
+            market_row.get("id"), phase,
+            linked_event_id if linked_event_id is not None else reject_reason,
+            str(exc)[:200],
+        )
+        return 0
+
+
 async def record_twin_merge_receipts(
     market_rows,
     *,
