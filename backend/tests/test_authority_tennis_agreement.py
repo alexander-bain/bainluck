@@ -1302,3 +1302,328 @@ class TestARefusalNameReadsAsMeasuredWhetherOrNotItFired:
                 unusable_rows=[],
                 refusal_names=("our_unusable_names",),
             )
+
+
+class TestTheRowNeverDividesByDaysNobodyRead:
+    """#3644. `ours_covered_in_span_pct` may only be measured over days we ASKED for.
+
+    THE PRODUCTION DEFECT, in one sentence: `livescores` is a state query that
+    keeps returning matches for days after they finish, so the StatPal side's
+    span reached back to `2026-09-04T11:10Z` — two days that
+    `SCHEDULE_DAY_OFFSETS` never requests — and every row of ours in that
+    stretch was counted as a miss *inside StatPal's span*. The row published
+    13.91% and it read as a coverage verdict when it was an artifact of loading
+    the two sides over different windows.
+
+    The fix is a clip, not a filter, and the difference is the first test below:
+    a fixture outside the read span still PAIRS. All that narrows is where a
+    MISS may be placed.
+    """
+
+    #: The read span a pass at `NOW` (2026-09-05 15:00Z) would compute: today
+    #: plus the two requested days, end-inclusive.
+    READ_SPAN = (
+        datetime(2026, 9, 5, tzinfo=timezone.utc),
+        datetime(2026, 9, 8, tzinfo=timezone.utc) - timedelta(microseconds=1),
+    )
+
+    #: A finished match `livescores` is still serving from two days before the
+    #: span — the residue that caused the defect.
+    RESIDUE = datetime(2026, 9, 3, 11, 10, tzinfo=timezone.utc)
+
+    def test_our_row_in_the_unrequested_stretch_is_not_an_in_span_miss(self):
+        """The defect itself, and the assertion that would have caught it.
+
+        Our 09-03 row has no StatPal counterpart. Unclipped, StatPal's span
+        starts at the 09-03 residue, so the row lands `inside_statpal_span` —
+        published as a disagreement with a day nobody requested. Clipped, it
+        lands `before_statpal_first`, which is what it is.
+        """
+        fixtures = [
+            f("1", "C. Alcaraz", "J. Sinner", start=self.RESIDUE),
+            f("2", "I. Swiatek", "Q. Zheng"),
+        ]
+        rows = [
+            r("11", "Carlos Alcaraz", "Jannik Sinner", start=self.RESIDUE),
+            r("12", "Iga Swiatek", "Qinwen Zheng"),
+            # Ours, in the unrequested stretch, with nothing on their side.
+            r("13", "Coco Gauff", "Aryna Sabalenka", start=self.RESIDUE),
+        ]
+
+        unclipped = build_tennis_agreements(fixtures=fixtures, rows=rows)
+        horizon = unclipped[SINGLES]["identity"]["ours_only_by_horizon"]
+        assert horizon["inside_statpal_span"] == 1, (
+            "corpus check — without the clip this row IS counted inside their "
+            "span, which is the defect this class exists for"
+        )
+
+        clipped = build_tennis_agreements(
+            fixtures=fixtures, rows=rows, statpal_read_span=self.READ_SPAN
+        )
+        horizon = clipped[SINGLES]["identity"]["ours_only_by_horizon"]
+        assert horizon["inside_statpal_span"] == 0
+        assert horizon["before_statpal_first"] == 1
+
+    def test_a_fixture_outside_the_read_span_still_pairs(self):
+        """A clip, not a filter — and this is the whole difference.
+
+        The 09-03 residue is real data and pairs with our real 09-03 row. If the
+        clip ever became a filter on the fixture list, `both` would drop and the
+        governing number would move, which is spec rule 5's failure mode wearing
+        a bug fix's clothes.
+        """
+        clipped = build_tennis_agreements(
+            fixtures=[
+                f("1", "C. Alcaraz", "J. Sinner", start=self.RESIDUE),
+                f("2", "I. Swiatek", "Q. Zheng"),
+            ],
+            rows=[
+                r("11", "Carlos Alcaraz", "Jannik Sinner", start=self.RESIDUE),
+                r("12", "Iga Swiatek", "Qinwen Zheng"),
+            ],
+            statpal_read_span=self.READ_SPAN,
+        )
+        identity = clipped[SINGLES]["identity"]
+        assert identity["both"] == 2
+        assert identity["pct"] == 100.0
+
+    def test_a_matched_residue_pair_does_not_credit_the_in_span_percentage(self):
+        """CERT-2151. `both` is the numerator; it must be clipped too.
+
+        `ours_covered_in_span_pct` is `both / (both + inside_statpal_span)`. The
+        denominator's miss bucket is placed against the CLIPPED span, so if the
+        numerator still counts every pair — including one from the stretch the
+        clip removed — the ratio mixes two populations.
+
+        The corpus is the minimal counterexample, not a corner: ONE matched
+        residue pair, ONE unmatched in-span row of ours. In-span coverage is
+        genuinely **0.0** — we hold one row inside the window StatPal was read
+        over and StatPal has nothing for it. The unclipped numerator publishes
+        **50.0**, which is worse than the 13.91% #3644 was filed about, because
+        it is wrong in the flattering direction and looks deliberate.
+        """
+        agreements = build_tennis_agreements(
+            fixtures=[
+                f("1", "C. Alcaraz", "J. Sinner", start=self.RESIDUE),
+                # An in-span fixture is required for the span to EXIST at all.
+                # Without it every fixture clips away, `statpal_span` is None,
+                # and the percentage is `None` rather than wrong — which would
+                # make this test pass for the wrong reason.
+                f("2", "I. Swiatek", "Q. Zheng"),
+            ],
+            rows=[
+                # Pairs with the residue fixture, OUTSIDE the read span.
+                r("11", "Carlos Alcaraz", "Jannik Sinner", start=self.RESIDUE),
+                # Inside the read span, and StatPal has nothing for it.
+                r("12", "Coco Gauff", "Aryna Sabalenka"),
+            ],
+            statpal_read_span=self.READ_SPAN,
+        )
+        identity = agreements[SINGLES]["identity"]
+
+        assert identity["both"] == 1, "corpus check: the residue pair still pairs"
+        assert identity["statpal_span"] is not None, "corpus check: a span exists"
+        assert identity["ours_only_by_horizon"]["inside_statpal_span"] == 1
+
+        assert identity["ours_covered_in_span_pct"] == 0.0, (
+            "published %r%% — the matched residue pair was counted in the "
+            "numerator while the misses beside it were clipped out of the "
+            "denominator" % identity["ours_covered_in_span_pct"]
+        )
+
+    def test_a_span_holding_only_residue_pairs_scores_nothing_rather_than_a_hundred(
+        self,
+    ):
+        """The mirror, and the reason the guard above is not enough on its own.
+
+        With every fixture in the clipped-off stretch there is no span left, so
+        there is no window to be inside of and nothing to divide. `None` is the
+        only honest answer: `100.0` would announce perfect coverage of a window
+        we compared nothing over, which is gotcha #53's shape in a percentage.
+        """
+        agreements = build_tennis_agreements(
+            fixtures=[f("1", "C. Alcaraz", "J. Sinner", start=self.RESIDUE)],
+            rows=[r("11", "Carlos Alcaraz", "Jannik Sinner", start=self.RESIDUE)],
+            statpal_read_span=self.READ_SPAN,
+        )
+        identity = agreements[SINGLES]["identity"]
+
+        assert identity["both"] == 1
+        assert identity["statpal_span"] is None
+        assert identity["ours_covered_in_span_pct"] is None, (
+            "published %r for a window nothing was compared over"
+            % identity["ours_covered_in_span_pct"]
+        )
+
+    def test_a_pair_whose_fixture_has_no_kickoff_is_not_counted_in_the_span(self):
+        """The third way into the same wrong numerator: a pair with no time.
+
+        The clipped numerator asks "does this pair's StatPal kickoff fall inside
+        the span?", and a fixture with no kickoff cannot answer. Excluding it is
+        the same answer `_split_against_span` already gives an untimed MISS,
+        which it calls `unplaceable` — the two halves of the ratio have to treat
+        an unplaceable row the same way or the mixing defect returns by another
+        door.
+
+        Counting it instead publishes **50.0** on a corpus whose in-span
+        coverage is **0.0**: the identical flattering lie as the residue pair
+        above, reached without any residue at all, which is why the residue
+        guard does not cover this and this test is not a duplicate of it.
+        """
+        agreements = build_tennis_agreements(
+            fixtures=[
+                # Pairs with our row, but carries no kickoff — unplaceable.
+                f("1", "C. Alcaraz", "J. Sinner", start=None),
+                # In-span, so the span EXISTS and the percentage is a number
+                # rather than `None` (which would pass this test vacuously).
+                f("2", "I. Swiatek", "Q. Zheng"),
+            ],
+            rows=[
+                r("11", "Carlos Alcaraz", "Jannik Sinner"),
+                # Inside the read span, and StatPal has nothing for it.
+                r("12", "Coco Gauff", "Aryna Sabalenka"),
+            ],
+            statpal_read_span=self.READ_SPAN,
+        )
+        identity = agreements[SINGLES]["identity"]
+
+        assert identity["both"] == 1, "corpus check: the untimed fixture pairs"
+        assert identity["statpal_span"] is not None, "corpus check: a span exists"
+        assert identity["ours_only_by_horizon"]["inside_statpal_span"] == 1, (
+            "corpus check: one in-span miss, so the denominator is non-zero"
+        )
+
+        assert identity["ours_covered_in_span_pct"] == 0.0, (
+            "published %r%% — a pair whose fixture has no kickoff was placed "
+            "inside a window it cannot be placed in"
+            % identity["ours_covered_in_span_pct"]
+        )
+
+    def test_the_compared_span_never_exceeds_the_span_that_was_read(self):
+        """The acceptance criterion, asserted directly.
+
+        `identity.statpal_span` is the window the in-span numbers were divided
+        by, and `statpal_read_span` is the window both sides were read over. The
+        first must sit inside the second, for BOTH draws, or the row is once
+        again publishing a comparison over days it never requested.
+        """
+        agreements = build_tennis_agreements(
+            fixtures=[
+                f("1", "C. Alcaraz", "J. Sinner", start=self.RESIDUE),
+                # INSIDE the span on purpose: a doubles fixture only in the
+                # residue would clip to no span at all, and this test would
+                # then pass vacuously on the draw it is meant to cover.
+                f("2", "Galloway/ Goransson", "Arevalo/ Pavic"),
+                f("3", "I. Swiatek", "Q. Zheng"),
+            ],
+            rows=[
+                r("11", "Carlos Alcaraz", "Jannik Sinner", start=self.RESIDUE),
+                r("12", "Iga Swiatek", "Qinwen Zheng"),
+            ],
+            statpal_read_span=self.READ_SPAN,
+        )
+        low, high = self.READ_SPAN
+        for key in (SINGLES, DOUBLES):
+            span = agreements[key]["identity"]["statpal_span"]
+            assert span is not None, key
+            first, last = (datetime.fromisoformat(s) for s in span)
+            assert low <= first <= last <= high, (key, span)
+
+    def test_the_read_span_is_published_on_the_row(self):
+        """A window a reader cannot see is a window a reader cannot check.
+
+        The row already stated `measurement_window` — the span of OUR inventory
+        — and said nothing about theirs, so the two sides being loaded over
+        different windows was invisible on the artifact that published the
+        number.
+        """
+        agreements = build_tennis_agreements(
+            fixtures=[f("1", "C. Alcaraz", "J. Sinner")],
+            rows=[r("11", "Carlos Alcaraz", "Jannik Sinner")],
+            statpal_read_span=self.READ_SPAN,
+        )
+        for key in (SINGLES, DOUBLES):
+            assert agreements[key]["statpal_read_span"] == [
+                self.READ_SPAN[0].isoformat(),
+                self.READ_SPAN[1].isoformat(),
+            ]
+
+    def test_a_read_span_holding_no_fixture_yields_no_span_not_an_empty_one(self):
+        """"Nothing falls inside a window that does not exist" is not "nothing
+        falls inside this window" (gotcha #53).
+
+        With every fixture clipped away there is no span to place a miss
+        against, so the misses are `unplaceable` and the percentage is `None`.
+        A `0.0` here would read as total disagreement, and a `100.0` as perfect
+        agreement, on a comparison that never happened.
+        """
+        far_future = (
+            datetime(2027, 1, 1, tzinfo=timezone.utc),
+            datetime(2027, 1, 2, tzinfo=timezone.utc),
+        )
+        agreements = build_tennis_agreements(
+            fixtures=[f("1", "C. Alcaraz", "J. Sinner")],
+            rows=[r("12", "Coco Gauff", "Aryna Sabalenka")],
+            statpal_read_span=far_future,
+        )
+        identity = agreements[SINGLES]["identity"]
+        assert identity["statpal_span"] is None
+        assert identity["ours_covered_in_span_pct"] is None
+        assert identity["ours_only_by_horizon"]["unplaceable"] == 1
+
+    def test_the_doubles_row_still_reads_a_hundred_on_its_own_terms(self):
+        """Acceptance: `tennis_doubles` must not be collateral damage."""
+        agreements = build_tennis_agreements(
+            fixtures=[f("2", "Galloway/ Goransson", "Arevalo/ Pavic")],
+            rows=[r("12", "Goransson/ Galloway", "Pavic/ Arevalo")],
+            statpal_read_span=self.READ_SPAN,
+        )
+        assert agreements[DOUBLES]["identity"]["pct"] == 100.0
+
+    def test_the_in_span_composition_stays_null_for_both_draws(self):
+        """Acceptance, and a standing constraint of this lane.
+
+        Tennis's identity relation is genuinely intransitive, so the row has no
+        `same_game` predicate and this field must stay `None`. Clipping the span
+        changes which misses are in-span; it must not tempt anyone into giving
+        tennis a predicate to make the field non-null.
+        """
+        agreements = build_tennis_agreements(
+            fixtures=[f("1", "C. Alcaraz", "J. Sinner", start=self.RESIDUE)],
+            rows=[
+                r("11", "Carlos Alcaraz", "Jannik Sinner", start=self.RESIDUE),
+                r("13", "Coco Gauff", "Aryna Sabalenka"),
+            ],
+            statpal_read_span=self.READ_SPAN,
+        )
+        for key in (SINGLES, DOUBLES):
+            assert agreements[key]["identity"]["ours_only_in_span_composition"] is None
+
+
+class TestTheTeamSportsAreUntouched:
+    """The bound is opt-in, and the team sports must not opt in by accident.
+
+    Their StatPal side is one `season-schedule` call whose contents ARE the days
+    requested, so a bound there could only ever narrow a correct span. This is
+    the guard that a later "consistency" tidy-up cannot quietly apply the clip
+    everywhere.
+    """
+
+    def test_no_bound_leaves_the_span_exactly_as_the_fixtures_gave_it(self):
+        early = datetime(2026, 3, 1, tzinfo=timezone.utc)
+        late = datetime(2026, 12, 27, tzinfo=timezone.utc)
+        row = build_agreement_row(
+            sport_key="americanfootball_nfl",
+            fixtures=[
+                Side(ref="1", home="Falcons", away="Buccaneers", start=early),
+                Side(ref="2", home="Bengals", away="Colts", start=late),
+            ],
+            rows=[Side(ref="11", home="Falcons", away="Buccaneers", start=early)],
+            normalize=str,
+        )
+        assert row["identity"]["statpal_span"] == [
+            early.isoformat(),
+            late.isoformat(),
+        ]
+        # And the row says nothing about a read span, because none was claimed.
+        assert "statpal_read_span" not in row
