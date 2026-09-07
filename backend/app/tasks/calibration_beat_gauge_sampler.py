@@ -962,13 +962,23 @@ def decide_terminal(
     about the sampler arrives as the seventy-ninth identical red and nobody
     looks; that is the crying-wolf failure ``task_verdict``'s own header names.
 
-    ``partial`` is the right home rather than a downgrade to GREEN because
-    :func:`~app.tasks.redis_state.record_task_incomplete` deliberately leaves
-    ``consecutive_failures`` alone and never escalates to critical, while
-    ``partial`` is in ``task_verdict.NOT_GREEN`` — so the producer signal this
-    module's docstring bought is kept in full and only its escalation is
-    dropped. The docstring's requirement was "must not read GREEN"; it never
-    said "must read FAILED", and the over-delivery is what burned the signal.
+    ``partial`` is the right home rather than a downgrade to GREEN because it is
+    in ``task_verdict.NOT_GREEN`` — so the producer signal this module's
+    docstring bought is kept in full and only its escalation is dropped. The
+    docstring's requirement was "must not read GREEN"; it never said "must read
+    FAILED", and the over-delivery is what burned the signal.
+
+    ⚠️ The terminal alone does NOT deliver the ship, and CERT-2153's BLOCK is why
+    this paragraph exists. ``record_task_incomplete`` FREEZES
+    ``consecutive_failures`` rather than clearing it, and ``get_task_metrics``
+    reads the streak band BEFORE the last-verdict band — so the 78 already
+    banked would have held ``health: critical`` forever, with every partial
+    refreshing the hash TTL so it could not even age out. The run artifact
+    therefore also carries ``self_ok``
+    (:data:`~app.utils.task_verdict.SELF_OK_FIELD`), the opt-in field by which a
+    task states its own machinery finished; that is what actually clears the
+    stale streak, and the terminal alone would have been a fix that changed the
+    word and not the number.
 
     Order still matters within question 1: a stale ledger under a failed write
     is a failed run, because the write failure is about US and is fixable here.
@@ -1080,7 +1090,7 @@ async def run_beat_gauge_sample() -> dict:
             read_status=read_status, observation=None, write_status=None, ledger_age_s=None
         )
         artifact["appended"] = False
-        artifact["sampler_ok"] = False
+        artifact["self_ok"] = False
         # ``measured: false`` — we never saw the producer, so we say nothing
         # about it rather than banking an all-clear we did not earn.
         artifact["producer_condition"] = producer_condition(
@@ -1125,7 +1135,7 @@ async def run_beat_gauge_sample() -> dict:
         artifact["terminal"] = "failed"
         artifact["reason"] = f"history_unreadable: {history_status}"
         artifact["appended"] = False
-        artifact["sampler_ok"] = False
+        artifact["self_ok"] = False
         return artifact
 
     merged = merge_history(existing, observation)
@@ -1177,7 +1187,15 @@ async def run_beat_gauge_sample() -> dict:
     # derived from one function so they cannot drift, and the field is what an
     # operator reads: "did the instrument work" is now a boolean, not a deduction
     # about which of two merged facts produced the red.
-    artifact["sampler_ok"] = sampler_did_its_job(
+    #
+    # It is also the CONTRACT field ``task_verdict.SELF_OK_FIELD``, and that is
+    # the half that actually pays the ship: on a `partial` it is what lets
+    # ``record_task_incomplete`` clear the 78-deep false streak that
+    # ``get_task_metrics`` would otherwise keep reading as `critical`. Set from
+    # ``sampler_did_its_job`` and never from a literal, so the assertion this
+    # task makes to the health surface is the same one it makes to its own
+    # terminal.
+    artifact["self_ok"] = sampler_did_its_job(
         observation=observation, write_status=write_status
     )
     artifact["duration_s"] = round(

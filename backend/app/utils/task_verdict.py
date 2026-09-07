@@ -123,6 +123,49 @@ class TaskVerdict:
 _LEGACY = TaskVerdict(UNKNOWN, "no_terminal_fields", authoritative=False)
 
 
+#: A summary field by which a task states that **its own machinery completed**
+#: and that whatever left the run short belongs to something outside it.
+#:
+#: CAL-P1042 (#3733), from CERT-2153's BLOCK. ``record_task_incomplete`` freezes
+#: ``consecutive_failures`` rather than clearing it, which is right for a
+#: resumable sweep that keeps stopping — the streak is real and must survive a
+#: partial. It is wrong for the *other* shape of partial: a run whose own work
+#: finished and which is only short because the thing it depends on is faulty.
+#: There the frozen streak is a lie that no later run can retract, because a
+#: task in that state never reaches ``record_task_success``. The beat gauge
+#: sampler sat at ``consecutive_failures: 78`` / ``health: critical`` for 39
+#: hours while banking every beat in 0.4s, and ``get_task_metrics`` reads the
+#: streak band BEFORE the last-verdict band, so it would have stayed critical
+#: for as long as the producer's fault lasted — with every partial refreshing
+#: the hash TTL, so it could not even age out.
+#:
+#: OPT-IN and EXPLICIT, never inferred. A task must set it deliberately; the
+#: contract will not guess that a partial is somebody else's fault, because
+#: guessing is how the streak stops meaning anything. No other task sets it
+#: today, so no other task's streak behaviour changes.
+SELF_OK_FIELD = "self_ok"
+
+
+def clears_failure_streak(verdict: str | None, summary: Any) -> bool:
+    """May this run zero ``consecutive_failures``? Pure.
+
+    Three conditions, all required:
+
+    * the verdict is ``partial`` — a ``failed`` or ``unknown`` run never clears
+      a streak, whatever it claims about itself;
+    * the summary is a dict that carries :data:`SELF_OK_FIELD`;
+    * that field is **literally ``True``** — not ``1``, not ``"yes"``, not any
+      other truthy value. A task asserting this is overriding a safety counter,
+      so it says so in the one unambiguous way, and a poisoned or
+      partially-decoded summary fails closed.
+    """
+    if _as_str(verdict) != PARTIAL:
+        return False
+    if not isinstance(summary, dict):
+        return False
+    return summary.get(SELF_OK_FIELD) is True
+
+
 def _as_str(value: Any) -> str | None:
     return value.strip().lower() if isinstance(value, str) and value.strip() else None
 
@@ -305,7 +348,7 @@ ENFORCED_TASKS = frozenset({
     # absent since 2026-09-05T07:19Z. `partial` keeps the signal (NOT_GREEN, and
     # `record_task_incomplete` records it under its own counter) while dropping
     # the escalation that spent it. The two facts are now separately named on
-    # the run artifact — `sampler_ok` and `producer_condition` — so neither has
+    # the run artifact — `self_ok` and `producer_condition` — so neither has
     # to be inferred from the other.
     "calibration_beat_gauge_sampler",  # terminal + appended + summary + ledger_age_s
     # #2199: the futures price refresher. Enrolled AT BIRTH with a terminal, and

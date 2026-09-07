@@ -599,7 +599,7 @@ class TestTheArtifactCarriesBothFactsByName:
         art = self._run(monkeypatch, ledger=self._ledger(stages))
 
         assert art["terminal"] == "partial"
-        assert art["sampler_ok"] is True, "the sampler read, keyed and wrote"
+        assert art["self_ok"] is True, "the sampler read, keyed and wrote"
         assert art["producer_condition"]["measured"] is True
         assert art["producer_condition"]["conditions"] == ["gauges_absent"]
         assert art["producer_condition"]["gauges_absent"] == ["staged:served_at"]
@@ -611,7 +611,7 @@ class TestTheArtifactCarriesBothFactsByName:
         art = self._run(monkeypatch, ledger=None, ledger_status="unavailable")
 
         assert art["terminal"] == "failed"
-        assert art["sampler_ok"] is False
+        assert art["self_ok"] is False
         assert art["producer_condition"]["measured"] is False
 
     def test_an_unreadable_ring_is_ours_and_still_reports_what_it_saw(
@@ -628,7 +628,7 @@ class TestTheArtifactCarriesBothFactsByName:
         )
 
         assert art["terminal"] == "failed"
-        assert art["sampler_ok"] is False
+        assert art["self_ok"] is False
         assert art["producer_condition"]["measured"] is True
 
 
