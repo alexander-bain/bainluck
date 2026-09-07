@@ -5,6 +5,7 @@ that can sum well over 100%.  The politics route must normalize these before
 returning them to the frontend.
 """
 
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 from app.routes.politics import (
@@ -12,6 +13,13 @@ from app.routes.politics import (
     _market_row,
     _normalize_outcome_probs,
 )
+
+#: A fixed anchor, because #3758 made the row a function of the clock as well as
+#: the market. These tests are about NORMALIZATION and their candidate names
+#: carry no dates, so the anchor only has to exist — the deadline ordering has
+#: its own suite (`test_a_politics_ladder_stops_headlining_a_passed_deadline_3758`)
+#: which sweeps the clock rather than pinning one instant (gotcha #44).
+_NOW = datetime(2026, 9, 7, 12, 0, 0, tzinfo=timezone.utc)
 
 
 # ---------------------------------------------------------------------------
@@ -100,7 +108,7 @@ class TestMarketRowNormalization:
     def test_normal_market_unchanged(self):
         outcomes = [_make_outcome("Yes", 0.60), _make_outcome("No", 0.40)]
         market = _make_market("Will X happen?", outcomes)
-        row = _market_row(market)
+        row = _market_row(market, now=_NOW)
         assert row["top_outcomes"][0]["prob"] == 60.0
         assert row["top_outcomes"][1]["prob"] == 40.0
 
@@ -113,7 +121,7 @@ class TestMarketRowNormalization:
             _make_outcome("Ramaswamy", 0.20),
         ]
         market = _make_market("Who will win?", outcomes)
-        row = _market_row(market)
+        row = _market_row(market, now=_NOW)
         total = sum(o["prob"] for o in row["top_outcomes"])
         # top 3 shown; their raw sum is 125% which exceeds 105%
         assert total <= 101.0, f"Top outcomes should sum ≤101%, got {total}%"
@@ -126,7 +134,7 @@ class TestMarketRowNormalization:
             _make_outcome("Haley", 0.40),
         ]
         market = _make_market("Who wins?", outcomes)
-        row = _market_row(market)
+        row = _market_row(market, now=_NOW)
         assert row["prob"] == row["top_outcomes"][0]["prob"]
 
 
@@ -165,7 +173,7 @@ class TestBuildPresidentialNormalization:
             "Who will win the 2028 presidential election?",
             outcomes, source="kalshi", market_id=100,
         )
-        response, _ = _build_presidential([market])
+        response, _ = _build_presidential([market], now=_NOW)
         merged_sum = sum(c["merged"] for c in response["candidates"])
         assert merged_sum <= 101.0, f"Merged sum should be ≤101%, got {merged_sum}%"
 
@@ -189,7 +197,7 @@ class TestBuildPresidentialNormalization:
             "Who will win the 2028 presidential election?",
             poly_outcomes, source="polymarket", external_id="polymarket_123", market_id=200,
         )
-        response, _ = _build_presidential([kalshi_market, poly_market])
+        response, _ = _build_presidential([kalshi_market, poly_market], now=_NOW)
         merged_sum = sum(c["merged"] for c in response["candidates"])
         assert merged_sum <= 101.0, f"Merged sum should be ≤101%, got {merged_sum}%"
 
@@ -204,7 +212,7 @@ class TestBuildPresidentialNormalization:
             "Who will win the 2028 presidential election?",
             outcomes, source="kalshi", market_id=100,
         )
-        response, _ = _build_presidential([market])
+        response, _ = _build_presidential([market], now=_NOW)
         # Raw sum is 85%, under threshold — should be unchanged
         assert response["candidates"][0]["merged"] == 45.0
         assert response["candidates"][1]["merged"] == 25.0
