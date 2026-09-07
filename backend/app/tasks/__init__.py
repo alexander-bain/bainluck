@@ -3723,6 +3723,33 @@ def reconcile_unanchored_events_task(self, apply: bool = False, limit: int = 100
     )
 
 
+@celery_app.task(bind=True, soft_time_limit=300, time_limit=360,
+                 name="app.tasks.tennis_twin_sweep")
+def tennis_twin_sweep_task(self, apply: bool = True, lookback: int = 10,
+                           lookahead: int = 5):
+    """#3811 — the #2693 twin fold, on a clock instead of on a human's memory.
+
+    The fold works and was STARVED: `provenance:duplicate-of:` had two writers,
+    the ingest-time one (which cannot reach a pair sharing no provider id and
+    stamped 3h apart) and a hand-run script. A twin formed at 03:03Z reached a
+    US Open semi-final page untagged and marketless 92 minutes later.
+
+    APPLY BY DEFAULT, unlike `reconcile_unanchored_events` above — that task's
+    apply path DELETEs, this one appends a reversible label with no deleter and
+    banks the prior value first (D51). A dry-run schedule would tag nothing and
+    leave the page broken.
+
+    Enrolled in ENFORCED_TASKS from birth (#1884) with a real `terminal`: this
+    task's founding defect IS the false GREEN, and its two zeros — "everything
+    is already labelled" and "the judgement stopped reaching the population" —
+    must never share a verdict. See the module docstring's verdict contract."""
+    from app.tasks.tennis_twin_sweep import run_tennis_twin_sweep
+    return _tracked_run(
+        "tennis_twin_sweep",
+        run_tennis_twin_sweep(apply=apply, lookback=lookback, lookahead=lookahead),
+    )
+
+
 # --- Duplicate Event Cleanup ---
 
 
@@ -4752,6 +4779,38 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.reconcile_unanchored_events",
         "schedule": crontab(minute="18,48"),
         "kwargs": {"apply": False, "limit": 1000},
+        "options": {"queue": "background"},
+    },
+    # #3811 — the #2693 twin fold, fed. The tag it depends on had no scheduled
+    # writer at all, so a twin that formed at 03:03Z was still untagged 92
+    # minutes later with a US Open semi-final 34 hours away.
+    #
+    # 30 minutes is sized against that race, not guessed: the harm window opens
+    # when the SECOND row is created and closes when this next runs, so cadence
+    # T bounds the double-print at T. Polymarket ingests hourly and Kalshi every
+    # 2h, so hourly would only match the fastest thing that can mint a ghost;
+    # 30 min is half of it. ~1,500-row indexed read, pure plan, zero writes in
+    # steady state (measured: 158/158 pairs already labelled at first run).
+    #
+    # `:27/:57` is CENSUSED, not picked. The first draft was `:08/:38` and
+    # `test_settlement_sweep_beat`'s G8 guard caught it: `:38` sits inside the
+    # settlement sweep's 10:31+13m window, taking it to 18 background fires
+    # against a declared ceiling of 17. That guard offers "re-derive the ceiling
+    # or move the sweep" and moving is the honest half — raising a ceiling to
+    # admit the thing it was measuring is #1910's failure. A per-minute census of
+    # background crontab fires puts `:27` and `:57` at ZERO co-fires, the only
+    # 30-min pair with none; it clears the settlement window (31-43),
+    # reconcile-unanchored (`:18/:48`), and sits 3 minutes ahead of the `:00`
+    # (36 fires) and `:30` (29 fires) pile-ups rather than immediately before
+    # them, which is why it beats the equally-empty `:29/:59`.
+    #
+    # APPLY, unattended, under D51: reversible label, no deleter, prior value
+    # banked into `bak_2878_twin_ghost_tags` first, and one-command undo via
+    # `scripts/restore_2878_tennis_twin_ghosts.py --apply`.
+    "tennis-twin-sweep": {
+        "task": "app.tasks.tennis_twin_sweep",
+        "schedule": crontab(minute="27,57"),
+        "kwargs": {"apply": True, "lookback": 10, "lookahead": 5},
         "options": {"queue": "background"},
     },
     "merge-duplicate-events": {

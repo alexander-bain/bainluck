@@ -1341,7 +1341,41 @@ def free_background_slots(
 #: 19 minutes after `sync-statpal-schedules-mlb` at `:02`, and is two minutes
 #: clear of the NHL stamper at `:19` and the NFL one at `:23` — so the four
 #: StatPal readers sit at `:17`/`:19`/`:21`/`:23` and no two ever run together.
-BACKGROUND_BEAT_COUNT = 118
+#:
+#: 🔴 RE-DERIVED at #3811 (2026-09-07): 118 → **119**, explicit 73 → **74**,
+#: fall-through UNMOVED at 45 — the benign direction. Obtained by RUNNING the
+#: census in `test_the_background_queue_carries_105_beats_and_45_are_fall_through`
+#: over the assembled `beat_schedule`, which printed `explicit 74 implicit 45
+#: total 119`, never by adding one to 118 (#1910).
+#:
+#: The beat is `tennis-twin-sweep` (`crontab(minute="27,57")`, EXPLICIT
+#: `options={"queue": "background"}`), which feeds the #2693 twin fold — the
+#: `provenance:duplicate-of:` tag it reads had no scheduled writer at all, so a
+#: twin that formed at 03:03Z reached a US Open semi-final page untagged and
+#: marketless 92 minutes later.
+#:
+#: ITS COST, declared here because this is where costs are declared. Per pass:
+#: ONE paged indexed read of the ±(10/5)-day tennis window — **1,546 rows
+#: measured on production 2026-09-07** — then a pure in-memory plan (998 blocks,
+#: no I/O), then ZERO writes in the steady state. Measured at the same moment:
+#: 158 pairs found, all 158 already labelled, so the first scheduled run writes
+#: nothing. A write pass is one INSERT and one UPDATE per new twin, single-row
+#: and idempotent in the database, and new twins arrive at single digits a day.
+#: No third-party call, no LLM, no unbounded scan. `background` rather than
+#: `heavy` because there is no multi-minute compute — the whole pass is one
+#: query and a dictionary — and rather than `realtime` because a 30-minute
+#: cadence is the point of it, not a latency requirement.
+#:
+#: `:27/:57` was chosen by RUNNING the per-minute census over the assembled
+#: schedule (CERT-418's lesson), not by reading the file. The first draft was
+#: `:08/:38` and `test_settlement_sweep_beat`'s G8 guard rejected it — `:38`
+#: falls inside the settlement sweep's `10:31+13m` window, taking it to 18
+#: background fires against a ceiling of 17. `:27` and `:57` are the ONLY
+#: 30-minute pair carrying zero other crontab fires; they clear that window,
+#: clear `reconcile-unanchored-events` at `:18/:48`, and sit three minutes ahead
+#: of the `:00` (36 fires) and `:30` (29 fires) pile-ups instead of immediately
+#: before them, which is what separates them from the equally-empty `:29/:59`.
+BACKGROUND_BEAT_COUNT = 119
 #: **UX-P139 re-derivation: 101 → 103, explicit 56 → 58, fall-through still 45.**
 #: Two beats added, both naming `background` explicitly:
 #: `refresh-registered-tournament-prices` (every 10 min, ~11 bounded Gamma calls

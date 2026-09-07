@@ -249,6 +249,27 @@ class TestEnforcementScope:
             # nowhere to land. `terminal` is `no_work` on any zero and `failed`
             # with `measured: false` when the census itself could not run.
             "reconcile_unanchored_events",
+            # #3811: the #2693 twin-fold tagger, enrolled at BIRTH. Its founding
+            # defect is this set's exact subject and it was invisible for the
+            # dullest possible reason — the tag its fold runs on had NO
+            # scheduled writer at all, so there was no task to read green or
+            # red about. A twin formed at 03:03Z, its canonical landed at
+            # 04:35Z, and a US Open semi-final page rendered with no markets
+            # section 34 hours before the match.
+            #
+            # 🔴 The trap here is the opposite of the polymarket_winners trap
+            # above, and worth stating because the obvious reading of "be loud
+            # on zero yield" gets it backwards: this task writes ZERO tags on
+            # nearly every run, because the steady state is "every decidable
+            # pair is already labelled". That zero is `complete` — the artifact
+            # is on disk. Making it not-GREEN would be ninety-six false REDs a
+            # day on a 30-minute clock. The zeros that are NOT green are a plan
+            # that has fallen below its floor (the judgement stopped reaching
+            # the population), an unplayed arm withheld because
+            # `_build_game_markets` stopped folding, and a population read that
+            # raised (`measured: false`). Terminals come from
+            # `app/tasks/tennis_twin_sweep.py`.
+            "tennis_twin_sweep",
             # #1912 (CAL-P065): the two halves of the Polymarket ownership
             # hole, enrolled TOGETHER because separately each one looked fine.
             # The Gamma rail discarded 9,748 markets a run as
