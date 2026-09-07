@@ -737,6 +737,51 @@ async def _load_match_group(
     return group_id, list(markets.values())
 
 
+def _slate_start_is_tbd(hub: dict[str, Any], event_id: int) -> Optional[bool]:
+    """Has the authority actually NAMED a start time for this fixture? (#3829)
+
+    ═══ WHY THE MATCH PAGE NEEDS THIS AND THE HUB DOES NOT ═══
+
+    ESPN publishes the order of play in stages: a fixture appears on the
+    scoreboard the moment its round is drawn, carrying midnight-local as a
+    placeholder timestamp, and gets a real hour only when the courts are
+    assigned.  ``start_is_tbd`` is ESPN's own word for which of the two you are
+    holding (``services/espn_tennis.py:806``), and the hub has honoured it since
+    Q463 — ``TournamentMatches.tsx`` prints the day and refuses the clock.
+
+    The match page had no such signal.  ``GET /api/events/{id}`` carries
+    ``commence_time`` and nothing else start-shaped, so ``/events/{id}`` rendered
+    the placeholder as a confident minute AND counted down to it: on 2026-09-07
+    all four US Open quarter-finals said "Sep 8, 2026 · 11:30 AM EDT" while the
+    hub row for the same match said "TOMORROW · TBD".  One fixture, two
+    surfaces, two answers — and the wrong one was the more specific.
+
+    ═══ WHY IT IS LIFTED FROM THE HUB AND NOT SOURCED AGAIN ═══
+
+    ``hub`` is already in hand on this branch and is the same object the
+    tournament page renders, so this is a list scan over a warm cache and costs
+    no query, no Redis read and no second call to ESPN.  It is also the whole
+    point: a second source for the flag is a second chance for the two surfaces
+    to disagree, which is the defect itself.  ``THE CHEAP NO`` is untouched —
+    a non-tournament event returns before this is ever called.
+
+    ═══ THREE ANSWERS, NOT TWO ═══
+
+    * ``True``  — ESPN listed the fixture and said it has no time yet.
+    * ``False`` — ESPN listed the fixture with a real, published hour.
+    * ``None``  — the fixture is not on today's slate at all, so we hold no
+      opinion.  Deliberately distinct from ``False``: "we know it is real" and
+      "we never asked" must never render the same, and a later reader that
+      wants to be stricter about the unknown case needs to be able to see it.
+      Callers must not read ``None`` as ``False``.
+    """
+    for row in (hub.get("slate") or {}).get("matches") or []:
+        if row.get("event_id") == event_id:
+            flag = row.get("start_is_tbd")
+            return flag if isinstance(flag, bool) else None
+    return None
+
+
 @router.get("/by-event/{event_id}")
 async def get_event_tournament(
     event_id: int, db: AsyncSession = Depends(get_db)
@@ -818,6 +863,14 @@ async def get_event_tournament(
 
     hub = await _hub_payload(slug, spec, db)
 
+    # ── WHETHER THE START TIME THE EVENT PAGE HOLDS IS REAL (#3829) ──
+    # Rides EVERY answer from here down, for the same reason `container` does:
+    # the fixture this is about is a quarter-final, and a quarter-final is
+    # exactly the row that dead-ends at `NOT_IN_REGISTER` below. A field
+    # emitted only on the fully-resolved path would be a field the four pages
+    # that reported the bug never receive.
+    start_is_tbd = _slate_start_is_tbd(hub, event_id)
+
     matchup_key = ((hub.get("event_links") or {}).get("by_event") or {}).get(
         str(event_id)
     )
@@ -837,6 +890,7 @@ async def get_event_tournament(
         return {
             "event_id": event_id,
             "tournament": container,
+            "start_is_tbd": start_is_tbd,
             "reason": "NOT_IN_REGISTER",
         }
 
@@ -862,6 +916,7 @@ async def get_event_tournament(
         return {
             "event_id": event_id,
             "tournament": container,
+            "start_is_tbd": start_is_tbd,
             "reason": "REGISTER_MOVED",
         }
 
@@ -936,6 +991,7 @@ async def get_event_tournament(
         # reader gets on a second-week match and the one they get on a R128
         # match cannot drift apart into two different URLs.
         "tournament": container,
+        "start_is_tbd": start_is_tbd,
         "matchup_key": matchup_key,
         "round": matchup.get("round"),
         "draw_label": (hub.get("grids") or {}).get(matchup.get("draw"), {}).get("label"),

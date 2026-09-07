@@ -296,6 +296,85 @@ export function shouldShowRefreshCountdown(args: {
   return startMs - nowMs <= REFRESH_COUNTDOWN_WINDOW_MS;
 }
 
+/**
+ * Does the authority actually KNOW when this event starts? (#3829)
+ *
+ * ═══ THE DEFECT ═══
+ *
+ * ESPN files a tennis fixture on the scoreboard the moment its round is drawn
+ * and withholds the hour until the courts are assigned, saying which of the two
+ * you hold in `start_is_tbd`. On 2026-09-07 all four US Open quarter-finals
+ * shared one fabricated `2026-09-08T15:30:00Z`, and `/events/{id}` printed
+ * "Sep 8, 2026 · 11:30 AM EDT" and counted down to it — while the hub row for
+ * the same match, which has honoured the flag since Q463, said "TOMORROW · TBD".
+ * Four matches cannot start at 11:30 on two courts.
+ *
+ * ═══ THREE STATES, BECAUSE TWO IS WHAT CAUSED IT ═══
+ *
+ * `"tbd"`     — the authority listed the fixture and said there is no time yet.
+ * `"pending"` — this is a tournament sport and the answer is still in flight.
+ *               We do not yet know, so we say nothing. A clock that renders
+ *               confidently and is then yanked is the same lie told briefly,
+ *               and "unknown" must never render as "known".
+ * `"clock"`   — everything else, and it is deliberately the default. A `null`
+ *               flag means the fixture is not on today's order of play, which
+ *               is the ordinary state of every FINISHED match — and a finished
+ *               match's start time is perfectly well known. Only positive
+ *               evidence removes a clock.
+ *
+ * Pure and exported because a Next.js page may not carry named exports, so this
+ * is the only seam a guard can hold — the same reason
+ * `shouldShowRefreshCountdown` lives here.
+ */
+export type StartClockState = "clock" | "tbd" | "pending";
+
+export function startClockState(args: {
+  /** `EventTournamentResponse.start_is_tbd` — `undefined` while unresolved. */
+  startIsTbd: boolean | null | undefined;
+  /** Did this page even ask? False for every non-tournament sport. */
+  isTournamentSport: boolean;
+  /** Has the `by-event` answer arrived (whatever it said)? */
+  tournamentResolved: boolean;
+}): StartClockState {
+  const { startIsTbd, isTournamentSport, tournamentResolved } = args;
+  if (startIsTbd === true) return "tbd";
+  // The hold is scoped to sports that actually ask. An MLB page never issues
+  // the request, so `tournamentResolved` is permanently false for it and an
+  // unscoped hold would blank the clock on the whole site.
+  if (isTournamentSport && !tournamentResolved) return "pending";
+  return "clock";
+}
+
+/**
+ * The event header's start line — "Sep 8, 2026 · 11:30 AM EDT" (#3829).
+ *
+ * THE DAY SURVIVES THE PLACEHOLDER AND THE HOUR DOES NOT. ESPN files a fixture
+ * on the day it will be played and withholds only the time, so a reader keeps
+ * the fact we hold and loses the one we invented. `"TBD"` is the hub's own word
+ * for this state — `TournamentMatches.formatMatchTime` has printed it since
+ * Q463 — so the two surfaces now say the same thing about the same match.
+ */
+export function formatEventStartLabel(
+  commenceTime: string,
+  state: StartClockState = "clock",
+): string {
+  const at = new Date(commenceTime);
+  if (isNaN(at.getTime())) return "";
+  const day = at.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+  if (state === "pending") return day;
+  if (state === "tbd") return `${day} · TBD`;
+  const clock = at.toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short",
+  });
+  return `${day} · ${clock}`;
+}
+
 /** Format a start time as a relative label (Today/Tomorrow) or short date. */
 export function formatStartTime(commenceTime: string): string {
   const date = new Date(commenceTime);
