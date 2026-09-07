@@ -283,6 +283,120 @@ enum MarketMapRail {
         hasDistribution ? "Half \(unit) distribution" : "Half \(unit)"
     }
 
+    // MARK: - Whether a margin card has a distribution to show
+
+    /// True when a margin rail has a real distribution on it.
+    ///
+    /// #3763, the sibling of ``totalRailHasDistribution`` on the card #3576
+    /// declared out of scope ("the margin cards do not pass the new flag and are
+    /// untouched").
+    ///
+    /// **It reads the builder's OUTPUT, not its inputs, and that is the whole
+    /// design.** `totalRailHasDistribution` has to mirror
+    /// `buildDensityFromThresholds`' flat exits condition-for-condition, because
+    /// those exits are early returns it cannot see. `buildDensityFromSpreads` has
+    /// no early exit worth mirroring — it bins, then normalises — so the honest
+    /// question is simply *what did it just draw*, and asking the array removes
+    /// the possibility of drift that a second copy of the arithmetic would
+    /// reintroduce. #3554's lesson was three copies of one rule disagreeing; this
+    /// keeps the count at one.
+    ///
+    /// **Distinct HEIGHTS, not populated bins** — and that distinction is
+    /// measured, not aesthetic. Census of production, 2026-09-06, every event
+    /// page across seven leagues that draws a margin map (`census049-margin.json`,
+    /// 22 cards): **9 of the 22 have no distribution on them.** Eight are a single
+    /// rung — one bin at full height, thirteen at zero, which is the case #3763
+    /// was filed on. The ninth is the one that decides this signature:
+    ///
+    /// (That 9 is measured in the world where #3743 has landed, which is the
+    /// world this code ships into. Against the tree #3743 was cut from it is 3:
+    /// the six US Open cards still carried the complement as a second rung at a
+    /// different price, so they read as two varied bins and this rule would have
+    /// left them alone. The two ships are textually independent and compose in
+    /// either order — but #3763's reach depends on #3743's, and a later reader
+    /// re-running the census on the wrong base would get the smaller number and
+    /// think this rule had regressed.)
+    ///
+    /// ```
+    /// MLB 15305475, Twins @ White Sox — 5 rungs, 5 populated bins
+    ///   [0, 0, 0, 0, 0, 0, 96, 96, 96, 96, 96, 0, 0, 0]
+    /// ```
+    ///
+    /// Five bins wide and perfectly flat. A `populatedBins >= 2` rule passes
+    /// that card and prints "distribution" over a solid uniform block — the
+    /// exact overclaim #3576 named on the totals side, "a uniform shape that
+    /// looks like a distribution and is not one". Reading heights refuses it and
+    /// refuses the single-rung case with the same expression, no special case
+    /// for either.
+    ///
+    /// **And that card is a whole CLASS, not a curiosity.** It is `completed`,
+    /// and its five served legs are "Chicago WS wins by over 1.5 / 2.5 / 3.5 /
+    /// 4.5 / 5.5 runs" at `p = 0.99, 0.99, 0.99, 0.99, 0.99` — the White Sox won
+    /// by six, so every line below the final margin resolved to the same
+    /// certainty. A settled game does that BY CONSTRUCTION: the cover lines
+    /// inside the final margin all go to ~1 and the ones outside it all go to
+    /// ~0, so the rail flattens into one block whose width is the margin. Every
+    /// settled game with a spread ladder arrives here, which is why this is
+    /// worth a rule rather than a special case.
+    ///
+    /// The admitted borderline, named so the next reader knows it was decided:
+    /// MLB 15298326 draws two bins at `[1.9, 96.0]`. Two bars of very different
+    /// height do say where the mass is, so this returns true for it. What this
+    /// refuses is a rail that asserts *no* shape, not a rail with a coarse one.
+    ///
+    /// **What this deliberately does NOT answer, #3772:** whether the shape on a
+    /// rail that passes here is the right shape. `buildDensityFromSpreads` bins
+    /// CUMULATIVE cover probabilities as though they were densities, so it plots
+    /// a survival curve — on live 15305476 the mass between the 1.5 and 2.5 rungs
+    /// is `0.58 - 0.12 = 0.46` and the rail draws `0.12`. This rule is about
+    /// whether the card asserts a shape at all, and is correct either way; when
+    /// #3772 is fixed by differencing (as `buildDensityFromThresholds` already
+    /// does) the surviving "distribution" is genuinely earned.
+    ///
+    /// - Parameter density: the array `buildDensityFromSpreads` just returned —
+    ///   the heights that will actually be drawn, post-normalisation.
+    static func marginRailHasDistribution(density: [Double]) -> Bool {
+        // Exact equality, deliberately. Every height is `(binSum / peak) * 96`
+        // evaluated by one expression over sums of the same served prices, so
+        // bins that agree agree bit-for-bit — that is why the flat card above
+        // reads as five exact `96.0`s. A tolerance here would be a magic number
+        // guarding against data no venue produces.
+        var firstPositive: Double?
+        for height in density where height > 0 {
+            guard let first = firstPositive else {
+                firstPositive = height
+                continue
+            }
+            if height != first { return true }
+        }
+        return false
+    }
+
+    /// The subtitle a FULL-GAME margin map may print.
+    ///
+    /// #3763. The same sentence-level rule as ``fullTotalSubtitle`` with one
+    /// difference that matters: the totals card overclaims only once settled,
+    /// because its unsettled string ("Projected total points") never contained
+    /// the word. The margin card says "**Projected** margin distribution" before
+    /// the game and "**Final** margin distribution" after, so it overclaims in
+    /// both states and both are gated here. The census population is mixed —
+    /// the eight single-rung cards include live US Open matches and a completed
+    /// MLB game (15305471) — so a settled-only gate would have fixed under half
+    /// of them.
+    static func fullMarginSubtitle(isDone: Bool, hasDistribution: Bool) -> String {
+        let noun = isDone ? "Final margin" : "Projected margin"
+        return hasDistribution ? "\(noun) distribution" : noun
+    }
+
+    /// The subtitle a HALF margin map may print.
+    ///
+    /// #3763. `halfMarginCard` hard-codes "Half margin distribution" over the
+    /// same `buildDensityFromSpreads` output as the full card, which is how
+    /// `halfTotalCard` read before #3576 gave it ``halfTotalSubtitle``.
+    static func halfMarginSubtitle(hasDistribution: Bool) -> String {
+        hasDistribution ? "Half margin distribution" : "Half margin"
+    }
+
     // MARK: - Where the mid axis label goes
 
     /// Where a map's middle axis label belongs.

@@ -373,4 +373,137 @@ final class MarketMapRailTests: XCTestCase {
             "Half runs"
         )
     }
+
+    // MARK: - #3763: the same question, asked of the margin card
+
+    /// Every density literal below is what `buildDensityFromSpreads` returns for
+    /// a REAL event page, replayed from that page's own
+    /// `/api/events/<id>/game-markets` spreads through the builder's arithmetic —
+    /// production, 2026-09-06, 22 drawable margin maps over seven leagues
+    /// (`artifacts-native-049/census049-margin.json`). Heights are rounded to one
+    /// decimal for legibility; the rule reads distinctness, which rounding here
+    /// preserves.
+
+    /// The photographed card. Event 15305580 (Zheng @ Swiatek, US Open) after
+    /// #3743 left it at one honest rung: one bin at full height, thirteen at
+    /// zero, under "Projected margin distribution".
+    func testThePhotographedSingleRungMarginCardDropsTheWordDistribution() {
+        let swiatekZheng: [Double] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 96, 0]
+
+        XCTAssertFalse(
+            MarketMapRail.marginRailHasDistribution(density: swiatekZheng),
+            "one bar is not a distribution, however tall"
+        )
+        XCTAssertEqual(
+            MarketMapRail.fullMarginSubtitle(isDone: false, hasDistribution: false),
+            "Projected margin",
+            "the sentence is the defect: the card may not promise a shape it has not got"
+        )
+    }
+
+    /// 🔴 THE CARD THAT DECIDES THE SIGNATURE. Event 15305475 (Twins @ White Sox)
+    /// draws FIVE populated bins, all at exactly the same height. A
+    /// `populatedBins >= 2` rule — the obvious port of the totals rule — passes
+    /// this card and prints "distribution" over a solid uniform block, which is
+    /// #3576's complaint verbatim.
+    ///
+    /// It is a settled game, and that is why this is a class and not a specimen:
+    /// its five legs are "Chicago WS wins by over 1.5 … 5.5 runs" at `0.99` each,
+    /// because the White Sox won by six. Every settled game with a spread ladder
+    /// flattens the same way — the lines inside the final margin all resolve to
+    /// ~1 — so a bin-count rule would overclaim on all of them.
+    func testFivePopulatedBinsAtOneHeightAreStillNotADistribution() {
+        let flatPlateau: [Double] = [0, 0, 0, 0, 0, 0, 96, 96, 96, 96, 96, 0, 0, 0]
+
+        XCTAssertEqual(flatPlateau.filter { $0 > 0 }.count, 5, "five bins are populated")
+        XCTAssertFalse(
+            MarketMapRail.marginRailHasDistribution(density: flatPlateau),
+            "a five-bin flat plateau asserts no shape — bin COUNT would have passed it"
+        )
+    }
+
+    /// 🔴 BOTH DIRECTIONS. The damaging mirror regression is stripping the word
+    /// from every well-quoted card. Event 14780138 (Patriots @ Seahawks, NFL)
+    /// serves 31 rungs and draws a genuinely peaked rail across 12 bins; 13 of
+    /// the 22 censused cards are of this kind and none of them may move.
+    func testAWellQuotedNFLMarginCardKeepsItsShapeAndItsWord() {
+        let patriotsSeahawks: [Double] = [
+            0, 37.2, 37.2, 67.1, 89.8, 89.8, 96, 89.8, 78.5, 37.2, 31, 37.2, 12.4, 0,
+        ]
+        XCTAssertTrue(MarketMapRail.marginRailHasDistribution(density: patriotsSeahawks))
+        XCTAssertEqual(
+            MarketMapRail.fullMarginSubtitle(isDone: false, hasDistribution: true),
+            "Projected margin distribution"
+        )
+        XCTAssertEqual(
+            MarketMapRail.fullMarginSubtitle(isDone: true, hasDistribution: true),
+            "Final margin distribution"
+        )
+        XCTAssertEqual(
+            MarketMapRail.halfMarginSubtitle(hasDistribution: true),
+            "Half margin distribution"
+        )
+    }
+
+    /// 🔴 THE DIFFERENCE FROM THE TOTALS RULE, and the one a port would miss.
+    /// `fullTotalSubtitle` leaves its unsettled string alone because that string
+    /// never said "distribution". The margin card's does, in BOTH states, so both
+    /// are gated. The censused single-rung population is mixed — live US Open
+    /// matches and the completed MLB game 15305471 — so a settled-only gate would
+    /// have left most of them overclaiming.
+    func testTheMarginCardIsGatedBeforeTheGameAsWellAsAfterIt() {
+        XCTAssertEqual(
+            MarketMapRail.fullMarginSubtitle(isDone: false, hasDistribution: false),
+            "Projected margin",
+            "an upcoming or live card overclaims too — this is not a settled-only rule"
+        )
+
+        // 15305471, Rays @ Rangers, `completed`: one rung, one bin.
+        let settledSingleRung: [Double] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 96, 0, 0, 0, 0]
+        XCTAssertFalse(MarketMapRail.marginRailHasDistribution(density: settledSingleRung))
+        XCTAssertEqual(
+            MarketMapRail.fullMarginSubtitle(isDone: true, hasDistribution: false),
+            "Final margin"
+        )
+    }
+
+    /// The half card has the same hard-coded word over the same builder's output,
+    /// exactly as `halfTotalCard` did before #3576.
+    func testTheHalfMarginCardDropsTheWordOnTheSameCondition() {
+        XCTAssertEqual(MarketMapRail.halfMarginSubtitle(hasDistribution: false), "Half margin")
+    }
+
+    /// The degenerate rails, pinned so a future edit cannot make one of them
+    /// claim a shape. The all-`5` array is what `buildDensityFromSpreads` returns
+    /// for NO rungs at all — a uniform rail that `marginMapIsEmptyChrome` usually
+    /// suppresses, and which must never read as a distribution if it does draw.
+    func testTheDegenerateRailsClaimNothing() {
+        XCTAssertFalse(MarketMapRail.marginRailHasDistribution(density: []))
+        XCTAssertFalse(MarketMapRail.marginRailHasDistribution(density: Array(repeating: 0, count: 14)))
+        XCTAssertFalse(
+            MarketMapRail.marginRailHasDistribution(density: Array(repeating: 5, count: 14)),
+            "`buildDensityFromSpreads([])`'s flat rail is a placeholder, not data"
+        )
+        XCTAssertFalse(MarketMapRail.marginRailHasDistribution(density: [96]))
+    }
+
+    /// The admitted borderline, asserted so it is on the record as a decision
+    /// rather than an accident. Event 15298326 (Cardinals @ Rockies) draws two
+    /// bins at wildly different heights. Two bars do say where the mass is, so
+    /// this is a distribution; what the rule refuses is a rail asserting NO
+    /// shape, not one asserting a coarse shape.
+    func testTwoBinsOfDifferentHeightAreADistribution() {
+        let cardinalsRockies: [Double] = [0, 0, 0, 0, 96, 0, 0, 0, 0, 1.9, 0, 0, 0, 0]
+        XCTAssertTrue(MarketMapRail.marginRailHasDistribution(density: cardinalsRockies))
+    }
+
+    /// Zero is not a height. A rail whose only variation is between "shaded" and
+    /// "not shaded" has one height on it, and the rule must not read the zeros as
+    /// a second one — that reading would call every single-rung card a
+    /// distribution and fix nothing.
+    func testTheZeroBinsAreNotCountedAsASecondHeight() {
+        XCTAssertFalse(MarketMapRail.marginRailHasDistribution(density: [0, 96, 0]))
+        XCTAssertFalse(MarketMapRail.marginRailHasDistribution(density: [96, 0, 96, 0, 96]))
+        XCTAssertTrue(MarketMapRail.marginRailHasDistribution(density: [96, 0, 95.9]))
+    }
 }

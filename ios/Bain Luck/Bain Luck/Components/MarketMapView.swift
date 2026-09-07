@@ -368,7 +368,13 @@ struct MarketMapView: View {
         // which is exactly how the phone has always read.
         return mapCard(
             title: vocab.marginTitle(quotedBy: data.unit),
-            subtitle: isDone ? "Final margin distribution" : "Projected margin distribution",
+            // #3763 — the card stops promising a distribution it has not got.
+            // Asked of the density this card is about to draw, not of `parsed`,
+            // so the sentence cannot disagree with the rail above it.
+            subtitle: MarketMapRail.fullMarginSubtitle(
+                isDone: isDone,
+                hasDistribution: MarketMapRail.marginRailHasDistribution(density: density)
+            ),
             headline: headline,
             density: density,
             rangeMin: rangeMin,
@@ -616,7 +622,12 @@ struct MarketMapView: View {
         // #3642 — each end names its own bound, as on the full-game card above.
         let axisEnds = MarketMapRail.marginAxisEnds(bounds)
         return mapCard(
-            title: label, subtitle: "Half margin distribution", headline: "",
+            // #3763 — as on the full-game card above.
+            title: label,
+            subtitle: MarketMapRail.halfMarginSubtitle(
+                hasDistribution: MarketMapRail.marginRailHasDistribution(density: density)
+            ),
+            headline: "",
             density: density, rangeMin: rangeMin, rangeMax: rangeMax,
             zeroPosition: zeroPos,
             leftRgb: resolveRGB(awayColor), rightRgb: resolveRGB(homeColor),
