@@ -18,7 +18,7 @@ import type {
 import ErrorState from "@/components/ErrorState";
 import PoliticsSkeleton from "@/components/skeletons/PoliticsSkeleton";
 import Sparkline from "@/components/Sparkline";
-import { formatSpan, seriesFreshness, seriesHasHole } from "@/lib/seriesFreshness";
+import { formatSpan, seriesFreshness, seriesHasHole, seriesWindowLabel } from "@/lib/seriesFreshness";
 import { eventPath } from "@/lib/eventKey";
 import s from "./politics.module.css";
 import { BORDER_COLOR, SourceBadge } from "@/components/politics/atoms";
@@ -321,6 +321,18 @@ function PresBarRace({ sorted, sourceMode, data }: {
       : `Dimmed trend lines are missing recent numbers.`;
   }, [sorted]);
 
+  /**
+   * #3710 — what the spark column is headed, derived from what it draws.
+   *
+   * It said "7d trend" over a 29-day series. Kept beside `trendNote` because
+   * the two describe the same column from opposite ends: this one names the
+   * window, that one names the hole inside it.
+   */
+  const trendWindow = useMemo(
+    () => seriesWindowLabel(sorted.map((c) => (c.history ?? []).map((h) => h.t))),
+    [sorted],
+  );
+
   return (
     <div>
       {/* Column header */}
@@ -329,7 +341,9 @@ function PresBarRace({ sorted, sourceMode, data }: {
         <span></span>
         <span>Candidate</span>
         <span>Probability{showDualBars ? " (K / P)" : ""}</span>
-        <span className={s.hideOnMobile} style={{ textAlign: "right" }}>7d trend</span>
+        <span className={s.hideOnMobile} style={{ textAlign: "right" }}>
+          {trendWindow ? `${trendWindow} trend` : "Trend"}
+        </span>
         <span className={s.hideOnMobile} style={{ textAlign: "right" }}>Δ 7d</span>
         <span style={{ textAlign: "right" }}>Now</span>
       </div>
