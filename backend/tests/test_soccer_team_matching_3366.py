@@ -446,27 +446,23 @@ class TestTokenisation:
         assert soccer_tokens("  Boca   Juniors  ") == ["boca", "juniors"]
 
 
-class TestThisModuleHasNoCallerYetAndThatIsDeliberate:
-    """A rule with no caller is a declaration nobody drives, so say why.
+class TestThisModuleNowHasItsCaller:
+    """The absence this class used to assert has been filled, in one commit.
 
-    The consumer is a soccer entry in `stamp_v1_statpal_fixtures.LEAGUES`, and
-    it cannot be written yet for two reasons that are not this file's to fix:
-
-      * `LeagueSpec` is built around `/v1/{sport}/season-schedule`, and soccer
-        has no such endpoint — its schedule is v2 `matches/daily?offset=N`,
-        one day per call.
-      * The id a soccer anchor is keyed on is `fallback_id_3`, which reaches
-        `StatPalFixture` on the #3366 branch that is not merged yet.
-
-    So this asserts the ABSENCE, the way `test_statpal_live_anchor_entrypoint_3094`
-    asserts its own, so that the next session reads the reason before adding a
-    fifth stamper.
+    It read: *"a soccer LeagueSpec landed: wire `soccer_pair_matches` into it,
+    and delete this test in the same commit"*. Both of its stated blockers are
+    gone — `LeagueSpec` now names its READ (`schedule_day_offsets`, soccer's
+    three `matches/daily` boards) instead of assuming `season-schedule`, and
+    `fallback_id_3` reaches `StatPalFixture`. So the assertion is inverted
+    rather than deleted: an absence test that is simply removed leaves nothing
+    behind saying the thing arrived, and the next reader has to diff to find out.
     """
 
-    def test_soccer_is_not_a_stamped_league_yet(self):
-        from app.tasks.stamp_v1_statpal_fixtures import LEAGUES
+    def test_soccer_names_its_own_pair_rule_and_does_not_inherit_the_nfl_one(self):
+        from app.tasks.stamp_v1_statpal_fixtures import SOCCER
+        from app.utils.nfl_team_matching import pair_matches
 
-        assert not any(key.startswith("soccer") for key in LEAGUES), (
-            "a soccer LeagueSpec landed: wire soccer_pair_matches into it, and "
-            "delete this test in the same commit"
+        assert SOCCER.pair_rule is soccer_pair_matches
+        assert SOCCER.pair_rule is not pair_matches, (
+            "soccer on the NFL rule joins 17 of the pinned 90, not 67"
         )

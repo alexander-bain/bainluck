@@ -110,9 +110,9 @@ class TestTheLiveBoardIsTheOneThatAnswers:
         assert LIVE_SCORE_ENDPOINTS == {"soccer": "matches/live"}
 
     def test_every_other_sport_keeps_livescores(self, service):
-        assert service._live_endpoint("nfl") == "livescores"
-        assert service._live_endpoint("tennis") == "livescores"
-        assert service._live_endpoint("soccer") == "matches/live"
+        assert service.live_endpoint("nfl") == "livescores"
+        assert service.live_endpoint("tennis") == "livescores"
+        assert service.live_endpoint("soccer") == "matches/live"
 
     @pytest.mark.asyncio
     async def test_the_url_asked_is_v2_matches_live(self, service, monkeypatch):

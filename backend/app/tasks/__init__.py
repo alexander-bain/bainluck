@@ -3455,6 +3455,47 @@ def stamp_mlb_statpal_fixtures(self, apply=True):
     )
 
 
+@celery_app.task(bind=True, soft_time_limit=300, time_limit=330,
+                 name="app.tasks.stamp_soccer_statpal_fixtures")
+def stamp_soccer_statpal_fixtures(self, apply=False):
+    """Plan (not yet write) the StatPal contest each soccer row is (#3366, D50).
+
+    **`apply` defaults to FALSE here and TRUE on the three stampers above, and
+    there is no beat entry for this task.** Both are deliberate. Soccer's first
+    pass has never run against production, it selects rows across ~40 of our
+    sport keys instead of one, and it matches on a token subset rather than on
+    equality — so what it owes first is a receipt. D51 governs the flip: the
+    plan pass is what sizes the backup and the one-command restore, and it runs
+    on demand until it has.
+
+    Three things are soccer's alone and each is a named field on its
+    `LeagueSpec` rather than a branch in the shared runner:
+
+      - **The read is three daily boards, not one season schedule.**
+        `/v2/soccer/matches/daily?offset=N` serves ~25.5h per board, so offsets
+        1+2 stop at 2026-09-10T00:45Z; offset 3 was measured to buy 13 of our
+        rows they cannot reach, including three west-coast MLS fixtures at
+        02:30Z. `offset=0` is byte-identical to `matches/live` (#3800) and is
+        refused by name.
+      - **The anchor is `fallback_id_3`, not `main_id`.** `main_id` is blank on
+        3.6-4.6% of rows, encodes the date, and collides ACROSS competitions
+        (CERT-2189). Writing it as an anchor is #2963's 8,272-row repair.
+      - **The match rule is `soccer_pair_matches`.** StatPal writes the short
+        club name and we write the long one, so equality after normalization —
+        the rule the other three leagues use and the only rule that is safe for
+        them — joins 17 of a pinned 90 where soccer's rule joins 67.
+
+    The 300s soft limit sits under the 330s hard limit (#966) and covers four
+    HTTP reads rather than two: three boards plus the live one."""
+    from app.tasks.stamp_v1_statpal_fixtures import (
+        _run_stamp_soccer_statpal_fixtures,
+    )
+    return _tracked_run(
+        "stamp_soccer_statpal_fixtures",
+        _run_stamp_soccer_statpal_fixtures(apply=apply),
+    )
+
+
 @celery_app.task(bind=True, soft_time_limit=600, time_limit=660,
                  name="app.tasks.grid_register_sentinel")
 def grid_register_sentinel(self, apply=False, file_issues=True):
