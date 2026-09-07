@@ -263,6 +263,16 @@ SPORT_PREFIX_TO_LLM_CATEGORY: dict[str, str] = {
     "curling": "curling",
     "fieldhockey": "fieldhockey",
     "motorsport": "motorsports",
+    # #3559 — the name-only match sports. A key reaching step 1 of
+    # `_categorize_kalshi_market` and finding no entry here does NOT fail loudly:
+    # it falls through to the name rules, which is the whole bug. `kxchess` has
+    # mapped to the `chess` key since #207 and KXCHESSMATCH still classified
+    # `other`, because the fix stopped one line short of this dict. The guard in
+    # `tests/test_name_only_match_tickers_classify_3559.py` is what keeps the
+    # next sport from landing in the same silent gap.
+    "chess": "chess",
+    "darts": "darts",
+    "squash": "squash",
 }
 
 
@@ -1587,6 +1597,22 @@ KALSHI_FUTURES_TICKER_TO_SPORT_KEY: dict[str, str] = {
     # Esports-World-Cup chess ticker must never route to soccer. Futures map (not
     # game map): chess has no events table to match against.
     "kxchess": "chess",
+    # #3559: darts and squash — the other two name-only match series. Same shape
+    # as chess and the same reason for the futures map: the market name is two
+    # human names ("Jack Smith vs Jurgen Nuijten"), so the name rules cannot do
+    # better than chance, and neither sport has an events table to match against.
+    # Both prefixes were confirmed against Kalshi's own series listing rather
+    # than read off their letters (notice 26): KXDARTSMATCH reports
+    # `tags: ["Darts"]` and KXSQUASHMATCH reports `tags: ["Squash"]`.
+    #
+    # KXWRESTLINGMATCH and KXPICKLEBALLMATCH are deliberately NOT here. The same
+    # venue read shows Kalshi files them under `tags: ["MMA"]` and
+    # `tags: ["Tennis"]` — so mapping them is a product judgement about whether a
+    # pickleball match belongs on our tennis surface, not the deterministic
+    # lookup this change is. Two rows between them, both resolved; #3559 carries
+    # the measurement.
+    "kxdarts": "darts",
+    "kxsquash": "squash",
 }
 
 
