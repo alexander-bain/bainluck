@@ -32,6 +32,30 @@ the restore planned zero changes and reported success. The follow-on repair
 on the incumbent under `column_write_run_id`, in the same transaction, and the
 undo owes such a row exactly one half — clear the column, leave the anchor.
 
+CERT-2216 then found the half THAT missed, one apply/restore cycle later. The
+attribution was guarded by `NOT (claim_context ? 'column_write_run_id')`, making
+the first writer the permanent owner — and the undo leaves the incumbent anchor,
+so the key outlived the value it described:
+
+    apply A   -> column = '9000004', anchor.column_write_run_id = A
+    restore A -> column = NULL,      anchor.column_write_run_id = A   <- stale
+    apply B   -> column = '9000004', attribution REFUSED, still A
+    B dies before `_bank`
+    restore B -> `_load_manifest(B)` finds nothing, reports success, write stands
+
+CERT-2211's exact defect, reached by a sequence of entirely correct operator
+steps. The repair (`SOCCER-3366-REAPPLY-REPLACES-STALE-COLUMN-ATTRIBUTION`) makes
+one invariant true at both ends: **`column_write_run_id` names the run whose
+column value is standing.** The writer replaces a stale key — it only reaches the
+attribution having won `statpal_fixture_id IS NULL`, so any key already there
+describes a value that is gone — and the restore takes its own key back off when
+it clears the column.
+
+Half two exposes a hazard in the other direction, guarded here too: B writes the
+SAME fixture id, so A's value CAS still matches and a stale `undo_command` would
+clear a write A never made. The value cannot see a re-apply; the run ids can, so
+the restore reports `reattributed` and writes nothing.
+
 ## why this gate needs a real server
 
 The pure planner is unit-tested in
@@ -56,10 +80,20 @@ The pure planner is unit-tested in
    each commit, so "what the manifest says" versus "what is on disk" is only a
    real question against a real transaction boundary.
 6. **`NOT (claim_context ? 'k')` is NULL, not true, on a NULL column.** The
-   attribution's "first writer owns it" guard would then match no row and
-   silently attribute nothing while the column write still committed. Python
+   attribution's original "first writer owns it" guard would then match no row
+   and silently attribute nothing while the column write still committed. Python
    has no equivalent of that trap — `'k' not in {}` is simply true — so a mock
-   cannot fail this the way a server can.
+   cannot fail this the way a server can. (That guard is gone as of CERT-2216;
+   the test that caught it stays, because the trap applies to any key test.)
+7. **`jsonb || jsonb` replaces a key in place, and `jsonb - 'key'` removes
+   exactly one.** The whole repair is those two operators applied to a column
+   another writer owns: merge must not flatten the incumbent's context, and the
+   removal must not take anything else with it. A dict `update`/`pop` in a mock
+   is a different implementation being asserted about.
+8. **An EXISTS against `events` inside the attribution UPDATE reads this
+   transaction's own uncommitted column write.** That is what makes replacing a
+   stale key safe without trusting the caller's control flow, and read-your-own-
+   writes is a property of the server's snapshot, not of the Python.
 
 There is no local PostgreSQL in the agent sandbox, so CI is where this runs. The
 `search-recall` job provides the container and its "Verify the gate is actually
@@ -121,11 +155,28 @@ UTC = timezone.utc
 #: red for a reason that has nothing to do with the code it guards.
 _NOW = datetime.now(UTC)
 
-#: The apply runs now; the backup was taken 10 minutes ago, which is inside
+#: Backup 20 minutes ago, apply 15 minutes ago: a 5-minute gap, well inside
 #: `BACKUP_MAX_AGE` — the point is that a VALID backup is still not a complete
 #: one.
-APPLY_AT = _NOW
-BACKUP_AT = _NOW - timedelta(minutes=10)
+#:
+#: The CERT-2216 sequence needs a SECOND backup and apply, and their instants
+#: are load-bearing in three directions at once:
+#:
+#: 1. **All four are in the PAST.** `_latest_backup` reads through
+#:    `read_snapshot` with no `now`, so the age bound runs against the real
+#:    clock — and `decode_envelope` REJECTS a negative age rather than clamping
+#:    it (a future stamp is clock skew, not freshness). A backup stamped ahead
+#:    of the real clock reads STALE and `cmd_apply` correctly refuses it.
+#: 2. **B is strictly LATER than A.** The run id is `_stamp(now)`, so different
+#:    instants are what make them two runs at all — and `_latest_apply_identity`
+#:    takes `ORDER BY generated_at DESC LIMIT 1`, so an earlier B would hand the
+#:    tests A's id back and every assertion would be about the wrong run.
+#: 3. **Each backup is inside `BACKUP_MAX_AGE` of its own apply**, because this
+#:    sequence is an ordinary correct re-apply, not a misuse.
+BACKUP_AT = _NOW - timedelta(minutes=20)
+APPLY_AT = _NOW - timedelta(minutes=15)
+REBACKUP_AT = _NOW - timedelta(minutes=10)
+REAPPLY_AT = _NOW - timedelta(minutes=5)
 
 #: A day out. Candidate selection is driven by the FIXTURE start times
 #: (`window_start = min(starts) - CANDIDATE_SLACK`), and the seeded rows carry
@@ -760,5 +811,170 @@ async def test_an_incumbent_with_no_claim_context_is_still_attributed(
         await s.commit()
 
     assert await rails.cmd_restore(run_id, apply=True, now=APPLY_AT) == 0
+    assert await _columns(maker) == {}
+    assert await _anchors(maker) == {CONFIRMED_ROW: f"soccer:{FIX_CONFIRMED}"}
+
+
+async def _lose_the_receipt(maker, run_id):
+    """The process loss: the per-row writes are committed, `_bank` never ran."""
+    from sqlalchemy import text
+
+    async with maker() as s:
+        await s.execute(
+            text("DELETE FROM durable_state_snapshots WHERE identity = :i"),
+            {"i": run_id},
+        )
+        await s.commit()
+
+
+async def _apply_restore_reapply(maker, monkeypatch):
+    """A -> restore A -> B, all on one incumbent anchor. Returns `(run_a, run_b)`.
+
+    This is CERT-2216's sequence. Every step is the ordinary, sanctioned one: a
+    fresh backup, an apply, its own printed undo line, then a second fresh
+    backup and a second apply. Nothing here is a misuse.
+    """
+    run_a = await _apply_over_a_confirmed_anchor(maker, monkeypatch)
+    assert await rails.cmd_restore(run_a, apply=True, now=APPLY_AT) == 0
+    assert await _columns(maker) == {}, "restore A left the column, so B is untested"
+
+    assert await rails.cmd_backup(REBACKUP_AT) == 0
+    _stub_statpal(monkeypatch, [_fixture(FIX_CONFIRMED, "Fulham", "Brentford")])
+    assert await rails.cmd_apply(REAPPLY_AT) == 0
+    run_b = await _latest_apply_identity(maker)
+    assert run_b != run_a, "both applies took the same run id; the sequence is fake"
+    return run_a, run_b
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("pg_schema")
+async def test_the_second_apply_really_does_rewrite_the_column(
+    session_factory, monkeypatch
+):
+    """PREMISE. If B never wrote, every assertion below passes vacuously."""
+    maker = session_factory
+    await _apply_restore_reapply(maker, monkeypatch)
+
+    assert await _columns(maker) == {
+        CONFIRMED_ROW: FIX_CONFIRMED
+    }, "the re-apply did not stamp the row, so the CERT-2216 case is untested"
+    assert await _anchors(maker) == {CONFIRMED_ROW: f"soccer:{FIX_CONFIRMED}"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("pg_schema")
+async def test_a_restore_takes_its_own_attribution_back_off_the_incumbent(
+    session_factory, monkeypatch
+):
+    """Half one of the invariant, and the state that made the defect possible.
+
+    The undo must leave the incumbent anchor — it is not ours — but it must not
+    leave it claiming a column value that no longer exists. Only the server
+    settles whether `claim_context - 'key'` removes exactly that key and spares
+    the incumbent's own.
+    """
+    maker = session_factory
+    run_a = await _apply_over_a_confirmed_anchor(maker, monkeypatch)
+    assert (await _claim_context_of(maker, CONFIRMED_ROW)).get(
+        "column_write_run_id"
+    ) == run_a
+
+    assert await rails.cmd_restore(run_a, apply=True, now=APPLY_AT) == 0
+
+    context = await _claim_context_of(maker, CONFIRMED_ROW)
+    assert context is not None
+    assert "column_write_run_id" not in context, (
+        "the anchor still claims a column write whose value the undo just "
+        "cleared, and the next apply is refused attribution on the strength of it"
+    )
+    assert (
+        context.get("written_by") == "an_earlier_anchor_only_pass"
+    ), "the unattribute stripped the incumbent's own context, not just our key"
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("pg_schema")
+async def test_the_re_applied_column_write_is_attributed_to_the_second_run(
+    session_factory, monkeypatch
+):
+    """Half two. The writer replaces a stale key rather than deferring to it.
+
+    Under the absence guard this assertion failed and everything downstream of
+    it followed: B's committed write carried A's name, so nothing could find it.
+    """
+    maker = session_factory
+    run_a, run_b = await _apply_restore_reapply(maker, monkeypatch)
+
+    context = await _claim_context_of(maker, CONFIRMED_ROW)
+    assert context is not None
+    assert context.get("column_write_run_id") == run_b, (
+        "the second apply's committed column write is attributed to the FIRST "
+        "run (or to nobody), so a process loss buries it: `_load_manifest(B)` "
+        "returns zero rows over a column that is still populated"
+    )
+    assert context.get("column_write_run_id") != run_a
+    assert context.get("written_by") == "an_earlier_anchor_only_pass"
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("pg_schema")
+async def test_a_re_applied_write_lost_before_banking_is_still_undone(
+    session_factory, monkeypatch
+):
+    """THE BLOCK'S CASE, end to end on real Postgres.
+
+    A/apply -> A/restore -> B/apply -> B pre-bank process loss -> B/restore.
+    The column has to come back to NULL and the incumbent anchor has to stay.
+    Before the repair `_load_manifest(B)` found zero rows and the restore
+    reported success over a committed write that was still standing.
+    """
+    maker = session_factory
+    _, run_b = await _apply_restore_reapply(maker, monkeypatch)
+    await _lose_the_receipt(maker, run_b)
+
+    assert await rails.cmd_restore(run_b, apply=True, now=REAPPLY_AT) == 0
+
+    assert (
+        await _columns(maker) == {}
+    ), "the re-applied column write survived its own undo — CERT-2216 unrepaired"
+    assert await _anchors(maker) == {
+        CONFIRMED_ROW: f"soccer:{FIX_CONFIRMED}"
+    }, "the undo deleted a correspondence this apply only confirmed"
+    assert "column_write_run_id" not in (
+        await _claim_context_of(maker, CONFIRMED_ROW) or {}
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("pg_schema")
+async def test_the_first_runs_stale_undo_line_does_not_clear_the_second_write(
+    session_factory, monkeypatch
+):
+    """The hazard the repair's own mechanism exposes, in the other direction.
+
+    An operator still holding A's `undo_command` runs it after B applied. B
+    wrote the SAME fixture id, so the value CAS matches and the column would be
+    cleared — destroying a write A never made, with A's anchor half deleting B's
+    anchor wherever A had inserted one. The run ids are the only thing that can
+    tell the two states apart, so the restore reports `reattributed` and writes
+    nothing.
+    """
+    maker = session_factory
+    run_a, run_b = await _apply_restore_reapply(maker, monkeypatch)
+
+    assert await rails.cmd_restore(run_a, apply=True, now=REAPPLY_AT) == 0
+
+    assert await _columns(maker) == {
+        CONFIRMED_ROW: FIX_CONFIRMED
+    }, "a stale undo line cleared a later run's committed write"
+    assert await _anchors(maker) == {CONFIRMED_ROW: f"soccer:{FIX_CONFIRMED}"}
+    assert (await _claim_context_of(maker, CONFIRMED_ROW)).get(
+        "column_write_run_id"
+    ) == run_b, "B's attribution was stripped by A's undo"
+
+    # And B's own undo still works afterwards: the refusal above is a report,
+    # not a latch. A distinct instant so it banks its own receipt rather than
+    # superseding the one the stale line just wrote.
+    assert await rails.cmd_restore(run_b, apply=True, now=_NOW) == 0
     assert await _columns(maker) == {}
     assert await _anchors(maker) == {CONFIRMED_ROW: f"soccer:{FIX_CONFIRMED}"}

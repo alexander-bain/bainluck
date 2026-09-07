@@ -532,12 +532,33 @@ UPDATE events
 #: Collapsing them would have the undo delete a correspondence it did not create.
 #:
 #: `event_id` is in the WHERE so this can only ever annotate an anchor already
-#: naming our event; it never repoints, never deletes, and the
-#: `column_write_run_id` absence test makes the first writer the owner, so a
-#: later pass cannot take attribution off an earlier one.
+#: naming our event: it never repoints and never deletes.
+#:
+#: THE OWNER IS WHOEVER'S COLUMN VALUE IS STANDING, NOT WHOEVER WROTE FIRST
+#: (CERT-2216). The first version guarded on `NOT (claim_context ?
+#: 'column_write_run_id')`, making the first writer the permanent owner. That
+#: read as conservative and was the defect: a restore clears the column and
+#: LEAVES the incumbent anchor — it must, the anchor is not ours to delete — so
+#: the stale key stays behind. A second apply then wins the NULL-column update,
+#: commits a real column write, and finds the attribution refused. Lose the
+#: process before `_bank` and that write has neither receipt nor attribution:
+#: `_load_manifest` returns zero rows and the undo silently leaves it standing —
+#: CERT-2211's defect again, one apply/restore cycle later.
+#:
+#: Replacing is safe, and the EXISTS is what makes it say so on its own. This
+#: statement runs only after `SET_FIXTURE_ID` — `WHERE statpal_fixture_id IS
+#: NULL` — returned rowcount 1 in this same transaction, so the column was empty
+#: a moment ago and now holds our id. Any earlier `column_write_run_id` therefore
+#: describes a value that is already gone, and the row it points at is not
+#: undoable by that run any more. The EXISTS re-states that in SQL rather than
+#: leaning on the caller's control flow: annotate only while the event's column
+#: actually holds the id being attributed. A caller that reached here without
+#: winning the write writes nothing.
 #:
 #: gotcha: `NOT (claim_context ? 'k')` is NULL — not true — when the column is
-#: NULL, which would silently match nothing. Both sides COALESCE.
+#: NULL, which is why the guard that replaced it tests a JOINed value instead of
+#: a key's absence. `COALESCE` still wraps the merge target for the same reason:
+#: `NULL || jsonb` is NULL, which would erase the incumbent's own context.
 ATTRIBUTE_COLUMN_WRITE = """
 UPDATE event_provider_anchors
    SET claim_context = COALESCE(claim_context, '{}'::jsonb)
@@ -546,7 +567,12 @@ UPDATE event_provider_anchors
    AND source_id = :source_id
    AND id_kind = :id_kind
    AND event_id = :event_id
-   AND NOT (COALESCE(claim_context, '{}'::jsonb) ? 'column_write_run_id')
+   AND EXISTS (
+         SELECT 1
+           FROM events e
+          WHERE e.id = event_provider_anchors.event_id
+            AND e.statpal_fixture_id = :fixture_id
+       )
 """
 
 
@@ -1231,6 +1257,12 @@ async def _write_link(
         # `record_anchor` discarded our claim context on the conflict path.
         # Record the write on the incumbent instead — same transaction, so the
         # attribution cannot outlive a rollback or be lost with the process.
+        #
+        # We got here only because the guarded UPDATE above won, so this run's
+        # value is the one standing and this run is the one that owes the undo:
+        # any `column_write_run_id` already there names a value that has since
+        # been cleared. `fixture_id` rides along so the statement can check that
+        # for itself rather than trusting this branch (CERT-2216).
         await session.execute(
             text(ATTRIBUTE_COLUMN_WRITE),
             {
@@ -1239,6 +1271,7 @@ async def _write_link(
                 "source_id": key.source_id,
                 "id_kind": key.id_kind,
                 "event_id": candidate["id"],
+                "fixture_id": fixture.fixture_id,
             },
         )
 

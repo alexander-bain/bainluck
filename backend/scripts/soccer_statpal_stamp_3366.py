@@ -90,6 +90,16 @@ deleted only on its exact ``(source, source_id, event_id)`` triple. So a row
 another writer has touched since is reported and left alone rather than dragged
 back to a value that is now two edits old.
 
+**AND THE ATTRIBUTION IS AN UNDOABLE WRITE TOO** (CERT-2216). A column-only row
+keeps its anchor, so clearing the column leaves ``column_write_run_id`` behind,
+describing a value that no longer exists. The invariant that makes the whole
+mechanism work — *the key names the run whose column value is standing* — needs
+both ends: the writer replaces a stale key when it wins the NULL-column update,
+and the restore takes its own key back off when it clears the column. With only
+the first half the second apply is undoable but the anchor lies; with only the
+second half a column cleared by anything other than this restore leaves the next
+apply unattributable, and a process loss then buries a committed write for good.
+
 Three reports, and all three are the success case:
 
   * ``column_moved_on`` — the column no longer holds what the apply wrote.
@@ -230,8 +240,16 @@ SELECT id, statpal_fixture_id
  WHERE id = ANY(:event_ids)
 """
 
+#: Who the anchors the manifest names are attributed to NOW, by either key. The
+#: value CAS cannot tell a re-apply from an un-restored write, because a
+#: re-apply writes the SAME fixture id back into the same column: `statpal_
+#: fixture_id = :written` matches, and a stale undo line would clear a value it
+#: does not own. The run ids can tell them apart, which is why they are read
+#: here and not only in `ATTRIBUTED_ANCHORS_SQL` (CERT-2216).
 ANCHORS_NOW_SQL = """
-SELECT event_id, source_id
+SELECT event_id, source_id,
+       claim_context->>'apply_run_id' AS apply_run_id,
+       claim_context->>'column_write_run_id' AS column_write_run_id
   FROM event_provider_anchors
  WHERE source = :source
    AND source_id = ANY(:source_ids)
@@ -252,6 +270,30 @@ DELETE FROM event_provider_anchors
  WHERE source = :source
    AND source_id = :source_id
    AND event_id = :event_id
+"""
+
+#: Take this run's `column_write_run_id` back off an incumbent whose column we
+#: just cleared (CERT-2216). Only for the column-only rows: where the anchor is
+#: ours the DELETE above removes the whole row and there is nothing to unsay.
+#:
+#: The writer no longer refuses to replace a stale key, so this is not what makes
+#: the re-apply case correct — `ATTRIBUTE_COLUMN_WRITE`'s EXISTS is. This is the
+#: other half of the same invariant: **`column_write_run_id` names the run whose
+#: column value is standing.** Once the column is NULL again the key is a false
+#: statement about a durable row — it would keep re-appearing in this run's
+#: `unbanked_anchors` forever, and it tells the next reader of that anchor that a
+#: write nobody can point at once happened here.
+#:
+#: CAS'd on our own run id, so it can only ever remove what this run wrote: if a
+#: later apply has already replaced the key, that apply's column write is the one
+#: standing and this statement touches nothing.
+CLEAR_COLUMN_ATTRIBUTION_SQL = """
+UPDATE event_provider_anchors
+   SET claim_context = claim_context - 'column_write_run_id'
+ WHERE source = :source
+   AND source_id = :source_id
+   AND event_id = :event_id
+   AND claim_context->>'column_write_run_id' = :run_id
 """
 
 LIST_SQL = """
@@ -535,7 +577,9 @@ def merge_manifest(manifest, attributed) -> list[dict]:
     return merged
 
 
-def plan_restore(manifest, columns_now, anchors_now) -> dict:
+def plan_restore(
+    manifest, columns_now, anchors_now, attributions_now=None, run_id=None
+) -> dict:
     """Exactly what one apply committed, from that apply's own manifest.
 
     Pure, so the undo can be replayed over ``db-query`` rows before anybody runs
@@ -544,7 +588,9 @@ def plan_restore(manifest, columns_now, anchors_now) -> dict:
 
     ``manifest`` is `merge_manifest`'s output. ``columns_now`` maps
     ``str(event_id) -> statpal_fixture_id`` as it stands now; ``anchors_now`` is
-    the set of ``"<event_id>|<source_id>"`` currently on file.
+    the set of ``"<event_id>|<source_id>"`` currently on file;
+    ``attributions_now`` maps that same key to the set of run ids the anchor
+    currently carries, under either attribution key.
 
     THE TEST FOR "OURS" IS THE MANIFEST, AND THE TEST FOR "STILL OURS" IS THE
     VALUE. Nothing outside the manifest is ever touched, however it looks —
@@ -552,9 +598,29 @@ def plan_restore(manifest, columns_now, anchors_now) -> dict:
     entered the window after the backup restorable. Inside the manifest, each
     half is checked against the state now, so an undo that arrives after someone
     else has edited the row reports instead of writing.
+
+    EXCEPT THAT THE VALUE CANNOT SEE A RE-APPLY (CERT-2216). Apply A, restore A,
+    apply B: B writes the SAME fixture id back into the same column, so
+    ``statpal_fixture_id = :written`` matches and A's stale undo line clears a
+    value A does not own — and where A had inserted the anchor, deletes B's
+    anchor too. The value CAS is blind to this because nothing about the value
+    changed; only the run ids can tell the two states apart. So an anchor that
+    now attributes this correspondence to some OTHER run, and to no run of ours,
+    is reported as ``reattributed`` and both halves are skipped. An anchor
+    carrying no attribution at all is not a contradiction — that is the ordinary
+    pre-repair and foreign-writer shape — and falls through to the value CAS as
+    before.
+
+    ``to_unattribute`` is the third, smaller list: the column-only rows whose
+    column this restore is about to clear. Their anchor stays — it was never
+    ours — so its ``column_write_run_id`` has to be taken back off by hand, or
+    the anchor goes on claiming a write whose value no longer exists. It is a
+    strict subset of ``to_clear``: a column we decline to clear is a write still
+    standing, and its attribution is still true.
     """
-    to_clear, to_delete = [], []
+    to_clear, to_delete, to_unattribute = [], [], []
     column_moved_on, anchor_already_gone, unbanked = [], [], []
+    reattributed = []
 
     for entry in manifest or ():
         event_id = entry.get("event_id")
@@ -563,10 +629,34 @@ def plan_restore(manifest, columns_now, anchors_now) -> dict:
                 {"event_id": event_id, "source_id": entry.get("anchor_source_id")}
             )
 
+        anchor_key = f"{event_id}|{entry.get('anchor_source_id')}"
+        holders = (attributions_now or {}).get(anchor_key) or set()
+        if run_id is not None and holders and run_id not in holders:
+            # Somebody else's write is standing on this correspondence now.
+            # Neither half is ours to undo, whatever the column happens to hold.
+            reattributed.append(
+                {
+                    "event_id": event_id,
+                    "source_id": entry.get("anchor_source_id"),
+                    "attributed_to": sorted(holders),
+                }
+            )
+            continue
+
         if entry.get("column_written"):
             written = entry.get("fixture_id")
             if columns_now.get(str(event_id)) == written:
                 to_clear.append({"event_id": event_id, "written": written})
+                if not entry.get("anchor_written"):
+                    # A column-only row: the anchor survives the undo, so its
+                    # `column_write_run_id` has to be unsaid separately or it
+                    # outlives the value it describes (CERT-2216).
+                    to_unattribute.append(
+                        {
+                            "event_id": event_id,
+                            "source_id": entry.get("anchor_source_id"),
+                        }
+                    )
             else:
                 column_moved_on.append(
                     {
@@ -588,9 +678,11 @@ def plan_restore(manifest, columns_now, anchors_now) -> dict:
     return {
         "to_clear": to_clear,
         "to_delete": to_delete,
+        "to_unattribute": to_unattribute,
         "column_moved_on": column_moved_on,
         "anchor_already_gone": anchor_already_gone,
         "unbanked_anchors": unbanked,
+        "reattributed": reattributed,
     }
 
 
@@ -648,7 +740,7 @@ async def _state_now(session, manifest):
         {e["anchor_source_id"] for e in manifest if e.get("anchor_source_id")}
     )
     if not event_ids:
-        return {}, set()
+        return {}, set(), {}
 
     rows = (
         await session.execute(text(COLUMNS_NOW_SQL), {"event_ids": event_ids})
@@ -662,6 +754,7 @@ async def _state_now(session, manifest):
     return (
         {str(r[0]): r[1] for r in rows},
         {f"{r[0]}|{r[1]}" for r in anchors},
+        {f"{r[0]}|{r[1]}": {run for run in (r[2], r[3]) if run} for r in anchors},
     )
 
 
@@ -693,8 +786,10 @@ async def cmd_restore(identity: str, apply: bool, now: datetime) -> int:
 
     async with get_task_session() as session:
         manifest, note = await _load_manifest(session, identity)
-        columns_now, anchors_now = await _state_now(session, manifest)
-        plan_result = plan_restore(manifest, columns_now, anchors_now)
+        columns_now, anchors_now, attributions_now = await _state_now(session, manifest)
+        plan_result = plan_restore(
+            manifest, columns_now, anchors_now, attributions_now, identity
+        )
         to_clear = plan_result["to_clear"]
         to_delete = plan_result["to_delete"]
 
@@ -703,6 +798,9 @@ async def cmd_restore(identity: str, apply: bool, now: datetime) -> int:
             "column_moved_on": len(plan_result["column_moved_on"]),
             "anchor_already_gone": len(plan_result["anchor_already_gone"]),
             "unbanked_anchors": len(plan_result["unbanked_anchors"]),
+            # Non-zero means a LATER apply owns these rows now — this undo line
+            # is stale. Restore that run instead; its id is on the anchor.
+            "reattributed": len(plan_result["reattributed"]),
         }
 
         if not apply:
@@ -712,6 +810,7 @@ async def cmd_restore(identity: str, apply: bool, now: datetime) -> int:
                 "note": note,
                 "would_clear_columns": len(to_clear),
                 "would_delete_anchors": len(to_delete),
+                "would_unattribute": len(plan_result["to_unattribute"]),
                 **counts,
                 "sample": to_clear[:10],
             }
@@ -721,6 +820,7 @@ async def cmd_restore(identity: str, apply: bool, now: datetime) -> int:
             return 0
 
         cleared = 0
+        cleared_ids: set = set()
         moved_on: list[dict] = []
         for row in to_clear:
             result = await session.execute(
@@ -729,9 +829,26 @@ async def cmd_restore(identity: str, apply: bool, now: datetime) -> int:
             )
             if result.rowcount or 0:
                 cleared += 1
+                cleared_ids.add(str(row["event_id"]))
             else:
                 # Lost a race between the read above and this write.
                 moved_on.append(row)
+        # Only for the columns actually cleared. A column we lost the race on is
+        # a write still standing, and its attribution is still the true one.
+        unattributed = 0
+        for row in plan_result["to_unattribute"]:
+            if str(row["event_id"]) not in cleared_ids:
+                continue
+            result = await session.execute(
+                text(CLEAR_COLUMN_ATTRIBUTION_SQL),
+                {
+                    "source": ANCHOR_SOURCE,
+                    "source_id": row["source_id"],
+                    "event_id": row["event_id"],
+                    "run_id": identity,
+                },
+            )
+            unattributed += result.rowcount or 0
         deleted = 0
         for row in to_delete:
             result = await session.execute(
@@ -754,6 +871,11 @@ async def cmd_restore(identity: str, apply: bool, now: datetime) -> int:
         "note": note,
         "columns_cleared": cleared,
         "anchors_deleted": deleted,
+        # Incumbent anchors this run's `column_write_run_id` came back off. Not
+        # a fourth thing undone — a bookkeeping count for the anchors that
+        # survive, and the number an operator compares to `columns_cleared`
+        # minus `anchors_deleted` if they want to check the arithmetic.
+        "attributions_cleared": unattributed,
         **counts,
     }
     await _bank(receipt, f"{RESTORE_IDENTITY_PREFIX}:{_stamp(now)}", now)

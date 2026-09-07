@@ -191,7 +191,18 @@ class TestARowBornInTheBackupGap:
         import inspect
 
         params = set(inspect.signature(rails.plan_restore).parameters)
-        assert params == {"manifest", "columns_now", "anchors_now"}
+        assert params == {
+            "manifest",
+            "columns_now",
+            "anchors_now",
+            # CERT-2216. Both read out of the anchors the manifest names, not
+            # out of the pre-image: the planner still cannot see a backup.
+            "attributions_now",
+            "run_id",
+        }
+        assert not any(
+            "backup" in p or "preimage" in p or "pre_image" in p for p in params
+        ), "the pre-image is back in the planner and ownership is derived again"
 
 
 class TestAForeignWriterIsNeverTouched:
@@ -349,13 +360,177 @@ class TestAConfirmedAnchorWriteIsDurablyAttributed:
         assert (
             "AND event_id = :event_id" in sql
         ), "without this it could annotate an anchor naming a different event"
-        assert (
-            "NOT (COALESCE(claim_context, '{}'::jsonb) ? 'column_write_run_id')" in sql
-        ), (
-            "a bare `NOT (claim_context ? ...)` is NULL on a NULL column, so it "
-            "would match nothing; and without the test at all a later pass "
-            "could take attribution off an earlier one"
+
+    def test_the_attribution_is_owned_by_the_standing_column_not_the_first_writer(
+        self,
+    ):
+        """CERT-2216. The guard may not be a `column_write_run_id` absence test.
+
+        That test made the FIRST writer the permanent owner. A restore clears the
+        column and leaves the incumbent anchor — it must, the anchor is not ours
+        — so the key survives its own value. The next apply wins the NULL-column
+        update, commits a real write, and is refused attribution; lose the
+        process before `_bank` and `_load_manifest` returns zero rows over a
+        column that is still populated.
+        """
+        import app.tasks.stamp_v1_statpal_fixtures as task
+
+        sql = " ".join(task.ATTRIBUTE_COLUMN_WRITE.split())
+        assert "? 'column_write_run_id'" not in sql, (
+            "an absence test makes the first writer the owner forever, so a "
+            "re-apply after a restore commits a column write it cannot undo"
         )
+        assert "EXISTS" in sql and "e.statpal_fixture_id = :fixture_id" in sql, (
+            "replacing is only safe while the event's column holds the id being "
+            "attributed. Without that clause the statement trusts its caller's "
+            "control flow, and a caller that did not win the write repoints "
+            "attribution onto a value it never set"
+        )
+        assert "e.id = event_provider_anchors.event_id" in sql, (
+            "the EXISTS must correlate to the anchor's own event, or it checks "
+            "some other row's column and passes for the wrong reason"
+        )
+        assert "COALESCE(claim_context, '{}'::jsonb) ||" in " ".join(
+            task.ATTRIBUTE_COLUMN_WRITE.split()
+        ), "`NULL || jsonb` is NULL — it would erase the incumbent's own context"
+
+    def test_the_writer_passes_the_id_the_exists_clause_checks(self):
+        """A bind the caller never supplies is a `StatementError`, not a
+        no-op — but only at runtime, and only on the CONFIRMED path. Cheap to
+        assert that the two sides of the contract still name the same key."""
+        import inspect
+
+        import app.tasks.stamp_v1_statpal_fixtures as task
+
+        source = inspect.getsource(task._write_link)
+        assert ":fixture_id" in task.ATTRIBUTE_COLUMN_WRITE
+        assert '"fixture_id": fixture.fixture_id' in source, (
+            "the EXISTS clause binds :fixture_id; `_write_link` must pass the "
+            "same value it wrote through SET_FIXTURE_ID"
+        )
+
+    def test_the_restore_takes_its_own_attribution_back_off(self):
+        """The other end of the same invariant. The key names the run whose
+        column value is standing, so clearing the column must unsay it."""
+        sql = " ".join(rails.CLEAR_COLUMN_ATTRIBUTION_SQL.split())
+        assert "claim_context - 'column_write_run_id'" in sql, (
+            "the restore must remove exactly that key and leave the rest of the "
+            "incumbent's context alone"
+        )
+        assert "claim_context->>'column_write_run_id' = :run_id" in sql, (
+            "uncased, this would strip a LATER apply's attribution — the one "
+            "whose column write is actually standing"
+        )
+        assert sql.upper().startswith("UPDATE EVENT_PROVIDER_ANCHORS") and (
+            "DELETE" not in sql.upper()
+        ), "this statement annotates the anchor that SURVIVES the undo"
+
+    def test_only_a_column_only_row_is_unattributed(self):
+        """Where the anchor is ours the DELETE removes the whole row, so an
+        unattribute would be a second write against a row that is going away."""
+        ours = rails.merge_manifest([], [(12, "soccer:777777", None, True)])
+        got = rails.plan_restore(ours, {"12": "777777"}, {"12|soccer:777777"})
+        assert len(got["to_delete"]) == 1
+        assert got["to_unattribute"] == []
+
+        incumbent = rails.merge_manifest([], [(12, "soccer:777777", None, False)])
+        got = rails.plan_restore(incumbent, {"12": "777777"}, {"12|soccer:777777"})
+        assert got["to_delete"] == []
+        assert got["to_unattribute"] == [
+            {"event_id": 12, "source_id": "soccer:777777"}
+        ], "the anchor survives, so its stale attribution has to come off by hand"
+
+    def test_a_stale_undo_line_does_not_clear_a_later_applys_write(self):
+        """CERT-2216's other direction, and the reason the run ids are read.
+
+        Apply A, restore A, apply B. B writes the SAME fixture id back into the
+        same column, so the value CAS matches and A's undo line would clear a
+        write A does not own. Nothing about the VALUE distinguishes the two
+        states; the attribution does.
+        """
+        merged = rails.merge_manifest(
+            [
+                {
+                    "event_id": 12,
+                    "fixture_id": "777777",
+                    "anchor_source_id": "soccer:777777",
+                    "column_written": True,
+                    "anchor_written": False,
+                }
+            ],
+            [],
+        )
+        got = rails.plan_restore(
+            merged,
+            {"12": "777777"},
+            {"12|soccer:777777"},
+            {"12|soccer:777777": {"run-B"}},
+            "run-A",
+        )
+        assert got["to_clear"] == [], "a stale undo line destroyed a later write"
+        assert got["to_unattribute"] == []
+        assert got["reattributed"] == [
+            {
+                "event_id": 12,
+                "source_id": "soccer:777777",
+                "attributed_to": ["run-B"],
+            }
+        ]
+
+    def test_the_anchor_half_is_skipped_for_a_reattributed_row_too(self):
+        """Where A had INSERTED the anchor, restore A deletes it — so after B
+        re-inserts one on the same triple, an unguarded replay deletes B's."""
+        merged = rails.merge_manifest([], [(12, "soccer:777777", None, True)])
+        got = rails.plan_restore(
+            merged,
+            {"12": "777777"},
+            {"12|soccer:777777"},
+            {"12|soccer:777777": {"run-B"}},
+            "run-A",
+        )
+        assert got["to_delete"] == [], "the replay deleted a later run's anchor"
+        assert got["to_clear"] == []
+        assert len(got["reattributed"]) == 1
+
+    def test_our_own_run_among_the_holders_still_undoes_both_halves(self):
+        """The control. An incumbent legitimately carries somebody else's
+        `apply_run_id` — it was inserted by an earlier pass — alongside our
+        `column_write_run_id`. Membership, not equality: reading this as a
+        contradiction would refuse every CONFIRMED-path undo there is.
+        """
+        merged = rails.merge_manifest([], [(12, "soccer:777777", None, False)])
+        got = rails.plan_restore(
+            merged,
+            {"12": "777777"},
+            {"12|soccer:777777"},
+            {"12|soccer:777777": {"an-earlier-anchor-pass", "run-A"}},
+            "run-A",
+        )
+        assert len(got["to_clear"]) == 1 and got["reattributed"] == []
+        assert len(got["to_unattribute"]) == 1
+
+    def test_an_anchor_carrying_no_attribution_is_not_a_contradiction(self):
+        """The pre-repair and foreign-writer shape. An empty holder set means
+        nobody has claimed the correspondence, which is not the same statement
+        as somebody else having claimed it — the value CAS still decides."""
+        merged = rails.merge_manifest([], [(12, "soccer:777777", None, False)])
+        got = rails.plan_restore(
+            merged,
+            {"12": "777777"},
+            {"12|soccer:777777"},
+            {"12|soccer:777777": set()},
+            "run-A",
+        )
+        assert len(got["to_clear"]) == 1 and got["reattributed"] == []
+
+    def test_a_column_we_decline_to_clear_keeps_its_attribution(self):
+        """A write still standing is a write still attributable. Stripping the
+        key there would orphan the value: populated column, nothing naming the
+        run that owes its undo."""
+        merged = rails.merge_manifest([], [(12, "soccer:777777", None, False)])
+        got = rails.plan_restore(merged, {"12": "888888"}, {"12|soccer:777777"})
+        assert got["to_clear"] == [] and len(got["column_moved_on"]) == 1
+        assert got["to_unattribute"] == []
 
 
 class TestTheWriterRecordsWhatItWrote:
@@ -518,6 +693,9 @@ class TestTheWriterRecordsWhatItWrote:
             "source_id": "soccer:9544921",
             "id_kind": "game",
             "event_id": 1,
+            # CERT-2216: the EXISTS clause checks the event's column still holds
+            # what this run wrote, so the id has to travel with the statement.
+            "fixture_id": "9544921",
         }, "the attribution must name the same triple `record_anchor` keyed on"
 
     @pytest.mark.asyncio
