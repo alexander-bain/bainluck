@@ -424,3 +424,337 @@ class TestComposed:
             s.commit()
 
         assert _plotted(eng, CANON_ID) == {"polymarket": [0.60]}
+
+
+# ── THE REAL ROUTE ───────────────────────────────────────────────────────────
+#
+# 🔴 REQUIRED REPAIR `CHART-SERIES-FOLD-REAL-ROUTE-GUARD-3810` (CERT-2208 BLOCK).
+#
+# Everything above this line is correct and none of it touches the shipping
+# seam. `_plotted` RE-IMPLEMENTS the route's grouping loop — the `.in_()`, the
+# `Counter`, the `series_row.get(...) != snap.event_id` skip — so mutating the
+# route's own query back from `.in_(series_event_ids)` to `event_id == event_id`
+# deletes the entire ship and leaves all 15 tests above green. The cert found
+# exactly that, and it is the oldest trap in this repo: a composed test proves
+# the helpers compose, never that the caller calls them.
+#
+# So these drive the REAL `get_event_odds_history` and assert on the payload a
+# reader's browser receives.
+
+from types import SimpleNamespace  # noqa: E402
+from unittest.mock import MagicMock  # noqa: E402
+
+import pytest  # noqa: E402
+
+from app.routes.events import get_event_odds_history  # noqa: E402
+
+
+class _Result:
+    def __init__(self, rows):
+        self._rows = list(rows)
+
+    def all(self):
+        return list(self._rows)
+
+    def scalars(self):
+        return self
+
+    def first(self):
+        return self._rows[0] if self._rows else None
+
+    def scalar_one_or_none(self):
+        return self._rows[0] if self._rows else None
+
+
+class _RouteSession:
+    """Answers `get_event_odds_history` by the table each statement reads.
+
+    Matched on the FROM clause and on the fold's exact projection, never on a
+    bare substring: `events` carries a `win_probability_sources` column, so
+    testing `"win_prob" in sql` routes the entity lookup into the snapshot arm
+    and the route 404s on its own event (the trap `is_series_fold` exists for).
+    """
+
+    def __init__(self, event, fold_rows, snapshots):
+        self.event = event
+        self.fold_rows = list(fold_rows)
+        self.snapshots = list(snapshots)
+        #: Every id set the route asked `win_prob_snapshots` for, so a test can
+        #: assert the WIDENING itself and not only its visible effect.
+        self.win_prob_id_filters: list[set] = []
+
+    @staticmethod
+    def _requested_ids(statement):
+        """The event ids this statement actually asked for.
+
+        🔴 THE RIG HONOURS THE FILTER, and that is what makes the fold
+        load-bearing here. A fake that hands back every snapshot regardless
+        answers an unfolded query with the ghost's rows anyway — so the mutant
+        that deletes the ship still passes, which is precisely the hole
+        CERT-2208 blocked. `event_id_1` binds the whole list for `.in_()` and
+        the scalar for `==`, so both forms are read the same way.
+        """
+        for key, value in statement.compile().params.items():
+            if not key.startswith("event_id"):
+                continue
+            if isinstance(value, (list, tuple, set)):
+                return set(value)
+            return {value}
+        return None
+
+    async def execute(self, statement, *_a, **_kw):
+        sql = " ".join(str(statement).split())
+
+        if "FROM win_prob_snapshots" in sql:
+            ids = self._requested_ids(statement)
+            self.win_prob_id_filters.append(ids)
+            rows = [s for s in self.snapshots if ids is None or s.event_id in ids]
+            if "min(" in sql:
+                return _Result([min((s.captured_at for s in rows), default=None)])
+            return _Result(sorted(rows, key=lambda s: s.captured_at))
+        if "FROM odds_snapshots" in sql:
+            return _Result([])
+        if is_series_fold(sql):
+            return _Result(self.fold_rows)
+        if "FROM events" in sql:
+            return _Result([self.event])
+        return _Result([])
+
+
+def _route_event(*, finished=True):
+    """The specimen, IN PLAY by default.
+
+    SETTLED BY DEFAULT, because the production specimen is: `15305016` is a
+    completed US Open semi-final, and a settled chart is the surface #3810 was
+    filed on. The route therefore appends a terminal settlement point (1.0 to
+    the winner's side) to every series it draws, which is correct behaviour and
+    is asserted here rather than engineered away -- a fixture that avoided it
+    would be testing a page no reader opens. `finished=False` is the in-play
+    shape, where the route instead carries the last reading forward to now.
+    """
+    return SimpleNamespace(
+        id=CANON_ID,
+        status="completed" if finished else "live",
+        commence_time=SF_TIME,
+        completed_at=SF_TIME + timedelta(hours=2) if finished else None,
+        home_team_name="Ben Shelton",
+        away_team_name="Stefanos Tsitsipas",
+        home_score=3 if finished else None,
+        away_score=0 if finished else None,
+        sport=SimpleNamespace(key="tennis_atp_us_open"),
+        sport_id=S_TENNIS,
+        box_score_data=None,
+        win_probability_sources={"kalshi": {"value": 0.75}},
+    )
+
+
+def _route_snap(event_id, source, minutes, home_prob):
+    return SimpleNamespace(
+        event_id=event_id,
+        source=source,
+        captured_at=SF_TIME + timedelta(minutes=minutes),
+        home_win_probability=home_prob,
+        away_win_probability=round(1.0 - home_prob, 4),
+        draw_probability=None,
+        game_state=None,
+    )
+
+
+#: The production shape, one order of magnitude down: the canonical holds a
+#: clean Polymarket series, the ghost holds ONE stray Polymarket reading in the
+#: middle of it, and the ghost alone holds Kalshi.
+def _production_shape():
+    return [
+        _route_snap(CANON_ID, "polymarket", 0, 0.60),
+        _route_snap(GHOST_ID, "polymarket", 1, 0.11),
+        _route_snap(CANON_ID, "polymarket", 2, 0.62),
+        _route_snap(GHOST_ID, "kalshi", 0, 0.71),
+        _route_snap(GHOST_ID, "kalshi", 1, 0.73),
+        _route_snap(GHOST_ID, "kalshi", 2, 0.75),
+    ]
+
+
+#: The fold's two rows, oriented in agreement — what production holds for this
+#: pair (12/12 agree, measured 2026-09-07).
+def _aligned_fold_rows():
+    return [
+        (CANON_ID, "Ben Shelton", "Stefanos Tsitsipas"),
+        (GHOST_ID, "Shelton", "Tsitsipas"),
+    ]
+
+
+async def _real_history(session):
+    return await get_event_odds_history(
+        event_id=CANON_ID, hours=720, response=MagicMock(headers={}), db=session
+    )
+
+
+#: The route appends this to every series it draws for a SETTLED event -- the
+#: winner's side resolved to certainty. Named rather than inlined so each
+#: expectation below reads as "the folded readings, then settlement", and so a
+#: change to the settlement rule fails these tests loudly instead of shifting a
+#: magic number in five places.
+SETTLED = 1.0
+
+
+def _curves(payload):
+    """`{source: [home probabilities]}` as the payload actually carries them."""
+    return {
+        source: [point["home_probability"] for point in points]
+        for source, points in (payload.get("win_prob_history") or {}).items()
+    }
+
+
+class TestTheRealRoute:
+    """`CHART-SERIES-FOLD-REAL-ROUTE-GUARD-3810`."""
+
+    def test_the_route_returns_the_ghosts_kalshi_and_a_clean_canonical(self):
+        """🔴 THE SHIP, through the real route.
+
+        Kalshi is in the payload AT ALL only because the fold reached the ghost,
+        and Polymarket is two points rather than three only because one row per
+        source was chosen. Both halves, one payload.
+        """
+        session = _RouteSession(
+            _route_event(), _aligned_fold_rows(), _production_shape()
+        )
+        curves = _curves(asyncio.run(_real_history(session)))
+
+        assert set(curves) == {"polymarket", "kalshi"}
+        assert curves["kalshi"] == [0.71, 0.73, 0.75, SETTLED], "the ghost's whole curve"
+        assert curves["polymarket"] == [0.60, 0.62, SETTLED], "the 0.11 stray is not spliced in"
+
+    def test_the_route_asked_for_both_ids(self):
+        """The wiring itself, not only its effect: an `IN` over the folded set.
+
+        Asserted on the compiled statement because the effect above could in
+        principle be produced by a route that read only the canonical and got
+        lucky with fixtures — this cannot.
+        """
+        session = _RouteSession(
+            _route_event(), _aligned_fold_rows(), _production_shape()
+        )
+        asyncio.run(_real_history(session))
+
+        assert session.win_prob_id_filters, "the route never read win_prob_snapshots"
+        assert any(
+            ids == {CANON_ID, GHOST_ID} for ids in session.win_prob_id_filters
+        ), f"the snapshot read was not over the folded set: {session.win_prob_id_filters}"
+
+    def test_the_source_metadata_counts_the_ghosts_rows(self):
+        """The legend is built from the same folded history, so `snapshot_count`
+        must report the curve that is drawn — a legend that says Kalshi while
+        the series is empty is the failure this ship is named for."""
+        session = _RouteSession(
+            _route_event(), _aligned_fold_rows(), _production_shape()
+        )
+        payload = asyncio.run(_real_history(session))
+        meta = payload.get("win_prob_sources") or {}
+
+        assert meta["kalshi"]["snapshot_count"] == 3
+        assert meta["polymarket"]["snapshot_count"] == 2
+
+    # ── mutation proofs ──────────────────────────────────────────────────────
+    #
+    # The route imports both helpers INSIDE the request (`events.py`, above the
+    # try), so patching them here reproduces the two mutants the cert named
+    # without writing a mutated file to disk — the shape
+    # `test_mutation_guard.test_every_on_disk_harness_is_guarded` says to prefer,
+    # and structurally immune to a SIGTERM leaving residue in the tree.
+
+    def test_mutant_unfolded_query_loses_the_kalshi_curve(self, monkeypatch):
+        """MUTANT 1 — the folded-ID wiring.
+
+        `folded_series_event_ids` returning `[canonical]` makes the route's
+        `.in_(series_event_ids)` compile to exactly the `event_id == event_id`
+        read it replaced. That is the cert's mutant, expressed where the route
+        actually consumes it. The ship must vanish.
+        """
+        async def _unfolded(db, canonical_event_id):
+            return [canonical_event_id]
+
+        monkeypatch.setattr(
+            "app.utils.proven_duplicates.folded_series_event_ids", _unfolded
+        )
+        session = _RouteSession(
+            _route_event(), _aligned_fold_rows(), _production_shape()
+        )
+        # The fake answers with every snapshot regardless, so this isolates the
+        # ROUTE's own selection: with one id folded, the ghost's rows are no
+        # longer attributable and Kalshi must leave the chart entirely.
+        curves = _curves(asyncio.run(_real_history(session)))
+
+        assert "kalshi" not in curves, (
+            "the unfolded route still drew Kalshi — this test cannot tell the "
+            "ship from its absence, which is what CERT-2208 blocked"
+        )
+
+    def test_mutant_no_per_source_selection_splices_the_stray_point(
+        self, monkeypatch
+    ):
+        """MUTANT 2 — per-source selection.
+
+        Without `series_row_for_each_source` picking ONE row per source, the
+        canonical's clean Polymarket line is drawn from two partial recordings
+        and the ghost's 0.11 is spliced into the middle of it. Timestamps
+        interleave, so the defect is a visible jag rather than an error.
+        """
+
+        class _Anything:
+            """Equal to every event_id, so the route's skip never fires."""
+
+            def __eq__(self, other):
+                return True
+
+            def __ne__(self, other):
+                return False
+
+            __hash__ = None
+
+        monkeypatch.setattr(
+            "app.utils.proven_duplicates.series_row_for_each_source",
+            lambda counts, canonical_event_id: SimpleNamespace(
+                get=lambda _source: _Anything()
+            ),
+        )
+        session = _RouteSession(
+            _route_event(), _aligned_fold_rows(), _production_shape()
+        )
+        curves = _curves(asyncio.run(_real_history(session)))
+
+        assert curves["polymarket"] == [0.60, 0.11, 0.62, SETTLED], (
+            "expected the un-selected route to splice the stray reading in; if "
+            "it did not, this file cannot prove the one-row-per-source rule"
+        )
+
+    def test_an_untagged_event_is_unchanged_through_the_real_route(self):
+        """The no-change case, through the route rather than beside it: an event
+        with no tagged twin returns exactly what it always did."""
+        session = _RouteSession(
+            _route_event(),
+            [(CANON_ID, "Ben Shelton", "Stefanos Tsitsipas")],
+            [
+                _route_snap(CANON_ID, "polymarket", 0, 0.60),
+                _route_snap(CANON_ID, "polymarket", 2, 0.62),
+            ],
+        )
+        curves = _curves(asyncio.run(_real_history(session)))
+
+        assert curves == {"polymarket": [0.60, 0.62, SETTLED]}
+
+    def test_a_swapped_ghost_reaches_the_real_route_not_at_all(self):
+        """Orientation, through the route. An inverted ghost must contribute no
+        point to any series — a smooth, confident, exactly-backwards curve is
+        the one failure mode nothing downstream would catch."""
+        session = _RouteSession(
+            _route_event(),
+            [
+                (CANON_ID, "Ben Shelton", "Stefanos Tsitsipas"),
+                (GHOST_ID, "Tsitsipas", "Shelton"),
+            ],
+            _production_shape(),
+        )
+        curves = _curves(asyncio.run(_real_history(session)))
+
+        assert "kalshi" not in curves, "the swapped ghost's curve was drawn"
+        assert curves["polymarket"] == [0.60, 0.62, SETTLED]

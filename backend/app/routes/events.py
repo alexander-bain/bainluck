@@ -6,9 +6,9 @@ import logging
 import os
 import re
 import time
+from collections import Counter
 
 logger = logging.getLogger(__name__)
-from collections import Counter
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
