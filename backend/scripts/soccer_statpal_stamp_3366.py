@@ -103,15 +103,25 @@ PREIMAGE_AFTER = timedelta(days=7)
 #: see, and the longer the gap the more of them there are.
 BACKUP_MAX_AGE = timedelta(minutes=45)
 
-#: Refuse rather than bank a payload nobody has sized. The measured population
-#: is ~108 rows in the write window; a superset three orders of magnitude larger
-#: than that means the query is wrong, not that soccer grew.
+#: Refuse rather than bank a payload nobody has sized. **Measured on production
+#: 2026-09-07 07:48Z: this window holds 1,347 soccer rows, of which 0 carry a
+#: `statpal_fixture_id`** — against ~108 rows in the write window the plan pass
+#: can actually reach. So the bound is ~15x the real superset, and a pass that
+#: trips it has a wrong query, not a big Saturday.
 PREIMAGE_MAX_ROWS = 20000
 
 #: `statpal_id_space("soccer")` returns `soccer`, so every anchor this pass
 #: writes is `soccer:<fallback_id_3>`. Asserted at runtime against the helper
 #: rather than trusted, so a future id-space rule cannot silently orphan the
 #: undo (D55 is exactly the rule that changed once already).
+#:
+#: **Measured 2026-09-07 07:49Z: the `statpal`/`soccer:` namespace holds 0 rows**
+#: — StatPal anchors exist only under `americanfootball_nfl` (293), `tennis`
+#: (237), `baseball_mlb` (150), `basketball_nba` (41) and `icehockey_nhl` (27).
+#: The two `soccer_other` anchors on file are `kalshi`, a different `source`,
+#: and the filter below never reaches them. So the first apply inserts into an
+#: empty namespace on BOTH halves, and the undo's delete set is exact by
+#: construction rather than by a timestamp.
 ANCHOR_SOURCE = "statpal"
 ANCHOR_SOURCE_ID_PREFIX = "soccer:"
 
