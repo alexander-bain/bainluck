@@ -217,6 +217,50 @@ SETTLED_STATUSES = frozenset({"completed", "closed"})
 #: hop back through ``live``.
 SETTLEABLE_STATUSES = frozenset({"live", EVENT_SUSPENDED})
 
+#: Rows the ESPN backfills must still be able to REACH — the ones whose record
+#: is incomplete and might yet be completed: a missing ``espn_id``, a missing
+#: box score, a missing win-probability history. #3790.
+#:
+#: 🔴 THIS IS NOT :data:`SETTLED_STATUSES`, AND THE DIFFERENCE IS THE BUG. The
+#: backfills all keyed their eligibility on ``["completed", "closed"]``, which
+#: asks *"has something declared this final?"*. That is a READER-facing
+#: question — it is what a client needs in order to draw a Final. The backfills
+#: are not readers. The question they mean to ask is **"do we still owe this row
+#: a result?"**, and on that question the two sets point opposite ways: a
+#: ``suspended`` row is precisely one we have ADMITTED we cannot score, so it is
+#: the row that most needs the authority, and it was the only one the authority
+#: could not see.
+#:
+#: The note above :data:`EVENT_SUSPENDED` warned that adding a state means
+#: hunting hand-written literal lists, and named the retrieval surfaces —
+#: *"what is there to show?"* — as the ones that will not fail loudly. These are
+#: a third kind it did not name, and they are quieter still: a retrieval surface
+#: that omits a row renders a visibly missing match, while a backfill that omits
+#: one simply never fills it in and reports a clean run either way (gotcha #53).
+#:
+#: 🔴 WHY IT IS URGENT RATHER THAN TIDY, and the part to carry: #3780's repair
+#: moves a measured **8,279** result-less rows ``closed`` → ``suspended`` in one
+#: sweep (population re-measured by live/091 on production at 2026-09-07 05:35Z;
+#: they span 2026-08-24 → 2026-09-03). Every one of them is reachable by these
+#: backfills TODAY as ``closed`` and would have stopped being reachable the
+#: moment that sweep ran. Note also that they cannot fall back on the resume arm
+#: in ``espn_sync``: that arm is bounded by ``SUSPENDED_RESUME_WINDOW`` (48h) and
+#: the whole cohort is weeks past it. The backfills are their ONLY door.
+#:
+#: Deliberately NOT spent on the ``un-settle`` repairs that hunt bogus settled
+#: rows, nor on the sport-key discovery scan. Those two really do mean
+#: :data:`SETTLED_STATUSES`: you cannot un-settle a row that is not settled.
+AUTHORITY_BACKFILL_STATUSES = frozenset(SETTLED_STATUSES | {EVENT_SUSPENDED})
+
+#: The same set rendered for an ``IN`` clause spelled in raw SQL, so the ORM
+#: sites and the ``text()`` site cannot drift into two answers about who is
+#: eligible. Same shape as :data:`_VENUE_SOURCE_SQL_LIST` below; sorted so the
+#: emitted SQL is stable across processes, and safe to interpolate because
+#: every member is a literal defined in this module.
+AUTHORITY_BACKFILL_STATUS_SQL = ", ".join(
+    f"'{s}'" for s in sorted(AUTHORITY_BACKFILL_STATUSES)
+)
+
 #: States that "this is being played right now" promotes back to ``live``.
 #: ``suspended`` is in the set for the same reason: play resuming after a rain
 #: delay is the ordinary case this state exists to survive.
