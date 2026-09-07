@@ -1336,8 +1336,13 @@ def apply_discover_display_chain(
             set at the same point ``get_feed`` does. The set must be loaded by
             the caller — this function does no I/O.
         timing_cb: optional ``fn(stage_name)`` called after ``ranking``,
-            ``reviewed_filter``, ``bundles`` and ``lead_composition`` so
-            ``get_feed`` keeps its per-stage timings.
+            ``reviewed_filter``, ``bundles``, ``lead_composition``,
+            ``first_page_quality_floor``, ``finished_rail_cap`` and
+            ``live_first_page`` so ``get_feed`` keeps its per-stage timings. The
+            exact list and its ORDER are pinned by
+            ``test_discover_display_chain_shared.py`` —
+            ``test_timing_callback_fires_for_every_recorded_stage`` is what
+            catches a new stage added here and nowhere else.
 
     Returns:
         ``(items, meta)``. ``meta['reviewed_filtered_count']`` is ``None`` when

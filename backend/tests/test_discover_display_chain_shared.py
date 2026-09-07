@@ -227,6 +227,15 @@ class TestChainContract:
             # `first_page_quality_floor`'s is, so a stage's duration is recorded
             # whether or not it did work. That is the existing convention and
             # this stage follows it rather than inventing a second one.
+            #
+            # #3805: the sports repeat-rail cap sits BETWEEN them, and the
+            # position is the contract, not an accident of where it was pasted.
+            # It must run after `first_page_quality_floor` (it reasons about the
+            # served first page, which only exists once composition is done) and
+            # BEFORE `live_first_page`, so the live hoist keeps the last word on
+            # first-page membership — Alex's P1. Its tick is outside its gate
+            # too, following the convention this list already records.
+            "finished_rail_cap",
             "live_first_page",
         ], (
             "get_feed's per-stage timings are built from these callbacks; "
