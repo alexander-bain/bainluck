@@ -103,7 +103,7 @@ jobs:
             *) echo "::error::base_url must be a canonical production origin"; exit 1 ;;
           esac
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: "20"
           cache: npm

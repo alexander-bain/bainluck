@@ -283,7 +283,7 @@ jobs:
           fi
           echo "AUDIT_CHECKOUT_ANCESTRY=requested-is-ancestor-of-checkout" >> "$GITHUB_ENV"
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: "20"
           # L2-229: restored, in the same commit that adds the lockfile.
