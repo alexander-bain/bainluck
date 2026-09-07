@@ -377,8 +377,29 @@ def swap_client_deleted_finished_off_first_page(
     ----------------------------
     1. **Undo the cap.** A replacement that is itself a finished card on a rail
        already at ``max_per_rail`` recreates #3805. Rails are counted with
-       ``finished_rail_key`` — the same function the cap uses, against the cards
-       that REMAIN after the planned swaps, so the two passes cannot disagree.
+       ``finished_rail_key`` — the same function the cap uses — against the
+       cards that remain **once every doomed card is treated as departing**.
+
+       READ THAT LAST CLAUSE LITERALLY; IT IS NOT THE SAME AS "AFTER THE PLANNED
+       SWAPS", WHICH IS WHAT THIS SENTENCE USED TO SAY (#3853). ``swaps`` is
+       ``min(len(doomed), len(replacements))``, so on a thin tail some doomed
+       cards have no replacement and STAY on the page — and their rails are
+       still written off as free. That reads like a bug, and CERT-2204's grader
+       filed it as one: four doomed cards on a rail plus one fresh same-rail
+       tail card, and page one ends up *carrying* four.
+
+       It is deliberate, because the two counts measure different things. The
+       cap bounds what the reader SEES repeated, and a doomed card is by
+       definition never rendered. Counting a stayer's rail as occupied would
+       refuse the fresh card, and refusing it is worse twice over: it spends a
+       page-one slot on something the client deletes, which is the whole defect
+       #3836 exists to end; and it removes the last non-stale game, which trips
+       the client's ``keptToAvoidEmptyGames`` reprieve (point 2 below), which
+       keeps EVERY stale game — so the reader sees four identical headlines
+       instead of one. As-served and as-rendered move in opposite directions
+       here, so the as-served count is not a conservative proxy for the cap; it
+       is an anti-proxy. ``TestThinTailRailAccounting3853`` pins the rendered
+       invariant and goes red if this is ever "fixed".
     2. **Empty the surface (#1091 / gotcha #43).** The client's own guard
        reprieves stale games when they are the only games
        (``keptToAvoidEmptyGames``). If this pass trades them away first, that
