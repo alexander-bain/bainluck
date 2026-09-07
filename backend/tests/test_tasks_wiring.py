@@ -269,6 +269,7 @@ class TestBeatScheduleCompleteness:
         "backfill-image-dimensions",
         "merge-duplicate-events",
         "reconcile-unanchored-events",
+        "tennis-twin-sweep",
         "merge-degenerate-combat-events",
         "canonicalize-entities-daily",
         "precompute-interestingness",

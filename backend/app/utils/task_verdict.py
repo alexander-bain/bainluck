@@ -278,6 +278,17 @@ ENFORCED_TASKS = frozenset({
     # `measured: false` + `terminal: failed` when the census itself could not run,
     # so "there is nothing to drain" and "I could not look" stay distinct.
     "reconcile_unanchored_events",     # terminal + measured + census + errors
+    # #3811. Enrolled FROM BIRTH (#1884) because the defect that created this
+    # task is this module's exact subject: the `duplicate-of` tag its fold runs
+    # on had no scheduled writer, and nothing anywhere read not-GREEN about it —
+    # a US Open semi-final page simply rendered with no markets. Its terminal
+    # keeps the two zeros apart, which is the only reason enrolment helps here:
+    # `complete` with `written: 0` is the healthy steady state (every decidable
+    # pair already labelled, ~96 runs a day), while a plan that falls below the
+    # floor, or an unplayed arm withheld because `_build_game_markets` stopped
+    # folding, is `failed`. Enrolling it without that split would have traded
+    # one false GREEN for ninety-six false REDs.
+    "tennis_twin_sweep",               # terminal + measured + fold_live + written
     # #1912 (CAL-P065) — the two halves of the Polymarket ownership hole,
     # enrolled TOGETHER because separately each looked fine. The Gamma rail
     # discarded 9,748 markets a run as `unsupported_lookup` to a CLOB rail

@@ -82,6 +82,20 @@ Still refused, and still correctly: a bare row that carries a result, a pair
 where both or neither row is tournament-keyed, a pair stamped beyond the 96h
 fence, and a ghost claimed by two canonicals.
 
+THIS IS NO LONGER THE ONLY WAY THE SWEEP RUNS (#3811)
+─────────────────────────────────────────────────────
+Being hand-run was itself the defect. On 2026-09-07 a twin formed at 03:03Z, its
+canonical landed at 04:35Z, and 92 minutes later a US Open semi-final page was
+still rendering with no markets section — because the only two writers of the
+tag are `event_registry._proven_duplicates` (which cannot reach this pair: no
+shared provider id, and the kickoffs are 3h apart against a 30-minute fence) and
+this script, which nobody had run.
+
+The sweep now also runs every 30 minutes as `app.tasks.tennis_twin_sweep`, and
+the helpers this file used to define live there. This CLI is unchanged in
+behaviour and is still the right tool for a one-off, a dry run, or a widened
+window — it just no longer owns the implementation.
+
 Usage — dry run first, always:
 
     python3 scripts/repair_2878_tennis_twin_ghosts.py
@@ -102,258 +116,42 @@ import asyncio
 import json
 import os
 import sys
-from datetime import timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.services.anchor_channel import (  # noqa: E402
-    DUPLICATE_TAG_PREFIX,
-    duplicate_tag,
+# EVERY helper below used to be defined in this file. They now live in
+# `app.tasks.tennis_twin_sweep`, which is the same sweep on a 30-minute beat
+# (#3811) — because a scheduled copy of a hand-run script is two matchers, and
+# two matchers that disagree is the failure ruling 048 exists to end. This file
+# is now the CLI face of that module: same population query, same plan floor,
+# same backup table, same writer.
+from app.tasks.tennis_twin_sweep import (  # noqa: E402
+    BAK_TABLE,
+    DEFAULT_LOOKAHEAD_DAYS,
+    DEFAULT_LOOKBACK_DAYS,
+    MAX_EXPECTED_TAGS,
+    MIN_EXPECTED_TAGS,
+    already_tagged_ids,
+    build_plan,
+    ensure_backup,
+    load_rows,
+    plan_refusal_reason,
+    write_tags,
 )
-from app.utils.tennis_twin_pairs import (  # noqa: E402
-    MAX_TWIN_SEPARATION,
-    TwinRow,
-    is_tournament_key,
-    plan_twin_tags,
-    row_has_settled_result,
-    row_is_id_anchored,
-)
 
-#: D51 backup. Holds the ghost's `event_tags` exactly as they were before the
-#: append, plus the canonical the tag names — so the undo can be surgical
-#: (remove ONE element) rather than a clobber of the whole array.
-BAK_TABLE = "bak_2878_twin_ghost_tags"
-
-#: The window the sweep reads. Wide enough to cover a Slam fortnight plus the
-#: qualifying week before it; deliberately NOT the whole table, because the
-#: block key is a global `(surname, surname)` pair with no time component and a
-#: wider read is a wider chance of fusing two meetings between the same players.
-DEFAULT_LOOKBACK_DAYS = 10
-DEFAULT_LOOKAHEAD_DAYS = 5
-
-#: Sanity band on the PLAN, measured 2026-09-06 at 162 tags over 1,430 rows.
-#: The floor exists because a repair that finds nothing and reports success is
-#: the worst outcome there is; it is waived when every candidate is already
-#: tagged, which is the idempotent re-run.
-MIN_EXPECTED_TAGS = 20
-MAX_EXPECTED_TAGS = 600
-
-_POPULATION_SQL = """
-SELECT e.id,
-       s.key                AS sport_key,
-       e.home_team_name,
-       e.away_team_name,
-       e.commence_time,
-       e.home_score,
-       e.away_score,
-       e.external_id,
-       e.espn_id,
-       e.statpal_fixture_id,
-       CAST(COALESCE(e.event_tags, '[]'::jsonb) AS text) AS tags_text
-  FROM events e
-  JOIN sports s ON s.id = e.sport_id
- WHERE s.key LIKE 'tennis%%'
-   AND e.commence_time >= now() - make_interval(days => :lookback)
-   AND e.commence_time <= now() + make_interval(days => :lookahead)
-   AND e.status NOT IN ('voided', 'merged')
-   AND e.id > :cursor
- ORDER BY e.id
- LIMIT :page
-"""
-
-
-async def load_rows(session, *, lookback: int, lookahead: int, page: int = 2000):
-    """Every tennis row in the window, paged by id.
-
-    Paged because the read is a plain cursor scan and `db-query`-shaped single
-    reads cap out; the cursor key IS the sort key, which is the only shape that
-    cannot skip or repeat a row.
-    """
-    from sqlalchemy import text
-
-    out, cursor = [], 0
-    while True:
-        rows = (
-            await session.execute(
-                text(_POPULATION_SQL),
-                {
-                    "lookback": lookback,
-                    "lookahead": lookahead,
-                    "cursor": cursor,
-                    "page": page,
-                },
-            )
-        ).all()
-        out.extend(rows)
-        if len(rows) < page:
-            return out
-        cursor = rows[-1].id
-
-
-def build_plan(rows, *, max_separation: timedelta = MAX_TWIN_SEPARATION):
-    """Turn database rows into the pure planner's inputs and run it.
-
-    Every field the judgement reads is copied to a scalar here. `events` is
-    write-hot and this script commits per row, so a live ORM object read after a
-    commit boundary would lazy-load in a sync context (gotcha #6) — and a
-    judgement that reads the database is a judgement nobody can test.
-    """
-    snapshots = [
-        TwinRow(
-            event_id=r.id,
-            home_team_name=r.home_team_name,
-            away_team_name=r.away_team_name,
-            sport_key=r.sport_key,
-            is_tournament_keyed=is_tournament_key(r.sport_key),
-            has_settled_result=row_has_settled_result(
-                home_score=r.home_score, away_score=r.away_score
-            ),
-            is_id_anchored=row_is_id_anchored(
-                external_id=r.external_id,
-                espn_id=r.espn_id,
-                statpal_fixture_id=r.statpal_fixture_id,
-            ),
-        )
-        for r in rows
-    ]
-    return plan_twin_tags(
-        snapshots,
-        commence_times={r.id: r.commence_time for r in rows},
-        max_separation=max_separation,
-    )
-
-
-def already_tagged_ids(rows) -> set[int]:
-    """Ghosts that already carry SOME `duplicate-of` tag.
-
-    Read off the serialised array with the same prefix the reader matches on, so
-    the writer and the reader cannot drift. A row already labelled a duplicate of
-    anything is left entirely alone — re-tagging it would be this script
-    arbitrating between its own finding and an existing one.
-    """
-    return {r.id for r in rows if DUPLICATE_TAG_PREFIX in (r.tags_text or "")}
-
-
-def plan_refusal_reason(plan, *, untagged: int) -> str | None:
-    """Why this plan must NOT be applied, or ``None`` if it is safe. Pure.
-
-    🔴 **The floor is on the PLAN, not on the write.** It used to be on
-    ``untagged``, and that was right exactly once — on the first run, when the
-    two numbers were the same. The moment 162 labels existed, the floor started
-    reading every legitimate incremental run as a failure: the six unplayed US
-    Open quarter-finals of 2026-09-07 are a plan of 167 tags of which 6 are new,
-    and a floor of 20 on the delta refuses that and exits 1.
-
-    The question the floor exists to ask is "does the judgement still reach this
-    population?", and the answer to that is the size of the PLAN. How much of
-    the plan is already on disk is a fact about previous runs, not about whether
-    this one is sane. ``untagged`` keeps only its one honest job: telling an
-    idempotent no-op apart from a real write.
-    """
-    if untagged == 0:
-        return None  # idempotent re-run: everything is already labelled
-    if len(plan.tags) < MIN_EXPECTED_TAGS:
-        return (
-            f"the plan decides only {len(plan.tags)} pair(s), below the floor "
-            f"{MIN_EXPECTED_TAGS}, and some candidates are still untagged — "
-            f"either the population has moved or the judgement has stopped "
-            f"reaching it. Re-measure before writing."
-        )
-    if len(plan.tags) > MAX_EXPECTED_TAGS:
-        return (
-            f"the plan writes {len(plan.tags)} tags, above the ceiling "
-            f"{MAX_EXPECTED_TAGS} — the population is far beyond what was "
-            f"measured; re-measure before writing."
-        )
-    return None
-
-
-async def ensure_backup(session, tags, current_tags: dict[int, str]) -> int:
-    """Bank each ghost's CURRENT `event_tags` before anything is appended.
-
-    `ON CONFLICT DO NOTHING` keeps the FIRST banked value, which is the
-    pre-repair one — a re-run after a partial apply must not overwrite a clean
-    banked array with one that already carries the tag we wrote.
-    """
-    from sqlalchemy import text
-
-    await session.execute(
-        text(
-            f"CREATE TABLE IF NOT EXISTS {BAK_TABLE} ("
-            "  event_id bigint PRIMARY KEY,"
-            "  canonical_id bigint NOT NULL,"
-            "  old_tags text NOT NULL,"
-            "  banked_at timestamptz NOT NULL DEFAULT now())"
-        )
-    )
-    await session.commit()
-
-    banked = 0
-    for tag in tags:
-        result = await session.execute(
-            text(
-                f"INSERT INTO {BAK_TABLE} (event_id, canonical_id, old_tags) "
-                "VALUES (:eid, :cid, :old) ON CONFLICT (event_id) DO NOTHING"
-            ),
-            {
-                "eid": tag.ghost_id,
-                "cid": tag.canonical_id,
-                "old": current_tags.get(tag.ghost_id, "[]"),
-            },
-        )
-        banked += result.rowcount or 0
-    await session.commit()
-    return banked
-
-
-async def write_tags(session, tags, *, progress_every: int = 25):
-    """Append the duplicate tag to each ghost, ONE ROW PER TRANSACTION.
-
-    Core SQL with a server-side `||`, never an ORM assignment: `event_tags` is
-    JSONB and gotcha #4 is that a JSONB ORM assignment can silently fail to
-    persist, gotcha #5 that mixing the two styles in one session is where flush
-    ordering bites. The `NOT @>` makes it idempotent in the DATABASE rather than
-    in this process's memory, so a re-run cannot double-append.
-
-    Single-row and patient rather than one batched UPDATE: `events` is write-hot
-    (constant poller and backfill locks) and a batched one-off rolls back on
-    every row where a patient single-row write succeeds.
-
-    Returns ``(written, failed_ids)``. Failures are RETAINED, not just printed —
-    on a detached dyno whose stdout nobody reads, a printed FAILED line that does
-    not reach the exit code is indistinguishable from a clean run (gotcha #53).
-    """
-    from sqlalchemy import text
-
-    written, failed = 0, []
-    for index, tag in enumerate(tags, start=1):
-        payload = json.dumps([duplicate_tag(tag.canonical_id)])
-        for attempt in (1, 2, 3):
-            try:
-                result = await session.execute(
-                    text(
-                        "UPDATE events "
-                        "SET event_tags = COALESCE(event_tags, '[]'::jsonb) "
-                        "                 || CAST(:tag_array AS jsonb) "
-                        "WHERE id = :eid "
-                        "  AND NOT COALESCE(event_tags, '[]'::jsonb) "
-                        "          @> CAST(:tag_array AS jsonb)"
-                    ),
-                    {"tag_array": payload, "eid": tag.ghost_id},
-                )
-                await session.commit()
-                written += result.rowcount or 0
-                break
-            except Exception as exc:  # noqa: BLE001 — retry, then surface
-                await session.rollback()
-                if attempt == 3:
-                    print(f"  FAILED event {tag.ghost_id} after 3 attempts: {exc}")
-                    failed.append(tag.ghost_id)
-                else:
-                    await asyncio.sleep(attempt)
-        if progress_every and index % progress_every == 0:
-            print(f"  … {index}/{len(tags)} processed, {written} tagged")
-    return written, failed
+__all__ = [
+    "BAK_TABLE",
+    "DEFAULT_LOOKAHEAD_DAYS",
+    "DEFAULT_LOOKBACK_DAYS",
+    "MAX_EXPECTED_TAGS",
+    "MIN_EXPECTED_TAGS",
+    "already_tagged_ids",
+    "build_plan",
+    "ensure_backup",
+    "load_rows",
+    "plan_refusal_reason",
+    "write_tags",
+]
 
 
 async def run(*, backup: bool, apply: bool, lookback: int, lookahead: int) -> None:

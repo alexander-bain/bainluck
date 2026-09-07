@@ -904,6 +904,18 @@ def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
     the census below on the rebased tree, which printed `explicit 69 implicit 45
     total 114`, never by adding one (#1910). The cost declaration is on
     `BACKGROUND_BEAT_COUNT`.
+
+    🔴 **RE-DERIVED AT #3811 (2026-09-07): 118 → 119, explicit 73 → 74.**
+    `tennis-twin-sweep` (`crontab(minute="27,57")`) names `background`
+    explicitly, so the fall-through half is UNMOVED at **45** — the benign
+    direction this docstring reserves. Obtained by RUNNING the census below,
+    which printed `explicit 74 implicit 45 total 119`. Its cost — one ~1,546-row
+    indexed read, a pure in-memory plan, and zero writes in the steady state —
+    is declared on `BACKGROUND_BEAT_COUNT`, along with the minute census that
+    chose `:27/:57` after `test_settlement_sweep_beat`'s G8 guard rejected the
+    first draft at `:08/:38`. Note that this is the guard pair working exactly
+    as designed twice in one change: G8 caught the collision, this one caught
+    the inventory.
     """
     from app.tasks import celery_app
     from app.utils.typeahead_beat_budget import BACKGROUND_BEAT_COUNT
@@ -920,9 +932,9 @@ def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
         elif named is None and conf.task_default_queue == "background":
             implicit += 1
 
-    assert explicit == 73, f"explicitly-routed background beats moved: {explicit}"
+    assert explicit == 74, f"explicitly-routed background beats moved: {explicit}"
     assert implicit == 45, f"default-queue fall-through moved: {implicit}"
-    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 118
+    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 119
 
     # ruling 110's two movers are OFF this queue and ON heavy — asserted here
     # too, so a silent revert cannot restore the count without being noticed.
