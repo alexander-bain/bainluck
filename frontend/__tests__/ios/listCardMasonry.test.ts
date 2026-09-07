@@ -38,31 +38,38 @@ import { join } from "path";
 const IOS_ROOT = join(__dirname, "../../../ios/Bain Luck");
 const CANONICAL = join(IOS_ROOT, "Bain Luck/Utilities/DiscoverMasonry.swift");
 
-/** The three surfaces #3709 converted. Each must use the deal and hold no grid. */
+/** Every surface converted, by #3709 and then #3723. Each uses the deal and holds no grid. */
 const CONVERTED = [
   "Bain Luck/Views/FeedView.swift",
   "Bain Luck/Views/SportCategoryView.swift",
   "Bain Luck/Views/MyStuffView.swift",
+  "Bain Luck/Views/SearchView.swift",
 ].map((p) => join(IOS_ROOT, p));
 
 /**
  * Files allowed to keep the 340/12 adaptive grid, each with a stated reason —
  * so adding one is a decision rather than a silent widening.
  *
- * `SearchView` is the fourth copy of the helper and is deliberately NOT
- * converted: its two grids are each HOMOGENEOUS (one grid of `searchEventRow`,
- * one of `searchFuturesRow`), so they have no tall-card/short-card pairing to
- * expose the row padding. native/043 and native/044 both photographed Search
- * full-width on iPad and saw no ragged column. If a future change makes either
- * grid mix cell types, delete this entry — that is the whole point of it being
- * written down.
+ * **Currently empty, and that is the finding.** #3709 put `SearchView` here
+ * with the reason "both grids are homogeneous (one row builder each), so no
+ * cell is ever padded to a differently-shaped neighbour". native/043 and
+ * native/044 had each photographed Search full-width on iPad and seen no
+ * ragged column, and native/045 wrote the excuse down here rather than leave
+ * it as a silent omission — which is what made it cheap to check.
+ *
+ * It was wrong. ONE ROW BUILDER IS NOT ONE SHAPE: `searchFuturesRow` has a
+ * `lineLimit(2)` title, a badge row that collapses when the market has neither
+ * a category nor a source, and a conditional top-outcome row. Measured on
+ * `bainluck://search?q=US%20Open` (#3723, `artifacts-native-046/`), the "US
+ * Open Winner" card came out 291 px wide and 164 px tall against ~721 px and
+ * 204 px for every other card in the same grid — 20 px of dead space above and
+ * below it, and 40 % of the width it was given.
+ *
+ * So: an entry here needs a reason that survives a photograph, not one that
+ * reads well. The mechanism is kept because a real exemption should be
+ * possible; it is empty because there is not one.
  */
-const KEEPS_THE_GRID = new Map<string, string>([
-  [
-    join(IOS_ROOT, "Bain Luck/Views/SearchView.swift"),
-    "both grids are homogeneous (one row builder each), so no cell is ever padded to a differently-shaped neighbour",
-  ],
-]);
+const KEEPS_THE_GRID = new Map<string, string>([]);
 
 function swiftFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -114,6 +121,42 @@ d("iOS List-backed iPad card grids deal masonry columns", () => {
     const offenders = swiftFiles(IOS_ROOT)
       .filter((file) => LIST_CARD_GRID.test(stripComments(readFileSync(file, "utf8"))))
       .filter((file) => !KEEPS_THE_GRID.has(file))
+      .map((file) => file.slice(IOS_ROOT.length + 1));
+
+    expect(offenders).toEqual([]);
+  });
+
+  it("a Search card fills its column instead of hugging its longest line", () => {
+    // The half of #3723 the masonry deal does NOT fix, and the reason this is
+    // asserted separately rather than folded into the test above: dealing the
+    // cards into stacks removes the ROW padding, but a `VStack` still sizes a
+    // child at its intrinsic width and centres it. "US Open Winner" was 291 px
+    // of a ~721 px column with 261/269 px of empty page either side.
+    //
+    // The order matters and is the thing worth pinning: the frame sits INSIDE
+    // the padding, so the card grows to the column. Padding outside a
+    // `maxWidth: .infinity` frame would make it the column PLUS 24 px.
+    const source = stripComments(
+      readFileSync(join(IOS_ROOT, "Bain Luck/Views/SearchView.swift"), "utf8")
+    );
+    expect(source).toMatch(
+      /\.padding\(12\)\s*\n\s*\.frame\(maxWidth: \.infinity, alignment: \.leading\)\s*\n\s*\.background\(Color\.cardBackgroundDark\)/
+    );
+  });
+
+  it("no iOS view keeps a UIScreen-derived landscape flag that nothing reads", () => {
+    // `@State private var landscapeColumns` was written by an
+    // `updateLandscapeColumns()` off `onAppear` plus an orientation observer,
+    // and read by NOTHING, in three separate files — MyStuffView (deleted by
+    // #3709), FeedView and SearchView (both deleted by #3723). Its only real
+    // effect was a `UIScreen.main.bounds` read on a layout path: gotcha #27,
+    // the Stage Manager trap, which measures the SCREEN and not the window.
+    //
+    // Named-symbol ratchets are usually weaker than discovery, but this symbol
+    // reached three files by copy-paste and a fourth copy would arrive the same
+    // way. Column count comes from a `GeometryReader` now, which IS the window.
+    const offenders = swiftFiles(IOS_ROOT)
+      .filter((file) => /landscapeColumns/.test(stripComments(readFileSync(file, "utf8"))))
       .map((file) => file.slice(IOS_ROOT.length + 1));
 
     expect(offenders).toEqual([]);

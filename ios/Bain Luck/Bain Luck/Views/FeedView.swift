@@ -9,7 +9,6 @@ struct FeedView: View {
     @StateObject private var vm = FeedViewModel()
     @State private var path = NavigationPath()
     @State private var selectedCategory: String = "all"
-    @State private var landscapeColumns = false
     @State private var hoveredItemId: String?
     // Sports first-render attribution (L2-211 Item 2 / C73): the once-only guard keys
     // on the view model's IMMUTABLE render-generation id — NOT a boolean an `onAppear`
@@ -59,7 +58,6 @@ struct FeedView: View {
         }
         .onAppear {
             AnalyticsService.trackScreen(name: "feed", type: "feed")
-            updateLandscapeColumns()
         }
         .task {
             // Route every load through the single owned rail (L2-211 Item 1 / C73):
@@ -97,11 +95,12 @@ struct FeedView: View {
             vm.viewDidStop()
             ScreenTimingSession.disarmScreen(surface: ScreenTimingSurface.sports)
         }
-        #if os(iOS)
-        .onReceive(NotificationCenter.default.publisher(for: UIDevice.orientationDidChangeNotification)) { _ in
-            updateLandscapeColumns()
-        }
-        #endif
+        // The orientation observer that used to live here drove
+        // `landscapeColumns`, which nothing read (#3723). #3709 replaced this
+        // view's column count with a `GeometryReader` and left the dead state
+        // behind; deleting it removes the last live `UIScreen.main.bounds` read
+        // on a layout path here — gotcha #27, the Stage Manager trap, which
+        // measures the SCREEN and not the window.
         .onChange(of: vm.liveCount) { _, count in
             navCoordinator.liveGameCount = count
         }
@@ -121,16 +120,6 @@ struct FeedView: View {
     /// geometry pass resolves, which `DiscoverMasonry` reads as one column
     /// (#3709).
     @State private var gridWidth: CGFloat = 0
-
-    private func updateLandscapeColumns() {
-        guard sizeClass == .regular else { return }
-        #if os(iOS)
-        let bounds = UIScreen.main.bounds
-        landscapeColumns = bounds.width > bounds.height
-        #else
-        landscapeColumns = true
-        #endif
-    }
 
     private var pinnedItems: [FeedItem] {
         vm.filteredItems(for: selectedCategory).filter { item in
