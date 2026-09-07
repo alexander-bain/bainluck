@@ -2114,7 +2114,14 @@ async def prediction_market_force_link(
     )
     from app.tasks.prediction_market_matching import (
         _find_matching_event,
-        _check_duplicate_kalshi_linkage,
+        _check_duplicate_kalshi_linkage_reason,
+    )
+    from app.utils.match_receipts import (
+        PHASE_ADMIN_REPAIR,
+        REJECT_EVENT_DATE_CONFLICT,
+        REJECT_NO_CANDIDATE,
+        REJECT_NO_MATCHUP,
+        record_out_of_band_attempt,
     )
 
     result = await db.execute(
@@ -2126,20 +2133,55 @@ async def prediction_market_force_link(
     if market.event_id is not None:
         return {"status": "already_linked", "event_id": market.event_id}
 
+    # #3755: every exit below now leaves a receipt, so a hand-run link is as
+    # visible in the history as a matcher pass. Read to scalars up front —
+    # ``db.commit()`` expires the ORM row (gotcha #6) and the receipt is written
+    # after it, so reaching through ``market`` down there would lazy-load or
+    # blow up on a detached instance.
+    market_row = {
+        "id": market.id, "source": market.source,
+        "external_id": market.external_id, "name": market.name,
+    }
+
     matchup = extract_matchup_with_ticker_fallback(market.name, external_id=market.external_id)
     ticker_date = extract_game_date_from_ticker(market.external_id)
     now = datetime.now(timezone.utc)
 
+    async def _receipt(**kwargs) -> int:
+        return await record_out_of_band_attempt(
+            market_row, phase=PHASE_ADMIN_REPAIR, now=now, **kwargs
+        )
+
     if not matchup:
-        return {"status": "no_matchup"}
+        return {
+            "status": "no_matchup",
+            "receipts_written": await _receipt(reject_reason=REJECT_NO_MATCHUP),
+        }
 
     matched = await _find_matching_event(db, matchup, market, now, game_date_override=ticker_date)
     if not matched:
-        return {"status": "no_event_found"}
+        return {
+            "status": "no_event_found",
+            "receipts_written": await _receipt(
+                reject_reason=REJECT_NO_CANDIDATE,
+                detail={"matchup": list(matchup) if matchup else None},
+            ),
+        }
 
-    guard_ok = await _check_duplicate_kalshi_linkage(db, matched["event_id"], market, ticker_date)
-    if not guard_ok:
-        return {"status": "duplicate_guard_blocked", "event_id": matched["event_id"]}
+    # The ``_reason`` form rather than the boolean one: the receipt should say
+    # WHICH refusal fired, and the boolean throws that away.
+    refusal = await _check_duplicate_kalshi_linkage_reason(
+        db, matched["event_id"], market, ticker_date
+    )
+    if refusal is not None:
+        return {
+            "status": "duplicate_guard_blocked",
+            "event_id": matched["event_id"],
+            "receipts_written": await _receipt(
+                reject_reason=REJECT_EVENT_DATE_CONFLICT,
+                detail={"refusal": refusal, "candidate_event_id": matched["event_id"]},
+            ),
+        }
 
     market.event_id = matched["event_id"]
     await db.commit()
@@ -2150,6 +2192,14 @@ async def prediction_market_force_link(
         "home_team": matched["home_team"],
         "away_team": matched["away_team"],
         "score": matched["score"],
+        "receipts_written": await _receipt(
+            linked_event_id=matched["event_id"],
+            detail={
+                "score": matched["score"],
+                "home_team": matched["home_team"],
+                "away_team": matched["away_team"],
+            },
+        ),
     }
 
 
