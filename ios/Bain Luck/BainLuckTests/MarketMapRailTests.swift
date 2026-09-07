@@ -731,4 +731,170 @@ final class MarketMapRailTests: XCTestCase {
             )
         }
     }
+
+    // MARK: - #3852, a settled MARGIN ladder
+
+    /// The five cover lines `/api/events/15305475/game-markets` serves on the
+    /// MARGIN side of the same photographed specimen, re-measured 2026-09-07 —
+    /// "Chicago WS wins by over 1.5 / 2.5 / 3.5 / 4.5 / 5.5 runs", every one at
+    /// `p = 0.99`. All five are HOME rungs; the away side is unquoted. Chicago
+    /// WS 10 — Minnesota 1, so the home-signed final margin is **+9**.
+    private let marginSpecimen15305475: [Double] = [1.5, 2.5, 3.5, 4.5, 5.5]
+
+    /// Six rungs `1.5 … 6.5` on event 15305468, Cubs 3 — Marlins 10, measured in
+    /// the same census. Home-signed final margin **+7**, and the card with the
+    /// most rungs in the settled population — so it is where the window moving
+    /// is most visible.
+    private let marginSpecimen15305468: [Double] = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5]
+
+    /// 🔴 THE GUARD THIS SHIP IS ACTUALLY FOR, and the one proved by mutation
+    /// rather than by passing first time.
+    ///
+    /// An AWAY rung on a game the HOME side won must MISS. Delete the sign flip
+    /// in ``MarketMapRail/sideFinalMargin(gameMargin:isHome:)`` — return
+    /// `gameMargin` for both sides — and the away rows come back HIT: the card
+    /// would tell a reader Minnesota covered +1.5 in a game they lost by nine,
+    /// which is a worse sentence than the `99%` this ship removes.
+    func testAnAwayRungOnAGameTheHomeSideWonMisses() {
+        let gameMargin = 9  // home by 9
+        let awayFinal = MarketMapRail.sideFinalMargin(gameMargin: gameMargin, isHome: false)
+        XCTAssertEqual(awayFinal, -9, "the away side lost by nine; that is its own margin")
+
+        let verdicts = marginSpecimen15305475.map {
+            MarketMapRail.totalLadderResult(threshold: $0, finalTotal: awayFinal)
+        }
+        XCTAssertEqual(verdicts, [.under, .under, .under, .under, .under],
+                       "every away cover line must MISS on a game the away side lost")
+
+        // And the same lines on the side that DID win.
+        let homeFinal = MarketMapRail.sideFinalMargin(gameMargin: gameMargin, isHome: true)
+        XCTAssertEqual(homeFinal, 9)
+        XCTAssertEqual(
+            marginSpecimen15305475.map {
+                MarketMapRail.totalLadderResult(threshold: $0, finalTotal: homeFinal)
+            },
+            [.over, .over, .over, .over, .over]
+        )
+    }
+
+    /// The away side WINNING is the same rule read the other way, and is the
+    /// direction a home-only fixture would never exercise.
+    func testAnAwayRungOnAGameTheAwaySideWonGradesAgainstItsOwnMargin() {
+        // Away by 5 => the game's home-signed margin is -5.
+        let awayFinal = MarketMapRail.sideFinalMargin(gameMargin: -5, isHome: false)
+        XCTAssertEqual(awayFinal, 5)
+        XCTAssertEqual(MarketMapRail.totalLadderResult(threshold: 3.5, finalTotal: awayFinal), .over)
+        XCTAssertEqual(MarketMapRail.totalLadderResult(threshold: 5.5, finalTotal: awayFinal), .under)
+
+        // The home side, on the same game, clears nothing.
+        let homeFinal = MarketMapRail.sideFinalMargin(gameMargin: -5, isHome: true)
+        XCTAssertEqual(homeFinal, -5)
+        XCTAssertEqual(MarketMapRail.totalLadderResult(threshold: 1.5, finalTotal: homeFinal), .under)
+    }
+
+    /// 🔴 A PICK'EM RUNG IS WHY THE FLIP READS `isHome` AND NOT THE SIGN. At
+    /// `margin: 0` the rung's own sign names no side, so a grader that switched
+    /// on it would hand every such rung to the home team — #3568's defect one
+    /// level down. Both sides get the opposite answer here, which is the whole
+    /// point.
+    func testAPickEmRungIsGradedByItsSideAndNotBySign() {
+        let gameMargin = 2  // home by 2
+        XCTAssertEqual(
+            MarketMapRail.totalLadderResult(
+                threshold: 0,
+                finalTotal: MarketMapRail.sideFinalMargin(gameMargin: gameMargin, isHome: true)),
+            .over, "home won, so 'home by more than 0' landed")
+        XCTAssertEqual(
+            MarketMapRail.totalLadderResult(
+                threshold: 0,
+                finalTotal: MarketMapRail.sideFinalMargin(gameMargin: gameMargin, isHome: false)),
+            .under, "the same rung on the away side did not")
+    }
+
+    /// 🟢 THE SHIP, on the issue's own frame. The card drew the three TIGHTEST
+    /// home lines — `1.5 · 2.5 · 3.5`, all at `99%`. Grading alone would have
+    /// traded three identical prices for three identical `HIT`s, so the window
+    /// has to move here for the same reason it moved on the totals card.
+    func testTheSettledMarginSpecimenMovesItsWindowUp() {
+        let sideFinal = MarketMapRail.sideFinalMargin(gameMargin: 9, isHome: true)
+        let window = MarketMapRail.settledLadderWindow(
+            sortedThresholds: marginSpecimen15305475, finalTotal: sideFinal, limit: 3
+        )
+        XCTAssertEqual(Array(window), [2, 3, 4])
+        XCTAssertEqual(window.map { marginSpecimen15305475[$0] }, [3.5, 4.5, 5.5],
+                       "the tightest lines the winner actually cleared, not the ones it cleared first")
+    }
+
+    /// The card with the most rungs in the settled population, where the window
+    /// moving is the most visible thing on the frame: `1.5 · 2.5 · 3.5` becomes
+    /// `4.5 · 5.5 · 6.5` on a game won by seven.
+    func testTheSixRungSpecimenShowsTheTopOfItsLadder() {
+        let sideFinal = MarketMapRail.sideFinalMargin(gameMargin: 7, isHome: true)
+        let window = MarketMapRail.settledLadderWindow(
+            sortedThresholds: marginSpecimen15305468, finalTotal: sideFinal, limit: 3
+        )
+        XCTAssertEqual(window.map { marginSpecimen15305468[$0] }, [4.5, 5.5, 6.5])
+    }
+
+    /// 🔴 THE REGRESSION GRADING ALONE WOULD LEAVE, pinned as the thing that was
+    /// wrong — the margin twin of `testGradingTheOldLowestSixWindowWouldHaveSaidNothing`.
+    /// If someone later drops the window and keeps only the verdicts, this fails.
+    func testGradingTheOldTightestThreeWouldHaveSaidNothing() {
+        let sideFinal = MarketMapRail.sideFinalMargin(gameMargin: 9, isHome: true)
+        let oldWindow = Array(marginSpecimen15305475.prefix(3))
+        XCTAssertEqual(
+            Set(oldWindow.map { MarketMapRail.totalLadderResult(threshold: $0, finalTotal: sideFinal) }),
+            [.over],
+            "all three of the tightest lines resolved the same way, which is why the "
+            + "window had to move and not just the wording")
+    }
+
+    /// The LOSING side keeps the tightest three, and that is the informative
+    /// slice for it: "did not even cover +1.5". The centred window slides back to
+    /// the bottom of the array without a special case.
+    func testTheLosingSideKeepsItsTightestLines() {
+        let sideFinal = MarketMapRail.sideFinalMargin(gameMargin: 9, isHome: false)
+        let window = MarketMapRail.settledLadderWindow(
+            sortedThresholds: marginSpecimen15305475, finalTotal: sideFinal, limit: 3
+        )
+        XCTAssertEqual(window.map { marginSpecimen15305475[$0] }, [1.5, 2.5, 3.5])
+    }
+
+    /// 🔴 NOT A HIDING RULE, and the pre-game card does not move. With no final
+    /// there is no side margin, so the call site's `0 ..< min(limit, count)`
+    /// stands and every row still prints its price.
+    func testAnUnsettledMarginCardIsUntouched() {
+        let settledMargin: Int? = nil
+        let sideFinal = settledMargin.map {
+            MarketMapRail.sideFinalMargin(gameMargin: $0, isHome: true)
+        }
+        XCTAssertNil(sideFinal, "no final margin means no verdict and no window")
+        XCTAssertEqual(min(3, marginSpecimen15305475.count), 3)
+        XCTAssertNil(
+            MarketMapView.LadderRow(label: "CWS +1.5", prob: 0.99, color: .purple).result,
+            "a row with no verdict prints its price, which is every pre-game margin row")
+    }
+
+    /// 🟠 The push, on the margin side. Unreachable on today's data — 39 of 39
+    /// cover lines measured across the settled and NFL/NCAAF populations on
+    /// 2026-09-07 are half-lines — and pinned because a tie is precisely the
+    /// case where `>` and `>=` stop agreeing and `threshold` cannot tell them
+    /// apart (#3788's admitted half-point). Grey "PUSH" claims neither.
+    func testAMarginLineTheGameLandedExactlyOnIsNeitherHitNorMiss() {
+        let sideFinal = MarketMapRail.sideFinalMargin(gameMargin: 3, isHome: true)
+        XCTAssertEqual(MarketMapRail.totalLadderResult(threshold: 3, finalTotal: sideFinal), .push)
+        XCTAssertEqual(MarketMapRail.totalLadderResult(threshold: 2.5, finalTotal: sideFinal), .over)
+        XCTAssertEqual(MarketMapRail.totalLadderResult(threshold: 3.5, finalTotal: sideFinal), .under)
+    }
+
+    /// The sign flip is an involution, which is the property that makes "two
+    /// totals ladders" true rather than merely convenient: flipping twice is the
+    /// game's own margin, so neither side is privileged.
+    func testTheSideFlipIsItsOwnInverse() {
+        for margin in [-9, -1, 0, 1, 9] {
+            let away = MarketMapRail.sideFinalMargin(gameMargin: margin, isHome: false)
+            XCTAssertEqual(MarketMapRail.sideFinalMargin(gameMargin: away, isHome: false), margin)
+            XCTAssertEqual(MarketMapRail.sideFinalMargin(gameMargin: margin, isHome: true), margin)
+        }
+    }
 }

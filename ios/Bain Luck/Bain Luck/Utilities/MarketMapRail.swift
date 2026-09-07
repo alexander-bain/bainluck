@@ -295,6 +295,15 @@ enum MarketMapRail {
     /// `>` and `>=` agree, which is precisely why the wrong one survives
     /// unnoticed: `TotalPointsSpectrumView:358` grades with `>=` and would call
     /// a push a HIT the day an integer line arrives.
+    ///
+    /// 🟠 **SHARED WITH THE MARGIN LADDER SINCE #3852, so the `Total` in these
+    /// three names is now a historical prefix rather than a scope.** A margin
+    /// card feeds one side's own positive cover lines and the margin that side
+    /// won by (``sideFinalMargin(gameMargin:isHome:)``) — the same monotone
+    /// ladder in a different unit. The names were left alone deliberately:
+    /// renaming the type without renaming the two functions buys nothing, and
+    /// renaming all three is a cosmetic diff across shipped #3823 code. Read
+    /// `finalTotal` as "the value this ladder is graded against".
     enum TotalLadderResult: Equatable {
         case over
         case under
@@ -384,6 +393,92 @@ enum MarketMapRail {
         let ideal = firstMiss - limit / 2
         let start = Swift.max(0, Swift.min(count - limit, ideal))
         return start ..< (start + limit)
+    }
+
+    // MARK: - Reading a MARGIN ladder once the game is over
+
+    /// The margin a SIDE won by, from the game's home-signed final margin.
+    ///
+    /// #3852, the margin-side twin of #3823 — and the whole of the new rule,
+    /// because of a reduction worth stating plainly:
+    ///
+    /// 🟢 **A MARGIN LADDER IS TWO TOTALS LADDERS, ONE PER SIDE.** Every
+    /// ``SpreadRungs/Rung`` makes exactly one claim — *this side by more than
+    /// `abs(margin)`, at this probability* — a sentence written down three times
+    /// in `SpreadRungs` (``SpreadRungs/fromHandicap(_:_:home:away:unit:)``,
+    /// ``SpreadRungs/namesARange(_:)``) because #3743 and #3788 were both filed
+    /// against rows that did not make it. So one side's rungs, taken as POSITIVE
+    /// cover lines in ascending order and graded against the margin THAT SIDE
+    /// won by, are exactly the monotone `HIT…HIT MISS…MISS` array that
+    /// ``totalLadderResult(threshold:finalTotal:)`` and
+    /// ``settledLadderWindow(sortedThresholds:finalTotal:limit:)`` were written
+    /// for. Nothing else is needed: no second grader, no second window rule, and
+    /// therefore no second copy of either to drift out of step — #3554's lesson
+    /// was three copies of one rule disagreeing, and this keeps the count at one.
+    ///
+    /// This function is the ONE thing the reduction needs: the sign flip that
+    /// puts the away side on its own number line.
+    ///
+    /// 🔴 **IT TAKES `isHome`, NOT THE SIGN OF THE RUNG.** A rung at `margin: 0`
+    /// — "wins by more than 0", i.e. wins — names a side that its own sign cannot
+    /// tell you, and resolving that tie by inspecting the sign would silently
+    /// hand every pick'em rung to the home team. That is #3568's defect
+    /// (`isHome ? t : -t` quietly resolving an ambiguous side to HOME) one level
+    /// down, and `SpreadRungs.Rung` already carries the answer.
+    ///
+    /// THE PHOTOGRAPH this fixes. Event 15305475 (Minnesota 1 — Chicago WS 10,
+    /// `completed`, Sox by 9), `artifacts-native-053/AFTER-3823-mlb-15305475-s1030.png`,
+    /// one card above the ladder #3823 had just fixed:
+    ///
+    /// ```
+    /// Run margin map / Final margin     FINAL Sox +9     PRE-GAME Sox +1.5
+    ///   Sox +1.5   ████████████████  99%
+    ///   Sox +2.5   ████████████████  99%
+    ///   Sox +3.5   ████████████████  99%
+    /// ```
+    ///
+    /// Three rows giving a 99% chance the Sox cover +1.5 in a game that ended
+    /// nine runs ago, and — the second fault, the one grading alone does not fix
+    /// — the three LEAST informative lines on the card, because the ladder takes
+    /// the tightest rungs by `abs(margin)` and on a settled game every line
+    /// inside the final margin resolved identically.
+    ///
+    /// **MEASURED, production, 2026-09-07** — 70 settled events fetched, 0 fetch
+    /// errors (the count matters: an earlier pass of this census swallowed 429s
+    /// in a bare `except` and reported a confident zero):
+    ///
+    /// - **6** of the 70 carry a full-game margin ladder at all.
+    /// - **39 of 39** cover lines across that population and the NFL/NCAAF
+    ///   window are HALF-lines. **Zero integer lines**, so ``TotalLadderResult``
+    ///   `.push` is unreachable here exactly as #3823 measured it unreachable on
+    ///   the totals side — and pinned anyway, below.
+    /// - **No settled card in the population has a step**: every quoted line sat
+    ///   inside the final margin, so the window's payoff today is "the tightest
+    ///   lines the winner actually cleared" rather than a visible step. On
+    ///   15305468 (Cubs 3 — Marlins 10, six rungs `1.5 … 6.5`) that moves the
+    ///   card from `1.5 · 2.5 · 3.5` to `4.5 · 5.5 · 6.5`.
+    /// - Away rungs are rare — **1** of the 6 cards quotes both sides.
+    ///
+    /// 🟠 **THE READING THE VERDICT COMMITS TO, said out loud because the label
+    /// is ambiguous and grading it is not.** `"Sox +1.5"` is a cover line on a
+    /// margin axis, not a handicap: the row's bar is already `P(Sox by more than
+    /// 1.5)`, the rung sits at `+1.5` on the very rail the `FINAL Sox +9` marker
+    /// sits on, and HIT/MISS grades that claim. Under the *other* reading of a
+    /// `+` prefix — Sox with 1.5 points given to them — the two verdicts differ
+    /// whenever the Sox lose by one, so this is a real fork and it is resolved
+    /// the way the card is drawn. The label itself is not touched here; changing
+    /// it is a different defect class and would invalidate this ship's
+    /// before/after frame.
+    ///
+    /// **WHAT THIS DELIBERATELY DOES NOT ANSWER.** On the first integer line to
+    /// arrive, `>` and `>=` stop agreeing and `threshold` alone cannot tell them
+    /// apart — #3788 records the same half-point gap ("`P(M >= 15)` is
+    /// `P(M > 14.5)`, not `P(M > 15)` … pre-existing, out of scope"). A tie
+    /// therefore grades `.push`, which prints a grey "PUSH" and claims neither a
+    /// hit nor a miss; that is the correct amount of confidence for a row whose
+    /// operator we cannot read, and it is unreachable on the data above.
+    static func sideFinalMargin(gameMargin: Int, isHome: Bool) -> Int {
+        isHome ? gameMargin : -gameMargin
     }
 
     // MARK: - Whether a margin card has a distribution to show

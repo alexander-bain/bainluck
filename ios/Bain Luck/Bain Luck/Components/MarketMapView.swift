@@ -296,18 +296,64 @@ struct MarketMapView: View {
         let rangeMax = bounds.max
         let density = buildDensityFromSpreads(parsed, rangeMin: rangeMin, rangeMax: rangeMax)
 
+        // #3852 — the final margin this card may GRADE its ladder against, read
+        // once. Home-signed, exactly like the FINAL marker built below.
+        //
+        // 🔴 STRONGER THAN THAT MARKER'S OWN GATE, on purpose. The marker asks
+        // only `scoredHomeScore != nil` (i.e. `vocab.scoreboardCountsTheUnit`),
+        // which is true of a tennis match whose scoreboard counts SETS while
+        // this rail may be drawn in GAMES. Grading a games rung against a sets
+        // margin is the `scoreboardCounts` class of error, so this asks the
+        // question the totals card's `settledTotal` asks: does the scoreboard
+        // count what THIS map's rungs are quoted in.
+        let settledMargin: Int? = {
+            guard isDone, scoreboardCounts(data.unit),
+                  let homeScoreValue = scoredHomeScore,
+                  let awayScoreValue = scoredAwayScore else { return nil }
+            return homeScoreValue - awayScoreValue
+        }()
+
         // `Int(abs(margin))` truncated: a `-5.5` game line printed "+5", and on
         // the set maps this change introduces `-1.5` printed "+1" — a
         // two-set handicap relabelled as a one-set one, which is a different
         // market. `formatThreshold` is the same formatter the totals ladder
         // has always used.
-        let ladder: [LadderRow] =
-            parsed.filter { !$0.isHome }.sorted { abs($0.margin) < abs($1.margin) }.prefix(3).map {
-                LadderRow(label: "\(aAbbr) +\(formatThreshold(abs($0.margin)))", prob: $0.probability, color: awayColor)
-            } +
-            parsed.filter(\.isHome).sorted { $0.margin < $1.margin }.prefix(3).map {
-                LadderRow(label: "\(hAbbr) +\(formatThreshold($0.margin))", prob: $0.probability, color: homeColor)
+        //
+        // #3852 — each SIDE is its own one-sided cover ladder: positive lines
+        // ascending, graded against the margin that side won by. Both sides now
+        // sort by `abs(margin)`; the home half used to sort by the signed value,
+        // which is the same order for the non-negative margins `SpreadRungs`
+        // produces and is the order the window rule actually requires.
+        let ladderLimit = 3
+        func marginLadder(
+            _ rungs: [SpreadRungs.Rung], isHome: Bool, abbr: String, color: Color
+        ) -> [LadderRow] {
+            let sorted = rungs.sorted { abs($0.margin) < abs($1.margin) }
+            let lines = sorted.map { abs($0.margin) }
+            let sideFinal = settledMargin.map {
+                MarketMapRail.sideFinalMargin(gameMargin: $0, isHome: isHome)
             }
+            // Before the result, the tightest lines; after it, the lines the
+            // result actually decided — the totals card's rule, unchanged.
+            let window = sideFinal.map {
+                MarketMapRail.settledLadderWindow(
+                    sortedThresholds: lines, finalTotal: $0, limit: ladderLimit
+                )
+            } ?? 0 ..< Swift.min(ladderLimit, sorted.count)
+            return window.map { i in
+                LadderRow(
+                    label: "\(abbr) +\(formatThreshold(lines[i]))",
+                    prob: sorted[i].probability,
+                    color: color,
+                    result: sideFinal.map {
+                        MarketMapRail.totalLadderResult(threshold: lines[i], finalTotal: $0)
+                    }
+                )
+            }
+        }
+        let ladder: [LadderRow] =
+            marginLadder(parsed.filter { !$0.isHome }, isHome: false, abbr: aAbbr, color: awayColor)
+            + marginLadder(parsed.filter(\.isHome), isHome: true, abbr: hAbbr, color: homeColor)
 
         // Headline: favored team + win %
         let headline: String = {
