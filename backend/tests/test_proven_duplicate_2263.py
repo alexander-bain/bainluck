@@ -743,6 +743,69 @@ class TestTheFold:
         )
         assert f'"{DUPLICATE_TAG_PREFIX}{CANON_ID}"' in compiled
 
+    def test_a_folded_market_survives_a_ticker_date_the_canonical_does_not_share(self):
+        """🔴 THE HAZARD THE FOLD CREATES, and the measurement that closes it.
+
+        `_build_game_markets` runs `filter_foreign_game_markets(markets,
+        event.commence_time.date())` immediately after the fold — and the ghost's
+        Kalshi tickers do NOT carry the canonical's date. All six US Open
+        quarter-finals on 2026-09-07 have this shape:
+
+            ghost ticker   KXATPMATCH-26SEP06CERBLO     -> 2026-09-06
+            canonical      commence_time                -> 2026-09-07 17:00Z
+
+        A date-keyed filter reading the CANONICAL's date over the GHOST's tickers
+        is exactly how a fold turns into a silent no-op (gotcha #53): the markets
+        arrive and are dropped one line later, the page looks unchanged, and the
+        repair reports success.
+
+        It does not happen, and the reason is structural rather than lucky: a
+        twin is the SAME matchup, so the folded markets carry the same team code,
+        and `filter_foreign_game_markets` short-circuits at
+        `len(team_codes) <= 1` before it consults a date at all. Verified against
+        the real production external_ids for 15305578 + 15305553 — 18/18 kept
+        under Sep 7, and 18/18 under Sep 6 as well.
+
+        The filter's own suite is `test_foreign_game_markets.py`; this case lives
+        here because the input shape is the fold's, not the filter's.
+        """
+        from datetime import date
+        from types import SimpleNamespace
+
+        from app.utils.prediction_market_matching import filter_foreign_game_markets
+
+        folded = [
+            SimpleNamespace(id=1, external_id="972932"),  # the canonical's own
+            SimpleNamespace(id=2, external_id="KXATPMATCH-26SEP06CERBLO"),
+            SimpleNamespace(id=3, external_id="KXATPEXACTMATCH-26SEP06CERBLO"),
+            SimpleNamespace(id=4, external_id="0xb7299024535d27679bef5f29ce57"),
+        ]
+        kept = filter_foreign_game_markets(folded, date(2026, 9, 7))
+        assert [m.id for m in kept] == [1, 2, 3, 4]
+
+    def test_a_fold_that_brought_a_SECOND_matchup_is_still_filtered(self):
+        """The other direction (gotcha #43): the safety net must still bite.
+
+        If the fold ever carried in a genuinely foreign game's markets, two team
+        codes are present, the date decides, and the foreign one is dropped. A
+        test that only proved the survival case above would have licensed
+        removing the filter.
+        """
+        from datetime import date
+        from types import SimpleNamespace
+
+        from app.utils.prediction_market_matching import filter_foreign_game_markets
+
+        mixed = [
+            SimpleNamespace(id=1, external_id="KXATPMATCH-26SEP07CERBLO"),
+            SimpleNamespace(id=2, external_id="KXATPMATCH-26SEP07SINALC"),
+            SimpleNamespace(id=3, external_id="KXATPMATCH-26SEP06SINALC"),
+        ]
+        # Two team codes, so the date is consulted: SINALC is the code with a
+        # ticker on the event's own day, CERBLO is the foreign game and goes.
+        kept = [m.id for m in filter_foreign_game_markets(mixed, date(2026, 9, 6))]
+        assert kept == [2, 3]
+
     def test_the_event_pages_market_read_actually_carries_the_fold(self):
         """Part D's discipline: a predicate nothing calls repairs nothing.
 
