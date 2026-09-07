@@ -101,6 +101,12 @@ import datetime
 import logging
 from typing import Any, Optional
 
+# Module-level ON PURPOSE, where the rest of this file imports locally: `_WRITE_OK`
+# is a module-level constant derived from it, and a local import cannot feed one.
+# Safe because `durable_snapshots` reaches back into `app.tasks` only from inside
+# function bodies, so there is no import cycle to close here (#3782).
+from app.services.durable_snapshots import PUBLISH_STATUS_DURABLE
+
 logger = logging.getLogger(__name__)
 
 #: A fixed instant, used only as the ``now`` handed to ``build_disclosure`` when
@@ -862,10 +868,31 @@ def summarise(history: dict) -> dict:
     }
 
 
-#: The two write statuses that mean the ring holds this beat when the run ends.
-#: ``unchanged`` is the job done, not a skip — the beat was already banked by an
-#: earlier sample in the same hour.
-_WRITE_OK = ("stored", "unchanged")
+#: This run attempted no write because the ring already held the beat. Local to
+#: the sampler — it is set by the ``else`` branch below, never by the writer —
+#: and it is the job done, not a skip: the beat was already banked by an earlier
+#: sample in the same hour.
+WRITE_NOOP = "unchanged"
+
+#: Every write status that means the ring holds this beat when the run ends.
+#:
+#: DERIVED from the writer's own contract, never restated (#3782). It used to
+#: read ``("stored", "unchanged")``, and ``"stored"`` is a status
+#: ``publish_snapshot_standalone`` has never returned — its contract is
+#: ``ok`` / ``superseded`` / ``error`` plus ``occupied`` / ``cas-miss``. So the
+#: only string in the accept set that could ever match was the sampler's OWN
+#: no-op sentinel, and the classification was exactly inverted: a run that read
+#: the ledger, keyed the row and banked a new beat got ``ok``, missed the set,
+#: and was recorded ``failed`` with reason ``history_write_failed: ok``, while
+#: the runs that banked nothing passed. Measured on production 2026-09-07:
+#: ``appended: true``, ``history_write: "ok"``, ``terminal: "failed"``.
+#:
+#: That also silently undid CAL-P1042 (#3733): ``self_ok`` is computed from this
+#: set, and ``clears_failure_streak`` needs ``partial`` AND ``self_ok`` — so an
+#: appending run took the failure path instead and the streak it had just
+#: cleared climbed straight back to ``critical``. The #3733 fix only appeared to
+#: hold because the producer had stopped and the sampler was idling on the no-op.
+_WRITE_OK = frozenset(PUBLISH_STATUS_DURABLE | {WRITE_NOOP})
 
 #: The observed beat did not write every gauge the derived bound depends on, so
 #: the banked row is not replayable. A fact about the PRODUCER.
@@ -1174,7 +1201,7 @@ async def run_beat_gauge_sample() -> dict:
     else:
         # Nothing new to record. NOT a write failure and NOT no-work: the beat
         # is already in the ring, which is the job.
-        write_status = "unchanged"
+        write_status = WRITE_NOOP
     artifact["history_write"] = write_status
 
     artifact["terminal"], artifact["reason"] = decide_terminal(
