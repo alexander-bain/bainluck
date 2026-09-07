@@ -66,7 +66,10 @@ from app.models.models import (
 )
 from app.services import get_db, get_db_rw
 from app.utils.live_first_page import hoist_live_events_into_first_page
-from app.utils.sports_first_page_rails import cap_repeated_finished_rails
+from app.utils.sports_first_page_rails import (
+    cap_repeated_finished_rails,
+    swap_client_deleted_finished_off_first_page,
+)
 from app.utils.tonights_games import compose_lead
 from app.utils.aggregation import (
     SOURCE_WEIGHTS,
@@ -1345,7 +1348,8 @@ def apply_discover_display_chain(
             the caller — this function does no I/O.
         timing_cb: optional ``fn(stage_name)`` called after ``ranking``,
             ``reviewed_filter``, ``bundles``, ``lead_composition``,
-            ``first_page_quality_floor``, ``finished_rail_cap`` and
+            ``first_page_quality_floor``, ``finished_rail_cap``,
+            ``client_deletion_swap`` and
             ``live_first_page`` so ``get_feed`` keeps its per-stage timings. The
             exact list and its ORDER are pinned by
             ``test_discover_display_chain_shared.py`` —
@@ -1549,6 +1553,62 @@ def apply_discover_display_chain(
             )
     _tick("finished_rail_cap")
 
+    # === THE FIRST PAGE STOPS SPENDING SLOTS THE CLIENT THROWS AWAY (#3836) ===
+    #
+    # `frontend/lib/discover/feedFreshness.ts` deletes any completed/closed
+    # event more than `COMPLETED_EVENT_MAX_AGE_HOURS = 8` past its
+    # `commence_time`, and `/sports` applies it through
+    # `applyFinishedCardGuard`. Nothing on this side knew that. Measured
+    # 2026-09-07: four of twenty first-page slots (11, 13, 14, 15 — 15.3h,
+    # 20.3h, 14.1h, 12.3h) went to cards the browser removed before paint, and
+    # they are NOT recovered — `FEED_PAGE_LIMIT` is 20 and `nextFeedRequest`
+    # marches 0 -> 20 -> 40 with no overlap, so the reader got a sixteen-card
+    # page wearing a twenty-card budget.
+    #
+    # NOT A THIN SLATE: the same pull at limit=60 held 21 admissible cards
+    # beyond the window. And NOT ALREADY COVERED BY THE CAP ABOVE — the window
+    # held exactly three "Recent upset" cards, exactly the cap, so it never
+    # fired and the page still lost four slots.
+    #
+    # AFTER the cap, so a replacement can take a rail the cap's own survivors
+    # freed; BEFORE the hoist, for the reason spelled out above — that pass is
+    # Alex's P1 criterion and keeps the last word on first-page membership.
+    # `test_sports_first_page_rails_wiring_3511` asserts all three positions.
+    #
+    # Gated exactly as the cap is, and for the same CERT-2190 reason: `mode`
+    # and `my_teams_only` are independent parameters, `not discover_mode` is
+    # TRUE for My Stuff, and My Stuff's contract is to show everything matching
+    # and skip this work entirely.
+    client_deletion_swap_meta = None
+    if sports_mode and not my_teams_only:
+        items, client_deletion_swap_meta = (
+            swap_client_deleted_finished_off_first_page(
+                items, first_page_size=min(20, limit)
+            )
+        )
+        if client_deletion_swap_meta["declined_to_keep_a_game"]:
+            # #1091 — the pass refused itself rather than hand the reader a
+            # gameless sports page. Loud, because "we did nothing on purpose"
+            # and "there was nothing to do" are opposite facts (gotcha #53).
+            logger.warning(
+                "Sports first-page client-deletion swap DECLINED: swapping the "
+                "%d doomed card(s) would have left the first page with no game "
+                "the client renders; page returned unchanged",
+                client_deletion_swap_meta["client_deleted_before"],
+            )
+        elif client_deletion_swap_meta["unswapped"]:
+            logger.warning(
+                "Sports first-page client-deletion swap: %d card(s) the client "
+                "will delete kept on page one — no admissible replacement "
+                "beyond the window (%d swapped, %d available, >%dh since "
+                "commence)",
+                client_deletion_swap_meta["unswapped"],
+                client_deletion_swap_meta["swapped"],
+                client_deletion_swap_meta["replacements_available"],
+                client_deletion_swap_meta["max_age_hours"],
+            )
+    _tick("client_deletion_swap")
+
     # === LIVE COMPLETENESS ON THE GAMES-LED SURFACES (#2709, Alex P1) ===
     #
     # The `include_tonights_games=discover_mode` gate above is correct and stays:
@@ -1594,6 +1654,7 @@ def apply_discover_display_chain(
         "reviewed_filtered_count": reviewed_filtered_count,
         "first_page_quality_floor": first_page_floor_meta,
         "finished_rail_cap": finished_rail_cap_meta,
+        "client_deletion_swap": client_deletion_swap_meta,
         "live_first_page": live_first_page_meta,
     }
 

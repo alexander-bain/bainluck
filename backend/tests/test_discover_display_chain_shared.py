@@ -236,6 +236,15 @@ class TestChainContract:
             # first-page membership — Alex's P1. Its tick is outside its gate
             # too, following the convention this list already records.
             "finished_rail_cap",
+            # #3836: the client-deletion swap sits between the cap and the
+            # hoist, and its position is a contract for two reasons rather than
+            # one. AFTER the cap, because the cap's departures free rails that
+            # a replacement may legitimately take — on the measured payload all
+            # three "Recent upset" cards were the doomed ones, so counting the
+            # window as-served would refuse the best replacement for no reason.
+            # BEFORE the hoist, so the live pass still has the last word.
+            # Its tick is outside its gate, per the convention above.
+            "client_deletion_swap",
             "live_first_page",
         ], (
             "get_feed's per-stage timings are built from these callbacks; "
