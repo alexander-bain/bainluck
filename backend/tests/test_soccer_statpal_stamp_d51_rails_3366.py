@@ -334,9 +334,9 @@ class TestAConfirmedAnchorWriteIsDurablyAttributed:
         assert "anchor_is_ours" in sql
 
     def test_the_attribution_never_repoints_or_overwrites(self):
-        from app.tasks.stamp_v1_statpal_fixtures import ATTRIBUTE_COLUMN_WRITE
+        import app.tasks.stamp_v1_statpal_fixtures as task
 
-        sql = " ".join(ATTRIBUTE_COLUMN_WRITE.split())
+        sql = " ".join(task.ATTRIBUTE_COLUMN_WRITE.split())
         assigned = sql.split("SET", 1)[1].split("WHERE", 1)[0]
         assert (
             "event_id" not in assigned
