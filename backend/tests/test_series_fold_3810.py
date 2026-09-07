@@ -444,8 +444,6 @@ class TestComposed:
 from types import SimpleNamespace  # noqa: E402
 from unittest.mock import MagicMock  # noqa: E402
 
-import pytest  # noqa: E402
-
 from app.routes.events import get_event_odds_history  # noqa: E402
 
 
