@@ -889,6 +889,34 @@ jobs:
             exit 1
           fi
 
+      - name: "#3366 soccer stamp backup/apply/restore round trip (real Postgres)"
+        # CERT-2207. `scripts/soccer_statpal_stamp_3366.py` makes soccer's first
+        # StatPal write unattended under D51, which grants that only for a
+        # repair that "writes a backup first and ships a one-command restore".
+        # The BLOCK found the restore was not exact: the backup snapshots
+        # membership at one instant and stays valid for 45 minutes, while the
+        # apply picks its candidates live — so a row created in between got
+        # stamped, then had its column kept (`outside_backup`) and its anchor
+        # deleted. A populated column with no anchor is the orphan the writer
+        # writes both halves to avoid.
+        #
+        # The repair records ownership at write time — `apply_run_id` in each
+        # anchor's `claim_context`, in the same per-row transaction — and the
+        # undo replays those exact pairs under a CAS. Only a server can say
+        # whether that JSONB key round-trips, whether `ON CONFLICT DO NOTHING`
+        # really leaves `claim_context` untouched (the premise the whole
+        # attribution rests on), and whether the CAS declines a moved value.
+        #
+        # Same skip detection as every gate in this job.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_soccer_statpal_manifest_restore_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/soccer3366.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/soccer3366.txt; then
+            echo "::error::#3366 soccer stamp round-trip gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#2867 tennis link apply/rollback round trip (real Postgres)"
         # `scripts/link_tennis_statpal_anchors_2867.py` runs unattended under
         # D51 on the same terms as the #2879 re-key above, and CERT-847 is the

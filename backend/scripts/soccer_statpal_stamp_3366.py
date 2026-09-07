@@ -5,7 +5,7 @@
     heroku run:detached -a <app> python3 scripts/soccer_statpal_stamp_3366.py backup
     heroku run:detached -a <app> python3 scripts/soccer_statpal_stamp_3366.py apply
     heroku run:detached -a <app> python3 scripts/soccer_statpal_stamp_3366.py restore \\
-        --identity <backup identity> --apply
+        --identity <apply run id> --apply
 
 ``stamp_soccer_statpal_fixtures`` defaults to ``apply=False`` and has no beat
 entry, so nothing has ever written a soccer link. D51 says the owning lane may
@@ -55,26 +55,60 @@ offsets 1-3 plus live and widens by ``CANDIDATE_SLACK``, so everything it can
 touch sits inside ``now - 2d .. now + 7d`` with days to spare. Deriving it would
 mean reading the boards to size the backup, which is the drift this avoids.
 
-WHAT THE RESTORE PUTS BACK, AND WHAT IT REFUSES TO
-══════════════════════════════════════════════════
+WHAT THE RESTORE PUTS BACK, AND HOW IT KNOWS WHAT IS ITS TO PUT BACK
+════════════════════════════════════════════════════════════════════
 Both halves of the write, because ``_write_link`` writes both and a restore that
-cleared only the column would leave an anchor naming an event that no longer
-claims the fixture — a state neither the stamper nor the registry can reach on
-its own, and one that reads as a real correspondence to every future caller.
+undid only one would leave an anchor naming an event that no longer claims the
+fixture — or a column claiming a fixture no anchor records — states neither the
+stamper nor the registry can reach on its own, and ones that read as a real
+correspondence to every future caller.
 
-It refuses two rows on purpose, and both refusals are the success case:
+**Ownership comes from the apply's own manifest, never from the pre-image**
+(CERT-2207). The first version of this script derived it: a column empty in the
+backup and populated now was assumed to be ours. That is wrong for the whole
+population that enters the window during the ``BACKUP_MAX_AGE`` gap. Normal
+ingestion creates soccer rows continuously; the apply selects its candidates
+live, so it can stamp a row the backup never saw. Under the derived rule that
+row's column was classified ``outside_backup`` and left populated while its
+anchor — equally absent from the pre-image — was classified deletable. The undo
+produced exactly the orphan this file exists to prevent.
 
-  * ``COLUMN_MOVED_ON`` — the column no longer holds what the apply wrote.
-    Something else has set it since. Dragging it back to a value that is now two
-    edits old would make the undo cause the corruption it exists to reverse.
-  * ``NOT_OURS`` — a soccer StatPal anchor that was already on file when the
-    backup was taken. The apply did not write it, so the undo does not delete
-    it. A restore that reports these is reading its pre-image, not ignoring it.
+So the writer records what it wrote, in the same transaction as the write:
+
+  * ``StampRun.committed_writes`` — appended after each per-row commit, naming
+    the event, the fixture, the anchor's ``source_id``, and which of the two
+    halves this pass actually wrote. Banked with the apply receipt.
+  * ``claim_context->>'apply_run_id'`` — the same invocation id, written INTO
+    each anchor by ``record_anchor``'s INSERT. This is the durable half: it
+    survives a process that dies before it can bank anything, and it cannot
+    attach to an anchor the run did not insert, because ``record_anchor`` never
+    writes ``claim_context`` on the conflict path.
+
+The restore takes the union and CAS-guards both halves — a column is cleared
+only if it still holds exactly what the manifest says was written, an anchor
+deleted only on its exact ``(source, source_id, event_id)`` triple. So a row
+another writer has touched since is reported and left alone rather than dragged
+back to a value that is now two edits old.
+
+Three reports, and all three are the success case:
+
+  * ``column_moved_on`` — the column no longer holds what the apply wrote.
+  * ``anchor_already_gone`` — the anchor was removed between apply and restore.
+  * ``unbanked_anchors`` — attributed in the table but absent from the banked
+    manifest, i.e. the apply died mid-flight. These ARE restored; the count is
+    how an operator learns the receipt is short.
+
+THE BACKUP IS STILL TAKEN, AND IS NO LONGER THE UNDO
+════════════════════════════════════════════════════
+D51 requires it and ``cmd_apply`` still refuses without a fresh one. Its job is
+now the one a pre-image is actually good at: a coarse, human-readable record of
+what the window held before, for the case where the manifest mechanism itself is
+what failed. It is not consulted to decide ownership, because that is the
+inference this repair removes.
 
 A restore is written in ONE transaction and committed once. The apply cannot be
 — ``stamp_v1_statpal_fixtures`` commits per row (gotcha #13) — which is exactly
-why the backup has to be a separate, already-committed write rather than a
-receipt staged alongside the data (the CERT-851 shape does not apply here).
+why attribution has to ride along with each row's own commit.
 """
 
 from __future__ import annotations
@@ -154,6 +188,41 @@ SELECT event_id, source_id
    AND source_id LIKE :source_id_prefix
 """
 
+#: Every anchor this invocation INSERTED, straight from the table. The durable
+#: half of the attribution: `record_anchor` writes `claim_context` on the INSERT
+#: and never on the conflict path, so a row matching this run id is one this run
+#: created. `column_was_already_set` is how the two write paths are told apart —
+#: `_write_anchor_only` sets it, `_write_link` does not — which is what says
+#: whether a column write rides with this anchor.
+ATTRIBUTED_ANCHORS_SQL = """
+SELECT event_id, source_id,
+       claim_context->>'column_was_already_set' AS column_was_already_set
+  FROM event_provider_anchors
+ WHERE source = :source
+   AND source_id LIKE :source_id_prefix
+   AND claim_context->>'apply_run_id' = :run_id
+"""
+
+#: The current value of every column the restore might clear, keyed by event.
+#: Read by id rather than by re-running the window query: the manifest already
+#: names the rows, and a window re-read would re-introduce the population drift
+#: this repair exists to remove.
+COLUMNS_NOW_SQL = """
+SELECT id, statpal_fixture_id
+  FROM events
+ WHERE id = ANY(:event_ids)
+"""
+
+ANCHORS_NOW_SQL = """
+SELECT event_id, source_id
+  FROM event_provider_anchors
+ WHERE source = :source
+   AND source_id = ANY(:source_ids)
+"""
+
+#: The CAS. `statpal_fixture_id = :written` is the whole guard: if another writer
+#: has changed the column since the apply, this touches no row and the restore
+#: reports it rather than overwriting a newer value with an older one.
 CLEAR_COLUMN_SQL = """
 UPDATE events
    SET statpal_fixture_id = NULL
@@ -305,10 +374,11 @@ async def cmd_backup(now: datetime) -> int:
                 "rows": preimage["rows"],
                 "already_linked": preimage["already_linked"],
                 "anchors_on_file": preimage["anchors_on_file"],
-                "undo_command": (
-                    "python3 scripts/soccer_statpal_stamp_3366.py restore "
-                    f"--identity {identity} --apply"
-                ),
+                # Deliberately NOT an undo line. The undo replays the apply's
+                # manifest, so it cannot be named until the apply has run and
+                # printed its own run id (CERT-2207). A backup that advertised
+                # an undo command would be advertising a restore of 0 rows.
+                "next": "python3 scripts/soccer_statpal_stamp_3366.py apply",
             },
             indent=2,
         )
@@ -352,7 +422,12 @@ async def _latest_backup(session, now: datetime):
 
 
 async def cmd_apply(now: datetime) -> int:
-    """The first write. Refuses unless a fresh, readable backup is on file."""
+    """The first write. Refuses unless a fresh, readable backup is on file.
+
+    The receipt is banked under the SAME string that stamped every anchor, so
+    `restore --identity <that string>` reaches both the manifest and the rows —
+    one id an operator can copy out of one line of output.
+    """
     from app.tasks.base import get_task_session
     from app.tasks.stamp_v1_statpal_fixtures import (
         _run_stamp_soccer_statpal_fixtures,
@@ -365,124 +440,254 @@ async def cmd_apply(now: datetime) -> int:
         print("Take one first:  python3 scripts/soccer_statpal_stamp_3366.py backup")
         return 1
 
-    result = await _run_stamp_soccer_statpal_fixtures(apply=True)
+    run_id = f"{APPLY_IDENTITY_PREFIX}:{_stamp(now)}"
+    result = await _run_stamp_soccer_statpal_fixtures(apply=True, apply_run_id=run_id)
+    manifest = result.get("committed_write_receipts") or []
+    undo = (
+        "python3 scripts/soccer_statpal_stamp_3366.py restore "
+        f"--identity {run_id} --apply"
+    )
     receipt = {
         "verdict": "APPLIED",
+        "apply_run_id": run_id,
         "backup_identity": identity,
-        "undo_command": (
-            "python3 scripts/soccer_statpal_stamp_3366.py restore "
-            f"--identity {identity} --apply"
-        ),
+        "manifest": manifest,
+        "manifest_rows": len(manifest),
+        "undo_command": undo,
         "result": result,
     }
-    status = await _bank(receipt, f"{APPLY_IDENTITY_PREFIX}:{_stamp(now)}", now)
+    status = await _bank(receipt, run_id, now)
     print(json.dumps({"banked": status, **receipt}, indent=2, default=str))
+    if status not in ("ok", "superseded"):
+        # The writes are already durable — per-row commits (gotcha #13) — so
+        # this is not a failed apply, it is an apply whose receipt is missing.
+        # Say so loudly and point at the half that does not depend on it: every
+        # anchor carries `run_id`, so the undo still reaches them.
+        print(
+            f"\nWARNING: the manifest did NOT bank ({status}). The writes stand.\n"
+            f"The undo still works — every anchor this run inserted carries the\n"
+            f"run id in its claim_context, and restore reads those directly:\n"
+            f"  {undo}\n"
+            f"Expect a non-zero `unbanked_anchors` count; that is this receipt\n"
+            f"being missing, not a second defect."
+        )
+        return 1
     return 0
 
 
-def plan_restore(preimage: dict, rows, anchors) -> dict:
-    """What one apply wrote, derived from the pre-image and the state now.
+def merge_manifest(manifest, attributed) -> list[dict]:
+    """The banked manifest, completed by what the table itself attributes.
+
+    ``attributed`` is ``(event_id, source_id, column_was_already_set)`` for every
+    anchor carrying this run id. Each one the manifest already lists is a
+    duplicate; each one it does not is a write the apply committed but never got
+    to bank, and it is reconstructed here rather than dropped — a row nobody can
+    name is a row nobody can undo.
+
+    The reconstruction is exact and needs no receipt: the anchor's ``source_id``
+    is ``soccer:<fixture_id>``, which is the value the column write used, and
+    ``column_was_already_set`` says which write path put it there. Both halves
+    are recoverable from the anchor alone, which is why the anchor is where the
+    run id lives.
+    """
+    merged = list(manifest or [])
+    seen = {(str(e.get("event_id")), e.get("anchor_source_id")) for e in merged}
+    for event_id, source_id, column_was_already_set in attributed or ():
+        if (str(event_id), source_id) in seen:
+            continue
+        merged.append(
+            {
+                "event_id": event_id,
+                # `soccer:1043639` -> `1043639`; the column never holds the
+                # namespace, only the id.
+                "fixture_id": str(source_id).split(":", 1)[-1],
+                "anchor_source_id": source_id,
+                "column_written": column_was_already_set is None,
+                "anchor_written": True,
+                "unbanked": True,
+            }
+        )
+    return merged
+
+
+def plan_restore(manifest, columns_now, anchors_now) -> dict:
+    """Exactly what one apply committed, from that apply's own manifest.
 
     Pure, so the undo can be replayed over ``db-query`` rows before anybody runs
     it against production — the same pre-flight that caught a circular pre-check
     on the last repair this lane inherited.
 
-    ``rows`` are ``(event_id, statpal_fixture_id)`` as they stand now; ``anchors``
-    are ``(event_id, source_id)`` for every soccer StatPal anchor now on file.
+    ``manifest`` is `merge_manifest`'s output. ``columns_now`` maps
+    ``str(event_id) -> statpal_fixture_id`` as it stands now; ``anchors_now`` is
+    the set of ``"<event_id>|<source_id>"`` currently on file.
 
-    THE TEST FOR "OURS" IS THE PRE-IMAGE, NOT THE VALUE. A column is ours to
-    clear only if the pre-image recorded it EMPTY and it is populated now, and
-    that is the whole test — because ``SET_FIXTURE_ID`` is guarded by ``IS NULL``
-    and therefore the apply provably could not have written anywhere else. A row
-    the pre-image did not record at all is a row that entered the window after
-    the backup: also not ours, and reported rather than silently skipped, since a
-    non-zero count there means the backup was taken too long before the apply.
+    THE TEST FOR "OURS" IS THE MANIFEST, AND THE TEST FOR "STILL OURS" IS THE
+    VALUE. Nothing outside the manifest is ever touched, however it looks —
+    which is what makes a foreign writer's row safe, and what makes a row that
+    entered the window after the backup restorable. Inside the manifest, each
+    half is checked against the state now, so an undo that arrives after someone
+    else has edited the row reports instead of writing.
     """
-    before_columns = preimage.get("columns") or {}
-    before_anchors = set(preimage.get("anchors") or [])
+    to_clear, to_delete = [], []
+    column_moved_on, anchor_already_gone, unbanked = [], [], []
 
-    to_clear, unseen = [], []
-    for event_id, current in rows:
-        key = str(event_id)
-        if key not in before_columns:
-            if current is not None:
-                unseen.append({"event_id": event_id, "holds": current})
-            continue
-        if before_columns[key] is not None or current is None:
-            continue
-        to_clear.append({"event_id": event_id, "written": current})
+    for entry in manifest or ():
+        event_id = entry.get("event_id")
+        if entry.get("unbanked"):
+            unbanked.append(
+                {"event_id": event_id, "source_id": entry.get("anchor_source_id")}
+            )
 
-    to_delete, not_ours = [], []
-    for event_id, source_id in anchors:
-        key = f"{event_id}|{source_id}"
-        if key in before_anchors:
-            not_ours.append(key)
-        else:
-            to_delete.append({"event_id": event_id, "source_id": source_id})
+        if entry.get("column_written"):
+            written = entry.get("fixture_id")
+            if columns_now.get(str(event_id)) == written:
+                to_clear.append({"event_id": event_id, "written": written})
+            else:
+                column_moved_on.append(
+                    {
+                        "event_id": event_id,
+                        "written": written,
+                        "holds": columns_now.get(str(event_id)),
+                    }
+                )
+
+        if entry.get("anchor_written"):
+            source_id = entry.get("anchor_source_id")
+            if f"{event_id}|{source_id}" in anchors_now:
+                to_delete.append({"event_id": event_id, "source_id": source_id})
+            else:
+                anchor_already_gone.append(
+                    {"event_id": event_id, "source_id": source_id}
+                )
 
     return {
         "to_clear": to_clear,
         "to_delete": to_delete,
-        "not_ours": not_ours,
-        "outside_backup": unseen,
+        "column_moved_on": column_moved_on,
+        "anchor_already_gone": anchor_already_gone,
+        "unbanked_anchors": unbanked,
     }
+
+
+async def _load_manifest(session, identity: str):
+    """The apply's manifest, completed by the anchors the table attributes to it.
+
+    Returns ``(manifest, note)``. A manifest can be empty and valid — an apply
+    that matched nothing — so "no rows" is never inferred to be "wrong id"; the
+    identity's SHAPE is what is checked, and only up front.
+    """
+    from sqlalchemy import text
+
+    from app.services.durable_snapshots import read_snapshot
+
+    note = None
+    banked: list[dict] = []
+    got = await read_snapshot(
+        session, identity, expected_version=SCHEMA_VERSION, max_age_s=float("inf")
+    )
+    if got.ok and (got.envelope.payload or {}).get("verdict") == "APPLIED":
+        banked = (got.envelope.payload or {}).get("manifest") or []
+    else:
+        # Not fatal. The anchors carry the run id themselves, which is the whole
+        # reason it is written there — an apply that died before banking is the
+        # case this path exists for.
+        note = (
+            f"no readable APPLY receipt at {identity} ({got.status}); "
+            "restoring from the anchors' own apply_run_id alone"
+        )
+
+    attributed = (
+        await session.execute(
+            text(ATTRIBUTED_ANCHORS_SQL),
+            {
+                "source": ANCHOR_SOURCE,
+                "source_id_prefix": f"{ANCHOR_SOURCE_ID_PREFIX}%",
+                "run_id": identity,
+            },
+        )
+    ).fetchall()
+    return merge_manifest(banked, [tuple(r) for r in attributed]), note
+
+
+async def _state_now(session, manifest):
+    """Only the rows the manifest names — never a re-read of the window.
+
+    Re-reading the window is what let population drift into the undo in the
+    first place; a restore should not be able to see a row its apply never
+    touched.
+    """
+    from sqlalchemy import text
+
+    event_ids = sorted({int(e["event_id"]) for e in manifest if e.get("event_id")})
+    source_ids = sorted(
+        {e["anchor_source_id"] for e in manifest if e.get("anchor_source_id")}
+    )
+    if not event_ids:
+        return {}, set()
+
+    rows = (
+        await session.execute(text(COLUMNS_NOW_SQL), {"event_ids": event_ids})
+    ).fetchall()
+    anchors = (
+        await session.execute(
+            text(ANCHORS_NOW_SQL),
+            {"source": ANCHOR_SOURCE, "source_ids": source_ids or [""]},
+        )
+    ).fetchall()
+    return (
+        {str(r[0]): r[1] for r in rows},
+        {f"{r[0]}|{r[1]}" for r in anchors},
+    )
 
 
 async def cmd_restore(identity: str, apply: bool, now: datetime) -> int:
     from sqlalchemy import text
 
-    from app.services.durable_snapshots import read_snapshot
     from app.tasks.base import get_task_session
 
-    async with get_task_session() as session:
-        got = await read_snapshot(
-            session, identity, expected_version=SCHEMA_VERSION, max_age_s=float("inf")
+    if identity.startswith(BACKUP_IDENTITY_PREFIX):
+        # The interface changed with CERT-2207 and an operator holding an old
+        # undo line must not get a silent no-op: a backup identity attributes
+        # nothing, so this would restore 0 rows and report success.
+        print(
+            json.dumps(
+                {
+                    "verdict": "REFUSED",
+                    "identity": identity,
+                    "reason": (
+                        "that is a BACKUP identity. The undo replays the APPLY's "
+                        "manifest, so it needs the apply run id "
+                        f"(`{APPLY_IDENTITY_PREFIX}:...`) printed by `apply` as "
+                        "`undo_command`."
+                    ),
+                },
+                indent=2,
+            )
         )
-        if not got.ok:
-            print(
-                json.dumps(
-                    {"verdict": "REFUSED", "identity": identity, "read": got.status},
-                    indent=2,
-                )
-            )
-            return 1
-        preimage = got.envelope.payload
+        return 1
 
-        rows = (
-            await session.execute(
-                text(PREIMAGE_ROWS_SQL),
-                {
-                    "sport_key": preimage["sport_key_prefix"],
-                    "window_start": preimage["window_start"],
-                    "window_end": preimage["window_end"],
-                },
-            )
-        ).fetchall()
-        anchors = (
-            await session.execute(
-                text(PREIMAGE_ANCHORS_SQL),
-                {
-                    "source": ANCHOR_SOURCE,
-                    "source_id_prefix": f"{ANCHOR_SOURCE_ID_PREFIX}%",
-                },
-            )
-        ).fetchall()
-
-        plan_result = plan_restore(preimage, rows, anchors)
+    async with get_task_session() as session:
+        manifest, note = await _load_manifest(session, identity)
+        columns_now, anchors_now = await _state_now(session, manifest)
+        plan_result = plan_restore(manifest, columns_now, anchors_now)
         to_clear = plan_result["to_clear"]
         to_delete = plan_result["to_delete"]
-        not_ours = plan_result["not_ours"]
-        moved_on: list[dict] = []
+
+        counts = {
+            "manifest_rows": len(manifest),
+            "column_moved_on": len(plan_result["column_moved_on"]),
+            "anchor_already_gone": len(plan_result["anchor_already_gone"]),
+            "unbanked_anchors": len(plan_result["unbanked_anchors"]),
+        }
 
         if not apply:
             plan = {
                 "verdict": "RESTORE_DRY_RUN",
                 "identity": identity,
-                "taken_at": preimage.get("taken_at"),
+                "note": note,
                 "would_clear_columns": len(to_clear),
                 "would_delete_anchors": len(to_delete),
-                "left_alone_not_ours": len(not_ours),
-                "outside_backup": len(plan_result["outside_backup"]),
+                **counts,
                 "sample": to_clear[:10],
             }
             await _bank(plan, f"{RESTORE_IDENTITY_PREFIX}:{_stamp(now)}", now)
@@ -491,6 +696,7 @@ async def cmd_restore(identity: str, apply: bool, now: datetime) -> int:
             return 0
 
         cleared = 0
+        moved_on: list[dict] = []
         for row in to_clear:
             result = await session.execute(
                 text(CLEAR_COLUMN_SQL),
@@ -499,6 +705,7 @@ async def cmd_restore(identity: str, apply: bool, now: datetime) -> int:
             if result.rowcount or 0:
                 cleared += 1
             else:
+                # Lost a race between the read above and this write.
                 moved_on.append(row)
         deleted = 0
         for row in to_delete:
@@ -515,14 +722,14 @@ async def cmd_restore(identity: str, apply: bool, now: datetime) -> int:
         # delete anchors would leave the exact orphan state it exists to prevent.
         await session.commit()
 
+    counts["column_moved_on"] += len(moved_on)
     receipt = {
         "verdict": "RESTORED",
         "identity": identity,
+        "note": note,
         "columns_cleared": cleared,
         "anchors_deleted": deleted,
-        "column_moved_on": len(moved_on),
-        "left_alone_not_ours": len(not_ours),
-        "outside_backup": len(plan_result["outside_backup"]),
+        **counts,
     }
     await _bank(receipt, f"{RESTORE_IDENTITY_PREFIX}:{_stamp(now)}", now)
     print(json.dumps(receipt, indent=2, default=str))
@@ -539,7 +746,11 @@ def main() -> int:
     sub.add_parser("backup", help="bank the pre-image the restore replays")
     sub.add_parser("apply", help="the first write; refuses without a fresh backup")
     restore = sub.add_parser("restore", help="put back exactly what one apply wrote")
-    restore.add_argument("--identity", required=True, help="the backup to replay")
+    restore.add_argument(
+        "--identity",
+        required=True,
+        help="the APPLY run id to undo (printed by `apply` as undo_command)",
+    )
     restore.add_argument("--apply", action="store_true", help="actually write")
     args = ap.parse_args()
 
