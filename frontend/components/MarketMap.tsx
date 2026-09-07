@@ -18,6 +18,13 @@ export interface MarketMapLadderRow {
   label: string;
   probability: number;
   side: "left" | "mid" | "right";
+  /**
+   * #3769. How this rung actually finished, when the page knows. `probability`
+   * is read live and collapses to ~0/~100 the moment the market resolves, so a
+   * settled rung must be graded against the final rather than quoted — see
+   * `ladderHeading`.
+   */
+  outcome?: "cleared" | "missed";
 }
 
 interface MarketMapProps {
@@ -374,7 +381,7 @@ export default function MarketMap({
           <LadderRows
             ladder={ladder}
             accentRgb={accentRgb}
-            heading={ladderHeading(status, variant)}
+            heading={ladderHeading(status, variant, ladderGraded(ladder))}
           />
         </div>
       )}
@@ -404,7 +411,7 @@ export default function MarketMap({
           <LadderRows
             ladder={ladder}
             accentRgb={accentRgb}
-            heading={ladderHeading(status, variant)}
+            heading={ladderHeading(status, variant, ladderGraded(ladder))}
           />
         </div>
       )}
@@ -413,16 +420,49 @@ export default function MarketMap({
 }
 
 /**
- * L2-131 Item 4: name what the bars mean — the pregame chance of reaching each
- * margin (or clearing each total).
+ * L2-131 Item 4: name what the bars mean — the chance of reaching each margin
+ * (or clearing each total).
  *
  * #2442: this said "covering", which is the betting verb — a side covers THE
  * SPREAD. The bars mean the same thing either way, and "winning by" states it
  * in the sport's own terms rather than the slip's.
+ *
+ * #3769: the `done` arm used to read "Pregame chance of going over", and it was
+ * the ONE branch where the word "pregame" appeared — over numbers that are not
+ * pregame. `probability` comes from the live payload, so on a settled match it
+ * is the resolved price: measured on production 2026-09-06, `/events/15304847`
+ * (Paul–Alcaraz, 6-4 6-3 6-4) served `over_probability: 0.0005` for both 36.5
+ * and 40.5, and the card printed "PREGAME CHANCE OF GOING OVER — Over 36.5: 0%"
+ * two rows under its own "PRE-GAME 33" tile. A book had hung a 36.5 line; no
+ * book hangs a line at 0%. The scheduled control (`/events/15305580`) served
+ * 0.445, so the collapse is settlement, not a genuinely tiny pregame chance.
+ * `PlayerPropsDashboard` already refuses to "fall through to `pre`, which
+ * renders the resolved over_probability" — this is that defense, applied to the
+ * ladder next to it.
+ *
+ * So there are three headings, not two, and none of them claims to be pregame:
+ * a graded ladder says how each line finished, an ungraded settled ladder says
+ * the numbers are last quotes, and anything else asks about a live chance.
  */
-function ladderHeading(status: MarketMapProps["status"], variant: MarketMapProps["variant"]): string {
-  const when = status === "done" ? "Pregame chance of " : "Chance of ";
-  return when + (variant === "total" ? "going over" : "winning by");
+/**
+ * #3769. A ladder is graded only when EVERY rung knows how it finished. A
+ * partially graded ladder would put "cleared" beside "0%" and invite the reader
+ * to compare them, so the mixed case falls back to quoting — one ladder, one
+ * tense.
+ */
+export function ladderGraded(ladder: MarketMapLadderRow[]): boolean {
+  return ladder.length > 0 && ladder.every((row) => row.outcome != null);
+}
+
+function ladderHeading(
+  status: MarketMapProps["status"],
+  variant: MarketMapProps["variant"],
+  graded: boolean
+): string {
+  const what = variant === "total" ? "going over" : "winning by";
+  if (graded) return "Each line vs the final";
+  if (status === "done") return "Last quote for " + what;
+  return "Chance of " + what;
 }
 
 /**
@@ -440,6 +480,9 @@ function LadderRows({
   heading: string;
 }) {
   const barColor = `rgba(${accentRgb},0.65)`;
+  // #3769: all-or-nothing, decided by the same `ladderGraded` the heading used,
+  // so one ladder can never print a graded row beside a quoted one.
+  const graded = ladderGraded(ladder);
   return (
     <>
       <div
@@ -466,28 +509,47 @@ function LadderRows({
           }}
         >
           <div style={{ fontSize: 10, color: "var(--text-secondary)", fontWeight: 850 }}>{row.label}</div>
-          <div
-            style={{
-              height: 16,
-              background: "#f1f5f9",
-              border: "1px solid #e2e8f0",
-              borderRadius: 999,
-              overflow: "hidden",
-            }}
-          >
+          {graded ? (
+            // #3769: a settled rung has a result, not a chance. No bar, because
+            // there is no longer a quantity to draw — the line either came in or
+            // it did not, and the emphasis carries which.
             <div
               style={{
-                height: "100%",
-                borderRadius: 999,
-                width: `${Math.max(2, row.probability)}%`,
-                background: barColor,
-                minWidth: 2,
+                gridColumn: "2 / span 2",
+                textAlign: "right",
+                fontSize: 10,
+                fontWeight: row.outcome === "cleared" ? 950 : 850,
+                color: row.outcome === "cleared" ? "#0f172a" : "var(--text-secondary)",
               }}
-            />
-          </div>
-          <div style={{ textAlign: "right", fontSize: 10, fontWeight: 950 }}>
-            {row.probability}%
-          </div>
+            >
+              {row.outcome === "cleared" ? "cleared" : "not cleared"}
+            </div>
+          ) : (
+            <>
+              <div
+                style={{
+                  height: 16,
+                  background: "#f1f5f9",
+                  border: "1px solid #e2e8f0",
+                  borderRadius: 999,
+                  overflow: "hidden",
+                }}
+              >
+                <div
+                  style={{
+                    height: "100%",
+                    borderRadius: 999,
+                    width: `${Math.max(2, row.probability)}%`,
+                    background: barColor,
+                    minWidth: 2,
+                  }}
+                />
+              </div>
+              <div style={{ textAlign: "right", fontSize: 10, fontWeight: 950 }}>
+                {row.probability}%
+              </div>
+            </>
+          )}
         </div>
       ))}
     </>

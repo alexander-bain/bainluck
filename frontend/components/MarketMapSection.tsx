@@ -602,10 +602,22 @@ export default function MarketMapSection({
       }
     }
 
+    /* #3769: on a settled match `over_probability` is the RESOLVED price, not
+       the pregame one — production served 0.0005 for both of Paul–Alcaraz's
+       rungs while the scheduled control served 0.445 — so a done ladder grades
+       against the final instead of quoting it. Gated on the same `scored` the
+       FINAL marker is gated on (see the `status === "live"` note below), so the
+       ladder grades exactly when the rail draws the number it grades against:
+       if `scored` is the wrong unit the tile above is already wrong, and the
+       two must not disagree about one card. */
+    const gradeAgainst = status === "done" ? scored : null;
+    const gradeRung = (threshold: number): MarketMapLadderRow["outcome"] =>
+      gradeAgainst == null ? undefined : gradeAgainst > threshold ? "cleared" : "missed";
     const ladder: MarketMapLadderRow[] = gameTotals.map((t) => ({
       label: `Over ${t.threshold}`,
       probability: Math.round(t.over_probability * 100),
       side: "right" as const,
+      outcome: gradeRung(t.threshold),
     }));
 
     const midLabel = String(Math.round((rangeMin + rangeMax) / 2));
