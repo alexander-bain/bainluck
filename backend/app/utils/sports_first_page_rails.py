@@ -77,16 +77,48 @@ have the last word on first-page membership. It displaces the *worst* window
 slots and swaps in live games, so running it after this pass can only improve on
 what this pass leaves; running it before would let this pass trade a hoisted
 live game away. A test asserts the call order rather than a comment claiming it.
+
+A SECOND PASS LIVES HERE: THE SLOTS THE CLIENT THROWS AWAY (#3836)
+-------------------------------------------------------------------
+``swap_client_deleted_finished_off_first_page`` is a sibling of the cap above
+and shares its rail bookkeeping, which is the whole reason it is in this file
+rather than its own: a replacement it admits must not recreate the repetition
+the cap has just removed, and the only way to guarantee that is to count rails
+against the same key function. See that function's docstring for the finding.
 """
 
 from __future__ import annotations
 
+import logging
+from datetime import datetime, timezone
+
+logger = logging.getLogger(__name__)
+
 __all__ = [
+    "CLIENT_COMPLETED_MAX_AGE_HOURS",
     "FINISHED_RAIL_FIRST_PAGE_CAP",
     "FINISHED_STATUSES",
+    "client_deletes_finished_card",
     "finished_rail_key",
     "cap_repeated_finished_rails",
+    "swap_client_deleted_finished_off_first_page",
 ]
+
+#: The age, in hours since ``commence_time``, past which the WEB CLIENT deletes
+#: a finished game before it paints.
+#:
+#: THIS IS A MIRROR, NOT A POLICY. The authority is
+#: ``frontend/lib/discover/feedFreshness.ts``::
+#:
+#:     export const COMPLETED_EVENT_MAX_AGE_HOURS = 8;
+#:
+#: which ``/sports`` applies through ``applyFinishedCardGuard`` and Discover
+#: applies directly. Inventing a second threshold here is how the two surfaces
+#: start disagreeing about what "old" means, so
+#: ``test_client_deletion_mirror_3836.py`` READS that file and fails if the two
+#: numbers ever diverge. Change the frontend constant and this one follows, or
+#: CI stops you.
+CLIENT_COMPLETED_MAX_AGE_HOURS = 8
 
 #: Statuses this pass counts as a finished game. ``suspended`` is absent on
 #: purpose: it is not a result, it renders a different card, and live/048 put it
@@ -227,4 +259,243 @@ def cap_repeated_finished_rails(
         meta["unswapped"] = len(over_cap) - swaps
         return new_window + new_tail, meta
     except Exception:  # pragma: no cover - defensive, mirrors live_first_page
+        return items, empty_meta
+
+
+def _commence_age_hours(value, *, now: datetime) -> float | None:
+    """Hours since ``value``, or ``None`` if it cannot be read as a time.
+
+    ``None`` is the client's answer too, and deliberately so. In JavaScript a
+    missing or unparseable ``commence_time`` makes ``hoursAgo`` NaN, and
+    ``NaN > 8`` is ``false`` — the card is KEPT. So an unreadable timestamp must
+    mean "the client will render this", never "assume it is old and trade it
+    away". Getting this backwards would swap out cards that are about to appear.
+    """
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip()
+    if text.endswith(("Z", "z")):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    # A naive stamp is UTC everywhere else in this payload; reading it as local
+    # time would shift the age by the host's offset and make the answer depend
+    # on which machine served the request.
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return (now - parsed).total_seconds() / 3600.0
+
+
+def client_deletes_finished_card(item: dict, *, now: datetime | None = None) -> bool:
+    """True when the web client will delete this card before it paints.
+
+    A line-for-line mirror of ``isStale``'s event arm in
+    ``frontend/lib/discover/feedFreshness.ts``::
+
+        if (ed.status === "completed" || ed.status === "closed") {
+          const hoursAgo =
+            (Date.now() - new Date(ed.commence_time).getTime()) / (1000*60*60);
+          if (hoursAgo > COMPLETED_EVENT_MAX_AGE_HOURS) return true;
+        }
+
+    Two details in that snippet are load-bearing and are easy to get wrong:
+
+    * It reads **``commence_time``, not ``completed_at``.** They are not
+      interchangeable — a four-hour baseball game finishing right now has a
+      ``commence_time`` more than four hours old — and in the served payload
+      ``completed_at`` is ``None`` anyway, so ``commence_time`` is both the
+      correct field and the only available one.
+    * The comparison is strict ``>``. A card at exactly the threshold is
+      RENDERED, so this function must not use ``>=``.
+
+    Only ``type == "event"`` cards are considered. Futures have their own arm in
+    ``isStale`` keyed on ``resolution_date``; this pass does not reason about
+    them, because the defect it fixes is finished GAMES eating game slots, and
+    widening it to a second lifecycle without a second measurement is how a
+    narrow fix becomes an unreviewable one.
+    """
+    if not isinstance(item, dict) or item.get("type") != "event":
+        return False
+    data = item.get("data")
+    if not isinstance(data, dict):
+        return False
+    if (data.get("status") or "").strip().lower() not in FINISHED_STATUSES:
+        return False
+    age = _commence_age_hours(
+        data.get("commence_time"), now=now or datetime.now(timezone.utc)
+    )
+    if age is None:
+        return False
+    return age > CLIENT_COMPLETED_MAX_AGE_HOURS
+
+
+def _renders_as_a_game(item: dict, *, now: datetime) -> bool:
+    """An event card the client will actually paint — the #1091 unit of account."""
+    return (
+        isinstance(item, dict)
+        and item.get("type") == "event"
+        and not client_deletes_finished_card(item, now=now)
+    )
+
+
+def swap_client_deleted_finished_off_first_page(
+    items: list[dict],
+    *,
+    first_page_size: int = 20,
+    max_per_rail: int = FINISHED_RAIL_FIRST_PAGE_CAP,
+    now: datetime | None = None,
+) -> tuple[list[dict], dict]:
+    """Trade first-page cards the client deletes for cards it will render.
+
+    THE FINDING (#3836), measured on production 2026-09-07
+    ------------------------------------------------------
+    ``GET /api/feed?limit=20&mode=sports`` served four finished games — at slots
+    11, 13, 14 and 15, aged 15.3h, 20.3h, 14.1h and 12.3h since commence — that
+    the client deletes before paint. Those four slots are not recovered:
+    ``FEED_PAGE_LIMIT`` is 20 and ``nextFeedRequest`` marches ``0 -> 20 -> 40``
+    with no overlap, so page two does not backfill them. The reader's first
+    screen was a **sixteen-card page wearing a twenty-card budget.**
+
+    AND IT IS NOT A THIN-SLATE FACT. The same pull at ``limit=60`` held 21
+    admissible cards beyond the window — 12 open futures, 4 scheduled games, 4
+    upcoming concepts and one *fresh* completed game. The ranker was not short of
+    things the reader would see; it simply did not know which of its own picks
+    the client was about to throw away.
+
+    WHY THE RAIL CAP ABOVE DOES NOT ALREADY COVER THIS
+    ---------------------------------------------------
+    It was the obvious suspect and the measurement clears it. The window held
+    exactly three "Recent upset" cards — exactly ``FINISHED_RAIL_FIRST_PAGE_CAP``
+    — so ``over_cap_before`` was 0 and the cap never fired, and the page still
+    lost four slots. Teaching only the cap's replacement choice about the 8h rule
+    would have shipped nothing measurable on this payload. The gap is one layer
+    up: no first-page pass knew the client's rule at all.
+
+    THREE THINGS IT MUST NOT DO
+    ----------------------------
+    1. **Undo the cap.** A replacement that is itself a finished card on a rail
+       already at ``max_per_rail`` recreates #3805. Rails are counted with
+       ``finished_rail_key`` — the same function the cap uses, against the cards
+       that REMAIN after the planned swaps, so the two passes cannot disagree.
+    2. **Empty the surface (#1091 / gotcha #43).** The client's own guard
+       reprieves stale games when they are the only games
+       (``keptToAvoidEmptyGames``). If this pass trades them away first, that
+       reprieve never fires and the reader gets a *gameless sports page* — a
+       worse defect than the one being fixed. So the pass checks its own outcome
+       and DECLINES ENTIRELY, returning the input untouched, whenever the plan
+       would leave the window with no game the client will paint. Declining is
+       reported in ``meta`` rather than logged as success.
+    3. **Shorten the page.** Swap, never drop — the same contract as
+       ``enforce_first_page_quality_floor`` and
+       ``hoist_live_events_into_first_page``. Length is preserved, no score is
+       touched, and the input list is returned unchanged on any error
+       (gotcha #42).
+
+    Live and scheduled cards are never counted and never displaced, for the same
+    reason the cap gives: a diversity or freshness rule that pushes a live game
+    off page one is the defect #2709 shipped the hoist to end.
+
+    Returns ``(items, meta)``. ``meta`` reports an unmet swap loudly (gotcha #53)
+    so a page that kept a doomed card because the pool had nothing to trade does
+    not read the same as a page that had no doomed cards at all.
+    """
+    empty_meta = {
+        "client_deleted_before": 0,
+        "replacements_available": 0,
+        "swapped": 0,
+        "client_deleted_after": 0,
+        "unswapped": 0,
+        "declined_to_keep_a_game": False,
+        "max_age_hours": CLIENT_COMPLETED_MAX_AGE_HOURS,
+    }
+    try:
+        now = now or datetime.now(timezone.utc)
+        window_size = min(first_page_size, len(items))
+        if window_size <= 0:
+            return items, empty_meta
+
+        window = items[:window_size]
+        tail = items[window_size:]
+
+        doomed = [
+            i
+            for i, it in enumerate(window)
+            if client_deletes_finished_card(it, now=now)
+        ]
+        meta = dict(empty_meta)
+        meta["client_deleted_before"] = len(doomed)
+        meta["client_deleted_after"] = len(doomed)
+        meta["unswapped"] = len(doomed)
+        if not doomed:
+            return items, meta
+
+        # Rail bookkeeping starts from the cards that SURVIVE the swap, not from
+        # every card in the window: the doomed cards are leaving, so the rails
+        # they occupy are freed and a replacement may legitimately take one. On
+        # the measured payload all three "Recent upset" cards were doomed, which
+        # is precisely the case where counting the window as-served would refuse
+        # the best available replacement for no reason.
+        doomed_set = set(doomed)
+        kept_counts: dict[str, int] = {}
+        for i, it in enumerate(window):
+            if i in doomed_set:
+                continue
+            rail = finished_rail_key(it)
+            if rail is not None:
+                kept_counts[rail] = kept_counts.get(rail, 0) + 1
+
+        replacements: list[int] = []
+        for t_idx, it in enumerate(tail):
+            if len(replacements) >= len(doomed):
+                break
+            # A replacement the client also deletes is not a replacement; it is
+            # the same defect moved up the page.
+            if client_deletes_finished_card(it, now=now):
+                continue
+            rail = finished_rail_key(it)
+            if rail is not None:
+                if kept_counts.get(rail, 0) >= max_per_rail:
+                    continue
+                kept_counts[rail] = kept_counts.get(rail, 0) + 1
+            replacements.append(t_idx)
+
+        meta["replacements_available"] = len(replacements)
+        swaps = min(len(doomed), len(replacements))
+        if swaps <= 0:
+            return items, meta
+
+        new_window = list(window)
+        new_tail = list(tail)
+        # Front-to-front, index-for-index, exactly as the cap above pairs its
+        # own lists and for the same reason: `doomed` is ascending window slots
+        # and `replacements` is ascending tail slots over an already-ranked
+        # tail, so the earliest doomed slot takes the best replacement and the
+        # page keeps descending rank. Pairing the weakest slot with the best
+        # card inverts reading order; that inversion is the CERT-2190 repair
+        # recorded in the cap's own comment, and repeating it here would undo
+        # that fix on a different pass.
+        for pair in range(swaps):
+            w_idx = doomed[pair]
+            t_idx = replacements[pair]
+            new_window[w_idx], new_tail[t_idx] = new_tail[t_idx], new_window[w_idx]
+
+        # #1091, checked on the OUTCOME rather than argued from the inputs. The
+        # question is not "did we swap carefully" but "does the reader still get
+        # a game", and the only honest way to answer it is to look at the page
+        # this pass is about to return.
+        if not any(_renders_as_a_game(it, now=now) for it in new_window):
+            meta["declined_to_keep_a_game"] = True
+            meta["swapped"] = 0
+            meta["client_deleted_after"] = len(doomed)
+            meta["unswapped"] = len(doomed)
+            return items, meta
+
+        meta["swapped"] = swaps
+        meta["client_deleted_after"] = len(doomed) - swaps
+        meta["unswapped"] = len(doomed) - swaps
+        return new_window + new_tail, meta
+    except Exception:  # pragma: no cover - defensive, mirrors live_first_page
+        logger.exception("Sports first-page client-deletion swap failed; page unchanged")
         return items, empty_meta
