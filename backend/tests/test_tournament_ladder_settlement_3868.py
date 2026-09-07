@@ -45,14 +45,17 @@ from sqlalchemy.dialects import postgresql
 from sqlalchemy.sql.dml import Update
 from sqlalchemy.sql.elements import TextClause
 
-from app.services.polymarket_api import PolymarketMarket
-from app.tasks.tournament_price_refresh import (
-    SETTLED_NO_BAR,
-    SETTLED_YES_BAR,
-    _write_refreshed_prices,
-    leg_side,
-    settled_yes_probability,
-)
+# Imported as MODULES, not as names: the last test in this file has to reach
+# into `app.tasks.tournament_price_refresh` with monkeypatch, and a file that
+# does both `import x` and `from x import y` binds the same module two ways.
+import app.services.polymarket_api as poly_api
+import app.tasks.tournament_price_refresh as rail
+import app.utils.tournament_register as reg
+
+SETTLED_YES_BAR = rail.SETTLED_YES_BAR
+SETTLED_NO_BAR = rail.SETTLED_NO_BAR
+leg_side = rail.leg_side
+settled_yes_probability = rail.settled_yes_probability
 
 CID = "0x3d060eff715e0aa1d15e3758ec37866519686f88c7e0cb0704314d8c844e3e2e"
 
@@ -63,7 +66,7 @@ LADDER_ID = 221651252
 SUB_YES_ID, SUB_NO_ID = 221651178, 221651179
 
 
-def _market(**kw) -> PolymarketMarket:
+def _market(**kw) -> "poly_api.PolymarketMarket":
     defaults = dict(
         condition_id=CID,
         question=(
@@ -79,7 +82,7 @@ def _market(**kw) -> PolymarketMarket:
         closed=False,
     )
     defaults.update(kw)
-    return PolymarketMarket(**defaults)
+    return poly_api.PolymarketMarket(**defaults)
 
 
 class _Result:
@@ -167,7 +170,7 @@ async def _run(monkeypatch, market, *, market_keyed=(), condition_keyed=()):
     monkeypatch.setattr(base, "get_task_session", _fake_session)
 
     stats = _stats()
-    await _write_refreshed_prices(
+    await rail._write_refreshed_prices(
         [market], stats, now=datetime(2026, 9, 7, 10, 0, tzinfo=timezone.utc)
     )
     return session, stats
@@ -447,10 +450,6 @@ class TestTheRailAsksTheVenueForResults:
 
     @pytest.mark.asyncio
     async def test_the_fetch_includes_closed_markets(self, monkeypatch):
-        import app.services.polymarket_api as poly
-        import app.tasks.tournament_price_refresh as rail
-        import app.utils.tournament_register as reg
-
         asked = {}
 
         class _Service:
@@ -480,12 +479,10 @@ class TestTheRailAsksTheVenueForResults:
                 ]
             },
         )
-        monkeypatch.setattr(poly, "PolymarketAPIService", lambda *a, **k: _Service())
+        monkeypatch.setattr(poly_api, "PolymarketAPIService", lambda *a, **k: _Service())
         # The liveness filter reads the DB; fail-open is its documented
         # behaviour and is not what this test is about.
-        monkeypatch.setattr(
-            rail, "_live_conditions", lambda conditions: _identity(conditions)
-        )
+        monkeypatch.setattr(rail, "_live_conditions", _identity)
 
         async def _noop_writer(markets, stats, *, now):
             stats["snapshots_written"] += 1
