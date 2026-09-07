@@ -21,11 +21,14 @@ An assertion that would also pass on the old behaviour proves nothing.
 from __future__ import annotations
 
 import json
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+from app.services.anchor_channel import WROTE
 from app.services.statpal_api import (
     StatPalAPIService,
     StatPalFixture,
@@ -713,3 +716,108 @@ class TestTheSoccerRunnerPlansRatherThanWrites:
             "soccer has never run against production; its first pass owes a "
             "receipt, not a beat entry (D51)"
         )
+
+    @pytest.mark.asyncio
+    async def test_a_plan_pass_that_FINDS_work_still_writes_nothing(self, monkeypatch):
+        """`SOCCER-PLAN-NO-WRITE-BEHAVIOR-GUARD-3366` (CERT-2195 follow-up).
+
+        The two tests above read a DEFAULT ARGUMENT. That is worth pinning and it
+        is not the claim the ship rests on: what D51 needs is that a pass which
+        finds real work performs no write. So this drives the whole runner and
+        watches the two things that can write — the `UPDATE` and `record_anchor`
+        — while asserting the pass DID match a fixture. A guard that passed
+        because nothing matched would be a green light on an empty room.
+
+        The `apply=True` arm is the control: same fixtures, same rows, and both
+        writes happen. Without it, a runner that had lost the ability to write
+        at all would pass the plan half.
+        """
+        start = datetime(2026, 9, 8, 19, 0, tzinfo=UTC)
+        fixture = _fixture(
+            "2026090812079", "Wrexham AFC", "Cardiff", start, fallback="9544921"
+        )
+        # `home_team_name`, `away_team_name` in our row order; the pool builder in
+        # `_candidates` reads the tuple positionally.
+        rows = [(1, "Wrexham", "Cardiff City", start, None, "scheduled")]
+
+        async def _drive(apply: bool):
+            executed: list[str] = []
+            anchors: list[dict] = []
+
+            class _Result:
+                rowcount = 1
+
+                def fetchall(self):
+                    return list(rows)
+
+            class _Session:
+                async def execute(self, statement, params=None):
+                    executed.append(str(statement))
+                    return _Result()
+
+                async def commit(self):
+                    return None
+
+                async def rollback(self):
+                    return None
+
+            @asynccontextmanager
+            async def _session():
+                yield _Session()
+
+            import app.tasks.base as task_base
+
+            monkeypatch.setattr(task_base, "get_task_session", _session)
+
+            async def _schedule(sport, day_offset=None):
+                return [fixture] if day_offset == 1 else []
+
+            async def _live(sport):
+                return []
+
+            async def _close():
+                return None
+
+            monkeypatch.setattr(
+                task,
+                "get_statpal_service",
+                lambda: SimpleNamespace(
+                    get_schedule_fixtures=_schedule,
+                    get_live_fixtures=_live,
+                    close=_close,
+                ),
+            )
+
+            async def _record_anchor(_s, *, event_id, key, claim_context=None):
+                anchors.append({"event_id": event_id, "key": key})
+                return SimpleNamespace(outcome=WROTE)
+
+            monkeypatch.setattr(task, "record_anchor", _record_anchor)
+
+            summary = await task._run_stamp_soccer_statpal_fixtures(
+                apply=apply, now=start
+            )
+            return summary, executed, anchors
+
+        planned, executed, anchors = await _drive(apply=False)
+
+        # It FOUND the work — otherwise "wrote nothing" is vacuous.
+        assert planned["stamped"] == 1
+        # And wrote none of it.
+        assert anchors == []
+        assert not [
+            s for s in executed if "UPDATE" in s.upper()
+        ], "a plan pass executed an UPDATE"
+
+        applied, executed_w, anchors_w = await _drive(apply=True)
+        assert applied["stamped"] == 1
+        assert [a["event_id"] for a in anchors_w] == [1]
+        assert [
+            s for s in executed_w if "UPDATE" in s.upper()
+        ], "the control arm wrote nothing either, so the plan arm proves nothing"
+        # The anchor is keyed on `fallback_id_3` in the SOCCER id space — NOT on
+        # `main_id` (`2026090812079`) and NOT on one of our ~40 sport keys. Both
+        # halves matter: the first is CERT-2189's collision finding, the second
+        # is its `statpal_id_space` collapse, and this is their first reader.
+        assert anchors_w[0]["key"].source_id == "soccer:9544921"
+        assert anchors_w[0]["key"].source == "statpal"
