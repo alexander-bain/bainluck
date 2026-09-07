@@ -238,6 +238,64 @@ export function formatCountdown(targetTime: string): string {
   return `${minutes}m`;
 }
 
+/**
+ * How close to its start an event has to be before the header's poll countdown
+ * is worth showing. Reuses the window `sportCategories.ts` already ships as
+ * "starting soon" (`hoursUntil <= 3`) rather than inventing a second one, so
+ * the two surfaces cannot drift into disagreeing about what "soon" means.
+ */
+export const REFRESH_COUNTDOWN_WINDOW_MS = 3 * 60 * 60 * 1000;
+
+/**
+ * Should the event header draw its "Next update: NN" ring? (#3802)
+ *
+ * The ring counts down the page's own poll, and the page polls every two
+ * minutes whether the match is in ten minutes or in three days. Gated only on
+ * `!isFinished && !streamConnected`, it therefore promised "next update in 109
+ * seconds" over a US Open quarter-final **34 hours away** — a true sentence
+ * about our poll that reads as a false one about the match, on the page a
+ * reader opens precisely to find out when something will happen. It is also
+ * the third element in a `justify-between` row that only has space for two at
+ * 390px, so the same countdown wrapped the header into three ragged lines.
+ *
+ * A countdown earns its place when an update could plausibly land while the
+ * reader is looking: the event is live, it is past its start with no reported
+ * result, or it starts within the window above. A pregame match days out is
+ * told when it starts by the hero ("Starts in 1d 10h") — the poll clock adds
+ * nothing there and costs the header its layout.
+ *
+ * Pure and exported because a Next.js page may not carry named exports, so
+ * this is the only seam a guard can hold.
+ */
+export function shouldShowRefreshCountdown(args: {
+  isFinished: boolean;
+  streamConnected: boolean;
+  isLive: boolean;
+  isSuspended: boolean;
+  commenceTime: string | null | undefined;
+  now?: Date;
+}): boolean {
+  const { isFinished, streamConnected, isLive, isSuspended, commenceTime } = args;
+
+  // Unchanged: a finished event has nothing to refresh, and a pushed event
+  // shows its age stamp instead (live/034 S2).
+  if (isFinished || streamConnected) return false;
+
+  // An event that is live, or past its start with no result reported, is
+  // exactly the case the ring was written for.
+  if (isLive || isSuspended) return true;
+
+  // No start time is not a licence to promise an update — an event we cannot
+  // place in time is the last one that should carry a confident clock.
+  if (!commenceTime) return false;
+
+  const startMs = new Date(commenceTime).getTime();
+  if (isNaN(startMs)) return false;
+
+  const nowMs = (args.now ?? new Date()).getTime();
+  return startMs - nowMs <= REFRESH_COUNTDOWN_WINDOW_MS;
+}
+
 /** Format a start time as a relative label (Today/Tomorrow) or short date. */
 export function formatStartTime(commenceTime: string): string {
   const date = new Date(commenceTime);
