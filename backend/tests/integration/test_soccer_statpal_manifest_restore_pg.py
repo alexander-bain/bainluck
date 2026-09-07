@@ -22,6 +22,16 @@ record what it wrote — `StampRun.committed_writes`, plus `apply_run_id` in eac
 anchor's `claim_context`, written in the same per-row transaction — and has the
 restore replay those exact pairs under a CAS.
 
+CERT-2211 then found the half that repair missed. `record_anchor` writes
+`claim_context` on the INSERT and never on the conflict path, so a column write
+against an anchor that was ALREADY on file got no `apply_run_id` at all — its
+only record was `StampRun.committed_writes`, in memory until the whole pass
+banks. Lose the process before `_bank` and the committed write was un-undoable:
+the restore planned zero changes and reported success. The follow-on repair
+(`SOCCER-3366-CONFIRMED-ANCHOR-WRITE-HAS-DURABLE-MANIFEST`) attributes that write
+on the incumbent under `column_write_run_id`, in the same transaction, and the
+undo owes such a row exactly one half — clear the column, leave the anchor.
+
 ## why this gate needs a real server
 
 The pure planner is unit-tested in
@@ -45,6 +55,11 @@ The pure planner is unit-tested in
 5. **The apply commits per row (gotcha #13).** The manifest is appended after
    each commit, so "what the manifest says" versus "what is on disk" is only a
    real question against a real transaction boundary.
+6. **`NOT (claim_context ? 'k')` is NULL, not true, on a NULL column.** The
+   attribution's "first writer owns it" guard would then match no row and
+   silently attribute nothing while the column write still committed. Python
+   has no equivalent of that trap — `'k' not in {}` is simply true — so a mock
+   cannot fail this the way a server can.
 
 There is no local PostgreSQL in the agent sandbox, so CI is where this runs. The
 `search-recall` job provides the container and its "Verify the gate is actually
@@ -52,7 +67,7 @@ armed" step is what stops a skipped gate reading as a passing one.
 
 ## the corpus
 
-Three soccer rows, each paired with the defect it catches:
+Four soccer rows, each paired with the defect it catches:
 
 * **`backed_up`** — present when the backup was taken. The ordinary case, here
   so a repair that fixes the gap by breaking the normal path cannot pass.
@@ -62,6 +77,18 @@ Three soccer rows, each paired with the defect it catches:
   writer (no `apply_run_id`) between apply and restore. Both halves must
   survive. This is the sibling case the BLOCK required, and it is what stops a
   repair that simply deletes every soccer StatPal anchor it can see.
+* **`confirmed_row`** — CERT-2211. A null column whose anchor is ALREADY on
+  file, so `record_anchor` conflicts and our claim context is discarded: the
+  committed column write gets no `apply_run_id`, and its only record was the
+  in-memory manifest. Lose the process before `_bank` and the restore planned
+  zero changes and left the write standing. Now attributed on the incumbent
+  under `column_write_run_id`, so the undo owes exactly one half — clear the
+  column, LEAVE the anchor.
+
+Rows 2 and 4 are the two halves of the same lesson, from opposite directions:
+the undo must reach a write the backup never saw, and must not reach a
+correspondence this pass did not create. Each has a PREMISE test asserting the
+apply really does write the row, so no undo assertion can pass vacuously.
 """
 
 import importlib.util
@@ -109,11 +136,15 @@ SPORT_ID = 1
 BACKED_UP = 301
 BORN_IN_THE_GAP = 302
 FOREIGN = 303
+#: CERT-2211: a null column whose anchor is ALREADY on file, so `record_anchor`
+#: takes the conflict path and the column write gets no `apply_run_id`.
+CONFIRMED_ROW = 304
 
 #: `fallback_id_3` is what soccer anchors on — NOT `fixture_id` (#3800).
 FIX_BACKED_UP = "9000001"
 FIX_BORN = "9000002"
 FIX_FOREIGN = "9000003"
+FIX_CONFIRMED = "9000004"
 
 
 def _load_script():
@@ -531,3 +562,203 @@ async def test_the_restore_is_idempotent(session_factory, monkeypatch):
     assert await rails.cmd_restore(run_id, apply=True, now=APPLY_AT) == 0
     assert await _columns(maker) == {}
     assert await _anchors(maker) == {}
+
+
+async def _seed_incumbent_anchor(maker, event_id, fixture_id, *, context=None):
+    """An anchor already on file for this event, written by somebody else.
+
+    This is what makes `record_anchor` return CONFIRMED: the correspondence
+    exists, so the INSERT conflicts and our claim context — `apply_run_id` and
+    all — is discarded. `column_was_already_set` is in the incumbent's context
+    deliberately: it is a TRUE statement about the pass that wrote the anchor,
+    and a false one about the pass that later fills the column. The undo must
+    not read it as its own.
+    """
+    from sqlalchemy import text
+
+    async with maker() as s:
+        await s.execute(
+            text(
+                "INSERT INTO event_provider_anchors "
+                "(event_id, source, source_id, id_kind, claim_context) "
+                "VALUES (:id, 'statpal', :sid, 'game', CAST(:ctx AS jsonb))"
+            ),
+            {
+                "id": event_id,
+                "sid": f"soccer:{fixture_id}",
+                "ctx": (
+                    '{"written_by": "an_earlier_anchor_only_pass", '
+                    '"column_was_already_set": true}'
+                    if context is None
+                    else context
+                ),
+            },
+        )
+        await s.commit()
+
+
+async def _claim_context_of(maker, event_id):
+    from sqlalchemy import text
+
+    async with maker() as s:
+        row = (
+            await s.execute(
+                text(
+                    "SELECT claim_context FROM event_provider_anchors "
+                    "WHERE event_id = :id AND source = 'statpal'"
+                ),
+                {"id": event_id},
+            )
+        ).first()
+    return dict(row[0]) if row and row[0] else None
+
+
+async def _apply_over_a_confirmed_anchor(maker, monkeypatch):
+    """A column write whose anchor was already there — the CERT-2211 path."""
+    await _seed_event(maker, CONFIRMED_ROW, "Fulham", "Brentford")
+    await _seed_incumbent_anchor(maker, CONFIRMED_ROW, FIX_CONFIRMED)
+    assert await rails.cmd_backup(BACKUP_AT) == 0
+    _stub_statpal(monkeypatch, [_fixture(FIX_CONFIRMED, "Fulham", "Brentford")])
+    assert await rails.cmd_apply(APPLY_AT) == 0
+    return await _latest_apply_identity(maker)
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("pg_schema")
+async def test_the_apply_does_write_the_column_over_a_confirmed_anchor(
+    session_factory, monkeypatch
+):
+    """PREMISE. If the apply never reached this row the undo assertions below
+    would pass vacuously, exactly as they would have for the backup gap."""
+    maker = session_factory
+    await _apply_over_a_confirmed_anchor(maker, monkeypatch)
+
+    assert await _columns(maker) == {
+        CONFIRMED_ROW: FIX_CONFIRMED
+    }, "the apply did not stamp the row, so the CERT-2211 case is untested"
+    assert await _anchors(maker) == {CONFIRMED_ROW: f"soccer:{FIX_CONFIRMED}"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("pg_schema")
+async def test_a_confirmed_path_column_write_is_attributed_in_the_database(
+    session_factory, monkeypatch
+):
+    """CERT-2211's mechanism, as a JSONB round trip only the server can confirm.
+
+    `apply_run_id` is absent because `record_anchor` never writes claim_context
+    on the conflict path — that absence IS the defect. `column_write_run_id` is
+    the durable record that replaces it, and the incumbent's own keys survive it.
+    """
+    maker = session_factory
+    run_id = await _apply_over_a_confirmed_anchor(maker, monkeypatch)
+
+    context = await _claim_context_of(maker, CONFIRMED_ROW)
+    assert context is not None
+    assert context.get("column_write_run_id") == run_id, (
+        "the committed column write left no durable trace: lose the process "
+        "before `_bank` and the restore plans nothing and leaves the write"
+    )
+    assert (
+        "apply_run_id" not in context
+    ), "the conflict path wrote a claim context it is documented never to write"
+    assert (
+        context.get("written_by") == "an_earlier_anchor_only_pass"
+    ), "the attribution overwrote the incumbent's context instead of merging"
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("pg_schema")
+async def test_a_confirmed_path_write_lost_before_banking_is_still_undone(
+    session_factory, monkeypatch
+):
+    """THE BLOCK'S CASE, end to end on real Postgres.
+
+    Apply -> the receipt never lands -> restore. The column has to come back to
+    NULL and the anchor has to stay: this pass wrote one half, so the undo owes
+    exactly one half. Before the repair the manifest was in memory only, the
+    restore planned zero changes, and the write stood forever.
+    """
+    from sqlalchemy import text
+
+    maker = session_factory
+    run_id = await _apply_over_a_confirmed_anchor(maker, monkeypatch)
+
+    # The process loss: the write is committed, the receipt never banked.
+    async with maker() as s:
+        await s.execute(
+            text("DELETE FROM durable_state_snapshots WHERE identity = :i"),
+            {"i": run_id},
+        )
+        await s.commit()
+
+    assert await rails.cmd_restore(run_id, apply=True, now=APPLY_AT) == 0
+
+    assert (
+        await _columns(maker) == {}
+    ), "the column write survived its own undo — CERT-2211 unrepaired"
+    assert await _anchors(maker) == {
+        CONFIRMED_ROW: f"soccer:{FIX_CONFIRMED}"
+    }, "the undo deleted a correspondence this apply only confirmed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("pg_schema")
+async def test_the_confirmed_path_undo_is_idempotent(session_factory, monkeypatch):
+    """A second undo reports rather than writing, and still spares the anchor."""
+    maker = session_factory
+    run_id = await _apply_over_a_confirmed_anchor(maker, monkeypatch)
+
+    assert await rails.cmd_restore(run_id, apply=True, now=APPLY_AT) == 0
+    assert await rails.cmd_restore(run_id, apply=True, now=APPLY_AT) == 0
+    assert await _columns(maker) == {}
+    assert await _anchors(maker) == {CONFIRMED_ROW: f"soccer:{FIX_CONFIRMED}"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("pg_schema")
+async def test_an_incumbent_with_no_claim_context_is_still_attributed(
+    session_factory, monkeypatch
+):
+    """`claim_context` is nullable, and `NOT (claim_context ? 'k')` is NULL —
+    not true — when it is NULL, so an un-COALESCEd guard would match no row and
+    attribute nothing. The write would still commit. Only the server settles
+    this: in Python the same expression is a plain `not in`.
+    """
+    maker = session_factory
+    await _seed_event(maker, CONFIRMED_ROW, "Fulham", "Brentford")
+    await _seed_incumbent_anchor(maker, CONFIRMED_ROW, FIX_CONFIRMED, context=None)
+
+    from sqlalchemy import text
+
+    async with maker() as s:
+        await s.execute(
+            text(
+                "UPDATE event_provider_anchors SET claim_context = NULL "
+                "WHERE event_id = :id"
+            ),
+            {"id": CONFIRMED_ROW},
+        )
+        await s.commit()
+
+    assert await rails.cmd_backup(BACKUP_AT) == 0
+    _stub_statpal(monkeypatch, [_fixture(FIX_CONFIRMED, "Fulham", "Brentford")])
+    assert await rails.cmd_apply(APPLY_AT) == 0
+    run_id = await _latest_apply_identity(maker)
+
+    context = await _claim_context_of(maker, CONFIRMED_ROW)
+    assert context is not None and context.get("column_write_run_id") == run_id, (
+        "a NULL claim_context swallowed the attribution — the `?` test needs "
+        "COALESCE on both sides"
+    )
+
+    async with maker() as s:
+        await s.execute(
+            text("DELETE FROM durable_state_snapshots WHERE identity = :i"),
+            {"i": run_id},
+        )
+        await s.commit()
+
+    assert await rails.cmd_restore(run_id, apply=True, now=APPLY_AT) == 0
+    assert await _columns(maker) == {}
+    assert await _anchors(maker) == {CONFIRMED_ROW: f"soccer:{FIX_CONFIRMED}"}

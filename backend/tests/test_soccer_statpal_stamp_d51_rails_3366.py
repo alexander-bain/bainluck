@@ -247,7 +247,7 @@ class TestAnApplyThatDiedBeforeBankingIsStillUndoable:
     the anchor alone."""
 
     def test_an_attributed_anchor_missing_from_the_manifest_is_reconstructed(self):
-        merged = rails.merge_manifest([], [(12, "soccer:777777", None)])
+        merged = rails.merge_manifest([], [(12, "soccer:777777", None, True)])
         assert merged == [
             {
                 "event_id": 12,
@@ -260,7 +260,7 @@ class TestAnApplyThatDiedBeforeBankingIsStillUndoable:
         ]
 
     def test_the_reconstructed_row_undoes_both_halves(self):
-        merged = rails.merge_manifest([], [(12, "soccer:777777", None)])
+        merged = rails.merge_manifest([], [(12, "soccer:777777", None, True)])
         got = rails.plan_restore(merged, {"12": "777777"}, {"12|soccer:777777"})
         assert len(got["to_clear"]) == 1
         assert len(got["to_delete"]) == 1
@@ -268,7 +268,7 @@ class TestAnApplyThatDiedBeforeBankingIsStillUndoable:
 
     def test_an_anchor_only_write_is_reconstructed_without_a_column_clear(self):
         """`column_was_already_set` is the discriminator the writer left behind."""
-        merged = rails.merge_manifest([], [(12, "soccer:777777", "true")])
+        merged = rails.merge_manifest([], [(12, "soccer:777777", "true", True)])
         assert merged[0]["column_written"] is False
         got = rails.plan_restore(merged, {"12": "777777"}, {"12|soccer:777777"})
         assert got["to_clear"] == [], "cleared a column this pass never wrote"
@@ -276,8 +276,86 @@ class TestAnApplyThatDiedBeforeBankingIsStillUndoable:
 
     def test_a_banked_row_is_not_duplicated_by_its_own_anchor(self):
         entry = _entry(11, "1043639")
-        merged = rails.merge_manifest([entry], [(11, "soccer:1043639", None)])
+        merged = rails.merge_manifest([entry], [(11, "soccer:1043639", None, True)])
         assert merged == [entry]
+
+
+class TestAConfirmedAnchorWriteIsDurablyAttributed:
+    """CERT-2211. The hole CERT-2207's repair left open.
+
+    `record_anchor` writes `claim_context` on the INSERT and never on the
+    conflict path, so on the CONFIRMED path — a null column, an anchor already
+    on file — the committed column write had NO durable record. Its only trace
+    was `StampRun.committed_writes`, which is in memory until the whole pass
+    banks. Lose the process before `_bank` and the restore plans zero changes and
+    silently leaves the write standing: an apply nobody can undo.
+
+    So that write is now attributed on the incumbent anchor under
+    `column_write_run_id`, in the same transaction as the column write. The key
+    is separate from `apply_run_id` because the undo owes the two cases opposite
+    treatment for the anchor.
+    """
+
+    def test_a_column_only_write_clears_the_column_and_keeps_the_anchor(self):
+        merged = rails.merge_manifest([], [(12, "soccer:777777", None, False)])
+        assert merged[0]["column_written"] is True
+        assert (
+            merged[0]["anchor_written"] is False
+        ), "the undo would delete an anchor this run only confirmed"
+        got = rails.plan_restore(merged, {"12": "777777"}, {"12|soccer:777777"})
+        assert got["to_clear"] == [
+            {"event_id": 12, "written": "777777"}
+        ], "the CERT-2211 defect: the column write survives its own undo"
+        assert got["to_delete"] == [], "deleted a correspondence it did not create"
+
+    def test_the_incumbents_own_note_cannot_suppress_the_column_clear(self):
+        """The incumbent's `claim_context` belongs to whoever wrote it, and may
+        well carry `column_was_already_set` from an earlier anchor-only pass.
+        Reading that as if it described THIS run leaves the column behind."""
+        merged = rails.merge_manifest([], [(12, "soccer:777777", "true", False)])
+        assert merged[0]["column_written"] is True
+        got = rails.plan_restore(merged, {"12": "777777"}, {"12|soccer:777777"})
+        assert len(got["to_clear"]) == 1
+        assert got["to_delete"] == []
+
+    def test_an_inserted_anchor_still_undoes_both_halves(self):
+        """The control: widening the tuple must not weaken the WROTE path."""
+        merged = rails.merge_manifest([], [(12, "soccer:777777", None, True)])
+        got = rails.plan_restore(merged, {"12": "777777"}, {"12|soccer:777777"})
+        assert len(got["to_clear"]) == 1
+        assert len(got["to_delete"]) == 1
+
+    def test_the_undo_selects_on_both_attribution_keys(self):
+        """A restore that scanned only `apply_run_id` would never see a
+        CONFIRMED-path write at all — it would report a clean zero."""
+        sql = rails.ATTRIBUTED_ANCHORS_SQL
+        assert "claim_context->>'apply_run_id' = :run_id" in sql
+        assert "claim_context->>'column_write_run_id' = :run_id" in sql
+        assert "anchor_is_ours" in sql
+
+    def test_the_attribution_never_repoints_or_overwrites(self):
+        from app.tasks.stamp_v1_statpal_fixtures import ATTRIBUTE_COLUMN_WRITE
+
+        sql = " ".join(ATTRIBUTE_COLUMN_WRITE.split())
+        assigned = sql.split("SET", 1)[1].split("WHERE", 1)[0]
+        assert (
+            "event_id" not in assigned
+        ), "the attribution must never move an anchor to another event"
+        assert "'column_write_run_id'" in assigned and "apply_run_id" not in assigned, (
+            "the CONFIRMED-path write must be recorded under its OWN key. Under "
+            "`apply_run_id` the undo reads the incumbent as an anchor this run "
+            "inserted and DELETES it — a correspondence the apply never created"
+        )
+        assert (
+            "AND event_id = :event_id" in sql
+        ), "without this it could annotate an anchor naming a different event"
+        assert (
+            "NOT (COALESCE(claim_context, '{}'::jsonb) ? 'column_write_run_id')" in sql
+        ), (
+            "a bare `NOT (claim_context ? ...)` is NULL on a NULL column, so it "
+            "would match nothing; and without the test at all a later pass "
+            "could take attribution off an earlier one"
+        )
 
 
 class TestTheWriterRecordsWhatItWrote:
@@ -309,6 +387,7 @@ class TestTheWriterRecordsWhatItWrote:
         )
         rows = [(1, "Wrexham", "Cardiff City", start, held, "scheduled")]
         contexts = []
+        executed = []
 
         class _Result:
             rowcount = 1
@@ -318,6 +397,10 @@ class TestTheWriterRecordsWhatItWrote:
 
         class _Session:
             async def execute(self, statement, params=None):
+                # The attribution of a CONFIRMED-path column write is a
+                # statement, not a claim context, so it is invisible unless the
+                # session records what it was asked to run.
+                executed.append((str(statement), params))
                 return _Result()
 
             async def commit(self):
@@ -356,13 +439,13 @@ class TestTheWriterRecordsWhatItWrote:
         result = await task._run_stamp_soccer_statpal_fixtures(
             apply=True, now=start, apply_run_id=run_id
         )
-        return result, contexts
+        return result, contexts, executed
 
     @pytest.mark.asyncio
     async def test_the_run_id_lands_in_the_anchors_claim_context(self, monkeypatch):
         from app.services.anchor_channel import WROTE
 
-        _, contexts = await self._drive(monkeypatch, outcome=WROTE)
+        _, contexts, _ex = await self._drive(monkeypatch, outcome=WROTE)
         assert contexts and contexts[0]["apply_run_id"] == "run-xyz", (
             "the anchor carries no run id, so an apply whose receipt is lost "
             "could never be attributed and never undone"
@@ -374,14 +457,14 @@ class TestTheWriterRecordsWhatItWrote:
         null — otherwise `->>'apply_run_id'` has to be null-guarded everywhere."""
         from app.services.anchor_channel import WROTE
 
-        _, contexts = await self._drive(monkeypatch, outcome=WROTE, run_id=None)
+        _, contexts, _ex = await self._drive(monkeypatch, outcome=WROTE, run_id=None)
         assert contexts and "apply_run_id" not in contexts[0]
 
     @pytest.mark.asyncio
     async def test_a_stamp_records_both_halves_as_written(self, monkeypatch):
         from app.services.anchor_channel import WROTE
 
-        result, _ = await self._drive(monkeypatch, outcome=WROTE)
+        result, _, _ex = await self._drive(monkeypatch, outcome=WROTE)
         assert result["committed_write_receipts"] == [
             {
                 "event_id": 1,
@@ -399,10 +482,60 @@ class TestTheWriterRecordsWhatItWrote:
         deletes somebody else's row."""
         from app.services.anchor_channel import CONFIRMED
 
-        result, _ = await self._drive(monkeypatch, outcome=CONFIRMED)
+        result, _, _ex = await self._drive(monkeypatch, outcome=CONFIRMED)
         entry = result["committed_write_receipts"][0]
         assert entry["column_written"] is True
         assert entry["anchor_written"] is False
+
+    @staticmethod
+    def _attributions(executed):
+        """The attribution statements the pass actually ran, with their params."""
+        return [
+            params
+            for sql, params in executed
+            if "column_write_run_id" in sql and sql.strip().upper().startswith("UPDATE")
+        ]
+
+    @pytest.mark.asyncio
+    async def test_a_confirmed_column_write_is_attributed_in_the_same_transaction(
+        self, monkeypatch
+    ):
+        """CERT-2211. The manifest entry above is in memory until the pass banks,
+        so on this path it is not a durable record of anything. The attribution
+        has to reach the database with the column write or the undo cannot find
+        it after a process loss."""
+        from app.services.anchor_channel import CONFIRMED
+
+        _, _, executed = await self._drive(monkeypatch, outcome=CONFIRMED)
+        attributions = self._attributions(executed)
+        assert len(attributions) == 1, (
+            "a committed column write left no durable trace — lose the process "
+            "before `_bank` and the restore plans nothing and leaves the write"
+        )
+        assert attributions[0] == {
+            "run_id": "run-xyz",
+            "source": "statpal",
+            "source_id": "soccer:9544921",
+            "id_kind": "game",
+            "event_id": 1,
+        }, "the attribution must name the same triple `record_anchor` keyed on"
+
+    @pytest.mark.asyncio
+    async def test_an_inserted_anchor_is_not_attributed_twice(self, monkeypatch):
+        """WROTE already carries `apply_run_id` from the INSERT. A second key on
+        the same row would have the undo see one write as two."""
+        from app.services.anchor_channel import WROTE
+
+        _, _, executed = await self._drive(monkeypatch, outcome=WROTE)
+        assert self._attributions(executed) == []
+
+    @pytest.mark.asyncio
+    async def test_a_scheduled_pass_attributes_nothing(self, monkeypatch):
+        """The four beat leagues have no undo and no run id to record."""
+        from app.services.anchor_channel import CONFIRMED
+
+        _, _, executed = await self._drive(monkeypatch, outcome=CONFIRMED, run_id=None)
+        assert self._attributions(executed) == []
 
     @pytest.mark.asyncio
     async def test_a_plan_pass_names_its_rows_and_commits_nothing(self, monkeypatch):
@@ -415,7 +548,9 @@ class TestTheWriterRecordsWhatItWrote:
             return await original(**{**kwargs, "apply": False})
 
         monkeypatch.setattr(task, "_run_stamp_soccer_statpal_fixtures", _plan)
-        result, contexts = await self._drive(monkeypatch, outcome="unused", run_id=None)
+        result, contexts, _ex = await self._drive(
+            monkeypatch, outcome="unused", run_id=None
+        )
         assert result["planned_write_receipts"] == [
             {
                 "event_id": 1,

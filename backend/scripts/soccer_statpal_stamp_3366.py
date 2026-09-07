@@ -194,13 +194,30 @@ SELECT event_id, source_id
 #: created. `column_was_already_set` is how the two write paths are told apart —
 #: `_write_anchor_only` sets it, `_write_link` does not — which is what says
 #: whether a column write rides with this anchor.
+#: Every anchor this run is attributed on, by either of the two keys the writer
+#: uses, with the flag that says which (CERT-2211).
+#:
+#: `apply_run_id`        — this run INSERTED the anchor. Clear the column, delete
+#:                         the anchor.
+#: `column_write_run_id` — this run wrote the column onto an anchor that was
+#:                         already on file (`record_anchor` CONFIRMED it). Clear
+#:                         the column and LEAVE THE ANCHOR: deleting it would
+#:                         remove a correspondence this run did not create, which
+#:                         is the orphan in the other direction.
+#:
+#: `anchor_is_ours` is computed here rather than inferred downstream because the
+#: incumbent's own `claim_context` belongs to whoever wrote it — it may well
+#: carry `column_was_already_set` from an earlier anchor-only pass, and reading
+#: that as if this run had written it is how the column would be left behind.
 ATTRIBUTED_ANCHORS_SQL = """
 SELECT event_id, source_id,
-       claim_context->>'column_was_already_set' AS column_was_already_set
+       claim_context->>'column_was_already_set' AS column_was_already_set,
+       (claim_context->>'apply_run_id' = :run_id) AS anchor_is_ours
   FROM event_provider_anchors
  WHERE source = :source
    AND source_id LIKE :source_id_prefix
-   AND claim_context->>'apply_run_id' = :run_id
+   AND (claim_context->>'apply_run_id' = :run_id
+        OR claim_context->>'column_write_run_id' = :run_id)
 """
 
 #: The current value of every column the restore might clear, keyed by event.
@@ -478,21 +495,27 @@ async def cmd_apply(now: datetime) -> int:
 def merge_manifest(manifest, attributed) -> list[dict]:
     """The banked manifest, completed by what the table itself attributes.
 
-    ``attributed`` is ``(event_id, source_id, column_was_already_set)`` for every
-    anchor carrying this run id. Each one the manifest already lists is a
-    duplicate; each one it does not is a write the apply committed but never got
-    to bank, and it is reconstructed here rather than dropped — a row nobody can
-    name is a row nobody can undo.
+    ``attributed`` is ``(event_id, source_id, column_was_already_set,
+    anchor_is_ours)`` for every anchor this run is attributed on, by either key.
+    Each one the manifest already lists is a duplicate; each one it does not is a
+    write the apply committed but never got to bank, and it is reconstructed here
+    rather than dropped — a row nobody can name is a row nobody can undo.
 
     The reconstruction is exact and needs no receipt: the anchor's ``source_id``
-    is ``soccer:<fixture_id>``, which is the value the column write used, and
-    ``column_was_already_set`` says which write path put it there. Both halves
-    are recoverable from the anchor alone, which is why the anchor is where the
-    run id lives.
+    is ``soccer:<fixture_id>``, which is the value the column write used, and the
+    two attribution keys say which halves this run wrote. Both are recoverable
+    from the anchor alone, which is why the anchor is where the run id lives.
+
+    ``anchor_is_ours`` false is the CERT-2211 case — the anchor was already on
+    file and only the column is this run's. ``column_written`` is then True
+    unconditionally: the sole reason such a row is attributed at all is that
+    ``_write_link`` committed a column write against it, and the incumbent's own
+    ``column_was_already_set`` is a different writer's note about a different
+    pass. Reading that flag here is what would leave the column behind.
     """
     merged = list(manifest or [])
     seen = {(str(e.get("event_id")), e.get("anchor_source_id")) for e in merged}
-    for event_id, source_id, column_was_already_set in attributed or ():
+    for event_id, source_id, column_was_already_set, anchor_is_ours in attributed or ():
         if (str(event_id), source_id) in seen:
             continue
         merged.append(
@@ -502,8 +525,10 @@ def merge_manifest(manifest, attributed) -> list[dict]:
                 # namespace, only the id.
                 "fixture_id": str(source_id).split(":", 1)[-1],
                 "anchor_source_id": source_id,
-                "column_written": column_was_already_set is None,
-                "anchor_written": True,
+                "column_written": (
+                    (column_was_already_set is None) if anchor_is_ours else True
+                ),
+                "anchor_written": bool(anchor_is_ours),
                 "unbanked": True,
             }
         )

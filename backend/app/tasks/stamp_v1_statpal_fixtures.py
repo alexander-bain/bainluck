@@ -514,6 +514,41 @@ UPDATE events
    AND statpal_fixture_id IS NULL
 """
 
+#: Attribute a column write whose anchor was already on file (CERT-2211).
+#:
+#: `record_anchor` writes `claim_context` on the INSERT and never on the
+#: conflict path, so a CONFIRMED anchor carries no `apply_run_id` — and on that
+#: path the column write's only record was the in-memory manifest, which is not
+#: durable until the whole pass banks. Lose the process before `_bank` and the
+#: committed column write is un-undoable: the restore plans nothing and leaves
+#: it. So the writer records it here instead, in the same transaction as the
+#: column write, under a key of its own.
+#:
+#: `column_write_run_id` is deliberately NOT `apply_run_id`. The two say
+#: different things and the undo owes them different treatment: `apply_run_id`
+#: means *this invocation inserted this anchor* (clear the column, delete the
+#: anchor), `column_write_run_id` means *this invocation wrote the column onto a
+#: correspondence that already existed* (clear the column, LEAVE THE ANCHOR).
+#: Collapsing them would have the undo delete a correspondence it did not create.
+#:
+#: `event_id` is in the WHERE so this can only ever annotate an anchor already
+#: naming our event; it never repoints, never deletes, and the
+#: `column_write_run_id` absence test makes the first writer the owner, so a
+#: later pass cannot take attribution off an earlier one.
+#:
+#: gotcha: `NOT (claim_context ? 'k')` is NULL — not true — when the column is
+#: NULL, which would silently match nothing. Both sides COALESCE.
+ATTRIBUTE_COLUMN_WRITE = """
+UPDATE event_provider_anchors
+   SET claim_context = COALESCE(claim_context, '{}'::jsonb)
+                       || jsonb_build_object('column_write_run_id', CAST(:run_id AS text))
+ WHERE source = :source
+   AND source_id = :source_id
+   AND id_kind = :id_kind
+   AND event_id = :event_id
+   AND NOT (COALESCE(claim_context, '{}'::jsonb) ? 'column_write_run_id')
+"""
+
 
 def is_statpal_contest_id(value: Optional[str]) -> bool:
     """Is this column value a StatPal id at all, or `statpal_live_...` (#2963)?
@@ -1182,14 +1217,31 @@ async def _write_link(
     if not (result.rowcount or 0):
         return LOST_RACE
 
+    key = statpal_anchor_key(fixture.fixture_id, statpal_id_space(spec.sport_key))
     written = await record_anchor(
         session,
         event_id=candidate["id"],
-        key=statpal_anchor_key(
-            fixture.fixture_id, statpal_id_space(spec.sport_key)
-        ),
+        key=key,
         claim_context=_claim_context(spec, fixture, apply_run_id),
     )
+
+    if written.outcome == CONFIRMED and apply_run_id and key is not None:
+        # The column write above is committed with this transaction, and the
+        # anchor that would have carried its run id was already on file, so
+        # `record_anchor` discarded our claim context on the conflict path.
+        # Record the write on the incumbent instead — same transaction, so the
+        # attribution cannot outlive a rollback or be lost with the process.
+        await session.execute(
+            text(ATTRIBUTE_COLUMN_WRITE),
+            {
+                "run_id": apply_run_id,
+                "source": key.source,
+                "source_id": key.source_id,
+                "id_kind": key.id_kind,
+                "event_id": candidate["id"],
+            },
+        )
+
     return written.outcome
 
 
