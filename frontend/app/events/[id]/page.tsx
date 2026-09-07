@@ -1380,8 +1380,33 @@ export default function EventPage({ params }: EventPageProps) {
         {/* Chart footer: Legend + Sources toggle */}
         {event.bookmaker_odds && event.bookmaker_odds.length > 0 && (
           <>
-            <div className="px-4 sm:px-5 py-2 border-t border-surface-border flex items-center justify-between">
-              <div className="flex items-center gap-4">
+            {/* #3427 — THE `Sources` CONTROL WAS PAINTED OFF THE PHONE EDGE.
+                At 390px this read "… — Kalshi — Polymarket  Sou": the word cut
+                mid-way and the chevron gone entirely, so a TAPPABLE control was
+                not merely ugly but unreachable.
+
+                THERE WAS NO WIDTH CALCULATION TO BE WRONG — that is what the
+                issue guessed and it is not what happened. This is a
+                `justify-between` row whose left child was a nowrap flex group
+                with no `min-w-0` and whose right child had no `shrink-0`, so the
+                chips took their full intrinsic width and the button was pushed
+                past the boundary. Measured at 390px: `px-4` leaves 358, four
+                chips are ≈336 with their gaps, the button ≈74 — over by ≈52,
+                which is exactly the missing "rces ⌄".
+
+                IT BREAKS ON THE BEST-ATTACHED EVENTS, which is why it kept
+                turning up on marquee pages. Four chips means BainLuck +
+                sportsbooks + Kalshi + Polymarket; a two-chip page
+                (`/events/15305579`) rendered the control in full all along. The
+                richer the data, the more certainly the control disappeared.
+
+                THE CHIPS WRAP AND THE BUTTON DOES NOT MOVE. Every chip is a
+                legend key for a line drawn above, so none of them may be
+                scrolled out of sight to buy room — `overflow-x-auto` would have
+                traded a hidden button for hidden sources. A second line of
+                chips costs a few pixels of height and keeps both. */}
+            <div className="px-4 sm:px-5 py-2 border-t border-surface-border flex items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 min-w-0">
                 <div className="flex items-center gap-1.5">
                   <div className="w-4 h-[2px] rounded" style={{ backgroundColor: event.home_team_data?.primary_color || '#10B981' }} />
                   <span className="text-[10px] text-text-muted">BainLuck</span>
@@ -1432,7 +1457,7 @@ export default function EventPage({ params }: EventPageProps) {
               </div>
               <button
                 onClick={() => setSourcesOpen(!sourcesOpen)}
-                className="flex items-center gap-1 px-2 py-1 rounded-md hover:bg-surface-elevated transition-colors"
+                className="shrink-0 flex items-center gap-1 px-2 py-1 rounded-md hover:bg-surface-elevated transition-colors"
               >
                 <span className="text-[10px] text-text-muted font-medium">Sources</span>
                 <svg
