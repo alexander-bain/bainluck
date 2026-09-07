@@ -1,0 +1,172 @@
+{
+  "event_id": 15305016,
+  "other": [
+    {
+      "market_name": "US Open ATP: Ben Shelton vs Stefanos Tsitsipas",
+      "outcome_name": "Yes",
+      "probability": 0.999,
+      "source": "polymarket"
+    },
+    {
+      "market_name": "US Open ATP: Ben Shelton vs Stefanos Tsitsipas",
+      "outcome_name": "No",
+      "probability": 0.0005,
+      "source": "polymarket"
+    },
+    {
+      "market_name": "Set 3 Winner: Shelton vs Tsitsipas",
+      "outcome_name": "Yes",
+      "probability": 0.9805,
+      "source": "polymarket"
+    },
+    {
+      "market_name": "Set 3 Winner: Shelton vs Tsitsipas",
+      "outcome_name": "No",
+      "probability": 0.0195,
+      "source": "polymarket"
+    },
+    {
+      "market_name": "US Open ATP: Ben Shelton vs Stefanos Tsitsipas",
+      "outcome_name": "Ben Shelton",
+      "probability": 0.9995,
+      "source": "polymarket"
+    },
+    {
+      "market_name": "Set 1 Winner: Shelton vs Tsitsipas",
+      "outcome_name": "Yes",
+      "probability": 0.9995,
+      "source": "polymarket"
+    },
+    {
+      "market_name": "Set 1 Winner: Shelton vs Tsitsipas",
+      "outcome_name": "No",
+      "probability": 0.0005,
+      "source": "polymarket"
+    },
+    {
+      "market_name": "Set 2 Winner: Shelton vs Tsitsipas",
+      "outcome_name": "Yes",
+      "probability": 0.999,
+      "source": "polymarket"
+    },
+    {
+      "market_name": "Set 2 Winner: Shelton vs Tsitsipas",
+      "outcome_name": "No",
+      "probability": 0.0005,
+      "source": "polymarket"
+    },
+    {
+      "market_name": "US Open ATP: Ben Shelton vs Stefanos Tsitsipas",
+      "outcome_name": "US Open ATP: Ben Shelton vs Stefanos Tsitsipas Set 1 Winner",
+      "probability": 0.9995,
+      "source": "polymarket"
+    },
+    {
+      "market_name": "US Open ATP: Ben Shelton vs Stefanos Tsitsipas",
+      "outcome_name": "US Open ATP: Ben Shelton vs Stefanos Tsitsipas Set Handicap +/-1.5",
+      "probability": 0.9995,
+      "source": "polymarket"
+    },
+    {
+      "market_name": "US Open ATP: Ben Shelton vs Stefanos Tsitsipas",
+      "outcome_name": "US Open ATP: Ben Shelton vs Stefanos Tsitsipas Set 2 Winner",
+      "probability": 0.9995,
+      "source": "polymarket"
+    },
+    {
+      "market_name": "US Open ATP: Ben Shelton vs Stefanos Tsitsipas",
+      "outcome_name": "US Open ATP: Ben Shelton vs Stefanos Tsitsipas Set Handicap +/-2.5",
+      "probability": 0.995,
+      "source": "polymarket"
+    },
+    {
+      "market_name": "US Open ATP: Ben Shelton vs Stefanos Tsitsipas",
+      "outcome_name": "US Open ATP: Ben Shelton vs Stefanos Tsitsipas Set 3 Winner",
+      "probability": 0.9895,
+      "source": "polymarket"
+    },
+    {
+      "market_name": "Ben Shelton vs. Stefanos Tsitsipas - Exact Score",
+      "outcome_name": "Stefanos Tsitsipas 3-2",
+      "probability": 0.065,
+      "source": "polymarket"
+    },
+    {
+      "market_name": "Ben Shelton vs. Stefanos Tsitsipas - Exact Score",
+      "outcome_name": "Stefanos Tsitsipas 3-1",
+      "probability": 0.065,
+      "source": "polymarket"
+    },
+    {
+      "market_name": "Ben Shelton vs. Stefanos Tsitsipas - Exact Score",
+      "outcome_name": "Stefanos Tsitsipas 3-0",
+      "probability": 0.05,
+      "source": "polymarket"
+    },
+    {
+      "market_name": "US Open ATP: Ben Shelton vs Stefanos Tsitsipas",
+      "outcome_name": "US Open ATP: Ben Shelton vs Stefanos Tsitsipas Total Sets: O/U 3.5",
+      "probability": 0.0005,
+      "source": "polymarket"
+    },
+    {
+      "market_name": "US Open ATP: Ben Shelton vs Stefanos Tsitsipas",
+      "outcome_name": "US Open ATP: Ben Shelton vs Stefanos Tsitsipas Game Spread +/-4.5",
+      "probability": 0.995,
+      "source": "polymarket"
+    },
+    {
+      "market_name": "US Open ATP: Ben Shelton vs Stefanos Tsitsipas",
+      "outcome_name": "US Open ATP: Ben Shelton vs Stefanos Tsitsipas Total Sets: O/U 4.5",
+      "probability": 0.005,
+      "source": "polymarket"
+    },
+    {
+      "market_name": "US Open ATP: Ben Shelton vs Stefanos Tsitsipas",
+      "outcome_name": "US Open ATP: Ben Shelton vs Stefanos Tsitsipas Set 1 O/U 8.5",
+      "probability": 0.87,
+      "source": "polymarket"
+    },
+    {
+      "market_name": "US Open ATP: Ben Shelton vs Stefanos Tsitsipas",
+      "outcome_name": "US Open ATP: Ben Shelton vs Stefanos Tsitsipas Set 1 O/U 9.5",
+      "probability": 0.625,
+      "source": "polymarket"
+    },
+    {
+      "market_name": "US Open ATP: Ben Shelton vs Stefanos Tsitsipas",
+      "outcome_name": "US Open ATP: Ben Shelton vs Stefanos Tsitsipas Set 2 O/U 10.5",
+      "probability": 0.5,
+      "source": "polymarket"
+    },
+    {
+      "market_name": "US Open ATP: Ben Shelton vs Stefanos Tsitsipas",
+      "outcome_name": "US Open ATP: Ben Shelton vs Stefanos Tsitsipas Set 1 O/U 10.5",
+      "probability": 0.0005,
+      "source": "polymarket"
+    },
+    {
+      "market_name": "US Open ATP: Ben Shelton vs Stefanos Tsitsipas",
+      "outcome_name": "US Open ATP: Ben Shelton vs Stefanos Tsitsipas Match O/U 36.5",
+      "probability": 0.0045,
+      "source": "polymarket"
+    },
+    {
+      "market_name": "US Open ATP: Ben Shelton vs Stefanos Tsitsipas",
+      "outcome_name": "US Open ATP: Ben Shelton vs Stefanos Tsitsipas Match O/U 38.5",
+      "probability": 0.0045,
+      "source": "polymarket"
+    },
+    {
+      "market_name": "US Open ATP: Ben Shelton vs Stefanos Tsitsipas",
+      "outcome_name": "US Open ATP: Ben Shelton vs Stefanos Tsitsipas Match O/U 40.5",
+      "probability": 0.0005,
+      "source": "polymarket"
+    }
+  ],
+  "away_team": "Stefanos Tsitsipas",
+  "home_score": 3,
+  "home_team": "Ben Shelton",
+  "away_score": 0,
+  "status": "completed"
+}

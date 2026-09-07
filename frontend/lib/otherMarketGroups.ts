@@ -482,6 +482,18 @@ export interface MarketSection {
   categories: MarketCategoryGroup[];
   /** Outcome bars reachable on screen — what the header must count. */
   renderedOutcomes: number;
+  /**
+   * Of those, the ones that still print a PERCENTAGE — i.e. the rows that have
+   * no `result` to state instead. #3752: the settled section note promises the
+   * reader a last quote, and on a settled tennis page most rows deliberately
+   * refuse to show one, so the promise has to be counted rather than assumed.
+   *
+   * Counted here, off the same array the renderer maps over, so it cannot
+   * disagree with the screen. Not conditioned on the event being settled: a
+   * row with a `result` shows no number in any state, and the caller that
+   * cares about settlement already knows whether it is settled.
+   */
+  quotedOutcomes: number;
   /** Labels withheld across the whole section. */
   withheld: number;
 }
@@ -793,7 +805,8 @@ export function buildMarketSection(
     (m) => !isRedundantWithMarketMaps(m) && !winProb.has(m.market_name || ""),
   );
 
-  if (kept.length < 3) return { categories: [], renderedOutcomes: 0, withheld: 0 };
+  if (kept.length < 3)
+    return { categories: [], renderedOutcomes: 0, quotedOutcomes: 0, withheld: 0 };
 
   interface Draft {
     title: string;
@@ -881,6 +894,7 @@ export function buildMarketSection(
   }
 
   let renderedOutcomes = 0;
+  let quotedOutcomes = 0;
   let withheld = 0;
 
   const categories: MarketCategoryGroup[] = draftOrder.map((title) => {
@@ -933,6 +947,10 @@ export function buildMarketSection(
           return strike !== 0 ? strike : b.prob - a.prob;
         });
       renderedOutcomes += outcomes.length;
+      // A row with a `result` renders the result and no number (`OutcomeBar`
+      // returns before the percentage in both its remaining branches only when
+      // there is none), so it is not a quote the header may promise.
+      quotedOutcomes += outcomes.filter((o) => !o.result).length;
       categoryWithheld += merged.withheld;
       return { name, outcomes, withheld: merged.withheld };
     });
@@ -957,6 +975,7 @@ export function buildMarketSection(
         return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
       }),
     renderedOutcomes,
+    quotedOutcomes,
     withheld,
   };
 }

@@ -12,8 +12,8 @@ import {
 } from "@/lib/otherMarketGroups";
 import {
   isSettledStatus,
+  settledSectionNote,
   SETTLED_QUOTE_PREFIX,
-  SETTLED_QUOTE_SECTION_NOTE,
 } from "@/lib/settledQuote";
 
 interface SpecialEventMarketsProps {
@@ -176,7 +176,7 @@ export default function SpecialEventMarkets({
 
   if (section.categories.length === 0) return null;
 
-  const { renderedOutcomes, withheld } = section;
+  const { renderedOutcomes, quotedOutcomes, withheld } = section;
 
   return (
     <div>
@@ -188,14 +188,22 @@ export default function SpecialEventMarkets({
             {/* Said ONCE, at section level, following `PropDivergenceDetail`'s
                 "Not graded" group rather than `PropTravelBar`'s per-row label.
                 The rail labels each row because its rows differ — some HIT,
-                some MISS, some ungraded — so the label discriminates. Here
-                every row is in the same state, so repeating it ten times
-                discriminates nothing and just crowds the card. */}
+                some MISS, some ungraded — so the label discriminates; repeating
+                this ten times would discriminate nothing and just crowd the
+                card.
+
+                #3752: which sentence, though, is decided by the ROWS. The note
+                used to promise "each market's last quote" unconditionally, and
+                a settled tennis page renders decided rows as results and
+                impossible ones struck through — six rows, no quote, on
+                `/events/15305016`. `quotedOutcomes` is counted off the same
+                arrays mapped below, so the header cannot promise a number the
+                grid does not print. */}
             {settled && (
               <>
                 {" · "}
                 <span className="text-text-muted" data-testid="special-markets-settled-note">
-                  {SETTLED_QUOTE_SECTION_NOTE}
+                  {settledSectionNote(quotedOutcomes)}
                 </span>
               </>
             )}
