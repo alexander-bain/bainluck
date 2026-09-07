@@ -1,0 +1,5611 @@
+{
+ "provenance": {
+  "read_at": "2026-09-07T05:30Z (approx; both boards read in one pass)",
+  "our_side": "production db-query, events JOIN sports, sports.key LIKE 'soccer%', commence_time in [2026-09-07T20:00Z, 2026-09-10T06:00Z)",
+  "venue_side": "GET https://statpal.io/api/v2/soccer/matches/daily?offset=1 (161,653 B) and offset=2 (213,147 B)",
+  "raw_fixture_rows": 636,
+  "duplicate_rows_dropped": 15
+ },
+ "our_events": [
+  {
+   "event_id": 15296352,
+   "sport_key": "soccer_argentina_primera_division",
+   "home": "Barracas Central",
+   "away": "Argentinos Juniors",
+   "commence_time": "2026-09-07T22:00:00+00:00"
+  },
+  {
+   "event_id": 15291890,
+   "sport_key": "soccer_brazil_campeonato",
+   "home": "Vitoria",
+   "away": "Grêmio",
+   "commence_time": "2026-09-07T23:00:00+00:00"
+  },
+  {
+   "event_id": 15300032,
+   "sport_key": "soccer_chile_campeonato",
+   "home": "Deportes Limache",
+   "away": "Cobresal",
+   "commence_time": "2026-09-07T23:00:00+00:00"
+  },
+  {
+   "event_id": 15296353,
+   "sport_key": "soccer_argentina_primera_division",
+   "home": "Union Santa Fe",
+   "away": "Instituto de Córdoba",
+   "commence_time": "2026-09-08T00:15:00+00:00"
+  },
+  {
+   "event_id": 15300112,
+   "sport_key": "soccer_korea_kleague1",
+   "home": "Incheon United",
+   "away": "Bucheon FC 1995",
+   "commence_time": "2026-09-08T10:30:00+00:00"
+  },
+  {
+   "event_id": 15300113,
+   "sport_key": "soccer_korea_kleague1",
+   "home": "Ulsan Hyundai FC",
+   "away": "FC Seoul",
+   "commence_time": "2026-09-08T10:30:00+00:00"
+  },
+  {
+   "event_id": 15305694,
+   "sport_key": "soccer_netherlands_eredivisie",
+   "home": "FC Utrecht",
+   "away": "Go Ahead Eagles",
+   "commence_time": "2026-09-08T12:00:00+00:00"
+  },
+  {
+   "event_id": 15300988,
+   "sport_key": "soccer_finland_veikkausliiga",
+   "home": "VPS Vaasa",
+   "away": "AC Oulu",
+   "commence_time": "2026-09-08T15:00:00+00:00"
+  },
+  {
+   "event_id": 15300989,
+   "sport_key": "soccer_finland_veikkausliiga",
+   "home": "FC Lahti",
+   "away": "IFK Mariehamn",
+   "commence_time": "2026-09-08T15:00:00+00:00"
+  },
+  {
+   "event_id": 15300990,
+   "sport_key": "soccer_finland_veikkausliiga",
+   "home": "Ilves Tampere",
+   "away": "Jaro",
+   "commence_time": "2026-09-08T15:00:00+00:00"
+  },
+  {
+   "event_id": 15300991,
+   "sport_key": "soccer_finland_veikkausliiga",
+   "home": "TPS Turku",
+   "away": "SJK Seinäjoki",
+   "commence_time": "2026-09-08T15:00:00+00:00"
+  },
+  {
+   "event_id": 15300191,
+   "sport_key": "soccer_saudi_arabia_pro_league",
+   "home": "Al-Ettifaq",
+   "away": "Al-Faisaly KSA FC",
+   "commence_time": "2026-09-08T15:30:00+00:00"
+  },
+  {
+   "event_id": 15300196,
+   "sport_key": "soccer_saudi_arabia_pro_league",
+   "home": "Al-Hazem",
+   "away": "Al-Taawoun",
+   "commence_time": "2026-09-08T15:55:00+00:00"
+  },
+  {
+   "event_id": 15300992,
+   "sport_key": "soccer_finland_veikkausliiga",
+   "home": "IF Gnistan",
+   "away": "KuPS Kuopio",
+   "commence_time": "2026-09-08T16:00:00+00:00"
+  },
+  {
+   "event_id": 15296749,
+   "sport_key": "soccer_uefa_champs_league",
+   "home": "AEK Athens",
+   "away": "LASK",
+   "commence_time": "2026-09-08T16:45:00+00:00"
+  },
+  {
+   "event_id": 15296750,
+   "sport_key": "soccer_uefa_champs_league",
+   "home": "Club Brugge",
+   "away": "Aston Villa",
+   "commence_time": "2026-09-08T16:45:00+00:00"
+  },
+  {
+   "event_id": 15300197,
+   "sport_key": "soccer_netherlands_eredivisie",
+   "home": "NEC Nijmegen",
+   "away": "Excelsior",
+   "commence_time": "2026-09-08T16:45:00+00:00"
+  },
+  {
+   "event_id": 15300461,
+   "sport_key": "soccer_saudi_arabia_pro_league",
+   "home": "Al-Qadsiah",
+   "away": "Al-Ahli",
+   "commence_time": "2026-09-08T18:00:00+00:00"
+  },
+  {
+   "event_id": 15300466,
+   "sport_key": "soccer_saudi_arabia_pro_league",
+   "home": "Al-Ittihad",
+   "away": "Al-Fayha",
+   "commence_time": "2026-09-08T18:00:00+00:00"
+  },
+  {
+   "event_id": 15301283,
+   "sport_key": "soccer_efl_champ",
+   "home": "Wrexham AFC",
+   "away": "Burnley",
+   "commence_time": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "event_id": 15301284,
+   "sport_key": "soccer_efl_champ",
+   "home": "Cardiff City",
+   "away": "Stoke City",
+   "commence_time": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "event_id": 15301285,
+   "sport_key": "soccer_efl_champ",
+   "home": "Watford",
+   "away": "Preston North End",
+   "commence_time": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "event_id": 15301288,
+   "sport_key": "soccer_england_efl_cup",
+   "home": "Bournemouth",
+   "away": "Lincoln City",
+   "commence_time": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "event_id": 15301286,
+   "sport_key": "soccer_efl_champ",
+   "home": "Southampton",
+   "away": "Swansea City",
+   "commence_time": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "event_id": 15301290,
+   "sport_key": "soccer_england_efl_cup",
+   "home": "Crystal Palace",
+   "away": "Middlesbrough",
+   "commence_time": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "event_id": 15301289,
+   "sport_key": "soccer_england_efl_cup",
+   "home": "Leyton Orient",
+   "away": "Bradford City",
+   "commence_time": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "event_id": 15301291,
+   "sport_key": "soccer_england_efl_cup",
+   "home": "Sunderland",
+   "away": "Hull City",
+   "commence_time": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "event_id": 15299077,
+   "sport_key": "soccer_england_league1",
+   "home": "Oxford United",
+   "away": "Reading",
+   "commence_time": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "event_id": 15301282,
+   "sport_key": "soccer_efl_champ",
+   "home": "Blackburn Rovers",
+   "away": "Sheffield United",
+   "commence_time": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "event_id": 15296751,
+   "sport_key": "soccer_uefa_champs_league",
+   "home": "Borussia Dortmund",
+   "away": "Villarreal",
+   "commence_time": "2026-09-08T19:00:00+00:00"
+  },
+  {
+   "event_id": 15296754,
+   "sport_key": "soccer_uefa_champs_league",
+   "home": "Porto",
+   "away": "Manchester City",
+   "commence_time": "2026-09-08T19:00:00+00:00"
+  },
+  {
+   "event_id": 15301287,
+   "sport_key": "soccer_efl_champ",
+   "home": "Bolton Wanderers",
+   "away": "West Ham United",
+   "commence_time": "2026-09-08T19:00:00+00:00"
+  },
+  {
+   "event_id": 15296752,
+   "sport_key": "soccer_uefa_champs_league",
+   "home": "Real Madrid",
+   "away": "Inter Milan",
+   "commence_time": "2026-09-08T19:00:00+00:00"
+  },
+  {
+   "event_id": 15296753,
+   "sport_key": "soccer_uefa_champs_league",
+   "home": "Lille",
+   "away": "Real Betis",
+   "commence_time": "2026-09-08T19:00:00+00:00"
+  },
+  {
+   "event_id": 15301292,
+   "sport_key": "soccer_england_efl_cup",
+   "home": "Millwall",
+   "away": "Newcastle United",
+   "commence_time": "2026-09-08T19:00:00+00:00"
+  },
+  {
+   "event_id": 15293383,
+   "sport_key": "soccer_conmebol_copa_sudamericana",
+   "home": "Independiente Santa Fe",
+   "away": "Vasco da Gama",
+   "commence_time": "2026-09-08T22:00:00+00:00"
+  },
+  {
+   "event_id": 15275083,
+   "sport_key": "soccer_conmebol_copa_libertadores",
+   "home": "Fluminense-RJ",
+   "away": "Platense",
+   "commence_time": "2026-09-08T22:00:00+00:00"
+  },
+  {
+   "event_id": 15300829,
+   "sport_key": "soccer_brazil_serie_b",
+   "home": "Cuiabá",
+   "away": "Athletic Club (MG)",
+   "commence_time": "2026-09-08T23:30:00+00:00"
+  },
+  {
+   "event_id": 15223746,
+   "sport_key": "soccer_conmebol_copa_sudamericana",
+   "home": "Boca Juniors",
+   "away": "Sao Paulo",
+   "commence_time": "2026-09-09T00:30:00+00:00"
+  },
+  {
+   "event_id": 15300870,
+   "sport_key": "soccer_brazil_serie_b",
+   "home": "Criciuma",
+   "away": "Juventude",
+   "commence_time": "2026-09-09T00:30:00+00:00"
+  },
+  {
+   "event_id": 15301248,
+   "sport_key": "soccer_korea_kleague1",
+   "home": "Daejeon Citizen",
+   "away": "FC Anyang",
+   "commence_time": "2026-09-09T10:30:00+00:00"
+  },
+  {
+   "event_id": 15301249,
+   "sport_key": "soccer_korea_kleague1",
+   "home": "Gangwon FC",
+   "away": "Jeonbuk Hyundai Motors",
+   "commence_time": "2026-09-09T10:30:00+00:00"
+  },
+  {
+   "event_id": 15301250,
+   "sport_key": "soccer_korea_kleague1",
+   "home": "Gwangju FC",
+   "away": "Jeju United FC",
+   "commence_time": "2026-09-09T10:30:00+00:00"
+  },
+  {
+   "event_id": 15301251,
+   "sport_key": "soccer_korea_kleague1",
+   "home": "Pohang Steelers",
+   "away": "Sangju Sangmu FC",
+   "commence_time": "2026-09-09T10:30:00+00:00"
+  },
+  {
+   "event_id": 15301129,
+   "sport_key": "soccer_finland_veikkausliiga",
+   "home": "HJK Helsinki",
+   "away": "FC Inter Turku",
+   "commence_time": "2026-09-09T15:00:00+00:00"
+  },
+  {
+   "event_id": 15301142,
+   "sport_key": "soccer_saudi_arabia_pro_league",
+   "home": "Al-Kholood",
+   "away": "Al-Shabab",
+   "commence_time": "2026-09-09T15:55:00+00:00"
+  },
+  {
+   "event_id": 15296755,
+   "sport_key": "soccer_uefa_champs_league",
+   "home": "Barcelona",
+   "away": "Feyenoord",
+   "commence_time": "2026-09-09T16:45:00+00:00"
+  },
+  {
+   "event_id": 15296756,
+   "sport_key": "soccer_uefa_champs_league",
+   "home": "VfB Stuttgart",
+   "away": "Viking FK",
+   "commence_time": "2026-09-09T16:45:00+00:00"
+  },
+  {
+   "event_id": 15297725,
+   "sport_key": "soccer_netherlands_eredivisie",
+   "home": "FC Twente Enschede",
+   "away": "SC Telstar",
+   "commence_time": "2026-09-09T16:45:00+00:00"
+  },
+  {
+   "event_id": 15301254,
+   "sport_key": "soccer_sweden_superettan",
+   "home": "Sandvikens IF",
+   "away": "IK Oddevold",
+   "commence_time": "2026-09-09T17:00:00+00:00"
+  },
+  {
+   "event_id": 15301255,
+   "sport_key": "soccer_sweden_superettan",
+   "home": "Ljungskile SK",
+   "away": "Norrby IF",
+   "commence_time": "2026-09-09T17:00:00+00:00"
+  },
+  {
+   "event_id": 15301252,
+   "sport_key": "soccer_sweden_superettan",
+   "home": "Landskrona BoIS",
+   "away": "Helsingborgs IF",
+   "commence_time": "2026-09-09T17:00:00+00:00"
+  },
+  {
+   "event_id": 15301253,
+   "sport_key": "soccer_sweden_superettan",
+   "home": "Nordic United FC",
+   "away": "IFK Värnamo",
+   "commence_time": "2026-09-09T17:00:00+00:00"
+  },
+  {
+   "event_id": 15301143,
+   "sport_key": "soccer_saudi_arabia_pro_league",
+   "home": "Al-Nassr",
+   "away": "Abha Club",
+   "commence_time": "2026-09-09T18:00:00+00:00"
+  },
+  {
+   "event_id": 15301144,
+   "sport_key": "soccer_saudi_arabia_pro_league",
+   "home": "Al-Fateh",
+   "away": "Diriyah Club",
+   "commence_time": "2026-09-09T18:00:00+00:00"
+  },
+  {
+   "event_id": 15304499,
+   "sport_key": "soccer_england_efl_cup",
+   "home": "Everton",
+   "away": "Wolverhampton Wanderers",
+   "commence_time": "2026-09-09T18:45:00+00:00"
+  },
+  {
+   "event_id": 15298410,
+   "sport_key": "soccer_efl_champ",
+   "home": "Norwich City",
+   "away": "Birmingham City",
+   "commence_time": "2026-09-09T18:45:00+00:00"
+  },
+  {
+   "event_id": 15298411,
+   "sport_key": "soccer_efl_champ",
+   "home": "Derby County",
+   "away": "West Bromwich Albion",
+   "commence_time": "2026-09-09T18:45:00+00:00"
+  },
+  {
+   "event_id": 15305489,
+   "sport_key": "soccer_spl",
+   "home": "Rangers",
+   "away": "St Mirren",
+   "commence_time": "2026-09-09T18:45:00+00:00"
+  },
+  {
+   "event_id": 15296757,
+   "sport_key": "soccer_uefa_champs_league",
+   "home": "Napoli",
+   "away": "Arsenal",
+   "commence_time": "2026-09-09T19:00:00+00:00"
+  },
+  {
+   "event_id": 15301293,
+   "sport_key": "soccer_england_efl_cup",
+   "home": "Chelsea",
+   "away": "Leeds United",
+   "commence_time": "2026-09-09T19:00:00+00:00"
+  },
+  {
+   "event_id": 15296758,
+   "sport_key": "soccer_uefa_champs_league",
+   "home": "Liverpool",
+   "away": "Atlético Madrid",
+   "commence_time": "2026-09-09T19:00:00+00:00"
+  },
+  {
+   "event_id": 15296759,
+   "sport_key": "soccer_uefa_champs_league",
+   "home": "Sporting Lisbon",
+   "away": "Galatasaray",
+   "commence_time": "2026-09-09T19:00:00+00:00"
+  },
+  {
+   "event_id": 15296760,
+   "sport_key": "soccer_uefa_champs_league",
+   "home": "Paris Saint Germain",
+   "away": "ŠK Slovan Bratislava",
+   "commence_time": "2026-09-09T19:00:00+00:00"
+  },
+  {
+   "event_id": 15298412,
+   "sport_key": "soccer_efl_champ",
+   "home": "Charlton Athletic",
+   "away": "Queens Park Rangers",
+   "commence_time": "2026-09-09T19:00:00+00:00"
+  },
+  {
+   "event_id": 15305594,
+   "sport_key": "soccer_spl",
+   "home": "St Johnstone",
+   "away": "Celtic",
+   "commence_time": "2026-09-09T19:00:00+00:00"
+  },
+  {
+   "event_id": 15301191,
+   "sport_key": "soccer_portugal_primeira_liga",
+   "home": "Moreirense FC",
+   "away": "Benfica",
+   "commence_time": "2026-09-09T19:45:00+00:00"
+  },
+  {
+   "event_id": 15290702,
+   "sport_key": "soccer_conmebol_copa_libertadores",
+   "home": "Palmeiras-SP",
+   "away": "LDU Quito",
+   "commence_time": "2026-09-09T22:00:00+00:00"
+  },
+  {
+   "event_id": 15290774,
+   "sport_key": "soccer_conmebol_copa_sudamericana",
+   "home": "Santos",
+   "away": "Clube Atlético Mineiro",
+   "commence_time": "2026-09-09T22:00:00+00:00"
+  },
+  {
+   "event_id": 15301237,
+   "sport_key": "soccer_brazil_serie_b",
+   "home": "Fortaleza",
+   "away": "Avai",
+   "commence_time": "2026-09-09T22:30:00+00:00"
+  },
+  {
+   "event_id": 15301238,
+   "sport_key": "soccer_brazil_serie_b",
+   "home": "Botafogo-SP",
+   "away": "Grêmio Novorizontino",
+   "commence_time": "2026-09-09T22:30:00+00:00"
+  },
+  {
+   "event_id": 15298470,
+   "sport_key": "soccer_usa_mls",
+   "home": "Philadelphia Union",
+   "away": "FC Cincinnati",
+   "commence_time": "2026-09-09T23:30:00+00:00"
+  },
+  {
+   "event_id": 15298471,
+   "sport_key": "soccer_usa_mls",
+   "home": "Toronto FC",
+   "away": "Nashville SC",
+   "commence_time": "2026-09-09T23:30:00+00:00"
+  },
+  {
+   "event_id": 15298468,
+   "sport_key": "soccer_usa_mls",
+   "home": "Atlanta United FC",
+   "away": "Orlando City SC",
+   "commence_time": "2026-09-09T23:30:00+00:00"
+  },
+  {
+   "event_id": 15298469,
+   "sport_key": "soccer_usa_mls",
+   "home": "CF Montreal",
+   "away": "Charlotte FC",
+   "commence_time": "2026-09-09T23:30:00+00:00"
+  },
+  {
+   "event_id": 15298465,
+   "sport_key": "soccer_usa_mls",
+   "home": "D.C. United",
+   "away": "Columbus Crew SC",
+   "commence_time": "2026-09-09T23:30:00+00:00"
+  },
+  {
+   "event_id": 15301239,
+   "sport_key": "soccer_brazil_serie_b",
+   "home": "América Mineiro",
+   "away": "Nautico PE",
+   "commence_time": "2026-09-09T23:30:00+00:00"
+  },
+  {
+   "event_id": 15301240,
+   "sport_key": "soccer_brazil_serie_b",
+   "home": "Operario PR",
+   "away": "Clube de Regatas Brasil",
+   "commence_time": "2026-09-09T23:30:00+00:00"
+  },
+  {
+   "event_id": 15298472,
+   "sport_key": "soccer_usa_mls",
+   "home": "New York City FC",
+   "away": "New England Revolution",
+   "commence_time": "2026-09-10T00:00:00+00:00"
+  },
+  {
+   "event_id": 15298430,
+   "sport_key": "soccer_usa_mls",
+   "home": "Austin FC",
+   "away": "Colorado Rapids",
+   "commence_time": "2026-09-10T00:30:00+00:00"
+  },
+  {
+   "event_id": 15298473,
+   "sport_key": "soccer_usa_mls",
+   "home": "Minnesota United FC",
+   "away": "FC Dallas",
+   "commence_time": "2026-09-10T00:30:00+00:00"
+  },
+  {
+   "event_id": 15298467,
+   "sport_key": "soccer_usa_mls",
+   "home": "Houston Dynamo",
+   "away": "Real Salt Lake",
+   "commence_time": "2026-09-10T00:30:00+00:00"
+  },
+  {
+   "event_id": 15290721,
+   "sport_key": "soccer_conmebol_copa_libertadores",
+   "home": "Estudiantes La Plata",
+   "away": "Corinthians-SP",
+   "commence_time": "2026-09-10T00:30:00+00:00"
+  },
+  {
+   "event_id": 15298466,
+   "sport_key": "soccer_usa_mls",
+   "home": "Chicago Fire",
+   "away": "Inter Miami CF",
+   "commence_time": "2026-09-10T00:30:00+00:00"
+  },
+  {
+   "event_id": 15301241,
+   "sport_key": "soccer_brazil_serie_b",
+   "home": "Atletico Goianiense",
+   "away": "Ceará",
+   "commence_time": "2026-09-10T00:30:00+00:00"
+  },
+  {
+   "event_id": 15298475,
+   "sport_key": "soccer_usa_mls",
+   "home": "Portland Timbers",
+   "away": "St. Louis City SC",
+   "commence_time": "2026-09-10T02:30:00+00:00"
+  },
+  {
+   "event_id": 15298476,
+   "sport_key": "soccer_usa_mls",
+   "home": "San Diego FC",
+   "away": "San Jose Earthquakes",
+   "commence_time": "2026-09-10T02:30:00+00:00"
+  },
+  {
+   "event_id": 15298474,
+   "sport_key": "soccer_usa_mls",
+   "home": "Vancouver Whitecaps FC",
+   "away": "LA Galaxy",
+   "commence_time": "2026-09-10T02:30:00+00:00"
+  },
+  {
+   "event_id": 15298741,
+   "sport_key": "soccer_usa_mls",
+   "home": "Los Angeles FC",
+   "away": "New York Red Bulls",
+   "commence_time": "2026-09-10T02:30:00+00:00"
+  },
+  {
+   "event_id": 15305754,
+   "sport_key": "soccer_usa_mls",
+   "home": "LAFC",
+   "away": "Red Bull New York",
+   "commence_time": "2026-09-10T02:30:00+00:00"
+  }
+ ],
+ "statpal_fixtures": [
+  {
+   "fallback_id_3": "9544921",
+   "main_id": "2026090812079",
+   "league": "Argentina: Liga Profesional - Clausura",
+   "home": "Union de Santa Fe",
+   "away": "Instituto",
+   "kickoff": "2026-09-08T00:15:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541941",
+   "main_id": "2026090711986",
+   "league": "Argentina: Primera B",
+   "home": "Excursionistas",
+   "away": "Ituzaingo",
+   "kickoff": "2026-09-07T23:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545345",
+   "main_id": "2026090811881",
+   "league": "Argentina: Primera C",
+   "home": "Claypole",
+   "away": "Central Ballester",
+   "kickoff": "2026-09-08T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9546229",
+   "main_id": "2026090880146",
+   "league": "Argentina: Reserve League - Clausura",
+   "home": "Atl. Rafaela 2",
+   "away": "Independiente 2",
+   "kickoff": "2026-09-08T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9546232",
+   "main_id": "2026090873816",
+   "league": "Argentina: Reserve League - Clausura",
+   "home": "Colon Santa Fe 2",
+   "away": "Belgrano 2",
+   "kickoff": "2026-09-08T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9546236",
+   "main_id": "2026090886590",
+   "league": "Argentina: Reserve League - Clausura",
+   "home": "Quilmes 2",
+   "away": "Ferro 2",
+   "kickoff": "2026-09-08T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9546237",
+   "main_id": "2026090872091",
+   "league": "Argentina: Reserve League - Clausura",
+   "home": "Racing Club 2",
+   "away": "Argentinos Jrs 2",
+   "kickoff": "2026-09-08T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9546244",
+   "main_id": "2026090872101",
+   "league": "Argentina: Reserve League - Clausura",
+   "home": "Velez Sarsfield 2",
+   "away": "Gimnasia L.P. 2",
+   "kickoff": "2026-09-08T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9546238",
+   "main_id": "2026090872112",
+   "league": "Argentina: Reserve League - Clausura",
+   "home": "River Plate 2",
+   "away": "Aldosivi 2",
+   "kickoff": "2026-09-08T22:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9535016",
+   "main_id": "2026090872772",
+   "league": "Armenia: First League",
+   "home": "Bentonit",
+   "away": "Lernayin Artsakh",
+   "kickoff": "2026-09-08T11:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9537372",
+   "main_id": "2026090879704",
+   "league": "Armenia: First League",
+   "home": "Sardarapat 2",
+   "away": "BKMA 2",
+   "kickoff": "2026-09-08T12:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9535691",
+   "main_id": "2026090835953",
+   "league": "Armenia: First League",
+   "home": "Urartu 2",
+   "away": "Ararat-Armenia 2",
+   "kickoff": "2026-09-08T15:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9347549",
+   "main_id": "2026090853358",
+   "league": "Asia: Afc Challenge League - Qualification",
+   "home": "Yangon Utd",
+   "away": "Ezra",
+   "kickoff": "2026-09-08T09:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9347552",
+   "main_id": "",
+   "league": "Asia: Afc Challenge League - Qualification",
+   "home": "Kasuka",
+   "away": "Karketu Dili",
+   "kickoff": "2026-09-08T12:15:00+00:00"
+  },
+  {
+   "fallback_id_3": "9546954",
+   "main_id": "2026090838872",
+   "league": "Australia: Npl Western Australia - Play Offs",
+   "home": "Olympic Kingsway",
+   "away": "Perth Azzurri",
+   "kickoff": "2026-09-08T11:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9084233",
+   "main_id": "2026090863222",
+   "league": "Australia and Oceania: Ofc Championship U19",
+   "home": "Vanuatu U19",
+   "away": "New Zealand U19",
+   "kickoff": "2026-09-08T02:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9539052",
+   "main_id": "2026090844667",
+   "league": "Austria: Regionalliga South",
+   "home": "Atus Velden",
+   "away": "A. Klagenfurt",
+   "kickoff": "2026-09-08T17:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9534954",
+   "main_id": "2026090856738",
+   "league": "Austria: Regionalliga North",
+   "home": "Wallern/St Marienkirchen",
+   "away": "Wals-Grunau",
+   "kickoff": "2026-09-08T17:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545747",
+   "main_id": "2026090855658",
+   "league": "Bhutan: Premier League",
+   "home": "Ugyen Academy",
+   "away": "Paro",
+   "kickoff": "2026-09-08T09:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9531256",
+   "main_id": "2026090870783",
+   "league": "Bolivia: Copa Pacena",
+   "home": "Academia del Balompie",
+   "away": "SA Bulo Bulo",
+   "kickoff": "2026-09-08T19:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9531257",
+   "main_id": "2026090813975",
+   "league": "Bolivia: Copa Pacena",
+   "home": "Aurora",
+   "away": "Real Potosi",
+   "kickoff": "2026-09-08T22:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9531258",
+   "main_id": "2026090913977",
+   "league": "Bolivia: Copa Pacena",
+   "home": "Oriente Petrolero",
+   "away": "Guabira",
+   "kickoff": "2026-09-09T00:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9543653",
+   "main_id": "2026090715002",
+   "league": "Brazil: Serie A Betano",
+   "home": "Vitoria",
+   "away": "Gremio",
+   "kickoff": "2026-09-07T23:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9544440",
+   "main_id": "2026090840370",
+   "league": "Brazil: Serie B",
+   "home": "Cuiaba",
+   "away": "Athletic Club",
+   "kickoff": "2026-09-08T23:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9544441",
+   "main_id": "2026090914649",
+   "league": "Brazil: Serie B",
+   "home": "Criciuma",
+   "away": "Juventude",
+   "kickoff": "2026-09-09T00:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9455669",
+   "main_id": "2026090814948",
+   "league": "Brazil: Acreano 2",
+   "home": "Nauas EC",
+   "away": "Placido de Castro",
+   "kickoff": "2026-09-08T21:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9455670",
+   "main_id": "2026090914267",
+   "league": "Brazil: Acreano 2",
+   "home": "Atletico Acreano",
+   "away": "Andira",
+   "kickoff": "2026-09-09T00:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9548905",
+   "main_id": "2026090848382",
+   "league": "Brazil: Amazonense 2 - Play Offs",
+   "home": "RB do Norte",
+   "away": "Fast Clube",
+   "kickoff": "2026-09-08T23:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9534033",
+   "main_id": "2026090850681",
+   "league": "Brazil: Piauiense 2",
+   "home": "Caicara",
+   "away": "River-PI",
+   "kickoff": "2026-09-08T22:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542347",
+   "main_id": "2026090870011",
+   "league": "Brazil: Copa Do Brasil U20",
+   "home": "Atletico-MG U20",
+   "away": "Sobradinho U20",
+   "kickoff": "2026-09-08T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542348",
+   "main_id": "2026090868827",
+   "league": "Brazil: Copa Do Brasil U20",
+   "home": "Bahia U20",
+   "away": "Alagoinhas U20",
+   "kickoff": "2026-09-08T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545968",
+   "main_id": "2026090863967",
+   "league": "Brazil: Copa Do Brasil U20",
+   "home": "Flamengo RJ U20",
+   "away": "Forte U20",
+   "kickoff": "2026-09-08T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545969",
+   "main_id": "2026090869226",
+   "league": "Brazil: Copa Do Brasil U20",
+   "home": "Gremio U20",
+   "away": "Real SC U20",
+   "kickoff": "2026-09-08T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545751",
+   "main_id": "2026090882802",
+   "league": "Brazil: Brasileiro U17",
+   "home": "Botafogo RJ U17",
+   "away": "Vasco U17",
+   "kickoff": "2026-09-08T20:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9367570",
+   "main_id": "2026090879380",
+   "league": "Brazil: Mineiro U20 - Winners Stage",
+   "home": "Coimbra U20",
+   "away": "Boston City U20",
+   "kickoff": "2026-09-08T13:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9539263",
+   "main_id": "2026090858198",
+   "league": "Brazil: Paulista U20",
+   "home": "Sao Caetano U20",
+   "away": "Osasco Sporting U20",
+   "kickoff": "2026-09-08T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9544453",
+   "main_id": "2026090857000",
+   "league": "Brazil: Paulista U20",
+   "home": "Agua Santa U20",
+   "away": "Palmeiras U20",
+   "kickoff": "2026-09-08T21:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9540814",
+   "main_id": "",
+   "league": "Brazil: Brasileiro A2 Women - Play Offs",
+   "home": "Vasco W",
+   "away": "Atletico-PI W",
+   "kickoff": "2026-09-08T00:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9544172",
+   "main_id": "2026090815662",
+   "league": "Bulgaria: Vtora Liga",
+   "home": "Montana",
+   "away": "Vihren",
+   "kickoff": "2026-09-08T16:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541732",
+   "main_id": "2026090737467",
+   "league": "Chile: Liga De Primera",
+   "home": "Limache",
+   "away": "Cobresal",
+   "kickoff": "2026-09-07T23:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541037",
+   "main_id": "2026090815996",
+   "league": "Chile: Liga De Ascenso",
+   "home": "D. Puerto Montt",
+   "away": "Rangers",
+   "kickoff": "2026-09-08T21:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9540047",
+   "main_id": "2026090816035",
+   "league": "Chile: Liga De Ascenso",
+   "home": "San Felipe",
+   "away": "San Luis",
+   "kickoff": "2026-09-08T21:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541937",
+   "main_id": "2026090815997",
+   "league": "Chile: Liga De Ascenso",
+   "home": "Curico Unido",
+   "away": "U. Espanola",
+   "kickoff": "2026-09-08T23:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541733",
+   "main_id": "2026090816004",
+   "league": "Chile: Liga De Ascenso",
+   "home": "Deportes Temuco",
+   "away": "S. Wanderers",
+   "kickoff": "2026-09-08T23:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9529029",
+   "main_id": "2026090729134",
+   "league": "Colombia: Primera A - Clausura",
+   "home": "Llaneros",
+   "away": "Deportes Tolima",
+   "kickoff": "2026-09-07T23:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541949",
+   "main_id": "2026090947568",
+   "league": "Colombia: Primera B - Clausura",
+   "home": "Inter Palmira",
+   "away": "Atletico F.C.",
+   "kickoff": "2026-09-09T00:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9508308",
+   "main_id": "2026090816287",
+   "league": "Colombia: Copa Colombia - Second Stage",
+   "home": "Atl. Nacional",
+   "away": "Dep. Cali",
+   "kickoff": "2026-09-08T01:15:00+00:00"
+  },
+  {
+   "fallback_id_3": "9546668",
+   "main_id": "2026090877822",
+   "league": "Colombia: Liga Women - Promotion Group",
+   "home": "Inter Palmira W",
+   "away": "Inter Bogotá W",
+   "kickoff": "2026-09-08T21:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9468068",
+   "main_id": "2026090833047",
+   "league": "Costa Rica: Liga De Ascenso - Apertura",
+   "home": "Cofutpa",
+   "away": "Grecia",
+   "kickoff": "2026-09-08T01:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542281",
+   "main_id": "2026090846892",
+   "league": "Croatia: Croatian Cup",
+   "home": "Vardarac Vardaroc",
+   "away": "Hajduk Split",
+   "kickoff": "2026-09-08T14:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542285",
+   "main_id": "2026090816657",
+   "league": "Croatia: Croatian Cup",
+   "home": "Zagorec K.",
+   "away": "Istra 1961",
+   "kickoff": "2026-09-08T15:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9537336",
+   "main_id": "",
+   "league": "Czech Republic: Prazsky Prebor",
+   "home": "Aritma Prague B",
+   "away": "Praga",
+   "kickoff": "2026-09-08T15:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9529663",
+   "main_id": "2026090860096",
+   "league": "Denmark: A-Liga Women",
+   "home": "KoldingQ W",
+   "away": "Brondby W",
+   "kickoff": "2026-09-08T17:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541291",
+   "main_id": "2026090817731",
+   "league": "Ecuador: Liga Pro",
+   "home": "Emelec",
+   "away": "Manta",
+   "kickoff": "2026-09-08T00:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542398",
+   "main_id": "2026090856778",
+   "league": "Ecuador: Liga Pro",
+   "home": "Mushuc Runa",
+   "away": "Leones del Norte",
+   "kickoff": "2026-09-08T00:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541695",
+   "main_id": "2026090848014",
+   "league": "Ecuador: Liga Pro",
+   "home": "Orense",
+   "away": "Guayaquil City",
+   "kickoff": "2026-09-08T00:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542883",
+   "main_id": "2026090842666",
+   "league": "Egypt: Premier League",
+   "home": "Smouha",
+   "away": "Ceramica Cleopatra",
+   "kickoff": "2026-09-08T17:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542680",
+   "main_id": "2026090817840",
+   "league": "Egypt: Premier League",
+   "home": "Zamalek",
+   "away": "Abu Qir Semad",
+   "kickoff": "2026-09-08T17:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9537036",
+   "main_id": "2026090953758",
+   "league": "El Salvador: Primera Division - Apertura",
+   "home": "Inca Aruba",
+   "away": "Atletico Balboa",
+   "kickoff": "2026-09-09T00:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545753",
+   "main_id": "2026090818392",
+   "league": "England: Championship",
+   "home": "Blackburn",
+   "away": "Sheffield Utd",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545754",
+   "main_id": "2026090818461",
+   "league": "England: Championship",
+   "home": "Cardiff",
+   "away": "Stoke",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545755",
+   "main_id": "2026090818750",
+   "league": "England: Championship",
+   "home": "Southampton",
+   "away": "Swansea",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545756",
+   "main_id": "2026090818740",
+   "league": "England: Championship",
+   "home": "Watford",
+   "away": "Preston",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545757",
+   "main_id": "2026090818525",
+   "league": "England: Championship",
+   "home": "Wrexham",
+   "away": "Burnley",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545758",
+   "main_id": "2026090818475",
+   "league": "England: Championship",
+   "home": "Bolton",
+   "away": "West Ham",
+   "kickoff": "2026-09-08T19:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545760",
+   "main_id": "2026090818296",
+   "league": "England: National League North",
+   "home": "AFC Telford",
+   "away": "Oxford City",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545761",
+   "main_id": "2026090818131",
+   "league": "England: National League North",
+   "home": "Buxton",
+   "away": "Brackley Town",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545762",
+   "main_id": "2026090838752",
+   "league": "England: National League North",
+   "home": "Chester",
+   "away": "Merthyr Town",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545763",
+   "main_id": "2026090831297",
+   "league": "England: National League North",
+   "home": "Chorley",
+   "away": "Darlington",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545764",
+   "main_id": "2026090848055",
+   "league": "England: National League North",
+   "home": "Harborough",
+   "away": "Hereford",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545765",
+   "main_id": "2026090818439",
+   "league": "England: National League North",
+   "home": "King’s Lynn",
+   "away": "Hednesford",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545766",
+   "main_id": "2026090855536",
+   "league": "England: National League North",
+   "home": "Macclesfield",
+   "away": "Scarborough",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545767",
+   "main_id": "2026090829308",
+   "league": "England: National League North",
+   "home": "Radcliffe",
+   "away": "Hebburn Town",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545768",
+   "main_id": "2026090818645",
+   "league": "England: National League North",
+   "home": "Southport",
+   "away": "Morecambe",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545769",
+   "main_id": "2026090829946",
+   "league": "England: National League North",
+   "home": "South Shields",
+   "away": "Marine",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545770",
+   "main_id": "2026090831503",
+   "league": "England: National League North",
+   "home": "Spennymoor",
+   "away": "Spalding United",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545771",
+   "main_id": "2026090818481",
+   "league": "England: National League North",
+   "home": "Worksop",
+   "away": "Bedford",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545772",
+   "main_id": "2026090818132",
+   "league": "England: National League South",
+   "home": "Chesham",
+   "away": "Billericay",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545773",
+   "main_id": "2026090818267",
+   "league": "England: National League South",
+   "home": "Dag and Red",
+   "away": "Dover",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545774",
+   "main_id": "2026090831252",
+   "league": "England: National League South",
+   "home": "Dorking",
+   "away": "Chelmsford",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545775",
+   "main_id": "2026090818358",
+   "league": "England: National League South",
+   "home": "Ebbsfleet",
+   "away": "Hemel Hempstead",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545776",
+   "main_id": "2026090818387",
+   "league": "England: National League South",
+   "home": "Folkestone",
+   "away": "Horsham FC",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545777",
+   "main_id": "2026090818357",
+   "league": "England: National League South",
+   "home": "Hampton and Richmond",
+   "away": "Farnborough",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545778",
+   "main_id": "2026090818660",
+   "league": "England: National League South",
+   "home": "Maidenhead",
+   "away": "Torquay",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545779",
+   "main_id": "2026090835266",
+   "league": "England: National League South",
+   "home": "Salisbury",
+   "away": "Slough",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545780",
+   "main_id": "2026090818659",
+   "league": "England: National League South",
+   "home": "Tonbridge",
+   "away": "Maidstone",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545781",
+   "main_id": "2026090818421",
+   "league": "England: National League South",
+   "home": "Weston-super-Mare",
+   "away": "AFC Totton",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9537393",
+   "main_id": "2026090831372",
+   "league": "England: National League Cup",
+   "home": "Boreham Wood",
+   "away": "Newcastle Utd U21",
+   "kickoff": "2026-09-08T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9537394",
+   "main_id": "2026090830791",
+   "league": "England: National League Cup",
+   "home": "Boston Utd",
+   "away": "West Brom U21",
+   "kickoff": "2026-09-08T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9531276",
+   "main_id": "2026090830934",
+   "league": "England: National League Cup",
+   "home": "FC Halifax",
+   "away": "Wolves U21",
+   "kickoff": "2026-09-08T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9531277",
+   "main_id": "2026090835259",
+   "league": "England: National League Cup",
+   "home": "Gateshead",
+   "away": "Derby U21",
+   "kickoff": "2026-09-08T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9537395",
+   "main_id": "2026090830950",
+   "league": "England: National League Cup",
+   "home": "Hartlepool",
+   "away": "Everton U21",
+   "kickoff": "2026-09-08T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9533606",
+   "main_id": "2026090846166",
+   "league": "England: National League Cup",
+   "home": "Hornchurch",
+   "away": "Ipswich U21",
+   "kickoff": "2026-09-08T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9531278",
+   "main_id": "2026090846246",
+   "league": "England: National League Cup",
+   "home": "Scunthorpe",
+   "away": "Nottingham U21",
+   "kickoff": "2026-09-08T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9537396",
+   "main_id": "2026090842994",
+   "league": "England: National League Cup",
+   "home": "Solihull Moors",
+   "away": "Leeds U21",
+   "kickoff": "2026-09-08T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9537397",
+   "main_id": "2026090846554",
+   "league": "England: National League Cup",
+   "home": "Sutton",
+   "away": "Birmingham U21",
+   "kickoff": "2026-09-08T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9537398",
+   "main_id": "2026090831777",
+   "league": "England: National League Cup",
+   "home": "Truro",
+   "away": "Leicester U21",
+   "kickoff": "2026-09-08T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9531279",
+   "main_id": "2026090831167",
+   "league": "England: National League Cup",
+   "home": "Wealdstone",
+   "away": "Stoke City U21",
+   "kickoff": "2026-09-08T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9537399",
+   "main_id": "2026090830727",
+   "league": "England: National League Cup",
+   "home": "Aldershot",
+   "away": "West Ham U21",
+   "kickoff": "2026-09-08T18:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9537400",
+   "main_id": "2026090830805",
+   "league": "England: National League Cup",
+   "home": "Braintree",
+   "away": "Fulham U21",
+   "kickoff": "2026-09-08T18:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9537401",
+   "main_id": "2026090831187",
+   "league": "England: National League Cup",
+   "home": "Worthing",
+   "away": "Norwich U21",
+   "kickoff": "2026-09-08T18:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9537402",
+   "main_id": "2026090831195",
+   "league": "England: National League Cup",
+   "home": "Woking",
+   "away": "Southampton U21",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9551377",
+   "main_id": "2026090841711",
+   "league": "England: Fa Cup - Qualification",
+   "home": "Pagham",
+   "away": "Ascot",
+   "kickoff": "2026-09-08T18:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9549919",
+   "main_id": "2026090834858",
+   "league": "England: Fa Cup - Qualification",
+   "home": "AFC Stoneham",
+   "away": "Basingstoke",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9549842",
+   "main_id": "2026090855763",
+   "league": "England: Fa Cup - Qualification",
+   "home": "Barton Town",
+   "away": "North Ferriby FC",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9551361",
+   "main_id": "2026090829913",
+   "league": "England: Fa Cup - Qualification",
+   "home": "Bishop Auckland",
+   "away": "Emley",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9549961",
+   "main_id": "2026090860674",
+   "league": "England: Fa Cup - Qualification",
+   "home": "Boldmere",
+   "away": "Bourne",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9549805",
+   "main_id": "2026090818170",
+   "league": "England: Fa Cup - Qualification",
+   "home": "Brentwood",
+   "away": "Concord",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9549774",
+   "main_id": "2026090846246",
+   "league": "England: Fa Cup - Qualification",
+   "home": "Buckhurst Hill",
+   "away": "Yaxley",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9549862",
+   "main_id": "2026090818365",
+   "league": "England: Fa Cup - Qualification",
+   "home": "Cray Wanderers",
+   "away": "Lewes",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9549920",
+   "main_id": "2026090830026",
+   "league": "England: Fa Cup - Qualification",
+   "home": "Dartford",
+   "away": "Westfield",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9549863",
+   "main_id": "2026090836997",
+   "league": "England: Fa Cup - Qualification",
+   "home": "Exmouth Town",
+   "away": "Banbury",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9549921",
+   "main_id": "2026090830211",
+   "league": "England: Fa Cup - Qualification",
+   "home": "Fakenham",
+   "away": "Ware",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9549827",
+   "main_id": "2026090827519",
+   "league": "England: Fa Cup - Qualification",
+   "home": "Felixstowe and Walton",
+   "away": "Wingate and Finchley",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9549828",
+   "main_id": "2026090837142",
+   "league": "England: Fa Cup - Qualification",
+   "home": "Guiseley",
+   "away": "Stockton",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9549962",
+   "main_id": "2026090842985",
+   "league": "England: Fa Cup - Qualification",
+   "home": "Hashtag",
+   "away": "St. Albans",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9549864",
+   "main_id": "2026090818302",
+   "league": "England: Fa Cup - Qualification",
+   "home": "Havant and W",
+   "away": "Chippenham",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9549829",
+   "main_id": "2026090818251",
+   "league": "England: Fa Cup - Qualification",
+   "home": "Hitchin",
+   "away": "Biggleswade Town",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9549416",
+   "main_id": "2026090843979",
+   "league": "England: Fa Cup - Qualification",
+   "home": "Jersey Bulls",
+   "away": "Burgess Hill",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9550150",
+   "main_id": "2026090827337",
+   "league": "England: Fa Cup - Qualification",
+   "home": "Kettering",
+   "away": "Wellingborough",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9549865",
+   "main_id": "2026090818431",
+   "league": "England: Fa Cup - Qualification",
+   "home": "Leiston",
+   "away": "Grays",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9549866",
+   "main_id": "2026090818443",
+   "league": "England: Fa Cup - Qualification",
+   "home": "Mangotsfield",
+   "away": "Gloucester",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9549867",
+   "main_id": "2026090818656",
+   "league": "England: Fa Cup - Qualification",
+   "home": "Needham Market",
+   "away": "Stanway",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9549806",
+   "main_id": "2026090835446",
+   "league": "England: Fa Cup - Qualification",
+   "home": "Newmarket",
+   "away": "Canvey",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9549908",
+   "main_id": "2026090835333",
+   "league": "England: Fa Cup - Qualification",
+   "home": "Portishead Town",
+   "away": "Wimborne",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9549830",
+   "main_id": "2026090870540",
+   "league": "England: Fa Cup - Qualification",
+   "home": "Prestwich Heys",
+   "away": "South Liverpool",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9549868",
+   "main_id": "2026090827324",
+   "league": "England: Fa Cup - Qualification",
+   "home": "Tadcaster",
+   "away": "Lancaster",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9549807",
+   "main_id": "2026090818774",
+   "league": "England: Fa Cup - Qualification",
+   "home": "Warrington",
+   "away": "Shildon",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9549775",
+   "main_id": "2026090827546",
+   "league": "England: Fa Cup - Qualification",
+   "home": "Welling",
+   "away": "Faversham",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9549869",
+   "main_id": "2026090818557",
+   "league": "England: Fa Cup - Qualification",
+   "home": "Whyteleafe",
+   "away": "Crowborough",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9549354",
+   "main_id": "2026090854549",
+   "league": "England: Fa Cup - Qualification",
+   "home": "Worcester",
+   "away": "Knowle",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542013",
+   "main_id": "2026090818300",
+   "league": "England: Efl Cup",
+   "home": "Bournemouth",
+   "away": "Lincoln",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542015",
+   "main_id": "2026090818401",
+   "league": "England: Efl Cup",
+   "home": "Crystal Palace",
+   "away": "Middlesbrough",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542019",
+   "main_id": "2026090818302",
+   "league": "England: Efl Cup",
+   "home": "Leyton Orient",
+   "away": "Bradford City",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542026",
+   "main_id": "2026090818605",
+   "league": "England: Efl Cup",
+   "home": "Sunderland",
+   "away": "Hull",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542023",
+   "main_id": "2026090818563",
+   "league": "England: Efl Cup",
+   "home": "Millwall",
+   "away": "Newcastle",
+   "kickoff": "2026-09-08T19:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9530774",
+   "main_id": "2026090818355",
+   "league": "England: Efl Trophy",
+   "home": "Doncaster",
+   "away": "Huddersfield",
+   "kickoff": "2026-09-08T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9530777",
+   "main_id": "2026090830891",
+   "league": "England: Efl Trophy",
+   "home": "Exeter",
+   "away": "Tottenham U21",
+   "kickoff": "2026-09-08T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9536402",
+   "main_id": "2026090875922",
+   "league": "England: Premier League Cup",
+   "home": "Fleetwood U21",
+   "away": "Burnley U21",
+   "kickoff": "2026-09-08T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9537415",
+   "main_id": "2026090874327",
+   "league": "England: Premier League Cup",
+   "home": "Hull U21",
+   "away": "Brentford U21",
+   "kickoff": "2026-09-08T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9536716",
+   "main_id": "2026090819013",
+   "league": "Estonia: Meistriliiga",
+   "home": "Narva",
+   "away": "Flora",
+   "kickoff": "2026-09-08T14:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9536715",
+   "main_id": "2026090819020",
+   "league": "Estonia: Meistriliiga",
+   "home": "Kalju",
+   "away": "Nomme Utd",
+   "kickoff": "2026-09-08T15:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542367",
+   "main_id": "2026090817160",
+   "league": "Europe: Champions League - League Phase",
+   "home": "AEK Athens",
+   "away": "LASK",
+   "kickoff": "2026-09-08T16:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9543323",
+   "main_id": "2026090815760",
+   "league": "Europe: Champions League - League Phase",
+   "home": "Club Brugge KV",
+   "away": "Aston Villa",
+   "kickoff": "2026-09-08T16:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9543344",
+   "main_id": "2026090826573",
+   "league": "Europe: Champions League - League Phase",
+   "home": "Dortmund",
+   "away": "Villarreal",
+   "kickoff": "2026-09-08T19:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542336",
+   "main_id": "2026090823667",
+   "league": "Europe: Champions League - League Phase",
+   "home": "FC Porto",
+   "away": "Manchester City",
+   "kickoff": "2026-09-08T19:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9543345",
+   "main_id": "2026090826111",
+   "league": "Europe: Champions League - League Phase",
+   "home": "Lille",
+   "away": "Betis",
+   "kickoff": "2026-09-08T19:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542328",
+   "main_id": "2026090828027",
+   "league": "Europe: Champions League - League Phase",
+   "home": "Real Madrid",
+   "away": "Inter",
+   "kickoff": "2026-09-08T19:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9455720",
+   "main_id": "",
+   "league": "Europe: Uefa Regions' Cup - Qualification",
+   "home": "Pest Region",
+   "away": "Federacion de Canarias",
+   "kickoff": "2026-09-08T08:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9455719",
+   "main_id": "",
+   "league": "Europe: Uefa Regions' Cup - Qualification",
+   "home": "Cilicia",
+   "away": "Bitola",
+   "kickoff": "2026-09-08T09:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9455722",
+   "main_id": "",
+   "league": "Europe: Uefa Regions' Cup - Qualification",
+   "home": "Tim Rhanbarthol y De",
+   "away": "Zenica-Doboj Canton",
+   "kickoff": "2026-09-08T09:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9455721",
+   "main_id": "",
+   "league": "Europe: Uefa Regions' Cup - Qualification",
+   "home": "Zemgale",
+   "away": "Hapoel Beit Shean Mesilot",
+   "kickoff": "2026-09-08T14:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9544305",
+   "main_id": "2026090875401",
+   "league": "Europe: Uefa Youth League - League Phase",
+   "home": "AEK U19",
+   "away": "LASK U19",
+   "kickoff": "2026-09-08T09:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9544308",
+   "main_id": "2026090844159",
+   "league": "Europe: Uefa Youth League - League Phase",
+   "home": "FC Porto U19",
+   "away": "Manchester City U19",
+   "kickoff": "2026-09-08T11:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9544306",
+   "main_id": "2026090848099",
+   "league": "Europe: Uefa Youth League - League Phase",
+   "home": "Club Brugge U19",
+   "away": "Aston Villa U19",
+   "kickoff": "2026-09-08T12:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9544309",
+   "main_id": "2026090873394",
+   "league": "Europe: Uefa Youth League - League Phase",
+   "home": "Lille U19",
+   "away": "Betis U19",
+   "kickoff": "2026-09-08T13:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9544307",
+   "main_id": "2026090846529",
+   "league": "Europe: Uefa Youth League - League Phase",
+   "home": "Dortmund U19",
+   "away": "Villarreal U19",
+   "kickoff": "2026-09-08T14:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9544310",
+   "main_id": "2026090851152",
+   "league": "Europe: Uefa Youth League - League Phase",
+   "home": "Real Madrid U19",
+   "away": "Inter U19",
+   "kickoff": "2026-09-08T14:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9546355",
+   "main_id": "2026090819561",
+   "league": "Finland: Veikkausliiga - Championship Group",
+   "home": "VPS",
+   "away": "AC Oulu",
+   "kickoff": "2026-09-08T15:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9546356",
+   "main_id": "2026090819401",
+   "league": "Finland: Veikkausliiga - Championship Group",
+   "home": "Gnistan",
+   "away": "KuPS",
+   "kickoff": "2026-09-08T16:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9546375",
+   "main_id": "2026090819365",
+   "league": "Finland: Veikkausliiga - Relegation Group",
+   "home": "Ilves",
+   "away": "Jaro",
+   "kickoff": "2026-09-08T15:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9546376",
+   "main_id": "2026090819462",
+   "league": "Finland: Veikkausliiga - Relegation Group",
+   "home": "Lahti",
+   "away": "Mariehamn",
+   "kickoff": "2026-09-08T15:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9546377",
+   "main_id": "2026090819584",
+   "league": "Finland: Veikkausliiga - Relegation Group",
+   "home": "TPS",
+   "away": "SJK",
+   "kickoff": "2026-09-08T15:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541553",
+   "main_id": "2026090819430",
+   "league": "Finland: Kakkonen Group A - Winners Stage",
+   "home": "PEPO",
+   "away": "HIFK",
+   "kickoff": "2026-09-08T15:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541554",
+   "main_id": "2026090844680",
+   "league": "Finland: Kakkonen Group A - Winners Stage",
+   "home": "HPS",
+   "away": "PPJ",
+   "kickoff": "2026-09-08T16:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541555",
+   "main_id": "2026090819351",
+   "league": "Finland: Kakkonen Group A - Winners Stage",
+   "home": "Kiffen",
+   "away": "Atlantis",
+   "kickoff": "2026-09-08T16:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9544009",
+   "main_id": "2026090820882",
+   "league": "Germany: Regionalliga Sudwest",
+   "home": "Aalen",
+   "away": "Ulm",
+   "kickoff": "2026-09-08T17:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9543081",
+   "main_id": "2026090820736",
+   "league": "Germany: Regionalliga Sudwest",
+   "home": "Eintracht Trier",
+   "away": "Freiburg II",
+   "kickoff": "2026-09-08T17:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9539395",
+   "main_id": "2026090820826",
+   "league": "Germany: Regionalliga Sudwest",
+   "home": "FSV Frankfurt",
+   "away": "Kassel",
+   "kickoff": "2026-09-08T17:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9544010",
+   "main_id": "2026090834110",
+   "league": "Germany: Regionalliga Sudwest",
+   "home": "Offenbach",
+   "away": "Steinbach Haiger",
+   "kickoff": "2026-09-08T17:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9544011",
+   "main_id": "2026090820953",
+   "league": "Germany: Regionalliga Sudwest",
+   "home": "Sandhausen",
+   "away": "Freiberg",
+   "kickoff": "2026-09-08T17:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9543082",
+   "main_id": "2026090820872",
+   "league": "Germany: Regionalliga Sudwest",
+   "home": "Walldorf",
+   "away": "Stutt. Kickers",
+   "kickoff": "2026-09-08T17:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9540612",
+   "main_id": "2026090850741",
+   "league": "Germany: Oberliga Hessen",
+   "home": "Friedberg",
+   "away": "Eddersheim",
+   "kickoff": "2026-09-08T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9539425",
+   "main_id": "2026090836391",
+   "league": "Germany: Oberliga Rheinland-Pfalz/Saar",
+   "home": "RW Koblenz",
+   "away": "Engers",
+   "kickoff": "2026-09-08T17:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9540614",
+   "main_id": "2026090841507",
+   "league": "Germany: Oberliga Rheinland-Pfalz/Saar",
+   "home": "Gonsenheim",
+   "away": "Diefflen",
+   "kickoff": "2026-09-08T17:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541644",
+   "main_id": "2026090839583",
+   "league": "Greece: Greek Cup",
+   "home": "Olympiacos Piraeus",
+   "away": "Volos",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9544931",
+   "main_id": "2026090856498",
+   "league": "Iraq: Stars League",
+   "home": "Duhok",
+   "away": "Ghaz Al Shamal",
+   "kickoff": "2026-09-08T15:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9544932",
+   "main_id": "2026090852831",
+   "league": "Iraq: Stars League",
+   "home": "Erbil",
+   "away": "Diyala",
+   "kickoff": "2026-09-08T15:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9544925",
+   "main_id": "2026090854297",
+   "league": "Iraq: Stars League",
+   "home": "Al Gharraf",
+   "away": "Al Shorta",
+   "kickoff": "2026-09-08T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9533869",
+   "main_id": "2026090854681",
+   "league": "Italy: Primavera 2",
+   "home": "Palermo U19",
+   "away": "Pescara U19",
+   "kickoff": "2026-09-08T09:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541471",
+   "main_id": "2026090876674",
+   "league": "Kazakhstan: League Women",
+   "home": "Aktobe W",
+   "away": "Okzhetpes W",
+   "kickoff": "2026-09-08T11:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541472",
+   "main_id": "",
+   "league": "Kazakhstan: League Women",
+   "home": "Kyzylzhar W",
+   "away": "Altai W",
+   "kickoff": "2026-09-08T12:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541827",
+   "main_id": "",
+   "league": "Kazakhstan: League Women",
+   "home": "Zhenis Astana W",
+   "away": "Ertis Pavlodar W",
+   "kickoff": "2026-09-08T13:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541828",
+   "main_id": "",
+   "league": "Kazakhstan: League Women",
+   "home": "FC Astana W",
+   "away": "Tobol W",
+   "kickoff": "2026-09-08T14:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9546322",
+   "main_id": "2026090845739",
+   "league": "Kosovo: Superliga",
+   "home": "Drenica",
+   "away": "Prishtina",
+   "kickoff": "2026-09-08T14:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9546323",
+   "main_id": "2026090847832",
+   "league": "Kosovo: Superliga",
+   "home": "Vushtrria",
+   "away": "KF Llapi",
+   "kickoff": "2026-09-08T14:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545782",
+   "main_id": "2026090846357",
+   "league": "Liechtenstein: Liechtenstein Cup",
+   "home": "Ruggell B",
+   "away": "Schaan",
+   "kickoff": "2026-09-08T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542155",
+   "main_id": "2026090857910",
+   "league": "Malaysia: Fa Cup",
+   "home": "Negeri Sembilan",
+   "away": "Kelantan City",
+   "kickoff": "2026-09-08T08:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542156",
+   "main_id": "2026090876617",
+   "league": "Malaysia: Fa Cup",
+   "home": "Kuching City FC",
+   "away": "Kelantan Red Warrior",
+   "kickoff": "2026-09-08T12:15:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542157",
+   "main_id": "2026090855378",
+   "league": "Malaysia: Fa Cup",
+   "home": "Johor DT",
+   "away": "Damansara",
+   "kickoff": "2026-09-08T12:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542158",
+   "main_id": "2026090845435",
+   "league": "Malaysia: Fa Cup",
+   "home": "Star City",
+   "away": "Kedah",
+   "kickoff": "2026-09-08T13:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9537871",
+   "main_id": "2026090866559",
+   "league": "Mexico: Primera Premier",
+   "home": "Inter Playa Del Carmen",
+   "away": "Pioneros",
+   "kickoff": "2026-09-08T02:05:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541700",
+   "main_id": "2026090867182",
+   "league": "Mexico: Liga Mx Women - Apertura",
+   "home": "Club Leon W",
+   "away": "Puebla W",
+   "kickoff": "2026-09-08T01:06:00+00:00"
+  },
+  {
+   "fallback_id_3": "9535685",
+   "main_id": "2026090826171",
+   "league": "Montenegro: Prva Crnogorska Liga",
+   "home": "Sutjeska",
+   "away": "Mornar Bar",
+   "kickoff": "2026-09-08T17:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9535825",
+   "main_id": "2026090826740",
+   "league": "Netherlands: Eredivisie",
+   "home": "Utrecht",
+   "away": "G.A. Eagles",
+   "kickoff": "2026-09-08T12:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9324493",
+   "main_id": "2026090826593",
+   "league": "Netherlands: Eredivisie",
+   "home": "Nijmegen",
+   "away": "Excelsior",
+   "kickoff": "2026-09-08T16:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9528578",
+   "main_id": "2026090833667",
+   "league": "North and Central America: Concacaf Caribbean Cup",
+   "home": "Sando",
+   "away": "Delfines Del Este",
+   "kickoff": "2026-09-08T23:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9328860",
+   "main_id": "2026090827293",
+   "league": "Northern Ireland: Nifl Premiership",
+   "home": "Larne",
+   "away": "Bangor FC",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545914",
+   "main_id": "2026090844850",
+   "league": "Norway: Nm Cup",
+   "home": "Djerv 1919",
+   "away": "Haugesund",
+   "kickoff": "2026-09-08T16:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545915",
+   "main_id": "2026090827584",
+   "league": "Norway: Nm Cup",
+   "home": "Tromsdalen",
+   "away": "Strommen",
+   "kickoff": "2026-09-08T16:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545913",
+   "main_id": "2026090827480",
+   "league": "Norway: Nm Cup",
+   "home": "Asker",
+   "away": "Stromsgodset",
+   "kickoff": "2026-09-08T17:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9536427",
+   "main_id": "2026090866620",
+   "league": "Panama: Lpf - Apertura",
+   "home": "UMECIT",
+   "away": "Independiente",
+   "kickoff": "2026-09-08T01:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542600",
+   "main_id": "2026090852088",
+   "league": "Paraguay: Division Intermedia",
+   "home": "3 de Noviembre",
+   "away": "Sol de America",
+   "kickoff": "2026-09-08T13:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542601",
+   "main_id": "2026090871607",
+   "league": "Paraguay: Division Intermedia",
+   "home": "Paraguari AC",
+   "away": "Guairena",
+   "kickoff": "2026-09-08T13:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542602",
+   "main_id": "2026090851161",
+   "league": "Paraguay: Division Intermedia",
+   "home": "General Caballero JLM",
+   "away": "Resistencia",
+   "kickoff": "2026-09-08T22:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9538686",
+   "main_id": "2026090861495",
+   "league": "Portugal: Liga Next Gen U23",
+   "home": "Estoril U23",
+   "away": "Famalicao U23",
+   "kickoff": "2026-09-08T10:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541677",
+   "main_id": "2026090874884",
+   "league": "Portugal: Liga Next Gen U23",
+   "home": "Portimonense U23",
+   "away": "Felgueiras U23",
+   "kickoff": "2026-09-08T10:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541962",
+   "main_id": "2026090868548",
+   "league": "Portugal: Liga Next Gen U23",
+   "home": "Rio Ave U23",
+   "away": "Torreense U23",
+   "kickoff": "2026-09-08T10:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541959",
+   "main_id": "2026090867054",
+   "league": "Portugal: Liga Next Gen U23",
+   "home": "Maritimo U23",
+   "away": "Gil Vicente U23",
+   "kickoff": "2026-09-08T14:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541960",
+   "main_id": "2026090883218",
+   "league": "Portugal: Liga Next Gen U23",
+   "home": "Academico Viseu U23",
+   "away": "Moreirense U23",
+   "kickoff": "2026-09-08T16:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541961",
+   "main_id": "2026090879465",
+   "league": "Portugal: Liga Next Gen U23",
+   "home": "Estrela U23",
+   "away": "Leiria U23",
+   "kickoff": "2026-09-08T16:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9493964",
+   "main_id": "2026090829010",
+   "league": "Qatar: Qsl 2",
+   "home": "Al Mesaimeer",
+   "away": "Al-Kharitiyath",
+   "kickoff": "2026-09-08T14:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9493968",
+   "main_id": "2026090875127",
+   "league": "Qatar: Qsl 2",
+   "home": "Shamal 2",
+   "away": "Al Bidda",
+   "kickoff": "2026-09-08T16:15:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541633",
+   "main_id": "2026090829758",
+   "league": "Russia: Russian Cup - Regions Path",
+   "home": "Ryazan",
+   "away": "S. Kostroma",
+   "kickoff": "2026-09-08T14:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9534300",
+   "main_id": "2026090829716",
+   "league": "Russia: Russian Cup - Regions Path",
+   "home": "Tekstilshtik",
+   "away": "Arsenal Tula",
+   "kickoff": "2026-09-08T16:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9530016",
+   "main_id": "2026090829943",
+   "league": "San Marino: Coppa Titano",
+   "home": "Domagnano",
+   "away": "Faetano",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9530017",
+   "main_id": "2026090829956",
+   "league": "San Marino: Coppa Titano",
+   "home": "Fiorentino",
+   "away": "Tre Fiori",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9530018",
+   "main_id": "2026090829951",
+   "league": "San Marino: Coppa Titano",
+   "home": "San Giovanni",
+   "away": "Cosmos",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9530019",
+   "main_id": "2026090829960",
+   "league": "San Marino: Coppa Titano",
+   "home": "Tre Penne",
+   "away": "Juvenes/Dogana",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542875",
+   "main_id": "2026090829999",
+   "league": "Saudi Arabia: Saudi Professional League",
+   "home": "Al Ettifaq",
+   "away": "Al-Faisaly",
+   "kickoff": "2026-09-08T15:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542876",
+   "main_id": "2026090830019",
+   "league": "Saudi Arabia: Saudi Professional League",
+   "home": "Al Hazem",
+   "away": "Al Taawon",
+   "kickoff": "2026-09-08T15:55:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542877",
+   "main_id": "2026090830001",
+   "league": "Saudi Arabia: Saudi Professional League",
+   "home": "Al Ittihad",
+   "away": "Al Fayha",
+   "kickoff": "2026-09-08T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9543963",
+   "main_id": "2026090830003",
+   "league": "Saudi Arabia: Saudi Professional League",
+   "home": "Al Qadsiah",
+   "away": "Al Ahli SC",
+   "kickoff": "2026-09-08T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542105",
+   "main_id": "2026090838330",
+   "league": "Saudi Arabia: Division 1",
+   "home": "Al Zulfi",
+   "away": "Hajer",
+   "kickoff": "2026-09-08T15:50:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542106",
+   "main_id": "2026090857618",
+   "league": "Saudi Arabia: Division 1",
+   "home": "Damac",
+   "away": "Al-Ula",
+   "kickoff": "2026-09-08T15:50:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542675",
+   "main_id": "2026090847188",
+   "league": "Saudi Arabia: Division 1",
+   "home": "Al Anwar",
+   "away": "Al Taee",
+   "kickoff": "2026-09-08T17:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541966",
+   "main_id": "2026090844648",
+   "league": "Scotland: Challenge Cup",
+   "home": "Airdrieonians",
+   "away": "St. Mirren B",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541967",
+   "main_id": "2026090840781",
+   "league": "Scotland: Challenge Cup",
+   "home": "Annan",
+   "away": "Motherwell B",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541968",
+   "main_id": "2026090830114",
+   "league": "Scotland: Challenge Cup",
+   "home": "Banks O' Dee",
+   "away": "Forfar Athletic",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541969",
+   "main_id": "2026090845193",
+   "league": "Scotland: Challenge Cup",
+   "home": "Berwick",
+   "away": "Hibernian B",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541970",
+   "main_id": "2026090830118",
+   "league": "Scotland: Challenge Cup",
+   "home": "Clyde",
+   "away": "East Fife",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541971",
+   "main_id": "2026090849790",
+   "league": "Scotland: Challenge Cup",
+   "home": "Clydebank FC",
+   "away": "Alloa",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541972",
+   "main_id": "2026090830117",
+   "league": "Scotland: Challenge Cup",
+   "home": "Cove Rangers",
+   "away": "Dumbarton",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541973",
+   "main_id": "2026090851614",
+   "league": "Scotland: Challenge Cup",
+   "home": "Cowdenbeath",
+   "away": "Kilmarnock B",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541974",
+   "main_id": "2026090849943",
+   "league": "Scotland: Challenge Cup",
+   "home": "Cumbernauld Colts",
+   "away": "Kelty Hearts",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541975",
+   "main_id": "2026090838863",
+   "league": "Scotland: Challenge Cup",
+   "home": "East Kilbride",
+   "away": "Bonnyrigg Rose",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541976",
+   "main_id": "2026090830179",
+   "league": "Scotland: Challenge Cup",
+   "home": "Edinburgh City",
+   "away": "Queen of South",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541977",
+   "main_id": "2026090830148",
+   "league": "Scotland: Challenge Cup",
+   "home": "Elgin City",
+   "away": "Fraserburgh",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541978",
+   "main_id": "2026090849874",
+   "league": "Scotland: Challenge Cup",
+   "home": "Formartine Utd",
+   "away": "Dundee Utd B",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541979",
+   "main_id": "2026090845226",
+   "league": "Scotland: Challenge Cup",
+   "home": "Gala Fairydean",
+   "away": "Hearts B",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541980",
+   "main_id": "2026090840847",
+   "league": "Scotland: Challenge Cup",
+   "home": "Montrose",
+   "away": "Dundee FC B",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541981",
+   "main_id": "2026090830158",
+   "league": "Scotland: Challenge Cup",
+   "home": "Peterhead",
+   "away": "Clachnacuddin",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541982",
+   "main_id": "2026090845265",
+   "league": "Scotland: Challenge Cup",
+   "home": "Ross County",
+   "away": "Aberdeen B",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541983",
+   "main_id": "2026090830201",
+   "league": "Scotland: Challenge Cup",
+   "home": "Spartans",
+   "away": "Hamilton",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541984",
+   "main_id": "2026090845271",
+   "league": "Scotland: Challenge Cup",
+   "home": "Stirling",
+   "away": "Rangers B",
+   "kickoff": "2026-09-08T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9540900",
+   "main_id": "",
+   "league": "Singapore: Premier League 2",
+   "home": "Lion City II",
+   "away": "Hougang II",
+   "kickoff": "2026-09-08T11:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542067",
+   "main_id": "2026090849879",
+   "league": "Slovakia: Slovak Cup",
+   "home": "MSK Lucenec",
+   "away": "Komarno",
+   "kickoff": "2026-09-08T14:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542066",
+   "main_id": "2026090848758",
+   "league": "Slovakia: Slovak Cup",
+   "home": "Medzev",
+   "away": "Michalovce",
+   "kickoff": "2026-09-08T14:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541812",
+   "main_id": "2026090852877",
+   "league": "Slovakia: Slovak Cup",
+   "home": "Namestovo",
+   "away": "MFK Bytca",
+   "kickoff": "2026-09-08T14:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545785",
+   "main_id": "2026090833654",
+   "league": "Slovakia: Slovak Cup",
+   "home": "Raca",
+   "away": "Samorin",
+   "kickoff": "2026-09-08T14:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542069",
+   "main_id": "2026090830867",
+   "league": "Slovakia: Slovak Cup",
+   "home": "Spisska Nova Ves",
+   "away": "Podbrezova",
+   "kickoff": "2026-09-08T14:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9534459",
+   "main_id": "2026090870893",
+   "league": "South Africa: Motsepe Foundation Championship",
+   "home": "Orbit College",
+   "away": "Lerumo Lions",
+   "kickoff": "2026-09-08T13:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9537853",
+   "main_id": "2026090813337",
+   "league": "South America: Copa Libertadores - Play Offs",
+   "home": "Fluminense",
+   "away": "Platense",
+   "kickoff": "2026-09-08T22:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542143",
+   "main_id": "2026090815819",
+   "league": "South America: Copa Sudamericana - Play Offs",
+   "home": "Santa Fe",
+   "away": "Vasco",
+   "kickoff": "2026-09-08T22:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9537419",
+   "main_id": "2026090913506",
+   "league": "South America: Copa Sudamericana - Play Offs",
+   "home": "Boca Juniors",
+   "away": "Sao Paulo",
+   "kickoff": "2026-09-09T00:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541335",
+   "main_id": "2026090824647",
+   "league": "South Korea: K League 1",
+   "home": "Incheon",
+   "away": "Bucheon FC 1995",
+   "kickoff": "2026-09-08T10:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541336",
+   "main_id": "2026090824683",
+   "league": "South Korea: K League 1",
+   "home": "Ulsan HD",
+   "away": "Seoul",
+   "kickoff": "2026-09-08T10:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545306",
+   "main_id": "2026090841022",
+   "league": "Spain: Copa Federacion",
+   "home": "San Fernando",
+   "away": "Orihuela",
+   "kickoff": "2026-09-08T09:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545786",
+   "main_id": "",
+   "league": "Sri Lanka: Super League",
+   "home": "Colombo",
+   "away": "UP Country Lions",
+   "kickoff": "2026-09-08T10:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9510063",
+   "main_id": "2026090846026",
+   "league": "Tajikistan: Vysshaya Liga",
+   "home": "Ravshan",
+   "away": "Parvoz-Aeroport Khujand",
+   "kickoff": "2026-09-08T13:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9509488",
+   "main_id": "2026090841196",
+   "league": "Tajikistan: Vysshaya Liga",
+   "home": "Regar-TadAZ",
+   "away": "Khujand",
+   "kickoff": "2026-09-08T13:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542205",
+   "main_id": "2026090850808",
+   "league": "Ukraine: Ukrainian Cup",
+   "home": "Olympia Savyntsi",
+   "away": "Kryvbas",
+   "kickoff": "2026-09-08T10:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542202",
+   "main_id": "2026090887599",
+   "league": "Ukraine: Ukrainian Cup",
+   "home": "Bazys",
+   "away": "Mayak Sarny",
+   "kickoff": "2026-09-08T12:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545658",
+   "main_id": "2026090873258",
+   "league": "USA: Mls Next Pro",
+   "home": "Atlanta United 2",
+   "away": "Connecticut FC",
+   "kickoff": "2026-09-08T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545787",
+   "main_id": "2026090860606",
+   "league": "USA: Mls Next Pro",
+   "home": "New York City II",
+   "away": "New York Red Bulls II",
+   "kickoff": "2026-09-08T23:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9467977",
+   "main_id": "2026090844109",
+   "league": "USA: Mls Next Pro",
+   "home": "Toronto FC II",
+   "away": "Columbus Crew 2",
+   "kickoff": "2026-09-08T23:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9534172",
+   "main_id": "2026090855051",
+   "league": "USA: Usl Cup - Play Offs",
+   "home": "Hartford Athletic",
+   "away": "Colorado Springs",
+   "kickoff": "2026-09-08T23:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9534173",
+   "main_id": "2026090949890",
+   "league": "USA: Usl Cup - Play Offs",
+   "home": "San Antonio",
+   "away": "Louisville City",
+   "kickoff": "2026-09-09T00:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9546502",
+   "main_id": "2026090742274",
+   "league": "Venezuela: Liga Futve - Clausura",
+   "home": "Universidad Central",
+   "away": "Puerto Cabello",
+   "kickoff": "2026-09-07T23:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9240544",
+   "main_id": "2026090884467",
+   "league": "World: World Cup Women U20",
+   "home": "Benin U20 W",
+   "away": "Argentina U20 W",
+   "kickoff": "2026-09-08T13:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9240545",
+   "main_id": "2026090854180",
+   "league": "World: World Cup Women U20",
+   "home": "Brazil U20 W",
+   "away": "Canada U20 W",
+   "kickoff": "2026-09-08T13:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9240546",
+   "main_id": "2026090888977",
+   "league": "World: World Cup Women U20",
+   "home": "England U20 W",
+   "away": "Tanzania U20 W",
+   "kickoff": "2026-09-08T16:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9240547",
+   "main_id": "2026090871628",
+   "league": "World: World Cup Women U20",
+   "home": "Poland U20 W",
+   "away": "Mexico U20 W",
+   "kickoff": "2026-09-08T16:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542590",
+   "main_id": "2026090879835",
+   "league": "World: Friendly International Women",
+   "home": "Chile U20 W",
+   "away": "Uruguay U20 W",
+   "kickoff": "2026-09-08T20:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9546228",
+   "main_id": "2026090911654",
+   "league": "Andorra: Super Cup",
+   "home": "Inter Escaldes",
+   "away": "Atletic Escaldes",
+   "kickoff": "2026-09-09T17:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9540792",
+   "main_id": "2026090911718",
+   "league": "Angola: Girabola",
+   "home": "Cabinda",
+   "away": "Primeiro de Agosto",
+   "kickoff": "2026-09-09T14:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9366568",
+   "main_id": "2026090911979",
+   "league": "Argentina: Primera Nacional",
+   "home": "Def. de Belgrano",
+   "away": "Los Andes",
+   "kickoff": "2026-09-09T18:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541493",
+   "main_id": "2026090911889",
+   "league": "Argentina: Copa Argentina",
+   "home": "Dep. Riestra",
+   "away": "Banfield",
+   "kickoff": "2026-09-09T22:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9546234",
+   "main_id": "2026090973823",
+   "league": "Argentina: Reserve League - Clausura",
+   "home": "Instituto 2",
+   "away": "Sarmiento Junin 2",
+   "kickoff": "2026-09-09T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9546235",
+   "main_id": "2026090972108",
+   "league": "Argentina: Reserve League - Clausura",
+   "home": "Platense 2",
+   "away": "Boca Juniors 2",
+   "kickoff": "2026-09-09T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9546240",
+   "main_id": "2026090972126",
+   "league": "Argentina: Reserve League - Clausura",
+   "home": "San Lorenzo 2",
+   "away": "Union de Santa Fe 2",
+   "kickoff": "2026-09-09T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9546241",
+   "main_id": "2026090977822",
+   "league": "Argentina: Reserve League - Clausura",
+   "home": "San Martin S.J. 2",
+   "away": "Defensa y Justicia 2",
+   "kickoff": "2026-09-09T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9546242",
+   "main_id": "2026090968512",
+   "league": "Argentina: Reserve League - Clausura",
+   "home": "Talleres Cordoba 2",
+   "away": "Barracas Central 2",
+   "kickoff": "2026-09-09T20:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9546231",
+   "main_id": "2026090980031",
+   "league": "Argentina: Reserve League - Clausura",
+   "home": "Central Cordoba 2",
+   "away": "Estudiantes Rio Cuarto 2",
+   "kickoff": "2026-09-09T22:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9346504",
+   "main_id": "2026090948575",
+   "league": "Armenia: Premier League",
+   "home": "Sardarapat",
+   "away": "Pyunik Yerevan",
+   "kickoff": "2026-09-09T12:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9537579",
+   "main_id": "2026090912486",
+   "league": "Australia: Australia Cup",
+   "home": "Sydney FC",
+   "away": "Melbourne Victory",
+   "kickoff": "2026-09-09T09:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9033423",
+   "main_id": "",
+   "league": "Australia and Oceania: Ofc Championship U16 Women",
+   "home": "New Zealand U16 W",
+   "away": "Fiji U16 W",
+   "kickoff": "2026-09-09T05:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9170063",
+   "main_id": "",
+   "league": "Australia and Oceania: Ofc Championship U16 Women",
+   "home": "Cook Islands U16 W",
+   "away": "Solomon Islands U16 W",
+   "kickoff": "2026-09-09T08:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9540649",
+   "main_id": "2026090912787",
+   "league": "Austria: Regionalliga West",
+   "home": "Kitzbuhel",
+   "away": "SC Imst",
+   "kickoff": "2026-09-09T17:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9537625",
+   "main_id": "2026090913141",
+   "league": "Azerbaijan: I Liqa",
+   "home": "Sahdag Qusar",
+   "away": "Karvan",
+   "kickoff": "2026-09-09T12:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9546245",
+   "main_id": "2026090960764",
+   "league": "Bhutan: Premier League",
+   "home": "BFF Academy U19",
+   "away": "Transport United",
+   "kickoff": "2026-09-09T12:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9531259",
+   "main_id": "2026090944294",
+   "league": "Bolivia: Copa Pacena",
+   "home": "Real Oruro",
+   "away": "Nacional Potosi",
+   "kickoff": "2026-09-09T19:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9537375",
+   "main_id": "2026090942396",
+   "league": "Bolivia: Copa Pacena",
+   "home": "Universitario de Vinto",
+   "away": "The Strongest",
+   "kickoff": "2026-09-09T22:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9537849",
+   "main_id": "2026091045816",
+   "league": "Bolivia: Copa Pacena",
+   "home": "Blooming",
+   "away": "GV San Jose",
+   "kickoff": "2026-09-10T00:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9347576",
+   "main_id": "2026090914146",
+   "league": "Bosnia And Herzegovina: Wwin Liga Bih",
+   "home": "Zeljeznicar",
+   "away": "FK Sarajevo",
+   "kickoff": "2026-09-09T16:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9544442",
+   "main_id": "2026090928838",
+   "league": "Brazil: Serie B",
+   "home": "Botafogo SP",
+   "away": "Novorizontino",
+   "kickoff": "2026-09-09T22:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9544443",
+   "main_id": "2026090914459",
+   "league": "Brazil: Serie B",
+   "home": "Fortaleza",
+   "away": "Avai",
+   "kickoff": "2026-09-09T22:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545712",
+   "main_id": "2026090914562",
+   "league": "Brazil: Serie B",
+   "home": "America MG",
+   "away": "Nautico",
+   "kickoff": "2026-09-09T23:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545713",
+   "main_id": "2026090914720",
+   "league": "Brazil: Serie B",
+   "home": "Operario-PR",
+   "away": "CRB",
+   "kickoff": "2026-09-09T23:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545714",
+   "main_id": "2026091014357",
+   "league": "Brazil: Serie B",
+   "home": "Atletico GO",
+   "away": "Ceara",
+   "kickoff": "2026-09-10T00:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542836",
+   "main_id": "2026090948688",
+   "league": "Brazil: Gaucho 2",
+   "home": "EC Guarani",
+   "away": "Apafut",
+   "kickoff": "2026-09-09T22:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9546247",
+   "main_id": "2026090926037",
+   "league": "Brazil: Gaucho 2",
+   "home": "Lajeadense",
+   "away": "Frederiquense",
+   "kickoff": "2026-09-09T22:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541025",
+   "main_id": "2026090948624",
+   "league": "Brazil: Gaucho 2",
+   "home": "Passo Fundo",
+   "away": "Gramadense",
+   "kickoff": "2026-09-09T22:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9543459",
+   "main_id": "2026090914595",
+   "league": "Brazil: Gaucho 2",
+   "home": "Pelotas",
+   "away": "Aimore",
+   "kickoff": "2026-09-09T22:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542837",
+   "main_id": "2026090914843",
+   "league": "Brazil: Gaucho 2",
+   "home": "Veranopolis",
+   "away": "Brasil de Pelotas",
+   "kickoff": "2026-09-09T22:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9546248",
+   "main_id": "2026090914888",
+   "league": "Brazil: Gaucho 2",
+   "home": "Brasil de Farroupilha",
+   "away": "Esportivo",
+   "kickoff": "2026-09-09T23:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9540469",
+   "main_id": "2026090925962",
+   "league": "Brazil: Goiano 2",
+   "home": "Goiania",
+   "away": "Goianesia",
+   "kickoff": "2026-09-09T22:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9540468",
+   "main_id": "2026090950039",
+   "league": "Brazil: Goiano 2",
+   "home": "Gremio Anapolis",
+   "away": "Sao Luis",
+   "kickoff": "2026-09-09T22:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9540467",
+   "main_id": "2026090948509",
+   "league": "Brazil: Goiano 2",
+   "home": "Tupy FC",
+   "away": "Morrinhos",
+   "kickoff": "2026-09-09T22:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9540470",
+   "main_id": "2026090914601",
+   "league": "Brazil: Goiano 2",
+   "home": "Mineiros",
+   "away": "Bom Jesus",
+   "kickoff": "2026-09-09T22:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9540471",
+   "main_id": "2026090927962",
+   "league": "Brazil: Goiano 2",
+   "home": "Trindade",
+   "away": "Rio Verde",
+   "kickoff": "2026-09-09T22:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9534034",
+   "main_id": "2026090925426",
+   "league": "Brazil: Piauiense 2",
+   "home": "Flamengo PI",
+   "away": "Julho Esporte",
+   "kickoff": "2026-09-09T22:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545970",
+   "main_id": "2026090970173",
+   "league": "Brazil: Copa Do Brasil U20",
+   "home": "America RN U20",
+   "away": "QFC U20",
+   "kickoff": "2026-09-09T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542346",
+   "main_id": "2026090975815",
+   "league": "Brazil: Copa Do Brasil U20",
+   "home": "Athletic Club U20",
+   "away": "Real Brasilia U20",
+   "kickoff": "2026-09-09T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545971",
+   "main_id": "2026090979142",
+   "league": "Brazil: Copa Do Brasil U20",
+   "home": "Botafogo U20",
+   "away": "Estrela De Marco U20",
+   "kickoff": "2026-09-09T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542349",
+   "main_id": "2026090973078",
+   "league": "Brazil: Copa Do Brasil U20",
+   "home": "Ceara U20",
+   "away": "Atletico-PI U20",
+   "kickoff": "2026-09-09T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545972",
+   "main_id": "2026090968784",
+   "league": "Brazil: Copa Do Brasil U20",
+   "home": "Criciuma U20",
+   "away": "Cascavel U20",
+   "kickoff": "2026-09-09T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542350",
+   "main_id": "2026090967707",
+   "league": "Brazil: Copa Do Brasil U20",
+   "home": "Cruzeiro U20",
+   "away": "Guanabara City U20",
+   "kickoff": "2026-09-09T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542351",
+   "main_id": "2026090962859",
+   "league": "Brazil: Copa Do Brasil U20",
+   "home": "CSA U20",
+   "away": "Confianca PB U20",
+   "kickoff": "2026-09-09T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542353",
+   "main_id": "2026090970780",
+   "league": "Brazil: Copa Do Brasil U20",
+   "home": "Fortaleza U20",
+   "away": "Piaui U20",
+   "kickoff": "2026-09-09T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542357",
+   "main_id": "2026090967667",
+   "league": "Brazil: Copa Do Brasil U20",
+   "home": "Internacional U20",
+   "away": "Barra FC U20",
+   "kickoff": "2026-09-09T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542358",
+   "main_id": "2026090958138",
+   "league": "Brazil: Copa Do Brasil U20",
+   "home": "Nautico U20",
+   "away": "America PE U20",
+   "kickoff": "2026-09-09T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545973",
+   "main_id": "2026090968457",
+   "league": "Brazil: Copa Do Brasil U20",
+   "home": "Paysandu PA U20",
+   "away": "Macapa U20",
+   "kickoff": "2026-09-09T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542360",
+   "main_id": "2026090966346",
+   "league": "Brazil: Copa Do Brasil U20",
+   "home": "Santa Cruz U20",
+   "away": "CSE U20",
+   "kickoff": "2026-09-09T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542363",
+   "main_id": "2026090964873",
+   "league": "Brazil: Copa Do Brasil U20",
+   "home": "Sergipe U20",
+   "away": "Falcon U20",
+   "kickoff": "2026-09-09T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545974",
+   "main_id": "2026090985279",
+   "league": "Brazil: Copa Do Brasil U20",
+   "home": "Tuna Luso U20",
+   "away": "Batalhao U20",
+   "kickoff": "2026-09-09T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542364",
+   "main_id": "2026090986778",
+   "league": "Brazil: Copa Do Brasil U20",
+   "home": "Uniao Carmolandense U20",
+   "away": "Miranda do Norte U20",
+   "kickoff": "2026-09-09T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542355",
+   "main_id": "2026090957062",
+   "league": "Brazil: Copa Do Brasil U20",
+   "home": "Goias U20",
+   "away": "Trindade U20",
+   "kickoff": "2026-09-09T18:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542345",
+   "main_id": "2026090986773",
+   "league": "Brazil: Copa Do Brasil U20",
+   "home": "Amazonas U20",
+   "away": "Monte Roraima U20",
+   "kickoff": "2026-09-09T23:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542356",
+   "main_id": "2026090987982",
+   "league": "Brazil: Copa Do Brasil U20",
+   "home": "Independente AP U20",
+   "away": "Sao Luis MA U20",
+   "kickoff": "2026-09-09T23:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542362",
+   "main_id": "2026090970762",
+   "league": "Brazil: Copa Do Brasil U20",
+   "home": "Sao Raimundo RR U20",
+   "away": "Genus U20",
+   "kickoff": "2026-09-09T23:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9546249",
+   "main_id": "2026090981630",
+   "league": "Brazil: Brasileiro U17",
+   "home": "America MG U17",
+   "away": "Fluminense U17",
+   "kickoff": "2026-09-09T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9546250",
+   "main_id": "2026090981638",
+   "league": "Brazil: Brasileiro U17",
+   "home": "Athletico-PR U17",
+   "away": "Santos U17",
+   "kickoff": "2026-09-09T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9546251",
+   "main_id": "2026090981638",
+   "league": "Brazil: Brasileiro U17",
+   "home": "Atletico GO U17",
+   "away": "Internacional U17",
+   "kickoff": "2026-09-09T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9546252",
+   "main_id": "2026090985279",
+   "league": "Brazil: Brasileiro U17",
+   "home": "Atletico-MG U17",
+   "away": "Vitoria U17",
+   "kickoff": "2026-09-09T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9546253",
+   "main_id": "2026090981640",
+   "league": "Brazil: Brasileiro U17",
+   "home": "Bahia U17",
+   "away": "Flamengo RJ U17",
+   "kickoff": "2026-09-09T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9546254",
+   "main_id": "2026090981646",
+   "league": "Brazil: Brasileiro U17",
+   "home": "Bragantino U17",
+   "away": "Cruzeiro U17",
+   "kickoff": "2026-09-09T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9546255",
+   "main_id": "2026090981626",
+   "league": "Brazil: Brasileiro U17",
+   "home": "Gremio U17",
+   "away": "Palmeiras U17",
+   "kickoff": "2026-09-09T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9546256",
+   "main_id": "2026090982817",
+   "league": "Brazil: Brasileiro U17",
+   "home": "Sao Paulo U17",
+   "away": "Juventude U17",
+   "kickoff": "2026-09-09T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9344829",
+   "main_id": "2026090957250",
+   "league": "Brazil: Carioca U20 - Taca Guanabara",
+   "home": "Vasco U20",
+   "away": "Boavista U20",
+   "kickoff": "2026-09-09T13:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9530097",
+   "main_id": "2026090964870",
+   "league": "Brazil: Potiguar U20",
+   "home": "ABC U20",
+   "away": "ASSU U20",
+   "kickoff": "2026-09-09T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9532288",
+   "main_id": "2026090973468",
+   "league": "Brazil: Potiguar U20",
+   "home": "Estrela Potiguar U20",
+   "away": "Palmeira U20",
+   "kickoff": "2026-09-09T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9538578",
+   "main_id": "2026090968085",
+   "league": "Brazil: Sergipano U20",
+   "home": "Falcon U20",
+   "away": "Confianca U20",
+   "kickoff": "2026-09-09T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9538579",
+   "main_id": "2026090981553",
+   "league": "Brazil: Sergipano U20",
+   "home": "Guarany SE U20",
+   "away": "Atletico Gloriense U20",
+   "kickoff": "2026-09-09T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9538580",
+   "main_id": "2026090966835",
+   "league": "Brazil: Sergipano U20",
+   "home": "Itabaiana U20",
+   "away": "Sergipe U20",
+   "kickoff": "2026-09-09T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9538581",
+   "main_id": "",
+   "league": "Brazil: Sergipano U20",
+   "home": "Lagarto U20",
+   "away": "Desportiva Aracaju U20",
+   "kickoff": "2026-09-09T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9367194",
+   "main_id": "",
+   "league": "Brazil: Mineiro Women",
+   "home": "Atletico-MG W",
+   "away": "Itabirito W",
+   "kickoff": "2026-09-09T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9324722",
+   "main_id": "2026090915514",
+   "league": "Bulgaria: Super Cup",
+   "home": "Levski Sofia",
+   "away": "CSKA Sofia",
+   "kickoff": "2026-09-09T15:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9546259",
+   "main_id": "2026090971660",
+   "league": "Burundi: Primus League",
+   "home": "Never Give Up Academy",
+   "away": "Musongati",
+   "kickoff": "2026-09-09T11:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9546260",
+   "main_id": "2026090937684",
+   "league": "Burundi: Primus League",
+   "home": "Aigle Noir",
+   "away": "Ngozi City",
+   "kickoff": "2026-09-09T13:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9546261",
+   "main_id": "2026090976530",
+   "league": "Burundi: Primus League",
+   "home": "Rukinzo",
+   "away": "Young Star",
+   "kickoff": "2026-09-09T13:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9546262",
+   "main_id": "2026090948940",
+   "league": "Burundi: Primus League",
+   "home": "Royal Vision",
+   "away": "Vital'O",
+   "kickoff": "2026-09-09T13:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9531788",
+   "main_id": "2026090961865",
+   "league": "Canada: Canadian Premier League",
+   "home": "Inter Toronto",
+   "away": "Pacific FC",
+   "kickoff": "2026-09-09T23:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9544465",
+   "main_id": "2026090937508",
+   "league": "Chile: Liga De Ascenso",
+   "home": "Recoleta",
+   "away": "San Marcos de Arica",
+   "kickoff": "2026-09-09T21:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9544466",
+   "main_id": "2026090915980",
+   "league": "Chile: Liga De Ascenso",
+   "home": "Copiapo",
+   "away": "Magallanes",
+   "kickoff": "2026-09-09T23:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9544467",
+   "main_id": "2026090915990",
+   "league": "Chile: Liga De Ascenso",
+   "home": "Deportes Iquique",
+   "away": "CD Santa Cruz",
+   "kickoff": "2026-09-09T23:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9348327",
+   "main_id": "",
+   "league": "Chile: Primera Division Women",
+   "home": "Huachipato W",
+   "away": "Deportes Iquique W",
+   "kickoff": "2026-09-09T15:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541950",
+   "main_id": "2026090952217",
+   "league": "Colombia: Primera B - Clausura",
+   "home": "Ind. Valle del Cauca",
+   "away": "Quindio",
+   "kickoff": "2026-09-09T20:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9508625",
+   "main_id": "2026090916263",
+   "league": "Colombia: Copa Colombia - Second Stage",
+   "home": "America De Cali",
+   "away": "Pereira",
+   "kickoff": "2026-09-09T23:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9508630",
+   "main_id": "2026090946698",
+   "league": "Colombia: Copa Colombia - Second Stage",
+   "home": "Real Cundinamarca",
+   "away": "Inter Bogotá",
+   "kickoff": "2026-09-09T23:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9529040",
+   "main_id": "2026091016274",
+   "league": "Colombia: Copa Colombia - Second Stage",
+   "home": "Once Caldas",
+   "away": "Alianza",
+   "kickoff": "2026-09-10T00:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9546669",
+   "main_id": "2026090970132",
+   "league": "Colombia: Liga Women - Promotion Group",
+   "home": "America de Cali W",
+   "away": "Orsomarso W",
+   "kickoff": "2026-09-09T20:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9546670",
+   "main_id": "2026090968574",
+   "league": "Colombia: Liga Women - Promotion Group",
+   "home": "Santa Fe W",
+   "away": "Dep. Cali W",
+   "kickoff": "2026-09-09T20:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9546671",
+   "main_id": "2026090968558",
+   "league": "Colombia: Liga Women - Promotion Group",
+   "home": "Millonarios W",
+   "away": "Atl. Nacional W",
+   "kickoff": "2026-09-09T23:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542271",
+   "main_id": "2026090916500",
+   "league": "Croatia: Croatian Cup",
+   "home": "Bedem Ivankovo",
+   "away": "Din. Zagreb",
+   "kickoff": "2026-09-09T14:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542273",
+   "main_id": "2026090916627",
+   "league": "Croatia: Croatian Cup",
+   "home": "Dragovoljac",
+   "away": "Slaven Belupo",
+   "kickoff": "2026-09-09T14:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542277",
+   "main_id": "2026090916696",
+   "league": "Croatia: Croatian Cup",
+   "home": "Segesta",
+   "away": "Osijek",
+   "kickoff": "2026-09-09T14:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542278",
+   "main_id": "2026090927892",
+   "league": "Croatia: Croatian Cup",
+   "home": "Slavonija Pozega",
+   "away": "Oriolik",
+   "kickoff": "2026-09-09T14:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542279",
+   "main_id": "2026090916671",
+   "league": "Croatia: Croatian Cup",
+   "home": "Tomislav DA",
+   "away": "Lok. Zagreb",
+   "kickoff": "2026-09-09T14:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542280",
+   "main_id": "2026090916676",
+   "league": "Croatia: Croatian Cup",
+   "home": "Uskok Klis",
+   "away": "Gorica",
+   "kickoff": "2026-09-09T14:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542283",
+   "main_id": "2026090916628",
+   "league": "Croatia: Croatian Cup",
+   "home": "Vukovar 1991",
+   "away": "Cibalia",
+   "kickoff": "2026-09-09T14:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542284",
+   "main_id": "2026090916714",
+   "league": "Croatia: Croatian Cup",
+   "home": "Zagora",
+   "away": "Varazdin",
+   "kickoff": "2026-09-09T14:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542276",
+   "main_id": "2026090949821",
+   "league": "Croatia: Croatian Cup",
+   "home": "Orijent",
+   "away": "Mladost Zdralovi",
+   "kickoff": "2026-09-09T15:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542274",
+   "main_id": "2026090916660",
+   "league": "Croatia: Croatian Cup",
+   "home": "Koprivnica",
+   "away": "Rudes",
+   "kickoff": "2026-09-09T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9530717",
+   "main_id": "2026090916998",
+   "league": "Czech Republic: Chance Liga",
+   "home": "Jablonec",
+   "away": "Ostrava",
+   "kickoff": "2026-09-09T15:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9531189",
+   "main_id": "2026090917174",
+   "league": "Czech Republic: Chance Liga",
+   "home": "Hradec Kralove",
+   "away": "Plzen",
+   "kickoff": "2026-09-09T17:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9328893",
+   "main_id": "2026090917067",
+   "league": "Czech Republic: 3. Cfl - Group A",
+   "home": "Motorlet Prague",
+   "away": "Dukla Prague B",
+   "kickoff": "2026-09-09T15:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542706",
+   "main_id": "2026090917175",
+   "league": "Czech Republic: Mol Cup",
+   "home": "Prostejov",
+   "away": "Sigma Olomouc",
+   "kickoff": "2026-09-09T16:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542714",
+   "main_id": "2026090917269",
+   "league": "Czech Republic: Mol Cup",
+   "home": "Zizkov",
+   "away": "Sparta Prague",
+   "kickoff": "2026-09-09T17:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9329203",
+   "main_id": "2026090953277",
+   "league": "Czech Republic: U19 League",
+   "home": "Opava U19",
+   "away": "Ceske Budejovice U19",
+   "kickoff": "2026-09-09T08:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542818",
+   "main_id": "2026090934716",
+   "league": "Denmark: Betano Pokalen",
+   "home": "VSK Aarhus",
+   "away": "Lyngby",
+   "kickoff": "2026-09-09T15:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542805",
+   "main_id": "2026090917517",
+   "league": "Denmark: Betano Pokalen",
+   "home": "BK Frem",
+   "away": "Roskilde",
+   "kickoff": "2026-09-09T16:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542814",
+   "main_id": "2026090928471",
+   "league": "Denmark: Betano Pokalen",
+   "home": "Vanlose",
+   "away": "Hillerod",
+   "kickoff": "2026-09-09T16:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542809",
+   "main_id": "2026090917535",
+   "league": "Denmark: Betano Pokalen",
+   "home": "Kolding IF",
+   "away": "Odense",
+   "kickoff": "2026-09-09T17:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542810",
+   "main_id": "2026090917541",
+   "league": "Denmark: Betano Pokalen",
+   "home": "Nykobing",
+   "away": "Middelfart",
+   "kickoff": "2026-09-09T17:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542884",
+   "main_id": "2026090943454",
+   "league": "Egypt: Premier League",
+   "home": "Modern Sport",
+   "away": "Wadi Degla",
+   "kickoff": "2026-09-09T14:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542679",
+   "main_id": "2026090932067",
+   "league": "Egypt: Premier League",
+   "home": "Pyramids",
+   "away": "El Gouna",
+   "kickoff": "2026-09-09T14:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542885",
+   "main_id": "2026090917767",
+   "league": "Egypt: Premier League",
+   "home": "Arab Contractors",
+   "away": "Al Ahly",
+   "kickoff": "2026-09-09T17:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542886",
+   "main_id": "2026090934456",
+   "league": "Egypt: Premier League",
+   "home": "Enppi",
+   "away": "ZED",
+   "kickoff": "2026-09-09T17:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9539768",
+   "main_id": "2026090948271",
+   "league": "El Salvador: Primera Division - Apertura",
+   "home": "Platense Municipal",
+   "away": "Metapan",
+   "kickoff": "2026-09-09T21:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9539769",
+   "main_id": "2026090917940",
+   "league": "El Salvador: Primera Division - Apertura",
+   "home": "Municipal Limeno",
+   "away": "Aguila",
+   "kickoff": "2026-09-09T23:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9546263",
+   "main_id": "2026090918559",
+   "league": "England: Championship",
+   "home": "Derby",
+   "away": "West Brom",
+   "kickoff": "2026-09-09T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9546264",
+   "main_id": "2026090918335",
+   "league": "England: Championship",
+   "home": "Norwich",
+   "away": "Birmingham",
+   "kickoff": "2026-09-09T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9546265",
+   "main_id": "2026090918406",
+   "league": "England: Championship",
+   "home": "Charlton",
+   "away": "QPR",
+   "kickoff": "2026-09-09T19:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9537403",
+   "main_id": "2026090931131",
+   "league": "England: National League Cup",
+   "home": "Tamworth",
+   "away": "Middlesbrough U21",
+   "kickoff": "2026-09-09T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542570",
+   "main_id": "2026090918330",
+   "league": "England: Efl Cup",
+   "home": "Chelsea",
+   "away": "Leeds",
+   "kickoff": "2026-09-09T19:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9540908",
+   "main_id": "2026090958904",
+   "league": "England: Premier League Cup",
+   "home": "Blackburn U21",
+   "away": "QPR U21",
+   "kickoff": "2026-09-09T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9536717",
+   "main_id": "2026090919016",
+   "league": "Estonia: Meistriliiga",
+   "home": "Levadia",
+   "away": "Kuressaare",
+   "kickoff": "2026-09-09T16:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9540083",
+   "main_id": "2026090969187",
+   "league": "Estonia: Meistriliiga",
+   "home": "Parnu JK Vaprus",
+   "away": "Harju JK Laagri",
+   "kickoff": "2026-09-09T16:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9536718",
+   "main_id": "2026090919032",
+   "league": "Estonia: Meistriliiga",
+   "home": "Tammeka",
+   "away": "Paide",
+   "kickoff": "2026-09-09T16:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9543348",
+   "main_id": "2026090928968",
+   "league": "Europe: Champions League - League Phase",
+   "home": "Barcelona",
+   "away": "Feyenoord",
+   "kickoff": "2026-09-09T16:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9543349",
+   "main_id": "2026090924450",
+   "league": "Europe: Champions League - League Phase",
+   "home": "Stuttgart",
+   "away": "Viking",
+   "kickoff": "2026-09-09T16:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542331",
+   "main_id": "2026090924941",
+   "league": "Europe: Champions League - League Phase",
+   "home": "Liverpool",
+   "away": "Atl. Madrid",
+   "kickoff": "2026-09-09T19:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9543350",
+   "main_id": "2026090920949",
+   "league": "Europe: Champions League - League Phase",
+   "home": "Napoli",
+   "away": "Arsenal",
+   "kickoff": "2026-09-09T19:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9543351",
+   "main_id": "2026090925498",
+   "league": "Europe: Champions League - League Phase",
+   "home": "PSG",
+   "away": "Slovan Bratislava",
+   "kickoff": "2026-09-09T19:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9543352",
+   "main_id": "2026090931477",
+   "league": "Europe: Champions League - League Phase",
+   "home": "Sporting CP",
+   "away": "Galatasaray",
+   "kickoff": "2026-09-09T19:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9544311",
+   "main_id": "2026090948929",
+   "league": "Europe: Uefa Youth League - League Phase",
+   "home": "Barcelona U19",
+   "away": "Feyenoord U19",
+   "kickoff": "2026-09-09T10:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9544316",
+   "main_id": "2026090954392",
+   "league": "Europe: Uefa Youth League - League Phase",
+   "home": "Stuttgart U19",
+   "away": "Viking U19",
+   "kickoff": "2026-09-09T10:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9544313",
+   "main_id": "2026090944178",
+   "league": "Europe: Uefa Youth League - League Phase",
+   "home": "Napoli U19",
+   "away": "Arsenal U19",
+   "kickoff": "2026-09-09T12:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9544314",
+   "main_id": "2026090953521",
+   "league": "Europe: Uefa Youth League - League Phase",
+   "home": "PSG U19",
+   "away": "Slovan Bratislava U19",
+   "kickoff": "2026-09-09T12:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9544315",
+   "main_id": "2026090963542",
+   "league": "Europe: Uefa Youth League - League Phase",
+   "home": "Sporting CP U19",
+   "away": "Galatasaray U19",
+   "kickoff": "2026-09-09T13:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9544312",
+   "main_id": "2026090944158",
+   "league": "Europe: Uefa Youth League - League Phase",
+   "home": "Liverpool U19",
+   "away": "Atl. Madrid U19",
+   "kickoff": "2026-09-09T14:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9533279",
+   "main_id": "2026090987435",
+   "league": "Europe: Premier League (Crimea)",
+   "home": "Sparta-KT",
+   "away": "MAK",
+   "kickoff": "2026-09-09T12:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9533280",
+   "main_id": "2026090966878",
+   "league": "Europe: Premier League (Crimea)",
+   "home": "TSK Simferopol",
+   "away": "GFK Yalta",
+   "kickoff": "2026-09-09T12:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9533281",
+   "main_id": "2026090987433",
+   "league": "Europe: Premier League (Crimea)",
+   "home": "Zarechnoye",
+   "away": "Feodosiya",
+   "kickoff": "2026-09-09T12:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9546357",
+   "main_id": "2026090919356",
+   "league": "Finland: Veikkausliiga - Championship Group",
+   "home": "HJK",
+   "away": "Inter Turku",
+   "kickoff": "2026-09-09T15:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9535700",
+   "main_id": "2026090928918",
+   "league": "Georgia: Crystalbet Erovnuli Liga",
+   "home": "Samgurali",
+   "away": "Dila Gori",
+   "kickoff": "2026-09-09T15:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9535701",
+   "main_id": "2026090954183",
+   "league": "Georgia: Crystalbet Erovnuli Liga",
+   "home": "Spaeri",
+   "away": "Rustavi",
+   "kickoff": "2026-09-09T15:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9536605",
+   "main_id": "2026090932644",
+   "league": "Georgia: Crystalbet Erovnuli Liga",
+   "home": "Dinamo Batumi",
+   "away": "Iberia 1999",
+   "kickoff": "2026-09-09T17:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9538465",
+   "main_id": "2026090920460",
+   "league": "Georgia: Liga 3",
+   "home": "WIT Georgia",
+   "away": "Loco. Tbilisi",
+   "kickoff": "2026-09-09T12:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9544012",
+   "main_id": "2026090920906",
+   "league": "Germany: Regionalliga Sudwest",
+   "home": "FC 08 Homburg",
+   "away": "Kaiserslautern II",
+   "kickoff": "2026-09-09T17:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9544013",
+   "main_id": "2026090940222",
+   "league": "Germany: Regionalliga Sudwest",
+   "home": "Fulda-Lehnerz",
+   "away": "Eintracht Frankfurt II",
+   "kickoff": "2026-09-09T17:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545074",
+   "main_id": "2026090921153",
+   "league": "Germany: Regionalliga Sudwest",
+   "home": "Mainz II",
+   "away": "VfR Mannheim",
+   "kickoff": "2026-09-09T17:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9540613",
+   "main_id": "2026090947015",
+   "league": "Germany: Oberliga Hessen",
+   "home": "Pohlheim",
+   "away": "Fernwald",
+   "kickoff": "2026-09-09T16:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9543099",
+   "main_id": "2026090948558",
+   "league": "Germany: Oberliga Hessen",
+   "home": "Alzenau",
+   "away": "Hanauer SC",
+   "kickoff": "2026-09-09T17:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9544040",
+   "main_id": "2026090952723",
+   "league": "Germany: Oberliga Hessen",
+   "home": "Baunatal",
+   "away": "CSC 03 Kassel",
+   "kickoff": "2026-09-09T17:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9544041",
+   "main_id": "2026090972249",
+   "league": "Germany: Oberliga Hessen",
+   "home": "Darmstadt U21",
+   "away": "RW Walldorf",
+   "kickoff": "2026-09-09T17:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9544042",
+   "main_id": "2026090955138",
+   "league": "Germany: Oberliga Hessen",
+   "home": "Hunfelder",
+   "away": "Kassel 2",
+   "kickoff": "2026-09-09T17:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9543100",
+   "main_id": "2026090920854",
+   "league": "Germany: Oberliga Hessen",
+   "home": "Stadtallendorf",
+   "away": "VfB Marburg",
+   "kickoff": "2026-09-09T17:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545103",
+   "main_id": "2026090944147",
+   "league": "Germany: Oberliga Hessen",
+   "home": "Hadamar",
+   "away": "Giessen",
+   "kickoff": "2026-09-09T17:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9544043",
+   "main_id": "2026090974349",
+   "league": "Germany: Oberliga Hessen",
+   "home": "Unter-Flockenbach",
+   "away": "Hummetroth",
+   "kickoff": "2026-09-09T17:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9543101",
+   "main_id": "2026090967694",
+   "league": "Germany: Oberliga Rheinland-Pfalz/Saar",
+   "home": "Ahrweiler",
+   "away": "Cosmos Koblenz",
+   "kickoff": "2026-09-09T17:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9544044",
+   "main_id": "2026090940426",
+   "league": "Germany: Oberliga Rheinland-Pfalz/Saar",
+   "home": "Pirmasens",
+   "away": "Emmelshausen-Karbach",
+   "kickoff": "2026-09-09T17:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9544045",
+   "main_id": "2026090949067",
+   "league": "Germany: Oberliga Rheinland-Pfalz/Saar",
+   "home": "TSV 1881 Gau-Odernheim",
+   "away": "Worms",
+   "kickoff": "2026-09-09T17:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9544046",
+   "main_id": "2026090920863",
+   "league": "Germany: Oberliga Rheinland-Pfalz/Saar",
+   "home": "Auersmacher",
+   "away": "Eisbachtal",
+   "kickoff": "2026-09-09T17:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9544047",
+   "main_id": "2026090933922",
+   "league": "Germany: Oberliga Rheinland-Pfalz/Saar",
+   "home": "Elversberg II",
+   "away": "Schott Mainz",
+   "kickoff": "2026-09-09T17:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9544048",
+   "main_id": "2026090955287",
+   "league": "Germany: Oberliga Rheinland-Pfalz/Saar",
+   "home": "RW Wittlich",
+   "away": "Mechtersheim",
+   "kickoff": "2026-09-09T17:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9544049",
+   "main_id": "2026090932697",
+   "league": "Germany: Oberliga Rheinland-Pfalz/Saar",
+   "home": "TuS Koblenz",
+   "away": "Hertha Wiesbach",
+   "kickoff": "2026-09-09T17:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9328764",
+   "main_id": "2026090921067",
+   "league": "Germany: Oberliga Bayern Nord",
+   "home": "Grossbardorf",
+   "away": "Aschaffenburg",
+   "kickoff": "2026-09-09T17:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9543111",
+   "main_id": "2026090938567",
+   "league": "Germany: Oberliga Baden-Württemberg",
+   "home": "Normannia Gmund",
+   "away": "Backnang",
+   "kickoff": "2026-09-09T15:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9540616",
+   "main_id": "2026090932496",
+   "league": "Germany: Oberliga Baden-Württemberg",
+   "home": "Ravensburg",
+   "away": "Balingen",
+   "kickoff": "2026-09-09T15:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9539437",
+   "main_id": "2026090940238",
+   "league": "Germany: Oberliga Baden-Württemberg",
+   "home": "Teningen",
+   "away": "Singen",
+   "kickoff": "2026-09-09T15:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9544057",
+   "main_id": "2026090941122",
+   "league": "Germany: Oberliga Baden-Württemberg",
+   "home": "Karlsruher SC II",
+   "away": "Essingen",
+   "kickoff": "2026-09-09T16:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9544058",
+   "main_id": "2026090962619",
+   "league": "Germany: Oberliga Baden-Württemberg",
+   "home": "Pforzheim",
+   "away": "Neckarsulm",
+   "kickoff": "2026-09-09T16:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9544059",
+   "main_id": "2026090947368",
+   "league": "Germany: Oberliga Baden-Württemberg",
+   "home": "Villingen",
+   "away": "FC Holzhausen",
+   "kickoff": "2026-09-09T16:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9544060",
+   "main_id": "2026090986473",
+   "league": "Germany: Oberliga Baden-Württemberg",
+   "home": "1. FC Muhlhausen",
+   "away": "Young Boys Reutlingen",
+   "kickoff": "2026-09-09T17:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9544061",
+   "main_id": "2026090920799",
+   "league": "Germany: Oberliga Baden-Württemberg",
+   "home": "Nottingen",
+   "away": "Bahlinger",
+   "kickoff": "2026-09-09T17:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545108",
+   "main_id": "2026090932776",
+   "league": "Germany: Oberliga Baden-Württemberg",
+   "home": "Reutlingen",
+   "away": "Oberachern",
+   "kickoff": "2026-09-09T17:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9381763",
+   "main_id": "2026090920844",
+   "league": "Germany: Oberliga Niederrhein",
+   "home": "Uerdingen",
+   "away": "Dusseldorf II",
+   "kickoff": "2026-09-09T17:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9540619",
+   "main_id": "2026090968136",
+   "league": "Germany: Oberliga Niederrhein",
+   "home": "Juchen-Garzweiler",
+   "away": "SC St.Tonis",
+   "kickoff": "2026-09-09T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542827",
+   "main_id": "2026090971123",
+   "league": "Greece: Super League 2",
+   "home": "PAOK B",
+   "away": "Olympiacos Piraeus B",
+   "kickoff": "2026-09-09T13:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541643",
+   "main_id": "2026090933506",
+   "league": "Greece: Greek Cup",
+   "home": "OFI Crete",
+   "away": "Chrisoupolis",
+   "kickoff": "2026-09-09T14:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9540777",
+   "main_id": "2026090955568",
+   "league": "Guatemala: Liga Nacional - Apertura",
+   "home": "Deportivo San Pedro",
+   "away": "Deportivo Mixco",
+   "kickoff": "2026-09-09T21:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9540776",
+   "main_id": "2026091021886",
+   "league": "Guatemala: Liga Nacional - Apertura",
+   "home": "Comunicaciones",
+   "away": "Marquense",
+   "kickoff": "2026-09-10T00:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9552012",
+   "main_id": "2026090922601",
+   "league": "Iceland: Division 1 - Promotion - Play Offs",
+   "home": "Njardvik",
+   "away": "Throttur",
+   "kickoff": "2026-09-09T17:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9552013",
+   "main_id": "2026090922549",
+   "league": "Iceland: Division 1 - Promotion - Play Offs",
+   "home": "Kopavogur",
+   "away": "Fylkir",
+   "kickoff": "2026-09-09T19:15:00+00:00"
+  },
+  {
+   "fallback_id_3": "9544926",
+   "main_id": "2026090956545",
+   "league": "Iraq: Stars League",
+   "home": "Al Golan",
+   "away": "Zakho",
+   "kickoff": "2026-09-09T15:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9544929",
+   "main_id": "2026090930251",
+   "league": "Iraq: Stars League",
+   "home": "Al Talaba",
+   "away": "Al Karkh",
+   "kickoff": "2026-09-09T15:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9544928",
+   "main_id": "2026090930245",
+   "league": "Iraq: Stars League",
+   "home": "Al Minaa",
+   "away": "Naft Missan",
+   "kickoff": "2026-09-09T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9544934",
+   "main_id": "2026090972156",
+   "league": "Iraq: Stars League",
+   "home": "Newroz",
+   "away": "Al Mosul",
+   "kickoff": "2026-09-09T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9544927",
+   "main_id": "2026090952841",
+   "league": "Iraq: Stars League",
+   "home": "Al-Karma",
+   "away": "Al Naft",
+   "kickoff": "2026-09-09T19:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9532377",
+   "main_id": "2026090966163",
+   "league": "Israel: Liga Alef North",
+   "home": "Hapoel Karmiel",
+   "away": "Hapoel Bnei Musmus",
+   "kickoff": "2026-09-09T12:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9532378",
+   "main_id": "2026090934567",
+   "league": "Israel: Liga Alef North",
+   "home": "H. Migdal HaEmek",
+   "away": "Beit Shean",
+   "kickoff": "2026-09-09T12:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9532379",
+   "main_id": "2026090947728",
+   "league": "Israel: Liga Alef North",
+   "home": "Ironi Baka",
+   "away": "Ironi Nesher",
+   "kickoff": "2026-09-09T12:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9532380",
+   "main_id": "2026090967556",
+   "league": "Israel: Liga Alef North",
+   "home": "M. Kiryat Ata-Bialik",
+   "away": "Maccabi Nujeidat Ahmad",
+   "kickoff": "2026-09-09T12:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9532381",
+   "main_id": "2026090951416",
+   "league": "Israel: Liga Alef North",
+   "home": "MS Tira",
+   "away": "Araba",
+   "kickoff": "2026-09-09T12:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9532384",
+   "main_id": "2026090964337",
+   "league": "Israel: Liga Alef North",
+   "home": "Tzeirey Tamra",
+   "away": "Hapoel Umm al-Fahm",
+   "kickoff": "2026-09-09T12:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9532383",
+   "main_id": "2026090941945",
+   "league": "Israel: Liga Alef North",
+   "home": "Nof Hagalil",
+   "away": "Hapoel Tirat Karmel",
+   "kickoff": "2026-09-09T14:10:00+00:00"
+  },
+  {
+   "fallback_id_3": "9532398",
+   "main_id": "2026090953891",
+   "league": "Israel: Liga Alef South",
+   "home": "Hapoel Azor",
+   "away": "Tzeirei Tira",
+   "kickoff": "2026-09-09T12:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9532399",
+   "main_id": "2026090941915",
+   "league": "Israel: Liga Alef South",
+   "home": "Hapoel Hadera",
+   "away": "Shimshon Tel Aviv",
+   "kickoff": "2026-09-09T12:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9532400",
+   "main_id": "2026090939913",
+   "league": "Israel: Liga Alef South",
+   "home": "Hapoel Herzliya",
+   "away": "Nordia Jerusalem",
+   "kickoff": "2026-09-09T12:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9532401",
+   "main_id": "2026090960687",
+   "league": "Israel: Liga Alef South",
+   "home": "Hapoel Sderot",
+   "away": "M. Ironi Kiryat Malachi",
+   "kickoff": "2026-09-09T12:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9532402",
+   "main_id": "2026090935826",
+   "league": "Israel: Liga Alef South",
+   "home": "Holon Yermiyahu",
+   "away": "H. Marmorek",
+   "kickoff": "2026-09-09T12:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9535244",
+   "main_id": "2026090980480",
+   "league": "Israel: Liga Alef South",
+   "home": "Ironi Beit Shemesh",
+   "away": "Kfar Saba 1928",
+   "kickoff": "2026-09-09T12:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9532403",
+   "main_id": "2026090965800",
+   "league": "Israel: Liga Alef South",
+   "home": "Jerusalem FC",
+   "away": "M. Ironi Ashdod",
+   "kickoff": "2026-09-09T12:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9532404",
+   "main_id": "2026090934602",
+   "league": "Israel: Liga Alef South",
+   "home": "Ramat Hasharon",
+   "away": "Hapoel Mahane Yehuda",
+   "kickoff": "2026-09-09T14:15:00+00:00"
+  },
+  {
+   "fallback_id_3": "9532405",
+   "main_id": "2026090923418",
+   "league": "Israel: Liga Alef South",
+   "home": "SC Dimona",
+   "away": "Maccabi Yavne",
+   "kickoff": "2026-09-09T14:20:00+00:00"
+  },
+  {
+   "fallback_id_3": "9546488",
+   "main_id": "2026090923831",
+   "league": "Italy: Coppa Italia Serie C",
+   "home": "Grosseto",
+   "away": "Latina",
+   "kickoff": "2026-09-09T16:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9348146",
+   "main_id": "2026090981825",
+   "league": "Italy: Supercoppa Primavera",
+   "home": "Fiorentina U20",
+   "away": "Atalanta U20",
+   "kickoff": "2026-09-09T16:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9325758",
+   "main_id": "2026090924303",
+   "league": "Japan: J3 League",
+   "home": "Ryukyu",
+   "away": "Giravanz Kitakyushu",
+   "kickoff": "2026-09-09T10:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9329007",
+   "main_id": "2026090924345",
+   "league": "Japan: J.League Cup - First Stage",
+   "home": "Reilac Shiga",
+   "away": "Verdy",
+   "kickoff": "2026-09-09T09:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9546529",
+   "main_id": "2026090924329",
+   "league": "Japan: J.League Cup - First Stage",
+   "home": "Fukushima Utd",
+   "away": "Vegalta Sendai",
+   "kickoff": "2026-09-09T10:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9546530",
+   "main_id": "2026090930475",
+   "league": "Japan: J.League Cup - First Stage",
+   "home": "Kamatamare",
+   "away": "Chiba",
+   "kickoff": "2026-09-09T10:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9329008",
+   "main_id": "2026090938539",
+   "league": "Japan: J.League Cup - First Stage",
+   "home": "Kochi United",
+   "away": "V-Varen Nagasaki",
+   "kickoff": "2026-09-09T10:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9329009",
+   "main_id": "2026090930910",
+   "league": "Japan: J.League Cup - First Stage",
+   "home": "Nagano",
+   "away": "Mito",
+   "kickoff": "2026-09-09T10:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9329010",
+   "main_id": "2026090924344",
+   "league": "Japan: J.League Cup - First Stage",
+   "home": "Tochigi SC",
+   "away": "Montedio Yamagata",
+   "kickoff": "2026-09-09T10:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9329011",
+   "main_id": "2026090924335",
+   "league": "Japan: J.League Cup - First Stage",
+   "home": "Yamaga",
+   "away": "Shonan Bellmare",
+   "kickoff": "2026-09-09T10:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9456006",
+   "main_id": "2026090946868",
+   "league": "Kazakhstan: Premier League",
+   "home": "Kairat Almaty",
+   "away": "Zhenis",
+   "kickoff": "2026-09-09T14:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9546324",
+   "main_id": "2026090955995",
+   "league": "Kosovo: Superliga",
+   "home": "Feronikeli",
+   "away": "Drita",
+   "kickoff": "2026-09-09T14:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9546325",
+   "main_id": "2026090957397",
+   "league": "Kosovo: Superliga",
+   "home": "Gjilani",
+   "away": "FC Ballkani",
+   "kickoff": "2026-09-09T17:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9546533",
+   "main_id": "2026090936375",
+   "league": "Liechtenstein: Liechtenstein Cup",
+   "home": "Triesen B",
+   "away": "Schaan B",
+   "kickoff": "2026-09-09T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545784",
+   "main_id": "2026090925090",
+   "league": "Liechtenstein: Liechtenstein Cup",
+   "home": "Triesenberg",
+   "away": "Vaduz B",
+   "kickoff": "2026-09-09T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9327756",
+   "main_id": "2026090925198",
+   "league": "Lithuania: Toplyga",
+   "home": "Kauno Zalgiris",
+   "away": "Suduva",
+   "kickoff": "2026-09-09T15:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9544965",
+   "main_id": "2026090980504",
+   "league": "Malawi: Super League",
+   "home": "Dedza Dynamos",
+   "away": "Mitundu Baptist",
+   "kickoff": "2026-09-09T12:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542159",
+   "main_id": "2026090950729",
+   "league": "Malaysia: Fa Cup",
+   "home": "Penang",
+   "away": "Melaka FC",
+   "kickoff": "2026-09-09T08:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542148",
+   "main_id": "2026090928186",
+   "league": "Malaysia: Fa Cup",
+   "home": "DPMM",
+   "away": "Terengganu",
+   "kickoff": "2026-09-09T12:15:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542160",
+   "main_id": "2026090925594",
+   "league": "Malaysia: Fa Cup",
+   "home": "Kuala Lumpur City",
+   "away": "Perak",
+   "kickoff": "2026-09-09T12:15:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542161",
+   "main_id": "2026090925623",
+   "league": "Malaysia: Fa Cup",
+   "home": "Selangor",
+   "away": "Sabah",
+   "kickoff": "2026-09-09T13:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542162",
+   "main_id": "2026090928186",
+   "league": "Malaysia: Fa Cup",
+   "home": "Terengganu",
+   "away": "DPMM",
+   "kickoff": "2026-09-09T13:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9536592",
+   "main_id": "2026090926143",
+   "league": "Montenegro: Prva Crnogorska Liga",
+   "home": "Decic",
+   "away": "Petrovac",
+   "kickoff": "2026-09-09T17:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9540022",
+   "main_id": "2026090926907",
+   "league": "Netherlands: Eredivisie",
+   "home": "Twente",
+   "away": "Telstar",
+   "kickoff": "2026-09-09T16:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9322781",
+   "main_id": "2026090941472",
+   "league": "North and Central America: Concacaf Caribbean Cup",
+   "home": "Broki",
+   "away": "Violette",
+   "kickoff": "2026-09-09T23:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9528579",
+   "main_id": "2026090942409",
+   "league": "North and Central America: Concacaf Caribbean Cup",
+   "home": "Portmore",
+   "away": "Mount Pleasant",
+   "kickoff": "2026-09-09T23:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9538520",
+   "main_id": "2026090975654",
+   "league": "North Macedonia: Macedonian Cup",
+   "home": "BVK Konjare",
+   "away": "Bashkimi",
+   "kickoff": "2026-09-09T14:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9538521",
+   "main_id": "2026090978008",
+   "league": "North Macedonia: Macedonian Cup",
+   "home": "Detonit Plackovica",
+   "away": "Shkendija Haracine",
+   "kickoff": "2026-09-09T14:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9538522",
+   "main_id": "2026090925467",
+   "league": "North Macedonia: Macedonian Cup",
+   "home": "Kozuf Gevgelija",
+   "away": "FK Skopje",
+   "kickoff": "2026-09-09T14:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9538523",
+   "main_id": "2026090925471",
+   "league": "North Macedonia: Macedonian Cup",
+   "home": "Novaci",
+   "away": "Ohrid",
+   "kickoff": "2026-09-09T14:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9538524",
+   "main_id": "2026090925476",
+   "league": "North Macedonia: Macedonian Cup",
+   "home": "Osogovo",
+   "away": "Belasica",
+   "kickoff": "2026-09-09T14:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9538527",
+   "main_id": "2026090935184",
+   "league": "North Macedonia: Macedonian Cup",
+   "home": "Sasa",
+   "away": "Shkupi",
+   "kickoff": "2026-09-09T14:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9538529",
+   "main_id": "2026090925480",
+   "league": "North Macedonia: Macedonian Cup",
+   "home": "Teteks",
+   "away": "Bregalnica Stip",
+   "kickoff": "2026-09-09T14:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9543582",
+   "main_id": "2026090953536",
+   "league": "Paraguay: Division Intermedia",
+   "home": "Encarnacion FC",
+   "away": "Tacuary",
+   "kickoff": "2026-09-09T13:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542603",
+   "main_id": "2026090932664",
+   "league": "Paraguay: Division Intermedia",
+   "home": "Fernando de la Mora",
+   "away": "Dep. Capiata",
+   "kickoff": "2026-09-09T13:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9543583",
+   "main_id": "2026090934144",
+   "league": "Paraguay: Division Intermedia",
+   "home": "Deportivo Santani",
+   "away": "Independiente FBC",
+   "kickoff": "2026-09-09T19:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541143",
+   "main_id": "2026090928654",
+   "league": "Portugal: Liga Portugal",
+   "home": "Moreirense",
+   "away": "Benfica",
+   "kickoff": "2026-09-09T19:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541963",
+   "main_id": "2026090973667",
+   "league": "Portugal: Liga Next Gen U23",
+   "home": "Santa Clara U23",
+   "away": "SC Farense U23",
+   "kickoff": "2026-09-09T12:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541964",
+   "main_id": "2026090965329",
+   "league": "Portugal: Liga Next Gen U23",
+   "home": "Benfica U23",
+   "away": "Vizela U23",
+   "kickoff": "2026-09-09T16:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541955",
+   "main_id": "2026090948321",
+   "league": "Russia: Russian Cup - Regions Path",
+   "home": "Volna Nizhegorodskaya",
+   "away": "R. Volgograd",
+   "kickoff": "2026-09-09T11:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541632",
+   "main_id": "2026090948230",
+   "league": "Russia: Russian Cup - Regions Path",
+   "home": "Krasnoye Znamya",
+   "away": "SKA Khabarovsk",
+   "kickoff": "2026-09-09T13:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541630",
+   "main_id": "2026090932629",
+   "league": "Russia: Russian Cup - Regions Path",
+   "home": "Kaluga",
+   "away": "Ufa",
+   "kickoff": "2026-09-09T14:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541631",
+   "main_id": "2026090929659",
+   "league": "Russia: Russian Cup - Regions Path",
+   "home": "Kirov",
+   "away": "Kamaz",
+   "kickoff": "2026-09-09T14:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542425",
+   "main_id": "2026090953795",
+   "league": "Russia: Russian Cup - Regions Path",
+   "home": "Murom",
+   "away": "Veles Moscow",
+   "kickoff": "2026-09-09T14:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541954",
+   "main_id": "2026090944558",
+   "league": "Russia: Russian Cup - Regions Path",
+   "home": "Saratov",
+   "away": "Leningradets",
+   "kickoff": "2026-09-09T14:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542426",
+   "main_id": "2026090929891",
+   "league": "Russia: Russian Cup - Regions Path",
+   "home": "Volgar-Astrakhan",
+   "away": "Ulyanovsk",
+   "kickoff": "2026-09-09T15:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541953",
+   "main_id": "2026090942676",
+   "league": "Russia: Russian Cup - Regions Path",
+   "home": "Dynamo Stavropol",
+   "away": "Pari NN",
+   "kickoff": "2026-09-09T15:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541952",
+   "main_id": "2026090938457",
+   "league": "Russia: Russian Cup - Regions Path",
+   "home": "Chertanovo M.",
+   "away": "Neftekhimik",
+   "kickoff": "2026-09-09T16:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542422",
+   "main_id": "2026090938576",
+   "league": "Russia: Russian Cup - Regions Path",
+   "home": "Dynamo SPB",
+   "away": "Sochi",
+   "kickoff": "2026-09-09T16:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542424",
+   "main_id": "2026090929687",
+   "league": "Russia: Russian Cup - Regions Path",
+   "home": "Maykop",
+   "away": "Yenisey",
+   "kickoff": "2026-09-09T16:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9530020",
+   "main_id": "2026090929952",
+   "league": "San Marino: Coppa Titano",
+   "home": "Libertas",
+   "away": "Folgore",
+   "kickoff": "2026-09-09T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9530021",
+   "main_id": "2026090929965",
+   "league": "San Marino: Coppa Titano",
+   "home": "Murata",
+   "away": "Virtus",
+   "kickoff": "2026-09-09T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9530022",
+   "main_id": "2026090929949",
+   "league": "San Marino: Coppa Titano",
+   "home": "Pennarossa",
+   "away": "Cailungo",
+   "kickoff": "2026-09-09T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9543964",
+   "main_id": "2026090945619",
+   "league": "Saudi Arabia: Saudi Professional League",
+   "home": "Al Kholood",
+   "away": "Al Shabab",
+   "kickoff": "2026-09-09T15:55:00+00:00"
+  },
+  {
+   "fallback_id_3": "9543965",
+   "main_id": "2026090957959",
+   "league": "Saudi Arabia: Saudi Professional League",
+   "home": "Al Fateh",
+   "away": "Al Diriyah",
+   "kickoff": "2026-09-09T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545032",
+   "main_id": "2026090929998",
+   "league": "Saudi Arabia: Saudi Professional League",
+   "home": "Al Nassr",
+   "away": "Abha",
+   "kickoff": "2026-09-09T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542676",
+   "main_id": "2026090930019",
+   "league": "Saudi Arabia: Division 1",
+   "home": "Al Raed",
+   "away": "Al Jeel",
+   "kickoff": "2026-09-09T15:50:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542677",
+   "main_id": "2026090961200",
+   "league": "Saudi Arabia: Division 1",
+   "home": "Al Jandal",
+   "away": "Al Bukiryah",
+   "kickoff": "2026-09-09T16:10:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542878",
+   "main_id": "2026090930026",
+   "league": "Saudi Arabia: Division 1",
+   "home": "Jeddah",
+   "away": "Al Orubah",
+   "kickoff": "2026-09-09T17:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9326664",
+   "main_id": "2026090930233",
+   "league": "Scotland: Premiership",
+   "home": "Rangers",
+   "away": "St. Mirren",
+   "kickoff": "2026-09-09T18:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9326665",
+   "main_id": "2026090930168",
+   "league": "Scotland: Premiership",
+   "home": "St Johnstone",
+   "away": "Celtic",
+   "kickoff": "2026-09-09T19:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542068",
+   "main_id": "2026090937726",
+   "league": "Slovakia: Slovak Cup",
+   "home": "Nova Bana",
+   "away": "Z. Moravce-Vrable",
+   "kickoff": "2026-09-09T14:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542062",
+   "main_id": "2026090957953",
+   "league": "Slovakia: Slovak Cup",
+   "home": "Banik Prievidza",
+   "away": "Lehota p. V.",
+   "kickoff": "2026-09-09T14:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542065",
+   "main_id": "2026090948749",
+   "league": "Slovakia: Slovak Cup",
+   "home": "Magura Vavrecka",
+   "away": "Zilina",
+   "kickoff": "2026-09-09T14:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9536293",
+   "main_id": "2026090958119",
+   "league": "South Africa: Betway Premiership",
+   "home": "Mamelodi Sundowns",
+   "away": "Siwelele",
+   "kickoff": "2026-09-09T17:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9538492",
+   "main_id": "2026090916339",
+   "league": "South America: Copa Libertadores - Play Offs",
+   "home": "Palmeiras",
+   "away": "LDU Quito",
+   "kickoff": "2026-09-09T22:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9538495",
+   "main_id": "2026091013217",
+   "league": "South America: Copa Libertadores - Play Offs",
+   "home": "Estudiantes L.P.",
+   "away": "Corinthians",
+   "kickoff": "2026-09-10T00:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9538444",
+   "main_id": "2026090914703",
+   "league": "South America: Copa Sudamericana - Play Offs",
+   "home": "Santos",
+   "away": "Atletico-MG",
+   "kickoff": "2026-09-09T22:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541917",
+   "main_id": "2026090924628",
+   "league": "South Korea: K League 1",
+   "home": "Daejeon",
+   "away": "Anyang",
+   "kickoff": "2026-09-09T10:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541918",
+   "main_id": "2026090924665",
+   "league": "South Korea: K League 1",
+   "home": "Gangwon",
+   "away": "Jeonbuk",
+   "kickoff": "2026-09-09T10:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541919",
+   "main_id": "2026090924668",
+   "league": "South Korea: K League 1",
+   "home": "Gwangju FC",
+   "away": "Jeju SK",
+   "kickoff": "2026-09-09T10:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542514",
+   "main_id": "2026090924680",
+   "league": "South Korea: K League 1",
+   "home": "Pohang",
+   "away": "Gimcheon Sangmu",
+   "kickoff": "2026-09-09T10:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545296",
+   "main_id": "2026090956712",
+   "league": "Spain: Copa Federacion",
+   "home": "Binefar",
+   "away": "Porreres",
+   "kickoff": "2026-09-09T14:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545302",
+   "main_id": "2026090934255",
+   "league": "Spain: Copa Federacion",
+   "home": "Melilla",
+   "away": "Conil",
+   "kickoff": "2026-09-09T15:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545308",
+   "main_id": "2026090958918",
+   "league": "Spain: Copa Federacion",
+   "home": "Sporting Ceuta",
+   "away": "Dos Hermanas",
+   "kickoff": "2026-09-09T16:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545295",
+   "main_id": "2026090931860",
+   "league": "Spain: Copa Federacion",
+   "home": "Bergantinos",
+   "away": "Leioa",
+   "kickoff": "2026-09-09T17:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545301",
+   "main_id": "2026090954854",
+   "league": "Spain: Copa Federacion",
+   "home": "Compostela",
+   "away": "Derio",
+   "kickoff": "2026-09-09T17:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545303",
+   "main_id": "2026090931964",
+   "league": "Spain: Copa Federacion",
+   "home": "Mensajero",
+   "away": "Murcia",
+   "kickoff": "2026-09-09T17:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545307",
+   "main_id": "2026090932507",
+   "league": "Spain: Copa Federacion",
+   "home": "Santa Marta Tormes",
+   "away": "Vimenor",
+   "kickoff": "2026-09-09T17:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545305",
+   "main_id": "2026090931870",
+   "league": "Spain: Copa Federacion",
+   "home": "Salamanca",
+   "away": "Caudal Deportivo",
+   "kickoff": "2026-09-09T17:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545298",
+   "main_id": "2026090953264",
+   "league": "Spain: Copa Federacion",
+   "home": "CF Badalona",
+   "away": "Sestao",
+   "kickoff": "2026-09-09T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545300",
+   "main_id": "2026090947804",
+   "league": "Spain: Copa Federacion",
+   "home": "Comillas",
+   "away": "L Hospitalet",
+   "kickoff": "2026-09-09T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545309",
+   "main_id": "2026090952181",
+   "league": "Spain: Copa Federacion",
+   "home": "Torrent",
+   "away": "Saguntino",
+   "kickoff": "2026-09-09T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545294",
+   "main_id": "2026090931830",
+   "league": "Spain: Copa Federacion",
+   "home": "AD San Juan",
+   "away": "Terrassa",
+   "kickoff": "2026-09-09T18:15:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545304",
+   "main_id": "2026090932191",
+   "league": "Spain: Copa Federacion",
+   "home": "Motril",
+   "away": "Recreativo Huelva",
+   "kickoff": "2026-09-09T18:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545297",
+   "main_id": "2026090935562",
+   "league": "Spain: Copa Federacion",
+   "home": "Cacereno",
+   "away": "UD San Pedro",
+   "kickoff": "2026-09-09T19:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9545299",
+   "main_id": "2026090931941",
+   "league": "Spain: Copa Federacion",
+   "home": "CF Talavera",
+   "away": "Navalcarnero",
+   "kickoff": "2026-09-09T19:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541686",
+   "main_id": "2026090932961",
+   "league": "Sweden: Superettan",
+   "home": "Landskrona",
+   "away": "Helsingborg",
+   "kickoff": "2026-09-09T17:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541687",
+   "main_id": "2026090933044",
+   "league": "Sweden: Superettan",
+   "home": "Ljungskile",
+   "away": "Norrby",
+   "kickoff": "2026-09-09T17:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541985",
+   "main_id": "2026090951076",
+   "league": "Sweden: Superettan",
+   "home": "Nordic United",
+   "away": "Varnamo",
+   "kickoff": "2026-09-09T17:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9541986",
+   "main_id": "2026090933032",
+   "league": "Sweden: Superettan",
+   "home": "Sandviken",
+   "away": "Oddevold",
+   "kickoff": "2026-09-09T17:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9537101",
+   "main_id": "2026090966356",
+   "league": "Sweden: Svenska Cupen Women - Qualification",
+   "home": "Goteborg W",
+   "away": "Hacken W",
+   "kickoff": "2026-09-09T16:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9537100",
+   "main_id": "2026090958291",
+   "league": "Sweden: Svenska Cupen Women - Qualification",
+   "home": "Hammarby W",
+   "away": "Gamla Upsala W",
+   "kickoff": "2026-09-09T17:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9531388",
+   "main_id": "2026090968942",
+   "league": "Switzerland: Super League Women",
+   "home": "Servette Geneve FC W",
+   "away": "Yverdon W",
+   "kickoff": "2026-09-09T16:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9535196",
+   "main_id": "2026090964832",
+   "league": "Switzerland: Super League Women",
+   "home": "Basel W",
+   "away": "Grasshopper W",
+   "kickoff": "2026-09-09T17:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9532171",
+   "main_id": "2026090968938",
+   "league": "Switzerland: Super League Women",
+   "home": "St. Gallen W",
+   "away": "Aarau W",
+   "kickoff": "2026-09-09T17:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9532172",
+   "main_id": "2026090960149",
+   "league": "Switzerland: Super League Women",
+   "home": "Zurich W",
+   "away": "Young Boys W",
+   "kickoff": "2026-09-09T17:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9532170",
+   "main_id": "2026090970443",
+   "league": "Switzerland: Super League Women",
+   "home": "Luzern W",
+   "away": "Rapperswil-Jona W",
+   "kickoff": "2026-09-09T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9538378",
+   "main_id": "2026090962167",
+   "league": "Ukraine: U19 League",
+   "home": "Shakhtar Donetsk U19",
+   "away": "Kolos Kovalivka U19",
+   "kickoff": "2026-09-09T08:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9538376",
+   "main_id": "2026090982146",
+   "league": "Ukraine: U19 League",
+   "home": "Lviv U19",
+   "away": "Rukh Lviv U19",
+   "kickoff": "2026-09-09T09:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9538375",
+   "main_id": "2026090980516",
+   "league": "Ukraine: U19 League",
+   "home": "Livyi Bereg U19",
+   "away": "Veres Rivne U19",
+   "kickoff": "2026-09-09T10:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9538377",
+   "main_id": "2026090979134",
+   "league": "Ukraine: U19 League",
+   "home": "Oleksandriya U19",
+   "away": "Obolon Kiev U19",
+   "kickoff": "2026-09-09T10:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542490",
+   "main_id": "2026090964586",
+   "league": "Ukraine: U19 League",
+   "home": "Zhytomyr U19",
+   "away": "Dyn. Kyiv U19",
+   "kickoff": "2026-09-09T11:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9538379",
+   "main_id": "2026090966558",
+   "league": "Ukraine: U19 League",
+   "home": "SK Metalurh U19",
+   "away": "Karpaty Lviv U19",
+   "kickoff": "2026-09-09T12:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9538687",
+   "main_id": "2026090979140",
+   "league": "Ukraine: U19 League",
+   "home": "LNZ Cherkasy U19",
+   "away": "FC Kharkiv U19",
+   "kickoff": "2026-09-09T13:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542210",
+   "main_id": "2026090963405",
+   "league": "Ukraine: Ukrainian Cup",
+   "home": "Viktoria",
+   "away": "Metalist Kharkiv",
+   "kickoff": "2026-09-09T08:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542199",
+   "main_id": "2026090976544",
+   "league": "Ukraine: Ukrainian Cup",
+   "home": "Karbon Cherkasy",
+   "away": "Epitsentr",
+   "kickoff": "2026-09-09T09:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542207",
+   "main_id": "2026090958128",
+   "league": "Ukraine: Ukrainian Cup",
+   "home": "Probiy Horodenka",
+   "away": "Oleksandriya",
+   "kickoff": "2026-09-09T10:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542203",
+   "main_id": "2026090987813",
+   "league": "Ukraine: Ukrainian Cup",
+   "home": "Novyi Rozdil",
+   "away": "Ahrotekh Tyshkivka",
+   "kickoff": "2026-09-09T11:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542195",
+   "main_id": "2026090962871",
+   "league": "Ukraine: Ukrainian Cup",
+   "home": "Ahrobiznes Volochysk",
+   "away": "Livyi Bereg",
+   "kickoff": "2026-09-09T12:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542198",
+   "main_id": "2026090950868",
+   "league": "Ukraine: Ukrainian Cup",
+   "home": "Fenix Mariupol",
+   "away": "FK Zorya Luhansk",
+   "kickoff": "2026-09-09T13:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9542206",
+   "main_id": "2026090955789",
+   "league": "Ukraine: Ukrainian Cup",
+   "home": "Polissya Zhytomyr",
+   "away": "Kudrivka",
+   "kickoff": "2026-09-09T15:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9539996",
+   "main_id": "2026090934865",
+   "league": "Uruguay: Copa Uruguay",
+   "home": "Racing Montevideo",
+   "away": "Central Esp.",
+   "kickoff": "2026-09-09T18:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9539997",
+   "main_id": "2026090934846",
+   "league": "Uruguay: Copa Uruguay",
+   "home": "Boston River",
+   "away": "Colon",
+   "kickoff": "2026-09-09T20:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9539998",
+   "main_id": "2026090934865",
+   "league": "Uruguay: Copa Uruguay",
+   "home": "Maldonado",
+   "away": "Wanderers",
+   "kickoff": "2026-09-09T23:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9467848",
+   "main_id": "2026090951515",
+   "league": "USA: Mls",
+   "home": "Atlanta Utd",
+   "away": "Orlando City",
+   "kickoff": "2026-09-09T23:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9467849",
+   "main_id": "2026090943685",
+   "league": "USA: Mls",
+   "home": "CF Montreal",
+   "away": "Charlotte",
+   "kickoff": "2026-09-09T23:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9467850",
+   "main_id": "2026090934616",
+   "league": "USA: Mls",
+   "home": "DC United",
+   "away": "Columbus Crew",
+   "kickoff": "2026-09-09T23:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9467853",
+   "main_id": "2026090937107",
+   "league": "USA: Mls",
+   "home": "Toronto FC",
+   "away": "Nashville SC",
+   "kickoff": "2026-09-09T23:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9467852",
+   "main_id": "2026090942818",
+   "league": "USA: Mls",
+   "home": "Philadelphia Union",
+   "away": "FC Cincinnati",
+   "kickoff": "2026-09-09T23:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9467851",
+   "main_id": "2026091041565",
+   "league": "USA: Mls",
+   "home": "New York City",
+   "away": "New England Revolution",
+   "kickoff": "2026-09-10T00:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9467854",
+   "main_id": "2026091051848",
+   "league": "USA: Mls",
+   "home": "Austin FC",
+   "away": "Colorado Rapids",
+   "kickoff": "2026-09-10T00:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9467855",
+   "main_id": "2026091049671",
+   "league": "USA: Mls",
+   "home": "Chicago Fire",
+   "away": "Inter Miami",
+   "kickoff": "2026-09-10T00:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9467856",
+   "main_id": "2026091034698",
+   "league": "USA: Mls",
+   "home": "Houston Dynamo",
+   "away": "Real Salt Lake",
+   "kickoff": "2026-09-10T00:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9467857",
+   "main_id": "2026091034653",
+   "league": "USA: Mls",
+   "home": "Minnesota United",
+   "away": "FC Dallas",
+   "kickoff": "2026-09-10T00:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9546206",
+   "main_id": "2026091057237",
+   "league": "USA: Mls Next Pro",
+   "home": "Huntsville",
+   "away": "Chattanooga",
+   "kickoff": "2026-09-10T00:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9546207",
+   "main_id": "2026091066909",
+   "league": "USA: Mls Next Pro",
+   "home": "North Texas",
+   "away": "Houston Dynamo 2",
+   "kickoff": "2026-09-10T00:45:00+00:00"
+  },
+  {
+   "fallback_id_3": "9538697",
+   "main_id": "2026090934969",
+   "league": "Uzbekistan: Super League",
+   "home": "OKMK",
+   "away": "Pakhtakor",
+   "kickoff": "2026-09-09T13:30:00+00:00"
+  },
+  {
+   "fallback_id_3": "9538696",
+   "main_id": "2026090934976",
+   "league": "Uzbekistan: Super League",
+   "home": "Neftchi Fargona",
+   "away": "Termez Surkhon",
+   "kickoff": "2026-09-09T14:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9539365",
+   "main_id": "2026090934947",
+   "league": "Uzbekistan: Super League",
+   "home": "Nasaf Qarshi",
+   "away": "Bunyodkor",
+   "kickoff": "2026-09-09T15:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9330359",
+   "main_id": "2026090953709",
+   "league": "Venezuela: Copa Venezuela",
+   "home": "Anzoategui FC",
+   "away": "Miranda",
+   "kickoff": "2026-09-09T20:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9330360",
+   "main_id": "2026090961729",
+   "league": "Venezuela: Copa Venezuela",
+   "home": "Atletico Barinas",
+   "away": "El Vigia",
+   "kickoff": "2026-09-09T20:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9330362",
+   "main_id": "2026090950120",
+   "league": "Venezuela: Copa Venezuela",
+   "home": "Barquisimeto",
+   "away": "Caracas",
+   "kickoff": "2026-09-09T20:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9330363",
+   "main_id": "2026090948375",
+   "league": "Venezuela: Copa Venezuela",
+   "home": "Dynamo Puerto",
+   "away": "Mineros",
+   "kickoff": "2026-09-09T20:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9330364",
+   "main_id": "2026090943012",
+   "league": "Venezuela: Copa Venezuela",
+   "home": "Frontera",
+   "away": "Zamora",
+   "kickoff": "2026-09-09T20:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9330365",
+   "main_id": "2026090935089",
+   "league": "Venezuela: Copa Venezuela",
+   "home": "Lara",
+   "away": "Trujillanos",
+   "kickoff": "2026-09-09T20:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9330366",
+   "main_id": "2026090957956",
+   "league": "Venezuela: Copa Venezuela",
+   "home": "Monagas",
+   "away": "Bolivar",
+   "kickoff": "2026-09-09T20:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9330367",
+   "main_id": "2026090953643",
+   "league": "Venezuela: Copa Venezuela",
+   "home": "Urena",
+   "away": "Rayo Zuliano",
+   "kickoff": "2026-09-09T20:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9330368",
+   "main_id": "2026090935077",
+   "league": "Venezuela: Copa Venezuela",
+   "home": "Yaracuyanos",
+   "away": "Aragua",
+   "kickoff": "2026-09-09T20:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9544437",
+   "main_id": "2026090950232",
+   "league": "World: Club Friendly",
+   "home": "Vanuatu United",
+   "away": "Central Coast Mariners",
+   "kickoff": "2026-09-09T04:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9240627",
+   "main_id": "2026090963580",
+   "league": "World: World Cup Women U20",
+   "home": "Ghana U20 W",
+   "away": "South Korea U20 W",
+   "kickoff": "2026-09-09T13:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9240628",
+   "main_id": "2026090972205",
+   "league": "World: World Cup Women U20",
+   "home": "Italy U20 W",
+   "away": "New Zealand U20 W",
+   "kickoff": "2026-09-09T13:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9240625",
+   "main_id": "2026090967008",
+   "league": "World: World Cup Women U20",
+   "home": "France U20 W",
+   "away": "Ecuador U20 W",
+   "kickoff": "2026-09-09T16:00:00+00:00"
+  },
+  {
+   "fallback_id_3": "9240626",
+   "main_id": "2026090963569",
+   "league": "World: World Cup Women U20",
+   "home": "Japan U20 W",
+   "away": "USA U20 W",
+   "kickoff": "2026-09-09T16:00:00+00:00"
+  }
+ ]
+}
