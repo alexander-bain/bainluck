@@ -123,14 +123,14 @@ export default function AboutPage() {
           <div className="bg-surface-deep rounded-2xl p-6 border border-surface-border max-w-sm mx-auto shadow-card">
             <div className="flex items-center justify-center gap-8">
               <div className="text-center">
-                <div className="text-prob-xl font-black text-text-primary font-mono tracking-tight">
+                <div className="text-prob-hero font-black text-text-primary font-mono tracking-tight">
                   60%
                 </div>
                 <div className="text-micro text-text-muted mt-1.5">Celtics</div>
               </div>
               <div className="text-title-3 text-text-muted font-light">vs</div>
               <div className="text-center">
-                <div className="text-prob-xl font-black text-text-secondary font-mono tracking-tight">
+                <div className="text-prob-hero font-black text-text-secondary font-mono tracking-tight">
                   40%
                 </div>
                 <div className="text-micro text-text-muted mt-1.5">76ers</div>
