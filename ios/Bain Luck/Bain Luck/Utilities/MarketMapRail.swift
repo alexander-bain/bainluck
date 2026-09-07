@@ -205,6 +205,84 @@ enum MarketMapRail {
         return true
     }
 
+    // MARK: - Whether a totals card has a distribution to show
+
+    /// True when a totals rail has a real distribution under it.
+    ///
+    /// #3576. `totalMapDrawsNothing` asks whether the card is worth drawing at
+    /// all; this asks the next question down, which nobody was asking: the card
+    /// is worth drawing, but is the SHAPE on it data?
+    ///
+    /// THE PHOTOGRAPH. Event 15292756 (Detroit Lions @ Indianapolis Colts, NFL,
+    /// `completed`, DET 25 – IND 16), iPhone 17 simulator against production,
+    /// 2026-09-06 — `artifacts-native-038/AFTER-nfl-settled-15292756-s600.png`.
+    /// A card headed "Points map / **Final points distribution**", a `FINAL 41
+    /// points` tile, an axis `28 · 45 · 62+`, and between them a uniform
+    /// pale-purple bar. `GET /api/events/15292756/game-markets` returns **0
+    /// totals rows and 0 spreads** — re-measured 2026-09-06, still 0 — so there
+    /// is no distribution, and the three facts the card does hold (the final,
+    /// the sport's range, and that nobody quoted a line) are all true and none
+    /// of them is a distribution.
+    ///
+    /// This mirrors, condition for condition, the two flat-array exits in
+    /// `MarketMapView.buildDensityFromThresholds` — the mapping is: fewer than
+    /// two lines, or no pair of lines separated by a positive gap (its `rawPdf`
+    /// skips every `dt <= 0`, so lines all quoted at the same number leave it
+    /// empty). Either exit returns `Array(repeating: 8, count: 14)`, which the
+    /// rail renders as one shade at alpha `0.21` across its whole width: a
+    /// placeholder that looks sourced. That is #3503's complaint one notch
+    /// smaller, in `marginMapIsEmptyChrome`'s own words, a rail that "looks like
+    /// a distribution and is not one".
+    ///
+    /// Not a reason to hide the card (#2086 — declare, don't delete): the card
+    /// keeps its FINAL tile and its correctly-labelled axis, and only stops
+    /// claiming a shape it does not have.
+    ///
+    /// Both of the builder's flat exits fall out of ONE expression, which is
+    /// why there is no `count >= 2` guard in front of it: with fewer than two
+    /// lines the pairwise zip is empty and `contains` is vacuously false, and
+    /// with two or more it applies exactly the `dt > 0` test that the builder's
+    /// `rawPdf` loop applies. A guard would restate the first case in a second
+    /// place, where it could later disagree with this one.
+    ///
+    /// - Parameter thresholds: every line that parsed, in any order — this
+    ///   sorts for itself rather than trusting the caller to have done it.
+    static func totalRailHasDistribution(thresholds: [Double]) -> Bool {
+        let sorted = thresholds.sorted()
+        return zip(sorted, sorted.dropFirst()).contains { $1 - $0 > 0 }
+    }
+
+    /// The subtitle a FULL-GAME totals map may print.
+    ///
+    /// #3576. Three states, and only the third of them is new:
+    ///
+    /// 1. **Not settled** — "Projected total <unit>". It promises a projected
+    ///    total and delivers one (the PROJECTION marker, drawn off a quoted
+    ///    over/under line, not off the density). Unchanged, deliberately: the
+    ///    word this issue is about is "distribution", and this string does not
+    ///    contain it.
+    /// 2. **Settled, with a distribution** — "Final <unit> distribution".
+    ///    Unchanged: the card means it.
+    /// 3. **Settled, with none** — "Final <unit>". Exactly what the card shows:
+    ///    a final, on a rail with no shape on it.
+    static func fullTotalSubtitle(isDone: Bool, hasDistribution: Bool, unit: String) -> String {
+        guard isDone else { return "Projected total \(unit)" }
+        return hasDistribution ? "Final \(unit) distribution" : "Final \(unit)"
+    }
+
+    /// The subtitle a HALF totals map may print — the same rule in the half
+    /// card's own words.
+    ///
+    /// #3576 covers this card too because it is the same sentence over the same
+    /// flat array: `halfTotalCard` calls the same `buildDensityFromThresholds`
+    /// and hard-codes "Half <unit> distribution" regardless of what came back.
+    /// One rule, one implementation — #3554's lesson was three copies of a
+    /// prefix-stripping rule drifting apart, and a second copy of this one would
+    /// start the same way.
+    static func halfTotalSubtitle(hasDistribution: Bool, unit: String) -> String {
+        hasDistribution ? "Half \(unit) distribution" : "Half \(unit)"
+    }
+
     // MARK: - Where the mid axis label goes
 
     /// Where a map's middle axis label belongs.

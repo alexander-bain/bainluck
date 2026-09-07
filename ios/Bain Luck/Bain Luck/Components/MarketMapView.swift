@@ -484,6 +484,9 @@ struct MarketMapView: View {
         let rangeMin = bounds.min
         let rangeMax = bounds.max
         let density = buildDensityFromThresholds(thresholds, rangeMin: rangeMin, rangeMax: rangeMax, segments: 14)
+        // #3576 — whether that density is data or a placeholder. The rule lives
+        // in `MarketMapRail` so it can be asserted without rasterising a view.
+        let hasDistribution = MarketMapRail.totalRailHasDistribution(thresholds: allThresh)
 
         let purpleRgb = (r: 124.0, g: 58.0, b: 237.0)
 
@@ -496,11 +499,14 @@ struct MarketMapView: View {
         // selector.
         return mapCard(
             title: vocab.totalTitle(quotedBy: fullGameTotals.map(\.marketName)),
-            subtitle: isDone
-                ? "Final \(displayUnit(mapUnit)) distribution"
-                : "Projected total \(displayUnit(mapUnit))",
+            subtitle: MarketMapRail.fullTotalSubtitle(
+                isDone: isDone,
+                hasDistribution: hasDistribution,
+                unit: displayUnit(mapUnit)
+            ),
             headline: "",
             density: density,
+            drawsDistribution: hasDistribution,
             rangeMin: rangeMin,
             rangeMax: rangeMax,
             zeroPosition: nil,
@@ -646,11 +652,19 @@ struct MarketMapView: View {
         let rangeMin = bounds.min
         let rangeMax = bounds.max
         let density = buildDensityFromThresholds(thresholds, rangeMin: rangeMin, rangeMax: rangeMax, segments: 14)
+        // #3576 — the full map's rule, on the half map's identical flat array.
+        let hasDistribution = MarketMapRail.totalRailHasDistribution(thresholds: allThresh)
         let purpleRgb = (r: 124.0, g: 58.0, b: 237.0)
 
         return mapCard(
-            title: label, subtitle: "Half \(displayUnit(mapUnit)) distribution", headline: "",
-            density: density, rangeMin: rangeMin, rangeMax: rangeMax,
+            title: label,
+            subtitle: MarketMapRail.halfTotalSubtitle(
+                hasDistribution: hasDistribution,
+                unit: displayUnit(mapUnit)
+            ),
+            headline: "",
+            density: density, drawsDistribution: hasDistribution,
+            rangeMin: rangeMin, rangeMax: rangeMax,
             zeroPosition: nil,
             leftRgb: purpleRgb, rightRgb: purpleRgb,
             axisLeft: "\(Int(rangeMin))", axisMid: "\(Int((rangeMin + rangeMax) / 2))", axisRight: "\(Int(rangeMax))+",
@@ -660,9 +674,14 @@ struct MarketMapView: View {
 
     // MARK: - Reusable Map Card
 
+    /// - Parameter drawsDistribution: false when `density` is a placeholder
+    ///   rather than data (#3576), in which case the rail is drawn as an empty
+    ///   track. Defaults true so the margin cards, whose densities are always
+    ///   built from real rungs, are untouched.
     private func mapCard(
         title: String, subtitle: String, headline: String,
-        density: [Double], rangeMin: Double, rangeMax: Double,
+        density: [Double], drawsDistribution: Bool = true,
+        rangeMin: Double, rangeMax: Double,
         zeroPosition: Double?,
         leftRgb: (r: Double, g: Double, b: Double),
         rightRgb: (r: Double, g: Double, b: Double),
@@ -719,7 +738,8 @@ struct MarketMapView: View {
 
             // Density rail with marker dots
             densityRail(
-                density: density, rangeMin: rangeMin, rangeMax: rangeMax,
+                density: density, drawsDistribution: drawsDistribution,
+                rangeMin: rangeMin, rangeMax: rangeMax,
                 zeroPosition: zeroPosition,
                 leftRgb: leftRgb, rightRgb: rightRgb,
                 markers: markers
@@ -768,7 +788,8 @@ struct MarketMapView: View {
     // MARK: - Density Rail with Marker Dots
 
     private func densityRail(
-        density: [Double], rangeMin: Double, rangeMax: Double,
+        density: [Double], drawsDistribution: Bool = true,
+        rangeMin: Double, rangeMax: Double,
         zeroPosition: Double?,
         leftRgb: (r: Double, g: Double, b: Double),
         rightRgb: (r: Double, g: Double, b: Double),
@@ -780,14 +801,26 @@ struct MarketMapView: View {
         return ZStack(alignment: .leading) {
             GeometryReader { geo in
                 // Background segments
-                HStack(spacing: 0) {
-                    ForEach(0..<segmentCount, id: \.self) { i in
-                        let frac = Double(i) / Double(segmentCount)
-                        let isLeft = zeroFrac.map { frac < $0 } ?? true
-                        let rgb = isLeft ? leftRgb : rightRgb
-                        let alpha = 0.15 + (density[i] / 100.0) * 0.75
-                        Rectangle()
-                            .fill(Color(red: rgb.r / 255, green: rgb.g / 255, blue: rgb.b / 255).opacity(alpha))
+                Group {
+                    if drawsDistribution {
+                        HStack(spacing: 0) {
+                            ForEach(0..<segmentCount, id: \.self) { i in
+                                let frac = Double(i) / Double(segmentCount)
+                                let isLeft = zeroFrac.map { frac < $0 } ?? true
+                                let rgb = isLeft ? leftRgb : rightRgb
+                                let alpha = 0.15 + (density[i] / 100.0) * 0.75
+                                Rectangle()
+                                    .fill(Color(red: rgb.r / 255, green: rgb.g / 255, blue: rgb.b / 255).opacity(alpha))
+                            }
+                        }
+                    } else {
+                        // #3576 — no distribution, so no shading to read as one.
+                        // `Color.secondary.opacity(0.08)` is this file's own
+                        // empty-track fill (`ladderView`'s capsule), which is the
+                        // point: the reader has already been taught it means
+                        // "track, not data", and it is lighter than the 0.21 the
+                        // placeholder density was rendering at.
+                        Rectangle().fill(Color.secondary.opacity(0.08))
                     }
                 }
                 .clipShape(Capsule())

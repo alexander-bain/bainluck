@@ -258,4 +258,119 @@ final class MarketMapRailTests: XCTestCase {
             hasThresholds: false, overUnder: nil, isLive: false, isDone: false,
             hasScoreboardTotal: true, hasProjectedTotal: true))
     }
+
+    // MARK: - #3576: the card draws, but is the shape on it data?
+
+    /// The photographed card, condition for condition. Event 15292756 (Lions @
+    /// Colts, NFL, `completed`, DET 25 – IND 16) served **0 totals rows** —
+    /// re-measured against production 2026-09-06 and still 0 — under a subtitle
+    /// reading "Final points distribution".
+    ///
+    /// Three things are asserted together because the fix is only right if all
+    /// three hold: the card is still drawn, it no longer claims a distribution,
+    /// and the rail is told not to shade one.
+    func testThePhotographedSettledNFLCardKeepsItsCardAndDropsTheWordDistribution() {
+        let served: [Double] = []   // 0 totals rows, measured
+
+        XCTAssertFalse(MarketMapRail.totalMapDrawsNothing(
+            hasThresholds: false, overUnder: nil, isLive: false, isDone: true,
+            hasScoreboardTotal: true, hasProjectedTotal: false
+        ), "#2086 — the FINAL tile is a real fact, so the card is declared, not deleted")
+
+        XCTAssertFalse(
+            MarketMapRail.totalRailHasDistribution(thresholds: served),
+            "nothing was quoted, so the flat rail is a placeholder"
+        )
+        XCTAssertEqual(
+            MarketMapRail.fullTotalSubtitle(isDone: true, hasDistribution: false, unit: "points"),
+            "Final points",
+            "the sentence is the defect: the card may not promise a distribution it has not got"
+        )
+    }
+
+    /// 🔴 BOTH DIRECTIONS. The damaging mirror regression is stripping the word
+    /// from every settled game that DOES have a distribution, which would make
+    /// the fix a downgrade on every well-quoted NFL game. The 19 lines are the
+    /// ones event 14632820 actually served.
+    func testASettledGameWithRealLinesKeepsItsDistributionAndItsWord() {
+        let production: [Double] = [
+            23.5, 30.5, 33.5, 36.5, 39.5, 41.5, 42.5, 43.5, 44.5,
+            45.5, 46.5, 47.5, 50.5, 53.5, 56.5, 59.5, 62.5, 65.5,
+        ]
+        XCTAssertTrue(MarketMapRail.totalRailHasDistribution(thresholds: production))
+        XCTAssertEqual(
+            MarketMapRail.fullTotalSubtitle(isDone: true, hasDistribution: true, unit: "points"),
+            "Final points distribution"
+        )
+        XCTAssertEqual(
+            MarketMapRail.halfTotalSubtitle(hasDistribution: true, unit: "points"),
+            "Half points distribution"
+        )
+    }
+
+    /// The rule mirrors `buildDensityFromThresholds`'s two flat exits, so it is
+    /// pinned against both of them and against the smallest real distribution.
+    func testTheRuleMirrorsBothOfTheDensityBuildersFlatExits() {
+        // Exit 1 — fewer than two lines.
+        XCTAssertFalse(MarketMapRail.totalRailHasDistribution(thresholds: []))
+        XCTAssertFalse(MarketMapRail.totalRailHasDistribution(thresholds: [44.5]))
+        // Exit 2 — two lines, no positive gap between any pair. `rawPdf` skips
+        // every `dt <= 0`, so this returns the same flat array as exit 1.
+        XCTAssertFalse(MarketMapRail.totalRailHasDistribution(thresholds: [44.5, 44.5]))
+        XCTAssertFalse(MarketMapRail.totalRailHasDistribution(thresholds: [7, 7, 7]))
+        // The smallest thing that IS a distribution.
+        XCTAssertTrue(MarketMapRail.totalRailHasDistribution(thresholds: [44.5, 45.5]))
+        // A duplicate alongside a genuine gap is still a distribution.
+        XCTAssertTrue(MarketMapRail.totalRailHasDistribution(thresholds: [44.5, 44.5, 45.5]))
+    }
+
+    /// `extractTotalThresholds` sorts, but this rule is handed a bare array and
+    /// must not depend on that: it sorts for itself.
+    func testTheRuleDoesNotDependOnTheCallerHavingSorted() {
+        XCTAssertTrue(MarketMapRail.totalRailHasDistribution(thresholds: [65.5, 23.5, 44.5]))
+        XCTAssertTrue(MarketMapRail.totalRailHasDistribution(thresholds: [45.5, 44.5]))
+    }
+
+    /// An UNSETTLED card is out of scope and must not move. Its subtitle never
+    /// contained the word, so neither state may change it — a fix that routed
+    /// this string through the new rule would rewrite every upcoming game's
+    /// card for no reason.
+    func testAnUnsettledCardsSubtitleIsIdenticalInBothStates() {
+        for hasDistribution in [true, false] {
+            XCTAssertEqual(
+                MarketMapRail.fullTotalSubtitle(
+                    isDone: false, hasDistribution: hasDistribution, unit: "points"
+                ),
+                "Projected total points",
+                "the pre-game subtitle promises a projected total, and the PROJECTION marker is one"
+            )
+        }
+    }
+
+    /// The half card gets the same treatment because it has the same defect —
+    /// the same `buildDensityFromThresholds`, the same hard-coded word.
+    func testTheHalfCardDropsTheWordOnTheSameCondition() {
+        XCTAssertEqual(
+            MarketMapRail.halfTotalSubtitle(hasDistribution: false, unit: "points"),
+            "Half points"
+        )
+    }
+
+    /// #3630 — the subtitle is unit-aware and must stay so on both branches; a
+    /// bases map that started saying "points" would be a fresh bug of the class
+    /// `SportVocab.totalTitle` exists to close.
+    func testBothSubtitleBranchesCarryTheMapsOwnUnit() {
+        XCTAssertEqual(
+            MarketMapRail.fullTotalSubtitle(isDone: true, hasDistribution: false, unit: "bases"),
+            "Final bases"
+        )
+        XCTAssertEqual(
+            MarketMapRail.fullTotalSubtitle(isDone: true, hasDistribution: true, unit: "games"),
+            "Final games distribution"
+        )
+        XCTAssertEqual(
+            MarketMapRail.halfTotalSubtitle(hasDistribution: false, unit: "runs"),
+            "Half runs"
+        )
+    }
 }
