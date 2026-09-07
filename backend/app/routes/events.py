@@ -7693,8 +7693,14 @@ async def _build_search_suggestions(db: AsyncSession) -> dict:
 
     # --- 2. Starting soon (tier 1-2, within 3 hours) ---
     try:
+        # 🔴 #3718: `Sport.key` IS IN THE SELECT, NOT REACHED THROUGH `ev.sport`.
+        # The countdown's verb is chosen from the sport, and the obvious
+        # `ev.sport.key` is a lazy load on a query that selects Event columns
+        # only — `MissingGreenlet` under async, raised inside this section's
+        # `try`, which logs and drops the section. The chips would not have said
+        # "Kicks off"; they would have vanished.
         soon_q = (
-            select(Event)
+            select(Event, Sport.key)
             .join(Sport)
             .where(
                 Event.status == "scheduled",
@@ -7722,8 +7728,11 @@ async def _build_search_suggestions(db: AsyncSession) -> dict:
         soon_rows = []
         if not _section_full(2):
             soon_result = await db.execute(soon_q)
-            soon_rows = soon_result.scalars().all()
-        for ev in soon_rows:
+            # Two-column select, so `.all()` yields (Event, sport_key) tuples —
+            # `.scalars()` here would silently keep only the Event and put the
+            # verb back on the default.
+            soon_rows = soon_result.all()
+        for ev, ev_sport_key in soon_rows:
             if _section_full(2):
                 break
             # 🔴 LAT-P139: THE ONLY CLOCK-RELATIVE TEXT THIS ROUTE PRODUCES, AND
@@ -7742,7 +7751,7 @@ async def _build_search_suggestions(db: AsyncSession) -> dict:
             # and `now` is the same object — and the item is skipped rather than
             # labelled anyway, so the build agrees with the renderer on the
             # boundary instead of relying on that argument.
-            time_label = ssc.countdown_label(ev.commence_time, now)
+            time_label = ssc.countdown_label(ev.commence_time, now, ev_sport_key)
             if time_label is None:
                 continue
             short = _shorter_team(ev.home_team_name, ev.away_team_name)
@@ -7752,7 +7761,12 @@ async def _build_search_suggestions(db: AsyncSession) -> dict:
                 "event",
                 section=2,
                 event_id=ev.id,
-                **{ssc.COUNTDOWN_FIELD: ev.commence_time},
+                **{
+                    ssc.COUNTDOWN_FIELD: ev.commence_time,
+                    # The sport travels with the deadline: both are inputs to
+                    # the one string `render` rebuilds from the serving clock.
+                    ssc.COUNTDOWN_SPORT_FIELD: ev_sport_key,
+                },
             )
     except Exception:
         _log_dead_suggestion_section(2, "starting soon")

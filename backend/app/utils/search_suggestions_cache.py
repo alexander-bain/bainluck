@@ -84,10 +84,13 @@ and die while their statement is being built. `TestSectionsThatHaveNeverRun` in
 `tests/integration/test_route_search_suggestions_cold_p124.py` pins both. So the
 served content is only ever:
 
-  * section 2 — "Tips off in N min" / "Starts in Nh". CLOCK-RELATIVE, and it is
+  * section 2 — "Kicks off in N min" / "Starts in Nh". CLOCK-RELATIVE, and it is
     the one this module re-renders. An item whose start has passed is DROPPED at
-    serve time rather than re-labelled, because "Tips off in -3 min" is not a
+    serve time rather than re-labelled, because "Kicks off in -3 min" is not a
     thing to print and a game that has started is not "starting soon".
+    The verb is per-sport (`countdown_verb`, #3718) and is therefore a second
+    build-time input the renderer needs: the SPORT travels in the payload beside
+    the deadline, and both are stripped on the way out.
   * section 3 — "Surging +4.1% — <market>". A 24-hour statistic whose own input
     (`probability_change_24h`) is refreshed by `update_max_movement` every ten
     minutes. It cannot move meaningfully inside the ceiling below.
@@ -206,6 +209,56 @@ STALE_SERVE_CEILING = 5
 #: the response on the wire keeps exactly the four/five keys it has today.
 COUNTDOWN_FIELD = "countdown_from"
 
+#: The per-suggestion field carrying the SPORT KEY the countdown's verb is
+#: chosen from. Travels beside `COUNTDOWN_FIELD` and is stripped by `render`
+#: for the same reason: the deadline alone is not enough to re-render the
+#: label, because the verb is part of the text being rendered.
+COUNTDOWN_SPORT_FIELD = "countdown_sport"
+
+#: Sport-key PREFIX -> the verb for a countdown under an hour. Keyed on the
+#: prefix (`americanfootball_ncaaf` -> `americanfootball`) because the tier-1/2
+#: set spells one sport many ways — `tennis_atp_us_open`, `tennis_wta_us_open`,
+#: `basketball_nba`, `basketball_ncaab` — and a per-key table would need a new
+#: row for every tour spelling, which is #2552's defect in copy form.
+#:
+#: 🔴 A SPORT THAT IS NOT IN HERE GETS THE NEUTRAL WORDING, NOT A GUESS. That is
+#: the same "Starts in ..." the >=1h branch already prints for every sport, so
+#: an unmapped sport is merely plain, never wrong. #3718 exists because the verb
+#: was a constant: every sport got basketball's, and on a September Saturday two
+#: of the eight chips told a reader that a college FOOTBALL game tips off.
+_COUNTDOWN_VERBS: dict[str, str] = {
+    "basketball": "Tips off",
+    "americanfootball": "Kicks off",
+    "soccer": "Kicks off",
+    "rugbyleague": "Kicks off",
+    "rugbyunion": "Kicks off",
+    "rugby": "Kicks off",
+    "aussierules": "Bounces down",
+    "baseball": "First pitch",
+    "icehockey": "Puck drops",
+    "tennis": "On court",
+    "cricket": "First ball",
+}
+
+#: What every unmapped sport prints, and what the >=1h branch prints for all of
+#: them. Sport-neutral by construction.
+_NEUTRAL_VERB = "Starts"
+
+
+def countdown_verb(sport_key: str | None) -> str:
+    """The verb for `sport_key`'s countdown, or the neutral one.
+
+    Prefix-matched, and tolerant of a missing/odd key by design — this is copy
+    selection on a non-critical chip, so an unrecognised sport must degrade to
+    plain wording rather than raise inside section 2's `try`. A raise there is
+    logged and drops the whole section (the #2286 class), which would trade two
+    wrong words for two missing chips.
+    """
+    if not sport_key or not isinstance(sport_key, str):
+        return _NEUTRAL_VERB
+    prefix = sport_key.split("_", 1)[0].strip().lower()
+    return _COUNTDOWN_VERBS.get(prefix, _NEUTRAL_VERB)
+
 
 def keys() -> ConceptCacheKeys:
     """Every Redis key this tier owns. There is one slot, so there is one set."""
@@ -222,8 +275,16 @@ def stale_serve_ceiling_seconds() -> int:
 # ---------------------------------------------------------------------------
 
 
-def countdown_label(deadline: datetime, now: datetime) -> str | None:
+def countdown_label(
+    deadline: datetime, now: datetime, sport_key: str | None = None
+) -> str | None:
     """The "starting soon" label, or None once `deadline` has passed.
+
+    `sport_key` picks the verb (`countdown_verb`); omitting it yields the
+    neutral "Starts in ...". It is optional because the expiry contract below is
+    what every caller depends on and it does not vary by sport — but a caller
+    that HAS the sport and drops it prints plain text where the right word was
+    available, so the route passes it and `render` carries it in the payload.
 
     🔴 THIS IS THE ROUTE'S OWN TEXT, MOVED, NOT A SECOND COPY OF IT. Section 2
     calls this to build the label and this module calls it again to re-render
@@ -247,8 +308,12 @@ def countdown_label(deadline: datetime, now: datetime) -> str | None:
         return None
     minutes = int(remaining / 60)
     if minutes < 60:
-        return f"Tips off in {minutes} min"
-    return f"Starts in {minutes // 60}h"
+        return f"{countdown_verb(sport_key)} in {minutes} min"
+    # 🔴 THE HOURS BRANCH STAYS SPORT-NEUTRAL ON PURPOSE. "Kicks off in 2h" is
+    # not wrong, but the verb buys nothing at that distance and #3718 is a bug
+    # about the sub-hour branch only; keeping this line a constant keeps the
+    # blast radius of a copy fix to the text that was actually wrong.
+    return f"{_NEUTRAL_VERB} in {minutes // 60}h"
 
 
 def render(payload: dict[str, Any], now: datetime | None = None) -> dict[str, Any]:
@@ -272,7 +337,18 @@ def render(payload: dict[str, Any], now: datetime | None = None) -> dict[str, An
         if raw_deadline is None:
             rendered.append(item)
             continue
-        item = {k: v for k, v in item.items() if k != COUNTDOWN_FIELD}
+        # 🔴 THE SPORT IS READ BEFORE THE STRIP AND STRIPPED WITH THE DEADLINE.
+        # Both are build-time inputs to one rendered string, so dropping the
+        # sport here while keeping the deadline would make a mirror re-render
+        # "Kicks off in 12 min" as "Starts in 12 min" — a build and a mirror of
+        # that build printing different strings, which is exactly what
+        # `test_render_is_a_no_op_on_a_payload_built_this_instant` forbids.
+        sport_key = item.get(COUNTDOWN_SPORT_FIELD)
+        item = {
+            k: v
+            for k, v in item.items()
+            if k not in (COUNTDOWN_FIELD, COUNTDOWN_SPORT_FIELD)
+        }
         deadline = _parse(raw_deadline)
         if deadline is None:
             # A deadline we cannot parse cannot be re-rendered, and the label
@@ -285,7 +361,7 @@ def render(payload: dict[str, Any], now: datetime | None = None) -> dict[str, An
                 raw_deadline,
             )
             continue
-        label = countdown_label(deadline, now)
+        label = countdown_label(deadline, now, sport_key)
         if label is None:
             continue
         item["label"] = label
