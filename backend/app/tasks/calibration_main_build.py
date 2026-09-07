@@ -1552,6 +1552,66 @@ def staged_lease() -> float:
     return time.time() + LEASE_S
 
 
+#: Units whose ``read:futures_unit`` stage COMPLETED but whose durable cursor
+#: write then failed — CAL-P1048, repairing CERT-2196's named finding
+#: ``CALIBRATION-3803-BANKED-AFTER-CHECKPOINT``.
+#:
+#: The frozen loop closes the stage when the SQL returns and only afterwards
+#: commits and calls :func:`save_staged_cursor`::
+#:
+#:   with runner.stage("read:futures_unit"):   # completed=True on exit
+#:       result = await db.execute(chunk_sql, {...})
+#:   await runner.commit(db)
+#:   if not await save_staged_cursor(cursor, terminal=TERMINAL_PARTIAL):
+#:       return None                             # counted, but NOT banked
+#:   done += 1
+#:
+#: So a unit that read and committed but could not persist its cursor is
+#: already inside ``stage_ok_counts`` when the beat returns. ``done`` is
+#: correctly not incremented and the unit is correctly not banked — but
+#: ``staged:units_completed_this_beat`` is derived from the stage tally, and
+#: the operator window publishes that as ``rebuild_units_this_beat``. The
+#: window would read "1 banked this beat" for a beat whose durable bank
+#: advanced by zero: gotcha #53 exactly, and the same class of defect
+#: CAL-P1047 fixed one layer up (a cancelled unit counted as a banked one).
+#:
+#: Carried in MODULE state, and not in a :class:`~contextvars.ContextVar`,
+#: because ``precompute_calibration.py`` is frozen under D45: the count has to
+#: travel from :func:`save_staged_cursor` to :func:`_record_staged_rate`
+#: without the frozen loop between them passing anything, and both ends live in
+#: this module.
+#:
+#: A ContextVar was the first attempt and is WRONG here, for a reason worth
+#: writing down: a coroutine run by ``asyncio.run`` — or by any
+#: ``create_task`` — executes in a COPY of the context, so a ``.set()`` inside
+#: the beat is invisible to anything outside that task. If the unit loop and
+#: the ledger save were ever to sit in different tasks, the tally would read a
+#: clean ``0`` at the moment it mattered and this repair would silently do
+#: nothing, while every test that drove one task still passed. That is the
+#: "guard that has never actually guarded" failure mode, so the mechanism is
+#: chosen to be independent of task structure rather than to look tidy.
+#:
+#: Module state is safe at this granularity: ``worker-heavy`` runs
+#: ``--concurrency=2`` on Celery's PREFORK pool, which is two separate
+#: processes rather than two threads, and each of them runs one beat at a time
+#: under the cursor lease. What module state does NOT get for free is
+#: freshness — a prefork process is reused across beats — so the reset in
+#: :func:`load_staged_cursor` is load-bearing, not hygiene, and has its own
+#: guard.
+_UNBANKED_UNIT_COMPLETIONS = 0
+
+
+def _reset_unbanked_completions() -> None:
+    """Start this beat's tally at zero. Called at the beat's first cursor action."""
+    global _UNBANKED_UNIT_COMPLETIONS
+    _UNBANKED_UNIT_COMPLETIONS = 0
+
+
+def unbanked_unit_completions() -> int:
+    """Units this beat read and committed but could not persist a cursor for."""
+    return _UNBANKED_UNIT_COMPLETIONS
+
+
 async def load_staged_cursor(
     *,
     population_version: str,
@@ -1577,6 +1637,12 @@ async def load_staged_cursor(
         decode_staged_cursor_detailed,
         new_staged_cursor,
     )
+
+    # CAL-P1048. The beat's first cursor action, so the only place that is
+    # guaranteed to run once before any unit and is not inside the frozen
+    # module. A prefork worker reuses its process, so without this a cursor
+    # failure in one beat would be subtracted from the NEXT beat's honest count.
+    _reset_unbanked_completions()
 
     blank = new_staged_cursor(
         population_version=population_version,
@@ -1650,11 +1716,26 @@ async def save_staged_cursor(cursor, *, terminal: str) -> bool:
         )
     except Exception as exc:  # noqa: BLE001 — reported, never swallowed
         logger.warning("calibration staged cursor persist failed: %s", exc)
+        _note_unbanked_completion()
         return False
     ok = result.get("status") in ("ok", "superseded")
     if not ok:
         logger.warning("calibration staged cursor persist rejected: %s", result)
+        _note_unbanked_completion()
     return ok
+
+
+def _note_unbanked_completion() -> None:
+    """One unit read and committed, then failed to persist its cursor.
+
+    CAL-P1048. Called on BOTH failing exits of :func:`save_staged_cursor` — the
+    raising one and the rejected-result one — because the caller cannot tell
+    them apart and neither banks anything. Recorded rather than deduced: the
+    caller's ``return False`` contract says "not banked", and this is that same
+    fact written where the count can still be corrected.
+    """
+    global _UNBANKED_UNIT_COMPLETIONS
+    _UNBANKED_UNIT_COMPLETIONS += 1
 
 
 async def _record_staged_convergence(runner: PhaseRunner) -> None:
@@ -1838,6 +1919,7 @@ def _record_served_bank(runner: PhaseRunner, payload: dict[str, Any]) -> None:
 STAGED_UNIT_STAGE = "read:futures_unit"
 
 
+
 def _record_staged_rate(runner: PhaseRunner, *, banked: int) -> None:
     """How fast this beat went and how many beats are left, on EVERY terminal.
 
@@ -1876,9 +1958,38 @@ def _record_staged_rate(runner: PhaseRunner, *, banked: int) -> None:
     # right number for attributing elapsed time and the wrong one for costing a
     # unit. Feasibility reads this pair; the operator-facing gauges above keep
     # the values CAL-P066 published, so nothing that reads them moves.
-    completed_units = runner.ledger.stage_completed_count(STAGED_UNIT_STAGE)
+    # CAL-P1048, repairing CERT-2196. The stage tally counts a unit whose SQL
+    # returned; the durable bank counts a unit whose cursor was written. They
+    # differ by exactly the units that failed at the cursor write, and the
+    # PROGRESS reading — the one the operator window publishes as
+    # ``rebuild_units_this_beat`` — has to be the second. Floored at 0 so an
+    # accounting slip can never publish a negative count as progress.
+    #
+    # The COST readings below deliberately do NOT subtract it. A unit that read
+    # and committed and then lost its cursor really did take the time it took,
+    # and that is a valid sample of what one unit costs — it is the same
+    # measurement whether or not the write landed. Dropping it would throw away
+    # a real observation AND feed a worse number to the unit bound, which is
+    # sized from measured cost. So a beat CAN legitimately publish
+    # ``units_completed_this_beat: 0`` beside a real ``unit_ms_mean_completed``:
+    # zero progress, one measured unit. That is the CAL-P067 split (cost beside
+    # progress, neither replacing the other) applied to the one case where the
+    # two genuinely disagree, and ``staged:units_completion_not_banked`` below
+    # is the field that explains the pair to whoever reads it.
+    unbanked = unbanked_unit_completions()
+    completed_units = max(0, runner.ledger.stage_completed_count(STAGED_UNIT_STAGE) - unbanked)
     completed_mean = runner.ledger.stage_completed_mean_ms(STAGED_UNIT_STAGE)
     runner.ledger.record_gauge("staged:units_completed_this_beat", completed_units)
+    if unbanked:
+        # NAMED, not just subtracted. "Nothing banked because every unit was
+        # cancelled at its bound" and "nothing banked because the cursor write
+        # failed" are opposite diagnoses — the first is the build working as
+        # designed under a tight window, the second is the durable-state path
+        # failing — and a bare 0 says neither (gotcha #53). The published
+        # triple still reconciles: this unit stays inside ``units_this_beat``
+        # and so lands in ``rebuild_units_ran_not_banked_this_beat``, which is
+        # true of it in the plainest sense.
+        runner.ledger.record_gauge("staged:units_completion_not_banked", unbanked)
     if completed_mean is None:
         # Every unit this beat was cancelled. Distinct from "no unit ran", and
         # the state in which no unit cost may be quoted at all.

@@ -53,8 +53,10 @@ from __future__ import annotations
 import pytest
 
 from app.tasks.calibration_beat_gauge_sampler import (
+    ALWAYS_CAPTURED_PROGRESS_GAUGES,
     PROGRESS_ABSENT_BEAT,
     PROGRESS_ABSENT_CAPTURE,
+    REBUILD_PROGRESS_FIELDS,
     REBUILD_PROGRESS_GAUGES,
     REQUIRED_DISCLOSURE_GAUGES,
     row_rebuild_progress,
@@ -269,6 +271,16 @@ class TestTheBuilderIsNeverConfusedWithTheServedCensus:
         branch. This proves the substitution is meaning-preserving where the old
         reader answered at all: same gauges, same numbers. A repair that fixed the
         null by changing what the field MEANS would be a different bug.
+
+        **CAL-P1047 narrowed what this can claim, and did not weaken it.** The
+        ring's ``rebuild_units_this_beat`` now reads
+        ``staged:units_completed_this_beat``; the disclosure's same-named field
+        still reads ``staged:units_this_beat``. On THIS fixture both are 1 —
+        nothing was cancelled — so the equality below still holds and still
+        proves the substitution did not move the number. It is no longer an
+        identity across all beats, and the beat where it breaks — one cancelled
+        unit — is pinned in
+        ``test_calibration_beat_ring_counts_banked_not_attempted_3803.py``.
         """
         serving = dict(PRODUCTION_2015Z_GAUGES)
         serving["staged:served_at"] = 1_788_724_500
@@ -376,11 +388,16 @@ class TestTheEndpointStopsAnsweringUnknown:
         )
         row = out["observations"][0]
 
-        for field in REBUILD_PROGRESS_GAUGES:
+        # Over the PUBLISHED fields, not the gauge map: CAL-P1047 added a derived
+        # one (``rebuild_units_ran_not_banked_this_beat``) that is backed by no
+        # gauge, and the invariant this test defends — an unmeasured figure is
+        # never a number — has to cover it or the derivation becomes the one way
+        # a zero can reach a reader unmeasured.
+        for field in REBUILD_PROGRESS_FIELDS:
             assert row[f"{field}_measured"] is False, field
             assert row[field] is None, field
         assert row["rebuild_progress_measured"] is False
-        assert set(row["rebuild_progress_absent"]) == set(REBUILD_PROGRESS_GAUGES)
+        assert set(row["rebuild_progress_absent"]) == set(REBUILD_PROGRESS_FIELDS)
 
     @pytest.mark.asyncio
     async def test_full_true_is_untouched_and_still_serves_the_raw_rows(
@@ -422,20 +439,46 @@ class TestTheEndpointStopsAnsweringUnknown:
 class TestTheNoVersionGateDecisionIsLicensed:
     """Why this reader needs no capture-version floor, asserted not asserted-in-prose."""
 
-    def test_every_gauge_it_reads_is_a_required_disclosure_gauge(self):
-        """The licence itself.
+    def test_every_gauge_it_reads_is_licensed_by_one_of_the_two_routes(self):
+        """The licence itself, and CAL-P1047 (#3803) took the second route.
 
         ``row_stop_and_drop`` needs a version floor because its gauges were added
         by a later capture rule, so their absence on an old row is the sampler's
-        silence and unrecoverable. Every gauge here is in
-        :data:`REQUIRED_DISCLOSURE_GAUGES`, so a capture that failed to keep one
-        records it in the row's own ``gauges_missing_required`` at the time — the
-        row carries its own disambiguating signal and no constant is needed. If
-        someone adds a gauge to the map that is NOT required, this fails, and the
-        version gate has to be thought about again.
+        silence and unrecoverable. A gauge read here escapes that only two ways:
+
+        1. it is in :data:`REQUIRED_DISCLOSURE_GAUGES`, so a capture that failed
+           to keep it records it in the row's own ``gauges_missing_required`` at
+           the time — the row carries its own disambiguating signal;
+        2. it is in :data:`ALWAYS_CAPTURED_PROGRESS_GAUGES`, retained by every
+           version of ``select_gauges`` there has ever been, so no row the ring
+           can hold is old enough for its absence to be about the sampler.
+
+        This test was written to fail when a gauge with NEITHER licence is added,
+        and that is still exactly what it does. It fired for real on CAL-P1047 —
+        the fix was to establish route 2 by measurement (``git log -S`` on both
+        new names returns one commit, the one that created the module), not to
+        widen the test.
         """
         for field, gauge in REBUILD_PROGRESS_GAUGES.items():
-            assert gauge in REQUIRED_DISCLOSURE_GAUGES, (field, gauge)
+            assert (
+                gauge in REQUIRED_DISCLOSURE_GAUGES
+                or gauge in ALWAYS_CAPTURED_PROGRESS_GAUGES
+            ), (field, gauge)
+
+    def test_the_always_captured_licence_is_not_a_claim_about_nothing(self):
+        """Route 2 must name gauges the sampler actually captures.
+
+        The set is hand-written, so the failure mode is a name that is licensed
+        as "always captured" while ``select_gauges`` never retains it — which
+        would make every one of its absences read ``beat_did_not_record`` when
+        the truth is that nothing ever looked. Asserted against the capture
+        tuples themselves rather than a transcription of them.
+        """
+        from app.tasks.calibration_beat_gauge_sampler import OPERATIONAL_GAUGES
+
+        captured = set(REQUIRED_DISCLOSURE_GAUGES) | set(OPERATIONAL_GAUGES)
+        for gauge in ALWAYS_CAPTURED_PROGRESS_GAUGES:
+            assert gauge in captured, gauge
 
     def test_the_two_absence_reasons_are_distinct_strings(self):
         """They are compared by value downstream; equal ones would erase the split."""
