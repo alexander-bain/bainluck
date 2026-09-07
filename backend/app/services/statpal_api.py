@@ -547,15 +547,22 @@ class StatPalAPIService(BaseAPIClient):
             )
             return []
 
-        data = await self._get(sport, self._live_endpoint(sport))
+        data = await self._get(sport, self.live_endpoint(sport))
         if not data:
             return []
 
         return self._parse_fixtures(data, sport)
 
     @staticmethod
-    def _live_endpoint(sport: str) -> str:
-        """The live-board path for a sport. `livescores` unless measured otherwise."""
+    def live_endpoint(sport: str) -> str:
+        """The live-board path for a sport. `livescores` unless measured otherwise.
+
+        Public because a caller has to be able to NAME the path it asked. The
+        authority stamper labels its read failures with this rather than with
+        the word "livescores", and soccer is why: its live board is
+        `matches/live`, so a receipt built from the default would send a reader
+        to a URL nobody requested.
+        """
         return LIVE_SCORE_ENDPOINTS.get(sport, "livescores")
 
     # -------------------------------------------------------------------------
@@ -590,6 +597,50 @@ class StatPalAPIService(BaseAPIClient):
         [d for d in range(-7, 0)] + [d for d in range(1, 8)]
     )
 
+    # /api/v2/soccer/matches/daily?offset=N — soccer's forward schedule, one
+    # board per call. Measured 2026-09-07 ~06:20Z, by asking rather than by
+    # reading the vendor's docs:
+    #
+    #     offset   HTTP   top-level key        leagues  rows
+    #       -8      400   —                        —      —
+    #       -7      200   matches_31_08_2026        —      —
+    #        0      200   live_matches              —      —   <- NOT a board
+    #        1      200   matches_08_09_2026       92    274
+    #        2      200   matches_09_09_2026      106    362
+    #        3      200   matches_10_09_2026       78    196
+    #        4      200   matches_11_09_2026      212    420
+    #        7      200   matches_14_09_2026        —      —
+    #        8      400   —                        —      —
+    #
+    # Three facts in that table, and each one is a decision here.
+    #
+    # 1. **`offset=0` IS `matches/live`, byte for byte** — both answers were
+    #    190,608 bytes with md5 `bd7893e7b2…` at 06:20Z, and both are keyed
+    #    `live_matches` rather than `matches_DD_MM_YYYY`. That is #3800, and it
+    #    is why 0 is refused BY NAME below instead of quietly returning today's
+    #    live board under a schedule method: a caller asking this door for
+    #    "today" wants the fixture list and would receive whatever happens to be
+    #    in play. Today's fixtures come from `get_live_fixtures`.
+    # 2. **The range is exactly [-7, 7].** ±8 is HTTP 400, so an out-of-range
+    #    offset is a caller bug and is raised as one rather than arriving as an
+    #    upstream absence — the same contract tennis's day token has.
+    # 3. **A board is NOT a UTC day; it is ~25.5 hours** running from 23:00Z the
+    #    previous day to 00:30–00:45Z the next, so consecutive boards OVERLAP by
+    #    an hour and a half and repeat rows verbatim. Every caller must dedupe on
+    #    `fallback_id_3` — see `StatPalFixture.fallback_id_3` and
+    #    `stamp_v1_statpal_fixtures`. The overlap is also why the row count is
+    #    not the day's fixture count.
+    SOCCER_DAILY_OFFSETS: tuple[int, ...] = tuple(
+        [d for d in range(-7, 0)] + [d for d in range(1, 8)]
+    )
+
+    #: The top-level key of a `matches/daily` board, which NAMES ITS OWN DATE
+    #: (`matches_08_09_2026`) rather than being a fixed word. Matched by shape
+    #: because the alternative is composing the date ourselves and asserting the
+    #: board is the one we asked for — and the board's date is a fact about the
+    #: response, not about the request.
+    _SOCCER_DAILY_SECTION = re.compile(r"^matches_\d{2}_\d{2}_\d{4}$")
+
     # Sports served as one flat `scores.tournament.match` array — the shape NFL
     # is the exception to. Measured 2026-09-03, and MLB 2026-09-04:
     #   nba  1206 games, 03.10.2026 → 04.04.2027, season "2026/2027"
@@ -618,18 +669,21 @@ class StatPalAPIService(BaseAPIClient):
         Dark by construction: no caller writes from this yet.
 
         Args:
-            sport: "tennis" or "nfl" (other sports fall through to get_fixtures).
+            sport: "tennis", "soccer" or "nfl" (other sports fall through to
+                get_fixtures).
             day_offset: Required for tennis — a day token in TENNIS_DAILY_OFFSETS
-                (-7…-1, 1…7). Ignored by season-schedule sports.
+                (-7…-1, 1…7) — and for soccer, an offset in SOCCER_DAILY_OFFSETS
+                (the same range, and 0 is refused for its own reason). Ignored
+                by season-schedule sports.
 
         Returns:
             List of StatPalFixture objects. Empty means StatPal has no games —
             never that we failed to ask.
 
         Raises:
-            ValueError: tennis called with a missing or out-of-range day_offset.
-                That is a caller bug, not an upstream absence, and the two must
-                not arrive as the same empty list.
+            ValueError: tennis or soccer called with a missing or out-of-range
+                day_offset. That is a caller bug, not an upstream absence, and
+                the two must not arrive as the same empty list.
             StatPalUpstreamError: StatPal did not answer, or answered with an
                 error body. The ingestion path swallows this into `[]`; the
                 authority path must not, because "no games" is the finding it
@@ -645,6 +699,30 @@ class StatPalAPIService(BaseAPIClient):
             data = await self._get(sport, endpoint)
             self._require_answer(sport, endpoint, data)
             return self._parse_tennis_daily(data)
+
+        if sport == "soccer":
+            if day_offset == 0:
+                # Refused by name, not by range. `offset=0` answers 200 with a
+                # board — it is simply `matches/live` wearing a schedule URL
+                # (byte-identical, measured; see SOCCER_DAILY_OFFSETS), so a
+                # caller that got it back would receive whatever is in play
+                # instead of today's fixture list and could not tell.
+                raise ValueError(
+                    "soccer day_offset=0 is not a schedule board: "
+                    "matches/daily?offset=0 is byte-identical to matches/live "
+                    "(#3800). Today's play is get_live_fixtures('soccer')."
+                )
+            if day_offset not in self.SOCCER_DAILY_OFFSETS:
+                raise ValueError(
+                    f"soccer day_offset must be one of "
+                    f"{self.SOCCER_DAILY_OFFSETS} (±8 is HTTP 400 upstream); "
+                    f"got {day_offset!r}"
+                )
+            data = await self._get(
+                sport, "matches/daily", {"offset": day_offset}
+            )
+            self._require_answer(sport, f"matches/daily?offset={day_offset}", data)
+            return self._parse_soccer_daily_matches(data)
 
         if sport == "nfl":
             data = await self._get(sport, "season-schedule")
@@ -694,7 +772,7 @@ class StatPalAPIService(BaseAPIClient):
                 #53) — a linker that treats a 500 as an empty slate reports a
                 clean run in which nothing was linked.
         """
-        endpoint = self._live_endpoint(sport)
+        endpoint = self.live_endpoint(sport)
         data = await self._get(sport, endpoint)
         self._require_answer(sport, endpoint, data)
         if sport == "tennis":
@@ -820,6 +898,60 @@ class StatPalAPIService(BaseAPIClient):
         one, and no soccer writer exists to do it.
         """
         section = data.get("live_matches") if isinstance(data, dict) else None
+        return self._parse_soccer_board(section, "live")
+
+    def _parse_soccer_daily_matches(self, data: dict) -> list[StatPalFixture]:
+        """Parse a v2 soccer `matches/daily?offset=N` board. See `_parse_soccer_board`.
+
+        **The rows are the same shape as `matches/live`'s, measured field by
+        field** over the pinned offset-1 census: `main_id`, `fallback_id_1..3`,
+        `status`, `date`, `time`, `venue`, `home{id,name,goals}`,
+        `away{id,name,goals}`, `events`, `ht`/`ft`/`et`/`penalties`. So the row
+        parser is REUSED rather than copied — a second copy of it would be a
+        second place for the kickoff-clock status and the `goals` scores to be
+        read wrong, and those are the two things `_parse_soccer_live_matches`
+        exists to get right.
+
+        Only the wrapper differs, and only in its NAME: the board is keyed
+        `matches_DD_MM_YYYY`, so the key is matched by shape
+        (`_SOCCER_DAILY_SECTION`). A board whose date we do not recognise is
+        still a board; refusing it because the key was not the one we predicted
+        would turn a fact about the response into an absence.
+
+        A payload with no board section returns `[]`. That is not gotcha #53:
+        the read itself already raised through `_require_answer` if StatPal did
+        not answer, so reaching here means a 200 whose body carries no board —
+        which is the vendor saying "no fixtures", and is the same answer the
+        live parser gives to the same shape.
+        """
+        section = None
+        if isinstance(data, dict):
+            for key, value in data.items():
+                if self._SOCCER_DAILY_SECTION.match(str(key)) and isinstance(
+                    value, dict
+                ):
+                    section = value
+                    break
+        return self._parse_soccer_board(section, "daily")
+
+    def _parse_soccer_board(
+        self, section: Optional[dict], board: str
+    ) -> list[StatPalFixture]:
+        """The rows out of one v2 soccer board section, live or daily.
+
+        Shape (measured 2026-09-07 04:25Z — 113 leagues, 195 matches on live;
+        92 leagues, 274 matches on `offset=1`)::
+
+            {"<live_matches | matches_DD_MM_YYYY>": {
+                "updated": "07.09.2026 04:25:00", "updated_ts": 1788755100,
+                "league": [{"id": "2914", "name": "Argentina: Liga …",
+                            "country": "argentina", "cup": "False",
+                            "match": [ … ] }]}}
+
+        One bad row is skipped and the board survives (gotcha #42): a global
+        soccer board is 92–212 leagues wide and losing all of them to one
+        malformed fixture would report an outage that did not happen.
+        """
         if not isinstance(section, dict):
             return []
 
@@ -836,7 +968,9 @@ class StatPalAPIService(BaseAPIClient):
                 try:
                     fixture = self._parse_soccer_live_match(item, league_name)
                 except Exception as exc:  # noqa: BLE001 — one bad row, not the board
-                    logger.debug("StatPal soccer: skipping live row: %s", exc)
+                    logger.debug(
+                        "StatPal soccer: skipping %s row: %s", board, exc
+                    )
                     continue
                 if fixture:
                     fixtures.append(fixture)

@@ -159,7 +159,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from sqlalchemy import text
 
@@ -170,17 +170,32 @@ from app.services.anchor_channel import (
     record_anchor,
 )
 from app.services.authority_ledger import record_agreement_day
-from app.services.statpal_api import StatPalFixture, get_statpal_service
+from app.services.statpal_api import (
+    StatPalAPIService,
+    StatPalFixture,
+    get_statpal_service,
+)
 from app.utils.authority_agreement import (
+    JoinStrategy,
     Side,
     build_agreement_row,
     measurement_bounds,
 )
+from app.utils.authority_soccer_agreement import pair_soccer_sides
 from app.utils.nfl_team_matching import normalize_team, pair_matches
 from app.utils.provider_anchor_keys import statpal_anchor_key, statpal_id_space
+from app.utils.soccer_team_matching import soccer_pair_matches
 from app.utils.statpal_league_rosters import is_known_league_team
 
 logger = logging.getLogger(__name__)
+
+#: "Is this StatPal (home, away) and this (home, away) of ours the same
+#: fixture?" — always in the SAME orientation; two clubs meet twice a season and
+#: the reverse fixture is a different game.
+PairRule = Callable[
+    [tuple[Optional[str], Optional[str]], tuple[Optional[str], Optional[str]]],
+    bool,
+]
 
 
 #: What a league was MEASURED to do with `stats_id`, StatPal's second id.
@@ -206,6 +221,16 @@ STATS_ID_ON_SOME_FIXTURES = "on some fixtures"
 #: `season-schedule.id`. Named per league and never inferred (D55).
 LIVE_ANCHOR_IS_ID = "id"
 LIVE_ANCHOR_IS_ODDS_ID = "oddsid"
+#: Soccer's, and the reason the choice is a NAMED field rather than a default.
+#: StatPal's v2 soccer boards publish four id spaces and the obvious one —
+#: `main_id`, which arrives here as `fixture_id` — is disqualified three times
+#: over: it is blank on 3.6–4.6% of rows, it is composite (`YYYYMMDD` + 5
+#: digits, so a postponed fixture necessarily changes id), and **it collides
+#: across competitions**, an England National League Cup tie and an FA Cup
+#: qualifier both answering to `2026090846246`. `fallback_id_3` is present on
+#: 195/195, 274/274 and 362/362 rows of the three pinned censuses with zero
+#: collisions. CERT-2189 is the measurement; this is the first reader of it.
+ANCHOR_IS_FALLBACK_ID_3 = "fallback_id_3"
 
 
 @dataclass(frozen=True)
@@ -219,10 +244,10 @@ class LeagueSpec:
     be widenings rather than exceptions.
     """
 
-    #: Our `sports.key`, and — because all three leagues are 1:1 with StatPal's
-    #: own sport name — the id space too. `statpal_id_space` is still asked
-    #: rather than assumed, so the day a sport stops being 1:1 (tennis already
-    #: has) there is one place to fix.
+    #: Our `sports.key`, and — because all three v1 leagues are 1:1 with
+    #: StatPal's own sport name — the id space too. `statpal_id_space` is still
+    #: asked rather than assumed, so the day a sport stops being 1:1 (tennis
+    #: already has, and soccer now does) there is one place to fix.
     sport_key: str
     #: StatPal's sport token: the `{sport}` in `/v1/{sport}/season-schedule`.
     statpal_sport: str
@@ -234,6 +259,23 @@ class LeagueSpec:
     #: The measurement the expectation was set from, verbatim, so a receipt can
     #: say what changed and not merely that something did.
     stats_id_measured: str
+    #: **Is this StatPal name and ours the same club?** No default, so a new
+    #: league cannot inherit an answer nobody chose for it.
+    #:
+    #: The three incumbents pass `nfl_team_matching.pair_matches`, which is
+    #: *equality after normalization* and says in its own docstring that it is
+    #: only safe because both sides spell all 32 franchises identically. Soccer
+    #: is the opposite case and the gap is 50 games wide: over the pinned
+    #: two-day corpus, equality joins **17 of 90** and
+    #: `soccer_team_matching.soccer_pair_matches` joins **67**. Widening the NFL
+    #: rule to close that gap would buy soccer's 50 at the price of every league
+    #: whose franchises are already spelled identically, so the rule is named
+    #: per league instead (#3366).
+    pair_rule: PairRule
+    #: The fold used to key the AGREEMENT row's default join, and to compare
+    #: team names in receipts. Travels with `pair_rule` because a strategy and
+    #: a fold that disagree measure their own disagreement.
+    normalize: Callable[[Optional[str]], str]
     #: Which `livescores` field carries the anchor-space id for this league.
     #:
     #: NBA and NHL serve one space and `id` is it. **MLB serves `id` in a space
@@ -243,6 +285,57 @@ class LeagueSpec:
     #: are indistinguishable by shape: both ten digits, both `1329…`, overlapping
     #: ranges, not one value in common. Hence a named field per league.
     live_anchor_field: str = LIVE_ANCHOR_IS_ID
+    #: Which field on a SCHEDULE fixture carries the anchor-space id.
+    #:
+    #: `id` for the three v1 sports, whose `season-schedule.id` is the space the
+    #: whole module is written around. Soccer's schedule and live boards are the
+    #: same v2 shape and both carry the anchor under `fallback_id_3`, so this is
+    #: the first league for which the two fields agree with each other and
+    #: disagree with everyone else — which is exactly why both are named rather
+    #: than one being derived from the other.
+    schedule_anchor_field: str = LIVE_ANCHOR_IS_ID
+    #: **How this league's forward schedule is READ.**
+    #:
+    #: Empty means one call, no offset: `/v1/{sport}/season-schedule` returns
+    #: the whole season (NBA, NHL) or a rolling window (MLB). Soccer has no such
+    #: endpoint — its schedule is `/v2/soccer/matches/daily?offset=N`, ONE BOARD
+    #: PER CALL — so it names the offsets it reads and the runner asks once per
+    #: offset, recording each as its own source with its own failure.
+    #:
+    #: A tuple and not a count, because "how many days" is not the question a
+    #: reader has: `(1, 2, 3)` says which days, and the reason for the third is
+    #: written at :data:`SOCCER`.
+    schedule_day_offsets: tuple[int, ...] = ()
+    #: Does a measured roster exist for this league's team names?
+    #:
+    #: `is_known_league_team` answers `False` for every name in a league it has
+    #: no roster for, which is the honest answer to "is this one of the names I
+    #: measured" — and turning that into a receipt would file every one of
+    #: soccer's several thousand club names as an unknown name on every pass.
+    #: Named per league so the absence is a stated decision rather than a
+    #: receipt nobody reads. NFL/NBA/NHL/MLB have 30–32 franchises and a roster;
+    #: soccer's board is 92–212 leagues wide and has none, and could not
+    #: usefully have one.
+    roster_checked: bool = True
+    #: Does `sport_key` name ONE of our `sports.key` values, or a family of them?
+    #:
+    #: Exact for the three v1 leagues: one StatPal sport, one key of ours. Soccer
+    #: is a PREFIX, and it has to be — StatPal serves and numbers all of soccer
+    #: as one sport while our side splits the same matches over ~40 keys
+    #: (`soccer_epl`, `soccer_usa_mls`, `soccer_uefa_champs_league`, …) that grow
+    #: per league. An enumeration would go stale on the next league we add, and
+    #: an exact match would select nothing at all. See `statpal_id_space`, which
+    #: makes the identical argument one layer down and is what keeps two of our
+    #: keys from writing two anchor keys for one StatPal match.
+    sport_key_is_prefix: bool = False
+    #: The AGREEMENT row's join strategy, or `None` for the default key join.
+    #:
+    #: Set whenever `pair_rule` is not equality-after-normalization, and
+    #: `test_a_leagues_join_strategy_agrees_with_its_pair_rule` is what keeps the
+    #: two from drifting: a row measured by a stricter relation than the one that
+    #: writes the links publishes the gap between two of our own definitions as
+    #: if it were a disagreement with StatPal.
+    join_strategy: Optional[JoinStrategy] = None
 
 
 NBA = LeagueSpec(
@@ -251,6 +344,8 @@ NBA = LeagueSpec(
     label="NBA",
     stats_id_coverage=STATS_ID_ON_NO_FIXTURE,
     stats_id_measured="0/1206 season-schedule games, 2026-09-04",
+    pair_rule=pair_matches,
+    normalize=normalize_team,
 )
 NHL = LeagueSpec(
     sport_key="icehockey_nhl",
@@ -258,6 +353,8 @@ NHL = LeagueSpec(
     label="NHL",
     stats_id_coverage=STATS_ID_ON_EVERY_FIXTURE,
     stats_id_measured="1404/1404 season-schedule games, 2026-09-04",
+    pair_rule=pair_matches,
+    normalize=normalize_team,
 )
 MLB = LeagueSpec(
     sport_key="baseball_mlb",
@@ -265,11 +362,63 @@ MLB = LeagueSpec(
     label="MLB",
     stats_id_coverage=STATS_ID_ON_SOME_FIXTURES,
     stats_id_measured="198/227 season-schedule games (87.2%), 2026-09-04",
+    pair_rule=pair_matches,
+    normalize=normalize_team,
     live_anchor_field=LIVE_ANCHOR_IS_ODDS_ID,
+)
+#: Soccer. The fourth sport, and the first that answers almost every question in
+#: this dataclass differently from the three above — which is the argument for
+#: the dataclass rather than a set of parallel dicts, finally being tested.
+#:
+#: **The read is three boards, and the third one is measured, not padded.**
+#: `matches/daily?offset=N` serves ~25.5 hours per board (23:00Z the previous
+#: day to 00:30–00:45Z the next), so offsets 1 and 2 together reach only to
+#: `2026-09-10T00:45Z`. Replayed against production at 2026-09-07 06:30Z,
+#: **offset 3 buys 13 of our rows that offsets 1+2 and the live board cannot
+#: reach at all** — three Champions League ties on 09-10, three west-coast MLS
+#: fixtures at `02:30Z` (past the tail of offset 2's own second day), and seven
+#: others. Without it the join reads 67/108; with it, 80/108. A fourth offset is
+#: not taken here: the write window only makes sense where our inventory is, and
+#: 09-11 is already the far edge of it.
+#:
+#: **`stats_id` is `on no fixture` and that is a statement about the ENDPOINT,
+#: not a hedge.** The v2 soccer boards publish four id spaces
+#: (`main_id`, `fallback_id_1..3`) and `stats_id` is not one of them, so the
+#: field is absent by construction rather than sometimes-empty — 0/972 over the
+#: three boards read on 2026-09-07.
+SOCCER = LeagueSpec(
+    sport_key="soccer",
+    statpal_sport="soccer",
+    label="Soccer",
+    stats_id_coverage=STATS_ID_ON_NO_FIXTURE,
+    stats_id_measured=(
+        "0/972 v2 board rows, 2026-09-07 — `stats_id` is not one of the four id "
+        "spaces this endpoint family publishes"
+    ),
+    pair_rule=soccer_pair_matches,
+    normalize=normalize_team,
+    live_anchor_field=ANCHOR_IS_FALLBACK_ID_3,
+    schedule_anchor_field=ANCHOR_IS_FALLBACK_ID_3,
+    schedule_day_offsets=(1, 2, 3),
+    roster_checked=False,
+    sport_key_is_prefix=True,
+    join_strategy=pair_soccer_sides,
 )
 
 #: By our `sports.key`, which is how the beat entries and the agreement endpoint
 #: name a sport.
+#:
+#: **Soccer is deliberately NOT in here, and its absence is the ship's current
+#: state rather than an oversight.** Our soccer inventory is spread over the
+#: widest key vocabulary we have — `soccer_epl`, `soccer_usa_mls`,
+#: `soccer_uefa_champs_league`, ~40 more, growing per league — while StatPal
+#: serves and numbers all of it as one sport (CERT-2189). So `SOCCER.sport_key`
+#: is the StatPal-side id space, not one of ours, and a dict keyed on our
+#: `sports.key` cannot hold it. Wiring soccer's row selection across those keys
+#: is the caller's question and is not answered here: **this league has no
+#: runner and no beat entry yet, by design.** What exists is the spec, the read
+#: and the join, plan-only, so the first pass that does run can be measured
+#: before it writes (D51).
 LEAGUES: dict[str, LeagueSpec] = {
     NBA.sport_key: NBA,
     NHL.sport_key: NHL,
@@ -335,6 +484,25 @@ SELECT e.id, e.home_team_name, e.away_team_name, e.commence_time,
   FROM events e
   JOIN sports s ON s.id = e.sport_id
  WHERE s.key = :sport_key
+   AND e.commence_time >= :window_start
+   AND e.commence_time <= :window_end
+"""
+
+#: The same query for a league whose StatPal sport spans a FAMILY of our keys
+#: (`sport_key_is_prefix`). Two statements rather than one with a `LIKE` on
+#: every sport: the three v1 leagues have equality plans that must not become
+#: pattern scans because soccer arrived, and a `LIKE` whose pattern happens to
+#: contain no wildcard still reads as a pattern to the planner.
+#:
+#: The bind carries the `%` — never interpolated — because a pattern built by
+#: string concatenation inside `text()` is how a bind stops being one
+#: (gotcha #45).
+CANDIDATES_BY_SPORT_PREFIX = """
+SELECT e.id, e.home_team_name, e.away_team_name, e.commence_time,
+       e.statpal_fixture_id, e.status
+  FROM events e
+  JOIN sports s ON s.id = e.sport_id
+ WHERE s.key LIKE :sport_key
    AND e.commence_time >= :window_start
    AND e.commence_time <= :window_end
 """
@@ -536,6 +704,8 @@ def classify_fixture(
     fixture: StatPalFixture,
     pool: list[dict[str, Any]],
     anchor_space: Optional[set[str]] = None,
+    *,
+    pair_rule: PairRule = pair_matches,
 ) -> tuple[str, list[dict[str, Any]]]:
     """Which of our rows, if any, is this StatPal contest?
 
@@ -554,6 +724,15 @@ def classify_fixture(
             omitting it collapses that verdict back into `CONTRADICTION` — which
             is the honest degradation, because without the space there is no
             evidence to tell them apart. Never a digit count (D55).
+        pair_rule: does this StatPal (home, away) name the same fixture as this
+            (home, away) of ours? Defaults to the incumbent NFL rule — equality
+            after normalization — which is what the three v1 leagues have always
+            used and what every existing caller of this function means. It is
+            NOT a default a new league may take: `LeagueSpec.pair_rule` has no
+            default precisely so that a sport must answer, and
+            `_run_stamp_v1_statpal_fixtures` always passes the spec's own. Soccer
+            passes `soccer_pair_matches`, which joins 67 of the pinned 90 where
+            equality joins 17.
     """
     if fixture.start_time is None:
         # No start is not a wide window, it is no window. Two teams meet two to
@@ -566,7 +745,7 @@ def classify_fixture(
         for c in pool
         if c.get("commence_time") is not None
         and abs(c["commence_time"] - fixture.start_time) <= MATCH_WINDOW
-        and pair_matches(
+        and pair_rule(
             (fixture.home_team, fixture.away_team), (c["home"], c["away"])
         )
     ]
@@ -628,21 +807,46 @@ def _row_receipt(row: dict[str, Any], **extra: Any) -> dict[str, Any]:
     }
 
 
-def live_anchor_id(spec: LeagueSpec, fixture: StatPalFixture) -> Optional[str]:
-    """The anchor-space id this `livescores` contest carries, or None.
+def _anchor_id(field_name: str, fixture: StatPalFixture) -> Optional[str]:
+    """The id in `field_name`'s space on this contest, or None if blank.
 
-    Pure, and it reads a NAMED field per league rather than choosing between two
-    numbers by their shape. On MLB both candidates are ten digits beginning
-    `1329…` with overlapping ranges and no value in common, so shape is exactly
-    the rule that would be confidently wrong (D55).
+    One function for both boards, because "which field carries the anchor" is
+    the same question asked of a schedule row and a live row — and answering it
+    in two places is how a league ends up with one board anchored on one space
+    and the other on another. The field is always NAMED by the spec, never
+    inferred from the value's shape: MLB's two candidates are both ten digits
+    beginning `1329…` with overlapping ranges and no value in common, so shape
+    is exactly the rule that would be confidently wrong (D55).
     """
-    if spec.live_anchor_field == LIVE_ANCHOR_IS_ODDS_ID:
+    if field_name == LIVE_ANCHOR_IS_ODDS_ID:
         return str(fixture.odds_id or "").strip() or None
+    if field_name == ANCHOR_IS_FALLBACK_ID_3:
+        return str(fixture.fallback_id_3 or "").strip() or None
     return str(fixture.fixture_id or "").strip() or None
 
 
+def live_anchor_id(spec: LeagueSpec, fixture: StatPalFixture) -> Optional[str]:
+    """The anchor-space id this LIVE contest carries, or None. See `_anchor_id`."""
+    return _anchor_id(spec.live_anchor_field, fixture)
+
+
+def schedule_anchor_id(spec: LeagueSpec, fixture: StatPalFixture) -> Optional[str]:
+    """The anchor-space id this SCHEDULE contest carries, or None.
+
+    Its own function rather than `str(fixture.fixture_id)` inlined at the read,
+    because soccer is the first league whose schedule board does not carry the
+    anchor under `id`: both its boards carry it under `fallback_id_3`, and
+    `fixture_id` there holds `main_id`, which collides across competitions.
+    """
+    return _anchor_id(spec.schedule_anchor_field, fixture)
+
+
 def recover_live_anchor(
-    fixture: StatPalFixture, schedule: list[StatPalFixture]
+    fixture: StatPalFixture,
+    schedule: list[StatPalFixture],
+    *,
+    pair_rule: PairRule = pair_matches,
+    anchor_field: str = LIVE_ANCHOR_IS_ID,
 ) -> tuple[Optional[str], str]:
     """Which scheduled contest is this live row, when its anchor field is blank?
 
@@ -678,6 +882,11 @@ def recover_live_anchor(
     window to "fix" it: the refused contest is still read, from
     `season-schedule`, under its own id. What is lost is only the live VIEW of
     it, and what is gained is not writing a start time we cannot corroborate.
+
+    `anchor_field` is the SCHEDULE side's anchor field, because what this
+    returns is a schedule contest's id: reading it off `fixture_id` was correct
+    while `fixture_id` was the anchor for every league, and soccer is the one
+    where it is not.
     """
     if fixture.start_time is None:
         return None, "live row carries no start time"
@@ -686,7 +895,7 @@ def recover_live_anchor(
         for s in schedule
         if s.start_time is not None
         and abs(s.start_time - fixture.start_time) <= MATCH_WINDOW
-        and pair_matches(
+        and pair_rule(
             (fixture.home_team, fixture.away_team), (s.home_team, s.away_team)
         )
     ]
@@ -695,9 +904,13 @@ def recover_live_anchor(
     if len(matches) > 1:
         return None, (
             f"{len(matches)} scheduled contests for this pair within "
-            f"{MATCH_WINDOW}: " + ", ".join(str(m.fixture_id) for m in matches)
+            f"{MATCH_WINDOW}: "
+            + ", ".join(str(_anchor_id(anchor_field, m)) for m in matches)
         )
-    return str(matches[0].fixture_id), f"recovered within {MATCH_WINDOW} on both clubs"
+    return (
+        _anchor_id(anchor_field, matches[0]),
+        f"recovered within {MATCH_WINDOW} on both clubs",
+    )
 
 
 async def _read_fixtures(
@@ -743,23 +956,47 @@ async def _read_fixtures(
         fixture.fixture_id = anchor
         fixtures.append(fixture)
 
-    schedule_batch = await _read(
-        "season-schedule", service.get_schedule_fixtures(spec.statpal_sport)
+    # One call for a season-schedule sport; one call PER DAY for a sport whose
+    # schedule is a daily board (soccer). Each board is its own labelled source
+    # with its own try/except, so a failed offset 2 costs offsets 1 and 3
+    # nothing and still lands in `read_failures` — a pass that read two of three
+    # boards and matched what it could is a different fact from a pass that read
+    # all three, and only the receipt can say which happened (gotcha #53).
+    #
+    # The boards OVERLAP by design (~25.5h each, 23:00Z to 00:30Z), so the same
+    # fixture arrives two or three times; `_keep` dedupes on the anchor, which
+    # is the whole reason the anchor is resolved before the fixture is kept.
+    # The OFFSETS, not the coroutines: a list of already-constructed coroutines
+    # leaks every un-awaited one the moment an earlier read raises something
+    # `_read` does not catch, and "coroutine was never awaited" is a warning on
+    # stderr, not a failure anyone sees.
+    schedule_reads: list[tuple[str, Optional[int]]] = (
+        [(f"matches/daily?offset={o}", o) for o in spec.schedule_day_offsets]
+        if spec.schedule_day_offsets
+        else [("season-schedule", None)]
     )
-    for f in schedule_batch or []:
-        anchor = str(f.fixture_id or "").strip()
-        if not anchor:
-            continue
-        anchor_space.add(anchor)
-        scheduled.append(f)
-        _keep(f, anchor)
-        # Counted here and not over the merged list: `livescores` fixtures never
-        # carry `stats_id` for any sport, so a combined count measures which
-        # endpoints answered rather than what the provider serves.
-        if f.stats_id and str(f.stats_id).strip():
-            run.stats_id_present += 1
-        else:
-            run.stats_id_absent += 1
+
+    for label, offset in schedule_reads:
+        schedule_batch = await _read(
+            label,
+            service.get_schedule_fixtures(spec.statpal_sport, day_offset=offset)
+            if offset is not None
+            else service.get_schedule_fixtures(spec.statpal_sport),
+        )
+        for f in schedule_batch or []:
+            anchor = schedule_anchor_id(spec, f)
+            if not anchor:
+                continue
+            anchor_space.add(anchor)
+            scheduled.append(f)
+            _keep(f, anchor)
+            # Counted here and not over the merged list: `livescores` fixtures
+            # never carry `stats_id` for any sport, so a combined count measures
+            # which endpoints answered rather than what the provider serves.
+            if f.stats_id and str(f.stats_id).strip():
+                run.stats_id_present += 1
+            else:
+                run.stats_id_absent += 1
 
     # `livescores` is the only endpoint that knows a game while it is being
     # played, and a game that goes live unlinked is exactly the case the eventual
@@ -767,13 +1004,29 @@ async def _read_fixtures(
     # empty on both — which is a different fact from a failed read, and
     # `sources_read` is what tells them apart. MLB's season is in progress, so it
     # is the first sport for which this half does any work at all.
+    #
+    # The label is the ENDPOINT this sport's live board actually lives at, not
+    # the word "livescores": soccer's is `matches/live` and the v1 sports' is
+    # `livescores`, and a receipt that names the wrong path sends whoever reads
+    # a `read_failures` line to a URL that was never requested.
+    #
+    # Asked of the CLASS rather than of `service`, because which path a sport is
+    # served from is a fact about the sport and not about the object doing the
+    # asking — and reaching through the instance would make every test double in
+    # this suite owe a method it does not use.
     live_batch = await _read(
-        "livescores", service.get_live_fixtures(spec.statpal_sport)
+        StatPalAPIService.live_endpoint(spec.statpal_sport),
+        service.get_live_fixtures(spec.statpal_sport),
     )
     for f in live_batch or []:
         anchor = live_anchor_id(spec, f)
         if anchor is None:
-            recovered, reason = recover_live_anchor(f, scheduled)
+            recovered, reason = recover_live_anchor(
+                f,
+                scheduled,
+                pair_rule=spec.pair_rule,
+                anchor_field=spec.schedule_anchor_field,
+            )
             if recovered is None:
                 run.live_unkeyable.append(_fixture_receipt(f, refused_because=reason))
                 continue
@@ -813,11 +1066,13 @@ def _measurement_population(
 async def _candidates(
     session, spec: LeagueSpec, start: datetime, end: datetime
 ) -> list[dict[str, Any]]:
+    sql = CANDIDATES_BY_SPORT_PREFIX if spec.sport_key_is_prefix else CANDIDATES
+    key = f"{spec.sport_key}%" if spec.sport_key_is_prefix else spec.sport_key
     rows = (
         await session.execute(
-            text(CANDIDATES),
+            text(sql),
             {
-                "sport_key": spec.sport_key,
+                "sport_key": key,
                 "window_start": start,
                 "window_end": end,
             },
@@ -904,6 +1159,16 @@ async def _write_anchor_only(
 
 
 def _note_unknown_names(run: StampRun, spec: LeagueSpec, *names: Optional[str]) -> None:
+    """Report names outside this league's measured roster. Reports; never gates.
+
+    Skipped entirely for a league with no roster (`roster_checked=False`).
+    `is_known_league_team` answers `False` for every name in such a league —
+    the honest answer to "is this one of the names I measured" — so running it
+    anyway would file soccer's entire club vocabulary as unknown on every pass
+    and drown the one receipt this list exists to surface.
+    """
+    if not spec.roster_checked:
+        return
     for name in names:
         if name and not is_known_league_team(spec.sport_key, name):
             run.unknown_team_names.append(str(name))
@@ -948,7 +1213,8 @@ async def _run_stamp_v1_statpal_fixtures(
                 sport_key=spec.sport_key,
                 fixtures=[],
                 rows=[],
-                normalize=normalize_team,
+                normalize=spec.normalize,
+                pair_sides=spec.join_strategy,
                 read_failures=run.read_failures,
                 sources_read=run.sources_read,
                 is_anchor_id=is_statpal_contest_id,
@@ -993,7 +1259,9 @@ async def _run_stamp_v1_statpal_fixtures(
 
         for fixture in fixtures:
             _note_unknown_names(run, spec, fixture.home_team, fixture.away_team)
-            verdict, matches = classify_fixture(fixture, pool, anchor_space)
+            verdict, matches = classify_fixture(
+                fixture, pool, anchor_space, pair_rule=spec.pair_rule
+            )
 
             if verdict == VERDICT_UNMATCHED:
                 run.unmatched_fixtures.append(_fixture_receipt(fixture))
@@ -1177,7 +1445,13 @@ async def _run_stamp_v1_statpal_fixtures(
             )
             for r in all_rows
         ],
-        normalize=normalize_team,
+        normalize=spec.normalize,
+        # The league's own join, or `None` for the default key join. Soccer's
+        # is `pair_soccer_sides`, which measures agreement on the SAME relation
+        # this pass writes links on — a row measured by equality would publish
+        # soccer's identity at 17/90 and call our spelling a disagreement with
+        # StatPal.
+        pair_sides=spec.join_strategy,
         read_failures=run.read_failures,
         sources_read=run.sources_read,
         window=(window_start, window_end),
@@ -1228,3 +1502,25 @@ async def _run_stamp_mlb_statpal_fixtures(
     *, apply: bool = True, now: Optional[datetime] = None
 ) -> dict[str, Any]:
     return await _run_stamp_v1_statpal_fixtures(MLB, apply=apply, now=now)
+
+
+async def _run_stamp_soccer_statpal_fixtures(
+    *, apply: bool = False, now: Optional[datetime] = None
+) -> dict[str, Any]:
+    """Soccer, and **`apply` defaults to False here where it defaults to True above.**
+
+    That inversion is the whole of this league's current state and is not a
+    stylistic choice. The three v1 leagues have been writing for days against a
+    measured population; soccer's first pass has never run against production,
+    it selects rows across ~40 of our sport keys rather than one, and its
+    matcher is a token subset rather than an equality — so the first thing it
+    owes is a receipt, not a write.
+
+    D51 governs the flip: a pass that writes needs a backup and a one-command
+    restore, and the plan pass is what sizes them. The plan replayed at
+    2026-09-07 06:30Z over the live boards and 108 production rows said 80
+    linked, **0 ambiguous in either direction, and all 80 columns empty** — so
+    the first apply would be 80 inserts and 0 overwrites. Nothing is written
+    until that has been reproduced by a real pass and the restore line exists.
+    """
+    return await _run_stamp_v1_statpal_fixtures(SOCCER, apply=apply, now=now)
