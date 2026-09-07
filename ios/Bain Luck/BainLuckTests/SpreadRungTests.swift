@@ -644,6 +644,41 @@ final class SpreadRungTests: XCTestCase {
         )
     }
 
+    /// 🔴 THE NFL PROJECTION MARKER MOVES, AND THAT IS THE FIX — pinned here
+    /// because `MarketMapView.closestToEvenMargin`'s own doc says moving one is
+    /// "the one thing #3743 forbids without a pin".
+    ///
+    /// The marker sits on the rung the book priced nearest a coin flip. On
+    /// event 14780138 every `…: Spread` rung is priced 0.145 and the band row
+    /// `"Seattle wins by 1 to 6 points"` is 0.175 — so the band row WAS the
+    /// nearest to 0.5, and the PRE-GAME tile read **`SEA +1.0`**: a line no
+    /// venue quoted, on a card whose every other number is a real one.
+    /// Photographed either side of this change,
+    /// `artifacts-native-050/MASTER-3788-nfl-14780138-s700.png` → `AFTER-…`.
+    ///
+    /// With the band rows refused the remaining rungs tie at 0.145 and
+    /// `min(by:)` returns the first, which is the venue's own serve order —
+    /// `SEA +1.5`, a quoted line. The tie-break is untouched and is still the
+    /// one #3743 declined to invent.
+    func testTheProjectionMarkerLeavesTheBandsLowerEdgeForAQuotedLine() {
+        func nearestEven(_ rungs: [SpreadRungs.Rung]) -> Double? {
+            rungs.min(by: { abs($0.probability - 0.5) < abs($1.probability - 0.5) })?.margin
+        }
+        let home = "Seattle Seahawks", away = "New England Patriots"
+        let both = patriotsSeahawks + patriotsSeahawksWinningMargin
+
+        // Reconstructed by hand: what the band rows used to add, in serve order.
+        let withBands = SpreadRungs.map(from: both, home: home, away: away, sportUnit: footballUnit).rungs + [
+            SpreadRungs.Rung(margin: 1.0, probability: 0.175, isHome: true, quotedUnit: nil),
+            SpreadRungs.Rung(margin: -1.0, probability: 0.145, isHome: false, quotedUnit: nil),
+        ]
+        XCTAssertEqual(nearestEven(withBands), 1.0, "the band's lower edge was the nearest to a coin flip")
+
+        let now = SpreadRungs.map(from: both, home: home, away: away, sportUnit: footballUnit).rungs
+        XCTAssertEqual(nearestEven(now), 1.5, "the marker lands on a line the venue actually quoted")
+        XCTAssertTrue(now.contains { $0.margin == 1.5 && $0.probability == 0.145 })
+    }
+
     /// With nothing readable at all the map is empty — but it still reports the
     /// SPORT's unit, because a card can carry a projection marker with no rung
     /// on it and that marker is quoted in the sport's unit. Reporting "" here
