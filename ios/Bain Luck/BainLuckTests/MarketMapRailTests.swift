@@ -625,4 +625,110 @@ final class MarketMapRailTests: XCTestCase {
             8, accuracy: 0.001
         )
     }
+
+    // MARK: - #3823, a settled totals ladder
+
+    /// The eleven lines `/api/events/15305475/game-markets` serves for the
+    /// photographed specimen, re-measured 2026-09-07. Minnesota 1 — Chicago WS
+    /// 10, `completed`, so the final total is **11**.
+    private let specimen15305475: [Double] = [
+        2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5, 10.5, 11.5, 12.5,
+    ]
+
+    /// 🟢 THE SHIP. The card drew the LOWEST six lines — `2.5 … 7.5`, every one
+    /// of them cleared, every one priced `0.99`. After #3823 the same six-row
+    /// window sits on the step, and the step is the answer: the reader sees the
+    /// ladder stop clearing between `10.5` and `11.5`, which is 11 runs, which is
+    /// what the game scored.
+    func testTheSettledSpecimenShowsTheStepRatherThanSixIdenticalRows() {
+        let window = MarketMapRail.settledLadderWindow(
+            sortedThresholds: specimen15305475, finalTotal: 11, limit: 6
+        )
+        XCTAssertEqual(Array(window), [5, 6, 7, 8, 9, 10])
+
+        let shown = window.map { specimen15305475[$0] }
+        XCTAssertEqual(shown, [7.5, 8.5, 9.5, 10.5, 11.5, 12.5])
+
+        let verdicts = shown.map {
+            MarketMapRail.totalLadderResult(threshold: $0, finalTotal: 11)
+        }
+        XCTAssertEqual(verdicts, [.over, .over, .over, .over, .under, .under],
+                       "the step must be INSIDE the window or the row set is no better than before")
+    }
+
+    /// 🔴 THE REGRESSION THE WINDOW ALONE WOULD LEAVE, pinned as the thing that
+    /// was wrong. Grading the OLD window turns six identical `99%`s into six
+    /// identical `HIT`s — a different sentence saying just as little. If someone
+    /// later "simplifies" `settledLadderWindow` back to a `prefix`, this fails.
+    func testGradingTheOldLowestSixWindowWouldHaveSaidNothing() {
+        let oldWindow = Array(specimen15305475.prefix(6))
+        let verdicts = Set(oldWindow.map {
+            MarketMapRail.totalLadderResult(threshold: $0, finalTotal: 11)
+        })
+        XCTAssertEqual(verdicts, [.over],
+                       "every one of the lowest six lines resolved the same way, which is why "
+                       + "the window had to move and not just the wording")
+    }
+
+    /// 🔴 BOTH DIRECTIONS, and the reason this is not a hiding rule: an UNSETTLED
+    /// card is untouched. It keeps `prefix(limit)` and it keeps its percentages,
+    /// because before the game the lowest lines are the ones a reader wants.
+    func testAnUnsettledCardIsUntouched() {
+        // The call site passes `0 ..< min(limit, count)` when there is no final;
+        // this pins the count that window yields against the same specimen.
+        XCTAssertEqual(min(6, specimen15305475.count), 6)
+        XCTAssertNil(MarketMapView.LadderRow(label: "Over 2.5", prob: 0.99, color: .purple).result,
+                     "a row with no verdict prints its price, which is every pre-game row")
+    }
+
+    /// The two ends, which the centred window has to handle without a special
+    /// case for either.
+    func testTheWindowSlidesBackInsideTheArrayAtBothEnds() {
+        // Cleared every line: show the six it came closest to failing.
+        XCTAssertEqual(
+            Array(MarketMapRail.settledLadderWindow(
+                sortedThresholds: specimen15305475, finalTotal: 40, limit: 6)),
+            [5, 6, 7, 8, 9, 10]
+        )
+        // Cleared none: show the bottom six.
+        XCTAssertEqual(
+            Array(MarketMapRail.settledLadderWindow(
+                sortedThresholds: specimen15305475, finalTotal: 0, limit: 6)),
+            [0, 1, 2, 3, 4, 5]
+        )
+        // Fewer lines than the card draws: all of them, no window arithmetic.
+        XCTAssertEqual(
+            Array(MarketMapRail.settledLadderWindow(
+                sortedThresholds: [44.5, 45.5], finalTotal: 50, limit: 6)),
+            [0, 1]
+        )
+        // Degenerate inputs a layout pass can produce.
+        XCTAssertTrue(MarketMapRail.settledLadderWindow(
+            sortedThresholds: [], finalTotal: 11, limit: 6).isEmpty)
+        XCTAssertTrue(MarketMapRail.settledLadderWindow(
+            sortedThresholds: specimen15305475, finalTotal: 11, limit: 0).isEmpty)
+    }
+
+    /// 🔴 The push. Unreachable on today's data — 95,821 of 95,821 served `Over N`
+    /// legs are half-lines (measured 2026-09-07) — and pinned anyway, because the
+    /// `>=` that `TotalPointsSpectrumView:358` grades with is indistinguishable
+    /// from the correct rule on a half-line and wrong on the first integer one.
+    func testALineTheGameLandedExactlyOnIsNeitherHitNorMiss() {
+        XCTAssertEqual(MarketMapRail.totalLadderResult(threshold: 11, finalTotal: 11), .push)
+        XCTAssertEqual(MarketMapRail.totalLadderResult(threshold: 10.5, finalTotal: 11), .over)
+        XCTAssertEqual(MarketMapRail.totalLadderResult(threshold: 11.5, finalTotal: 11), .under)
+        XCTAssertEqual(MarketMapRail.totalLadderResultLabel(.push), "PUSH")
+    }
+
+    /// Every verdict is four characters or fewer, which is what lets them share
+    /// the 32 pt column that already holds `"100%"` in the same monospaced font.
+    /// `MarketMapLadderTests` measures the column; this pins the premise.
+    func testEveryVerdictIsNoWiderThanTheWidestPercentage() {
+        for verdict: MarketMapRail.TotalLadderResult in [.over, .under, .push] {
+            XCTAssertLessThanOrEqual(
+                MarketMapRail.totalLadderResultLabel(verdict).count, "100%".count,
+                "a verdict longer than the percentage it replaces silently truncates"
+            )
+        }
+    }
 }

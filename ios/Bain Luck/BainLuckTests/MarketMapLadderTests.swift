@@ -100,6 +100,48 @@ final class MarketMapLadderTests: XCTestCase {
         t.truncatingRemainder(dividingBy: 1) == 0 ? "\(Int(t))" : String(format: "%.1f", t)
     }
 
+    /// 🔴 #3823 — the VALUE column, measured the way native/040 measured the
+    /// label column next to it. A settled row prints `HIT` / `MISS` / `PUSH`
+    /// where an unsettled one prints `99%`, in the same 32 pt frame; a verdict
+    /// that wants more room truncates in exactly the silent way
+    /// `Sabalenka +5.5` did, and the whole point of the row is the verdict.
+    ///
+    /// The font is stated here rather than shared with `ladderView` because
+    /// `ladderView` is private to `MarketMapView`. If it drifts, this test keeps
+    /// passing while the card truncates — so the two are pinned together by
+    /// `testTheVerdictFontMatchesThePercentageItReplaces` below, which asserts
+    /// the only property that matters: both strings are laid out identically.
+    @MainActor
+    func testTheValueColumnHoldsEveryVerdictAndEveryPercentage() {
+        let font = Font.system(size: 10, weight: .black, design: .monospaced)
+        var widest: (text: String, width: CGFloat) = ("", 0)
+        for text in ["HIT", "MISS", "PUSH", "100%", "0%", "99%"] {
+            let wanted = naturalWidth(of: Text(text).font(font))
+            if wanted > widest.width { widest = (text, wanted) }
+        }
+
+        XCTAssertGreaterThanOrEqual(
+            MarketMapLadderLayout.valueColumnWidth, widest.width,
+            "the widest thing the value column draws is '\(widest.text)' at "
+            + "\(widest.width) pt, against the \(MarketMapLadderLayout.valueColumnWidth) pt "
+            + "the column offers")
+    }
+
+    /// The premise the test above rests on: a monospaced four-character verdict
+    /// occupies exactly what a four-character percentage does, so `MISS` cannot
+    /// need room `100%` did not already have. Stated as a measurement rather
+    /// than as a claim about fonts.
+    @MainActor
+    func testTheVerdictFontMatchesThePercentageItReplaces() {
+        let font = Font.system(size: 10, weight: .black, design: .monospaced)
+        XCTAssertEqual(
+            naturalWidth(of: Text("MISS").font(font)),
+            naturalWidth(of: Text("100%").font(font)),
+            accuracy: 0.5,
+            "monospaced means four characters is four characters — if this fails the "
+            + "design is no longer monospaced and the column needs re-sizing")
+    }
+
     @MainActor
     private func naturalWidth<V: View>(of view: V) -> CGFloat {
         let host = UIHostingController(rootView: view)

@@ -283,6 +283,109 @@ enum MarketMapRail {
         hasDistribution ? "Half \(unit) distribution" : "Half \(unit)"
     }
 
+    // MARK: - Reading a totals ladder once the game is over
+
+    /// What a totals line DID, once there is a final to grade it against.
+    ///
+    /// #3823. `push` is unreachable on today's data and is here anyway, because
+    /// the alternative is a rule that is silently wrong the first day it is not.
+    /// **Measured 2026-09-07:** of the **95,821** `Over N` legs production serves
+    /// on `quantity` markets, **95,821 are half-lines** — not one integer line,
+    /// so no served row can land exactly on its own threshold. On a half-line
+    /// `>` and `>=` agree, which is precisely why the wrong one survives
+    /// unnoticed: `TotalPointsSpectrumView:358` grades with `>=` and would call
+    /// a push a HIT the day an integer line arrives.
+    enum TotalLadderResult: Equatable {
+        case over
+        case under
+        case push
+    }
+
+    static func totalLadderResult(threshold: Double, finalTotal: Int) -> TotalLadderResult {
+        let final = Double(finalTotal)
+        if final > threshold { return .over }
+        if final < threshold { return .under }
+        return .push
+    }
+
+    /// The word a graded row prints in the value column.
+    ///
+    /// All four characters wide, deliberately: the column they share with
+    /// `"100%"` is a fixed 32 pt (``MarketMapLadderLayout/valueColumnWidth``) and
+    /// the font is monospaced, so a four-character verdict provably fits wherever
+    /// a four-character percentage already does. `MarketMapLadderTests` measures
+    /// that rather than trusting this sentence.
+    static func totalLadderResultLabel(_ result: TotalLadderResult) -> String {
+        switch result {
+        case .over: return "HIT"
+        case .under: return "MISS"
+        case .push: return "PUSH"
+        }
+    }
+
+    /// Which slice of a settled game's totals ladder is worth printing.
+    ///
+    /// #3823. THE PHOTOGRAPH: event 15305475 (Minnesota 1 — Chicago WS 10,
+    /// `completed`, **11 runs**), `artifacts-native-050/POSTDEPLOY-3763-mlb-15305475-s900.png`.
+    /// The Runs map's ladder read
+    ///
+    /// ```
+    /// Over 2.5   99%      Over 5.5   99%
+    /// Over 3.5   99%      Over 6.5   99%
+    /// Over 4.5   99%      Over 7.5   99%
+    /// ```
+    ///
+    /// — six rows of the same number on a game that finished hours earlier.
+    ///
+    /// TWO FAULTS, AND THE SECOND IS THE ONE THAT SURVIVES FIXING THE FIRST.
+    ///
+    /// 1. The number is a *forecast* on a decided event. That is graded away by
+    ///    ``totalLadderResult``.
+    /// 2. **The window is wrong.** The card takes the LOWEST six lines, and on a
+    ///    settled game the lowest lines are the least informative ones — every
+    ///    line below the final resolved to the same certainty, so grading alone
+    ///    would have traded six identical `99%`s for six identical `HIT`s. The
+    ///    reader learns nothing either way.
+    ///
+    /// What a settled ladder is FOR is the step: the last line the game cleared
+    /// and the first it did not. `/api/events/15305475/game-markets`, re-measured
+    /// 2026-09-07, serves eleven lines `2.5 … 12.5` at `p = 0.99` up to `10.5`
+    /// and `0.01` from `11.5`, so this returns `5 ..< 11` — `7.5 · 8.5 · 9.5 ·
+    /// 10.5` HIT, `11.5 · 12.5` MISS. **The reader can read "11" off the step
+    /// without the card printing a word**, and 11 is what the game scored.
+    ///
+    /// The window is CENTRED on the step and then slid back inside the array, so
+    /// the two ends behave without a special case for either: a final that
+    /// cleared every line shows the top `limit` rows (the lines it came closest
+    /// to failing) and one that cleared none shows the bottom `limit`.
+    ///
+    /// 🔴 THIS IS NOT A HIDING RULE. The pre-game card shows six of eleven rows
+    /// too — `prefix(6)` — so nothing here withholds anything a reader could see
+    /// before. It moves the same six-row window to where the information is.
+    ///
+    /// - Parameters:
+    ///   - sortedThresholds: the lines, ascending. `extractTotalThresholds` sorts
+    ///     for its own reasons; this restates the requirement because the
+    ///     `firstIndex` below is only a step-finder on a sorted array.
+    ///   - finalTotal: the score this card is allowed to grade against — see the
+    ///     `scoreboardCounts` gate at the call site.
+    ///   - limit: how many rows the card draws.
+    static func settledLadderWindow(
+        sortedThresholds: [Double],
+        finalTotal: Int,
+        limit: Int
+    ) -> Range<Int> {
+        let count = sortedThresholds.count
+        guard limit > 0 else { return 0 ..< 0 }
+        guard count > limit else { return 0 ..< count }
+        let firstMiss = sortedThresholds.firstIndex {
+            totalLadderResult(threshold: $0, finalTotal: finalTotal) != .over
+        } ?? count
+        let ideal = firstMiss - limit / 2
+        let start = Swift.max(0, Swift.min(count - limit, ideal))
+        return start ..< (start + limit)
+    }
+
     // MARK: - Whether a margin card has a distribution to show
 
     /// True when a margin rail has a real distribution on it.
