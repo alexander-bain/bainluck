@@ -65,10 +65,39 @@ _MONTHS_THAT_USED_TO_GUESS = {
 #: the population the guesser was written for.
 _UNMAPPED_BARE_MATCHUPS = [
     ("KXODIMATCH-26AUG09INDAUS", "India vs Australia"),               # cricket
-    ("KXSQUASHMATCH-26JUL10ELSFAR", "ElShorbagy vs Farag"),           # squash
     ("KXIIHFGAME-26MAY24FINSWE", "Finland vs Sweden"),                # ice hockey
-    ("KXDARTSMATCH-26JUN24VANPRI", "van Gerwen vs Price"),            # darts
     ("KXWBCGAME-26MAR03USAJPN", "USA vs Japan"),                      # baseball!
+    # #3559 replacements for the squash and darts specimens, which graduated to
+    # the mapped list below. Both are real production rows of exactly the same
+    # shape — a name-only match ticker whose market name is two human names —
+    # and both were measured holding a wrong tag (`football` and
+    # `entertainment` respectively) on 2026-09-07. They are unmapped on purpose:
+    # Kalshi tags them `MMA` and `Tennis`, so mapping them is a product call
+    # about whether a pickleball match belongs on our tennis surface, which
+    # #3559 declined to make. See
+    # `test_name_only_match_tickers_classify_3559.py`.
+    ("KXWRESTLINGMATCH-26JUN13CHIDAN", "Khamzat Chimaev vs Dillon Danis"),
+    ("KXPICKLEBALLMATCH-26JUN19DOSHFOMA", "Dobrik / Sherry vs Foxx / Manasse"),
+]
+
+#: #3559 — the two specimens that LEFT the list above, and why they did not
+#: leave this file with them.
+#:
+#: Squash and darts were listed as unmapped because they genuinely were: the
+#: ticker map had no prefix for either, so the only signal left was the clock.
+#: #3559 mapped both (`kxsquash`, `kxdarts`, confirmed against Kalshi's own
+#: series tags), so `other` is no longer the honest answer for them — the
+#: honest answer is the sport.
+#:
+#: Deleting them would have quietly dropped two of the five specimens this
+#: file's census was built on. They keep the full twelve-month sweep here with
+#: a STRONGER expectation than they had before: not merely "the same value in
+#: every month", but that specific sport in every month. The invariant #1888
+#: pins — that no tag is ever derived from the calendar — is what both lists
+#: test, and it is unchanged by which side a family sits on.
+_TICKER_MAPPED_BARE_MATCHUPS = [
+    ("KXSQUASHMATCH-26JUL10ELSFAR", "ElShorbagy vs Farag", "squash"),
+    ("KXDARTSMATCH-26JUN24VANPRI", "van Gerwen vs Price", "darts"),
 ]
 
 #: Deliberately NOT in the list above. ``Flamengo vs Palmeiras`` is an unmapped
@@ -184,6 +213,32 @@ class TestTheUnmappedMarketsLandInOther:
         assert len(seen) == 1, (
             f"{ticker!r} is classified {len(seen)} different ways across the "
             f"year ({sorted(seen)}) — the tag migrates on re-poll."
+        )
+
+    @pytest.mark.parametrize("month", _ALL_MONTHS)
+    @pytest.mark.parametrize("ticker,name,sport", _TICKER_MAPPED_BARE_MATCHUPS)
+    def test_a_ticker_mapped_bare_matchup_is_its_sport_in_every_month(
+        self, freeze_month, month, ticker, name, sport
+    ):
+        """#3559 — the graduated specimens, swept the same twelve months.
+
+        These two carry no more name evidence than they ever did: "van Gerwen vs
+        Price" is still two human names. What changed is that the ticker now
+        answers before the guesser is reached, so the honest answer became the
+        sport instead of `other`.
+
+        The reason this is here and not only in the #3559 file: honest-empty is
+        a claim about what happens when evidence is ABSENT, and the way to break
+        it is to let the calendar supply the missing answer. A family that
+        acquires real evidence must leave through the front door — a stable,
+        correct tag in all twelve months — and not by the assertion being
+        deleted. If a future change makes darts vary by month, this fails.
+        """
+        freeze_month(month)
+        assert _categorize_kalshi_market(name, None, ticker) == sport, (
+            f"{ticker!r} in month {month} did not classify as {sport!r}. "
+            "Its ticker prefix is mapped, so step 1 must settle it before the "
+            "name or the clock is consulted."
         )
 
 
