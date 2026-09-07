@@ -623,6 +623,11 @@ GHOST_ID = 15305553
 DECOY_ID = 1530  # a PREFIX of CANON_ID — see the trap below
 UNRELATED_ID = 99
 
+# Part G's fixture — the same production pair, served through the real route.
+S_TENNIS = 77
+QF_TIME = datetime(2026, 9, 7, 17, 0, tzinfo=timezone.utc)
+E2E_MARKET_ID = 901
+
 
 class _SyncAsAsync:
     """The one `await db.execute(...)` `folded_event_ids` makes, over a sync Session.
@@ -743,6 +748,69 @@ class TestTheFold:
         )
         assert f'"{DUPLICATE_TAG_PREFIX}{CANON_ID}"' in compiled
 
+    def test_a_folded_market_survives_a_ticker_date_the_canonical_does_not_share(self):
+        """🔴 THE HAZARD THE FOLD CREATES, and the measurement that closes it.
+
+        `_build_game_markets` runs `filter_foreign_game_markets(markets,
+        event.commence_time.date())` immediately after the fold — and the ghost's
+        Kalshi tickers do NOT carry the canonical's date. All six US Open
+        quarter-finals on 2026-09-07 have this shape:
+
+            ghost ticker   KXATPMATCH-26SEP06CERBLO     -> 2026-09-06
+            canonical      commence_time                -> 2026-09-07 17:00Z
+
+        A date-keyed filter reading the CANONICAL's date over the GHOST's tickers
+        is exactly how a fold turns into a silent no-op (gotcha #53): the markets
+        arrive and are dropped one line later, the page looks unchanged, and the
+        repair reports success.
+
+        It does not happen, and the reason is structural rather than lucky: a
+        twin is the SAME matchup, so the folded markets carry the same team code,
+        and `filter_foreign_game_markets` short-circuits at
+        `len(team_codes) <= 1` before it consults a date at all. Verified against
+        the real production external_ids for 15305578 + 15305553 — 18/18 kept
+        under Sep 7, and 18/18 under Sep 6 as well.
+
+        The filter's own suite is `test_foreign_game_markets.py`; this case lives
+        here because the input shape is the fold's, not the filter's.
+        """
+        from datetime import date
+        from types import SimpleNamespace
+
+        from app.utils.prediction_market_matching import filter_foreign_game_markets
+
+        folded = [
+            SimpleNamespace(id=1, external_id="972932"),  # the canonical's own
+            SimpleNamespace(id=2, external_id="KXATPMATCH-26SEP06CERBLO"),
+            SimpleNamespace(id=3, external_id="KXATPEXACTMATCH-26SEP06CERBLO"),
+            SimpleNamespace(id=4, external_id="0xb7299024535d27679bef5f29ce57"),
+        ]
+        kept = filter_foreign_game_markets(folded, date(2026, 9, 7))
+        assert [m.id for m in kept] == [1, 2, 3, 4]
+
+    def test_a_fold_that_brought_a_SECOND_matchup_is_still_filtered(self):
+        """The other direction (gotcha #43): the safety net must still bite.
+
+        If the fold ever carried in a genuinely foreign game's markets, two team
+        codes are present, the date decides, and the foreign one is dropped. A
+        test that only proved the survival case above would have licensed
+        removing the filter.
+        """
+        from datetime import date
+        from types import SimpleNamespace
+
+        from app.utils.prediction_market_matching import filter_foreign_game_markets
+
+        mixed = [
+            SimpleNamespace(id=1, external_id="KXATPMATCH-26SEP07CERBLO"),
+            SimpleNamespace(id=2, external_id="KXATPMATCH-26SEP07SINALC"),
+            SimpleNamespace(id=3, external_id="KXATPMATCH-26SEP06SINALC"),
+        ]
+        # Two team codes, so the date is consulted: SINALC is the code with a
+        # ticker on the event's own day, CERBLO is the foreign game and goes.
+        kept = [m.id for m in filter_foreign_game_markets(mixed, date(2026, 9, 6))]
+        assert kept == [2, 3]
+
     def test_the_event_pages_market_read_actually_carries_the_fold(self):
         """Part D's discipline: a predicate nothing calls repairs nothing.
 
@@ -759,3 +827,141 @@ class TestTheFold:
         assert "folded_event_ids" in source
         assert "FuturesMarket.event_id.in_(market_event_ids)" in source
         assert "FuturesMarket.event_id == event_id" not in source
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Part G — the two halves in ONE response (UNPLAYED-TWIN-FOLD-END-TO-END-2693)
+# ════════════════════════════════════════════════════════════════════════════
+#
+# CERT-2172's named nonblocking follow-up. Everything above proves the halves
+# SEPARATELY: Part C proves the tag suppresses the second card, Part F proves
+# `folded_event_ids` resolves the tag to a list, and the test directly above
+# proves the route mentions it — by `inspect.getsource`, which is a grep. A
+# grep cannot tell you the payload changed; it survives a caller that computes
+# `market_event_ids` and then never puts it in the query, and it survives every
+# way the markets could be dropped downstream of the fold (the ticker-date
+# filter one line later being the specific hazard Part F's first case covers).
+#
+# So this part runs the REAL `_build_game_markets` against a real engine and
+# asserts on the body a user is served. The two arms are seeded identically and
+# differ in exactly one field — the ghost's `event_tags`. That single-variable
+# contrast is what joins the halves: the tag is shown to be the thing that moves
+# the prices onto the surviving card, rather than the fold happening to work.
+
+
+def _fold_e2e_engine(*, tagged: bool):
+    """Canonical + ghost for one real fixture; the ghost holds the market.
+
+    The production shape (#2693): US Open QF Cerundolo–Blockx, where the row we
+    have declined to print is the row carrying the prices. `tagged=False` is the
+    control — the SAME two events and the SAME market, with only the provenance
+    tag removed.
+    """
+    from app.models.models import FuturesMarket, FuturesOutcome
+
+    eng = create_engine("sqlite://")
+    Base.metadata.create_all(eng)
+    with Session(eng) as s:
+        s.add(Sport(id=S_TENNIS, key="tennis_atp", name="ATP"))
+        for row_id in (CANON_ID, GHOST_ID):
+            s.add(
+                Event(
+                    id=row_id,
+                    sport_id=S_TENNIS,
+                    home_team_name="Cerundolo",
+                    away_team_name="Blockx",
+                    commence_time=QF_TIME,
+                    status="scheduled",
+                    event_tags=(
+                        [duplicate_tag(CANON_ID)]
+                        if tagged and row_id == GHOST_ID
+                        else None
+                    ),
+                )
+            )
+        # The ghost's market, with the ghost's OWN Kalshi ticker — note the
+        # `26SEP06` against a canonical stamped Sep 7 (Part F's hazard).
+        s.add(
+            FuturesMarket(
+                id=E2E_MARKET_ID,
+                event_id=GHOST_ID,
+                sport_id=S_TENNIS,
+                source="kalshi",
+                external_id="KXATPEXACTMATCH-26SEP06CERBLO",
+                name="Cerundolo vs Blockx - Exact Score",
+                category="game",
+                llm_sport_category="tennis",
+                market_type="game_prop",
+                status="open",
+            )
+        )
+        s.add(
+            FuturesOutcome(
+                id=8001,
+                market_id=E2E_MARKET_ID,
+                external_id="CERBLO-3-1",
+                name="Francisco Cerundolo 3-1",
+                current_probability=0.10,
+            )
+        )
+        s.add(
+            FuturesOutcome(
+                id=8002,
+                market_id=E2E_MARKET_ID,
+                external_id="CERBLO-3-0",
+                name="Francisco Cerundolo 3-0",
+                current_probability=0.08,
+            )
+        )
+        s.commit()
+    return eng
+
+
+def _served_game_markets(eng, event_id):
+    """`GET /api/events/{id}/game-markets`'s builder, actually executed."""
+    import asyncio
+
+    from app.routes.events import _build_game_markets
+
+    with Session(eng) as s:
+        return asyncio.run(_build_game_markets(event_id, _SyncAsAsync(s)))
+
+
+class TestTheFoldEndToEnd:
+    def test_the_canonicals_page_is_SERVED_the_ghosts_priced_market(self):
+        """🔴 THE SHIP, in the payload: the unplayed QF prints its prices.
+
+        Before #2693 this response was empty on the canonical while the ghost —
+        the row we suppress — served the Exact Score ladder. A user opening the
+        one card we print saw no prices at all.
+        """
+        response, _status, market_ids = _served_game_markets(
+            _fold_e2e_engine(tagged=True), CANON_ID
+        )
+
+        assert market_ids == [E2E_MARKET_ID]
+        other = response["other"]
+        assert [o["outcome_name"] for o in other] == [
+            "Francisco Cerundolo 3-1",
+            "Francisco Cerundolo 3-0",
+        ]
+        assert [o["probability"] for o in other] == [0.10, 0.08]
+        assert {o["market_name"] for o in other} == {
+            "Cerundolo vs Blockx - Exact Score"
+        }
+
+    def test_without_the_TAG_the_same_market_never_arrives(self):
+        """🔴 The control, and the only reason the case above proves anything.
+
+        Identical events, identical market, identical outcomes — the ghost's
+        `event_tags` is the single field that differs. If this ever passes
+        alongside the case above, the fold has stopped reading the tag and is
+        reaching markets by some other route (a name/time join, say), which is
+        precisely the name-and-time absorption ruling 048 bans.
+        """
+        response, _status, market_ids = _served_game_markets(
+            _fold_e2e_engine(tagged=False), CANON_ID
+        )
+
+        assert market_ids == []
+        assert response["other"] == []
