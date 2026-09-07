@@ -38,6 +38,23 @@ a fact.
 
 from __future__ import annotations
 
+#: Celery ``--concurrency`` per worker queue, from ``backend/Procfile``.
+#:
+#: LAT-P242 (#3466). Mirrored here rather than read at runtime because the
+#: Procfile is not on a path the dyno can rely on, and pinned against the
+#: Procfile text for all three queues by
+#: ``test_worker_concurrency_mirror_matches_the_procfile`` — the same guard that
+#: already pinned the background entry alone, widened, so a concurrency change
+#: cannot land silently on any queue.
+#:
+#: This is the DENOMINATOR of every capacity claim this lane makes: a queue's
+#: capacity is ``slots x 3600`` worker-seconds per hour, and demand measured
+#: against the wrong slot count is not a measurement. ``background``'s 2 is a
+#: MEMORY bound, not a preference — 2 x 200MB + ~100MB overhead fits a 512MB
+#: Standard-1X exactly — so raising it is a dyno purchase and never a config
+#: edit. See the routing block in ``app/tasks/__init__.py``.
+QUEUE_SLOTS = {"realtime": 4, "background": 2, "heavy": 2}
+
 #: A window must have had room for at least this many fires before a shortfall
 #: means anything. At 2 expected, observing 0 is a real signal; at 0.3 expected,
 #: observing 0 is the overwhelmingly likely outcome for a perfectly healthy task
@@ -1134,6 +1151,49 @@ def beat_intervals(beat_schedule):
     return {t: 1.0 / r for t, r in rates.items() if r > 0}
 
 
+def beat_queues(beat_schedule, task_routes=None, default_queue="background"):
+    """``task name -> [distinct worker queues its beat entries land on]``.
+
+    LAT-P242 (#3466). The companion to :func:`beat_intervals` and it must get
+    the same two shapes right, both of which have already misled readers:
+
+    1. **The beat schedule is keyed by ENTRY name, not by task name.** An entry
+       is ``{"task": "app.tasks.foo", "schedule": ..., "options": {...}}`` under
+       an arbitrary key. Looking an entry up by task name silently finds
+       nothing, and "nothing" here degrades to the default queue — which is
+       ``background``, the very queue being sized, so the failure would have
+       inflated the number it was built to measure.
+
+    2. **One task can have several entries** (``collapse_snapshots`` has three)
+       and they need not agree about the queue. So this returns a LIST, always,
+       and never collapses it. A task whose entries disagree cannot have its
+       wall time attributed to a queue at all — the counter is per task, not per
+       entry — and the caller must report that rather than pick one.
+
+    Precedence within an entry is celery's: ``options["queue"]`` OVERRIDES
+    ``task_routes``. The routing block in ``app/tasks/__init__.py`` says so in
+    the same words ("beat options override task_routes, so both must agree").
+    Getting it backwards would credit the three multi-minute grinders that were
+    deliberately pinned to ``heavy`` back to the queue they were moved off.
+    """
+    task_routes = task_routes or {}
+    out: dict = {}
+    for entry in (beat_schedule or {}).values():
+        task = entry.get("task")
+        if not task:
+            continue
+        options = entry.get("options") or {}
+        queue = (
+            options.get("queue")
+            or (task_routes.get(task) or {}).get("queue")
+            or default_queue
+        )
+        seen = out.setdefault(task, [])
+        if queue not in seen:
+            seen.append(queue)
+    return {t: sorted(q) for t, q in out.items()}
+
+
 def find_lapping(graded):
     """The work-list: every task that is not both on schedule AND completing.
 
@@ -1187,3 +1247,397 @@ def find_lapping(graded):
         for name, g in sorted(graded.items(), key=_key)
         if g["verdict"] != "on_schedule" or g.get("never_completes")
     ]
+
+
+# =============================================================================
+# LAT-P243 (#3480) — CO-RESIDENCY OF LONG-HOLD BEATS ON A FIXED-SLOT POOL
+#
+# `beat_intervals` and `beat_queues` answer "how often" and "where". The
+# question those two together still cannot answer, and the one that took the
+# search box cold every morning, is **"can two of these be resident at the same
+# time on a pool that only has two slots?"**
+#
+# The `background` worker is Standard-1X `--concurrency=2`. Six of its beats
+# declare a soft_time_limit of half an hour or more, and five of them could be
+# resident simultaneously — a scheduled outage during which every `warm-typeahead`
+# fire expired unstarted (`expires: 120`) and the head of the search box went
+# cold. Nothing detected it because adherence grades each task against its OWN
+# cadence, and every one of those tasks was individually on schedule.
+#
+# Two properties this must get right, both of which have already misled a reader
+# of this schedule:
+#
+# 1. **Enumerate, do not read the cron by eye.** `crontab(minute=30, hour="*/6")`
+#    and `crontab(minute=45, hour="*/6")` look fifteen minutes apart and are, but
+#    both tasks declare a 3600s hold, so "fifteen minutes apart" is the reason
+#    they collide rather than the reason they do not. The fire times here come
+#    from celery's OWN parsed field sets, which are already expanded from the
+#    "*/6" string, so a mis-read of the cron syntax cannot enter.
+#
+# 2. **The window is the DECLARED soft_time_limit, never a sampled duration.**
+#    The soft limit is the longest the system PERMITS the task to hold the slot.
+#    A bound taken from a measured maximum has been refuted twice in this
+#    program by the next sample; a declared limit cannot be, because exceeding
+#    it is what the limit prevents.
+# =============================================================================
+
+#: A background beat that can hold one of two slots for this long or more is a
+#: "long hold": the pool has effectively lost half its capacity for the
+#: duration, so two of them overlapping is a total outage rather than a slowdown.
+#: 1200s sits in a wide gap in the actual distribution — the long holds declare
+#: 1700/1800/3600 and the next beat below declares 900 — so it separates the two
+#: populations with margin on both sides rather than cutting through a cluster.
+LONG_HOLD_SOFT_LIMIT_S = 1200
+
+
+def crontab_fire_times(schedule, start, days=7):
+    """Every UTC fire instant of one beat ``schedule`` in ``[start, start+days)``.
+
+    Handles the two shapes a long-hold beat can carry: a ``crontab`` (read from
+    its OWN parsed field sets, so ``"*/6"`` is already expanded and cannot be
+    mis-read here) and a plain interval in seconds or a ``timedelta``.
+
+    Returns ``None`` — not an empty list — for a schedule shape it cannot
+    enumerate. An unenumerable schedule is a gap in the check and the caller
+    must report it; silently returning "no fires" would render such a beat
+    permanently non-overlapping, which is the one answer that is certainly
+    wrong.
+    """
+    from datetime import timedelta
+
+    if isinstance(schedule, bool) or schedule is None:
+        return None
+    if isinstance(schedule, (int, float)):
+        if schedule <= 0:
+            return None
+        step = timedelta(seconds=float(schedule))
+        out, t, end = [], start, start + timedelta(days=days)
+        while t < end:
+            out.append(t)
+            t += step
+        return out
+    total = getattr(schedule, "total_seconds", None)
+    if callable(total):  # timedelta
+        secs = total()
+        return crontab_fire_times(float(secs), start, days) if secs > 0 else None
+
+    try:
+        minutes = sorted(schedule.minute)
+        hours = sorted(schedule.hour)
+        dows = set(schedule.day_of_week)
+        doms = set(schedule.day_of_month)
+        moys = set(schedule.month_of_year)
+    except (AttributeError, TypeError):
+        return None
+    if not (minutes and hours and dows and doms and moys):
+        return None
+
+    out = []
+    day = start.replace(hour=0, minute=0, second=0, microsecond=0)
+    for offset in range(days + 1):
+        d = day + timedelta(days=offset)
+        # celery's day_of_week is 0=Sunday; python's weekday() is 0=Monday.
+        if ((d.weekday() + 1) % 7) not in dows:
+            continue
+        if d.day not in doms or d.month not in moys:
+            continue
+        for h in hours:
+            for m in minutes:
+                t = d + timedelta(hours=h, minutes=m)
+                if start <= t < start + timedelta(days=days):
+                    out.append(t)
+    return sorted(out)
+
+
+def long_hold_beats(beat_schedule, soft_limits, queues, *, queue="background",
+                    long_hold_s=LONG_HOLD_SOFT_LIMIT_S):
+    """Beat ENTRY names on ``queue`` whose task declares a long hold.
+
+    ``soft_limits`` and ``queues`` are plain ``task name -> value`` maps so this
+    stays importable without celery and testable without the app. ``queues``
+    is :func:`beat_queues`' output, i.e. a LIST per task, and a task whose
+    entries disagree about the queue is included if ANY of them lands on
+    ``queue`` — the pessimistic reading, because one entry on the pool is enough
+    to hold one of its slots.
+    """
+    out = []
+    for name, entry in (beat_schedule or {}).items():
+        task = entry.get("task")
+        if not task:
+            continue
+        if (soft_limits.get(task) or 0) < long_hold_s:
+            continue
+        if queue not in (queues.get(task) or []):
+            continue
+        out.append(name)
+    return sorted(out)
+
+
+def residency_overlaps(beat_schedule, soft_limits, queues, *, start, days=7,
+                       queue="background", long_hold_s=LONG_HOLD_SOFT_LIMIT_S):
+    """Every pair of long-hold ``queue`` beats whose declared windows overlap.
+
+    A "window" is ``[fire, fire + soft_time_limit]``: the span for which that
+    fire may hold one slot. Two overlapping windows mean both slots of a
+    two-slot pool can be held by grinders at once, with nothing else able to
+    run — which is what the user feels, not as a slow page but as a cold one.
+
+    Returns ``(overlaps, unenumerable)``. ``unenumerable`` carries the entries
+    whose schedule shape :func:`crontab_fire_times` could not read, so a gap in
+    the check is reported rather than passing as a clean result.
+    """
+    from datetime import timedelta
+
+    names = long_hold_beats(beat_schedule, soft_limits, queues,
+                            queue=queue, long_hold_s=long_hold_s)
+    windows, unenumerable = [], []
+    for name in names:
+        entry = beat_schedule[name]
+        fires = crontab_fire_times(entry.get("schedule"), start, days)
+        if fires is None:
+            unenumerable.append(name)
+            continue
+        hold = timedelta(seconds=float(soft_limits[entry["task"]]))
+        for f in fires:
+            windows.append((f, f + hold, name))
+    windows.sort()
+
+    overlaps = []
+    for i, (s_a, e_a, n_a) in enumerate(windows):
+        for (s_b, e_b, n_b) in windows[i + 1:]:
+            if s_b >= e_a:
+                break  # sorted by start: nothing later can overlap this window
+            overlaps.append({
+                "a": n_a, "a_fire": s_a.isoformat(), "a_until": e_a.isoformat(),
+                "b": n_b, "b_fire": s_b.isoformat(), "b_until": e_b.isoformat(),
+                "overlap_s": (min(e_a, e_b) - s_b).total_seconds(),
+            })
+    return overlaps, unenumerable
+
+
+# =============================================================================
+# LAT-P243 REPAIR (#3480, answering CERT-2045's BLOCK)
+#
+# `residency_overlaps` asks "can two grinders hold both slots?". CERT-2045 found
+# the case it cannot see, and the finding is correct: the first staggered
+# schedule put `collapse-winprob-snapshots-daily` (declared 1700s) at 05:15Z
+# EXACTLY with `backfill-kalshi-trade-history` (600s) and `poll-polymarket-hourly`
+# (540s). Three arrivals, two slots. Two of them hold both slots for 9-10
+# minutes, `warm-typeahead`'s message expires at 120s behind them, and the search
+# box goes cold by the very mechanism the ship claimed to remove. The pair test
+# missed it because it required BOTH sides to exceed 1200s, and 600 and 540 do
+# not.
+#
+# So the invariant is re-derived from the quantity the user actually feels: the
+# warmer's own MESSAGE EXPIRY BUDGET. A fire that cannot reach a slot inside that
+# budget is not delayed, it is destroyed.
+#
+# 🔴 THE LITERAL INVARIANT IS NOT SCHEDULABLE, AND SAYING SO IS PART OF THE
+# ANSWER. "A slot opportunity within the budget throughout every compaction
+# window" cannot be met by moving beats. Measured on this schedule: **59
+# background beat entries declare a hold longer than the budget and fire 1,222
+# times a day**; by declared windows the median minute of the day has FIVE of
+# them resident on a two-slot pool, and only 7 minutes in 1,440 have none. No
+# 28-minute window exists anywhere on the clock that satisfies it. Only isolation
+# — a queue and a worker the warmer does not share — can, and that is a dyno
+# purchase and Alex's call.
+#
+# What IS schedulable, and what this therefore enforces, is the arrival pattern
+# that produced the reproduction: **SIMULTANEOUS arrival.** A compaction beat
+# that fires alongside other long-holding work hands both slots away at once and
+# puts the warmer behind them; a compaction beat that fires with the budget clear
+# on either side leaves the second slot turning over. 335 of 1,440 minutes are
+# clear on every day of the week, so this is satisfiable with room.
+#
+# The residual — a competitor arriving mid-window — is real, is NOT fixed here,
+# and is named in the ship's disclosure rather than left for the next grader.
+# =============================================================================
+
+
+def warmer_expiry_budget_s(beat_schedule, warmer_beat="warm-typeahead"):
+    """The warmer's own message-expiry bound, READ from the live schedule.
+
+    Never a typed constant. `_EXPIRING_WARMER_BEATS` derives this value (it is
+    `_LOCK_TTL_SECONDS`, deliberately a constant rather than a sampled wall) and
+    applies it to the beat's `options` at import time. Reading it back here means
+    the isolation rule and the expiry it protects can never disagree — change one
+    and the other follows.
+
+    Raises rather than defaulting: a missing bound would silently make the
+    isolation check vacuous, and a vacuous check on this property is exactly what
+    CERT-2045 caught.
+    """
+    entry = (beat_schedule or {}).get(warmer_beat)
+    if not entry:
+        raise KeyError(
+            f"{warmer_beat!r} is not in the beat schedule, so its expiry budget "
+            "cannot be read. If the warmer was renamed, this check must be "
+            "re-pointed, not skipped."
+        )
+    expires = (entry.get("options") or {}).get("expires")
+    if not expires or expires <= 0:
+        raise ValueError(
+            f"{warmer_beat!r} declares no positive `expires`, so there is no "
+            "budget to derive an isolation rule from."
+        )
+    return float(expires)
+
+
+def fire_isolation_violations(beat_schedule, soft_limits, queues, subjects, *,
+                              start, days=7, queue="background",
+                              warmer_beat="warm-typeahead"):
+    """Subject fires that share their arrival instant with other long-holding work.
+
+    ``subjects`` are the beat ENTRY names being placed (here, the compaction
+    beats). A violation is any OTHER beat on ``queue`` whose declared hold
+    exceeds the warmer's expiry budget and which fires within that same budget of
+    a subject fire — before or after, because either ordering can take the second
+    slot first.
+
+    The comparison population is "declared hold > budget", NOT "declared hold >
+    some round number". A 540s task and a 1700s task exhaust two slots exactly as
+    thoroughly as two 3600s tasks do; the only thing that matters is whether the
+    second slot comes back inside the budget, and neither of them does.
+
+    Returns ``(violations, unenumerable)`` with the same contract as
+    :func:`residency_overlaps`: a schedule shape that cannot be enumerated is
+    REPORTED, never silently treated as non-colliding.
+    """
+    from datetime import timedelta
+
+    budget = warmer_expiry_budget_s(beat_schedule, warmer_beat)
+    unenumerable, competitors = [], []
+    for name, entry in (beat_schedule or {}).items():
+        task = entry.get("task")
+        if not task or name in subjects or name == warmer_beat:
+            continue
+        if queue not in (queues.get(task) or []):
+            continue
+        if (soft_limits.get(task) or 0) <= budget:
+            continue
+        fires = crontab_fire_times(entry.get("schedule"), start, days)
+        if fires is None:
+            unenumerable.append(name)
+            continue
+        for f in fires:
+            competitors.append((f, name, soft_limits[task]))
+    competitors.sort()
+
+    violations = []
+    for name in sorted(subjects):
+        entry = (beat_schedule or {}).get(name)
+        if entry is None:
+            continue
+        fires = crontab_fire_times(entry.get("schedule"), start, days)
+        if fires is None:
+            unenumerable.append(name)
+            continue
+        for f in fires:
+            lo, hi = f - timedelta(seconds=budget), f + timedelta(seconds=budget)
+            for (cf, cname, chold) in competitors:
+                if cf <= lo:
+                    continue
+                if cf >= hi:
+                    break
+                violations.append({
+                    "subject": name,
+                    "subject_fire": f.isoformat(),
+                    "competitor": cname,
+                    "competitor_fire": cf.isoformat(),
+                    "competitor_declared_hold_s": chold,
+                    "separation_s": abs((cf - f).total_seconds()),
+                    "budget_s": budget,
+                })
+    return violations, unenumerable
+
+
+def effective_hold_s(soft_limit, global_hard_limit):
+    """The longest a task may hold its slot, from what is DECLARED about it.
+
+    🔴 ``soft_time_limit`` UNSET DOES NOT MEAN ZERO, AND IT DOES NOT MEAN
+    UNBOUNDED EITHER. Nine of ``realtime``'s ten beats declare no soft limit, and
+    reading that as ``0`` scores the busiest lane in the fleet as the emptiest —
+    the arithmetic error that would send the warmer to the one queue measured
+    (#3060) to have zero standing headroom. What actually bounds those tasks is
+    celery's GLOBAL ``task_time_limit`` (300s here), a hard SIGKILL, so their
+    declared hold is 300s and not 0.
+
+    Returns ``None`` only when neither bound exists — genuinely unbounded, which
+    is worse than any finite hold and is reported as such rather than defaulted.
+    """
+    soft = soft_limit or 0
+    if soft > 0:
+        return float(soft)
+    hard = global_hard_limit or 0
+    return float(hard) if hard > 0 else None
+
+
+def unbudgeted_residents(beat_schedule, soft_limits, queues, *, queue,
+                         budget_s, global_hard_limit=None,
+                         warmer_beat="warm-typeahead"):
+    """Beats on ``queue`` that cannot be shown to release a slot inside ``budget_s``.
+
+    Two kinds, and they are reported apart because they argue differently:
+
+    *   ``over_budget`` — a declared hold (soft, else the global hard limit)
+        longer than the budget. It may legitimately keep the slot past the point
+        the warmer's message expires.
+    *   ``unbounded`` — no bound of either kind. Strictly worse, and never folded
+        into the first list, because "300s > 120s" and "no answer at all" are
+        different findings and a reader is entitled to tell them apart.
+
+    Returns ``(over_budget, unbounded)``, both sorted entry-name lists. The
+    warmer itself is excluded — it does not compete with itself for the slot it
+    is waiting for.
+    """
+    over_budget, unbounded = [], []
+    for name, entry in (beat_schedule or {}).items():
+        task = entry.get("task")
+        if not task or name == warmer_beat:
+            continue
+        if queue not in (queues.get(task) or []):
+            continue
+        hold = effective_hold_s(soft_limits.get(task), global_hard_limit)
+        if hold is None:
+            unbounded.append(name)
+        elif hold > budget_s:
+            over_budget.append(name)
+    return sorted(over_budget), sorted(unbounded)
+
+
+def queues_that_cannot_guarantee_a_slot(beat_schedule, soft_limits, queues, *,
+                                        budget_s, slots=None,
+                                        global_hard_limit=None,
+                                        warmer_beat="warm-typeahead"):
+    """Which existing worker queues fail to guarantee a slot inside ``budget_s``.
+
+    🔴 READ THE DIRECTION OF THIS CHECK BEFORE USING ITS ANSWER. It is a
+    DISQUALIFIER, not a failure detector. A queue is disqualified when it has at
+    least as many residents that cannot be shown to release inside the budget as
+    it has slots — i.e. when nothing in the declared schedule rules out every
+    slot being held past the budget. That is the condition for *"this queue
+    cannot be PROVEN to satisfy the invariant"*, which is the claim the
+    dedicated-worker ask rests on. It is deliberately NOT a claim that the queue
+    *does* starve the warmer: proving that needs measured occupancy, and this
+    module only ever reads declarations.
+
+    Why the weaker claim is the right one to automate: the strong one is
+    unfalsifiable from a schedule, and the decision it feeds — "is there anywhere
+    to put the warmer that we already pay for?" — is answered by the weak one. A
+    queue that survives this check has EARNED a measurement, not a move.
+
+    Returns ``{queue: {"slots": n, "over_budget": [...], "unbounded": [...]}}``
+    for the disqualified queues only, so an empty return is the good-news case
+    and says an existing lane may now be worth measuring as a home.
+    """
+    slots = QUEUE_SLOTS if slots is None else slots
+    out = {}
+    for queue, n_slots in slots.items():
+        over, unbounded = unbudgeted_residents(
+            beat_schedule, soft_limits, queues,
+            queue=queue, budget_s=budget_s,
+            global_hard_limit=global_hard_limit, warmer_beat=warmer_beat,
+        )
+        if len(over) + len(unbounded) >= n_slots:
+            out[queue] = {"slots": n_slots, "over_budget": over, "unbounded": unbounded}
+    return out

@@ -435,11 +435,44 @@ except Exception:  # pragma: no cover - defensive
 # from a beat publication at this signal, because celery beat stamps nothing on
 # the message that says so. Deliveries are therefore "broker publications this
 # process consumed, first attempt only", which is an upper bound on beat fires.
+# LAT-P242 (#3466): the start instants of the executions currently in flight in
+# THIS worker child, keyed by celery task id, so `task_postrun` can turn the
+# prerun/postrun pair into a DURATION for every task in the system — including
+# the 32 background beats that never call `_tracked_run` and therefore have no
+# duration under any label at all.
+#
+# A module-level dict rather than an attribute on `task.request`: celery reuses
+# one task INSTANCE per name and pushes a request stack onto it, so an attribute
+# written in prerun is written onto a shared object, and the task id is the only
+# thing in scope at both signals that identifies one execution. Prefork means
+# prerun and postrun for a given execution always run in the same child, so this
+# never has to cross a process boundary.
+#
+# BOUNDED, because the pop is not guaranteed: an execution SIGKILLed between the
+# two signals leaves its entry behind forever. That population is exactly the
+# hard-kill residual (`attempts - terminals`), it is small, and each entry is a
+# short string and a float — but "small and leaks" is still a leak, and this
+# runs in a worker with a 200MB child budget. The cap discards OLDEST-first
+# (dict insertion order), so the entries dropped under pressure are the ones
+# least likely to still have a postrun coming.
+_INFLIGHT_STARTS: dict = {}
+_INFLIGHT_STARTS_CAP = 1024
+
+
+def _forget_oldest_inflight():
+    """Drop the oldest quarter of the in-flight map once it exceeds its cap."""
+    excess = len(_INFLIGHT_STARTS) - _INFLIGHT_STARTS_CAP
+    if excess < 0:
+        return
+    for task_id in list(_INFLIGHT_STARTS)[: excess + _INFLIGHT_STARTS_CAP // 4]:
+        _INFLIGHT_STARTS.pop(task_id, None)
+
+
 try:  # pragma: no cover - signal wiring exercised by the worker, not unit tests
     from celery.signals import task_prerun as _task_prerun
 
     @_task_prerun.connect
-    def _record_delivery(sender=None, task=None, **_kwargs):
+    def _record_delivery(sender=None, task=None, task_id=None, **_kwargs):
         try:
             from app.tasks.redis_state import (
                 record_task_attempt,
@@ -459,6 +492,18 @@ try:  # pragma: no cover - signal wiring exercised by the worker, not unit tests
             # Filtering it here would leave a terminal with no attempt and drive
             # the difference negative — which floors to zero and reads healthy.
             record_task_attempt(name)
+            # LAT-P242: the clock starts HERE — beside `attempts`, above both
+            # filters, and for the same reason. `wall_ms` is closed by
+            # `task_postrun`, which applies no filter of its own, so stashing
+            # below either `return` would leave executions that terminate
+            # without ever having started and make the accumulator's population
+            # differ from the pair that BOUNDS it. The undercount this counter
+            # discloses is `attempts - terminals`; that bound is only exact
+            # while all three counters see the same executions.
+            if task_id:
+                _INFLIGHT_STARTS[task_id] = _time.monotonic()
+                if len(_INFLIGHT_STARTS) > _INFLIGHT_STARTS_CAP:
+                    _forget_oldest_inflight()
             # An unreadable request must not silently zero the counter: the
             # count is the point, and losing it is worse than an upper bound.
             if request is not None:
@@ -584,12 +629,29 @@ try:  # pragma: no cover - signal wiring exercised by the worker, not unit tests
     from celery.signals import task_postrun as _task_postrun
 
     @_task_postrun.connect
-    def _record_terminal(sender=None, task=None, **_kwargs):
+    def _record_terminal(sender=None, task=None, task_id=None, **_kwargs):
         try:
-            from app.tasks.redis_state import record_task_terminal
+            from app.tasks.redis_state import record_task_terminal, record_task_wall_ms
 
             name = getattr(sender, "name", None) or getattr(task, "name", None)
             record_task_terminal(name)
+            # LAT-P242 (#3466): close the clock opened in `task_prerun` and add
+            # this execution's wall time to the task's 24h accumulator.
+            #
+            # `pop`, not `get`: the entry must go whether or not the write
+            # succeeds, or a worker that loses Redis for an hour comes back with
+            # an in-flight map full of dead ids.
+            #
+            # A MISSING start is not zero and is not recorded. It means this
+            # child never saw the prerun for this execution — the signal was
+            # connected mid-flight by a deploy, or the cap above discarded the
+            # entry — and writing 0 would silently deflate the very total this
+            # counter exists to compute. Absent stays absent; the gap shows up
+            # as `terminals` exceeding the number of durations summed, which is
+            # readable, whereas a 0 is not.
+            started = _INFLIGHT_STARTS.pop(task_id, None) if task_id else None
+            if started is not None:
+                record_task_wall_ms(name, (_time.monotonic() - started) * 1000)
         except Exception:
             pass
 except Exception:  # pragma: no cover - defensive
@@ -5234,29 +5296,140 @@ celery_app.conf.beat_schedule = {
         "schedule": crontab(minute="*/10"),  # Every 10 minutes
         "options": {"queue": "background"},
     },
+    # =====================================================================
+    # LAT-P243 (#3480) — THE COMPACTION BEATS ARE STAGGERED, AND THE GUARD
+    # THAT KEEPS THEM STAGGERED IS DERIVED, NOT TRANSCRIBED.
+    #
+    # Six background beats declare a soft_time_limit of half an hour or more.
+    # Before this change, five of them could be resident at once against a
+    # `background` pool of TWO slots. Enumerated from celery's own parsed
+    # crontabs, not read off the cron strings by eye:
+    #
+    #   06:30  collapse-odds-snapshots-daily     soft 1700   } all five
+    #   06:30  turbo-collapse-futures            soft 3600   } resident
+    #   06:35  collapse-winprob-snapshots-daily  soft 1700   } at 06:45Z,
+    #   06:40  collapse-futures-snapshots-daily  soft 1700   } every day
+    #   06:45  turbo-collapse-odds               soft 3600   }
+    #   06:55  precompute-bookmaker-calibration  soft 1800   -> SIX at 06:55Z
+    #
+    # and 00:45 / 12:45 / 18:45 put the two `turbo` grinders on both slots
+    # three more times a day. The comment above `turbo_collapse_futures`
+    # already stated the consequence in the codebase's own words — "a
+    # scheduled, total background outage window with nothing else able to
+    # run" — but nothing enforced it, so it stayed true.
+    #
+    # WHAT THE USER SEES, which is why this is a ship and not housekeeping.
+    # `warm-typeahead` fires every 10s onto the same pool with `expires: 120`.
+    # A fire that cannot reach a slot inside 120s is DISCARDED, so through the
+    # outage window every fire dies, the 65s response TTL lapses, and the head
+    # of the search box goes cold. Measured on production 2026-09-06 07:35-08:02Z
+    # (a QUIET window — no compaction resident): whenever the warmer's period
+    # crosses ~90s the ring reports `expired: 40` of a 40-term head, i.e. the
+    # WHOLE head cold, four times in 26 minutes. A cold head term costs
+    # 1094.5ms with 710 shared read blocks against 27.1ms warm (the numbers in
+    # the `warm-typeahead` entry below). The compaction window is that same
+    # mechanism held open for the best part of an hour.
+    #
+    # WHY STAGGERING AND NOT A TOPOLOGY CHANGE. Relieving one contributor in an
+    # oversubscribed queue only reallocates the wait (LAT-P239's rule). This is
+    # not that move: it removes a scheduling COINCIDENCE, so it is better at any
+    # utilisation and does not depend on first knowing the total. A third slot
+    # is a dyno purchase — `background`'s two slots are a MEMORY bound
+    # (2 x 200MB + ~100MB ~= 512MB Standard-1X exactly) — and is Alex's call.
+    #
+    # 🔴 REPAIR AFTER CERT-2045, AND THE FINDING WAS CORRECT. The first staggered
+    # schedule put `collapse-winprob-snapshots-daily` (declared 1700s) at 05:15Z
+    # EXACTLY alongside `backfill-kalshi-trade-history` (600s) and
+    # `poll-polymarket-hourly` (540s). Three arrivals, two slots: two of them hold
+    # both slots for 9-10 minutes, `warm-typeahead`'s message expires at 120s
+    # behind them, and the search box goes cold by the very mechanism this change
+    # claims to remove. The pairwise check could not see it because it required
+    # BOTH sides to exceed 1200s, and 600 and 540 do not.
+    #
+    # So there is now a SECOND invariant, derived from the quantity the user
+    # actually feels rather than from a round number: **no compaction beat may
+    # fire within `warm-typeahead`'s own message-expiry budget of any other
+    # `background` beat whose declared hold exceeds that budget.** The budget is
+    # READ from `_EXPIRING_WARMER_BEATS["warm-typeahead"]` at check time, never
+    # typed, so the rule and the expiry it protects cannot drift apart.
+    #
+    # ⚠️ WHAT THIS DOES **NOT** FIX, stated here so the next reader does not have
+    # to rediscover it. "A slot opportunity inside the budget THROUGHOUT every
+    # compaction window" is not schedulable at all: **59 background beat entries
+    # declare a hold longer than the budget and fire 1,222 times a day**, the
+    # median minute of the day has FIVE of them resident by declared window on a
+    # two-slot pool, and only 7 minutes in 1,440 have none. No 28-minute window
+    # exists anywhere on the clock that satisfies it. A competitor arriving
+    # mid-window can still pair with a compaction resident and hold both slots
+    # past the budget. Closing that needs ISOLATION — a queue and a worker the
+    # warmer does not share — which is a dyno purchase and Alex's call.
+    #
+    # What IS schedulable, and what these times therefore guarantee, is that the
+    # compaction beats never arrive SIMULTANEOUSLY with other long-holding work:
+    # 335 of 1,440 minutes are clear on every day of the week, so the constraint
+    # is satisfiable with room, and the arrival pattern CERT-2045 reproduced
+    # cannot recur.
+    #
+    # HOW THE NEW TIMES WERE CHOSEN. `precompute-bookmaker-calibration` does
+    # NOT move: its :55 slot is load-bearing for the hourly
+    # `precompute-calibration-main` (:15) that consumes its key, and it is the
+    # calibration lane's. Everything else is scheduled AROUND it, leaving each
+    # beat's own cadence untouched, and solved for the LARGEST minimum gap
+    # between any two long-hold windows rather than the first assignment that
+    # fits — 43 minutes, against the 2 minutes the previous draft left:
+    #
+    #   00:55-01:25  precompute-bookmaker-calibration   (unchanged)
+    #   02:08-03:08  turbo-collapse-futures             (was :30 of 0,6,12,18)
+    #   03:57-04:57  turbo-collapse-odds                (was :45 of 0,6,12,18)
+    #   11:43-12:11  collapse-futures-snapshots-daily   (was 06:40)
+    #   17:43-18:11  collapse-winprob-snapshots-daily   (was 06:35)
+    #   23:43-00:11  collapse-odds-snapshots-daily      (was 06:30)
+    #   ...the 6h pair repeats at 08:08/09:57, 14:08/15:57, 20:08/21:57.
+    #
+    # The three dailies are spread across the day rather than clustered because
+    # the clustering bought nothing and the clear minutes are where they are.
+    #
+    # Windows are the DECLARED soft_time_limit, not a sampled duration: the
+    # soft limit is the longest the system permits the task to hold the slot,
+    # and a bound taken from a measured maximum has already been wrong twice in
+    # this program. Nothing user-facing reads compaction output, so the cadence
+    # has the slack the price refreshes did not.
+    #
+    # THE GUARD: `tests/test_lat_p243_compaction_stagger_3480.py` re-derives BOTH
+    # invariants from the LIVE beat schedule, each task's DECLARED
+    # soft_time_limit, and the warmer's own declared expiry. It transcribes no
+    # time, so editing a schedule here cannot rot it — and a NEW background beat
+    # that declares a long hold is covered the moment it is added. To satisfy it,
+    # a long-hold beat must either move clear of the others, route to `heavy`, or
+    # declare a shorter soft limit.
+    # =====================================================================
     "collapse-odds-snapshots-daily": {
         "task": "app.tasks.collapse_snapshots",
-        "schedule": crontab(minute=30, hour=6),  # Daily at 6:30 AM UTC
+        "schedule": crontab(minute=43, hour=23),  # Daily 23:43 UTC — see LAT-P243 above
         "kwargs": {"table": "odds", "limit": 500},
     },
     "collapse-winprob-snapshots-daily": {
         "task": "app.tasks.collapse_snapshots",
-        "schedule": crontab(minute=35, hour=6),  # Daily at 6:35 AM UTC
+        "schedule": crontab(minute=43, hour=17),  # Daily 17:43 UTC — see LAT-P243 above
         "kwargs": {"table": "winprob", "limit": 500},
     },
     "collapse-futures-snapshots-daily": {
         "task": "app.tasks.collapse_snapshots",
-        "schedule": crontab(minute=40, hour=6),  # Daily at 6:40 AM UTC
+        "schedule": crontab(minute=43, hour=11),  # Daily 11:43 UTC — see LAT-P243 above
         "kwargs": {"table": "futures", "limit": 500},
     },
     "turbo-collapse-futures": {
         "task": "app.tasks.turbo_collapse_futures",
-        "schedule": crontab(minute=30, hour="*/6"),  # Every 6 hours — catch up on backlog
+        # Every 6 hours — catch up on backlog. :40 of 1,7,13,19 clears
+        # `precompute-bookmaker-calibration`'s [x:55, x+1:25] hold by 15 min.
+        "schedule": crontab(minute=8, hour="2,8,14,20"),
         "kwargs": {"limit": 5000},
     },
     "turbo-collapse-odds": {
         "task": "app.tasks.turbo_collapse_odds",
-        "schedule": crontab(minute=45, hour="*/6"),  # Every 6 hours
+        # Every 6 hours, two hours behind its futures sibling so the two 3600s
+        # grinders can never hold both background slots at once.
+        "schedule": crontab(minute=57, hour="3,9,15,21"),
         "kwargs": {"limit": 5000},
     },
     "matching-metrics-daily": {
