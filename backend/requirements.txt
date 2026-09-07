@@ -16,7 +16,7 @@ psycopg2-binary>=2.9.9
 alembic>=1.13.1
 
 # HTTP Client (for odds API)
-httpx>=0.26.0
+httpx>=0.28.1
 
 # Fast JSON decode (#995 attempt-10): stdlib json.loads holds the GIL for the
 # whole parse of a giant Kalshi nested-markets page (~67s observed), freezing the
