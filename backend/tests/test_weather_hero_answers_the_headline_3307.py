@@ -35,7 +35,7 @@ The trap these tests exist to hold: on a 22-city event there is ALWAYS some
 number to print, and the wrong one looks exactly as confident as the right one.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import create_engine, event
@@ -69,6 +69,66 @@ from app.routes.weather import (  # noqa: E402
 
 NOW = datetime.now(timezone.utc)
 FRESH = NOW - timedelta(hours=1)
+
+# ---------------------------------------------------------------------------
+# EVERY SEEDED TITLE DATE DERIVES FROM THE SAME ANCHOR ITS ROW DOES (#3736).
+#
+# These tests drive `get_featured`, whose first act is to drop any market whose
+# TITLE names a day that has passed:
+#
+#     if is_title_implied_stale(m.name, m.llm_sport_category, now): continue
+#
+# That filter is correct and deliberate (#883 L2-56). The fixture used to seed
+# `resolution_date` from the live clock while writing the day into the title as
+# a literal — "...on September 5?" — so the two drifted apart the moment real
+# time passed that date. `is_title_implied_stale` allows the title's day plus
+# ONE day of grace, which gave this file about a day and a half of life: it was
+# written 2026-09-05 and every branch in the repo went red on shard 4 at
+# 2026-09-07 00:00Z, when the tornado market silently stopped existing and the
+# corpus each test had built collapsed under it.
+#
+# The failure worth naming is not the red CI. It is that these two assertions
+# had stopped exercising their invariants at all, and a fixture that has quietly
+# stopped testing anything looks exactly like one that passes.
+#
+# So the day is computed, never typed. Gotcha #44's rule in the shape it takes
+# when the anchor is the clock and the date is prose: offset FIRST, render the
+# string from the offset, and never write a date a reader could have to update.
+# ---------------------------------------------------------------------------
+
+#: The 0.6-day markets price TODAY and settle tomorrow morning — Kalshi's real
+#: shape, and the reason `_rain_day` reads the ticker rather than
+#: `resolution_date`.
+_TITLE_DAY = NOW.date()
+#: The daily rain market sits one day further out (`days_out=1.4`), exactly as
+#: it did in the production capture this corpus is copied from.
+_RAIN_TITLE_DAY = _TITLE_DAY + timedelta(days=1)
+
+
+def _long_day(d: date) -> str:
+    """`September 6` - the Polymarket phrasing."""
+    return f"{d:%B} {d.day}"
+
+
+def _short_day(d: date) -> str:
+    """`Sep 6, 2026` - the Kalshi phrasing, which `_NAME_DAY_RE` also reads."""
+    return f"{d:%b} {d.day}, {d.year}"
+
+
+def _ticker_day(d: date) -> str:
+    """`26SEP06` - the suffix `_TICKER_DAY_RE` parses out of a KXRAIN ticker."""
+    return f"{d:%y%b%d}".upper()
+
+
+#: The three questions this corpus is built from, each named ONCE so that an
+#: assertion and the row it is about cannot disagree.
+TORNADO_Q = f"Which cities face tornado risk on {_long_day(_TITLE_DAY)}?"
+RAIN_Q = f"Where will it rain on {_short_day(_RAIN_TITLE_DAY)}?"
+RAIN_TICKER = f"KXRAIN-{_ticker_day(_RAIN_TITLE_DAY)}"
+
+
+def _temperature_q(city: str) -> str:
+    return f"Highest temperature in {city} on {_long_day(_TITLE_DAY)}?"
 
 
 @pytest.fixture(autouse=True)
@@ -157,17 +217,19 @@ def _outcome(oid: int, mid: int, name: str, probability, external_id=None):
     )
 
 
-def _daily_rain_event(session, mid: int, day: str, cities: list[tuple[str, object]]):
+def _daily_rain_event(session, mid: int, cities: list[tuple[str, object]]):
     """The live shape: ONE market per day carrying a leg per city.
 
     `cities` is (city, probability) in the venue's own order — deliberately not
     sorted, because the defect is about which leg the card picks, not which is
     listed first.
+
+    The day is no longer a parameter (#3736). Every caller passed the same one,
+    and a caller-supplied day is exactly how the ticker, the title and the row's
+    `resolution_date` came to disagree.
     """
-    ticker = f"KXRAIN-26SEP{day}"
-    session.add(
-        _market(mid, ticker, f"Where will it rain on Sep {int(day)}, 2026?", days_out=1.4)
-    )
+    ticker = RAIN_TICKER
+    session.add(_market(mid, ticker, RAIN_Q, days_out=1.4))
     for i, (city, prob) in enumerate(cities):
         session.add(
             _outcome(
@@ -186,7 +248,7 @@ def _temperature_ladder(session, mid: int, city: str, buckets: int = 11):
         _market(
             mid,
             f"poly-temp-{mid}",
-            f"Highest temperature in {city} on September 6?",
+            _temperature_q(city),
             days_out=0.6,
             source="polymarket",
         )
@@ -209,7 +271,7 @@ async def test_the_rain_market_leads_even_though_it_scores_lowest():
     """The production shape, reproduced: tornado 44.73, thirteen temps at 18.22,
     rain ~15.1. Score alone puts rain nowhere; the headline names it."""
     s = _new_session()
-    s.add(_market(1, "poly-tornado", "Which cities face tornado risk on September 5?", days_out=0.6, source="polymarket"))
+    s.add(_market(1, "poly-tornado", TORNADO_Q, days_out=0.6, source="polymarket"))
     for i in range(27):
         s.add(_outcome(9000 + i, 1, f"City {i}", 0.2))
     for n, city in enumerate(
@@ -219,13 +281,13 @@ async def test_the_rain_market_leads_even_though_it_scores_lowest():
         start=10,
     ):
         _temperature_ladder(s, n, city)
-    _daily_rain_event(s, 40, "06", [("Miami", 0.835), ("New York City", 0.385), ("Chicago", 0.025)])
+    _daily_rain_event(s, 40, [("Miami", 0.835), ("New York City", 0.385), ("Chicago", 0.025)])
     s.commit()
 
     items = await _featured(s)
 
     assert items, "the hero rendered no slides at all"
-    assert items[0]["q"] == "Where will it rain on Sep 6, 2026?", (
+    assert items[0]["q"] == RAIN_Q, (
         "slide one is %r — the page's headline asks about rain tomorrow and the "
         "card beside it is about something else" % items[0]["q"]
     )
@@ -235,7 +297,7 @@ async def test_the_rain_market_leads_even_though_it_scores_lowest():
 async def test_no_question_family_owns_more_than_two_of_the_five_slides():
     """Defect 1: four of five slides came out of one thirteen-way tie."""
     s = _new_session()
-    s.add(_market(1, "poly-tornado", "Which cities face tornado risk on September 5?", days_out=0.6, source="polymarket"))
+    s.add(_market(1, "poly-tornado", TORNADO_Q, days_out=0.6, source="polymarket"))
     for i in range(27):
         s.add(_outcome(9000 + i, 1, f"City {i}", 0.2))
     for n, city in enumerate(
@@ -245,7 +307,7 @@ async def test_no_question_family_owns_more_than_two_of_the_five_slides():
         start=10,
     ):
         _temperature_ladder(s, n, city)
-    _daily_rain_event(s, 40, "06", [("Miami", 0.835), ("New York City", 0.385)])
+    _daily_rain_event(s, 40, [("Miami", 0.835), ("New York City", 0.385)])
     s.add(_market(50, "KXHURR-1", "Hurricane Marie category?", days_out=3))
     s.add(_outcome(5000, 50, "Category 4 or above", 0.95))
     s.add(_outcome(5001, 50, "Category 5 or above", 0.31))
@@ -311,7 +373,7 @@ async def test_the_rain_slide_prints_new_yorks_number_not_the_wettest_citys():
     """
     s = _new_session()
     _daily_rain_event(
-        s, 40, "06",
+        s, 40,
         [("Miami", 0.835), ("Los Angeles", 0.775), ("New York City", 0.385), ("Chicago", 0.025)],
     )
     s.commit()
@@ -334,7 +396,7 @@ async def test_the_sparkline_charts_the_same_leg_the_number_comes_from():
     card draws Miami's history under New York's percentage — the ux/1069 defect
     with real data instead of invented data, which is no better."""
     s = _new_session()
-    _daily_rain_event(s, 40, "06", [("Miami", 0.835), ("New York City", 0.385)])
+    _daily_rain_event(s, 40, [("Miami", 0.835), ("New York City", 0.385)])
     miami_leg, nyc_leg = 4000, 4001
     for i in range(6):
         captured = NOW - timedelta(hours=12 - i)
@@ -368,19 +430,19 @@ async def test_an_event_without_a_new_york_price_is_not_pinned():
     hold no New York price for.
     """
     s = _new_session()
-    _daily_rain_event(s, 40, "06", [("Miami", 0.835), ("Chicago", 0.025)])
-    s.add(_market(1, "poly-tornado", "Which cities face tornado risk on September 5?", days_out=0.6, source="polymarket"))
+    _daily_rain_event(s, 40, [("Miami", 0.835), ("Chicago", 0.025)])
+    s.add(_market(1, "poly-tornado", TORNADO_Q, days_out=0.6, source="polymarket"))
     for i in range(27):
         s.add(_outcome(9000 + i, 1, f"City {i}", 0.2))
     s.commit()
 
     items = await _featured(s)
 
-    assert items[0]["q"] == "Which cities face tornado risk on September 5?", (
+    assert items[0]["q"] == TORNADO_Q, (
         "the hero led with %r — a rain market we hold no New York price for"
         % items[0]["q"]
     )
-    rain = next(i for i in items if i["q"] == "Where will it rain on Sep 6, 2026?")
+    rain = next(i for i in items if i["q"] == RAIN_Q)
     assert (rain["prob"], rain["leader"]) == (84, "Miami"), (
         "the rain slide quotes %r%% as %r — a card may quote Miami, but it has "
         "to say Miami" % (rain["prob"], rain["leader"])
@@ -392,7 +454,7 @@ async def test_a_new_york_leg_with_no_price_is_absence_not_zero():
     """ux/1075's rule at this seam: an unpriced leg must never become a
     confident 0%, and must not silently promote the wettest city either."""
     s = _new_session()
-    _daily_rain_event(s, 40, "06", [("Miami", 0.835), ("New York City", None)])
+    _daily_rain_event(s, 40, [("Miami", 0.835), ("New York City", None)])
     s.commit()
 
     items = await _featured(s)
@@ -428,7 +490,7 @@ def test_the_weekend_and_monthly_rain_series_are_different_questions():
 def test_a_market_that_is_not_about_rain_is_untouched():
     """The seam is shared by every weather card, so a temperature ladder must
     come out of it exactly as it went in."""
-    ladder = _market(70, "poly-temp-70", "Highest temperature in Manila on September 6?", days_out=0.6, source="polymarket")
+    ladder = _market(70, "poly-temp-70", _temperature_q("Manila"), days_out=0.6, source="polymarket")
     ladder.outcomes = [
         _outcome(7000, 70, "29°C", 0.36),
         _outcome(7001, 70, "30°C", 0.44),
