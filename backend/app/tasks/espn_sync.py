@@ -17,6 +17,10 @@ from app.tasks.config import ESPN_SPORT_MAPPING
 # `espn_data.get(sport_key, [])`, the reader can see that a reading is being
 # taken and go and find out what the three of them are.
 from app.utils import authority_failover as _failover
+from app.utils.event_completion import (
+    AUTHORITY_BACKFILL_STATUS_SQL,
+    AUTHORITY_BACKFILL_STATUSES,
+)
 from app.utils.team_binding_invariant import accept_team_binding
 from app.utils.name_normalization import (
     token_overlap_score as _team_name_match_score,
@@ -1332,7 +1336,11 @@ async def _backfill_box_scores(
                     select(Event)
                     .options(selectinload(Event.sport))
                     .where(
-                        Event.status.in_(["completed", "closed"]),
+                        # #3790: "do we still owe this row a box score?", never
+                        # "is this row final?". A suspended match is the one we
+                        # have admitted we cannot score, so it is the last row
+                        # that should be unreachable here.
+                        Event.status.in_(AUTHORITY_BACKFILL_STATUSES),
                         Event.espn_id.isnot(None),
                         or_(
                             Event.box_score_data.is_(None),
@@ -1371,7 +1379,11 @@ async def _backfill_box_scores(
                                 Event.espn_id.isnot(None),
                             ),
                             and_(
-                                Event.status.in_(["completed", "closed"]),
+                                # #3790, the non-calibration arm of the same
+                                # question — kept identical to the arm above so
+                                # the two orderings cannot disagree about WHICH
+                                # rows are eligible, only about their order.
+                                Event.status.in_(AUTHORITY_BACKFILL_STATUSES),
                                 Event.espn_id.isnot(None),
                                 or_(
                                     Event.box_score_data.is_(None),
@@ -1535,7 +1547,14 @@ async def _backfill_espn_ids(limit: int = 1000):
                 select(Event)
                 .options(selectinload(Event.sport))
                 .where(
-                    Event.status.in_(["completed", "closed"]),
+                    # 🔴 #3790, and this is the site that mattered most. Every
+                    # other backfill needs an `espn_id` to do its job; this is
+                    # the one that GOES AND GETS the espn_id. A suspended row
+                    # with no anchor cannot be reached by `espn_helpers`' direct
+                    # authority door either — that door opens off the espn_id —
+                    # so excluding it here did not delay the fix, it removed the
+                    # last path by which the row could ever be scored.
+                    Event.status.in_(AUTHORITY_BACKFILL_STATUSES),
                     Event.espn_id.is_(None),
                     Event.commence_time.isnot(None),
                     Event.home_team_name.isnot(None),
@@ -2159,7 +2178,7 @@ async def _backfill_espn_win_probability(limit: int = 200, oldest_first: bool = 
                         SELECT COUNT(*) AS cnt FROM win_prob_snapshots wps
                         WHERE wps.event_id = e.id AND wps.source = 'espn'
                     ) snap_cnt ON true
-                    WHERE e.status IN ('completed', 'closed')
+                    WHERE e.status IN (""" + AUTHORITY_BACKFILL_STATUS_SQL + """)
                       AND e.espn_id IS NOT NULL
                       AND snap_cnt.cnt < 10
                     ORDER BY e.commence_time """ + ("ASC" if oldest_first else "DESC") + """
