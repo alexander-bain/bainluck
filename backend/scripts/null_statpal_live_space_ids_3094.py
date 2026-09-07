@@ -152,6 +152,41 @@ reused, so this script has none of the reused-BIGSERIAL hazard that CERT-847
 found in the anchor re-key. It still asks the post-condition — *is every
 backed-up row back verbatim?* — rather than trusting two rowcounts, because a
 rowcount cannot see a row that was legitimately declined.
+
+TWO WAYS THE BACKUP CAN FAIL TO COVER WHAT THE RUN CLEARS (CERT-2171 follow-ups)
+--------------------------------------------------------------------------------
+Both are silent, and both end in the same place: rows moved, and the undo does
+not hold them. Neither is reachable from a clean first run, and that is exactly
+why nothing would have noticed.
+
+**1. The population is measured and cleared under two different snapshots.**
+The precondition counts, and then `CLEAR_BOTH` clears. Under READ COMMITTED
+those are two statements at two moments, so a writer refilling rows in between
+gets a `FROZEN 364` verdict and a 374-row clear — the very loop the frozen count
+exists to refuse, waved through by the guard that was supposed to stop it. Every
+non-rollback mode therefore runs at **`REPEATABLE READ`**, so the census, the
+precondition count, the backup and the clear all see ONE snapshot; and
+`apply_clear` re-measures the population and refuses if it disagrees with the
+number the verdict was computed from, so if the isolation is ever weakened again
+the mismatch is loud rather than silent. A concurrent write to a targeted row
+now aborts the UPDATE with a serialization failure, which is the correct
+outcome: nothing is written, and the writer this repair waits on has announced
+itself. `--rollback` stays at READ COMMITTED deliberately — it is the way OUT of
+a bad state and must never be the thing a concurrent writer can block.
+
+**2. A repeat apply clears rows the PRESERVED backup has never held.**
+`CREATE TABLE IF NOT EXISTS` not refreshing the snapshot is the right rule and a
+trap with a second edge. The empty-table case is guarded below; this is the
+non-empty one. Say the apply ran and backed up its 364, and later a writer
+refills ten rows — or an operator states the new number with
+`--expect-population 10`. The table exists and is not empty, so the emptiness
+guard passes, and those ten rows are cleared against a snapshot taken before
+they were ever in this shape. `--rollback` would then restore 364 rows verbatim
+and report a clean undo, while ten rows it never knew about stay cleared. So the
+run counts its candidates that are ABSENT from the preserved backup and refuses
+before writing if there are any. The remedy is never to drop the table — that
+discards a real undo for the rows it does hold — but to undo first, or to
+archive it under a dated name so both snapshots survive.
 """
 
 from __future__ import annotations
@@ -351,6 +386,36 @@ BACKUP_EXISTS = """
 SELECT to_regclass(%s) IS NOT NULL
 """
 
+#: How many rows THIS run would clear that the PRESERVED backup does not hold.
+#:
+#: Zero by construction on a first run — `CREATE_BACKUP` selects the same
+#: population under the same snapshot — so any non-zero answer means the table
+#: was left by an EARLIER run and does not cover what this one is about to
+#: touch. Keyed on `event_id`, the same primary key `RESTORE` joins on, because
+#: "the undo can find this row" is precisely the question being asked.
+COUNT_UNCOVERED_BY_BACKUP = f"""
+SELECT count(*)
+  FROM events e
+  JOIN sports s ON s.id = e.sport_id
+ WHERE {POPULATION}
+   AND NOT EXISTS (
+       SELECT 1 FROM {BACKUP_TABLE} b WHERE b.event_id = e.id
+   )
+"""
+
+#: Every non-rollback mode runs here. See "TWO WAYS THE BACKUP CAN FAIL TO
+#: COVER WHAT THE RUN CLEARS" above: under READ COMMITTED the precondition's
+#: count and the UPDATE it gates are two snapshots, so the guard can pass on one
+#: population while the write lands on another.
+SNAPSHOT_ISOLATION = "REPEATABLE READ"
+
+#: `--rollback` only. Named rather than left implicit: the exemption is a
+#: decision, not an omission. A serialization failure aborts the transaction,
+#: and aborting the undo is the one failure this script cannot afford — the
+#: rollback must be able to run *while* the bad state it is undoing is being
+#: written to.
+ROLLBACK_ISOLATION = "READ COMMITTED"
+
 #: The census is the guard, not decoration. `live_space` is the number that must
 #: read 364 before an apply and 0 after; `schedule_space` is the number whose
 #: RISE is the repair's only positive evidence — and it must rise by ~75, not by
@@ -394,6 +459,23 @@ def _connect():
     conn = psycopg2.connect(url, sslmode="require")
     conn.autocommit = False
     return conn
+
+
+def pin_isolation(conn, level: str) -> None:
+    """Put every statement of this run on one snapshot (or deliberately not).
+
+    Called before the first statement, because that is when a transaction's
+    snapshot is taken and `set_session` refuses inside an open one. The
+    `rollback()` first is what makes this safe to call on a connection a caller
+    has already read from — nothing has been written yet at this point in any
+    mode, so there is never anything to discard.
+
+    Not wrapped in a try/except on purpose. A silently-degraded isolation level
+    is the exact defect this exists to close: the guard would keep printing
+    `FROZEN` while the clear ran on a population nobody measured.
+    """
+    conn.rollback()
+    conn.set_session(isolation_level=level)
 
 
 #: Counted by the SAME predicate `--apply` clears on, deliberately: a
@@ -459,6 +541,70 @@ def population_verdict(
     )
 
 
+def preserved_backup(cur) -> tuple[int, int] | None:
+    """Read the backup an EARLIER run left behind, before this one writes.
+
+    Returns `(rows, uncovered)` — how many rows the preserved table holds, and
+    how many of THIS run's candidates it does not hold — or `None` when there is
+    no backup table at all.
+
+    Read before `CREATE_BACKUP` on purpose. Afterwards the two cases are
+    indistinguishable: a table this run just created is full of exactly this
+    run's rows, so it would answer `(planned, 0)` and the guards would have
+    nothing to see. `None` is therefore the first-run answer and means "coverage
+    is total by construction", not "unknown".
+    """
+    cur.execute(BACKUP_EXISTS, (BACKUP_TABLE,))
+    row = cur.fetchone()
+    if not row or not row[0]:
+        return None
+    cur.execute(f"SELECT count(*) FROM {BACKUP_TABLE}")
+    rows = cur.fetchone()[0]
+    cur.execute(COUNT_UNCOVERED_BY_BACKUP)
+    return rows, cur.fetchone()[0]
+
+
+def refuse_unless_the_backup_covers_the_run(
+    planned: int, preserved: tuple[int, int] | None
+) -> None:
+    """Refuse before the write when the undo would not cover what is cleared.
+
+    Pure but for the raise, and called on the DRY RUN as well as the apply: a
+    pre-flight that exits 0 for a run the apply will refuse has told the operator
+    the opposite of what they asked.
+
+    Two distinct failures, deliberately not collapsed into one message. They
+    share a symptom — rows cleared that `--rollback` cannot restore — and have
+    opposite remedies, and a guard that names the wrong remedy is worse than one
+    that names none.
+    """
+    if preserved is None or not planned:
+        return
+    rows, uncovered = preserved
+
+    if not rows:
+        raise SystemExit(
+            f"{BACKUP_TABLE} exists but holds 0 rows, while this run would "
+            f"clear {planned}. The snapshot predates nothing and CREATE TABLE "
+            f"IF NOT EXISTS will not refresh it, so the undo would restore "
+            f"nothing. Drop the empty table and re-run: "
+            f"DROP TABLE {BACKUP_TABLE};"
+        )
+
+    if uncovered:
+        raise SystemExit(
+            f"{uncovered} of the {planned} rows this run would clear are NOT in "
+            f"{BACKUP_TABLE}, which holds {rows} rows from an earlier run. "
+            f"CREATE TABLE IF NOT EXISTS deliberately does not refresh it, so "
+            f"those {uncovered} would be cleared with no undo while --rollback "
+            f"reported a clean restore of the {rows} it does hold. DO NOT DROP "
+            f"THE TABLE — it is the real undo for those {rows}. Either roll back "
+            f"first (--rollback) and re-measure, or archive the snapshot and let "
+            f"this run take a fresh one: "
+            f"ALTER TABLE {BACKUP_TABLE} RENAME TO {BACKUP_TABLE}_<yyyymmdd>;"
+        )
+
+
 def census(cur, label: str) -> dict:
     """Print the shape census and return it, so a caller can assert on it."""
     cur.execute(CENSUS)
@@ -472,11 +618,18 @@ def census(cur, label: str) -> dict:
     return shapes
 
 
-def apply_clear(cur, *, dry_run: bool = False) -> dict:
+def apply_clear(cur, *, dry_run: bool = False, gated_on: int | None = None) -> dict:
     """Clear both halves for every live-space MLB row. Returns what it did.
 
     Does not commit — the caller owns the transaction, which is what lets a test
     drive the same statements the dyno runs.
+
+    `gated_on` is the population the caller's precondition verdict was computed
+    from. The two counts are the same number under `SNAPSHOT_ISOLATION` and this
+    check is then trivially satisfied — which is the point. It is what turns a
+    later loss of that isolation from a silent widening of the clear into a
+    refusal, and it costs one count. `None` means the caller is driving these
+    statements directly (the round-trip tests) rather than through a gate.
     """
     cur.execute(f"""
         SELECT count(*),
@@ -486,6 +639,24 @@ def apply_clear(cur, *, dry_run: bool = False) -> dict:
         """)
     planned, planned_jsonb = cur.fetchone()
     print(f"[plan] {planned} live-space MLB rows ({planned_jsonb} also in JSONB)")
+
+    # The precondition and the write candidate must be ONE population. If they
+    # are not, the verdict that let this run through was about a different set
+    # of rows than the one about to be cleared, and no part of the output would
+    # say so.
+    if gated_on is not None and planned != gated_on:
+        raise SystemExit(
+            f"the precondition was computed on {gated_on} live-space rows and "
+            f"this run would clear {planned}. The population MOVED between the "
+            f"guard and the write, so the verdict that allowed this run is "
+            f"about a different set of rows — which is the loop the frozen "
+            f"count exists to refuse. Nothing was written. Re-run: at "
+            f"{SNAPSHOT_ISOLATION} both numbers come from one snapshot, so a "
+            f"disagreement here means the isolation is not in force."
+        )
+
+    # An earlier run's snapshot, read BEFORE this run creates or touches one.
+    preserved = preserved_backup(cur)
 
     if dry_run:
         cur.execute(f"""
@@ -498,7 +669,15 @@ def apply_clear(cur, *, dry_run: bool = False) -> dict:
         for event_id, fid, status, in_jsonb in cur.fetchall():
             both = " +jsonb" if in_jsonb else ""
             print(f"[dry-run] event {event_id} ({status}): {fid} -> NULL{both}")
-        return {"planned": planned, "planned_jsonb": planned_jsonb, "cleared": 0}
+        # The pre-flight answers the question the operator actually asked —
+        # "will the apply run?" — so it refuses everything the apply refuses.
+        refuse_unless_the_backup_covers_the_run(planned, preserved)
+        return {
+            "planned": planned,
+            "planned_jsonb": planned_jsonb,
+            "cleared": 0,
+            "uncovered": 0 if preserved is None else preserved[1],
+        }
 
     # BEFORE the first write, in the same transaction as the writes.
     # `IF NOT EXISTS` makes a re-run safe and deliberately does NOT refresh an
@@ -511,20 +690,13 @@ def apply_clear(cur, *, dry_run: bool = False) -> dict:
     print(f"[backup] {BACKUP_TABLE} holds {backed_up} rows")
 
     # The other side of "IF NOT EXISTS deliberately does not refresh": a backup
-    # table left behind by a run that found nothing is EMPTY, and an empty
-    # snapshot is not an undo for rows this run is about to clear. Nothing else
-    # would notice — both statements succeed, the census reads perfectly
-    # repaired, and D51's reversibility is gone silently. Refuse before the
-    # write rather than discover it at rollback time, which is the one moment
-    # the backup is needed and the one moment it is too late.
-    if planned and not backed_up:
-        raise SystemExit(
-            f"{BACKUP_TABLE} exists but holds 0 rows, while this run would "
-            f"clear {planned}. The snapshot predates nothing and CREATE TABLE "
-            f"IF NOT EXISTS will not refresh it, so the undo would restore "
-            f"nothing. Drop the empty table and re-run: "
-            f"DROP TABLE {BACKUP_TABLE};"
-        )
+    # left behind by an EARLIER run may not cover what this one clears — because
+    # it is empty, or because it predates rows a writer has since refilled.
+    # Nothing else would notice either case: both statements succeed, the census
+    # reads perfectly repaired, and D51's reversibility is gone silently. Refuse
+    # before the write rather than discover it at rollback time, which is the
+    # one moment the backup is needed and the one moment it is too late.
+    refuse_unless_the_backup_covers_the_run(planned, preserved)
 
     cur.execute(CLEAR_BOTH)
     cleared = cur.rowcount or 0
@@ -534,6 +706,7 @@ def apply_clear(cur, *, dry_run: bool = False) -> dict:
         "planned_jsonb": planned_jsonb,
         "backed_up": backed_up,
         "cleared": cleared,
+        "uncovered": 0 if preserved is None else preserved[1],
     }
 
 
@@ -580,6 +753,7 @@ def main() -> int:
     args = ap.parse_args()
 
     conn = _connect()
+    pin_isolation(conn, ROLLBACK_ISOLATION if args.rollback else SNAPSHOT_ISOLATION)
     cur = conn.cursor()
 
     before = census(cur, "before")
@@ -629,7 +803,10 @@ def main() -> int:
         print("[rollback] every backed-up row is present verbatim.")
         return 0
 
-    done = apply_clear(cur, dry_run=not args.apply)
+    # `gated_on` is the count the verdict above was computed from. Under
+    # SNAPSHOT_ISOLATION it is the same snapshot the clear runs on; passing it
+    # anyway is what makes that an assertion rather than an assumption.
+    done = apply_clear(cur, dry_run=not args.apply, gated_on=planned)
 
     if not args.apply:
         conn.rollback()
