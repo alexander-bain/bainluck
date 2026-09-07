@@ -60,6 +60,7 @@ COVERED = (
     "test_kalshi_sweep_settlement_bind_pg.py",
     "test_link_tennis_already_linked_pg.py",
     "test_link_tennis_statpal_real_postgres.py",
+    "test_null_statpal_live_space_3094_real_postgres.py",
     "test_repair_3672_bind_contract.py",
     "test_rekey_statpal_anchors_real_postgres.py",
     "test_restore_3026_jsonb_roundtrip_pg.py",
