@@ -99,6 +99,7 @@ import {
   SPORT_KEY_TO_LEAGUE_PATH,
   hasAnyWinProbData,
   formatCountdown,
+  shouldShowRefreshCountdown,
   resolveProbability,
   computeSharedChartDomain,
   computeRealStartTime,
@@ -669,6 +670,16 @@ export default function EventPage({ params }: EventPageProps) {
   // Calculate countdown progress percentage
   const countdownProgress = ((refreshInterval / 1000 - countdown) / (refreshInterval / 1000)) * 100;
 
+  // #3802 — the poll ring only where an update could land while you are looking.
+  // The rule (and why 3h) lives in `shouldShowRefreshCountdown`.
+  const showRefreshCountdown = shouldShowRefreshCountdown({
+    isFinished,
+    streamConnected,
+    isLive,
+    isSuspended,
+    commenceTime: event?.commence_time,
+  });
+
   // L2-112 Item 4: the Score Differential card must hide when there is no
   // projected OR actual score data — otherwise ScoreDifferentialChart returns
   // null (or its "Score data is not available" message) inside a card shell,
@@ -713,8 +724,13 @@ export default function EventPage({ params }: EventPageProps) {
     }>
     <div className="space-y-3">
       {/* Navigation */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
+      <div className="flex items-center justify-between gap-3">
+        {/* #3802: `whitespace-nowrap` sits on the CONTAINER, not on either link.
+            `white-space` inherits, so both back links get it without editing
+            TournamentExtensions.tsx; `min-w-0` + `overflow-hidden` mean a long
+            tournament title clips rather than wrapping the header into ragged
+            lines, which is the defect at 390px. */}
+        <div className="flex min-w-0 items-center gap-3 overflow-hidden whitespace-nowrap">
         {/* #2448: A TOURNAMENT IS A CONTAINER, AND A CONTAINER NEEDS A WAY OUT.
             Alex: "no link back to the tournament (only Back to events)". The
             tournament page routes a match card down here; this page routed back
@@ -759,8 +775,9 @@ export default function EventPage({ params }: EventPageProps) {
           </div>
         )}
 
-        {/* Visual countdown timer */}
-        {!isFinished && !streamConnected && (
+        {/* Visual countdown timer — #3802 gates it on proximity, not just on
+            "not finished and not pushed". */}
+        {showRefreshCountdown && (
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2 text-sm">
               {effectivelyLive && (
