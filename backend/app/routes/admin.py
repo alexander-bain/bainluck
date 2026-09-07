@@ -1248,7 +1248,7 @@ async def get_feed_prewarm_last(
 
 
 def _live_prewarm_state() -> dict:
-    """The 40s republish rail's status, its SELECTION, and its two kill switches.
+    """The live republish rail's status, its SELECTION, and its two kill switches.
 
     Three reads beyond the status key, and each closes a specific ambiguity that
     the status key alone cannot — every one of them met while trying to grade
@@ -1287,13 +1287,20 @@ def _live_prewarm_state() -> dict:
         FEED_PREWARM_LIVE_SHAPES_KEY,
         FEED_PREWARM_LIVE_SHAPES_TTL_S,
     )
+    from app.utils.feed_cache import FEED_LIVE_REPUBLISH_PERIOD_S
 
     out = _warm_rail_status(
         FEED_LIVE_PREWARM_STATUS_KEY,
-        # The pass runs every 40s, so its report is stale in seconds, not hours.
+        # The pass runs sub-minute, so its report is stale in seconds, not hours.
         # Reusing the 6h TTL of the other rail would call a dead beat fresh for a
         # quarter of a day.
-        ttl_s=3 * 40,
+        #
+        # LAT-P182: three PERIODS, read from the constant, not the literal `3 * 40`
+        # this used to be. That literal was the #2236 two-files arrangement in
+        # miniature — the period moved 40s -> 30s and this grader would have gone
+        # on calling a rail fresh for 90s of a 60s ceiling while nothing compared
+        # them. Three and not one because a single missed fire is not a dead rail.
+        ttl_s=3 * int(FEED_LIVE_REPUBLISH_PERIOD_S),
         absent_note=(
             "No report present. The pass writes this key on EVERY tick including "
             "the idle one, so an absent report means the beat did not run in the "
