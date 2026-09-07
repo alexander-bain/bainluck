@@ -569,13 +569,91 @@ def row_stop_and_drop(row: Any) -> dict:
 #: Names carry the ``rebuild_`` prefix for that reason, matching the prefix
 #: ``build_disclosure`` already uses for exactly these two figures on a serving
 #: bank. Nothing here is ever published under a bare ``units_*`` name.
+#:
+#: 🔴 ``rebuild_units_this_beat`` READS FROM THE COMPLETED COUNT, NOT THE RAN
+#: COUNT, AND IT USED TO BE THE OTHER WAY ROUND (CAL-P1047, #3803). A unit that
+#: is handed the rest of the window, runs to its statement bound and is cancelled
+#: RAN — ``staged:units_this_beat`` counts it — and banked nothing. So the ring
+#: published ``rebuild_units_this_beat: 6`` for the 04:37Z beat of 2026-09-07,
+#: whose ``rebuild_units_banked`` advanced 13 → 18. Five. On the two beats
+#: measured that night the cancelled unit took 70.3% and 72.5% of the hour, so
+#: the over-count is not a rounding of the truth — it reports the beat's single
+#: most expensive failure as its largest success, in the one instrument an
+#: operator reads to decide whether the rebuild is moving.
+#:
+#: The mixed number is not deleted, it is NAMED: ``rebuild_units_ran_this_beat``
+#: keeps it, and :func:`row_rebuild_progress` derives
+#: ``rebuild_units_ran_not_banked_this_beat`` so the gap is stated on the row
+#: rather than left to a reader to subtract. Three facts, three names — the
+#: separation :func:`bank_drop` draws for ``units_dropped`` and
+#: :func:`row_stop_and_drop` for the stop reasons, applied to the one figure that
+#: reads as progress.
+#:
+#: 🔴 THE GAP IS DERIVED, AND ``staged:units_cancelled`` IS DELIBERATELY NOT IN
+#: THIS MAP. It is a ``record_stage`` COUNTER (``precompute_calibration.py``,
+#: the cancel arm), so a beat that cancelled nothing never writes the key at all
+#: — and ``rebuild_progress_measured`` is ``not absent``, one flag over every
+#: field. Mapping the counter here would therefore null the whole progress block
+#: on every CLEAN beat, which is CAL-P1039's defect exactly ("eight of the nine
+#: required gauges present; the ninth nulled all eight") rebuilt one layer up by
+#: the repair for its sibling. The two operands of the subtraction are both
+#: written on the path that always runs, whatever the terminal
+#: (``calibration_main_build.py``, ``_record_rate_gauges``), so the derived gap
+#: is measured on every beat including the clean ones, where it is a real 0
+#: rather than an unknown.
+#:
+#: CAL-P067 kept ``staged:units_this_beat`` mixed for compatibility — "the
+#: operator-facing gauges above keep the values CAL-P066 published, so nothing
+#: that reads them moves" — which was right for the GAUGE. Its consequence was
+#: that the ring, which is what an operator actually reads, only ever carried the
+#: mixed one; this fixes the ring and leaves the gauge alone.
 REBUILD_PROGRESS_GAUGES: dict[str, str] = {
     "rebuild_units_banked": "staged:units_banked",
-    "rebuild_units_this_beat": "staged:units_this_beat",
+    "rebuild_units_this_beat": "staged:units_completed_this_beat",
+    "rebuild_units_ran_this_beat": "staged:units_this_beat",
     "rebuild_units_drifted": "staged:units_drifted",
     "rebuild_units_drift_checkable": "staged:units_drift_checkable",
     "rebuild_units_drift_uncheckable": "staged:units_drift_uncheckable",
 }
+
+#: Progress gauges whose absence is a fact about the BEAT on EVERY banked row,
+#: including an unversioned one — so the ``looked_for`` test in
+#: :func:`row_rebuild_progress` must not attribute them to the sampler.
+#:
+#: That test reads ``gauges_missing_required``, which lists only
+#: :data:`REQUIRED_DISCLOSURE_GAUGES`. The gauge added above lives in
+#: :data:`OPERATIONAL_GAUGES` instead, so without this set it would answer
+#: ``capture_did_not_retain`` on a row where the sampler looked and the beat had
+#: written nothing — the exact collapse of the two facts that
+#: :data:`GAUGE_CAPTURE_VERSION` exists to prevent, arriving through the fix for
+#: a different symptom.
+#:
+#: No version floor, and that is MEASURED rather than assumed: ``git log -S`` on
+#: the name returns exactly one commit, ``64c7b761`` (CAL-P084), the commit that
+#: created this module. :func:`select_gauges` has retained it for every row the
+#: ring can hold, so there is no sampler old enough to be the reason it is
+#: missing. A gauge that starts being captured LATER needs its own floor constant
+#: beside :data:`DROP_AND_STOP_CAPTURE_VERSION` and does not belong here — the
+#: guard test asserts membership against the capture tuples so the set cannot
+#: quietly grow past what is captured.
+ALWAYS_CAPTURED_PROGRESS_GAUGES = frozenset({"staged:units_completed_this_beat"})
+
+#: The units a beat RAN and did not bank, and the two gauges it is derived from.
+#:
+#: Not a gauge of its own: see the 🔴 note on :data:`REBUILD_PROGRESS_GAUGES` for
+#: why the ``staged:units_cancelled`` counter cannot be published directly. Both
+#: operands are unconditional, so this is measured on every beat that reached the
+#: rate-gauge site — including a clean one, where it is a measured ``0`` and not
+#: an unknown.
+GAP_FIELD = "rebuild_units_ran_not_banked_this_beat"
+GAP_OPERANDS = ("rebuild_units_ran_this_beat", "rebuild_units_this_beat")
+
+#: Every field :func:`row_rebuild_progress` publishes a value and a ``_measured``
+#: flag for — the gauge-backed ones and the derived gap. DERIVED, because a
+#: reader that iterates the published block (the route does, and so does every
+#: test of the "never rendered as 0" invariant) must not carry a transcription
+#: that a new field can fall out of silently.
+REBUILD_PROGRESS_FIELDS: tuple[str, ...] = tuple(REBUILD_PROGRESS_GAUGES) + (GAP_FIELD,)
 
 #: Why a rebuild-progress field is absent. Two facts, never merged — the same
 #: separation :func:`bank_drop` draws for ``units_dropped``.
@@ -626,15 +704,23 @@ def row_rebuild_progress(row: Any) -> dict:
     "nobody recorded what the rebuild banked" are the collapse this whole module
     exists to refuse.
 
-    No capture-version gate, deliberately, and the row is what makes that safe:
-    every gauge above is in :data:`REQUIRED_DISCLOSURE_GAUGES`, so a capture that
-    dropped one records it in ``gauges_missing_required`` at the time. This reads
-    that list rather than assuming a floor — which is CERT-2051's lesson applied
-    without inheriting its constant.
+    No capture-version gate, deliberately, and the row is what makes that safe —
+    by two routes now, because CAL-P1047 added two gauges that take the second.
+    Five of the seven are in :data:`REQUIRED_DISCLOSURE_GAUGES`, so a capture that
+    dropped one records it in ``gauges_missing_required`` at the time and this
+    reads that list rather than assuming a floor — CERT-2051's lesson applied
+    without inheriting its constant. The other two are in
+    :data:`ALWAYS_CAPTURED_PROGRESS_GAUGES`, retained by every version of
+    :func:`select_gauges` there has ever been, so no row in the ring is old
+    enough for their absence to be about the sampler. A gauge that satisfies
+    NEITHER route would need a version floor of its own; the guard test refuses
+    one that has neither.
     """
     row = row if isinstance(row, dict) else {}
     gauges = row.get("gauges")
     gauges = gauges if isinstance(gauges, dict) else {}
+    #: Did this row capture anything at all? The licence below turns on it.
+    has_capture = bool(gauges)
     looked_for = {
         name
         for name in (row.get("gauges_missing_required") or [])
@@ -651,10 +737,38 @@ def row_rebuild_progress(row: Any) -> dict:
             continue
         out[field] = None
         out[f"{field}_measured"] = False
-        absent[field] = (
-            PROGRESS_ABSENT_BEAT if gauge in looked_for else PROGRESS_ABSENT_CAPTURE
+        # The always-captured licence is a claim about what THIS ROW's capture
+        # retained, so it may only be applied to a row that has a capture. On a
+        # row with no gauge map at all — a non-dict, a legacy row, a beat that
+        # died before the ledger write — "the beat did not record it" is a
+        # statement nobody is in a position to make, and the honest answer is the
+        # one this reader already gave: unknown, attributed to the capture.
+        licensed = gauge in looked_for or (
+            has_capture and gauge in ALWAYS_CAPTURED_PROGRESS_GAUGES
         )
+        absent[field] = PROGRESS_ABSENT_BEAT if licensed else PROGRESS_ABSENT_CAPTURE
 
+    # CAL-P1047 (#3803). The gap between what the beat attempted and what it
+    # banked, derived rather than read — and derived HERE, after the loop, so it
+    # inherits the absence discipline of its operands instead of inventing one.
+    # It is measured exactly when both are; a subtraction with an unknown side is
+    # an unknown, never the other side's value.
+    ran, banked = (out.get(name) for name in GAP_OPERANDS)
+    if isinstance(ran, int) and isinstance(banked, int):
+        out[GAP_FIELD] = max(0, ran - banked)
+        out[f"{GAP_FIELD}_measured"] = True
+    else:
+        out[GAP_FIELD] = None
+        out[f"{GAP_FIELD}_measured"] = False
+        # Named against the operand that failed, so a reader is pointed at the
+        # gauge that is actually missing rather than at the derived field, which
+        # no beat ever writes and which they would go looking for in vain.
+        missing = [n for n in GAP_OPERANDS if not isinstance(out.get(n), int)]
+        absent[GAP_FIELD] = absent.get(missing[0], PROGRESS_ABSENT_BEAT)
+
+    # Reads the GAUGE-backed fields only. The derived gap cannot be the reason
+    # this flag goes false without one of its operands already having made it
+    # false, and letting it vote twice would report one absence as two.
     out["rebuild_progress_measured"] = not absent
     out["rebuild_progress_absent"] = absent
     return out
