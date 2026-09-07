@@ -247,9 +247,45 @@ enum SpreadRungs {
         }
     }
 
-    /// `Yes` is the favourite covering its own line; `No` is the underdog
-    /// covering the other side of it. One rung each, exactly as a named
-    /// two-sided ladder produces one rung per team.
+    /// The ONE rung a two-way handicap market is entitled to draw: the
+    /// favourite covering its own line, at the `Yes` price.
+    ///
+    /// **#3743 — this used to return two, and the second one was never true.**
+    ///
+    /// A `Rung` makes exactly one claim: *this side by more than
+    /// `abs(margin)`, at this probability.* The `Yes` leg makes it —
+    /// `P(Swiatek covers -1.5 sets)` **is** `P(Swiatek wins by 2 sets)`. The
+    /// `No` leg does not: it is `P(Zheng wins, OR loses 1-2)`, which is not
+    /// "Zheng by more than 1.5" and is not any rung's claim. Drawn as one
+    /// anyway, it put a bar on Zheng's side of a rail that no market had priced.
+    ///
+    /// And it was never a second *reading*, either. A two-way market's legs are
+    /// complements by construction — that is the entire content of
+    /// ``twoWaySumFloor``/``twoWaySumCeiling`` above, which admit a pair only
+    /// when it sums to about 1. `No` is `1 - Yes` wearing the other player's
+    /// name, so the map was drawing one fact twice: once truthfully, and once
+    /// as its own opposite.
+    ///
+    /// What a reader saw. Event 15305580, `artifacts-native-041/AFTER-ipad-swiatek-15305580-s600.png`:
+    ///
+    /// ```
+    /// Zheng   +1.5   42%    <- P(No)  = wins, or loses 1-2. NOT a cover.
+    /// Swiatek +1.5   59%    <- P(Yes) = wins by 2.          A cover.
+    /// ```
+    ///
+    /// Two rows in one ladder, formatted identically, answering questions of
+    /// different shape — and summing to 101%, which is the tell, because
+    /// complements sum to one and parallel rungs do not. Measured on production
+    /// 2026-09-06: **8 of the 28 event pages carrying a margin map drew one of
+    /// these, every one of them a US Open match, and all 8 summed to exactly
+    /// 1.000** (`artifacts-native-048/handicap-census.json`).
+    ///
+    /// The underdog is still resolved, and still has to be a real and distinct
+    /// side, even though it no longer gets a rung. That guard is what proves
+    /// the title names THIS event's two competitors and not some other match's;
+    /// dropping it along with its rung would let
+    /// `Set Handicap: Gauff (-1.5) vs SomeoneElse (+1.5)` draw a Gauff rung on
+    /// a page Gauff is not playing on.
     private static func fromHandicap(
         _ pair: (yes: Double, no: Double),
         _ handicap: Handicap,
@@ -262,8 +298,6 @@ enum SpreadRungs {
         return [
             Rung(margin: favouriteSide == .home ? handicap.line : -handicap.line,
                  probability: pair.yes, isHome: favouriteSide == .home, quotedUnit: unit),
-            Rung(margin: underdogSide == .home ? handicap.line : -handicap.line,
-                 probability: pair.no, isHome: underdogSide == .home, quotedUnit: unit),
         ]
     }
 

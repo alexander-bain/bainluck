@@ -913,10 +913,28 @@ struct MarketMapView: View {
         t.truncatingRemainder(dividingBy: 1) == 0 ? "\(Int(t))" : String(format: "%.1f", t)
     }
 
+    /// The margin the PROJECTION / PRE-GAME marker sits on: the rung the book
+    /// priced nearest a coin flip.
+    ///
+    /// #3743 raised the tie-break — `min(by:)` returns the FIRST minimal
+    /// element, so two rungs equidistant from 0.5 are separated by array order,
+    /// which is the order the venue served them in. That is left exactly as it
+    /// is, deliberately, and the reason is that #3743's own fix removed the
+    /// tie's entire measured population rather than papering over it: a
+    /// two-way handicap market's legs sum to ~1, so `|yes - 0.5|` and
+    /// `|no - 0.5|` were always equal-or-nearly, and every one of the 8
+    /// production maps drawing such a pair on 2026-09-06 hit this tie. They now
+    /// carry ONE rung each and cannot. What remains reachable is a NAMED ladder
+    /// whose two rungs happen to price to exactly 0.52/0.48 — and any tie-break
+    /// invented for that case would, by definition, move an NFL projection
+    /// marker, which is the one thing #3743 forbids without a pin.
+    ///
+    /// The `isHome ? margin : margin` ternary that used to be the last line was
+    /// dead — both branches were the same expression. Deleted rather than left
+    /// as a second place the rule could disagree with itself.
     private func closestToEvenMargin(_ parsed: [SpreadRungs.Rung]) -> Double? {
         guard !parsed.isEmpty else { return nil }
-        let closest = parsed.min(by: { abs($0.probability - 0.5) < abs($1.probability - 0.5) })!
-        return closest.isHome ? closest.margin : closest.margin
+        return parsed.min(by: { abs($0.probability - 0.5) < abs($1.probability - 0.5) })!.margin
     }
 
     /// Derive the period label for a market outcome.

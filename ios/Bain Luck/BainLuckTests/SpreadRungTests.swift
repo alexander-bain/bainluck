@@ -80,34 +80,52 @@ final class SpreadRungTests: XCTestCase {
     /// 🟢 THE SHIP. Swiatek–Zheng drew nothing; it now draws the one market on
     /// the event that is internally consistent, with both players named out of
     /// the market title and the line the venue quoted.
+    ///
+    /// #3743 amended the count from 2 to 1 — see
+    /// ``testATwoWayHandicapDrawsTheCoverAndNotItsComplement``.
     func testUSOpenMatchDrawsAMarginMapFromTheMarketTitle() {
         let map = SpreadRungs.map(from: swiatekZheng, home: "Iga Swiatek", away: "Qinwen Zheng", sportUnit: tennisUnit)
 
         XCTAssertEqual(map.unit, "sets")
-        XCTAssertEqual(map.rungs.count, 2, "one rung per side of the one readable market")
+        XCTAssertEqual(map.rungs.count, 1, "one rung for the one readable market: the cover")
 
-        let home = map.rungs.first { $0.isHome }
-        let away = map.rungs.first { !$0.isHome }
         // `Yes` is Swiatek covering -1.5 sets. Swiatek is HOME, so the rung is
-        // +1.5 at the `Yes` price; `No` is Zheng at the other end of the same
-        // line, at the `No` price.
-        XCTAssertEqual(home?.margin, 1.5)
-        XCTAssertEqual(home?.probability, 0.585)
-        XCTAssertEqual(away?.margin, -1.5)
-        XCTAssertEqual(away?.probability, 0.415)
+        // +1.5 at the `Yes` price.
+        XCTAssertEqual(map.rungs.first?.margin, 1.5)
+        XCTAssertEqual(map.rungs.first?.probability, 0.585)
+        XCTAssertEqual(map.rungs.first?.isHome, true)
     }
 
     /// The venue spells `Jovic`; the event spells `Jović`. Without accent
     /// folding the underdog's name matches nothing, `fromHandicap` bails, and
     /// this page is back to drawing no map — the exact bug, one diacritic away.
+    ///
+    /// 🔴 STILL LOAD-BEARING AFTER #3743, and worth saying why: Jović is the
+    /// UNDERDOG here and no longer gets a rung at all. The test still bites
+    /// because `fromHandicap` resolves the underdog's side as a GUARD — proof
+    /// that the title names this event's two competitors — and bails when it
+    /// cannot. Fold the diacritic away and this page draws nothing again.
     func testAParticipantNamedWithoutItsDiacriticStillFindsItsSide() {
         let map = SpreadRungs.map(from: gauffJovic, home: "Iva Jović", away: "Coco Gauff", sportUnit: tennisUnit)
 
-        XCTAssertEqual(map.rungs.count, 2)
-        XCTAssertEqual(map.rungs.first { $0.isHome }?.margin, 1.5, "Jović is home and takes the +1.5")
-        XCTAssertEqual(map.rungs.first { $0.isHome }?.probability, 0.545)
-        XCTAssertEqual(map.rungs.first { !$0.isHome }?.margin, -1.5, "Gauff is away and covers the -1.5")
-        XCTAssertEqual(map.rungs.first { !$0.isHome }?.probability, 0.455)
+        XCTAssertEqual(map.rungs.count, 1)
+        XCTAssertEqual(map.rungs.first?.isHome, false, "Gauff is away and is the favourite")
+        XCTAssertEqual(map.rungs.first?.margin, -1.5, "away by 1.5 — the sign is the SIDE, not the handicap")
+        XCTAssertEqual(map.rungs.first?.probability, 0.455, "the `Yes` price, Gauff covering -1.5")
+    }
+
+    /// 🔴 THE UNDERDOG GUARD, on its own. Jović no longer gets a rung, so a
+    /// mutant that deletes the underdog resolution keeps every assertion above
+    /// green — and lets a title naming somebody who is not playing draw a rung
+    /// on the favourite anyway.
+    func testAHandicapTitleNamingANonParticipantDrawsNothing() {
+        let wrongMatch = [
+            SpreadRungs.Leg(marketName: "Set Handicap: Gauff (-1.5) vs Sabalenka (+1.5)", outcomeName: "Yes", probability: 0.455),
+            SpreadRungs.Leg(marketName: "Set Handicap: Gauff (-1.5) vs Sabalenka (+1.5)", outcomeName: "No", probability: 0.545),
+        ]
+        let map = SpreadRungs.map(from: wrongMatch, home: "Iva Jović", away: "Coco Gauff", sportUnit: tennisUnit)
+        XCTAssertTrue(map.rungs.isEmpty,
+                      "Gauff resolves, but Sabalenka is not the other side of this match — so this title is not about this event")
     }
 
     /// A title is only read in the ONE shape the venue serves. Everything else
@@ -156,11 +174,12 @@ final class SpreadRungTests: XCTestCase {
                 home: "Aryna Sabalenka", away: "Taylor Townsend", sportUnit: tennisUnit
             ).rungs.count
         }
-        XCTAssertEqual(sum(0.5, 0.6), 2, "1.100, the live US Open match at capture — vig, not a fault")
+        // One rung per admitted pair since #3743, so the counts read 1/0.
+        XCTAssertEqual(sum(0.5, 0.6), 1, "1.100, the live US Open match at capture — vig, not a fault")
         XCTAssertEqual(sum(0.465, 0.5), 0, "0.965, the same match's set handicap — a 3.5% arbitrage")
-        XCTAssertEqual(sum(0.5, 0.49), 2, "0.990, inside the floor")
+        XCTAssertEqual(sum(0.5, 0.49), 1, "0.990, inside the floor")
         XCTAssertEqual(sum(0.5, 0.47), 0, "0.970, outside it")
-        XCTAssertEqual(sum(0.5, 0.64), 2, "1.140, inside the ceiling")
+        XCTAssertEqual(sum(0.5, 0.64), 1, "1.140, inside the ceiling")
         XCTAssertEqual(sum(0.5, 0.66), 0, "1.160, outside it")
 
         // The floor and ceiling are the numbers, not whatever the constants
@@ -197,9 +216,9 @@ final class SpreadRungTests: XCTestCase {
         let map = SpreadRungs.map(from: kostyukNoskova, home: "Marta Kostyuk", away: "Linda Noskova", sportUnit: tennisUnit)
 
         XCTAssertEqual(map.unit, "games")
-        XCTAssertEqual(map.rungs.count, 2)
+        XCTAssertEqual(map.rungs.count, 1)
         XCTAssertEqual(map.rungs.first { $0.isHome }?.probability, 0.515, "Kostyuk covers -1.5 games")
-        XCTAssertEqual(map.rungs.first { !$0.isHome }?.probability, 0.485)
+        XCTAssertNil(map.rungs.first { !$0.isHome }, "Noskova's 0.485 is 1 - Kostyuk's, not a second rung")
         XCTAssertEqual(SportVocab.forSport("tennis_wta_us_open").marginRange(quotedBy: map.unit), 6)
     }
 
@@ -214,8 +233,128 @@ final class SpreadRungTests: XCTestCase {
         ]
         let map = SpreadRungs.map(from: both, home: "Marta Kostyuk", away: "Linda Noskova", sportUnit: tennisUnit)
         XCTAssertEqual(map.unit, "games")
-        XCTAssertEqual(map.rungs.count, 2)
+        XCTAssertEqual(map.rungs.count, 1)
         XCTAssertTrue(map.rungs.allSatisfy { $0.quotedUnit == "games" })
+    }
+
+    // MARK: - #3743: one fact is drawn once
+
+    /// 🟢 THE SHIP. A two-way handicap market draws the COVER and not its
+    /// complement.
+    ///
+    /// Before this, `Set Handicap: Swiatek (-1.5) vs Zheng (+1.5)` produced two
+    /// rungs and the card printed them as two rows of one ladder:
+    ///
+    /// ```
+    /// Zheng   +1.5   42%
+    /// Swiatek +1.5   59%
+    /// ```
+    ///
+    /// **101%.** Not a rounding artifact — the tell. Parallel rungs on a margin
+    /// ladder ("A by more than 1.5", "A by more than 2.5") are nested and sum to
+    /// no more than 1 only by accident; these two summed to exactly 1 because
+    /// they are COMPLEMENTS. `Zheng +1.5 42%` was `P(No)` = Zheng wins or loses
+    /// 1-2, which is not "Zheng by more than 1.5" and is not what any other row
+    /// of that ladder means.
+    func testATwoWayHandicapDrawsTheCoverAndNotItsComplement() {
+        let map = SpreadRungs.map(from: swiatekZheng, home: "Iga Swiatek", away: "Qinwen Zheng", sportUnit: tennisUnit)
+
+        XCTAssertEqual(map.rungs.count, 1)
+        let rung = try! XCTUnwrap(map.rungs.first)
+        XCTAssertEqual(rung.probability, 0.585, "the `Yes` price — the favourite covering its own line")
+        XCTAssertNotEqual(rung.probability, 0.415, "`No` is 1 - `Yes`, not a second reading")
+
+        // The property the old shape broke, stated as a property: no margin map
+        // may carry two rungs whose probabilities are each other's complement.
+        for a in map.rungs {
+            for b in map.rungs where a != b {
+                XCTAssertGreaterThan(abs((a.probability + b.probability) - 1.0), 0.02,
+                                     "two rungs summing to 1 are one fact drawn twice")
+            }
+        }
+    }
+
+    /// 🔴 THE ONE THAT KILLS "just keep whichever leg is over 50%". Event
+    /// 15305797, production: home `Naomi Osaka`, away `Elena Rybakina`, and the
+    /// venue writes `Rybakina (-1.5) vs Osaka (+1.5)` with `Yes` at 0.335.
+    ///
+    /// The surviving rung is therefore the LOWER price, and it is on the AWAY
+    /// side with a negative margin. A fix that kept the bigger number would
+    /// print `Osaka +1.5 67%` — the underdog's not-swept probability, drawn as
+    /// though Osaka were favoured to win by two sets.
+    func testTheCoverIsKeptEvenWhenItIsTheLongerPriceAndOnTheAwaySide() {
+        let rybakinaOsaka = [
+            SpreadRungs.Leg(marketName: "Set Handicap: Rybakina (-1.5) vs Osaka (+1.5)", outcomeName: "No", probability: 0.665),
+            SpreadRungs.Leg(marketName: "Set Handicap: Rybakina (-1.5) vs Osaka (+1.5)", outcomeName: "Yes", probability: 0.335),
+        ]
+        let map = SpreadRungs.map(from: rybakinaOsaka, home: "Naomi Osaka", away: "Elena Rybakina", sportUnit: tennisUnit)
+
+        XCTAssertEqual(map.rungs.count, 1)
+        XCTAssertEqual(map.rungs.first?.probability, 0.335, "the cover, not the bigger number")
+        XCTAssertEqual(map.rungs.first?.isHome, false, "Rybakina is away")
+        XCTAssertEqual(map.rungs.first?.margin, -1.5)
+    }
+
+    /// The other two production shapes drawing a two-row ladder on 2026-09-06,
+    /// so the census is on the record and not just in a comment: a `-2.5` set
+    /// line whose event ALSO serves two incoherent markets that must stay
+    /// refused, and a live `-0.5` GAME line (event 15304973) which is the
+    /// smallest line the venue quotes.
+    func testTheRemainingProductionShapesEachDrawExactlyOneRung() {
+        // 15305796 — home Karen Khachanov, away Learner Tien. Only the -2.5 set
+        // handicap is coherent (1.000); the -1.5 set handicap and the -2.5 game
+        // spread both repeat 0.225 and sum to 0.450.
+        let tienKhachanov = [
+            SpreadRungs.Leg(marketName: "Set Handicap: Tien (-2.5) vs Khachanov (+2.5)", outcomeName: "No", probability: 0.775),
+            SpreadRungs.Leg(marketName: "Set Handicap: Tien (-2.5) vs Khachanov (+2.5)", outcomeName: "Yes", probability: 0.225),
+            SpreadRungs.Leg(marketName: "Game Spread: Tien (-2.5) vs Khachanov (+2.5)", outcomeName: "Yes", probability: 0.225),
+            SpreadRungs.Leg(marketName: "Game Spread: Tien (-2.5) vs Khachanov (+2.5)", outcomeName: "No", probability: 0.225),
+            SpreadRungs.Leg(marketName: "Set Handicap: Tien (-1.5) vs Khachanov (+1.5)", outcomeName: "No", probability: 0.225),
+            SpreadRungs.Leg(marketName: "Set Handicap: Tien (-1.5) vs Khachanov (+1.5)", outcomeName: "Yes", probability: 0.225),
+        ]
+        let a = SpreadRungs.map(from: tienKhachanov, home: "Karen Khachanov", away: "Learner Tien", sportUnit: tennisUnit)
+        XCTAssertEqual(a.unit, "sets")
+        XCTAssertEqual(a.rungs.count, 1, "one coherent market on the event, one rung")
+        XCTAssertEqual(a.rungs.first?.margin, -2.5, "Tien is away")
+        XCTAssertEqual(a.rungs.first?.probability, 0.225)
+
+        // 15304973, LIVE — home Anna Kalinskaya, away Emma Navarro. The GAME
+        // spread is coherent (1.000) and is in tennis's own unit; the set
+        // handicap sums to 0.715 and is refused.
+        let kalinskayaNavarro = [
+            SpreadRungs.Leg(marketName: "Game Spread: Kalinskaya (-0.5) vs Navarro (+0.5)", outcomeName: "Yes", probability: 0.505),
+            SpreadRungs.Leg(marketName: "Game Spread: Kalinskaya (-0.5) vs Navarro (+0.5)", outcomeName: "No", probability: 0.495),
+            SpreadRungs.Leg(marketName: "Set Handicap: Kalinskaya (-1.5) vs Navarro (+1.5)", outcomeName: "No", probability: 0.495),
+            SpreadRungs.Leg(marketName: "Set Handicap: Kalinskaya (-1.5) vs Navarro (+1.5)", outcomeName: "Yes", probability: 0.22),
+        ]
+        let b = SpreadRungs.map(from: kalinskayaNavarro, home: "Anna Kalinskaya", away: "Emma Navarro", sportUnit: tennisUnit)
+        XCTAssertEqual(b.unit, "games")
+        XCTAssertEqual(b.rungs.count, 1)
+        XCTAssertEqual(b.rungs.first?.margin, 0.5, "Kalinskaya is home; a half-game line is still a line")
+        XCTAssertEqual(b.rungs.first?.probability, 0.505)
+    }
+
+    /// The PROJECTION marker does not move on any of them, which is the reason
+    /// this change is narrow enough to make.
+    ///
+    /// `MarketMapView.closestToEvenMargin` picks the rung nearest a coin flip
+    /// and `min(by:)` keeps the FIRST minimal element. Because a two-way pair
+    /// sums to ~1, `|yes - 0.5|` and `|no - 0.5|` were equal-or-nearly on every
+    /// one of these, so the tie always resolved to the favourite — which is the
+    /// only rung left. Same margin, before and after.
+    func testTheProjectionMarkerLandsOnTheSameMarginAsBefore() {
+        func nearestEven(_ rungs: [SpreadRungs.Rung]) -> Double? {
+            rungs.min(by: { abs($0.probability - 0.5) < abs($1.probability - 0.5) })?.margin
+        }
+        // What the two-rung shape produced, reconstructed by hand: favourite
+        // first, underdog second, exactly as `fromHandicap` used to order them.
+        let old = [
+            SpreadRungs.Rung(margin: 1.5, probability: 0.585, isHome: true, quotedUnit: "sets"),
+            SpreadRungs.Rung(margin: -1.5, probability: 0.415, isHome: false, quotedUnit: "sets"),
+        ]
+        let new = SpreadRungs.map(from: swiatekZheng, home: "Iga Swiatek", away: "Qinwen Zheng", sportUnit: tennisUnit).rungs
+        XCTAssertEqual(nearestEven(old), 1.5)
+        XCTAssertEqual(nearestEven(new), nearestEven(old), "the marker sat on the favourite before and still does")
     }
 
     // MARK: - #3568: which side a rung is on
@@ -307,6 +446,46 @@ final class SpreadRungTests: XCTestCase {
         XCTAssertTrue(map.rungs.allSatisfy { $0.probability == 0.145 })
 
         XCTAssertEqual(SportVocab.forSport("americanfootball_nfl").marginRange(quotedBy: map.unit), 18)
+    }
+
+    /// 🔴 THE PIN #3743 ASKED FOR, and the reason it is a separate test from
+    /// the one above: the two constructors put DIFFERENT SEMANTICS behind one
+    /// `Rung` type, and that is the root of #3743. `fromNamedOutcome`'s rungs
+    /// all genuinely mean "this side wins by more than X" and are parallel;
+    /// `fromHandicap`'s two used to be complementary. Narrowing the handicap
+    /// path to one rung is only safe if the named path is provably untouched,
+    /// so this pins the WHOLE named ladder as one value rather than
+    /// field-by-field — a mutant that changes any margin, price, side or unit
+    /// fails here even if it slips past the assertions above.
+    ///
+    /// This is as close to byte-identical as the seam allows: these four rungs
+    /// are the complete input to the labels `MarketMapView` prints, and the
+    /// labels themselves are unreachable without rasterising a SwiftUI view,
+    /// which is the reason `SpreadRungs` was extracted in the first place.
+    func testTheWholeNamedNFLLadderIsPinnedAsOneValue() {
+        let map = SpreadRungs.map(from: patriotsSeahawks, home: "Seattle Seahawks", away: "New England Patriots", sportUnit: footballUnit)
+
+        XCTAssertEqual(
+            map.rungs.sorted(by: { $0.margin < $1.margin }),
+            [
+                SpreadRungs.Rung(margin: -4.5, probability: 0.145, isHome: false, quotedUnit: nil),
+                SpreadRungs.Rung(margin: -1.5, probability: 0.145, isHome: false, quotedUnit: nil),
+                SpreadRungs.Rung(margin: 1.5, probability: 0.145, isHome: true, quotedUnit: nil),
+                SpreadRungs.Rung(margin: 4.5, probability: 0.145, isHome: true, quotedUnit: nil),
+            ],
+            "a named ladder keeps BOTH sides — #3743 narrowed the handicap path only"
+        )
+        XCTAssertEqual(map.unit, "points")
+
+        // …and the two independent reasons it never reaches `fromHandicap`, so
+        // a change to either one cannot silently route NFL down the new path.
+        XCTAssertNil(SpreadRungs.Handicap.read(marketName: "New England vs Seattle: Spread"),
+                     "no signed pair in the title")
+        XCTAssertEqual(
+            SpreadRungs.map(from: Array(patriotsSeahawks.prefix(2)),
+                            home: "Seattle Seahawks", away: "New England Patriots", sportUnit: footballUnit).rungs.count,
+            2,
+            "two named legs are not a `Yes`/`No` two-way market and are not pair-collapsed")
     }
 
     /// A named ladder whose every rung repeats one price is #3555's shape on a
