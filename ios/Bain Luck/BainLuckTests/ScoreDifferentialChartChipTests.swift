@@ -39,30 +39,50 @@ final class ScoreDifferentialChartChipTests: XCTestCase {
         }
     }
 
-    /// …but still an UPPER bound on what is drawn: 8pt semibold renders at
-    /// roughly 4pt per glyph, and the model charges 5.
-    func testScoreStripStaysAnUpperBoundOnItsOwnInk() {
-        // "Final" at 8pt semibold measures ~20pt of glyphs + 6pt of padding.
-        XCTAssertGreaterThanOrEqual(
-            PeriodChipGeometry.chipWidth(for: "Final", metrics: .score), 26)
+    /// …and it is the ink itself now, not an upper bound on it.
+    ///
+    /// **#3817.** This used to assert `>= 26pt` for "Final" on the strength of
+    /// "8pt semibold renders at roughly 4pt per glyph, and the model charges 5" —
+    /// i.e. it pinned the SLACK in the guess. Measured, the chip draws 25.63pt, so
+    /// the old floor was a fifth of a chip of ink that does not exist, and
+    /// `place` was spending it. `PeriodChipWidthTests` re-renders every label in
+    /// the vocabulary against both strips' fonts; what is left here is the
+    /// relation between the two strips, which is this file's subject.
+    func testScoreStripIsRealInkAndStillSmallerThanTheMatchStrip() {
         XCTAssertLessThanOrEqual(
             PeriodChipGeometry.chipWidth(for: "Final", metrics: .score),
             PeriodChipGeometry.chipWidth(for: "Final", metrics: .match))
+        XCTAssertGreaterThan(
+            PeriodChipGeometry.chipWidth(for: "Final", metrics: .score),
+            PeriodChipGeometry.ChipMetrics.score.horizontalPadding * 2,
+            "a chip is its padding plus real glyphs")
     }
 
-    /// The concrete payoff: a pair of periods close enough that the MATCH strip
-    /// must drop one still fits on the score strip, and both are kept.
-    func testTheSmallerStripKeepsAPairTheLargerOneHasToDrop() {
-        // 23pt apart: inside a 10pt-bold "3rd" (26pt), outside an 8pt-semibold
-        // one (21pt).
-        let requests = [request(0, "3rd", 100), request(1, "4th", 123)]
+    /// The concrete payoff: on a strip too crowded for the large type, the small
+    /// type still carries every period.
+    ///
+    /// **#3817 rewrote the fixture, because the old one stopped being crowded.**
+    /// It was a single PAIR 23pt apart, asserting the MATCH strip had to drop one
+    /// of the two. Two chips in a 293pt plot are never out of room — the old
+    /// policy dropped one because it would not move them apart, and `place`
+    /// moves them now. So the difference between the two strips has to be shown
+    /// where it is real: a full ten-period strip at 20pt spacing, which the 8pt
+    /// type clears outright and the 10pt type cannot.
+    func testTheSmallerStripCarriesACrowdedStripTheLargerOneCannot() {
+        let labels = ["1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "8th", "9th", "Final"]
+        let requests = labels.enumerated().map { index, label in
+            request(index, label, 40 + 20 * Double(index))
+        }
+
+        let score = PeriodChipGeometry.place(requests, plotWidth: 293, metrics: .score)
+        let match = PeriodChipGeometry.place(requests, plotWidth: 293, metrics: .match)
 
         XCTAssertEqual(
-            PeriodChipGeometry.place(requests, plotWidth: 293, metrics: .match).count, 1,
-            "23pt apart is inside a 10pt-bold chip's width — one must go")
-        XCTAssertEqual(
-            PeriodChipGeometry.place(requests, plotWidth: 293, metrics: .score).count, 2,
-            "…and outside an 8pt-semibold chip's, so both are drawn")
+            score.count, labels.count,
+            "20pt clears an 8pt-semibold chip, so the small strip loses nothing")
+        XCTAssertLessThan(
+            match.count, score.count,
+            "…while the 10pt-bold strip cannot seat them all near their own boundaries")
     }
 
     /// The clamp #3237 added applies to this strip too: a period at x = 0 is the

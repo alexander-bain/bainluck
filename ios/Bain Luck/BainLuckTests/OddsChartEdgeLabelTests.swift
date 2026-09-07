@@ -135,6 +135,15 @@ final class OddsChartEdgeLabelTests: XCTestCase {
     /// 10-inning walk-off — that pulled "Final" off the trailing edge straight
     /// into "9th", and the strip drew "9Final". Photographed before this test was
     /// written; pinned here so a later simplification cannot bring it back.
+    ///
+    /// **#3817 CHANGED THE REMEDY, NOT THE REQUIREMENT.** This test used to assert
+    /// `keys == [0, 2]` — that "9th" was DELETED to make room for the clamped
+    /// terminal chip. That was the old fix's mechanism written down as if it were
+    /// the rule, and it was costing real periods: on 15305472 the same policy
+    /// deleted four innings of nine. `place` now shuffles the strip before it
+    /// deletes anything, so all three chips are drawn. The requirement — no
+    /// overlap, nothing overhanging, and "9Final" impossible — is unchanged, and
+    /// `assertNoOverlaps` is the half of this test that always carried it.
     func testClampedTerminalChipDoesNotLandOnItsNeighbour() {
         let plotWidth = 337.0
         let labels = [0: "8th", 1: "9th", 2: "Final"]
@@ -142,8 +151,8 @@ final class OddsChartEdgeLabelTests: XCTestCase {
             [request(0, "8th", 250), request(1, "9th", 300), request(2, "Final", 335)],
             plotWidth: plotWidth)
 
-        XCTAssertEqual(placements.map(\.key), [0, 2],
-                       "the earlier chip of the colliding pair is the one dropped")
+        XCTAssertEqual(placements.map(\.key), [0, 1, 2],
+                       "337pt holds all three once the strip may shuffle")
         assertNoOverlaps(placements, labels: labels, plotWidth: plotWidth)
     }
 
