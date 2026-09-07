@@ -133,7 +133,23 @@ describe("ux/1034 B7 — and the page spends it", () => {
           "check what it cannot locate; find the block and re-anchor it."
       );
     }
-    const block = SOURCE.slice(footer, footer + 4000);
+    // BOUNDED BY THE NEXT BLOCK, NOT BY A CHARACTER COUNT (#3427).
+    //
+    // This was `footer + 4000`, and the magic number was load-bearing without
+    // saying so: #3427 added a comment explaining a layout fix INSIDE this
+    // block and pushed `sourceChips.map` past the 4,000th character, so a guard
+    // about the legend reading the payload failed over prose that changed
+    // nothing it asserts. Widening the number would only move the cliff.
+    //
+    // The collapsible panel is this row's next sibling and the natural end of
+    // the block, so the window now grows and shrinks with the thing it is
+    // describing. Falls back to the old bound if that marker is ever renamed,
+    // so this cannot silently scan the whole file.
+    const nextBlock = SOURCE.indexOf("{/* Sources panel (collapsible) */}", footer);
+    const block = SOURCE.slice(
+      footer,
+      nextBlock > footer ? nextBlock : footer + 4000
+    );
     expect(block).toContain("{sourceChips.map((chip) => (");
     expect(block).toContain("backgroundColor: chip.color");
     expect(block).toContain("{chip.label}");
