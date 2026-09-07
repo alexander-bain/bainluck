@@ -276,6 +276,27 @@ function SideLine({
             {percent === null ? "—" : `${percent}%`}
           </span>
         )}
+        {/* WHERE THIS NUMBER CAME FROM, when that needs saying (#3729).
+            The same word, the same size and the same reason as the finished
+            list's `BOOKS_MARKER` one section down — a sportsbook consensus is
+            a different claim wearing the same shape, and one page may not
+            caveat it in two vocabularies. `null` on every row whose number is
+            the product's own reading, which is all of them until a fixture is
+            quoted by books before any market is pinned to it. */}
+        {/* NOT `aria-hidden`, and that is the one place this differs from the
+            results row's marker. There it is decorative because the row already
+            speaks a full clause naming the rung; this card speaks none, so
+            hiding the word would leave a screen reader with the number and no
+            caveat at all — the state #3729's own footnote calls out. Read
+            aloud it is "70% books", which is what the page says. */}
+        {entry.priced && percent !== null && entry.priceMarker !== null && (
+          <span
+            className="-ml-1 text-[9px] font-medium uppercase tracking-[0.04em] text-text-muted"
+            data-testid="match-price-marker"
+          >
+            {entry.priceMarker}
+          </span>
+        )}
       </span>
     </div>
   );

@@ -51,7 +51,9 @@ import {
   type RoundName,
 } from "./bracket";
 import { orientLinescore, type SlateLinescore } from "./linescore";
+import { isPredictionMarketSource } from "./prematchReading";
 import { matchupEventHref, type MatchupEventIds } from "./tournamentEventLink";
+import { BOOKS_MARKER } from "./tournamentResults";
 import {
   formatSlateProbability,
   matchBroadcast,
@@ -251,6 +253,29 @@ export interface MatchListEntry {
    */
   matchupKey: string | null;
   source: "slate" | "bracket";
+  /**
+   * The word this row's number wears, or `null` when it needs none (#3729).
+   *
+   * `"books"` where the backend filled a blank row from its own event's
+   * sportsbook consensus. Every other row is `null` and prints nothing, which
+   * is the state the whole list was in before — including a bracket row, which
+   * joins its price from the slate and carries whatever that row carried.
+   */
+  priceMarker: string | null;
+}
+
+/**
+ * Does this row's number need to say where it came from?
+ *
+ * One decision for the card, and it is NOT a new one: `prematchAttribution`
+ * makes the same call for the finished list, off the same `isPredictionMarketSource`
+ * set and printing the same `BOOKS_MARKER` word. An absent source keeps the
+ * meaning it has always had on this payload — the product's own reading, which
+ * reads as itself — so a cached payload picks up no caveat it did not earn.
+ */
+export function priceMarkerFor(source: string | null | undefined): string | null {
+  if (source == null || isPredictionMarketSource(source)) return null;
+  return BOOKS_MARKER;
 }
 
 /** Unordered pair key — the only thing the slate and the draw share. */
@@ -599,6 +624,7 @@ export function matchListFromSlate(
       eventId: match.event_id ?? null,
       matchupKey: match.matchup_key ?? null,
       source: "slate",
+      priceMarker: priceMarkerFor(match.price_source),
     };
     entry.detailNote = matchDetailNote(entry);
     out.push(entry);
@@ -760,6 +786,9 @@ export function matchListFromBracket(
         eventId: joined?.event_id ?? null,
         matchupKey: joined?.matchup_key ?? null,
         source: "bracket",
+        // The marker travels with the number, and the number came from the
+        // slate row this slot absorbed — a draw slot has no price of its own.
+        priceMarker: priceMarkerFor(joined?.price_source),
       };
       entry.detailNote = matchDetailNote(entry);
       out.push(entry);

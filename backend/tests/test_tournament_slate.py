@@ -405,6 +405,10 @@ def test_an_empty_slate_is_an_honest_shape_not_an_error():
         # rather than absent: an absent key and a genuine zero are the same
         # bytes to a reader, which is the confusion this whole shape guards.
         "scoreboard_linked": 0,
+        # #3729: and how many of today's numbers are a sportsbook consensus
+        # rather than a pinned market. Declared here and filled by
+        # `apply_event_blend_slate` for the same reason as the line above.
+        "books_priced": 0,
         "price_state": "dark", "newest_observed_at": None, "age_hours": None,
         "dark_after_hours": 48.0,
     }
