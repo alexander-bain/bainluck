@@ -208,6 +208,17 @@ export interface Event {
   espn?: ESPNData;
   home_team_data?: TeamData;
   away_team_data?: TeamData;
+  // #3784 — the four participant-image keys `FeedEventData` has carried since
+  // #2919, now served by `_format_event` too, so the SHARED card can draw the
+  // same face the feed card draws for the same match. Served for individual
+  // sports only: a team sport has crests and these are always null there, so
+  // the base formatter omits them rather than null-padding a 500-row list.
+  // Optional here for that reason — `undefined` means "team sport", `null`
+  // means "we looked and this player has no photo".
+  home_image_url?: string | null;
+  away_image_url?: string | null;
+  home_flag_url?: string | null;
+  away_flag_url?: string | null;
   // `updated_at` is the source's STAMPED write time. The API has always sent it
   // (it is what drives the hero's recency decay server-side); it was simply
   // absent from this type, so the live age stamp could not read it. live/034.

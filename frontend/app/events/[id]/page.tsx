@@ -51,7 +51,10 @@ const TournamentBackLink = dynamic(
    hero's existing logo markup as its fallback, so lazy-loading it would blank
    the avatar of every event on the site until the chunk arrived. The two
    sections below are additive and can afford to appear late; a hero cannot. */
-import { TournamentPlayerFace } from "@/components/event/TournamentExtensions";
+import {
+  TournamentPlayerFace,
+  servedParticipantImage,
+} from "@/components/event/TournamentExtensions";
 // L2-118 Phase 1: the archetype-agnostic props body (SCRIPT / DIVERGENCE / WHAT HIT).
 const PropsSection = dynamic(() => import("@/components/event/PropsSection"), { ssr: false });
 import type { PropMark } from "@/components/event/PropsSection";
@@ -950,6 +953,14 @@ export default function EventPage({ params }: EventPageProps) {
                 awayName={event.away_team}
                 side="home"
                 size={56}
+                /* #3787 — the payload's own pinned pair, in FRONT of the
+                   bracket register. The register answers NOT_IN_REGISTER for
+                   any match off the bracket, which is why this hero still drew
+                   `DM`/`FT` for a US Open round-of-16 after #2447 shipped. */
+                servedImage={servedParticipantImage(
+                  event.home_image_url,
+                  event.home_flag_url
+                )}
                 fallback={
               <div
                 className="w-14 h-14 rounded-2xl flex items-center justify-center mb-1.5 overflow-hidden"
@@ -1112,6 +1123,11 @@ export default function EventPage({ params }: EventPageProps) {
                 awayName={event.away_team}
                 side="away"
                 size={56}
+                /* #3787, the other side. Same pair, same precedence. */
+                servedImage={servedParticipantImage(
+                  event.away_image_url,
+                  event.away_flag_url
+                )}
                 fallback={
               <div
                 className="w-14 h-14 rounded-2xl flex items-center justify-center mb-1.5 overflow-hidden"

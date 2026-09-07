@@ -80,7 +80,11 @@ from app.utils.search_cache import (
     search_response_cache_enabled,
     search_response_cache_key,
 )
-from app.utils.search_fixture_dedup import collapse_duplicate_fixtures
+from app.utils.participant_images import participant_images_for_event
+from app.utils.search_fixture_dedup import (
+    collapse_duplicate_fixtures,
+    is_individual_sport,
+)
 from app.utils.search_match_class import (
     PROMINENT_SPORT_KEYS as _SEARCH_PROMINENT_SPORT_KEYS,
     Evidence as _SearchEvidence,
@@ -14598,6 +14602,45 @@ def _format_event(event: Event, gei_percentiles: dict = None, team_lookup: dict 
     linescore = (event.box_score_data or {}).get("tennis")
     if isinstance(linescore, dict) and linescore.get("sets"):
         response["linescore"] = deepcopy(linescore)
+
+    # ── THE PARTICIPANT'S FACE, ON EVERY SURFACE AND NOT JUST THE FEED (#3784) ─
+    #
+    # #2919 gave the feed event payload a pinned, verified headshot-or-flag and
+    # shipped it to exactly ONE renderer. This formatter is the base for
+    # `/api/events`, `/api/events/search` and the detail route — i.e. for the
+    # shared `components/EventCard`, which draws `/sports/[key]`, `/search`,
+    # `/my-stuff`, `/preferences` and the league rails. It never got the field,
+    # so on 2026-09-07 the ATP US Open tour page drew a grey initials square for
+    # every player — `FC`, `AB`, `KK`, `LT`, `AG`, `BV` — while `/api/feed`
+    # served a Wikipedia headshot and an ESPN flag for those same people.
+    #
+    # Same helper, same register, same precedence: this is a MISSING FIELD, not
+    # a second opinion about how to draw one. Resolved server-side from the
+    # pinned register only — never a name lookup (17 of 378 measured return the
+    # wrong person, with a photo, at HTTP 200) and never from the browser
+    # (#1600: ~600 failed requests on one draw).
+    #
+    # INDIVIDUAL SPORTS ONLY, and that is deliberate where the feed serves all
+    # four unconditionally. `participant_image` is gated on
+    # `is_individual_sport`, so for a team sport all four values are ALWAYS
+    # None — and this formatter feeds single-sport lists up to 500 rows, where
+    # the feed serves ~120 mixed cards. Four null keys per row on every MLB list
+    # is bytes on the wire that can never carry an answer; the `linescore`
+    # decision above is the same call for the same reason.
+    #
+    # The ambiguity the helper's docstring warns about — "absent key" reading
+    # the same as "we looked and there is no photo" — is fully preserved, because
+    # WITHIN the individual-sport population all four keys are always present.
+    # Absence here means "this sport has crests", which is a different question.
+    image_sport_key = event.sport.key if event.sport else None
+    if is_individual_sport(image_sport_key):
+        response.update(
+            participant_images_for_event(
+                home_team=event.home_team_name,
+                away_team=event.away_team_name,
+                sport_key=image_sport_key,
+            )
+        )
 
     # Add team data (colors, logos) from lookup
     if team_lookup:
