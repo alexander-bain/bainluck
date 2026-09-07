@@ -441,6 +441,19 @@ def test_every_accepted_attachment_is_a_pair_the_audit_said_belongs_nowhere():
     that stops ``ACCEPTED_ATTACHMENTS`` from becoming a mute button. A positive
     pair has a known-correct event id, so "accepting" some other destination for
     it would delete the one finding the golden set exists to make.
+
+    THE ATTACHMENT CLAUSE WAS ``is None`` UNTIL 2026-09-06 (#3564 step 2), and
+    it was ``is None`` only because the fixture predated the attachments. When
+    the map was written on 2026-09-03 all five rows were unattached in the
+    2026-09-02 capture, so "not attached at capture" and "not attached to a
+    RIVAL of what we accepted" were the same sentence. The re-capture separated
+    them: production has since attached all five, and every one of them landed
+    on exactly the event this map accepts. Keeping ``is None`` would have failed
+    the guard for the single outcome that most vindicates it.
+
+    So the clause now says what it always meant — a key may not already point
+    somewhere OTHER than the destination being accepted. Agreement is not a
+    conflict; a second destination is.
     """
     pairs, _ = mrec.load_golden_baseline()
     by_market = {int(p["market_id"]): p for p in pairs}
@@ -453,9 +466,12 @@ def test_every_accepted_attachment_is_a_pair_the_audit_said_belongs_nowhere():
             f"{pair['correct_event_id']}; accepting {event_id} for it would hide "
             "a regression"
         )
-        assert pair["market"].get("event_id_at_capture") is None, (
-            f"market {market_id} was already attached at capture, so it is not "
-            "a fixture-appeared-later row"
+        attached = pair["market"].get("event_id_at_capture")
+        assert attached in (None, event_id), (
+            f"market {market_id} was attached to {attached} at capture, which "
+            f"is not the {event_id} this map accepts — accepting a second "
+            "destination for a row already pointing somewhere else is exactly "
+            "the silencing this guard exists to stop"
         )
         assert isinstance(event_id, int)
 

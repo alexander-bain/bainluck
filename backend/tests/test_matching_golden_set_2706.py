@@ -30,6 +30,7 @@ the scoring and this file moves.
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import json
 import re
@@ -418,46 +419,94 @@ def test_the_adjudicated_event_is_always_present_for_a_positive_pair():
 # =============================================================================
 # The truncation proof (LANE1B-002-FIXTURE-CANDIDATE-PARITY)
 #
-# The 2026-09-02 capture is NOT production's candidate set. It differs in three
-# measurable ways, and each one makes some green in this file mean less than it
-# looks. A ratchet whose fixture is optimistic in ways nobody has written down
-# is a ratchet that quietly stops guarding, so the three gaps are COMPUTED from
-# the fixture here, PINNED, and allowed to move in one direction only.
+# The capture is NOT production's candidate set. It differs in three measurable
+# ways, and each one makes some green in this file mean less than it looks. A
+# ratchet whose fixture is optimistic in ways nobody has written down is a
+# ratchet that quietly stops guarding, so the three gaps are COMPUTED from the
+# fixture here, PINNED, and allowed to move in one direction only.
 #
-#   1. THE CAP. `capture_matching_golden_fixture.py` keeps 10 candidates per
-#      market; production's own candidate query takes `LIMIT 20`
-#      (`_find_matching_event`). 327/709 pairs came back at the cap.
+# RE-CAPTURED 2026-09-06 at the matcher's own limit (#3564 step 2). The previous
+# block said, of the 2026-09-02 capture: "THE FIX, when someone re-captures: use
+# production's own window and its own ORDER BY commence_time LIMIT 20 ... Every
+# number below then falls, and these tests say so out loud rather than going
+# quietly green." That is what happened — the pin below caught the re-capture
+# and every one of the three roughly halved:
+#
+#       appended answers       88 -> 44
+#       pairs at the cap      327 -> 189
+#       window outlasts them  235 -> 65
+#
+#   1. THE CAP. `capture_matching_golden_fixture.py` now keeps the SAME number
+#      of candidates per market as production's own candidate query
+#      (`_find_matching_event`, LIMIT 20), and `CAPTURE_CANDIDATE_CAP` below is
+#      read out of that script rather than copied, so the two cannot drift
+#      apart again — a drifting copy of this constant IS #3564.
+#      189/709 pairs still come back at the cap, so the gap is smaller, not
+#      closed: production can hold more than 20 rows in the widened window.
 #   2. THE WIDENING. The capture widens the matcher's window by ±4 days so a
 #      failure-class-(c) answer — one that sits OUTSIDE the window, which is
 #      the whole point of that class — is in the file at all. But the cap is
-#      applied as "earliest 10 in the WIDENED window", so for a market with
-#      more than 10 rows in that span the eviction lands on the LATE end, which
-#      overlaps the matcher's real window. 235 pairs are in that state: their
+#      applied as "earliest N in the WIDENED window", so for a market with more
+#      than N rows in that span the eviction lands on the LATE end, which
+#      overlaps the matcher's real window. 65 pairs are in that state: their
 #      last captured candidate starts BEFORE the matcher's own window closes,
 #      so real in-window rivals may be missing. Fewer rivals is an EASIER test
 #      in both directions — a positive chooses against less competition, a
 #      negative refuses less temptation.
 #   3. THE APPENDED ANSWER. When the capture's own search did not surface the
 #      adjudicated event, the capture appends it (`search_surfaced_the_answer`
-#      is false for 88 pairs). Such a pair can still test the SCORER — does it
+#      is false for 44 pairs). Such a pair can still test the SCORER — does it
 #      prefer the adjudicated event over the decoys it did see — but it says
 #      nothing about whether production would ever put that event on the board.
-#      60 of the 105 passing positives are in this bucket, so the positive arm
+#      30 of the 172 passing positives are in this bucket, so the positive arm
 #      is asserted separately WITHOUT them below.
 #
-# THE FIX, when someone re-captures: use production's own window and its own
-# `ORDER BY commence_time LIMIT 20` for the primary block, and keep the
-# appended answer flagged. Every number below then falls, and these tests say
-# so out loud rather than going quietly green.
+# THE REMAINING FIX: the widened window is still capped, so raising the limit
+# again only moves the eviction later. Closing gap 2 needs the capture to take
+# the matcher's own window for the primary block and the ±4-day widening only
+# for the adjudicated answer. Every number above then falls again, and these
+# tests will say so out loud rather than going quietly green.
 # =============================================================================
 
-#: Candidates kept per market by the capture that produced this fixture.
-CAPTURE_CANDIDATE_CAP = 10
 
-#: Measured 2026-09-02 on `matching_golden_inputs.json`. Each may only FALL.
-POSITIVES_WITH_AN_APPENDED_ANSWER = 88
-PAIRS_AT_THE_CAPTURE_CAP = 327
-TRUNCATED_PAIRS_THE_WINDOW_OUTLASTS = 235
+def _capture_candidate_cap() -> int:
+    """The capture's own `MAX_CANDIDATES`, read from its source.
+
+    NOT a copy. This file used to hard-code 10 while the capture kept 10 and
+    production took 20; #3564 is precisely what a copied constant costs once it
+    drifts, so the number is read from the one place that defines it. Parsed
+    rather than imported for the same reason
+    `test_golden_capture_cap_matches_production_3564.py` parses it: importing
+    the script pulls in the whole task module at collection time.
+    """
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "scripts" / "capture_matching_golden_fixture.py"
+    ).read_text()
+    for node in ast.parse(source).body:
+        if not isinstance(node, ast.Assign):
+            continue
+        for target in node.targets:
+            if isinstance(target, ast.Name) and target.id == "MAX_CANDIDATES":
+                assert isinstance(node.value, ast.Constant), (
+                    "MAX_CANDIDATES must stay a plain int literal so this guard "
+                    "can read it without importing the capture script"
+                )
+                return node.value.value
+    raise AssertionError(
+        "MAX_CANDIDATES not found in capture_matching_golden_fixture.py"
+    )
+
+
+#: Candidates kept per market by the capture that produced this fixture, read
+#: from the capture script so it cannot drift away from it.
+CAPTURE_CANDIDATE_CAP = _capture_candidate_cap()
+
+#: Measured 2026-09-06 on the re-captured `matching_golden_inputs.json`, at
+#: CAPTURE_CANDIDATE_CAP. Each may only FALL.
+POSITIVES_WITH_AN_APPENDED_ANSWER = 44
+PAIRS_AT_THE_CAPTURE_CAP = 189
+TRUNCATED_PAIRS_THE_WINDOW_OUTLASTS = 65
 
 _WINDOW_RE = re.compile(r"commence_time BETWEEN '([^']+)' AND '([^']+)'")
 

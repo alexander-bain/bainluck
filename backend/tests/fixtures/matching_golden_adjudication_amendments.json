@@ -74,6 +74,870 @@
     "Replayed on the real harness with the prefix mapped: `replay()` returns (15291291, 'matched'). Without the mapping it returns (None, 'no_match'). The ticker mapping is the whole difference, and the golden suite is green on the combined tree with the baseline UNMOVED at 652 -- the pair passed before as a correct `None` and passes after as a correct 15291291.",
     "NOT a condition of this amendment, filed under D35 and belonging to lane1 under D39: our stored market commence_time for 59173468 is 2026-08-27 03:03:57Z, which is EXACTLY the venue's close_time for all three legs -- we again stored a Kalshi settlement stamp where a start time belongs (the #3438 / #3532 class). It is evidence about our ingest, not about the tie."
    ]
+  },
+  {
+   "market_id": 59172944,
+   "was": null,
+   "now": 15299672,
+   "on": "2026-09-06",
+   "by": "lane1b/069",
+   "raised_by": "#3564 step 2 re-capture",
+   "artifact_note": "global 2+-token check; titles batch-read",
+   "cause": "NOT-SURFACED-old-search-under-cap",
+   "why": "The artifact recorded `correct_event_id: null` for a `a-no-event` pair on 2026-09-02, and the 2026-09-02 capture surfaced ZERO candidates for this market — so the pair was a VACUOUS negative: the matcher was handed an empty list and returning null proved nothing about restraint. The event existed even then (`events.created_at` 2026-09-01 02:09:28.879018), and event 15299672 is South Carolina State Bulldogs @ Florida A&M Rattlers. With the corpus re-captured the market's own search reaches it. Recording null here asserted a fact about a fixture the capture had never put on the board.",
+   "evidence": [
+    "Production census 2026-09-06 22:0xZ, re-runnable: the matcher's own parse (`extract_matchup_with_ticker_fallback`) and its own expanded search terms (`_expand_team_search_terms`), asked over the capture's own window [2026-09-01T18:00:00+00:00 .. 2026-09-11T06:00:00+00:00] with the per-market LIMIT raised from 20 to 200 so a rival hiding just past the cap would be visible. 2 events matched either side; EXACTLY ONE carries both 'South Carolina St.' and 'Florida A&M' — event 15299672. There is no rival to prefer, so `null` cannot have meant 'it belongs on a different event'.",
+    "`SELECT id, created_at, commence_time, status FROM events WHERE id = 15299672` returns created_at 2026-09-01 02:09:28.879018, commence_time 2026-09-06 20:43:25+00:00, status 'live' — the timestamp the 'was it reachable on 2026-09-02 20:00Z' claim above rests on.",
+    "The market is 'South Carolina St. vs Florida A&M' (source kalshi, external_id KXNCAAFGAME-26SEP06SCSTFAMU); the event's two sides are 'South Carolina State Bulldogs' and 'Florida A&M Rattlers'. Both of the market's named sides appear on the event, one on each side, so this is a name identity and not a token overlap."
+   ]
+  },
+  {
+   "market_id": 59172945,
+   "was": null,
+   "now": 15299671,
+   "on": "2026-09-06",
+   "by": "lane1b/069",
+   "raised_by": "#3564 step 2 re-capture",
+   "artifact_note": "global 2+-token check; titles batch-read",
+   "cause": "NOT-SURFACED-old-search-under-cap",
+   "why": "The artifact recorded `correct_event_id: null` for a `a-no-event` pair on 2026-09-02, and the 2026-09-02 capture surfaced ZERO candidates for this market — so the pair was a VACUOUS negative: the matcher was handed an empty list and returning null proved nothing about restraint. The event existed even then (`events.created_at` 2026-09-01 02:09:28.879018), and event 15299671 is Texas Southern Tigers @ Prairie View A&M Panthers. With the corpus re-captured the market's own search reaches it. Recording null here asserted a fact about a fixture the capture had never put on the board.",
+   "evidence": [
+    "Production census 2026-09-06 22:0xZ, re-runnable: the matcher's own parse (`extract_matchup_with_ticker_fallback`) and its own expanded search terms (`_expand_team_search_terms`), asked over the capture's own window [2026-09-01T18:00:00+00:00 .. 2026-09-11T06:00:00+00:00] with the per-market LIMIT raised from 20 to 200 so a rival hiding just past the cap would be visible. 5 events matched either side; EXACTLY ONE carries both 'Texas Southern' and 'Prairie View A&M' — event 15299671. There is no rival to prefer, so `null` cannot have meant 'it belongs on a different event'.",
+    "`SELECT id, created_at, commence_time, status FROM events WHERE id = 15299671` returns created_at 2026-09-01 02:09:28.879018, commence_time 2026-09-06 16:16:15+00:00, status 'completed' — the timestamp the 'was it reachable on 2026-09-02 20:00Z' claim above rests on.",
+    "The market is 'Texas Southern vs Prairie View A&M' (source kalshi, external_id KXNCAAFGAME-26SEP06TXSOPV); the event's two sides are 'Texas Southern Tigers' and 'Prairie View A&M Panthers'. Both of the market's named sides appear on the event, one on each side, so this is a name identity and not a token overlap."
+   ]
+  },
+  {
+   "market_id": 59172963,
+   "was": null,
+   "now": 15299666,
+   "on": "2026-09-06",
+   "by": "lane1b/069",
+   "raised_by": "#3564 step 2 re-capture",
+   "artifact_note": "global 2+-token check; titles batch-read",
+   "cause": "NOT-SURFACED-old-search-under-cap",
+   "why": "The artifact recorded `correct_event_id: null` for a `a-no-event` pair on 2026-09-02, and the 2026-09-02 capture surfaced ZERO candidates for this market — so the pair was a VACUOUS negative: the matcher was handed an empty list and returning null proved nothing about restraint. The event existed even then (`events.created_at` 2026-09-01 02:09:28.879018), and event 15299666 is East Texas A&M Lions @ Stephen F. Austin Lumberjacks. With the corpus re-captured the market's own search reaches it. Recording null here asserted a fact about a fixture the capture had never put on the board.",
+   "evidence": [
+    "Production census 2026-09-06 22:0xZ, re-runnable: the matcher's own parse (`extract_matchup_with_ticker_fallback`) and its own expanded search terms (`_expand_team_search_terms`), asked over the capture's own window [2026-08-31T18:00:00+00:00 .. 2026-09-10T06:00:00+00:00] with the per-market LIMIT raised from 20 to 200 so a rival hiding just past the cap would be visible. 7 events matched either side; EXACTLY ONE carries both 'East Texas A&M' and 'Stephen F. Austin' — event 15299666. There is no rival to prefer, so `null` cannot have meant 'it belongs on a different event'.",
+    "`SELECT id, created_at, commence_time, status FROM events WHERE id = 15299666` returns created_at 2026-09-01 02:09:28.879018, commence_time 2026-09-06 00:01:00+00:00, status 'completed' — the timestamp the 'was it reachable on 2026-09-02 20:00Z' claim above rests on.",
+    "The market is 'East Texas A&M vs Stephen F. Austin' (source kalshi, external_id KXNCAAFGAME-26SEP05ETAMSFA); the event's two sides are 'East Texas A&M Lions' and 'Stephen F. Austin Lumberjacks'. Both of the market's named sides appear on the event, one on each side, so this is a name identity and not a token overlap."
+   ]
+  },
+  {
+   "market_id": 59172975,
+   "was": null,
+   "now": 14793413,
+   "on": "2026-09-06",
+   "by": "lane1b/069",
+   "raised_by": "#3564 step 2 re-capture",
+   "artifact_note": "global 2+-token check; titles batch-read",
+   "cause": "NOT-SURFACED-old-search-under-cap",
+   "why": "The artifact recorded `correct_event_id: null` for a `a-no-event` pair on 2026-09-02, and the 2026-09-02 capture surfaced ZERO candidates for this market — so the pair was a VACUOUS negative: the matcher was handed an empty list and returning null proved nothing about restraint. The event existed even then (`events.created_at` 2026-05-21 13:35:00.087875), and event 14793413 is Missouri State Bears @ Texas A&M Aggies. With the corpus re-captured the market's own search reaches it. Recording null here asserted a fact about a fixture the capture had never put on the board.",
+   "evidence": [
+    "Production census 2026-09-06 22:0xZ, re-runnable: the matcher's own parse (`extract_matchup_with_ticker_fallback`) and its own expanded search terms (`_expand_team_search_terms`), asked over the capture's own window [2026-08-31T18:00:00+00:00 .. 2026-09-10T06:00:00+00:00] with the per-market LIMIT raised from 20 to 200 so a rival hiding just past the cap would be visible. 3 events matched either side; EXACTLY ONE carries both 'Missouri St.' and 'Texas A&M' — event 14793413. There is no rival to prefer, so `null` cannot have meant 'it belongs on a different event'.",
+    "`SELECT id, created_at, commence_time, status FROM events WHERE id = 14793413` returns created_at 2026-05-21 13:35:00.087875, commence_time 2026-09-05 23:00:00+00:00, status 'completed' — the timestamp the 'was it reachable on 2026-09-02 20:00Z' claim above rests on.",
+    "The market is 'Missouri St. vs Texas A&M' (source kalshi, external_id KXNCAAFGAME-26SEP05MOSUTXAM); the event's two sides are 'Missouri State Bears' and 'Texas A&M Aggies'. Both of the market's named sides appear on the event, one on each side, so this is a name identity and not a token overlap."
+   ]
+  },
+  {
+   "market_id": 59173074,
+   "was": null,
+   "now": 15181890,
+   "on": "2026-09-06",
+   "by": "lane1b/069",
+   "raised_by": "#3564 step 2 re-capture",
+   "artifact_note": "global 2+-token check; titles batch-read",
+   "cause": "NOT-SURFACED-old-search-under-cap",
+   "why": "The artifact recorded `correct_event_id: null` for a `a-no-event` pair on 2026-09-02, and the 2026-09-02 capture surfaced ZERO candidates for this market — so the pair was a VACUOUS negative: the matcher was handed an empty list and returning null proved nothing about restraint. The event existed even then (`events.created_at` 2026-07-27 00:44:26.381830), and event 15181890 is North Carolina A&T Aggies @ Georgia State Panthers. With the corpus re-captured the market's own search reaches it. Recording null here asserted a fact about a fixture the capture had never put on the board.",
+   "evidence": [
+    "Production census 2026-09-06 22:0xZ, re-runnable: the matcher's own parse (`extract_matchup_with_ticker_fallback`) and its own expanded search terms (`_expand_team_search_terms`), asked over the capture's own window [2026-08-30T18:00:00+00:00 .. 2026-09-09T06:00:00+00:00] with the per-market LIMIT raised from 20 to 200 so a rival hiding just past the cap would be visible. 1 events matched either side; EXACTLY ONE carries both 'North Carolina A&T' and 'Georgia St.' — event 15181890. There is no rival to prefer, so `null` cannot have meant 'it belongs on a different event'.",
+    "`SELECT id, created_at, commence_time, status FROM events WHERE id = 15181890` returns created_at 2026-07-27 00:44:26.381830, commence_time 2026-09-04 23:00:00+00:00, status 'completed' — the timestamp the 'was it reachable on 2026-09-02 20:00Z' claim above rests on.",
+    "The market is 'North Carolina A&T vs Georgia St.' (source kalshi, external_id KXNCAAFGAME-26SEP04NCATGAST); the event's two sides are 'North Carolina A&T Aggies' and 'Georgia State Panthers'. Both of the market's named sides appear on the event, one on each side, so this is a name identity and not a token overlap."
+   ]
+  },
+  {
+   "market_id": 59173252,
+   "was": null,
+   "now": 15294066,
+   "on": "2026-09-06",
+   "by": "lane1b/069",
+   "raised_by": "#3564 step 2 re-capture",
+   "artifact_note": "global 2+-token check; titles batch-read",
+   "cause": "NOT-SURFACED-old-search-under-cap",
+   "why": "The artifact recorded `correct_event_id: null` for a `a-no-event` pair on 2026-09-02, and the 2026-09-02 capture surfaced ZERO candidates for this market — so the pair was a VACUOUS negative: the matcher was handed an empty list and returning null proved nothing about restraint. The event existed even then (`events.created_at` 2026-08-28 14:05:17.709989), and event 15294066 is Prairie View A&M Panthers @ Tarleton State Texans. With the corpus re-captured the market's own search reaches it. Recording null here asserted a fact about a fixture the capture had never put on the board.",
+   "evidence": [
+    "Production census 2026-09-06 22:0xZ, re-runnable: the matcher's own parse (`extract_matchup_with_ticker_fallback`) and its own expanded search terms (`_expand_team_search_terms`), asked over the capture's own window [2026-08-24T18:00:00+00:00 .. 2026-09-03T06:00:00+00:00] with the per-market LIMIT raised from 20 to 200 so a rival hiding just past the cap would be visible. 3 events matched either side; EXACTLY ONE carries both 'Prairie View A&M' and 'Tarleton St.' — event 15294066. There is no rival to prefer, so `null` cannot have meant 'it belongs on a different event'.",
+    "`SELECT id, created_at, commence_time, status FROM events WHERE id = 15294066` returns created_at 2026-08-28 14:05:17.709989, commence_time 2026-08-30 01:00:00+00:00, status 'completed' — the timestamp the 'was it reachable on 2026-09-02 20:00Z' claim above rests on.",
+    "The market is 'Prairie View A&M vs Tarleton St.' (source kalshi, external_id KXNCAAFGAME-26AUG29PVTARL); the event's two sides are 'Prairie View A&M Panthers' and 'Tarleton State Texans'. Both of the market's named sides appear on the event, one on each side, so this is a name identity and not a token overlap."
+   ]
+  },
+  {
+   "market_id": 59173262,
+   "was": null,
+   "now": 15294063,
+   "on": "2026-09-06",
+   "by": "lane1b/069",
+   "raised_by": "#3564 step 2 re-capture",
+   "artifact_note": "global 2+-token check; titles batch-read",
+   "cause": "NOT-SURFACED-old-search-under-cap",
+   "why": "The artifact recorded `correct_event_id: null` for a `a-no-event` pair on 2026-09-02, and the 2026-09-02 capture surfaced ZERO candidates for this market — so the pair was a VACUOUS negative: the matcher was handed an empty list and returning null proved nothing about restraint. The event existed even then (`events.created_at` 2026-08-28 14:05:17.709989), and event 15294063 is Alabama A&M Bulldogs @ Howard Bison. With the corpus re-captured the market's own search reaches it. Recording null here asserted a fact about a fixture the capture had never put on the board.",
+   "evidence": [
+    "Production census 2026-09-06 22:0xZ, re-runnable: the matcher's own parse (`extract_matchup_with_ticker_fallback`) and its own expanded search terms (`_expand_team_search_terms`), asked over the capture's own window [2026-08-24T18:00:00+00:00 .. 2026-09-03T06:00:00+00:00] with the per-market LIMIT raised from 20 to 200 so a rival hiding just past the cap would be visible. 3 events matched either side; EXACTLY ONE carries both 'Alabama A&M' and 'Howard' — event 15294063. There is no rival to prefer, so `null` cannot have meant 'it belongs on a different event'.",
+    "`SELECT id, created_at, commence_time, status FROM events WHERE id = 15294063` returns created_at 2026-08-28 14:05:17.709989, commence_time 2026-08-29 23:30:00+00:00, status 'completed' — the timestamp the 'was it reachable on 2026-09-02 20:00Z' claim above rests on.",
+    "The market is 'Alabama A&M vs Howard' (source kalshi, external_id KXNCAAFGAME-26AUG29AAMUHOW); the event's two sides are 'Alabama A&M Bulldogs' and 'Howard Bison'. Both of the market's named sides appear on the event, one on each side, so this is a name identity and not a token overlap."
+   ]
+  },
+  {
+   "market_id": 59173288,
+   "was": null,
+   "now": 15294056,
+   "on": "2026-09-06",
+   "by": "lane1b/069",
+   "raised_by": "#3564 step 2 re-capture",
+   "artifact_note": "global 2+-token check; titles batch-read",
+   "cause": "NOT-SURFACED-old-search-under-cap",
+   "why": "The artifact recorded `correct_event_id: null` for a `a-no-event` pair on 2026-09-02, and the 2026-09-02 capture surfaced ZERO candidates for this market — so the pair was a VACUOUS negative: the matcher was handed an empty list and returning null proved nothing about restraint. The event existed even then (`events.created_at` 2026-08-28 14:05:17.709989), and event 15294056 is East Texas A&M Lions @ Mercer Bears. With the corpus re-captured the market's own search reaches it. Recording null here asserted a fact about a fixture the capture had never put on the board.",
+   "evidence": [
+    "Production census 2026-09-06 22:0xZ, re-runnable: the matcher's own parse (`extract_matchup_with_ticker_fallback`) and its own expanded search terms (`_expand_team_search_terms`), asked over the capture's own window [2026-08-24T18:00:00+00:00 .. 2026-09-03T06:00:00+00:00] with the per-market LIMIT raised from 20 to 200 so a rival hiding just past the cap would be visible. 2 events matched either side; EXACTLY ONE carries both 'East Texas A&M' and 'Mercer' — event 15294056. There is no rival to prefer, so `null` cannot have meant 'it belongs on a different event'.",
+    "`SELECT id, created_at, commence_time, status FROM events WHERE id = 15294056` returns created_at 2026-08-28 14:05:17.709989, commence_time 2026-08-29 23:00:00+00:00, status 'completed' — the timestamp the 'was it reachable on 2026-09-02 20:00Z' claim above rests on.",
+    "The market is 'East Texas A&M vs Mercer' (source kalshi, external_id KXNCAAFGAME-26AUG29ETAMMER); the event's two sides are 'East Texas A&M Lions' and 'Mercer Bears'. Both of the market's named sides appear on the event, one on each side, so this is a name identity and not a token overlap."
+   ]
+  },
+  {
+   "market_id": 59613212,
+   "was": null,
+   "now": 15293196,
+   "on": "2026-09-06",
+   "by": "lane1b/069",
+   "raised_by": "#3564 step 2 re-capture",
+   "artifact_note": "no parent in window",
+   "cause": "HIDDEN-BY-THE-10-CAP",
+   "why": "The artifact recorded `correct_event_id: null` for a `e-prop` pair on 2026-09-02. The event existed at that moment — `events.created_at` is 2026-08-26 20:50:57.086538, BEFORE the 20:00Z adjudication — but the capture script kept only `MAX_CANDIDATES = 10` while production's own matcher takes LIMIT 20, and this market's candidate list was AT that cap with 10 rows. Event 15293196 (Al Diraiyah Saudi Club @ Al Fateh Saudi Club) was evicted by our own truncation, so the adjudicator was asked to choose from a list the correct answer had been removed from. That is #3564's defect demonstrated on a single pair, not a matcher error.",
+   "evidence": [
+    "Production census 2026-09-06 22:0xZ, re-runnable: the matcher's own parse (`extract_matchup_with_ticker_fallback`) and its own expanded search terms (`_expand_team_search_terms`), asked over the capture's own window [2026-08-20T19:30:35+00:00 .. 2026-09-01T19:30:35+00:00] with the per-market LIMIT raised from 20 to 200 so a rival hiding just past the cap would be visible. 18 events matched either side; EXACTLY ONE carries both 'Al Fateh Saudi Club' and 'Al Diraiyah Saudi Club' — event 15293196. There is no rival to prefer, so `null` cannot have meant 'it belongs on a different event'.",
+    "`SELECT id, created_at, commence_time, status FROM events WHERE id = 15293196` returns created_at 2026-08-26 20:50:57.086538, commence_time 2026-08-26 19:30:31+00:00, status 'closed' — the timestamp the 'was it reachable on 2026-09-02 20:00Z' claim above rests on.",
+    "The market is 'Al Fateh Saudi Club vs. Al Diraiyah Saudi Club - Exact Score' (source polymarket, external_id 917171); the event's two sides are 'Al Diraiyah Saudi Club' and 'Al Fateh Saudi Club'. Both of the market's named sides appear on the event, one on each side, so this is a name identity and not a token overlap."
+   ]
+  },
+  {
+   "market_id": 59613214,
+   "was": null,
+   "now": 15293197,
+   "on": "2026-09-06",
+   "by": "lane1b/069",
+   "raised_by": "#3564 step 2 re-capture",
+   "artifact_note": "no parent in window",
+   "cause": "HIDDEN-BY-THE-10-CAP",
+   "why": "The artifact recorded `correct_event_id: null` for a `e-prop` pair on 2026-09-02. The event existed at that moment — `events.created_at` is 2026-08-26 20:50:57.086538, BEFORE the 20:00Z adjudication — but the capture script kept only `MAX_CANDIDATES = 10` while production's own matcher takes LIMIT 20, and this market's candidate list was AT that cap with 10 rows. Event 15293197 (Al Shabab Saudi Club @ Al Kholood Saudi Club) was evicted by our own truncation, so the adjudicator was asked to choose from a list the correct answer had been removed from. That is #3564's defect demonstrated on a single pair, not a matcher error.",
+   "evidence": [
+    "Production census 2026-09-06 22:0xZ, re-runnable: the matcher's own parse (`extract_matchup_with_ticker_fallback`) and its own expanded search terms (`_expand_team_search_terms`), asked over the capture's own window [2026-08-20T19:30:31+00:00 .. 2026-09-01T19:30:31+00:00] with the per-market LIMIT raised from 20 to 200 so a rival hiding just past the cap would be visible. 17 events matched either side; EXACTLY ONE carries both 'Al Kholood Saudi Club' and 'Al Shabab Saudi Club' — event 15293197. There is no rival to prefer, so `null` cannot have meant 'it belongs on a different event'.",
+    "`SELECT id, created_at, commence_time, status FROM events WHERE id = 15293197` returns created_at 2026-08-26 20:50:57.086538, commence_time 2026-08-26 19:30:23+00:00, status 'closed' — the timestamp the 'was it reachable on 2026-09-02 20:00Z' claim above rests on.",
+    "The market is 'Al Kholood Saudi Club vs. Al Shabab Saudi Club - Exact Score' (source polymarket, external_id 917163); the event's two sides are 'Al Shabab Saudi Club' and 'Al Kholood Saudi Club'. Both of the market's named sides appear on the event, one on each side, so this is a name identity and not a token overlap."
+   ]
+  },
+  {
+   "market_id": 59692110,
+   "was": null,
+   "now": 15302935,
+   "on": "2026-09-06",
+   "by": "lane1b/069",
+   "raised_by": "#3564 step 2 re-capture",
+   "artifact_note": "no parent in window",
+   "cause": "EVENT-INGESTED-AFTER-CAPTURE",
+   "why": "The artifact recorded `correct_event_id: null` for a `e-prop` pair on 2026-09-02, and for that class null records that no event was reachable, not that the fixture does not exist. The game does exist: event 15302935 is FC Arouca @ Estoril Praia. It could not have been adjudicated on capture day because our database did not hold it yet — `events.created_at` is 2026-09-03 18:51:51.506480, which is AFTER the 2026-09-02 20:00Z adjudication instant. The market was always about this fixture; only our ingest was behind. This corrects the record to the answer that was always true.",
+   "evidence": [
+    "Production census 2026-09-06 22:0xZ, re-runnable: the matcher's own parse (`extract_matchup_with_ticker_fallback`) and its own expanded search terms (`_expand_team_search_terms`), asked over the capture's own window [2026-08-22T17:46:17+00:00 .. 2026-09-03T17:46:17+00:00] with the per-market LIMIT raised from 20 to 200 so a rival hiding just past the cap would be visible. 30 events matched either side; EXACTLY ONE carries both 'Estoril Praia' and 'FC Arouca' — event 15302935. There is no rival to prefer, so `null` cannot have meant 'it belongs on a different event'.",
+    "`SELECT id, created_at, commence_time, status FROM events WHERE id = 15302935` returns created_at 2026-09-03 18:51:51.506480, commence_time 2026-08-28 17:46:17+00:00, status 'suspended' — the timestamp the 'was it reachable on 2026-09-02 20:00Z' claim above rests on.",
+    "The market is 'Estoril Praia vs. FC Arouca - Exact Score' (source polymarket, external_id 926716); the event's two sides are 'FC Arouca' and 'Estoril Praia'. Both of the market's named sides appear on the event, one on each side, so this is a name identity and not a token overlap."
+   ]
+  },
+  {
+   "market_id": 59692130,
+   "was": null,
+   "now": 15302944,
+   "on": "2026-09-06",
+   "by": "lane1b/069",
+   "raised_by": "#3564 step 2 re-capture",
+   "artifact_note": "no parent in window",
+   "cause": "EVENT-INGESTED-AFTER-CAPTURE",
+   "why": "The artifact recorded `correct_event_id: null` for a `e-prop` pair on 2026-09-02, and for that class null records that no event was reachable, not that the fixture does not exist. The game does exist: event 15302944 is FC Famalicão @ CF Estrela da Amadora. It could not have been adjudicated on capture day because our database did not hold it yet — `events.created_at` is 2026-09-03 18:52:07.910173, which is AFTER the 2026-09-02 20:00Z adjudication instant. The market was always about this fixture; only our ingest was behind. This corrects the record to the answer that was always true.",
+   "evidence": [
+    "Production census 2026-09-06 22:0xZ, re-runnable: the matcher's own parse (`extract_matchup_with_ticker_fallback`) and its own expanded search terms (`_expand_team_search_terms`), asked over the capture's own window [2026-08-22T17:45:58+00:00 .. 2026-09-03T17:45:58+00:00] with the per-market LIMIT raised from 20 to 200 so a rival hiding just past the cap would be visible. 32 events matched either side; EXACTLY ONE carries both 'CF Estrela da Amadora' and 'FC Famalicão' — event 15302944. There is no rival to prefer, so `null` cannot have meant 'it belongs on a different event'.",
+    "`SELECT id, created_at, commence_time, status FROM events WHERE id = 15302944` returns created_at 2026-09-03 18:52:07.910173, commence_time 2026-08-28 17:45:58+00:00, status 'suspended' — the timestamp the 'was it reachable on 2026-09-02 20:00Z' claim above rests on.",
+    "The market is 'CF Estrela da Amadora vs. FC Famalicão - Exact Score' (source polymarket, external_id 926692); the event's two sides are 'FC Famalicão' and 'CF Estrela da Amadora'. Both of the market's named sides appear on the event, one on each side, so this is a name identity and not a token overlap."
+   ]
+  },
+  {
+   "market_id": 59692146,
+   "was": null,
+   "now": 15303055,
+   "on": "2026-09-06",
+   "by": "lane1b/069",
+   "raised_by": "#3564 step 2 re-capture",
+   "artifact_note": "no parent in window",
+   "cause": "EVENT-INGESTED-AFTER-CAPTURE",
+   "why": "The artifact recorded `correct_event_id: null` for a `e-prop` pair on 2026-09-02, and for that class null records that no event was reachable, not that the fixture does not exist. The game does exist: event 15303055 is FK Rodina Moskva @ PFK Krylia Sovetov Samara. It could not have been adjudicated on capture day because our database did not hold it yet — `events.created_at` is 2026-09-03 19:06:22.047915, which is AFTER the 2026-09-02 20:00Z adjudication instant. The market was always about this fixture; only our ingest was behind. This corrects the record to the answer that was always true.",
+   "evidence": [
+    "Production census 2026-09-06 22:0xZ, re-runnable: the matcher's own parse (`extract_matchup_with_ticker_fallback`) and its own expanded search terms (`_expand_team_search_terms`), asked over the capture's own window [2026-08-22T17:45:39+00:00 .. 2026-09-03T17:45:39+00:00] with the per-market LIMIT raised from 20 to 200 so a rival hiding just past the cap would be visible. 32 events matched either side; EXACTLY ONE carries both 'PFK Krylia Sovetov Samara' and 'FK Rodina Moskva' — event 15303055. There is no rival to prefer, so `null` cannot have meant 'it belongs on a different event'.",
+    "`SELECT id, created_at, commence_time, status FROM events WHERE id = 15303055` returns created_at 2026-09-03 19:06:22.047915, commence_time 2026-08-28 22:30:21+00:00, status 'suspended' — the timestamp the 'was it reachable on 2026-09-02 20:00Z' claim above rests on.",
+    "The market is 'PFK Krylia Sovetov Samara vs. FK Rodina Moskva - Exact Score' (source polymarket, external_id 926675); the event's two sides are 'FK Rodina Moskva' and 'PFK Krylia Sovetov Samara'. Both of the market's named sides appear on the event, one on each side, so this is a name identity and not a token overlap."
+   ]
+  },
+  {
+   "market_id": 59692181,
+   "was": null,
+   "now": 15303207,
+   "on": "2026-09-06",
+   "by": "lane1b/069",
+   "raised_by": "#3564 step 2 re-capture",
+   "artifact_note": "no parent in window",
+   "cause": "EVENT-INGESTED-AFTER-CAPTURE",
+   "why": "The artifact recorded `correct_event_id: null` for a `e-prop` pair on 2026-09-02, and for that class null records that no event was reachable, not that the fixture does not exist. The game does exist: event 15303207 is Montevideo City Torque @ CS Cienciano. It could not have been adjudicated on capture day because our database did not hold it yet — `events.created_at` is 2026-09-03 19:07:14.628434, which is AFTER the 2026-09-02 20:00Z adjudication instant. The market was always about this fixture; only our ingest was behind. This corrects the record to the answer that was always true.",
+   "evidence": [
+    "Production census 2026-09-06 22:0xZ, re-runnable: the matcher's own parse (`extract_matchup_with_ticker_fallback`) and its own expanded search terms (`_expand_team_search_terms`), asked over the capture's own window [2026-08-22T17:15:57+00:00 .. 2026-09-03T17:15:57+00:00] with the per-market LIMIT raised from 20 to 200 so a rival hiding just past the cap would be visible. 32 events matched either side; EXACTLY ONE carries both 'CS Cienciano' and 'Montevideo City Torque' — event 15303207. There is no rival to prefer, so `null` cannot have meant 'it belongs on a different event'.",
+    "`SELECT id, created_at, commence_time, status FROM events WHERE id = 15303207` returns created_at 2026-09-03 19:07:14.628434, commence_time 2026-08-29 15:00:18+00:00, status 'suspended' — the timestamp the 'was it reachable on 2026-09-02 20:00Z' claim above rests on.",
+    "The market is 'CS Cienciano vs. Montevideo City Torque - Exact Score' (source polymarket, external_id 926584); the event's two sides are 'Montevideo City Torque' and 'CS Cienciano'. Both of the market's named sides appear on the event, one on each side, so this is a name identity and not a token overlap."
+   ]
+  },
+  {
+   "market_id": 59699263,
+   "was": null,
+   "now": 15303206,
+   "on": "2026-09-06",
+   "by": "lane1b/069",
+   "raised_by": "#3564 step 2 re-capture",
+   "artifact_note": "no parent in window",
+   "cause": "EVENT-INGESTED-AFTER-CAPTURE",
+   "why": "The artifact recorded `correct_event_id: null` for a `e-prop` pair on 2026-09-02, and for that class null records that no event was reachable, not that the fixture does not exist. The game does exist: event 15303206 is Kashima Antlers @ Vissel Kōbe. It could not have been adjudicated on capture day because our database did not hold it yet — `events.created_at` is 2026-09-03 19:07:14.545194, which is AFTER the 2026-09-02 20:00Z adjudication instant. The market was always about this fixture; only our ingest was behind. This corrects the record to the answer that was always true.",
+   "evidence": [
+    "Production census 2026-09-06 22:0xZ, re-runnable: the matcher's own parse (`extract_matchup_with_ticker_fallback`) and its own expanded search terms (`_expand_team_search_terms`), asked over the capture's own window [2026-08-22T19:15:51+00:00 .. 2026-09-03T19:15:51+00:00] with the per-market LIMIT raised from 20 to 200 so a rival hiding just past the cap would be visible. 31 events matched either side; EXACTLY ONE carries both 'Vissel Kōbe' and 'Kashima Antlers' — event 15303206. There is no rival to prefer, so `null` cannot have meant 'it belongs on a different event'.",
+    "`SELECT id, created_at, commence_time, status FROM events WHERE id = 15303206` returns created_at 2026-09-03 19:07:14.545194, commence_time 2026-08-29 15:00:31+00:00, status 'suspended' — the timestamp the 'was it reachable on 2026-09-02 20:00Z' claim above rests on.",
+    "The market is 'Vissel Kōbe vs. Kashima Antlers - Exact Score' (source polymarket, external_id 927070); the event's two sides are 'Kashima Antlers' and 'Vissel Kōbe'. Both of the market's named sides appear on the event, one on each side, so this is a name identity and not a token overlap."
+   ]
+  },
+  {
+   "market_id": 59699264,
+   "was": null,
+   "now": 15303205,
+   "on": "2026-09-06",
+   "by": "lane1b/069",
+   "raised_by": "#3564 step 2 re-capture",
+   "artifact_note": "no parent in window",
+   "cause": "EVENT-INGESTED-AFTER-CAPTURE",
+   "why": "The artifact recorded `correct_event_id: null` for a `e-prop` pair on 2026-09-02, and for that class null records that no event was reachable, not that the fixture does not exist. The game does exist: event 15303205 is Kashiwa Reysol @ Kyōto Sanga FC. It could not have been adjudicated on capture day because our database did not hold it yet — `events.created_at` is 2026-09-03 19:07:14.380462, which is AFTER the 2026-09-02 20:00Z adjudication instant. The market was always about this fixture; only our ingest was behind. This corrects the record to the answer that was always true.",
+   "evidence": [
+    "Production census 2026-09-06 22:0xZ, re-runnable: the matcher's own parse (`extract_matchup_with_ticker_fallback`) and its own expanded search terms (`_expand_team_search_terms`), asked over the capture's own window [2026-08-22T19:15:49+00:00 .. 2026-09-03T19:15:49+00:00] with the per-market LIMIT raised from 20 to 200 so a rival hiding just past the cap would be visible. 31 events matched either side; EXACTLY ONE carries both 'Kyōto Sanga FC' and 'Kashiwa Reysol' — event 15303205. There is no rival to prefer, so `null` cannot have meant 'it belongs on a different event'.",
+    "`SELECT id, created_at, commence_time, status FROM events WHERE id = 15303205` returns created_at 2026-09-03 19:07:14.380462, commence_time 2026-08-29 15:00:45+00:00, status 'suspended' — the timestamp the 'was it reachable on 2026-09-02 20:00Z' claim above rests on.",
+    "The market is 'Kyōto Sanga FC vs. Kashiwa Reysol - Exact Score' (source polymarket, external_id 927066); the event's two sides are 'Kashiwa Reysol' and 'Kyōto Sanga FC'. Both of the market's named sides appear on the event, one on each side, so this is a name identity and not a token overlap."
+   ]
+  },
+  {
+   "market_id": 59700717,
+   "was": null,
+   "now": 15303023,
+   "on": "2026-09-06",
+   "by": "lane1b/069",
+   "raised_by": "#3564 step 2 re-capture",
+   "artifact_note": "global 2+-token check; titles batch-read",
+   "cause": "EVENT-INGESTED-AFTER-CAPTURE",
+   "why": "The artifact recorded `correct_event_id: null` for a `a-no-event` pair on 2026-09-02, and for that class null records that no event was reachable, not that the fixture does not exist. The game does exist: event 15303023 is FC Silon Taborsko @ Prostejov. It could not have been adjudicated on capture day because our database did not hold it yet — `events.created_at` is 2026-09-03 19:06:02.215358, which is AFTER the 2026-09-02 20:00Z adjudication instant. The market was always about this fixture; only our ingest was behind. This corrects the record to the answer that was always true.",
+   "evidence": [
+    "Production census 2026-09-06 22:0xZ, re-runnable: the matcher's own parse (`extract_matchup_with_ticker_fallback`) and its own expanded search terms (`_expand_team_search_terms`), asked over the capture's own window [2026-08-30T18:00:00+00:00 .. 2026-09-09T06:00:00+00:00] with the per-market LIMIT raised from 20 to 200 so a rival hiding just past the cap would be visible. 1 events matched either side; EXACTLY ONE carries both 'Prostejov' and 'FC Silon Taborsko' — event 15303023. There is no rival to prefer, so `null` cannot have meant 'it belongs on a different event'.",
+    "`SELECT id, created_at, commence_time, status FROM events WHERE id = 15303023` returns created_at 2026-09-03 19:06:02.215358, commence_time 2026-09-04 00:00:00+00:00, status 'scheduled' — the timestamp the 'was it reachable on 2026-09-02 20:00Z' claim above rests on.",
+    "The market is 'Prostejov vs FC Silon Taborsko' (source kalshi, external_id KXCZEFNLGAME-26SEP041SKSIL); the event's two sides are 'FC Silon Taborsko' and 'Prostejov'. Both of the market's named sides appear on the event, one on each side, so this is a name identity and not a token overlap."
+   ]
+  },
+  {
+   "market_id": 59700752,
+   "was": null,
+   "now": 15303027,
+   "on": "2026-09-06",
+   "by": "lane1b/069",
+   "raised_by": "#3564 step 2 re-capture",
+   "artifact_note": "global 2+-token check; titles batch-read",
+   "cause": "EVENT-INGESTED-AFTER-CAPTURE",
+   "why": "The artifact recorded `correct_event_id: null` for a `a-no-event` pair on 2026-09-02, and for that class null records that no event was reachable, not that the fixture does not exist. The game does exist: event 15303027 is Adhyaksa @ Arema FC. It could not have been adjudicated on capture day because our database did not hold it yet — `events.created_at` is 2026-09-03 19:06:03.409992, which is AFTER the 2026-09-02 20:00Z adjudication instant. The market was always about this fixture; only our ingest was behind. This corrects the record to the answer that was always true.",
+   "evidence": [
+    "Production census 2026-09-06 22:0xZ, re-runnable: the matcher's own parse (`extract_matchup_with_ticker_fallback`) and its own expanded search terms (`_expand_team_search_terms`), asked over the capture's own window [2026-08-30T18:00:00+00:00 .. 2026-09-09T06:00:00+00:00] with the per-market LIMIT raised from 20 to 200 so a rival hiding just past the cap would be visible. 2 events matched either side; EXACTLY ONE carries both 'Arema FC' and 'Adhyaksa' — event 15303027. There is no rival to prefer, so `null` cannot have meant 'it belongs on a different event'.",
+    "`SELECT id, created_at, commence_time, status FROM events WHERE id = 15303027` returns created_at 2026-09-03 19:06:03.409992, commence_time 2026-09-04 00:00:00+00:00, status 'scheduled' — the timestamp the 'was it reachable on 2026-09-02 20:00Z' claim above rests on.",
+    "The market is 'Arema FC vs Adhyaksa' (source kalshi, external_id KXIDNSLGAME-26SEP04AREADB); the event's two sides are 'Adhyaksa' and 'Arema FC'. Both of the market's named sides appear on the event, one on each side, so this is a name identity and not a token overlap."
+   ]
+  },
+  {
+   "market_id": 59700842,
+   "was": null,
+   "now": 15297435,
+   "on": "2026-09-06",
+   "by": "lane1b/069",
+   "raised_by": "#3564 step 2 re-capture",
+   "artifact_note": "non-sport-category;cup-ticker",
+   "cause": "WAS-VISIBLE-matcher-behaviour-changed",
+   "why": "The artifact recorded `correct_event_id: null` for a `d-mislabel` pair under the note 'non-sport-category;cup-ticker' — i.e. WHILE the Kalshi cup ticker was unmapped and the market's LLM category was deciding its sport. The event was already on the board on capture day (`events.created_at` 2026-08-30 07:59:56.472216) and was in the pair's own candidate list, so nothing about the world changed: mapping the ticker changed what our matcher could see. Event 15297435 is Renate @ Cittadella. This is the same correction, and the same reason, as the `non-sport-category;cup-ticker` amendments already in this file.",
+   "evidence": [
+    "Production census 2026-09-06 22:0xZ, re-runnable: the matcher's own parse (`extract_matchup_with_ticker_fallback`) and its own expanded search terms (`_expand_team_search_terms`), asked over the capture's own window [2026-08-29T18:00:00+00:00 .. 2026-09-08T06:00:00+00:00] with the per-market LIMIT raised from 20 to 200 so a rival hiding just past the cap would be visible. 1 events matched either side; EXACTLY ONE carries both 'Cittadella' and 'Renate' — event 15297435. There is no rival to prefer, so `null` cannot have meant 'it belongs on a different event'.",
+    "`SELECT id, created_at, commence_time, status FROM events WHERE id = 15297435` returns created_at 2026-08-30 07:59:56.472216, commence_time 2026-09-03 00:00:00+00:00, status 'scheduled' — the timestamp the 'was it reachable on 2026-09-02 20:00Z' claim above rests on.",
+    "The market is 'Cittadella vs Renate: Regulation Time Moneyline' (source kalshi, external_id KXSERIECCUPGAME-26SEP03CITACR); the event's two sides are 'Renate' and 'Cittadella'. Both of the market's named sides appear on the event, one on each side, so this is a name identity and not a token overlap."
+   ]
+  },
+  {
+   "market_id": 59700901,
+   "was": null,
+   "now": 15304737,
+   "on": "2026-09-06",
+   "by": "lane1b/069",
+   "raised_by": "#3564 step 2 re-capture",
+   "artifact_note": "global 2+-token check; titles batch-read",
+   "cause": "EVENT-INGESTED-AFTER-CAPTURE",
+   "why": "The artifact recorded `correct_event_id: null` for a `a-no-event` pair on 2026-09-02, and for that class null records that no event was reachable, not that the fixture does not exist. The game does exist: event 15304737 is Caracas FC @ Trujillanos FC. It could not have been adjudicated on capture day because our database did not hold it yet — `events.created_at` is 2026-09-04 18:21:54.243690, which is AFTER the 2026-09-02 20:00Z adjudication instant. The market was always about this fixture; only our ingest was behind. This corrects the record to the answer that was always true.",
+   "evidence": [
+    "Production census 2026-09-06 22:0xZ, re-runnable: the matcher's own parse (`extract_matchup_with_ticker_fallback`) and its own expanded search terms (`_expand_team_search_terms`), asked over the capture's own window [2026-08-28T18:00:00+00:00 .. 2026-09-07T06:00:00+00:00] with the per-market LIMIT raised from 20 to 200 so a rival hiding just past the cap would be visible. 5 events matched either side; EXACTLY ONE carries both 'Trujillanos' and 'Caracas' — event 15304737. There is no rival to prefer, so `null` cannot have meant 'it belongs on a different event'.",
+    "`SELECT id, created_at, commence_time, status FROM events WHERE id = 15304737` returns created_at 2026-09-04 18:21:54.243690, commence_time 2026-09-04 17:49:13+00:00, status 'suspended' — the timestamp the 'was it reachable on 2026-09-02 20:00Z' claim above rests on.",
+    "The market is 'Trujillanos vs Caracas' (source kalshi, external_id KXVENFUTVEGAME-26SEP02TRUCAR); the event's two sides are 'Caracas FC' and 'Trujillanos FC'. Both of the market's named sides appear on the event, one on each side, so this is a name identity and not a token overlap."
+   ]
+  },
+  {
+   "market_id": 59700902,
+   "was": null,
+   "now": 15304098,
+   "on": "2026-09-06",
+   "by": "lane1b/069",
+   "raised_by": "#3564 step 2 re-capture",
+   "artifact_note": "global 2+-token check; titles batch-read",
+   "cause": "EVENT-INGESTED-AFTER-CAPTURE",
+   "why": "The artifact recorded `correct_event_id: null` for a `a-no-event` pair on 2026-09-02, and for that class null records that no event was reachable, not that the fixture does not exist. The game does exist: event 15304098 is Deportivo Rayo Zuliano @ Deportivo Tachira. It could not have been adjudicated on capture day because our database did not hold it yet — `events.created_at` is 2026-09-03 19:52:05.366990, which is AFTER the 2026-09-02 20:00Z adjudication instant. The market was always about this fixture; only our ingest was behind. This corrects the record to the answer that was always true.",
+   "evidence": [
+    "Production census 2026-09-06 22:0xZ, re-runnable: the matcher's own parse (`extract_matchup_with_ticker_fallback`) and its own expanded search terms (`_expand_team_search_terms`), asked over the capture's own window [2026-08-28T18:00:00+00:00 .. 2026-09-07T06:00:00+00:00] with the per-market LIMIT raised from 20 to 200 so a rival hiding just past the cap would be visible. 3 events matched either side; EXACTLY ONE carries both 'Tachira' and 'Rayo Zuliano' — event 15304098. There is no rival to prefer, so `null` cannot have meant 'it belongs on a different event'.",
+    "`SELECT id, created_at, commence_time, status FROM events WHERE id = 15304098` returns created_at 2026-09-03 19:52:05.366990, commence_time 2026-09-03 01:49:38+00:00, status 'suspended' — the timestamp the 'was it reachable on 2026-09-02 20:00Z' claim above rests on.",
+    "The market is 'Tachira vs Rayo Zuliano' (source kalshi, external_id KXVENFUTVEGAME-26SEP02TACDRZ); the event's two sides are 'Deportivo Rayo Zuliano' and 'Deportivo Tachira'. Both of the market's named sides appear on the event, one on each side, so this is a name identity and not a token overlap."
+   ]
+  },
+  {
+   "market_id": 59700903,
+   "was": null,
+   "now": 15304706,
+   "on": "2026-09-06",
+   "by": "lane1b/069",
+   "raised_by": "#3564 step 2 re-capture",
+   "artifact_note": "global 2+-token check; titles batch-read",
+   "cause": "EVENT-INGESTED-AFTER-CAPTURE",
+   "why": "The artifact recorded `correct_event_id: null` for a `a-no-event` pair on 2026-09-02, and for that class null records that no event was reachable, not that the fixture does not exist. The game does exist: event 15304706 is Zamora FC @ Portuguesa FC. It could not have been adjudicated on capture day because our database did not hold it yet — `events.created_at` is 2026-09-04 17:23:56.061809, which is AFTER the 2026-09-02 20:00Z adjudication instant. The market was always about this fixture; only our ingest was behind. This corrects the record to the answer that was always true.",
+   "evidence": [
+    "Production census 2026-09-06 22:0xZ, re-runnable: the matcher's own parse (`extract_matchup_with_ticker_fallback`) and its own expanded search terms (`_expand_team_search_terms`), asked over the capture's own window [2026-08-28T18:00:00+00:00 .. 2026-09-07T06:00:00+00:00] with the per-market LIMIT raised from 20 to 200 so a rival hiding just past the cap would be visible. 4 events matched either side; EXACTLY ONE carries both 'Portuguesa' and 'Zamora' — event 15304706. There is no rival to prefer, so `null` cannot have meant 'it belongs on a different event'.",
+    "`SELECT id, created_at, commence_time, status FROM events WHERE id = 15304706` returns created_at 2026-09-04 17:23:56.061809, commence_time 2026-09-04 16:49:13+00:00, status 'suspended' — the timestamp the 'was it reachable on 2026-09-02 20:00Z' claim above rests on.",
+    "The market is 'Portuguesa vs Zamora' (source kalshi, external_id KXVENFUTVEGAME-26SEP02PORZAM); the event's two sides are 'Zamora FC' and 'Portuguesa FC'. Both of the market's named sides appear on the event, one on each side, so this is a name identity and not a token overlap."
+   ]
+  },
+  {
+   "market_id": 59700904,
+   "was": null,
+   "now": 15304099,
+   "on": "2026-09-06",
+   "by": "lane1b/069",
+   "raised_by": "#3564 step 2 re-capture",
+   "artifact_note": "global 2+-token check; titles batch-read",
+   "cause": "EVENT-INGESTED-AFTER-CAPTURE",
+   "why": "The artifact recorded `correct_event_id: null` for a `a-no-event` pair on 2026-09-02, and for that class null records that no event was reachable, not that the fixture does not exist. The game does exist: event 15304099 is Metropolitanos FC @ Monagas SC. It could not have been adjudicated on capture day because our database did not hold it yet — `events.created_at` is 2026-09-03 19:52:05.466096, which is AFTER the 2026-09-02 20:00Z adjudication instant. The market was always about this fixture; only our ingest was behind. This corrects the record to the answer that was always true.",
+   "evidence": [
+    "Production census 2026-09-06 22:0xZ, re-runnable: the matcher's own parse (`extract_matchup_with_ticker_fallback`) and its own expanded search terms (`_expand_team_search_terms`), asked over the capture's own window [2026-08-28T18:00:00+00:00 .. 2026-09-07T06:00:00+00:00] with the per-market LIMIT raised from 20 to 200 so a rival hiding just past the cap would be visible. 4 events matched either side; EXACTLY ONE carries both 'Monagas' and 'Metropolitanos' — event 15304099. There is no rival to prefer, so `null` cannot have meant 'it belongs on a different event'.",
+    "`SELECT id, created_at, commence_time, status FROM events WHERE id = 15304099` returns created_at 2026-09-03 19:52:05.466096, commence_time 2026-09-03 01:49:32+00:00, status 'suspended' — the timestamp the 'was it reachable on 2026-09-02 20:00Z' claim above rests on.",
+    "The market is 'Monagas vs Metropolitanos' (source kalshi, external_id KXVENFUTVEGAME-26SEP02MSCMET); the event's two sides are 'Metropolitanos FC' and 'Monagas SC'. Both of the market's named sides appear on the event, one on each side, so this is a name identity and not a token overlap."
+   ]
+  },
+  {
+   "market_id": 59700911,
+   "was": null,
+   "now": 15297341,
+   "on": "2026-09-06",
+   "by": "lane1b/069",
+   "raised_by": "#3564 step 2 re-capture",
+   "artifact_note": "non-sport-category;cup-ticker",
+   "cause": "WAS-VISIBLE-matcher-behaviour-changed",
+   "why": "The artifact recorded `correct_event_id: null` for a `d-mislabel` pair under the note 'non-sport-category;cup-ticker' — i.e. WHILE the Kalshi cup ticker was unmapped and the market's LLM category was deciding its sport. The event was already on the board on capture day (`events.created_at` 2026-08-30 07:59:56.472216) and was in the pair's own candidate list, so nothing about the world changed: mapping the ticker changed what our matcher could see. Event 15297341 is Vado @ Spezia. This is the same correction, and the same reason, as the `non-sport-category;cup-ticker` amendments already in this file.",
+   "evidence": [
+    "Production census 2026-09-06 22:0xZ, re-runnable: the matcher's own parse (`extract_matchup_with_ticker_fallback`) and its own expanded search terms (`_expand_team_search_terms`), asked over the capture's own window [2026-08-28T18:00:00+00:00 .. 2026-09-07T06:00:00+00:00] with the per-market LIMIT raised from 20 to 200 so a rival hiding just past the cap would be visible. 1 events matched either side; EXACTLY ONE carries both 'Spezia' and 'Vado' — event 15297341. There is no rival to prefer, so `null` cannot have meant 'it belongs on a different event'.",
+    "`SELECT id, created_at, commence_time, status FROM events WHERE id = 15297341` returns created_at 2026-08-30 07:59:56.472216, commence_time 2026-09-02 00:00:00+00:00, status 'scheduled' — the timestamp the 'was it reachable on 2026-09-02 20:00Z' claim above rests on.",
+    "The market is 'Spezia vs Vado: Regulation Time Moneyline' (source kalshi, external_id KXSERIECCUPGAME-26SEP02SPEVAD); the event's two sides are 'Vado' and 'Spezia'. Both of the market's named sides appear on the event, one on each side, so this is a name identity and not a token overlap."
+   ]
+  },
+  {
+   "market_id": 59700912,
+   "was": null,
+   "now": 15297350,
+   "on": "2026-09-06",
+   "by": "lane1b/069",
+   "raised_by": "#3564 step 2 re-capture",
+   "artifact_note": "non-sport-category;cup-ticker",
+   "cause": "WAS-VISIBLE-matcher-behaviour-changed",
+   "why": "The artifact recorded `correct_event_id: null` for a `d-mislabel` pair under the note 'non-sport-category;cup-ticker' — i.e. WHILE the Kalshi cup ticker was unmapped and the market's LLM category was deciding its sport. The event was already on the board on capture day (`events.created_at` 2026-08-30 07:59:56.472216) and was in the pair's own candidate list, so nothing about the world changed: mapping the ticker changed what our matcher could see. Event 15297350 is Pesaro @ Gubbio. This is the same correction, and the same reason, as the `non-sport-category;cup-ticker` amendments already in this file.",
+   "evidence": [
+    "Production census 2026-09-06 22:0xZ, re-runnable: the matcher's own parse (`extract_matchup_with_ticker_fallback`) and its own expanded search terms (`_expand_team_search_terms`), asked over the capture's own window [2026-08-28T18:00:00+00:00 .. 2026-09-07T06:00:00+00:00] with the per-market LIMIT raised from 20 to 200 so a rival hiding just past the cap would be visible. 2 events matched either side; EXACTLY ONE carries both 'Gubbio' and 'Pesaro' — event 15297350. There is no rival to prefer, so `null` cannot have meant 'it belongs on a different event'.",
+    "`SELECT id, created_at, commence_time, status FROM events WHERE id = 15297350` returns created_at 2026-08-30 07:59:56.472216, commence_time 2026-09-02 00:00:00+00:00, status 'scheduled' — the timestamp the 'was it reachable on 2026-09-02 20:00Z' claim above rests on.",
+    "The market is 'Gubbio vs Pesaro: Regulation Time Moneyline' (source kalshi, external_id KXSERIECCUPGAME-26SEP02GUBP98); the event's two sides are 'Pesaro' and 'Gubbio'. Both of the market's named sides appear on the event, one on each side, so this is a name identity and not a token overlap."
+   ]
+  },
+  {
+   "market_id": 59700913,
+   "was": null,
+   "now": 15297303,
+   "on": "2026-09-06",
+   "by": "lane1b/069",
+   "raised_by": "#3564 step 2 re-capture",
+   "artifact_note": "non-sport-category;cup-ticker",
+   "cause": "WAS-VISIBLE-matcher-behaviour-changed",
+   "why": "The artifact recorded `correct_event_id: null` for a `d-mislabel` pair under the note 'non-sport-category;cup-ticker' — i.e. WHILE the Kalshi cup ticker was unmapped and the market's LLM category was deciding its sport. The event was already on the board on capture day (`events.created_at` 2026-08-30 07:59:56.472216) and was in the pair's own candidate list, so nothing about the world changed: mapping the ticker changed what our matcher could see. Event 15297303 is Savoia @ Catania. This is the same correction, and the same reason, as the `non-sport-category;cup-ticker` amendments already in this file.",
+   "evidence": [
+    "Production census 2026-09-06 22:0xZ, re-runnable: the matcher's own parse (`extract_matchup_with_ticker_fallback`) and its own expanded search terms (`_expand_team_search_terms`), asked over the capture's own window [2026-08-28T18:00:00+00:00 .. 2026-09-07T06:00:00+00:00] with the per-market LIMIT raised from 20 to 200 so a rival hiding just past the cap would be visible. 1 events matched either side; EXACTLY ONE carries both 'Catania' and 'Savoia' — event 15297303. There is no rival to prefer, so `null` cannot have meant 'it belongs on a different event'.",
+    "`SELECT id, created_at, commence_time, status FROM events WHERE id = 15297303` returns created_at 2026-08-30 07:59:56.472216, commence_time 2026-09-02 00:00:00+00:00, status 'scheduled' — the timestamp the 'was it reachable on 2026-09-02 20:00Z' claim above rests on.",
+    "The market is 'Catania vs Savoia: Regulation Time Moneyline' (source kalshi, external_id KXSERIECCUPGAME-26SEP02CATSAV); the event's two sides are 'Savoia' and 'Catania'. Both of the market's named sides appear on the event, one on each side, so this is a name identity and not a token overlap."
+   ]
+  },
+  {
+   "market_id": 59700914,
+   "was": null,
+   "now": 15297463,
+   "on": "2026-09-06",
+   "by": "lane1b/069",
+   "raised_by": "#3564 step 2 re-capture",
+   "artifact_note": "non-sport-category;cup-ticker",
+   "cause": "WAS-VISIBLE-matcher-behaviour-changed",
+   "why": "The artifact recorded `correct_event_id: null` for a `d-mislabel` pair under the note 'non-sport-category;cup-ticker' — i.e. WHILE the Kalshi cup ticker was unmapped and the market's LLM category was deciding its sport. The event was already on the board on capture day (`events.created_at` 2026-08-30 07:59:56.472216) and was in the pair's own candidate list, so nothing about the world changed: mapping the ticker changed what our matcher could see. Event 15297463 is Sambenedettese @ Altamura. This is the same correction, and the same reason, as the `non-sport-category;cup-ticker` amendments already in this file.",
+   "evidence": [
+    "Production census 2026-09-06 22:0xZ, re-runnable: the matcher's own parse (`extract_matchup_with_ticker_fallback`) and its own expanded search terms (`_expand_team_search_terms`), asked over the capture's own window [2026-08-28T18:00:00+00:00 .. 2026-09-07T06:00:00+00:00] with the per-market LIMIT raised from 20 to 200 so a rival hiding just past the cap would be visible. 1 events matched either side; EXACTLY ONE carries both 'Altamura' and 'Sambenedettese' — event 15297463. There is no rival to prefer, so `null` cannot have meant 'it belongs on a different event'.",
+    "`SELECT id, created_at, commence_time, status FROM events WHERE id = 15297463` returns created_at 2026-08-30 07:59:56.472216, commence_time 2026-09-02 00:00:00+00:00, status 'scheduled' — the timestamp the 'was it reachable on 2026-09-02 20:00Z' claim above rests on.",
+    "The market is 'Altamura vs Sambenedettese: Regulation Time Moneyline' (source kalshi, external_id KXSERIECCUPGAME-26SEP02ALTSAM); the event's two sides are 'Sambenedettese' and 'Altamura'. Both of the market's named sides appear on the event, one on each side, so this is a name identity and not a token overlap."
+   ]
+  },
+  {
+   "market_id": 59700951,
+   "was": null,
+   "now": 15303047,
+   "on": "2026-09-06",
+   "by": "lane1b/069",
+   "raised_by": "#3564 step 2 re-capture",
+   "artifact_note": "global 2+-token check; titles batch-read",
+   "cause": "EVENT-INGESTED-AFTER-CAPTURE",
+   "why": "The artifact recorded `correct_event_id: null` for a `a-no-event` pair on 2026-09-02, and for that class null records that no event was reachable, not that the fixture does not exist. The game does exist: event 15303047 is Dovo Veenendaal @ FC Surhusterfean. It could not have been adjudicated on capture day because our database did not hold it yet — `events.created_at` is 2026-09-03 19:06:09.860864, which is AFTER the 2026-09-02 20:00Z adjudication instant. The market was always about this fixture; only our ingest was behind. This corrects the record to the answer that was always true.",
+   "evidence": [
+    "Production census 2026-09-06 22:0xZ, re-runnable: the matcher's own parse (`extract_matchup_with_ticker_fallback`) and its own expanded search terms (`_expand_team_search_terms`), asked over the capture's own window [2026-08-28T18:00:00+00:00 .. 2026-09-07T06:00:00+00:00] with the per-market LIMIT raised from 20 to 200 so a rival hiding just past the cap would be visible. 1 events matched either side; EXACTLY ONE carries both 'FC Surhusterfean' and 'Dovo Veenendaal' — event 15303047. There is no rival to prefer, so `null` cannot have meant 'it belongs on a different event'.",
+    "`SELECT id, created_at, commence_time, status FROM events WHERE id = 15303047` returns created_at 2026-09-03 19:06:09.860864, commence_time 2026-09-02 00:00:00+00:00, status 'scheduled' — the timestamp the 'was it reachable on 2026-09-02 20:00Z' claim above rests on.",
+    "The market is 'FC Surhusterfean vs Dovo Veenendaal: Regulation Time Moneyline' (source kalshi, external_id KXKNVBCUPGAME-26SEP02SURDVE); the event's two sides are 'Dovo Veenendaal' and 'FC Surhusterfean'. Both of the market's named sides appear on the event, one on each side, so this is a name identity and not a token overlap."
+   ]
+  },
+  {
+   "market_id": 59700958,
+   "was": null,
+   "now": 15303048,
+   "on": "2026-09-06",
+   "by": "lane1b/069",
+   "raised_by": "#3564 step 2 re-capture",
+   "artifact_note": "global 2+-token check; titles batch-read",
+   "cause": "EVENT-INGESTED-AFTER-CAPTURE",
+   "why": "The artifact recorded `correct_event_id: null` for a `a-no-event` pair on 2026-09-02, and for that class null records that no event was reachable, not that the fixture does not exist. The game does exist: event 15303048 is VV Bennekom @ FC Rijnvogels. It could not have been adjudicated on capture day because our database did not hold it yet — `events.created_at` is 2026-09-03 19:06:10.636468, which is AFTER the 2026-09-02 20:00Z adjudication instant. The market was always about this fixture; only our ingest was behind. This corrects the record to the answer that was always true.",
+   "evidence": [
+    "Production census 2026-09-06 22:0xZ, re-runnable: the matcher's own parse (`extract_matchup_with_ticker_fallback`) and its own expanded search terms (`_expand_team_search_terms`), asked over the capture's own window [2026-08-28T18:00:00+00:00 .. 2026-09-07T06:00:00+00:00] with the per-market LIMIT raised from 20 to 200 so a rival hiding just past the cap would be visible. 1 events matched either side; EXACTLY ONE carries both 'FC Rijnvogels' and 'VV Bennekom' — event 15303048. There is no rival to prefer, so `null` cannot have meant 'it belongs on a different event'.",
+    "`SELECT id, created_at, commence_time, status FROM events WHERE id = 15303048` returns created_at 2026-09-03 19:06:10.636468, commence_time 2026-09-02 00:00:00+00:00, status 'scheduled' — the timestamp the 'was it reachable on 2026-09-02 20:00Z' claim above rests on.",
+    "The market is 'FC Rijnvogels vs VV Bennekom: Regulation Time Moneyline' (source kalshi, external_id KXKNVBCUPGAME-26SEP02RIJBEN); the event's two sides are 'VV Bennekom' and 'FC Rijnvogels'. Both of the market's named sides appear on the event, one on each side, so this is a name identity and not a token overlap."
+   ]
+  },
+  {
+   "market_id": 59701006,
+   "was": null,
+   "now": 15297411,
+   "on": "2026-09-06",
+   "by": "lane1b/069",
+   "raised_by": "#3564 step 2 re-capture",
+   "artifact_note": "non-sport-category;cup-ticker",
+   "cause": "WAS-VISIBLE-matcher-behaviour-changed",
+   "why": "The artifact recorded `correct_event_id: null` for a `d-mislabel` pair under the note 'non-sport-category;cup-ticker' — i.e. WHILE the Kalshi cup ticker was unmapped and the market's LLM category was deciding its sport. The event was already on the board on capture day (`events.created_at` 2026-08-30 07:59:56.472216) and was in the pair's own candidate list, so nothing about the world changed: mapping the ticker changed what our matcher could see. Event 15297411 is Cosenza @ Sorrento. This is the same correction, and the same reason, as the `non-sport-category;cup-ticker` amendments already in this file.",
+   "evidence": [
+    "Production census 2026-09-06 22:0xZ, re-runnable: the matcher's own parse (`extract_matchup_with_ticker_fallback`) and its own expanded search terms (`_expand_team_search_terms`), asked over the capture's own window [2026-08-28T18:00:00+00:00 .. 2026-09-07T06:00:00+00:00] with the per-market LIMIT raised from 20 to 200 so a rival hiding just past the cap would be visible. 1 events matched either side; EXACTLY ONE carries both 'Sorrento' and 'Cosenza' — event 15297411. There is no rival to prefer, so `null` cannot have meant 'it belongs on a different event'.",
+    "`SELECT id, created_at, commence_time, status FROM events WHERE id = 15297411` returns created_at 2026-08-30 07:59:56.472216, commence_time 2026-09-02 00:00:00+00:00, status 'scheduled' — the timestamp the 'was it reachable on 2026-09-02 20:00Z' claim above rests on.",
+    "The market is 'Sorrento vs Cosenza: Regulation Time Moneyline' (source kalshi, external_id KXSERIECCUPGAME-26SEP02SORCOS); the event's two sides are 'Cosenza' and 'Sorrento'. Both of the market's named sides appear on the event, one on each side, so this is a name identity and not a token overlap."
+   ]
+  },
+  {
+   "market_id": 59701016,
+   "was": null,
+   "now": 15297335,
+   "on": "2026-09-06",
+   "by": "lane1b/069",
+   "raised_by": "#3564 step 2 re-capture",
+   "artifact_note": "non-sport-category;cup-ticker",
+   "cause": "WAS-VISIBLE-matcher-behaviour-changed",
+   "why": "The artifact recorded `correct_event_id: null` for a `d-mislabel` pair under the note 'non-sport-category;cup-ticker' — i.e. WHILE the Kalshi cup ticker was unmapped and the market's LLM category was deciding its sport. The event was already on the board on capture day (`events.created_at` 2026-08-30 07:59:56.472216) and was in the pair's own candidate list, so nothing about the world changed: mapping the ticker changed what our matcher could see. Event 15297335 is Livorno @ Novara. This is the same correction, and the same reason, as the `non-sport-category;cup-ticker` amendments already in this file.",
+   "evidence": [
+    "Production census 2026-09-06 22:0xZ, re-runnable: the matcher's own parse (`extract_matchup_with_ticker_fallback`) and its own expanded search terms (`_expand_team_search_terms`), asked over the capture's own window [2026-08-28T18:00:00+00:00 .. 2026-09-07T06:00:00+00:00] with the per-market LIMIT raised from 20 to 200 so a rival hiding just past the cap would be visible. 1 events matched either side; EXACTLY ONE carries both 'Novara' and 'Livorno' — event 15297335. There is no rival to prefer, so `null` cannot have meant 'it belongs on a different event'.",
+    "`SELECT id, created_at, commence_time, status FROM events WHERE id = 15297335` returns created_at 2026-08-30 07:59:56.472216, commence_time 2026-09-02 00:00:00+00:00, status 'scheduled' — the timestamp the 'was it reachable on 2026-09-02 20:00Z' claim above rests on.",
+    "The market is 'Novara vs Livorno: Regulation Time Moneyline' (source kalshi, external_id KXSERIECCUPGAME-26SEP02NOVLIV); the event's two sides are 'Livorno' and 'Novara'. Both of the market's named sides appear on the event, one on each side, so this is a name identity and not a token overlap."
+   ]
+  },
+  {
+   "market_id": 59705004,
+   "was": null,
+   "now": 15303033,
+   "on": "2026-09-06",
+   "by": "lane1b/069",
+   "raised_by": "#3564 step 2 re-capture",
+   "artifact_note": "global 2+-token check; titles batch-read",
+   "cause": "EVENT-INGESTED-AFTER-CAPTURE",
+   "why": "The artifact recorded `correct_event_id: null` for a `a-no-event` pair on 2026-09-02, and for that class null records that no event was reachable, not that the fixture does not exist. The game does exist: event 15303033 is Carabobo @ Rayo Zuliano. It could not have been adjudicated on capture day because our database did not hold it yet — `events.created_at` is 2026-09-03 19:06:05.931078, which is AFTER the 2026-09-02 20:00Z adjudication instant. The market was always about this fixture; only our ingest was behind. This corrects the record to the answer that was always true.",
+   "evidence": [
+    "Production census 2026-09-06 22:0xZ, re-runnable: the matcher's own parse (`extract_matchup_with_ticker_fallback`) and its own expanded search terms (`_expand_team_search_terms`), asked over the capture's own window [2026-08-25T18:00:00+00:00 .. 2026-09-04T06:00:00+00:00] with the per-market LIMIT raised from 20 to 200 so a rival hiding just past the cap would be visible. 2 events matched either side; EXACTLY ONE carries both 'Rayo Zuliano' and 'Carabobo' — event 15303033. There is no rival to prefer, so `null` cannot have meant 'it belongs on a different event'.",
+    "`SELECT id, created_at, commence_time, status FROM events WHERE id = 15303033` returns created_at 2026-09-03 19:06:05.931078, commence_time 2026-09-03 00:00:00+00:00, status 'scheduled' — the timestamp the 'was it reachable on 2026-09-02 20:00Z' claim above rests on.",
+    "The market is 'Rayo Zuliano vs Carabobo' (source kalshi, external_id KXVENFUTVEGAME-26AUG30DRZCFC); the event's two sides are 'Carabobo' and 'Rayo Zuliano'. Both of the market's named sides appear on the event, one on each side, so this is a name identity and not a token overlap."
+   ]
+  },
+  {
+   "market_id": 59723427,
+   "was": null,
+   "now": 15303351,
+   "on": "2026-09-06",
+   "by": "lane1b/069",
+   "raised_by": "#3564 step 2 re-capture",
+   "artifact_note": "no parent in window",
+   "cause": "EVENT-INGESTED-AFTER-CAPTURE",
+   "why": "The artifact recorded `correct_event_id: null` for a `e-prop` pair on 2026-09-02, and for that class null records that no event was reachable, not that the fixture does not exist. The game does exist: event 15303351 is Leeds United FC @ Chelsea FC. It could not have been adjudicated on capture day because our database did not hold it yet — `events.created_at` is 2026-09-03 19:07:50.046579, which is AFTER the 2026-09-02 20:00Z adjudication instant. The market was always about this fixture; only our ingest was behind. This corrects the record to the answer that was always true.",
+   "evidence": [
+    "Production census 2026-09-06 22:0xZ, re-runnable: the matcher's own parse (`extract_matchup_with_ticker_fallback`) and its own expanded search terms (`_expand_team_search_terms`), asked over the capture's own window [2026-08-23T04:00:59+00:00 .. 2026-09-04T04:00:59+00:00] with the per-market LIMIT raised from 20 to 200 so a rival hiding just past the cap would be visible. 36 events matched either side; EXACTLY ONE carries both 'Chelsea FC' and 'Leeds United FC' — event 15303351. There is no rival to prefer, so `null` cannot have meant 'it belongs on a different event'.",
+    "`SELECT id, created_at, commence_time, status FROM events WHERE id = 15303351` returns created_at 2026-09-03 19:07:50.046579, commence_time 2026-08-29 18:30:21+00:00, status 'suspended' — the timestamp the 'was it reachable on 2026-09-02 20:00Z' claim above rests on.",
+    "The market is 'Chelsea FC vs. Leeds United FC - Exact Score' (source polymarket, external_id 929036); the event's two sides are 'Leeds United FC' and 'Chelsea FC'. Both of the market's named sides appear on the event, one on each side, so this is a name identity and not a token overlap."
+   ]
+  },
+  {
+   "market_id": 59723428,
+   "was": null,
+   "now": 15303350,
+   "on": "2026-09-06",
+   "by": "lane1b/069",
+   "raised_by": "#3564 step 2 re-capture",
+   "artifact_note": "no parent in window",
+   "cause": "EVENT-INGESTED-AFTER-CAPTURE",
+   "why": "The artifact recorded `correct_event_id: null` for a `e-prop` pair on 2026-09-02, and for that class null records that no event was reachable, not that the fixture does not exist. The game does exist: event 15303350 is Wolverhampton Wanderers FC @ Everton FC. It could not have been adjudicated on capture day because our database did not hold it yet — `events.created_at` is 2026-09-03 19:07:50.013466, which is AFTER the 2026-09-02 20:00Z adjudication instant. The market was always about this fixture; only our ingest was behind. This corrects the record to the answer that was always true.",
+   "evidence": [
+    "Production census 2026-09-06 22:0xZ, re-runnable: the matcher's own parse (`extract_matchup_with_ticker_fallback`) and its own expanded search terms (`_expand_team_search_terms`), asked over the capture's own window [2026-08-23T04:00:58+00:00 .. 2026-09-04T04:00:58+00:00] with the per-market LIMIT raised from 20 to 200 so a rival hiding just past the cap would be visible. 35 events matched either side; EXACTLY ONE carries both 'Everton FC' and 'Wolverhampton Wanderers FC' — event 15303350. There is no rival to prefer, so `null` cannot have meant 'it belongs on a different event'.",
+    "`SELECT id, created_at, commence_time, status FROM events WHERE id = 15303350` returns created_at 2026-09-03 19:07:50.013466, commence_time 2026-08-29 18:30:28+00:00, status 'suspended' — the timestamp the 'was it reachable on 2026-09-02 20:00Z' claim above rests on.",
+    "The market is 'Everton FC vs. Wolverhampton Wanderers FC - Exact Score' (source polymarket, external_id 929032); the event's two sides are 'Wolverhampton Wanderers FC' and 'Everton FC'. Both of the market's named sides appear on the event, one on each side, so this is a name identity and not a token overlap."
+   ]
+  },
+  {
+   "market_id": 59723436,
+   "was": null,
+   "now": 15303346,
+   "on": "2026-09-06",
+   "by": "lane1b/069",
+   "raised_by": "#3564 step 2 re-capture",
+   "artifact_note": "no parent in window",
+   "cause": "EVENT-INGESTED-AFTER-CAPTURE",
+   "why": "The artifact recorded `correct_event_id: null` for a `e-prop` pair on 2026-09-02, and for that class null records that no event was reachable, not that the fixture does not exist. The game does exist: event 15303346 is Hull City AFC @ Sunderland AFC. It could not have been adjudicated on capture day because our database did not hold it yet — `events.created_at` is 2026-09-03 19:07:49.793034, which is AFTER the 2026-09-02 20:00Z adjudication instant. The market was always about this fixture; only our ingest was behind. This corrects the record to the answer that was always true.",
+   "evidence": [
+    "Production census 2026-09-06 22:0xZ, re-runnable: the matcher's own parse (`extract_matchup_with_ticker_fallback`) and its own expanded search terms (`_expand_team_search_terms`), asked over the capture's own window [2026-08-23T04:00:51+00:00 .. 2026-09-04T04:00:51+00:00] with the per-market LIMIT raised from 20 to 200 so a rival hiding just past the cap would be visible. 36 events matched either side; EXACTLY ONE carries both 'Sunderland AFC' and 'Hull City AFC' — event 15303346. There is no rival to prefer, so `null` cannot have meant 'it belongs on a different event'.",
+    "`SELECT id, created_at, commence_time, status FROM events WHERE id = 15303346` returns created_at 2026-09-03 19:07:49.793034, commence_time 2026-08-29 18:31:09+00:00, status 'suspended' — the timestamp the 'was it reachable on 2026-09-02 20:00Z' claim above rests on.",
+    "The market is 'Sunderland AFC vs. Hull City AFC - Exact Score' (source polymarket, external_id 929005); the event's two sides are 'Hull City AFC' and 'Sunderland AFC'. Both of the market's named sides appear on the event, one on each side, so this is a name identity and not a token overlap."
+   ]
+  },
+  {
+   "market_id": 59723437,
+   "was": null,
+   "now": 15303082,
+   "on": "2026-09-06",
+   "by": "lane1b/069",
+   "raised_by": "#3564 step 2 re-capture",
+   "artifact_note": "no parent in window",
+   "cause": "EVENT-INGESTED-AFTER-CAPTURE",
+   "why": "The artifact recorded `correct_event_id: null` for a `e-prop` pair on 2026-09-02, and for that class null records that no event was reachable, not that the fixture does not exist. The game does exist: event 15303082 is Hannover 96 @ 1. FC Nürnberg. It could not have been adjudicated on capture day because our database did not hold it yet — `events.created_at` is 2026-09-03 19:06:44.685418, which is AFTER the 2026-09-02 20:00Z adjudication instant. The market was always about this fixture; only our ingest was behind. This corrects the record to the answer that was always true.",
+   "evidence": [
+    "Production census 2026-09-06 22:0xZ, re-runnable: the matcher's own parse (`extract_matchup_with_ticker_fallback`) and its own expanded search terms (`_expand_team_search_terms`), asked over the capture's own window [2026-08-23T04:00:47+00:00 .. 2026-09-04T04:00:47+00:00] with the per-market LIMIT raised from 20 to 200 so a rival hiding just past the cap would be visible. 32 events matched either side; EXACTLY ONE carries both '1. FC Nürnberg' and 'Hannover 96' — event 15303082. There is no rival to prefer, so `null` cannot have meant 'it belongs on a different event'.",
+    "`SELECT id, created_at, commence_time, status FROM events WHERE id = 15303082` returns created_at 2026-09-03 19:06:44.685418, commence_time 2026-08-29 04:00:47+00:00, status 'suspended' — the timestamp the 'was it reachable on 2026-09-02 20:00Z' claim above rests on.",
+    "The market is '1. FC Nürnberg vs. Hannover 96 - Exact Score' (source polymarket, external_id 929007); the event's two sides are 'Hannover 96' and '1. FC Nürnberg'. Both of the market's named sides appear on the event, one on each side, so this is a name identity and not a token overlap."
+   ]
+  },
+  {
+   "market_id": 59723438,
+   "was": null,
+   "now": 15303083,
+   "on": "2026-09-06",
+   "by": "lane1b/069",
+   "raised_by": "#3564 step 2 re-capture",
+   "artifact_note": "no parent in window",
+   "cause": "EVENT-INGESTED-AFTER-CAPTURE",
+   "why": "The artifact recorded `correct_event_id: null` for a `e-prop` pair on 2026-09-02, and for that class null records that no event was reachable, not that the fixture does not exist. The game does exist: event 15303083 is DSC Arminia Bielefeld @ SV Darmstadt 98. It could not have been adjudicated on capture day because our database did not hold it yet — `events.created_at` is 2026-09-03 19:06:44.758449, which is AFTER the 2026-09-02 20:00Z adjudication instant. The market was always about this fixture; only our ingest was behind. This corrects the record to the answer that was always true.",
+   "evidence": [
+    "Production census 2026-09-06 22:0xZ, re-runnable: the matcher's own parse (`extract_matchup_with_ticker_fallback`) and its own expanded search terms (`_expand_team_search_terms`), asked over the capture's own window [2026-08-23T04:00:46+00:00 .. 2026-09-04T04:00:46+00:00] with the per-market LIMIT raised from 20 to 200 so a rival hiding just past the cap would be visible. 32 events matched either side; EXACTLY ONE carries both 'SV Darmstadt 98' and 'DSC Arminia Bielefeld' — event 15303083. There is no rival to prefer, so `null` cannot have meant 'it belongs on a different event'.",
+    "`SELECT id, created_at, commence_time, status FROM events WHERE id = 15303083` returns created_at 2026-09-03 19:06:44.758449, commence_time 2026-08-29 04:00:46+00:00, status 'suspended' — the timestamp the 'was it reachable on 2026-09-02 20:00Z' claim above rests on.",
+    "The market is 'SV Darmstadt 98 vs. DSC Arminia Bielefeld - Exact Score' (source polymarket, external_id 928996); the event's two sides are 'DSC Arminia Bielefeld' and 'SV Darmstadt 98'. Both of the market's named sides appear on the event, one on each side, so this is a name identity and not a token overlap."
+   ]
+  },
+  {
+   "market_id": 59723439,
+   "was": null,
+   "now": 15303084,
+   "on": "2026-09-06",
+   "by": "lane1b/069",
+   "raised_by": "#3564 step 2 re-capture",
+   "artifact_note": "no parent in window",
+   "cause": "EVENT-INGESTED-AFTER-CAPTURE",
+   "why": "The artifact recorded `correct_event_id: null` for a `e-prop` pair on 2026-09-02, and for that class null records that no event was reachable, not that the fixture does not exist. The game does exist: event 15303084 is Wrexham AFC @ West Ham United FC. It could not have been adjudicated on capture day because our database did not hold it yet — `events.created_at` is 2026-09-03 19:06:44.824379, which is AFTER the 2026-09-02 20:00Z adjudication instant. The market was always about this fixture; only our ingest was behind. This corrects the record to the answer that was always true.",
+   "evidence": [
+    "Production census 2026-09-06 22:0xZ, re-runnable: the matcher's own parse (`extract_matchup_with_ticker_fallback`) and its own expanded search terms (`_expand_team_search_terms`), asked over the capture's own window [2026-08-23T04:00:45+00:00 .. 2026-09-04T04:00:45+00:00] with the per-market LIMIT raised from 20 to 200 so a rival hiding just past the cap would be visible. 35 events matched either side; EXACTLY ONE carries both 'West Ham United FC' and 'Wrexham AFC' — event 15303084. There is no rival to prefer, so `null` cannot have meant 'it belongs on a different event'.",
+    "`SELECT id, created_at, commence_time, status FROM events WHERE id = 15303084` returns created_at 2026-09-03 19:06:44.824379, commence_time 2026-08-29 04:00:45+00:00, status 'suspended' — the timestamp the 'was it reachable on 2026-09-02 20:00Z' claim above rests on.",
+    "The market is 'West Ham United FC vs. Wrexham AFC - Exact Score' (source polymarket, external_id 929019); the event's two sides are 'Wrexham AFC' and 'West Ham United FC'. Both of the market's named sides appear on the event, one on each side, so this is a name identity and not a token overlap."
+   ]
+  },
+  {
+   "market_id": 59723440,
+   "was": null,
+   "now": 15303347,
+   "on": "2026-09-06",
+   "by": "lane1b/069",
+   "raised_by": "#3564 step 2 re-capture",
+   "artifact_note": "no parent in window",
+   "cause": "EVENT-INGESTED-AFTER-CAPTURE",
+   "why": "The artifact recorded `correct_event_id: null` for a `e-prop` pair on 2026-09-02, and for that class null records that no event was reachable, not that the fixture does not exist. The game does exist: event 15303347 is Middlesbrough FC @ Crystal Palace FC. It could not have been adjudicated on capture day because our database did not hold it yet — `events.created_at` is 2026-09-03 19:07:49.829879, which is AFTER the 2026-09-02 20:00Z adjudication instant. The market was always about this fixture; only our ingest was behind. This corrects the record to the answer that was always true.",
+   "evidence": [
+    "Production census 2026-09-06 22:0xZ, re-runnable: the matcher's own parse (`extract_matchup_with_ticker_fallback`) and its own expanded search terms (`_expand_team_search_terms`), asked over the capture's own window [2026-08-23T04:00:45+00:00 .. 2026-09-04T04:00:45+00:00] with the per-market LIMIT raised from 20 to 200 so a rival hiding just past the cap would be visible. 34 events matched either side; EXACTLY ONE carries both 'Crystal Palace FC' and 'Middlesbrough FC' — event 15303347. There is no rival to prefer, so `null` cannot have meant 'it belongs on a different event'.",
+    "`SELECT id, created_at, commence_time, status FROM events WHERE id = 15303347` returns created_at 2026-09-03 19:07:49.829879, commence_time 2026-08-29 18:30:56+00:00, status 'suspended' — the timestamp the 'was it reachable on 2026-09-02 20:00Z' claim above rests on.",
+    "The market is 'Crystal Palace FC vs. Middlesbrough FC - Exact Score' (source polymarket, external_id 929012); the event's two sides are 'Middlesbrough FC' and 'Crystal Palace FC'. Both of the market's named sides appear on the event, one on each side, so this is a name identity and not a token overlap."
+   ]
+  },
+  {
+   "market_id": 59723444,
+   "was": null,
+   "now": 15303348,
+   "on": "2026-09-06",
+   "by": "lane1b/069",
+   "raised_by": "#3564 step 2 re-capture",
+   "artifact_note": "no parent in window",
+   "cause": "EVENT-INGESTED-AFTER-CAPTURE",
+   "why": "The artifact recorded `correct_event_id: null` for a `e-prop` pair on 2026-09-02, and for that class null records that no event was reachable, not that the fixture does not exist. The game does exist: event 15303348 is Bradford City AFC @ Leyton Orient FC. It could not have been adjudicated on capture day because our database did not hold it yet — `events.created_at` is 2026-09-03 19:07:49.872806, which is AFTER the 2026-09-02 20:00Z adjudication instant. The market was always about this fixture; only our ingest was behind. This corrects the record to the answer that was always true.",
+   "evidence": [
+    "Production census 2026-09-06 22:0xZ, re-runnable: the matcher's own parse (`extract_matchup_with_ticker_fallback`) and its own expanded search terms (`_expand_team_search_terms`), asked over the capture's own window [2026-08-23T04:00:43+00:00 .. 2026-09-04T04:00:43+00:00] with the per-market LIMIT raised from 20 to 200 so a rival hiding just past the cap would be visible. 32 events matched either side; EXACTLY ONE carries both 'Leyton Orient FC' and 'Bradford City AFC' — event 15303348. There is no rival to prefer, so `null` cannot have meant 'it belongs on a different event'.",
+    "`SELECT id, created_at, commence_time, status FROM events WHERE id = 15303348` returns created_at 2026-09-03 19:07:49.872806, commence_time 2026-08-29 18:30:48+00:00, status 'suspended' — the timestamp the 'was it reachable on 2026-09-02 20:00Z' claim above rests on.",
+    "The market is 'Leyton Orient FC vs. Bradford City AFC - Exact Score' (source polymarket, external_id 929018); the event's two sides are 'Bradford City AFC' and 'Leyton Orient FC'. Both of the market's named sides appear on the event, one on each side, so this is a name identity and not a token overlap."
+   ]
+  },
+  {
+   "market_id": 59737425,
+   "was": null,
+   "now": 15303356,
+   "on": "2026-09-06",
+   "by": "lane1b/069",
+   "raised_by": "#3564 step 2 re-capture",
+   "artifact_note": "no parent in window",
+   "cause": "EVENT-INGESTED-AFTER-CAPTURE",
+   "why": "The artifact recorded `correct_event_id: null` for a `e-prop` pair on 2026-09-02, and for that class null records that no event was reachable, not that the fixture does not exist. The game does exist: event 15303356 is US Boulogne Côte d'Opale @ Clermont Foot 63. It could not have been adjudicated on capture day because our database did not hold it yet — `events.created_at` is 2026-09-03 19:07:56.146920, which is AFTER the 2026-09-02 20:00Z adjudication instant. The market was always about this fixture; only our ingest was behind. This corrects the record to the answer that was always true.",
+   "evidence": [
+    "Production census 2026-09-06 22:0xZ, re-runnable: the matcher's own parse (`extract_matchup_with_ticker_fallback`) and its own expanded search terms (`_expand_team_search_terms`), asked over the capture's own window [2026-08-23T07:00:45+00:00 .. 2026-09-04T07:00:45+00:00] with the per-market LIMIT raised from 20 to 200 so a rival hiding just past the cap would be visible. 30 events matched either side; EXACTLY ONE carries both 'Clermont Foot 63' and \"US Boulogne Côte d'Opale\" — event 15303356. There is no rival to prefer, so `null` cannot have meant 'it belongs on a different event'.",
+    "`SELECT id, created_at, commence_time, status FROM events WHERE id = 15303356` returns created_at 2026-09-03 19:07:56.146920, commence_time 2026-08-29 20:00:25+00:00, status 'suspended' — the timestamp the 'was it reachable on 2026-09-02 20:00Z' claim above rests on.",
+    "The market is \"Clermont Foot 63 vs. US Boulogne Côte d'Opale - Exact Score\" (source polymarket, external_id 929620); the event's two sides are \"US Boulogne Côte d'Opale\" and 'Clermont Foot 63'. Both of the market's named sides appear on the event, one on each side, so this is a name identity and not a token overlap."
+   ]
+  },
+  {
+   "market_id": 59737426,
+   "was": null,
+   "now": 15303355,
+   "on": "2026-09-06",
+   "by": "lane1b/069",
+   "raised_by": "#3564 step 2 re-capture",
+   "artifact_note": "no parent in window",
+   "cause": "EVENT-INGESTED-AFTER-CAPTURE",
+   "why": "The artifact recorded `correct_event_id: null` for a `e-prop` pair on 2026-09-02, and for that class null records that no event was reachable, not that the fixture does not exist. The game does exist: event 15303355 is Grenoble Foot 38 @ Rodez Aveyron Football. It could not have been adjudicated on capture day because our database did not hold it yet — `events.created_at` is 2026-09-03 19:07:56.109536, which is AFTER the 2026-09-02 20:00Z adjudication instant. The market was always about this fixture; only our ingest was behind. This corrects the record to the answer that was always true.",
+   "evidence": [
+    "Production census 2026-09-06 22:0xZ, re-runnable: the matcher's own parse (`extract_matchup_with_ticker_fallback`) and its own expanded search terms (`_expand_team_search_terms`), asked over the capture's own window [2026-08-23T07:00:41+00:00 .. 2026-09-04T07:00:41+00:00] with the per-market LIMIT raised from 20 to 200 so a rival hiding just past the cap would be visible. 33 events matched either side; EXACTLY ONE carries both 'Rodez Aveyron Football' and 'Grenoble Foot 38' — event 15303355. There is no rival to prefer, so `null` cannot have meant 'it belongs on a different event'.",
+    "`SELECT id, created_at, commence_time, status FROM events WHERE id = 15303355` returns created_at 2026-09-03 19:07:56.109536, commence_time 2026-08-29 20:00:33+00:00, status 'suspended' — the timestamp the 'was it reachable on 2026-09-02 20:00Z' claim above rests on.",
+    "The market is 'Rodez Aveyron Football vs. Grenoble Foot 38 - Exact Score' (source polymarket, external_id 929616); the event's two sides are 'Grenoble Foot 38' and 'Rodez Aveyron Football'. Both of the market's named sides appear on the event, one on each side, so this is a name identity and not a token overlap."
+   ]
+  },
+  {
+   "market_id": 59737431,
+   "was": null,
+   "now": 15303354,
+   "on": "2026-09-06",
+   "by": "lane1b/069",
+   "raised_by": "#3564 step 2 re-capture",
+   "artifact_note": "no parent in window",
+   "cause": "EVENT-INGESTED-AFTER-CAPTURE",
+   "why": "The artifact recorded `correct_event_id: null` for a `e-prop` pair on 2026-09-02, and for that class null records that no event was reachable, not that the fixture does not exist. The game does exist: event 15303354 is Pau FC @ Montpellier HSC. It could not have been adjudicated on capture day because our database did not hold it yet — `events.created_at` is 2026-09-03 19:07:56.078620, which is AFTER the 2026-09-02 20:00Z adjudication instant. The market was always about this fixture; only our ingest was behind. This corrects the record to the answer that was always true.",
+   "evidence": [
+    "Production census 2026-09-06 22:0xZ, re-runnable: the matcher's own parse (`extract_matchup_with_ticker_fallback`) and its own expanded search terms (`_expand_team_search_terms`), asked over the capture's own window [2026-08-23T07:00:35+00:00 .. 2026-09-04T07:00:35+00:00] with the per-market LIMIT raised from 20 to 200 so a rival hiding just past the cap would be visible. 31 events matched either side; EXACTLY ONE carries both 'Montpellier HSC' and 'Pau FC' — event 15303354. There is no rival to prefer, so `null` cannot have meant 'it belongs on a different event'.",
+    "`SELECT id, created_at, commence_time, status FROM events WHERE id = 15303354` returns created_at 2026-09-03 19:07:56.078620, commence_time 2026-08-29 20:00:41+00:00, status 'suspended' — the timestamp the 'was it reachable on 2026-09-02 20:00Z' claim above rests on.",
+    "The market is 'Montpellier HSC vs. Pau FC - Exact Score' (source polymarket, external_id 929612); the event's two sides are 'Pau FC' and 'Montpellier HSC'. Both of the market's named sides appear on the event, one on each side, so this is a name identity and not a token overlap."
+   ]
+  },
+  {
+   "market_id": 59737435,
+   "was": null,
+   "now": 15303353,
+   "on": "2026-09-06",
+   "by": "lane1b/069",
+   "raised_by": "#3564 step 2 re-capture",
+   "artifact_note": "no parent in window",
+   "cause": "EVENT-INGESTED-AFTER-CAPTURE",
+   "why": "The artifact recorded `correct_event_id: null` for a `e-prop` pair on 2026-09-02, and for that class null records that no event was reachable, not that the fixture does not exist. The game does exist: event 15303353 is Stade Lavallois Mayenne FC @ Dijon Football Côte d'Or. It could not have been adjudicated on capture day because our database did not hold it yet — `events.created_at` is 2026-09-03 19:07:56.043825, which is AFTER the 2026-09-02 20:00Z adjudication instant. The market was always about this fixture; only our ingest was behind. This corrects the record to the answer that was always true.",
+   "evidence": [
+    "Production census 2026-09-06 22:0xZ, re-runnable: the matcher's own parse (`extract_matchup_with_ticker_fallback`) and its own expanded search terms (`_expand_team_search_terms`), asked over the capture's own window [2026-08-23T07:00:33+00:00 .. 2026-09-04T07:00:33+00:00] with the per-market LIMIT raised from 20 to 200 so a rival hiding just past the cap would be visible. 30 events matched either side; EXACTLY ONE carries both \"Dijon Football Côte d'Or\" and 'Stade Lavallois Mayenne FC' — event 15303353. There is no rival to prefer, so `null` cannot have meant 'it belongs on a different event'.",
+    "`SELECT id, created_at, commence_time, status FROM events WHERE id = 15303353` returns created_at 2026-09-03 19:07:56.043825, commence_time 2026-08-29 20:00:47+00:00, status 'suspended' — the timestamp the 'was it reachable on 2026-09-02 20:00Z' claim above rests on.",
+    "The market is \"Dijon Football Côte d'Or vs. Stade Lavallois Mayenne FC - Exact Score\" (source polymarket, external_id 929608); the event's two sides are 'Stade Lavallois Mayenne FC' and \"Dijon Football Côte d'Or\". Both of the market's named sides appear on the event, one on each side, so this is a name identity and not a token overlap."
+   ]
+  },
+  {
+   "market_id": 59738399,
+   "was": null,
+   "now": 15297083,
+   "on": "2026-09-06",
+   "by": "lane1b/069",
+   "raised_by": "#3564 step 2 re-capture",
+   "artifact_note": "no parent in window",
+   "cause": "HIDDEN-BY-THE-10-CAP",
+   "why": "The artifact recorded `correct_event_id: null` for a `e-prop` pair on 2026-09-02. The event existed at that moment — `events.created_at` is 2026-08-30 05:00:47.492520, BEFORE the 20:00Z adjudication — but the capture script kept only `MAX_CANDIDATES = 10` while production's own matcher takes LIMIT 20, and this market's candidate list was AT that cap with 10 rows. Event 15297083 (SS Arezzo @ Empoli FC) was evicted by our own truncation, so the adjudicator was asked to choose from a list the correct answer had been removed from. That is #3564's defect demonstrated on a single pair, not a matcher error.",
+   "evidence": [
+    "Production census 2026-09-06 22:0xZ, re-runnable: the matcher's own parse (`extract_matchup_with_ticker_fallback`) and its own expanded search terms (`_expand_team_search_terms`), asked over the capture's own window [2026-08-23T08:00:37+00:00 .. 2026-09-04T08:00:37+00:00] with the per-market LIMIT raised from 20 to 200 so a rival hiding just past the cap would be visible. 31 events matched either side; EXACTLY ONE carries both 'Empoli FC' and 'SS Arezzo' — event 15297083. There is no rival to prefer, so `null` cannot have meant 'it belongs on a different event'.",
+    "`SELECT id, created_at, commence_time, status FROM events WHERE id = 15297083` returns created_at 2026-08-30 05:00:47.492520, commence_time 2026-08-29 21:00:40+00:00, status 'closed' — the timestamp the 'was it reachable on 2026-09-02 20:00Z' claim above rests on.",
+    "The market is 'Empoli FC vs. SS Arezzo - Exact Score' (source polymarket, external_id 929798); the event's two sides are 'SS Arezzo' and 'Empoli FC'. Both of the market's named sides appear on the event, one on each side, so this is a name identity and not a token overlap."
+   ]
+  },
+  {
+   "market_id": 59745821,
+   "was": null,
+   "now": 15303173,
+   "on": "2026-09-06",
+   "by": "lane1b/069",
+   "raised_by": "#3564 step 2 re-capture",
+   "artifact_note": "no parent in window",
+   "cause": "EVENT-INGESTED-AFTER-CAPTURE",
+   "why": "The artifact recorded `correct_event_id: null` for a `e-prop` pair on 2026-09-02, and for that class null records that no event was reachable, not that the fixture does not exist. The game does exist: event 15303173 is CSD Mixco @ Deportivo San Pedro. It could not have been adjudicated on capture day because our database did not hold it yet — `events.created_at` is 2026-09-03 19:07:06.813756, which is AFTER the 2026-09-02 20:00Z adjudication instant. The market was always about this fixture; only our ingest was behind. This corrects the record to the answer that was always true.",
+   "evidence": [
+    "Production census 2026-09-06 22:0xZ, re-runnable: the matcher's own parse (`extract_matchup_with_ticker_fallback`) and its own expanded search terms (`_expand_team_search_terms`), asked over the capture's own window [2026-08-23T10:44:54+00:00 .. 2026-09-04T10:44:54+00:00] with the per-market LIMIT raised from 20 to 200 so a rival hiding just past the cap would be visible. 11 events matched either side; EXACTLY ONE carries both 'Deportivo San Pedro' and 'CSD Mixco' — event 15303173. There is no rival to prefer, so `null` cannot have meant 'it belongs on a different event'.",
+    "`SELECT id, created_at, commence_time, status FROM events WHERE id = 15303173` returns created_at 2026-09-03 19:07:06.813756, commence_time 2026-08-29 10:46:07+00:00, status 'suspended' — the timestamp the 'was it reachable on 2026-09-02 20:00Z' claim above rests on.",
+    "The market is 'Deportivo San Pedro vs. CSD Mixco - Total Corners' (source polymarket, external_id 930285); the event's two sides are 'CSD Mixco' and 'Deportivo San Pedro'. Both of the market's named sides appear on the event, one on each side, so this is a name identity and not a token overlap."
+   ]
+  },
+  {
+   "market_id": 59751103,
+   "was": null,
+   "now": 15297251,
+   "on": "2026-09-06",
+   "by": "lane1b/069",
+   "raised_by": "#3564 step 2 re-capture",
+   "artifact_note": "no parent in window",
+   "cause": "HIDDEN-BY-THE-10-CAP",
+   "why": "The artifact recorded `correct_event_id: null` for a `e-prop` pair on 2026-09-02. The event existed at that moment — `events.created_at` is 2026-08-30 07:40:49.342274, BEFORE the 20:00Z adjudication — but the capture script kept only `MAX_CANDIDATES = 10` while production's own matcher takes LIMIT 20, and this market's candidate list was AT that cap with 10 rows. Event 15297251 (Glasgow University FC @ St Cadoc's YC) was evicted by our own truncation, so the adjudicator was asked to choose from a list the correct answer had been removed from. That is #3564's defect demonstrated on a single pair, not a matcher error.",
+   "evidence": [
+    "Production census 2026-09-06 22:0xZ, re-runnable: the matcher's own parse (`extract_matchup_with_ticker_fallback`) and its own expanded search terms (`_expand_team_search_terms`), asked over the capture's own window [2026-08-23T12:45:27+00:00 .. 2026-09-04T12:45:27+00:00] with the per-market LIMIT raised from 20 to 200 so a rival hiding just past the cap would be visible. 30 events matched either side; EXACTLY ONE carries both \"St Cadoc's YC\" and 'Glasgow University FC' — event 15297251. There is no rival to prefer, so `null` cannot have meant 'it belongs on a different event'.",
+    "`SELECT id, created_at, commence_time, status FROM events WHERE id = 15297251` returns created_at 2026-08-30 07:40:49.342274, commence_time 2026-08-30 06:15:21+00:00, status 'closed' — the timestamp the 'was it reachable on 2026-09-02 20:00Z' claim above rests on.",
+    "The market is \"St Cadoc's YC vs. Glasgow University FC - Exact Score\" (source polymarket, external_id 930633); the event's two sides are 'Glasgow University FC' and \"St Cadoc's YC\". Both of the market's named sides appear on the event, one on each side, so this is a name identity and not a token overlap."
+   ]
+  },
+  {
+   "market_id": 59768483,
+   "was": null,
+   "now": 15298009,
+   "on": "2026-09-06",
+   "by": "lane1b/069",
+   "raised_by": "#3564 step 2 re-capture",
+   "artifact_note": "no parent in window",
+   "cause": "HIDDEN-BY-THE-10-CAP",
+   "why": "The artifact recorded `correct_event_id: null` for a `e-prop` pair on 2026-09-02. The event existed at that moment — `events.created_at` is 2026-08-30 16:56:56.160899, BEFORE the 20:00Z adjudication — but the capture script kept only `MAX_CANDIDATES = 10` while production's own matcher takes LIMIT 20, and this market's candidate list was AT that cap with 10 rows. Event 15298009 (Tromsø IL @ Rosenborg BK) was evicted by our own truncation, so the adjudicator was asked to choose from a list the correct answer had been removed from. That is #3564's defect demonstrated on a single pair, not a matcher error.",
+   "evidence": [
+    "Production census 2026-09-06 22:0xZ, re-runnable: the matcher's own parse (`extract_matchup_with_ticker_fallback`) and its own expanded search terms (`_expand_team_search_terms`), asked over the capture's own window [2026-08-23T19:45:43+00:00 .. 2026-09-04T19:45:43+00:00] with the per-market LIMIT raised from 20 to 200 so a rival hiding just past the cap would be visible. 29 events matched either side; EXACTLY ONE carries both 'Rosenborg BK' and 'Tromsø IL' — event 15298009. There is no rival to prefer, so `null` cannot have meant 'it belongs on a different event'.",
+    "`SELECT id, created_at, commence_time, status FROM events WHERE id = 15298009` returns created_at 2026-08-30 16:56:56.160899, commence_time 2026-08-30 16:00:26+00:00, status 'closed' — the timestamp the 'was it reachable on 2026-09-02 20:00Z' claim above rests on.",
+    "The market is 'Rosenborg BK vs. Tromsø IL - Exact Score' (source polymarket, external_id 932521); the event's two sides are 'Tromsø IL' and 'Rosenborg BK'. Both of the market's named sides appear on the event, one on each side, so this is a name identity and not a token overlap."
+   ]
+  },
+  {
+   "market_id": 59768524,
+   "was": null,
+   "now": 15297951,
+   "on": "2026-09-06",
+   "by": "lane1b/069",
+   "raised_by": "#3564 step 2 re-capture",
+   "artifact_note": "no parent in window",
+   "cause": "HIDDEN-BY-THE-10-CAP",
+   "why": "The artifact recorded `correct_event_id: null` for a `e-prop` pair on 2026-09-02. The event existed at that moment — `events.created_at` is 2026-08-30 15:08:44.499281, BEFORE the 20:00Z adjudication — but the capture script kept only `MAX_CANDIDATES = 10` while production's own matcher takes LIMIT 20, and this market's candidate list was AT that cap with 10 rows. Event 15297951 (FC Tōkyō @ Gamba Ōsaka) was evicted by our own truncation, so the adjudicator was asked to choose from a list the correct answer had been removed from. That is #3564's defect demonstrated on a single pair, not a matcher error.",
+   "evidence": [
+    "Production census 2026-09-06 22:0xZ, re-runnable: the matcher's own parse (`extract_matchup_with_ticker_fallback`) and its own expanded search terms (`_expand_team_search_terms`), asked over the capture's own window [2026-08-23T19:16:03+00:00 .. 2026-09-04T19:16:03+00:00] with the per-market LIMIT raised from 20 to 200 so a rival hiding just past the cap would be visible. 31 events matched either side; EXACTLY ONE carries both 'Gamba Ōsaka' and 'FC Tōkyō' — event 15297951. There is no rival to prefer, so `null` cannot have meant 'it belongs on a different event'.",
+    "`SELECT id, created_at, commence_time, status FROM events WHERE id = 15297951` returns created_at 2026-08-30 15:08:44.499281, commence_time 2026-08-30 15:00:45+00:00, status 'closed' — the timestamp the 'was it reachable on 2026-09-02 20:00Z' claim above rests on.",
+    "The market is 'Gamba Ōsaka vs. FC Tōkyō - Exact Score' (source polymarket, external_id 932418); the event's two sides are 'FC Tōkyō' and 'Gamba Ōsaka'. Both of the market's named sides appear on the event, one on each side, so this is a name identity and not a token overlap."
+   ]
+  },
+  {
+   "market_id": 59768531,
+   "was": null,
+   "now": 15297955,
+   "on": "2026-09-06",
+   "by": "lane1b/069",
+   "raised_by": "#3564 step 2 re-capture",
+   "artifact_note": "no parent in window",
+   "cause": "HIDDEN-BY-THE-10-CAP",
+   "why": "The artifact recorded `correct_event_id: null` for a `e-prop` pair on 2026-09-02. The event existed at that moment — `events.created_at` is 2026-08-30 15:08:44.499281, BEFORE the 20:00Z adjudication — but the capture script kept only `MAX_CANDIDATES = 10` while production's own matcher takes LIMIT 20, and this market's candidate list was AT that cap with 10 rows. Event 15297955 (Avispa Fukuoka @ Shimizu S-Pulse) was evicted by our own truncation, so the adjudicator was asked to choose from a list the correct answer had been removed from. That is #3564's defect demonstrated on a single pair, not a matcher error.",
+   "evidence": [
+    "Production census 2026-09-06 22:0xZ, re-runnable: the matcher's own parse (`extract_matchup_with_ticker_fallback`) and its own expanded search terms (`_expand_team_search_terms`), asked over the capture's own window [2026-08-23T19:15:54+00:00 .. 2026-09-04T19:15:54+00:00] with the per-market LIMIT raised from 20 to 200 so a rival hiding just past the cap would be visible. 30 events matched either side; EXACTLY ONE carries both 'Shimizu S-Pulse' and 'Avispa Fukuoka' — event 15297955. There is no rival to prefer, so `null` cannot have meant 'it belongs on a different event'.",
+    "`SELECT id, created_at, commence_time, status FROM events WHERE id = 15297955` returns created_at 2026-08-30 15:08:44.499281, commence_time 2026-08-30 15:01:01+00:00, status 'closed' — the timestamp the 'was it reachable on 2026-09-02 20:00Z' claim above rests on.",
+    "The market is 'Shimizu S-Pulse vs. Avispa Fukuoka - Exact Score' (source polymarket, external_id 932410); the event's two sides are 'Avispa Fukuoka' and 'Shimizu S-Pulse'. Both of the market's named sides appear on the event, one on each side, so this is a name identity and not a token overlap."
+   ]
+  },
+  {
+   "market_id": 59768535,
+   "was": null,
+   "now": 15297954,
+   "on": "2026-09-06",
+   "by": "lane1b/069",
+   "raised_by": "#3564 step 2 re-capture",
+   "artifact_note": "no parent in window",
+   "cause": "HIDDEN-BY-THE-10-CAP",
+   "why": "The artifact recorded `correct_event_id: null` for a `e-prop` pair on 2026-09-02. The event existed at that moment — `events.created_at` is 2026-08-30 15:08:44.499281, BEFORE the 20:00Z adjudication — but the capture script kept only `MAX_CANDIDATES = 10` while production's own matcher takes LIMIT 20, and this market's candidate list was AT that cap with 10 rows. Event 15297954 (Kawasaki Frontale @ FC Mito Holly Hock) was evicted by our own truncation, so the adjudicator was asked to choose from a list the correct answer had been removed from. That is #3564's defect demonstrated on a single pair, not a matcher error.",
+   "evidence": [
+    "Production census 2026-09-06 22:0xZ, re-runnable: the matcher's own parse (`extract_matchup_with_ticker_fallback`) and its own expanded search terms (`_expand_team_search_terms`), asked over the capture's own window [2026-08-23T19:15:52+00:00 .. 2026-09-04T19:15:52+00:00] with the per-market LIMIT raised from 20 to 200 so a rival hiding just past the cap would be visible. 29 events matched either side; EXACTLY ONE carries both 'FC Mito Holly Hock' and 'Kawasaki Frontale' — event 15297954. There is no rival to prefer, so `null` cannot have meant 'it belongs on a different event'.",
+    "`SELECT id, created_at, commence_time, status FROM events WHERE id = 15297954` returns created_at 2026-08-30 15:08:44.499281, commence_time 2026-08-30 15:01:10+00:00, status 'closed' — the timestamp the 'was it reachable on 2026-09-02 20:00Z' claim above rests on.",
+    "The market is 'FC Mito Holly Hock vs. Kawasaki Frontale - Exact Score' (source polymarket, external_id 932406); the event's two sides are 'Kawasaki Frontale' and 'FC Mito Holly Hock'. Both of the market's named sides appear on the event, one on each side, so this is a name identity and not a token overlap."
+   ]
+  },
+  {
+   "market_id": 59614584,
+   "was": 15293305,
+   "now": 15293225,
+   "on": "2026-09-06",
+   "by": "lane1b/069",
+   "raised_by": "#3564 step 2 re-capture",
+   "artifact_note": "eyeballed containment-ok",
+   "cause": "ADJUDICATED-EVENT-DELETED-DUPLICATE-RECONCILED",
+   "why": "The artifact adjudicated this attached-correct pair onto event 15293305, and that row no longer exists in production. It was not lost: 15293305 and 15293225 were TWO ROWS FOR ONE GAME, the duplicate was reconciled away, and the surviving row is 15293225 (FC Anyang @ Daejeon Hana Citizen FC). The market itself is untouched and production has already re-attached it — futures_markets.event_id for this market reads 15293225 today. Without this amendment the capture drops the pair as event_gone, which would silently shrink the golden set and, because this is an attached-correct pair, would quietly retire one of the only 39 pairs that exercise the POSITIVE arm of the ratchet. Re-pointing it at the surviving row preserves the coverage and the question both.",
+   "evidence": [
+    "`SELECT id FROM events WHERE id = 15293305` returns NO ROW in production on 2026-09-06; the same query for 15293225 returns FC Anyang @ Daejeon Hana Citizen FC, commence_time 2026-08-26 21:44:44+00:00, created_at 2026-08-26 22:51:50.805933. The adjudicated id is gone and the surviving row carries the identical pair of team names.",
+    "`SELECT id, event_id FROM futures_markets WHERE id = 59614584` returns event_id 15293225 — production has already moved this market onto the surviving row, so the amendment records a reconciliation that has happened rather than proposing one.",
+    "The pair is class 'attached-correct' with artifact note 'eyeballed containment-ok': it was adjudicated as ALREADY CORRECTLY ATTACHED, so the adjudicated answer and the live attachment agreed then and agree now — only the row id changed underneath both."
+   ]
+  },
+  {
+   "market_id": 59652744,
+   "was": 15293769,
+   "now": 15293766,
+   "on": "2026-09-06",
+   "by": "lane1b/069",
+   "raised_by": "#3564 step 2 re-capture",
+   "artifact_note": "eyeballed containment-ok",
+   "cause": "ADJUDICATED-EVENT-DELETED-DUPLICATE-RECONCILED",
+   "why": "The artifact adjudicated this attached-correct pair onto event 15293769, and that row no longer exists in production. It was not lost: 15293769 and 15293766 were TWO ROWS FOR ONE GAME, the duplicate was reconciled away, and the surviving row is 15293766 (Swindon Supermarine FC @ Winslow United FC). The market itself is untouched and production has already re-attached it — futures_markets.event_id for this market reads 15293766 today. Without this amendment the capture drops the pair as event_gone, which would silently shrink the golden set and, because this is an attached-correct pair, would quietly retire one of the only 39 pairs that exercise the POSITIVE arm of the ratchet. Re-pointing it at the surviving row preserves the coverage and the question both.",
+   "evidence": [
+    "`SELECT id FROM events WHERE id = 15293769` returns NO ROW in production on 2026-09-06; the same query for 15293766 returns Swindon Supermarine FC @ Winslow United FC, commence_time 2026-08-27 18:00:55+00:00, created_at 2026-08-27 21:05:00.189572. The adjudicated id is gone and the surviving row carries the identical pair of team names.",
+    "`SELECT id, event_id FROM futures_markets WHERE id = 59652744` returns event_id 15293766 — production has already moved this market onto the surviving row, so the amendment records a reconciliation that has happened rather than proposing one.",
+    "The pair is class 'attached-correct' with artifact note 'eyeballed containment-ok': it was adjudicated as ALREADY CORRECTLY ATTACHED, so the adjudicated answer and the live attachment agreed then and agree now — only the row id changed underneath both."
+   ]
+  },
+  {
+   "market_id": 59683704,
+   "was": 15294098,
+   "now": 15294081,
+   "on": "2026-09-06",
+   "by": "lane1b/069",
+   "raised_by": "#3564 step 2 re-capture",
+   "artifact_note": "eyeballed containment-ok",
+   "cause": "ADJUDICATED-EVENT-DELETED-DUPLICATE-RECONCILED",
+   "why": "The artifact adjudicated this attached-correct pair onto event 15294098, and that row no longer exists in production. It was not lost: 15294098 and 15294081 were TWO ROWS FOR ONE GAME, the duplicate was reconciled away, and the surviving row is 15294081 (OFI @ AEK). The market itself is untouched and production has already re-attached it — futures_markets.event_id for this market reads 15294081 today. Without this amendment the capture drops the pair as event_gone, which would silently shrink the golden set and, because this is an attached-correct pair, would quietly retire one of the only 39 pairs that exercise the POSITIVE arm of the ratchet. Re-pointing it at the surviving row preserves the coverage and the question both.",
+   "evidence": [
+    "`SELECT id FROM events WHERE id = 15294098` returns NO ROW in production on 2026-09-06; the same query for 15294081 returns OFI @ AEK, commence_time 2026-08-28 12:30:15+00:00, created_at 2026-08-28 14:05:00.224930. The adjudicated id is gone and the surviving row carries the identical pair of team names.",
+    "`SELECT id, event_id FROM futures_markets WHERE id = 59683704` returns event_id 15294081 — production has already moved this market onto the surviving row, so the amendment records a reconciliation that has happened rather than proposing one.",
+    "The pair is class 'attached-correct' with artifact note 'eyeballed containment-ok': it was adjudicated as ALREADY CORRECTLY ATTACHED, so the adjudicated answer and the live attachment agreed then and agree now — only the row id changed underneath both."
+   ]
   }
  ]
 }
