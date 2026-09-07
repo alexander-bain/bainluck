@@ -179,6 +179,67 @@ jobs:
         # report balance for a split nobody runs.
         run: python scripts/ci_shard.py --verify --of 4
 
+  # #3761 — THE GOLDEN FLOOR GUARD, RUN RATHER THAN MERELY AVAILABLE.
+  #
+  # `scripts/check_golden_baseline_floor.py` shipped with CERT-2166/2170 as a
+  # command a merge desk could run by hand, and
+  # `tests/test_golden_baseline_floor_guard_3564.py` proves its LOGIC against
+  # fixtures. Neither of those makes it run against an actual proposal, so the
+  # read integrator/239 did by hand on 2026-09-06 — a branch carrying
+  # `passing_count: 665` over master's 668, with no conflict, no reviewable diff
+  # line and `git merge-tree` exit 0 — stayed a thing somebody had to remember
+  # to do. `matching_golden_baseline.json` is a whole-file generated artifact,
+  # so a silent revert of it is textually indistinguishable from a deliberate
+  # re-derivation. This job is that read, on every PR, without remembering.
+  #
+  # PULL REQUEST ONLY, AND THAT IS A FINDING, NOT AN OVERSIGHT. The script
+  # defends the working tree against `--target origin/master`. On a push to
+  # master those are the SAME COMMIT, so a push run compares the tip against
+  # itself and prints "ACCEPT: the floor is defended" no matter what just
+  # landed. A gate that cannot fail is worse than no gate, because it is a green
+  # check somebody will later cite as proof. Excluded here rather than left to
+  # print a meaningless pass; `test_golden_floor_ci_wiring_3761.py` pins both
+  # the exclusion and the self-comparison fact that forces it.
+  #
+  # AND THAT IS WHY THIS JOB MUST NEVER JOIN `deploy: needs:`, however much it
+  # looks like it belongs there. `deploy` runs on push only, this job is skipped
+  # on push, and a `needs:` dependency that SKIPS skips its dependents too — so
+  # adding it would silently stop every release rather than gate one.
+  #
+  # `fetch-depth: 0` + `filter: blob:none` for exactly the reason backend-tests
+  # carries them: a default PR checkout is a detached merge ref at depth 1 where
+  # `origin/master` DOES NOT EXIST. Without them the script cannot read its
+  # target and exits 2 — which it announces as "The comparison did NOT run. Do
+  # not read this as a pass." — but only to a log nobody opens on a green run.
+  golden-baseline-floor:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          filter: blob:none
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      # No `pip install` step: the script imports the standard library only, and
+      # that is deliberate — this gate cannot then be taken down by a dependency
+      # resolution failure on an unrelated package.
+      #
+      # NOT piped and NOT `continue-on-error` (gotcha #124). Exit 1 is a result:
+      # the floor fell and the proposal did not name what fell. Exit 2 is a
+      # story about the harness: a ref or blob was unreadable and the comparison
+      # never happened. BOTH must fail this job, which they do only because the
+      # step's exit code is the command's own and nothing swallows it.
+      - name: The golden baseline floor may not fall without naming what fell
+        run: python3 scripts/check_golden_baseline_floor.py --target origin/master
+
   # #1494 — the search RECALL gate.
   #
   # Separate from backend-tests because it needs a real Postgres. LAT-P002 was
