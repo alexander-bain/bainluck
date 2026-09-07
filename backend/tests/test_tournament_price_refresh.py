@@ -169,8 +169,13 @@ class _Service:
     def __init__(self, markets=None, raises: Exception | None = None):
         self._markets = markets or []
         self._raises = raises
+        #: What the rail actually asked for, so a test can assert on it (#3868).
+        self.asked_include_closed: bool | None = None
 
-    async def get_markets_by_conditions(self, conditions, batch_size=None):
+    async def get_markets_by_conditions(
+        self, conditions, batch_size=None, include_closed=False
+    ):
+        self.asked_include_closed = include_closed
         if self._raises is not None:
             raise self._raises
         return self._markets

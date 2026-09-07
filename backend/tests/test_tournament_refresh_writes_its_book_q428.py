@@ -153,7 +153,14 @@ def _market(**kw) -> PolymarketMarket:
 
 
 async def _run(monkeypatch, market=None, rows=None):
-    rows = rows if rows is not None else [(YES_ID, "Yes"), (NO_ID, "No")]
+    # (id, name, external_id). #3868 added the third column: the writer decides
+    # which side of the book a row is from its ID first and its name only as a
+    # fallback, because a ladder leg is named "Novak Djokovic", not "Yes".
+    rows = (
+        rows
+        if rows is not None
+        else [(YES_ID, "Yes", "0xq428_yes"), (NO_ID, "No", "0xq428_no")]
+    )
     session = _arm(monkeypatch, rows)
     # `volume_observed` added by UX-P158, which gave this rail a third
     # thing to write: the venue's 24h volume figure and the stamp that says
@@ -163,6 +170,10 @@ async def _run(monkeypatch, market=None, rows=None):
         "snapshots_written": 0,
         "unpriced": 0,
         "volume_observed": 0,
+        # #3868's three, mirroring the task's own stats literal.
+        "legs_settled": 0,
+        "closed_without_result": 0,
+        "legs_reached_by_condition": 0,
     }
     await _write_refreshed_prices(
         [market or _market()], stats, now=datetime(2026, 8, 28, 21, 30, tzinfo=timezone.utc)

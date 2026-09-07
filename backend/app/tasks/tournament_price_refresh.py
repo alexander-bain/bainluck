@@ -57,6 +57,50 @@ This task NEVER creates a market and never touches identity.  It updates prices
 for outcomes the register already pins, which is why it is safe to run at a
 cadence the discovery poll could not sustain.
 
+═══ AND IT GRADES THEM, BECAUSE A REFRESH RAIL THAT CANNOT SEE A RESULT IS A
+    RAIL THAT FREEZES ON THE LAST WRONG NUMBER (#3868) ═══
+
+Twelve days after the paragraph above was written, `/sport/tennis/atp` was
+showing **Carlos Alcaraz at 78% to reach a quarterfinal he had already reached**
+and **Novak Djokovic at 58% for one he was out of**, in the same scroll as the
+FINISHED list that said so. Two causes, both of them here:
+
+**(a) This rail could not see a result.**  `get_markets_by_conditions` applies a
+`closed=false` filter the caller never asked for (its own docstring, measured
+under Q499), so the moment a leg settled it stopped coming back — `not_returned`,
+no write, and the last LIVE price frozen for good.  Measured 2026-09-07:
+Djokovic's leg was refreshed to 0.470 at 08:50Z and settled at the venue to
+`["0","1"]` minutes later.  0.470 is what this task would have served forever.
+The fetch now passes `include_closed=True` and a closed book with a terminal
+`outcomePrices` grades the leg — the same field, the same bars, the same
+`resolution_source='api_settlement'` that `_sync_polymarket_resolved_status`
+writes when the parent EVENT closes.  **The gap between those two is the whole
+bug: a round-by-round ladder settles its children weeks before its event
+closes,** so the event-level rail cannot reach them and this one can.
+
+**(b) This rail could not see the row the page renders.**  `_process_event_batch`
+writes one Gamma event into this database TWICE — a `polymarket_sub_market` row
+per child keyed `external_id = <condition>` with legs `<condition>_yes`/`_no`,
+and a `polymarket_event` PARENT ladder row keyed by the Gamma EVENT id with one
+leg per child under the BARE `<condition>`.  The register pins the sub-markets;
+the writer keyed its outcome lookup on the MARKET's external_id; so it reached
+those and nothing else.  The league page renders the parent.  Measured: the
+sub-market leg refreshed 2026-09-06 22:33Z, the ladder leg carrying the SAME
+condition id last written 2026-08-25 18:17Z.  Thirteen days, one condition, two
+rows, and only one of them had a writer.  A second lookup keyed on the OUTCOME's
+own external_id now reaches both, and they stop disagreeing.
+
+The side-of-book test is (b)'s hinge and was the quiet half: it read the outcome
+NAME and skipped anything that was neither "Yes" nor "No".  Every ladder leg is
+named for a player, so even a lookup that found those rows would have written
+none of them.  `leg_side` reads the id first for that reason.
+
+WHAT THIS DOES NOT FIX, SAID PLAINLY.  Only tournaments with a committed
+register (today: us-open-2026) are reached, because that is what this task is
+addressed by.  The general case — ~76,000 served Polymarket futures legs, 56,721
+of them over a day stale, measured 2026-09-07 — is the discovery poll's
+offset-2000 cap and belongs to #219E's keyset migration, not here.
+
 ═══ WHY BOTH RAILS SPEAK THE TERMINAL VOCABULARY (CERT P2, gotcha #53) ═══
 
 Both functions here return a ``terminal`` and both labels are in
@@ -112,6 +156,16 @@ _LIVE_REGISTERED_CONDITIONS_SQL = f"""
 #: ``PolymarketAPIService.get_markets_by_conditions``.
 BATCH_SIZE = 40
 
+#: The bars at which a CLOSED venue book stops being a price and becomes a
+#: result.  Not new numbers: they are
+#: ``polymarket._sync_polymarket_resolved_status``'s own settlement test, to the
+#: digit, so the two rails cannot come to different verdicts about the same
+#: condition id.  That task grades a leg the moment its Gamma EVENT closes; this
+#: one grades the same leg the moment its own CHILD MARKET closes, which for a
+#: round-by-round tournament ladder happens weeks earlier (#3868).
+SETTLED_YES_BAR = 0.95
+SETTLED_NO_BAR = 0.05
+
 #: A hard ceiling on how many markets one run will refresh, so a mis-sized
 #: register can never turn a 10-minute task into a Gamma flood.  Well above the
 #: US Open's ~420 and well below anything that would matter.
@@ -121,6 +175,64 @@ MAX_MARKETS = 2000
 #: route's own table.
 DEFAULT_PRICE_TARGETS: list[tuple[str, str]] = [("us-open", "2026")]
 DEFAULT_RESULT_TARGETS: list[tuple[str, str]] = [("us-open", "US Open")]
+
+
+def settled_yes_probability(market: Any) -> float | None:
+    """``1.0``/``0.0`` when the venue has SETTLED this book, else ``None``.
+
+    #3868.  A ``closed`` child market is not a stale price, it is an answer, and
+    the two have to be told apart before anything is written — which is why this
+    returns ``None`` rather than a number for the third case.
+
+    THE THIRD CASE IS THE POINT.  A book that is closed but whose ``outcomePrices``
+    sit between the bars has closed without telling us who won: void, mis-settled,
+    or caught mid-settlement.  Grading it would be inventing a result, and pricing
+    it would be quoting a dead book, so this rail does neither and the caller
+    counts it (gotcha #53 — the zero-yield case has to be loud, not absent).
+    """
+    if not getattr(market, "closed", False):
+        return None
+    prices = getattr(market, "outcome_prices", None) or []
+    if not prices:
+        return None
+    try:
+        yes = float(prices[0])
+    except (TypeError, ValueError):
+        return None
+    if yes >= SETTLED_YES_BAR:
+        return 1.0
+    if yes <= SETTLED_NO_BAR:
+        return 0.0
+    return None
+
+
+def leg_side(outcome_name: str | None, outcome_external_id: str | None, condition_id: str) -> str | None:
+    """``"yes"``, ``"no"`` or ``None`` — which side of the book this row is.
+
+    READ FROM THE ID FIRST, AND THAT IS THE #3868 FIX (see the caller).  The
+    original writer read the side off the outcome NAME and skipped anything that
+    was neither "Yes" nor "No".  That was correct for the sub-market rows the
+    register pins, whose legs really are named ``Yes``/``No`` — and it silently
+    skipped every row of the LADDER copy of the same condition, whose legs are
+    named ``Carlos Alcaraz`` and ``Novak Djokovic``.
+
+    The id says the side without ambiguity, because the id is what the ingest
+    wrote it as: ``_parent_outcome_data`` stores a ladder leg under the BARE
+    condition id and that leg is by construction the Yes side of that child
+    book (P(this player advances)), while ``_process_event_batch`` stores the
+    sub-market's two legs under ``…_yes`` and ``…_no``.  The name test is kept
+    as the fallback so no row this function used to resolve stops resolving.
+    """
+    ext = (outcome_external_id or "").strip()
+    if ext:
+        if ext.endswith("_no"):
+            return "no"
+        if ext.endswith("_yes") or ext == condition_id:
+            return "yes"
+    label = (outcome_name or "").strip().lower()
+    if label in ("yes", "no"):
+        return label
+    return None
 
 
 def registered_polymarket_conditions(register: dict[str, Any]) -> dict[str, list[int]]:
@@ -196,6 +308,21 @@ async def _refresh_registered_tournament_prices(
         "snapshots_written": 0,
         "unpriced": 0,
         "not_returned": 0,
+        # #3868. Counted apart from `outcomes_updated` because they are a
+        # different KIND of write and a run can do a lot of one and none of the
+        # other: `legs_settled` are rows this pass graded from a closed venue
+        # book, and after grading they leave the population for good.
+        "legs_settled": 0,
+        # A closed book that named no winner — see `settled_yes_probability`.
+        # Reported rather than dropped: a register whose legs all close without
+        # a result is a venue change, and it would otherwise look like a quiet
+        # run that simply had nothing to grade (gotcha #53).
+        "closed_without_result": 0,
+        # Rows reached only through their OWN external_id — the ladder copy the
+        # market-keyed lookup cannot see. Zero here after the US Open ladders
+        # are graded is fine; zero on the FIRST run would mean the widened
+        # lookup never fired and #3868's user-visible half did not ship.
+        "legs_reached_by_condition": 0,
         "errors": [],
     }
 
@@ -239,7 +366,23 @@ async def _refresh_registered_tournament_prices(
     service = PolymarketAPIService()
     try:
         markets = await service.get_markets_by_conditions(
-            conditions, batch_size=BATCH_SIZE
+            # #3868: `include_closed` — WITHOUT IT THIS RAIL CANNOT SEE A RESULT.
+            # `/markets?condition_ids=…` applies a `closed=false` filter the
+            # caller never asked for (that method's own docstring, measured
+            # under Q499), so the instant a leg settles it stops coming back at
+            # all: it lands in `not_returned`, nothing is written, and the last
+            # LIVE price freezes on the page for good. Measured on production
+            # 2026-09-07 09:3xZ, Djokovic's "advance to the Quarterfinals" leg
+            # was refreshed at 08:50Z to 0.470 and then settled at the venue to
+            # `["0","1"]` — the 0.470 was the last thing this task would ever
+            # have written to it.
+            #
+            # It costs one extra request per batch of 40 and buys the settlement
+            # branch below. On the US Open register that is ~10 more Gamma calls
+            # per run against the ~1,000/hr ceiling the module docstring cites.
+            conditions,
+            batch_size=BATCH_SIZE,
+            include_closed=True,
         )
     except Exception as exc:  # noqa: BLE001 — reported, never swallowed
         stats["errors"].append(f"gamma fetch failed: {exc}")
@@ -325,7 +468,7 @@ async def _write_refreshed_prices(
     markets: list[Any], stats: dict[str, Any], *, now: datetime
 ) -> None:
     """Update every registered outcome these markets price, and snapshot it."""
-    from sqlalchemy import select, update
+    from sqlalchemy import select, text, update
     from sqlalchemy.dialects.postgresql import insert as pg_insert
 
     from app.models import FuturesMarket, FuturesOddsSnapshot, FuturesOutcome
@@ -335,6 +478,7 @@ async def _write_refreshed_prices(
         complementary_book,
     )
     from app.utils.odds_math import probability_to_american
+    from app.utils.winner_field_coherence import DUPLICATE_CONDITION_LEG_SQL
 
     async with get_task_session() as session:
         for market in markets:
@@ -424,7 +568,21 @@ async def _write_refreshed_prices(
             )
             stats["volume_observed"] += 1
 
-            probability = _resolve_market_probability(market)
+            # ── #3868: SETTLEMENT IS READ BEFORE PRICE, BECAUSE A CLOSED BOOK IS
+            # NOT A PRICE. `_resolve_market_probability` is a book reader — bid,
+            # ask, midpoint, last trade — and on a settled market those are the
+            # residue of trading that has stopped, not an opinion about anything.
+            # The venue's own `outcomePrices` is the answer, and it is the same
+            # field, read at the same bars, that `_sync_polymarket_resolved_status`
+            # grades on when the parent EVENT closes.
+            settled = settled_yes_probability(market)
+            if settled is None and getattr(market, "closed", False):
+                stats["closed_without_result"] += 1
+                continue
+
+            probability = settled
+            if probability is None:
+                probability = _resolve_market_probability(market)
             if probability is None:
                 # A placeholder or an untradeable book. Not an error, and not a
                 # number: gotcha #19's rule, unchanged.
@@ -433,7 +591,11 @@ async def _write_refreshed_prices(
 
             rows = (
                 await session.execute(
-                    select(FuturesOutcome.id, FuturesOutcome.name)
+                    select(
+                        FuturesOutcome.id,
+                        FuturesOutcome.name,
+                        FuturesOutcome.external_id,
+                    )
                     .join(FuturesMarket, FuturesMarket.id == FuturesOutcome.market_id)
                     .where(
                         # LAT-P240: leading column first, same reason as the
@@ -456,17 +618,78 @@ async def _write_refreshed_prices(
                     )
                 )
             ).all()
-            if not rows:
+
+            # ── #3868: THE SAME CONDITION IS IN THIS DATABASE TWICE, AND THE
+            # LOOKUP ABOVE CAN ONLY SEE ONE OF THEM.
+            #
+            # `_process_event_batch` writes a Gamma event two ways at once: a
+            # SUB-MARKET row per child, keyed `external_id = <condition>` with
+            # legs `<condition>_yes` / `<condition>_no`, and a PARENT ladder row
+            # keyed by the Gamma EVENT id with one leg per child under the BARE
+            # `<condition>`. The register pins the sub-markets, so the lookup
+            # above — which keys on the MARKET's external_id — reaches those and
+            # nothing else.
+            #
+            # `/sport/tennis/atp` renders the parent. Measured on production
+            # 2026-09-07 (#3868): sub-market leg `…3d06…_yes` (Alcaraz) refreshed
+            # 2026-09-06 22:33Z; the ladder leg `…3d06…` carrying the SAME
+            # condition, last written 2026-08-25 18:17Z and reading 78% for a
+            # quarterfinal he had already reached. Thirteen days, one condition
+            # id, two rows, and only one of them had a writer.
+            #
+            # Keyed on the outcome's OWN external_id, which is an indexed exact
+            # IN (`ix_futures_outcomes_external_id`) and not a `regexp_replace`
+            # — LAT-P240's lesson is that the probe in this loop must seek.
+            #
+            # `DUPLICATE_CONDITION_LEG_SQL` is Q487's rule and it is exactly
+            # right here, unchanged: it excludes a `_yes`/`_no` leg only when
+            # the BARE row sits on the SAME market, which is the duplicate case.
+            # Our two rows are on DIFFERENT markets and are both legitimate, so
+            # both are written and they stop disagreeing.
+            by_condition = (
+                await session.execute(
+                    text(
+                        f"""
+                        SELECT fo.id, fo.name, fo.external_id
+                          FROM futures_outcomes fo
+                         WHERE fo.external_id IN (:cid, :cid_yes, :cid_no)
+                           AND fo.is_winner IS NOT TRUE
+                           AND COALESCE(fo.resolution_source, '') <> 'api_settlement'
+                           AND {DUPLICATE_CONDITION_LEG_SQL}
+                        """
+                    ),
+                    {
+                        "cid": market.condition_id,
+                        "cid_yes": f"{market.condition_id}_yes",
+                        "cid_no": f"{market.condition_id}_no",
+                    },
+                )
+            ).all()
+
+            # Merged by outcome id, so a row both lookups return is written once.
+            merged: dict[int, tuple[str | None, str | None]] = {
+                r[0]: (r[1], r[2]) for r in rows
+            }
+            for oid, name, ext in by_condition:
+                if oid not in merged:
+                    stats["legs_reached_by_condition"] += 1
+                merged[oid] = (name, ext)
+
+            if not merged:
                 continue
 
-            for outcome_id, name in rows:
-                # The YES side carries the market's resolved probability; the
-                # NO side is its complement. Read off the outcome NAME rather
-                # than from position: `outcome_prices[1]` and "the row called
+            for outcome_id, (name, outcome_ext) in merged.items():
+                # WHICH SIDE OF THE BOOK THIS ROW IS. The YES side carries the
+                # market's resolved probability; the NO side is its complement.
+                # Never from position: `outcome_prices[1]` and "the row called
                 # No" are the same thing only when the source ordered them the
                 # way we assumed, and this task has no business re-deriving an
                 # ordering the ingest already pinned.
-                label = (name or "").strip().lower()
+                #
+                # #3868 reads the ID before the name — see `leg_side`. A ladder
+                # leg is named "Carlos Alcaraz", and the name test alone skipped
+                # every one of them.
+                label = leg_side(name, outcome_ext, market.condition_id)
                 if label == "yes":
                     value = probability
                     bid, ask, last = (
@@ -489,12 +712,30 @@ async def _write_refreshed_prices(
                     continue
 
                 value = max(0.0, min(1.0, value))
+
+                # #3868: a settled book grades the leg as well as pricing it.
+                # `resolution_source='api_settlement'` is the SAME grade
+                # `_sync_polymarket_resolved_status` writes from the same field
+                # at the same bars — this is that write reaching a leg whose
+                # parent event has not closed and, for a round-by-round ladder,
+                # will not close for weeks. A graded row leaves this rail's
+                # population for good (both lookups refuse it), so the grade is
+                # written once and never revised here.
+                graded: dict[str, Any] = {}
+                if settled is not None:
+                    graded = {
+                        "is_winner": value >= 0.5,
+                        "resolution_source": "api_settlement",
+                    }
+                    stats["legs_settled"] += 1
+
                 await session.execute(
                     update(FuturesOutcome)
                     .where(FuturesOutcome.id == outcome_id)
                     .values(
                         current_probability=value,
                         current_american_odds=probability_to_american(value),
+                        **graded,
                         # Q428: THE BOOK TRAVELS WITH THE PRICE IT PRODUCED.
                         # Without these two columns this rail moved the number
                         # every ten minutes and left the book frozen at whatever
