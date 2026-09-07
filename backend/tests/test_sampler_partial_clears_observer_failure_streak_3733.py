@@ -296,7 +296,7 @@ class TestTheSeamHoldsOnTheREALArtifact:
             return {}, "ok"
 
         async def _pub(_envelope):
-            return {"status": "stored"}
+            return {"status": "ok"}  # the writer's REAL contract, not "stored" (#3782)
 
         monkeypatch.setattr(mod, "_read_ledger", _rl)
         monkeypatch.setattr(mod, "_read_history", _rh)

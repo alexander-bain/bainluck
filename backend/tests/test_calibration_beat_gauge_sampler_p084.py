@@ -406,7 +406,7 @@ class TestSummarise:
 class TestDecideTerminal:
     def test_a_captured_current_beat_is_complete(self):
         terminal, reason = decide_terminal(
-            read_status="ok", observation=_obs(1), write_status="stored", ledger_age_s=600
+            read_status="ok", observation=_obs(1), write_status="ok", ledger_age_s=600
         )
         assert terminal == "complete"
         assert reason is None
@@ -441,7 +441,7 @@ class TestDecideTerminal:
         """
         obs = dict(_obs(1), gauges_missing_required=["staged:served_drift_uncheckable"])
         terminal, reason = decide_terminal(
-            read_status="ok", observation=obs, write_status="stored", ledger_age_s=60
+            read_status="ok", observation=obs, write_status="ok", ledger_age_s=60
         )
         assert terminal == "partial"
         assert "staged:served_drift_uncheckable" in reason
@@ -498,7 +498,7 @@ class TestTheObserverIsNotTheProducer:
 
         obs = dict(_obs(1), gauges_missing_required=["staged:served_at"])
         terminal, _ = decide_terminal(
-            read_status="ok", observation=obs, write_status="stored", ledger_age_s=60
+            read_status="ok", observation=obs, write_status="ok", ledger_age_s=60
         )
         v = verdict_for("calibration_beat_gauge_sampler", {"terminal": terminal})
         assert v.is_green is False
@@ -511,7 +511,7 @@ class TestTheObserverIsNotTheProducer:
             decide_terminal(read_status="unavailable", observation=None,
                             write_status=None, ledger_age_s=None),
             decide_terminal(read_status="ok", observation=dict(_obs(1), generation=None),
-                            write_status="stored", ledger_age_s=60),
+                            write_status="ok", ledger_age_s=60),
             decide_terminal(read_status="ok", observation=_obs(1),
                             write_status="error", ledger_age_s=60),
         ]
@@ -559,7 +559,7 @@ class TestTheArtifactCarriesBothFactsByName:
 
     @staticmethod
     def _run(monkeypatch, *, ledger, ledger_status="ok", history=({}, "ok"),
-             write_status="stored"):
+             write_status="ok"):
         import app.tasks.calibration_beat_gauge_sampler as mod
 
         async def _rl():
