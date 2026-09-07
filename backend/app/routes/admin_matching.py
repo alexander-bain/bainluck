@@ -170,6 +170,46 @@ def _should_include_link_rate_bucket(
     )
 
 
+#: The three states a market's attachment can be in, for #3778's split.
+ATTACH_UNLINKED = "unlinked"
+ATTACH_ANCHORED = "anchored"
+ATTACH_SELF_MINTED = "self_minted"
+
+
+def _classify_attachment(
+    event_id: int | None,
+    espn_id: str | None,
+    external_id: str | None,
+) -> str:
+    """Say what a market is attached TO, not merely that it is attached (#3778).
+
+    ``event_id IS NOT NULL`` was the whole definition of "linked", and it cannot
+    fall. When an ingest mints its own event row for a game another source
+    already carries, the market attaches to that fresh row and scores as a
+    success -- so a twin-generating ingest and a healthy one report the SAME
+    number. On 2026-09-07 the Kalshi ATP/WTA cohort read 244/244 (100%), flat,
+    while 84 of those rows were Kalshi's own creations and 82 had a real
+    ESPN-anchored twin; the men's semi-final page rendered with no Kalshi curve
+    at the moment the receipt called it perfect.
+
+    ``anchored`` means the event row carries an id from outside the ingest that
+    linked it -- an ``espn_id`` or a provider ``external_id`` -- so a second
+    source can find the same row. ``self_minted`` means neither, i.e. the row
+    exists only because some ingest created it.
+
+    SELF_MINTED IS NOT A SYNONYM FOR GHOST, and no caller may report it as a
+    duplicate count. A row with neither id can legitimately be the only row for
+    a contest nobody else lists, which is most of Polymarket's long tail. What
+    the bucket honestly means is "attachments this metric cannot grade" -- the
+    twin question is #3582's and #2693's to answer, not this counter's.
+    """
+    if event_id is None:
+        return ATTACH_UNLINKED
+    if espn_id or external_id:
+        return ATTACH_ANCHORED
+    return ATTACH_SELF_MINTED
+
+
 def _is_closed_past_event_candidate(candidate: Any, now: datetime) -> bool:
     """Return True when a matched event row represents a finished past game."""
     status = (getattr(candidate, "status", None) or "").lower()
@@ -518,7 +558,14 @@ async def _compute_link_rate(
             FuturesMarket.external_id,
             FuturesMarket.category,
             FuturesMarket.name,
+            # #3778: what the market is attached TO. OUTER join, so an unlinked
+            # market keeps its row and both ids read NULL -- an inner join here
+            # would silently drop every unlinked market and drive the published
+            # rate to 100% by construction.
+            Event.espn_id.label("event_espn_id"),
+            Event.external_id.label("event_external_id"),
         )
+        .outerjoin(Event, FuturesMarket.event_id == Event.id)
         .where(
             FuturesMarket.source == "kalshi",
             FuturesMarket.llm_sport_category.isnot(None),
@@ -574,22 +621,48 @@ async def _compute_link_rate(
                 "linked": 0,
                 "open_total": 0,
                 "open_linked": 0,
+                "linked_anchored": 0,
+                "linked_self_minted": 0,
+                "open_linked_anchored": 0,
+                "open_linked_self_minted": 0,
             },
+        )
+        # #3778. `linked` is unchanged and still means `event_id IS NOT NULL`,
+        # so every published number keeps its meaning; the split is added
+        # ALONGSIDE it rather than redefining it under callers' feet.
+        attachment = _classify_attachment(
+            row.event_id, row.event_espn_id, row.event_external_id
         )
         sport_data["total"] += 1
         if row.event_id is not None:
             sport_data["linked"] += 1
+            sport_data[f"linked_{attachment}"] += 1
         if (row.status or "").lower() == "open":
             sport_data["open_total"] += 1
             if row.event_id is not None:
                 sport_data["open_linked"] += 1
+                sport_data[f"open_linked_{attachment}"] += 1
 
     kalshi_by_sport = sorted(
         kalshi_rows_by_bucket.values(),
         key=lambda item: item["total"],
         reverse=True,
     )
-    kalshi_totals = {"total": 0, "linked": 0, "open_total": 0, "open_linked": 0}
+    kalshi_totals = {
+        "total": 0,
+        "linked": 0,
+        "open_total": 0,
+        "open_linked": 0,
+        # #3778. Rolled up by the `for k in <totals>` loops below, which iterate
+        # the keys of this dict -- so a bucket key added here without a matching
+        # key in the per-bucket dict raises KeyError rather than reporting a
+        # silent zero. That is the intended failure: a split that quietly reads
+        # 0 is the exact defect this is here to end.
+        "linked_anchored": 0,
+        "linked_self_minted": 0,
+        "open_linked_anchored": 0,
+        "open_linked_self_minted": 0,
+    }
     for sport_data in kalshi_by_sport:
         sport_data["link_rate"] = (
             round(sport_data["open_linked"] / sport_data["open_total"] * 100, 1)
@@ -616,7 +689,11 @@ async def _compute_link_rate(
             FuturesMarket.name,
             FuturesMarket.category,
             FuturesMarket.external_id,
+            # #3778, same OUTER join and same reason as the Kalshi select above.
+            Event.espn_id.label("event_espn_id"),
+            Event.external_id.label("event_external_id"),
         )
+        .outerjoin(Event, FuturesMarket.event_id == Event.id)
         .where(
             FuturesMarket.source == "polymarket",
             FuturesMarket.llm_sport_category.isnot(None),
@@ -630,7 +707,21 @@ async def _compute_link_rate(
         )
     )
     poly_rows_by_bucket = {}
-    poly_totals = {"total": 0, "linked": 0, "open_total": 0, "open_linked": 0}
+    poly_totals = {
+        "total": 0,
+        "linked": 0,
+        "open_total": 0,
+        "open_linked": 0,
+        # #3778. Rolled up by the `for k in <totals>` loops below, which iterate
+        # the keys of this dict -- so a bucket key added here without a matching
+        # key in the per-bucket dict raises KeyError rather than reporting a
+        # silent zero. That is the intended failure: a split that quietly reads
+        # 0 is the exact defect this is here to end.
+        "linked_anchored": 0,
+        "linked_self_minted": 0,
+        "open_linked_anchored": 0,
+        "open_linked_self_minted": 0,
+    }
     poly_excluded_not_matcher_game_level = 0
     poly_excluded_open_not_matcher_game_level = 0
     poly_excluded_samples = []
@@ -687,15 +778,27 @@ async def _compute_link_rate(
                 "linked": 0,
                 "open_total": 0,
                 "open_linked": 0,
+                "linked_anchored": 0,
+                "linked_self_minted": 0,
+                "open_linked_anchored": 0,
+                "open_linked_self_minted": 0,
             },
+        )
+        # #3778. `linked` is unchanged and still means `event_id IS NOT NULL`,
+        # so every published number keeps its meaning; the split is added
+        # ALONGSIDE it rather than redefining it under callers' feet.
+        attachment = _classify_attachment(
+            row.event_id, row.event_espn_id, row.event_external_id
         )
         sport_data["total"] += 1
         if row.event_id is not None:
             sport_data["linked"] += 1
+            sport_data[f"linked_{attachment}"] += 1
         if (row.status or "").lower() == "open":
             sport_data["open_total"] += 1
             if row.event_id is not None:
                 sport_data["open_linked"] += 1
+                sport_data[f"open_linked_{attachment}"] += 1
 
     poly_by_sport = sorted(
         poly_rows_by_bucket.values(),
@@ -764,6 +867,11 @@ async def _compute_link_rate(
                 "link_rate_raw_pct": _raw_open_rate(
                     kalshi_totals["open_linked"], kalshi_totals["open_total"], kalshi_excluded_open_upstream_gap
                 ),
+                # #3778. `link_rate_all_pct` counts a market as linked even when
+                # the row it is linked to is one this same ingest minted, so it
+                # cannot fall when we start generating twins. These two can.
+                "anchored_rate_all_pct": round(kalshi_totals["linked_anchored"] / kalshi_totals["total"] * 100, 1) if kalshi_totals["total"] else 0,
+                "anchored_rate_pct": round(kalshi_totals["open_linked_anchored"] / kalshi_totals["open_total"] * 100, 1) if kalshi_totals["open_total"] else 0,
                 "excluded_stale_open_unlinked": excluded_stale_open_unlinked,
                 "excluded_upstream_coverage_gap": kalshi_excluded_upstream_gap,
                 "excluded_open_upstream_coverage_gap": kalshi_excluded_open_upstream_gap,
@@ -783,6 +891,13 @@ async def _compute_link_rate(
                 "link_rate_raw_pct": _raw_open_rate(
                     poly_totals["open_linked"], poly_totals["open_total"], poly_excluded_open_upstream_gap
                 ),
+                # #3778, same two rates and the same reason as Kalshi above.
+                # Polymarket's self_minted share is far the larger of the two and
+                # is NOT a duplicate count -- much of it is long-tail contests no
+                # other source lists. It means "attachments this metric cannot
+                # grade", and a reader must not quote it as ghosts.
+                "anchored_rate_all_pct": round(poly_totals["linked_anchored"] / poly_totals["total"] * 100, 1) if poly_totals["total"] else 0,
+                "anchored_rate_pct": round(poly_totals["open_linked_anchored"] / poly_totals["open_total"] * 100, 1) if poly_totals["open_total"] else 0,
                 "excluded_not_matcher_game_level": poly_excluded_not_matcher_game_level,
                 "excluded_open_not_matcher_game_level": poly_excluded_open_not_matcher_game_level,
                 "excluded_upstream_coverage_gap": poly_excluded_upstream_gap,
