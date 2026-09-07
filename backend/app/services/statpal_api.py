@@ -97,6 +97,42 @@ class StatPalFixture:
     # ranges — and share not one value, which is precisely why the anchor is
     # named rather than inferred (D55).
     odds_id: Optional[str] = None
+    # StatPal's id for a v2 SOCCER match, under the name the soccer feed gives
+    # it. The name misdescribes it — on that feed it is the only COMPLETE id
+    # space, not a fallback — but it is kept because it is the provider's own,
+    # exactly as `odds_id` keeps a name that reads like an odds-provider key.
+    #
+    # It is carried rather than substituted for `fixture_id` because the
+    # question "which id anchors a soccer match" belongs to the stamper that
+    # does not exist yet, and this door already ships: `get_live_fixtures`
+    # feeds `espn_sync`'s standby check, which is keyed on the team pair and
+    # would not notice either way. Carrying is what lets that stamper choose
+    # from evidence instead of from whatever this parser happened to pick.
+    #
+    # The evidence, measured 2026-09-07 ~05:00Z over three full v2 payloads —
+    # `matches/live` (195 rows, 113 leagues) and `matches/daily` at offsets 1
+    # and 2 (274 and 362 rows), pinned as `..._fullcensus.json` fixtures:
+    #
+    #   main_id         188/195, 262/274, 357/362 present   1, 2 and 4 COLLISIONS
+    #   fallback_id_1   183/195, 250/274, 334/362 present   0 collisions
+    #   fallback_id_2   183/195, 250/274, 334/362 present   0 collisions
+    #   fallback_id_3   195/195, 274/274, 362/362 present   0 collisions
+    #
+    # `main_id` is disqualified three times over and it is the one a reader
+    # reaches for first. It collides ACROSS COMPETITIONS — Scunthorpe v
+    # Nottingham U21 in the National League Cup and Buckhurst Hill v Yaxley in
+    # the FA Cup qualifying round both answer to `2026090846246` — which is the
+    # tell that StatPal numbers all 113 leagues from one sequence. It is blank
+    # on 3.6–4.6% of rows. And it is composite, not opaque: 13 characters,
+    # `YYYYMMDD` + 5 digits, its prefix agreeing with the row's own `date` on
+    # 832 of 832 rows, so a postponed fixture necessarily changes id.
+    #
+    # `fallback_id_1`/`_2` are strictly dominated — blank on the 11–12 rows
+    # where this one is blank on none — so they are not carried. All four
+    # spaces agree on 9/9 of the matches served by both the live board and the
+    # offset-1 schedule, so the ids are stable across endpoints; only this one
+    # is also complete and unique.
+    fallback_id_3: Optional[str] = None
 
 
 @dataclass
@@ -772,7 +808,11 @@ class StatPalAPIService(BaseAPIClient):
         Ids are carried, never substituted (D55). `main_id` is StatPal's own
         primary key for the fixture and it is **blank on 7 of the 195 rows**,
         with `fallback_id_1..3` blank on 12 — the same four id spaces
-        `StatPalInjury` names. A blank id is emitted as a blank, because this
+        `StatPalInjury` names. It is also **not an identity**: it collides, it
+        is blank, and it encodes the date, all measured — see
+        `StatPalFixture.fallback_id_3`, which is the space that survives and is
+        carried beside it for the stamper that will have to choose. A blank id
+        is emitted as a blank, because this
         door feeds a live READING keyed on the team pair (`espn_sync`'s standby
         check), and dropping the row would under-report StatPal's coverage of
         exactly the games ESPN went dark on. It must never become an anchor:
@@ -836,6 +876,7 @@ class StatPalAPIService(BaseAPIClient):
 
         return StatPalFixture(
             fixture_id=str(item.get("main_id") or ""),
+            fallback_id_3=str(item.get("fallback_id_3") or "") or None,
             home_team=home_team,
             away_team=away_team,
             home_team_id=str(home.get("id") or "") or None,
