@@ -281,6 +281,34 @@ struct OddsChartView: View {
         allPoints.isEmpty
     }
 
+    /// What that section says, in the tense the game is actually in.
+    ///
+    /// #3859 — the sentence took NO state at all. On the full-time LAFC 2 — Real
+    /// Salt Lake 2 (15304990), under a navigation bar reading `FT 90'+4'`, it said
+    /// *"No win probability readings for this game YET"* — a reading that will
+    /// never arrive, because nothing writes win-prob snapshots for a match that is
+    /// over. It is #3821's defect two cards higher on the same page, and #3465's
+    /// two cards lower than that; all three are Alex's standing ruling that
+    /// settled means settled, which binds an empty state's copy as tightly as it
+    /// binds a hero.
+    ///
+    /// The population is not a curiosity: every one of the ten most recently
+    /// settled events sampled for #3859 held ZERO win-prob snapshots.
+    ///
+    /// Like ``EventState/noGameMarketsLine(status:)``, the settled reading NAMES
+    /// NO CAUSE. This branch covers a match no source ever modelled and a match
+    /// whose readings we simply never captured, and the view cannot tell them
+    /// apart — so it drops the false promise and claims nothing in its place.
+    ///
+    /// Takes the raw status, not a `settled` flag, so the status test stays in
+    /// ``EventState/isFinished(_:)`` where every other native reading of "is it
+    /// over?" already comes from.
+    static func noReadingsLine(status: String?) -> String {
+        EventState.isFinished(status)
+            ? "No win probability readings for this game."
+            : "No win probability readings for this game yet."
+    }
+
     /// True once the payload has LOADED and holds nothing. Deliberately false
     /// while loading and on error, so a slow network never reads as an empty
     /// game — those two states have their own answers below.
@@ -310,7 +338,7 @@ struct OddsChartView: View {
             Image(systemName: "chart.xyaxis.line")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Text("No win probability readings for this game yet.")
+            Text(Self.noReadingsLine(status: status))
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Spacer()
@@ -410,7 +438,8 @@ struct OddsChartView: View {
                     Text(Self.emptyChartMessage(
                         range: vm.selectedRange,
                         hasAnyPointInRange: !dataPoints.isEmpty,
-                        allIsDrawable: Self.hasDrawableLine(in: enrichedPoints)
+                        allIsDrawable: Self.hasDrawableLine(in: enrichedPoints),
+                        status: status
                     ))
                         .font(.caption)
                         .multilineTextAlignment(.center)
@@ -522,7 +551,8 @@ struct OddsChartView: View {
                             Text(Self.emptyChartMessage(
                                 range: vm.selectedRange,
                                 hasAnyPointInRange: !dataPoints.isEmpty,
-                                allIsDrawable: Self.hasDrawableLine(in: enrichedPoints)
+                                allIsDrawable: Self.hasDrawableLine(in: enrichedPoints),
+                                status: status
                             ))
                                 .font(.callout)
                                 .multilineTextAlignment(.center)
@@ -1275,21 +1305,48 @@ struct OddsChartView: View {
     /// obeying it. It points at "All" only when `allIsDrawable` says All genuinely
     /// has a line to show, so the suggestion can never send a reader to a second
     /// empty frame.
+    ///
+    /// #3859 — THREE OF THESE FOUR SENTENCES WERE TENSED and none of them could
+    /// see the game's state, so a finished match was told to keep waiting. `status`
+    /// is REQUIRED rather than defaulted: a default is exactly how ``noReadingsNote``
+    /// came to print "yet" over a full-time header for as long as it did, and a
+    /// future call site that has not thought about the tense should fail to compile
+    /// rather than quietly pick the promising one.
+    ///
+    /// READ THE FOUR AS A BLOCK, not row by row — that is #3823's lesson. A per-row
+    /// rule can be right on every row and still leave the card saying one thing six
+    /// times. It does not happen here: the settled set holds exactly as many
+    /// distinct sentences as the unsettled one, which
+    /// `testTheSettledSetSaysAsMuchAsTheUnsettledOne` pins.
+    ///
+    /// "No probability data available" is untensed already and is left alone.
     static func emptyChartMessage(
         range: OddsTimeRange,
         hasAnyPointInRange: Bool,
-        allIsDrawable: Bool
+        allIsDrawable: Bool,
+        status: String?
     ) -> String {
+        let over = EventState.isFinished(status)
         guard range == .sinceStart else {
-            return hasAnyPointInRange
-                ? "Not enough readings yet to draw a line."
-                : "No probability data available"
+            guard hasAnyPointInRange else { return "No probability data available" }
+            return over
+                ? "Not enough readings to draw a line."
+                : "Not enough readings yet to draw a line."
         }
-        let lead = hasAnyPointInRange
-            ? "Not enough readings since the start to draw a line yet."
-            : "No readings since the start yet."
+        let lead: String
+        if hasAnyPointInRange {
+            lead = over
+                ? "Not enough readings since the start to draw a line."
+                : "Not enough readings since the start to draw a line yet."
+        } else {
+            lead = over ? "No readings since the start." : "No readings since the start yet."
+        }
         // "Switch to", not "Tap": this view runs on macOS too (it branches on
         // `os(iOS)` for the fullscreen presentation), where there is nothing to tap.
+        //
+        // The offer survives settlement deliberately: on a finished game "All" still
+        // holds the pre-match market, and a reader who cannot see a line since the
+        // first whistle is exactly the reader that helps.
         return allIsDrawable ? lead + " Switch to All for the pre-match market." : lead
     }
 
