@@ -17,6 +17,7 @@ from sqlalchemy import (
     Index,
     Integer,
     Numeric,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
@@ -2449,6 +2450,28 @@ class MarketMatchReceipt(Base):
     )
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
+    #: The container this attempt was judged against, when the deciding pass was
+    #: container assembly rather than the matcher (#2927). NULL for every
+    #: receipt the matcher writes, which is all of them today.
+    #:
+    #: WHY THE COLUMN LIVES HERE RATHER THAN ON A SECOND TABLE. Container
+    #: assembly makes exactly the same kind of decision the matcher makes —
+    #: *this candidate is a member / this candidate is not, and here is the test
+    #: it failed* — and the spec's rule is that membership is never a curated
+    #: list, the receipt is how that is proved rather than asserted. A separate
+    #: ``container_match_receipts`` would duplicate every column and split the
+    #: one question the bus asks ("why is KXATPMATCH-… reachable from nowhere")
+    #: across two tables.
+    #:
+    #: ``ON DELETE SET NULL``, not CASCADE. Deleting a container must not delete
+    #: the evidence of what it refused — a container rebuilt from scratch after
+    #: a bad assembly is the exact moment those receipts are worth most. The
+    #: matcher's own ``market_id`` cascade is different because a receipt for a
+    #: market that no longer exists answers a question nobody can ask.
+    container_id: Mapped[Optional[int]] = mapped_column(
+        BigInteger, ForeignKey("containers.id", ondelete="SET NULL")
+    )
+
     __table_args__ = (
         # Identity. Names match the migration exactly.
         Index("uq_match_receipt_market", "market_id", unique=True),
@@ -2468,6 +2491,12 @@ class MarketMatchReceipt(Base):
         # "Which markets came OFF this event" — the mirror of the lookup above,
         # and the one the merge question is asked in.
         Index("ix_match_receipt_prev_event", "previous_event_id"),
+        # "What did assembly refuse from this container, and why" — the
+        # by-container half of the membership proof. Partial in spirit (almost
+        # every row is NULL) but plain here: Alembic runs this on an empty
+        # table, and a partial index would need its own predicate kept in sync
+        # with the model forever for no measured gain at ~450k rows.
+        Index("ix_match_receipt_container", "container_id"),
     )
 
 
@@ -2552,4 +2581,376 @@ class MarketLinkChange(Base):
         Index("ix_link_change_prev_event", "previous_event_id", "changed_at"),
         # "Everything that ever happened to this market's link."
         Index("ix_link_change_market", "market_id", "changed_at"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# The event graph: containers, edges, participants (#2927, Phase 1).
+#
+# The graph has nodes and no edges. `tournaments` is five columns and inert —
+# nothing joins to it; `events` has no `tournament_id` at all; the US Open hub
+# is a hand-versioned JSON file committed to the repo. These four tables are
+# the additive half of the fix: nothing here is altered, nothing dropped, and
+# the down migration is four DROP TABLEs.
+#
+# Full spec, with the measurements behind every column:
+# `.claude/handoff/ARTIFACT-LANE1B-CONTAINERS-SPEC.md`.
+# ---------------------------------------------------------------------------
+
+
+class Container(Base):
+    """A thing that gathers events and markets: a tournament, a card, a season.
+
+    THE SHIP. A person opening the US Open hub sees the doubles draw, the side
+    questions and the props that are on the site today but reachable from
+    nowhere — and when Wimbledon or the Oscars arrives, sees the same thing
+    with no one having written a list.
+
+    NESTING IS ONE LEVEL OF MEANING, NOT ONE LEVEL OF DEPTH. US Open 2026
+    (``kind='tournament'``) has children Men's Singles · Women's Singles ·
+    Men's Doubles · Women's Doubles · Mixed Doubles, each *also*
+    ``kind='tournament'`` with ``parent_container_id`` set. A hub renders the
+    parent; its sections come from the children and from the class on each
+    ``contains`` edge. One container per draw is what lets Men's Doubles carry
+    its own anchor and its own status.
+
+    ``status`` OBEYS D27. The authority decides a container's state exactly as
+    it decides an event's. A container is ``final`` when its authority says the
+    tournament is over — **never** when its last known child finished, which is
+    the inference that makes a hub go dark early on a fixture we missed.
+
+    THE CYCLE GUARD IS NOT ENTIRELY IN THE SCHEMA. ``parent_container_id`` is
+    self-referential and nullable. A one-hop cycle (a container parented to
+    itself) is a CHECK constraint below, because that much a CHECK can express.
+    A longer cycle cannot be expressed as a CHECK and belongs to the assembly
+    job, which walks the chain before it writes.
+    """
+
+    __tablename__ = "containers"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+
+    #: One of ``app.utils.container_graph.CONTAINER_KINDS``.
+    kind: Mapped[str] = mapped_column(String(24), nullable=False)
+
+    #: Display name, e.g. "US Open 2026 — Men's Doubles".
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+
+    #: The URL the hub is served at: ``/api/containers/{slug}``. Unique — the
+    #: slug IS the public identity, so two containers cannot claim one URL.
+    slug: Mapped[str] = mapped_column(String(200), nullable=False)
+
+    sport_id: Mapped[Optional[int]] = mapped_column(ForeignKey("sports.id"))
+
+    #: For containers that are not a sport at all (an award show). Nullable
+    #: alongside ``sport_id`` rather than one polymorphic column, because a
+    #: sport FK is worth having where a sport exists.
+    category: Mapped[Optional[str]] = mapped_column(String(50))
+
+    window_start: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    window_end: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+    #: One of ``CONTAINER_STATUSES``. See the class docstring — authority-set.
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default="scheduled"
+    )
+
+    parent_container_id: Mapped[Optional[int]] = mapped_column(
+        BigInteger, ForeignKey("containers.id", ondelete="SET NULL")
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        # The public identity.
+        Index("uq_container_slug", "slug", unique=True),
+        # "Every live tournament" — the hub index and the assembly job's own
+        # work queue.
+        Index("ix_container_kind_status", "kind", "status"),
+        # "The children of US Open 2026", rendered on every hub load.
+        Index("ix_container_parent", "parent_container_id"),
+        # "What is on this weekend in tennis."
+        Index("ix_container_sport_window", "sport_id", "window_start"),
+        # A one-hop cycle is expressible and therefore refused. Longer cycles
+        # are the assembly job's (see the class docstring).
+        CheckConstraint(
+            "parent_container_id IS NULL OR parent_container_id <> id",
+            name="ck_container_not_own_parent",
+        ),
+    )
+
+
+class ContainerProviderAnchor(Base):
+    """One provider id, one container. Mirrors ``event_provider_anchors``.
+
+    THE UNIQUE CONSTRAINT IS THE WHOLE POINT, and it is the same lesson
+    ``event_provider_anchors`` exists for: one provider id names ONE container,
+    and a second claim **raises or tags — it never silently no-ops** (D55). A
+    no-op here is how two draws quietly become one hub.
+
+    ``id_kind`` IS EXPLICIT AND NEVER INFERRED FROM THE SHAPE OF THE STRING
+    (D55 again). Inferring an anchor key from digit count is what put StatPal's
+    6-digit and 10-digit fixture ids in one namespace and produced 21
+    conflicting duplicate groups on #2213.
+
+    WHY THIS IS A SEPARATE TABLE FROM ``event_provider_anchors`` RATHER THAN A
+    NULLABLE ``container_id`` ON IT. The unique key differs. An event anchor is
+    unique on ``(source, source_id, id_kind)`` across all events; a container
+    anchor must be unique on ``(provider, id_kind, provider_id)`` across all
+    containers — and the same ESPN league id legitimately appears in both
+    spaces meaning different things. Sharing the table would make one of those
+    two constraints unstatable.
+    """
+
+    __tablename__ = "container_provider_anchors"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+
+    #: CASCADE: an anchor to a container that no longer exists is not history,
+    #: it is a dangling assertion that the next assembly run would act on.
+    container_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("containers.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    #: One of ``ANCHOR_PROVIDERS``.
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+
+    #: The sport this id is scoped to, where the provider namespaces by sport.
+    sport: Mapped[Optional[str]] = mapped_column(String(32))
+
+    #: ESPN league/tournament id, StatPal tournament id, DataGolf event id,
+    #: Kalshi series ticker, Polymarket event slug or tag.
+    provider_id: Mapped[str] = mapped_column(String(200), nullable=False)
+
+    #: One of ``ANCHOR_ID_KINDS``. In the key, so one string may legitimately
+    #: be both a ``series`` and a ``tag`` without colliding.
+    id_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    #: Which call site claimed it, so a bad call site's anchors can be withdrawn
+    #: selectively instead of the table being rebuilt.
+    claim_context: Mapped[Optional[dict]] = mapped_column(JSONB)
+
+    __table_args__ = (
+        # Identity, and the collision detector. Name matches the migration.
+        #
+        # ``sport`` IS IN THE KEY (CERT-2001). It was omitted in the first cut —
+        # the key was ``(provider, id_kind, provider_id)`` — which contradicted
+        # D55's explicit ``(provider, sport, id)`` namespace and made two
+        # legitimate containers collide: ESPN tournament id ``1234`` in tennis
+        # and ``1234`` in golf are different tournaments, and the second one to
+        # claim would have been REFUSED. The failure is silent in the worst
+        # direction, because a refused anchor is a container assembly can never
+        # resolve, so an entire hub goes missing rather than wrong.
+        #
+        # ``NULLS NOT DISTINCT`` is the other half and is not optional. A plain
+        # unique index treats every NULL as distinct, so making ``sport``
+        # nullable-and-in-the-key would have quietly UNDONE the constraint for
+        # every provider that does not namespace by sport — two rows with
+        # ``sport IS NULL`` and the same provider id would both be accepted,
+        # which is exactly the silent no-op D55 forbids. Postgres 15+ (CI runs
+        # 15, production runs 17), so the feature is available on both.
+        Index(
+            "uq_container_anchor",
+            "provider",
+            "sport",
+            "id_kind",
+            "provider_id",
+            unique=True,
+            postgresql_nulls_not_distinct=True,
+        ),
+        # "Resolve this container's anchors" — assembly's first step.
+        Index("ix_container_anchor_container", "container_id"),
+    )
+
+
+class EventEdge(Base):
+    """The relationships: membership, identity, derivation, progression.
+
+    NO POLYMORPHIC FOREIGN KEYS, DELIBERATELY. ``parent_id``/``child_id``
+    cannot carry a real FK because the type varies. That integrity is bought
+    back two ways, and **both are part of this ship, not a follow-up**:
+    (a) assembly writes an edge only for ids it just read, and (b) a nightly
+    invariant check — *every ``contains`` edge resolves to a live row of its
+    declared type* — files through the reconciliation rail exactly as the
+    golden check does. An edges table without (b) is a second place for
+    dangling ids to hide, and #2914 already shows what unreachable rows cost.
+
+    ``class`` IS REQUIRED WHEN ``kind='contains'`` and refused otherwise. The
+    required half is the CHECK constraint below; the refused half is enforced
+    by ``container_graph.validate_edge_kind_and_class``. A ``contains`` edge
+    with no class is a member the hub cannot put in a section — and the answer
+    is ``'unclassified'``, never NULL, because an unclassified member must stay
+    visible.
+
+    ``same_as`` IS THE DRAIN'S LEDGER AND IS NOT WRITTEN CASUALLY. Ruling 048
+    is unchanged by this table. An id-less claim still never absorbs; a
+    ``same_as`` edge *records* a correspondence that an anchored id already
+    proved, it does not create one. Assembly may write ``contains`` and nothing
+    else (``ASSEMBLY_WRITABLE_KINDS``); twins remain lane1's under #2693 / D39.
+
+    EVERY EDGE NAMES A SOURCE AND A CONFIDENCE, AND EVERY CANDIDATE **NOT**
+    EDGED GETS A RECEIPT (``market_match_receipts.container_id``, with
+    ``outcome='rejected'`` and a ``reject_reason`` naming the test it failed).
+    Membership is never a curated list, and the receipt is how that is proved
+    rather than asserted.
+
+    ON THE COLUMN NAME ``class``: measured against production's
+    ``pg_get_keywords()`` before it was chosen — ``class`` is ``unreserved`` in
+    Postgres, so raw SQL may use it unquoted. The Python attribute is
+    ``edge_class`` only because ``class`` is a Python keyword.
+    """
+
+    __tablename__ = "event_edges"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+
+    parent_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    #: One of ``EDGE_NODE_TYPES``; resolves via ``EDGE_NODE_TABLES``.
+    parent_type: Mapped[str] = mapped_column(String(16), nullable=False)
+
+    child_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    child_type: Mapped[str] = mapped_column(String(16), nullable=False)
+
+    #: One of ``EDGE_KINDS``. See the class docstring for what each means and
+    #: which ones assembly may write.
+    kind: Mapped[str] = mapped_column(String(24), nullable=False)
+
+    #: One of ``EDGE_CLASSES``. Required when ``kind='contains'``.
+    #: DB column is ``class``; the attribute is renamed only for Python.
+    edge_class: Mapped[Optional[str]] = mapped_column("class", String(32))
+
+    #: One of ``EDGE_SOURCES``.
+    source: Mapped[str] = mapped_column(String(32), nullable=False)
+
+    confidence: Mapped[float] = mapped_column(Numeric(4, 3), nullable=False)
+
+    #: The receipt that recorded the decision, when there was one.
+    receipt_id: Mapped[Optional[int]] = mapped_column(
+        BigInteger, ForeignKey("market_match_receipts.id", ondelete="SET NULL")
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        # Identity: one edge of a given kind between two nodes. This is the
+        # ON CONFLICT target assembly upserts against, which is what makes a
+        # re-run idempotent instead of duplicating every member.
+        Index(
+            "uq_event_edge",
+            "parent_type",
+            "parent_id",
+            "child_type",
+            "child_id",
+            "kind",
+            unique=True,
+        ),
+        # "What contains this event?" — the reverse lookup a card needs to
+        # print "part of the US Open".
+        Index("ix_event_edge_child", "child_type", "child_id", "kind"),
+        # "This container's members, by section" — the hub's own read, and the
+        # reason ``class`` is stored rather than inferred.
+        Index("ix_event_edge_parent", "parent_type", "parent_id", "kind", "class"),
+        # A member with no section cannot be rendered. ``'unclassified'`` is
+        # the answer for "we could not tell"; NULL is not.
+        CheckConstraint(
+            "kind <> 'contains' OR class IS NOT NULL",
+            name="ck_event_edge_contains_has_class",
+        ),
+        # A node cannot contain itself.
+        CheckConstraint(
+            "NOT (parent_type = child_type AND parent_id = child_id)",
+            name="ck_event_edge_not_self",
+        ),
+        CheckConstraint(
+            "confidence >= 0 AND confidence <= 1",
+            name="ck_event_edge_confidence_range",
+        ),
+    )
+
+
+class EventParticipant(Base):
+    """A side of an event that can hold more than one person.
+
+    ONE SHAPE FOR ALL OF THEM: a doubles match (two rows per side, ``position``
+    0 and 1), a golf field (many rows, ``side='field'``), an award category
+    (many ``nominee`` rows), a fight-card bout.
+
+    ``entity_name`` IS DENORMALISED ON PURPOSE. A participant must be
+    recordable *before* it resolves to a ``teams`` row, or doubles ingest
+    blocks on entity resolution. ARTIFACT-M-20260903-I lists ten name shapes
+    that will not all resolve on day one — "Y. Bu" is Bu Yunchaokete,
+    "C. Wong" is Chak Lam Coleman Wong — and a side we cannot name is a side we
+    do not store.
+
+    ``position``, NOT ``order``. ``order`` is reserved in Postgres and quoting
+    it forever is a tax. (``position`` is unreserved as a column name —
+    measured against production's ``pg_get_keywords()``, where it is
+    "unreserved (cannot be function or type name)".)
+
+    ``events.home_team_name`` / ``away_team_name`` BECOME A PROJECTION, NOT THE
+    TRUTH — but only after the participants backfill, and only for sports that
+    migrate. They are read by a large surface area and they stay written and
+    correct throughout. **No column is dropped by this program.**
+
+    WHY THIS UNBLOCKS THE DOUBLES GUARD. D60 asks for a test that a doubles
+    fixture can never attach to a singles event. That test is only statable
+    once a side can have two participants: a two-participant side cannot equal
+    a one-participant side. Name matching is what the register does today, and
+    artifact I measured its cost — 79 doubles slash-teams that never match
+    2-name rows, and token-fallback catching 30+ false doubles→singles hits. A
+    doubles fixture matched by name onto a singles row is a wrong answer that
+    looks like a right one.
+    """
+
+    __tablename__ = "event_participants"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+
+    event_id: Mapped[int] = mapped_column(
+        ForeignKey("events.id", ondelete="CASCADE"), nullable=False
+    )
+
+    #: One of ``PARTICIPANT_SIDES``.
+    side: Mapped[str] = mapped_column(String(16), nullable=False)
+
+    #: ``teams.id`` or a player id per ``entity_type``. NULL until resolved —
+    #: no FK, because the id space depends on the type.
+    entity_id: Mapped[Optional[int]] = mapped_column(BigInteger)
+
+    #: One of ``PARTICIPANT_ENTITY_TYPES``.
+    entity_type: Mapped[str] = mapped_column(String(16), nullable=False)
+
+    #: Denormalised, and never NULL. See the class docstring.
+    entity_name: Mapped[str] = mapped_column(String(200), nullable=False)
+
+    #: One of ``PARTICIPANT_ROLES``.
+    role: Mapped[Optional[str]] = mapped_column(String(24))
+
+    #: Order within the side. 0 and 1 for a doubles pair.
+    position: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, server_default="0"
+    )
+
+    __table_args__ = (
+        # Identity: one participant per slot. This is what makes the ingest
+        # idempotent, and what stops a re-run turning a doubles pair into four.
+        Index("uq_event_participant_slot", "event_id", "side", "position", unique=True),
+        # "Every event this player is in."
+        Index("ix_event_participant_entity", "entity_type", "entity_id"),
+        # "This event's sides", the read every card and every guard makes.
+        Index("ix_event_participant_event", "event_id"),
+        CheckConstraint("position >= 0", name="ck_event_participant_position"),
     )
