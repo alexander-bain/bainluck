@@ -76,8 +76,10 @@ SELF_GATE_MATERIAL_RATIO = 0.1
 #:
 #: The residual noise is SPILL: a message published at second 599 of a bucket is
 #: delivered in the next one, so a perfectly healthy task can under-report by up
-#: to one fire per bucket. That is 1-in-15 at the 40s rail this instrument was
-#: built for, which 0.10 covers — but it is 1-in-2 for a 300s beat, which no
+#: to one fire per bucket. That is 1-in-20 at the live republish rail this
+#: instrument was built for — 1-in-15 until LAT-P182 shortened that rail's period
+#: 40s -> 30s, which moves the spill AWAY from this threshold rather than toward
+#: it — which 0.10 covers. But it is 1-in-2 for a 300s beat, which no
 #: fraction threshold covers at all. Hence the SECOND term at the call site:
 #: material requires the gap to exceed one whole fire as well. A fraction alone
 #: would editorialise about a single boundary message on every slow beat in the

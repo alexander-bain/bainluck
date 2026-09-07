@@ -175,7 +175,7 @@ def test_the_live_rail_is_graded_stale_against_its_own_period_not_the_other_rail
         out = admin._live_prewarm_state()
     assert out["status"] == "ok"
     assert out["stale"] is True, (
-        f"a report {out['age_seconds']:.0f}s old is not stale for a 40s beat — the "
+        f"a report {out['age_seconds']:.0f}s old is not stale for a sub-minute beat — the "
         "freshness bound has been taken from the wrong rail"
     )
 
@@ -183,7 +183,7 @@ def test_the_live_rail_is_graded_stale_against_its_own_period_not_the_other_rail
 def test_live_and_absent_labels_are_never_merged():
     """LAT-P112's distinction, which the report exists to carry.
 
-    "This shape is live" and "this shape's mirror was GONE and the 40s pass
+    "This shape is live" and "this shape's mirror was GONE and the republish pass
     covered for a starved host beat" are different incidents. A reader who cannot
     separate them cannot tell a healthy live night from a `background`-queue
     outage.

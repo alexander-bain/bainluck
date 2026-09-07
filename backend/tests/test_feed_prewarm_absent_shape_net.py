@@ -128,7 +128,7 @@ def test_a_first_paint_shape_with_no_stale_mirror_is_rebuilt():
 def test_a_healthy_rail_builds_nothing_and_the_net_stays_free():
     """The state on every ordinary pass, and it must cost no build at all.
 
-    `#2236`'s affordability argument for a 40s beat is that the idle pass is one
+    `#2236`'s affordability argument for a sub-minute beat is that the idle pass is one
     `HGETALL` and one `SETEX`. LAT-P112 may add reads to that and must not add
     work: with every mirror present the net's answer is the empty set and the
     pass still reports `no_live_shapes`.
@@ -197,7 +197,7 @@ def test_the_probe_reads_the_stale_mirror_and_never_the_head():
     for key in probed:
         assert key.endswith(":stale"), (
             f"probed {key!r} — reading the head makes this pass rebuild every "
-            "shape every 40s, which is the cost #2236's docstring refused"
+            "shape every republish period, which is the cost #2236's docstring refused"
         )
 
 

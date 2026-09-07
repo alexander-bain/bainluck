@@ -392,7 +392,7 @@ def _fake_rc(hash_state=None):
 def test_a_live_warm_enters_the_set_and_a_not_live_warm_leaves_it():
     """Both directions, on every warm. Clearing matters as much as setting.
 
-    A shape that goes not-live but stays in the set keeps a 40s beat rebuilding a
+    A shape that goes not-live but stays in the set keeps the republish beat rebuilding a
     payload whose own TTL is 60/300 and which the 120s pass already covers —
     paying three times over for nothing, silently, until someone reads a bill.
     """
@@ -422,7 +422,7 @@ def test_the_live_set_reader_fails_to_empty_not_to_everything():
     """A Redis error must republish NOTHING, not every shape on the site.
 
     Direction of failure is the whole argument. Wrong-and-empty costs one 60s
-    sawtooth — the pre-#2236 status quo. Wrong-and-full is a 40s beat rebuilding
+    sawtooth — the pre-#2236 status quo. Wrong-and-full is the republish beat rebuilding
     the entire feed surface off a transient error.
     """
     rc = MagicMock()
@@ -479,7 +479,7 @@ def _run_live_pass(rc, warm_result=None):
 def test_an_empty_live_set_builds_nothing_but_still_reports():
     """The common case — off-hours this pass must be uninteresting, not invisible.
 
-    One `HGETALL`, one `SETEX`, no build. That is what makes a 40s beat
+    One `HGETALL`, one `SETEX`, no build. That is what makes a sub-minute beat
     affordable beside a 120s pass measured at p50 9.8s / p95 14.2s; the cost
     scales with the number of shapes actually live, which is the only thing it
     should scale with.
@@ -681,7 +681,7 @@ def test_a_build_gets_its_own_engine_so_the_pool_size_is_not_the_bound():
     )
     assert "engine.dispose()" in session_src, (
         "a per-call engine that is not disposed leaks its pool once per build, "
-        "which at this concurrency is once per 40s beat (#1162)"
+        "which at this concurrency is once per republish beat (#1162)"
     )
 
 

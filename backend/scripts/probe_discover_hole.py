@@ -43,7 +43,8 @@ attributable.
 load-bearing. A `miss` on the anon shape REBUILDS and REPUBLISHES the shared
 entry, so a high-frequency probe would paper over the very hole it is looking
 for — it would become the warmer. The cadence is therefore deliberately SLOWER
-than the warm rail it is auditing (`FEED_LIVE_REPUBLISH_PERIOD_S = 40s`): at
+than the warm rail it is auditing (`FEED_LIVE_REPUBLISH_PERIOD_S`, 30s since
+LAT-P182 and 40s when this probe was written): at
 `--interval 5` this probe touches each shape every 10s, which is frequent enough
 to see a hole open and slow enough that the rail, not the probe, is what closes
 it. Read `--interval` as an instrument setting, not a knob.

@@ -951,7 +951,9 @@ TASK_DELIVERY_BUCKET_PREFIX = "bainluck:task_deliv_bucket"
 #: Bounded on both sides by numbers this module already owns, not chosen for
 #: roundness. BELOW: the fraction is refused under ``MIN_EXPECTED_FIRES`` (2.0)
 #: publications, so a bucket must comfortably clear that for the beats this
-#: instrument exists for — at the 40s rail that is 15 fires per bucket, and the
+#: instrument exists for — at the live republish rail that is 20 fires per bucket
+#: (LAT-P182 shortened its period 40s -> 30s, which moved this from 15 and made the
+#: lower bound SAFER, not tighter), and the
 #: bucket still grades any beat down to a 300s cadence. ABOVE: it must be short
 #: enough to see the hole. 172 measured a rail losing 35% of its fires over 28.9
 #: minutes while the 24h ratio moved to 0.70 and read ``on_schedule``; a bucket
