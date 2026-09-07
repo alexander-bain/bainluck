@@ -205,7 +205,32 @@ MAX_EXPECTED_POPULATION = 20_000
 #: Pre-registered census. `--apply` refuses unless the live measurement still
 #: shows zeros on every ladder rung, so this docstring's claims and the dyno's
 #: result cannot drift apart unnoticed.
-EXPECTED_ZEROS = ("with_score", "with_statpal_end", "with_espn_id", "with_box_score")
+#:
+#: THESE ARE THE POPULATION-SCOPED COUNTERS, not the window-wide ones, and the
+#: distinction is the whole point. The first cut of this gate read the plain
+#: `with_score` / `with_espn_id` / `with_box_score` counters, which
+#: :data:`_CENSUS_SQL` measures over EVERY `closed` row in the window — a
+#: superset of the population. Those rows are exactly the ones
+#: :data:`_TARGET_WHERE` already excludes, so the gate refused on rows the
+#: repair could never touch: measured on production 2026-09-07,
+#: `with_score` 126 / `with_espn_id` 80 / `with_box_score` 87, and the
+#: intersection with the population **0**. It could only have passed on a
+#: database where nothing had been scored in fourteen days, i.e. with the
+#: results pipeline dark, so in a healthy production it was unsatisfiable and
+#: the repair could never run.
+#:
+#: Scoped to the population the check becomes the invariant it was always
+#: reaching for: no row selected for unsettling may carry a settlement signal.
+#: That is a real control — it fires the moment an edit to `_TARGET_WHERE`
+#: drops one of the exclusions — and it is satisfiable. The window-wide
+#: counters stay in the census output, where they are informative, and gate
+#: nothing.
+EXPECTED_ZEROS = (
+    "population_with_score",
+    "population_with_statpal_end",
+    "population_with_espn_id",
+    "population_with_box_score",
+)
 
 
 def horizon_floor(now: datetime, lookback_days: int = RESULTS_LOOKBACK_DAYS):
@@ -361,9 +386,18 @@ def statement(sql: str):
         bindparam("floor", type_=DateTime(timezone=True)),
     )
 
-#: The census counts each refusal clause SEPARATELY over the `closed` rows in
-#: the window, so "0 with a score" is measured on the dyno rather than quoted
-#: from this file's docstring. `EXPECTED_ZEROS` then gates `--apply` on them.
+#: The census counts each refusal clause SEPARATELY, so every number is measured
+#: on the dyno rather than quoted from this file's docstring. Each one is counted
+#: TWICE and the two readings answer different questions:
+#:
+#:   * `with_*`            — over every `closed` row in the window. Context: how
+#:                           much of the window is healthy. Gates NOTHING.
+#:   * `population_with_*` — over `_TARGET_WHERE` only, i.e. the rows this repair
+#:                           would actually write. `EXPECTED_ZEROS` gates
+#:                           `--apply` on THESE.
+#:
+#: Gating on the first set is what made this repair unrunnable in production;
+#: see the note on :data:`EXPECTED_ZEROS`.
 _CENSUS_SQL = f"""
 SELECT count(*) FILTER (WHERE {_TARGET_WHERE}) AS population,
        count(*) FILTER (WHERE {_TARGET_WHERE} AND completed_at IS NOT NULL)
@@ -373,7 +407,16 @@ SELECT count(*) FILTER (WHERE {_TARGET_WHERE}) AS population,
            AS with_score,
        count(*) FILTER (WHERE statpal_end_time IS NOT NULL) AS with_statpal_end,
        count(*) FILTER (WHERE espn_id IS NOT NULL)          AS with_espn_id,
-       count(*) FILTER (WHERE box_score_data IS NOT NULL)   AS with_box_score
+       count(*) FILTER (WHERE box_score_data IS NOT NULL)   AS with_box_score,
+       count(*) FILTER (WHERE {_TARGET_WHERE}
+                          AND (home_score IS NOT NULL OR away_score IS NOT NULL))
+           AS population_with_score,
+       count(*) FILTER (WHERE {_TARGET_WHERE} AND statpal_end_time IS NOT NULL)
+           AS population_with_statpal_end,
+       count(*) FILTER (WHERE {_TARGET_WHERE} AND espn_id IS NOT NULL)
+           AS population_with_espn_id,
+       count(*) FILTER (WHERE {_TARGET_WHERE} AND box_score_data IS NOT NULL)
+           AS population_with_box_score
   FROM events
  WHERE status = :closed
    AND commence_time IS NOT NULL
@@ -428,10 +471,17 @@ def population_refusal_reason(measured: dict, *, default_window: bool) -> str | 
     for field in EXPECTED_ZEROS:
         count = measured.get(field, 0)
         if count:
+            signal = field[len("population_with_") :]
             return (
-                f"{count} row(s) in the window have {field} — this repair's whole "
-                "licence is that NO rung of the ladder spoke about these rows, and "
-                "that has stopped being true. Adjudicate them before sweeping."
+                f"{count} row(s) SELECTED FOR UNSETTLING carry {signal} — this "
+                "repair's whole licence is that no rung of the ladder spoke about "
+                "the rows it writes, and `_TARGET_WHERE` is supposed to make that "
+                "structurally impossible. A non-zero count here means the "
+                "population predicate and this census disagree, so the plan is no "
+                "longer the thing being applied. Fix the predicate before sweeping "
+                "— do NOT widen the window and do NOT relax this check. (Rows "
+                "elsewhere in the window that carry a result are EXPECTED and are "
+                "counted separately as `with_*`; they are not this.)"
             )
     return None
 
@@ -449,6 +499,10 @@ async def measure(session, *, floor) -> dict:
         "with_statpal_end": census.with_statpal_end,
         "with_espn_id": census.with_espn_id,
         "with_box_score": census.with_box_score,
+        "population_with_score": census.population_with_score,
+        "population_with_statpal_end": census.population_with_statpal_end,
+        "population_with_espn_id": census.population_with_espn_id,
+        "population_with_box_score": census.population_with_box_score,
         "leagues_with_a_result_less_row": len(rails),
         "leagues_with_no_real_result_at_all": sum(
             1 for r in rails if r.visible == r.no_result

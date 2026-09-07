@@ -670,6 +670,10 @@ class TestTheGatesAreNotDecoration:
             "with_statpal_end": 0,
             "with_espn_id": 0,
             "with_box_score": 0,
+            "population_with_score": 0,
+            "population_with_statpal_end": 0,
+            "population_with_espn_id": 0,
+            "population_with_box_score": 0,
         }
         base.update(overrides)
         return base
@@ -689,11 +693,42 @@ class TestTheGatesAreNotDecoration:
         )
 
     @pytest.mark.parametrize(
-        "field", ["with_score", "with_statpal_end", "with_espn_id", "with_box_score"]
+        "field",
+        [
+            "population_with_score",
+            "population_with_statpal_end",
+            "population_with_espn_id",
+            "population_with_box_score",
+        ],
     )
-    def test_any_rung_speaking_in_the_window_refuses(self, field):
+    def test_a_rung_speaking_about_a_row_we_would_write_refuses(self, field):
+        """The invariant: a row selected for unsettling may not carry a
+        settlement signal. `_TARGET_WHERE` is supposed to make this impossible,
+        so a non-zero count means the predicate and the census have diverged."""
         assert population_refusal_reason(
             self._measured(**{field: 1}), default_window=True
+        )
+
+    @pytest.mark.parametrize(
+        "field", ["with_score", "with_statpal_end", "with_espn_id", "with_box_score"]
+    )
+    def test_a_healthy_row_ELSEWHERE_in_the_window_does_not_refuse(self, field):
+        """THE REGRESSION THIS CLASS EXISTS FOR.
+
+        These four counters are measured over every `closed` row in the window,
+        which is a SUPERSET of the population — and the rows they count are
+        precisely the ones `_TARGET_WHERE` already excludes. Gating on them made
+        the repair unrunnable against any healthy database: measured on
+        production 2026-09-07, `with_score` 126 / `with_espn_id` 80 /
+        `with_box_score` 87, with the population intersection **0**, so
+        `--apply` exited 1 while 8,279 correct rows waited. A window with
+        results in it is the NORMAL state and must never block the sweep.
+        """
+        assert (
+            population_refusal_reason(
+                self._measured(**{field: 999}), default_window=True
+            )
+            is None
         )
 
     def test_the_band_is_not_applied_to_a_widened_window(self):
@@ -710,7 +745,7 @@ class TestTheGatesAreNotDecoration:
     def test_a_rung_still_refuses_a_widened_window(self):
         """Widening the horizon relaxes the SIZE claim, never the ladder one."""
         assert population_refusal_reason(
-            self._measured(with_score=1), default_window=False
+            self._measured(population_with_score=1), default_window=False
         )
 
 
