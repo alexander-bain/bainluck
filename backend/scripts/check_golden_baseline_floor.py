@@ -29,10 +29,22 @@ regressions" while replacing master's 668. Both are claims a reader can falsify.
     python3 scripts/check_golden_baseline_floor.py --target master
     python3 scripts/check_golden_baseline_floor.py --proposed <sha>  # a merged tree
 
+AN ACCEPT IS NOT ALWAYS A DEFENCE (#3761). When the two refs carry the identical
+pairs map, no verdict other than accept was reachable -- the run compared a file
+to itself. That is the ORDINARY case (most proposals never touch the baseline)
+and it must stay exit 0, or this gate fails every pull request in the repo. So
+it is not an error; it is reported as ``NO CHANGE`` rather than dressed up as
+``ACCEPT: the floor is defended``, because the second is a sentence somebody
+later cites as proof. A caller who already knows the proposal touches the
+baseline -- a merge desk reading a specific branch -- passes ``--require-change``
+and gets exit 2 instead, which catches the ref that was pointed at the wrong
+tree. That mis-aim is not hypothetical: it is how the CERT-2152 bounce stayed
+invisible until somebody read the blob by hand.
+
 Exit codes follow gotcha #124 -- ``1`` is a result, anything else is a story
-about the harness: 0 = accept, 1 = floor moved without naming what moved,
-2 = a ref or blob could not be read (the check never ran; do NOT read that as a
-pass).
+about the harness: 0 = accept (or nothing to compare), 1 = floor moved without
+naming what moved, 2 = a ref or blob could not be read, or ``--require-change``
+found nothing to compare (the check never ran; do NOT read that as a pass).
 """
 
 from __future__ import annotations
@@ -58,6 +70,9 @@ class BlobUnreadable(Exception):
 @dataclass
 class Verdict:
     ok: bool
+    #: The two baselines adjudicate the identical pairs map, so no outcome other
+    #: than accept was reachable -- see ``compare_baselines``.
+    vacuous: bool = False
     #: Pairs passing in the target that do not pass in the proposal.
     fell: list[str] = field(default_factory=list)
     #: Pairs passing in the proposal that did not pass in the target.
@@ -84,6 +99,11 @@ class Verdict:
             lines.append("  rose:    " + " ".join(self.rose))
         if self.dropped:
             lines.append("  dropped: " + " ".join(self.dropped))
+        if self.vacuous:
+            lines.append(
+                "  NOTHING WAS COMPARED: target and proposal carry the identical "
+                "pairs map, so no verdict other than accept was reachable."
+            )
         if self.problems:
             lines.append("")
             lines.extend(self.problems)
@@ -170,6 +190,12 @@ def compare_baselines(target: dict, proposed: dict) -> Verdict:
 
     verdict = Verdict(
         ok=True,
+        # #3761: an accept earned against an identical pairs map is not an
+        # accept the caller may cite. Recomputed from the blobs like everything
+        # else here -- never inferred from the refs the caller named, because
+        # two different refs resolving to one blob is exactly the case that
+        # looks like a comparison and is not one.
+        vacuous=t_pairs == p_pairs,
         fell=fell,
         rose=rose,
         dropped=dropped,
@@ -268,6 +294,14 @@ def main() -> int:
         help="the ref to judge; omit to judge the working tree. Point this at a "
         "locally merged tree to reproduce the merge desk's read.",
     )
+    ap.add_argument(
+        "--require-change",
+        action="store_true",
+        help="exit 2 if the two baselines carry the identical pairs map. Pass "
+        "this when you already know the proposal touches the baseline: it turns "
+        "'I pointed both refs at the same tree' from a green tick into a "
+        "harness error.",
+    )
     args = ap.parse_args()
 
     try:
@@ -286,8 +320,31 @@ def main() -> int:
     print(f"proposed = {args.proposed or '(working tree)'}")
     print(verdict.report())
     print()
-    print("ACCEPT: the floor is defended" if verdict.ok else "REFUSE: see above")
-    return 0 if verdict.ok else 1
+
+    if not verdict.ok:
+        print("REFUSE: see above")
+        return 1
+
+    # #3761. "ACCEPT: the floor is defended" is a claim, and on an identical
+    # pairs map it is one this run did not earn -- it defended nothing, because
+    # nothing was proposed. Saying so is the whole point: the ordinary case is
+    # a PR that does not touch the baseline, which MUST stay exit 0 or the gate
+    # fails every PR in the repo, so the honesty has to live in the words rather
+    # than in the status. A caller that knows better says --require-change.
+    if verdict.vacuous:
+        if args.require_change:
+            print(
+                "HARNESS ERROR: --require-change was passed and the baseline is "
+                "unchanged between these two refs. The comparison did NOT run. "
+                "Do not read this as a pass.",
+                file=sys.stderr,
+            )
+            return 2
+        print("NO CHANGE: the baseline is untouched, so there was nothing to defend")
+        return 0
+
+    print("ACCEPT: the floor is defended")
+    return 0
 
 
 if __name__ == "__main__":

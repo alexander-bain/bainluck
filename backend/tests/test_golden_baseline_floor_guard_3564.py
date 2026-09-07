@@ -41,6 +41,7 @@ from scripts.check_golden_baseline_floor import (  # noqa: E402
     BLOB_PATH,
     BlobUnreadable,
     compare_baselines,
+    main,
     read_blob,
 )
 
@@ -424,3 +425,149 @@ def test_an_unreadable_ref_raises_rather_than_reading_as_a_pass():
     """gotcha #124: a check that could not run must never look like a green."""
     with pytest.raises(BlobUnreadable):
         read_blob("refs/heads/no-such-branch-3564")
+
+
+# =============================================================================
+# #3761 -- an accept against an identical blob is not a defence
+# =============================================================================
+#
+# The guard above cannot fail when the two refs carry the same pairs map: there
+# is no movement to refuse. It nonetheless printed "ACCEPT: the floor is
+# defended", which is a sentence a reader cites as proof that the floor was
+# checked. `test_a_push_run_would_be_structurally_incapable_of_failing` in
+# test_golden_floor_ci_wiring_3761.py demonstrates the same fact from the CI
+# side; these pin what the script itself now says about it.
+#
+# THE TRAP THAT SHAPES EVERY TEST BELOW, and the reason the obvious repair is
+# wrong. "Exit non-zero when both refs resolve to one blob" reads as the
+# rigorous fix. It is not: the golden-baseline-floor job runs on EVERY pull
+# request, and the overwhelming majority of proposals never touch the fixture,
+# so an identical pairs map is the ORDINARY case. Refusing it fails every PR in
+# the repo -- a repair that produces a worse outage than the flaw it closes.
+# The honesty therefore lives in the WORDS at exit 0, and the non-zero exit is
+# opt-in for a caller who already knows the baseline moved.
+
+
+def _run_cli(monkeypatch, capsys, target: dict, proposed: dict, *argv: str):
+    """Drive ``main()`` with the two blobs supplied directly.
+
+    Deliberately not a subprocess against real refs: `origin/master` does not
+    exist in a default shallow CI checkout -- the very reason the floor job
+    carries `fetch-depth: 0` and nothing else does. A test that reached for it
+    would pass here and turn into a harness error there.
+    """
+    blobs = iter([target, proposed])
+    # Patched by dotted path rather than through a second `import ... as mod`:
+    # importing the module alongside this file's existing `from ... import` is
+    # what CodeQL's py/import-and-import-from flags, and the string form needs
+    # no module object at all.
+    monkeypatch.setattr(
+        "scripts.check_golden_baseline_floor.read_blob", lambda ref: next(blobs)
+    )
+    monkeypatch.setattr(sys, "argv", ["check_golden_baseline_floor.py", *argv])
+    code = main()
+    captured = capsys.readouterr()
+    return code, captured.out, captured.err
+
+
+def test_an_identical_pairs_map_is_reported_as_vacuous():
+    b = baseline({"1": True, "2": False})
+    v = compare_baselines(b, b)
+    assert v.ok
+    assert v.vacuous
+
+
+def test_a_real_comparison_is_not_vacuous():
+    """Positive control: the flag must distinguish, not simply always fire."""
+    v = compare_baselines(
+        baseline({"1": True, "2": False}),
+        baseline({"1": True, "2": True}),
+    )
+    assert v.ok, v.problems
+    assert not v.vacuous
+
+
+def test_a_changed_reason_over_an_identical_map_is_still_vacuous():
+    """The ratchet dimension is the pairs map, not the prose beside it.
+
+    Rewording `reset_reason` moves no floor, so a run that sees only that
+    still compared nothing -- and must not be able to buy a defended-floor
+    line with an edit to the narrative the guard already refuses to trust.
+    """
+    pairs = {"1": True, "2": False}
+    v = compare_baselines(
+        baseline(pairs, reset_reason="first wording"),
+        baseline(pairs, reset_reason="second wording, same map"),
+    )
+    assert v.ok, v.problems
+    assert v.vacuous
+
+
+def test_a_vacuous_run_exits_zero_and_does_not_claim_a_defence(monkeypatch, capsys):
+    b = baseline({"1": True, "2": False})
+    code, out, _ = _run_cli(monkeypatch, capsys, b, b)
+    assert code == 0
+    assert "the floor is defended" not in out, (
+        "a run that compared a file to itself defended nothing; that sentence "
+        "is the one somebody later cites as proof the floor was checked"
+    )
+    assert "NO CHANGE" in out
+    assert "NOTHING WAS COMPARED" in out
+
+
+def test_an_ordinary_proposal_that_never_touches_the_baseline_still_passes(
+    monkeypatch, capsys
+):
+    """THE load-bearing test of this section.
+
+    Most pull requests leave the fixture alone, so they reach the CLI with two
+    identical blobs. If that ever stops exiting 0, `golden-baseline-floor` goes
+    red on nearly every PR in the repo. Any future tightening of the vacuity
+    rule has to come past this test first.
+    """
+    b = baseline({"1": True, "2": True})
+    code, _, _ = _run_cli(monkeypatch, capsys, b, b)
+    assert code == 0
+
+
+def test_require_change_turns_a_self_comparison_into_a_harness_error(
+    monkeypatch, capsys
+):
+    """Exit 2, not 1: nothing was judged, so this is a story about the harness
+    and not a result (gotcha #124). The case it catches is a merge desk that
+    knows the branch moved the fixture and has pointed a ref at the wrong tree
+    -- the mis-aim that let the CERT-2152 bounce survive to the desk.
+    """
+    b = baseline({"1": True, "2": False})
+    code, _, err = _run_cli(monkeypatch, capsys, b, b, "--require-change")
+    assert code == 2
+    assert "Do not read this as a pass" in err
+
+
+def test_require_change_stays_out_of_the_way_of_a_real_comparison(
+    monkeypatch, capsys
+):
+    code, out, _ = _run_cli(
+        monkeypatch,
+        capsys,
+        baseline({"1": True, "2": False}),
+        baseline({"1": True, "2": True}),
+        "--require-change",
+    )
+    assert code == 0
+    assert "ACCEPT: the floor is defended" in out
+
+
+def test_a_refusal_is_never_relabelled_as_nothing_to_compare(monkeypatch, capsys):
+    """Precedence: REFUSE outranks the vacuity notice.
+
+    An identical pairs map whose header misdescribes it is still refused. If
+    the vacuity branch were consulted first, a blob that cannot be compared at
+    all would exit 0 reading `NO CHANGE`.
+    """
+    pairs = {"1": True, "2": False}
+    bad = {"pair_count": 2, "passing_count": 99, "reset_reason": None, "pairs": pairs}
+    code, out, _ = _run_cli(monkeypatch, capsys, bad, bad)
+    assert code == 1
+    assert "REFUSE" in out
+    assert "NO CHANGE" not in out

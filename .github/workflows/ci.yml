@@ -195,11 +195,21 @@ jobs:
   # PULL REQUEST ONLY, AND THAT IS A FINDING, NOT AN OVERSIGHT. The script
   # defends the working tree against `--target origin/master`. On a push to
   # master those are the SAME COMMIT, so a push run compares the tip against
-  # itself and prints "ACCEPT: the floor is defended" no matter what just
-  # landed. A gate that cannot fail is worse than no gate, because it is a green
-  # check somebody will later cite as proof. Excluded here rather than left to
-  # print a meaningless pass; `test_golden_floor_ci_wiring_3761.py` pins both
-  # the exclusion and the self-comparison fact that forces it.
+  # itself and cannot fail no matter what just landed. A gate that cannot fail
+  # is worse than no gate, because it is a green check somebody will later cite
+  # as proof. Excluded here rather than left to print a meaningless pass;
+  # `test_golden_floor_ci_wiring_3761.py` pins both the exclusion and the
+  # self-comparison fact that forces it.
+  #
+  # Since #3761 the script no longer DRESSES that case up: an identical pairs
+  # map prints "NO CHANGE: the baseline is untouched" instead of "ACCEPT: the
+  # floor is defended", so a log read after the fact says which of the two
+  # happened. It still exits 0, and it must -- most pull requests never touch
+  # the fixture, so this job reaches that branch on nearly every run, and any
+  # non-zero there would redden the whole repo. The opt-in `--require-change`
+  # (exit 2 on an identical map) is a MERGE DESK tool for a proposal already
+  # known to move the fixture; it does NOT unlock a push arm, which would then
+  # fail every single release instead of passing meaninglessly.
   #
   # AND THAT IS WHY THIS JOB MUST NEVER JOIN `deploy: needs:`, however much it
   # looks like it belongs there. `deploy` runs on push only, this job is skipped
