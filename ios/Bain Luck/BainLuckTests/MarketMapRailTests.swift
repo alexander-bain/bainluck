@@ -506,4 +506,123 @@ final class MarketMapRailTests: XCTestCase {
         XCTAssertFalse(MarketMapRail.marginRailHasDistribution(density: [96, 0, 96, 0, 96]))
         XCTAssertTrue(MarketMapRail.marginRailHasDistribution(density: [96, 0, 95.9]))
     }
+
+    // MARK: - #3820: a marker dot stays on the rail it names
+
+    /// The specimen, replayed as arithmetic. Every number here was read off
+    /// `artifacts-native-051/mlb-15305472-s700.png` in pixels at @3x BEFORE the
+    /// fix was written, and the model was required to reproduce BOTH dots
+    /// before either was believed — a model that fits one marker and misses its
+    /// twin is describing a hidden variable, not the layout.
+    private let railWidth: Double = 342      // 402 - 2*16 page - 2*14 card
+    private let dotWidth: Double = 24        // 22 pt frame + a 2 pt centred stroke
+
+    /// 🔴 THE DEFECT. `FINAL 18` on a `4 … 18` rail is 100%, so `.position`
+    /// centred the dot on the rail's own trailing edge and half of it — 12 pt —
+    /// hung outside the track. Measured centre 1115.5 px against a rail ending
+    /// at 1115.5 px: the same number, which is the whole bug.
+    func testAValueAtTheTopOfTheScaleKeepsItsDotOnTheRail() {
+        let ideal = railWidth   // (18 - 4) / (18 - 4) = 100%
+        XCTAssertEqual(ideal, 342, "the pre-fix centre was the rail's own end")
+
+        let placed = MarketMapRail.clampedMarkerCenterX(
+            idealX: ideal, markerWidth: dotWidth, railWidth: railWidth
+        )
+        XCTAssertEqual(placed, 330, accuracy: 0.001)
+        XCTAssertLessThanOrEqual(
+            placed + dotWidth / 2, railWidth,
+            "the dot's trailing edge must not pass the end of its own track"
+        )
+    }
+
+    /// The other end, which no production frame has photographed yet and which
+    /// is reachable by any game landing on the floor of its scale. Asserted in
+    /// the same breath because a clamp written for one end is exactly the shape
+    /// of bug that ships fixing only one end.
+    func testAValueAtTheBottomOfTheScaleKeepsItsDotOnTheRail() {
+        let placed = MarketMapRail.clampedMarkerCenterX(
+            idealX: 0, markerWidth: dotWidth, railWidth: railWidth
+        )
+        XCTAssertEqual(placed, 12, accuracy: 0.001)
+        XCTAssertGreaterThanOrEqual(
+            placed - dotWidth / 2, 0,
+            "the dot's leading edge must not pass the start of its own track"
+        )
+    }
+
+    /// 🔴 THE HALF THE CLAMP IS UNSAFE AGAINST. Over-correcting an overhang is
+    /// safe against a dot leaving the track and UNSAFE against that dot closing
+    /// on its neighbour — a bound is only ever safe against one of the two
+    /// failures, so the other one gets a number.
+    ///
+    /// On the specimen the two centres sit 132 px = 44 pt apart. The clamp moves
+    /// `FINAL` 12 pt and leaves `PRE-GAME` alone, so 32 pt remains against a
+    /// 24 pt drawn width: 8 pt of visible track still between them, which is
+    /// what the photograph must show. A future change to `markerRadius` that
+    /// would push these two into contact fails HERE.
+    func testFinalAndPreGameStayApartAfterTheClamp() {
+        let final = MarketMapRail.clampedMarkerCenterX(
+            idealX: railWidth, markerWidth: dotWidth, railWidth: railWidth
+        )
+        // (16.2 - 4) / (18 - 4) = 87.142…%
+        let preIdeal = railWidth * (16.2 - 4) / (18 - 4)
+        let pre = MarketMapRail.clampedMarkerCenterX(
+            idealX: preIdeal, markerWidth: dotWidth, railWidth: railWidth
+        )
+        XCTAssertEqual(pre, preIdeal, accuracy: 0.001, "a mid-scale dot is never moved")
+
+        let separation = final - pre
+        XCTAssertEqual(separation, 32.0, accuracy: 0.5)
+        XCTAssertGreaterThan(
+            separation, dotWidth,
+            "the clamp must not push the end dot into the one beside it"
+        )
+    }
+
+    /// A dot that is not at an end is not moved AT ALL. This is the assertion
+    /// that stops the fix from quietly becoming an inset rail: every marker on
+    /// every map in the app is mid-scale, and if this drifts, every card in the
+    /// app is drawing its values in the wrong place to fix two of them.
+    func testEveryInteriorValueIsLeftExactlyWhereItWas() {
+        for pct in stride(from: 4.0, through: 96.0, by: 4.0) {
+            let ideal = railWidth * pct / 100
+            XCTAssertEqual(
+                MarketMapRail.clampedMarkerCenterX(
+                    idealX: ideal, markerWidth: dotWidth, railWidth: railWidth
+                ),
+                ideal, accuracy: 0.001,
+                "\(pct)% is \(dotWidth / 2) pt clear of both ends and must not move"
+            )
+        }
+    }
+
+    /// The narrow rail. `densityRail` also draws inside a half-width card on
+    /// iPad, where `markerRadius` drops to 11 and the drawn dot to 20 pt; the
+    /// clamp must scale with the dot it is given rather than with a constant
+    /// copied from the phone.
+    func testTheClampFollowsTheDotSizeNotAHardCodedPhoneNumber() {
+        let narrowDot: Double = 20   // markerRadius 11 → 11*2 - 4 + 2
+        XCTAssertEqual(
+            MarketMapRail.clampedMarkerCenterX(
+                idealX: 280, markerWidth: narrowDot, railWidth: 280
+            ),
+            270, accuracy: 0.001
+        )
+    }
+
+    /// The degenerate pass. SwiftUI hands a `GeometryReader` a zero width before
+    /// it hands out a real one, and a rail narrower than its own dot has no
+    /// placement that keeps the dot on it. Centre it rather than pick an end, so
+    /// the first frame is symmetric instead of jammed left — and so the call
+    /// site never grows an `if` for a case the geometry already answers.
+    func testARailNarrowerThanItsOwnDotCentresTheDot() {
+        XCTAssertEqual(
+            MarketMapRail.clampedMarkerCenterX(idealX: 0, markerWidth: dotWidth, railWidth: 0),
+            0, accuracy: 0.001
+        )
+        XCTAssertEqual(
+            MarketMapRail.clampedMarkerCenterX(idealX: 30, markerWidth: dotWidth, railWidth: 16),
+            8, accuracy: 0.001
+        )
+    }
 }

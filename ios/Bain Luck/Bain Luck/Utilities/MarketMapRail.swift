@@ -455,4 +455,71 @@ enum MarketMapRail {
         if zero <= endLabelBand || zero >= 100 - endLabelBand { return .withheld }
         return .at(percent: zero)
     }
+
+    // MARK: - Keeping a marker dot on the rail it names
+
+    /// Where a marker dot's CENTRE belongs, so that the whole dot stays inside
+    /// the rail.
+    ///
+    /// #3820. `densityRail` positioned every dot with
+    /// `.position(x: railWidth * pct / 100)`, and `.position` places a view by
+    /// its centre. A value at either end of its own scale therefore put half a
+    /// dot outside the track.
+    ///
+    /// THE PHOTOGRAPH. Event 15305472 (Cardinals 10 — Rockies 8, final),
+    /// iPhone 17 against production, 2026-09-07 —
+    /// `artifacts-native-051/mlb-15305472-s700.png`, the **Runs map** card.
+    ///
+    /// THE MEASUREMENT, read off that frame in pixels at @3x rather than taken
+    /// from the code's own account of itself, and confirmed on BOTH dots before
+    /// any of it was believed:
+    ///
+    /// - the rail runs `x = 89.1 … 1115.5` px, so **342.1 pt** wide — which is
+    ///   `402 - 2*16` page padding `- 2*14` card padding = 342 pt exactly.
+    /// - `PRE-GAME 16.2` on a `4 … 18` rail is 87.14%: predicted centre 983 px,
+    ///   **measured 983.5**.
+    /// - `FINAL 18` is 100%: predicted centre 1115 px — the rail's own trailing
+    ///   edge — **measured 1115.5**.
+    /// - a dot is `dotSize` wide plus a 2 pt stroke that SwiftUI centres on the
+    ///   edge, so the drawn width is `dotSize + 2` = 24 pt: predicted 72 px,
+    ///   **measured 71**.
+    ///
+    /// So the FINAL dot hung **12 pt — half of itself — past the end of the
+    /// track**, and its white ring finished 1 px short of the card's border.
+    ///
+    /// This is #3237's defect class, which the charts fixed for period chips
+    /// ("a marker at or near `x = 0` centres a chip whose left half hangs over
+    /// the y-axis gutter"), and which THIS FILE already fixes for the middle
+    /// axis LABEL by withholding it inside ``endLabelBandPercent``. A dot cannot
+    /// be withheld — it is the value — so it is moved instead.
+    ///
+    /// 🔴 CLAMPING IS SAFE AGAINST OVERHANG AND UNSAFE AGAINST CROWDING, and a
+    /// bound is only ever safe against one of the two. Moving the end dot inward
+    /// closes the gap to its neighbour, so that gap was measured too rather than
+    /// hoped for: the two centres sit 132 px = **44 pt** apart, the clamp moves
+    /// FINAL 12 pt, leaving **32 pt** between centres against a 24 pt drawn
+    /// width — 8 pt of visible track still between them. `testFinalAndPreGame…`
+    /// pins that number, so a future change to `markerRadius` that would make
+    /// the two dots touch fails here rather than in a screenshot.
+    ///
+    /// - Parameters:
+    ///   - idealX: where the value falls on the rail, in points from its leading
+    ///     edge. Already clamped to `0 ... railWidth` by `posOnRail`.
+    ///   - markerWidth: the dot's full DRAWN width, stroke included — not the
+    ///     `frame` width, which excludes the half-stroke that hangs outside it.
+    ///   - railWidth: the track's width in points.
+    static func clampedMarkerCenterX(
+        idealX: Double,
+        markerWidth: Double,
+        railWidth: Double
+    ) -> Double {
+        let half = markerWidth / 2
+        // A dot wider than its own rail cannot be placed without overhanging on
+        // one side or the other. Centre it, so it overhangs evenly rather than
+        // picking an end — and so the caller never has to special-case a
+        // degenerate layout pass, where SwiftUI hands out a zero width before
+        // the first real one.
+        guard railWidth > markerWidth else { return railWidth / 2 }
+        return Swift.max(half, Swift.min(railWidth - half, idealX))
+    }
 }

@@ -44,6 +44,15 @@ struct MarketMapView: View {
 
     @Environment(\.horizontalSizeClass) private var sizeClass
 
+    /// The ring drawn around every marker dot on a density rail.
+    ///
+    /// #3820 named it. It was a `2` written twice — once in the `stroke` and,
+    /// implicitly, nowhere at all in the positioning, which is how the dot came
+    /// to be clamped by a width 2 pt narrower than the one it drew at. A stroke
+    /// is centred on the shape's edge, so the drawn dot is `dotSize + this`
+    /// wide, and both readers now take that from the same constant.
+    private static let markerStrokeWidth: CGFloat = 2
+
     /// #3430 — both competitors of one matchup, so the pair rule decides.
     private var sides: (away: String, home: String) {
         TeamShortName.shortPair(
@@ -867,14 +876,28 @@ struct MarketMapView: View {
                     let isProj = m.type == .proj
                     let markerRadius: CGFloat = geo.size.width > 300 ? 13 : 11
                     let dotSize: CGFloat = isProj ? markerRadius * 2 : markerRadius * 2 - 4
+                    // #3820 — `.position` places a view by its CENTRE, so a
+                    // value at either end of its own scale drew half a dot
+                    // outside the track. `markerStrokeWidth` is added because
+                    // SwiftUI centres a stroke on the shape's edge: the drawn
+                    // dot is wider than the `frame` by the full line width, and
+                    // clamping by the frame alone would leave 1 pt hanging.
+                    let clampedX = CGFloat(MarketMapRail.clampedMarkerCenterX(
+                        idealX: Double(xPos),
+                        markerWidth: Double(dotSize + Self.markerStrokeWidth),
+                        railWidth: Double(geo.size.width)
+                    ))
                     Circle()
                         .fill(isProj ? Color.cardBackground : m.type.dotColor)
                         .frame(width: dotSize, height: dotSize)
                         .overlay(
-                            Circle().stroke(isProj ? Color.primary : .white, lineWidth: 2)
+                            Circle().stroke(
+                                isProj ? Color.primary : .white,
+                                lineWidth: Self.markerStrokeWidth
+                            )
                         )
                         .shadow(color: .black.opacity(0.2), radius: 3, y: 1)
-                        .position(x: xPos, y: 15)
+                        .position(x: clampedX, y: 15)
                 }
             }
         }
