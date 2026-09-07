@@ -4,7 +4,7 @@ import Link from "next/link";
 import type { TeamGameBrief } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { SUSPENDED_LABEL } from "@/lib/eventState";
-import { isGameLive, isGameSuspended, teamLastScore, teamResult } from "@/lib/teamGames";
+import { isGameLive, teamLastScore, teamResult } from "@/lib/teamGames";
 
 // ---------------------------------------------------------------------------
 // Team-page game cards (L2-158). Extracted from the team page so the
@@ -140,13 +140,31 @@ export function RecentGameCard({
   const result = teamResult(game);
   const dateStr = formatSettledDate(game.completed_at || game.commence_time);
 
-  // live/056 — this rail now carries `suspended` (it was on neither of the team
-  // page's two rails before). `teamResult` refuses to grade it, so `result` is
-  // null and the else-branch below would have printed "Final" over a match
-  // nobody said had ended. It gets its own branch and the app's ONE suspended
-  // sentence instead.
-  const suspended = isGameSuspended(game);
-  const lastScore = suspended ? teamLastScore(game) : null;
+  // 🔴 THE QUESTION IS "CAN WE STATE A RESULT", NOT "WHICH FLAVOUR OF UNKNOWN
+  // IS THIS" (#3791). live/056 gave `suspended` its own branch and left a bare
+  // `Final` as the else — so the card still claimed a Final for every OTHER way
+  // of not knowing, and the commonest one is a `closed` row whose scores never
+  // arrived. Measured on production 2026-09-07 07:5xZ: `/api/teams/new-york-jets`
+  // served 15184679 (Jets v Vikings, Aug 15) `closed` with both scores null as
+  // the fifth recent card, and it printed
+  //
+  //     vs Minnesota Vikings                                     Aug 15
+  //     FINAL
+  //     we had them at 40%
+  //
+  // one card below a `suspended` row on the Vikings page rendering the honest
+  // sentence off exactly the same absent evidence. Same page family, two
+  // answers, decided by which status the row happens to carry.
+  //
+  // So the branch keys on `teamResult` — the function that MINTS the verdict and
+  // already refuses to mint one without two scores and a settled status. That
+  // makes this an allowlist: a Final is printed only when there is a Final to
+  // show, and every state nobody has thought of yet (a `voided` row, a status
+  // added upstream) lands on the honest side instead of inheriting the claim.
+  // It is the same shape as `event_is_playable`'s allowlist one layer down, and
+  // the same rule #3780 applied to the league rail by removing the rows.
+  const noResult = result === null;
+  const lastScore = noResult ? teamLastScore(game) : null;
 
   const pre = game.pregame_win_probability;
   const teamWon = result?.char === "W";
@@ -170,18 +188,7 @@ export function RecentGameCard({
       </div>
 
       <div className="flex items-baseline gap-2">
-        {suspended ? (
-          // The badge says what is NOT known; the last score says what is, and
-          // the pair is the whole honest statement (lib/eventState). Printed
-          // team-relative because every other number on this card is — the
-          // shared string takes its order from the surface (#2786), and this
-          // surface speaks from the team's side.
-          <span className="text-sm font-medium text-text-secondary">
-            {lastScore
-              ? `${SUSPENDED_LABEL} · last score ${lastScore.teamScore}-${lastScore.oppScore}`
-              : SUSPENDED_LABEL}
-          </span>
-        ) : result ? (
+        {result ? (
           <>
             <span
               className={cn(
@@ -200,15 +207,29 @@ export function RecentGameCard({
             </span>
           </>
         ) : (
-          <span className="text-sm text-text-secondary uppercase">Final</span>
+          // The badge says what is NOT known; the last score says what is, and
+          // the pair is the whole honest statement (lib/eventState). Printed
+          // team-relative because every other number on this card is — the
+          // shared string takes its order from the surface (#2786), and this
+          // surface speaks from the team's side. `teamLastScore` returns null
+          // unless BOTH sides are present, so a scoreless row prints the badge
+          // alone rather than half a line.
+          <span className="text-sm font-medium text-text-secondary">
+            {lastScore
+              ? `${SUSPENDED_LABEL} · last score ${lastScore.teamScore}-${lastScore.oppScore}`
+              : SUSPENDED_LABEL}
+          </span>
         )}
       </div>
 
-      {/* "we had them at 72%" is the grade-our-call line, and a suspended match
-          has no call to grade — the same reason the shared card drops its `Proj`
-          footer (CERT-799). The pre-game number is still true; printed beside a
-          non-result it reads as a verdict on one. */}
-      {!suspended && pre !== null && pre !== undefined && (
+      {/* "we had them at 72%" is the grade-our-call line, and a match with no
+          reported result has no call to grade — the same reason the shared card
+          drops its `Proj` footer (CERT-799). The pre-game number is still true;
+          printed beside a non-result it reads as a verdict on one. Gated on
+          `result` for the reason the block above is: `!suspended` let it print
+          under the bare `Final`, which is how the Jets card came to say "we had
+          them at 40%" about a game whose score we never received. */}
+      {result && pre !== null && pre !== undefined && (
         <div className="text-xs mt-0.5">
           {upset ? (
             <span className="text-accent-brand font-medium">
