@@ -137,6 +137,28 @@ _CAS_UPSERT_SQL = text(
 #: to fold again.
 STATUS_CAS_MISS = "cas-miss"
 
+#: The durable write landed and a good copy of this generation is on disk.
+STATUS_OK = "ok"
+
+#: A newer generation is already stored. The durability requirement IS satisfied
+#: — a good copy exists — so this counts as success; it is reported distinctly
+#: only so an operator can see a writer racing behind.
+STATUS_SUPERSEDED = "superseded"
+
+#: The durable write did not land. Nothing may be reported as saved.
+STATUS_ERROR = "error"
+
+#: Every status under which a caller may consider the publication durable.
+#:
+#: Named here, at the writer, because the alternative is each caller carrying its
+#: own tuple of accepted strings — and #3782 is what that costs. The beat gauge
+#: sampler's accept set had drifted to ``("stored", "unchanged")``, where
+#: ``"stored"`` is a status this module has never returned, so every run that
+#: actually banked a beat was classified `failed` and only the no-op runs passed.
+#: Import this rather than restating it; a status added below must be classified
+#: here, where its meaning is known, and not guessed at by six call sites.
+PUBLISH_STATUS_DURABLE = frozenset({STATUS_OK, STATUS_SUPERSEDED})
+
 
 _SELECT_SQL = text(
     """
@@ -753,7 +775,7 @@ async def publish_sentinel_evidence(
     if durable.get("error"):
         stages["durable_error"] = durable["error"]
 
-    if durable["status"] in ("ok", "superseded"):
+    if durable["status"] in PUBLISH_STATUS_DURABLE:
         try:
             from app.tasks.redis_state import get_redis_client
 
