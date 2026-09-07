@@ -909,6 +909,12 @@ class TestLeagueFuturesEndpoint:
                         "rank": 1,
                         "movement_24h": 0.04,
                         "team_id": 15,
+                        # #3868: the card cannot draw a state it is not sent.
+                        # An ungraded outcome is `settled: False`, and
+                        # `is_winner` passes through raw — None means "nobody
+                        # has looked", which is NOT "lost".
+                        "settled": False,
+                        "is_winner": None,
                     },
                     {
                         "id": 402,
@@ -918,6 +924,8 @@ class TestLeagueFuturesEndpoint:
                         "rank": 2,
                         "movement_24h": -0.01,
                         "team_id": 25,
+                        "settled": False,
+                        "is_winner": None,
                     },
                 ],
                 "canonical_market_key": "basketball_nba_mvp_2026",

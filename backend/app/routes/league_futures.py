@@ -1127,6 +1127,62 @@ def _effectively_resolved(sorted_outcomes: list) -> bool:
     return len(probs) >= 2 and all(p < 0.03 or p > 0.97 for p in probs)
 
 
+def _outcome_is_settled(outcome) -> bool:
+    """Has this contender's question already been answered? (#3868, CERT-2215.)
+
+    A GRADE, never a probability. `current_probability == 1.0` is what a settled
+    row happens to carry and is NOT the test: a live book can print 0.9995 for a
+    day before it settles (measured on the Alcaraz leg), and reading certainty as
+    settlement would stamp a result on a market that is still trading.
+
+    `resolution_source` is the grade, whoever wrote it — `api_settlement`,
+    `clean_resolution`, `pass2_loser`, `all_losers`. `is_winner IS TRUE` is
+    admitted beside it because production carries rows crowned without a source,
+    and a crowned row is settled by anyone's reading. Never `is_winner is False`:
+    the column is nullable with `default=False`, so FALSE cannot tell "lost" from
+    "nobody has looked".
+    """
+    if getattr(outcome, "is_winner", None) is True:
+        return True
+    return bool(getattr(outcome, "resolution_source", None))
+
+
+def _live_first(sorted_outcomes: list) -> list:
+    """Open contenders first, settled ones behind them. (#3868, CERT-2215.)
+
+    🔴 A SETTLED LEG MUST NOT TAKE A LIVE LEG'S SLOT. The card renders
+    `top_outcomes[:6]` off a list this function feeds, ranked by probability —
+    and a settled winner carries 1.0, which sorts above every live contender
+    there is. So the moment #3868 taught the refresh rail to grade a
+    round-by-round ladder, the eight already-through players would have filled
+    every visible slot of "TO REACH QUARTERFINALS" and pushed out the five
+    players actually still fighting for one. The reader would have lost the only
+    live question on the card, which is worse than the stale prices that started
+    this.
+
+    Settled rows are kept rather than dropped — a result is worth reading, and
+    Alex's standing ruling is that cards show results — but they queue behind the
+    live ones and the component renders them as Won/Lost, never as a percentage.
+
+    Winners before losers within the settled tail: "who got through" is the
+    interesting half, and a tail of Losts would bury it.
+
+    NOT folded into `_sorted_outcomes`, deliberately. That function feeds
+    `_effectively_resolved`, which reads `[0]` as "the leader" — reordering under
+    it would silently change which market the league page considers answered.
+    This is a DISPLAY ordering and it lives in the display function.
+    """
+    live, won, lost = [], [], []
+    for outcome in sorted_outcomes:
+        if not _outcome_is_settled(outcome):
+            live.append(outcome)
+        elif getattr(outcome, "is_winner", None) is True:
+            won.append(outcome)
+        else:
+            lost.append(outcome)
+    return live + won + lost
+
+
 def _serialize_outcomes(sorted_outcomes: list, market=None) -> list[dict]:
     """The top ten outcomes in the shape every league/hub card renders.
 
@@ -1134,6 +1190,11 @@ def _serialize_outcomes(sorted_outcomes: list, market=None) -> list[dict]:
     only in the market's NAME, and an outcome row cannot see it. Passing None
     keeps the raw venue labels — the pre-#3089 behaviour — so a caller that has
     no market in hand degrades to the status quo rather than guessing.
+
+    #3868 (CERT-2215) added `settled`/`is_winner` and the live-first ordering.
+    The payload carries the STATE and the component decides how to draw it; a
+    settled leg that travelled as a bare `probability: 1.0` is exactly how a
+    graded row reached `/sport/tennis/atp` dressed as an ordinary 100%.
     """
     labels = (
         sided_yes_no_labels(
@@ -1144,6 +1205,7 @@ def _serialize_outcomes(sorted_outcomes: list, market=None) -> list[dict]:
         if market is not None
         else None
     )
+    ordered = _live_first(sorted_outcomes)
     return [
         {
             "id": o.id,
@@ -1156,8 +1218,13 @@ def _serialize_outcomes(sorted_outcomes: list, market=None) -> list[dict]:
             "rank": o.rank,
             "movement_24h": float(o.probability_change_24h) if o.probability_change_24h else None,
             "team_id": o.team_id,
+            # #3868: the STATE, so the card can draw a result instead of a
+            # percentage. `is_winner` is passed through raw — including None,
+            # which means "nobody has looked" and is not "lost".
+            "settled": _outcome_is_settled(o),
+            "is_winner": o.is_winner,
         }
-        for o in sorted_outcomes[:10]
+        for o in ordered[:10]
     ]
 
 

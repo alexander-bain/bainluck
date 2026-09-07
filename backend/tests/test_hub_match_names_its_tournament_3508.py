@@ -301,6 +301,9 @@ def test_control_serialize_outcomes_shape_is_unchanged():
         rank = 1
         probability_change_24h = None
         team_id = None
+        # #3868 widened the payload; the control tracks the real shape.
+        is_winner = False
+        resolution_source = None
 
     rows = _serialize_outcomes([_O()])
     assert rows == [{
@@ -311,4 +314,6 @@ def test_control_serialize_outcomes_shape_is_unchanged():
         "rank": 1,
         "movement_24h": None,
         "team_id": None,
+        "settled": False,
+        "is_winner": False,
     }]
