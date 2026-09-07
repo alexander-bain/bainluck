@@ -29,7 +29,10 @@ from app.utils.cross_source_matching import (
     source as _source,
 )
 from app.utils.futures_liveness import market_reads_settled
-from app.utils.market_staleness import should_exclude_from_featured
+from app.utils.market_staleness import (
+    expired_ladder_rungs,
+    should_exclude_from_featured,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -164,11 +167,73 @@ def _normalize_outcome_probs(outcomes: list[dict], key: str = "prob") -> None:
                 o[key] = round(o[key] / prob_sum * 100, 1)
 
 
-def _market_row(market: FuturesMarket) -> dict | None:
+def _market_row(market: FuturesMarket, *, now: datetime) -> dict | None:
+    """One /politics row: the question, its leader, and its top three rungs.
+
+    🔴 A RUNG WHOSE OWN DEADLINE HAS PASSED SORTS LAST (#3758).
+
+    This sorted on `current_probability` alone, and a "When will X happen?"
+    ladder prices its rungs in the order they were written rather than the order
+    they can still happen. A rung that can no longer occur keeps its last traded
+    price forever — nothing re-prices an impossibility to zero — so the highest
+    number on the ladder is routinely a date that is already gone, and it
+    becomes the row's headline AND its `prob`.
+
+    Measured on production 2026-09-07, `/api/politics` served five date-bounded
+    ladders and two of them headlined an expired rung:
+
+        "When will Nick Adams be confirmed as Ambassador of Malaysia?"
+            Before Apr 1, 2026   3.0   ← headline, five months gone
+            Before Jul 1, 2026   1.5     also gone
+            Before Jan 1, 2027   0.9     the only rung that can still happen
+        "Will Trump pull CBP from a sanctuary city airport?"
+            Before Sep 1, 2026   2.0   ← headline, six days gone
+            Before Aug 1, 2026   2.0
+            Before Jan 1, 2027   1.0     the only rung that can still happen
+
+    🔴 THE MARKET-LEVEL CHECK CANNOT CATCH THIS, which is why nothing did.
+    `should_exclude_from_featured` reads the market's TITLE, and these titles
+    carry no date at all — "When will Nick Adams be confirmed" is a perfectly
+    current question. The date lives in the OUTCOME label, one level down.
+
+    DEMOTED, NEVER DROPPED, and that is the difference from the feed's use of
+    the same helper (`routes/feed.py` strips them). A "Before Apr 1" rung is
+    part of the shape of a cumulative ladder and its price is real history; what
+    it must not do is speak for the market. Sorting it below every live rung
+    lets the three-slot cap decide, exactly as it already does for a rung with a
+    lower price — `outcome_count` still counts it, and a ladder whose rungs have
+    ALL expired is unchanged rather than emptied.
+
+    `expired_ladder_rungs` is IMPORTED, not re-derived. It already carries the
+    parsing this needs and the two judgements that make it safe: a year-less
+    rung more than `_BARE_DATE_LOOKBACK_DAYS` past reads as NEXT year's and is
+    treated as live ("Before February" on this page today), and a past-dated
+    rung at or above `EXPIRED_RUNG_MAX_PROBABILITY` is the ladder's ANSWER
+    rather than a ghost and keeps its place. Unparseable ⇒ live, in every arm.
+
+    `now` is a REQUIRED keyword argument (gotcha #44): the answer changes with
+    the clock, so the caller states its anchor and a guard can sweep a year of
+    them instead of asserting whatever today happens to be.
+    """
     outcomes = _clean_outcomes(market.outcomes)
-    outcomes = sorted(outcomes, key=lambda o: float(o.current_probability or 0), reverse=True)
     if not outcomes:
         return None
+    expired = expired_ladder_rungs(
+        [
+            (
+                o.name,
+                float(o.current_probability)
+                if o.current_probability is not None
+                else None,
+            )
+            for o in outcomes
+        ],
+        now,
+    )
+    outcomes = sorted(
+        outcomes,
+        key=lambda o: (o.name in expired, -float(o.current_probability or 0)),
+    )
     top = outcomes[:3]
     top_outcomes = [
         {
@@ -234,6 +299,8 @@ def _is_headline_market(name_lower: str) -> bool:
 
 def _build_presidential(
     pres_markets: list[FuturesMarket],
+    *,
+    now: datetime,
 ) -> tuple[dict, dict[int, str]]:
     """Returns (response_dict, outcome_id_to_candidate_key)."""
     kalshi_headline = None
@@ -259,7 +326,7 @@ def _build_presidential(
                 if poly_headline is None or len(outcomes) > len(poly_headline["outcomes"]):
                     poly_headline = entry
         else:
-            row = _market_row(m)
+            row = _market_row(m, now=now)
             if row and not (row["outcome_count"] <= 2 and row["prob"] > 95):
                 side_markets.append(row)
 
@@ -497,15 +564,26 @@ def _build_senate_map(congressional_markets: list[FuturesMarket]) -> dict[str, f
 # Cross-source matching — find markets on both Kalshi & Polymarket
 # ---------------------------------------------------------------------------
 
-def _cross_source_row_fn(market: FuturesMarket) -> dict | None:
-    """Build a row for cross-source matching (politics-specific)."""
-    row = _market_row(market)
-    if not row:
-        return None
-    if row["outcome_count"] <= 2 and row["prob"] > 95:
-        return None
-    row["theme"] = _classify_theme(market)
-    return row
+def _cross_source_row_fn(now: datetime):
+    """The row builder `find_cross_source_markets` spends, bound to one clock.
+
+    A FACTORY rather than a plain function because `market_row_fn` is called
+    per market with one argument, and #3758 made the row a function of the
+    clock as well as the market. Binding `now` once at the call site keeps every
+    row on the page answering the same instant — a per-row `datetime.now()`
+    would let two rungs of the same ladder be judged against two clocks.
+    """
+
+    def build(market: FuturesMarket) -> dict | None:
+        row = _market_row(market, now=now)
+        if not row:
+            return None
+        if row["outcome_count"] <= 2 and row["prob"] > 95:
+            return None
+        row["theme"] = _classify_theme(market)
+        return row
+
+    return build
 
 
 # ---------------------------------------------------------------------------
@@ -712,7 +790,7 @@ async def get_politics(db: AsyncSession, stage_ms: dict | None = None):
     def build_section(markets: list, limit: int = 10) -> list[dict]:
         rows = []
         for m in markets:
-            row = _market_row(m)
+            row = _market_row(m, now=now)
             if not row:
                 continue
             if row["outcome_count"] <= 2 and row["prob"] > 95:
@@ -723,7 +801,7 @@ async def get_politics(db: AsyncSession, stage_ms: dict | None = None):
 
     # Presidential — dual-source merge
     presidential, outcome_id_map = _build_presidential(
-        themed.get("presidential", [])
+        themed.get("presidential", []), now=now
     )
     _t = _mark("presidential", _t)
 
@@ -793,7 +871,7 @@ async def get_politics(db: AsyncSession, stage_ms: dict | None = None):
     # A market this page already refused to put in a theme section must not
     # reappear as its headline source disagreement. UX-P194-1 / CERT-540.
     cross_source = find_cross_source_markets(
-        list(spotlight_eligible), market_row_fn=_cross_source_row_fn
+        list(spotlight_eligible), market_row_fn=_cross_source_row_fn(now)
     )
     _t = _mark("cross_source", _t)
 
