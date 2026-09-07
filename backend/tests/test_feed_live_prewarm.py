@@ -33,6 +33,7 @@ import pytest
 from app.utils.feed_cache import (
     FEED_LIVE_REPUBLISH_BUDGET_S,
     FEED_LIVE_REPUBLISH_CONCURRENCY,
+    FEED_LIVE_REPUBLISH_MIN_HEADROOM_S,
     FEED_LIVE_REPUBLISH_PERIOD_S,
     FEED_PREWARM_MIN_VIABLE_BUILD_S,
     FEED_RESPONSE_STALE_TTL_LIVE_SECONDS,
@@ -48,7 +49,7 @@ pcp = import_module("app.tasks.precompute_category_pages")
 
 
 def test_a_republish_pass_lands_before_the_previous_one_expires():
-    """PERIOD + BUDGET <= the live stale ceiling. The red-first gate for #2236.
+    """PERIOD + BUDGET < the live stale ceiling. The red-first gate for #2236.
 
     Stated as a worst case, not an average. A pass fires at t=0 and publishes a
     payload whose stale mirror dies at t=60. The next pass fires at t=PERIOD and
@@ -59,13 +60,98 @@ def test_a_republish_pass_lands_before_the_previous_one_expires():
 
     This assertion fails on every way of reintroducing the bug: lengthening the
     period, widening the budget, or shortening the ceiling underneath both.
+
+    🔴 **`>= 0` -> `>= FEED_LIVE_REPUBLISH_MIN_HEADROOM_S`, LAT-P182 (#3827). The
+    `=` was the defect and it is the whole of this change.** The assertion was
+    satisfied by 40 + 20 == 60, and an invariant satisfied only at equality is an
+    invariant that holds only while the beat is PUNCTUAL — a property no beat has
+    and nothing in the system provides. Production said so with the warmer
+    measurably healthy (`prewarm_age_s` max 41.4s against a 40s period, 21
+    samples): 12 of 132 front-page reads still paid a 1.49-2.25s cold build off a
+    0.26s median, and the misses fell only in the t=0/40/80s read classes, on the
+    period boundary. `live_republish_headroom_s()` is not spare wall — it is the
+    seconds of lateness this rail tolerates, and it was zero.
+
+    See `test_the_invariant_reserves_a_margin_for_a_late_beat` below for the
+    reserve stated on its own; this test keeps the #2236 sum it has always
+    guarded, now at the strict bound.
     """
     headroom = live_republish_headroom_s()
-    assert headroom >= 0, (
+    assert headroom >= FEED_LIVE_REPUBLISH_MIN_HEADROOM_S, (
         f"period {FEED_LIVE_REPUBLISH_PERIOD_S}s + budget "
-        f"{FEED_LIVE_REPUBLISH_BUDGET_S}s exceeds the live stale ceiling "
-        f"{FEED_RESPONSE_STALE_TTL_LIVE_SECONDS}s by {-headroom}s — a live shape "
-        "will be gone from the cache before its next republish, which is #2236"
+        f"{FEED_LIVE_REPUBLISH_BUDGET_S}s leaves {headroom}s under the live stale "
+        f"ceiling {FEED_RESPONSE_STALE_TTL_LIVE_SECONDS}s, below the "
+        f"{FEED_LIVE_REPUBLISH_MIN_HEADROOM_S}s reserve — a live shape will be "
+        "gone from the cache before its next republish on any pass that fires "
+        "late, which is #2236 (at 0s of reserve) and LAT-P182 (at too little)"
+    )
+
+
+def test_the_invariant_reserves_a_margin_for_a_late_beat():
+    """The reserve is STRICTLY positive, and it is the beat's lateness budget.
+
+    Separate from the sum above on purpose. That test asks "do the three numbers
+    fit"; this one asks "is any of the fit held back", and they are different
+    questions with different failure modes — 40 + 20 == 60 passed the first and
+    is the exact state this second one exists to refuse.
+
+    The reserve is what the invariant's original derivation left implicit. Its
+    worst case is not `PERIOD + BUDGET` but
+
+        PERIOD + lateness + (this build - the previous build) <= CEILING
+
+    and a build is bounded by BUDGET, so the slack IS the tolerated lateness.
+    Sized at 10s against LAT-P179's measured worst lateness for this rail on
+    `realtime` — 1.4s over 21 samples — which is ~7x margin rather than a round
+    number.
+
+    The three constants sit exactly on the bound today (60 - 30 - 20 == 10). That
+    is deliberate and this assertion is what makes it legible: the reserve is
+    fully spent, so the next change to the period, the budget or the ceiling has
+    to say where it is taking the reserve back from instead of quietly consuming
+    it, which is how it reached zero the first time.
+    """
+    assert FEED_LIVE_REPUBLISH_MIN_HEADROOM_S > 0, (
+        "a reserve of zero is not a reserve — it is the equality case the old "
+        "`>= 0` assertion admitted, and it is exactly what LAT-P182 measured "
+        "costing 9.1% of front-page reads a ~2s cold build"
+    )
+    assert (
+        FEED_LIVE_REPUBLISH_PERIOD_S
+        + FEED_LIVE_REPUBLISH_BUDGET_S
+        + FEED_LIVE_REPUBLISH_MIN_HEADROOM_S
+        <= FEED_RESPONSE_STALE_TTL_LIVE_SECONDS
+    ), (
+        "the reserve does not fit beside the period and the budget — one of the "
+        "three has been widened into the margin the other two are supposed to "
+        "leave for a late fire"
+    )
+    # The same property in the form that needs NO measurement of lateness at all,
+    # and is therefore the one that survives someone disputing LAT-P179's samples:
+    # the tolerated total is `CEILING - PERIOD`, and a single pass's own
+    # contribution to it is bounded by BUDGET. At 40 the two were EQUAL, so one
+    # slow-but-in-budget pass following a fast one spent the entire tolerance by
+    # itself and any lateness whatsoever opened a hole — the rail was one slow
+    # database read from a cold build with every constant obeyed. Strictly greater
+    # means the whole budget swing is absorbed by construction and the reserve is
+    # what is left for the beat.
+    assert (
+        FEED_RESPONSE_STALE_TTL_LIVE_SECONDS - FEED_LIVE_REPUBLISH_PERIOD_S
+        > FEED_LIVE_REPUBLISH_BUDGET_S
+    ), (
+        f"the ceiling leaves {FEED_RESPONSE_STALE_TTL_LIVE_SECONDS - FEED_LIVE_REPUBLISH_PERIOD_S}s "
+        f"after the period, which does not exceed the {FEED_LIVE_REPUBLISH_BUDGET_S}s a single "
+        "pass may take — so a pass that merely runs slowly, inside its own budget, "
+        "can open the hole without the beat being late at all"
+    )
+    # And the ceiling is NOT the term that may be moved to make room. #2216 ruled
+    # it a product rule: past 60s a live page is rebuilt, not served older. A
+    # future queue that "fixes" this test by raising the ceiling has bought
+    # latency with a score printed as current when it is not.
+    assert FEED_RESPONSE_STALE_TTL_LIVE_SECONDS == 60, (
+        "the live stale ceiling moved. It is #2216's product rule, not the slack "
+        "term of this invariant — buy the margin on the refresh side (period) or "
+        "the pass side (budget), never by serving a staler score"
     )
 
 

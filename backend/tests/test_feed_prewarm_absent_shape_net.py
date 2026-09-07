@@ -257,8 +257,11 @@ def test_the_net_changes_neither_term_of_the_2236_invariant():
     """A safety net that widened the budget would break the thing it protects.
 
     Stated as a test rather than as a comment because the tempting fix for "the
-    net ran out of budget" is to widen `FEED_LIVE_REPUBLISH_BUDGET_S`, and the
-    ceiling arithmetic has zero headroom.
+    net ran out of budget" is to widen `FEED_LIVE_REPUBLISH_BUDGET_S`, and every
+    second of that widening comes out of the ceiling's margin — which since
+    LAT-P182 is a NAMED reserve for beat lateness
+    (`FEED_LIVE_REPUBLISH_MIN_HEADROOM_S`) and not spare wall. Before LAT-P182
+    there was no margin at all to take it from.
 
     🔴 **#3233 RE-ANCHORED THIS ON THE INTENT.** It used to match the source text
     `budget_left = float(FEED_LIVE_REPUBLISH_BUDGET_S)`. That line was the serial
@@ -270,11 +273,15 @@ def test_the_net_changes_neither_term_of_the_2236_invariant():
     SHAPE, not the line).
     """
     from app.utils.feed_cache import (
+        FEED_LIVE_REPUBLISH_MIN_HEADROOM_S,
         live_republish_headroom_s,
         live_republish_target_headroom_s,
     )
 
-    assert live_republish_headroom_s() >= 0
+    # LAT-P182: the bound is the RESERVE, not zero. `>= 0` was the assertion that
+    # let 40 + 20 == 60 stand, and a weaker restatement of the rule sitting beside
+    # the strict one is how the weak form gets believed.
+    assert live_republish_headroom_s() >= FEED_LIVE_REPUBLISH_MIN_HEADROOM_S
     # #3233's second term: the wall must also cover the WORK, not merely be
     # divided fairly among it.
     assert live_republish_target_headroom_s(len(pcp.FEED_PREWARM_SHAPES)) >= 0

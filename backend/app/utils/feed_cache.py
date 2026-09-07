@@ -73,11 +73,63 @@ FEED_LAST_GOOD_MAX_AGE_LIVE_SECONDS = 60
 # arithmetic that ties them is a function rather than a comment.
 #
 #: How often a live-containing shape is republished. Strictly below the ceiling.
-FEED_LIVE_REPUBLISH_PERIOD_S = 40
+#:
+#: 🔴 **40 -> 30, LAT-P182 (#3827).** The pair below summed to the ceiling
+#: EXACTLY — 40 + 20 == 60 — and the file said so twice without ever saying that
+#: a sum which only just fits is a sum that fits under no other condition. With
+#: the warmer healthy and holding its schedule (LAT-P179: `prewarm_age_s` max
+#: 41.4 s against a 40 s period, 21 samples), 12 of 132 measured front-page reads
+#: still paid a 1.49-2.25 s cold build off a 0.26 s median, and the misses fell
+#: only in the t=0/40/80 s read classes. Zero headroom is a rail with no
+#: tolerance for its own lateness, and a beat has lateness.
+#:
+#: The ceiling did NOT move to buy this and must not: 60 s is #2216's product
+#: rule (see the block above), and paying for latency with a staler score is the
+#: trade that issue refused. The margin is bought on the refresh side, where it
+#: costs passes rather than truth.
+FEED_LIVE_REPUBLISH_PERIOD_S = 30
 #: Wall budget for ONE republish pass. Not headroom — it is the second term of
 #: the invariant: even a pass that burns its entire budget must still land
 #: before the PREVIOUS publication's stale mirror expires.
 FEED_LIVE_REPUBLISH_BUDGET_S = 20
+
+#: The slack the #2236 invariant must carry, and what that slack IS FOR.
+#:
+#: `live_republish_headroom_s()` computes `CEILING - PERIOD - BUDGET`. Until
+#: LAT-P182 the guard on it asserted `>= 0`, which admitted the equality case —
+#: and the equality case is not a satisfied invariant, it is an invariant that
+#: holds only while every pass fires at its exact period. Restated with the term
+#: the original derivation left implicit, the worst case is
+#:
+#:     PERIOD + lateness + (this pass's build - the previous pass's build)
+#:         <= FEED_RESPONSE_STALE_TTL_LIVE_SECONDS
+#:
+#: so the headroom is not spare budget. **It is the number of seconds one fire of
+#: this beat may run late before a reader eats a cold build**, and at 40 + 20 that
+#: number was zero.
+#:
+#: 🔴 THE SHARPEST FORM, because it is provable from the constants alone and does
+#: not depend on any measurement of lateness. The tolerated total is
+#: `CEILING - PERIOD`. A build's own contribution to that total is bounded by
+#: BUDGET, so:
+#:   * at 40, the tolerance was 20 == BUDGET. A single pass that ran SLOWLY but
+#:     entirely WITHIN its budget, following a fast one, spent the whole tolerance
+#:     by itself — and then any lateness at all, one second, opened a hole. The
+#:     rail was one slow database read away from a cold build, with every counter
+#:     green and every constant obeyed.
+#:   * at 30, the tolerance is 30 > BUDGET. The full budget swing is now absorbed
+#:     by construction, and the 10 s below is what is left over for lateness.
+#: That is the difference this change buys, and it is why the fix is the PERIOD
+#: and not, say, a tighter budget: shrinking BUDGET would also lift the tolerance
+#: above the swing, but `live_republish_target_headroom_s()` shows the pass cannot
+#: serve its five shapes in less than 12 s of wall, so there is no room there.
+#:
+#: 10 s, sized against measurement rather than roundness: LAT-P179 measured this
+#: rail's worst observed lateness on `realtime` at 1.4 s over 21 samples, so 10 s
+#: is ~7x the observed maximum. Today's constants sit EXACTLY on this bound
+#: (60 - 30 - 20 == 10), which is deliberate — the reserve is spent, and the next
+#: change to any of the three numbers has to say where it is taking it back from.
+FEED_LIVE_REPUBLISH_MIN_HEADROOM_S = 10
 
 # --- #3233: the term the budget never counted — how much ONE build costs ------
 # The two numbers above bound the pass. Neither says anything about the work
@@ -112,9 +164,12 @@ FEED_PREWARM_MIN_VIABLE_BUILD_S = 6.0
 
 #: How many republish targets may build AT ONCE.
 #:
-#: Concurrency is the only lever #2236 leaves. `PERIOD + BUDGET == 60` exactly,
-#: with zero headroom against the live ceiling, so the wall cannot grow; and
-#: five sequential 6 s builds need 30 s, which no ordering fits into 20 s.
+#: Concurrency is the only lever #2236 leaves. The wall cannot grow: it is the
+#: BUDGET term of the invariant, and every second added to it comes out of
+#: `FEED_LIVE_REPUBLISH_MIN_HEADROOM_S`, which LAT-P182 has already spent on beat
+#: lateness (`PERIOD + BUDGET + MIN_HEADROOM == 60` exactly, and before LAT-P182
+#: it was `PERIOD + BUDGET == 60` with nothing held back at all). Meanwhile five
+#: sequential 6 s builds need 30 s, which no ordering fits into 20 s.
 #:
 #: 3 is bounded by the task database pool, not chosen: `tasks/base.py` declares
 #: `pool_size=3, max_overflow=2`. Three concurrent builds take the pooled slots
@@ -162,7 +217,7 @@ def live_republish_headroom_s() -> int:
     The invariant, stated once so it cannot be re-derived differently by the
     next reader:
 
-        PERIOD + BUDGET <= FEED_RESPONSE_STALE_TTL_LIVE_SECONDS
+        PERIOD + BUDGET + MIN_HEADROOM <= FEED_RESPONSE_STALE_TTL_LIVE_SECONDS
 
     Read it as a worst case, not an average. A pass fires at t=0 and publishes a
     payload whose stale mirror dies at t=60. The next pass fires at t=PERIOD and
@@ -170,6 +225,21 @@ def live_republish_headroom_s() -> int:
     ceiling there is a window in which the key is simply gone and a user eats a
     cold build — which is exactly the state #2236 measured, with PERIOD=120 and
     no budget term at all.
+
+    🔴 **LAT-P182 (#3827): the third term, and why `<=` was the bug.** The two
+    terms above are the whole worst case only if the beat is PUNCTUAL. It is not,
+    and nothing makes it so — the pass fires at PERIOD *plus* whatever lateness
+    the queue imposes. So the honest statement is
+
+        PERIOD + lateness + (this build - the previous build) <= CEILING
+
+    and since a build is bounded by BUDGET, what this function returns is exactly
+    the LATENESS THIS RAIL TOLERATES. At 40 + 20 == 60 it returned zero: a rail
+    that survived only a beat that never ran a second late. That is not a
+    hypothetical — with the warmer measurably healthy, 12 of 132 front-page reads
+    still paid a ~2 s cold build, in the read classes that fall on the period
+    boundary. The guard therefore requires `>= FEED_LIVE_REPUBLISH_MIN_HEADROOM_S`
+    and not `>= 0`; the `=` in the old assertion was the entire defect.
 
     It is a function and not a bare `assert` at import time because a guard test
     should FAIL, loudly and by name, rather than take the web dyno down.

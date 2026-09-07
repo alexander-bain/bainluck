@@ -566,7 +566,7 @@ FEED_PREWARM_STATUS_TTL = 6 * 3600
 #: two passes have different costs and different blast radii: turning the main
 #: warm off makes every first paint cold, turning this one off restores exactly
 #: the pre-#2236 behaviour (a 60s sawtooth) and nothing worse. An operator who
-#: needs to shed the 40s beat must not have to take the 120s one down with it.
+#: needs to shed the republish beat must not have to take the 120s one down with it.
 #: This pass ALSO honours the main switch — "the warm rail is off" must mean the
 #: whole rail, or the switch is a lie.
 FEED_LIVE_PREWARM_ENABLED_KEY = "discover_feed_live_prewarm:enabled"
@@ -618,7 +618,7 @@ def _record_shape_liveness(rc, label: str, live: bool) -> None:
     """Record (or clear) one shape's liveness in the shared live set. Never raises.
 
     Clearing matters as much as setting. A shape that goes not-live must LEAVE
-    the set, or the 40s pass keeps rebuilding a payload whose own TTL is 60/300
+    the set, or the republish pass keeps rebuilding a payload whose own TTL is 60/300
     and which the 120s pass already covers — paying three times over for nothing.
     The set is therefore always written, in both directions, on every warm.
 
@@ -680,7 +680,7 @@ def _live_prewarm_labels(rc) -> set[str]:
 
     Empty means "republish nothing", which is the correct direction: the cost of
     being wrong here is one 60s sawtooth (the pre-#2236 status quo), where the
-    cost of failing the other way is a 40s beat rebuilding every feed shape on
+    cost of failing the other way is the republish beat rebuilding every feed shape on
     the site off a Redis error.
     """
     try:
@@ -1114,12 +1114,12 @@ async def _prewarm_feed_shape(
     rc.setex(cache_key, ttl, body)
     rc.setex(f"{cache_key}:stale", stale_ttl, body)
     # #2236: the shape's liveness is recorded by the writer that just measured
-    # it. Whichever pass called this — the 120s one or the 40s one — the live set
+    # it. Whichever pass called this — the 120s one or the republish one — the live set
     # now describes the payload actually on the key, so the republish pass can
     # never be selecting on a belief no warmer holds.
     _record_shape_liveness(rc, label, live)
     # LAT-P112: carry the key the route just resolved forward, so the punctual
-    # 40s pass can ask whether this shape's entry has GONE without re-deriving
+    # republish pass can ask whether this shape's entry has GONE without re-deriving
     # a key of its own. Written here and only here, from the scope readback two
     # statements above — the same value that was just published to.
     _record_shape_cache_key(rc, label, cache_key)
@@ -1340,7 +1340,7 @@ async def _prewarm_live_feed_shapes():
     way it is:
 
     * **It usually does nothing.** Off-hours the live set is empty and the pass
-      is one `HGETALL` — this is what makes a 40s beat affordable next to a
+      is one `HGETALL` — this is what makes a sub-minute beat affordable next to a
       120s pass that costs p50 9.8s. The cost scales with the number of shapes
       that are actually live, which is the only thing it should scale with.
       LAT-P112 keeps that true: when the host rail is healthy every mirror
@@ -1357,21 +1357,24 @@ async def _prewarm_live_feed_shapes():
       finish.** It used to run them serially, each given `BUDGET / N` — a slice
       that fell under the cost of one build the moment N reached 5, at which
       point the pass killed every target it started and published nothing while
-      reporting `failures_24h: 0`. The wall could not be widened
-      (`PERIOD + BUDGET == 60`, the #2216 ceiling, zero headroom), so the fix is
-      waves rather than slices, checked by
-      `live_republish_target_headroom_s()`.
+      reporting `failures_24h: 0`. The wall could not be widened — it is the
+      BUDGET term of the #2216 ceiling, and since LAT-P182 every second added to
+      it comes out of `FEED_LIVE_REPUBLISH_MIN_HEADROOM_S` — so the fix is waves
+      rather than slices, checked by `live_republish_target_headroom_s()`.
     * **A shape that stops being live leaves on its own.** The warm it just ran
       rewrites the live set, so the set converges within one pass in both
       directions and no separate expiry logic exists to get wrong.
 
-    COST, stated rather than left to be discovered — `worker-background` runs
-    `--concurrency=2` against ~57 beats and this makes 58:
-      * Idle (the overnight case): one `HGETALL` + one `SETEX`, ~2,160 passes/day,
-        well under a minute of slot time across the whole day.
-      * Live, taking 8h/day with two live shapes as the working figure: ~720
-        passes x 2 builds x ~1.2s ~= 29 min/day, about 1% of the two-slot pool.
-      * Worst case for a SINGLE pass — 20s budget, 35s hard limit — is strictly
+    COST, stated rather than left to be discovered. Restated at LAT-P182's 30s
+    period (was 40s); the pass runs on `realtime`, not `background`:
+      * Idle (the overnight case): one `HGETALL` + one `SETEX`, ~2,880 passes/day
+        (was ~2,160), well under two minutes of slot time across the whole day.
+      * Live, taking 8h/day with two live shapes as the working figure: ~960
+        passes x 2 builds x ~1.2s ~= 38 min/day (was ~29).
+      * The lane it is spent on was MEASURED and not assumed: LAT-P179 sampled
+        `realtime` on 22 consecutive ticks and found queue depth 0 and 3 of the 4
+        slots free on every one.
+      * Worst case for a SINGLE pass — 20s budget, 28s hard limit — is strictly
         smaller than the pass it sits beside, which may hold a slot for 80s of
         budget under a 120s soft limit.
 
@@ -1383,13 +1386,24 @@ async def _prewarm_live_feed_shapes():
     from "0 of 5 published" into "3 of 5"; it does not claim to make the tail
     fit. That needs the feed build to get cheaper and is a different ship.
 
-    ALSO NOT DONE, same reason: this does
-    not skip a shape whose current publication would survive to the next pass.
-    With zero headroom in the #2236 invariant (40 + 20 == 60) such a skip can
-    never fire, so it would be a Redis `TTL` read per shape buying nothing. If
-    the period is ever shortened, the skip becomes real and worth adding — and
-    the duplicate it would remove is the one this pass performs when its tick
-    happens to coincide with the 120s pass's.
+    ALSO NOT DONE, and LAT-P182 CHANGED THE REASON RATHER THAN THE DECISION —
+    the old text is corrected here rather than quietly edited, because a reader
+    who re-derives it from the new numbers will get a different answer than the
+    one on the page. This still does not skip a shape whose current publication
+    would survive to the next pass. Under 40 + 20 == 60 the old text was right
+    that such a skip could NEVER fire; the previous sentence of that paragraph
+    then predicted, correctly, that shortening the period would make it real.
+
+    It is real now, and it is still not worth it. The skip is safe only when the
+    remaining TTL exceeds `PERIOD + BUDGET` (50s) — skipping on anything less
+    reopens exactly the hole this pass exists to close — and in steady state the
+    entry this pass finds is one period old, so its TTL is ~30s and the skip does
+    not fire. It fires only when the entry was published within the last
+    `FEED_LIVE_REPUBLISH_MIN_HEADROOM_S` seconds, i.e. only on coincidence with
+    the 120s host pass: a ~10s window in every 120s, so under a tenth of host
+    passes. Buying that with one Redis `TTL` round trip per shape on every one of
+    ~2,880 daily passes is the wrong trade, and it would be the wrong trade
+    silently — the reads happen whether or not the skip ever fires.
 
     Never raises; the caller wraps it too.
     """
@@ -1435,8 +1449,9 @@ async def _prewarm_live_feed_shapes():
     if absent_labels:
         logger.warning(
             "Feed warm HOLE detected — %s had no stale mirror; rebuilding on the "
-            "40s rail (LAT-P112). The 120s host beat is late or starved.",
+            "%ss republish rail (LAT-P112). The 120s host beat is late or starved.",
             sorted(absent_labels),
+            FEED_LIVE_REPUBLISH_PERIOD_S,
         )
     targets = [(s["label"], s) for s in FEED_PREWARM_SHAPES if s["label"] in live_labels]
     targets += [
@@ -1455,9 +1470,11 @@ async def _prewarm_live_feed_shapes():
     # Dividing a wall below the cost of one item does not make the pass do less,
     # it makes it do NOTHING — see `live_republish_target_headroom_s()`.
     #
-    # Why concurrency and not a bigger wall: `PERIOD + BUDGET == 60` is the #2216
-    # ceiling with zero headroom (`live_republish_headroom_s()`), so the budget is
-    # not available to be raised. The semaphore is the only term left.
+    # Why concurrency and not a bigger wall: the budget is a term of the #2216
+    # ceiling (`live_republish_headroom_s()`), and since LAT-P182 the slack beside
+    # it is a NAMED reserve for this beat's own lateness
+    # (`FEED_LIVE_REPUBLISH_MIN_HEADROOM_S`), not spare wall. So the budget is
+    # still not available to be raised. The semaphore is the only term left.
     #
     # THE ORDERING RULE SURVIVES, and it survives by construction rather than by
     # care. `gather` creates the tasks in list order and `asyncio.Semaphore`
@@ -1505,7 +1522,7 @@ async def _prewarm_live_feed_shapes():
     # The idle pass reports too, and that is deliberate (gotcha #53). "Nothing was
     # live" and "this beat has not run since the deploy" are different facts with
     # opposite remedies, and an absent status key states both. One `setex` per
-    # 40 s is not a cost worth buying that ambiguity with.
+    # pass is not a cost worth buying that ambiguity with.
     report = {
         "ran_at": datetime.now(timezone.utc).isoformat(),
         "period_s": FEED_LIVE_REPUBLISH_PERIOD_S,

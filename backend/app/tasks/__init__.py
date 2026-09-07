@@ -4434,8 +4434,19 @@ def precompute_discover_candidate_base(self):
 #: merely unlikely. Soft sits under hard so the pass raises `SoftTimeLimitExceeded`
 #: and gets logged, instead of vanishing into an untracked SIGKILL (gotcha:
 #: "Celery SIGKILL untracked" — a hard-killed task reports nothing at all).
-_LIVE_PREWARM_HARD_LIMIT_S = 35
-_LIVE_PREWARM_SOFT_LIMIT_S = 28
+#:
+#: 🔴 **35/28 -> 28/24, LAT-P182 (#3827), and this is a CONSEQUENCE of that queue
+#: rather than a second opinion about time limits.** The chain
+#: `BUDGET < SOFT < HARD < PERIOD` is what makes the overlap lock unnecessary, and
+#: shortening the period to 30 s put the old hard limit ABOVE it — two passes
+#: could then build the same shapes at once and the slower one would publish an
+#: OLDER payload over a newer one, which is a staleness bug introduced by a
+#: staleness fix. The numbers are typed rather than derived because no honest
+#: formula reproduces 35/28 from 40; what ties them is
+#: `test_the_hard_time_limit_is_below_the_period`, which asserts the whole chain
+#: and fails the moment any one of the four moves alone.
+_LIVE_PREWARM_HARD_LIMIT_S = 28
+_LIVE_PREWARM_SOFT_LIMIT_S = 24
 
 
 @celery_app.task(
@@ -5364,8 +5375,16 @@ celery_app.conf.beat_schedule = {
         # neighbour, and `test_feed_live_prewarm.py` fails if they do not.
         #
         # Cost: `HGETALL` on an empty live set when nothing is live (the common
-        # case, and the reason a 40s beat is affordable at all), otherwise one
-        # feed build per LIVE shape inside a 20s pass budget.
+        # case, and the reason a beat this frequent is affordable at all),
+        # otherwise one feed build per LIVE shape inside a 20s pass budget.
+        #
+        # LAT-P182 (#3827) shortened the period 40s -> 30s to buy the invariant
+        # 10s of tolerance for this beat's OWN lateness — see
+        # `FEED_LIVE_REPUBLISH_MIN_HEADROOM_S`. That is ~33% more fires: ~2,160/day
+        # -> ~2,880/day. The occupancy it is spent against was measured, not
+        # assumed — LAT-P179 sampled `realtime` on 22 consecutive ticks and found
+        # depth 0 and 3 of 4 slots free on every one — and the added fires are
+        # overwhelmingly the idle shape above, which builds nothing.
         #
         # `realtime` under #2236, `heavy` under D68-next (#3060, L1B-050), and
         # `realtime` again under #3765 (LAT-P179) on 2026-09-07: `heavy` delivered
