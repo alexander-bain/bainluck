@@ -47,6 +47,8 @@ from app.utils.tournament_register import TournamentRegister, load_register
 from app.utils.tournament_slate import (
     apply_books_prematch,
     apply_espn_event_links,
+    apply_event_blend_slate,
+    event_blend_view,
     build_bracket,
     build_props,
     build_results,
@@ -1360,6 +1362,47 @@ async def _build_sections(
         # served, rather than a count arriving with the half below the fold.
         first["event_links"]["slate_linked"] = first["slate"].get(
             "scoreboard_linked", 0
+        )
+
+        # A BLANK ROW FALLS BACK TO THE NUMBER ITS OWN MATCH PAGE SHOWS (#3729).
+        #
+        # The two US Open quarterfinals rendered blank on 2026-09-07 while the
+        # event page each one links to printed the sportsbook consensus of 7
+        # books — `priced` meant "a prediction market was pinned to this
+        # matchup", and a quarterfinal's market is pinned LAST because its
+        # feeders have to resolve first. `apply_event_blend_slate` says why that
+        # makes the deepest round of every tournament the likeliest to be empty.
+        #
+        # THE NUMBER IS RESOLVED HERE, THROUGH THE HERO'S OWN FUNCTION.
+        # `compute_aggregate_probability(event, event.status)` is what
+        # `/api/events/{id}` calls, so the card and the page it links to cannot
+        # answer the same question differently — which is the whole defect,
+        # arriving from the other side. `effective_source_weights` names the
+        # readings that fed it: an empty list means the blend came from a
+        # fallback tier (ESPN's model, or `opening_*`) and the rung refuses.
+        #
+        # BOUNDED BY THE ROWS THAT ARE ACTUALLY BLANK, and by the ids the link
+        # phase above ALREADY resolved — nothing is queried to FIND an event. On
+        # the payload that prompted this, 2 rows of 13; a card with nothing blank
+        # on it pays for no query at all.
+        _blank_event_ids = sorted(
+            {
+                int(row["event_id"])
+                for row in (first["slate"].get("matches") or [])
+                if not row.get("priced") and isinstance(row.get("event_id"), int)
+            }
+        )
+        _slate_events: dict[int, dict[str, Any]] = {}
+        if _blank_event_ids:
+            _blank_rows = await db.execute(
+                select(Event).where(Event.id.in_(_blank_event_ids))
+            )
+            _slate_events = {
+                int(_event.id): event_blend_view(_event)
+                for _event in _blank_rows.scalars().all()
+            }
+        apply_event_blend_slate(
+            first["slate"], rows_by_event=_slate_events, now=now
         )
 
     if want_rest:

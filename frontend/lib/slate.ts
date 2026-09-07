@@ -154,6 +154,31 @@ export interface SlateMatch {
   favourite: string | null;
   has_moved: boolean;
   source_count: number;
+  /**
+   * WHERE THIS ROW'S NUMBER CAME FROM, when that needs saying (#3729).
+   *
+   * `"books"` on a row the backend filled from its own event's sportsbook
+   * consensus, because no prediction market had been pinned to the fixture yet
+   * — the case that left both US Open quarterfinals blank on 2026-09-07 while
+   * each match page printed a number. Same field name, same value and same
+   * caveat the finished list already publishes per player.
+   *
+   * ABSENT is the state every row had before this and keeps its meaning: the
+   * number is the product's own reading and reads as itself
+   * (`isPredictionMarketSource`). So a payload written before the field
+   * existed, or served from cache, renders exactly as it always did.
+   */
+  price_source?: string | null;
+  /**
+   * WHY a row carries no number, when it carries none (#3729).
+   *
+   * `no_event_link` · `no_event_row` · `no_event_reading` ·
+   * `orientation_ambiguous`. Read by nothing on the card today — the reader
+   * gets `unpricedDetailNote`, which deliberately names no mechanism — and
+   * carried so a measurement can tell four different silences apart without
+   * a database.
+   */
+  unpriced_reason?: string | null;
   /** UX-P157. The AND over both sides — see `lib/liquidity`. */
   liquidity?: string | null;
   liquidity_reasons?: string[] | null;

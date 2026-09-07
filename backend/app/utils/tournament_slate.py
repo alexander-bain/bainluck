@@ -80,6 +80,7 @@ from typing import Any, Optional
 from app.utils.market_liquidity import LIQUIDITY_UNKNOWN, thinnest_liquidity
 from app.utils.prematch_reading import (
     BOOKS_SOURCE,
+    is_prediction_market_source,
     prematch_source_rank,
     resolve_prematch_reading,
 )
@@ -240,6 +241,20 @@ def _as_float(value: Any) -> Optional[float]:
     if result != result:  # NaN
         return None
     return result
+
+
+def _as_probability(value: Any) -> Optional[float]:
+    """A number strictly between 0 and 1, or ``None``.
+
+    The endpoints are rejected as well as the out-of-range, for the reason
+    `prematch_reading` gives at its own gate: an exact 0 or 1 on an unplayed
+    match is a settled price that leaked past a clock filter, and it would print
+    as the most confident claim on the card.
+    """
+    number = _as_float(value)
+    if number is None or not 0.0 < number < 1.0:
+        return None
+    return number
 
 
 def normalize_pair(
@@ -1406,15 +1421,8 @@ def build_slate(
 
     # Slate-level, like the board's: the newest thing anyone has seen. Reads
     # `freshest_observed_at` because `observed_at` is now the governing side's.
-    observed_times = [
-        datetime.fromisoformat(r["freshest_observed_at"])
-        for r in rows
-        if r.get("freshest_observed_at")
-    ]
-    newest_overall = max(observed_times) if observed_times else None
-    slate_age = (
-        (now - newest_overall).total_seconds() / 3600.0 if newest_overall else None
-    )
+    # Shared with `apply_books_slate`, which re-answers it after filling rows.
+    newest_overall, slate_age = _slate_freshness(rows, now)
 
     if dropped:
         # Never a silent truncation. A short slate must be explainable.
@@ -1485,6 +1493,11 @@ def build_slate(
         # the same bytes to a reader, and this whole module exists because that
         # confusion shipped once already (gotcha #53).
         "scoreboard_linked": 0,
+        # HOW MANY OF TODAY'S NUMBERS ARE A SPORTSBOOK CONSENSUS (#3729).
+        # Stamped by `apply_books_slate` after this function returns, and
+        # declared HERE at zero for the same reason `scoreboard_linked` is: an
+        # absent count and a genuine zero are the same bytes to a reader.
+        "books_priced": 0,
         "price_state": price_state(slate_age),
         "newest_observed_at": newest_overall.isoformat() if newest_overall else None,
         "age_hours": round(slate_age, 2) if slate_age is not None else None,
@@ -1582,6 +1595,344 @@ def apply_espn_event_links(
         linked += 1
     slate["scoreboard_linked"] = linked
     return linked
+
+
+#: WHY A SLATE ROW STILL CARRIES NO NUMBER, once its own event has been asked.
+#:
+#: On its own field and NOT in ``liquidity_reasons``: that list is the prediction
+#: market's own liquidity vocabulary (``no_trades_24h``,
+#: ``spread_exceeds_price``, graded by ``grade_liquidity`` from an order book we
+#: hold), and a reader — or the hub's `LiquidityMark` — that finds
+#: ``no_event_link`` in it would be told a book is thin when the truth is that
+#: there is no book at all.  Two different questions, two fields.
+UNPRICED_NO_EVENT_LINK = "no_event_link"
+UNPRICED_NO_EVENT_ROW = "no_event_row"
+UNPRICED_NO_EVENT_READING = "no_event_reading"
+UNPRICED_ORIENTATION_AMBIGUOUS = "orientation_ambiguous"
+
+
+def apply_event_blend_slate(
+    slate: dict[str, Any],
+    *,
+    rows_by_event: Optional[dict[int, dict[str, Any]]] = None,
+    now: datetime,
+) -> int:
+    """Today's blank row falls back to THE NUMBER ITS OWN MATCH PAGE SHOWS (#3729).
+
+    ═══ THE DEFECT, MEASURED ═══
+
+    `/tournaments/us-open`, 2026-09-07T00:35Z: **13 slate rows, 11 priced, and
+    the two blanks are the two quarterfinals** — Sabalenka v Noskova and
+    Tiafoe v Michelsen, the most advanced matches in the tournament.  Both
+    published `priced: false`, `probability: null`, `price_state: "unpriced"`,
+    `liquidity_reasons: []`.  Both events carried a sportsbook consensus written
+    two minutes before the payload was built (`betting` 0.6992 over 7 books,
+    0.5723 over 4), and each row's own match page rendered it: 69% - 31%.
+
+    Not cache lag — the payload's `generated_at` is LATER than both odds writes.
+    The card and the page it links to disagreed about whether anybody had a
+    number, and the card was the one that was wrong.
+
+    ═══ WHY IT WAS STRUCTURAL, AND WHY IT WOULD RECUR EVERY TOURNAMENT ═══
+
+    `priced` meant one thing here: *a prediction market was pinned to this
+    matchup*.  A quarterfinal's match market cannot exist until its round-of-16
+    feeders resolve, so the pinned market always arrives LAST — while the books
+    quote the pairing the moment it is known.  The definition therefore
+    guaranteed that the deepest, most-watched rounds are the likeliest to render
+    blank, at exactly the semifinal and final stage a reader most wants a number.
+
+    And the page already prices from books elsewhere: its finished list prints
+    `43% books`, `81% books`, and its own footnote says so out loud.  One page,
+    two pricing policies, the stricter one applied to the rows nobody has
+    finished watching yet.
+
+    ═══ THE NUMBER IS THE EVENT'S OWN BLEND, AND THAT IS THE POINT ═══
+
+    `apply_books_prematch` — the settled list's rung — reads `opening_*`,
+    because what a finished row needs is THE SCRIPT, the quote that pre-dates
+    the match.  A row that has not been played needs the opposite: what is
+    believed NOW.
+
+    So the caller resolves that number with `compute_aggregate_probability` —
+    **the same function the event page hero calls**, on the same event row, and
+    hands the answer in as `blend_home_probability`.  Reading one source
+    directly here would have been easier and would have re-opened the defect
+    from the other side: on an event carrying both a sportsbook consensus and a
+    Kalshi price, the card would quote one and the hero the blend, and the two
+    surfaces would disagree by a couple of points about the same match.  Alex's
+    standing ruling is one number per question, and the only way to keep it is
+    to ask the question in one place.  `blend_sources` says which readings fed
+    it, so the row can label itself honestly (below) and so a refusal can be
+    told from a reading.
+
+    THE SCRIPT STILL COMES FROM `opening_*`, normalized on its own sum — that is
+    what the slate's script-vs-divergence grammar wants, and `move` is then
+    computed by the same rule as on a market-priced row.
+
+    AN EVENT WITH NO LIVE READING IS A REFUSAL, NEVER A FALLBACK TO THE OPENING.
+    `compute_aggregate_probability` falls back through ESPN's model to
+    `opening_home_probability` when the JSONB is empty, and that last tier is the
+    frozen number ruling 051 and #1829 exist to prevent: below its evidence
+    floor, or when every book pulls the line, `betting` is DROPPED rather than
+    left in place, precisely so nothing downstream can print it as current.  So
+    the rung requires at least one live source reading (`blend_sources`
+    non-empty) and refuses otherwise.  A row that says nothing is a row a reader
+    can trust the rest of.
+
+    ═══ AND IT SAYS WHERE THE NUMBER CAME FROM ═══
+
+    `price_source: "books"` when the blend was fed by the sportsbook consensus
+    ALONE — the caveat the finished list already prints beside its own
+    sportsbook priors, in the same word, so one page keeps one vocabulary.  When
+    a prediction market fed it the field is absent, which on this payload has
+    always meant exactly that: the number is the product's own blend and reads
+    as itself (`needs_source_label`).
+
+    ═══ THE ORIENTATION RULE: A BIJECTION, OR NOTHING ═══
+
+    Same rule and same comparator as the settled rung, for the same reason: an
+    events row names `home_team_name` / `away_team_name`, this row names two
+    players, and putting 69% on the wrong one is wrong in the most confident
+    possible way and looks right.  Both event names must land on the two sides
+    exactly one each, or the row keeps its empty column and says why.
+
+    ═══ AND EVERY REFUSAL NAMES ITSELF ═══
+
+    Before this, an unpriced row published `liquidity_reasons: []` and no other
+    account of itself: "no market was ever pinned", "we could not reach an
+    events row" and "the two names did not resolve" were one silence, which is
+    gotcha #53 on the very surface built to refuse it.  `unpriced_reason` is
+    that account, on every row this pass leaves blank.
+
+    Mutates `slate` and returns how many rows the rung filled.  A row that is
+    already priced is never touched — the pinned market is the upper rung and a
+    second answer must not displace the first.
+    """
+    rows = slate.get("matches") or []
+    by_event = rows_by_event or {}
+    filled = 0
+    for row in rows:
+        if row.get("priced"):
+            continue
+        reason = _fill_blend_row(row, by_event, now)
+        if reason is None:
+            filled += 1
+            row.pop("unpriced_reason", None)
+        else:
+            row["unpriced_reason"] = reason
+
+    if filled:
+        # THE COUNTERS ARE PART OF THE FILL, not bookkeeping after it.
+        # `build_slate` computes them before this pass runs, so a rung that
+        # filled rows and left the counts alone would publish
+        # `scoreboard_pairings` far above `scoreboard_priced` — the gap ux/1033
+        # named as the live alarm — while every row on the card carried a
+        # number.  A monitor that cannot be true is worse than no monitor.
+        for key, pairing in (
+            ("scoreboard_priced", "scoreboard"),
+            ("authority_priced", "authority"),
+        ):
+            if key in slate:
+                slate[key] = sum(
+                    1
+                    for r in rows
+                    if r.get("pairing_source") == pairing and r.get("priced")
+                )
+        # Named on its own and never summed away, exactly as
+        # `with_prematch_books` is on the settled list: "how many of today's
+        # numbers are a sportsbook consensus" is the question the card's
+        # marker answers, and a total cannot answer it.
+        slate["books_priced"] = int(slate.get("books_priced") or 0) + filled
+        newest_overall, slate_age = _slate_freshness(rows, now)
+        slate["newest_observed_at"] = (
+            newest_overall.isoformat() if newest_overall else None
+        )
+        slate["age_hours"] = round(slate_age, 2) if slate_age is not None else None
+        slate["price_state"] = price_state(slate_age)
+    else:
+        slate.setdefault("books_priced", 0)
+    return filled
+
+
+def event_blend_view(event: Any) -> dict[str, Any]:
+    """What an `events` row says about this match — as `apply_event_blend_slate` reads it.
+
+    ONE OWNER FOR "WHAT NUMBER DOES THIS EVENT SHOW". The route could assemble
+    this dict itself in six lines, and then there would be two places that
+    answer the question the hero answers — which is the #3729 defect exactly:
+    two surfaces, one match, two numbers. `compute_aggregate_probability(event,
+    event.status)` is the call `/api/events/{id}` makes for its hero, and this
+    is the only place the hub makes it.
+
+    `blend_sources` is `effective_source_weights`' key list — the readings that
+    actually fed the blend, after the recency decay and the weight cap. Empty
+    means the hero answered from a fallback tier (ESPN's model, or
+    `opening_home_probability`), which the rung refuses; see its docstring.
+
+    `observed_at` is the NEWEST contributing stamp. `stamp_source_reading` is the
+    only writer of those, so a source that predates it contributes no stamp and
+    an event with none renders `dark` rather than claiming a freshness we cannot
+    demonstrate.
+
+    Takes any object carrying the Event attributes, so it is testable without a
+    database — the same contract `compute_aggregate_probability` itself keeps.
+    """
+    from app.utils.aggregation import (
+        compute_aggregate_probability,
+        effective_source_weights,
+        parse_source_entry,
+    )
+
+    status = getattr(event, "status", None)
+    keys, _values, _weights = effective_source_weights(event, status)
+    sources = getattr(event, "win_probability_sources", None) or {}
+    stamps = [
+        stamp
+        for key in keys
+        for _value, stamp in [parse_source_entry(sources.get(key))]
+        if stamp is not None
+    ]
+    return {
+        "home_team_name": getattr(event, "home_team_name", None),
+        "away_team_name": getattr(event, "away_team_name", None),
+        "opening_home_probability": getattr(event, "opening_home_probability", None),
+        "opening_away_probability": getattr(event, "opening_away_probability", None),
+        "blend_home_probability": compute_aggregate_probability(event, status),
+        "blend_sources": list(keys),
+        "observed_at": max(stamps) if stamps else None,
+    }
+
+
+def _fill_blend_row(
+    row: dict[str, Any], by_event: dict[int, dict[str, Any]], now: datetime
+) -> Optional[str]:
+    """Fill one blank slate row from its own event's number, or name the refusal."""
+    event_id = row.get("event_id")
+    if not isinstance(event_id, int):
+        return UNPRICED_NO_EVENT_LINK
+    event_row = by_event.get(event_id)
+    if not event_row:
+        return UNPRICED_NO_EVENT_ROW
+
+    # THE READING, AND WHAT MAKES IT ONE. `blend_sources` is empty whenever
+    # `compute_aggregate_probability` answered from a fallback tier rather than
+    # from a live source, and that is a refusal here even though the hero still
+    # renders it: a tier-3 answer IS `opening_home_probability`, and printing an
+    # opening on a row whose own freshness fields say "live" is the frozen
+    # number in a new place.
+    home_probability = _as_probability(event_row.get("blend_home_probability"))
+    if home_probability is None or not (event_row.get("blend_sources") or []):
+        return UNPRICED_NO_EVENT_READING
+    observed = event_row.get("observed_at")
+    if not isinstance(observed, datetime):
+        observed = None
+
+    sides = row.get("sides") or []
+    if len(sides) != 2:
+        return UNPRICED_ORIENTATION_AMBIGUOUS
+    home = [s for s in sides if _names_agree(s.get("display_name"), event_row.get("home_team_name"))]
+    away = [s for s in sides if _names_agree(s.get("display_name"), event_row.get("away_team_name"))]
+    if len(home) != 1 or len(away) != 1 or home[0] is away[0]:
+        return UNPRICED_ORIENTATION_AMBIGUOUS
+
+    # ONE QUESTION, TWO SIDES. The blend answers "does home win", so the away
+    # side is its complement by definition — this is not two quotes being
+    # reconciled (`normalize_pair`'s job, for two independent binaries) and
+    # there is no overround to absorb.
+    probabilities = {
+        id(home[0]): home_probability,
+        id(away[0]): round(1.0 - home_probability, 6),
+    }
+    # THE SCRIPT, on its OWN sum. `opening_*` is a median across whichever books
+    # were quoting when the event first priced, so it carries its own overround
+    # and is normalized separately — mixing the two bases would make `move` an
+    # artifact of the sums differing rather than of the market moving (the same
+    # rule `build_match_row` states above).
+    open_home, open_away, open_sum, open_coherent = normalize_pair(
+        _as_float(event_row.get("opening_home_probability")),
+        _as_float(event_row.get("opening_away_probability")),
+    )
+    openings = (
+        {id(home[0]): open_home, id(away[0]): open_away} if open_coherent else {}
+    )
+
+    age = (now - observed).total_seconds() / 3600.0 if observed else None
+    state = price_state(age)
+    for side in sides:
+        probability = probabilities[id(side)]
+        side["probability"] = probability
+        side["raw_probability"] = probability
+        side["observed_at"] = observed
+        side["age_hours"] = round(age, 2) if age is not None else None
+        side["price_state"] = state
+        opening = openings.get(id(side))
+        side["opening_probability"] = opening
+        side["raw_opening_probability"] = opening
+        side["move"] = (
+            round(probability - opening, 6) if opening is not None else None
+        )
+
+    moves = [s["move"] for s in sides if s["move"] is not None]
+    row["priced"] = True
+    # WHAT THIS NUMBER IS, when it is not the thing the page has always shown.
+    #
+    # Set ONLY where the sportsbook consensus fed the blend alone: that is the
+    # one case where the word "books" is literally true, and it is the same word
+    # and the same caveat the finished list already prints beside its own
+    # sportsbook priors. Where a prediction market contributed, the field is
+    # absent — and absence keeps the meaning it has always had on this payload:
+    # the product's own number, which reads as itself (`needs_source_label`).
+    if not any(
+        is_prediction_market_source(s) for s in (event_row.get("blend_sources") or [])
+    ):
+        row["price_source"] = BOOKS_SOURCE
+    row["coherent"] = True
+    row["raw_sum"] = 1.0
+    row["opening_raw_sum"] = open_sum
+    row["price_state"] = state
+    row["probability_is_live"] = state == "live"
+    row["observed_at"] = observed.isoformat() if observed else None
+    row["age_hours"] = round(age, 2) if age is not None else None
+    row["freshest_observed_at"] = observed.isoformat() if observed else None
+    row["freshest_age_hours"] = round(age, 2) if age is not None else None
+    # ONE READING, TWO SIDES: the blend is one answer to one question, so the
+    # two sides cannot be of different ages and neither can be stale while the
+    # other is fresh. `stale_sides` still names both when the pair is not live —
+    # the field is "which sides are not live", not "which side is the older one".
+    row["stale_sides"] = (
+        [] if state == "live" else [s["entity_key"] for s in sides]
+    )
+    row["mixed_freshness"] = False
+    row["favourite"] = (
+        sides[0]["entity_key"]
+        if (sides[0]["probability"] or 0) >= (sides[1]["probability"] or 0)
+        else sides[1]["entity_key"]
+    )
+    row["has_moved"] = any(abs(m) > MOVE_DEAD_BAND for m in moves)
+    row["source_count"] = 1
+    return None
+
+
+def _slate_freshness(
+    rows: list[dict[str, Any]], now: datetime
+) -> tuple[Optional[datetime], Optional[float]]:
+    """Slate-level: the newest thing anyone has seen, and how old it is.
+
+    Extracted so `build_slate` and the books rung that runs after it cannot
+    answer this differently. Reads `freshest_observed_at` because `observed_at`
+    is the governing side's.
+    """
+    observed_times = [
+        datetime.fromisoformat(r["freshest_observed_at"])
+        for r in rows
+        if r.get("freshest_observed_at")
+    ]
+    newest_overall = max(observed_times) if observed_times else None
+    slate_age = (
+        (now - newest_overall).total_seconds() / 3600.0 if newest_overall else None
+    )
+    return newest_overall, slate_age
 
 
 def _prematch_by_pair(
