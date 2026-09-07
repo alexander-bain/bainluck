@@ -86,6 +86,102 @@ function AnimatedProbability({
   return <motion.span className={className}>{display}</motion.span>;
 }
 
+// ---------------------------------------------------------------------------
+// ParticipantCrest — the 20px square (or 20x15 flag) at the head of a team row
+// ---------------------------------------------------------------------------
+//
+// #3784. This was two identical inline chains, one per row, differing only in
+// which CSS colour var the initials square took. Adding a fourth and fifth rung
+// to a chain that exists twice is how the two rows drift apart, so the ladder is
+// stated ONCE and each row names its side.
+//
+// PRECEDENCE, and the order is the whole decision — it mirrors `FeedCard`'s
+// exactly, because "the two cards disagree about the same match" is the bug
+// being fixed and a second opinion about ordering would re-open it:
+//
+//   1. the served headshot — a picture of the person, the best answer;
+//   2. the served flag — what every draw sheet has printed for fifty years,
+//      and the right answer for the registered players with no face;
+//   3. the country flag this card already resolved for international TEAM
+//      sports (`flagUrl()` by country name);
+//   4. the club crest — `logo_small`, then `espnTeamLogoByName()`;
+//   5. initials, unchanged, which stays the honest fallback for a player the
+//      register has never heard of.
+//
+// A served value can never displace a crest for a team sport, because the
+// server only fills these keys for individual ones.
+//
+// A FACE IS SQUARE AND A FLAG IS 20x15. Which box gets drawn follows what is
+// ACTUALLY being rendered, never what the sport usually gets — a headshot
+// squashed into a flag's letterbox is the defect this distinction prevents.
+// The face takes `object-cover` so a portrait crop is cropped rather than
+// squashed; a flag keeps `object-cover` at its own ratio and a crest keeps
+// `object-contain`, which is what each was already doing.
+function ParticipantCrest({
+  name,
+  servedFace,
+  servedFlag,
+  countryFlagUrl,
+  crestUrl,
+  colorVar,
+}: {
+  name: string;
+  servedFace: string | null;
+  servedFlag: string | null;
+  countryFlagUrl: string | null;
+  crestUrl: string | null;
+  colorVar: string;
+}) {
+  if (servedFace) {
+    return (
+      <img
+        src={servedFace}
+        alt={name}
+        width={20}
+        height={20}
+        loading="lazy"
+        data-testid="event-card-participant-face"
+        className="w-5 h-5 object-cover rounded-sm flex-shrink-0"
+      />
+    );
+  }
+  const flag = servedFlag || countryFlagUrl;
+  if (flag) {
+    return (
+      <img
+        src={flag}
+        alt={name}
+        width={20}
+        height={15}
+        loading="lazy"
+        data-testid="event-card-participant-flag"
+        className="w-5 h-[15px] object-cover rounded-sm flex-shrink-0"
+      />
+    );
+  }
+  if (crestUrl) {
+    return (
+      <img
+        src={crestUrl}
+        crossOrigin="anonymous"
+        alt=""
+        width={20}
+        height={20}
+        loading="lazy"
+        className="w-5 h-5 object-contain flex-shrink-0"
+      />
+    );
+  }
+  return (
+    <div
+      className="w-5 h-5 rounded-sm flex-shrink-0 flex items-center justify-center text-[9px] font-bold text-white/90"
+      style={{ backgroundColor: `rgb(var(${colorVar}))` }}
+    >
+      {teamCrestInitials(name)}
+    </div>
+  );
+}
+
 export default function EventCard({
   event,
   showSport = true,
@@ -296,6 +392,16 @@ export default function EventCard({
   const homeFlagUrl = showFlags ? flagUrl(event.home_team) : null;
   const awayFlagUrl = showFlags ? flagUrl(event.away_team) : null;
 
+  // #3784 — the served face/flag, for individual sports. See `ParticipantCrest`
+  // for the precedence and why it is stated once. `?? null` rather than a bare
+  // read: the key is ABSENT on a team-sport payload, and `undefined` reaching a
+  // `string | null` prop is a different type error than the missing photo it
+  // would be mistaken for.
+  const homeCrestUrl =
+    event.home_team_data?.logo_small || espnTeamLogoByName(event.home_team, event.sport) || null;
+  const awayCrestUrl =
+    event.away_team_data?.logo_small || espnTeamLogoByName(event.away_team, event.sport) || null;
+
   // Short team names for compact display. UX-1065 (#2936): the last word alone
   // renders "Town" for Ipswich Town and "FC" for both sides of an FC-vs-FC
   // fixture, so the pair is decided together in `lib/teamShortName.ts`.
@@ -441,33 +547,14 @@ export default function EventCard({
             {/* Home team */}
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2 flex-1 min-w-0">
-                {homeFlagUrl ? (
-                  <img
-                    src={homeFlagUrl}
-                    alt={event.home_team}
-                    width={20}
-                    height={15}
-                    loading="lazy"
-                    className="w-5 h-[15px] object-cover rounded-sm flex-shrink-0"
-                  />
-                ) : (event.home_team_data?.logo_small || espnTeamLogoByName(event.home_team, event.sport)) ? (
-                  <img
-                    src={(event.home_team_data?.logo_small || espnTeamLogoByName(event.home_team, event.sport))!}
-                    crossOrigin="anonymous"
-                    alt=""
-                    width={20}
-                    height={20}
-                    loading="lazy"
-                    className="w-5 h-5 object-contain flex-shrink-0"
-                  />
-                ) : (
-                  <div
-                    className="w-5 h-5 rounded-sm flex-shrink-0 flex items-center justify-center text-[9px] font-bold text-white/90"
-                    style={{ backgroundColor: "rgb(var(--team-home-primary))" }}
-                  >
-                    {teamCrestInitials(event.home_team)}
-                  </div>
-                )}
+                <ParticipantCrest
+                  name={event.home_team}
+                  servedFace={event.home_image_url ?? null}
+                  servedFlag={event.home_flag_url ?? null}
+                  countryFlagUrl={homeFlagUrl}
+                  crestUrl={homeCrestUrl}
+                  colorVar="--team-home-primary"
+                />
                 <TeamNameLink
                   name={event.home_team}
                   sportKey={event.sport}
@@ -555,33 +642,14 @@ export default function EventCard({
             {/* Away team */}
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2 flex-1 min-w-0">
-                {awayFlagUrl ? (
-                  <img
-                    src={awayFlagUrl}
-                    alt={event.away_team}
-                    width={20}
-                    height={15}
-                    loading="lazy"
-                    className="w-5 h-[15px] object-cover rounded-sm flex-shrink-0"
-                  />
-                ) : (event.away_team_data?.logo_small || espnTeamLogoByName(event.away_team, event.sport)) ? (
-                  <img
-                    src={(event.away_team_data?.logo_small || espnTeamLogoByName(event.away_team, event.sport))!}
-                    alt=""
-                    crossOrigin="anonymous"
-                    width={20}
-                    height={20}
-                    loading="lazy"
-                    className="w-5 h-5 object-contain flex-shrink-0"
-                  />
-                ) : (
-                  <div
-                    className="w-5 h-5 rounded-sm flex-shrink-0 flex items-center justify-center text-[9px] font-bold text-white/90"
-                    style={{ backgroundColor: "rgb(var(--team-away-primary))" }}
-                  >
-                    {teamCrestInitials(event.away_team)}
-                  </div>
-                )}
+                <ParticipantCrest
+                  name={event.away_team}
+                  servedFace={event.away_image_url ?? null}
+                  servedFlag={event.away_flag_url ?? null}
+                  countryFlagUrl={awayFlagUrl}
+                  crestUrl={awayCrestUrl}
+                  colorVar="--team-away-primary"
+                />
                 <TeamNameLink
                   name={event.away_team}
                   sportKey={event.sport}
