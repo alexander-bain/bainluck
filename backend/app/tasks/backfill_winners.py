@@ -6140,6 +6140,8 @@ async def _resolve_winners_only(limit: int = 2000):
     """
     import time as _t
 
+    from app.utils.event_completion import EVENT_SUSPENDED
+
     _start = _t.monotonic()
     stats = {}
 
@@ -6160,15 +6162,58 @@ async def _resolve_winners_only(limit: int = 2000):
         stats["duration_seconds"] = round(_t.monotonic() - _start, 1)
         return stats
 
-    # Phase 0: Fix stale scheduled events
-    # 13,524 events stuck in 'scheduled' despite being completed.
-    # Transitioning to 'closed' makes them eligible for ESPN ID matching,
-    # score backfill, and score-based winner resolution.
+    # Phase 0: take stale scheduled events off the schedule.
+    #
+    # 🔴 IT WRITES `suspended`, NOT `closed` (#3780, EVENT-GRAPH-DOCTRINE §R).
+    #
+    # This phase reasons from a wall clock and nothing else — "still `scheduled`
+    # two days after its own kickoff" — and wall-clock silence is not on the
+    # ladder at all: it is the ABSENCE of every rung, and absence cannot end a
+    # match. `event_completion` states the rule in as many words and CERT-752
+    # applied it to the two staleness NETS on 2026-09-02 (`0ee26b71`); this
+    # phase is the third writer of the same lie and was missed, because
+    # `resolve_winners` has been retired from the beat since 2026-07-06 (#991)
+    # so nothing it does shows up in production metrics.
+    #
+    # What the `closed` here cost, MEASURED on production 2026-09-06 while its
+    # two siblings were already fixed: 8,282 rows inside the league page's own
+    # 14-day lookback read `status='closed'` — Final to every client — with no
+    # score, no StatPal end time, no ESPN id and no box score. On 25 league
+    # pages EVERY visible row of "Recent Results" was one of them, so the
+    # section was eight cards deep and reported not one result. `suspended`
+    # renders as "No result reported" on the rail whose heading says so, and —
+    # the half that is not cosmetic — `authority_may_settle` admits `suspended`
+    # and refuses `closed`, so writing the terminal word here makes the row
+    # PERMANENTLY unsettleable by the authority that may yet report on it.
+    #
+    # ⚠️ THE OLD COMMENT'S RATIONALE IS NOT PRESERVED, ON PURPOSE. It read
+    # "transitioning to 'closed' makes them eligible for ESPN ID matching, score
+    # backfill, and score-based winner resolution" — i.e. it wrote a
+    # reader-facing status in order to move rows into another task's WHERE
+    # clause. A status word is the row's own statement about itself, never a
+    # work queue. The eligibility gate is `espn_sync._backfill_espn_ids`'
+    # `status IN ('completed','closed')`, which is lane1's file under D39;
+    # widening it to `suspended` is filed rather than done here.
+    #
+    # 🔴 THE WORD IS A LITERAL HERE AND THE ASSERTION IS WHAT BINDS IT.
+    # `tests/test_link_loss_receipts_linkloss02.py` scans this file's SOURCE for
+    # raw-SQL status writes and REFUSES a value it cannot read — a bind
+    # parameter leaves it looking at `SET status = :suspended`, which it cannot
+    # classify, so it fails closed. It is right to: "a scanner that drops what
+    # it does not understand reports the clean zero it was built to catch."
+    # Passing the constant as a bind is the tidier code and would have made this
+    # line invisible to the guard that watches this exact class of write, so the
+    # literal stays and the constant is asserted against it instead.
+    assert EVENT_SUSPENDED == "suspended", (
+        f"EVENT_SUSPENDED is now {EVENT_SUSPENDED!r} and the SQL below still "
+        "writes 'suspended' as a literal — the literal exists so a source scan "
+        "can read it, and this assertion exists so it cannot go stale"
+    )
     try:
         async with get_task_session() as session:
             r = await session.execute(text("""
                     UPDATE events
-                    SET status = 'closed'
+                    SET status = 'suspended'
                     WHERE status = 'scheduled'
                       AND commence_time < NOW() - INTERVAL '2 days'
                 """))
