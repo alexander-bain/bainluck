@@ -50,7 +50,7 @@ from app.utils.event_concept_cache import (
     release_refresh_lock,
 )
 from app.utils.proven_duplicates import not_a_proven_duplicate
-from app.utils.sport_keys import SPORT_HIERARCHY
+from app.utils.sport_keys import SPORT_HIERARCHY, tour_child_key_prefix
 
 logger = logging.getLogger(__name__)
 
@@ -288,7 +288,91 @@ RESULTS_LIMIT = 8
 UNREPORTED_LIMIT = 6
 
 
-def upcoming_games_query(sport_key: str, now: datetime):
+def _scope_condition(sport_keys: str | Sequence[str]):
+    """The league scope for a rail: one key, or a tour and its tournaments.
+
+    🔴 A SINGLE KEY STILL COMPILES TO `Sport.key = :key`, byte for byte. That is
+    not an optimization, it is what makes every measurement, needle and test in
+    this file still true of the 27 leagues that are not tours: they emit the
+    statement they always emitted. Only a tour parent takes the `IN`.
+    """
+    keys = [sport_keys] if isinstance(sport_keys, str) else list(sport_keys)
+    if len(keys) == 1:
+        return Sport.key == keys[0]
+    return Sport.key.in_(keys)
+
+
+async def league_scope_sport_keys(
+    db: AsyncSession, sport_key: str, now: datetime
+) -> list[str]:
+    """Every sport key whose games belong on ONE league page — #3816.
+
+    For a league this is the league. For a TOUR it is the tour plus the
+    tournament buckets currently carrying rows, because a tournament is not a
+    different competition from the tour that stages it — see
+    :data:`~app.utils.sport_keys.TOUR_PARENT_SPORT_KEYS` for why that set is
+    written out by name instead of inferred from the key's shape.
+
+    ═══ WHY THE ACTIVE CHILDREN AND NOT ALL OF THEM ═══
+
+    `tennis_atp` has 19 tournament children and in September 18 of them are
+    dormant. Measured on production 2026-09-07 with `EXPLAIN (ANALYZE, BUFFERS)`
+    over the exact fenced statement the results rail compiles, quoting BLOCKS
+    for the reason `recent_results_query` quotes them:
+
+        scope                                blocks   rows
+        `key = 'tennis_atp'` (today)            266      0
+        the 2 keys actually carrying rows       547      9
+        all 20 keys, by LIKE                  4,195      9
+
+    The dormant buckets hold 130–216 rows each, so this is not row volume — it
+    is 18 more index probes into a table with ~437% dead tuples, and it costs
+    16x for rows that cannot exist. Restricting to the active children buys the
+    whole ship for ~2x, and `tennis_atp` alone is 14,117 of the family's 15,183
+    lifetime rows, so the parent's own cost is unchanged.
+
+    ═══ THE FIFTH STATEMENT, ARGUED ═══
+
+    `test_build_league_issues_exactly_four_statements` requires exactly four and
+    says the next rail must argue for its own round trip. This is that argument,
+    and it is only spent on a tour: 1,521 blocks / 6.5 ms for this query, against
+    a rails cost of 3 x 547. Total 3,162 versus 12,585 for expanding blindly and
+    asking nothing. The round trip pays for itself four times over — and for the
+    27 leagues that are not tours it is never issued at all, so their page is
+    still four statements.
+
+    `EXISTS` rather than `SELECT DISTINCT e.sport_id` deliberately: same answer,
+    measured 1,521 blocks against 15,863: the distinct form reads every tennis
+    row in the window to return two integers.
+
+    No cap on the children. A cap would silently drop a tournament, which is the
+    bug this function exists to fix, and the count is self-limiting — 1 to 3
+    tournaments run at once and each costs ~76 blocks.
+    """
+    prefix = tour_child_key_prefix(sport_key)
+    if prefix is None:
+        return [sport_key]
+
+    # The widest window any of the three rails can ask for: the results rail's
+    # lookback behind, and unbounded ahead for the upcoming one. A child that
+    # has nothing in that span cannot contribute a row to any rail, so leaving
+    # it out changes no output — only the plan.
+    floor = now - timedelta(days=RESULTS_LOOKBACK_DAYS)
+    carries_rows = (
+        select(literal_column("1"))
+        .select_from(Event)
+        .where(Event.sport_id == Sport.id, Event.commence_time >= floor)
+        .exists()
+    )
+    result = await db.execute(
+        select(Sport.key).where(Sport.key.like(prefix), carries_rows)
+    )
+    # The parent is always in scope even when it carries nothing itself, so a
+    # tour page can never come back emptier than it was before this existed.
+    return [sport_key, *sorted(k for (k,) in result.all() if k != sport_key)]
+
+
+def upcoming_games_query(sport_keys: str | Sequence[str], now: datetime):
     """The UPCOMING GAMES rail, scoped to one league.
 
     `events` has no `sport_key` column, so the league scope is a join through
@@ -311,7 +395,7 @@ def upcoming_games_query(sport_key: str, now: datetime):
         select(Event)
         .join(Sport, Sport.id == Event.sport_id)
         .where(
-            Sport.key == sport_key,
+            _scope_condition(sport_keys),
             upcoming_rail_condition(now),
             # #2263: THE rail that made this visible. Read on 2026-08-29, the MLB
             # page printed Dodgers–Tigers, Marlins–Nationals and Padres–Rays TWICE
@@ -335,7 +419,7 @@ def upcoming_games_query(sport_key: str, now: datetime):
     )
 
 
-def recent_results_query(sport_key: str, now: datetime):
+def recent_results_query(sport_keys: str | Sequence[str], now: datetime):
     """The RECENT RESULTS rail, scoped to one league.
 
     🔴 **THE `OFFSET 0` IS AN OPTIMIZATION FENCE, NOT A PAGING CLAUSE.** Removing
@@ -390,7 +474,7 @@ def recent_results_query(sport_key: str, now: datetime):
         select(Event)
         .join(Sport, Sport.id == Event.sport_id)
         .where(
-            Sport.key == sport_key,
+            _scope_condition(sport_keys),
             # #2263, as on the upcoming rail. Placed INSIDE the fence with the
             # other filters, which is where the fence's own measurement says the
             # filtering happens — it runs to completion before the sort either
@@ -439,7 +523,7 @@ def recent_results_query(sport_key: str, now: datetime):
     )
 
 
-def unreported_games_query(sport_key: str, now: datetime):
+def unreported_games_query(sport_keys: str | Sequence[str], now: datetime):
     """The NO RESULT REPORTED rail, scoped to one league — #3211.
 
     Matches whose kickoff has passed while the row still says `scheduled`. They
@@ -464,7 +548,7 @@ def unreported_games_query(sport_key: str, now: datetime):
         select(Event)
         .join(Sport, Sport.id == Event.sport_id)
         .where(
-            Sport.key == sport_key,
+            _scope_condition(sport_keys),
             # #2263 / #2878: THE rail the tennis ghosts actually live on, and the
             # one rail of this file's three that did not consume the proof.
             #
@@ -1449,9 +1533,15 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
     more_results = False
     more_unreported = False
     try:
-        _games_q = upcoming_games_query(sport_key, now)
-        _results_q = recent_results_query(sport_key, now)
-        _unreported_q = unreported_games_query(sport_key, now)
+        # #3816: a TOUR page covers its own tournaments. For every other league
+        # this returns `[sport_key]` without issuing a statement, and the three
+        # builders below then compile exactly what they always did.
+        _scope = await asyncio.wait_for(
+            league_scope_sport_keys(db, sport_key, now), timeout=10
+        )
+        _games_q = upcoming_games_query(_scope, now)
+        _results_q = recent_results_query(_scope, now)
+        _unreported_q = unreported_games_query(_scope, now)
         _g = await asyncio.wait_for(db.execute(_games_q), timeout=10)
         _g_events = list(_g.scalars().all())
         _r = await asyncio.wait_for(db.execute(_results_q), timeout=10)
