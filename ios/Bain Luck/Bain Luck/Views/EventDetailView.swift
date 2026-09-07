@@ -330,7 +330,7 @@ struct EventDetailView: View {
                     // assuming a section exists (#1092).
                     if let gameMarkets = vm.gameMarkets,
                        !gameMarketsHaveContent(gameMarkets) {
-                        noGameMarketsNote
+                        noGameMarketsNote(status: event.status)
                     }
                     // Series Probability (playoff series context)
                     if let tags = event.eventTags,
@@ -397,12 +397,16 @@ struct EventDetailView: View {
             || !(gm.other ?? []).isEmpty
     }
 
-    private var noGameMarketsNote: some View {
+    /// #3821 — the copy is tensed by ``EventState/noGameMarketsLine(status:)``.
+    /// It takes the status rather than the sentence so the tense cannot drift
+    /// from the one place native decides what "over" means, which is the same
+    /// reason #3465 moved its two notes onto `SportVocab`.
+    private func noGameMarketsNote(status: String?) -> some View {
         HStack(spacing: 8) {
             Image(systemName: "chart.bar.xaxis")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Text("No prediction markets for this game yet.")
+            Text(EventState.noGameMarketsLine(status: status))
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Spacer()
