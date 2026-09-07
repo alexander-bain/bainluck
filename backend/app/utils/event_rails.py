@@ -42,10 +42,92 @@ sweep a matrix and no anchor can rot (gotcha #44).
 
 from datetime import timedelta
 
-from sqlalchemy import and_, case, or_
+from sqlalchemy import and_, case, not_, or_
 
 from app.models.models import Event
-from app.utils.event_completion import RECENT_RAIL_STATUSES, UPCOMING_GRACE
+from app.utils.event_completion import (
+    EVENT_SUSPENDED,
+    RECENT_RAIL_STATUSES,
+    UPCOMING_GRACE,
+)
+
+#: The settled rail's statuses with the split one removed — see
+#: :func:`suspended_with_a_score`. DERIVED from
+#: :data:`~app.utils.event_completion.RECENT_RAIL_STATUSES` rather than
+#: re-listed, so a fourth settled word added to the vocabulary reaches this rail
+#: without anybody remembering this line. Re-listing it is the exact failure
+#: mode this module's header is about.
+_SETTLED_ONLY_STATUSES = [s for s in RECENT_RAIL_STATUSES if s != EVENT_SUSPENDED]
+
+
+def reported_a_score():
+    """Both sides of the scoreline are populated.
+
+    Both, not either: a row with one side filled and the other NULL has not
+    reported a score, it has half of one, and a rail called "Recent Results"
+    cannot show "3 – " as a result.
+
+    ``IS NOT NULL`` never evaluates to NULL, so this expression and its
+    :func:`~sqlalchemy.not_` are a true two-valued pair — there is no
+    three-valued-logic gap between them for a row to fall into. That is what
+    lets :func:`suspended_with_a_score` and :func:`suspended_without_a_score`
+    be written as one predicate and its negation, which is the only reason the
+    two rails below stay jointly exhaustive over ``suspended`` BY CONSTRUCTION
+    rather than by two hand-written conditions that agree today.
+    """
+    return and_(Event.home_score.isnot(None), Event.away_score.isnot(None))
+
+
+def suspended_with_a_score():
+    """A suspended row that has something to show — it rides the settled rail.
+
+    This is live/056's ship, kept exactly where live/056 put it. See
+    :func:`suspended_without_a_score` for the half that moves and why.
+    """
+    return and_(Event.status == EVENT_SUSPENDED, reported_a_score())
+
+
+def suspended_without_a_score():
+    """A suspended row with no scoreline at all — #3748.
+
+    🔴 IT IS THE #3211 STARVATION AGAIN, POINTED AT THE THIRD STATUS.
+    :func:`unreported_rail_condition` already says in as many words that a
+    result-less ``scheduled`` row "has the same standing as a ``suspended``
+    one — its clock ran out and nothing reported an ending". #3211 acted on
+    that for ``scheduled`` and gave it a rail of its own. ``suspended`` was
+    left on the settled rail, where it has the same midnight-UTC stamp
+    (gotcha #14) and therefore the same behaviour under
+    ``ORDER BY commence_time DESC LIMIT 8``: it sorts above every real Final.
+
+    MEASURED on production 2026-09-06, simulating the real rail (duplicate-tag
+    filter included) over all 29 leagues: **28 leagues** had at least one such
+    row inside their eight visible Recent Results slots, and **thirteen of them
+    had all eight** — KBO, NPB, MiLB, AFLW, boxing, MMA, Liiga and six more
+    showed a "Recent Results" section containing not one result. Confirmed
+    against the serving endpoint, not just the query: ``/api/leagues/baseball_kbo``
+    and ``/api/leagues/baseball_npb`` each returned 8/8 scoreless ``suspended``
+    rows **while their own unreported rail was EMPTY**. In the window there
+    were 1,618 scoreless suspended rows against 54 with a score.
+
+    🔴 THE FIX IS NOT A REORDER AND NOT A BIGGER CAP, for the reason
+    :func:`unreported_rail_condition` already argues at length: one cap over two
+    populations of very different size starves the smaller one whichever way it
+    is sorted. Ordering settled-first would hide all 1,618 behind eight slots of
+    Finals, which is #3211 inverted. Split the bound — which is what this does,
+    by routing these rows to the rail whose heading already matches what their
+    card says.
+
+    ⚠️ WHAT THIS DELIBERATELY DOES NOT DO. The frontend's
+    ``eventState.hasNoReportedResult`` is true for EVERY ``suspended`` row,
+    score or no score, so the 54 scored ones still render the words "No result
+    reported" while sitting on a rail headed "Recent Results". Moving those too
+    is a defensible reading and it is NOT taken here: it would overturn
+    live/056's deliberate placement, which
+    ``test_a_suspended_match_still_rides_the_settled_rail`` was written to
+    protect, and 54 rows is not the starvation. Raised as a question on #3748
+    rather than decided in passing.
+    """
+    return and_(Event.status == EVENT_SUSPENDED, not_(reported_a_score()))
 
 
 def upcoming_rail_condition(now):
@@ -169,10 +251,19 @@ def settled_rail_condition(now, *, lookback: timedelta):
     Unchanged in meaning by #3211 — this is the rail that was always here, and
     keeping it exactly as narrow as it was is the point of
     :func:`unreported_rail_condition` existing beside it rather than inside it.
+
+    NARROWED by #3748, in the same spirit: ``suspended`` is admitted only where
+    a scoreline exists. The half with nothing to show moved to the rail that
+    says so — :func:`suspended_without_a_score` carries the measurement and the
+    argument. The two arms are one predicate and its negation, so ``suspended``
+    is still on exactly one rail for every row.
     """
     return and_(
         Event.commence_time >= now - lookback,
-        Event.status.in_(RECENT_RAIL_STATUSES),
+        or_(
+            Event.status.in_(_SETTLED_ONLY_STATUSES),
+            suspended_with_a_score(),
+        ),
     )
 
 
@@ -217,8 +308,20 @@ def unreported_rail_condition(now, *, lookback: timedelta):
     """
     return and_(
         Event.commence_time >= now - lookback,
-        Event.status == "scheduled",
-        Event.commence_time < now - UPCOMING_GRACE,
+        or_(
+            and_(
+                Event.status == "scheduled",
+                Event.commence_time < now - UPCOMING_GRACE,
+            ),
+            # #3748. NO grace bound on this arm, and that asymmetry is the
+            # point rather than an omission: the grace exists to let a
+            # `scheduled` row that has not quite kicked off stay on the
+            # upcoming rail, and a `suspended` row was never on the upcoming
+            # rail to be held back from. Adding the bound here would put a
+            # freshly-suspended row on NO rail for two hours, which is the
+            # hole this whole module exists to close.
+            suspended_without_a_score(),
+        ),
     )
 
 

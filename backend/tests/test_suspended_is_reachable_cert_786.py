@@ -670,10 +670,37 @@ class TestTheLeagueRailAdmitsSuspended:
         squarely inside it. Two windows, two answers, both right. A test that
         asserted the esports rail was empty would have been asserting Discover's
         window on a page that does not use it — and it did, until it ran.
+
+        🔴 #3748 MOVED WHICH RAIL, NOT WHETHER. `STALE_SUSPENDED_ID` carries no
+        scoreline, so it is now on the league page's "No result reported" rail
+        rather than its "Recent Results" rail. The claim this test is here to
+        make is unchanged and is still asserted below in both halves — the
+        specimen does not leak across the join, and the esports row is still
+        reachable on its own page. What changed is a fact about the OTHER row's
+        rail, which this test was pinning incidentally.
+
+        Asserted against both rails rather than swapped to the new one: "it is
+        on the unreported rail" alone would go green if the settled rail
+        silently swallowed it back, and the point of the pin is that it is on
+        exactly one page, once.
         """
+        from app.routes.league_futures import unreported_games_query
+
         esports = self._rail(slate, "esports_lol")
+        esports_unreported = {
+            e.id
+            for e in slate.execute(
+                unreported_games_query("esports_lol", NOW)
+            ).scalars().all()
+        }
+
         assert SPECIMEN_ID not in esports
-        assert esports == {STALE_SUSPENDED_ID}
+        assert SPECIMEN_ID not in esports_unreported
+        assert esports == set(), (
+            "a row that reports no result is back on the rail headed 'Recent "
+            f"Results': {esports}"
+        )
+        assert esports_unreported == {STALE_SUSPENDED_ID}
 
     def test_the_upcoming_rail_is_untouched(self, slate):
         """The other rail keeps its own vocabulary. Admitting `suspended` to

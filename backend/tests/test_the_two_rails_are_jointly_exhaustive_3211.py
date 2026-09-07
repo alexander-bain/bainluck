@@ -137,7 +137,26 @@ SPECIMEN_ID = 15304868
 SPECIMEN_COMMENCE = datetime(2026, 9, 2, 0, 0, 0, tzinfo=timezone.utc)
 
 
-def _event(eid, commence_time, status):
+#: The THIRD axis, added by #3748. The rails used to split on (status, time)
+#: alone; `suspended` now splits on whether a scoreline exists as well, so a
+#: sweep over two axes would be blind to exactly the dimension the new code
+#: reads — it would test one score state per cell and call the matrix total.
+#:
+#: Swept over EVERY status, not just `suspended`. The interesting assertion is
+#: as much that a score changes nothing for `completed`, `closed`, `scheduled`
+#: and `live` as that it changes the rail for `suspended`: a predicate written
+#: one arm too wide would move a Final and no two-axis sweep would notice.
+SCORE_CELLS = {
+    "with a score": (3, 1),
+    "with no score": (None, None),
+    # Half a scoreline is not a scoreline — `reported_a_score()` requires BOTH
+    # sides, and this is the cell that pins the `and_` against an `or_`.
+    "with half a score": (3, None),
+}
+
+
+def _event(eid, commence_time, status, score=(None, None)):
+    home_score, away_score = score
     return Event(
         id=eid,
         sport_id=S_TENNIS,
@@ -146,26 +165,30 @@ def _event(eid, commence_time, status):
         away_team_name="Bucsa / Melichar-Martinez",
         commence_time=commence_time,
         status=status,
+        home_score=home_score,
+        away_score=away_score,
     )
 
 
 def _matrix_rows():
-    """One row per (status, time) cell, plus the specimen and the two retired
-    words. Ids encode the cell so a failure names the cell, not a number."""
+    """One row per (status, time, score) cell, plus the specimen and the two
+    retired words. Ids encode the cell so a failure names the cell, not a
+    number."""
     rows = []
     eid = 1
     index = {}
     for status in ALL_STATUSES:
         for cell, offset in TIME_CELLS.items():
-            rows.append(_event(eid, NOW + offset, status))
-            index[eid] = (status, cell)
-            eid += 1
+            for score_cell, score in SCORE_CELLS.items():
+                rows.append(_event(eid, NOW + offset, status, score))
+                index[eid] = (status, cell, score_cell)
+                eid += 1
     for status in sorted(RETIRED_STATUSES):
         rows.append(_event(eid, NOW - timedelta(days=1), status))
-        index[eid] = (status, "yesterday")
+        index[eid] = (status, "yesterday", "with no score")
         eid += 1
     rows.append(_event(SPECIMEN_ID, SPECIMEN_COMMENCE, "scheduled"))
-    index[SPECIMEN_ID] = ("scheduled", "the specimen")
+    index[SPECIMEN_ID] = ("scheduled", "the specimen", "with no score")
     return rows, index
 
 
@@ -207,16 +230,21 @@ def _rails_holding(session, eid):
     return sorted(name for name, ids in _rails(session).items() if eid in ids)
 
 
-def _in_horizon(status, offset_cell):
+def _in_horizon(status, offset_cell, score_cell="with no score"):
     """Is this cell one the pair is CLAIMING to cover?
 
     Everything except the two deliberate exclusions. Written as a function so
     the exclusions are one expression the tests below can also assert ON,
     rather than a set literal that could be widened to make a red sweep green.
+
+    The score axis adds NO exclusion and takes the parameter only so the whole
+    index entry can be splatted in: every score state of every in-horizon
+    (status, time) cell is still claimed. #3748 changed WHICH rail a row lands
+    on, never whether it lands on one.
     """
     if status in RETIRED_STATUSES:
         return False
-    return offset_cell in TIME_CELLS
+    return offset_cell in TIME_CELLS and score_cell in SCORE_CELLS
 
 
 class TestTheInvariant:
@@ -298,9 +326,16 @@ class TestTheDefectReproduces:
         )
         # Named, not just counted: a gap of the wrong SHAPE would satisfy a
         # bare `assert orphans` while the real defect went unreproduced.
-        assert ("scheduled", "just outside the grace") in orphans
-        assert ("scheduled", "yesterday") in orphans
-        assert ("live", "yesterday") in orphans
+        #
+        # Compared on (status, time) only. #3748 gave the index a third axis,
+        # but the PRE-FIX conditions being reproduced here never read a
+        # scoreline, so the gap they leave cannot depend on one — naming a
+        # score cell would assert something about the old code that the old
+        # code does not say.
+        by_status_and_time = {(status, cell) for status, cell, _ in orphans}
+        assert ("scheduled", "just outside the grace") in by_status_and_time
+        assert ("scheduled", "yesterday") in by_status_and_time
+        assert ("live", "yesterday") in by_status_and_time
 
     def test_the_old_pair_lost_the_specimen(self, corpus):
         session, _ = corpus
@@ -317,13 +352,21 @@ class TestTheHealthyDirectionIsUntouched:
     """Controls. Each routes only through behaviour that predates #3211, so a
     control going red means the change was too wide — not that it is absent."""
 
-    def _cells(self, index, statuses, cell_name):
+    def _cells(self, index, statuses, cell_name, score_cells=None):
+        """Every id at these (status, time) cells, optionally narrowed to a
+        score state. `score_cells=None` means "all of them", which is what a
+        control for a status the score axis must not touch wants to say."""
         found = [
             eid
-            for eid, (status, cell) in index.items()
-            if status in statuses and cell == cell_name
+            for eid, (status, cell, score_cell) in index.items()
+            if status in statuses
+            and cell == cell_name
+            and (score_cells is None or score_cell in score_cells)
         ]
-        assert found, f"the corpus holds no {statuses} row at {cell_name!r}"
+        assert found, (
+            f"the corpus holds no {statuses} row at {cell_name!r} "
+            f"(score {score_cells or 'any'})"
+        )
         return found
 
     def test_a_fixture_an_hour_out_is_still_upcoming_and_only_upcoming(self, corpus):
@@ -336,15 +379,71 @@ class TestTheHealthyDirectionIsUntouched:
         for eid in self._cells(index, {"completed", "closed"}, "yesterday"):
             assert _rails_holding(session, eid) == ["settled"]
 
-    def test_a_suspended_match_still_rides_the_settled_rail(self, corpus):
-        """live/056's ship. It must not have been moved by this one — in
-        particular it must NOT have been swept onto the new `unreported` rail,
-        which would quietly undo live/056 while looking like tidying: a
-        suspended row carries a partial score and the recents rail is where it
-        was deliberately put."""
+    def test_a_scored_suspended_match_still_rides_the_settled_rail(self, corpus):
+        """live/056's ship, and the half of it #3748 deliberately did NOT move.
+
+        The original of this test asserted it for EVERY suspended row, on the
+        stated premise that "a suspended row carries a partial score". That
+        premise is false about the data and was never measured: on production
+        2026-09-06 the 14-day window held **1,618 scoreless** suspended rows
+        against **54** with a score. So the guard was protecting live/056's
+        placement over a population that is 97% not the one it described.
+
+        What live/056 actually shipped was that a suspended match is reachable
+        AT ALL — it was on no rail and vanished, and the unreported rail did not
+        yet exist. Routing the scoreless ones there does not undo that: the
+        match is still on the page, on the rail whose heading matches what its
+        card already says. What WOULD undo it is the row disappearing, and
+        `test_no_row_lands_on_no_rail` sweeps every score state for that.
+
+        So this control is narrowed to the rows whose premise holds, and kept
+        as strict as it was for them.
+        """
         session, index = corpus
-        for eid in self._cells(index, {EVENT_SUSPENDED}, "yesterday"):
+        for eid in self._cells(index, {EVENT_SUSPENDED}, "yesterday", {"with a score"}):
             assert _rails_holding(session, eid) == ["settled"]
+
+    def test_a_scoreless_suspended_match_rides_the_unreported_rail(self, corpus):
+        """#3748's ship, and the direction gotcha #43 demands beside the one
+        above: not merely "off the settled rail" but ON the named other rail.
+
+        A row that is only asserted absent from one rail can satisfy the
+        assertion by vanishing, which is the failure this whole file exists to
+        refuse.
+        """
+        session, index = corpus
+        for eid in self._cells(
+            index,
+            {EVENT_SUSPENDED},
+            "yesterday",
+            {"with no score", "with half a score"},
+        ):
+            assert _rails_holding(session, eid) == ["unreported"]
+
+    def test_the_score_axis_moves_nothing_but_suspended(self, corpus):
+        """The blast radius, pinned. A scoreline is now read by the rails, so
+        the thing to prove is that it is read for ONE status: a `completed`
+        row's rail must not depend on whether anyone filled the scoreline in,
+        and neither must a `scheduled` or `live` one's.
+
+        This is the control that fails if `reported_a_score()` is ever ANDed
+        into an arm it does not belong in.
+        """
+        session, index = corpus
+
+        for status in ALL_STATUSES:
+            if status == EVENT_SUSPENDED:
+                continue
+            for cell in TIME_CELLS:
+                rails = {
+                    score_cell: _rails_holding(session, eid)
+                    for eid in self._cells(index, {status}, cell)
+                    for score_cell in [index[eid][2]]
+                }
+                assert len(set(map(tuple, rails.values()))) == 1, (
+                    f"{status!r} at {cell!r} lands on different rails depending "
+                    f"on its scoreline, and it must not: {rails}"
+                )
 
 
 class TestTheExclusionsAreDeliberate:
@@ -358,7 +457,7 @@ class TestTheExclusionsAreDeliberate:
         session, index = corpus
 
         retired = [
-            eid for eid, (status, _) in index.items() if status in RETIRED_STATUSES
+            eid for eid, (status, _, _) in index.items() if status in RETIRED_STATUSES
         ]
         assert retired, "the corpus holds no retired row, so this proves nothing"
         for eid in retired:
@@ -388,6 +487,16 @@ class TestThePredicateAndTheSQLAgree:
     and the frontend renders off the predicate's twin while the rails select off
     the SQL. If they disagree, a row reaches a card that then prints a start
     time for it — the exact fall-through this repair refuses.
+
+    🔴 SCOPE, after #3748. `started_without_result` answers a question about
+    `scheduled` rows and ONLY about them (the test at the foot of this class is
+    what says so), so it is the twin of the unreported rail's `scheduled` ARM,
+    not of the whole rail. The rail's second arm — a scoreless `suspended`
+    row — has no Python twin here because it needs none: the frontend's
+    `eventState.hasNoReportedResult` is already true for every `suspended` row,
+    score or no score, so no suspended row can reach a card that prints a start
+    time for it. The two expressions cannot drift on that arm because only one
+    of them exists.
     """
 
     @pytest.mark.parametrize("cell,offset", sorted(TIME_CELLS.items()))
@@ -398,7 +507,9 @@ class TestThePredicateAndTheSQLAgree:
         unreported = _rails(session)["unreported"]
 
         eid = next(
-            e for e, (status, c) in index.items() if status == "scheduled" and c == cell
+            e
+            for e, (status, c, score_cell) in index.items()
+            if status == "scheduled" and c == cell and score_cell == "with no score"
         )
         by_predicate = started_without_result("scheduled", NOW + offset, NOW)
         by_sql = eid in unreported
