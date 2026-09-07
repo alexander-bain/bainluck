@@ -75,6 +75,20 @@ final class SpreadRungTests: XCTestCase {
         SpreadRungs.Leg(marketName: "New England vs Seattle: Spread", outcomeName: "New England wins by over 4.5 points", threshold: 4.5, probability: 0.145),
     ]
 
+    /// Event 14780138 again, `americanfootball_nfl`, `scheduled`, captured
+    /// 2026-09-07 — the SECOND market Kalshi serves the same game, which the
+    /// backend also files under `spreads`. Verbatim, including the thresholds:
+    /// the band's LOWER edge is what arrives, which is what puts a `+1` at the
+    /// top of the ladder. #3788.
+    private let patriotsSeahawksWinningMargin = [
+        SpreadRungs.Leg(marketName: "New England vs Seattle: Winning Margin", outcomeName: "Seattle wins by 1 to 6 points", threshold: 1.0, probability: 0.175),
+        SpreadRungs.Leg(marketName: "New England vs Seattle: Winning Margin", outcomeName: "New England wins by 1 to 6 points", threshold: 1.0, probability: 0.145),
+        SpreadRungs.Leg(marketName: "New England vs Seattle: Winning Margin", outcomeName: "Seattle wins by 7 to 14 points", threshold: 7.0, probability: 0.145),
+        SpreadRungs.Leg(marketName: "New England vs Seattle: Winning Margin", outcomeName: "New England wins by 7 to 14 points", threshold: 7.0, probability: 0.09),
+        SpreadRungs.Leg(marketName: "New England vs Seattle: Winning Margin", outcomeName: "Seattle wins by 15 or more points", threshold: 15.0, probability: 0.06),
+        SpreadRungs.Leg(marketName: "New England vs Seattle: Winning Margin", outcomeName: "New England wins by 15 or more points", threshold: 15.0, probability: 0.06),
+    ]
+
     // MARK: - #3552: the map appears at all
 
     /// 🟢 THE SHIP. Swiatek–Zheng drew nothing; it now draws the one market on
@@ -521,6 +535,148 @@ final class SpreadRungTests: XCTestCase {
     func testAFlatNamedLadderIsDrawnBecauseItIsNotProvablyImpossible() {
         let map = SpreadRungs.map(from: patriotsSeahawks, home: "Seattle Seahawks", away: "New England Patriots", sportUnit: footballUnit)
         XCTAssertEqual(map.rungs.count, 4)
+    }
+
+    // MARK: - #3788: a band is not a cover line
+
+    /// 🟢 THE SHIP. The whole of both markets, as production serves them, and
+    /// the `+1` is gone.
+    ///
+    /// This is the assertion that would have caught it: the ladder sorts by
+    /// `abs(margin)` and takes three, so the ONLY rung a reader sees first is
+    /// the smallest, and before this change the smallest on every NFL card was
+    /// a band's lower edge.
+    func testABandMarketAddsNoRungToTheLadderItSharesARailWith() {
+        let both = patriotsSeahawks + patriotsSeahawksWinningMargin
+        let map = SpreadRungs.map(from: both, home: "Seattle Seahawks", away: "New England Patriots", sportUnit: footballUnit)
+
+        XCTAssertEqual(
+            map.rungs.sorted(by: { $0.margin < $1.margin }),
+            [
+                SpreadRungs.Rung(margin: -15.0, probability: 0.06, isHome: false, quotedUnit: nil),
+                SpreadRungs.Rung(margin: -4.5, probability: 0.145, isHome: false, quotedUnit: nil),
+                SpreadRungs.Rung(margin: -1.5, probability: 0.145, isHome: false, quotedUnit: nil),
+                SpreadRungs.Rung(margin: 1.5, probability: 0.145, isHome: true, quotedUnit: nil),
+                SpreadRungs.Rung(margin: 4.5, probability: 0.145, isHome: true, quotedUnit: nil),
+                SpreadRungs.Rung(margin: 15.0, probability: 0.06, isHome: true, quotedUnit: nil),
+            ],
+            "the four `A to B` rows are refused; the two `N or more` rows are cover claims and stay"
+        )
+
+        // The reader's view: what the ladder actually prints, both sides.
+        let awayFirstThree = map.rungs.filter { !$0.isHome }.sorted { abs($0.margin) < abs($1.margin) }.prefix(3).map(\.margin)
+        let homeFirstThree = map.rungs.filter(\.isHome).sorted { $0.margin < $1.margin }.prefix(3).map(\.margin)
+        XCTAssertEqual(Array(awayFirstThree), [-1.5, -4.5, -15.0])
+        XCTAssertEqual(Array(homeFirstThree), [1.5, 4.5, 15.0])
+        XCTAssertFalse(map.rungs.contains { abs($0.margin) == 1.0 },
+                       "`+1` is the band's lower edge and is not a line any venue quoted")
+        XCTAssertFalse(map.rungs.contains { abs($0.margin) == 7.0 },
+                       "`+7` is the second band's lower edge")
+    }
+
+    /// The band market ALONE draws nothing — so a card whose only spread market
+    /// is a band one gets an empty map rather than a fabricated ladder, and
+    /// `marginMapIsEmptyChrome` can then suppress the card.
+    func testABandMarketOnItsOwnDrawsOnlyItsOpenEndedRows() {
+        let map = SpreadRungs.map(from: patriotsSeahawksWinningMargin,
+                                  home: "Seattle Seahawks", away: "New England Patriots", sportUnit: footballUnit)
+        XCTAssertEqual(map.rungs.map(\.margin).sorted(), [-15.0, 15.0],
+                       "only the two `15 or more` rows survive; all four bounded bands are refused")
+    }
+
+    /// The predicate itself, over the shapes a venue writes and the shapes it
+    /// must not catch. `over` and a signed line have no number in the first
+    /// slot after `by`, which is what keeps them out.
+    func testWhatCountsAsNamingARangeOfMargins() {
+        for named in [
+            "Seattle wins by 1 to 6 points",
+            "Seattle wins by 7 to 14 points",
+            "Seattle wins by 1-6 points",
+            "Seattle wins by 1 – 6 points",
+            "Seattle wins by between 1 and 6 points",
+            "Seattle wins by 1.5 to 6.5 goals",
+            "Seattle Wins By 1 To 6 Points",
+        ] {
+            XCTAssertTrue(SpreadRungs.namesARange(named), "should be refused: \(named)")
+        }
+        for cover in [
+            "Seattle wins by over 1.5 points",
+            "Seattle wins by over 15.5 points",
+            "Seattle wins by 15 or more points",
+            "Seattle wins by more than 6 points",
+            "Yes",
+            "No",
+            "Seattle -3.5",
+            "Seattle wins by 6 points",
+            "",
+            // 🔴 THE `by` ANCHOR, and the mutation battery is the only reason
+            // it is pinned: dropping it leaves `\d+ [-–—] \d+`, which any date
+            // or score sitting anywhere in an outcome name satisfies. Both of
+            // these are cover lines and both would be silently refused.
+            "Seattle wins by over 3.5 points on 2026-09-07",
+            "Seattle 7-3 wins by over 3.5 points",
+        ] {
+            XCTAssertFalse(SpreadRungs.namesARange(cover), "should be kept: \(cover)")
+        }
+    }
+
+    /// 🔴 THE CONTROL. The `…: Spread` ladder is bit-for-bit what it was — this
+    /// change may only ever REMOVE band rows, and the pinned NFL ladder above
+    /// is the value it must still produce when no band market is present.
+    func testTheSpreadLadderIsUntouchedWhenNoBandMarketIsServed() {
+        let map = SpreadRungs.map(from: patriotsSeahawks, home: "Seattle Seahawks", away: "New England Patriots", sportUnit: footballUnit)
+        XCTAssertEqual(map.rungs.count, 4)
+        XCTAssertEqual(map.rungs.map(\.margin).sorted(), [-4.5, -1.5, 1.5, 4.5])
+        XCTAssertTrue(map.rungs.allSatisfy { $0.probability == 0.145 })
+        XCTAssertEqual(map.unit, "points")
+    }
+
+    /// And neither of the two-way paths is reachable from a band row, so this
+    /// cannot have moved tennis. Both US Open fixtures keep their exact rung.
+    func testTheTennisPathsAreUnreachableFromThisRule() {
+        for leg in patriotsSeahawksWinningMargin {
+            XCTAssertNil(SpreadRungs.Handicap.read(marketName: leg.marketName),
+                         "a band market's title carries no signed pair")
+        }
+        XCTAssertEqual(
+            SpreadRungs.map(from: swiatekZheng, home: "Iga Swiatek", away: "Qinwen Zheng", sportUnit: tennisUnit).rungs,
+            [SpreadRungs.Rung(margin: 1.5, probability: 0.585, isHome: true, quotedUnit: "sets")]
+        )
+    }
+
+    /// 🔴 THE NFL PROJECTION MARKER MOVES, AND THAT IS THE FIX — pinned here
+    /// because `MarketMapView.closestToEvenMargin`'s own doc says moving one is
+    /// "the one thing #3743 forbids without a pin".
+    ///
+    /// The marker sits on the rung the book priced nearest a coin flip. On
+    /// event 14780138 every `…: Spread` rung is priced 0.145 and the band row
+    /// `"Seattle wins by 1 to 6 points"` is 0.175 — so the band row WAS the
+    /// nearest to 0.5, and the PRE-GAME tile read **`SEA +1.0`**: a line no
+    /// venue quoted, on a card whose every other number is a real one.
+    /// Photographed either side of this change,
+    /// `artifacts-native-050/MASTER-3788-nfl-14780138-s700.png` → `AFTER-…`.
+    ///
+    /// With the band rows refused the remaining rungs tie at 0.145 and
+    /// `min(by:)` returns the first, which is the venue's own serve order —
+    /// `SEA +1.5`, a quoted line. The tie-break is untouched and is still the
+    /// one #3743 declined to invent.
+    func testTheProjectionMarkerLeavesTheBandsLowerEdgeForAQuotedLine() {
+        func nearestEven(_ rungs: [SpreadRungs.Rung]) -> Double? {
+            rungs.min(by: { abs($0.probability - 0.5) < abs($1.probability - 0.5) })?.margin
+        }
+        let home = "Seattle Seahawks", away = "New England Patriots"
+        let both = patriotsSeahawks + patriotsSeahawksWinningMargin
+
+        // Reconstructed by hand: what the band rows used to add, in serve order.
+        let withBands = SpreadRungs.map(from: both, home: home, away: away, sportUnit: footballUnit).rungs + [
+            SpreadRungs.Rung(margin: 1.0, probability: 0.175, isHome: true, quotedUnit: nil),
+            SpreadRungs.Rung(margin: -1.0, probability: 0.145, isHome: false, quotedUnit: nil),
+        ]
+        XCTAssertEqual(nearestEven(withBands), 1.0, "the band's lower edge was the nearest to a coin flip")
+
+        let now = SpreadRungs.map(from: both, home: home, away: away, sportUnit: footballUnit).rungs
+        XCTAssertEqual(nearestEven(now), 1.5, "the marker lands on a line the venue actually quoted")
+        XCTAssertTrue(now.contains { $0.margin == 1.5 && $0.probability == 0.145 })
     }
 
     /// With nothing readable at all the map is empty — but it still reports the
