@@ -343,7 +343,26 @@ export function slateRowFreshnessLabel(match: SlateMatch): string | null {
     });
     return `${names.join(" + ")} ${when}`;
   }
-  return when;
+  // #3881: this used to return the bare age. On the US Open hub that put an
+  // amber "7 hours ago" on the same line as "1:00 PM · MEN'S SINGLES", under a
+  // ROUND OF 16 header, for a match that had not started and would not start
+  // for another three and a half hours. Three facts on one line and the third
+  // had no noun, so it read as a claim about the match.
+  //
+  // Every other answer this function can give already names its own subject —
+  // "No probability yet", "no reading yet", and the mixed branch above names
+  // the players whose reading is old. Only the common case did not.
+  //
+  // "Last number" is the page's existing vocabulary for this exact fact, not a
+  // new phrase: `propFreshness.label` in `lib/tournamentProps.ts` and
+  // `seriesFreshness` both build it, and that module's own comment records
+  // that a bare "32 hours ago" is ambiguous. Same idea, same words.
+  //
+  // Only an AGE takes the prefix. With no age at all `slateStalenessLabel`
+  // returns "no reading yet", which already names its own subject — prefixing
+  // that would read "Last number no reading yet".
+  if (match.age_hours === null || !Number.isFinite(match.age_hours)) return when;
+  return `Last number ${when}`;
 }
 
 /** Human age, rounded DOWN — "8 days ago" must never flatter to "7". */
