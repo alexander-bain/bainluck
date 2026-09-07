@@ -536,28 +536,49 @@ function isPastDate(dateStr: string | null): boolean {
   return d < now;
 }
 
-// ─── GAME GRID: Dense 2-col cells for matchup markets ───
-function GameMarketsGrid({
-  futures,
-  teamColor,
-  teamName,
-}: {
-  futures: RelatedFuture[];
-  teamColor: string;
-  teamName: string;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  if (futures.length === 0) return null;
+/**
+ * #3775: the ONE liquidity test, shared by the section gate and the bodies.
+ *
+ * A resolved or untraded row draws no card. Both `StatPropsSection` and
+ * `GameMarketsGrid` dropped these rows privately while the section gate above
+ * counted the payload, so a page whose only related futures were settled got a
+ * "Bigger Picture" header and a "N related futures" caption over zero cards.
+ * The gate and the bodies now read the same predicate; a copy is a regression.
+ */
+function isMeaningfulProbability(f: RelatedFuture): boolean {
+  const p = f.probability;
+  if (p === null || p === undefined) return false;
+  if (p <= 0.02 || p >= 0.98) return false; // effectively 0% or 100%
+  return true;
+}
 
-  // --- Filter and deduplicate ---
+/**
+ * #3775: the stat-prop rows that will actually draw. See the note above —
+ * the gate calls this for its count, `StatPropsSection` renders its result.
+ */
+function visibleStatProps(futures: RelatedFuture[]): RelatedFuture[] {
+  return futures.filter(isMeaningfulProbability);
+}
+
+/**
+ * #3775: the game-market rows that will actually draw, in draw order.
+ *
+ * Lifted out of `GameMarketsGrid` unchanged so the section gate can count
+ * survivors rather than payload rows. This filter is far more aggressive than
+ * the liquidity test alone — it also drops games already played and cross-sport
+ * name leaks, and collapses duplicates by opponent — which is why counting the
+ * raw array overstated the body by so much.
+ */
+function visibleGameMarkets(
+  futures: RelatedFuture[],
+  teamName: string,
+): RelatedFuture[] {
   const teamShort = teamName.split(" ").pop()?.toLowerCase() || "";
   const teamFull = teamName.toLowerCase();
 
   // 1. Remove resolved/illiquid, past games, and cross-sport false positives
   const meaningful = futures.filter((f) => {
-    const p = f.probability;
-    if (p === null || p === undefined) return false;
-    if (p <= 0.02 || p >= 0.98) return false; // effectively 0% or 100%
+    if (!isMeaningfulProbability(f)) return false;
     // Filter out past games
     if (f.resolution_date && isPastDate(f.resolution_date)) return false;
     // Verify market name actually contains this team (catches cross-sport leaks)
@@ -585,7 +606,7 @@ function GameMarketsGrid({
   const deduped = Array.from(opponentMap.values());
 
   // Sort: soonest games first (by resolution_date), then by probability
-  const sorted = deduped.sort((a, b) => {
+  return deduped.sort((a, b) => {
     if (a.resolution_date && b.resolution_date) {
       return new Date(a.resolution_date).getTime() - new Date(b.resolution_date).getTime();
     }
@@ -593,6 +614,24 @@ function GameMarketsGrid({
     if (!a.resolution_date && b.resolution_date) return 1;
     return (b.probability || 0) - (a.probability || 0);
   });
+}
+
+// ─── GAME GRID: Dense 2-col cells for matchup markets ───
+function GameMarketsGrid({
+  futures,
+  teamColor,
+  teamName,
+}: {
+  futures: RelatedFuture[];
+  teamColor: string;
+  teamName: string;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  if (futures.length === 0) return null;
+
+  // #3775: filter + dedupe + sort now live in `visibleGameMarkets` so the
+  // section gate counts exactly these rows.
+  const sorted = visibleGameMarkets(futures, teamName);
 
   if (sorted.length === 0) return null;
 
@@ -821,13 +860,8 @@ function StatPropsSection({
   const [expanded, setExpanded] = useState(false);
   if (futures.length === 0) return null;
 
-  // Filter out resolved/illiquid
-  const meaningful = futures.filter((f) => {
-    const p = f.probability;
-    if (p === null || p === undefined) return false;
-    if (p <= 0.02 || p >= 0.98) return false;
-    return true;
-  });
+  // Filter out resolved/illiquid — #3775: shared with the section gate.
+  const meaningful = visibleStatProps(futures);
 
   if (meaningful.length === 0) return null;
 
@@ -2345,11 +2379,25 @@ export default function RelatedFutures({
     awayPlayoff = [...awayCats.championship, ...awayCats.conference];
   }
 
-  // Section counts — suppress stat props when game-markets components already show them
-  const effectiveStatProps = hasGameMarkets ? 0 : homeCats.statProps.length + awayCats.statProps.length;
+  // Section counts — suppress stat props when game-markets components already show them.
+  //
+  // #3775: these count the rows that will DRAW, not the rows in the payload.
+  // `StatPropsSection` and `GameMarketsGrid` each drop resolved/illiquid rows
+  // (and games drops played games, cross-sport leaks and opponent duplicates),
+  // so counting the raw arrays let the gate below pass on a page where every
+  // body then returned null — the "Bigger Picture" header and its
+  // "N related futures" caption over zero cards that Alex reported.
+  const visibleHomeStatProps = visibleStatProps(homeCats.statProps);
+  const visibleAwayStatProps = visibleStatProps(awayCats.statProps);
+  const visibleHomeGames = visibleGameMarkets(homeCats.games, homeTeam);
+  const visibleAwayGames = visibleGameMarkets(awayCats.games, awayTeam);
+
+  const effectiveStatProps = hasGameMarkets
+    ? 0
+    : visibleHomeStatProps.length + visibleAwayStatProps.length;
   const gameMarketCount =
     effectiveStatProps +
-    homeCats.games.length + awayCats.games.length;
+    visibleHomeGames.length + visibleAwayGames.length;
   // Series markets come as a dedicated top-level array from the API.
   // Fall back to the old home/away filter for backward compatibility.
   const seriesMarkets = safeData.series_markets ?? [];
@@ -2359,9 +2407,13 @@ export default function RelatedFutures({
   const hasSeriesData = seriesMarkets.length > 0 || legacySeries.length > 0;
 
   const hasStandings = !!(homeStandings || awayStandings);
+  // #3775, same defect class as the game counts above: `matchups` was counted
+  // here while `MatchupGrid` — its only renderer — is declared in this file,
+  // never called and never exported (see the note on it, UX-1065 / #2936). It
+  // could only ever open the section over rows that draw nothing, so it is not
+  // counted. Restore this term in the same commit that calls the component.
   const seasonCount =
     homePlayoff.length + awayPlayoff.length +
-    homeCats.matchups.length + awayCats.matchups.length +
     homeCats.seasonStats.length + awayCats.seasonStats.length +
     mergedAwards.length +
     (seriesMarkets.length || legacySeries.length) +
@@ -2405,9 +2457,11 @@ export default function RelatedFutures({
           API; this section renders from related-futures. Showing both is redundant. */}
       {!hasGameMarkets && gameMarketCount > 0 && (
         <>
-          {(homeCats.statProps.length > 0 || awayCats.statProps.length > 0) && (
+          {/* #3775: gated on the DRAWING rows, so this spaced wrapper cannot
+              render around two sections that both return null. */}
+          {(visibleHomeStatProps.length > 0 || visibleAwayStatProps.length > 0) && (
             <div className="space-y-4 mb-3">
-              {homeCats.statProps.length > 0 && (
+              {visibleHomeStatProps.length > 0 && (
                 <StatPropsSection
                   futures={homeCats.statProps}
                   teamColor={hColor}
@@ -2417,7 +2471,7 @@ export default function RelatedFutures({
                   boxScore={boxScore}
                 />
               )}
-              {awayCats.statProps.length > 0 && (
+              {visibleAwayStatProps.length > 0 && (
                 <StatPropsSection
                   futures={awayCats.statProps}
                   teamColor={aColor}
