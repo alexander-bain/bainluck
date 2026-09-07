@@ -238,9 +238,50 @@ MUTANTS: list[tuple[str, str, str, str]] = [
         "M17",
         "the tier gate comes off section 1 — AAA baseball and ninth-tier "
         "non-league football are candidates for the row again",
+        # 🔴 NEITHER SIDE OF A NEEDLE MAY BE A PREFIX OF THE OTHER. #3728 put a
+        # clock floor between `status` and the tier gate, and the obvious repair
+        # — extend the original by one line, leave the mutant alone — leaves the
+        # mutant text a SUBSTRING of the original, so it is "present" on a clean
+        # tree and the residue scan is carried entirely by "original absent".
+        # Anchoring both sides on the line AFTER the gate keeps the two texts
+        # disjoint, which is what makes the scan's two clauses independent.
+        """                Event.commence_time <= now,
+                Sport.key.in_(tier_12_keys),
+                not_a_proven_duplicate(),""",
+        """                Event.commence_time <= now,
+                not_a_proven_duplicate(),""",
+    ),
+    (
+        "M21",
+        "#3728: the clock floor comes off section 1's statement, so a "
+        "premature-live row is a candidate again and can spend one of the "
+        "unordered fifty slots the section gets",
+        """                Event.status == "live",
+                Event.commence_time <= now,
+                Sport.key.in_(tier_12_keys),""",
         """                Event.status == "live",
                 Sport.key.in_(tier_12_keys),""",
-        """                Event.status == "live",""",
+    ),
+    (
+        "M22",
+        "#3728: the per-row `served_event_status` check goes, leaving only the "
+        "SQL floor — the rule becomes an optimisation of the budget and nothing "
+        "enforces the invariant on the rows that survive the read",
+        """                if served_event_status(ev.status, ev.commence_time, now) != "live":
+                    continue""",
+        """                if False:
+                    continue""",
+    ),
+    (
+        "M23",
+        "#3728's other half: section 2 goes back to the RAW `scheduled`, so the "
+        "game section 1 now refuses falls out of the row entirely instead of "
+        "being shown with the time it actually starts",
+        """                or_(
+                    Event.status == "scheduled",
+                    and_(Event.status == "live", Event.commence_time > now),
+                ),""",
+        """                Event.status == "scheduled",""",
     ),
     (
         "M18",
@@ -273,6 +314,12 @@ SUITES = [
     # out would reproduce the LAT-P139 mistake this list was written to fix —
     # a survivor that is really "the oracle was not looking".
     ROOT / "tests" / "test_search_suggestions_tier_and_budget_3685.py",
+    # #3728: same argument one ship later. M19-M21 mutate the clock floor, the
+    # per-row `served_event_status` check and section 2's live arm, and all
+    # three are guarded in their own file. A battery that mutated them without
+    # this line would report survivors that only mean "the oracle was not
+    # looking".
+    ROOT / "tests" / "test_search_suggestions_premature_live_3728.py",
 ]
 
 
