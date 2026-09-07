@@ -182,7 +182,7 @@ final class OddsChartNoReadingsTests: XCTestCase {
     func testTheNotDrawableMessageIsUnchanged() {
         XCTAssertEqual(
             OddsChartView.emptyChartMessage(
-                range: .sinceStart, hasAnyPointInRange: true, allIsDrawable: false),
+                range: .sinceStart, hasAnyPointInRange: true, allIsDrawable: false, status: "live"),
             "Not enough readings since the start to draw a line yet.")
     }
 }

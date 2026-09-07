@@ -109,14 +109,14 @@ final class OddsChartEmptyStateTests: XCTestCase {
 
     func testSinceStartWithNothingYetSaysSoAndOffersAll() {
         let message = OddsChartView.emptyChartMessage(
-            range: .sinceStart, hasAnyPointInRange: false, allIsDrawable: true
+            range: .sinceStart, hasAnyPointInRange: false, allIsDrawable: true, status: "live"
         )
         XCTAssertEqual(message, "No readings since the start yet. Switch to All for the pre-match market.")
     }
 
     func testSinceStartWithOneReadingNamesTheReasonAndOffersAll() {
         let message = OddsChartView.emptyChartMessage(
-            range: .sinceStart, hasAnyPointInRange: true, allIsDrawable: true
+            range: .sinceStart, hasAnyPointInRange: true, allIsDrawable: true, status: "live"
         )
         XCTAssertEqual(
             message,
@@ -130,7 +130,7 @@ final class OddsChartEmptyStateTests: XCTestCase {
         // guess that pre-match data usually exists.
         for hasAnyPointInRange in [true, false] {
             let message = OddsChartView.emptyChartMessage(
-                range: .sinceStart, hasAnyPointInRange: hasAnyPointInRange, allIsDrawable: false
+                range: .sinceStart, hasAnyPointInRange: hasAnyPointInRange, allIsDrawable: false, status: "live"
             )
             XCTAssertFalse(message.contains("Switch to All"), "offered All with nothing to show there")
             XCTAssertFalse(message.isEmpty)
@@ -141,14 +141,14 @@ final class OddsChartEmptyStateTests: XCTestCase {
         // The genuinely-no-data case is unchanged: no range to fall back to, so no
         // suggestion, and the copy readers already see stays put.
         XCTAssertEqual(
-            OddsChartView.emptyChartMessage(range: .all, hasAnyPointInRange: false, allIsDrawable: false),
+            OddsChartView.emptyChartMessage(range: .all, hasAnyPointInRange: false, allIsDrawable: false, status: "live"),
             "No probability data available"
         )
     }
 
     func testAllRangeWithOneReadingNamesTheReason() {
         XCTAssertEqual(
-            OddsChartView.emptyChartMessage(range: .all, hasAnyPointInRange: true, allIsDrawable: true),
+            OddsChartView.emptyChartMessage(range: .all, hasAnyPointInRange: true, allIsDrawable: true, status: "live"),
             "Not enough readings yet to draw a line."
         )
     }
@@ -157,7 +157,7 @@ final class OddsChartEmptyStateTests: XCTestCase {
         // A suggestion to switch to the segment that is already active would be the
         // empty frame with extra words.
         let message = OddsChartView.emptyChartMessage(
-            range: .all, hasAnyPointInRange: true, allIsDrawable: true
+            range: .all, hasAnyPointInRange: true, allIsDrawable: true, status: "live"
         )
         XCTAssertFalse(message.contains("Switch to All"))
     }
