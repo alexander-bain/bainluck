@@ -477,9 +477,29 @@ class TestItIsReachable:
     """A migration that is not on the chain runs on nobody's deploy."""
 
     def test_is_the_single_head(self):
+        """Exactly one head, and this migration is REACHABLE from it.
+
+        This assertion used to read ``heads == ["uq_event_espn_id"]``, which is
+        a stronger claim than the class needs and one that rots the moment ANY
+        migration chains on top — as the very next one did (LAT-P232's
+        ``add_client_timing_events``). It is the same trap the sibling test
+        below already argues against for the PARENT name, one level up: pinning
+        a literal that names a position in a growing chain, when what must hold
+        is a property of the chain.
+
+        The property: a single head (no branchpoint — the thing that actually
+        breaks a deploy), and this revision on the walk back from it (so it
+        runs). Both survive the next migration; neither survives a real defect.
+        """
         script = ScriptDirectory.from_config(Config("alembic.ini"))
         heads = list(script.get_heads())
-        assert heads == ["uq_event_espn_id"], f"expected a single head, got {heads}"
+        assert len(heads) == 1, f"expected a single head, got {heads}"
+
+        reachable = {rev.revision for rev in script.walk_revisions(base="base", head=heads[0])}
+        assert "uq_event_espn_id" in reachable, (
+            f"uq_event_espn_id is not on the chain under head {heads[0]} — "
+            "it would run on nobody's deploy"
+        )
 
     def test_chains_onto_a_revision_that_exists(self):
         """Its parent must resolve, and the chain must reach base.
