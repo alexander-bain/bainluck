@@ -27,6 +27,19 @@ the sandbox with one ``db-query``:
      WHERE identity LIKE 'authority:soccer_statpal_stamp:%'
      ORDER BY generated_at DESC
 
+AND WHY THAT RECEIPT IS THE ONLY ONE — THIS DOES NOT SHOW UP IN TASK HEALTH
+═══════════════════════════════════════════════════════════════════════════
+It calls ``_run_stamp_soccer_statpal_fixtures`` directly rather than through the
+celery task, so ``_tracked_run`` never sees it: no success counter moves, no
+verdict is classified, nothing appears against ``stamp_soccer_statpal_fixtures``
+in the task metrics. **That is deliberate and it is the honest side of the
+trade.** Soccer has no beat entry, so those counters answer "is the schedule
+being kept?" for a schedule that does not exist; an operator-run apply recorded
+against them would put a single ad-hoc run into a cadence series and make the
+one number they publish mean two different things. The receipt above is
+therefore the whole record of this run, which is why every subcommand writes one
+whether it changed anything or not.
+
 THE BACKUP IS A PRE-IMAGE, NOT A PLAN
 ═════════════════════════════════════
 It records what every soccer row's ``statpal_fixture_id`` **held**, and which
