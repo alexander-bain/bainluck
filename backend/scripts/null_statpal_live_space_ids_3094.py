@@ -18,10 +18,23 @@ THE MECHANISM FIX MUST BE LIVE FIRST, AND THE COUNT IS HOW YOU KNOW
 -------------------------------------------------------------------
 #3094's mechanism (`_live_anchor_id`, `STATPAL_LIVE_ANCHOR_FIELD`) shipped in
 v4238. The population has been FROZEN at 364 ever since; under the old code
-2026-09-07 alone would have added ~14. **Re-read the count before applying (the
-`--report` census does it). If it has moved off 364, the mechanism fix is
-incomplete and this repair waits** — clearing rows while a writer is still
-refilling them is a loop, not a repair.
+2026-09-07 alone would have added ~14. **If it has moved off 364, the mechanism
+fix is incomplete and this repair waits** — clearing rows while a writer is
+still refilling them is a loop, not a repair.
+
+THE SCRIPT NOW ENFORCES THAT ITSELF (it used to only print it). Every mode
+measures the population by the same predicate `--apply` clears on and prints a
+`[precondition]` verdict; `--apply` and the dry run both REFUSE with exit 1 on
+any count that is neither 364 nor 0. Zero is not a mismatch — it means the apply
+has already run, and a re-run is a harmless no-op. `--rollback` is exempt,
+because it is the way out of a bad state and must never be blocked by one.
+
+A count that has FALLEN refuses too: a rise means the writer is still refilling,
+a fall means something cleared rows this script never backed up, and neither is
+a state this repair has measured. To proceed on a genuinely new number, re-measure,
+find the writer, then say the number out loud with `--expect-population N` —
+which exists so that the way past the guard is a stated measurement rather than
+an edit to the guard.
 
 WHY NULL, AND NOT A RE-KEY
 --------------------------
@@ -148,6 +161,20 @@ import os
 import sys
 
 BACKUP_TABLE = "events_statpal_live_space_backup_3094"
+
+#: The frozen count from the header — the number of live-space rows that existed
+#: once #3094's mechanism fix (v4238) stopped the writer refilling them.
+#:
+#: The header has always said "re-read the count before applying; if it has moved
+#: off 364 the mechanism fix is incomplete and this repair waits". Until now that
+#: was a sentence an operator had to obey, and `--apply` printed the measured
+#: count and cleared whatever it found regardless. A precondition that only
+#: prints is not a precondition: the run it exists to stop — clearing rows while
+#: a writer is still refilling them, which is a loop and not a repair — is
+#: exactly the run whose operator is least likely to be reading stdout, because a
+#: detached dyno's stdout is not reliably readable from the sandbox at all
+#: (gotcha #48). So the number is enforced here, and the exit code carries it.
+EXPECTED_POPULATION = 364
 
 #: The population, stated once and shared by every statement below.
 #:
@@ -369,6 +396,69 @@ def _connect():
     return conn
 
 
+#: Counted by the SAME predicate `--apply` clears on, deliberately: a
+#: precondition measured a different way from the write it gates is a
+#: precondition about a different population. `census()` reports the column
+#: shapes and is for a human; this is the number the refusal is computed from.
+COUNT_POPULATION = f"""
+SELECT count(*)
+  FROM events e JOIN sports s ON s.id = e.sport_id
+ WHERE {POPULATION}
+"""
+
+
+def count_population(cur) -> int:
+    """How many rows `--apply` would clear, by the predicate it clears on."""
+    cur.execute(COUNT_POPULATION)
+    return cur.fetchone()[0]
+
+
+def population_verdict(
+    planned: int, *, expected: int = EXPECTED_POPULATION
+) -> tuple[str, str]:
+    """Classify the measured live-space population against the frozen count.
+
+    Pure, and separated from the database on purpose: the refusal is the part of
+    this script that must be provable without a live population to seed, and a
+    guard that can only be tested by reproducing the failure it prevents tends
+    not to be tested at all.
+
+    Returns `(verdict, message)`. Three verdicts, and only `MOVED` refuses:
+
+    ``FROZEN``
+        The count is the one the mechanism fix froze. Proceed.
+    ``ALREADY-APPLIED``
+        Zero rows. The apply has run (or there was never anything to clear);
+        re-running is a no-op and safe — `CLEAR_BOTH` matches nothing and
+        `CREATE TABLE IF NOT EXISTS` deliberately does not refresh the snapshot.
+    ``MOVED``
+        Anything else. Note this refuses a count that has FALLEN as well as one
+        that has risen: a rise means a writer is still refilling and the loop is
+        live, but a fall means something cleared rows that this script did not
+        back up, and neither number is a state this repair has measured. The
+        header's rule is "if it has moved off 364", not "if it has grown".
+    """
+    if planned == expected:
+        return (
+            "FROZEN",
+            f"{planned} live-space rows — the frozen count. Safe to apply.",
+        )
+    if planned == 0:
+        return (
+            "ALREADY-APPLIED",
+            "0 live-space rows — nothing to clear. An --apply here is a no-op "
+            "and will not refresh the existing backup.",
+        )
+    return (
+        "MOVED",
+        f"{planned} live-space rows, expected {expected}. The population has "
+        f"MOVED OFF the frozen count, so #3094's mechanism fix is not holding "
+        f"and clearing these rows would be a loop, not a repair. Re-measure, "
+        f"find the writer, and only then re-run with "
+        f"--expect-population {planned} to state the new number out loud.",
+    )
+
+
 def census(cur, label: str) -> dict:
     """Print the shape census and return it, so a caller can assert on it."""
     cur.execute(CENSUS)
@@ -420,6 +510,22 @@ def apply_clear(cur, *, dry_run: bool = False) -> dict:
     backed_up = cur.fetchone()[0]
     print(f"[backup] {BACKUP_TABLE} holds {backed_up} rows")
 
+    # The other side of "IF NOT EXISTS deliberately does not refresh": a backup
+    # table left behind by a run that found nothing is EMPTY, and an empty
+    # snapshot is not an undo for rows this run is about to clear. Nothing else
+    # would notice — both statements succeed, the census reads perfectly
+    # repaired, and D51's reversibility is gone silently. Refuse before the
+    # write rather than discover it at rollback time, which is the one moment
+    # the backup is needed and the one moment it is too late.
+    if planned and not backed_up:
+        raise SystemExit(
+            f"{BACKUP_TABLE} exists but holds 0 rows, while this run would "
+            f"clear {planned}. The snapshot predates nothing and CREATE TABLE "
+            f"IF NOT EXISTS will not refresh it, so the undo would restore "
+            f"nothing. Drop the empty table and re-run: "
+            f"DROP TABLE {BACKUP_TABLE};"
+        )
+
     cur.execute(CLEAR_BOTH)
     cleared = cur.rowcount or 0
 
@@ -459,15 +565,44 @@ def main() -> int:
         "--rollback", action="store_true", help=f"restore from {BACKUP_TABLE}"
     )
     ap.add_argument("--report", action="store_true", help="census only, change nothing")
+    ap.add_argument(
+        "--expect-population",
+        type=int,
+        default=EXPECTED_POPULATION,
+        metavar="N",
+        help=(
+            f"the live-space count this run expects (default {EXPECTED_POPULATION}, "
+            f"the frozen count). Override only after re-measuring and finding the "
+            f"writer — it makes you state the new number out loud rather than "
+            f"editing the guard out."
+        ),
+    )
     args = ap.parse_args()
 
     conn = _connect()
     cur = conn.cursor()
 
     before = census(cur, "before")
+
+    # Measured for every mode, including --report: an operator running the
+    # census to decide whether to apply should get the verdict in the same
+    # output, not have to compare a number to a docstring by eye.
+    planned = count_population(cur)
+    verdict, message = population_verdict(planned, expected=args.expect_population)
+    print(f"[precondition] {verdict}: {message}")
+
     if args.report:
         conn.rollback()
         return 0
+
+    # Refuses the DRY RUN too, and that is the point of putting it here. The dry
+    # run is the operator's pre-flight; one that exits 0 for a run the apply will
+    # refuse has told them the opposite of what they asked. `--rollback` is
+    # exempt: it is the way OUT of a bad state, so a bad state must not block it.
+    if verdict == "MOVED" and not args.rollback:
+        conn.rollback()
+        print("[precondition] REFUSED — nothing was written.")
+        return 1
 
     if args.rollback:
         done = rollback_clear(cur)

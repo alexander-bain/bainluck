@@ -564,3 +564,150 @@ class TestApplyRollbackRoundTrip:
         conn.commit()
         assert undone["unrestored"] == 0, undone
         assert _rows(cur)[ids["col_and_jsonb"]] == before[ids["col_and_jsonb"]]
+
+
+def _run_main(conn, monkeypatch, argv: list[str]) -> int:
+    """Drive `main()` itself over the test connection.
+
+    The point of going through `main` rather than `population_verdict` is that
+    the verdict is not the guard — the WIRING is. A pure function can return
+    "MOVED" all day while the entrypoint reads it into a variable and clears the
+    rows anyway, and that is precisely the shape of the defect these tests
+    exist for: the frozen count was measured, printed, and then not acted on.
+    """
+    import sys
+
+    import scripts.null_statpal_live_space_ids_3094 as mod
+
+    monkeypatch.setattr(mod, "_connect", lambda: conn)
+    monkeypatch.setattr(sys, "argv", ["null_statpal_live_space_ids_3094.py", *argv])
+    return mod.main()
+
+
+@needs_postgres
+class TestTheFrozenCountPreconditionIsEnforcedByTheEntrypoint:
+    """The corpus seeds TWO live-space rows, and the default expectation is 364.
+
+    So every test in this class runs against a population that has "moved off
+    the frozen count" — the exact state the header says the repair must wait on.
+
+    🔴 THE SEED IS COMMITTED FIRST, and it has to be. `main()` calls
+    `conn.rollback()` on its refusal path; with an uncommitted seed that rollback
+    would discard the corpus itself, every row would be gone for reasons having
+    nothing to do with the guard, and "nothing was written" would pass vacuously
+    against an empty table. Committing first is what makes the assertion mean
+    the rows SURVIVED rather than never existed.
+    """
+
+    def test_apply_refuses_a_population_that_moved_and_writes_nothing(
+        self, conn, monkeypatch
+    ):
+        cur = conn.cursor()
+        _seed(cur)
+        conn.commit()
+        before = _rows(cur)
+
+        assert _run_main(conn, monkeypatch, ["--apply"]) == 1
+
+        # The refusal is only worth anything if it lands BEFORE the writes.
+        assert _rows(cur) == before
+        cur.execute("SELECT to_regclass(%s) IS NOT NULL", (BACKUP_TABLE,))
+        assert cur.fetchone()[0] is False, "refused, yet it created a backup table"
+
+    def test_the_dry_run_refuses_too(self, conn, monkeypatch):
+        # A pre-flight that exits 0 for a run the apply will refuse has told the
+        # operator the opposite of what they asked.
+        cur = conn.cursor()
+        _seed(cur)
+        conn.commit()
+
+        assert _run_main(conn, monkeypatch, []) == 1
+
+    def test_report_never_refuses(self, conn, monkeypatch):
+        # `--report` makes no claim about applying; it is how you go LOOK at a
+        # moved population. A census that exits non-zero on the state it exists
+        # to show you is a census nobody can use.
+        cur = conn.cursor()
+        _seed(cur)
+        conn.commit()
+
+        assert _run_main(conn, monkeypatch, ["--report"]) == 0
+
+    def test_a_stated_expectation_lets_the_apply_through_and_it_really_clears(
+        self, conn, monkeypatch
+    ):
+        cur = conn.cursor()
+        ids = _seed(cur)
+        conn.commit()
+
+        argv = ["--apply", "--expect-population", "2"]
+        assert _run_main(conn, monkeypatch, argv) == 0
+
+        rows = _rows(cur)
+        assert rows[ids["col_only"]][0] is None
+        assert rows[ids["col_and_jsonb"]][0] is None
+        # The override is a permission to proceed, not a licence to widen: the
+        # correctly-shaped row is still untouched.
+        assert rows[ids["six_digit"]][0] == SCHEDULE_ID
+
+    def test_rollback_is_never_blocked_by_a_moved_population(
+        self, conn, monkeypatch
+    ):
+        """The way OUT of a bad state must not be gated on the state being good.
+
+        After a legitimate apply the population reads 0, so this would pass
+        whatever the exemption did. The rows are re-dirtied first so the
+        rollback runs against a genuinely MOVED count — otherwise the test
+        proves the exemption is unnecessary rather than that it works.
+        """
+        cur = conn.cursor()
+        ids = _seed(cur)
+        conn.commit()
+
+        argv = ["--apply", "--expect-population", "2"]
+        assert _run_main(conn, monkeypatch, argv) == 0
+
+        cur.execute(
+            "UPDATE events SET statpal_fixture_id = %s WHERE id = %s",
+            (LIVE_ID, ids["already_null"]),
+        )
+        conn.commit()
+
+        assert _run_main(conn, monkeypatch, ["--rollback"]) == 0
+        assert _rows(cur)[ids["col_only"]][0] == LIVE_ID
+
+
+@needs_postgres
+class TestAnEmptyBackupCannotBeMistakenForASnapshot:
+    def test_apply_refuses_when_the_existing_backup_holds_nothing(self, conn):
+        """`CREATE TABLE IF NOT EXISTS` not refreshing is a feature and a trap.
+
+        A run that found nothing to clear leaves an EMPTY backup table behind.
+        A later run with real rows then finds the table present, declines to
+        refresh it — correctly, by its own rule that the first snapshot is the
+        one that predates every change — and clears the rows against a snapshot
+        of nothing. Both statements succeed and the census reads perfectly
+        repaired, so the only symptom is that D51's undo silently restores zero
+        rows, discovered at the one moment it is too late to matter.
+        """
+        from scripts.null_statpal_live_space_ids_3094 import apply_clear
+
+        cur = conn.cursor()
+        _seed(cur)
+        # Exactly what an apply-with-nothing-to-clear leaves behind: the right
+        # shape, no rows.
+        cur.execute(
+            f"CREATE TABLE {BACKUP_TABLE} AS "
+            "SELECT e.id AS event_id, e.statpal_fixture_id, "
+            "false AS jsonb_had_key, NULL::text AS jsonb_value, "
+            "false AS sources_was_null FROM events e WHERE false"
+        )
+        conn.commit()
+        before = _rows(cur)
+
+        with pytest.raises(SystemExit) as excinfo:
+            apply_clear(cur, dry_run=False)
+
+        assert BACKUP_TABLE in str(excinfo.value)
+        conn.rollback()
+        assert _rows(cur) == before
