@@ -126,6 +126,19 @@ final class SpreadRungTests: XCTestCase {
         let map = SpreadRungs.map(from: wrongMatch, home: "Iva Jović", away: "Coco Gauff", sportUnit: tennisUnit)
         XCTAssertTrue(map.rungs.isEmpty,
                       "Gauff resolves, but Sabalenka is not the other side of this match — so this title is not about this event")
+
+        // 🔴 THE SECOND CLAUSE, which the case above cannot reach. There, the
+        // underdog resolved to NOBODY and the `let` binding failed. Here it
+        // resolves to the SAME side as the favourite — `Coco` and `Gauff` are
+        // both away words — so only `favouriteSide != underdogSide` refuses it.
+        // A title that names one player twice describes no matchup.
+        let oneSidedTitle = [
+            SpreadRungs.Leg(marketName: "Set Handicap: Gauff (-1.5) vs Coco (+1.5)", outcomeName: "Yes", probability: 0.455),
+            SpreadRungs.Leg(marketName: "Set Handicap: Gauff (-1.5) vs Coco (+1.5)", outcomeName: "No", probability: 0.545),
+        ]
+        XCTAssertTrue(
+            SpreadRungs.map(from: oneSidedTitle, home: "Iva Jović", away: "Coco Gauff", sportUnit: tennisUnit).rungs.isEmpty,
+            "both participants read as Gauff; there is no two-sided market here to draw")
     }
 
     /// A title is only read in the ONE shape the venue serves. Everything else
@@ -140,6 +153,17 @@ final class SpreadRungTests: XCTestCase {
                      "unequal lines are not one two-way market")
         XCTAssertNil(SpreadRungs.Handicap.read(marketName: "Game Spread: Swiatek (+5.5) vs Zheng (-5.5)"),
                      "the favourite is the side `Yes` asks about, and it is written first")
+
+        // 🔴 THE CLAUSE THE LINE ABOVE DOES NOT REACH, found by mutation.
+        // `abs(firstLine) == secondLine` already rejects the swapped pair on
+        // its own — `abs(5.5) == -5.5` is false — so a mutant deleting
+        // `firstLine < 0, secondLine > 0` survived every assertion here. What
+        // actually needs those two clauses is a title whose lines share a sign,
+        // where the equality holds and the market is still not a handicap.
+        XCTAssertNil(SpreadRungs.Handicap.read(marketName: "Game Spread: Swiatek (+5.5) vs Zheng (+5.5)"),
+                     "both sides receiving 5.5 is not a handicap — nobody is giving it")
+        XCTAssertNil(SpreadRungs.Handicap.read(marketName: "Game Spread: Swiatek (0) vs Zheng (0)"),
+                     "a zero line is not a handicap, and a rung at margin 0 is a claim about a tie")
         XCTAssertNil(SpreadRungs.Handicap.read(marketName: "Winner: Swiatek (1.30) vs Zheng (3.40)"),
                      "two prices are not a handicap")
         XCTAssertNil(SpreadRungs.Handicap.read(marketName: "New England vs Seattle: Spread"),
