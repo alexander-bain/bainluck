@@ -185,6 +185,107 @@ final class DailyChallengeQuestionTests: XCTestCase {
         XCTAssertNil(DailyChallengeViewModel.question(from: card))
     }
 
+    // MARK: - #3864 item 2, a decided game is not a question
+
+    /// A fixed instant, so nothing here branches on the clock (gotcha #44):
+    /// offset FIRST, then use it. Every `resolution_date` below is written
+    /// relative to this and never to "now".
+    private let anchor = Date(timeIntervalSince1970: 1_757_000_000)  // 2026-09-04T15:33:20Z
+
+    private func event(status: String?, probability: Double = 0.56) throws -> FeedItem {
+        let statusField = status.map { "\"status\": \"\($0)\"," } ?? ""
+        return try item("""
+        {"type": "event", "score": 70,
+         "data": {"id": 15305001, "home_team": "Milwaukee Brewers",
+                   "away_team": "Chicago Cubs", \(statusField)
+                   "current_odds": {"home_probability": \(probability)}}}
+        """)
+    }
+
+    /// 🟢 THE SHIP, event half. The deck had no lifecycle test of any kind — its
+    /// whole filter was a price band and an id — so a finished game was a
+    /// perfectly valid Higher/Lower question with an answer that was already
+    /// fixed.
+    func testAFinishedGameIsNotAQuestion() throws {
+        for status in ["completed", "closed"] {
+            XCTAssertNil(DailyChallengeViewModel.question(from: try event(status: status), now: anchor),
+                         "\(status) is a decided game and must never be asked")
+        }
+    }
+
+    /// 🔴 BOTH DIRECTIONS. A guard that empties the deck is a worse bug than the
+    /// one it fixes — #3864 names exactly that risk — so the states that MUST
+    /// still be asked are pinned beside the ones that must not.
+    func testAGameStillBeingPlayedOrNotYetStartedIsStillAQuestion() throws {
+        for status in ["scheduled", "live", nil] {
+            let q = DailyChallengeViewModel.question(from: try event(status: status), now: anchor)
+            XCTAssertNotNil(q, "\(status ?? "nil") is undecided and must stay askable")
+        }
+    }
+
+    /// `suspended` is deliberately NOT refused, and this is the test that says so
+    /// on purpose rather than by omission. It is non-terminal (``EventState``): no
+    /// result was ever reported, the match can return to `live`, and the answer is
+    /// not fixed. Refusing it would be a hiding rule, not a settled rule.
+    func testASuspendedGameIsStillAQuestion() throws {
+        XCTAssertNotNil(
+            DailyChallengeViewModel.question(from: try event(status: "suspended"), now: anchor))
+    }
+
+    private func settledFutures(_ field: String) throws -> FeedItem {
+        try item("""
+        {"type": "futures", "score": 70,
+         "data": {"id": 4242, "name": "World Series 2026 winner", \(field)
+                   "top_outcomes": [{"id": 9, "name": "Dodgers", "probability": 0.22}]}}
+        """)
+    }
+
+    /// 🟢 THE SHIP, futures half — all four of `FeedLifecycle`'s authorities, not
+    /// just the obvious one. The `resolution_date` arm is the one that actually
+    /// fires in production: gotcha #33 means a settled Kalshi market keeps
+    /// `status='open'` forever, so a status-only guard would catch almost nothing.
+    func testASettledMarketIsNotAQuestionOnAnyOfItsFourAuthorities() throws {
+        let past = ISO8601DateFormatter().string(from: anchor.addingTimeInterval(-3600))
+        let cases = [
+            "\"resolved\": true,",
+            "\"winner\": \"Los Angeles Dodgers\",",
+            "\"status\": \"settled\",",
+            "\"resolution_date\": \"\(past)\",",
+        ]
+        for field in cases {
+            XCTAssertNil(
+                DailyChallengeViewModel.question(from: try settledFutures(field), now: anchor),
+                "settled by \(field) and must never be asked")
+        }
+    }
+
+    /// The other direction again, and the trap inside it: a resolution date in the
+    /// FUTURE is the normal state of every open market, so it must stay askable.
+    /// An `>=`/`<=` slip here would empty the deck of futures entirely.
+    func testAnOpenMarketIsStillAQuestion() throws {
+        let future = ISO8601DateFormatter().string(from: anchor.addingTimeInterval(86_400))
+        for field in ["", "\"resolved\": false,", "\"status\": \"open\",",
+                      "\"resolution_date\": \"\(future)\",", "\"winner\": \"\","] {
+            XCTAssertNotNil(
+                DailyChallengeViewModel.question(from: try settledFutures(field), now: anchor),
+                "\(field.isEmpty ? "(no lifecycle fields)" : field) is an open market")
+        }
+    }
+
+    /// `now` is injected, so the same fixture is settled or not purely by the
+    /// clock it is read against — which is what makes the date arm testable at all
+    /// and what stops a fixture drifting into a different verdict next week.
+    func testTheResolutionDateArmIsReadAgainstTheInjectedClockAndNotTheWallClock() throws {
+        let stamp = ISO8601DateFormatter().string(from: anchor)
+        let card = try settledFutures("\"resolution_date\": \"\(stamp)\",")
+        XCTAssertNotNil(DailyChallengeViewModel.question(from: card,
+                                                         now: anchor.addingTimeInterval(-60)),
+                        "one minute BEFORE resolution the market is still open")
+        XCTAssertNil(DailyChallengeViewModel.question(from: card,
+                                                      now: anchor.addingTimeInterval(60)),
+                     "one minute AFTER resolution it is decided")
+    }
+
     /// `category` is submitted to `/api/predictions` and read by the stats
     /// breakdown, so it is pinned: fixing copy must not quietly narrow an
     /// analytics field. Both branches keep the expression they had.
