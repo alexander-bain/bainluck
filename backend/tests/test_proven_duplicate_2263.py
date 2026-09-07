@@ -598,3 +598,164 @@ class TestTheIdColumnMap:
 
         assert _claim_id_value(_good(), "kalshi") is None
         assert _claim_id_value(_good(), "polymarket") is None
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Part F — the FOLD: what the suppressed row was holding (#2693)
+# ════════════════════════════════════════════════════════════════════════════
+#
+# Parts C and D prove the second card stops printing. That is only half of "one
+# match, one card": on the population this tag was written for, the suppressed
+# row is usually the one holding the PRICES.
+#
+#     ghosts carrying at least one market            110 / 172
+#     ghosts carrying MORE markets than their own
+#       canonical                                     63 / 172
+#     Andreeva/Potapova QF, 2026-09-07     ghost 13 markets, canonical  0
+#     Cerundolo/Blockx   QF, 2026-09-07    ghost 17 markets, canonical  1
+#
+# So `not_a_proven_duplicate` alone, applied to those two, does not remove a
+# duplicate card — it removes the only card with prices. `folded_event_ids` is
+# the reverse lookup that lets the surviving card read them.
+
+CANON_ID = 15305578
+GHOST_ID = 15305553
+DECOY_ID = 1530  # a PREFIX of CANON_ID — see the trap below
+UNRELATED_ID = 99
+
+
+class _SyncAsAsync:
+    """The one `await db.execute(...)` `folded_event_ids` makes, over a sync Session.
+
+    `folded_event_ids` is async because every caller is; the statement it runs is
+    ordinary SQLAlchemy Core. This shim lets Part F execute it against the same
+    real engine Part C uses rather than assert on a mock's call args.
+    """
+
+    def __init__(self, session):
+        self._session = session
+
+    async def execute(self, statement):
+        return self._session.execute(statement)
+
+
+@pytest.fixture
+def fold_engine():
+    eng = create_engine("sqlite://")
+    Base.metadata.create_all(eng)
+    with Session(eng) as s:
+        s.add(Sport(id=S_MLB, key="baseball_mlb", name="MLB"))
+        s.add(_row(CANON_ID, GOOD_TIME, event_tags=None))
+        s.add(_row(GHOST_ID, TWIN_TIME, event_tags=[duplicate_tag(CANON_ID)]))
+        s.add(_row(DECOY_ID, GOOD_TIME, event_tags=None))
+        s.add(_row(UNRELATED_ID, GOOD_TIME, event_tags=[duplicate_tag(DECOY_ID)]))
+        s.commit()
+    return eng
+
+
+def _folded(eng, event_id):
+    import asyncio
+
+    from app.utils.proven_duplicates import folded_event_ids
+
+    with Session(eng) as s:
+        return asyncio.run(folded_event_ids(_SyncAsAsync(s), event_id))
+
+
+class TestTheFold:
+    def test_the_canonical_reads_its_suppressed_twins_content(self, fold_engine):
+        """The ship: `/events/15305578` gets `15305553`'s 17 markets."""
+        assert _folded(fold_engine, CANON_ID) == [CANON_ID, GHOST_ID]
+
+    def test_an_untagged_event_folds_to_exactly_itself(self, fold_engine):
+        """🔴 The no-change case, and it is the overwhelming majority.
+
+        Almost every event on the site has no duplicate. If this ever returned
+        `[]` the caller's `event_id.in_(...)` would become `IN ()` and every
+        event page on the site would lose every market at once — so the
+        canonical is unconditionally first and unconditionally present.
+        """
+        assert _folded(fold_engine, DECOY_ID + 7) == [DECOY_ID + 7]
+
+    def test_a_shorter_canonical_id_does_not_claim_a_longer_ones_duplicates(
+        self, fold_engine
+    ):
+        """🔴 THE TRAP. `duplicate-of:1530` is a prefix of `duplicate-of:15305578`.
+
+        The portable arm is a LIKE, so an unquoted pattern would fold a
+        completely unrelated match's markets onto this page — and the failure is
+        silent, because extra markets on a busy page look like coverage. The
+        element is matched WITH its quotes for exactly this reason.
+        """
+        assert _folded(fold_engine, DECOY_ID) == [DECOY_ID, UNRELATED_ID]
+        assert GHOST_ID not in _folded(fold_engine, DECOY_ID)
+
+    def test_a_row_tagged_as_its_own_duplicate_is_not_returned_twice(self):
+        """Defensive: `IN (x, x)` is harmless, a duplicated market row is not."""
+        eng = create_engine("sqlite://")
+        Base.metadata.create_all(eng)
+        with Session(eng) as s:
+            s.add(Sport(id=S_MLB, key="baseball_mlb", name="MLB"))
+            s.add(_row(CANON_ID, GOOD_TIME, event_tags=[duplicate_tag(CANON_ID)]))
+            s.commit()
+        assert _folded(eng, CANON_ID) == [CANON_ID]
+
+    def test_the_postgres_rendering_is_the_one_the_gin_index_can_answer(self):
+        """🔴 THE PERFORMANCE CONTRACT, pinned because it fails silently.
+
+        Measured on production 2026-09-07, `EXPLAIN (ANALYZE, BUFFERS)` root node
+        for the same single row:
+
+            event_tags @> '["provenance:duplicate-of:15304938"]'
+                Bitmap Index Scan, ix_events_event_tags     5 blocks     0.06 ms
+            CAST(event_tags AS text) LIKE '%"…:15304938"%'
+                Seq Scan                              105,540 blocks  8,296 ms
+
+        A fall back to the portable arm on Postgres keeps every test in this
+        file green and puts an eight-second table scan on every event page.
+        SQLite agreeing is not Postgres agreeing.
+        """
+        from app.utils.proven_duplicates import tagged_duplicate_of
+
+        compiled = str(
+            select(Event.id)
+            .where(tagged_duplicate_of(CANON_ID))
+            .compile(dialect=postgresql.dialect())
+        )
+        assert "@>" in compiled
+        assert "LIKE" not in compiled.upper()
+        assert "CAST(events.event_tags AS VARCHAR)" not in compiled
+
+    def test_the_fold_and_the_suppression_read_the_same_tag(self):
+        """One writer, one tag, two readers. They cannot be allowed to drift."""
+        from sqlalchemy.dialects import sqlite as sqlite_dialect
+
+        from app.services.anchor_channel import DUPLICATE_TAG_PREFIX
+        from app.utils.proven_duplicates import tagged_duplicate_of
+
+        compiled = str(
+            select(Event.id)
+            .where(tagged_duplicate_of(CANON_ID))
+            .compile(
+                dialect=sqlite_dialect.dialect(),
+                compile_kwargs={"literal_binds": True},
+            )
+        )
+        assert f'"{DUPLICATE_TAG_PREFIX}{CANON_ID}"' in compiled
+
+    def test_the_event_pages_market_read_actually_carries_the_fold(self):
+        """Part D's discipline: a predicate nothing calls repairs nothing.
+
+        `_build_game_markets` is the read that populates
+        `GET /api/events/{id}/game-markets` — measured on production as 32
+        market entries on the ghost against 3 on the canonical, which is the
+        gap this ship closes.
+        """
+        import inspect
+
+        from app.routes.events import _build_game_markets
+
+        source = inspect.getsource(_build_game_markets)
+        assert "folded_event_ids" in source
+        assert "FuturesMarket.event_id.in_(market_event_ids)" in source
+        assert "FuturesMarket.event_id == event_id" not in source

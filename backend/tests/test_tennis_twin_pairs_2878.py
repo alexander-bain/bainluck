@@ -48,15 +48,17 @@ from app.utils.tennis_twin_pairs import (  # noqa: E402
     block_key,
     classify_pair,
     players_agree,
+    row_is_id_anchored,
 )
 
 
-def ghost(event_id, home, away, sport_key="tennis_atp"):
-    """A bare tour-key row: no tournament key and never settled.
+def ghost(event_id, home, away, sport_key="tennis_atp", *, settled=False, anchored=False):
+    """A bare tour-key row: no tournament key, no score, no provider id.
 
     Deliberately NOT "an empty row". Measured on production, 110 of 172 ghosts
     carry prediction markets and 63 carry more of them than their own canonical.
-    What a ghost never carries is a score — see `row_has_settled_result`.
+    What a ghost never carries is a score (`row_has_settled_result`) or a
+    provider id (`row_is_id_anchored`, 0/1259 on production).
     """
     return TwinRow(
         event_id=event_id,
@@ -64,19 +66,28 @@ def ghost(event_id, home, away, sport_key="tennis_atp"):
         away_team_name=away,
         sport_key=sport_key,
         is_tournament_keyed=False,
-        has_settled_result=False,
+        has_settled_result=settled,
+        is_id_anchored=anchored,
     )
 
 
-def canonical(event_id, home, away, sport_key="tennis_atp_us_open"):
-    """The tournament-keyed row that got settled and carries the result."""
+def canonical(
+    event_id, home, away, sport_key="tennis_atp_us_open", *, settled=True, anchored=True
+):
+    """The tournament-keyed row: carries the result, and carries a provider id.
+
+    `settled` defaults True so the settled arm's fixtures read unchanged;
+    `anchored` defaults True because 250/250 tournament-keyed rows on production
+    carry one. Both are overridable so the refusals can be exercised.
+    """
     return TwinRow(
         event_id=event_id,
         home_team_name=home,
         away_team_name=away,
         sport_key=sport_key,
         is_tournament_keyed=True,
-        has_settled_result=True,
+        has_settled_result=settled,
+        is_id_anchored=anchored,
     )
 
 
@@ -160,30 +171,10 @@ class TestTheGhostIsChosenByStructureNotByTaste:
         Measured 0/172 on production — so if this ever fires in a real sweep,
         the premise has changed and the refusal is the correct output.
         """
-        settled = TwinRow(1, "Fritz", "Cerundolo", "tennis_atp", False, True)
+        settled = ghost(1, "Fritz", "Cerundolo", settled=True)
         v = classify_pair(settled, canonical(2, "Taylor Fritz", "Francisco Cerundolo"))
         assert v.outcome == REFUSE_AMBIGUOUS
         assert "carries a result" in v.reason
-
-    def test_an_unsettled_pair_is_refused_because_nothing_separates_them(self):
-        """🔴 THE LIMIT OF THIS SHIP, pinned so it cannot be lost.
-
-        Before a match is played NEITHER row has a score, so the field that
-        separates ghost from canonical does not exist yet and this refuses. That
-        is why the sweep cannot fix tomorrow's semi-final: on 2026-09-06 the
-        Swiatek–Zheng, Shelton–Tsitsipas and Osaka–Rybakina pairs were all
-        unsettled, and one of them (`Cerundolo/Blockx`) carries 17 markets on the
-        GHOST against 1 on the canonical — hiding the ghost there would take
-        away most of the market coverage, not a duplicate card.
-
-        The fix for that half is market re-attachment (#2693), not a label.
-        """
-        unplayed = TwinRow(
-            2, "Iga Swiatek", "Qinwen Zheng", "tennis_wta_us_open", True, False
-        )
-        v = classify_pair(ghost(1, "Swiatek", "Zheng", "tennis_wta"), unplayed)
-        assert v.outcome == REFUSE_AMBIGUOUS
-        assert "neither row has been settled" in v.reason
 
     def test_a_row_never_twins_with_itself(self):
         g = ghost(1, "Fritz", "Cerundolo")
@@ -197,6 +188,113 @@ class TestTheGhostIsChosenByStructureNotByTaste:
             canonical(2, "Taylor Fritz", "Francisco Cerundolo"),
         )
         assert v.outcome == NOT_A_TWIN
+
+
+class TestTheUnplayedArm:
+    """#2693 — the half the score could not reach.
+
+    Six US Open quarter-finals were printing twice on 2026-09-07 with no score
+    on either row. What separates them is the PROVIDER ID: 250/250
+    tournament-keyed rows carry one, 0/1259 bare rows do, and the shape holds on
+    all 161 settled tags and all 6 unplayed pairs.
+
+    Every refusal below is a case where the population has stopped obeying that
+    structure. Under-tagging stays the intended failure direction, so each of
+    these is the CORRECT output and not a shortcoming.
+    """
+
+    @pytest.mark.parametrize(
+        "short_home,short_away,full_home,full_away",
+        [
+            ("Swiatek", "Zheng", "Iga Swiatek", "Qinwen Zheng"),
+            ("Andreeva", "Potapova", "Mirra Andreeva", "Anastasia Potapova"),
+            ("Cerundolo", "Blockx", "Francisco Cerundolo", "Alexander Blockx"),
+            ("Osaka", "Rybakina", "Naomi Osaka", "Elena Rybakina"),
+            ("Zverev", "Darderi", "Alexander Zverev", "Luciano Darderi"),
+            ("Khachanov", "Tien", "Karen Khachanov", "Learner Tien"),
+        ],
+    )
+    def test_the_six_quarter_finals_are_decided_before_a_ball_is_struck(
+        self, short_home, short_away, full_home, full_away
+    ):
+        """The exact six pairs on production, by the shape they were found in."""
+        v = classify_pair(
+            ghost(1, short_home, short_away),
+            canonical(2, full_home, full_away, settled=False),
+        )
+        assert v.outcome == TWIN_FOUND
+        assert (v.ghost_id, v.canonical_id) == (1, 2)
+
+    def test_the_verdict_does_not_depend_on_argument_order(self):
+        g = ghost(1, "Cerundolo", "Blockx")
+        c = canonical(2, "Francisco Cerundolo", "Alexander Blockx", settled=False)
+        assert classify_pair(g, c) == classify_pair(c, g)
+
+    def test_an_unplayed_pair_whose_bare_row_has_a_provider_id_is_refused(self):
+        """🔴 The tripwire. 0/1259 bare rows carried an id when this was measured.
+
+        If one ever does, the conjunction that licenses the whole judgement has
+        broken and the honest answer is to stop, not to fall back on the sport
+        key alone.
+        """
+        v = classify_pair(
+            ghost(1, "Swiatek", "Zheng", "tennis_wta", anchored=True),
+            canonical(2, "Iga Swiatek", "Qinwen Zheng", "tennis_wta_us_open",
+                      settled=False),
+        )
+        assert v.outcome == REFUSE_AMBIGUOUS
+        assert "carries a provider id" in v.reason
+
+    def test_an_unplayed_pair_with_no_provider_id_anywhere_is_refused(self):
+        """Neither a score nor an id: nothing separates them, so nothing is written."""
+        v = classify_pair(
+            ghost(1, "Swiatek", "Zheng", "tennis_wta"),
+            canonical(2, "Iga Swiatek", "Qinwen Zheng", "tennis_wta_us_open",
+                      settled=False, anchored=False),
+        )
+        assert v.outcome == REFUSE_AMBIGUOUS
+        assert "neither carries a provider id" in v.reason
+
+    def test_the_settled_arm_does_not_consult_the_anchor(self):
+        """🔴 The already-shipped arm is untouched, and that is deliberate.
+
+        161 labels are on disk, written on the score. Re-deciding them on a
+        second column would be this module arbitrating against itself, so a
+        settled pair whose canonical happens to carry no provider id is still
+        TWIN_FOUND — exactly as it was before #2693.
+        """
+        v = classify_pair(
+            ghost(1, "Fritz", "Cerundolo"),
+            canonical(2, "Taylor Fritz", "Francisco Cerundolo", anchored=False),
+        )
+        assert v.outcome == TWIN_FOUND
+
+    def test_the_anchor_reader_accepts_any_one_of_the_three_providers(self):
+        """`row_is_id_anchored` asks whether SOME provider knows this fixture."""
+        assert not row_is_id_anchored(
+            external_id=None, espn_id=None, statpal_fixture_id=None
+        )
+        for field in ("external_id", "espn_id", "statpal_fixture_id"):
+            kwargs = {
+                "external_id": None,
+                "espn_id": None,
+                "statpal_fixture_id": None,
+                field: "x",
+            }
+            assert row_is_id_anchored(**kwargs), field
+
+    def test_market_count_is_not_the_anchor(self):
+        """🔴 The mistake `row_has_settled_result` documents, restated.
+
+        A ghost typically has MORE markets than its canonical (63/172), so any
+        reading of "which row has substance" that counts markets points the
+        wrong way. `row_is_id_anchored` takes no market argument at all — this
+        pins that it cannot acquire one by accident.
+        """
+        import inspect
+
+        params = set(inspect.signature(row_is_id_anchored).parameters)
+        assert params == {"external_id", "espn_id", "statpal_fixture_id"}
 
 
 class TestTheFusionsThatMustNotHappen:

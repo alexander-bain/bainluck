@@ -92,10 +92,51 @@ often a bigger market book than the odds_api row that will actually be settled �
 sweep built on the intuitive reading tags **zero of the pairs the tour page is
 blocked on** and reports success, which is gotcha #53 written out in full.
 
-The consequence runs the other way too, and it is the honest limit of this ship:
-because the score is what separates them, **an unsettled pair cannot be
-separated at all** and :func:`plan_twin_tags` refuses it. See
-:func:`row_has_settled_result`.
+The consequence runs the other way too, and it WAS the honest limit of the
+first ship: because the score is what separates them, an unsettled pair could
+not be separated at all. That limit is lifted below by a SECOND, independent
+separating field — see :func:`row_is_id_anchored`.
+
+THE UNPLAYED HALF, AND WHY IT NEEDED A SECOND FIELD (#2693)
+════════════════════════════════════════════════════════════
+
+The settled arm above answers "which of these two rows is the ghost?" with the
+score. Before the match is played there is no score, and on 2026-09-07 that left
+**six US Open quarter-finals each printing twice** — Swiatek/Zheng,
+Andreeva/Potapova, Cerundolo/Blockx, Osaka/Rybakina, Zverev/Darderi,
+Khachanov/Tien.
+
+The field that separates them before a ball is struck is the **provider id**.
+Measured on production 2026-09-07 over the same ±15-day window (1,509 rows):
+
+    tournament-keyed rows carrying an anchor      250 / 250   (100%)
+    bare tour-key rows carrying an anchor           0 / 1259  (0%)
+    the 161 SETTLED tags: ghost id-less AND
+      canonical id-anchored                       161 / 161
+    the 6 UNPLAYED pairs: same shape                6 / 6
+
+🔴 **Be honest about what that is.** On this population the id anchor and the
+tournament key are PERFECTLY correlated, so the anchor is not independent
+corroboration today — it is the same structure read through a different column.
+What it buys is a **tripwire**: the day a bare row acquires an ``espn_id``, or a
+tournament row is minted without one, the conjunction breaks and the pair is
+refused instead of guessed. A guard that only exists after it has failed in
+production is a guard that arrived late.
+
+It also puts the unplayed arm on the right side of ruling 048's line. 048 bans
+an id-less claim ABSORBING; here the row we decline to print is the id-less one
+and the row we keep is the id-anchored one, which is the direction 048 argues
+for. Nothing is absorbed, deleted or repointed either way.
+
+🔴 **THE UNPLAYED ARM HAS A DEPLOY ORDER AND IT IS NOT OPTIONAL.** An unplayed
+ghost is usually the row holding the prices — Andreeva/Potapova was 13 markets
+on the ghost against **0** on its canonical, Cerundolo/Blockx 17 against 1. So
+tagging an unplayed ghost BEFORE the read side folds the ghost's markets onto
+its canonical does not remove a duplicate card, it removes the only card with
+prices on it. The fold is
+:func:`app.utils.proven_duplicates.tagged_duplicate_of`, wired into
+``_build_game_markets``; it must be live in production before this arm's tags
+are written, and the repair script says so at its own call site.
 """
 
 from __future__ import annotations
@@ -201,6 +242,38 @@ def row_has_settled_result(*, home_score: object, away_score: object) -> bool:
     return home_score is not None or away_score is not None
 
 
+def row_is_id_anchored(
+    *, external_id: object, espn_id: object, statpal_fixture_id: object
+) -> bool:
+    """Does this row carry ANY provider's id for the fixture?
+
+    The counterpart to :func:`row_has_settled_result`, and the field that
+    decides an UNPLAYED pair — the one the score cannot reach. Same discipline
+    as its sibling: a named function, not a lambda at the call site, because the
+    caller must be able to read what "anchored" means and the module docstring
+    carries the measurement.
+
+    "Any of three" rather than a single named column, because the three
+    providers mint at different times — an ESPN-scheduled row has ``espn_id``
+    from the first poll, an odds_api row has ``external_id``, a StatPal-anchored
+    row has ``statpal_fixture_id`` — and the question here is not *which*
+    provider knows this fixture but *whether one does*. On the measured
+    population all 250 tournament-keyed rows carried all three and all 1,259
+    bare rows carried none, so the disjunction costs nothing today and is the
+    shape that survives one provider going quiet.
+
+    🔴 It is deliberately NOT "the row has markets". That is the same mistake
+    :func:`row_has_settled_result` documents: the Kalshi-minted ghost usually has
+    MORE markets than the row that will actually be settled, so market count
+    points the wrong way two times in five.
+    """
+    return (
+        external_id is not None
+        or espn_id is not None
+        or statpal_fixture_id is not None
+    )
+
+
 #: The two rows are one fixture and `ghost_id` is safe to stop printing.
 TWIN_FOUND = "TWIN_FOUND"
 #: The two rows are one fixture, but which is the ghost cannot be decided.
@@ -289,6 +362,15 @@ class TwinRow:
     #: a status. Read :func:`row_has_settled_result` before you compute this —
     #: the obvious reading is measurably wrong and silently ships a no-op.
     has_settled_result: bool
+    #: Does the row carry a provider id for the fixture? Compute it with
+    #: :func:`row_is_id_anchored` and nothing else.
+    #:
+    #: **Required, with no default, on purpose.** A default of ``False`` would
+    #: make every unplayed pair refuse, which is the safe direction and
+    #: therefore the invisible one: a caller who forgot the field would get a
+    #: sweep that finds nothing and exits 0 (gotcha #53). A missing argument is
+    #: a ``TypeError`` at the call site, which is the failure you can see.
+    is_id_anchored: bool
 
 
 @dataclass(frozen=True)
@@ -307,14 +389,30 @@ def classify_pair(a: TwinRow, b: TwinRow) -> TwinVerdict:
     Returns :data:`TWIN_FOUND` only when BOTH hold:
 
     * the participants agree in one orientation or the other, and
-    * exactly one row is tournament-keyed **and** exactly one row has substance,
-      and they are the same row.
+    * exactly one row is tournament-keyed, and the OTHER evidence agrees with
+      the key about which row that is.
 
     The second clause is the whole safety argument. It is not a heuristic about
     which row looks nicer; it is authority/048's 240/240 structural finding —
     only tournament-keyed rows are ever linked — restated as a precondition, so
     that a population which stops obeying it stops being tagged instead of being
     tagged wrongly.
+
+    "The other evidence" is a different column depending on whether the match
+    has been played, and the two arms are kept apart deliberately:
+
+    ==============  ==========================================  ============
+    arm             what corroborates the tournament key        measured
+    ==============  ==========================================  ============
+    settled         exactly one row carries a FINAL SCORE       172/172
+    unplayed        exactly one row carries a PROVIDER ID       167/167
+    ==============  ==========================================  ============
+
+    The settled arm is untouched by #2693 — it shipped, it ran, and re-deciding
+    161 already-written labels on new evidence would be this module arbitrating
+    against itself. The unplayed arm is the new one and its full argument,
+    including what the perfect correlation between the two columns does and does
+    not buy, is in the module docstring.
 
     Orientation is checked both ways because a twin can be stored flipped, and
     ``event_registry._find_structured_matches`` already treats a swapped
@@ -354,10 +452,29 @@ def classify_pair(a: TwinRow, b: TwinRow) -> TwinVerdict:
             reason="the bare-keyed row carries a result; it is not a ghost",
         )
     if not canonical.has_settled_result:
-        return TwinVerdict(
-            REFUSE_AMBIGUOUS,
-            reason="neither row has been settled; which is the ghost is not yet decidable",
-        )
+        # THE UNPLAYED ARM (#2693). No score exists yet on either row, so the
+        # settled arm's evidence is unavailable and the provider id is what
+        # decides — see `row_is_id_anchored` and the module docstring's table.
+        # Stated as two separate refusals rather than one conjunction because
+        # they are two different things going wrong and a receipt that says
+        # which is worth the extra clause.
+        if ghost.is_id_anchored:
+            return TwinVerdict(
+                REFUSE_AMBIGUOUS,
+                reason=(
+                    "neither row has been settled and the bare-keyed row carries "
+                    "a provider id — 0/1259 bare rows did when this was measured, "
+                    "so the population has changed and the pair is not ours to decide"
+                ),
+            )
+        if not canonical.is_id_anchored:
+            return TwinVerdict(
+                REFUSE_AMBIGUOUS,
+                reason=(
+                    "neither row has been settled and neither carries a provider "
+                    "id, so nothing separates them"
+                ),
+            )
     return TwinVerdict(
         TWIN_FOUND,
         ghost_id=ghost.event_id,

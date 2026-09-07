@@ -26,10 +26,27 @@ the ghost would have taken away nearly all the market coverage and left a bare
 card. `classify_pair` refuses that pair, correctly, and
 `TestTheSemiFinalIsRefusedAndThatIsTheRightAnswer` pins it with those ids.
 
-So the ship this file grades is the settled half:
+So the ship this file graded at first was the settled half:
 **a US Open match that has been PLAYED appears once on the tour page, not twice.**
-162 pairs on production. The unsettled half needs the markets moved onto the
-canonical — #2693 — which is a merge-class change and not a label's to force.
+162 pairs on production.
+
+UPDATE 2026-09-07 — #2693 LIFTED THAT LIMIT, AND THE TEST THE BLOCK ASKED FOR
+─────────────────────────────────────────────────────────────────────────────
+Both halves are graded here now, and the semi-final test the block named exists
+under `TestTheShip.test_tomorrows_quarter_final_also_appears_once`. Two changes
+made it truthful, and neither on its own would have been:
+
+* the PROVIDER ID separates an unplayed pair where the score cannot — 250/250
+  tournament-keyed rows carry one, 0/1259 bare rows do
+  (`tennis_twin_pairs.row_is_id_anchored`);
+* the surviving card now READS the suppressed row's markets, so Cerundolo's 17
+  move onto the canonical instead of disappearing
+  (`proven_duplicates.folded_event_ids`, graded in
+  `test_proven_duplicate_2263.TestTheFold`).
+
+🔴 Note what is still true: **nothing is merged, deleted or repointed.** The
+markets are folded at READ time. An `UPDATE futures_markets SET event_id` on a
+name-and-time correspondence is what ruling 048 bans, and it is still banned.
 
 WHY BOTH RAILS ARE SEEDED
 ─────────────────────────
@@ -100,7 +117,21 @@ class _Row:
     this breaks, which is the point.
     """
 
-    def __init__(self, *, id, sport_key, home, away, at, hs=None, aws=None, tags="[]"):
+    def __init__(
+        self,
+        *,
+        id,
+        sport_key,
+        home,
+        away,
+        at,
+        hs=None,
+        aws=None,
+        tags="[]",
+        external_id=None,
+        espn_id=None,
+        statpal_fixture_id=None,
+    ):
         self.id = id
         self.sport_key = sport_key
         self.home_team_name = home
@@ -109,6 +140,12 @@ class _Row:
         self.home_score = hs
         self.away_score = aws
         self.tags_text = tags
+        # #2693 — the three provider-id columns `row_is_id_anchored` reads. They
+        # default to None (unanchored) because that is what a ghost carries; a
+        # canonical sets one explicitly, exactly as production does.
+        self.external_id = external_id
+        self.espn_id = espn_id
+        self.statpal_fixture_id = statpal_fixture_id
 
 
 def _ghost_row(**kw):
@@ -131,6 +168,9 @@ def _canon_row(**kw):
         at=CANON_TIME,
         hs=1,
         aws=3,
+        # 250/250 tournament-keyed rows on production carry all three.
+        external_id="772774e181b7af9eada58d",
+        espn_id="182738",
     )
     return _Row(**{**base, **kw})
 
@@ -211,31 +251,63 @@ class TestTheRefusalsThatStopItHidingARealMatch:
         assert plan.tags == ()
 
 
-class TestTheSemiFinalIsRefusedAndThatIsTheRightAnswer:
-    """🔴 The honest limit of this ship, pinned with production's own numbers.
+class TestTheUnplayedMatchTheScoreCouldNotReach:
+    """#2693 — the limit this file used to pin, and how it was lifted.
 
-    On 2026-09-06 the two US Open semi-finals were unsettled, and the market
-    books were on the GHOST:
+    Until 2026-09-07 this class was
+    ``TestTheSemiFinalIsRefusedAndThatIsTheRightAnswer`` and it asserted
+    ``plan.tags == ()`` for an unplayed pair. That was correct at the time: the
+    score was the only field that separated ghost from canonical, and the market
+    books were on the GHOST —
 
         ghost 15305538 Andreeva/Potapova  13 markets → canonical 15305579   0
         ghost 15305553 Cerundolo/Blockx   17 markets → canonical 15305578   1
 
-    Neither row has a score, so nothing separates them and the pair refuses.
-    That is not this sweep falling short of its ship — hiding those ghosts would
-    take away nearly all the market coverage for tomorrow's match and leave a
-    card with nothing on it. The fix is market re-attachment (#2693).
+    — so tagging would have removed the only card with prices on it.
+
+    Two changes lifted it, and BOTH are load-bearing:
+
+    1. ``row_is_id_anchored`` — the provider id separates an unplayed pair.
+       250/250 tournament-keyed rows carry one, 0/1259 bare rows do.
+    2. ``proven_duplicates.folded_event_ids`` in ``_build_game_markets`` — the
+       surviving card reads the suppressed row's markets, so the 17 move rather
+       than vanish. Pinned in ``test_proven_duplicate_2263.TestTheFold``.
+
+    🔴 The refusals below are what keeps (1) honest. Under-tagging is still the
+    intended failure direction.
     """
 
-    def test_an_unplayed_match_is_refused_by_the_planner(self):
+    def test_an_unplayed_match_is_now_decided_by_the_provider_id(self):
+        """THE #2693 SHIP, through the script's own wiring: 6 QFs, 6 tags."""
         plan = build_plan([_ghost_row(), _canon_row(hs=None, aws=None)])
-        assert plan.tags == ()
-        assert any("neither row has been settled" in r for r in plan.refusals)
+        assert [(t.ghost_id, t.canonical_id) for t in plan.tags] == [
+            (GHOST_ID, CANON_ID)
+        ]
 
-    def test_the_refusal_names_both_rows_so_2693_can_find_them(self):
-        plan = build_plan([_ghost_row(), _canon_row(hs=None, aws=None)])
-        assert any(
-            str(GHOST_ID) in r and str(CANON_ID) in r for r in plan.refusals
+    def test_an_unplayed_pair_with_no_provider_id_anywhere_is_still_refused(self):
+        """Nothing separates them, so nothing is written — and the refusal names
+        both rows, so whoever looks next can find them."""
+        plan = build_plan(
+            [
+                _ghost_row(),
+                _canon_row(hs=None, aws=None, external_id=None, espn_id=None),
+            ]
         )
+        assert plan.tags == ()
+        assert any(
+            str(GHOST_ID) in r and str(CANON_ID) in r and "provider id" in r
+            for r in plan.refusals
+        )
+
+    def test_an_unplayed_pair_whose_bare_row_carries_an_id_is_refused(self):
+        """🔴 The tripwire. 0/1259 bare rows carried a provider id when this was
+        measured; if one does, the structure the judgement rests on has changed
+        and the sweep stops rather than falling back on the sport key alone."""
+        plan = build_plan(
+            [_ghost_row(espn_id="182738"), _canon_row(hs=None, aws=None)]
+        )
+        assert plan.tags == ()
+        assert any("carries a provider id" in r for r in plan.refusals)
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -334,12 +406,13 @@ class TestTheShip:
             assert survivor.home_score is not None
             assert survivor.status == "completed"
 
-    def test_the_refused_pair_still_shows_both_cards(self, engine):
-        """The two-card refusal the block asked for, driven through the rails.
+    def test_tomorrows_quarter_final_also_appears_once(self, engine):
+        """#2693's half of the ship, driven through the same real rails.
 
-        An unsettled pair is refused, and a refusal must leave the page exactly
-        as it was — an ambiguous verdict that quietly hid one of them would be
-        the failure mode this whole design is built to avoid.
+        The pair is unplayed on both rows — no score anywhere — and the tour page
+        still collapses to one card, because the provider id decided it. This is
+        the test CERT-2142 originally asked for and that #2878 could not write
+        truthfully; it can be written now.
         """
         with Session(engine) as s:
             canonical = s.get(Event, CANON_ID)
@@ -347,7 +420,37 @@ class TestTheShip:
             canonical.status = "scheduled"
             canonical.commence_time = NOW + timedelta(hours=3)
             s.commit()
-        plan = build_plan([_ghost_row(), _canon_row(hs=None, aws=None, at=NOW + timedelta(hours=3))])
+        plan = build_plan(
+            [_ghost_row(), _canon_row(hs=None, aws=None, at=NOW + timedelta(hours=3))]
+        )
+        _apply(engine, plan)
+        assert _cards_on_the_tour_page(engine) == [CANON_ID]
+
+    def test_a_refused_pair_still_shows_both_cards(self, engine):
+        """A refusal must leave the page exactly as it was.
+
+        An ambiguous verdict that quietly hid one of them is the failure mode
+        this whole design is built to avoid, so the refusal is driven all the way
+        through the rails rather than asserted on the plan alone.
+        """
+        with Session(engine) as s:
+            canonical = s.get(Event, CANON_ID)
+            canonical.home_score = canonical.away_score = None
+            canonical.status = "scheduled"
+            canonical.commence_time = NOW + timedelta(hours=3)
+            s.commit()
+        plan = build_plan(
+            [
+                _ghost_row(),
+                _canon_row(
+                    hs=None,
+                    aws=None,
+                    at=NOW + timedelta(hours=3),
+                    external_id=None,
+                    espn_id=None,
+                ),
+            ]
+        )
         assert plan.tags == ()
         _apply(engine, plan)
         assert _cards_on_the_tour_page(engine) == sorted([GHOST_ID, CANON_ID])

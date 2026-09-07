@@ -50,22 +50,37 @@ row that actually gets settled. A sweep written on the intuitive reading of
 The final score is the only field that separates them, and it separates them
 172/172.
 
-WHAT THIS DELIBERATELY DOES NOT FIX, AND WHY THAT IS THE RIGHT CALL
-────────────────────────────────────────────────────────────────────
-**Unsettled matches are refused.** Before a match is played neither row has a
-score, so nothing separates them and `classify_pair` returns REFUSE_AMBIGUOUS.
-Eight pairs were in that state on 2026-09-06, including the two semi-finals, and
-refusing them is correct rather than merely cautious:
+THE UNPLAYED HALF, ADDED 2026-09-07 (#2693) — AND ITS DEPLOY ORDER
+───────────────────────────────────────────────────────────────────
+The first version of this script refused every unsettled pair, because the
+score was the only field that separated ghost from canonical and an unplayed
+row has none. Six US Open quarter-finals were sitting in that state on
+2026-09-07, each printing twice, and two of them were the reason refusing was
+right at the time:
 
     ghost 15305538 Andreeva/Potapova   13 markets  →  canonical 15305579   0 markets
     ghost 15305553 Cerundolo/Blockx    17 markets  →  canonical 15305578   1 market
 
-Hiding those ghosts would take away nearly all of the market coverage for
-tomorrow's matches and leave a card with nothing on it. That half is market
-re-attachment — #2693 — not a label, and it is not this script's to force.
+Hiding those ghosts would have taken away nearly all of the market coverage and
+left a card with nothing on it. Two things changed:
 
-So this repair ships the settled half: **a US Open match that has been played
-appears once.** Tomorrow's semi-final still prints twice until #2693 lands.
+1. `tennis_twin_pairs.row_is_id_anchored` — the PROVIDER ID separates an
+   unplayed pair where the score cannot. 250/250 tournament-keyed rows carry
+   one, 0/1259 bare rows do, and the shape holds on all 161 settled tags and
+   all 6 unplayed pairs.
+2. `proven_duplicates.folded_event_ids`, wired into `_build_game_markets` —
+   the canonical's page now reads the markets of the rows we decline to print,
+   so the 17 markets move to the surviving card instead of disappearing.
+
+🔴 **(2) MUST BE LIVE IN PRODUCTION BEFORE THIS SCRIPT IS RUN AGAINST AN
+UNPLAYED PAIR.** They shipped in the same commit, so the check is a deploy
+check, not a code check: confirm `/api/events/<canonical>/game-markets` returns
+the ghost's markets BEFORE `--apply`. Run it before the fold is live and this
+script does not remove a duplicate card, it removes the only card with prices.
+
+Still refused, and still correctly: a bare row that carries a result, a pair
+where both or neither row is tournament-keyed, a pair stamped beyond the 96h
+fence, and a ghost claimed by two canonicals.
 
 Usage — dry run first, always:
 
@@ -101,6 +116,7 @@ from app.utils.tennis_twin_pairs import (  # noqa: E402
     is_tournament_key,
     plan_twin_tags,
     row_has_settled_result,
+    row_is_id_anchored,
 )
 
 #: D51 backup. Holds the ghost's `event_tags` exactly as they were before the
@@ -130,6 +146,9 @@ SELECT e.id,
        e.commence_time,
        e.home_score,
        e.away_score,
+       e.external_id,
+       e.espn_id,
+       e.statpal_fixture_id,
        CAST(COALESCE(e.event_tags, '[]'::jsonb) AS text) AS tags_text
   FROM events e
   JOIN sports s ON s.id = e.sport_id
@@ -189,6 +208,11 @@ def build_plan(rows, *, max_separation: timedelta = MAX_TWIN_SEPARATION):
             has_settled_result=row_has_settled_result(
                 home_score=r.home_score, away_score=r.away_score
             ),
+            is_id_anchored=row_is_id_anchored(
+                external_id=r.external_id,
+                espn_id=r.espn_id,
+                statpal_fixture_id=r.statpal_fixture_id,
+            ),
         )
         for r in rows
     ]
@@ -211,12 +235,26 @@ def already_tagged_ids(rows) -> set[int]:
 
 
 def plan_refusal_reason(plan, *, untagged: int) -> str | None:
-    """Why this plan must NOT be applied, or ``None`` if it is safe. Pure."""
+    """Why this plan must NOT be applied, or ``None`` if it is safe. Pure.
+
+    🔴 **The floor is on the PLAN, not on the write.** It used to be on
+    ``untagged``, and that was right exactly once — on the first run, when the
+    two numbers were the same. The moment 162 labels existed, the floor started
+    reading every legitimate incremental run as a failure: the six unplayed US
+    Open quarter-finals of 2026-09-07 are a plan of 167 tags of which 6 are new,
+    and a floor of 20 on the delta refuses that and exits 1.
+
+    The question the floor exists to ask is "does the judgement still reach this
+    population?", and the answer to that is the size of the PLAN. How much of
+    the plan is already on disk is a fact about previous runs, not about whether
+    this one is sane. ``untagged`` keeps only its one honest job: telling an
+    idempotent no-op apart from a real write.
+    """
     if untagged == 0:
         return None  # idempotent re-run: everything is already labelled
-    if untagged < MIN_EXPECTED_TAGS:
+    if len(plan.tags) < MIN_EXPECTED_TAGS:
         return (
-            f"the plan writes {untagged} new tag(s), below the floor "
+            f"the plan decides only {len(plan.tags)} pair(s), below the floor "
             f"{MIN_EXPECTED_TAGS}, and some candidates are still untagged — "
             f"either the population has moved or the judgement has stopped "
             f"reaching it. Re-measure before writing."

@@ -431,6 +431,11 @@ class TestGetGameMarketsFormatting:
         db = AsyncMock()
         db.execute = AsyncMock(side_effect=[
             _make_result(scalar=event),
+            # #2693 — `folded_event_ids`: the canonical's suppressed twins, so
+            # the surviving card carries the prices the ghost was holding. This
+            # list is a POSITIONAL contract with the query sequence, so the
+            # lookup has to appear here even when it finds nothing.
+            _make_result(rows=[]),
             _make_result(rows=[market]),
             _make_result(all_rows=[]),
             _make_result(rows=[]),
@@ -481,6 +486,11 @@ class TestGetGameMarketsFormatting:
         db = AsyncMock()
         db.execute = AsyncMock(side_effect=[
             _make_result(scalar=event),
+            # #2693 — `folded_event_ids`: the canonical's suppressed twins, so
+            # the surviving card carries the prices the ghost was holding. This
+            # list is a POSITIONAL contract with the query sequence, so the
+            # lookup has to appear here even when it finds nothing.
+            _make_result(rows=[]),
             _make_result(rows=[market]),
             _make_result(all_rows=[]),
             _make_result(rows=[]),
@@ -525,6 +535,11 @@ class TestGetGameMarketsFormatting:
         db = AsyncMock()
         db.execute = AsyncMock(side_effect=[
             _make_result(scalar=event),
+            # #2693 — `folded_event_ids`: the canonical's suppressed twins, so
+            # the surviving card carries the prices the ghost was holding. This
+            # list is a POSITIONAL contract with the query sequence, so the
+            # lookup has to appear here even when it finds nothing.
+            _make_result(rows=[]),
             _make_result(rows=[market]),
             _make_result(all_rows=[]),
             _make_result(rows=[]),
@@ -563,6 +578,11 @@ class TestGetGameMarketsFormatting:
         db = AsyncMock()
         db.execute = AsyncMock(side_effect=[
             _make_result(scalar=event),
+            # #2693 — `folded_event_ids`: the canonical's suppressed twins, so
+            # the surviving card carries the prices the ghost was holding. This
+            # list is a POSITIONAL contract with the query sequence, so the
+            # lookup has to appear here even when it finds nothing.
+            _make_result(rows=[]),
             _make_result(rows=[market]),
             _make_result(all_rows=[]),
             _make_result(rows=[]),
@@ -592,6 +612,11 @@ class TestGetGameMarketsFormatting:
         db = AsyncMock()
         db.execute = AsyncMock(side_effect=[
             _make_result(scalar=event),
+            # #2693 — `folded_event_ids`: the canonical's suppressed twins, so
+            # the surviving card carries the prices the ghost was holding. This
+            # list is a POSITIONAL contract with the query sequence, so the
+            # lookup has to appear here even when it finds nothing.
+            _make_result(rows=[]),
             _make_result(rows=[market]),
             _make_result(all_rows=[]),
             _make_result(rows=[]),
@@ -622,6 +647,11 @@ class TestGetGameMarketsFormatting:
         db = AsyncMock()
         db.execute = AsyncMock(side_effect=[
             _make_result(scalar=event),
+            # #2693 — `folded_event_ids`: the canonical's suppressed twins, so
+            # the surviving card carries the prices the ghost was holding. This
+            # list is a POSITIONAL contract with the query sequence, so the
+            # lookup has to appear here even when it finds nothing.
+            _make_result(rows=[]),
             _make_result(rows=[]),
             _make_result(all_rows=[]),
             _make_result(rows=[market]),
@@ -683,6 +713,11 @@ class TestSportTotalRangeGuard:
         db = AsyncMock()
         db.execute = AsyncMock(side_effect=[
             _make_result(scalar=event),
+            # #2693 — `folded_event_ids`: the canonical's suppressed twins, so
+            # the surviving card carries the prices the ghost was holding. This
+            # list is a POSITIONAL contract with the query sequence, so the
+            # lookup has to appear here even when it finds nothing.
+            _make_result(rows=[]),
             _make_result(rows=[nba_market, nhl_market_1, nhl_market_2]),
             _make_result(all_rows=[]),   # poly parent groups
             _make_result(rows=[]),        # unlinked fallback
@@ -724,6 +759,11 @@ class TestSportTotalRangeGuard:
         db = AsyncMock()
         db.execute = AsyncMock(side_effect=[
             _make_result(scalar=event),
+            # #2693 — `folded_event_ids`: the canonical's suppressed twins, so
+            # the surviving card carries the prices the ghost was holding. This
+            # list is a POSITIONAL contract with the query sequence, so the
+            # lookup has to appear here even when it finds nothing.
+            _make_result(rows=[]),
             _make_result(rows=[nhl_market, nba_market]),
             _make_result(all_rows=[]),
             _make_result(rows=[]),
@@ -751,6 +791,11 @@ class TestSportTotalRangeGuard:
         db = AsyncMock()
         db.execute = AsyncMock(side_effect=[
             _make_result(scalar=event),
+            # #2693 — `folded_event_ids`: the canonical's suppressed twins, so
+            # the surviving card carries the prices the ghost was holding. This
+            # list is a POSITIONAL contract with the query sequence, so the
+            # lookup has to appear here even when it finds nothing.
+            _make_result(rows=[]),
             _make_result(rows=[market]),
             _make_result(all_rows=[]),
             _make_result(rows=[]),
@@ -780,6 +825,11 @@ class TestSportTotalRangeGuard:
         db = AsyncMock()
         db.execute = AsyncMock(side_effect=[
             _make_result(scalar=event),
+            # #2693 — `folded_event_ids`: the canonical's suppressed twins, so
+            # the surviving card carries the prices the ghost was holding. This
+            # list is a POSITIONAL contract with the query sequence, so the
+            # lookup has to appear here even when it finds nothing.
+            _make_result(rows=[]),
             _make_result(rows=[market]),
             _make_result(all_rows=[]),
             _make_result(rows=[]),
@@ -805,6 +855,11 @@ class TestSportTotalRangeGuard:
         db = AsyncMock()
         db.execute = AsyncMock(side_effect=[
             _make_result(scalar=event),
+            # #2693 — `folded_event_ids`: the canonical's suppressed twins, so
+            # the surviving card carries the prices the ghost was holding. This
+            # list is a POSITIONAL contract with the query sequence, so the
+            # lookup has to appear here even when it finds nothing.
+            _make_result(rows=[]),
             _make_result(rows=[market]),
             _make_result(all_rows=[]),
             _make_result(rows=[]),
@@ -874,6 +929,11 @@ class TestPolymarketLinePlacement:
         db = AsyncMock()
         db.execute = AsyncMock(side_effect=[
             _make_result(scalar=event),
+            # #2693 — `folded_event_ids`: the canonical's suppressed twins, so
+            # the surviving card carries the prices the ghost was holding. This
+            # list is a POSITIONAL contract with the query sequence, so the
+            # lookup has to appear here even when it finds nothing.
+            _make_result(rows=[]),
             _make_result(rows=markets),
             _make_result(all_rows=[]),
             _make_result(rows=[]),
@@ -928,6 +988,11 @@ class TestPolymarketLinePlacement:
         db = AsyncMock()
         db.execute = AsyncMock(side_effect=[
             _make_result(scalar=event),
+            # #2693 — `folded_event_ids`: the canonical's suppressed twins, so
+            # the surviving card carries the prices the ghost was holding. This
+            # list is a POSITIONAL contract with the query sequence, so the
+            # lookup has to appear here even when it finds nothing.
+            _make_result(rows=[]),
             _make_result(rows=[market]),
             _make_result(all_rows=[]),
             _make_result(rows=[]),

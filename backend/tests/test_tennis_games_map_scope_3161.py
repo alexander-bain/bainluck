@@ -120,6 +120,10 @@ def _db_for(event, markets, outcomes):
     db.execute = AsyncMock(
         side_effect=[
             _make_result(scalar=event),
+            # #2693 — `folded_event_ids`: the canonical's suppressed twins, so
+            # the surviving card carries the prices the ghost was holding. The
+            # list is a POSITIONAL contract with the query sequence.
+            _make_result(rows=[]),
             _make_result(rows=markets),
             _make_result(all_rows=[]),  # polymarket parent groups
             _make_result(rows=[]),  # unlinked fallback
