@@ -48,7 +48,12 @@ final class SettledQuoteTests: XCTestCase {
 
     func testTheWordsAreStatedAndAreNotVerdicts() {
         XCTAssertEqual(SettledQuote.prefix, "last quote")
-        XCTAssertEqual(SettledQuote.sectionNote, "settled — showing each market's last quote")
+        // #3792: #3752 moved this string and left the pin behind, so the iOS
+        // suite has been red on master since a144733d. The shipped value is the
+        // correct one — `SettledQuoteParityTests` reads
+        // `frontend/lib/settledQuote.ts` and passes, so web carries the same
+        // wording, and re-fixing the constant would break that parity instead.
+        XCTAssertEqual(SettledQuote.sectionNote, "settled — any percentage is a last quote")
 
         // This surface states NO verdict, because the grade for these rows is
         // not on the payload — it exists, authoritatively (`api_settlement`),

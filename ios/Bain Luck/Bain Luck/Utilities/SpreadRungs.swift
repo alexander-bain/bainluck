@@ -301,9 +301,66 @@ enum SpreadRungs {
         ]
     }
 
-    // MARK: - `Seattle wins by over 3.5 points`
+    // MARK: - `Seattle wins by 1 to 6 points` is not a rung (#3788)
+
+    /// True where an outcome names a **band of margins** rather than a cover
+    /// line — `"Seattle wins by 1 to 6 points"`, not `"Seattle wins by over
+    /// 1.5 points"`.
+    ///
+    /// **#3788, and it is #3743's rule applied to the second shape that breaks
+    /// it.** A ``Rung`` makes exactly one claim: *this side by more than
+    /// `abs(margin)`, at this probability.* A band outcome does not make it.
+    /// `P(Seattle by 1 to 6)` is not `P(Seattle by more than anything)` — it is
+    /// bounded at BOTH ends, and the whole point of the market is the upper
+    /// bound that a cover line does not have.
+    ///
+    /// Drawn as a rung anyway, it takes the band's LOWER edge as a line and the
+    /// band's mass as a cover price, and prints both on the ladder.
+    ///
+    /// What a reader saw, production 2026-09-07, every NFL card on opening
+    /// Sunday. Kalshi serves each game a `…: Spread` ladder **and** a separate
+    /// `…: Winning Margin` band market, the backend puts both under `spreads`,
+    /// and `isFullGameSpread` excludes halves and nothing else, so they land on
+    /// one rail. Event 14780138, New England @ Seattle — the top of the ladder:
+    ///
+    /// ```
+    /// SEA +1     18%     <- "Seattle wins by 1 to 6 points".  A BAND.
+    /// SEA +1.5   14%     <- "Seattle wins by over 1.5 points". A cover.
+    /// ```
+    ///
+    /// Two rows, formatted identically, a half point apart, answering questions
+    /// of different shape — and the fabricated one is on top, because the
+    /// ladder sorts by `abs(margin)` and the band's lower edge (`1`) is the
+    /// smallest number on the card. `"+1"` is not a line any venue quoted.
+    ///
+    /// Measured on the 22 production event pages that draw a margin map
+    /// (`census049-margin.json`, re-fetched 2026-09-07): **8 carry a band
+    /// market, all 8 of them NFL, 4 band rows each — and on all 8 a band row is
+    /// the FIRST row of both sides of the ladder.** 48 of 311 full-game spread
+    /// legs across the population. Nothing outside NFL serves one today, which
+    /// is why this survived #3552, #3568 and #3743: none of those censuses had
+    /// an NFL band market in front of them.
+    ///
+    /// **What this deliberately does NOT refuse.** `"wins by 15 or more
+    /// points"` is bounded at one end only, which IS a cover claim
+    /// (`P(M >= 15)`), so it stays a rung. It is half a point off the line it
+    /// really names — `P(M >= 15)` is `P(M > 14.5)`, not `P(M > 15)` — and that
+    /// is pre-existing, out of scope here, and worth nothing on today's data
+    /// because every card serving one also serves the `over 14.5` cover at the
+    /// same price.
+    static func namesARange(_ outcomeName: String) -> Bool {
+        // `by <n> to <n>`, `by <n>-<n>`, `by between <n> and <n>`. Anchored on
+        // `by` and on a digit immediately after it, so a signed line (`by
+        // -3.5`) and a cover line (`by over 1.5`) cannot reach the range test:
+        // neither has a number in the first slot.
+        let pattern = #"\bby\s+(?:between\s+)?\d+(?:\.\d+)?\s*(?:to|and|[-–—])\s*\d+"#
+        guard let re = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { return false }
+        let range = NSRange(outcomeName.startIndex..., in: outcomeName)
+        return re.firstMatch(in: outcomeName, range: range) != nil
+    }
 
     private static func fromNamedOutcome(_ leg: Leg, home: String, away: String, unit: String?) -> Rung? {
+        guard !namesARange(leg.outcomeName) else { return nil }
         guard let side = side(of: leg.outcomeName, home: home, away: away) else { return nil }
         guard let threshold = leg.threshold ?? lastNumber(in: leg.outcomeName) else { return nil }
         return Rung(
