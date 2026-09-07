@@ -344,6 +344,86 @@ class TestTheTwoZerosDoNotShareAVerdict:
         assert "append_tag" not in session.calls
         assert "already labelled" in summary["reason"]
 
+    def test_the_guard_itself_refuses_an_empty_plan_with_nothing_outstanding(self):
+        """CERT-2193's counterexample verbatim, as a pure call.
+
+        The grader's one-liner was `plan_refusal_reason(plan_with_no_tags,
+        untagged=0)` returning `None`. It is pinned here as a direct assertion
+        so the fix is checkable without running the whole task, and so the
+        `untagged == 0` short-circuit cannot be reintroduced as an
+        "optimisation" without this failing loudly.
+        """
+        empty = sweep.build_plan([])
+        assert empty.tags == ()
+
+        assert sweep.plan_refusal_reason(empty, untagged=0) is not None
+        assert sweep.plan_refusal_reason(empty, untagged=5) is not None
+
+    def test_an_empty_plan_over_a_live_population_is_failed_not_complete(
+        self, monkeypatch
+    ):
+        """🔴 CERT-2193's counterexample: the false GREEN this task exists to prevent.
+
+        The population is the SAME healthy 30-pair backdrop as the steady-state
+        control above — 60 real tennis rows, every pair decidable and labelled.
+        Only the planner is broken, which is what a renamed sport key or a moved
+        name column actually looks like from here: `plan_twin_tags` stops
+        returning pairs while the rows sit there untouched.
+
+        The old guard waved this through. An empty plan plans no tags, so
+        nothing is outstanding, so `untagged == 0` returned `None` before the
+        floor was ever consulted — and `run_tennis_twin_sweep` then took its
+        `not todo` exit and reported `complete`. Ninety-six times a day, forever,
+        while every twin formed that day double-printed.
+
+        The distinguishing assertion is `pairs_found == 0` alongside a nonzero
+        `rows_read`: this is not an empty window (that is `no_work`, pinned
+        below), it is a live population the judgement has stopped reaching.
+        """
+        rows = _filler(30)
+        empty = sweep.build_plan([])  # a real TwinSweepPlan, genuinely empty
+        monkeypatch.setattr(sweep, "build_plan", lambda *a, **kw: empty)
+
+        summary, session = _run(rows, monkeypatch)
+
+        assert summary["terminal"] == "failed", (
+            "an empty plan over a live population must never read `complete` — "
+            "it is the founding defect, not the idempotent re-run"
+        )
+        assert summary["written"] == 0
+        assert summary["rows_read"] == len(rows), "the population was live, not empty"
+        assert summary["pairs_found"] == 0
+        assert "NO pair at all" in summary["reason"]
+
+        # The refusal must land BEFORE the D51 backup, not after it: a run that
+        # banks rows and then refuses has written to the database on a plan it
+        # just declared untrustworthy.
+        assert "bank" not in session.calls
+        assert "create_backup_table" not in session.calls
+        assert "append_tag" not in session.calls
+
+    def test_the_floor_is_not_waived_just_because_nothing_is_outstanding(
+        self, monkeypatch
+    ):
+        """The same hole one step up: a below-floor plan that is fully labelled.
+
+        Three pairs, all already tagged, so `untagged == 0` again. The plan is
+        non-empty — so the vacuity arm above does not catch it — but three is far
+        under the floor of 20 over a population this size. The old code returned
+        `None` here too. Pins that the band is asked on the PLAN every run, and
+        that `untagged` no longer carries a veto.
+        """
+        summary, session = _run(_filler(3), monkeypatch)
+
+        assert summary["terminal"] == "failed"
+        assert summary["written"] == 0
+        assert str(sweep.MIN_EXPECTED_TAGS) in summary["reason"]
+        assert "nothing was outstanding" in summary["reason"], (
+            "the message must say the run only LOOKED quiet, so an operator is "
+            "not sent hunting for stranded work that does not exist"
+        )
+        assert "append_tag" not in session.calls
+
     def test_a_plan_that_stops_reaching_the_population_is_failed(self, monkeypatch):
         """The dangerous zero. One untagged pair, and a plan far under the floor.
 

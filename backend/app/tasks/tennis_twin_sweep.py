@@ -96,9 +96,13 @@ floor is on the PLAN, not on the write**:
     Tags were written but a planned ghost is still untagged, or a row exhausted
     its retries. Real progress, unfinished run.
 ``failed``
-    The plan fell below the floor or above the ceiling with work outstanding —
-    the judgement has stopped reaching the population — or the population read
-    itself raised, in which case ``measured`` is ``false``.
+    The plan fell outside the measured band — below the floor, above the
+    ceiling, or empty outright — so the judgement has stopped reaching the
+    population; or the population read itself raised, in which case ``measured``
+    is ``false``. 🔴 **The band is asked on every run, including the quiet ones.**
+    Whether anything was left to write does not enter into it: an empty plan has
+    nothing outstanding too, and treating that as the idempotent re-run is the
+    false GREEN CERT-2193 found.
 ``no_work``
     The window holds no tennis rows at all. Authoritative "I looked and there was
     nothing", never GREEN. Rare, and correct: a sweep over an empty population
@@ -143,8 +147,15 @@ DEFAULT_LOOKAHEAD_DAYS = 5
 
 #: Sanity band on the PLAN, measured 2026-09-06 at 162 tags over 1,430 rows.
 #: The floor exists because a repair that finds nothing and reports success is
-#: the worst outcome there is; it is waived when every candidate is already
-#: tagged, which is the idempotent re-run.
+#: the worst outcome there is.
+#:
+#: 🔴 **It is never waived.** It used to be skipped whenever every candidate was
+#: already tagged — the idempotent re-run — and that waiver was the hole
+#: CERT-2193 found: an empty plan over a live population also has nothing
+#: outstanding, so it took the same exit and recorded GREEN forever. The
+#: idempotent re-run does not need the waiver, because a healthy steady state
+#: clears the floor on the size of its PLAN (167 on the specimen), not on the
+#: size of its write.
 MIN_EXPECTED_TAGS = 20
 MAX_EXPECTED_TAGS = 600
 
@@ -264,15 +275,44 @@ def plan_refusal_reason(plan, *, untagged: int) -> str | None:
     for a hand-run script: nearly every scheduled run has ``untagged == 0``, so a
     floor on the write would refuse the healthy steady state ninety-six times a
     day.
+
+    🔴 **THE BAND IS ASKED FIRST, AND ``untagged`` NEVER BYPASSES IT** (CERT-2193,
+    repair ``TWIN-SWEEP-NONVACUOUS-PLAN-FLOOR-3811``). This function used to
+    return ``None`` the instant ``untagged == 0``, before looking at the plan at
+    all. That read as "everything is already labelled", but it is also what an
+    EMPTY plan over a live population looks like: no tags planned means nothing
+    outstanding means the guard waved it through, and
+    :func:`run_tennis_twin_sweep` then took its ``not todo`` exit and returned
+    ``terminal: complete``. A planner regression — a renamed sport key, a moved
+    name column — would therefore have recorded GREEN on every one of ninety-six
+    daily runs while every newly formed twin went untagged and double-printed.
+    That is this task's founding defect wearing the costume of its own guard,
+    which is why the task is in ``ENFORCED_TASKS`` at all.
+
+    So the band is now unconditional and ``untagged`` keeps no veto — only a
+    voice in the message, where it tells an operator whether work was stranded
+    by the refusal or whether the run merely looked quiet.
     """
-    if untagged == 0:
-        return None  # idempotent re-run: everything is already labelled
+    outstanding = (
+        f"{untagged} candidate(s) still untagged"
+        if untagged
+        else "nothing was outstanding, which is exactly how this used to read GREEN"
+    )
+
+    if not plan.tags:
+        return (
+            f"the plan decides NO pair at all across {plan.rows_considered} "
+            f"tennis row(s) in {plan.blocks_examined} block(s) — {outstanding}. A "
+            f"sweep that labels nothing has not shown that it still reaches its "
+            f"population, so it cannot vouch for the fold. Re-measure before "
+            f"writing."
+        )
     if len(plan.tags) < MIN_EXPECTED_TAGS:
         return (
             f"the plan decides only {len(plan.tags)} pair(s), below the floor "
-            f"{MIN_EXPECTED_TAGS}, and some candidates are still untagged — "
-            f"either the population has moved or the judgement has stopped "
-            f"reaching it. Re-measure before writing."
+            f"{MIN_EXPECTED_TAGS} — {outstanding}. Either the population has "
+            f"moved or the judgement has stopped reaching it. Re-measure before "
+            f"writing."
         )
     if len(plan.tags) > MAX_EXPECTED_TAGS:
         return (
