@@ -89,21 +89,41 @@ const render = (data: GameMarketsResponse, status: string | undefined) =>
     />,
   );
 
+const ENTITIES: Readonly<Record<string, string>> = {
+  "&#x27;": "'",
+  "&quot;": '"',
+  "&#x2F;": "/",
+  "&lt;": "<",
+  "&gt;": ">",
+  "&amp;": "&",
+  "&mdash;": "—",
+};
+
 /**
  * What a reader sees. React emits the apostrophe in the old note as `&#x27;`,
  * so a raw `toContain` finds nothing — and finds nothing in the PASSING
- * direction for every "must not contain" check below.
+ * direction for every "must NOT contain" check below.
+ *
+ * ── ONE PASS, DELIBERATELY (CodeQL `js/double-escaping`, high) ───────────────
+ *
+ * The obvious shape is a chain of `.replace()` calls, one per entity, and
+ * `specialEventMarketsSettled.test.tsx` still has it. It is wrong in a way that
+ * only bites on adversarial input: whichever entity is decoded LAST can be
+ * produced by an earlier decode, so `&amp;#x27;` — a literally-escaped
+ * `&#x27;` — comes out as `'` instead of `&#x27;`. Chained unescaping is not
+ * order-fixable; there is always a last rule.
+ *
+ * A single pass with one alternation cannot double-decode, because a
+ * replacement's output is never re-scanned. Harmless here (the input is our own
+ * React output) and it costs one object, so there is no reason to keep the
+ * shape that has to be argued about. The sibling suite carries the same latent
+ * instance and is untouched only because widening this diff to a second test
+ * file is a rider on this ship.
  */
 const visible = (html: string) =>
   html
     .replace(/<[^>]*>/g, " ")
-    .replace(/&#x27;/g, "'")
-    .replace(/&quot;/g, '"')
-    .replace(/&#x2F;/g, "/")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&amp;/g, "&")
-    .replace(/&mdash;/g, "—")
+    .replace(/&(?:#x27|quot|#x2F|lt|gt|amp|mdash);/g, (entity) => ENTITIES[entity])
     .replace(/\s+/g, " ");
 
 /** Any percentage in the body of the grid — the thing the note promises. */
