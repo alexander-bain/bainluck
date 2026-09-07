@@ -219,6 +219,41 @@ const SCOPED_WINNER_MARKET = /^(.+?)\s+winner\s*:\s*(.+?)\s+vs\.?\s+(.+?)\s*$/i;
 const PERIOD_SCOPE = /^(?:\d+(?:st|nd|rd|th)?\s+)?(?:set|period|quarter|inning|frame|half|map|leg)(?:\s*\d+(?:st|nd|rd|th)?)?$/i;
 
 /**
+ * `PERIOD_SCOPE` with the position CAPTURED, from whichever side carries it.
+ *
+ * Same vocabulary and same shape as `PERIOD_SCOPE` on purpose — it matches
+ * exactly the strings that one matches, and adds only the two capture groups.
+ * Keep the two in step: a period word added to one belongs in the other, or
+ * that period's rows silently lose their ordering. A test walks every word in
+ * the vocabulary through both, so the pair cannot drift without going red.
+ */
+const PERIOD_SEQUENCE = /^(?:(\d+)(?:st|nd|rd|th)?\s+)?(?:set|period|quarter|inning|frame|half|map|leg)(?:\s*(\d+)(?:st|nd|rd|th)?)?$/i;
+
+/**
+ * Where a period sits in its match — `Set 3` → 3, `1st Half` → 1 — or null when
+ * the scope names no numbered position.
+ *
+ * This is `setNumberFromLabel`'s general cousin and deliberately a SEPARATE
+ * function: that one answers "which tennis set does a finishing set decide?"
+ * and is anchored on the word `set` because a `Map 2` never freezes when a
+ * tennis set ends. This one answers "what order do these rows go in?", which
+ * every period vocabulary has — so it reads the number off either side of the
+ * word, because production writes it both ways (`Set 3`, `1st Half`).
+ *
+ * Null for `Half` and `Period`, which name a period but not WHICH one. A card
+ * carrying one of those is not an enumeration this can order, and says so by
+ * returning null rather than guessing a position.
+ */
+export function periodSequenceFromScope(scope: string | null | undefined): number | null {
+  const match = PERIOD_SEQUENCE.exec((scope ?? "").trim());
+  if (!match) return null;
+  const digits = match[1] ?? match[2];
+  if (digits === undefined) return null;
+  const n = Number(digits);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/**
  * A market asking who wins ONE NAMED PERIOD, **and saying who the two sides
  * are** — `Set 1 Winner: Swiatek vs Zheng`. Null for anything else.
  *
@@ -903,6 +938,24 @@ export function buildMarketSection(
 
     const cards: MarketCard[] = draft.cardOrder.map((name) => {
       const merged = mergeOutcomes(draft.cards.get(name) as LabeledRow[]);
+      // Is this card an ENUMERATION — set 1/2/3, the four quarters, three maps
+      // — rather than a field of rival candidates? Every row must name its own
+      // position for the answer to be yes, so a card that mixes `Set 1 Winner`
+      // with anything else keeps the price order it has today rather than
+      // interleaving a sequence with rows that have no place in one.
+      //
+      // Read off `winnerParts.scope`, the MARKET's own words, not the rendered
+      // label: by this point the label says `Tiafoe wins Set 3`, and a player
+      // whose name ends in a digit would otherwise be read as a position.
+      const sequence = new Map<string, number>();
+      const sequenced =
+        merged.outcomes.length > 1 &&
+        merged.outcomes.every((o) => {
+          const n = periodSequenceFromScope(o.winnerParts?.scope);
+          if (n === null) return false;
+          sequence.set(o.label, n);
+          return true;
+        });
       const outcomes = [...merged.outcomes]
         .map((o) => {
           // A score the board has already ruled out is not a long shot, it is
@@ -941,10 +994,31 @@ export function buildMarketSection(
         // corpse at the top would keep the exact lie this change exists to
         // remove, merely without a percentage beside it. Set-winner rows are
         // deliberately NOT sunk: they are the story of the match so far and
-        // belong where their price puts them.
+        // belong where the card's own order puts them.
         .sort((a, b) => {
           const strike = Number(a.unreachable === true) - Number(b.unreachable === true);
-          return strike !== 0 ? strike : b.prob - a.prob;
+          if (strike !== 0) return strike;
+          // An ENUMERATION goes in its own order, never in price order. On
+          // `/events/15306225` at 01:55 PT 2026-09-07 the three set-winner rows
+          // priced 0.565 / 0.565 / 0.560 and rendered `Set 3, Set 1, Set 2` —
+          // correctly sorted by a quantity the page ROUNDS AWAY, since all
+          // three print `56%`. Sorting a field of rival candidates by price is
+          // right and is untouched below; sorting sets 1, 2 and 3 by price
+          // shows a reader a scrambled sequence and no reason for it (#3861).
+          if (sequenced) {
+            const seq = (sequence.get(a.label) as number) - (sequence.get(b.label) as number);
+            if (seq !== 0) return seq;
+          }
+          if (b.prob !== a.prob) return b.prob - a.prob;
+          // Equal prices must not leave the order to the wire. Set 1 and Set 3
+          // were BOTH 0.565, so the tie fell through to `Array.sort`'s
+          // stability and the payload decided — and the payload reorders on
+          // its own (it arrives ranked by a relevance score that moves with
+          // the clock), so the top two rows SWAPPED between two loads of the
+          // same page 45 minutes apart with no price change at all. Comparing
+          // by codepoint rather than `localeCompare` keeps that answer
+          // independent of whatever ICU data the runtime happens to carry.
+          return a.label < b.label ? -1 : a.label > b.label ? 1 : 0;
         });
       renderedOutcomes += outcomes.length;
       // A row with a `result` renders the result and no number (`OutcomeBar`
