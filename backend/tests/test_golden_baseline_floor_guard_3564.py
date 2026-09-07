@@ -41,6 +41,7 @@ from scripts.check_golden_baseline_floor import (  # noqa: E402
     BLOB_PATH,
     BlobUnreadable,
     compare_baselines,
+    main,
     read_blob,
 )
 
@@ -455,12 +456,16 @@ def _run_cli(monkeypatch, capsys, target: dict, proposed: dict, *argv: str):
     carries `fetch-depth: 0` and nothing else does. A test that reached for it
     would pass here and turn into a harness error there.
     """
-    import scripts.check_golden_baseline_floor as mod
-
     blobs = iter([target, proposed])
-    monkeypatch.setattr(mod, "read_blob", lambda ref: next(blobs))
+    # Patched by dotted path rather than through a second `import ... as mod`:
+    # importing the module alongside this file's existing `from ... import` is
+    # what CodeQL's py/import-and-import-from flags, and the string form needs
+    # no module object at all.
+    monkeypatch.setattr(
+        "scripts.check_golden_baseline_floor.read_blob", lambda ref: next(blobs)
+    )
     monkeypatch.setattr(sys, "argv", ["check_golden_baseline_floor.py", *argv])
-    code = mod.main()
+    code = main()
     captured = capsys.readouterr()
     return code, captured.out, captured.err
 
