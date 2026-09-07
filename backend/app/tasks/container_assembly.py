@@ -1,0 +1,1481 @@
+"""Container assembly — membership, proved rather than curated. #2927 Phase 2.
+
+Spec §6. One container per run. Read-only against every existing table: this
+job writes `containers`' own edges and receipts and touches nothing else, so it
+is D51-reversible by deleting the rows it wrote (the undo line is on
+``UNDO_LINE`` below and is quoted in the alex-inbox note).
+
+WHAT IT DOES.
+
+1. **Resolve the container** by its `container_provider_anchors`.
+2. **Gather candidates** from every source that can name a member.
+3. **Test each candidate**, and write EITHER a `contains` edge with a class, a
+   source and a confidence, OR a receipt naming the test it failed.
+4. **Never absorb.** Assembly writes `contains` and nothing else. Ruling 048 is
+   untouched: an id-less claim never absorbs, `same_as` is the drain's ledger
+   and is not this job's to write, and twins stay lane1's under #2693 / D39.
+   The rule is enforced by ``ASSEMBLY_WRITABLE_KINDS``, not left as prose.
+
+MEMBERSHIP KEYS ON PROVIDER IDS, NEVER ON NAMES. This is the ordering
+constraint spec §6 names and it is the single most important line in this file.
+Name matching is what the register does today and ARTIFACT-M-20260903-I
+measured its cost: 340 unmatched rows, 79 of them doubles slash-teams that
+*"never match 2-name rows"*, and token-fallback catching 30+ false
+doubles→singles hits. A doubles fixture matched by name onto a singles row is a
+wrong answer that looks like a right one. Every gatherer below therefore yields
+a candidate carrying an id we already hold — the register's own `market_id`,
+a provider id from an anchor — and names are used only to CLASSIFY a candidate
+that some id already admitted, never to find one.
+
+AN ID IS NOT AN EDITION. The second half of that constraint, learned the hard
+way against production: a provider id can be *too coarse* to name one
+tournament. A Kalshi series ticker is a whole tour, so "US Open 2026 › Men's
+Doubles" anchored to `KXATPDOUBLES` would have collected the 42 open rows we
+hold under it — every one of them for 2026-09-18 → 09-20, the week AFTER the US
+Open. The container's own window is what separates the editions, and the date
+it tests is the market's TICKER date, never the stored `commence_time`, which
+on all 29 open Kalshi tennis match markets sat exactly 14 days late (gotcha
+#14; see `member_window_verdict`).
+
+EVERY CANDIDATE NOT EDGED IS ACCOUNTED FOR — by a receipt where one can be
+written, and in the run report where one cannot. Membership is never a curated
+list, and this is how that is proved rather than asserted. A live market
+rejected from a container is `market_match_receipts` with `container_id` set,
+`outcome='rejected'` and a `reject_reason` naming the test it failed. A
+candidate whose id does NOT resolve gets no receipt at all, whatever its type:
+`market_match_receipts.market_id` has a real FK, so a receipt for an id with no
+row is refused by the database and — receipts flushing as one batched
+statement — takes the whole pass down with it. Those land in `unresolved`.
+
+ONE BAD CANDIDATE NEVER WIPES A PASS (gotcha #42). Per-item try/except around
+every candidate, and the failure is recorded as
+`container_attempt_error` rather than swallowed.
+
+WHAT IT DELIBERATELY DOES NOT DO.
+* It does not create events. A container cannot contain an event that does not
+  exist; Kalshi's `KXATPMATCH-26SEP02AUGKHA` (FAA–Khachanov, two winner legs
+  active, no event of ours) is lane1's under #2693 and this job reports it as a
+  receipt rather than papering over it.
+* It does not resolve twins, merge rows, or write `same_as`.
+* It does not write receipts for non-market candidates, nor for any candidate
+  whose id does not resolve. `market_match_receipts` is keyed on `market_id`
+  with a real FK, so neither an event candidate nor a ghost market id has
+  anywhere to go in that table; both land in the run report's `unresolved` list
+  instead, and that asymmetry is stated here rather than discovered later.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from typing import Any, Iterable, Optional
+
+from sqlalchemy import text
+
+from app.utils.container_class import MemberEvidence, classify_member
+from app.utils.market_identity import ticker_game_date
+from app.utils.container_graph import (
+    ASSEMBLY_WRITABLE_KINDS,
+    EDGE_NODE_TABLES,
+    ContainerVocabularyError,
+    normalize_anchor_sport,
+    validate_anchor_id_kind,
+    validate_anchor_provider,
+    validate_confidence,
+    validate_edge_kind_and_class,
+    validate_edge_source,
+    validate_node_type,
+)
+from app.utils.match_receipts import (
+    PHASE_CONTAINER_ASSEMBLY,
+    REJECT_CONTAINER_ATTEMPT_ERROR,
+    REJECT_CONTAINER_CHILD_MISSING,
+    REJECT_CONTAINER_NOT_A_MEMBER,
+    MatchReceipt,
+    flush_receipts,
+)
+
+logger = logging.getLogger(__name__)
+
+#: D51. What to run to undo one assembly pass. Quoted in the alex-inbox note
+#: alongside the pass's own counts, so the undo is never reconstructed from
+#: memory at the moment it is needed.
+UNDO_LINE = (
+    "DELETE FROM event_edges WHERE parent_type = 'container' "
+    "AND parent_id = :container_id AND source = :source; "
+    "UPDATE market_match_receipts SET container_id = NULL "
+    "WHERE container_id = :container_id"
+)
+
+#: How confident each source is that its candidate is a member. These are
+#: confidences about MEMBERSHIP, not about price or identity.
+#:
+#: The register and a provider id are both 1.0 and that is not laziness: both
+#: are id-keyed. The register carries our own `futures_markets.id`, and a venue
+#: grouping carries the venue's own event id. Neither is a guess. A source that
+#: guessed would sit below 1.0, and there is deliberately no such source in
+#: this file — see the module docstring's ordering constraint.
+SOURCE_CONFIDENCE = {
+    "register": 1.0,
+    "venue_grouping": 1.0,
+    "authority_tournament_id": 1.0,
+}
+
+
+# ---------------------------------------------------------------------------
+# Candidates
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Candidate:
+    """One thing that MIGHT be a member, and the id that says so.
+
+    ``child_id`` is always an id we already hold. A gatherer that cannot
+    produce one does not produce a candidate — it produces nothing, and the
+    absence shows up in the completeness needle rather than as a name-matched
+    guess.
+    """
+
+    child_type: str
+    child_id: int
+    source: str
+    evidence: MemberEvidence
+    #: Carried for the receipt, so "why is KXATPMATCH-… reachable from
+    #: nowhere" is answerable without a join.
+    external_id: Optional[str] = None
+    market_source: Optional[str] = None
+
+    @property
+    def name(self) -> Optional[str]:
+        return self.evidence.name
+
+
+@dataclass
+class AssemblyReport:
+    """What one pass did. Returned, logged, and quoted in the alex-inbox note.
+
+    ``by_class`` is the number the completeness needle reads. ``unresolved``
+    holds candidates that could not even be receipted (non-market ids), so a
+    zero-member pass is never indistinguishable from a container with no
+    members — the failure mode gotcha #53 names.
+    """
+
+    container_id: int
+    slug: str
+    edges_written: int = 0
+    receipts_written: int = 0
+    by_class: dict = field(default_factory=dict)
+    rejected: dict = field(default_factory=dict)
+    unresolved: list = field(default_factory=list)
+    errors: list = field(default_factory=list)
+
+    def as_dict(self) -> dict:
+        return {
+            "container_id": self.container_id,
+            "slug": self.slug,
+            "edges_written": self.edges_written,
+            "receipts_written": self.receipts_written,
+            "by_class": dict(sorted(self.by_class.items())),
+            "rejected": dict(sorted(self.rejected.items())),
+            "unresolved": self.unresolved[:50],
+            "errors": self.errors[:20],
+        }
+
+
+# ---------------------------------------------------------------------------
+# Gatherer: the register (spec §5 M4)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class RegisterHarvest:
+    """What the register yielded, AND what it pinned that yielded nothing.
+
+    ``unpriced`` IS THE HALF THAT MUST NOT BE DROPPED, and it is not a
+    hypothetical. Measured against the committed US Open register on
+    2026-09-05: **448 `reaches` rows carry only 336 market ids, and 124
+    `matchups` rows carry only 116** — so 112 advancement ladders and 8 fixtures
+    are pinned by the register with no market of ours behind them. Every one is
+    a row the hub renders today and that the graph, on its own, would not.
+
+    Spec §5 M4 is explicit that this is a RED and not a graceful degradation:
+    *"if assembly yields less than the register did, that is a RED"*. Returning
+    only the candidates would have made that impossible to see — the pass would
+    report 458 happy members and the 120 missing rows would be nowhere, which
+    is the silent loss this whole program exists to end. The hub cannot flip to
+    reading the graph until this list is empty or explained.
+    """
+
+    candidates: list = field(default_factory=list)
+    #: Register rows pinning a member we hold no market for. Each carries the
+    #: kind, the draw and the register's own key, so the gap is diagnosable
+    #: without re-reading the JSON.
+    unpriced: list = field(default_factory=list)
+
+    def summary(self) -> dict:
+        counts: dict = {}
+        for row in self.unpriced:
+            counts[row["kind"]] = counts.get(row["kind"], 0) + 1
+        return {"candidates": len(self.candidates), "unpriced_by_kind": counts}
+
+
+def gather_register_candidates(register: dict) -> RegisterHarvest:
+    """Every member the committed register already pins, keyed on OUR ids.
+
+    Pure — takes the parsed JSON, returns candidates, touches no database. That
+    is what makes the "container output ⊇ register output" comparison in spec
+    §5 M4 gradeable without a tournament running.
+
+    WHY THIS GATHERER EXISTS AT ALL, given the register already renders the
+    hub. Because the hub's current content has to be reproducible FROM THE
+    GRAPH before anything switches to reading the graph. Until that holds, a
+    flip is a bet. And the register must never become the fallback that quietly
+    hides an assembly failure: if assembly yields less than the register did,
+    that is a RED, not a graceful degradation — which is a comparison you can
+    only make if both sides are expressed as edges.
+
+    EVERY ROW HERE CARRIES `market_id`, our own `futures_markets.id`. That is
+    why the register is an id-keyed source and not a name-matched one, and it
+    is the reason this gatherer can be trusted at confidence 1.0.
+    """
+    harvest = RegisterHarvest()
+    seen: set[tuple] = set()
+
+    def add(market_id: Any, evidence: MemberEvidence, external_id=None, src=None) -> bool:
+        # A register row can name the same market from two source blocks (a
+        # matchup priced on both venues). The edge's unique key would collapse
+        # them anyway; deduping here keeps the receipt count honest.
+        try:
+            market_id = int(market_id)
+        except (TypeError, ValueError):
+            # No id: the register pins this member but we hold no market for
+            # it. NOT silently skipped — the caller records it as unpriced.
+            return False
+        key = ("market", market_id)
+        if key in seen:
+            return True
+        seen.add(key)
+        harvest.candidates.append(
+            Candidate(
+                child_type="market",
+                child_id=market_id,
+                source="register",
+                evidence=evidence,
+                external_id=external_id,
+                market_source=src,
+            )
+        )
+        return True
+
+    def note_unpriced(kind: str, key: Any, draw: Any) -> None:
+        harvest.unpriced.append({"kind": kind, "key": key, "draw": draw})
+
+    for matchup in register.get("matchups") or []:
+        if not isinstance(matchup, dict):
+            continue
+        name = matchup.get("matchup_key")
+        draw = matchup.get("draw")
+        got = False
+        for block in matchup.get("sources") or []:
+            if not isinstance(block, dict):
+                continue
+            got |= add(
+                block.get("market_id"),
+                MemberEvidence(
+                    node_type="market",
+                    name=name,
+                    register_kind="matchup",
+                    draw=draw,
+                    external_id=block.get("market_external_id"),
+                ),
+                external_id=block.get("market_external_id"),
+                src=block.get("source"),
+            )
+        if not got:
+            note_unpriced("matchup", name, draw)
+
+    for reach in register.get("reaches") or []:
+        if not isinstance(reach, dict):
+            continue
+        draw = reach.get("draw")
+        got = False
+        for block in reach.get("sources") or []:
+            if not isinstance(block, dict):
+                continue
+            got |= add(
+                block.get("market_id"),
+                MemberEvidence(
+                    node_type="market",
+                    # The register stores the venue's own question text, which
+                    # is a better classification input than a synthesised name.
+                    name=block.get("question") or reach.get("entity_key"),
+                    register_kind="reach",
+                    draw=draw,
+                    external_id=block.get("market_external_id"),
+                ),
+                external_id=block.get("market_external_id"),
+                src=block.get("source"),
+            )
+        if not got:
+            note_unpriced(
+                "reach",
+                f"{reach.get('entity_key')}@{reach.get('round')}",
+                draw,
+            )
+
+    for prop in register.get("props") or []:
+        if not isinstance(prop, dict):
+            continue
+        evidence_for = MemberEvidence(
+            node_type="market",
+            name=prop.get("title"),
+            register_kind="prop",
+            draw=prop.get("draw"),
+            external_id=prop.get("market_external_id"),
+        )
+        # `markets` is the plural form; `market_id` is the singular legacy one.
+        # Both are read, because a prop that lost its section because we only
+        # looked at one spelling is precisely the silent loss this job exists
+        # to end.
+        got = False
+        for block in prop.get("markets") or []:
+            if isinstance(block, dict):
+                got |= add(
+                    block.get("market_id"),
+                    evidence_for,
+                    external_id=block.get("market_external_id"),
+                    src=prop.get("source"),
+                )
+        got |= add(
+            prop.get("market_id"),
+            evidence_for,
+            external_id=prop.get("market_external_id"),
+            src=prop.get("source"),
+        )
+        if not got:
+            note_unpriced("prop", prop.get("key"), prop.get("draw"))
+
+    return harvest
+
+
+# ---------------------------------------------------------------------------
+# The sanctioned anchor writer (CERT-2006's follow-up)
+# ---------------------------------------------------------------------------
+
+
+class AnchorCollision(Exception):
+    """Another container already owns this provider id in this namespace.
+
+    D55: a collision **raises or tags — it never silently no-ops.** Raising is
+    the whole value of the unique index; swallowing the conflict would turn the
+    detector into a no-op and let two draws quietly become one hub.
+    """
+
+    def __init__(self, provider: str, sport, id_kind: str, provider_id: str, owner: int):
+        self.owner_container_id = owner
+        super().__init__(
+            f"{provider}/{sport}/{id_kind}/{provider_id} is already claimed by "
+            f"container {owner}"
+        )
+
+
+async def claim_container_anchor(
+    session,
+    *,
+    container_id: int,
+    provider: str,
+    provider_id: str,
+    id_kind: str,
+    sport=None,
+    claim_context: Optional[dict] = None,
+) -> bool:
+    """Bind one provider id to one container. THE sanctioned write path.
+
+    Exists so that CERT-2006's follow-up cannot be forgotten by the next
+    caller: ``sport`` is folded through
+    :func:`~app.utils.container_graph.normalize_anchor_sport` HERE, once, on
+    the only path that inserts. The index is ``NULLS NOT DISTINCT``, which
+    makes NULL one namespace — but ``''`` is not NULL and ``'Tennis'`` is not
+    ``'tennis'``, so a caller spelling "no sport" its own way would open a
+    second namespace and defeat the constraint. A validator nobody is obliged
+    to call is a validator that gets skipped; this is the obligation.
+
+    Returns ``True`` when a row was written, ``False`` when this exact
+    ``(container, provider, sport, id_kind, provider_id)`` was already bound —
+    an idempotent re-claim by the same owner, which is what a nightly
+    re-discovery does and is not a collision.
+
+    Raises :class:`AnchorCollision` when a DIFFERENT container owns the key.
+    """
+    from app.models.models import ContainerProviderAnchor  # noqa: F401
+
+    sport = normalize_anchor_sport(sport)
+    validate_anchor_provider(provider)
+    validate_anchor_id_kind(id_kind)
+
+    existing = (
+        await session.execute(
+            text(
+                "SELECT container_id FROM container_provider_anchors "
+                "WHERE provider = :provider AND id_kind = :id_kind "
+                "  AND provider_id = :provider_id "
+                "  AND sport IS NOT DISTINCT FROM :sport"
+            ),
+            {
+                "provider": provider,
+                "id_kind": id_kind,
+                "provider_id": provider_id,
+                "sport": sport,
+            },
+        )
+    ).fetchone()
+
+    if existing is not None:
+        owner = int(existing[0])
+        if owner == container_id:
+            return False
+        raise AnchorCollision(provider, sport, id_kind, provider_id, owner)
+
+    await session.execute(
+        text(
+            "INSERT INTO container_provider_anchors "
+            "(container_id, provider, sport, provider_id, id_kind, claim_context) "
+            "VALUES (:container_id, :provider, :sport, :provider_id, :id_kind, "
+            "        CAST(:claim_context AS jsonb))"
+        ),
+        {
+            "container_id": container_id,
+            "provider": provider,
+            "sport": sport,
+            "provider_id": provider_id,
+            "id_kind": id_kind,
+            "claim_context": json.dumps(claim_context) if claim_context else None,
+        },
+    )
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Gatherer: venue grouping
+# ---------------------------------------------------------------------------
+
+#: Which `futures_markets` column an anchor's `id_kind` addresses. Explicit,
+#: because inferring it from the shape of the id is the D55 mistake — a Kalshi
+#: series ticker and a Polymarket slug are both bare strings.
+_ANCHOR_KIND_TO_PREDICATE = {
+    # A Kalshi series ticker prefixes every market ticker in the series:
+    # `KXATPMATCH` -> `KXATPMATCH-26SEP02AUGKHA`. Anchored LIKE, so it is
+    # index-servable and cannot match mid-string.
+    "series": "fm.external_id LIKE :pattern",
+    # Polymarket groups its sub-markets under one `group_id`.
+    "event_slug": "fm.group_id = :exact",
+    "tag": "fm.group_id = :exact",
+}
+
+#: How much an anchor of this kind PROVES about membership of ONE EDITION.
+#:
+#: `exact` — the venue's own grouping is per-edition. A Polymarket event slug
+#: names one tournament, so everything grouped under it is a member and the
+#: container's window adds nothing.
+#:
+#: `coarse` — the grouping spans editions. **A Kalshi series ticker is a whole
+#: tour**: `KXATPDOUBLES` holds every ATP doubles market there is, not the US
+#: Open's. Measured on production 2026-09-06: the 42 open `KXATPDOUBLES` rows
+#: we hold are all for 2026-09-18 → 09-20, i.e. the week AFTER the US Open. An
+#: unbounded series anchor would therefore have filled "US Open 2026 › Men's
+#: Doubles" with next week's tour, and it would have looked like the container
+#: working unusually well. The container's window is what separates the
+#: editions, so for a coarse anchor the window is REQUIRED, not optional.
+_ANCHOR_KIND_SPECIFICITY = {
+    "series": "coarse",
+    "event_slug": "exact",
+    "tag": "exact",
+}
+
+#: Row cap per anchor. `limit + 1` is fetched so saturation is DETECTED rather
+#: than silently truncating a draw (a cap that quietly fills is the recorded
+#: `candidate probe LIMIT 5 saturates` trap), and the fetch is ordered by id so
+#: which rows survive a truncation is deterministic and re-runnable.
+VENUE_FETCH_LIMIT = 5000
+
+#: Window verdicts. `undated` is its own answer and never folded into
+#: `outside`: "this market is for another tournament" and "this market does not
+#: say when it is" are different findings with different fixes, and a single
+#: bucket would hide the second behind the first.
+WINDOW_IN = "in_window"
+WINDOW_OUTSIDE = "outside_window"
+WINDOW_UNDATED = "undated"
+
+#: An anchor may DECLARE that its id, coarse as its kind is, belongs wholly to
+#: one edition. Written into the anchor's own `claim_context` at claim time, so
+#: the exception travels with the claim and is auditable, rather than living in
+#: a list of trusted series inside this file.
+ANCHOR_SCOPE_EDITION = "edition"
+
+
+def anchor_scope(anchor) -> Optional[str]:
+    """The scope its claimer declared, if any. Tolerant of every row shape.
+
+    `claim_context` is nullable JSONB and arrives as a dict from the ORM, as a
+    string from a hand-written `text()` select, and as absent from a test
+    double. None of those is an error — an anchor with no declared scope is the
+    normal case and gets its kind's default.
+    """
+    context = getattr(anchor, "claim_context", None)
+    if isinstance(context, str):
+        try:
+            context = json.loads(context)
+        except (TypeError, ValueError):
+            return None
+    if isinstance(context, dict):
+        scope = context.get("scope")
+        return scope if isinstance(scope, str) else None
+    return None
+
+
+def member_window_verdict(
+    external_id: Optional[str],
+    commence_time,
+    resolution_date,
+    window_start,
+    window_end,
+) -> str:
+    """Is this market inside the container's window? Pure; no database.
+
+    **THE TICKER OUTRANKS THE STORED TIME, and this is the whole reason this
+    function exists rather than a SQL `BETWEEN`.** Gotcha #14 says a Kalshi
+    `commence_time` is frequently the CLOSE time, and production says it every
+    time: on 2026-09-06 all 29 open Kalshi tennis match markets carried a
+    `commence_time` exactly 14 days after their own ticker date —
+    `KXWTAMATCH-26SEP06SWIZHE` (Swiatek–Zheng, played 9/6, the match standing
+    notice 27 names) is stored as `2026-09-20 15:00`. A window test that
+    trusted the column would have thrown tomorrow's final out of the US Open
+    and filed it under the tournament after. The market's own id knows better
+    than the column, so the id is asked first.
+
+    Falling back to the stored times is an INTERVAL overlap, not a point test:
+    an outright priced in June and resolving in September belongs to the
+    September tournament, and `commence <= window_end AND resolution >=
+    window_start` is what says so. `LEAST`/`GREATEST` semantics are done here
+    in Python rather than in SQL so this rule is gradeable by a table of
+    examples and cannot differ between Postgres and a test's SQLite.
+    """
+    ticker_date = ticker_game_date(external_id)
+    if ticker_date is not None:
+        # Compared on the calendar the ticker uses. A window is a timestamp
+        # pair; a ticker is a date. Widening the window to whole days at each
+        # end is deliberate — a 15:00Z close on the window's last day must not
+        # exclude a match played that morning.
+        if window_start is not None and ticker_date < window_start.date():
+            return WINDOW_OUTSIDE
+        if window_end is not None and ticker_date > window_end.date():
+            return WINDOW_OUTSIDE
+        return WINDOW_IN
+
+    times = [t for t in (commence_time, resolution_date) if t is not None]
+    if not times:
+        # Cannot be placed in ANY edition. Not silently admitted: a coarse
+        # anchor plus an undated row is exactly how another tournament's market
+        # gets into this hub with nothing to argue against it.
+        return WINDOW_UNDATED
+
+    earliest, latest = min(times), max(times)
+    if window_end is not None and earliest > window_end:
+        return WINDOW_OUTSIDE
+    if window_start is not None and latest < window_start:
+        return WINDOW_OUTSIDE
+    return WINDOW_IN
+
+
+@dataclass
+class VenueHarvest:
+    """What the venue gatherer collected AND what it refused, per anchor.
+
+    The refusals are returned rather than logged because a container that
+    collected nothing must never be indistinguishable from a tournament with
+    nothing on (gotcha #53) — `by_anchor` makes "the anchor matched 42 rows and
+    the window kept 0" a sentence the run report can say out loud.
+
+    NO `market_match_receipts` ROW IS WRITTEN FOR A WINDOW EXCLUSION, and that
+    is a deliberate departure from "every candidate not edged gets a receipt".
+    That table is keyed ON CONFLICT (market_id) — one row per market, not one
+    per (market, container) — so writing "not a member of the US Open" for next
+    week's Chengdu market would OVERWRITE the receipt that records how that
+    market actually matched. The exclusion is counted here instead.
+    """
+
+    candidates: list = field(default_factory=list)
+    #: One row per anchor: what it matched, kept, and refused.
+    by_anchor: list = field(default_factory=list)
+    #: Coarse anchors on a container with no window. Collected nothing.
+    refused_anchors: list = field(default_factory=list)
+
+    @property
+    def truncated(self) -> bool:
+        return any(a.get("truncated") for a in self.by_anchor)
+
+    def summary(self) -> dict:
+        return {
+            "candidates": len(self.candidates),
+            "anchors": len(self.by_anchor),
+            "refused_anchors": self.refused_anchors,
+            "outside_window": sum(a.get("outside_window", 0) for a in self.by_anchor),
+            "undated": sum(a.get("undated", 0) for a in self.by_anchor),
+            "truncated": self.truncated,
+        }
+
+
+async def gather_venue_candidates(
+    session,
+    anchors: Iterable,
+    *,
+    window_start=None,
+    window_end=None,
+    limit: int = VENUE_FETCH_LIMIT,
+) -> VenueHarvest:
+    """Markets the venue itself groups under one of the container's anchors.
+
+    Id-keyed by construction: the anchor holds the venue's own series ticker or
+    event slug, and this asks the venue's own grouping column for its members.
+    No name is read to FIND anything here.
+
+    A COARSE ANCHOR WITHOUT A WINDOW COLLECTS NOTHING. It is recorded in
+    ``refused_anchors`` and skipped, because the alternative is a hub holding a
+    whole tour — and #2215's lesson is that fail-closed is the only safe
+    direction when the two outcomes look identical from outside.
+
+    NOTE ON `LIKE`. The pattern is built with an explicit trailing `-%` and the
+    literal is escaped, because an unescaped `_` in a ticker is a single-char
+    wildcard in `LIKE` and `KXATP_MATCH` would silently widen to every
+    six-letter prefix. Binding it as a parameter is also what keeps it out of
+    gotcha #45's trap, where a `LIKE '%:x'` inside `text()` parses as a bind.
+    """
+    harvest = VenueHarvest()
+    seen: set[int] = set()
+
+    for anchor in anchors:
+        predicate = _ANCHOR_KIND_TO_PREDICATE.get(anchor.id_kind)
+        if predicate is None:
+            # An anchor kind that names no grouping column is not an error —
+            # a `tournament` or `league` anchor is for the authority gatherer.
+            continue
+
+        coarse = _ANCHOR_KIND_SPECIFICITY.get(anchor.id_kind) == "coarse"
+        if coarse and anchor_scope(anchor) == "edition":
+            # THE DECLARED EXCEPTION, and it has to exist: some series belong
+            # wholly to one tournament. `KXHONEYDEUCE` is the US Open's Honey
+            # Deuce prop and nothing else's, and its single market's only
+            # stored date is its 2027 expiry — so the window would refuse a
+            # genuine member forever. The claim says so explicitly, in the
+            # anchor row, rather than this file keeping a list of series it
+            # trusts.
+            coarse = False
+
+        if coarse and window_start is None and window_end is None:
+            harvest.refused_anchors.append(
+                {
+                    "provider": anchor.provider,
+                    "id_kind": anchor.id_kind,
+                    "provider_id": anchor.provider_id,
+                    "reason": "coarse_anchor_needs_window",
+                }
+            )
+            continue
+
+        escaped = (
+            anchor.provider_id.replace("\\", "\\\\")
+            .replace("%", "\\%")
+            .replace("_", "\\_")
+        )
+        params = {"pattern": f"{escaped}-%", "exact": anchor.provider_id}
+        sql = text(
+            "SELECT fm.id, fm.name, fm.external_id, fm.source, fm.market_type, "
+            "       fm.commence_time, fm.resolution_date "
+            "FROM futures_markets fm "
+            f"WHERE {predicate} "
+            "  AND fm.status <> 'resolved' "
+            "ORDER BY fm.id "
+            "LIMIT :limit"
+        )
+        # No explicit ESCAPE clause: backslash is PostgreSQL's default LIKE
+        # escape character, which is what the escaping above relies on.
+        params["limit"] = limit + 1
+        result = await session.execute(sql, params)
+        rows = result.fetchall()
+
+        account = {
+            "provider": anchor.provider,
+            "id_kind": anchor.id_kind,
+            "provider_id": anchor.provider_id,
+            "bounded_by_window": coarse,
+            "matched": min(len(rows), limit),
+            "selected": 0,
+            "outside_window": 0,
+            "undated": 0,
+            "truncated": len(rows) > limit,
+        }
+        if account["truncated"]:
+            logger.error(
+                "container venue gather truncated at %s rows for anchor %s/%s — "
+                "members beyond the cap are invisible to this pass",
+                limit,
+                anchor.provider,
+                anchor.provider_id,
+            )
+            rows = rows[:limit]
+
+        for row in rows:
+            market_id = int(row[0])
+            if market_id in seen:
+                continue
+
+            if coarse:
+                verdict = member_window_verdict(
+                    row[2], row[5], row[6], window_start, window_end
+                )
+                if verdict != WINDOW_IN:
+                    account[
+                        "outside_window" if verdict == WINDOW_OUTSIDE else "undated"
+                    ] += 1
+                    continue
+
+            seen.add(market_id)
+            account["selected"] += 1
+            harvest.candidates.append(
+                Candidate(
+                    child_type="market",
+                    child_id=market_id,
+                    source="venue_grouping",
+                    evidence=MemberEvidence(
+                        node_type="market",
+                        name=row[1],
+                        market_shape=row[4],
+                        external_id=row[2],
+                    ),
+                    external_id=row[2],
+                    market_source=row[3],
+                )
+            )
+
+        harvest.by_anchor.append(account)
+
+    return harvest
+
+
+# ---------------------------------------------------------------------------
+# The pass
+# ---------------------------------------------------------------------------
+
+
+async def _live_ids(session, child_type: str, ids: set[int]) -> set[int]:
+    """Which of these ids actually exist, as rows of the declared type.
+
+    THE INTEGRITY THE MISSING FOREIGN KEY CANNOT GIVE (spec §2). `event_edges`
+    has no FK on `child_id` because the type varies, so this check runs BEFORE
+    the edge is written rather than as a nightly cleanup. An edges table
+    without it is a second place for dangling ids to hide, and #2914 already
+    shows what unreachable rows cost.
+
+    The table name comes from `EDGE_NODE_TABLES`, never from a hand-written
+    CASE, so a new node type cannot be added without this learning about it in
+    the same commit.
+    """
+    if not ids:
+        return set()
+    table = EDGE_NODE_TABLES[validate_node_type(child_type, "child_type")]
+    result = await session.execute(
+        text(f"SELECT id FROM {table} WHERE id = ANY(:ids)"),
+        {"ids": list(ids)},
+    )
+    return {int(r[0]) for r in result.fetchall()}
+
+
+async def assemble_container(session, container, candidates: list[Candidate]) -> AssemblyReport:
+    """Write the `contains` edges for one container, and receipt the rest.
+
+    Idempotent. The edge's unique key `(parent_type, parent_id, child_type,
+    child_id, kind)` is the ON CONFLICT target, so a nightly re-run updates the
+    class and confidence in place instead of doubling every member — which is
+    the failure that would make the hub grow without bound and look, from the
+    outside, like the container was working unusually well.
+    """
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    from app.models.models import EventEdge
+
+    report = AssemblyReport(container_id=container.id, slug=container.slug)
+    now = datetime.now(timezone.utc)
+
+    # One existence query per child type, not one per candidate. A COUNT in a
+    # loop re-scans the whole table when the key is a Join Filter rather than
+    # an Index Cond; `id = ANY(:ids)` on the primary key is one index scan.
+    by_type: dict[str, set[int]] = {}
+    for candidate in candidates:
+        by_type.setdefault(candidate.child_type, set()).add(candidate.child_id)
+    live: dict[str, set[int]] = {}
+    for child_type, ids in by_type.items():
+        live[child_type] = await _live_ids(session, child_type, ids)
+
+    rows: list[dict] = []
+    receipts: list[MatchReceipt] = []
+
+    for candidate in candidates:
+        try:
+            receipt = None
+            if candidate.child_type == "market":
+                receipt = MatchReceipt(
+                    market_id=candidate.child_id,
+                    source=candidate.market_source or candidate.source,
+                    external_id=candidate.external_id,
+                    market_name=candidate.name,
+                    phase=PHASE_CONTAINER_ASSEMBLY,
+                    attempted_at=now,
+                    container_id=container.id,
+                )
+
+            if candidate.child_id not in live.get(candidate.child_type, ()):
+                # The id does not resolve. A container cannot contain a row
+                # that does not exist — report it, never paper over it.
+                #
+                # AND IT CANNOT BE RECEIPTED EITHER, market or not.
+                # `market_match_receipts.market_id` carries a real FK to
+                # `futures_markets`, so a receipt for an id with no row is
+                # refused by the database — and because receipts flush as one
+                # batched statement, that single refusal takes the WHOLE pass
+                # down with it. Real Postgres said so:
+                # `ForeignKeyViolationError … Key (market_id)=(999999999) is
+                # not present in table "futures_markets"`, which failed both
+                # the missing-child test and the "one bad candidate does not
+                # wipe the pass" test that exists to prevent exactly this. The
+                # unresolved list is where a missing id goes, whatever its
+                # type; it is reported, never faked into a table that would
+                # refuse it.
+                receipt = None
+                report.unresolved.append(
+                    {
+                        "child_type": candidate.child_type,
+                        "child_id": candidate.child_id,
+                        "name": candidate.name,
+                        "source": candidate.source,
+                        "external_id": candidate.external_id,
+                        "reject_reason": REJECT_CONTAINER_CHILD_MISSING,
+                    }
+                )
+                report.rejected[REJECT_CONTAINER_CHILD_MISSING] = (
+                    report.rejected.get(REJECT_CONTAINER_CHILD_MISSING, 0) + 1
+                )
+                continue
+
+            member_class = classify_member(candidate.evidence)
+            source = validate_edge_source(candidate.source)
+            confidence = validate_confidence(SOURCE_CONFIDENCE.get(source, 0.5))
+            kind, member_class = validate_edge_kind_and_class("contains", member_class)
+            assert kind in ASSEMBLY_WRITABLE_KINDS  # enforced, not assumed
+
+            rows.append(
+                {
+                    "parent_type": "container",
+                    "parent_id": container.id,
+                    "child_type": candidate.child_type,
+                    "child_id": candidate.child_id,
+                    "kind": kind,
+                    "class": member_class,
+                    "source": source,
+                    "confidence": confidence,
+                }
+            )
+            report.by_class[member_class] = report.by_class.get(member_class, 0) + 1
+
+            if receipt is not None:
+                receipt.outcome = "linked"
+                receipt.reject_reason = None
+                receipt.detail.update(
+                    {"container_slug": container.slug, "member_class": member_class}
+                )
+                receipts.append(receipt)
+
+        except ContainerVocabularyError as exc:
+            # A vocabulary error is a bug in this file, not bad data — record
+            # it loudly and keep going, so one wrong class cannot cost a pass.
+            report.errors.append(f"{candidate.child_type}:{candidate.child_id}: {exc}")
+            logger.error("container assembly vocabulary error: %s", exc)
+        except Exception as exc:  # noqa: BLE001 — gotcha #42
+            report.errors.append(f"{candidate.child_type}:{candidate.child_id}: {exc!r}")
+            logger.exception("container assembly candidate failed")
+            if candidate.child_type == "market":
+                failed = MatchReceipt(
+                    market_id=candidate.child_id,
+                    source=candidate.market_source or candidate.source,
+                    external_id=candidate.external_id,
+                    market_name=candidate.name,
+                    phase=PHASE_CONTAINER_ASSEMBLY,
+                    attempted_at=now,
+                    container_id=container.id,
+                )
+                failed.reject(REJECT_CONTAINER_ATTEMPT_ERROR, error=repr(exc))
+                receipts.append(failed)
+            report.rejected[REJECT_CONTAINER_ATTEMPT_ERROR] = (
+                report.rejected.get(REJECT_CONTAINER_ATTEMPT_ERROR, 0) + 1
+            )
+
+    # Deduplicate on the edge's own unique key before the upsert: Postgres
+    # refuses an ON CONFLICT statement that hits one key twice in a command
+    # ("cannot affect row a second time"), and two gatherers CAN legitimately
+    # find the same market.
+    deduped: dict[tuple, dict] = {}
+    for row in rows:
+        deduped[
+            (row["parent_type"], row["parent_id"], row["child_type"], row["child_id"], row["kind"])
+        ] = row
+    ordered = list(deduped.values())
+
+    for start in range(0, len(ordered), 500):
+        batch = ordered[start : start + 500]
+        stmt = pg_insert(EventEdge).values(batch)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["parent_type", "parent_id", "child_type", "child_id", "kind"],
+            set_={
+                "class": stmt.excluded["class"],
+                "source": stmt.excluded.source,
+                "confidence": stmt.excluded.confidence,
+            },
+        )
+        await session.execute(stmt)
+        report.edges_written += len(batch)
+
+    if receipts:
+        report.receipts_written = await flush_receipts(session, receipts)
+
+    return report
+
+
+# ---------------------------------------------------------------------------
+# Bootstrap: the container tree a tournament needs before assembly can run
+# ---------------------------------------------------------------------------
+
+#: The draws a tennis tournament has. Named, not inferred, and this list is the
+#: ONLY hand-written thing in the whole program — the spec's promise is that
+#: nobody writes a list of MEMBERS, not that nobody names the draws a Slam has.
+#: Each becomes a child container with its own anchor and its own status, which
+#: is what lets Men's Doubles go `final` while Mixed is still `live`.
+TENNIS_DRAWS = (
+    ("mens-singles", "Men's Singles"),
+    ("womens-singles", "Women's Singles"),
+    ("mens-doubles", "Men's Doubles"),
+    ("womens-doubles", "Women's Doubles"),
+    ("mixed-doubles", "Mixed Doubles"),
+)
+
+
+@dataclass(frozen=True)
+class PlannedContainer:
+    """One row `bootstrap_container_tree` would write. A PLAN, not a write."""
+
+    slug: str
+    name: str
+    kind: str
+    parent_slug: Optional[str] = None
+    category: Optional[str] = None
+    #: The edition's own dates. NOT decoration: a coarse (tour-wide) anchor
+    #: collects nothing without them, so a tree bootstrapped with no window is
+    #: a tree whose venue members are all refused.
+    window_start: Optional[datetime] = None
+    window_end: Optional[datetime] = None
+
+
+def plan_container_tree(
+    tournament: str,
+    season: str,
+    display_name: str,
+    draws=TENNIS_DRAWS,
+    window_start=None,
+    window_end=None,
+) -> list[PlannedContainer]:
+    """The parent container and one child per draw. Pure — returns a plan.
+
+    SEPARATED FROM THE WRITE ON PURPOSE. A plan that can be printed, diffed and
+    tested without a database is a plan somebody will actually read before it
+    runs, and D51's shape is "say what you did and the undo line" — which is
+    much easier to honour when the *intent* was reviewable first. It is also
+    what lets the slug contract below be tested at all.
+
+    SLUGS ARE DERIVED, NEVER TYPED. `us-open` + `2026` + `mens-doubles` →
+    `us-open-2026-mens-doubles`, always. The slug is the public URL and the
+    unique key, so a hand-typed one is a 404 waiting for a typo — and because
+    it is derived, a re-run produces the same slugs and the bootstrap is
+    idempotent for free.
+    """
+    root = f"{tournament}-{season}"
+    plan = [
+        PlannedContainer(
+            slug=root,
+            name=display_name,
+            kind="tournament",
+            window_start=window_start,
+            window_end=window_end,
+        )
+    ]
+    for draw_slug, draw_name in draws:
+        plan.append(
+            PlannedContainer(
+                slug=f"{root}-{draw_slug}",
+                name=f"{display_name} — {draw_name}",
+                kind="tournament",
+                parent_slug=root,
+                # Every draw inherits the edition's window. A draw's own dates
+                # are narrower (mixed doubles finishes before the singles start
+                # in 2026) but they are the AUTHORITY's to narrow later under
+                # D27; inheriting is what makes the parent's window the one
+                # thing that has to be right.
+                window_start=window_start,
+                window_end=window_end,
+            )
+        )
+    return plan
+
+
+async def apply_container_tree(session, plan: list[PlannedContainer]) -> dict:
+    """Create the planned containers if they do not exist. Idempotent.
+
+    Never updates an existing row. A container that is already there may have
+    had its `status` set by its authority (D27) or its window corrected, and a
+    bootstrap re-run must not stamp over that — the job's purpose is to make
+    the tree EXIST, not to own it afterwards.
+
+    Parents are created before children in one pass, which is safe because
+    `plan_container_tree` always emits the root first; the lookup below does
+    not assume it, so a hand-built plan in the wrong order fails loudly on the
+    missing parent instead of silently orphaning a draw.
+    """
+    created: list[str] = []
+    existing: list[str] = []
+    by_slug: dict[str, int] = {}
+
+    for planned in plan:
+        row = (
+            await session.execute(
+                text("SELECT id FROM containers WHERE slug = :slug"),
+                {"slug": planned.slug},
+            )
+        ).fetchone()
+        if row is not None:
+            by_slug[planned.slug] = int(row[0])
+            existing.append(planned.slug)
+            continue
+
+        parent_id = None
+        if planned.parent_slug is not None:
+            parent_id = by_slug.get(planned.parent_slug)
+            if parent_id is None:
+                parent_row = (
+                    await session.execute(
+                        text("SELECT id FROM containers WHERE slug = :slug"),
+                        {"slug": planned.parent_slug},
+                    )
+                ).fetchone()
+                if parent_row is None:
+                    raise ValueError(
+                        f"{planned.slug!r} names parent {planned.parent_slug!r}, "
+                        "which does not exist and is not earlier in the plan"
+                    )
+                parent_id = int(parent_row[0])
+
+        new_row = (
+            await session.execute(
+                text(
+                    "INSERT INTO containers "
+                    "(kind, name, slug, category, parent_container_id, "
+                    " window_start, window_end) "
+                    "VALUES (:kind, :name, :slug, :category, :parent_id, "
+                    "        :window_start, :window_end) "
+                    "RETURNING id"
+                ),
+                {
+                    "kind": planned.kind,
+                    "name": planned.name,
+                    "slug": planned.slug,
+                    "category": planned.category,
+                    "parent_id": parent_id,
+                    "window_start": planned.window_start,
+                    "window_end": planned.window_end,
+                },
+            )
+        ).fetchone()
+        by_slug[planned.slug] = int(new_row[0])
+        created.append(planned.slug)
+
+    return {"created": created, "existing": existing, "ids": by_slug}
+
+
+#: D51. Undo for one bootstrap, and it is deliberately narrow: it removes only
+#: containers that hold NO edges, so a re-run after assembly cannot delete a
+#: populated hub. The slugs to pass are the `created` list the apply returned —
+#: never `existing`, which the bootstrap did not create and must not remove.
+BOOTSTRAP_UNDO_LINE = (
+    "DELETE FROM containers c WHERE c.slug = ANY(:created_slugs) "
+    "AND NOT EXISTS (SELECT 1 FROM event_edges e "
+    "                WHERE e.parent_type = 'container' AND e.parent_id = c.id)"
+)
+
+
+# ---------------------------------------------------------------------------
+# The invariant check — part of the ship, not a follow-up (spec §2)
+# ---------------------------------------------------------------------------
+
+
+async def find_dangling_edges(session, limit: int = 500) -> list[dict]:
+    """Every `contains` edge whose child does not resolve to a live row.
+
+    Spec §2 is explicit that this is part of the ship: *"an edges table without
+    it is a second place for dangling ids to hide, and we already have #2914 to
+    show what unreachable rows cost."* Assembly checks before it writes, but a
+    row can be deleted afterwards — a settled market purged, a twin cleanup
+    removing an event — and nothing else in the schema would notice, because
+    `child_id` carries no foreign key.
+
+    The type→table map comes from `EDGE_NODE_TABLES`, so this cannot fall
+    behind a new node type.
+    """
+    findings: list[dict] = []
+    for child_type, table in sorted(EDGE_NODE_TABLES.items()):
+        result = await session.execute(
+            text(
+                "SELECT e.id, e.parent_id, e.child_id, e.class "
+                "FROM event_edges e "
+                f"LEFT JOIN {table} t ON t.id = e.child_id "
+                "WHERE e.kind = 'contains' AND e.child_type = :ct "
+                "  AND t.id IS NULL "
+                "LIMIT :limit"
+            ),
+            {"ct": child_type, "limit": limit},
+        )
+        for row in result.fetchall():
+            findings.append(
+                {
+                    "edge_id": int(row[0]),
+                    "parent_id": int(row[1]),
+                    "child_type": child_type,
+                    "child_id": int(row[2]),
+                    "class": row[3],
+                }
+            )
+    return findings
+
+
+def container_chain_has_cycle(parent_of: dict, start: int) -> bool:
+    """Would following `parent_container_id` from ``start`` loop forever?
+
+    The one-hop case is a CHECK constraint; a longer cycle cannot be expressed
+    as one and lives here, exactly as the spec says (§1). Floyd's tortoise and
+    hare so a cycle costs no allocation and a long legitimate chain costs one
+    pass.
+    """
+    slow = fast = start
+    while True:
+        slow = parent_of.get(slow)
+        fast = parent_of.get(parent_of.get(fast)) if parent_of.get(fast) else None
+        if slow is None or fast is None:
+            return False
+        if slow == fast:
+            return True
+
+
+# ---------------------------------------------------------------------------
+# The pass that runs itself (spec §6, program step 2)
+# ---------------------------------------------------------------------------
+
+#: The tables Phase 1 adds. Checked before a pass touches anything, because
+#: this code ships BEFORE its migration is applied (CERT-2006 is migration
+#: class under D45 and merges only when Alex says so), and a scheduled task
+#: that raises `UndefinedTable` every hour teaches its reader to ignore it.
+CONTAINER_TABLES = (
+    "containers",
+    "container_provider_anchors",
+    "event_edges",
+    "event_participants",
+)
+
+
+async def containers_tables_present(session) -> bool:
+    """Is Phase 1's migration applied on this database?
+
+    `to_regclass` returns NULL for a missing relation instead of raising, which
+    is what lets this be a question rather than an exception handler. An
+    exception here is NOT read as "absent": a connection failure and an
+    un-migrated database are different answers and only one of them means
+    "wait for Alex".
+    """
+    row = (
+        await session.execute(
+            text(
+                "SELECT "
+                + ", ".join(
+                    f"to_regclass('public.{t}') IS NOT NULL" for t in CONTAINER_TABLES
+                )
+            )
+        )
+    ).fetchone()
+    return bool(row) and all(bool(present) for present in row)
+
+
+async def _resolve_container(session, slug: str):
+    """The container row for a slug, or None. Read-only."""
+    return (
+        await session.execute(
+            text(
+                "SELECT id, slug, window_start, window_end "
+                "FROM containers WHERE slug = :slug"
+            ),
+            {"slug": slug},
+        )
+    ).fetchone()
+
+
+async def _container_anchors(session, container_id: int) -> list:
+    return list(
+        (
+            await session.execute(
+                text(
+                    "SELECT provider, sport, provider_id, id_kind, claim_context "
+                    "FROM container_provider_anchors WHERE container_id = :cid "
+                    "ORDER BY id"
+                ),
+                {"cid": container_id},
+            )
+        ).fetchall()
+    )
+
+
+@dataclass(frozen=True)
+class _Anchor:
+    """The shape `gather_venue_candidates` reads, from a plain row."""
+
+    provider: str
+    sport: Optional[str]
+    provider_id: str
+    id_kind: str
+    claim_context: Optional[Any] = None
+
+
+async def run_declared_assembly(session, declaration, *, apply: bool = True) -> dict:
+    """Bootstrap one declared edition's tree, claim its ids, assemble it.
+
+    Idempotent end to end: the bootstrap creates only what is missing, the
+    anchor claim returns False for a re-claim by the same owner, and the edge
+    write is an upsert on the edge's unique key. A pass that runs hourly
+    therefore converges instead of growing.
+
+    `apply=False` plans and writes NOTHING — no container, no anchor, no edge —
+    and still returns the counts, so the first run against a real database can
+    be read before it is trusted (D51's shape: say what it would do, then say
+    what it did, and carry the undo line either way).
+    """
+    report: dict = {
+        "slug": declaration.root_slug,
+        "apply": apply,
+        "tables": "present",
+        "bootstrap": {},
+        "anchors": {"claimed": 0, "already": 0, "collisions": []},
+        "containers": [],
+        "venue": {},
+        "errors": [],
+        "undo": {
+            "containers": BOOTSTRAP_UNDO_LINE,
+            "edges": UNDO_LINE,
+        },
+    }
+
+    plan = plan_container_tree(
+        declaration.tournament,
+        declaration.season,
+        declaration.display_name,
+        window_start=declaration.window_start,
+        window_end=declaration.window_end,
+    )
+    if not apply:
+        report["bootstrap"] = {
+            "would_create": [p.slug for p in plan],
+            "created": [],
+            "existing": [],
+        }
+    else:
+        report["bootstrap"] = await apply_container_tree(session, plan)
+
+    ids: dict = dict(report["bootstrap"].get("ids") or {})
+
+    for declared in declaration.anchors:
+        slug = declaration.slug_for(declared.draw)
+        if not apply:
+            # A dry run has nothing to anchor TO — the tree it printed was not
+            # written. Reporting six "no container" errors for that would make
+            # the dry run's output unreadable in exactly the case it exists for.
+            report["anchors"].setdefault("would_claim", []).append(
+                {"slug": slug, "provider_id": declared.provider_id}
+            )
+            continue
+
+        container_id = ids.get(slug)
+        if container_id is None:
+            row = await _resolve_container(session, slug)
+            if row is None:
+                # Somebody deleted a container between the bootstrap and here.
+                # Reported, never silently skipped.
+                report["errors"].append(f"{slug}: no container to anchor")
+                continue
+            container_id = int(row[0])
+            ids[slug] = container_id
+
+        try:
+            wrote = await claim_container_anchor(
+                session,
+                container_id=container_id,
+                provider=declared.provider,
+                provider_id=declared.provider_id,
+                id_kind=declared.id_kind,
+                sport=declared.sport,
+                claim_context={
+                    "declared_by": "container_tournaments",
+                    "scope": declared.scope,
+                    "evidence": declared.evidence,
+                },
+            )
+            report["anchors"]["claimed" if wrote else "already"] += 1
+        except AnchorCollision as exc:
+            # D55: a collision is reported, never swallowed. Another container
+            # owning this id is a real question about which edition it belongs
+            # to, and answering it by overwriting is how two draws become one.
+            report["anchors"]["collisions"].append(
+                {
+                    "slug": slug,
+                    "provider_id": declared.provider_id,
+                    "owner_container_id": exc.owner_container_id,
+                }
+            )
+
+    # Assemble every container in the tree, parent included: the root holds the
+    # edition-wide props, the children hold the draws.
+    for planned in plan:
+        slug = planned.slug
+        row = await _resolve_container(session, slug)
+        if row is None:
+            if apply:
+                report["errors"].append(f"{slug}: vanished before assembly")
+            continue
+        container = _ContainerRow(int(row[0]), row[1], row[2], row[3])
+
+        anchors = [
+            _Anchor(a[0], a[1], a[2], a[3], a[4])
+            for a in await _container_anchors(session, container.id)
+        ]
+        harvest = await gather_venue_candidates(
+            session,
+            anchors,
+            window_start=container.window_start,
+            window_end=container.window_end,
+        )
+        entry = {
+            "slug": slug,
+            "container_id": container.id,
+            "venue": harvest.summary(),
+            "by_anchor": harvest.by_anchor,
+        }
+        if apply and harvest.candidates:
+            result = await assemble_container(session, container, harvest.candidates)
+            entry["assembly"] = result.as_dict()
+        report["containers"].append(entry)
+
+    if apply:
+        await session.commit()
+
+    edges = sum(
+        (c.get("assembly") or {}).get("edges_written", 0) for c in report["containers"]
+    )
+    members = sum(c["venue"]["candidates"] for c in report["containers"])
+    report["edges_written"] = edges
+    report["members"] = members
+    # gotcha #53: a pass that returned is not a pass that worked. A zero-member
+    # run is `partial`, never `complete`, so the tracker cannot bank it green.
+    report["terminal"] = "complete" if members else "partial"
+    report["reason"] = None if members else "no_member_found"
+    return report
+
+
+@dataclass(frozen=True)
+class _ContainerRow:
+    id: int
+    slug: str
+    window_start: Optional[datetime]
+    window_end: Optional[datetime]
+
+
+async def _run_assemble_containers(apply: bool = True, only: Optional[str] = None) -> dict:
+    """Every declared edition, one session, one verdict. The Celery entry point.
+
+    THE UN-MIGRATED CASE IS THE NORMAL ONE TODAY and it is answered explicitly:
+    Phase 1's tables are migration-class under D45 and are not on production
+    until Alex says "merge 2006", so this returns `skipped` with
+    `reason: containers_tables_absent` rather than raising hourly. That is a
+    third state, not a success — `terminal: skipped` keeps it out of the green
+    counters (gotcha #53).
+    """
+    from app.tasks.base import get_task_session
+    from app.utils.container_tournaments import DECLARED_TOURNAMENTS
+
+    started = datetime.now(timezone.utc)
+    declarations = [
+        d
+        for d in DECLARED_TOURNAMENTS
+        if only is None or d.root_slug == only
+    ]
+
+    async with get_task_session() as session:
+        if not await containers_tables_present(session):
+            return {
+                "terminal": "skipped",
+                "reason": "containers_tables_absent",
+                "detail": (
+                    "containers Phase 1 (#2927) is not applied on this database; "
+                    "the assembly pass has nothing to write to and did not try"
+                ),
+                "declared": [d.root_slug for d in declarations],
+                "started_at": started.isoformat(),
+            }
+
+        runs = []
+        for declaration in declarations:
+            try:
+                runs.append(await run_declared_assembly(session, declaration, apply=apply))
+            except Exception as exc:  # noqa: BLE001 — gotcha #42, per EDITION
+                await session.rollback()
+                logger.exception("container assembly failed for %s", declaration.root_slug)
+                runs.append(
+                    {
+                        "slug": declaration.root_slug,
+                        "terminal": "failed",
+                        "reason": "assembly_error",
+                        "error": repr(exc),
+                    }
+                )
+
+    members = sum(r.get("members", 0) for r in runs)
+    failed = [r for r in runs if r.get("terminal") == "failed"]
+    if failed and len(failed) == len(runs):
+        terminal, reason = "failed", "every_edition_failed"
+    elif failed or not members:
+        terminal, reason = "partial", "some_edition_yielded_nothing"
+    else:
+        terminal, reason = "complete", None
+
+    return {
+        "terminal": terminal,
+        "reason": reason,
+        "editions": len(runs),
+        "members": members,
+        "edges_written": sum(r.get("edges_written", 0) for r in runs),
+        "runs": runs,
+        "started_at": started.isoformat(),
+        "duration_s": (datetime.now(timezone.utc) - started).total_seconds(),
+    }

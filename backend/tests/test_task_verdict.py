@@ -448,6 +448,14 @@ class TestEnforcementScope:
             # otherwise, so a sport the venue serves no injury path for stays
             # green (that is a fact about StatPal) while a dead path does not.
             "statpal_injuries",
+            # #2927 Phase 2: the event-container assembly pass, enrolled at
+            # BIRTH in the change that gives it terminals. Its empty case is
+            # not an edge case — it is the NORMAL state for as long as the
+            # Phase 1 migration is held for Alex, so an unenrolled version
+            # would bank a green hourly for a hub producer that has never
+            # produced a hub. `skipped` while the tables are absent, `partial`
+            # when it ran and edged nobody, `complete` only with a member.
+            "assemble_containers",
         }
 
     def test_enforced_task_partial_blocks_success(self):

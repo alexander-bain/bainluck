@@ -1375,7 +1375,85 @@ def free_background_slots(
 #: clear `reconcile-unanchored-events` at `:18/:48`, and sit three minutes ahead
 #: of the `:00` (36 fires) and `:30` (29 fires) pile-ups instead of immediately
 #: before them, which is what separates them from the equally-empty `:29/:59`.
-BACKGROUND_BEAT_COUNT = 119
+#:
+#: 🔴 RE-DERIVED at lane1b/053 (2026-09-07, #2927 Phase 2): **119 → 120,
+#: explicit 74 → 75.** One beat, explicitly routed here:
+#: `assemble-containers-hourly` at `crontab(minute=47)`, the event-container
+#: assembly pass. RE-DERIVED by RUNNING the census in
+#: `test_typeahead_beat_budget.py` over the assembled `beat_schedule`, which
+#: printed `explicit 75 implicit 45 total 120` — not by adding 1 to 119 (#1910).
+#: The fall-through half is UNMOVED at **45**: the beat names its queue rather
+#: than defaulting into it, the benign direction this guard reserves.
+#:
+#: 🔴 **AND THIS ENTRY WAS 119 UNTIL THE REBASE, WHICH IS INT-158'S COLLISION
+#: FOR THE FIFTH TIME AND THE MOST DANGEROUS SHAPE OF IT YET.** The `#3811`
+#: block immediately above and this one were written against the same base and
+#: each measured its own beat honestly: `tennis-twin-sweep` made it 119, and
+#: `assemble-containers-hourly` made it 119. Both were right about their own
+#: branch and 119 is the one number wrong on the composed tree, which is 120.
+#:
+#: What makes this instance worth reading rather than just counting: **the two
+#: prose blocks conflicted and the CONSTANT DID NOT.** `git merge` flagged only
+#: the docstrings, because both sides had written the identical
+#: `BACKGROUND_BEAT_COUNT = 119` and a textual merge cannot see that two
+#: authors meant different 119s. `merge-tree` exit 0 would have called the tree
+#: clean. It was integrator/243 running the census on the composed tree — not
+#: reading it — that produced `assert 75 == 74` and bounced it.
+#:
+#: The rule that follows is stronger than "re-derive when you add a beat": **a
+#: REBASE of a branch that adds a beat re-derives too, because the number can
+#: auto-merge into a value that is false of the tree it now lives in.** The
+#: earlier `authority/009` note below records the same trap one level down, on
+#: the assertion rather than the constant. Both halves can go quiet at once.
+#:
+#: **And the guard caught the original omission too, exactly as the MLB
+#: stamper's note above predicts.** The beat first shipped without any
+#: re-derivation; the lane's focused local run (D40) selected on `receipt or
+#: container` and this file matches neither word, so it went red only in CI
+#: backend shard 1 on `74 != 73`. That is now three times in four days that the
+#: census was missed by a `-k` band named after the feature. The lesson is on
+#: the band, not the guard: a change that adds — or rebases — a `beat_schedule`
+#: entry runs THIS file, whatever it is about.
+#:
+#: ITS COST, declared here because this is where costs are declared — and
+#: **updated at the rebase, because the sentence that used to be here is now
+#: false.** It read "for as long as #2927 Phase 1's migration is unapplied —
+#: which is TODAY, and is the case Alex is still deciding", and described a
+#: pass whose whole cost was FOUR `to_regclass` catalogue lookups and a
+#: `skipped` terminal. **Phase 1 is applied.** Alex ruled D76 = A, CERT-2199
+#: `4eff82a6` merged, and the four tables are live on production
+#: (`alembic_version = containers_phase1`, `market_match_receipts.container_id`
+#: present as a nullable `bigint` with 0 non-null of 63,504 rows). So the free
+#: arm is history and the first scheduled `:47` after this deploys does real
+#: work. That is the ship, not a regression — but a cost note a reader trusts
+#: must not describe an arm that can no longer be taken.
+#:
+#: The real per-pass cost, from here on: per declared edition, ONE indexed read
+#: per declared venue id (the US Open edition declares 6), each bounded to the
+#: edition's own date window, plus the edge writes for whatever those ids
+#: gather. There is no scan over `futures_markets` and no LLM call. NO HTTP AT
+#: ALL — the assembly pass reads ids we already hold and never asks a venue.
+#: The `to_regclass` guard stays in the code and is not dead: it is what makes
+#: the pass `skipped` rather than crashing on a database whose migration has
+#: not run, which is every review app and every fresh local checkout.
+#:
+#: `background` rather than `heavy` because there is no multi-minute compute,
+#: and rather than `realtime` because NOTHING READS THE OUTPUT YET:
+#: `/api/containers/{slug}` is behind `CONTAINERS_READ_ENABLED` and the hub
+#: still renders from the register. A producer with no reader has no claim on
+#: the live queue — the same reason the four StatPal stampers above sit here.
+#:
+#: `:47` was chosen by RUNNING the minute census over the assembled schedule
+#: (CERT-418's lesson), not by reading the file, and the census was RE-RUN at
+#: the rebase rather than carried forward: of **161** beat entries (157 before
+#: master took `tennis-twin-sweep` and three siblings) `:47` still carries ZERO
+#: other crontab fires — the only fire there is this beat's own. The new
+#: neighbour sits at `:27/:57` and does not reach it. It is the last minute of the settlement sweep's
+#: `:31`–`:47` band, whose only other occupant is `settlement-capture-sweep-
+#: nightly` at `:31`; it is clear of the two 15-and-17-entry pile-ups at `:45`
+#: and `:40`, and one minute after `precompute-discover-candidate-base` at
+#: `:46`.
+BACKGROUND_BEAT_COUNT = 120
 #: **UX-P139 re-derivation: 101 → 103, explicit 56 → 58, fall-through still 45.**
 #: Two beats added, both naming `background` explicitly:
 #: `refresh-registered-tournament-prices` (every 10 min, ~11 bounded Gamma calls

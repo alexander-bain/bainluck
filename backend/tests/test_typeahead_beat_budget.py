@@ -916,6 +916,41 @@ def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
     first draft at `:08/:38`. Note that this is the guard pair working exactly
     as designed twice in one change: G8 caught the collision, this one caught
     the inventory.
+
+    🔴 **RE-DERIVED at lane1b/053 (2026-09-07, #2927 Phase 2): 119 → 120,
+    explicit 74 → 75.** `assemble-containers-hourly` (`crontab(minute=47)`, the
+    event-container assembly pass) names `background` explicitly, so the
+    fall-through half is UNMOVED at **45**. Obtained by RUNNING the census below
+    over the assembled schedule, which printed `explicit 75 implicit 45 total
+    120`, never by adding one (#1910). The cost declaration is on
+    `BACKGROUND_BEAT_COUNT`.
+
+    🔴 **THIS ENTRY SAID 119 UNTIL THE REBASE, AND THAT IS INT-158'S COLLISION
+    FOR THE FIFTH TIME — read it next to the `authority/009` note above, which
+    is the same trap on the other half of the pair.** The `#3811` block
+    immediately above and this one were written against the same base, each
+    measured its own beat honestly, and both arrived at 119. Both were right
+    about their own branch; 119 is the one number wrong on the composed tree.
+
+    Note what the composition did to the two halves THIS time, because it is
+    the mirror image of `authority/009`'s: there, the constant conflicted
+    loudly and this assertion auto-merged. Here **the two docstrings conflicted
+    and `BACKGROUND_BEAT_COUNT = 119` auto-merged clean**, because both sides
+    wrote the identical line. Either half can be the quiet one. So the rule is
+    not "watch the assertion" or "watch the constant" — it is **re-run the
+    census on the composed tree**, which is a thing no textual merge and no
+    `merge-tree` exit code can do for you. integrator/243 did exactly that and
+    bounced this branch on `assert 75 == 74` before it reached master.
+
+    **This guard did its job again, and the MLB stamper's note above called the
+    shot.** That note says the census "lives nowhere near the words a StatPal
+    change would think to select". Substitute containers and it is the same
+    sentence: the lane's focused run (D40) selected on `receipt or container`,
+    this file is named after `typeahead`, and the beat shipped without the
+    re-derivation. It went red in CI backend shard 1 on `74 != 73` — the second
+    time in three days, and the second time the `-k` band was named after the
+    feature rather than after what the change touches. **A change that adds a
+    `beat_schedule` entry runs THIS file, whatever the change is about.**
     """
     from app.tasks import celery_app
     from app.utils.typeahead_beat_budget import BACKGROUND_BEAT_COUNT
@@ -932,9 +967,9 @@ def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
         elif named is None and conf.task_default_queue == "background":
             implicit += 1
 
-    assert explicit == 74, f"explicitly-routed background beats moved: {explicit}"
+    assert explicit == 75, f"explicitly-routed background beats moved: {explicit}"
     assert implicit == 45, f"default-queue fall-through moved: {implicit}"
-    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 119
+    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 120
 
     # ruling 110's two movers are OFF this queue and ON heavy — asserted here
     # too, so a silent revert cannot restore the count without being noticed.

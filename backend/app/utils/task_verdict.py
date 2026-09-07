@@ -487,6 +487,19 @@ ENFORCED_TASKS = frozenset({
     # `complete` otherwise — including when the venue serves no injury path for
     # a sport at all, which is a fact about the venue and not a failed run.
     "statpal_injuries",                # terminal + fetch_failures
+    # #2927 Phase 2: the event-container assembly pass. Enrolled IN THE SAME
+    # CHANGE that gives it terminals, because this file's own trap is that
+    # either half alone is worthless — and here the empty case is not an edge
+    # case, it is the normal one for as long as the Phase 1 migration is held.
+    # A pass that finds nothing must not bank a success: `skipped` while the
+    # four tables do not exist, `partial` when the pass ran and no member was
+    # found (an anchor whose series went dark, a window that refused
+    # everything), `failed` only when every declared edition raised, and
+    # `complete` only when at least one member was actually edged. Without
+    # enrolment all four read as the non-authoritative legacy unknown and
+    # `_tracked_run` records a bare returning invocation — a hub producer that
+    # has never produced a hub, permanently green.
+    "assemble_containers",             # terminal + members + edges_written
 })
 
 

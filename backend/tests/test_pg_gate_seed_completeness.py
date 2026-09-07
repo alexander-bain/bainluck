@@ -58,6 +58,7 @@ COVERED = (
     # `Sport.active` carries a CLIENT-SIDE ORM default and no server default —
     # the exact class this file is named after. It is in COVERED so the next
     # raw INSERT added to it is checked before a runner finds out.
+    "test_container_assembly_real_postgres.py",
     "test_containers_migration_real_postgres.py",
     "test_create_wave_insert_bind_contract.py",
     "test_feed_static_tag_filter_pg.py",
