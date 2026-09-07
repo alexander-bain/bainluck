@@ -204,3 +204,101 @@ describe("RecentGameCard — a suspended match (live/056)", () => {
     expect(html).not.toContain("No result reported");
   });
 });
+
+// ---------------------------------------------------------------------------
+// #3791 — the THIRD way of not knowing, and the one live/056's denylist let
+// through: a `closed`/`completed` row whose scores never arrived.
+//
+// THE SPECIMEN IS PRODUCTION, NOT INVENTED. Measured 2026-09-07 07:5xZ:
+// `/api/teams/new-york-jets` served 15184679 (Jets v Vikings, Aug 15, `closed`,
+// home_score null, away_score null) as the fifth card of its recent rail, and
+// `/api/teams/los-angeles-chargers` served 14781719 (v Chiefs, same date, same
+// shape). The Jets card printed "FINAL" and, under it, "we had them at 40%" —
+// a Final we cannot show, and a grade on a call that was never settled. One
+// card up on the Vikings page, 15291332 (`suspended`, same absent evidence)
+// printed the honest sentence. Two answers, one page family.
+//
+// Both directions are pinned below, because a guard that only suppressed would
+// pass by deleting the feature — that is what the CONTROL in each block is for.
+// ---------------------------------------------------------------------------
+describe("RecentGameCard — a settled row with no score (#3791)", () => {
+  const scoreless = (o: Partial<TeamGameBrief> = {}) =>
+    brief({
+      status: "closed",
+      is_home: true,
+      opponent: "Minnesota Vikings",
+      home_score: null,
+      away_score: null,
+      commence_time: past(),
+      completed_at: past(),
+      ...o,
+    });
+
+  test("🔴 a `closed` row with no score does NOT print Final", () => {
+    const html = renderToStaticMarkup(<RecentGameCard game={scoreless()} />);
+    expect(html).not.toContain("Final");
+    expect(html).not.toContain("FINAL");
+    expect(html).toContain("No result reported");
+  });
+
+  test("🔴 `completed` reaches the same answer — the fix is not status-keyed", () => {
+    const html = renderToStaticMarkup(
+      <RecentGameCard game={scoreless({ status: "completed" })} />,
+    );
+    expect(html).not.toContain("Final");
+    expect(html).toContain("No result reported");
+  });
+
+  test("🔴 and it does not grade our call under the non-result", () => {
+    // The exact pair the Jets card printed: FINAL over "we had them at 40%".
+    const html = renderToStaticMarkup(
+      <RecentGameCard game={scoreless({ pregame_win_probability: 0.4 })} />,
+    );
+    expect(html).not.toContain("we had them at");
+    expect(html).not.toContain("Upset");
+  });
+
+  test("half a score is no score — one side present still refuses", () => {
+    const html = renderToStaticMarkup(
+      <RecentGameCard game={scoreless({ home_score: 17 })} />,
+    );
+    expect(html).not.toContain("Final");
+    expect(html).toContain("No result reported");
+    expect(html).not.toContain("last score"); // teamLastScore needs both sides
+  });
+
+  test("ALLOWLIST — an unrecognised status inherits no claim either", () => {
+    // The point of keying on `teamResult` rather than on a list of the states
+    // we happen to know about: `voided` was never enumerated anywhere in this
+    // component, and before this change it printed Final by falling through.
+    //
+    // The cast is the finding, not a workaround. `lib/types.ts`'s `EventStatus`
+    // lists five states and the `events` table holds at least seven — the
+    // census in `app/utils/lifecycle.py` (2026-09-05) counts 66 `voided` and 22
+    // `merged` rows. So the type is NARROWER than the payload, and a status the
+    // union does not know about is exactly what reaches this card at runtime.
+    const html = renderToStaticMarkup(
+      <RecentGameCard
+        game={scoreless({ status: "voided" as TeamGameBrief["status"] })}
+      />,
+    );
+    expect(html).not.toContain("Final");
+    expect(html).toContain("No result reported");
+  });
+
+  test("CONTROL — a settled row WITH scores still prints its result and its call", () => {
+    const html = renderToStaticMarkup(
+      <RecentGameCard
+        game={scoreless({
+          home_score: 6,
+          away_score: 23,
+          pregame_win_probability: 0.4,
+        })}
+      />,
+    );
+    expect(html).toContain(">L<");
+    expect(html).toContain("6–23");
+    expect(html).toContain("we had them at 40%");
+    expect(html).not.toContain("No result reported");
+  });
+});

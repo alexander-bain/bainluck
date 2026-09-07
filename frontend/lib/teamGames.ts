@@ -58,6 +58,16 @@ export function isGameSettled(game: Pick<TeamGameBrief, "status">): boolean {
  * Such a row carries NO score at all, where a suspended one carries a partial
  * — so it lands on the score-less arm of the handling live/056 already built,
  * and there is nothing further for `RecentGameCard` to learn.
+ *
+ * 🔴 `RecentGameCard` NO LONGER CALLS THIS, AND THAT IS THE FIX, NOT A REGRESSION
+ * (#3791). Asking "is this one of the two states we know we do not know about"
+ * is a denylist, and it let the card claim a bare `Final` for the third way —
+ * a `closed` row whose scores never arrived. The card now asks {@link teamResult}
+ * whether a result can be STATED, which is the same question fail-closed. This
+ * predicate stays because it is still the right one for anything reasoning about
+ * the rail's membership rather than about what a card may claim, and because it
+ * is where a surface should reach for the shared vocabulary rather than writing
+ * a fourth `=== "suspended"`.
  */
 export function isGameSuspended(
   game: Pick<TeamGameBrief, "status" | "commence_time">,
