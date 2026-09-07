@@ -651,8 +651,31 @@ class TestTheLeagueRailAdmitsSuspended:
             recent_results_query(sport_key, NOW)
         ).scalars().all()}
 
+    def _unreported(self, session, sport_key="tennis_atp_us_open"):
+        from app.routes.league_futures import unreported_games_query
+
+        return {e.id for e in session.execute(
+            unreported_games_query(sport_key, NOW)
+        ).scalars().all()}
+
     def test_the_suspended_match_is_on_its_own_league_page(self, slate):
-        assert SPECIMEN_ID in self._rail(slate)
+        """live/056's ship: the rain-delayed match is REACHABLE. That is the
+        claim, and #3748 did not touch it.
+
+        🔴 WHICH RAIL CHANGED, and the distinction is the whole of CERT-2167.
+        This asserted `recent_results` because that is where live/056 put the
+        row when the unreported rail did not yet exist. The specimen carries a
+        2-1 scoreline, and it STILL renders "No result reported · last score
+        2-1" — `eventState.hasNoReportedResult` is true for every suspended row
+        — so "Recent Results" was never a heading that was true of it. It is now
+        on the rail that says what its card says.
+
+        Asserted against BOTH rails, exactly once between them: "it is on the
+        unreported rail" alone would go green if the settled rail also admitted
+        it, and a match on a page twice is its own defect.
+        """
+        assert SPECIMEN_ID not in self._rail(slate)
+        assert SPECIMEN_ID in self._unreported(slate)
 
     def test_the_final_beside_it_is_still_there(self, slate):
         """CONTROL — a widening that swallowed the rail would pass the test

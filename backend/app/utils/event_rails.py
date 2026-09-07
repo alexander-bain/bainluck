@@ -42,7 +42,7 @@ sweep a matrix and no anchor can rot (gotcha #44).
 
 from datetime import timedelta
 
-from sqlalchemy import and_, case, not_, or_
+from sqlalchemy import and_, case, or_
 
 from app.models.models import Event
 from app.utils.event_completion import (
@@ -51,44 +51,22 @@ from app.utils.event_completion import (
     UPCOMING_GRACE,
 )
 
-#: The settled rail's statuses with the split one removed — see
-#: :func:`suspended_with_a_score`. DERIVED from
-#: :data:`~app.utils.event_completion.RECENT_RAIL_STATUSES` rather than
-#: re-listed, so a fourth settled word added to the vocabulary reaches this rail
-#: without anybody remembering this line. Re-listing it is the exact failure
-#: mode this module's header is about.
+#: The statuses that mean "this happened and we know how it went" — the settled
+#: rail's whole vocabulary after #3748.
+#:
+#: DERIVED from :data:`~app.utils.event_completion.RECENT_RAIL_STATUSES` by
+#: removing the one word that moved, rather than re-listed, so a fourth settled
+#: word added to the vocabulary reaches this rail without anybody remembering
+#: this line. Re-listing it is the exact failure mode this module's header is
+#: about. ``RECENT_RAIL_STATUSES`` itself is unchanged and still names every
+#: status that rides a PAST rail — which of the two past rails is what #3748
+#: moved, and the guard sweep derives its status axis from that constant, so
+#: narrowing it there would make the sweep blind to ``suspended`` entirely.
 _SETTLED_ONLY_STATUSES = [s for s in RECENT_RAIL_STATUSES if s != EVENT_SUSPENDED]
 
 
-def reported_a_score():
-    """Both sides of the scoreline are populated.
-
-    Both, not either: a row with one side filled and the other NULL has not
-    reported a score, it has half of one, and a rail called "Recent Results"
-    cannot show "3 – " as a result.
-
-    ``IS NOT NULL`` never evaluates to NULL, so this expression and its
-    :func:`~sqlalchemy.not_` are a true two-valued pair — there is no
-    three-valued-logic gap between them for a row to fall into. That is what
-    lets :func:`suspended_with_a_score` and :func:`suspended_without_a_score`
-    be written as one predicate and its negation, which is the only reason the
-    two rails below stay jointly exhaustive over ``suspended`` BY CONSTRUCTION
-    rather than by two hand-written conditions that agree today.
-    """
-    return and_(Event.home_score.isnot(None), Event.away_score.isnot(None))
-
-
-def suspended_with_a_score():
-    """A suspended row that has something to show — it rides the settled rail.
-
-    This is live/056's ship, kept exactly where live/056 put it. See
-    :func:`suspended_without_a_score` for the half that moves and why.
-    """
-    return and_(Event.status == EVENT_SUSPENDED, reported_a_score())
-
-
-def suspended_without_a_score():
-    """A suspended row with no scoreline at all — #3748.
+def suspended_rows():
+    """Every ``suspended`` row — they all ride the unreported rail. #3748.
 
     🔴 IT IS THE #3211 STARVATION AGAIN, POINTED AT THE THIRD STATUS.
     :func:`unreported_rail_condition` already says in as many words that a
@@ -113,21 +91,29 @@ def suspended_without_a_score():
     :func:`unreported_rail_condition` already argues at length: one cap over two
     populations of very different size starves the smaller one whichever way it
     is sorted. Ordering settled-first would hide all 1,618 behind eight slots of
-    Finals, which is #3211 inverted. Split the bound — which is what this does,
-    by routing these rows to the rail whose heading already matches what their
-    card says.
+    Finals, which is #3211 inverted. Split the bound.
 
-    ⚠️ WHAT THIS DELIBERATELY DOES NOT DO. The frontend's
-    ``eventState.hasNoReportedResult`` is true for EVERY ``suspended`` row,
-    score or no score, so the 54 scored ones still render the words "No result
-    reported" while sitting on a rail headed "Recent Results". Moving those too
-    is a defensible reading and it is NOT taken here: it would overturn
-    live/056's deliberate placement, which
-    ``test_a_suspended_match_still_rides_the_settled_rail`` was written to
-    protect, and 54 rows is not the starvation. Raised as a question on #3748
-    rather than decided in passing.
+    🔴 EVERY SUSPENDED ROW, NOT ONLY THE SCORELESS ONES, and that is CERT-2167's
+    correction to this lane's first attempt. The first version split ``suspended``
+    on whether a scoreline existed and left the 54 scored rows on the settled
+    rail, reasoning that they had something to show. **The rail a row sits on has
+    to agree with the words its own card prints**, and the card is not ours to
+    reinterpret here: ``eventState.hasNoReportedResult`` is true for EVERY
+    suspended row, so all 54 rendered "No result reported · last score 1-2"
+    under a heading that says "Recent Results". That is the same contradiction
+    the issue was filed about, at 54 rows instead of 1,618 — a present defect,
+    not a hypothetical, and those rows can still consume capped result slots.
+
+    Nothing is lost by moving them: both rails render the same shared card
+    through ``LeagueGameRail``, so a scored suspended row keeps its
+    ``· last score 1-2`` label verbatim — it simply now sits under a heading
+    that is true of it.
+
+    Nor does this undo live/056, whose ship was that a suspended match is
+    reachable AT ALL (it was on no rail and vanished; the unreported rail did
+    not yet exist). It is still on its league page, once.
     """
-    return and_(Event.status == EVENT_SUSPENDED, not_(reported_a_score()))
+    return Event.status == EVENT_SUSPENDED
 
 
 def upcoming_rail_condition(now):
@@ -252,32 +238,40 @@ def settled_rail_condition(now, *, lookback: timedelta):
     keeping it exactly as narrow as it was is the point of
     :func:`unreported_rail_condition` existing beside it rather than inside it.
 
-    NARROWED by #3748, in the same spirit: ``suspended`` is admitted only where
-    a scoreline exists. The half with nothing to show moved to the rail that
-    says so — :func:`suspended_without_a_score` carries the measurement and the
-    argument. The two arms are one predicate and its negation, so ``suspended``
-    is still on exactly one rail for every row.
+    NARROWED by #3748: ``suspended`` is no longer admitted at all. Every
+    suspended row moved to the rail whose heading matches the words its own card
+    prints — :func:`suspended_rows` carries the measurement and the argument.
+    What is left here is exactly "we know how it went", which is what the
+    docstring above always claimed and now is.
     """
     return and_(
         Event.commence_time >= now - lookback,
-        or_(
-            Event.status.in_(_SETTLED_ONLY_STATUSES),
-            suspended_with_a_score(),
-        ),
+        Event.status.in_(_SETTLED_ONLY_STATUSES),
     )
 
 
 def unreported_rail_condition(now, *, lookback: timedelta):
     """What should have happened, and nobody told us how it went.
 
-    A row that still says ``scheduled`` more than
-    :data:`~app.utils.event_completion.UPCOMING_GRACE` past its own kickoff. It
-    has the same standing as a ``suspended`` one — its clock ran out and nothing
-    reported an ending — and it ages off on the same lookback for the reason
+    Two populations, and #3748 is the day the second one arrived:
+
+      * a row that still says ``scheduled`` more than
+        :data:`~app.utils.event_completion.UPCOMING_GRACE` past its own kickoff
+        (#3211), and
+      * every ``suspended`` row (:func:`suspended_rows`).
+
+    They are one rail because they are one state. This docstring said so before
+    either of them was on it — a result-less ``scheduled`` row "has the same
+    standing as a ``suspended`` one — its clock ran out and nothing reported an
+    ending" — and #3748 is simply that sentence finally applied to the status it
+    names. The frontend has always agreed: ``eventState.hasNoReportedResult`` is
+    one predicate over both.
+
+    Both age off on the same lookback for the reason
     :data:`~app.utils.event_completion.RECENT_RAIL_STATUSES` argues at length:
-    the upcoming rail's grace excludes it by construction, and a lookback ages
-    it off exactly where the Final it never got would have, rather than leaving
-    it on an open floor forever.
+    the upcoming rail's grace excludes them by construction, and a lookback ages
+    them off exactly where the Final they never got would have, rather than
+    leaving them on an open floor forever.
 
     🔴 WHY IT IS ITS OWN CONDITION AND ITS OWN RAIL, WHICH IS THE HALF WORTH
     ARGUING. The obvious repair is to widen the settled rail by one arm, and
@@ -320,7 +314,7 @@ def unreported_rail_condition(now, *, lookback: timedelta):
             # rail to be held back from. Adding the bound here would put a
             # freshly-suspended row on NO rail for two hours, which is the
             # hole this whole module exists to close.
-            suspended_without_a_score(),
+            suspended_rows(),
         ),
     )
 

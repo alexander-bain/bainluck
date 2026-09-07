@@ -137,20 +137,24 @@ SPECIMEN_ID = 15304868
 SPECIMEN_COMMENCE = datetime(2026, 9, 2, 0, 0, 0, tzinfo=timezone.utc)
 
 
-#: The THIRD axis, added by #3748. The rails used to split on (status, time)
-#: alone; `suspended` now splits on whether a scoreline exists as well, so a
-#: sweep over two axes would be blind to exactly the dimension the new code
-#: reads — it would test one score state per cell and call the matrix total.
+#: The THIRD axis, added by #3748 — and the invariant over it is a NEGATIVE:
+#: no rail reads the scoreline, for any status. See
+#: `test_no_rail_reads_the_scoreline_at_all`.
 #:
-#: Swept over EVERY status, not just `suspended`. The interesting assertion is
-#: as much that a score changes nothing for `completed`, `closed`, `scheduled`
-#: and `live` as that it changes the rail for `suspended`: a predicate written
-#: one arm too wide would move a Final and no two-axis sweep would notice.
+#: The axis is here because a rail once nearly did. #3748's first attempt split
+#: `suspended` on whether a score existed, keeping the scored ones under "Recent
+#: Results"; CERT-2167 rejected it, because the shared card calls EVERY suspended
+#: row result-less and those rows can still consume the capped result slots.
+#: "The scored ones do have a result, surely they belong on the results rail" is
+#: a natural thing for a future reader to propose, and sweeping this axis is what
+#: makes the answer testable rather than remembered.
+#:
+#: The half-scored cell is not decoration: it is the shape any future
+#: score-reading predicate is most likely to get wrong (an `or_` where it meant
+#: an `and_`), and it must land on the same rail as both of its neighbours.
 SCORE_CELLS = {
     "with a score": (3, 1),
     "with no score": (None, None),
-    # Half a scoreline is not a scoreline — `reported_a_score()` requires BOTH
-    # sides, and this is the cell that pins the `and_` against an `or_`.
     "with half a score": (3, None),
 }
 
@@ -379,70 +383,62 @@ class TestTheHealthyDirectionIsUntouched:
         for eid in self._cells(index, {"completed", "closed"}, "yesterday"):
             assert _rails_holding(session, eid) == ["settled"]
 
-    def test_a_scored_suspended_match_still_rides_the_settled_rail(self, corpus):
-        """live/056's ship, and the half of it #3748 deliberately did NOT move.
+    def test_every_suspended_match_rides_the_unreported_rail(self, corpus):
+        """#3748's ship, and the direction gotcha #43 demands: not merely "off
+        the settled rail" but ON the named other rail. A row only asserted
+        ABSENT from one rail can satisfy the assertion by vanishing, which is
+        the failure this whole file exists to refuse.
 
-        The original of this test asserted it for EVERY suspended row, on the
-        stated premise that "a suspended row carries a partial score". That
-        premise is false about the data and was never measured: on production
-        2026-09-06 the 14-day window held **1,618 scoreless** suspended rows
-        against **54** with a score. So the guard was protecting live/056's
-        placement over a population that is 97% not the one it described.
+        EVERY score state, which is CERT-2167's correction. This test first
+        shipped split — scored rows asserted onto `settled`, scoreless onto
+        `unreported` — on the reasoning that a scored row has something to show.
+        The rail a row sits on has to agree with the words its own card prints,
+        and `eventState.hasNoReportedResult` is true for every suspended row, so
+        a scored one rendered "No result reported · last score 1-2" under a
+        heading reading "Recent Results". Same contradiction the issue was filed
+        about, and those rows could still consume capped result slots.
 
-        What live/056 actually shipped was that a suspended match is reachable
-        AT ALL — it was on no rail and vanished, and the unreported rail did not
-        yet exist. Routing the scoreless ones there does not undo that: the
-        match is still on the page, on the rail whose heading matches what its
-        card already says. What WOULD undo it is the row disappearing, and
+        This does NOT undo live/056, whose ship was that a suspended match is
+        reachable AT ALL — it was on no rail and vanished, and the unreported
+        rail did not yet exist. It is still on its league page, once, and it
+        keeps its `· last score` label because both rails render the same card.
+        What WOULD undo live/056 is the row disappearing, and
         `test_no_row_lands_on_no_rail` sweeps every score state for that.
-
-        So this control is narrowed to the rows whose premise holds, and kept
-        as strict as it was for them.
         """
         session, index = corpus
-        for eid in self._cells(index, {EVENT_SUSPENDED}, "yesterday", {"with a score"}):
-            assert _rails_holding(session, eid) == ["settled"]
+        for score_cell in SCORE_CELLS:
+            for eid in self._cells(index, {EVENT_SUSPENDED}, "yesterday", {score_cell}):
+                assert _rails_holding(session, eid) == [
+                    "unreported"
+                ], f"a suspended row {score_cell} is not on the unreported rail"
 
-    def test_a_scoreless_suspended_match_rides_the_unreported_rail(self, corpus):
-        """#3748's ship, and the direction gotcha #43 demands beside the one
-        above: not merely "off the settled rail" but ON the named other rail.
+    def test_no_rail_reads_the_scoreline_at_all(self, corpus):
+        """🔴 A ROW'S RAIL IS A FUNCTION OF (status, time) AND NOTHING ELSE.
 
-        A row that is only asserted absent from one rail can satisfy the
-        assertion by vanishing, which is the failure this whole file exists to
-        refuse.
-        """
-        session, index = corpus
-        for eid in self._cells(
-            index,
-            {EVENT_SUSPENDED},
-            "yesterday",
-            {"with no score", "with half a score"},
-        ):
-            assert _rails_holding(session, eid) == ["unreported"]
+        The score axis exists in this matrix because a rail once DID read the
+        scoreline: #3748's first attempt split `suspended` on it, and CERT-2167
+        rejected that — the rail a row sits on has to agree with the words its
+        own card prints, and the card calls every suspended row result-less.
 
-    def test_the_score_axis_moves_nothing_but_suspended(self, corpus):
-        """The blast radius, pinned. A scoreline is now read by the rails, so
-        the thing to prove is that it is read for ONE status: a `completed`
-        row's rail must not depend on whether anyone filled the scoreline in,
-        and neither must a `scheduled` or `live` one's.
-
-        This is the control that fails if `reported_a_score()` is ever ANDed
-        into an arm it does not belong in.
+        Keeping the axis and asserting the NEGATIVE is what makes that ruling
+        durable. "Route the scored ones back to Recent Results" is a natural
+        thing for a future reader to propose (they do have a score, after all),
+        and it is exactly wrong; this is the test that says so. Swept over the
+        whole vocabulary, so it also catches a scoreline predicate ANDed into
+        `completed` or `scheduled`, where it would silently strand a Final
+        nobody filled the score in for.
         """
         session, index = corpus
 
         for status in ALL_STATUSES:
-            if status == EVENT_SUSPENDED:
-                continue
             for cell in TIME_CELLS:
                 rails = {
-                    score_cell: _rails_holding(session, eid)
+                    index[eid][2]: _rails_holding(session, eid)
                     for eid in self._cells(index, {status}, cell)
-                    for score_cell in [index[eid][2]]
                 }
                 assert len(set(map(tuple, rails.values()))) == 1, (
                     f"{status!r} at {cell!r} lands on different rails depending "
-                    f"on its scoreline, and it must not: {rails}"
+                    f"on its scoreline, and no rail may read one: {rails}"
                 )
 
 

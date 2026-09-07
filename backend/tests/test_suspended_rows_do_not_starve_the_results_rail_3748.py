@@ -35,17 +35,38 @@ very different size starves the smaller one whichever way it is sorted. Sorting
 settled-first would have hidden all 1,618 behind eight slots of Finals, which is
 #3211 inverted. The bound is split instead.
 
+═══ EVERY SUSPENDED ROW, NOT ONLY THE SCORELESS ONES — CERT-2167 ═══
+
+This suite first shipped guarding a SCORE SPLIT: scoreless suspended rows to the
+unreported rail, the 54 scored ones left under "Recent Results" on the reasoning
+that they have something to show. CERT-2167 blocked it, and the argument is the
+one that decides this file's shape:
+
+    the rail a row sits on has to agree with the words its own card prints
+
+`eventState.hasNoReportedResult` is true for EVERY suspended row, so all 54
+scored ones rendered "No result reported · last score 1-2" under a heading
+saying "Recent Results" — the same contradiction the issue was filed about, at
+54 rows instead of 1,618. And a score does not stop a row being stamped midnight
+UTC, so those 54 can still CONSUME THE CAPPED SLOTS.
+`TestEightNewerScoredSuspendedRowsCannotTakeTheSlots` is that case, and the
+version of this file that shipped first could not have passed it.
+
+Nothing is lost by moving them: both rails render the same shared card via
+`LeagueGameRail`, so a scored row keeps its `· last score` label verbatim.
+
 ═══ RED-FIRST ═══
 
 `TestTheDefectReproduces` rebuilds the PRE-FIX settled condition over the same
-corpus and shows the Finals pushed off the page by it. Without that, every
-assertion below could be passing over a corpus the old code also satisfied.
+corpus and shows the Finals pushed off the page by it. The scored-flood class
+carries its own red-first for the same reason, over its own corpus. Without
+them, every assertion below could be passing over a slate that never starved.
 
 ═══ BOTH DIRECTIONS (gotcha #43) ═══
 
 The flood being capped and the adjacent surface being populated are two claims
 and this file asserts both: the Finals come back on `recent_results`, AND the
-scoreless rows are on `unreported_games`. A test that only checked the first
+suspended rows are on `unreported_games`. A test that only checked the first
 would be satisfied by the rows being deleted, which is the #3211 disappearance
 wearing the repair's clothes.
 """
@@ -204,9 +225,14 @@ class TestTheShip:
                 eid in results
             ), f"Final {eid} is still off the Recent Results rail: {results}"
 
-    def test_no_scoreless_suspended_row_is_on_recent_results(self, session):
+    def test_NO_suspended_row_is_on_recent_results(self, session):
+        """Scored or scoreless — CERT-2167's correction. The card calls every
+        suspended row result-less, so none of them belongs under a heading that
+        promises results."""
         results = set(_results(session))
-        intruders = sorted(results & {eid for eid, _ in SCORELESS_SUSPENDED})
+        intruders = sorted(
+            results & ({eid for eid, _ in SCORELESS_SUSPENDED} | {SCORED_SUSPENDED_ID})
+        )
         assert intruders == [], (
             "these rows report no result and are on the rail headed "
             f"'Recent Results': {intruders}"
@@ -245,19 +271,33 @@ class TestTheShip:
 
     def test_the_unreported_rail_actually_renders_them(self, session):
         """And the capped query is not empty, which is the half the reader
-        sees. Every row it returns is one of the starving population."""
+        sees. Every row it returns is one of the suspended population."""
         unreported = _unreported(session)
         assert unreported, "the unreported rail came back empty"
-        assert set(unreported) <= {
-            eid for eid, _ in SCORELESS_SUSPENDED
-        }, f"the unreported rail is holding something else: {unreported}"
+        assert set(unreported) <= (
+            {eid for eid, _ in SCORELESS_SUSPENDED} | {SCORED_SUSPENDED_ID}
+        ), f"the unreported rail is holding something else: {unreported}"
 
-    def test_a_scored_suspended_row_stays_where_live_056_put_it(self, session):
-        """The control. `suspended` WITH a scoreline has something to show and
-        is deliberately untouched — the repair is scoped to the population that
-        was starving the rail, not to the word `suspended`."""
-        assert SCORED_SUSPENDED_ID in _results(session)
-        assert SCORED_SUSPENDED_ID not in _unreported(session)
+    def test_a_scored_suspended_row_moves_too_and_keeps_its_score(self, session):
+        """CERT-2167's correction, and the row that first attempt left behind.
+
+        It renders "No result reported · last score 1-2" — the words are the
+        frontend's and are true of it — so a rail headed "Recent Results" is the
+        wrong place for it however much of a scoreline it carries.
+
+        Nothing is lost by the move: both rails render the same shared card via
+        `LeagueGameRail`, so the `· last score` label survives verbatim. Asserted
+        here by checking the scoreline is still ON the row, since this suite
+        cannot see a React tree.
+        """
+        assert SCORED_SUSPENDED_ID not in _results(session)
+        assert SCORED_SUSPENDED_ID in _unreported(session)
+
+        row = session.get(Event, SCORED_SUSPENDED_ID)
+        assert (row.home_score, row.away_score) == (1, 2), (
+            "the move must not cost the row its last score — that is what the "
+            "card prints beside 'No result reported'"
+        )
 
 
 class TestTheCapIsSplitRatherThanShared:
@@ -281,3 +321,94 @@ class TestTheCapIsSplitRatherThanShared:
     def test_the_two_rails_do_not_share_a_row(self, session):
         overlap = sorted(set(_results(session)) & set(_unreported(session)))
         assert overlap == [], f"these rows are on both rails at once: {overlap}"
+
+
+class TestEightNewerScoredSuspendedRowsCannotTakeTheSlots:
+    """🔴 CERT-2167's named regression, and the one the first attempt could not
+    have passed.
+
+    The BLOCK's argument was not that scored suspended rows look wrong — it was
+    that they can still CONSUME THE CAPPED RESULT SLOTS. A score does not stop a
+    row being stamped midnight UTC (gotcha #14), so a league with eight scored
+    suspended rows newer than its Finals starves exactly as hard as one with
+    eight scoreless ones, and every one of those eight prints "No result
+    reported".
+
+    So this is the same starvation with the score column filled in. Its own
+    corpus rather than the shared fixture, because the shared one has a single
+    scored row and this needs a full cap's worth to prove the cap.
+    """
+
+    #: Eight scored `suspended` rows, all NEWER than every Final in `FINALS`,
+    #: so under `commence_time DESC LIMIT 8` they would take all eight slots.
+    SCORED_FLOOD = [
+        (401 + i, datetime(2026, 9, 6, 12 - i, 0, tzinfo=timezone.utc))
+        for i in range(8)
+    ]
+
+    @pytest.fixture
+    def flooded(self):
+        eng = create_engine("sqlite://")
+        Base.metadata.create_all(eng)
+        with Session(eng) as s:
+            s.add(Sport(id=S_KBO, key=LEAGUE, name="KBO"))
+            for eid, commence in self.SCORED_FLOOD:
+                s.add(_row(eid, commence, EVENT_SUSPENDED, (4, 2)))
+            for eid, commence, status, score in FINALS:
+                s.add(_row(eid, commence, status, score))
+            s.commit()
+            yield s
+
+    def test_the_flood_would_have_taken_every_slot(self, flooded):
+        """🔴 RED-FIRST for this corpus specifically. Without it the three
+        assertions below could be passing over a slate that never starved."""
+        from sqlalchemy import and_
+
+        pre_fix = and_(
+            Event.commence_time >= NOW - timedelta(days=14),
+            Event.status.in_(["completed", "closed", EVENT_SUSPENDED]),
+        )
+        shown = (
+            flooded.execute(
+                select(Event.id)
+                .where(Event.sport_id == S_KBO, pre_fix)
+                .order_by(Event.commence_time.desc())
+                .limit(RESULTS_LIMIT)
+            )
+            .scalars()
+            .all()
+        )
+        assert set(shown) == {eid for eid, _ in self.SCORED_FLOOD}, (
+            "the scored flood does not fill all eight slots under the pre-fix "
+            f"rail, so this corpus proves nothing: {shown}"
+        )
+
+    def test_no_suspended_row_is_admitted_to_the_results_card_rail(self, flooded):
+        results = set(_results(flooded))
+        intruders = sorted(results & {eid for eid, _ in self.SCORED_FLOOD})
+        assert intruders == [], (
+            "scored suspended rows are consuming Recent Results slots while "
+            f"their own cards say 'No result reported': {intruders}"
+        )
+
+    def test_the_finals_are_visible(self, flooded):
+        results = _results(flooded)
+        for eid, _, _, _ in FINALS:
+            assert eid in results, f"Final {eid} is off the rail: {results}"
+
+    def test_the_flood_is_reachable_on_the_unreported_rail(self, flooded):
+        """Not deleted — the direction that separates a repair from #3211."""
+        admitted = set(
+            flooded.execute(
+                select(Event.id).where(
+                    Event.sport_id == S_KBO,
+                    unreported_rail_condition(
+                        NOW, lookback=timedelta(days=RESULTS_LOOKBACK_DAYS)
+                    ),
+                )
+            )
+            .scalars()
+            .all()
+        )
+        missing = sorted({eid for eid, _ in self.SCORED_FLOOD} - admitted)
+        assert missing == [], f"these rows are admitted by NO rail: {missing}"
