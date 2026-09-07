@@ -84,10 +84,20 @@ function imageSources(html: string): string[] {
   return Array.from(html.matchAll(/<img[^>]*\ssrc="([^"]*)"/g)).map(m => m[1]);
 }
 
-/** The `<img>` tag carrying a given src, so its geometry can be read. */
+/**
+ * The `<img>` tag carrying a given src, so its geometry can be read.
+ *
+ * Deliberately NOT `new RegExp(...src...)`. Building a pattern out of a URL
+ * puts a dot-bearing hostname into a regex, which CodeQL flags high-severity
+ * (`js/incomplete-hostname-regexp`) — and it was right to, even here where the
+ * input is escaped and a literal: a check run reading `fail` kills the sha
+ * (notice 13b), and a test helper is not worth arguing with a scanner over.
+ * Splitting the tags with one STATIC pattern and comparing strings is both
+ * cleaner and unflaggable.
+ */
 function imgTagFor(html: string, src: string): string {
-  const tag = html.match(new RegExp(`<img[^>]*src="${src.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"[^>]*>`));
-  return tag ? tag[0] : "";
+  const tags = Array.from(html.matchAll(/<img\b[^>]*>/g)).map(m => m[0]);
+  return tags.find(tag => tag.includes(`src="${src}"`)) ?? "";
 }
 
 // ── the ship ───────────────────────────────────────────────────────────────
