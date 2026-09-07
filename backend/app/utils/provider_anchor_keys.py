@@ -209,6 +209,42 @@ def compare_statpal_ids(a: Optional[str], b: Optional[str]) -> str:
     return AGREE if str(a).strip() == str(b).strip() else CONFLICT
 
 
+#: The three ways a StatPal sport qualifier can be unusable, as short stable
+#: tokens. They exist to be logged: a refusal that names WHICH of the three it
+#: was tells an operator whether a caller forgot the argument, passed one that
+#: arrived empty, or built one that cannot be split back apart — three different
+#: bugs with three different fixes, which one undifferentiated "refused" line
+#: cannot distinguish.
+STATPAL_QUALIFIER_ABSENT = "absent"
+STATPAL_QUALIFIER_BLANK = "blank"
+STATPAL_QUALIFIER_SEPARATOR = "separator"
+
+
+def statpal_qualifier_refusal(sport_key: Optional[str]) -> Optional[str]:
+    """Why this sport qualifier cannot key a StatPal anchor, or ``None`` if it can.
+
+    This is the SINGLE reading of the qualifier rule. `statpal_anchor_key` calls
+    it to decide, and `anchor_channel.anchor_key_for_claim` calls it to say why —
+    deliberately, because the alternative is two copies of the same three
+    conditions in two modules, and the copy that drifts is always the one in the
+    log line. A telemetry line that reports a rule the code no longer applies is
+    worse than no telemetry, because it is believed.
+
+    The three refusals are not ranked; they are disjoint causes, checked in the
+    only order that can distinguish them (``None`` before blank, because
+    ``str(None).strip()`` is the truthy string ``"None"`` and would otherwise be
+    read as a usable qualifier).
+    """
+    if sport_key is None:
+        return STATPAL_QUALIFIER_ABSENT
+    qualifier = str(sport_key).strip()
+    if not qualifier:
+        return STATPAL_QUALIFIER_BLANK
+    if ":" in qualifier:
+        return STATPAL_QUALIFIER_SEPARATOR
+    return None
+
+
 def statpal_anchor_key(
     fixture_id: Optional[str], sport_key: Optional[str] = None
 ) -> Optional[AnchorKey]:
@@ -296,9 +332,9 @@ def statpal_anchor_key(
     # refused for a second reason that outlives the bridge — the key could not be
     # split back apart, and `anchor_is_current` re-derives the sport from exactly
     # that split, so it would emit a key its own reader misreads.
-    qualifier = "" if sport_key is None else str(sport_key).strip()
-    if not qualifier or ":" in qualifier:
+    if statpal_qualifier_refusal(sport_key) is not None:
         return None
+    qualifier = str(sport_key).strip()
     return AnchorKey(
         source=SOURCE_STATPAL,
         source_id=f"{qualifier}:{token}",

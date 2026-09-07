@@ -41,9 +41,13 @@ from app.utils.provider_anchor_keys import (
     ANCHOR_KIND_GAME,
     SOURCE_STATPAL,
     STATPAL_NS_SHORT,
+    STATPAL_QUALIFIER_ABSENT,
+    STATPAL_QUALIFIER_BLANK,
+    STATPAL_QUALIFIER_SEPARATOR,
     statpal_anchor_key,
     statpal_bare_fixture_id,
     statpal_namespace,
+    statpal_qualifier_refusal,
     statpal_sport_from_source_id,
 )
 from app.utils.sport_keys import SPORT_LEAGUE_MAP
@@ -498,6 +502,146 @@ def test_a_re_derivation_of_an_existing_key_does_not_warn():
         logger.removeHandler(handler)
 
     assert not [r for r in records if "D55" in r.getMessage()]
+
+
+# ---------------------------------------------------------------------------
+# The refusal is loud for EVERY unusable qualifier, not just an absent one
+# (`STATPAL-BLANK-QUALIFIER-REFUSAL-TELEMETRY`, follow-up from CERT-2133)
+# ---------------------------------------------------------------------------
+
+#: The qualifiers `statpal_anchor_key` refuses. Shared by the refusal test and
+#: the telemetry test BY REFERENCE and not by copy, because the defect being
+#: guarded is precisely the two lists disagreeing: before this fix the key
+#: module refused all five and the channel warned about exactly one.
+UNUSABLE_QUALIFIERS = [None, "", "   ", "tennis:atp", "a:b:c"]
+
+
+@pytest.mark.parametrize("sport_key", UNUSABLE_QUALIFIERS)
+def test_every_refused_qualifier_is_also_reported_not_just_the_absent_one(
+    sport_key, caplog
+):
+    """The property: refusing and reporting are the SAME set.
+
+    This is the live half of the follow-up. `sport_key=None` was warned about
+    and `sport_key=""` was not, though the key module has always refused both
+    identically — so an empty sport column produced a claim that wrote no anchor
+    and said nothing, which is the `NO_ANCHOR_CHANNEL` state ruling 048's
+    amendment says must never be papered over. From the operator's side a
+    silently refused claim is indistinguishable from a sport that simply had no
+    fixture that day, and the second one is fine.
+
+    Stated over the refusal list rather than over `""` alone, so it also fails
+    for any FUTURE qualifier rule that starts refusing a sixth shape without
+    teaching the channel to say so.
+
+    Control arm: `test_a_qualified_claim_does_not_warn` — without it this would
+    pass for a channel that warned unconditionally, which is the same defect
+    upside down (a warning on the good path is a warning nobody reads).
+    """
+    with caplog.at_level(logging.WARNING, logger="app.services.anchor_channel"):
+        key = anchor_key_for_claim("statpal", MLB_FIXTURE_ID, sport_key=sport_key)
+
+    assert key is None, f"{sport_key!r} must not produce an anchor"
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("D55" in m and "REFUSED" in m for m in messages), (
+        f"a StatPal claim refused for qualifier {sport_key!r} was not reported — "
+        f"the channel is silently dropping anchors"
+    )
+
+
+@pytest.mark.parametrize(
+    "sport_key,expected",
+    [
+        (None, STATPAL_QUALIFIER_ABSENT),
+        ("", STATPAL_QUALIFIER_BLANK),
+        ("   ", STATPAL_QUALIFIER_BLANK),
+        ("tennis:atp", STATPAL_QUALIFIER_SEPARATOR),
+        ("a:b:c", STATPAL_QUALIFIER_SEPARATOR),
+    ],
+)
+def test_the_report_says_which_of_the_three_refusals_it_was(
+    sport_key, expected, caplog
+):
+    """Three causes, three fixes — so one undifferentiated line is not enough.
+
+    An absent qualifier is a caller that was never updated. A blank one is a
+    caller that WAS updated and is reading an empty column, which is a data bug
+    somewhere upstream of here. A separator-bearing one is a caller building the
+    qualifier by hand out of something that is not a bare `sports.key`. An
+    operator who only knows "refused" has to go and find out which; the log line
+    already knows.
+
+    Control arm: the `expected` column is asserted against a distinct token per
+    cause, so a message that hard-coded one word would fail four of five rows.
+    """
+    assert statpal_qualifier_refusal(sport_key) == expected
+
+    with caplog.at_level(logging.WARNING, logger="app.services.anchor_channel"):
+        anchor_key_for_claim("statpal", MLB_FIXTURE_ID, sport_key=sport_key)
+
+    messages = [r.getMessage() for r in caplog.records if "D55" in r.getMessage()]
+    assert messages, "no refusal was reported at all"
+    assert any(expected in m for m in messages), (
+        f"the refusal of {sport_key!r} was reported but did not name its cause "
+        f"{expected!r}: {messages!r}"
+    )
+
+
+def test_the_rule_and_the_reason_are_one_reading_not_two():
+    """`statpal_qualifier_refusal` is what `statpal_anchor_key` DECIDES on.
+
+    The cheap version of this fix re-tests the three conditions inside
+    `anchor_channel` to build the message. That version is correct on the day it
+    ships and becomes a liar the first time the rule moves, because a log line is
+    the one caller nobody re-reads. So the guard is not "both agree today" on a
+    fixed list — it is that a refusal reason exists for exactly the qualifiers
+    that produce no key, checked over usable and unusable alike.
+
+    Control arm: the usable half. Without it a `statpal_qualifier_refusal` that
+    returned a reason for EVERYTHING would satisfy the unusable half completely.
+    """
+    for sport_key in UNUSABLE_QUALIFIERS:
+        assert statpal_qualifier_refusal(sport_key) is not None
+        assert statpal_anchor_key(MLB_FIXTURE_ID, sport_key=sport_key) is None
+
+    for sport_key in ["baseball_mlb", "americanfootball_nfl", "tennis_atp", " mlb "]:
+        assert statpal_qualifier_refusal(sport_key) is None, (
+            f"{sport_key!r} is usable but was given a refusal reason"
+        )
+        assert statpal_anchor_key(MLB_FIXTURE_ID, sport_key=sport_key) is not None
+
+
+def test_a_claim_carrying_no_statpal_id_at_all_stays_quiet():
+    """The common path must not become noisy.
+
+    Most events have no StatPal fixture id, and a claim for one is not a hole in
+    the channel — there is nothing to anchor. Widening the warning from "absent
+    qualifier" to "any refusal" must not accidentally widen it to "every event we
+    have no StatPal id for", which would bury the real line under thousands.
+
+    This is the control arm that makes the two tests above meaningful rather than
+    satisfied by an unconditional `logger.warning`.
+    """
+    import logging as _logging
+
+    records: list[_logging.LogRecord] = []
+
+    class _Capture(_logging.Handler):
+        def emit(self, record):  # pragma: no cover - trivial
+            records.append(record)
+
+    logger = _logging.getLogger("app.services.anchor_channel")
+    handler = _Capture(level=_logging.WARNING)
+    logger.addHandler(handler)
+    try:
+        for source_id in [None, "", "   "]:
+            assert anchor_key_for_claim("statpal", source_id) is None
+    finally:
+        logger.removeHandler(handler)
+
+    assert not [r for r in records if "D55" in r.getMessage()], (
+        "a claim with no StatPal id is the ordinary case, not a refused anchor"
+    )
 
 
 # ---------------------------------------------------------------------------
