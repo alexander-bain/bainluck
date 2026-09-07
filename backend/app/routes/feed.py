@@ -66,6 +66,7 @@ from app.models.models import (
 )
 from app.services import get_db, get_db_rw
 from app.utils.live_first_page import hoist_live_events_into_first_page
+from app.utils.sports_first_page_rails import cap_repeated_finished_rails
 from app.utils.tonights_games import compose_lead
 from app.utils.aggregation import (
     SOURCE_WEIGHTS,
@@ -1335,8 +1336,13 @@ def apply_discover_display_chain(
             set at the same point ``get_feed`` does. The set must be loaded by
             the caller — this function does no I/O.
         timing_cb: optional ``fn(stage_name)`` called after ``ranking``,
-            ``reviewed_filter``, ``bundles`` and ``lead_composition`` so
-            ``get_feed`` keeps its per-stage timings.
+            ``reviewed_filter``, ``bundles``, ``lead_composition``,
+            ``first_page_quality_floor``, ``finished_rail_cap`` and
+            ``live_first_page`` so ``get_feed`` keeps its per-stage timings. The
+            exact list and its ORDER are pinned by
+            ``test_discover_display_chain_shared.py`` —
+            ``test_timing_callback_fires_for_every_recorded_stage`` is what
+            catches a new stage added here and nowhere else.
 
     Returns:
         ``(items, meta)``. ``meta['reviewed_filtered_count']`` is ``None`` when
@@ -1480,6 +1486,46 @@ def apply_discover_display_chain(
             )
     _tick("first_page_quality_floor")
 
+    # === ONE STORY, NOT NINE CARDS, ON THE SPORTS FIRST PAGE (#3511) ===
+    #
+    # `diversify_discover_first_page` caps repeated archetypes at 3 and runs
+    # under `if discover_mode:` only, so the games-led surface — whose cards are
+    # ALL `sports_story`, i.e. all one archetype — has never had a repeat-rail
+    # cap. On 2026-09-07 04:40Z that showed: ten finished games in twenty slots
+    # and NINE of them headlined "Recent upset" over "Won as 33% underdog",
+    # "Won as 17% underdog", and seven more of the same sentence.
+    #
+    # It is a swap, not a filter, and it counts only FINISHED cards — a live or
+    # upcoming game is never counted and never displaced, so this cannot spend a
+    # slot the hoist below is about to need. See the module docstring for the
+    # three causes that were measured and cleared first (cache, decay, hoist).
+    #
+    # BEFORE the hoist, deliberately: that pass is Alex's P1 acceptance
+    # criterion and must have the last word on first-page membership. It
+    # displaces the worst window slots for live games, so running it after this
+    # can only improve on what this leaves; running it first would let this
+    # trade a hoisted live game away. `test_sports_first_page_rails_wiring_3511`
+    # asserts the order rather than trusting this comment.
+    finished_rail_cap_meta = None
+    if not discover_mode:
+        items, finished_rail_cap_meta = cap_repeated_finished_rails(
+            items, first_page_size=min(20, limit)
+        )
+        if finished_rail_cap_meta["unswapped"]:
+            # Not a silent cap (gotcha #53). A page that kept a repeat because
+            # the pool had nothing left to trade is a thin-slate fact about the
+            # data, and it must not log the same as a page with no repeats.
+            logger.warning(
+                "Sports first-page rail cap: %d repeated finished card(s) kept "
+                "— no admissible replacement beyond the window (%d swapped, "
+                "%d replacements available, cap %d)",
+                finished_rail_cap_meta["unswapped"],
+                finished_rail_cap_meta["swapped"],
+                finished_rail_cap_meta["replacements_available"],
+                finished_rail_cap_meta["cap"],
+            )
+    _tick("finished_rail_cap")
+
     # === LIVE COMPLETENESS ON THE GAMES-LED SURFACES (#2709, Alex P1) ===
     #
     # The `include_tonights_games=discover_mode` gate above is correct and stays:
@@ -1524,6 +1570,7 @@ def apply_discover_display_chain(
     return items, {
         "reviewed_filtered_count": reviewed_filtered_count,
         "first_page_quality_floor": first_page_floor_meta,
+        "finished_rail_cap": finished_rail_cap_meta,
         "live_first_page": live_first_page_meta,
     }
 
