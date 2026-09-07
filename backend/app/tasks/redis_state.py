@@ -1565,21 +1565,50 @@ def record_task_incomplete(
     relabels itself as a thrown error. It simply cannot be counted as
     completion, and ``last_verdict`` keeps the task out of GREEN until a run
     actually completes.
+
+    ONE EXCEPTION, opt-in (CAL-P1042 / #3733, from CERT-2153's BLOCK)
+    ----------------------------------------------------------------
+    Freezing the streak is right for a resumable sweep that keeps stopping: the
+    streak is real, and a partial must not wipe it. It is wrong for the other
+    shape of partial — a run whose OWN work finished and which is short only
+    because something it depends on is faulty. There the frozen streak is a lie
+    no later run can retract, because a task in that state never reaches
+    :func:`record_task_success`, and ``get_task_metrics`` reads the streak band
+    BEFORE the last-verdict band. Measured: the beat gauge sampler held
+    ``consecutive_failures: 78`` / ``health: critical`` for 39 hours while
+    banking every beat in 0.4s — and because this function refreshes the hash
+    TTL on every call, the stale streak could not even age out.
+
+    So a run that sets ``self_ok: True`` clears the streak, and ONLY such a run.
+    See :func:`~app.utils.task_verdict.clears_failure_streak` for the three
+    conditions. No other task sets the field today, so no other task's streak
+    behaviour changes — an unrelated partial still preserves a real streak.
     """
     try:
+        from app.utils.task_verdict import clears_failure_streak
+
         r = get_redis_client()
         key = f"{TASK_METRICS_PREFIX}:{task_name}"
         now_iso = _utc_now_iso()
 
         incomplete_key = f"{TASK_METRICS_PREFIX}:{task_name}:incompletes"
-        pipe = r.pipeline()
-        pipe.hset(key, mapping={
+        mapping = {
             "last_incomplete_at": now_iso,
             "last_duration_ms": str(round(duration_ms)),
             "last_result_summary": json.dumps(result_summary or {}),
             "last_verdict": verdict,
             "last_verdict_reason": verdict_reason,
-        })
+        }
+        if clears_failure_streak(verdict, result_summary):
+            # Stamped, not silently zeroed. A counter that a task is allowed to
+            # reset needs to say when it last did so and on whose word, or the
+            # next operator cannot tell a cleared streak from one that never
+            # climbed — which is the same conflation this whole change is about.
+            mapping["consecutive_failures"] = "0"
+            mapping["failure_streak_cleared_at"] = now_iso
+            mapping["failure_streak_cleared_by"] = str(verdict_reason)[:200]
+        pipe = r.pipeline()
+        pipe.hset(key, mapping=mapping)
         pipe.expire(key, TASK_METRICS_TTL)
         _bump_window_counter(pipe, incomplete_key)
         _push_duration(pipe, task_name, duration_ms)

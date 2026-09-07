@@ -64,18 +64,35 @@ terminals, and the middle one is the one that exists for that:
     done; ``appended`` says which, so "the sampler ran" and "a beat was
     captured" never collapse into one fact.
 ``partial``
-    the ledger was read fine and is **STALE** — no beat has landed in longer
-    than :data:`LEDGER_STALE_AFTER_S`. The sampler worked and the producer did
-    not. It must not read GREEN, because a green sampler over a stopped producer
-    is precisely the blindness this instrument was built to end.
+    the sampler worked and **the producer did not** — no beat has landed in
+    longer than :data:`LEDGER_STALE_AFTER_S`, or the beat did not write every
+    gauge the derived bound needs. It must not read GREEN, because a green
+    sampler over a stopped producer is precisely the blindness this instrument
+    was built to end.
 ``failed``
-    the ledger could not be read, the gauges could not be extracted, or the
-    history could not be written. A failed durable write is a FAILED run here
-    (unlike the twin, where the measurement is the product and the record is
-    secondary): for a sampler the record IS the product.
+    the ledger could not be read, the row could not be keyed, or the history
+    could not be written. A failed durable write is a FAILED run here (unlike
+    the twin, where the measurement is the product and the record is secondary):
+    for a sampler the record IS the product.
 
 It is enrolled in ``ENFORCED_TASKS`` in the same change that gives it these
 terminals — enrolment without a terminal is a documented no-op.
+
+The observer's verdict is not the producer's condition (CAL-P1042, #3733)
+-------------------------------------------------------------------------
+Those three terminals shipped with the gauge check in the ``failed`` arm, and
+that one placement cost the instrument its own signal. By 2026-09-06 the sampler
+read ``consecutive_failures: 78`` / ``health: critical`` **while working
+perfectly**, because ``staged:served_at`` had been absent from the beat since
+2026-09-05T07:19Z. Seventy-eight reds, not one of them about the sampler, and
+unfalsifiable from outside without opening ``last_result_summary`` by hand.
+
+So the two questions are asked separately and answered separately —
+:func:`sampler_did_its_job` and :func:`producer_condition`, both pure, both on
+the run artifact by name. ``health`` tracks the first. The second is reported,
+never suppressed: it still costs the run its GREEN, it just no longer counts as
+the instrument breaking. See :func:`decide_terminal` for the full argument and
+why ``partial`` rather than a downgrade to GREEN.
 """
 
 from __future__ import annotations
@@ -845,6 +862,78 @@ def summarise(history: dict) -> dict:
     }
 
 
+#: The two write statuses that mean the ring holds this beat when the run ends.
+#: ``unchanged`` is the job done, not a skip — the beat was already banked by an
+#: earlier sample in the same hour.
+_WRITE_OK = ("stored", "unchanged")
+
+#: The observed beat did not write every gauge the derived bound depends on, so
+#: the banked row is not replayable. A fact about the PRODUCER.
+PRODUCER_GAUGES_ABSENT = "gauges_absent"
+
+#: No beat has landed in longer than :data:`LEDGER_STALE_AFTER_S`. A fact about
+#: the PRODUCER.
+PRODUCER_LEDGER_STALE = "ledger_stale"
+
+
+def sampler_did_its_job(
+    *, observation: Optional[dict], write_status: Optional[str]
+) -> bool:
+    """Did THIS RUN do the sampler's own work? Pure.
+
+    Read the ledger, key the row by its generation, put the ring on disk. That
+    is the whole of it, and it is deliberately silent about what the row SAID —
+    a sampler that faithfully banks a beat which stopped has done its job
+    perfectly, and CAL-P1042 exists because saying otherwise spent the signal.
+    """
+    if observation is None or observation.get("generation") is None:
+        return False
+    return write_status in _WRITE_OK
+
+
+def producer_condition(
+    *, observation: Optional[dict], ledger_age_s: Optional[float]
+) -> dict:
+    """What condition is the OBSERVED BEAT in? Pure. Never about the sampler.
+
+    ``measured`` is the gotcha #53 half and is load-bearing: when the ledger
+    could not be read, the producer's condition is **unknown**, which is not the
+    same value as "healthy". An empty ``conditions`` list under
+    ``measured: false`` would read as an all-clear the sampler never earned.
+    """
+    condition: dict[str, Any] = {
+        "measured": observation is not None,
+        "conditions": [],
+        "gauges_absent": None,
+        "ledger_age_s": None if ledger_age_s is None else round(ledger_age_s),
+        "ledger_stale_after_s": LEDGER_STALE_AFTER_S,
+        "beat_terminal": None,
+        "reason": None,
+    }
+    if observation is None:
+        return condition
+
+    condition["beat_terminal"] = observation.get("terminal")
+    absent = list(observation.get("gauges_missing_required") or [])
+    condition["gauges_absent"] = absent
+
+    parts: list[str] = []
+    if absent:
+        condition["conditions"].append(PRODUCER_GAUGES_ABSENT)
+        parts.append(f"{PRODUCER_GAUGES_ABSENT}: the beat did not write " + ",".join(absent))
+    if ledger_age_s is not None and ledger_age_s > LEDGER_STALE_AFTER_S:
+        condition["conditions"].append(PRODUCER_LEDGER_STALE)
+        parts.append(
+            f"{PRODUCER_LEDGER_STALE}: newest beat is {int(ledger_age_s)}s old, "
+            f"bound is {LEDGER_STALE_AFTER_S}s"
+        )
+    # Every condition, not the first one — the two have different owners and a
+    # reader who is told only about the gauge cannot see that the beat has also
+    # stopped landing.
+    condition["reason"] = "; ".join(parts) or None
+    return condition
+
+
 def decide_terminal(
     *,
     read_status: str,
@@ -854,28 +943,56 @@ def decide_terminal(
 ) -> tuple[str, Optional[str]]:
     """``(terminal, reason)``. Pure, so every branch is reachable from a test.
 
-    Ordered by which fact dominates. A stale ledger under a failed write is a
-    failed run — the write failure is about US and is fixable here; the staleness
-    is about the producer and is somebody else's P1.
+    Two questions, asked in this order and **never merged** (CAL-P1042, #3733):
+
+    1. **Did the sampler do its job?** Ledger read, row keyed, ring written. Only
+       this can be ``failed``, because only this is about US and fixable here.
+    2. **What condition is the producer in?** Gauges absent, no beat landing.
+       Real, and it must not read GREEN — so it is ``partial``, the terminal this
+       module already had for exactly "the sampler worked and the producer did
+       not", and it is carried by name in :func:`producer_condition` beside it.
+
+    Why the split, measured
+    -----------------------
+    Both facts used to come out as ``failed``. On 2026-09-06 the sampler had
+    ``consecutive_failures: 78`` and ``health: critical`` **while working
+    perfectly** — banking the 22:38:15Z beat in 0.3s — because one gauge,
+    ``staged:served_at``, had been absent from the beat since 2026-09-05T07:19Z.
+    Seventy-eight reds, none of them about the sampler. The next one that IS
+    about the sampler arrives as the seventy-ninth identical red and nobody
+    looks; that is the crying-wolf failure ``task_verdict``'s own header names.
+
+    ``partial`` is the right home rather than a downgrade to GREEN because it is
+    in ``task_verdict.NOT_GREEN`` — so the producer signal this module's
+    docstring bought is kept in full and only its escalation is dropped. The
+    docstring's requirement was "must not read GREEN"; it never said "must read
+    FAILED", and the over-delivery is what burned the signal.
+
+    ⚠️ The terminal alone does NOT deliver the ship, and CERT-2153's BLOCK is why
+    this paragraph exists. ``record_task_incomplete`` FREEZES
+    ``consecutive_failures`` rather than clearing it, and ``get_task_metrics``
+    reads the streak band BEFORE the last-verdict band — so the 78 already
+    banked would have held ``health: critical`` forever, with every partial
+    refreshing the hash TTL so it could not even age out. The run artifact
+    therefore also carries ``self_ok``
+    (:data:`~app.utils.task_verdict.SELF_OK_FIELD`), the opt-in field by which a
+    task states its own machinery finished; that is what actually clears the
+    stale streak, and the terminal alone would have been a fix that changed the
+    word and not the number.
+
+    Order still matters within question 1: a stale ledger under a failed write
+    is a failed run, because the write failure is about US and is fixable here.
     """
     if observation is None:
         return "failed", f"ledger_unreadable: {read_status}"
     if observation.get("generation") is None:
         return "failed", "ledger_row_has_no_generation"
-    if write_status not in ("stored", "unchanged"):
+    if write_status not in _WRITE_OK:
         return "failed", f"history_write_failed: {write_status}"
-    if observation.get("gauges_missing_required"):
-        return (
-            "failed",
-            "required gauges absent from the ledger: "
-            + ",".join(observation["gauges_missing_required"]),
-        )
-    if ledger_age_s is not None and ledger_age_s > LEDGER_STALE_AFTER_S:
-        return (
-            "partial",
-            f"ledger_stale: newest beat is {int(ledger_age_s)}s old, "
-            f"bound is {LEDGER_STALE_AFTER_S}s",
-        )
+
+    condition = producer_condition(observation=observation, ledger_age_s=ledger_age_s)
+    if condition["conditions"]:
+        return "partial", condition["reason"]
     return "complete", None
 
 
@@ -973,6 +1090,12 @@ async def run_beat_gauge_sample() -> dict:
             read_status=read_status, observation=None, write_status=None, ledger_age_s=None
         )
         artifact["appended"] = False
+        artifact["self_ok"] = False
+        # ``measured: false`` — we never saw the producer, so we say nothing
+        # about it rather than banking an all-clear we did not earn.
+        artifact["producer_condition"] = producer_condition(
+            observation=None, ledger_age_s=None
+        )
         return artifact
 
     observation = build_observation(
@@ -997,6 +1120,14 @@ async def run_beat_gauge_sample() -> dict:
     ledger_age_s = (started - stamp).total_seconds() if stamp is not None else None
     artifact["ledger_age_s"] = None if ledger_age_s is None else round(ledger_age_s)
 
+    # CAL-P1042 (#3733). Stamped BEFORE the write is attempted and on every exit
+    # below, because the producer's condition is a fact this run measured
+    # whether or not the run then went on to succeed. A reader who has to infer
+    # it from the absence of a field is back to opening the summary by hand.
+    artifact["producer_condition"] = producer_condition(
+        observation=observation, ledger_age_s=ledger_age_s
+    )
+
     existing, history_status = await _read_history()
     artifact["history_read_status"] = history_status
     if history_status not in ("ok", "malformed", "missing"):
@@ -1004,6 +1135,7 @@ async def run_beat_gauge_sample() -> dict:
         artifact["terminal"] = "failed"
         artifact["reason"] = f"history_unreadable: {history_status}"
         artifact["appended"] = False
+        artifact["self_ok"] = False
         return artifact
 
     merged = merge_history(existing, observation)
@@ -1050,6 +1182,21 @@ async def run_beat_gauge_sample() -> dict:
         observation=observation,
         write_status=write_status,
         ledger_age_s=ledger_age_s,
+    )
+    # Named rather than inferred from ``terminal != "failed"``. The two are
+    # derived from one function so they cannot drift, and the field is what an
+    # operator reads: "did the instrument work" is now a boolean, not a deduction
+    # about which of two merged facts produced the red.
+    #
+    # It is also the CONTRACT field ``task_verdict.SELF_OK_FIELD``, and that is
+    # the half that actually pays the ship: on a `partial` it is what lets
+    # ``record_task_incomplete`` clear the 78-deep false streak that
+    # ``get_task_metrics`` would otherwise keep reading as `critical`. Set from
+    # ``sampler_did_its_job`` and never from a literal, so the assertion this
+    # task makes to the health surface is the same one it makes to its own
+    # terminal.
+    artifact["self_ok"] = sampler_did_its_job(
+        observation=observation, write_status=write_status
     )
     artifact["duration_s"] = round(
         (datetime.datetime.now(datetime.timezone.utc) - started).total_seconds(), 2
