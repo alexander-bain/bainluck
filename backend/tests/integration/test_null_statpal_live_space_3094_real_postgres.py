@@ -711,3 +711,219 @@ class TestAnEmptyBackupCannotBeMistakenForASnapshot:
         assert BACKUP_TABLE in str(excinfo.value)
         conn.rollback()
         assert _rows(cur) == before
+
+
+@needs_postgres
+class TestAPreservedBackupThatDoesNotCoverTheRun:
+    """CERT-2171 follow-up `MLB-3094-BACKUP-COVERS-EVERY-CLEARED-EVENT`.
+
+    The other edge of "CREATE TABLE IF NOT EXISTS deliberately does not
+    refresh", and the one with no symptom. The preserved backup is real,
+    populated, and a perfectly good undo — for a DIFFERENT set of rows. The
+    emptiness guard above is satisfied by it, so a later apply clears rows the
+    snapshot predates, and `--rollback` then restores its own rows verbatim and
+    reports a clean undo while the newer ones stay cleared with nothing holding
+    them.
+
+    Executed against a real server because the claim is a `NOT EXISTS`
+    anti-join between the live population and the backup table, evaluated at the
+    moment before the write. A fake can be told any number; only the server can
+    be wrong about which rows are actually in the table.
+    """
+
+    def test_a_second_apply_refuses_rows_the_first_snapshot_never_held(self, conn):
+        from scripts.null_statpal_live_space_ids_3094 import apply_clear
+
+        cur = conn.cursor()
+        ids = _seed(cur)
+        conn.commit()
+
+        apply_clear(cur, dry_run=False)
+        conn.commit()
+
+        # A writer refills a row the backup has never held. `already_null`
+        # is chosen precisely because the first apply left it out of the backup.
+        cur.execute(
+            "UPDATE events SET statpal_fixture_id = %s WHERE id = %s",
+            (LIVE_ID, ids["already_null"]),
+        )
+        conn.commit()
+        before_second = _rows(cur)
+
+        with pytest.raises(SystemExit) as excinfo:
+            apply_clear(cur, dry_run=False)
+        conn.rollback()
+
+        message = str(excinfo.value)
+        assert "1 of the 1" in message, message
+        assert "DO NOT DROP" in message, message
+
+        # The refusal landed before the write: the refilled row still holds its
+        # id, and the backup was not widened behind the operator's back.
+        assert _rows(cur) == before_second
+        cur.execute(f"SELECT count(*) FROM {BACKUP_TABLE}")
+        assert cur.fetchone()[0] == 2
+
+    def test_the_undo_for_the_rows_it_does_hold_still_works_after_the_refusal(
+        self, conn
+    ):
+        """The refusal must not be a dead end. The 364 in the banked snapshot
+        are still restorable, and that is the state an operator is left in.
+        """
+        from scripts.null_statpal_live_space_ids_3094 import (
+            apply_clear,
+            rollback_clear,
+        )
+
+        cur = conn.cursor()
+        ids = _seed(cur)
+        conn.commit()
+        before = _rows(cur)
+
+        apply_clear(cur, dry_run=False)
+        conn.commit()
+        cur.execute(
+            "UPDATE events SET statpal_fixture_id = %s WHERE id = %s",
+            (LIVE_ID, ids["already_null"]),
+        )
+        conn.commit()
+
+        with pytest.raises(SystemExit):
+            apply_clear(cur, dry_run=False)
+        conn.rollback()
+
+        undone = rollback_clear(cur)
+        conn.commit()
+        assert undone["unrestored"] == 0, undone
+        assert _rows(cur)[ids["col_only"]] == before[ids["col_only"]]
+        assert _rows(cur)[ids["col_and_jsonb"]] == before[ids["col_and_jsonb"]]
+
+    def test_the_dry_run_refuses_it_too_and_creates_nothing(self, conn):
+        """A pre-flight that exits 0 for a run the apply refuses is worse than
+        no pre-flight: it is the operator's evidence that the apply is safe.
+        """
+        from scripts.null_statpal_live_space_ids_3094 import apply_clear
+
+        cur = conn.cursor()
+        ids = _seed(cur)
+        conn.commit()
+
+        apply_clear(cur, dry_run=False)
+        conn.commit()
+        cur.execute(
+            "UPDATE events SET statpal_fixture_id = %s WHERE id = %s",
+            (LIVE_ID, ids["already_null"]),
+        )
+        conn.commit()
+        before_dry = _rows(cur)
+
+        with pytest.raises(SystemExit) as excinfo:
+            apply_clear(cur, dry_run=True)
+        conn.rollback()
+
+        assert "DO NOT DROP" in str(excinfo.value)
+        assert _rows(cur) == before_dry
+
+    def test_re_clearing_rows_the_backup_already_holds_is_allowed(self, conn):
+        """The legitimate repeat, and the reason the guard counts coverage
+        rather than refusing every second apply outright.
+
+        After a rollback the original rows are back in the live space and the
+        banked snapshot still holds every one of them, so re-applying is fully
+        reversible. A guard that refused here would make the undo a one-way
+        door — restore once, never re-apply — which is a worse operator
+        position than the defect it was closing.
+        """
+        from scripts.null_statpal_live_space_ids_3094 import (
+            apply_clear,
+            rollback_clear,
+        )
+
+        cur = conn.cursor()
+        ids = _seed(cur)
+        conn.commit()
+        before = _rows(cur)
+
+        apply_clear(cur, dry_run=False)
+        conn.commit()
+        rollback_clear(cur)
+        conn.commit()
+        assert _rows(cur) == before
+
+        second = apply_clear(cur, dry_run=False)
+        conn.commit()
+        assert second["uncovered"] == 0, second
+        assert second["cleared"] == 2, second
+        assert _rows(cur)[ids["col_only"]][0] is None
+
+
+@needs_postgres
+class TestThePreconditionAndTheClearAreOnePopulation:
+    """CERT-2171 follow-up `MLB-3094-POPULATION-CHECK-AND-CLEAR-ATOMICITY`.
+
+    `SNAPSHOT_ISOLATION` is what makes the precondition's count and the clear
+    one population; this arm proves the equality check that makes a future loss
+    of that isolation loud rather than silent. It is driven over real statements
+    because the number it compares is one the server computes.
+    """
+
+    def test_a_clear_wider_than_the_verdict_it_was_gated_on_refuses(self, conn):
+        from scripts.null_statpal_live_space_ids_3094 import apply_clear
+
+        cur = conn.cursor()
+        _seed(cur)
+        conn.commit()
+        before = _rows(cur)
+
+        # The corpus holds two live-space rows. `gated_on=1` is a verdict
+        # computed on a population that has since grown — exactly what a writer
+        # refilling between the guard and the write produces under READ
+        # COMMITTED.
+        with pytest.raises(SystemExit) as excinfo:
+            apply_clear(cur, dry_run=False, gated_on=1)
+        conn.rollback()
+
+        message = str(excinfo.value)
+        assert "1" in message and "2" in message, message
+        assert _rows(cur) == before
+        cur.execute("SELECT to_regclass(%s) IS NOT NULL", (BACKUP_TABLE,))
+        assert cur.fetchone()[0] is False, "refused, yet it created a backup table"
+
+    def test_the_matching_count_proceeds(self, conn):
+        from scripts.null_statpal_live_space_ids_3094 import apply_clear
+
+        cur = conn.cursor()
+        _seed(cur)
+        conn.commit()
+
+        done = apply_clear(cur, dry_run=False, gated_on=2)
+        conn.commit()
+        assert done["cleared"] == 2, done
+
+    def test_the_entrypoint_pins_the_apply_to_one_snapshot(self, conn, monkeypatch):
+        """`main()` on a REAL connection, asserting the server's own view.
+
+        `set_session` raises inside an open transaction, so this is the arm that
+        would catch a pin placed after the first statement — the fake in the
+        fast suite can only check the call order, not whether the server
+        accepted it.
+        """
+        cur = conn.cursor()
+        _seed(cur)
+        conn.commit()
+
+        assert _run_main(conn, monkeypatch, ["--apply", "--expect-population", "2"]) == 0
+
+        cur.execute("SHOW transaction_isolation")
+        assert cur.fetchone()[0] == "repeatable read"
+
+    def test_the_entrypoint_leaves_the_rollback_unpinned(self, conn, monkeypatch):
+        cur = conn.cursor()
+        _seed(cur)
+        conn.commit()
+
+        assert _run_main(conn, monkeypatch, ["--apply", "--expect-population", "2"]) == 0
+        assert _run_main(conn, monkeypatch, ["--rollback"]) == 0
+
+        cur.execute("SHOW transaction_isolation")
+        assert cur.fetchone()[0] == "read committed"

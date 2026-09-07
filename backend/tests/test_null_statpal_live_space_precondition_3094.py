@@ -48,15 +48,39 @@ class FakeCursor:
     one change most likely to move a guard to the wrong side of a write.
     """
 
-    def __init__(self, *, population: int, backup_rows: int = 0):
+    def __init__(
+        self,
+        *,
+        population: int,
+        backup_rows: int = 0,
+        backup_exists: bool = False,
+        uncovered: int = 0,
+        population_at_clear: int | None = None,
+    ):
         self.population = population
         self.backup_rows = backup_rows
+        self.backup_exists = backup_exists
+        self.uncovered = uncovered
+        #: What `apply_clear`'s OWN plan query answers, when a test wants it to
+        #: disagree with the count the precondition was computed from. That
+        #: disagreement is what READ COMMITTED makes possible between the guard
+        #: and the write, and a fake that cannot express it cannot test for it.
+        self.population_at_clear = (
+            population if population_at_clear is None else population_at_clear
+        )
         self.statements: list[str] = []
         self._pending = None
 
     def execute(self, sql, params=None):
         self.statements.append(sql)
-        if mod.BACKUP_TABLE in sql and "count(*)" in sql:
+        # Most specific first. `COUNT_UNCOVERED_BY_BACKUP` names the backup table
+        # AND counts, so it has to be matched before the plain backup count or it
+        # silently answers with the wrong number.
+        if "NOT EXISTS" in sql and mod.BACKUP_TABLE in sql:
+            self._pending = ("one", (self.uncovered,))
+        elif "to_regclass" in sql:
+            self._pending = ("one", (self.backup_exists,))
+        elif mod.BACKUP_TABLE in sql and "count(*)" in sql:
             self._pending = ("one", (self.backup_rows,))
         elif "END AS shape" in sql:
             self._pending = ("all", [("live_space (10-digit)", self.population)])
@@ -64,7 +88,7 @@ class FakeCursor:
             self._pending = ("one", (0,))
         elif "FILTER (WHERE" in sql:
             # apply_clear's own plan query: (planned, planned_jsonb).
-            self._pending = ("one", (self.population, 0))
+            self._pending = ("one", (self.population_at_clear, 0))
         elif "ORDER BY e.commence_time" in sql:
             self._pending = ("all", [])  # the dry run's sample listing
         elif "count(*)" in sql:
@@ -96,6 +120,11 @@ class FakeConn:
         self._cursor = cursor
         self.committed = False
         self.rolled_back = False
+        #: What `pin_isolation` asked for, and WHEN. The level alone is not the
+        #: claim: `set_session` raises inside an open transaction, so a pin that
+        #: lands after the first statement is not a pin at all.
+        self.isolation = None
+        self.statements_before_pin = None
 
     def cursor(self):
         return self._cursor
@@ -106,9 +135,13 @@ class FakeConn:
     def rollback(self):
         self.rolled_back = True
 
+    def set_session(self, isolation_level=None):
+        self.isolation = isolation_level
+        self.statements_before_pin = len(self._cursor.statements)
 
-def run_main(monkeypatch, argv, *, population):
-    cur = FakeCursor(population=population)
+
+def run_main(monkeypatch, argv, *, population, **cursor_kwargs):
+    cur = FakeCursor(population=population, **cursor_kwargs)
     conn = FakeConn(cur)
     monkeypatch.setattr(mod, "_connect", lambda: conn)
     monkeypatch.setattr(sys, "argv", ["null_statpal_live_space_ids_3094.py", *argv])
@@ -243,7 +276,10 @@ class TestAnEmptyBackupIsNotASnapshot:
     """
 
     def test_apply_refuses_when_an_existing_backup_holds_nothing(self):
-        cur = FakeCursor(population=364, backup_rows=0)
+        # `backup_exists` is the load-bearing half: the guard is about a table an
+        # EARLIER run left behind. A table this run creates holds exactly this
+        # run's rows and there is nothing for the guard to see.
+        cur = FakeCursor(population=364, backup_exists=True, backup_rows=0)
 
         with pytest.raises(SystemExit) as excinfo:
             mod.apply_clear(cur, dry_run=False)
@@ -252,14 +288,174 @@ class TestAnEmptyBackupIsNotASnapshot:
         # And it refused BEFORE the clear, which is the whole claim.
         assert not any("UPDATE events" in s for s in cur.statements), cur.statements
 
-    def test_a_populated_backup_proceeds(self):
-        cur = FakeCursor(population=364, backup_rows=364)
+    def test_a_populated_backup_that_covers_the_run_proceeds(self):
+        cur = FakeCursor(
+            population=364, backup_exists=True, backup_rows=364, uncovered=0
+        )
         done = mod.apply_clear(cur, dry_run=False)
         assert done["backed_up"] == 364
+        assert done["uncovered"] == 0
         assert any("UPDATE events" in s for s in cur.statements)
 
     def test_nothing_to_clear_does_not_trip_the_guard(self):
         # The legitimate no-op re-run: zero planned, zero backed up. Refusing
         # here would make every post-apply invocation raise.
-        cur = FakeCursor(population=0, backup_rows=0)
+        cur = FakeCursor(population=0, backup_exists=True, backup_rows=0)
         assert mod.apply_clear(cur, dry_run=False)["cleared"] == 0
+
+    def test_a_first_run_has_no_preserved_backup_to_answer_for(self):
+        """No table yet, so `preserved_backup` is None and neither arm fires.
+
+        This is the ONLY state in which coverage needs no check, and it needs
+        none because `CREATE_BACKUP` selects the same population the clear runs
+        on, under the same snapshot. Stated as a test because the guard is
+        written to skip on `None`, and a `None` that meant "unknown" rather than
+        "total by construction" would be a hole rather than an exemption.
+        """
+        cur = FakeCursor(population=364, backup_exists=False)
+        assert mod.preserved_backup(cur) is None
+        done = mod.apply_clear(cur, dry_run=False)
+        assert done["uncovered"] == 0
+        assert any("UPDATE events" in s for s in cur.statements)
+
+
+class TestThePreservedBackupMustCoverEveryRowTheRunClears:
+    """CERT-2171 follow-up `MLB-3094-BACKUP-COVERS-EVERY-CLEARED-EVENT`.
+
+    The empty-table case above is one edge of "CREATE TABLE IF NOT EXISTS
+    deliberately does not refresh". This is the other, and it is the one with no
+    symptom at all: the preserved backup is real, populated and a perfectly good
+    undo — for a DIFFERENT set of rows.
+
+    The sequence is the one production is actually set up for. The apply clears
+    364 and banks them. A writer later refills rows, or an operator states a new
+    number with `--expect-population`. The table exists and is not empty, so the
+    emptiness guard is satisfied; the new rows are cleared against a snapshot
+    taken before they were ever in this shape; and `--rollback` then restores
+    364 rows verbatim and reports a CLEAN undo while the new rows stay cleared
+    with nothing holding them. D51's grant is written against a repair that can
+    be undone, and after that run part of it cannot be.
+    """
+
+    def test_apply_refuses_candidates_the_preserved_backup_does_not_hold(self):
+        cur = FakeCursor(
+            population=10, backup_exists=True, backup_rows=364, uncovered=10
+        )
+
+        with pytest.raises(SystemExit) as excinfo:
+            mod.apply_clear(cur, dry_run=False, gated_on=10)
+
+        message = str(excinfo.value)
+        # Both numbers, because the operator's next decision depends on the
+        # difference between them, not on the fact that something was refused.
+        assert "10" in message and "364" in message
+        # And the remedy must not be the one the emptiness guard prescribes:
+        # dropping this table discards a real undo for the 364 it does hold.
+        assert "DO NOT DROP" in message
+        assert not any("UPDATE events" in s for s in cur.statements), cur.statements
+
+    def test_a_partially_covered_run_refuses_too(self):
+        """Nine of ten covered is not covered. The guard counts rows, not runs."""
+        cur = FakeCursor(
+            population=10, backup_exists=True, backup_rows=364, uncovered=1
+        )
+
+        with pytest.raises(SystemExit) as excinfo:
+            mod.apply_clear(cur, dry_run=False, gated_on=10)
+
+        assert "1 of the 10" in str(excinfo.value)
+
+    def test_the_dry_run_refuses_it_before_creating_anything(self):
+        """The pre-flight answers "will the apply run?", so it refuses too.
+
+        And it refuses EARLIER than the apply does — a dry run reaches this
+        before `CREATE_BACKUP`, so nothing at all is written, which is the one
+        thing a dry run promises unconditionally.
+        """
+        cur = FakeCursor(
+            population=10, backup_exists=True, backup_rows=364, uncovered=10
+        )
+
+        with pytest.raises(SystemExit):
+            mod.apply_clear(cur, dry_run=True, gated_on=10)
+
+        assert not cur.wrote(), cur.statements
+
+    def test_a_re_run_over_rows_the_backup_already_holds_is_allowed(self):
+        """The legitimate repeat: rollback put the rows back, so re-clearing
+        them is covered by the snapshot that is already banked. Refusing here
+        would make the undo a one-way door — you could restore, but never
+        re-apply — and the guard's question is coverage, not novelty.
+        """
+        cur = FakeCursor(
+            population=364, backup_exists=True, backup_rows=364, uncovered=0
+        )
+        done = mod.apply_clear(cur, dry_run=False, gated_on=364)
+        assert done["cleared"] == 0  # the fake reports no rowcount
+        assert any("UPDATE events" in s for s in cur.statements)
+
+
+class TestThePreconditionAndTheClearAreOnePopulation:
+    """CERT-2171 follow-up `MLB-3094-POPULATION-CHECK-AND-CLEAR-ATOMICITY`.
+
+    `main()` counts the population, grades it, and then `apply_clear` clears it.
+    Under READ COMMITTED those are two statements at two moments: a writer
+    refilling rows in between gets a `FROZEN 364` verdict and a wider clear —
+    the exact loop the frozen count exists to refuse, waved through by the guard
+    that was supposed to stop it.
+
+    Two defenses, and they are not redundant. `SNAPSHOT_ISOLATION` is what makes
+    the two counts one number; the equality check is what makes a future loss of
+    that isolation LOUD instead of silent. Testing only the second would pass on
+    a script with no isolation at all.
+    """
+
+    def test_a_population_that_moved_between_the_guard_and_the_write_refuses(self):
+        cur = FakeCursor(population=364, population_at_clear=374)
+
+        with pytest.raises(SystemExit) as excinfo:
+            mod.apply_clear(cur, dry_run=False, gated_on=364)
+
+        message = str(excinfo.value)
+        assert "364" in message and "374" in message
+        assert not any("UPDATE events" in s for s in cur.statements), cur.statements
+
+    def test_a_population_that_shrank_refuses_as_well(self):
+        # Symmetry with `population_verdict`: a FALL means something cleared
+        # rows this run has not backed up, which is not a state it has measured.
+        cur = FakeCursor(population=364, population_at_clear=350)
+        with pytest.raises(SystemExit):
+            mod.apply_clear(cur, dry_run=False, gated_on=364)
+
+    def test_an_ungated_caller_is_not_second_guessed(self):
+        # `gated_on=None` is the round-trip tests driving the statements
+        # directly. There is no verdict to disagree with, so there is nothing
+        # to assert; inventing one would make the helper untestable in isolation.
+        cur = FakeCursor(population=2, population_at_clear=2)
+        assert mod.apply_clear(cur, dry_run=False)["planned"] == 2
+
+    def test_every_writing_mode_runs_on_one_snapshot(self, monkeypatch):
+        for argv in (["--apply"], [], ["--report"]):
+            _, conn, cur = run_main(monkeypatch, argv, population=364)
+            assert conn.isolation == mod.SNAPSHOT_ISOLATION, argv
+            # A pin is only a pin if it lands before the first statement:
+            # `set_session` raises inside an open transaction, so a pin placed
+            # after the census would fail on a real connection and silently do
+            # nothing on a forgiving one.
+            assert conn.statements_before_pin == 0, argv
+
+    def test_the_rollback_is_deliberately_left_unpinned(self, monkeypatch):
+        """The way OUT of a bad state must not be blockable by that state.
+
+        At REPEATABLE READ a concurrent write to a row being restored aborts the
+        UPDATE with a serialization failure. That is the correct answer for the
+        apply — it means the writer this repair waits on is live — and the wrong
+        one for the undo, which has to be able to run *while* the damage it is
+        undoing is still being written to.
+        """
+        rc, conn, _ = run_main(
+            monkeypatch, ["--rollback"], population=0, backup_exists=True
+        )
+        assert rc == 0
+        assert conn.isolation == mod.ROLLBACK_ISOLATION
+        assert mod.ROLLBACK_ISOLATION != mod.SNAPSHOT_ISOLATION
