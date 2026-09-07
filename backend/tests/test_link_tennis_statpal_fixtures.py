@@ -30,7 +30,7 @@ production held them the same evening, including the `tennis_other` twin of
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -44,6 +44,7 @@ from app.tasks.link_tennis_statpal_fixtures import (
     VERDICT_LINK,
     VERDICT_UNMATCHED,
     classify_fixture,
+    statpal_read_span,
 )
 
 FIXTURE = (
@@ -262,3 +263,68 @@ class TestTheReadPlan:
     def test_the_offsets_are_ones_the_service_accepts(self):
         for offset in SCHEDULE_DAY_OFFSETS:
             assert offset in StatPalAPIService.TENNIS_DAILY_OFFSETS
+
+
+class TestTheSpanWeClaimToHaveRead:
+    """#3644. The span the agreement row divides by must be days we ASKED about.
+
+    `livescores` is a state query, not a day's schedule, and it keeps returning
+    matches for days after they finish. Production 2026-09-06: it dragged the
+    published span's start to `2026-09-04T11:10Z`, into two days that
+    `SCHEDULE_DAY_OFFSETS` never requests, and every row of ours in that stretch
+    was counted as a miss *inside StatPal's span* — a disagreement with a list
+    nobody asked for. `ours_covered_in_span_pct` published 13.91% as though it
+    were a coverage verdict.
+    """
+
+    def test_it_starts_today_and_not_at_whatever_livescores_dredged_up(self):
+        """The defect, stated as a date.
+
+        `2026-09-04` and `2026-09-05` are the two days the production span
+        wrongly reached back into. Neither may be inside the span we claim.
+        """
+        first, _ = statpal_read_span(datetime(2026, 9, 6, 11, 10, tzinfo=timezone.utc))
+        assert first == datetime(2026, 9, 6, 0, 0, tzinfo=timezone.utc)
+        assert first > datetime(2026, 9, 5, 23, 59, tzinfo=timezone.utc)
+
+    def test_it_reaches_the_last_instant_of_the_last_day_requested(self):
+        """End-INCLUSIVE, and this is the assertion that says so.
+
+        `day + timedelta(days=max_offset)` ends at that day's MIDNIGHT, which
+        excludes all but the first instant of `d2` — the day whose unplayed
+        fixtures are most of what `d2` is asked for. The bug would be invisible
+        in any test that only checked the start.
+        """
+        now = datetime(2026, 9, 6, 11, 10, tzinfo=timezone.utc)
+        _, last = statpal_read_span(now)
+        assert last >= datetime(2026, 9, 8, 23, 59, 59, tzinfo=timezone.utc)
+        assert last < datetime(2026, 9, 9, 0, 0, tzinfo=timezone.utc)
+
+    def test_the_span_tracks_the_offsets_it_is_derived_from(self, monkeypatch):
+        """Change what we ask for and the span must follow, or it lies.
+
+        A span written out as a literal would keep claiming the old window
+        forever after someone widened the read — and it would keep passing the
+        two tests above, which is exactly why this one exists.
+        """
+        import app.tasks.link_tennis_statpal_fixtures as mod
+
+        now = datetime(2026, 9, 6, 11, 10, tzinfo=timezone.utc)
+        monkeypatch.setattr(mod, "SCHEDULE_DAY_OFFSETS", (1, 2, 3, 4))
+        _, last = mod.statpal_read_span(now)
+        assert last >= datetime(2026, 9, 10, 23, 59, 59, tzinfo=timezone.utc)
+        assert last < datetime(2026, 9, 11, 0, 0, tzinfo=timezone.utc)
+
+    def test_a_non_utc_clock_does_not_move_the_day_boundary(self):
+        """The offsets are UTC days, so the span must be too.
+
+        Handed a `now` in a zone whose local date differs from the UTC date, a
+        naive `.replace(hour=0)` floors to the LOCAL midnight and shifts the
+        whole span by up to a day — silently, and only for part of the day
+        (gotcha #44's shape, in the span rather than in a fixture).
+        """
+        utc_now = datetime(2026, 9, 6, 2, 30, tzinfo=timezone.utc)
+        # 2026-09-05 22:30 in UTC-4 — the same instant, the previous local date.
+        other = utc_now.astimezone(timezone(timedelta(hours=-4)))
+        assert other.date() != utc_now.date()
+        assert statpal_read_span(other) == statpal_read_span(utc_now)

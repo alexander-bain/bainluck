@@ -154,6 +154,57 @@ logger = logging.getLogger(__name__)
 #: for it spends a call to learn nothing.
 SCHEDULE_DAY_OFFSETS: tuple[int, ...] = (1, 2)
 
+
+def statpal_read_span(now: datetime) -> tuple[datetime, datetime]:
+    """The UTC span StatPal's tennis side was actually REQUESTED over (#3644).
+
+    Not the dates the returned fixtures carry — the dates some call we make is
+    *scoped to*. Those were the same thing for the team sports, whose StatPal
+    side is one `season-schedule` call, and they were never the same thing here.
+
+    THE DEFECT THIS EXISTS TO KILL. `livescores` is a state query, not a day's
+    schedule, and it keeps returning matches for several days after they finish.
+    Measured 2026-09-06: it dragged the published span's start back to
+    `2026-09-04T11:10Z`, two days whose schedule `SCHEDULE_DAY_OFFSETS` never
+    asks for. Every row of ours in that stretch was then counted as a miss
+    *inside StatPal's span* — a disagreement with a list nobody requested — and
+    `tennis_singles.identity.ours_covered_in_span_pct` published 13.91% as
+    though it were a coverage verdict.
+
+    THE LINE, stated so the next reader can disagree with it deliberately: a day
+    is READ when a request we make is scoped to it. `livescores` is scoped to
+    now, so today counts. `daily/dN` is scoped to `now + N`. Days before today
+    are scoped to by NOTHING — they appear only as `livescores` residue, and
+    residue is not a read.
+
+    KNOWN AND NARROWER, on purpose: today is covered by `livescores` (plus `d1`,
+    which spills — measured, 1 of its 22 fixtures was dated today), and
+    `livescores` favours live and recently-finished matches. A match early today
+    that finished before this pass could still be absent, and would land
+    `inside` this span. That is a real residual and it is roughly two orders of
+    magnitude smaller than the two whole unrequested days this removes; the
+    alternative — dropping today from the span — throws away the one day that
+    carries the live matches, and it is a bigger lie than the one it fixes.
+
+    Derived FROM `SCHEDULE_DAY_OFFSETS` rather than written out, so a change to
+    what we ask for cannot leave the span claiming what we used to ask for.
+    `test_the_read_span_tracks_the_offsets_it_is_derived_from` holds that.
+    """
+    day = now.astimezone(timezone.utc).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    # `0` for `livescores`. Not in `SCHEDULE_DAY_OFFSETS` because StatPal has no
+    # `d0` token to request (see that constant) — but the day IS read, by a
+    # different call, and the span is about days read rather than tokens sent.
+    offsets = (0,) + tuple(SCHEDULE_DAY_OFFSETS)
+    first = day + timedelta(days=min(offsets))
+    # End-INCLUSIVE, to the last instant of the last day read. `+ N days` alone
+    # would end at that day's midnight and exclude all but the first instant of
+    # it, quietly shrinking the span by a whole day at the far end — where the
+    # unplayed fixtures `d2` exists to serve actually sit.
+    last = day + timedelta(days=max(offsets) + 1) - timedelta(microseconds=1)
+    return first, last
+
 #: How far apart a StatPal start time and ours may be and still be one match.
 #:
 #: Wide on purpose and NOT a threshold to tune. Both sides carry placeholder
@@ -692,6 +743,14 @@ async def _run_link_tennis_statpal_fixtures(
             measurement_window=(
                 None if run.read_failures else tennis_measurement_bounds((now, now), now=now)
             ),
+            # Stated on the no-fixtures path too. The span is what we ASKED
+            # over, so it is known even when the answer was empty — and this is
+            # the path where a reader most needs to see it, because "no
+            # fixtures" and "no fixtures on the days we asked about" are the
+            # two readings a bare zero cannot separate (gotcha #53).
+            statpal_read_span=(
+                None if run.read_failures else statpal_read_span(now)
+            ),
         )
         for row in empty.values():
             await record_agreement_day(row, at=now, apply=apply)
@@ -863,6 +922,7 @@ async def _run_link_tennis_statpal_fixtures(
         sources_read=run.sources_read,
         window=(window_start, window_end),
         measurement_window=tennis_measurement_bounds((now, now), now=now),
+        statpal_read_span=statpal_read_span(now),
     )
     for row in agreements.values():
         # Both populations gate PENDING-NO-GOVERNING-NUMBER, so neither advances
