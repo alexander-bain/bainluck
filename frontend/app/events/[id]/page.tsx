@@ -59,6 +59,7 @@ import {
 const PropsSection = dynamic(() => import("@/components/event/PropsSection"), { ssr: false });
 import type { PropMark } from "@/components/event/PropsSection";
 import { indexPropRowsByScriptKey, verifyScriptGrade } from "@/lib/propGrade";
+import { isChildTitleMark } from "@/lib/propFamily";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import SectionErrorBoundary from "@/components/SectionErrorBoundary";
@@ -1696,17 +1697,24 @@ export default function EventPage({ params }: EventPageProps) {
           <SectionErrorBoundary label="The script" resetKey={gameMarkets}>
           <PropsSection
             eventStatus={event.status}
-            items={propsScript.map((p, i): PropMark => {
-              const verified = verifyScriptGrade(p, rawPropRowsByKey);
-              return {
-                key: p.key ?? i,
-                label: p.label,
-                pregame_mark: p.pregame_mark ?? null,
-                current: p.current ?? null,
-                graded_result: verified.graded_result,
-                graded_label: verified.graded_label,
-              };
-            })}
+            items={propsScript
+              .map((p, i): PropMark => {
+                const verified = verifyScriptGrade(p, rawPropRowsByKey);
+                return {
+                  key: p.key ?? i,
+                  label: p.label,
+                  pregame_mark: p.pregame_mark ?? null,
+                  current: p.current ?? null,
+                  graded_result: verified.graded_result,
+                  graded_label: verified.graded_label,
+                };
+              })
+              // #3874: drop the undecomposed-child-title rows (gotcha #18) — the
+              // same row class, and the same decision, that the Additional Markets
+              // card one section lower already drops. Nine of this page's twelve
+              // marks were the parent title verbatim plus a remainder the phone
+              // clipped away. PropsSection self-gates on an empty array.
+              .filter((mark) => !isChildTitleMark(mark))}
           />
           </SectionErrorBoundary>
         );

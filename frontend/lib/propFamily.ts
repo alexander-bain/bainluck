@@ -15,6 +15,8 @@
  * PURE: no I/O, no React, no DB.
  */
 
+import { childTitleRemainder } from "./otherMarketGroups";
+
 /** Separator the backend uses between market name and outcome name in a key. */
 export const FAMILY_SEPARATOR = "|";
 
@@ -33,6 +35,56 @@ export function propFamilyName(key: string | number): string | null {
   if (i <= 0) return null;
   const family = key.slice(0, i).trim();
   return family.length > 0 ? family : null;
+}
+
+/**
+ * True when a props_script mark is not an outcome at all but an undecomposed
+ * nested child market's TITLE (gotcha #18, the Polymarket parent).
+ *
+ * #3874: on `/events/15305579` (Andreeva v Potapova, US Open) THE SCRIPT · Props
+ * rendered NINE rows all reading `US Open WTA: Mirra Andreeva vs Anasta…` against
+ * nine different percentages — every row restating the card's own header and then
+ * clipping before the words that would tell them apart. There is no reading of
+ * that card that says what any number is about.
+ *
+ * The decision this expresses is NOT new and is deliberately not re-derived here:
+ * `otherMarketGroups.buildMarketSection` already drops exactly this row class from
+ * the Additional Markets card ONE CARD LOWER ON THE SAME PAGE, and
+ * {@link childTitleRemainder} is that decision, already exported. This composes it
+ * with the key format {@link propFamilyName} already owns — the parent title only
+ * reaches this surface inside the key, because the backend sets
+ * `label = outcome_name` and keeps `market_name` on the left of the separator.
+ *
+ * **Drop, not shorten** — the point #3557 is open about. De-prefixing makes these
+ * rows shorter but cannot make them readable: `Set Handicap +/-1.5 — 64%` names a
+ * question and no side of it, and the side is not in the wire text to recover.
+ * On the measured payload it is also the safer answer, because the prices look
+ * re-used, not merely unsided: eight of the nine rows carried only four distinct
+ * values, with `Set Handicap +/-1.5` and `Set 2 Winner` both `0.645`. And the
+ * properly sided `Set 2 Winner` in the SAME response reads `0.775` — 65% against
+ * 78%, one question and 13 points, both cards on screen at once. (Pregame the
+ * split is masked, because THE SCRIPT renders `pregame_mark` rather than
+ * `current`: 76% against 78%. It surfaces the moment the match goes live.)
+ *
+ * False for everything that is a real outcome. A numeric key (the concept page
+ * builds marks with `key: mid`) carries no family, so it can never match.
+ *
+ * **This judges the LABEL, so only apply it where the label is all the reader
+ * gets.** The `/events/[id]` mapping builds every mark without `kind`, `question`
+ * or `outcomes`, so all of them render as a bare `PropRow` whose entire text is
+ * `label` — which is why the drop is unambiguously right there. A caller whose
+ * marks carry a shape (the concept page's `kind: "field" | "ladder"`) routes them
+ * to a card that renders `question` and NAMED outcomes instead, and such a mark
+ * can be perfectly readable while still having a prefixed label. Do not filter
+ * those on this predicate alone; that surface is deliberately left untouched.
+ */
+export function isChildTitleMark(mark: {
+  key: string | number;
+  label?: string | null;
+}): boolean {
+  const family = propFamilyName(mark.key);
+  if (family == null) return false;
+  return childTitleRemainder(family, mark.label) !== null;
 }
 
 /**
