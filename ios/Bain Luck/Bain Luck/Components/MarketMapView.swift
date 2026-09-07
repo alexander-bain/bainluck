@@ -301,12 +301,12 @@ struct MarketMapView: View {
         // two-set handicap relabelled as a one-set one, which is a different
         // market. `formatThreshold` is the same formatter the totals ladder
         // has always used.
-        let ladder: [(label: String, prob: Double, color: Color)] =
+        let ladder: [LadderRow] =
             parsed.filter { !$0.isHome }.sorted { abs($0.margin) < abs($1.margin) }.prefix(3).map {
-                ("\(aAbbr) +\(formatThreshold(abs($0.margin)))", $0.probability, awayColor)
+                LadderRow(label: "\(aAbbr) +\(formatThreshold(abs($0.margin)))", prob: $0.probability, color: awayColor)
             } +
             parsed.filter(\.isHome).sorted { $0.margin < $1.margin }.prefix(3).map {
-                ("\(hAbbr) +\(formatThreshold($0.margin))", $0.probability, homeColor)
+                LadderRow(label: "\(hAbbr) +\(formatThreshold($0.margin))", prob: $0.probability, color: homeColor)
             }
 
         // Headline: favored team + win %
@@ -443,8 +443,37 @@ struct MarketMapView: View {
         let mapUnit = fullTotalUnit
         let scoreboardIsComparable = scoreboardCounts(mapUnit)
 
-        let ladder: [(label: String, prob: Double, color: Color)] = thresholds.prefix(6).map {
-            ("Over \(formatThreshold($0.threshold))", $0.overProb, Color(hex: "#7c3aed"))
+        // #3823 — the final this card may GRADE its ladder against, read once.
+        // The gate is not new: it is the FINAL marker's own gate below, lifted
+        // out so the two cannot disagree about whether the scoreboard counts
+        // what the rungs are quoted in. A soccer corners map on a goals
+        // scoreboard has a final and must not grade a single row with it.
+        let settledTotal: Int? = {
+            guard isDone, scoreboardIsComparable,
+                  let homeScoreValue = scoredHomeScore,
+                  let awayScoreValue = scoredAwayScore else { return nil }
+            return homeScoreValue + awayScoreValue
+        }()
+
+        // #3823 — before the result, the lowest lines; after it, the lines the
+        // result actually decided. `settledLadderWindow` carries the argument.
+        let ladderLimit = 6
+        let window = settledTotal.map {
+            MarketMapRail.settledLadderWindow(
+                sortedThresholds: allThresh, finalTotal: $0, limit: ladderLimit
+            )
+        } ?? 0 ..< Swift.min(ladderLimit, thresholds.count)
+        let ladder: [LadderRow] = window.map { i in
+            LadderRow(
+                label: "Over \(formatThreshold(thresholds[i].threshold))",
+                prob: thresholds[i].overProb,
+                color: Color(hex: "#7c3aed"),
+                result: settledTotal.map {
+                    MarketMapRail.totalLadderResult(
+                        threshold: thresholds[i].threshold, finalTotal: $0
+                    )
+                }
+            )
         }
 
         // Markers are built BEFORE the rail (#3503): with no line parsed they
@@ -454,10 +483,7 @@ struct MarketMapView: View {
         let sportLine = sportUnitLineApplies(mapUnit) ? overUnder : nil
         let ouLine = sportLine ?? thresholds.first(where: { abs($0.overProb - 0.5) < 0.1 })?.threshold
         if isDone {
-            if scoreboardIsComparable,
-               let homeScoreValue = scoredHomeScore,
-               let awayScoreValue = scoredAwayScore {
-                let totalScore = homeScoreValue + awayScoreValue
+            if let totalScore = settledTotal {
                 markers.append(MapMarker(id: "final", value: Double(totalScore), type: .final_, label: "FINAL", displayValue: vocab.withUnit("\(totalScore)")))
             }
             if let ou = ouLine {
@@ -707,7 +733,7 @@ struct MarketMapView: View {
         rightRgb: (r: Double, g: Double, b: Double),
         axisLeft: String, axisMid: String, axisRight: String,
         markers: [MapMarker],
-        ladder: [(label: String, prob: Double, color: Color)]
+        ladder: [LadderRow]
     ) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             // Header
@@ -906,7 +932,42 @@ struct MarketMapView: View {
 
     // MARK: - Probability Ladder
 
-    private func ladderView(entries: [(label: String, prob: Double, color: Color)]) -> some View {
+    /// One row of a map's ladder.
+    ///
+    /// #3823 gave it a fourth field and that is why it stopped being a tuple: a
+    /// `(label:prob:color:)` tuple cannot default its new member, so every margin
+    /// call site would have had to name a totals-only concept to say it has none.
+    struct LadderRow {
+        let label: String
+        let prob: Double
+        let color: Color
+        /// The verdict this row earned, or nil while the game can still decide
+        /// it. Nil is the ONLY state in which the row prints a probability —
+        /// see ``MarketMapRail/settledLadderWindow(sortedThresholds:finalTotal:limit:)``.
+        var result: MarketMapRail.TotalLadderResult?
+
+        init(label: String, prob: Double, color: Color,
+             result: MarketMapRail.TotalLadderResult? = nil) {
+            self.label = label
+            self.prob = prob
+            self.color = color
+            self.result = result
+        }
+    }
+
+    /// #3823 — green and red are `TotalPointsSpectrumView`'s own, to the hex,
+    /// because that view already grades a settled totals ladder on this same
+    /// event page and two settled ladders in two colours is a third bug.
+    private static func ladderResultColor(_ result: MarketMapRail.TotalLadderResult) -> Color {
+        switch result {
+        case .over: return Color(hex: "#10B981")
+        case .under: return .red
+        // Nothing happened, so nothing is coloured as though it had.
+        case .push: return .secondary
+        }
+    }
+
+    private func ladderView(entries: [LadderRow]) -> some View {
         VStack(spacing: 5) {
             ForEach(entries.indices, id: \.self) { i in
                 let entry = entries[i]
@@ -924,9 +985,21 @@ struct MarketMapView: View {
                             }
                     }
                     .frame(height: 16)
-                    Text("\(Int((entry.prob * 100).rounded()))%")
-                        .font(.system(size: 10, weight: .black, design: .monospaced))
-                        .frame(width: MarketMapLadderLayout.valueColumnWidth, alignment: .trailing)
+                    // #3823 — the BAR is left exactly as it was on purpose. It
+                    // already draws the step (0.99 above the final, 0.01 below),
+                    // so it was never the thing making a false claim; the number
+                    // beside it was, by stating a settlement price in a forecast's
+                    // tense.
+                    Group {
+                        if let result = entry.result {
+                            Text(MarketMapRail.totalLadderResultLabel(result))
+                                .foregroundStyle(Self.ladderResultColor(result))
+                        } else {
+                            Text("\(Int((entry.prob * 100).rounded()))%")
+                        }
+                    }
+                    .font(.system(size: 10, weight: .black, design: .monospaced))
+                    .frame(width: MarketMapLadderLayout.valueColumnWidth, alignment: .trailing)
                 }
             }
         }
