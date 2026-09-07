@@ -107,6 +107,7 @@ from app.utils.provider_anchor_keys import (
     odds_api_anchor_key,
     polymarket_anchor_key,
     statpal_anchor_key,
+    statpal_qualifier_refusal,
     statpal_sport_from_source_id,
 )
 from app.utils.sport_keys import get_llm_category_for_prefix
@@ -194,7 +195,20 @@ def anchor_key_for_claim(
     if source == "espn":
         return espn_anchor_key(source_id)
     if source == "statpal":
-        if warn_unqualified and sport_key is None and source_id:
+        # The refusal reason comes from the key module's own rule rather than
+        # being re-tested here, so the log line cannot come to describe a rule
+        # the code has stopped applying (`statpal_qualifier_refusal`).
+        #
+        # It is asked for EVERY unusable qualifier, not just an absent one. A
+        # present-but-blank qualifier — an empty column, a stripped-to-nothing
+        # string — refuses exactly like `None` does and used to do it in
+        # silence, which is the one outcome D55 forbids: the caller sees no
+        # anchor and no reason, and a hole in the channel looks identical to a
+        # sport that simply has no fixture. Same for a qualifier carrying the
+        # `:` separator, which is refused because the key could not be split
+        # back apart by `anchor_is_current`.
+        refusal = statpal_qualifier_refusal(sport_key) if warn_unqualified else None
+        if refusal is not None and source_id and str(source_id).strip():
             # WARNING and not DEBUG on purpose, and the reason changed with step
             # 3. While the digit fallback existed this was a COUNTDOWN — it
             # marked a call that still got an answer, by the wrong rule. Now it
@@ -202,11 +216,17 @@ def anchor_key_for_claim(
             # channel rather than a deprecation notice, so it must not get
             # quieter as it becomes more serious. D55's second clause is that a
             # key we cannot form raises or tags; this is the tag.
+            #
+            # Gated on a non-blank `source_id` because a claim with no StatPal
+            # id at all is the ordinary case for most events, not a defect, and
+            # a warning that fires on the common path is one nobody reads.
             logger.warning(
-                "D55/#2879: StatPal anchor claim REFUSED — no sport_key for "
+                "D55/#2879: StatPal anchor claim REFUSED (%s sport_key=%r) for "
                 "fixture id=%s, so no anchor was written or matched. The "
                 "digit-derived fallback was deleted at step 3; the caller must "
-                "pass sport_key.",
+                "pass a non-empty sport_key that contains no ':'.",
+                refusal,
+                sport_key,
                 source_id,
             )
         return statpal_anchor_key(source_id, sport_key)
