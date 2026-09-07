@@ -1207,6 +1207,48 @@ async def _check_and_fix_inversion(
 _KALSHI_TICKER_LIKE_PATTERNS = [f"{prefix}%" for prefix in _KALSHI_GAME_TICKER_PREFIXES]
 
 
+async def _record_link_anchor(
+    session, event_id: int, market, stats: dict,
+) -> None:
+    """Put the correspondence this link just established into the channel.
+
+    Q477 (P476-2). Only `find_or_create_event` ever wrote an anchor, so the
+    schedule-derived side of a correspondence — the row with the score on it —
+    was systematically absent from `event_provider_anchors`, and the ONLY rows
+    the channel held for a Kalshi fixture were the twins it minted. This is the
+    write that lets the next series for the same fixture resolve to the real
+    event at registry Step 2 instead of creating its own.
+
+    One `INSERT ... ON CONFLICT DO NOTHING` on the `newly_linked` branch only —
+    the first time a market links, never on a repeat poll — and only for a key
+    that can actually anchor an absorption. Everything else returns `NO_KEY`
+    before touching the database.
+
+    **Exceptions are deliberately NOT caught here.** The instinct is gotcha
+    #42's — one bad item must not wipe the pass — but a failed INSERT has
+    already aborted the Postgres transaction, so swallowing it does not save the
+    link: it strands the session in an aborted state and, worse, skips the
+    caller's `rollback()`. Both `_try_link_market` call sites are already
+    wrapped in a per-market `except` that rolls back and records the error, and
+    that is the boundary that actually recovers.
+    """
+    from app.services.anchor_channel import COLLISION, WROTE, record_link_anchor
+
+    result = await record_link_anchor(
+        session,
+        event_id=event_id,
+        source=market.source,
+        provider_id=market.external_id,
+    )
+
+    if result.outcome == WROTE:
+        stats["funnel"].setdefault("link_anchor_written", 0)
+        stats["funnel"]["link_anchor_written"] += 1
+    elif result.outcome == COLLISION:
+        stats["funnel"].setdefault("link_anchor_collision", 0)
+        stats["funnel"]["link_anchor_collision"] += 1
+
+
 async def _try_link_market(
     session, market, matchup, matched_event, stats: dict,
     ticker_game_date, now: datetime, polymarket_backfill_queue: list,
@@ -1259,6 +1301,9 @@ async def _try_link_market(
         )
         await _register_market_team_identities(
             session, matched_event["event_id"], matchup, market,
+        )
+        await _record_link_anchor(
+            session, matched_event["event_id"], market, stats,
         )
         if market.group_id and market.source == "polymarket":
             from sqlalchemy import text as _text
