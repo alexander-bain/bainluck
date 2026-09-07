@@ -2429,6 +2429,20 @@ export interface EventTournamentResponse {
   tournament: { slug: string; title: string; url: string } | null;
   /** Named, when there is one: `NOT_IN_REGISTER`, `REGISTER_MOVED`. */
   reason?: string;
+  /**
+   * Has the authority actually NAMED a start time for this fixture? (#3829)
+   *
+   * `true` — ESPN listed it and said there is no time yet, so its
+   * `commence_time` is a placeholder and printing an hour off it is a
+   * fabrication. `false` — a real published hour. `null`/absent — it is not on
+   * today's order of play and we hold no opinion.
+   *
+   * **`null` is not `false`.** The only thing that may suppress a clock is an
+   * explicit `true`; an absent flag leaves the page exactly as it was, which is
+   * what keeps a finished match — always absent from today's slate — printing
+   * the real time it was actually played at.
+   */
+  start_is_tbd?: boolean | null;
   matchup_key?: string;
   round?: string | null;
   draw_label?: string | null;

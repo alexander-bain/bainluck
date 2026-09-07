@@ -103,6 +103,8 @@ import {
   hasAnyWinProbData,
   formatCountdown,
   shouldShowRefreshCountdown,
+  startClockState,
+  formatEventStartLabel,
   resolveProbability,
   computeSharedChartDomain,
   computeRealStartTime,
@@ -398,11 +400,47 @@ export default function EventPage({ params }: EventPageProps) {
     return () => clearInterval(interval);
   }, [lastRefresh, refreshInterval]);
 
+  // #2443 — the container the event belongs to, which for a registered
+  // tournament carries the decided result the hero needs to name a winner.
+  //
+  // The SAME key `TournamentExtensions` uses, so this is one request between
+  // the two of them and not two; the hero simply needs it resolved above the
+  // fold rather than when a lazy section below the chart mounts. Gated on the
+  // shared sport-key test, so no event outside a tournament sport asks.
+  //
+  // HOISTED ABOVE THE COUNTDOWN EFFECT BY #3829, which reads `start_is_tbd` off
+  // it — a countdown to a time the authority has not published should never be
+  // computed, not merely hidden after the fact.
+  const { data: eventTournament } = useSWR<EventTournamentResponse>(
+    isTournamentSportKey(event?.sport) ? eventTournamentKey(eventId) : null,
+    () => fetchEventTournament(eventId),
+    { revalidateOnFocus: false, refreshInterval: 120000 },
+  );
+
+  // ── IS THIS EVENT'S START TIME A REAL ONE? (#3829) ──
+  //
+  // The rule, the three states and why the default keeps the clock all live in
+  // `startClockState`, which is pure and guarded. This page only supplies the
+  // three facts it is the one that holds.
+  const startClock = startClockState({
+    startIsTbd: eventTournament?.start_is_tbd,
+    isTournamentSport: isTournamentSportKey(event?.sport),
+    tournamentResolved: eventTournament !== undefined,
+  });
+  const hideStartClock = startClock !== "clock";
+
   useEffect(() => {
     // live/048: `isSuspended` joins the suppression list. A suspended match has
     // a commence_time in the PAST, so counting down to it is counting down to
     // something that already happened.
-    if (!event?.commence_time || isLive || isFinished || isSuspended) {
+    //
+    // #3829: `hideStartClock` joins it for the mirror-image reason — a fixture
+    // with no published order of play has a commence_time that was never a
+    // start time at all, so counting down to it is counting down to nothing.
+    if (
+      !event?.commence_time || isLive || isFinished || isSuspended ||
+      hideStartClock
+    ) {
       setGameCountdown("");
       return;
     }
@@ -412,7 +450,7 @@ export default function EventPage({ params }: EventPageProps) {
     updateCountdown();
     const interval = setInterval(updateCountdown, 1000);
     return () => clearInterval(interval);
-  }, [event?.commence_time, isLive, isFinished, isSuspended]);
+  }, [event?.commence_time, isLive, isFinished, isSuspended, hideStartClock]);
 
   const {
     data: historyData,
@@ -451,19 +489,6 @@ export default function EventPage({ params }: EventPageProps) {
     if (last && last.timestamp === liveFrame.updated_at) return served;
     return [...served, { timestamp: liveFrame.updated_at, value: liveFrame.p }];
   }, [historyData?.aggregate_line, liveFrame]);
-
-  // #2443 — the container the event belongs to, which for a registered
-  // tournament carries the decided result the hero needs to name a winner.
-  //
-  // The SAME key `TournamentExtensions` uses, so this is one request between
-  // the two of them and not two; the hero simply needs it resolved above the
-  // fold rather than when a lazy section below the chart mounts. Gated on the
-  // shared sport-key test, so no event outside a tournament sport asks.
-  const { data: eventTournament } = useSWR<EventTournamentResponse>(
-    isTournamentSportKey(event?.sport) ? eventTournamentKey(eventId) : null,
-    () => fetchEventTournament(eventId),
-    { revalidateOnFocus: false, refreshInterval: 120000 },
-  );
 
   // Team championship progression (playoff path from grid data — always available for both teams)
   const { data: teamProgression } = useSWR<TeamProgressionResponse>(
@@ -937,16 +962,11 @@ export default function EventPage({ params }: EventPageProps) {
                 <span className="tabular-nums font-mono">{countdown}s</span>
               </span>
             ) : (
-              <span className="text-[10px] text-text-muted">
-                {new Date(event.commence_time).toLocaleDateString("en-US", {
-                  month: "short",
-                  day: "numeric",
-                  year: "numeric",
-                })} · {new Date(event.commence_time).toLocaleTimeString("en-US", {
-                  hour: "numeric",
-                  minute: "2-digit",
-                  timeZoneName: "short",
-                })}
+              <span className="text-[10px] text-text-muted" data-testid="event-hero-start">
+                {/* #3829 — the day is real, the hour may not be. The label and
+                    the reason it is shaped this way live in
+                    `formatEventStartLabel`, beside the state that selects it. */}
+                {formatEventStartLabel(event.commence_time, startClock)}
               </span>
             )}
           </div>
