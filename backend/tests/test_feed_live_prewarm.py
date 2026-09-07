@@ -83,7 +83,7 @@ def test_a_republish_pass_lands_before_the_previous_one_expires():
         f"ceiling {FEED_RESPONSE_STALE_TTL_LIVE_SECONDS}s, below the "
         f"{FEED_LIVE_REPUBLISH_MIN_HEADROOM_S}s reserve — a live shape will be "
         "gone from the cache before its next republish on any pass that fires "
-        "late, which is #2236 (at 0s of reserve) and LAT-P182 (at too little)"
+        "late, which is #2236 (at 0s of reserve) and LAT-P182 (#3827) (at too little)"
     )
 
 
@@ -113,7 +113,7 @@ def test_the_invariant_reserves_a_margin_for_a_late_beat():
     """
     assert FEED_LIVE_REPUBLISH_MIN_HEADROOM_S > 0, (
         "a reserve of zero is not a reserve — it is the equality case the old "
-        "`>= 0` assertion admitted, and it is exactly what LAT-P182 measured "
+        "`>= 0` assertion admitted, and it is exactly what LAT-P182 (#3827) measured "
         "costing 9.1% of front-page reads a ~2s cold build"
     )
     assert (

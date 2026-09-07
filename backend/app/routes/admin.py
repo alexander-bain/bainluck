@@ -1295,7 +1295,7 @@ def _live_prewarm_state() -> dict:
         # Reusing the 6h TTL of the other rail would call a dead beat fresh for a
         # quarter of a day.
         #
-        # LAT-P182: three PERIODS, read from the constant, not the literal `3 * 40`
+        # LAT-P182 (#3827): three PERIODS, read from the constant, not the literal `3 * 40`
         # this used to be. That literal was the #2236 two-files arrangement in
         # miniature — the period moved 40s -> 30s and this grader would have gone
         # on calling a rail fresh for 90s of a 60s ceiling while nothing compared

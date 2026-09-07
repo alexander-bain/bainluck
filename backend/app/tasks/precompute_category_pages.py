@@ -1358,14 +1358,14 @@ async def _prewarm_live_feed_shapes():
       that fell under the cost of one build the moment N reached 5, at which
       point the pass killed every target it started and published nothing while
       reporting `failures_24h: 0`. The wall could not be widened — it is the
-      BUDGET term of the #2216 ceiling, and since LAT-P182 every second added to
+      BUDGET term of the #2216 ceiling, and since LAT-P182 (#3827) every second added to
       it comes out of `FEED_LIVE_REPUBLISH_MIN_HEADROOM_S` — so the fix is waves
       rather than slices, checked by `live_republish_target_headroom_s()`.
     * **A shape that stops being live leaves on its own.** The warm it just ran
       rewrites the live set, so the set converges within one pass in both
       directions and no separate expiry logic exists to get wrong.
 
-    COST, stated rather than left to be discovered. Restated at LAT-P182's 30s
+    COST, stated rather than left to be discovered. Restated at LAT-P182 (#3827)'s 30s
     period (was 40s); the pass runs on `realtime`, not `background`:
       * Idle (the overnight case): one `HGETALL` + one `SETEX`, ~2,880 passes/day
         (was ~2,160), well under two minutes of slot time across the whole day.
@@ -1386,7 +1386,7 @@ async def _prewarm_live_feed_shapes():
     from "0 of 5 published" into "3 of 5"; it does not claim to make the tail
     fit. That needs the feed build to get cheaper and is a different ship.
 
-    ALSO NOT DONE, and LAT-P182 CHANGED THE REASON RATHER THAN THE DECISION —
+    ALSO NOT DONE, and LAT-P182 (#3827) CHANGED THE REASON RATHER THAN THE DECISION —
     the old text is corrected here rather than quietly edited, because a reader
     who re-derives it from the new numbers will get a different answer than the
     one on the page. This still does not skip a shape whose current publication
@@ -1471,7 +1471,7 @@ async def _prewarm_live_feed_shapes():
     # it makes it do NOTHING — see `live_republish_target_headroom_s()`.
     #
     # Why concurrency and not a bigger wall: the budget is a term of the #2216
-    # ceiling (`live_republish_headroom_s()`), and since LAT-P182 the slack beside
+    # ceiling (`live_republish_headroom_s()`), and since LAT-P182 (#3827) the slack beside
     # it is a NAMED reserve for this beat's own lateness
     # (`FEED_LIVE_REPUBLISH_MIN_HEADROOM_S`), not spare wall. So the budget is
     # still not available to be raised. The semaphore is the only term left.

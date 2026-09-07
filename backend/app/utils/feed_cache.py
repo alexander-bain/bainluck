@@ -74,6 +74,16 @@ FEED_LAST_GOOD_MAX_AGE_LIVE_SECONDS = 60
 #
 #: How often a live-containing shape is republished. Strictly below the ceiling.
 #:
+#: ⚠️ **THE ID `LAT-P182` IS AMBIGUOUS IN THIS TREE AND IS ALWAYS WRITTEN WITH ITS
+#: ISSUE NUMBER FOR THAT REASON.** It also names the cycling-races queue in
+#: `app/utils/event_cycling.py` (`#2482`, rolling race editions), which has
+#: nothing to do with the feed cache. The latency lane numbered this queue from
+#: its SESSION counter rather than the program counter, which had already reached
+#: LAT-P257, and by the time the collision was found the sha was certified and
+#: could not be renumbered without killing its token. Recorded rather than
+#: quietly fixed, on the same reasoning as the Hot List / catalog id collision in
+#: CLAUDE.md: **cite it only as `LAT-P182 (#3827)`**. `#3827` is unambiguous.
+#:
 #: 🔴 **40 -> 30, LAT-P182 (#3827).** The pair below summed to the ceiling
 #: EXACTLY — 40 + 20 == 60 — and the file said so twice without ever saying that
 #: a sum which only just fits is a sum that fits under no other condition. With
@@ -96,7 +106,7 @@ FEED_LIVE_REPUBLISH_BUDGET_S = 20
 #: The slack the #2236 invariant must carry, and what that slack IS FOR.
 #:
 #: `live_republish_headroom_s()` computes `CEILING - PERIOD - BUDGET`. Until
-#: LAT-P182 the guard on it asserted `>= 0`, which admitted the equality case —
+#: LAT-P182 (#3827) the guard on it asserted `>= 0`, which admitted the equality case —
 #: and the equality case is not a satisfied invariant, it is an invariant that
 #: holds only while every pass fires at its exact period. Restated with the term
 #: the original derivation left implicit, the worst case is
@@ -166,8 +176,8 @@ FEED_PREWARM_MIN_VIABLE_BUILD_S = 6.0
 #:
 #: Concurrency is the only lever #2236 leaves. The wall cannot grow: it is the
 #: BUDGET term of the invariant, and every second added to it comes out of
-#: `FEED_LIVE_REPUBLISH_MIN_HEADROOM_S`, which LAT-P182 has already spent on beat
-#: lateness (`PERIOD + BUDGET + MIN_HEADROOM == 60` exactly, and before LAT-P182
+#: `FEED_LIVE_REPUBLISH_MIN_HEADROOM_S`, which LAT-P182 (#3827) has already spent on beat
+#: lateness (`PERIOD + BUDGET + MIN_HEADROOM == 60` exactly, and before LAT-P182 (#3827)
 #: it was `PERIOD + BUDGET == 60` with nothing held back at all). Meanwhile five
 #: sequential 6 s builds need 30 s, which no ordering fits into 20 s.
 #:

@@ -259,8 +259,8 @@ def test_the_net_changes_neither_term_of_the_2236_invariant():
     Stated as a test rather than as a comment because the tempting fix for "the
     net ran out of budget" is to widen `FEED_LIVE_REPUBLISH_BUDGET_S`, and every
     second of that widening comes out of the ceiling's margin — which since
-    LAT-P182 is a NAMED reserve for beat lateness
-    (`FEED_LIVE_REPUBLISH_MIN_HEADROOM_S`) and not spare wall. Before LAT-P182
+    LAT-P182 (#3827) is a NAMED reserve for beat lateness
+    (`FEED_LIVE_REPUBLISH_MIN_HEADROOM_S`) and not spare wall. Before LAT-P182 (#3827)
     there was no margin at all to take it from.
 
     🔴 **#3233 RE-ANCHORED THIS ON THE INTENT.** It used to match the source text
@@ -278,7 +278,7 @@ def test_the_net_changes_neither_term_of_the_2236_invariant():
         live_republish_target_headroom_s,
     )
 
-    # LAT-P182: the bound is the RESERVE, not zero. `>= 0` was the assertion that
+    # LAT-P182 (#3827): the bound is the RESERVE, not zero. `>= 0` was the assertion that
     # let 40 + 20 == 60 stand, and a weaker restatement of the rule sitting beside
     # the strict one is how the weak form gets believed.
     assert live_republish_headroom_s() >= FEED_LIVE_REPUBLISH_MIN_HEADROOM_S
