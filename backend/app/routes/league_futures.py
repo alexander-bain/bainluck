@@ -15,11 +15,11 @@ import re
 from collections.abc import Callable, Sequence
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, Path
-from sqlalchemy import select, and_, or_, func, literal_column
+from sqlalchemy import select, or_, literal_column
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload
 
-from app.models import Event, FuturesMarket, FuturesOutcome, Sport
+from app.models import Event, FuturesMarket, Sport
 from app.routes.events import (
     _build_team_lookup,
     _format_team_data,
@@ -465,6 +465,20 @@ def unreported_games_query(sport_key: str, now: datetime):
         .join(Sport, Sport.id == Event.sport_id)
         .where(
             Sport.key == sport_key,
+            # #2263 / #2878: THE rail the tennis ghosts actually live on, and the
+            # one rail of this file's three that did not consume the proof.
+            #
+            # The omission is chronological, not a judgement: #2263 added the
+            # predicate to the upcoming and results rails, and #3211 created THIS
+            # rail afterwards to hold precisely the population #2263 was written
+            # about — a `scheduled` row past its own kickoff. Measured on
+            # production 2026-09-06, 99 of the 162 tennis twin ghosts are
+            # `scheduled` and land here; the other 63 are `closed`/`suspended`
+            # and land on the results rail, which already excluded them. So
+            # tagging a ghost took its SECOND card off the page and left its
+            # FIRST, and the sweep would have reported success having changed
+            # nothing a user can see.
+            not_a_proven_duplicate(),
             unreported_rail_condition(
                 now, lookback=timedelta(days=RESULTS_LOOKBACK_DAYS)
             ),
