@@ -578,3 +578,94 @@ def test_the_undo_is_a_noop_when_the_backup_table_is_gone(monkeypatch):
     session = _FakeRestoreSession([], table=None)
     code, updates = _restore_run(monkeypatch, session, apply=True)
     assert code == 0 and updates == []
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# The bind contract — #1884's class, recurred (see the module's `SINCE` note)
+# ════════════════════════════════════════════════════════════════════════════
+
+
+class TestEveryTimestamptzBindIsADatetime:
+    """🔴 This suite was 20-odd cases green while the script could not run.
+
+    The repair shipped through CERT-2139 and merged (`343eea23`, Heroku v4240)
+    binding `SINCE = "2026-06-01"` — an ISO **string** — into
+    `CAST(:since AS timestamptz)`. Postgres infers that parameter as
+    `timestamptz` and asyncpg refuses a `str` there rather than coercing it, as
+    psycopg2 would have. The first statement of every run raised
+
+        asyncpg.exceptions.DataError: invalid input for query argument $1:
+        '2026-06-01' (expected a datetime.date or datetime.datetime instance)
+
+    so the script never planned a row and never wrote its backup. Nothing in
+    this file could see it: every case here drives the planner through a fake
+    session that accepts any params object, and the cert graded the diff rather
+    than an execution.
+
+    It is exactly #1884's class — `tests/integration/test_kalshi_cliff_bind_contract.py`
+    exists to close it and says so — and it recurred because that file executes
+    only the cliff drain's own SQL. The executable half for THIS script is
+    `tests/integration/test_repair_3672_bind_contract.py`; these two cases are
+    the fast half that runs in every shard.
+    """
+
+    def test_the_since_watermark_is_a_datetime_and_not_an_iso_string(self):
+        from datetime import datetime
+
+        from scripts.repair_3672_bare_namespace_event_names import SINCE
+
+        assert isinstance(SINCE, datetime), (
+            f"SINCE is {type(SINCE).__name__} — it is bound into "
+            f"CAST(:since AS timestamptz) and asyncpg refuses a str there, so "
+            f"the script dies on its first statement (#1884's class)"
+        )
+        assert SINCE.tzinfo is not None, (
+            "a naive datetime bound to timestamptz takes the server's timezone, "
+            "which silently moves the watermark"
+        )
+
+    def test_no_timestamptz_cast_in_this_script_is_fed_a_string_literal(self):
+        """The specimen above is closed; this catches the NEXT one.
+
+        Reads the source for `CAST(:name AS timestamptz)` and requires every
+        module-level constant bound under one of those names to be a datetime.
+        A future `SINCE`-alike added as a string fails here rather than on a
+        detached dyno whose stdout nobody can read.
+        """
+        import inspect
+        import re
+        from datetime import date, datetime
+
+        from scripts import repair_3672_bare_namespace_event_names as mod
+
+        source = inspect.getsource(mod)
+        bound = set(re.findall(r"CAST\(:(\w+) AS timestamptz\)", source))
+        assert bound, "the timestamptz casts are gone — has the query changed?"
+        for name, value in vars(mod).items():
+            if name.isupper() and name.lower() in {b.lower() for b in bound}:
+                assert isinstance(value, (datetime, date)), (
+                    f"{name} is bound to a timestamptz cast but is "
+                    f"{type(value).__name__}"
+                )
+
+    def test_the_real_asyncpg_bind_gate_is_wired_into_ci(self):
+        """The executable half runs in ONE job and only if it is named there.
+
+        `tests/integration/test_repair_3672_bind_contract.py` is `skipif`-gated
+        on `SEARCH_TEST_DATABASE_URL`, so it skips in all four `backend-tests`
+        shards and pytest exits 0. This assertion lives here, in the always-run
+        file, because a wiring check inside the skip-gated file is circular:
+        unwire it and the test that would catch that stops running too.
+        """
+        import pathlib
+
+        workflow = (
+            pathlib.Path(__file__).resolve().parents[2]
+            / ".github"
+            / "workflows"
+            / "ci.yml"
+        ).read_text()
+        assert "tests/integration/test_repair_3672_bind_contract.py" in workflow, (
+            "the #3672 bind gate is not named in ci.yml — it would skip in every "
+            "shard, and this repair already shipped once without ever executing"
+        )
