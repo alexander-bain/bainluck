@@ -76,13 +76,18 @@ class TestTheQualifierIsTheProvidersIdSpace:
         "tennis_mixed_united_cup",  # not minted yet
     )
 
+    #: Keys whose StatPal id space is 1:1 with our own, so the qualifier is the
+    #: key itself. `soccer_epl` was here until authority/062 measured soccer's
+    #: feed and found the tennis shape a second time — 113 leagues numbered
+    #: from one sequence — so soccer now collapses too and its claims live in
+    #: `test_statpal_soccer_id_spaces_3366.py`. It is not dropped from this
+    #: class: the cross-sport distinctness property below still covers it.
     NON_TENNIS_KEYS = (
         "baseball_mlb",
         "americanfootball_nfl",
         "americanfootball_ncaaf",
         "basketball_nba",
         "icehockey_nhl",
-        "soccer_epl",
         "golf_pga",
     )
 
@@ -130,11 +135,15 @@ class TestTheQualifierIsTheProvidersIdSpace:
         """D55's actual property, still true with tennis collapsed.
 
         Collapsing WITHIN a provider sport is safe; collapsing ACROSS them is
-        the defect #2879 fixed. One `tennis` bucket plus the untouched
-        pass-through must still give every distinct sport a distinct key.
+        the defect #2879 fixed. Two collapsed buckets — `tennis` and, since
+        authority/062, `soccer` — plus the untouched pass-through must still
+        give every distinct sport a distinct key. Both collapsed sports are
+        listed here precisely because a bucket is where an over-broad prefix
+        would first swallow a neighbour.
         """
         spaces = [statpal_id_space(k) for k in self.NON_TENNIS_KEYS]
         spaces.append(statpal_id_space("tennis_atp_us_open"))
+        spaces.append(statpal_id_space("soccer_epl"))
         assert len(set(spaces)) == len(spaces)
 
     def test_none_stays_none_and_blank_stays_blank(self):

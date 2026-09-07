@@ -342,9 +342,10 @@ def statpal_anchor_key(
     )
 
 
-#: The one sport whose StatPal id space is COARSER than our `sports.key`
+#: The two sports whose StatPal id space is COARSER than our `sports.key`
 #: vocabulary. See :func:`statpal_id_space`.
 STATPAL_ID_SPACE_TENNIS = "tennis"
+STATPAL_ID_SPACE_SOCCER = "soccer"
 
 #: Prefix of every `sports.key` that is served by StatPal's single `tennis`
 #: endpoint family (`tennis/daily/{token}`, `tennis/livescores`). Matched as a
@@ -352,6 +353,17 @@ STATPAL_ID_SPACE_TENNIS = "tennis"
 #: per event (`tennis_atp_us_open`, `tennis_wta_wimbledon`, …) and an enumeration
 #: would silently mis-space the next Slam we add.
 _TENNIS_SPORT_KEY_PREFIX = "tennis"
+
+#: Prefix of every `sports.key` served by StatPal's single `soccer` endpoint
+#: family (`soccer/matches/live`, `soccer/matches/daily`). Matched as a prefix
+#: for a stronger reason than tennis's: soccer's key vocabulary is the widest
+#: we have and it grows per league, so an enumeration would mis-space whichever
+#: league is added next. `STATPAL_SPORT_MAPPING` alone already carries seven
+#: (`soccer_epl`, `soccer_usa_mls`, `soccer_spain_la_liga`,
+#: `soccer_germany_bundesliga`, `soccer_italy_serie_a`,
+#: `soccer_france_ligue_one`, `soccer_uefa_champs_league`), all mapping to the
+#: one StatPal sport `soccer`.
+_SOCCER_SPORT_KEY_PREFIX = "soccer"
 
 
 def statpal_id_space(sport_key: Optional[str]) -> Optional[str]:
@@ -382,9 +394,35 @@ def statpal_id_space(sport_key: Optional[str]) -> Optional[str]:
     them duplicates. Fragmenting one provider namespace into thirty is the same
     defect as collapsing thirty into one, arrived at from the other end.
 
-    So: every `tennis*` key maps to `tennis`, and everything else is itself.
-    `None` in, `None` out — a caller with no sport still has no sport, and
-    `statpal_anchor_key` refuses an empty qualifier rather than inventing one.
+    **Soccer is the same shape as tennis and the argument above is repeated
+    verbatim for it, now with a payload behind it.** StatPal serves all of
+    soccer from one endpoint family and numbers every match in one sequence:
+    measured 2026-09-07 ~05:00Z, a single `matches/live` board carried 195
+    matches across 113 leagues, and its ids are unique across the whole board,
+    not per league. The tell is in the id space it publishes first — `main_id`
+    collides ACROSS COMPETITIONS (an England National League Cup tie and an FA
+    Cup qualifier both answer to `2026090846246`), which only happens because
+    one sequence spans the leagues. Our side splits the same matches over the
+    widest key vocabulary we have, growing per league.
+
+    So qualifying by `sports.key` would write `soccer_epl:9541291` and
+    `soccer_uefa_champs_league:9541291` as two different keys for one StatPal
+    match, and the `COLLISION` that is this system's only proof that two of our
+    rows are one game would never fire — on the sport with the most leagues,
+    the most rows and the widest team-name space. That is the tennis defect
+    exactly, and soccer would arrive at it from the same end.
+
+    It is fixed here rather than in the stamper that will need it because
+    right now it is free: `event_provider_anchors` holds **zero** soccer StatPal
+    rows (measured 2026-09-07: nfl 293, tennis 237, mlb 150, nba 41, nhl 27,
+    soccer 0), so there is no history to re-key. Every row a soccer stamper
+    writes before this lands is a row #2879's re-key would have to come back
+    for.
+
+    So: every `tennis*` key maps to `tennis`, every `soccer*` key maps to
+    `soccer`, and everything else is itself. `None` in, `None` out — a caller
+    with no sport still has no sport, and `statpal_anchor_key` refuses an empty
+    qualifier rather than inventing one.
     """
     if sport_key is None:
         return None
@@ -393,6 +431,8 @@ def statpal_id_space(sport_key: Optional[str]) -> Optional[str]:
         return token
     if token.lower().startswith(_TENNIS_SPORT_KEY_PREFIX):
         return STATPAL_ID_SPACE_TENNIS
+    if token.lower().startswith(_SOCCER_SPORT_KEY_PREFIX):
+        return STATPAL_ID_SPACE_SOCCER
     return token
 
 
