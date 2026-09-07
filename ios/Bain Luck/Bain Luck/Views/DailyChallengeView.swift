@@ -50,9 +50,16 @@ struct DailyChallengeView: View {
                     }
 
                     VStack(spacing: 4) {
-                        Text(item.subject)
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                        // #3858 — this line is the SUBJECT OF THE QUESTION, not
+                        // decoration: without it the percentage below belongs to
+                        // nobody. It is drawn immediately above the number on
+                        // purpose, and it is absent only when the headline has
+                        // already said the same thing.
+                        if let subject = item.subject {
+                            Text(subject)
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
                         Text("\(item.threshold)%")
                             .font(.system(size: 64, weight: .bold, design: .monospaced))
                     }
@@ -184,7 +191,11 @@ struct DailyChallengeView: View {
 struct DailyChallengeItem {
     let id: Int
     let headline: String
-    let subject: String
+    /// #3858 — WHOSE number the card is showing, or `nil` when the headline
+    /// already says it. Optional rather than empty-string so the card cannot draw
+    /// a blank line where a sentence belongs; built by
+    /// ``DailyChallengeViewModel/question(from:)``, which is where the reasoning is.
+    let subject: String?
     let threshold: Int
     let actualProbability: Double
     let category: String?
