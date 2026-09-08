@@ -293,7 +293,10 @@ describe("every cohort label names the predicate it actually selects", () => {
     // should believe it, on the page whose entire job is not being taken at our
     // word.
     expect(dflt.proxyFootnote).toContain("traded by construction");
-    expect(dflt.proxyFootnote).toContain("a book moves its line with money");
+    // CERT-2290: was "a book"; notice 33 bans the word in any number, and the
+    // GROUND the assertion is really about — that a sportsbook moves its line
+    // with money — is unchanged.
+    expect(dflt.proxyFootnote).toContain("a sportsbook moves its line with money");
   });
 
   test("the excluded side is described by what it is, with its count", () => {
@@ -317,7 +320,8 @@ describe("every cohort label names the predicate it actually selects", () => {
     // Identical arithmetic, and identical shape, to native's partition note.
     expect(dflt.partitionNote).toBe(
       "Sportsbook lines (40,075 outcomes) carry no price-moved flag and need none — " +
-        "a book moves its line with money — so they count as traded: " +
+        // CERT-2290: was "a book"; notice 33 bans the word in any number.
+        "a sportsbook moves its line with money — so they count as traded: " +
         "349,310 price-moved + 40,075 sportsbook = 389,385 traded, plus " +
         "263,022 untraded = 652,407 resolved outcomes."
     );

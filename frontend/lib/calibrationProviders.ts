@@ -119,7 +119,11 @@ const SOURCE_DISPLAY_NAMES: Record<string, string> = {
   odds_api: "Odds API",
   odds_api_spreads: "Spreads (Odds API)",
   odds_api_totals: "Totals (Odds API)",
-  odds_api_bookmaker: "Per-Bookmaker (Odds API)",
+  // #4067 repair (CERT-2290): this local map SHADOWS the server label. The
+  // backend serves "Per-sportsbook (Odds API)" since b0e54ac3 and the page
+  // never saw it — every calibration source list, table, chart and sample
+  // title kept printing the banned word from here.
+  odds_api_bookmaker: "Per-sportsbook (Odds API)",
   datagolf: "DataGolf",
 };
 
