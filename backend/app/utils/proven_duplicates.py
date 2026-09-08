@@ -346,3 +346,141 @@ def series_row_for_each_source(
         if rank > best_rank:
             chosen[source] = event_id
     return chosen
+
+
+# ── Folding a READING is not folding a SERIES (#3810 Fold A) ─────────────────
+#
+# The series fold above gave the CHART the ghost's rows. The hero number is a
+# different read: `compute_aggregate_probability` does not look at
+# `win_prob_snapshots` at all, it looks at the `win_probability_sources` JSONB
+# on the row being rendered. So on a tagged pair the chart can now draw Kalshi
+# while the big number above it still blends only what happened to land on the
+# canonical — and on the 12 measured US Open pairs, 11 of them have Kalshi on
+# the ghost and none on the canonical.
+#
+# Three user-visible things read this one dict, which is why the fold has to be
+# applied to the dict rather than to the aggregate:
+#
+#   the hero number       `compute_aggregate_probability`
+#   the confidence bars   `confidenceFromSources({sourceCount: keys.length})`  (#490)
+#   the hero's age stamp  MAX(`updated_at`) across the sources
+#
+# Folding only the number would light three bars' worth of evidence into a
+# two-bar hero and date it from the wrong set. They are one ship.
+
+
+def merge_probability_sources(
+    canonical_sources: dict | None,
+    folded_rows: list[tuple[int, dict | None]],
+) -> dict:
+    """The canonical's own readings, plus any source only its folded twins hold.
+
+    GAP-FILL — and deliberately NOT the "richest wins" rule
+    :func:`series_row_for_each_source` uses. A series has a size, so two partial
+    recordings of one source can be compared and the better one chosen. A
+    point-in-time reading has no size: there is nothing to prefer a twin's copy
+    ON. So the canonical's own reading always wins and a twin may only supply a
+    source the canonical does not hold at all, which keeps this strictly
+    ADDITIVE — no page that renders a correct number today can have that number
+    replaced by this fold, only joined by a venue that was already ours.
+
+    Only keys in ``SOURCE_WEIGHTS`` are folded. This column is a shared JSONB
+    bag: it also carries ``statpal_plays`` and ``statpal_injuries`` as ARRAYS
+    and ``_``-prefixed metadata. Those are content, not readings, and moving one
+    row's play-by-play onto another row is a different question from blending
+    its probability.
+
+    "Does the canonical already hold it?" is decided by
+    :func:`parse_source_entry`, never by key presence. A ``None`` write stores
+    JSON ``null``, which is a PRESENT key carrying no reading — a fold that
+    tested ``in`` would decline to fill the exact gap it exists for.
+
+    Twins are consumed in ascending id order so that a hero, its confidence bars
+    and its age stamp do not depend on the order the database returned rows in.
+    """
+    from app.utils.aggregation import SOURCE_WEIGHTS, parse_source_entry
+
+    merged = dict(canonical_sources or {})
+    held = {k for k, v in merged.items() if parse_source_entry(v)[0] is not None}
+
+    for _twin_id, twin_sources in sorted(folded_rows, key=lambda row: row[0]):
+        for key, entry in (twin_sources or {}).items():
+            if key in held or key not in SOURCE_WEIGHTS:
+                continue
+            if parse_source_entry(entry)[0] is None:
+                continue
+            merged[key] = entry
+            held.add(key)
+    return merged
+
+
+class FoldedBlendView:
+    """``event`` with its folded ``win_probability_sources``, nothing else changed.
+
+    🔴 The point of this class is that it CANNOT write. Acceptance 4 of #3810 is
+    "read-side only": ruling 048 permits reading a ghost's content onto the page
+    and does not permit ``UPDATE events SET win_probability_sources``. Assigning
+    the merged dict onto the ORM row would be the obvious way to fold every
+    reader at once, and it is exactly the thing that must not happen — the row
+    is live in an async session, so a later flush would persist it (and gotcha
+    #4 says JSONB ORM assignment is unreliable even when you DO want the write).
+    A wrapper makes the read-only-ness structural rather than a convention a
+    future editor has to know about.
+
+    A proxy rather than a ``SimpleNamespace`` copy, because
+    ``compute_aggregate_probability`` reaches for ``espn_win_prob_home`` and
+    ``opening_home_probability`` through ``getattr(event, name, None)``: a
+    hand-copied shim that missed one would not raise, it would silently drop the
+    hero to its next fallback tier. Forwarding everything cannot miss a field.
+    """
+
+    def __init__(self, event, sources: dict | None):
+        self._event = event
+        self.win_probability_sources = sources
+
+    def __getattr__(self, name):
+        # `_event` is set in `__init__`, so a lookup of it here means the object
+        # is half-built (unpickling, a subclass that skipped `super().__init__`).
+        # Raising rather than recursing turns that into an AttributeError
+        # instead of a RecursionError.
+        if name == "_event":
+            raise AttributeError(name)
+        return getattr(self._event, name)
+
+
+async def folded_probability_sources(db, event) -> dict:
+    """``event``'s readings, plus any source only its suppressed twins hold.
+
+    One indexed lookup against ``ix_events_event_tags`` — the same shape and
+    cost as :func:`folded_event_ids` (~0.06 ms / 5 blocks). The canonical is
+    deliberately NOT in the query: the caller already holds that row, so this
+    reads only the tagged twins, and an untagged event pays one lookup that
+    returns nothing and gets its own dict straight back.
+
+    Orientation is checked for exactly the reason the series fold checks it, and
+    the hazard is if anything sharper here. A ``win_probability_sources`` entry
+    is a HOME win probability, a number whose meaning comes from its own row's
+    ``home_team_name``; fold a twin that disagrees about which player is home
+    and the hero prints one player's number under the other's name — a single
+    confident percentage, with no curve shape for a reader to notice is wrong.
+
+    Errors are not swallowed, for the reason given in :func:`folded_event_ids`.
+    """
+    rows = (
+        await db.execute(
+            select(
+                Event.id,
+                Event.home_team_name,
+                Event.away_team_name,
+                Event.win_probability_sources,
+            ).where(tagged_duplicate_of(event.id))
+        )
+    ).all()
+
+    oriented = [
+        (twin_id, sources)
+        for twin_id, home, away, sources in rows
+        if twin_id != event.id
+        and orientation_agrees(event.home_team_name, event.away_team_name, home, away)
+    ]
+    return merge_probability_sources(event.win_probability_sources, oriented)

@@ -8722,23 +8722,59 @@ async def get_live_odds(sport_key: str):
         )
 
 
+def _cached_detail_payload(event_id: int, now: float) -> dict | None:
+    """The detail payload `get_event` would serve RIGHT NOW, or ``None``.
+
+    ONE freshness rule with ONE reader-visible answer, and that is the whole
+    point of it being a function (#3911, CERT-2239).
+
+    The chart's right edge is pinned to the point-in-time blend so that the hero
+    and the curve under it are one number (standing ruling #1). But the hero is
+    SERVED FROM THIS CACHE for up to `_EVENT_DETAIL_DEFAULT_TTL` while the
+    history route re-reads live rows on every request, so between two source
+    writes a reader gets a cached hero over a freshly-computed edge — measured
+    at 0.40 against 0.30, both on screen, both refreshed every 120s by the page
+    itself. Recomputing the hero on the chart's side cannot fix that: two
+    correct recomputations of a moving number still disagree with a cached one.
+    The chart has to read the number the hero is ACTUALLY RENDERING.
+
+    So this returns the served payload, and the TTL ladder lives here rather
+    than at each call site — a second copy of "is it still fresh" is the same
+    class of defect one level down.
+    """
+    entry = _event_detail_cache.get(event_id)
+    if entry is None:
+        return None
+    cached_at, cached_status, cached_resp = entry
+    if cached_status == "live":
+        ttl = _EVENT_DETAIL_LIVE_TTL
+    elif cached_status in SETTLED_STATUSES:
+        # Was `or` with no expiry at all — see `_EVENT_DETAIL_SETTLED_TTL`.
+        ttl = _EVENT_DETAIL_SETTLED_TTL
+    else:
+        ttl = _EVENT_DETAIL_DEFAULT_TTL
+    if now - cached_at >= ttl:
+        return None
+    return cached_resp
+
+
+#: The only `hero_probability_source` whose number IS the point-in-time blend.
+#: A settled hero, an `opening` fallback and `final-unresolved` are different
+#: claims, and pinning a curve's live edge to one of them would put a number on
+#: the chart that no aggregator produced. The payload says which it is, so the
+#: chart asks rather than infers.
+_PINNABLE_HERO_SOURCE = "blend"
+
+
 @router.get("/{event_id}")
 async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
     """Get event details with aggregated odds from all bookmakers."""
     import time as _time
     _now = _time.time()
     requested_event_id = event_id
-    if event_id in _event_detail_cache:
-        _cached_at, _cached_status, _cached_resp = _event_detail_cache[event_id]
-        if _cached_status == "live":
-            _ttl = _EVENT_DETAIL_LIVE_TTL
-        elif _cached_status in SETTLED_STATUSES:
-            # Was `or` with no expiry at all — see `_EVENT_DETAIL_SETTLED_TTL`.
-            _ttl = _EVENT_DETAIL_SETTLED_TTL
-        else:
-            _ttl = _EVENT_DETAIL_DEFAULT_TTL
-        if _now - _cached_at < _ttl:
-            return _cached_resp
+    _cached_resp = _cached_detail_payload(event_id, _now)
+    if _cached_resp is not None:
+        return _cached_resp
 
     result = await db.execute(
         select(Event)
@@ -8858,7 +8894,36 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
         db, [event.home_team_name, event.away_team_name]
     )
 
-    response = _format_event(event, gei_percentiles, team_lookup=team_lookup)
+    # ── #3810 Fold A: the BLEND reads the rows we declined to print ──────────
+    #
+    # #2693 folded the market book onto the canonical and #3810's Fold B folded
+    # the chart's time series. The hero number is the half left behind: it does
+    # not read `win_prob_snapshots` at all, it reads this row's
+    # `win_probability_sources` — so a tagged pair could draw Kalshi's curve
+    # under a number that had never heard of Kalshi. Measured on the 12 tagged
+    # US Open pairs (issue #3810): 11 have Kalshi on the ghost and none on the
+    # canonical.
+    #
+    # AFTER the Q050 drain above, which can repoint `event`/`event_id` at a
+    # different row — folding the id the caller asked for rather than the row we
+    # are about to render would fold the wrong twins.
+    #
+    # One indexed lookup, read-side only: `FoldedBlendView` wraps the ORM row
+    # rather than assigning to it, so nothing here can reach a flush
+    # (acceptance 4 — ruling 048 permits the read and forbids the write).
+    from app.utils.proven_duplicates import (
+        FoldedBlendView,
+        folded_probability_sources,
+    )
+    folded_sources = await folded_probability_sources(db, event)
+    blend_view = FoldedBlendView(event, folded_sources)
+
+    response = _format_event(
+        event,
+        gei_percentiles,
+        team_lookup=team_lookup,
+        probability_sources=folded_sources,
+    )
 
     # Compute deterministic tags, then merge in stored LLM-enriched tags
     # (competitive_structure, stakes, narrative, audience) from background enrichment.
@@ -8893,7 +8958,17 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
     # matching the feed endpoint. This blends all sources (sportsbooks, ESPN,
     # Kalshi, Polymarket, stat model) with SOURCE_WEIGHTS for consistency.
     from app.utils.aggregation import compute_aggregate_probability
-    agg_prob = compute_aggregate_probability(event)
+    # `blend_view`, not `event` — the folded sources (#3810 Fold A). The
+    # aggregator is passed the merged dict and is otherwise untouched, so the
+    # folded readings are weighted, decayed, capped and status-excluded exactly
+    # as they would have been had they arrived on the canonical (acceptance 1).
+    # That last one is load-bearing and is the reason this is not a visible
+    # change on a FINISHED page: `_EXCLUDE_WHEN_COMPLETED` drops kalshi and
+    # polymarket once a game is over, so a completed twin pair whose ghost holds
+    # only market sources blends to the same number it does today. The hero
+    # moves on the SCHEDULED and LIVE pairs — which is where a reader is
+    # actually asking the page what it thinks will happen.
+    agg_prob = compute_aggregate_probability(blend_view)
 
     if latest_snapshots:
         # latest_snapshots already contains only the most recent per bookmaker
@@ -9041,7 +9116,22 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
     # copies of "one number per question" is the ruling losing to its own
     # implementation, so they moved to `app/utils/hero_probability.resolve_hero`
     # and every surface reads that. Behaviour here is unchanged, arm for arm.
-    _hero = resolve_hero(event)
+    #
+    # 🔴 `blend_view`, NOT `event` (#3810 Fold A + #3903). These two ships met in
+    # a merge that git resolved with no conflict, because they edited different
+    # lines: #3903 replaced the cascade that CONSUMES the blend, while Fold A
+    # changed which sources it is computed FROM. The textual merge kept both and
+    # silently dropped the fold — `resolve_hero(event)` recomputes from the raw
+    # row, so a twin-paired hero fell back to the canonical's own reading (0.60
+    # where the folded answer is 0.40) while every other consumer below still
+    # used the folded `agg_prob`. The page then disagreed with itself.
+    #
+    # `resolve_hero` reads every input off a plain attribute and `FoldedBlendView`
+    # forwards everything it does not override, so the wrapper is exactly the
+    # "lightweight row wrapper" that module's docstring says it accepts. The
+    # settled and opening arms are unaffected: the view changes only
+    # `win_probability_sources`.
+    _hero = resolve_hero(blend_view)
     if _hero is not None:
         response["hero_probability"] = _hero.home_probability
         response["hero_probability_away"] = _hero.away_probability
@@ -12591,6 +12681,7 @@ def _pin_blend_edge(
     is_live: bool,
     is_finished: bool = False,
     now: datetime,
+    served_blend: float | None = None,
 ) -> bool:
     """Pin the blend line's right edge to the point-in-time blend (UX-P003).
 
@@ -12684,8 +12775,17 @@ def _pin_blend_edge(
     try:
         from app.utils.aggregation import compute_aggregate_probability
 
-        live_edge = compute_aggregate_probability(
-            event, event_status=getattr(event, "status", None)
+        # #3911: `served_blend` is the hero the detail route is CURRENTLY
+        # serving from its cache. Prefer it over a fresh computation — not
+        # because it is more accurate (it is up to one TTL old) but because it
+        # is the number on the same screen, and one number per question is the
+        # ruling. Recomputing here is only right when nothing is being served.
+        live_edge = (
+            served_blend
+            if served_blend is not None
+            else compute_aggregate_probability(
+                event, event_status=getattr(event, "status", None)
+            )
         )
         if live_edge is None:
             return False
@@ -13476,12 +13576,80 @@ async def get_event_odds_history(
         pass
 
     # ── UX-P003 / #3714: pin the blend line's right edge to the point-in-time blend ──
-    _pin_blend_edge(
+    #
+    # ── #3911 repair, `HERO-BLEND-FOLD-CHART-PIN-PARITY-3911` ────────────────
+    #
+    # The pin exists to serve standing ruling #1 — card == hero == chart, one
+    # number per question — by making the right edge BE the point-in-time blend
+    # every other surface renders. Fold A moved that blend onto the twins'
+    # readings in `get_event`; this call still read the raw canonical row, so on
+    # a tagged pair the two numbers the fold was meant to reconcile came apart
+    # again at the same minute. Canonical polymarket 0.60 with an aligned twin's
+    # kalshi 0.40 gives a hero of 0.40 over an edge pinned to 0.60: two numbers,
+    # one screen, 20 rendered points apart — #3898's shape, rebuilt by the fix
+    # for its sibling.
+    #
+    # The SAME view the hero is computed from, so the two agree by construction
+    # rather than by two call sites remembering to. Orientation is checked
+    # inside `folded_probability_sources` for the reason it always is: a
+    # `win_probability_sources` entry is a HOME probability whose meaning comes
+    # from its own row's `home_team_name`.
+    #
+    # Bought only when there is a line to pin. `_pin_blend_edge` returns
+    # immediately on an empty `aggregate_line` (single-source charts, and every
+    # event with no win-prob series at all), and those must not pay a lookup for
+    # a pin that cannot fire.
+    pin_event = event
+    served_blend = None
+    if aggregate_line:
+        # THE NUMBER THE HERO IS ACTUALLY SHOWING, when one is being served.
+        # `_cached_detail_payload` applies the identical TTL ladder `get_event`
+        # applies, so "the detail route would serve this right now" is one
+        # question with one answer — see its docstring for the 0.40-over-0.30
+        # reproduction that made this necessary.
+        import time as _time
+
+        _served = _cached_detail_payload(event_id, _time.time())
+        if (
+            _served is not None
+            and _served.get("hero_probability_source") == _PINNABLE_HERO_SOURCE
+        ):
+            served_blend = _served.get("hero_probability")
+
+        if served_blend is None:
+            # Nothing is being served, so the chart computes it — from the same
+            # orientation-checked folded view `get_event` will compute it from
+            # on its next miss, which is what keeps the two in step across the
+            # boundary rather than only inside it.
+            from app.utils.proven_duplicates import (
+                FoldedBlendView,
+                folded_probability_sources,
+            )
+
+            pin_event = FoldedBlendView(
+                event, await folded_probability_sources(db, event)
+            )
+
+    # 🔴 The RETURN VALUE travels (#3911, CERT-2243). `_event_detail_cache` is
+    # module-global and therefore PROCESS-local: on production the detail and
+    # history requests for one page load can land on different web workers, so
+    # worker A can serve a cached hero of 0.40 while worker B computes a fresh
+    # edge of 0.10 — reproduced by the cert bus at exactly those numbers. No
+    # amount of agreement WITHIN a process fixes a disagreement BETWEEN two.
+    #
+    # The only place that holds both payloads is the page, so the page performs
+    # the final pin — but it must not re-implement WHEN to pin (live vs
+    # pre-match vs settled, the two-minute edge window, the two settled owners
+    # that do not agree). That policy stays here, and only its ANSWER travels:
+    # the backend says whether this line's right edge is a "now" claim, the
+    # client supplies which number that claim should carry.
+    blend_edge_pinned = _pin_blend_edge(
         aggregate_line,
-        event,
+        pin_event,
         is_live=(not is_finished and (event.status or "").lower() == "live"),
         is_finished=is_finished,
         now=now,
+        served_blend=served_blend,
     )
 
     # ── Inject terminal "final result" data point for completed events ──
@@ -13811,6 +13979,12 @@ async def get_event_odds_history(
         "moments": moments,
         "period_markers": period_markers,
         "aggregate_line": aggregate_line if aggregate_line else None,
+        # See `blend_edge_pinned` above: true iff the last point of
+        # `aggregate_line` is this route's claim about NOW rather than a real
+        # past bucket, and therefore iff the client may replace it with the
+        # hero it was served. False on a settled row, on a stale pre-match line
+        # and whenever there is no line at all.
+        "blend_edge_pinned": blend_edge_pinned,
         "pm_spread_data": pm_spread_data if pm_spread_data else None,
         "points": len(history),
         "bookmaker_count": len(bookmaker_history),
@@ -14641,12 +14815,37 @@ def _format_team_data(team) -> dict:
     return data
 
 
-def _format_event(event: Event, gei_percentiles: dict = None, team_lookup: dict = None) -> dict:
+def _format_event(
+    event: Event,
+    gei_percentiles: dict = None,
+    team_lookup: dict = None,
+    probability_sources: dict = None,
+) -> dict:
     """Format event for API response.
 
     Args:
         team_lookup: Optional dict mapping team names to Team objects for color/logo data.
+        probability_sources: #3810 Fold A — the event's ``win_probability_sources``
+            with any source only its suppressed twins hold folded in. Optional and
+            defaulting to None so the nine other call sites compile to exactly the
+            read they had before; only `get_event` folds today, because it is the
+            only one of them that renders a hero. Passed as a VALUE rather than
+            assigned onto ``event`` because the fold is read-side only — see
+            ``FoldedBlendView``.
     """
+    # Named once, used by both source blocks below. `is not None` and not `or`:
+    # an event whose twins add nothing folds to `{}`, and `{} or x` would fall
+    # back to the unfolded column and quietly undo the fold's own refusals.
+    #
+    # `getattr` with a default because the blocks that consume this sit inside a
+    # `try/except AttributeError` guarding "columns may not exist yet" — reading
+    # the column bare out here would raise past that guard for the callers it
+    # was written for. Falsy either way, so those blocks skip exactly as before.
+    _wps = (
+        probability_sources
+        if probability_sources is not None
+        else getattr(event, "win_probability_sources", None)
+    )
     response = {
         "id": event.id,
         "external_id": event.external_id,
@@ -14763,7 +14962,7 @@ def _format_event(event: Event, gei_percentiles: dict = None, team_lookup: dict 
             espn_data["broadcast"] = event.broadcast_info
         if event.espn_win_prob_home is not None:
             espn_data["win_probability"] = float(event.espn_win_prob_home)
-        if event.win_probability_sources:
+        if _wps:
             # #1829: serialise NUMBERS here, never raw JSONB entries. iOS types
             # this `[String: WinProbValue]?` and `WinProbValue` THROWS on
             # anything that is not a Double or a String — and a throw inside
@@ -14775,7 +14974,7 @@ def _format_event(event: Event, gei_percentiles: dict = None, team_lookup: dict 
             # essentially every event. Normalising fixes both.
             from app.utils.aggregation import parse_source_entry as _parse_src
             _norm_sources = {}
-            for _sk, _sv in event.win_probability_sources.items():
+            for _sk, _sv in _wps.items():
                 _num, _ = _parse_src(_sv)
                 if _num is not None:
                     _norm_sources[_sk] = _num
@@ -14786,12 +14985,12 @@ def _format_event(event: Event, gei_percentiles: dict = None, team_lookup: dict 
             response["espn"] = espn_data
 
         # Also expose win_probability_sources at top level with source metadata
-        if event.win_probability_sources:
+        if _wps:
             try:
                 from app.config.win_prob_sources import WIN_PROB_SOURCES
                 from app.utils.aggregation import parse_source_entry
                 wp_sources = {}
-                for src_key, src_value in event.win_probability_sources.items():
+                for src_key, src_value in _wps.items():
                     if src_key.startswith("_"):
                         continue
                     # #1829: `value` stays a bare NUMBER on the wire. The column

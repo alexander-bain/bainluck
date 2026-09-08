@@ -78,9 +78,30 @@ def _array_on_sqlite(type_, compiler, **kw):  # pragma: no cover - DDL shim
 SERIES_FOLD_SELECT = "SELECT events.id, events.home_team_name, events.away_team_name"
 
 
+#: The BLEND fold's projection (#3810 Fold A, `folded_probability_sources`) is
+#: this one plus a fourth column. It lives here, beside its sibling and in the
+#: module the rigs already import, because since #3911 BOTH folds run on the
+#: history route and no rig can tell them apart without knowing both.
+BLEND_FOLD_SELECT = f"{SERIES_FOLD_SELECT}, events.win_probability_sources"
+
+
+def is_blend_fold(sql: str) -> bool:
+    """True when this statement is `folded_probability_sources`' lookup."""
+    return " ".join(sql.split()).startswith(BLEND_FOLD_SELECT)
+
+
 def is_series_fold(sql: str) -> bool:
-    """True when this statement is `folded_series_event_ids`' lookup."""
-    return " ".join(sql.split()).startswith(SERIES_FOLD_SELECT)
+    """True when this statement is `folded_series_event_ids`' lookup.
+
+    🔴 EXCLUSIVE of the blend fold, since #3911 put both folds on the history
+    route. The blend fold's projection EXTENDS this one, so a bare `startswith`
+    claims it too — and a rig that believed it handed a four-column lookup its
+    three-column rows, which `merge_probability_sources` unpacks into a
+    `ValueError` and the route serves as a 500. Every rig driving
+    `get_event_odds_history` inherits the fix by asking this question.
+    """
+    flat = " ".join(sql.split())
+    return flat.startswith(SERIES_FOLD_SELECT) and not is_blend_fold(flat)
 
 
 def fold_row(event):
@@ -94,6 +115,16 @@ def fold_row(event):
         getattr(event, "home_team_name", None),
         getattr(event, "away_team_name", None),
     )
+
+
+def blend_fold_row(event):
+    """An event's own ``(id, home, away, sources)`` — the BLEND fold's shape.
+
+    The neutral answer for a rig that is not testing Fold A: the row's own
+    readings fold to the row's own dict, so the pinned chart edge is exactly the
+    number it was before #3911.
+    """
+    return fold_row(event) + (getattr(event, "win_probability_sources", None),)
 
 
 # The production pair this issue was filed on.
@@ -514,6 +545,12 @@ class _RouteSession:
             return _Result([])
         if is_series_fold(sql):
             return _Result(self.fold_rows)
+        # #3911: the same route now also folds the BLEND's sources before it
+        # pins the chart's right edge. Answered with this module's own rows so
+        # nothing here depends on Fold A — the parity itself is
+        # `test_blend_fold_chart_pin_parity_3911`.
+        if is_blend_fold(sql):
+            return _Result([blend_fold_row(self.event)])
         if "FROM events" in sql:
             return _Result([self.event])
         return _Result([])

@@ -64,6 +64,8 @@ class _Result:
 # apart from the route's own entity lookup. See `tests/test_series_fold_3810`.
 from tests.test_series_fold_3810 import fold_row as _fold_row  # noqa: E402
 from tests.test_series_fold_3810 import is_series_fold as _is_series_fold  # noqa: E402
+from tests.test_series_fold_3810 import blend_fold_row as _blend_fold_row  # noqa: E402
+from tests.test_series_fold_3810 import is_blend_fold as _is_blend_fold  # noqa: E402
 
 
 class _DispatchingSession:
@@ -83,6 +85,11 @@ class _DispatchingSession:
         sql = str(statement)
         if _is_series_fold(sql):
             return _Result([_fold_row(self.event)])
+        # #3911 put a SECOND fold on this route — the blend fold, read before
+        # the chart's right edge is pinned. Answered with the row's own sources,
+        # which folds to exactly the number this module already expects.
+        if _is_blend_fold(sql):
+            return _Result([_blend_fold_row(self.event)])
         if "FROM events" in sql:
             return _Result([self.event])
         if "odds_snapshots" in sql:
