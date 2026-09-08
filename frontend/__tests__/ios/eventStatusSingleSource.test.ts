@@ -261,13 +261,25 @@ d("iOS reads one event-status vocabulary", () => {
           // The predicate may sit on the line under the `.contains {`.
           const context = [lines[i - 1] ?? "", line].join(" ");
           if (/\.contains \{/.test(context)) continue;
-          offenders.push(`${path.slice(IOS_ROOT.length + 1)}:${i + 1} — ${line.trim()}`);
+          // FILE AND CODE, NOT LINE NUMBER — see the note on the pin below.
+          offenders.push(`${path.slice(IOS_ROOT.length + 1)} — ${line.trim()}`);
         }
       }
 
       // An exact-set PIN, not an allowlist: a new offender fails this, and so
       // does removing one of these without editing the list. Two lines survive,
       // each for a stated reason.
+      //
+      // THE PIN IS FILE + CODE AND DELIBERATELY CARRIES NO LINE NUMBER (changed
+      // by #3978, which broke this test without changing any of the code it is
+      // about). The original pinned `EventDetailView.swift:490`, so adding nine
+      // lines of comment anywhere above `showsScore` failed a guard whose whole
+      // subject was elsewhere. A number that moves when untouched code moves is
+      // not part of the claim — the claim is "exactly these two readings
+      // survive, in these two files" — and a guard that cries wolf on unrelated
+      // edits is a guard someone eventually edits carelessly to make it green.
+      // Nothing is lost: the offending line's own text is in the message, so
+      // locating a genuine new offender is one grep.
       //
       // 1. `ShareCardRenderer` is a real per-item claim, left DELIBERATELY:
       //    `ShareableEventCardView` has no `commenceTime` property, so gating it
@@ -284,8 +296,8 @@ d("iOS reads one event-status vocabulary", () => {
       //    clock because the scores ARE the evidence the game started: a fixture
       //    four days out has none, so the future-dated row cannot reach it.
       expect(offenders).toEqual([
-        'Utilities/ShareCardRenderer.swift:238 — if EventState.isSuspended(status) { return "PAUSED" }',
-        'Views/EventDetailView.swift:490 — return status == "live" || EventState.isFinished(status) || EventState.isSuspended(status)',
+        'Utilities/ShareCardRenderer.swift — if EventState.isSuspended(status) { return "PAUSED" }',
+        'Views/EventDetailView.swift — return status == "live" || EventState.isFinished(status) || EventState.isSuspended(status)',
       ]);
     });
 
