@@ -22,6 +22,9 @@ as `test_golden_floor_ci_wiring_3761.py`.
 from __future__ import annotations
 
 import importlib.util
+import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -247,4 +250,150 @@ def test_every_failure_path_in_the_scope_step_deploys(deploy_job):
     assert run.count('echo "heroku_needed=1" >> "$GITHUB_OUTPUT"') >= 4, (
         "expected every fail-closed arm to write heroku_needed=1; if an arm was "
         "removed, make sure it did not become a fail-OPEN path"
+    )
+
+
+# --------------------------------------------------------------------------
+# The diff that feeds the decision (CERT-2292: SHIP2-HEROKU-SCOPE-COUNTS-RENAME-SOURCE)
+# --------------------------------------------------------------------------
+#
+# Everything above this line tests the decider against a path list someone else
+# produced. That is the wrong half to trust on its own: the decider was correct
+# and the shipped filter still skipped a release it had to run, because `git
+# diff --name-only` is rename-aware and prints only a rename's DESTINATION.
+# `backend/runtime-file` -> `frontend/runtime-file` arrived as one frontend
+# path, and a decider that is right about every input it is given cannot save
+# you from an input that omits half the change.
+#
+# So these run the real command through a real git rename. They read the flags
+# out of ci.yml rather than restating them, because a test that hardcodes
+# `--no-renames` while ci.yml quietly loses it passes forever while production
+# stops shipping backend deletes.
+
+_DIFF_COMMAND = re.compile(
+    r"git diff\s+(?P<flags>.*?)\s+\"\$BEFORE\"\s+\"\$GITHUB_SHA\"",
+)
+
+
+def _shipped_diff_flags(deploy_job) -> list[str]:
+    """The flags ci.yml actually passes to `git diff`, straight from the file."""
+    scope_steps = [s for s in _steps(deploy_job) if s.get("id") == "scope"]
+    assert scope_steps, "no scope step to read the diff command from"
+    run = scope_steps[0].get("run", "")
+
+    match = _DIFF_COMMAND.search(run)
+    assert match, (
+        "could not find the `git diff ... \"$BEFORE\" \"$GITHUB_SHA\"` command in "
+        "the scope step. If the diff moved or was reshaped, this integration "
+        "test is no longer running the shipped command — re-point it before "
+        "assuming the rename hole stayed shut."
+    )
+    return match.group("flags").split()
+
+
+def _git(repo: Path, *args: str) -> str:
+    result = subprocess.run(
+        ["git", *args],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout
+
+
+@pytest.fixture
+def rename_repo(tmp_path):
+    """A throwaway repo with one committed file, ready to be moved."""
+    if shutil.which("git") is None:  # pragma: no cover - git is present in CI
+        pytest.skip("git is not available")
+
+    repo = tmp_path / "repo"
+    (repo / "backend").mkdir(parents=True)
+    (repo / "frontend").mkdir(parents=True)
+    _git(repo.parent, "init", "-q", str(repo))
+    _git(repo, "config", "user.email", "ci@example.invalid")
+    _git(repo, "config", "user.name", "ci")
+    return repo
+
+
+def _commit_rename(repo: Path, src: str, dst: str) -> tuple[str, str]:
+    """Commit `src`, rename it to `dst`, commit again. Returns (before, after).
+
+    The body is long enough that git's similarity detection scores the move at
+    R100 — a one-byte file would be too small to be detected as a rename and
+    the test would pass without ever exercising the bug.
+    """
+    (repo / src).write_text("runtime payload\n" * 40, encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "base")
+    before = _git(repo, "rev-parse", "HEAD").strip()
+
+    _git(repo, "mv", src, dst)
+    _git(repo, "commit", "-qam", "move it")
+    after = _git(repo, "rev-parse", "HEAD").strip()
+    return before, after
+
+
+def _decision_for(repo: Path, deploy_job, before: str, after: str) -> bool:
+    """Run the SHIPPED diff command over the repo and ask the decider."""
+    paths = _git(
+        repo, "diff", *_shipped_diff_flags(deploy_job), before, after
+    ).splitlines()
+    module = _load_scope_module()
+    return module.heroku_needed(paths)
+
+
+def test_the_shipped_diff_names_both_sides_of_a_rename(rename_repo, deploy_job):
+    """The precondition the whole repair rests on, asserted directly.
+
+    Without `--no-renames` this returns the destination alone. The next test
+    asserts the consequence; this one asserts the mechanism, so a failure tells
+    you which of the two broke.
+    """
+    before, after = _commit_rename(
+        rename_repo, "backend/runtime-file", "frontend/runtime-file"
+    )
+    paths = _git(
+        rename_repo, "diff", *_shipped_diff_flags(deploy_job), before, after
+    ).splitlines()
+
+    assert sorted(paths) == ["backend/runtime-file", "frontend/runtime-file"], (
+        "the shipped `git diff` dropped a side of the rename — it returned "
+        f"{paths}. Rename detection is on by default and `--name-only` prints "
+        "only the destination; `--no-renames` is what makes both sides appear."
+    )
+
+
+def test_a_backend_to_frontend_rename_still_deploys(rename_repo, deploy_job):
+    """Moving a file OUT of backend/ must release: production has to lose it.
+
+    This is CERT-2292's named repair. Heroku serves whatever the last release
+    put on the slug, so a commit whose only backend effect is a DELETE needs a
+    release exactly as much as one that adds a route.
+    """
+    before, after = _commit_rename(
+        rename_repo, "backend/runtime-file", "frontend/runtime-file"
+    )
+
+    assert _decision_for(rename_repo, deploy_job, before, after) is True, (
+        "a backend -> frontend rename was scoped as frontend-only. Heroku "
+        "would keep serving the file the commit deleted, and CI would be green."
+    )
+
+
+def test_a_frontend_to_frontend_rename_still_skips(rename_repo, deploy_job):
+    """The control: the repair must not turn every rename into a release.
+
+    `--no-renames` doubles the path count for every move. If that alone were
+    enough to trip the allowlist, the fix would have quietly restored all 105
+    needless releases a week while looking like a bugfix.
+    """
+    before, after = _commit_rename(
+        rename_repo, "frontend/old-card.tsx", "frontend/new-card.tsx"
+    )
+
+    assert _decision_for(rename_repo, deploy_job, before, after) is False, (
+        "a rename entirely inside frontend/ was scoped as needing Heroku — the "
+        "rename repair over-corrected and the skip never fires."
     )

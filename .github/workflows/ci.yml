@@ -1544,7 +1544,19 @@ jobs:
           # Write to a file rather than piping into the decider: a pipeline hands
           # back the LAST command's exit code, and a git failure upstream would
           # then arrive as a clean empty path list (gotcha #124).
-          if ! git diff --name-only "$BEFORE" "$GITHUB_SHA" > /tmp/changed-paths.txt; then
+          #
+          # `--no-renames` is load-bearing, not tidiness (CERT-2292's BLOCK).
+          # Rename detection is ON by default, and for a rename `--name-only`
+          # prints the DESTINATION ONLY: moving `backend/runtime-file` to
+          # `frontend/runtime-file` emits the one frontend path, the decider
+          # reads "frontend-only", and Heroku never releases -- so production
+          # keeps serving the backend file the commit deleted. Turning rename
+          # detection off makes the diff name both sides, which is the input
+          # this decision actually needs. Guarded by
+          # `test_a_backend_to_frontend_rename_still_deploys` in
+          # backend/tests/test_heroku_deploy_scope_wiring.py, which runs a real
+          # git rename through THIS command line rather than a copy of it.
+          if ! git diff --no-renames --name-only "$BEFORE" "$GITHUB_SHA" > /tmp/changed-paths.txt; then
             echo "git diff failed — deploying (fail-closed)."
             echo "heroku_needed=1" >> "$GITHUB_OUTPUT"
             exit 0
