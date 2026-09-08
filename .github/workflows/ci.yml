@@ -1286,6 +1286,31 @@ jobs:
             exit 1
           }
 
+      - name: "#3879 price_observed_at migration + refusals (real Postgres)"
+        # Migration-class under D45, so the evidence that it applies and
+        # reverses exists before Alex is asked for the word that ships it.
+        #
+        # The behaviour arms are the half no string matching can cover. The
+        # monotonicity design rests on `GREATEST` IGNORING NULL arguments — if
+        # `GREATEST(NULL, now())` were NULL, every FIRST observation would write
+        # NULL, the column would never populate, and #3879's census would read
+        # the entire table as unreachable: a total failure indistinguishable
+        # from the defect being measured. The no-price refusal rests on
+        # `NULL IS NOT NULL` being FALSE rather than NULL. Both are claims about
+        # the server, so both are executed against one.
+        #
+        # Same skip-detection as every gate in this job: pytest exits 0 when
+        # every test skips, so a gate that silently did not run is
+        # indistinguishable from one that passed.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_price_observed_at_real_postgres.py \
+            -v -s -rs 2>&1 | tee /tmp/pobs3879.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/pobs3879.txt; then
+            echo "::error::#3879 price_observed_at round trip SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#2927 container assembly writes and re-writes (real Postgres)"
         # Phase 2. The pure half of assembly — the register gatherer, the class
         # computation, the cycle guard, the section ordering — is graded in
