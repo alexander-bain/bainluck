@@ -59,7 +59,20 @@ struct StatusBadge: View {
                 .padding(.vertical, 2)
                 .background(Color.cardBackgroundDark)
                 .clipShape(Capsule())
-        } else if EventState.isSuspended(status) {
+        } else if EventState.isSuspendedAndStarted(status, commenceTime: commenceTime?.asDate) {
+            // 🔴 #4021 — THE CLOCK IS PART OF THE TEST, and it has to be tested
+            // HERE rather than left to callers. Three of this component's five
+            // call sites (`SearchView` ×2, `TeamDetailView`) hand it a raw
+            // `event.status`, so a suspended arm that trusted the status alone
+            // would have put "No result reported" on a search row and a team
+            // schedule row for event 416569 — Ohio State @ Texas, four days
+            // BEFORE kick-off. Those callers now pass `commenceTime` too.
+            //
+            // A caller that passes none still gets the badge, matching
+            // `EventState.hasStarted`'s documented default; a caller that passes
+            // a FUTURE one falls through to `EmptyView`, which is exactly what
+            // master did for it, so no surface loses a badge it had.
+            //
             // #4002 — the state that had no badge at all. It cannot borrow
             // FINAL's grey silence: FINAL is read against a score, and this one
             // is read against a hero that may have nothing else on it. The

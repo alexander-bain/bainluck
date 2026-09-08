@@ -66,8 +66,15 @@ struct NativeEventDiscoverCard: View {
     /// live/048 + CERT-786. The `statusText` default arm below is the literal
     /// string "vs" — the pregame reading — so a suspended match printed the
     /// crest strip of a game that has not started, on the app's default screen.
+    /// #4021 — and the CLOCK is part of the test, for the same reason the
+    /// comment above gives: the default arm is the pregame reading. Event 416569
+    /// carried `status='suspended'` four days BEFORE kick-off, and without this
+    /// the app's default screen would answer that with "No result reported"
+    /// instead of the "vs" that is actually true. Found by the discovery scan in
+    /// `eventStatusSingleSource.test.ts`, not by hand.
     private var isSuspended: Bool {
-        EventState.isSuspended(event.status)
+        EventState.isSuspendedAndStarted(
+            event.status, commenceTime: event.commenceTime?.asDate)
     }
 
     private var sportLabel: String {

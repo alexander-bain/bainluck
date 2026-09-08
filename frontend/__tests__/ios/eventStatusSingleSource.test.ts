@@ -153,7 +153,9 @@ d("iOS reads one event-status vocabulary", () => {
     });
 
     it("the projection gate asks the helper instead of restating !isFinished", () => {
-      expect(detail()).toMatch(/EventDetailView\.showsProjection\(status: event\.status\)/);
+      expect(detail()).toMatch(
+        /EventDetailView\.showsProjection\(\n\s*status: event\.status, commenceTime: event\.commenceTime\?\.asDate\)/
+      );
       // The pre-fix gate, verbatim. Its absence is the assertion.
       expect(stripComments(detail())).not.toMatch(
         /projectedAwayScore,\s*\n\s*!isFinished \{/
@@ -164,9 +166,9 @@ d("iOS reads one event-status vocabulary", () => {
       // Two separate renders of the same channel list, one scroll apart. Fixing
       // only the hero leaves the promise on the page.
       expect(detail()).toMatch(
-        /if let broadcast = event\.espn\?\.broadcast,\n\s*EventDetailView\.showsBroadcast\(status: event\.status\) \{/
+        /if let broadcast = event\.espn\?\.broadcast,\n\s*EventDetailView\.showsBroadcast\(\n\s*status: event\.status, commenceTime: event\.commenceTime\?\.asDate\) \{/
       );
-      expect(detail()).toMatch(/let showsBroadcast = event\.espn\?\.broadcast != nil\n\s*&& EventDetailView\.showsBroadcast\(status: event\.status\)/);
+      expect(detail()).toMatch(/let showsBroadcast = event\.espn\?\.broadcast != nil\n\s*&& EventDetailView\.showsBroadcast\(\n\s*status: event\.status, commenceTime: event\.commenceTime\?\.asDate\)/);
       expect(detail()).toMatch(/if let broadcast = event\.espn\?\.broadcast, showsBroadcast \{/);
     });
 
@@ -176,7 +178,7 @@ d("iOS reads one event-status vocabulary", () => {
       // for a past date, so the badge fell through to EmptyView and the match
       // wore no label at all. A suspended arm placed AFTER the default is dead.
       const body = detail();
-      const suspendedArm = body.indexOf("} else if EventState.isSuspended(event.status) {");
+      const suspendedArm = body.indexOf("} else if EventState.isSuspendedAndStarted(");
       const pregameDefault = body.indexOf(`StatusBadge(status: "scheduled", commenceTime: event.commenceTime)`);
       expect(suspendedArm).toBeGreaterThan(-1);
       expect(pregameDefault).toBeGreaterThan(suspendedArm);
@@ -191,7 +193,9 @@ d("iOS reads one event-status vocabulary", () => {
 
     it("the page's own predicates delegate", () => {
       expect(detail()).toMatch(/private var isFinished: Bool \{ EventState\.isFinished\(vm\.event\?\.status\) \}/);
-      expect(detail()).toMatch(/private var isSuspended: Bool \{ EventState\.isSuspended\(vm\.event\?\.status\) \}/);
+      expect(detail()).toMatch(
+        /private var isSuspended: Bool \{\n\s*EventState\.isSuspendedAndStarted\(\n\s*vm\.event\?\.status, commenceTime: vm\.event\?\.commenceTime\?\.asDate\)\n\s*\}/
+      );
     });
   });
 
@@ -199,9 +203,144 @@ d("iOS reads one event-status vocabulary", () => {
     // `EventState.suspendedLabel` is "No result reported" and the reason is
     // written where it is defined: the same status covers a rain delay and a
     // source going dark, and only one of those is a stoppage anybody reported.
-    expect(badge()).toMatch(/EventState\.isSuspended\(status\)/);
+    expect(badge()).toMatch(/EventState\.isSuspendedAndStarted\(status, commenceTime: commenceTime\?\.asDate\)/);
     expect(badge()).toMatch(/Text\(EventState\.suspendedLabel\)/);
     expect(stripComments(badge())).not.toMatch(/Text\("Suspended"\)/);
+  });
+
+  describe("#4021 — the suspended TREATMENT asks the clock, not just the status", () => {
+    // `suspended` is a status, not a phase. Event 416569 (Ohio State @ Texas)
+    // carried it four days BEFORE kick-off — exactly one such row, measured by
+    // lane1b/084 and again independently. The first draft of this ship routed
+    // every suspended row to the settled treatment and was, on that one row, a
+    // REGRESSION against master: master's pregame default produced a correct
+    // "In 4d" countdown, because `formatCountdown` only returns nil for a PAST
+    // date. These assertions are what stop that draft coming back.
+
+    it("no surface renders the suspended TREATMENT from the bare status", () => {
+      // Discovered, not listed. `isSuspended` alone is legitimate for BUCKETING
+      // (which grid section, what the section header is called) — a future-dated
+      // row in the live bucket is harmless. It is not legitimate for a per-card
+      // claim that no result arrived.
+      const TREATMENT_TELLS: Array<[string, RegExp]> = [
+        ["prints the suspended label", /EventState\.suspendedLabel/],
+        ["prints the suspended summary", /EventState\.suspendedSummary/],
+      ];
+      const offenders: string[] = [];
+
+      for (const path of swiftFiles(IOS_ROOT)) {
+        if (path === CANONICAL) continue;
+        const code = stripComments(readFileSync(path, "utf8"));
+        const drawsTreatment = TREATMENT_TELLS.some(([, re]) => re.test(code));
+        if (!drawsTreatment) continue;
+        // A file that draws the treatment must decide it with the clock.
+        if (!/isSuspendedAndStarted\(/.test(code)) {
+          offenders.push(
+            `${path.slice(IOS_ROOT.length + 1)} — draws the suspended treatment but never calls isSuspendedAndStarted`
+          );
+        }
+      }
+
+      expect(offenders).toEqual([]);
+    });
+
+    it("the bare status test survives, and only where the question is about a LIST", () => {
+      // `EventState.isSuspended` alone is correct for a collection-level question
+      // — "does this section contain a paused match?", which decides a section
+      // TITLE and cannot mislabel an individual card. It is wrong for a per-item
+      // claim. The structural difference is `.contains {`, so that is what this
+      // tests, rather than listing the three view models by name.
+      const offenders: string[] = [];
+
+      for (const path of swiftFiles(IOS_ROOT)) {
+        if (path === CANONICAL) continue;
+        const lines = stripComments(readFileSync(path, "utf8")).split("\n");
+        for (const [i, line] of lines.entries()) {
+          if (!/EventState\.isSuspended\(/.test(line)) continue;
+          if (/isSuspendedAndStarted\(/.test(line)) continue;
+          // The predicate may sit on the line under the `.contains {`.
+          const context = [lines[i - 1] ?? "", line].join(" ");
+          if (/\.contains \{/.test(context)) continue;
+          offenders.push(`${path.slice(IOS_ROOT.length + 1)}:${i + 1} — ${line.trim()}`);
+        }
+      }
+
+      // An exact-set PIN, not an allowlist: a new offender fails this, and so
+      // does removing one of these without editing the list. Two lines survive,
+      // each for a stated reason.
+      //
+      // 1. `ShareCardRenderer` is a real per-item claim, left DELIBERATELY:
+      //    `ShareableEventCardView` has no `commenceTime` property, so gating it
+      //    means threading a new one through a renderer API and every
+      //    construction site — a different change from this ship's one-line
+      //    predicate swaps. It also draws its own private word ("PAUSED") rather
+      //    than `EventState.suspendedLabel`, a second and smaller drift.
+      //    Filed as #4044, which cites this pin: fixing it means editing this
+      //    list, so the carve-out cannot be quietly forgotten.
+      //
+      // 2. `showsScore` is NOT the suspended treatment — it is the opposite. The
+      //    treatment claims no result arrived; this draws a score we actually
+      //    hold, and drawing a real score is never the wrong answer. It needs no
+      //    clock because the scores ARE the evidence the game started: a fixture
+      //    four days out has none, so the future-dated row cannot reach it.
+      expect(offenders).toEqual([
+        'Utilities/ShareCardRenderer.swift:238 — if EventState.isSuspended(status) { return "PAUSED" }',
+        'Views/EventDetailView.swift:490 — return status == "live" || EventState.isFinished(status) || EventState.isSuspended(status)',
+      ]);
+    });
+
+    it("every StatusBadge call site hands it a commenceTime", () => {
+      // THE leak that made this more than a one-view fix. Three of the five call
+      // sites passed a bare `event.status`, so the new suspended arm would have
+      // put "No result reported" on a search row and a team schedule row for a
+      // game four days out. A call site without a `commenceTime:` is that bug.
+      const CALLERS = [
+        "Views/SearchView.swift",
+        "Views/TeamDetailView.swift",
+        "Components/EventCardView.swift",
+        "Views/EventDetailView.swift",
+      ];
+      const offenders: string[] = [];
+
+      for (const rel of CALLERS) {
+        const code = stripComments(readFileSync(join(IOS_ROOT, rel), "utf8"));
+        // Match a StatusBadge(...) invocation and check the argument list.
+        // `(?<![A-Za-z])` or this also matches `heroStatusBadge(` and the
+        // `private func heroStatusBadge(_ event:)` declaration — both of which
+        // it then reports as call sites missing an argument they cannot take.
+        for (const m of code.matchAll(/(?<![A-Za-z])StatusBadge\(([^)]*)\)/g)) {
+          const args = m[1];
+          // A LITERAL status is pinned to one arm and a reader can check it at a
+          // glance; only an expression the compiler cannot narrow needs the date.
+          if (/status: "/.test(args)) continue;
+          if (!args.includes("commenceTime:")) {
+            offenders.push(`${rel} — StatusBadge(${args.trim().replace(/\s+/g, " ")})`);
+          }
+        }
+      }
+
+      expect(offenders).toEqual([]);
+    });
+
+    it("the card and the page make the SAME clock-gated reading", () => {
+      // #4002 exists because these two held separate opinions about `suspended`.
+      // Fixing one and not the other is the same mistake with the roles swapped.
+      const card = readFileSync(join(IOS_ROOT, "Components/EventCardView.swift"), "utf8");
+      expect(card).toMatch(
+        /private var isSuspended: Bool \{\n\s*EventState\.isSuspendedAndStarted\(\n\s*event\.status, commenceTime: event\.commenceTime\?\.asDate\)/
+      );
+      expect(detail()).toMatch(/EventState\.isSuspendedAndStarted\(\n\s*vm\.event\?\.status/);
+    });
+
+    it("the vocabulary keeps BOTH readings, and says which is which", () => {
+      // Deleting the plain `isSuspended` would push bucketing onto the clock too,
+      // which is a different and unasked-for change.
+      expect(canonical()).toMatch(/static func isSuspended\(_ status: String\?\) -> Bool/);
+      expect(canonical()).toMatch(
+        /static func isSuspendedAndStarted\(\n\s*_ status: String\?, commenceTime: Date\?, now: Date = Date\(\)\n\s*\) -> Bool/
+      );
+      expect(canonical()).toMatch(/static func hasStarted\(commenceTime: Date\?, now: Date = Date\(\)\) -> Bool/);
+    });
   });
 
   it("the discovery check fires on the REAL pre-fix source", () => {

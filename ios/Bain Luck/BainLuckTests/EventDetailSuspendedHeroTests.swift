@@ -39,6 +39,13 @@ final class EventDetailSuspendedHeroTests: XCTestCase {
         "postponed", "cancelled", nil,
     ]
 
+    /// Fixed anchors, offset from a literal instant. Gotcha #44 — the anchor is
+    /// computed by OFFSET, never by a branch on the real clock, so these do not
+    /// straddle a date boundary or behave differently at 23:59.
+    private static let now = Date(timeIntervalSince1970: 1_788_000_000)  // 2026-09-08ish
+    private static let started = now.addingTimeInterval(-4 * 24 * 3600)
+    private static let notYet = now.addingTimeInterval(4 * 24 * 3600)
+
     // MARK: - The score
 
     /// THE MARQUEE SPECIMEN. `15298408` — Yankees @ Padres, played 2026-09-06,
@@ -82,17 +89,17 @@ final class EventDetailSuspendedHeroTests: XCTestCase {
     /// A broadcast listing is a promise about the future. `15298408` offered
     /// three channels for a game that had already been abandoned.
     func testAFinishedOrSuspendedGameOffersNoChannels() {
-        XCTAssertFalse(EventDetailView.showsBroadcast(status: "suspended"))
-        XCTAssertFalse(EventDetailView.showsBroadcast(status: "completed"))
-        XCTAssertFalse(EventDetailView.showsBroadcast(status: "closed"))
+        XCTAssertFalse(EventDetailView.showsBroadcast(status: "suspended", commenceTime: Self.started, now: Self.now))
+        XCTAssertFalse(EventDetailView.showsBroadcast(status: "completed", commenceTime: Self.started, now: Self.now))
+        XCTAssertFalse(EventDetailView.showsBroadcast(status: "closed", commenceTime: Self.started, now: Self.now))
     }
 
     func testAGameYouCanStillWatchKeepsItsChannels() {
         // The inverse hazard: a gate that hides the broadcast on a live game
         // removes the single most useful thing on a pregame hero.
-        XCTAssertTrue(EventDetailView.showsBroadcast(status: "live"))
-        XCTAssertTrue(EventDetailView.showsBroadcast(status: "scheduled"))
-        XCTAssertTrue(EventDetailView.showsBroadcast(status: nil))
+        XCTAssertTrue(EventDetailView.showsBroadcast(status: "live", commenceTime: Self.started, now: Self.now))
+        XCTAssertTrue(EventDetailView.showsBroadcast(status: "scheduled", commenceTime: Self.notYet, now: Self.now))
+        XCTAssertTrue(EventDetailView.showsBroadcast(status: nil, commenceTime: Self.notYet, now: Self.now))
     }
 
     // MARK: - The projection
@@ -100,12 +107,12 @@ final class EventDetailSuspendedHeroTests: XCTestCase {
     /// The 184. A projected FINAL score for a match that will never be given
     /// one, printed in the score's slot, on a hero that had no state label.
     func testASuspendedGameDrawsNoProjectedFinal() {
-        XCTAssertFalse(EventDetailView.showsProjection(status: "suspended"))
+        XCTAssertFalse(EventDetailView.showsProjection(status: "suspended", commenceTime: Self.started, now: Self.now))
     }
 
     func testTheProjectionSurvivesWhereItIsStillAProjection() {
-        XCTAssertTrue(EventDetailView.showsProjection(status: "live"))
-        XCTAssertTrue(EventDetailView.showsProjection(status: "scheduled"))
+        XCTAssertTrue(EventDetailView.showsProjection(status: "live", commenceTime: Self.started, now: Self.now))
+        XCTAssertTrue(EventDetailView.showsProjection(status: "scheduled", commenceTime: Self.notYet, now: Self.now))
     }
 
     func testTheProjectionGateAgreesWithIsFinishedEverywhereElse() {
@@ -114,7 +121,8 @@ final class EventDetailSuspendedHeroTests: XCTestCase {
         // silently removing the projection from states nobody complained about.
         for status in Self.vocabulary where !EventState.isSuspended(status) {
             XCTAssertEqual(
-                EventDetailView.showsProjection(status: status),
+                EventDetailView.showsProjection(
+                    status: status, commenceTime: Self.started, now: Self.now),
                 !EventState.isFinished(status),
                 "the projection gate moved on \(status ?? "nil"), which #4002 did not ask for"
             )
@@ -151,6 +159,83 @@ final class EventDetailSuspendedHeroTests: XCTestCase {
         }
     }
 
+    // MARK: - #4021 — the clock, and the regression this ship nearly shipped
+
+    /// 🔴 THE ONE THAT CAUGHT ME. `suspended` is a STATUS, NOT A PHASE.
+    ///
+    /// Event **416569** — Ohio State @ Texas, kick-off 2026-09-12 — sat at
+    /// `status='suspended'` FOUR DAYS BEFORE it was due to be played. Filed as
+    /// #4021 by lane1b/084 against `/sports`; I re-measured it independently
+    /// (`WHERE status='suspended' AND commence_time > now()` → exactly 1 row).
+    ///
+    /// The first draft of this ship routed every `suspended` row to the settled
+    /// treatment without asking the clock, which on that row was a REGRESSION
+    /// against master, not a fix: master's pregame default still produced a
+    /// correct "In 4d" countdown, because `formatCountdown` works fine on a
+    /// FUTURE date — it is only a PAST one it returns nil for. So the shipped
+    /// version would have replaced a right answer with "No result reported",
+    /// hidden the broadcast, and printed "Started" about a date four days out,
+    /// on an Ohio State – Texas game.
+    func testAFutureDatedSuspendedGameIsNotTreatedAsAbandoned() {
+        XCTAssertTrue(
+            EventDetailView.showsBroadcast(
+                status: "suspended", commenceTime: Self.notYet, now: Self.now),
+            "a game nobody has played lost its broadcast listing"
+        )
+        XCTAssertTrue(
+            EventDetailView.showsProjection(
+                status: "suspended", commenceTime: Self.notYet, now: Self.now),
+            "a game nobody has played lost its projection"
+        )
+        XCTAssertFalse(
+            EventState.isSuspendedAndStarted(
+                "suspended", commenceTime: Self.notYet, now: Self.now),
+            "the settled treatment reached a fixture"
+        )
+    }
+
+    /// …and the fix must not undo #4002. The same status, a PAST date.
+    func testAStartedSuspendedGameStillGetsTheWholeRepair() {
+        XCTAssertTrue(EventState.isSuspendedAndStarted(
+            "suspended", commenceTime: Self.started, now: Self.now))
+        XCTAssertFalse(EventDetailView.showsBroadcast(
+            status: "suspended", commenceTime: Self.started, now: Self.now))
+        XCTAssertFalse(EventDetailView.showsProjection(
+            status: "suspended", commenceTime: Self.started, now: Self.now))
+    }
+
+    /// A dateless suspended row keeps the repair. Stated as a test because the
+    /// default is a judgement, not an accident: `suspended` is produced by
+    /// something that watched a match begin and never saw it end, so no date is
+    /// far more likely to be a lost schedule than an unplayed fixture — and
+    /// defaulting the other way would put the #4002 hero back to a blank badge
+    /// on every one of them.
+    func testNoCommenceTimeIsTreatedAsStarted() {
+        XCTAssertTrue(EventState.hasStarted(commenceTime: nil, now: Self.now))
+        XCTAssertTrue(EventState.isSuspendedAndStarted(
+            "suspended", commenceTime: nil, now: Self.now))
+    }
+
+    /// The boundary. Exactly at kick-off counts as started — a match at its own
+    /// commence time has begun, and the alternative leaves a one-instant hole.
+    func testTheBoundaryIsInclusive() {
+        XCTAssertTrue(EventState.hasStarted(commenceTime: Self.now, now: Self.now))
+        XCTAssertFalse(EventState.hasStarted(
+            commenceTime: Self.now.addingTimeInterval(1), now: Self.now))
+    }
+
+    /// The clock gate is scoped to `suspended` and must not leak. A FINISHED
+    /// game with a future commence_time is a data bug of a different kind, and
+    /// this ship does not get to decide it is unfinished.
+    func testTheClockGateDoesNotReachTheFinishedStates() {
+        for status in ["completed", "closed"] {
+            XCTAssertFalse(EventDetailView.showsBroadcast(
+                status: status, commenceTime: Self.notYet, now: Self.now))
+            XCTAssertFalse(EventDetailView.showsProjection(
+                status: status, commenceTime: Self.notYet, now: Self.now))
+        }
+    }
+
     // MARK: - The vocabulary itself
 
     /// The root cause, asserted directly: this page must not be able to hold an
@@ -160,12 +245,16 @@ final class EventDetailSuspendedHeroTests: XCTestCase {
             // Anything the shared enum calls finished must be finished here, in
             // all four renders, without this file naming the strings.
             if EventState.isFinished(status) {
-                XCTAssertFalse(EventDetailView.showsProjection(status: status))
-                XCTAssertFalse(EventDetailView.showsBroadcast(status: status))
+                XCTAssertFalse(EventDetailView.showsProjection(
+                    status: status, commenceTime: Self.started, now: Self.now))
+                XCTAssertFalse(EventDetailView.showsBroadcast(
+                    status: status, commenceTime: Self.started, now: Self.now))
             }
             if EventState.isSuspended(status) {
-                XCTAssertFalse(EventDetailView.showsProjection(status: status))
-                XCTAssertFalse(EventDetailView.showsBroadcast(status: status))
+                XCTAssertFalse(EventDetailView.showsProjection(
+                    status: status, commenceTime: Self.started, now: Self.now))
+                XCTAssertFalse(EventDetailView.showsBroadcast(
+                    status: status, commenceTime: Self.started, now: Self.now))
                 XCTAssertTrue(EventDetailView.showsScore(status: status, away: 3, home: 4))
             }
         }

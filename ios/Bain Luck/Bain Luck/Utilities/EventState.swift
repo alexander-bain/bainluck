@@ -40,6 +40,48 @@ enum EventState {
         status == "suspended"
     }
 
+    /// Whether the clock agrees the event has started.
+    ///
+    /// A nil `commenceTime` returns TRUE. That is the deliberate default and not
+    /// a shrug: `suspended` is produced by something that watched a match begin
+    /// and never saw it end, so a row carrying that status and no date is far
+    /// more likely to be a started game we lost the schedule for than a fixture
+    /// nobody has played. The false direction matters too — defaulting to
+    /// "not started" would put the #4002 hero back to a blank badge on every
+    /// dateless suspended row.
+    static func hasStarted(commenceTime: Date?, now: Date = Date()) -> Bool {
+        guard let commenceTime else { return true }
+        return commenceTime <= now
+    }
+
+    /// The suspended TREATMENT: the status **and** the clock agreeing.
+    ///
+    /// 🔴 #4021 — `suspended` IS A STATUS, NOT A PHASE, and the two can disagree.
+    /// Event 416569 (Ohio State @ Texas, kick-off 2026-09-12) sat at
+    /// `status='suspended'` four days BEFORE it was due to be played. There is
+    /// exactly one such row today — measured twice, by lane1b/084 and again
+    /// independently — but one is enough, because the treatment it wrongly
+    /// receives is the settled one: "No result reported" over a game nobody has
+    /// played, a hidden broadcast, and a time chip reading "Started" about a date
+    /// in the future.
+    ///
+    /// lane1b named the durable shape on #4021 and it is the reason this function
+    /// exists rather than a fix at one call site: *a renderer deciding "no result"
+    /// from a status it does not otherwise handle, without first asking whether
+    /// the game has even started.* That is the denylist shape in
+    /// `docs/gotchas-reference.md` — the first unfamiliar state inherits the
+    /// settled claim. Asking the clock is what stops the NEXT odd status doing it.
+    ///
+    /// Every surface that renders the suspended treatment reads THIS, not
+    /// ``isSuspended(_:)``. `isSuspended` stays as the plain vocabulary test for
+    /// callers that want the status alone (grid bucketing, section titles), where
+    /// a future-dated row landing in the live section is harmless.
+    static func isSuspendedAndStarted(
+        _ status: String?, commenceTime: Date?, now: Date = Date()
+    ) -> Bool {
+        isSuspended(status) && hasStarted(commenceTime: commenceTime, now: now)
+    }
+
     /// The short badge a suspended event wears.
     ///
     /// Deliberately NOT the bare word "Suspended": for a rain-delayed US Open

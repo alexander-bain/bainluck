@@ -92,7 +92,11 @@ struct EventDetailView: View {
     /// not, because a copy is invisible to the fix applied to the original.
     /// Read the vocabulary; never restate it.
     private var isFinished: Bool { EventState.isFinished(vm.event?.status) }
-    private var isSuspended: Bool { EventState.isSuspended(vm.event?.status) }
+    /// #4021 — the CLOCK is part of this test. See `EventState.isSuspendedAndStarted`.
+    private var isSuspended: Bool {
+        EventState.isSuspendedAndStarted(
+            vm.event?.status, commenceTime: vm.event?.commenceTime?.asDate)
+    }
     private var isScheduled: Bool { vm.event?.status == "scheduled" }
 
     private var isIPad: Bool { sizeClass == .regular }
@@ -494,8 +498,9 @@ struct EventDetailView: View {
     /// future; on a game that is over or will never be resumed it is #3821's
     /// false promise worn as a chip, and Alex's standing ruling that settled
     /// means settled binds a chip as tightly as it binds a hero.
-    static func showsBroadcast(status: String?) -> Bool {
-        !EventState.isFinished(status) && !EventState.isSuspended(status)
+    static func showsBroadcast(status: String?, commenceTime: Date?, now: Date = Date()) -> Bool {
+        !EventState.isFinished(status)
+            && !EventState.isSuspendedAndStarted(status, commenceTime: commenceTime, now: now)
     }
 
     /// Whether the projected final score is still a projection of anything.
@@ -506,8 +511,9 @@ struct EventDetailView: View {
     /// against 1 live one. On every one of those the grey pair was the only
     /// numbers on a hero that carried no state label at all — a projected final
     /// for a match nobody will ever grade.
-    static func showsProjection(status: String?) -> Bool {
-        !EventState.isFinished(status) && !EventState.isSuspended(status)
+    static func showsProjection(status: String?, commenceTime: Date?, now: Date = Date()) -> Bool {
+        !EventState.isFinished(status)
+            && !EventState.isSuspendedAndStarted(status, commenceTime: commenceTime, now: now)
     }
 
     /// #3014 — "Proj. 2-3" beside a LIVE badge on a game with no score reads as
@@ -533,7 +539,8 @@ struct EventDetailView: View {
                 heroStatusBadge(event)
                 Spacer()
                 if let broadcast = event.espn?.broadcast,
-                   EventDetailView.showsBroadcast(status: event.status) {
+                   EventDetailView.showsBroadcast(
+                    status: event.status, commenceTime: event.commenceTime?.asDate) {
                     HStack(spacing: 3) {
                         Image(systemName: "tv")
                             .font(.system(size: 8))
@@ -722,7 +729,8 @@ struct EventDetailView: View {
                     // the smallest honest fix — the projection is real and
                     // useful, it was simply anonymous.
                     if let phs = event.currentOdds?.projectedHomeScore, let pas = event.currentOdds?.projectedAwayScore,
-                       EventDetailView.showsProjection(status: event.status) {
+                       EventDetailView.showsProjection(
+                        status: event.status, commenceTime: event.commenceTime?.asDate) {
                         let vocab = SportVocab.forSport(event.sport)
                         let pair = "\(Int(pas.rounded()))-\(Int(phs.rounded()))"
                         let label = EventDetailView.projectionLabel(status: event.status, hasScore: hasScore)
@@ -811,9 +819,13 @@ struct EventDetailView: View {
         if event.status == "live" {
             StatusBadge(status: "live", gameClock: event.espn?.gameClock, period: event.espn?.period)
         } else if EventState.isFinished(event.status) {
-            StatusBadge(status: event.status)
-        } else if EventState.isSuspended(event.status) {
-            StatusBadge(status: "suspended")
+            // Passes `commenceTime` it does not strictly need, so that "every
+            // non-literal status reaching StatusBadge carries a date" is a rule
+            // with no exceptions for its guard to have to encode. See #4021.
+            StatusBadge(status: event.status, commenceTime: event.commenceTime)
+        } else if EventState.isSuspendedAndStarted(
+            event.status, commenceTime: event.commenceTime?.asDate) {
+            StatusBadge(status: "suspended", commenceTime: event.commenceTime)
         } else {
             StatusBadge(status: "scheduled", commenceTime: event.commenceTime)
         }
@@ -827,7 +839,8 @@ struct EventDetailView: View {
         // the "Game Info" card re-offers "MLB.TV, Padres.TV, YES" for a game that
         // finished two days ago one scroll below the hero that stopped doing it.
         let showsBroadcast = event.espn?.broadcast != nil
-            && EventDetailView.showsBroadcast(status: event.status)
+            && EventDetailView.showsBroadcast(
+                status: event.status, commenceTime: event.commenceTime?.asDate)
         let hasData = showsBroadcast || event.commenceTime != nil
         if hasData {
             VStack(alignment: .leading, spacing: 10) {

@@ -523,7 +523,9 @@ struct SearchView: View {
                                 .lineLimit(1)
                             if suggestion.type == "event", let status = suggestion.status {
                                 HStack(spacing: 4) {
-                                    StatusBadge(status: status)
+                                    // #4021 — the badge needs the clock to tell a
+                                    // suspended-and-played row from a future-dated one.
+                                    StatusBadge(status: status, commenceTime: suggestion.commenceTime)
                                     if let commenceTime = suggestion.commenceTime {
                                         RelativeTimeText(dateString: commenceTime)
                                     }
@@ -946,7 +948,8 @@ struct SearchView: View {
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
-                    StatusBadge(status: event.status)
+                    // #4021 — see StatusBadge: the suspended arm is clock-gated.
+                    StatusBadge(status: event.status, commenceTime: event.commenceTime)
                     if event.status == "scheduled", let commenceTime = event.commenceTime {
                         RelativeTimeText(dateString: commenceTime)
                     }
