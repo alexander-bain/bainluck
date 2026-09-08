@@ -45,10 +45,21 @@ the payload carries what a CLIENT CAN DRAW. `test_the_census_is_taken_before_the
 _filter` is that ordering, made executable.
 """
 
+# NOTE ON THE THIRD RETURN VALUE. #3980 added `unpriced_dropped` and this file
+# was updated to unpack it, deliberately without folding the two counters
+# together. Every assertion below still says what it said on 2026-09-08: these
+# tests own the EMPTY-outcome rule, and `unpriced` is asserted `{}` in each of
+# them so that a change which quietly re-routes an empty row into the other
+# counter fails HERE. The unpriced rule has its own file,
+# `test_an_unpriced_card_is_not_admitted_3980.py`.
+
 import ast
 import inspect
+from datetime import datetime, timezone
 
 from app.routes.league_futures import _drawable_sections
+
+NOW = datetime(2026, 9, 8, 19, 0, tzinfo=timezone.utc)
 
 
 def _row(id_, *probabilities):
@@ -57,47 +68,60 @@ def _row(id_, *probabilities):
 
 class TestDrawableSections:
     def test_a_row_with_no_outcomes_is_not_served(self):
-        served, dropped = _drawable_sections(
-            {"matches": [_row(1, 0.495), _row(2), _row(3)]}
+        served, dropped, unpriced = _drawable_sections(
+            {"matches": [_row(1, 0.495), _row(2), _row(3)]}, now=NOW
         )
         assert [m["id"] for m in served["matches"]] == [1]
         assert dropped == {"matches": 2}
+        assert unpriced == {}, "an EMPTY row is counted as empty, not as unpriced"
 
     def test_a_section_whose_every_row_is_undrawable_is_removed(self):
         # Not served empty: an empty list is still a key, and a key is what a
         # client draws a heading from. This is baseball_mlb's `season_stats`.
-        served, dropped = _drawable_sections({"season_stats": [_row(1)]})
+        served, dropped, unpriced = _drawable_sections(
+            {"season_stats": [_row(1)]}, now=NOW
+        )
         assert "season_stats" not in served
         assert dropped == {"season_stats": 1}
+        assert unpriced == {}
 
     def test_a_healthy_section_is_untouched_and_reports_no_drop(self):
         rows = [_row(1, 0.6), _row(2, 0.4, 0.6)]
-        served, dropped = _drawable_sections({"futures": rows})
+        served, dropped, unpriced = _drawable_sections({"futures": rows}, now=NOW)
         assert served == {"futures": rows}
         assert dropped == {}, "a section that lost nothing must not appear at all"
+        assert unpriced == {}
 
     def test_one_bad_section_never_empties_a_healthy_sibling(self):
         # gotcha #42 — one item's fate must not decide another's.
-        served, dropped = _drawable_sections(
-            {"matches": [_row(1)], "futures": [_row(2, 0.5)]}
+        served, dropped, unpriced = _drawable_sections(
+            {"matches": [_row(1)], "futures": [_row(2, 0.5)]}, now=NOW
         )
         assert list(served) == ["futures"]
         assert dropped == {"matches": 1}
+        assert unpriced == {}
 
-    def test_a_row_with_a_none_probability_still_counts_as_drawable(self):
-        # An outcome with no price is a row the card CAN draw (it renders the
-        # name and no number); a row with no outcomes at all is not. The two
-        # absences are different and only the second one is this rule's.
-        served, dropped = _drawable_sections({"props": [_row(1, None)]})
-        assert [m["id"] for m in served["props"]] == [1]
-        assert dropped == {}
+    def test_an_empty_row_and_a_priceless_row_are_counted_apart(self):
+        # WAS `test_a_row_with_a_none_probability_still_counts_as_drawable`, and
+        # #3980 reversed its verdict on purpose: a card whose every outcome is
+        # priceless draws names and no numbers, which is the defect that issue
+        # filed. What this file still owns — and what this test now pins — is
+        # that the two absences keep SEPARATE names. `no_outcomes` is an ingest
+        # gap (#3412); `unpriced` is a row we have and cannot price. Merging
+        # them would hide the first inside the second.
+        served, dropped, unpriced = _drawable_sections(
+            {"props": [_row(1, None), _row(2)]}, now=NOW
+        )
+        assert "props" not in served
+        assert dropped == {"props": 1}, "row 2 is the EMPTY one"
+        assert unpriced == {"props": 1}, "row 1 is the PRICELESS one"
 
     def test_the_input_is_not_mutated(self):
         # The caller's census holds the ORIGINAL lists; mutating them in place
         # would re-tier the page through the back door.
         original = {"matches": [_row(1, 0.5), _row(2)]}
         census_view = {name: rows for name, rows in original.items()}
-        _drawable_sections(original)
+        _drawable_sections(original, now=NOW)
         assert len(census_view["matches"]) == 2
         assert len(original["matches"]) == 2
 
@@ -129,7 +153,10 @@ class TestTheRouteIsWiredTheRightWayRound:
         # the filtered world and every affected page could silently change tier.
         src = self._route_source()
         census_at = src.index("census_sections = dict(sections)")
-        filter_at = src.index("_drawable_sections(sections)")
+        # Matched on the call OPENER, not on its arguments: #3980 added a keyword
+        # and Black rewrapped the line, which would have broken an exact-text
+        # match while the ordering this test exists to guard was untouched.
+        filter_at = src.index("_drawable_sections(")
         assert census_at < filter_at, (
             "census_sections must be copied from the UNFILTERED sections — the "
             "census counts what the league has, the payload carries what a "
@@ -141,7 +168,8 @@ class TestTheRouteIsWiredTheRightWayRound:
         # `dropped` would hide an ingest gap inside a pricing statistic.
         src = self._route_source()
         assert '"no_outcomes": no_outcomes' in src
-        assert '"shown": s["total"] - no_outcomes' in src, (
+        assert '"shown": s["total"] - no_outcomes - unpriced_gone' in src, (
             "`shown` must be what the section SERVES; reading the census total "
-            "here is the defect #3964 filed"
+            "here is the defect #3964 filed, and leaving the #3980 term off "
+            "re-opens it one step along"
         )
