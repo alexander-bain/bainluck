@@ -1514,6 +1514,41 @@ def _effectively_resolved(sorted_outcomes: list) -> bool:
     return len(probs) >= 2 and all(p < 0.03 or p > 0.97 for p in probs)
 
 
+def _drawable_sections(sections: dict) -> tuple[dict, dict]:
+    """Keep only rows a client can turn into a card, and count what came off.
+
+    Returns ``(served_sections, no_outcome_dropped)`` — #3964 defect 2.
+
+    A row whose ``top_outcomes`` is empty draws NOTHING, anywhere: every card the
+    league sections route to opens by returning null on an empty field
+    (``PropGroupCard``, ``AwardCard``, ``SeriesCard``). It is not a card the
+    reader might dislike; it is bytes that cannot become a card. Serving ten of
+    them is what let ``/sport/boxing/boxing`` print ``UPCOMING MATCHES (10)`` over
+    empty space, and the ten carried ``outcome_count: 0`` — the markets have no
+    ``futures_outcomes`` rows at all, so this is a real absence and not a
+    serialization artifact.
+
+    A section left with nothing is REMOVED rather than served empty, because an
+    empty list is still a key and a key is what a client draws a heading from.
+
+    THIS IS NOT THE CENSUS. The tier resolver keeps counting what the LEAGUE HAS;
+    a page's chrome is a statement about the league, not about today's
+    serialization. The caller must therefore take its census copy BEFORE calling
+    this — ``test_the_census_is_taken_before_the_filter`` pins the order, because
+    getting it backwards would silently re-tier every affected page.
+    """
+    served: dict = {}
+    dropped: dict = {}
+    for name, rows in sections.items():
+        drawable = [m for m in rows if m.get("top_outcomes")]
+        gone = len(rows) - len(drawable)
+        if gone:
+            dropped[name] = gone
+        if drawable:
+            served[name] = drawable
+    return served, dropped
+
+
 def _field_has_a_winner(outcomes: list) -> bool:
     """Did anybody WIN this market? (#3617.)
 
@@ -2308,6 +2343,33 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
             for g in upcoming_games
         ]
 
+    # #3964 (defect 2) — A MARKET WITH NO OUTCOMES IS NOT A CARD ANYWHERE.
+    #
+    # The census above counts what the LEAGUE HAS and must keep counting it: the
+    # tier resolver's world does not change here, deliberately, because a page's
+    # chrome is a statement about the league and not about today's serialization.
+    # What follows decides what the PAYLOAD CARRIES, and those are different
+    # questions — `census_sections` holds the original lists (the copy above is
+    # shallow, and the rebuild below makes new ones), so the resolver sees
+    # exactly what it saw before this clause existed.
+    #
+    # A row whose `top_outcomes` is empty draws nothing on any client. Every card
+    # this section can route to opens by returning null on an empty field
+    # (`PropGroupCard`, `AwardCard`, `SeriesCard`), so the row is not "a card the
+    # reader might not like" — it is bytes that cannot become a card. Serving it
+    # is what let `/sport/boxing/boxing` print `UPCOMING MATCHES (10)` over empty
+    # space: ten of twelve `matches` rows carried `outcome_count: 0` and the
+    # header counted what the section was HANDED.
+    #
+    # 533ff05d stopped the web header outliving its cards. This stops the rows
+    # arriving, which is the half that reaches EVERY client — the iOS app decodes
+    # the same `sections` off `/api/leagues/{key}` and never saw that fix.
+    #
+    # The drop is DECLARED, never silent (spec §4, and the same rule the price
+    # skip already obeys): `no_outcomes` is its own counter with its own name, so
+    # "we had nothing to draw" can never be read as "the league had nothing".
+    sections, no_outcome_dropped = _drawable_sections(sections)
+
     tiering = resolve_entity_tier(
         census_sections,
         now=now,
@@ -2332,18 +2394,32 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
     # `sections` entirely, and reporting nothing about it is precisely the silent
     # truncation clause 3 forbids.
     section_counts: dict[str, dict[str, int]] = {}
-    for name in set(tiering["per_section"]) | set(resolved_skipped):
+    for name in set(tiering["per_section"]) | set(resolved_skipped) | set(
+        no_outcome_dropped
+    ):
         s = tiering["per_section"].get(
             name, {"total": 0, "answers": 0, "unpriced": 0, "settled": 0}
         )
         skipped = resolved_skipped.get(name, 0)
+        no_outcomes = no_outcome_dropped.get(name, 0)
         section_counts[name] = {
             # `total` is what we HAD before the price skip, so "showing X of Y" is
             # true about the league rather than true about the leftovers.
             "total": s["total"] + skipped,
-            "shown": s["total"],
+            # #3964: `shown` is what this section SERVES, so the rows that carry
+            # no outcomes come off it. It read `s["total"]` — the census total,
+            # every row the league has — which is how `matches` on
+            # `/api/leagues/boxing_boxing` published `{total: 12, shown: 12,
+            # dropped: 10}`: twelve rows called shown, ten of them undrawable,
+            # and `shown + dropped` exceeding `total` by the size of the lie.
+            "shown": s["total"] - no_outcomes,
             "dropped": s["unpriced"] + skipped,
             "answers": s["answers"],
+            # Named separately from `dropped` because the reasons are not
+            # interchangeable: `unpriced` is a row we HAVE and cannot price,
+            # `no_outcomes` is a row with nothing under it at all. Merging them
+            # would hide an ingest gap inside a pricing statistic.
+            "no_outcomes": no_outcomes,
         }
 
     total_skipped = sum(resolved_skipped.values())
