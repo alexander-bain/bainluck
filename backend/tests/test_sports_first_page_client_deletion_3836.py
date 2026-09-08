@@ -71,7 +71,38 @@ from app.utils.sports_first_page_rails import (
     swap_client_deleted_finished_off_first_page,
 )
 
-NOW = datetime(2026, 9, 7, 12, 0, 0, tzinfo=timezone.utc)
+#: The fixture anchor, and it MUST track the real clock.
+#:
+#: This was `datetime(2026, 9, 7, 12, 0, 0, tzinfo=timezone.utc)` — a fixed
+#: calendar instant — and it took master red roughly eighteen hours after it was
+#: written, on 2026-09-08.
+#:
+#: The reason is that this file has two families of test and only one of them
+#: gets to choose the clock. The direct callers pass `now=NOW` into
+#: `swap_client_deleted_finished_off_first_page` and are perfectly
+#: deterministic. `TestWiring` cannot: it exercises the real
+#: `apply_discover_display_chain`, whose signature has no `now` and which reads
+#: `datetime.now(timezone.utc)` internally. So the fixtures were dated against a
+#: frozen instant while the code under test judged them against the real one,
+#: and the gap between the two widened by one hour per hour.
+#:
+#: Once the gap passed `CLIENT_COMPLETED_MAX_AGE_HOURS` (8), the cards these
+#: tests build as FRESH — `hours_ago=1.0`, `hours_ago=2.0` — were themselves
+#: older than the threshold. Every candidate on the page was doomed, the swap
+#: correctly found no admissible replacement and declined, and
+#: `test_both_passes_fire_when_the_page_is_repetitive_AND_doomed` failed
+#: `assert 0 > 0`. The production code was right the whole time; the fixture had
+#: expired. Gotcha #44: a test anchor must not be a fixed point on the calendar
+#: when the thing it measures reads the wall clock.
+#:
+#: Anchoring to the real clock costs nothing in determinism here, because every
+#: age in this file is stated in whole or tenth hours and the nearest fixture to
+#: the eight-hour threshold sits 2.0 hours below it and 12.3 above — margins of
+#: hours against a sub-second import-to-assert drift.
+#:
+#: `test_the_fixture_anchor_tracks_the_real_clock` fails the moment this is
+#: frozen again.
+NOW = datetime.now(timezone.utc)
 
 SPORTS = {
     "event_pct": 0.6,
@@ -246,6 +277,31 @@ class TestThePremise:
     def test_and_the_tail_really_does_offer_admissible_replacements(self):
         tail = _measured_pool()[20:]
         assert sum(1 for it in tail if not client_deletes_finished_card(it, now=NOW)) >= 4
+
+    def test_the_fixture_anchor_tracks_the_real_clock(self):
+        """The guard for the class, not for the one line.
+
+        `TestWiring` drives the real `apply_discover_display_chain`, which takes
+        no `now` and reads `datetime.now(timezone.utc)` itself. So a fixture
+        anchor that is a fixed calendar instant is a fuse, not a constant: it
+        ages one hour per hour, and the file goes red — everywhere, for good —
+        once the drift passes `CLIENT_COMPLETED_MAX_AGE_HOURS`. That is exactly
+        what happened on 2026-09-08, about eighteen hours after the anchor was
+        written, and it took the deploy job down with it because a red master
+        skips `deploy` entirely.
+
+        Re-freezing the anchor is the one edit that reintroduces the defect, so
+        it is the one edit this asserts against. Deliberately generous: five
+        minutes admits any real import-to-assert drift while still failing any
+        hardcoded date instantly.
+        """
+        drift_seconds = abs((datetime.now(timezone.utc) - NOW).total_seconds())
+        assert drift_seconds < 300, (
+            f"the fixture anchor NOW is {drift_seconds / 3600:.1f} hours from "
+            "the real clock. The passes under test read the real clock, so a "
+            "frozen anchor makes every 'fresh' fixture doomed and the swap "
+            "declines. Anchor NOW to datetime.now(timezone.utc) (gotcha #44)."
+        )
 
     def test_the_rail_cap_would_NOT_have_caught_this(self):
         """The measurement that re-scoped this ship. Exactly three cards share
