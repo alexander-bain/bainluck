@@ -51,7 +51,9 @@ from app.utils.event_concept_cache import (
     cache_keys,
     release_refresh_lock,
 )
+from app.utils.event_tennis import is_tennis_feeder_circuit
 from app.utils.proven_duplicates import not_a_proven_duplicate
+from app.utils.rail_competition_share import equal_share_by_competition
 from app.utils.sport_keys import (
     SPORT_HIERARCHY,
     TOUR_LEAGUES_INCLUDING_TOURNAMENTS,
@@ -294,6 +296,56 @@ RESULTS_LIMIT = 8
 UNREPORTED_LIMIT = 6
 
 
+#: Leagues whose LIVE & UPCOMING rail shares its slots between the competitions
+#: in play, instead of letting the clock hand them all to one (#3872).
+#:
+#: Declared per league, following #3640's `_UNDERCARD_CLASSIFIERS` and for its
+#: reasons. `equal_share_by_competition` is already inert wherever a venue names
+#: one competition or none — which is MLB, the NFL, NCAAF and every soccer
+#: league — so this table is not what protects them. What it decides is the
+#: judgement the data cannot: whether a league's competitions are things a
+#: reader distinguishes at all.
+#:
+#: MMA and boxing are absent DELIBERATELY, in #3640's words: a UFC prelim is on
+#: the card the reader came for, so thinning it would be the same mistake
+#: pointed the other way. Tennis is here because a Challenger at Phan Thiet and
+#: a US Open semi-final are not the same errand, and the venue says so itself.
+#: Signature: (external_id, name, competition) -> bool, and deliberately the
+#: same one `hub._UNDERCARD_CLASSIFIERS` uses, reading the same three
+#: venue-stated fields.
+RAIL_COMPETITION_SHARE_LEAGUES: dict[
+    str, Callable[[str | None, str | None, str | None], bool]
+] = {
+    "tennis_atp": is_tennis_feeder_circuit,
+    "tennis_wta": is_tennis_feeder_circuit,
+}
+
+#: How far past the cap an opted-in rail looks for the competitions the share is
+#: for.
+#:
+#: 🔴 **SIZED AGAINST THE RANK OF THE ROW THAT MUST APPEAR, NOT AGAINST THE
+#: SIZE OF THE WALL IN FRONT OF IT.** The first guess here was 24, on the
+#: reasoning that 12 live Challenger rows stood between the cap and the first US
+#: Open row. That was wrong, and replaying the rule on production's own rows is
+#: what caught it: the wall is not the LIVE rows, it is every Challenger match
+#: scheduled before the Slam's first ball. Measured 2026-09-08, `tennis_atp`
+#: candidate window, in the rail's own order:
+#:
+#:     107   candidate rows in the window
+#:      81   rank of the first non-feeder row (Tiafoe-Michelsen, 17:00Z)
+#:     103   rank of Shelton-Alcaraz, the semi-final the issue is about
+#:
+#: A scan of 33 rows reached none of them. So the depth covers the window with
+#: room, and the rail is built behind a Redis slot rather than per request, so
+#: the cost is paid on a build and not on a read.
+#:
+#: If a window ever runs deeper than this, the rule degrades to exactly today's
+#: behaviour — the share simply has nothing past the wall to offer — which is a
+#: silent no-op and not a new failure. That is the honest bound: the scan makes
+#: the fix reachable, it does not guarantee it.
+RAIL_COMPETITION_SCAN_DEPTH = 200
+
+
 def _rail_league_scope(sport_key: str, also_sport_keys: Sequence[str]):
     """The `sports` predicate that scopes a games rail to one league.
 
@@ -318,8 +370,91 @@ def _rail_league_scope(sport_key: str, also_sport_keys: Sequence[str]):
     return Sport.key.in_(scope)
 
 
+#: The one group every feeder-circuit match shares, whatever tournament it is.
+#:
+#: 🔴 THIS FOLD IS THE SHIP, and it is what replaying the rule on production's
+#: own rows taught. Shared out per TOURNAMENT, the Challenger circuit does not
+#: get thinned at all — it gets subdivided. On 2026-09-08 the ATP window held
+#: five separate Challenger draws (Phan Thiet, Istanbul, Shanghai, Tulln,
+#: Cassis) and the equal share handed each of them a slot of its own, filling
+#: the rail eight-deep in Challengers before the scan ever reached rank 81. One
+#: match from each of eight feeder tournaments is not an improvement on eight
+#: from one; it is the same rail with more logos.
+#:
+#: The circuit is ONE errand to a reader, so it is one group, and
+#: `is_tennis_feeder_circuit` is what says which matches belong to it — the same
+#: venue-stated predicate `/hub/tennis` already sorts on (#3640), reading the
+#: same three fields, inferring nothing.
+RAIL_FEEDER_GROUP = "\x00feeder"
+
+
+async def _event_rail_groups(
+    db: AsyncSession,
+    event_ids: Sequence[int],
+    *,
+    is_feeder: Callable[[str | None, str | None, str | None], bool],
+) -> dict:
+    """Which group each of these events shares the rail as — #3872.
+
+    `events` has no competition column. The string lives on the linked market,
+    where Kalshi wrote it at ingest ("ATP Challenger Phan Thiet 3", "US Open Men
+    Singles", "US Open Men Doubles"), so this reads the market and nothing else.
+    Same venue-stated discipline as `is_tennis_feeder_circuit`, and the same
+    three fields: read only, never infer. An event with no market, or one whose
+    venue named nothing and does not read as a feeder match, is simply absent
+    from the result — and `equal_share_by_competition` never holds those back.
+
+    A match the venue names as a feeder-circuit match answers to
+    `RAIL_FEEDER_GROUP` no matter which Challenger draw it is in; the constant
+    carries why. That verdict is taken over ALL of an event's markets, because
+    one venue naming the circuit is enough evidence and the other venue's
+    silence is not counter-evidence.
+
+    One bounded statement on an indexed `event_id` IN-list of at most
+    `UPCOMING_GAMES_LIMIT + 1 + RAIL_COMPETITION_SCAN_DEPTH` ids, not the second
+    ordered scan of the rail's own population a SQL-side answer would cost
+    (#3677 measured that shape at 8,689 blocks for this league).
+
+    `min()` rather than "the first row wins": an event carries several markets
+    (a match, its exact-score prop, its handicaps) and a dict built from an
+    unordered result would otherwise hand the same event a different competition
+    between two reads, which is a rail that reshuffles for no reason.
+    """
+    if not event_ids:
+        return {}
+    rows = await asyncio.wait_for(
+        db.execute(
+            select(
+                FuturesMarket.event_id,
+                FuturesMarket.external_id,
+                FuturesMarket.name,
+                FuturesMarket.market_metadata["competition"].astext,
+            ).where(FuturesMarket.event_id.in_(list(event_ids))),
+        ),
+        timeout=10,
+    )
+    named: dict = {}
+    feeder: set = set()
+    for event_id, external_id, name, competition in rows.all():
+        if is_feeder(external_id, name, competition):
+            feeder.add(event_id)
+        if not competition:
+            continue
+        current = named.get(event_id)
+        if current is None or competition < current:
+            named[event_id] = competition
+    out: dict = {e: RAIL_FEEDER_GROUP for e in feeder}
+    for event_id, competition in named.items():
+        out.setdefault(event_id, competition)
+    return out
+
+
 def upcoming_games_query(
-    sport_key: str, now: datetime, *, also_sport_keys: Sequence[str] = ()
+    sport_key: str,
+    now: datetime,
+    *,
+    also_sport_keys: Sequence[str] = (),
+    scan_depth: int = 0,
 ):
     """The UPCOMING GAMES rail, scoped to one league.
 
@@ -363,7 +498,16 @@ def upcoming_games_query(
         )
         # +1 so the cap can be DECLARED rather than silently applied. A full
         # COUNT would be a second round trip to say the same thing.
-        .limit(UPCOMING_GAMES_LIMIT + 1)
+        #
+        # `scan_depth` (#3872) is how far past the cap a league that shares its
+        # rail between competitions may look. It is 0 for every other league, so
+        # their statement is byte-for-byte the one LAT-P110's block table was
+        # measured on — the same care `_rail_league_scope` takes, for the same
+        # reason. Deepening it is close to free where it IS asked for: this
+        # ORDER BY leads with a CASE, so the planner has already collected and
+        # sorted every candidate row (that is the no-fence argument above), and
+        # a larger LIMIT only carries more of that finished sort back.
+        .limit(UPCOMING_GAMES_LIMIT + 1 + max(0, scan_depth))
     )
 
 
@@ -1640,11 +1784,67 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
                 timeout=10,
             )
             _also_keys = tour_scope_sport_keys(sport_key, _in_play.scalars().all())[1:]
-        _games_q = upcoming_games_query(sport_key, now, also_sport_keys=_also_keys)
+        # #3872: an opted-in rail looks past its cap so the share below has
+        # something to share. Every other league passes 0 and compiles the exact
+        # statement it compiled before.
+        _is_feeder = RAIL_COMPETITION_SHARE_LEAGUES.get(sport_key)
+        _games_q = upcoming_games_query(
+            sport_key,
+            now,
+            also_sport_keys=_also_keys,
+            scan_depth=RAIL_COMPETITION_SCAN_DEPTH if _is_feeder else 0,
+        )
         _results_q = recent_results_query(sport_key, now, also_sport_keys=_also_keys)
         _unreported_q = unreported_games_query(sport_key, now, also_sport_keys=_also_keys)
         _g = await asyncio.wait_for(db.execute(_games_q), timeout=10)
         _g_events = list(_g.scalars().all())
+        # ── #3872: one competition may not take the whole rail ──
+        #
+        # Measured on production 2026-09-08, mid-US-Open: twelve Challenger
+        # matches at Phan Thiet and Shanghai were on court while the Slam's
+        # semi-finals were still hours away, so live-first correctly handed the
+        # ATP page all eight slots to the Challengers and the fifteen rows the
+        # reader came for — Tiafoe–Michelsen, six US Open doubles,
+        # Shelton–Alcaraz, Zverev, Khachanov — got none of them.
+        #
+        # `more_games` is taken from the FULL candidate list, before the share
+        # picks from it: the question "are there more games?" is about the
+        # league, not about which of them this rail elected to show.
+        #
+        # 🔴 Applied HERE and not inside `_format_all`, so the team lookup, the
+        # formatter and every downstream reader still see at most the cap. The
+        # deeper scan is a selection input and must not become a payload.
+        _more_games = len(_g_events) > UPCOMING_GAMES_LIMIT
+        if _is_feeder and len(_g_events) > 1:
+            try:
+                _groups = await _event_rail_groups(
+                    db, [e.id for e in _g_events], is_feeder=_is_feeder
+                )
+                _g_events = equal_share_by_competition(
+                    _g_events,
+                    limit=UPCOMING_GAMES_LIMIT,
+                    competition_of=lambda e: _groups.get(e.id),
+                )
+            except Exception:
+                # Chrome, not content (gotcha #42): a rail that cannot read its
+                # competitions is still a rail. Fall back to the clock's order.
+                #
+                # 🔴 The league is NOT interpolated, and that is deliberate.
+                # `sport_key` is a path parameter, so a new log line carrying it
+                # is a `py/log-injection` finding (CodeQL called this one a
+                # medium-severity security vulnerability on the first push, and
+                # notice 32 refuses those). The neighbouring log calls do carry
+                # it and are not flagged only because they are untouched lines;
+                # inheriting a convention is not the same as it being safe.
+                # `logger.exception` prints the traceback, and the branch is
+                # reachable for exactly the two keys in
+                # `RAIL_COMPETITION_SHARE_LEAGUES`, so the count identifies the
+                # call as well as the key would.
+                logger.exception(
+                    "league page: competition share failed over %d candidates",
+                    len(_g_events),
+                )
+                _g_events = _g_events[:UPCOMING_GAMES_LIMIT]
         _r = await asyncio.wait_for(db.execute(_results_q), timeout=10)
         _r_events = list(_r.scalars().all())
         _u = await asyncio.wait_for(db.execute(_unreported_q), timeout=10)
@@ -1694,7 +1894,10 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
             return out
 
         _grows = _format_all(_g_events)
-        more_games = len(_grows) > UPCOMING_GAMES_LIMIT
+        # `or _more_games` (#3872): the share hands back at most the cap, so the
+        # +1 that used to declare "there are more" is gone by the time we get
+        # here. The count taken from the full candidate list above still knows.
+        more_games = len(_grows) > UPCOMING_GAMES_LIMIT or _more_games
         upcoming_games = _grows[:UPCOMING_GAMES_LIMIT]
 
         _rrows = _format_all(_r_events)
