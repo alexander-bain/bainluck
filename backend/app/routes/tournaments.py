@@ -664,8 +664,22 @@ async def _load_blends(
         await session.execute(
             select(
                 Event.id,
-                Event.home_team,
-                Event.away_team,
+                # THE NAME COLUMNS, NOT THE RELATIONSHIPS (CERT-2235).
+                #
+                # `Event.home_team` / `Event.away_team` are `relationship()`s to
+                # `Team`, not strings. Putting one in a `select()` does not
+                # fail — it compiles to a boolean comparison
+                # (`teams.id = events.home_team_id`) landing in an unnamed
+                # result key, so `row.home_team` never carries the player's
+                # name. `orient_event_blend` then cannot match either name onto
+                # a side and refuses every linked row by design, which is the
+                # whole ship failing silently on the first screen.
+                #
+                # `home_team_name` / `away_team_name` are the `mapped_column`s
+                # that hold the string (models.py:141-142), and they are what
+                # every other read of a fixture's names on this route uses.
+                Event.home_team_name,
+                Event.away_team_name,
                 Event.status,
                 Event.home_score,
                 Event.away_score,
@@ -689,8 +703,8 @@ async def _load_blends(
             continue
         source_count, _freshest = blend_provenance(row)
         blends[int(row.id)] = {
-            "home_name": row.home_team,
-            "away_name": row.away_team,
+            "home_name": row.home_team_name,
+            "away_name": row.away_team_name,
             "home_probability": hero.home_probability,
             "away_probability": hero.away_probability,
             "source": hero.source,

@@ -310,3 +310,156 @@ def test_an_unpriced_row_is_not_given_a_number_it_never_had():
     assert row["price_basis"] == PRICE_BASIS_VENUE
     assert row["sides"][0]["probability"] is None
     assert row["price_state"] == "unpriced"
+
+
+# ---------------------------------------------------------------------------
+# THE REPAIR — CERT-2235, `HUB-BLEND-LOADER-USES-EVENT-NAME-COLUMNS-3903`
+#
+# Everything above this line drives `build_slate` with a blend dict that THIS
+# FILE built, via `_blend_entry`. That is a fine test of the builder and it is
+# not a test of the ship, because the route does not use `_blend_entry` — it
+# uses `_load_blends`, and `_load_blends` was broken.
+#
+# It selected `Event.home_team` / `Event.away_team`, which are `relationship()`s
+# and not columns. SQLAlchemy does not refuse that. It compiles to
+#
+#     SELECT events.id, teams.id = events.home_team_id AS anon_1 ...
+#     FROM events, teams
+#
+# — a boolean comparison over a CARTESIAN product, landing in `anon_1`. So
+# `row.home_team` is not the player's name, `orient_event_blend` cannot match
+# either name onto a side, and every linked hub row is refused. The ship failed
+# on the first screen while this file was green, because the guard injected a
+# prebuilt blend BELOW the failing seam.
+#
+# The lesson is the same one #3892 hit tonight in the frontend and the same one
+# #3920 records: a guard that rebuilds what the code does can only prove the
+# rebuild self-consistent. These two tests call the real loader.
+
+import asyncio
+
+from app.routes.tournaments import _load_blends
+
+
+class _FakeResult:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def all(self):
+        return self._rows
+
+
+class _CapturingSession:
+    """Answers `execute` with prepared rows and keeps the statement it was given.
+
+    The statement is kept because half of this defect is invisible in the rows:
+    a tree that fixed the MAPPING (`row.home_team_name`) and left the SELECT on
+    the relationship would satisfy any row-shaped stub while still emitting the
+    cartesian join to Postgres. So the SQL is asserted too.
+    """
+
+    def __init__(self, rows):
+        self._rows = rows
+        self.statements = []
+
+    async def execute(self, statement):
+        self.statements.append(statement)
+        return _FakeResult(self._rows)
+
+
+def _selected_row(event, keys):
+    """A row exposing EXACTLY the result keys a SELECT of `keys` would produce.
+
+    Not a `SimpleNamespace(**everything)`: that is what made the original guard
+    hole possible. A row carrying every attribute the code MIGHT read answers
+    `row.home_team` happily and hides the very mistake this test exists for. A
+    real `Row` answers for the columns that were selected and raises for the
+    rest, so this one does too.
+    """
+    return SimpleNamespace(**{k: getattr(event, k) for k in keys})
+
+
+# The columns the loader must select for the names. Written out here so the
+# assertion below names them, rather than reading them back off the code under
+# test and agreeing with itself.
+NAME_COLUMNS = ("home_team_name", "away_team_name")
+
+ROW_KEYS = (
+    "id",
+    *NAME_COLUMNS,
+    "status",
+    "home_score",
+    "away_score",
+    "completed_at",
+    "win_probability_sources",
+    "espn_win_prob_home",
+    "opening_home_probability",
+    "opening_away_probability",
+)
+
+
+def _event_row(**overrides):
+    """The `_event` fixture, renamed onto the real name columns."""
+    base = _event(**overrides)
+    base.home_team_name = base.home_team
+    base.away_team_name = base.away_team
+    return _selected_row(base, ROW_KEYS)
+
+
+def test_the_loader_selects_the_name_columns_and_not_the_relationships():
+    """The SQL half: no cartesian join, and the two name columns are present."""
+    session = _CapturingSession([_event_row()])
+    asyncio.run(_load_blends(session, [EVENT_ID]))
+
+    assert session.statements, "the loader issued no query; the test proves nothing"
+    sql = str(session.statements[0])
+
+    for column in NAME_COLUMNS:
+        assert f"events.{column}" in sql, f"{column} is not selected: {sql}"
+
+    # The relationship's signature, asserted by what it COMPILES TO rather than
+    # by the attribute name — `home_team_id` is a legitimate column and may be
+    # selected one day, but this comparison never is.
+    assert "= events.home_team_id" not in sql
+    assert "= events.away_team_id" not in sql
+    # And the cartesian product those comparisons drag in.
+    assert "FROM events, teams" not in sql
+
+
+def test_the_loader_maps_the_real_names_through_to_a_priced_hub_row():
+    """The ship, end to end: real loader -> real builder -> the page's number.
+
+    This is the test CERT-2235 required. It fails with `AttributeError` on a
+    tree that reads `row.home_team`, because a row that never selected it does
+    not have it — which is exactly what production does.
+    """
+    event = _event_row()
+    session = _CapturingSession([event])
+
+    blends = asyncio.run(_load_blends(session, [EVENT_ID]))
+
+    # The mapping itself: real strings, not booleans and not None.
+    entry = blends[EVENT_ID]
+    assert entry["home_name"] == "Clara Burel"
+    assert entry["away_name"] == "Yexin Ma"
+    assert isinstance(entry["home_name"], str)
+
+    # And through the builder, which is where the names have to land for the
+    # orientation to resolve at all.
+    row = _the_row(_linked_register(), _venue_prices(), blends)
+
+    assert row["blend_refusal"] is None, (
+        "the loader's names did not orient onto the row's sides"
+    )
+    assert row["price_basis"] == PRICE_BASIS_BLEND
+
+    page = resolve_hero(event)
+    assert page is not None
+    assert row["sides"][0]["probability"] == pytest.approx(page.home_probability)
+    assert row["sides"][1]["probability"] == pytest.approx(page.away_probability)
+
+    # The control that makes the assertion above mean something: the venue's own
+    # number is genuinely different, so a row that kept it would fail here.
+    assert row["sides"][0]["probability"] != pytest.approx(
+        VENUE_NOW / (VENUE_NOW + 0.415)
+    )
