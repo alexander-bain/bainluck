@@ -778,7 +778,30 @@ export default function EventPage({ params }: EventPageProps) {
     }>
     <div className="space-y-3">
       {/* Navigation */}
-      <div className="flex items-center justify-between gap-3">
+      {/* #3974: THE ROW WRAPS, because at 390px three elements do not fit in it.
+          Measured on this page at that width: the row has 366px of usable
+          width, the two back links need 246px of it, and the countdown group
+          needs 125px — 383px of content for 366px of room. The 17px deficit
+          came out of the back links, because they are the group carrying
+          `min-w-0` + `overflow-hidden`, so the reader got "‹ Back to ever" —
+          a clipped NAVIGATION CONTROL, which reads as a broken page rather
+          than as an abbreviation — while "Next update:" wrapped over it.
+
+          `flex-wrap` fixes it rather than `min-w-0` doing so, because flex
+          breaks lines on each item's CONTENT size and only then shrinks what
+          is on the line. So the countdown moves to its own row while the back
+          links keep their full 246px, and on any width where all three fit
+          nothing moves at all.
+
+          This does not reverse #3802 below. That rule is about ONE long
+          tournament title inside the inner group, and it still clips there;
+          this is about a third element that has no room on the line. The
+          `justify-between` that used to be here is gone because it does
+          nothing once the right-hand group carries `ml-auto` — and `ml-auto`
+          is what keeps that group right-aligned on the line it wraps to,
+          which `justify-between` would not do. `gap-y-1` keeps the wrapped
+          row tight; the horizontal gap is unchanged. */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         {/* #3802: `whitespace-nowrap` sits on the CONTAINER, not on either link.
             `white-space` inherits, so both back links get it without editing
             TournamentExtensions.tsx; `min-w-0` + `overflow-hidden` mean a long
@@ -831,7 +854,7 @@ export default function EventPage({ params }: EventPageProps) {
             down to, because updates arrive. Show how old the number is instead.
             The countdown stays for every event still on the poll. */}
         {!isFinished && streamConnected && (
-          <div className="flex items-center gap-3">
+          <div className="ml-auto flex items-center gap-3">
             <LiveSparkline points={sparklinePoints} />
             <LiveAgeStamp updatedAt={freshestSourceStamp} connected={streamConnected} />
           </div>
@@ -840,7 +863,7 @@ export default function EventPage({ params }: EventPageProps) {
         {/* Visual countdown timer — #3802 gates it on proximity, not just on
             "not finished and not pushed". */}
         {showRefreshCountdown && (
-          <div className="flex items-center gap-3">
+          <div className="ml-auto flex items-center gap-3">
             <div className="flex items-center gap-2 text-sm">
               {effectivelyLive && (
                 <span className="flex items-center gap-1.5 bg-emerald-500/15 text-emerald-600 px-2 py-1 rounded-full text-xs font-semibold">
