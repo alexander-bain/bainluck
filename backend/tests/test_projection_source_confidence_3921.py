@@ -442,6 +442,16 @@ async def test_a_sport_with_no_declared_range_keeps_its_contracts():
 
     The guard suppresses; suppressing a projection we cannot fault is the worse
     error, so an unrecognised sport prefix is left exactly as it was.
+
+    Amended by lane1/182 (repair `3921-PROJECTION-SELECTION-CANNOT-EMIT-NEGATIVE-
+    SCORES`). The assertion was `projected_final is not None`, which this fixture
+    only ever satisfied by accident: a spread of ~5.6 against a total of 2.5 is
+    not a scoreline, and the repair now declines to serve one. That says nothing
+    about the range guard, which is what this test is for — so the assertion
+    moved onto the guard's own output, where it is *stronger* than it was: all
+    four contracts must survive by name, not merely enough of them to produce a
+    number. The end-to-end fail-open claim is kept in the sibling below, on a
+    fixture whose pair is a scoreline.
     """
     unknown = "quidditch_league"
     assert unknown.split("_")[0] not in _SPORT_TOTAL_RANGE
@@ -452,7 +462,33 @@ async def test_a_sport_with_no_declared_range_keeps_its_contracts():
             _total_market("kalshi", CONTAMINATED_TOTALS, crossover_at=(1.5, 3.5)),
         ],
     )
-    assert pm.get("projected_final") is not None
+    kept = pm["implied_totals"]["kalshi"]["contracts"]
+    assert [c["threshold"] for c in kept] == list(CONTAMINATED_TOTALS), (
+        "an unrecognised sport must lose no contract to the range guard"
+    )
+
+
+async def test_a_sport_with_no_declared_range_still_projects_a_score():
+    """Fail-open, end to end: the unknown sport still renders a projection.
+
+    The sibling above proves the guard deletes nothing; this proves the page
+    that results still shows a number. Same unrecognised prefix, on a pair that
+    is a scoreline — so if the range guard ever stops failing open, or the
+    renderable-pair walk ever starts refusing honest pairs, one of the two
+    fails.
+    """
+    unknown = "quidditch_league"
+    assert unknown.split("_")[0] not in _SPORT_TOTAL_RANGE
+    pm = await _projection(
+        _event(sport_key=unknown),
+        [
+            _spread_market("kalshi", (1.0, 3.5, 7.5)),
+            _total_market("kalshi", (30.5, 40.5, 50.5), crossover_at=(30.5, 50.5)),
+        ],
+    )
+    final = pm.get("projected_final")
+    assert final is not None
+    assert final["home_score"] >= 0 and final["away_score"] >= 0
 
 
 # ---------------------------------------------------------------------------

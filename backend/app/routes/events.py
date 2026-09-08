@@ -9559,8 +9559,14 @@ def _classify_game_market(name: str, external_id: Optional[str] = None) -> str:
     """
     lower = name.lower()
 
+    # "1st 5 innings" is the form POLYMARKET emits (measured on Detroit v
+    # Minnesota, #3951: "1st 5 Innings O/U 2.5", "1st 5 Innings Spread -1.5").
+    # The list carried "first 5 innings" and "f5" and so read Polymarket's
+    # half-game lines as full-game ones — a 2.5-run "total" for a 9-inning
+    # game. Ordinal-vs-word is the same distinction the list already draws
+    # either side of it ("1st half" AND "first half").
     _HALF_PATTERNS = ("1st half", "1h", "2nd half", "2h", "first half", "second half",
-                      "first 5 innings", "f5 innings", "f5",
+                      "first 5 innings", "1st 5 innings", "f5 innings", "f5",
                       "first inning", "1st inning")
     _QUARTER_PATTERNS = ("1st quarter", "2nd quarter", "3rd quarter", "4th quarter",
                          "1q", "2q", "3q", "4q")
@@ -9706,6 +9712,31 @@ _PM_PERIOD_SCOPES = frozenset({
 _PM_NON_GAME_TOTAL_SCOPES = frozenset({
     "spread", "team_total", "player_prop", "h2h", "3ball",
 })
+
+#: Scopes that price neither arm of THIS game, read off an OUTCOME name.
+#:
+#: The market-level gate above is blind to Polymarket, which names a market for
+#: the matchup alone ("Detroit Tigers vs. Minnesota Twins") and puts the scope
+#: in the outcome: `1st 5 Innings Spread -1.5`, `Luke Keaschall: Home Runs O/U
+#: 0.5`. Read as a whole-game market its 38 home-run rungs priced the run total
+#: and its 1st-5-innings rungs derived a −14.25 spread, and the page served
+#: `Projected final: 7.9 – -6.4` (#3951).
+#:
+#: One athlete's line and one side's points cannot price the game's spread
+#: EITHER, so these drop the outcome from both arms — unlike the market-level
+#: set, which refuses only the total. ``spread`` is deliberately absent: an
+#: outcome named "Spread -1.5" in a matchup-named market is a real spread rung,
+#: and is handled by refusing it the TOTAL arm alone.
+_PM_OUTCOME_NEVER_PRICES_THE_GAME = frozenset({
+    "team_total", "player_prop", "h2h", "3ball",
+})
+
+#: Market labels that make no claim about WHICH quantity the market prices, and
+#: so hand the question to the outcome names. Keeping this a two-name set (not
+#: "everything not in the gates above") is what stops the outcome pass from
+#: second-guessing a market that has already told us what it is: a Kalshi
+#: "…: Total Points" market's outcomes stay eligible on the market's word.
+_PM_SCOPES_DEFERRING_TO_OUTCOMES = frozenset({"other", "moneyline"})
 
 
 # Ticker-prefix → period label.  Built once at import time alongside
@@ -13413,7 +13444,7 @@ async def get_event_odds_history(
             projected_final_score as calc_projected_score,
             extract_spread_threshold,
             extract_total_threshold,
-            select_projection_source,
+            select_projected_final,
         )
         from app.models.models import FuturesOddsSnapshot
 
@@ -13450,11 +13481,39 @@ async def get_event_odds_history(
             # market is allowed to price the game's combined total at all.
             may_price_total = scope not in _PM_NON_GAME_TOTAL_SCOPES
 
+            # A market named only for the matchup has told us nothing about
+            # which quantity it prices, so the outcome names are asked instead
+            # (#3951). Computed once per market: the answer is a property of
+            # the market's LABEL, not of any one contract.
+            ask_the_outcome = scope in _PM_SCOPES_DEFERRING_TO_OUTCOMES
+
             for outcome in market.outcomes:
                 name = outcome.name or ""
                 prob = float(outcome.current_probability) if outcome.current_probability else None
                 if prob is None or prob <= 0:
                     continue
+
+                outcome_may_price_total = may_price_total
+                if ask_the_outcome:
+                    # The same shipped classifier, run on the outcome — with no
+                    # `external_id`, because the ticker describes the MARKET and
+                    # would answer for every contract in it identically, which
+                    # is exactly the resolution this pass exists to improve on.
+                    outcome_scope = _classify_game_market(name, None)
+                    if (
+                        outcome_scope in _PM_PERIOD_SCOPES
+                        or outcome_scope in _PM_OUTCOME_NEVER_PRICES_THE_GAME
+                    ):
+                        continue
+                    if outcome_scope in _PM_NON_GAME_TOTAL_SCOPES:
+                        # Reachable only for `spread`, the one label the set
+                        # above deliberately leaves eligible: the rung may
+                        # price the margin, never the total. Without this the
+                        # rung falls through to the total extractor the moment
+                        # `extract_spread_threshold` cannot read its wording
+                        # (#3948) — which is how a spread contaminated a total
+                        # pool in the first place.
+                        outcome_may_price_total = False
 
                 # Try to extract spread threshold
                 spread_val = extract_spread_threshold(name)
@@ -13475,7 +13534,7 @@ async def get_event_odds_history(
                 # (That `extract_spread_threshold` cannot read Kalshi's own
                 # "Dallas wins by over 10.5 points" — which is why a spread
                 # market reached this line at all — is a separate defect, #3948.)
-                if not may_price_total:
+                if not outcome_may_price_total:
                     continue
 
                 # Try to extract total threshold
@@ -13570,20 +13629,20 @@ async def get_event_odds_history(
 
         # Compute projected final score from the best available data — the arm
         # with the highest confidence, kalshi > polymarket > sportsbook only as
-        # the tie-break (#3921).
-        best_spread = None
-        best_spread_source = select_projection_source(implied_spreads)
-        if best_spread_source is not None:
-            best_spread = implied_spreads[best_spread_source]["spread"]
-
-        best_total = None
-        best_total_source = select_projection_source(implied_totals)
-        if best_total_source is not None:
-            best_total = implied_totals[best_total_source]["total"]
-
+        # the tie-break (#3921) — and never a pair that is not a scoreline.
+        #
+        # The confidence pick reads how tightly a source's own ladder brackets
+        # 50%, which says nothing about whether the ladder prices THIS game: a
+        # contaminated Polymarket pool whose rungs all sit at 1.000 reports
+        # confidence 1.0 and outranks a real Kalshi total. The scope gates
+        # above are what stop that pool forming; this is the backstop for the
+        # shape they miss, and it is cheap because it only ever walks when the
+        # preferred pair is unrenderable (repair
+        # `3921-PROJECTION-SELECTION-CANNOT-EMIT-NEGATIVE-SCORES`).
         projected = None
-        if best_spread is not None and best_total is not None:
-            proj = calc_projected_score(best_spread, best_total)
+        best_pair = select_projected_final(implied_spreads, implied_totals)
+        if best_pair is not None:
+            best_spread_source, best_total_source, proj = best_pair
             projected = {
                 "home_score": proj.home_score,
                 "away_score": proj.away_score,
