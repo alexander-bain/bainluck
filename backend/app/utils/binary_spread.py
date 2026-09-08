@@ -107,6 +107,31 @@ class ImpliedSpread:
     upper_prob: float
 
 
+def home_margin_from_spread(spread: float) -> float:
+    """Convert a betting-line spread into the chart's ``home - away`` axis.
+
+    🔴 There are TWO opposite sign conventions in this payload and they are one
+    negation apart, which is exactly why they were confused (#3948 repair
+    `3948-KALSHI-IMPLIED-LINE-MATCHES-HOME-MARGIN-AXIS`):
+
+    * ``spread`` is **betting-line sign** — negative means the HOME team is
+      favoured. Every producer agrees: ``binary_to_implied_spread`` returns
+      ``-round(spread, 1)`` and the sportsbook arm computes ``away - home``.
+      ``projected_final_score`` consumes this convention and is correct.
+    * ``home_margin`` is the **chart axis** — positive means the HOME team is
+      leading, matching ``projected_home_score - projected_away_score``, which
+      is how `ScoreDifferentialChart` builds every other series it draws.
+
+    Plotting ``spread`` on that axis mirrors the line about zero: a Giants-home
+    ladder with Dallas favoured by 3 yields ``spread=+3.0``, which the chart
+    would draw as the Giants leading by 3 while the hero favours Dallas.
+
+    Rendered consumers read ``home_margin`` and never re-derive the flip — one
+    named rule, in one place, instead of a negation remembered at each call.
+    """
+    return -spread
+
+
 @dataclass
 class ImpliedTotal:
     """Result of binary-to-total derivation."""

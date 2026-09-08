@@ -93,6 +93,20 @@ NFL_RUNGS = (
     ("New York G wins by over 14.5 points", 0.085),
 )
 
+#: Verbatim from production, event 14637256's `: Total Points` ladder, 2026-09-08.
+#: Crosses 50% between 47.5 (0.520) and 48.5 (0.485).
+NFL_TOTAL_RUNGS = (
+    ("Over 39.5 points scored", 0.750),
+    ("Over 42.5 points scored", 0.670),
+    ("Over 45.5 points scored", 0.585),
+    ("Over 46.5 points scored", 0.560),
+    ("Over 47.5 points scored", 0.520),
+    ("Over 48.5 points scored", 0.485),
+    ("Over 49.5 points scored", 0.460),
+    ("Over 50.5 points scored", 0.440),
+    ("Over 51.5 points scored", 0.395),
+)
+
 #: Verbatim from production, market 60405695, event 15307194 (#3951's page).
 #: Home is Detroit, so the `Minnesota ...` rungs are the AWAY half.
 MLB_RUNGS = (
@@ -424,6 +438,92 @@ async def test_swapping_home_and_away_mirrors_the_projected_scoreline():
     # Detroit is the favourite in both readings — it just changes column.
     assert a["home_score"] > a["away_score"]
     assert b["away_score"] > b["home_score"]
+
+
+def _nfl_markets():
+    return [
+        _market(
+            "kalshi",
+            [_outcome(n, p) for n, p in NFL_RUNGS],
+            name="Dallas vs New York: Spread",
+        ),
+        _market(
+            "kalshi",
+            [_outcome(n, p) for n, p in NFL_TOTAL_RUNGS],
+            name="Dallas vs New York: Total Points",
+        ),
+    ]
+
+
+async def test_the_kalshi_line_is_placed_on_the_charts_home_margin_axis():
+    """Repair `3948-KALSHI-IMPLIED-LINE-MATCHES-HOME-MARGIN-AXIS` (CERT-2264).
+
+    🔴 This crosses the API-to-chart sign boundary, which no other guard here
+    does. The projected-final arithmetic was already right and stays right; what
+    was wrong is the number the dashed `Kalshi Implied` line is drawn at.
+
+    `ScoreDifferentialChart` builds every other series as `projected_home_score
+    - awayScore`, so on its Y axis POSITIVE means the HOME team is LEADING. But
+    `spread` is betting-line sign, and on this real Giants-home ladder it is
+    `+3.0` — Dallas favoured by 3. Plotted raw that draws the GIANTS +3, against
+    a hero on the same page that favours Dallas.
+
+    So the assertion is on `home_margin`, the field the chart consumes: Dallas
+    favoured must put the line BELOW zero, and swapping the sides must mirror it
+    ABOVE zero while the projected-final winner stays Dallas either way.
+    """
+    upright = await _projection(
+        _event(14637256, "New York Giants", "Dallas Cowboys", "americanfootball_nfl"),
+        _nfl_markets(),
+    )
+    flipped = await _projection(
+        _event(14637256, "Dallas Cowboys", "New York Giants", "americanfootball_nfl"),
+        _nfl_markets(),
+    )
+
+    up_arm, flip_arm = upright["implied_spreads"]["kalshi"], flipped["implied_spreads"]["kalshi"]
+
+    # Betting-line sign is unchanged — the projected-final path still reads it.
+    assert up_arm["spread"] == pytest.approx(3.0, abs=0.05)
+
+    # The chart axis is the opposite, and is what the line is drawn at.
+    assert up_arm["home_margin"] == pytest.approx(-3.0, abs=0.05)
+    assert up_arm["home_margin"] < 0, "Dallas is favoured, so the home line sits below zero"
+    assert flip_arm["home_margin"] == pytest.approx(3.0, abs=0.05)
+    assert flip_arm["home_margin"] > 0, "Dallas is now home, so the same line mirrors above zero"
+
+    # 🔴 The mirror must be a mirror, not two independent readings.
+    assert up_arm["home_margin"] == pytest.approx(-flip_arm["home_margin"], abs=0.05)
+
+    # And the winner does NOT move: Dallas is favoured in both orientations, it
+    # only changes column. A line that agreed with the axis but disagreed with
+    # the scoreline would still be a contradiction on the page.
+    up_final, flip_final = upright["projected_final"], flipped["projected_final"]
+    assert up_final["away_score"] > up_final["home_score"]
+    assert flip_final["home_score"] > flip_final["away_score"]
+
+    # The line and the scoreline must tell the same story, on the same axis.
+    assert up_arm["home_margin"] == pytest.approx(
+        up_final["home_score"] - up_final["away_score"], abs=0.05
+    )
+
+
+async def test_every_spread_arm_carries_the_chart_axis_not_just_kalshi():
+    """`home_margin` is a property of the payload, not of one venue.
+
+    The chart loops over `implied_spreads` and draws whatever it finds, so an
+    arm that shipped `spread` without `home_margin` would fall back to negating
+    — correct, but only by luck. Every producer states the axis.
+    """
+    data = await _projection(
+        _event(15307194, "Detroit Tigers", "Minnesota Twins", "baseball_mlb"),
+        _mlb_markets("Minnesota vs Detroit: Spread"),
+    )
+    arms = data["implied_spreads"]
+    assert arms, "the specimen must produce at least one arm or this proves nothing"
+    for source, arm in arms.items():
+        assert "home_margin" in arm, f"{source} ships no chart axis"
+        assert arm["home_margin"] == pytest.approx(-arm["spread"], abs=1e-9), source
 
 
 async def test_an_unresolvable_ladder_serves_no_spread_arm_rather_than_a_guess():

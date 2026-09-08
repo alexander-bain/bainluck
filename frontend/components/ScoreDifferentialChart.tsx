@@ -20,6 +20,7 @@ import {
   CATEGORY_LABEL_FORMAT,
 } from "@/lib/chartTimeline";
 import { sourceLabel } from "@/lib/sourceColors";
+import { impliedSpreadHomeMargin } from "@/lib/impliedSpreadAxis";
 import { sportVocab, playedCountAbsence, playedUnits, withUnit } from "@/lib/marketMapUtils";
 import type { PlayedLinescore } from "@/lib/marketMapUtils";
 import type {
@@ -101,7 +102,7 @@ interface ScoreDifferentialChartProps {
   totalsMapPresent?: boolean;
   /** Prediction market spread/total data from binary contracts */
   pmSpreadData?: {
-    implied_spreads?: Record<string, { spread: number; confidence: number; contracts: { threshold: number; probability: number }[] }>;
+    implied_spreads?: Record<string, { spread: number; home_margin?: number; confidence: number; contracts: { threshold: number; probability: number }[] }>;
     implied_totals?: Record<string, { total: number; confidence: number; contracts: { threshold: number; probability: number }[] }>;
     projected_final?: { home_score: number; away_score: number; spread_source: string; total_source: string } | null;
   } | null;
@@ -509,8 +510,11 @@ export default function ScoreDifferentialChart({
         if (source === "sportsbook") continue; // Already shown as projected spread
         const key = `pm_${source}_spread`;
         for (const pt of allPts) {
-          // Show the implied spread as a flat line across all timestamps
-          pt[key] = data.spread;
+          // Show the implied spread as a flat line across all timestamps.
+          //
+          // 🔴 Never plot `data.spread` raw here — it is betting-line sign and
+          // this axis is `home - away`. See `impliedSpreadHomeMargin` (#3948).
+          pt[key] = impliedSpreadHomeMargin(data);
         }
       }
     }

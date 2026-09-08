@@ -13460,6 +13460,7 @@ async def get_event_odds_history(
             projected_final_score as calc_projected_score,
             extract_spread_threshold,
             extract_total_threshold,
+            home_margin_from_spread,
             margin_rung_on_home_axis,
             select_projected_final,
         )
@@ -13625,6 +13626,9 @@ async def get_event_odds_history(
             if result:
                 implied_spreads[source] = {
                     "spread": result.spread,
+                    # Betting-line sign is NOT the chart's axis; see
+                    # `home_margin_from_spread`. Rendered consumers read this.
+                    "home_margin": home_margin_from_spread(result.spread),
                     "confidence": result.confidence,
                     "contracts": sorted(
                         [{"threshold": c["threshold"], "probability": c["probability"]}
@@ -13656,6 +13660,7 @@ async def get_event_odds_history(
                 sb_spread = sb_away - sb_home  # negative = home favored
                 implied_spreads["sportsbook"] = {
                     "spread": round(sb_spread, 1),
+                    "home_margin": home_margin_from_spread(round(sb_spread, 1)),
                     "confidence": 1.0,
                     "contracts": [],
                 }
