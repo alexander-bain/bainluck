@@ -17,6 +17,7 @@ import os
 import random
 import re
 import time
+import unicodedata
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
@@ -10175,38 +10176,102 @@ def _concept_headline(c: dict, now: datetime) -> Optional[str]:
     return None
 
 
+def _concept_surname(name: str) -> str:
+    """Last name-token of a competitor, lowercased and accent-folded.
+
+    The two sources of a fight card disagree about how much of a fighter's name
+    they carry — measured on production 2026-09-08, the same five bouts were in
+    `events` twice, once as `Christian Echols vs Martin Kozák` and once as
+    `Kozak vs Echols`. A surname, folded, is the part both always spell the same,
+    which is what makes it usable as an identity (never as a display string)."""
+    folded = unicodedata.normalize("NFKD", (name or "").strip())
+    folded = "".join(ch for ch in folded if not unicodedata.combining(ch))
+    parts = [p for p in re.split(r"\s+", folded) if p]
+    return parts[-1].lower() if parts else ""
+
+
+def _concept_main_event(c: dict) -> list[str]:
+    """The two names of a concept's MAIN EVENT, or ``[]``.
+
+    Reads the priced bout first (`headline_bout`, ux/1070 item 2). An
+    events-table-only card carries no bout — but it IS named for one
+    ("Pasley vs Berisha"), so the title is the fallback, minus any promotion
+    prefix ("MMA: ", "Fight Night: ")."""
+    bout = c.get("headline_bout") or {}
+    named = [
+        (x.get("name") or "").strip()
+        for x in (bout.get("competitors") or [])
+        if isinstance(x, dict) and (x.get("name") or "").strip()
+    ]
+    if len(named) == 2:
+        return named
+    title = c.get("name") or ""
+    if ":" in title:
+        title = title.split(":", 1)[1]
+    parts = [p.strip() for p in re.split(r"\s+vs\.?\s+", title, flags=re.IGNORECASE)]
+    parts = [p for p in parts if p]
+    return parts if len(parts) == 2 else []
+
+
+def _concept_bout_key(data: dict) -> Optional[tuple]:
+    """Identity of the card's main event — ``(domain, {surname, surname})`` — or
+    ``None`` when the card has no two-sided main event to be identified by.
+
+    Deliberately narrow: two participants or nothing. A card we cannot identify
+    is never deduped, because dropping a card we misread is worse than serving
+    one twice."""
+    names = _concept_main_event(data)
+    if len(names) != 2:
+        return None
+    surnames = frozenset(_concept_surname(n) for n in names)
+    if len(surnames) != 2 or "" in surnames:
+        return None
+    return ((data.get("domain") or ""), surnames)
+
+
 def _concept_reason(c: dict) -> str:
     """Honest, archetype-correct per-domain reason line for a concept card.
 
     Each racing/fighting archetype gets its own framing — a cycling Grand Tour is
-    NOT "0 fights on the card" (Queue #250). When a domain has no honest,
-    count-based line to show, return "" — a blank subtitle beats a misleading
-    wrong-archetype one.
+    NOT "0 fights on the card" (Queue #250). When a domain has no honest line to
+    show, return "" — a blank subtitle beats a misleading one.
+
+    **#4066 / ship D1: this line no longer carries a COUNT.** Every count reachable
+    from here counts rows WE hold, not things in the world: `fight_count` is
+    `len(kalshi["fights"])` or `len(bouts)` in `list_card_concepts`, and
+    `entry_count` is a market count. Printing either as "13 fights on the card"
+    asserts a fact about the card that we never measured. Alex read page one on
+    his phone on 2026-09-08 and found two UFC concepts saying **"2 fights on the
+    card"** — a UFC card never has two fights, and both were halves of a card we
+    had split in half (#4093). His rule: *the venue's fight count or nothing.* We
+    do not hold the venue's count, so it is nothing.
+
+    What replaces it is the best true thing the payload already holds — the main
+    event, and only when the card's own title does not already name it (#3989:
+    this card printed its name twice once already). Otherwise the card is
+    complete without a subtitle: `_concept_can_render` guarantees a bout or a
+    leader, and the countdown badge carries the "why now".
     """
     domain = c.get("domain")
     if domain == "ufc":
-        fc = c.get("fight_count", 0)
-        return (
-            f"{fc} fight{'' if fc == 1 else 's'} on the card" if fc else "Fight card"
-        )
+        names = _concept_main_event(c)
+        if names and not _title_names_bout(c.get("name"), names):
+            return f"Main event: {names[0]} vs {names[1]}"
+        return ""
     if domain == "f1":
-        n = c.get("entry_count", 0)
-        return (
-            f"{n} weekend market{'' if n == 1 else 's'}"
-            if n
-            else "Grand Prix race winner"
-        )
+        return "Grand Prix race winner"
     if domain == "cycling":
-        n = c.get("entry_count", 0)
-        return (
-            f"{n} race market{'' if n == 1 else 's'}"
-            if n
-            else "General classification winner"
-        )
-    # Unknown archetype: show a generic market count if we have one, otherwise
-    # nothing — never fall back to a wrong-archetype default line.
-    n = c.get("entry_count", 0) or c.get("fight_count", 0)
-    return f"{n} market{'' if n == 1 else 's'}" if n else ""
+        return "General classification winner"
+    # Unknown archetype: nothing. Never a count, and never a wrong-archetype
+    # default line.
+    return ""
+
+
+def _title_names_bout(title: Optional[str], names: list[str]) -> bool:
+    """True when the card's title already names both sides of `names`."""
+    folded = unicodedata.normalize("NFKD", (title or ""))
+    folded = "".join(ch for ch in folded if not unicodedata.combining(ch)).lower()
+    return all((_concept_surname(n) or "\0") in folded for n in names)
 
 
 #: How old a MIRROR-served concept envelope may be before the feed refuses to
@@ -10643,7 +10708,79 @@ async def _score_event_concepts(
             }
         )
 
-    return feed_items
+    return _drop_duplicate_bout_concepts(feed_items)
+
+
+def _drop_duplicate_bout_concepts(items: list[dict]) -> list[dict]:
+    """One fight night is one card — enforced where the cards are SERVED (#4066).
+
+    Alex, phone, 2026-09-08: "the same fight, Pasley vs Berisha, appears TWICE as
+    two cards with two numbers (59% and 57%)". Reproduced on production the same
+    afternoon at `limit=40`:
+
+        event:ufc:26sep08  "MMA: Pasley vs Berisha"  fight_count 5  leader .585
+        event:ufc:26sep09  "Pasley vs Berisha"       fight_count 8  leader .575
+
+    Both are the Sept 8/9 card. `list_card_concepts` already has a rollover fold
+    for exactly this, and it refused: the fold tests contiguity over a span that
+    mixes the events table's real fight times with Kalshi's `commence_time`,
+    which is a CLOSE time a day later (gotcha #14). `26sep08`'s five Kalshi
+    tickers commence 04:00–05:20 on the 9th, so the earlier token's span already
+    covers the later token's first bout and the `later_first < earlier_last`
+    overlap guard fires. Root cause is **#4093** (filed independently the same
+    evening off the same two cards, with the same arithmetic), against ux/#1712, whose
+    file `event_combat.py` is; the same read shows `26sep12`/`26sep13` split the
+    same way.
+
+    This is not a patch for that bug. "Never serve one bout as two cards" is a
+    guarantee the FEED owes regardless of what the concept lister hands it —
+    twins in the events table (lane1, D35 = A) would split a card the same way
+    with the fold working perfectly. So the rule lives here, keyed on the one
+    thing both halves agree about: who is in the main event.
+
+    The keeper is the RICHER half — the one carrying a priced `headline_bout`,
+    two names and two numbers — and only then the higher score, first-wins on a
+    tie. Richness leads deliberately, because score does not track it: the
+    `_score_event_concept` card-size bonus reads `fight_count`, so the half
+    holding more of OUR rows can outrank the half that can actually render the
+    bout, and on the Sept 8/9 pair it does. (That bonus is the same untrusted
+    count wearing a ranking hat; it stays for now because removing it moves
+    slots, and this ship changes what cards SAY, not which ones get one —
+    logged on #4066 for the ranking pass, #4080.)
+
+    Original order is preserved: this is a filter over the candidate pool, never
+    a re-rank. An unidentifiable card is always kept (see `_concept_bout_key`),
+    and a card that raises while being read is kept too — one bad item must
+    never wipe the pass (gotcha #42).
+    """
+
+    def _key(item: dict) -> Optional[tuple]:
+        try:
+            return _concept_bout_key(item.get("data") or {})
+        except Exception:
+            logger.debug("concept dedup: unreadable item", exc_info=True)
+            return None
+
+    def _rank(item: dict) -> tuple:
+        try:
+            renders_bout = bool((item.get("data") or {}).get("headline_bout"))
+        except Exception:
+            renders_bout = False
+        return (1 if renders_bout else 0, item.get("score") or 0)
+
+    keys = [_key(item) for item in items]
+    winner: dict[tuple, int] = {}
+    for idx, key in enumerate(keys):
+        if key is None:
+            continue
+        best = winner.get(key)
+        if best is None or _rank(items[idx]) > _rank(items[best]):
+            winner[key] = idx
+    return [
+        item
+        for idx, (item, key) in enumerate(zip(items, keys))
+        if key is None or winner[key] == idx
+    ]
 
 
 @router.get("/tag-counts")

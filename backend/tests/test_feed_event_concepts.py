@@ -80,26 +80,47 @@ class TestConceptHeadline:
 
 
 class TestConceptReason:
-    """L2-86: the reason line is domain-aware (UFC fights vs F1 weekend markets)."""
+    """L2-86: the reason line is domain-aware (a Grand Tour is not a fight card).
 
-    def test_ufc_reason(self):
-        assert _concept_reason({"domain": "ufc", "fight_count": 12}) == "12 fights on the card"
-        assert _concept_reason({"domain": "ufc", "fight_count": 1}) == "1 fight on the card"
+    #4066 / ship D1 rewrote what "domain-aware" is allowed to SAY. Every count
+    once printed here counted rows we hold, not things in the world, so the
+    counts are gone — see `_concept_reason`'s docstring and
+    `test_feed_concept_no_inventory_counts_4066.py` for the guard that keeps
+    them gone.
+    """
+
+    def test_ufc_reason_names_the_main_event_not_a_count(self):
+        assert _concept_reason(
+            {
+                "domain": "ufc",
+                "name": "UFC 329",
+                "fight_count": 12,
+                "headline_bout": {
+                    "competitors": [
+                        {"name": "Alexandre Pantoja"},
+                        {"name": "Joshua Van"},
+                    ]
+                },
+            }
+        ) == "Main event: Alexandre Pantoja vs Joshua Van"
+
+    def test_ufc_reason_stays_silent_when_the_title_is_the_main_event(self):
+        # #3989: this card already prints its name; a subtitle repeating it is a
+        # spent line. `_concept_can_render` guarantees a bout or a leader, so the
+        # card is complete without one.
+        assert _concept_reason(
+            {"domain": "ufc", "name": "MMA: Pasley vs Berisha", "fight_count": 5}
+        ) == ""
 
     def test_f1_reason(self):
-        assert _concept_reason({"domain": "f1", "entry_count": 6}) == "6 weekend markets"
-        assert _concept_reason({"domain": "f1", "entry_count": 1}) == "1 weekend market"
+        assert _concept_reason({"domain": "f1", "entry_count": 6}) == "Grand Prix race winner"
         assert _concept_reason({"domain": "f1", "entry_count": 0}) == "Grand Prix race winner"
 
     def test_cycling_reason_is_archetype_correct(self):
         # Queue #250: cycling must NOT read "0 fights on the card".
         assert (
             _concept_reason({"domain": "cycling", "entry_count": 8})
-            == "8 race markets"
-        )
-        assert (
-            _concept_reason({"domain": "cycling", "entry_count": 1})
-            == "1 race market"
+            == "General classification winner"
         )
         assert (
             _concept_reason({"domain": "cycling", "entry_count": 0})
@@ -108,11 +129,9 @@ class TestConceptReason:
         assert "fight" not in _concept_reason({"domain": "cycling", "entry_count": 0})
 
     def test_unknown_domain_never_claims_fights(self):
-        # A new/unknown archetype gets a generic count or nothing — never the
-        # misleading "fights on the card" default.
-        assert (
-            _concept_reason({"domain": "tennis", "entry_count": 5}) == "5 markets"
-        )
+        # A new/unknown archetype says nothing — never the misleading "fights on
+        # the card" default, and (#4066) never a count of our own rows either.
+        assert _concept_reason({"domain": "tennis", "entry_count": 5}) == ""
         assert _concept_reason({"domain": "tennis", "entry_count": 0}) == ""
         assert _concept_reason({"domain": "mystery"}) == ""
         assert "fight" not in _concept_reason({"domain": "mystery"})
