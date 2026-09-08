@@ -581,17 +581,19 @@ def compute_current_aggregate(
 _EXCLUDE_WHEN_COMPLETED = {"kalshi", "polymarket"}
 
 
-def effective_source_weights(
+def _tier1_readings(
     event, event_status: Optional[str] = None
-) -> tuple[list[str], list[float], list[float]]:
-    """The readings and the weights the hero is ABOUT to use — decayed and capped.
+) -> tuple[dict[str, float], dict[str, datetime]]:
+    """The ``win_probability_sources`` entries tier 1 will actually use.
 
-    Extracted so the divergence gate and the flag that reports it read the same
-    numbers the value is computed from. A detector that recomputes its own
-    weights is a detector that can disagree with the thing it is watching.
+    ``(values_by_source, stamps_by_source)``. A source with no parseable value is
+    absent from both; a source with a value but no ``updated_at`` is in the first
+    and not the second.
 
-    Returns ``(keys, values, weights)``, index-aligned; ``([], [], [])`` when
-    tier 1 has nothing.
+    Split out so that ``newest_source_reading_time`` answers "when was the hero's
+    number observed?" over exactly the entries ``effective_source_weights`` feeds
+    the hero, and not a second, drifting reading of the same column — the hazard
+    that function's own docstring names.
     """
     status = event_status or getattr(event, "status", None)
     is_finished = status in ("completed", "closed")
@@ -610,6 +612,42 @@ def effective_source_weights(
         prob_readings[k] = value
         if updated_at is not None:
             stamps[k] = updated_at
+    return prob_readings, stamps
+
+
+def newest_source_reading_time(
+    event, event_status: Optional[str] = None
+) -> Optional[datetime]:
+    """When the freshest source behind this event's hero was observed (#3898).
+
+    ``None`` means "cannot say", never "old": the event has no tier-1 readings at
+    all, or none of the ones it has carries an ``updated_at``. Both the bare-float
+    legacy shape and an unparseable stamp land here (``parse_source_entry`` /
+    ``_coerce_timestamp``), so a caller may only ever use this to EARN an action,
+    never to justify one by its absence.
+
+    Tier 1 only, deliberately. ``compute_aggregate_probability`` falls through to
+    ESPN and then to the opening line, and neither of those carries a time — so a
+    hero resting on a fallback tier honestly has no observation time, and saying
+    so is the whole point.
+    """
+    _, stamps = _tier1_readings(event, event_status)
+    return max(stamps.values()) if stamps else None
+
+
+def effective_source_weights(
+    event, event_status: Optional[str] = None
+) -> tuple[list[str], list[float], list[float]]:
+    """The readings and the weights the hero is ABOUT to use — decayed and capped.
+
+    Extracted so the divergence gate and the flag that reports it read the same
+    numbers the value is computed from. A detector that recomputes its own
+    weights is a detector that can disagree with the thing it is watching.
+
+    Returns ``(keys, values, weights)``, index-aligned; ``([], [], [])`` when
+    tier 1 has nothing.
+    """
+    prob_readings, stamps = _tier1_readings(event, event_status)
 
     if not prob_readings:
         return [], [], []

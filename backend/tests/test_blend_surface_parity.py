@@ -37,6 +37,8 @@ from app.utils.aggregation import (
     TimestampedProb,
     compute_aggregate_probability,
     compute_aggregated_probability,
+    effective_source_weights,
+    newest_source_reading_time,
 )
 
 NOW = datetime(2026, 8, 5, 18, 5, 0, tzinfo=timezone.utc)
@@ -215,9 +217,11 @@ class TestPreMatchSurfaceParity:
         assert line[-1]["timestamp"] == (NOW - timedelta(minutes=1)).isoformat()
 
     def test_a_stale_pre_match_edge_is_left_alone(self):
-        """Past the freshness window the chart is not contradicting anything: it
-        says "at that minute it was 30%", which a hero saying "now, 50%" does not
-        argue with. Pinning there would stamp today's blend onto an old minute."""
+        """An UNSTAMPED blend cannot say when it was observed, so past the
+        freshness window there is nothing to weigh the chart's own bucket against
+        and the wall clock still governs. #3898 narrowed this from every pre-match
+        row to this one — a blend that CAN prove it is newer now pins; see
+        ``TestTheBlendEarnsTheEdgeByBeingNewer``."""
         event = _event(status="scheduled", betting=0.60, espn=0.40)
         line = _line((30, 0.30))
 
@@ -226,7 +230,11 @@ class TestPreMatchSurfaceParity:
         assert len(line) == 1
 
     def test_the_window_boundary_is_the_live_price_poll(self):
-        """Two minutes — one `poll_live_prediction_markets` cycle — is inside."""
+        """Two minutes — one `poll_live_prediction_markets` cycle — is inside.
+
+        Unstamped sources on purpose: this asserts the WALL-CLOCK arm, which #3898
+        left exactly where it was for a blend that carries no observation time.
+        """
         for minutes, pinned in ((2, True), (3, False)):
             event = _event(status="scheduled", betting=0.60, espn=0.40)
             line = _line((minutes, 0.30))
@@ -240,6 +248,164 @@ class TestPreMatchSurfaceParity:
         _pin_blend_edge(line, event, is_live=False, now=NOW)
 
         assert line[:-1] == original
+
+
+def _stamped(value, minutes_before_now):
+    """A ``win_probability_sources`` entry in the stamped shape the writers use."""
+    return {
+        "value": value,
+        "updated_at": (NOW - timedelta(minutes=minutes_before_now)).isoformat(),
+    }
+
+
+class TestTheBlendEarnsTheEdgeByBeingNewer:
+    """#3898: the pre-match gate asks the COLUMN, not the clock.
+
+    Read on production at 07:15Z on 2026-09-08, three of the seven drawable US
+    Open match pages printed two numbers for one match on one card:
+
+        15306813  Shelton v Alcaraz   hero 21%  curve 24%   (0.215  vs 0.2373)
+        15306814  Pegula v Navarro    hero 79%  curve 77%   (0.785  vs 0.7673)
+        15306160                      hero 69%  curve 68%   (0.685  vs 0.6797)
+
+    Every one of them was #3714's arm standing down: the chart's newest bucket was
+    older than two minutes, so the wall-clock gate refused, and the reader got the
+    bucket instead of the blend. Shelton's line held 0.215 — the hero's own number
+    — for every bucket but the last, which a lone 7-book snapshot at 06:07Z carried
+    to 0.2373 while Polymarket's 06:54Z reading sat behind the hero.
+
+    The defence for standing down was that a stale edge "contradicts nothing"
+    because it says "at 8:34 PM it was 38%". The chart says no such thing: it draws
+    the edge as a dot with a bare percent and no time. So the question became a
+    measured one — is the hero's newest source at least as new as the bucket it
+    would overwrite? — and this class is both of its answers.
+    """
+
+    def test_the_shelton_alcaraz_specimen_reconciles(self):
+        """The production shape: an hour-old chart edge, a fresher blend."""
+        event = _event(
+            status="scheduled",
+            betting=_stamped(0.2306, 205),
+            polymarket=_stamped(0.215, 21),
+        )
+        line = _line((78, 0.215), (69, 0.2373))
+
+        assert _pin_blend_edge(line, event, is_live=False, now=NOW) is True
+
+        hero = _hero_probability(event)
+        assert hero == 0.215
+        assert _chart_live_edge(line) == hero
+
+        # And the gap was a RENDERED one, not a float-noise one: the bucket the
+        # pin displaced is a whole point away from the hero at display
+        # resolution. (Which integers the page prints is the frontend contract's
+        # job — 0.215/0.785 prints 21/79 because the duel rule rounds the
+        # favourite and derives the underdog, not because 21.5 rounds down.)
+        assert round(0.2373 * 100) != round(hero * 100)
+
+    def test_a_blend_older_than_the_edge_does_not_take_it(self):
+        """The direction that keeps the chart honest. If every source behind the
+        hero was read BEFORE the bucket, the bucket is the newer observation and
+        overwriting it would move the line backwards in time."""
+        event = _event(
+            status="scheduled",
+            betting=_stamped(0.60, 90),
+            polymarket=_stamped(0.62, 75),
+        )
+        line = _line((30, 0.30))
+
+        assert _pin_blend_edge(line, event, is_live=False, now=NOW) is False
+        assert _chart_live_edge(line) == 0.30
+
+    def test_a_blend_read_on_the_same_minute_earns_it(self):
+        """`>=`, not `>`: a source and a bucket stamped the same minute describe the
+        same moment, and the hero's reading is the one the product ships."""
+        event = _event(status="scheduled", polymarket=_stamped(0.44, 30))
+        line = _line((30, 0.30))
+
+        assert _pin_blend_edge(line, event, is_live=False, now=NOW) is True
+        assert _chart_live_edge(line) == _hero_probability(event)
+
+    def test_nothing_is_appended_and_no_timestamp_moves(self):
+        """#1561 cannot fire on this arm. The edge only ever changes VALUE — the
+        series keeps its length and every one of its timestamps, so no reading is
+        ever stamped later than the minute it was actually taken."""
+        event = _event(status="scheduled", polymarket=_stamped(0.44, 5))
+        line = _line((40, 0.10), (35, 0.90), (30, 0.30))
+        stamps_before = [p["timestamp"] for p in line]
+        head_before = [dict(p) for p in line[:-1]]
+
+        assert _pin_blend_edge(line, event, is_live=False, now=NOW) is True
+
+        assert [p["timestamp"] for p in line] == stamps_before
+        assert line[:-1] == head_before
+
+    def test_the_change_can_only_add_pins_never_remove_one(self):
+        """The wall-clock arm is untouched, so every row that pinned before #3898
+        still pins — including the ones this predicate cannot speak for."""
+        cases = (
+            # (source entries, minutes the edge is old, pinned)
+            ({"betting": 0.60, "espn": 0.40}, 1, True),      # unstamped, inside
+            ({"betting": 0.60, "espn": 0.40}, 30, False),    # unstamped, outside
+            ({"betting": _stamped(0.60, 0)}, 1, True),       # stamped, inside
+            ({"betting": _stamped(0.60, 0)}, 30, True),      # stamped, outside: NEW
+        )
+        for sources, minutes, pinned in cases:
+            event = _event(status="scheduled", **sources)
+            line = _line((minutes, 0.30))
+            assert _pin_blend_edge(line, event, is_live=False, now=NOW) is pinned, (
+                f"{sources} at {minutes}m"
+            )
+
+
+class TestNewestSourceReadingTime:
+    """``None`` means "cannot say", and a caller may only EARN an action with it."""
+
+    def test_the_newest_stamp_wins(self):
+        event = _event(
+            status="scheduled",
+            betting=_stamped(0.60, 205),
+            kalshi=_stamped(0.58, 21),
+            polymarket=_stamped(0.61, 44),
+        )
+        assert newest_source_reading_time(event) == NOW - timedelta(minutes=21)
+
+    def test_a_bare_float_carries_no_time(self):
+        """The legacy shape (gotcha behind #1000) is a value with no observation."""
+        assert newest_source_reading_time(_event(status="scheduled", betting=0.6)) is None
+
+    def test_an_unparseable_stamp_is_no_stamp(self):
+        event = _event(
+            status="scheduled", betting={"value": 0.6, "updated_at": "not a time"}
+        )
+        assert newest_source_reading_time(event) is None
+
+    def test_an_event_with_no_tier_one_sources_says_nothing(self):
+        assert newest_source_reading_time(_event(status="scheduled")) is None
+
+    def test_a_source_the_blend_does_not_use_cannot_supply_the_time(self):
+        """It reads exactly the entries the hero is fed, so an unweighted key in
+        the column can never make the blend look newer than it is."""
+        event = _event(
+            status="scheduled",
+            betting=_stamped(0.60, 205),
+            not_a_real_source=_stamped(0.99, 1),
+        )
+        assert newest_source_reading_time(event) == NOW - timedelta(minutes=205)
+
+    def test_it_agrees_with_the_readings_the_hero_actually_uses(self):
+        """A completed row drops the market sources from the blend, so it must drop
+        them from the time too — the drift `effective_source_weights` warns about."""
+        event = _event(
+            status="completed",
+            betting=_stamped(0.60, 205),
+            kalshi=_stamped(0.58, 1),
+        )
+        keys, _, _ = effective_source_weights(event, "completed")
+        assert "kalshi" not in keys
+        assert newest_source_reading_time(event, "completed") == NOW - timedelta(
+            minutes=205
+        )
 
 
 class TestSettledLinesStayOut:
