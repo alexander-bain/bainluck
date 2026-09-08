@@ -508,6 +508,7 @@ def census(payload: Any) -> dict:
             "sections_missing": list(REQUIRED_SECTIONS),
             "cohorts": {},
             "version_declaration": None,
+            "excluded_cells": {},
         }
 
     buckets = payload.get("buckets") if isinstance(payload.get("buckets"), list) else []
@@ -566,6 +567,10 @@ def census(payload: Any) -> dict:
         "nonfinite_fields": sorted(set(nonfinite_fields)),
         "sections_missing": [s for s in REQUIRED_SECTIONS if s not in payload],
         "cohorts": {"well_traded": well, "thin": thin},
+        # Which cells each rung says it deletes. Read from keys the artifact
+        # already publishes, so an OLD baseline simply discloses less — never a
+        # reason to raise, and the difference is itself the signal.
+        "excluded_cells": _disclosed_excluded_cells(payload),
         # Carried RAW and unvalidated: `census` is the tolerant reduction and
         # must not raise on a malformed artifact. The declaration is parsed at
         # the one place its verdict can be recorded (`_read_declaration`), so a
@@ -781,6 +786,106 @@ def _same_predicate(cand: dict, prev: dict) -> bool:
     a = cand.get("population_predicate")
     b = prev.get("population_predicate")
     return isinstance(a, str) and bool(a) and a == b
+
+
+#: Keys under which an artifact's filter sections disclose WHICH (source,
+#: category) cells that rung deletes. All three already ship on
+#: ``/api/calibration``; this reads them, it does not add to the contract.
+#: ``excluded_by_cell`` is a mapping (cell -> count), the other two are lists of
+#: ``[source, category]`` pairs.
+DISCLOSED_CELL_LIST_KEYS = ("excluded_cells", "sum_arm_only_cells")
+DISCLOSED_CELL_MAP_KEY = "excluded_by_cell"
+
+
+def _split_cell(raw: Any) -> Optional[tuple[str, str]]:
+    """One disclosed cell, normalised to ``(source, category)``.
+
+    Two shapes ship today: a ``["kalshi", "crypto"]`` pair, and a mapping key
+    that is either ``"kalshi/crypto"`` or the bare ``"esports"``. A bare key is
+    a category with no source, which is recorded as an EMPTY source rather than
+    a guessed one — the gate matches on the category, and inventing a source
+    here would let an unrelated cell answer for this one.
+    """
+    if isinstance(raw, (list, tuple)):
+        if len(raw) != 2:
+            return None
+        source, category = raw
+        if not isinstance(source, str) or not isinstance(category, str):
+            return None
+        return (source, category)
+    if isinstance(raw, str) and raw:
+        source, _, category = raw.partition("/")
+        return (source, category) if category else ("", source)
+    return None
+
+
+def _disclosed_excluded_cells(payload: Any) -> dict[str, list[list[str]]]:
+    """Every (source, category) cell each filter section says it deletes.
+
+    Tolerant like :func:`census` itself: a malformed section contributes nothing
+    rather than raising. Sections are kept SEPARATE — which rung took a cell is
+    the thing a later reader needs, and flattening the sections into one set
+    would answer "was this cell excluded somewhere" while destroying "by what".
+    """
+    if not isinstance(payload, dict):
+        return {}
+    out: dict[str, list[list[str]]] = {}
+    for section, body in payload.items():
+        if not isinstance(section, str) or not isinstance(body, dict):
+            continue
+        cells: set[tuple[str, str]] = set()
+        for key in DISCLOSED_CELL_LIST_KEYS:
+            raw = body.get(key)
+            if isinstance(raw, list):
+                for item in raw:
+                    cell = _split_cell(item)
+                    if cell is not None:
+                        cells.add(cell)
+        raw_map = body.get(DISCLOSED_CELL_MAP_KEY)
+        if isinstance(raw_map, dict):
+            for item in raw_map:
+                cell = _split_cell(item)
+                if cell is not None:
+                    cells.add(cell)
+        if cells:
+            out[section] = [list(c) for c in sorted(cells)]
+    return out
+
+
+def _newly_excluded_in(cand: dict, prev: dict, category: str) -> list[dict]:
+    """Cells in ``category`` the CANDIDATE discloses and the baseline does not.
+
+    This is the whole discriminator for the disclosed-exclusion rule below. It
+    is deliberately one-directional: a cell the baseline excluded and the
+    candidate no longer does is a rung being LOOSENED, which grows a category
+    and is not what Rule 3 judges.
+
+    An absent key on the baseline reads as an empty list, which is correct and
+    is the ordinary case — a rung disclosed for the first time is precisely the
+    change this rule exists to see (CAL-P1002F/D66 added its cell to a key the
+    published artifact predates).
+    """
+    cand_cells = cand.get("excluded_cells") or {}
+    prev_cells = prev.get("excluded_cells") or {}
+    if not isinstance(cand_cells, dict) or not isinstance(prev_cells, dict):
+        return []
+    rows: list[dict] = []
+    for section, cells in sorted(cand_cells.items()):
+        if not isinstance(cells, list):
+            continue
+        before = {
+            tuple(c)
+            for c in (prev_cells.get(section) or [])
+            if isinstance(c, (list, tuple)) and len(c) == 2
+        }
+        for cell in cells:
+            if not isinstance(cell, (list, tuple)) or len(cell) != 2:
+                continue
+            source, cat = cell
+            if cat != category or tuple(cell) in before:
+                continue
+            rows.append({"section": section, "source": source, "category": cat})
+    return rows
 
 
 def _probe_baseline(
@@ -1197,6 +1302,56 @@ def evaluate_publish(
         cand_n = cand["categories"].get(name, 0)
         drop = (prev_n - cand_n) / prev_n
         if drop > CATEGORY_DROP_TOLERANCE:
+            # A collapse the CANDIDATE ITSELF explains. The bump branch above
+            # already holds that "a change in WHICH ROWS QUALIFY reshapes
+            # individual categories by definition", and records the movement
+            # instead of vetoing it — but it can only reach that conclusion
+            # from a version string. A rung that names the cell it started
+            # deleting is the same fact, stated more precisely and by the build
+            # rather than by a human remembering to relabel it.
+            #
+            # This is narrow on purpose. It excuses a category ONLY where the
+            # candidate's own disclosure newly names that category as excluded
+            # by a named rung; a collapse no rung claims still refuses exactly
+            # as before, and CATEGORY_DROP_TOLERANCE does not move. The
+            # motivating case is CAL-P1002F/D66 (#1978), which added
+            # ('kalshi', 'entertainment') to a rung 95 seconds after the
+            # baseline was built, leaving the gate comparing a post-ruling
+            # candidate against a pre-ruling baseline and refusing every hour
+            # for three days while both artifacts said why in a published key.
+            disclosed = _newly_excluded_in(cand, prev, name)
+            if disclosed:
+                observe(
+                    "category_collapse_disclosed_exclusion",
+                    f"category {name!r} fell {drop * 100:.1f}% "
+                    f"({prev_n:,} -> {cand_n:,}), past the "
+                    f"{CATEGORY_DROP_TOLERANCE * 100:.0f}% limit, and is "
+                    "RECORDED rather than refused because the candidate "
+                    "discloses a rung that newly excludes this category — "
+                    + ", ".join(
+                        f"{r['section']} adds "
+                        f"{r['source'] + '/' if r['source'] else ''}{r['category']}"
+                        for r in disclosed
+                    )
+                    + "; the rows did not vanish, they stopped qualifying, and "
+                    "the two artifacts state so themselves",
+                    category=name,
+                    previous=prev_n,
+                    candidate=cand_n,
+                    drop_pct=round(drop * 100, 2),
+                    disclosed_by=disclosed,
+                    # No rung publishes a PER-CELL count today, so the size of
+                    # the drop is explained in kind but not in magnitude. Said
+                    # out loud: an unchecked read must never pass as a clean
+                    # one. Bounding this needs the build to disclose per-cell
+                    # counts, which is a change to the artifact contract and
+                    # belongs to its own ship, not to this alarm.
+                    magnitude_uncheckable=True,
+                )
+                # The ECE comparison below is skipped for the same reason the
+                # bump branch waives it: a cohort whose membership provably
+                # changed cannot be compared against its own former error rate.
+                continue
             reject(
                 "category_collapse",
                 f"category {name!r} fell {drop * 100:.1f}% "
@@ -1267,10 +1422,32 @@ def gate_ledger_record(verdict: PublishVerdict) -> dict:
     kept = diff[:LEDGER_CATEGORY_DIFF_LIMIT]
     dropped = diff[LEDGER_CATEGORY_DIFF_LIMIT:]
 
+    # A collapse ADMITTED on a disclosed rung is the acceptance most worth
+    # explaining later, and `observation_codes` carries only the class name. The
+    # code alone would leave the next reader exactly where CAL-P213's reader
+    # stood: knowing a category was excused, not by what. Same bound and the
+    # same never-silent truncation as the diff above.
+    excused = [
+        {
+            "category": o.get("category"),
+            "previous": o.get("previous"),
+            "candidate": o.get("candidate"),
+            "drop_pct": o.get("drop_pct"),
+            "disclosed_by": o.get("disclosed_by"),
+            "magnitude_uncheckable": o.get("magnitude_uncheckable"),
+        }
+        for o in verdict.observations
+        if o.get("code") == "category_collapse_disclosed_exclusion"
+    ]
+
     return {
         "ok": verdict.ok,
         "codes": verdict.codes,
         "observations": verdict.observation_codes,
+        "disclosed_exclusions": excused[:LEDGER_CATEGORY_DIFF_LIMIT],
+        "disclosed_exclusions_omitted": max(
+            0, len(excused) - LEDGER_CATEGORY_DIFF_LIMIT
+        ),
         "version_bumped": verdict.version_bumped,
         "first_publish": verdict.first_publish,
         "baseline_source": verdict.baseline_source,
