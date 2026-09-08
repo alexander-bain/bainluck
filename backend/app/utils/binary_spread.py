@@ -316,13 +316,13 @@ def select_projected_final(
 ) -> Optional[tuple[str, str, ProjectedScore]]:
     """Best ``(spread_source, total_source, projection)`` whose scores are renderable.
 
-    Pairs are walked best-first by combined confidence with ``order`` as the
-    tie-break, so **when the preferred pair is renderable this returns exactly
-    what picking each arm independently returns** — the two arms' confidences
-    are independent, so maximising their sum maximises each. The walk therefore
-    only becomes visible when the preferred pair is *not* renderable, which is
-    the whole of its job: the required repair
-    `3921-PROJECTION-SELECTION-CANNOT-EMIT-NEGATIVE-SCORES` asks that an
+    **The pair each arm's own best choice makes is tried first and returned if
+    it is renderable**, so on every page whose projection is already a scoreline
+    this is ``select_projection_source`` twice over and nothing else — the
+    behaviour #3921 shipped, reached through the same call rather than through
+    an argument that two rankings must agree. Only when that pair is not a
+    scoreline does the walk begin, which is the whole of its job: the required
+    repair `3921-PROJECTION-SELECTION-CANNOT-EMIT-NEGATIVE-SCORES` asks that an
     unusable pair fall back to the next valid source rather than be served.
 
     ``None`` when no pair is renderable. Serving no projection is the correct
@@ -331,6 +331,24 @@ def select_projected_final(
     """
     if not implied_spreads or not implied_totals:
         return None
+
+    def attempt(spread_source, total_source):
+        spread = (implied_spreads.get(spread_source) or {}).get("spread")
+        total = (implied_totals.get(total_source) or {}).get("total")
+        if spread is None or total is None:
+            return None
+        projection = projected_final_score(spread, total)
+        if projection_is_renderable(projection):
+            return (spread_source, total_source, projection)
+        return None
+
+    # The pair #3921 would have served, tried on its own terms first.
+    preferred = attempt(
+        select_projection_source(implied_spreads, order),
+        select_projection_source(implied_totals, order),
+    )
+    if preferred is not None:
+        return preferred
 
     pairs = [
         (spread_source, total_source)
@@ -347,13 +365,9 @@ def select_projected_final(
     )
 
     for spread_source, total_source in pairs:
-        spread = (implied_spreads.get(spread_source) or {}).get("spread")
-        total = (implied_totals.get(total_source) or {}).get("total")
-        if spread is None or total is None:
-            continue
-        projection = projected_final_score(spread, total)
-        if projection_is_renderable(projection):
-            return (spread_source, total_source, projection)
+        found = attempt(spread_source, total_source)
+        if found is not None:
+            return found
 
     return None
 
