@@ -151,7 +151,8 @@ def main() -> int:
         type=float,
         default=5.0,
         help="seconds between samples; each shape is touched every 2x this. "
-        "Deliberately slower than the 40s warm rail — see the docstring.",
+        "Deliberately slower than the warm rail's "
+        "`FEED_LIVE_REPUBLISH_PERIOD_S` — see the docstring.",
     )
     parser.add_argument("--timeout", type=float, default=30.0)
     parser.add_argument("--out", default=None)

@@ -1432,7 +1432,10 @@ async def get_feed_live_prewarm_last(
     request: Request,
     secret: str = Query(None, description="Admin secret for authorization"),
 ):
-    """Last 40s live-republish pass, plus what it selected and whether it is on.
+    """The last live-republish pass, plus what it selected and whether it is on.
+
+    One pass lands per `FEED_LIVE_REPUBLISH_PERIOD_S`; this reads whichever was
+    last, so `age_seconds` — not the period — is what says how current it is.
 
     #2430, riding #3233. `live_labels` and `absent_labels` stay SEPARATE in the
     report — LAT-P112's comment is emphatic that merging them destroys the
