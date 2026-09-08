@@ -32,6 +32,12 @@ PREVIEWS_REDIS_KEY = "bainluck:precompute:oscars_previews"
 # Hourly. The blurbs are derived from 24h movement, so this is far more often than
 # the content can meaningfully change — the cost is six gpt-4o-mini calls an hour,
 # and the benefit is that "generated_at" is never a surprise.
+#
+# The beat itself is a `crontab(minute="7")`, not this number: an hourly interval
+# beat joins the background INTERVAL FLOOR, which the settlement-sweep guard
+# reserves for continuous (<=180s) beats. The two are kept in agreement by
+# `test_the_cadence_and_the_ttl_still_agree_after_the_crontab_move`, because a
+# coupling nothing checks is a coupling that drifts.
 PREVIEWS_REFRESH_SECONDS = 3600
 
 # See the module docstring: a stopped beat self-clears rather than freezing.
@@ -56,14 +62,14 @@ def read_published_previews(rc) -> tuple[dict[str, str], str | None]:
     renders without them. A Redis outage degrades to the same place — the one thing
     this must never do is raise into a request handler for a decoration.
     """
-    if rc is None:
-        return {}, None
     try:
-        raw = rc.get(PREVIEWS_REDIS_KEY)
+        raw = rc.get(PREVIEWS_REDIS_KEY) if rc is not None else None
     except Exception as exc:  # pragma: no cover - defensive
         logger.warning("Oscars previews read failed: %s", exc)
         return {}, None
 
+    # No client, no key, or an expired one all land here — the same answer, because
+    # to a reader they are the same thing: no previews today.
     if not raw:
         return {}, None
 

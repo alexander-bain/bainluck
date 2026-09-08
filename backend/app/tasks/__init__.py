@@ -32,9 +32,6 @@ from app.tasks.base import run_async
 # #2236: the live republish period is declared beside the live cache ceiling it
 # has to stay under, not beside the beat that consumes it. See feed_cache.py.
 from app.utils.feed_cache import FEED_LIVE_REPUBLISH_PERIOD_S
-# The beat interval and the published TTL are one decision (TTL = 2x interval), so
-# the schedule reads the constant rather than restating the number here (#3322).
-from app.utils.oscars_previews import PREVIEWS_REFRESH_SECONDS
 
 import time as _time
 
@@ -4676,8 +4673,18 @@ celery_app.conf.beat_schedule = {
         # Self-gates on DATA (no major categories => no OpenAI call), so it costs
         # one query when the markets are gone. Background queue: it runs the full
         # Oscars aggregation and then talks to OpenAI.
+        #
+        # CRONTAB, NOT AN INTERVAL, and that is the guard's ruling rather than a
+        # preference: `test_the_unavoidable_background_floor_is_named_and_has_not
+        # _grown` holds that an interval beat slower than 180s is not a continuous
+        # floor and must be reasoned about as a CO-FIRE — visible to the census
+        # that protects the settlement sweep's window. All five existing interval
+        # background beats are <=180s; an hourly one is a different animal.
+        # :07 because it is one of the 14 minutes carrying ZERO background crontab
+        # beats, it is clear of the sweep's 10:31+13m window, and it is outside
+        # the :28-:47 accuracy-page rebuild window.
         "task": "app.tasks.refresh_oscars_previews",
-        "schedule": float(PREVIEWS_REFRESH_SECONDS),
+        "schedule": crontab(minute="7"),
         "options": {"queue": "background"},
     },
     "poll-mlb-pregame": {

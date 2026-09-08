@@ -1483,7 +1483,36 @@ def free_background_slots(
 #: clear of the settlement sweep's `:31`–`:47`. It is not the lowest-load
 #: window outright — `:24` is, at 11 — and `:24` is excluded because
 #: `link-tennis-statpal-fixtures-10min` fires in it.
-BACKGROUND_BEAT_COUNT = 121
+#: 🔴 RE-DERIVED at latency/271 (2026-09-08, #3322 / LAT-P271): **121 → 122,
+#: explicit 76 → 77.** One beat, explicitly routed here: `refresh-oscars-previews`
+#: at `crontab(minute=7)`. RE-DERIVED by RUNNING the census over the assembled
+#: `beat_schedule`, which printed `explicit 77 implicit 45 total 122` — not by
+#: adding 1 to 121 (#1910). The fall-through half is UNMOVED at **45**: the beat
+#: names its queue, the benign direction this guard reserves.
+#:
+#: Cost: one Oscars aggregation query an hour, and six gpt-4o-mini calls when
+#: there is anything to preview — the beat self-gates on DATA, so if the markets
+#: go away it costs the query alone and no OpenAI call. It is here rather than on
+#: the request path because that is where it was: `GET /api/oscars` measured
+#: **10.83s** cold on production, six synchronous LLM calls parking the event loop
+#: for every other request on the same worker process (#3322).
+#:
+#: `crontab`, NOT an interval, and that was the settlement-sweep guard's ruling
+#: rather than a preference: an interval beat slower than 180s is not a continuous
+#: floor and has to be visible to the co-fire census as a crontab entry. Scheduling
+#: it as `3600.0` put it in `BACKGROUND_INTERVAL_FLOOR` and turned that guard red
+#: in CI, correctly. `:07` by the minute census RUN over the assembled schedule: it
+#: is one of 14 minutes carrying ZERO background crontab beats, it is clear of the
+#: settlement sweep's `:31`+13m window, and it is outside the `:28`–`:47`
+#: accuracy-page rebuild window.
+#:
+#: ⚠️ **MERGE HAZARD, and it is INT-158's collision shape (see the `#3811` block
+#: above).** Any other lane adding a background beat this week writes the
+#: IDENTICAL `BACKGROUND_BEAT_COUNT = 122` line, and `git merge` sees no conflict
+#: because the two sides' text agrees — while the composed tree is 123. The prose
+#: blocks conflict; the constant does not. **Re-run the census on the composed
+#: tree after any rebase and before any merge**, and do not trust a clean merge.
+BACKGROUND_BEAT_COUNT = 122
 #: **UX-P139 re-derivation: 101 → 103, explicit 56 → 58, fall-through still 45.**
 #: Two beats added, both naming `background` explicitly:
 #: `refresh-registered-tournament-prices` (every 10 min, ~11 bounded Gamma calls

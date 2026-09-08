@@ -352,13 +352,51 @@ async def test_a_hung_provider_is_bounded_and_does_not_stall_the_task():
     rc.setex.assert_not_called()
 
 
-def test_the_beat_is_wired_to_the_shared_interval():
-    """The schedule reads the constant, so the interval and the TTL cannot drift."""
+def test_the_beat_is_a_crontab_cofire_not_an_interval_floor():
+    """Hourly, as a crontab at a named minute — and the guard says why.
+
+    `test_the_unavoidable_background_floor_is_named_and_has_not_grown` holds that
+    an interval beat slower than 180s is not a continuous floor and must be
+    reasoned about as a CO-FIRE, where the census protecting the settlement
+    sweep's window can see it. Scheduling this hourly job as `3600.0` put it in
+    the floor set and turned that guard red in CI — correctly. So it is a crontab,
+    and this pins that it stays one.
+    """
+    from celery.schedules import crontab
+
     from app.tasks import celery_app
 
     entry = celery_app.conf.beat_schedule["refresh-oscars-previews"]
     assert entry["task"] == "app.tasks.refresh_oscars_previews"
-    assert entry["schedule"] == float(PREVIEWS_REFRESH_SECONDS)
     assert (
         entry["options"]["queue"] == "background"
     ), "an OpenAI-calling aggregation may not sit on the realtime queue"
+
+    schedule = entry["schedule"]
+    assert isinstance(schedule, crontab), (
+        "an hourly beat scheduled as a float joins the background interval floor "
+        "and is invisible to the sweep-window co-fire census"
+    )
+    assert len(set(schedule.minute)) == 1, "must fire once an hour, at one minute"
+    assert len(set(schedule.hour)) == 24, "must fire every hour"
+
+
+def test_the_cadence_and_the_ttl_still_agree_after_the_crontab_move():
+    """The schedule no longer imports the constant, so assert the coupling here.
+
+    The TTL is 2x the cadence by design (see `PREVIEWS_TTL_SECONDS`). Once the
+    schedule became a crontab it stopped reading `PREVIEWS_REFRESH_SECONDS`, and
+    a coupling that nothing checks is a coupling that drifts — change the beat to
+    every 15 minutes and the TTL silently becomes 8x the cadence.
+    """
+    from app.tasks import celery_app
+
+    schedule = celery_app.conf.beat_schedule["refresh-oscars-previews"]["schedule"]
+    fires_per_day = len(set(schedule.hour)) * len(set(schedule.minute))
+    seconds_between_fires = 86400 / fires_per_day
+
+    assert seconds_between_fires == PREVIEWS_REFRESH_SECONDS, (
+        f"the beat fires every {seconds_between_fires:.0f}s but the TTL is sized "
+        f"against {PREVIEWS_REFRESH_SECONDS}s — they must move together"
+    )
+    assert PREVIEWS_TTL_SECONDS == 2 * seconds_between_fires
