@@ -364,6 +364,33 @@ class KalshiScanReport:
     post_loop_fixups_dry_run_detail: Dict[str, Dict[str, int]] = field(
         default_factory=dict
     )
+    #: Fix-up name -> exception class name -> how many individual ROWS that
+    #: fix-up could not evaluate and skipped, e.g.
+    #: ``{"golf_commence_fixed": {"TypeError": 3}}`` (#3984).
+    #:
+    #: Distinct from all four fields above, and the distinction is the point.
+    #: `post_loop_fixups_failed` is a fix-up that died; `post_loop_fixups_skipped`
+    #: is a fix-up the block never started for want of budget. This is a fix-up
+    #: that RAN TO COMPLETION and dropped some rows on the way — which only
+    #: became a reportable state when `_fix_golf_commence_times` got a per-market
+    #: guard. Before it, one unevaluable row out of ~3,400 raised out of the loop
+    #: and put the whole repair in `post_loop_fixups_failed`, so this map's
+    #: contents used to be indistinguishable from total failure.
+    #:
+    #: Keyed by exception class because the class is the diagnosis: a
+    #: `TypeError` here is the tz contract in `_get_golf_schedule` having drifted
+    #: (Tier 2 does its own arithmetic on a string that module produces), while a
+    #: `KeyError` is a shape change. Nothing is classified by hand — the key is
+    #: `type(exc).__name__` — so this cannot drift out of date with the code.
+    #:
+    #: A name appears here ONLY when it dropped at least one row. Absence is
+    #: therefore zero, unambiguously, because "did this fix-up run at all" is
+    #: already answered by the four fields above: present in `_ran`/`_dry_run`
+    #: means it ran, present in `_failed`/`_skipped` means it did not. Filing an
+    #: empty map on every clean beat would cost receipt size and buy no reading.
+    post_loop_fixups_row_errors: Dict[str, Dict[str, int]] = field(
+        default_factory=dict
+    )
 
     duration_s: float = 0.0
     notes: List[str] = field(default_factory=list)

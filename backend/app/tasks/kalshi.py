@@ -1701,6 +1701,11 @@ async def _poll_kalshi_markets():
         # #3956: fix-up name -> per-tier breakdown of that mode's count.
         _post_loop_ran_detail: dict = {}
         _post_loop_dry_run_detail: dict = {}
+        # #3984: fix-up name -> exception class -> rows it could not evaluate.
+        # A fix-up that RAN and dropped rows; a name lands here only when it
+        # dropped at least one, so absence is zero (the maps above prove the
+        # run happened).
+        _post_loop_row_errors: dict = {}
 
         def _no_post_loop_budget(_key: str) -> bool:
             """True when `_key` must be skipped, recording it as a casualty."""
@@ -1741,9 +1746,19 @@ async def _poll_kalshi_markets():
                     # so in practice the number did not exist for the operator
                     # who has to make the call.
                     golf_detail: dict[str, int] = {}
+                    # #3984: rows the repair could not evaluate. Not a mode
+                    # split like the detail above — this is not a breakdown OF
+                    # the count, it is a separate population counted in neither
+                    # the count nor the tiers, so there is no other-mode number
+                    # for a reader to misread it against.
+                    golf_unevaluable: dict[str, int] = {}
                     golf_fixed = await _fix_golf_commence_times(
-                        dry_run=golf_dry_run, detail=golf_detail
+                        dry_run=golf_dry_run,
+                        detail=golf_detail,
+                        unevaluable=golf_unevaluable,
                     )
+                    if golf_unevaluable:
+                        _post_loop_row_errors["golf_commence_fixed"] = golf_unevaluable
                     stats["golf_commence_fixed"] = golf_fixed
                     stats["golf_commence_dry_run"] = golf_dry_run
                     # A dry run repaired NOTHING, and `post_loop_fixups_ran` is
@@ -1837,6 +1852,7 @@ async def _poll_kalshi_markets():
                 _report.post_loop_fixups_dry_run_detail = dict(
                     _post_loop_dry_run_detail
                 )
+                _report.post_loop_fixups_row_errors = dict(_post_loop_row_errors)
                 update_scan_report_head(_report)
             except Exception as exc:
                 logger.warning(
@@ -1897,7 +1913,9 @@ def _golf_commence_fix_enabled() -> bool:
 
 
 async def _fix_golf_commence_times(
-    dry_run: bool | None = None, detail: dict[str, int] | None = None
+    dry_run: bool | None = None,
+    detail: dict[str, int] | None = None,
+    unevaluable: dict[str, int] | None = None,
 ) -> int:
     """Fix commence_time on Kalshi golf markets using DataGolf DB data.
 
@@ -1907,6 +1925,12 @@ async def _fix_golf_commence_times(
     guess" (#3956). It is opt-in rather than part of the return type because
     the other two callers (`backfill_winners`, the admin endpoint) want only the
     count, and widening the return would churn them for nothing.
+
+    ``unevaluable`` is the same kind of out-param, counting the ROWS this pass
+    could not evaluate, keyed by exception class name (#3984). It is a separate
+    dict rather than a key in ``detail`` precisely so the invariant below keeps
+    holding: a skipped row has no tier and is counted in neither the breakdown
+    nor the return value.
 
     The invariant worth keeping: ``sum(detail.values()) == <return value>``.
     The breakdown describes the markets this repair reports, never the wider
@@ -2020,50 +2044,93 @@ async def _fix_golf_commence_times(
         # #3952 removed from the count itself.
         source_counts = {"datagolf_db": 0, "schedule": 0, "heuristic": 0}
         fixed_source_counts = {"datagolf_db": 0, "schedule": 0, "heuristic": 0}
+        # #3984: rows this pass could not evaluate, by exception class name.
+        row_errors: dict[str, int] = {}
+        error_sample: list[tuple] = []
         for m in markets:
-            target_dt = None
-            tier: str | None = None
+            # #3984: resolve and judge ONE market inside a guard (gotcha #42 —
+            # one bad item must never wipe a pass). This loop runs over ~3,400
+            # rows, and before the guard the first one that raised propagated
+            # out of the function, so the caller filed the whole repair into
+            # `post_loop_fixups_failed`: one bad row cost 3,287 good ones.
+            #
+            # The guard wraps the RESOLUTION and the threshold decision only.
+            # The UPDATE below stays outside it deliberately: a failed write
+            # poisons the transaction, so every later row would fail too and
+            # the final commit could not succeed — swallowing that per-row
+            # would turn one real fault into a receipt reporting a tidy handful
+            # of skips. A computation fault is per-row; a DB fault is not.
+            try:
+                target_dt = None
+                tier: str | None = None
 
-            # Normalize this Kalshi market's name to a tournament key
-            tourn_key = _normalize_tournament(m.name, schedule)
+                # Normalize this Kalshi market's name to a tournament key
+                tourn_key = _normalize_tournament(m.name, schedule)
 
-            # Tier 1: DataGolf DB commence_time (most accurate — actual
-            # tournament start date stored during polling).
-            if tourn_key != "other" and tourn_key in dg_commence_by_key:
-                dg_ct = dg_commence_by_key[tourn_key]
-                # DataGolf commence_time is midnight UTC on Round 1.
-                # Back up 18h to the eve of Round 1 (same convention
-                # as the old schedule path).
-                target_dt = dg_ct - timedelta(hours=18)
-                tier = "datagolf_db"
-                source_counts[tier] += 1
-
-            # Tier 2: DataGolf live schedule (current season)
-            if (
-                target_dt is None
-                and tourn_key != "other"
-                and tourn_key in schedule_by_key
-            ):
-                try:
-                    target_dt = datetime.fromisoformat(
-                        schedule_by_key[tourn_key]
-                    ) - timedelta(hours=18)
-                    tier = "schedule"
+                # Tier 1: DataGolf DB commence_time (most accurate — actual
+                # tournament start date stored during polling).
+                if tourn_key != "other" and tourn_key in dg_commence_by_key:
+                    dg_ct = dg_commence_by_key[tourn_key]
+                    # DataGolf commence_time is midnight UTC on Round 1.
+                    # Back up 18h to the eve of Round 1 (same convention
+                    # as the old schedule path).
+                    target_dt = dg_ct - timedelta(hours=18)
+                    tier = "datagolf_db"
                     source_counts[tier] += 1
-                except (ValueError, TypeError):
-                    pass
 
-            # Tier 3: Heuristic fallback — close_time - 4.5 days
-            if target_dt is None and m.commence_time:
-                target_dt = m.commence_time - timedelta(days=4, hours=12)
-                tier = "heuristic"
-                source_counts[tier] += 1
+                # Tier 2: DataGolf live schedule (current season)
+                if (
+                    target_dt is None
+                    and tourn_key != "other"
+                    and tourn_key in schedule_by_key
+                ):
+                    try:
+                        # #3984: `_as_utc` is what makes this arithmetic safe,
+                        # and it is here — at the parse — rather than at the
+                        # comparison below, because this is where the naive
+                        # value is created and where the semantic decision
+                        # lives: a bare date from the schedule means midnight
+                        # UTC, exactly what the offset form spells out.
+                        #
+                        # It is load-bearing, not belt-and-braces. The string
+                        # comes from `_get_golf_schedule` in `routes/golf.py`,
+                        # which emits `f"{t.start_date}T00:00:00+00:00"` — an
+                        # offset suffix produced in ANOTHER module that this
+                        # module's arithmetic silently depends on. Drop the
+                        # suffix there and `fromisoformat` returns a naive
+                        # datetime, while `futures_markets.commence_time` is
+                        # `DateTime(timezone=True)` and therefore aware. The
+                        # `>1h` comparison then raises TypeError — and it is
+                        # OUTSIDE this `except`, so this `except` never sees it.
+                        target_dt = _as_utc(
+                            datetime.fromisoformat(schedule_by_key[tourn_key])
+                        ) - timedelta(hours=18)
+                        tier = "schedule"
+                        source_counts[tier] += 1
+                    except (ValueError, TypeError):
+                        pass
 
-            if (
-                target_dt
-                and m.commence_time
-                and abs((m.commence_time - target_dt).total_seconds()) > 3600
-            ):
+                # Tier 3: Heuristic fallback — close_time - 4.5 days
+                if target_dt is None and m.commence_time:
+                    target_dt = m.commence_time - timedelta(days=4, hours=12)
+                    tier = "heuristic"
+                    source_counts[tier] += 1
+
+                needs_fix = bool(
+                    target_dt
+                    and m.commence_time
+                    and abs((m.commence_time - target_dt).total_seconds()) > 3600
+                )
+            except Exception as exc:
+                # Counted by class, because the class IS the diagnosis: a
+                # TypeError here means the tz contract above has drifted.
+                cls = type(exc).__name__
+                row_errors[cls] = row_errors.get(cls, 0) + 1
+                if len(error_sample) < 10:
+                    error_sample.append((m.id, cls, str(exc)[:120]))
+                continue
+
+            if needs_fix:
                 if not dry_run:
                     await session.execute(
                         text(
@@ -2077,6 +2144,19 @@ async def _fix_golf_commence_times(
                     fixed_source_counts[tier] += 1
                 if len(sample) < 20:
                     sample.append((m.id, m.name, m.commence_time, target_dt))
+
+        if row_errors:
+            # WARNING, not info: the pass completed, but it completed over a
+            # smaller population than it was asked to, and the receipt field is
+            # a count — the sample is the only place the actual rows are named.
+            logger.warning(
+                "Golf commence_time fix skipped %d/%d markets it could not "
+                "evaluate: %s. Sample (id, error, detail): %s",
+                sum(row_errors.values()),
+                len(markets),
+                row_errors,
+                error_sample,
+            )
 
         if fixed_ids and not dry_run:
             await session.execute(
@@ -2123,6 +2203,12 @@ async def _fix_golf_commence_times(
         if detail is not None:
             detail.clear()
             detail.update(fixed_source_counts)
+        # Same clear-then-fill contract, for the same reason: a caller that
+        # reuses the dict across beats must publish this beat, not a running
+        # total that only ever grows.
+        if unevaluable is not None:
+            unevaluable.clear()
+            unevaluable.update(row_errors)
 
         return fixed
 

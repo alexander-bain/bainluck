@@ -93,7 +93,7 @@ _DG_TARGET = _utc(2026, 6, 4, 6)
 
 
 def _install_population(monkeypatch):
-    """Three resolved Kalshi golf markets: two that move, one that does not.
+    """Four resolved Kalshi golf markets: three that move, one that does not.
 
     The load-bearing one is `already_right`: Tier 1 resolves for it, so it lands
     in `source_counts`, but its commence_time is ALREADY the target, so it never
@@ -101,17 +101,24 @@ def _install_population(monkeypatch):
     considered set from the reported one — and, like them, it sits on the
     trustworthy tier, which is why counting it inflates `datagolf_db`.
 
-    Tier 2 (the live DataGolf schedule) is deliberately NOT exercised, and the
-    schedule is returned empty to keep it unreachable. It cannot fire against a
-    faithful fixture: `futures_markets.commence_time` is `DateTime(timezone=True)`
-    so production rows are tz-AWARE, while Tier 2 builds its target from
-    `datetime.fromisoformat("2026-07-16")`, which is naive. The `>1h` comparison
-    below is outside Tier 2's `except (ValueError, TypeError)`, so the first
-    market resolving that way raises `TypeError: can't subtract offset-naive and
-    offset-aware datetimes` and takes the WHOLE repair down into
-    `post_loop_fixups_failed`. Filed as #3984 and deliberately not fixed here,
-    because changing which tier a market resolves to would change the very
-    numbers this ship publishes for the Queue #189 decision.
+    All three tiers fire, so the split below is a real three-way one.
+
+    **A correction (#3984).** This fixture used to leave Tier 2 unexercised, on
+    the stated grounds that it could not fire against a faithful fixture:
+    `futures_markets.commence_time` is `DateTime(timezone=True)` and therefore
+    aware, while Tier 2 was said to build a NAIVE target, raising `TypeError` in
+    the `>1h` comparison outside its own `except`. **That was wrong**, and the
+    #3956 post-deploy read falsified it: the 16:45Z scan on `20bf161c` published
+    `"schedule": 62` with `failed: []`, so Tier 2 fires ~62 times a beat in
+    production and does not crash. The reason is that `_get_golf_schedule`
+    emits `f"{t.start_date}T00:00:00+00:00"` — with an offset — so
+    `fromisoformat` returns an AWARE datetime. The schedule entry below uses
+    that real production shape.
+
+    What was true, and is what #3984 became: that offset is produced in a
+    different module and guarded by nothing, and one unevaluable row used to
+    abort the whole pass. Both are now guarded in
+    `test_golf_commence_repair_survives_one_bad_market_3984.py`.
     """
     dg_row = _Row(name="Masters Tournament", commence_time=_DG_ROUND_1)
 
@@ -124,23 +131,34 @@ def _install_population(monkeypatch):
     tier3_fixed = _Row(
         id=3, name="Obscure Invitational Winner", commence_time=_utc(2026, 7, 1, 18)
     )
+    tier2_fixed = _Row(
+        id=4, name="Open Championship Winner", commence_time=_utc(2026, 7, 19, 18)
+    )
 
     log: list = []
     sessions = iter(
         [
             _MockSession([_Result([dg_row])], log),
-            _MockSession([_Result([tier1_fixed, already_right, tier3_fixed])], log),
+            _MockSession(
+                [_Result([tier1_fixed, already_right, tier3_fixed, tier2_fixed])], log
+            ),
         ]
     )
     monkeypatch.setattr(kalshi_task, "get_task_session", lambda: next(sessions))
 
+    # The real shape `_get_golf_schedule` returns: an ISO string WITH a UTC
+    # offset, which is the whole reason Tier 2's arithmetic works.
     async def _schedule(*a, **k):
-        return None
+        return [{"key": "the_open", "start_date": "2026-07-16T00:00:00+00:00"}]
 
     monkeypatch.setattr(golf_mod, "_get_golf_schedule", _schedule)
 
     def _norm(name, schedule=None):
-        return "masters" if "Masters" in name else "other"
+        if "Masters" in name:
+            return "masters"
+        if "Open Championship" in name:
+            return "the_open"
+        return "other"
 
     monkeypatch.setattr(golf_mod, "_normalize_tournament", _norm)
     return log
@@ -153,9 +171,9 @@ def _install_population(monkeypatch):
 async def test_the_breakdown_counts_the_fixed_set_not_the_considered_set(monkeypatch):
     """The guard against the shape the issue itself suggested.
 
-    Three markets, all three resolve a tier, only two cross the >1h threshold.
-    The breakdown must describe the two. Carrying `source_counts` instead
-    reports `datagolf_db: 2` and sums to 3 — a split describing a market the
+    Four markets, all four resolve a tier, only three cross the >1h threshold.
+    The breakdown must describe the three. Carrying `source_counts` instead
+    reports `datagolf_db: 2` and sums to 4 — a split describing a market the
     repair would not touch, biased toward the trustworthy tier.
     """
     _install_population(monkeypatch)
@@ -163,8 +181,8 @@ async def test_the_breakdown_counts_the_fixed_set_not_the_considered_set(monkeyp
 
     fixed = await kalshi_task._fix_golf_commence_times(dry_run=True, detail=detail)
 
-    assert fixed == 2, "expected two of the three markets to be more than an hour off"
-    assert detail == {"datagolf_db": 1, "schedule": 0, "heuristic": 1}, (
+    assert fixed == 3, "expected three of the four markets to be more than an hour off"
+    assert detail == {"datagolf_db": 1, "schedule": 1, "heuristic": 1}, (
         "the breakdown is describing markets the repair leaves alone. A "
         "`datagolf_db: 2` here is the considered set (`source_counts`) leaking "
         "onto the receipt: it counts the market that was already correctly "
@@ -222,7 +240,7 @@ async def test_the_out_param_is_optional_for_the_callers_that_want_the_count(
     therefore stay genuinely optional, and the count identical without it.
     """
     _install_population(monkeypatch)
-    assert await kalshi_task._fix_golf_commence_times(dry_run=True) == 2
+    assert await kalshi_task._fix_golf_commence_times(dry_run=True) == 3
 
 
 @pytest.mark.asyncio
@@ -237,7 +255,7 @@ async def test_a_reused_detail_dict_does_not_accumulate_across_runs(monkeypatch)
     _install_population(monkeypatch)
     await kalshi_task._fix_golf_commence_times(dry_run=True, detail=detail)
 
-    assert detail == {"datagolf_db": 1, "schedule": 0, "heuristic": 1}, (
+    assert detail == {"datagolf_db": 1, "schedule": 1, "heuristic": 1}, (
         "a stale key or an accumulated count survived the run"
     )
 
