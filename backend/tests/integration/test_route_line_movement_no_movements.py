@@ -30,11 +30,13 @@ declining to reach the handler at all.
 import ast
 import inspect
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from app import routes as app_routes
 from app.dependencies.auth import get_optional_user
 from app.services.database import get_db, get_db_rw
 
@@ -274,3 +276,171 @@ def test_blocking_llm_call_scan_catches_a_planted_call():
         "X = 'generate_market_disagreement_explanation('\n"
     )
     assert _blocking_llm_calls(mention_only) == []
+
+
+# ── The same rule, widened to EVERY route module ───────────────────────
+#
+# CERT-868's named follow-up (`LATENCY-133-BLOCKING-CALL-GUARD-SCOPE`): the guard
+# above names one helper in one file, so it could only ever catch the defect that
+# had already been fixed. #3322 then found the same class in `routes/oscars.py`
+# — six calls, 10.83s on production — which the narrow guard was structurally
+# incapable of seeing. Widened here, with the oscars fix, rather than landed with
+# those call sites as a tracked exemption: after that fix there is nothing to
+# exempt.
+
+# Cheap enough to call from anywhere: a null-check on the module-global client
+# that issues no request. It is the ONLY exemption, and it is behavioural, not
+# historical — nothing is on this list because it is inconvenient to fix.
+_NON_BLOCKING_LLM_HELPERS = frozenset({"is_available"})
+
+# Operator-triggered batch enrichment, whose whole purpose is to run the LLM over
+# rows — a different shape of caller from a page request, and a different fix
+# (#4068). They are exempt BY NAME so that a sync LLM call appearing in any other
+# route module still fails today, and the exemption is self-retiring: the control
+# below requires each of these to still contain a hit, so whoever fixes #4068 is
+# made to delete the entry rather than leave a permanent hole behind.
+_BATCH_ENRICHMENT_MODULES = frozenset({"admin_providers.py", "admin_taxonomy.py"})
+
+
+def _sync_llm_entry_points() -> frozenset[str]:
+    """Every public synchronous helper `app/services/llm.py` exposes.
+
+    DERIVED, never listed: a literal set would cover the helpers that existed the
+    day it was written, which is exactly how the narrow guard missed oscars. A new
+    blocking helper is covered by this the moment it is defined.
+    """
+    from app.services import llm as llm_module
+
+    tree = ast.parse(inspect.getsource(llm_module))
+    return frozenset(
+        node.name
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)  # `async def` is an AsyncFunctionDef
+        and not node.name.startswith("_")
+        and node.name not in _NON_BLOCKING_LLM_HELPERS
+    )
+
+
+def _sync_llm_calls_in_async_bodies(source: str, names) -> list[tuple[str, str]]:
+    """`(async function, helper)` for each blocking call reachable in an async def.
+
+    Scoped to async bodies, per CERT-868: the helpers are synchronous by design and
+    calling one from a task or a sync path is correct. Parking the event loop is
+    the defect, so an async body is where the defect lives. Nested `def`s inside an
+    async function are walked too — wrapping the call in a closure does not unpark
+    the loop when the closure is awaited.
+    """
+    hits: list[tuple[str, str]] = []
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.AsyncFunctionDef):
+            continue
+        for inner in ast.walk(node):
+            if not isinstance(inner, ast.Call):
+                continue
+            fn = inner.func
+            name = (
+                fn.id if isinstance(fn, ast.Name)
+                else fn.attr if isinstance(fn, ast.Attribute)
+                else None
+            )
+            if name in names:
+                hits.append((node.name, name))
+    return hits
+
+
+def test_no_route_module_calls_a_sync_llm_helper_from_an_async_handler():
+    """No `app/routes/*.py` may CALL a synchronous llm.py helper in an async def.
+
+    `app/services/llm.py` is synchronous end to end — 35 of 35 helpers — so any of
+    them invoked from an async handler blocks the event loop, and the cost is paid
+    by every concurrent request on the worker process, not just the one that asked.
+    Generation belongs on a task that writes where the request can read it
+    (`app/tasks/oscars_previews.py` is the worked example).
+    """
+    routes_dir = Path(inspect.getsourcefile(app_routes)).parent
+    names = _sync_llm_entry_points()
+    assert names, "derived an EMPTY helper set — the scan would be vacuous"
+
+    offenders: dict[str, list[tuple[str, str]]] = {}
+    for path in sorted(routes_dir.glob("*.py")):
+        if path.name in _BATCH_ENRICHMENT_MODULES:
+            continue
+        hits = _sync_llm_calls_in_async_bodies(path.read_text(), names)
+        if hits:
+            offenders[path.name] = sorted(set(hits))
+
+    assert not offenders, (
+        "synchronous OpenAI calls on an async request path: "
+        + "; ".join(
+            f"{mod} ({', '.join(f'{fn}() in {where}()' for where, fn in hits)})"
+            for mod, hits in sorted(offenders.items())
+        )
+        + " — move generation to a task and read its result (#3322, CERT-868)"
+    )
+
+
+def test_the_batch_enrichment_exemption_retires_itself():
+    """Every exempt module must STILL have a hit, or the exemption must go.
+
+    A denylist of known-unknowns hands the claim to the first new state: left
+    alone, this one would keep excusing `admin_taxonomy.py` long after #4068 is
+    fixed, and would silently cover a *new* blocking call added to it. So the
+    exemption is only valid while it is load-bearing — fix #4068 and this test
+    goes red until the module's name is deleted from `_BATCH_ENRICHMENT_MODULES`.
+    """
+    routes_dir = Path(inspect.getsourcefile(app_routes)).parent
+    names = _sync_llm_entry_points()
+
+    for module in sorted(_BATCH_ENRICHMENT_MODULES):
+        path = routes_dir / module
+        assert path.exists(), (
+            f"{module} is exempted but no longer exists — drop it from "
+            "_BATCH_ENRICHMENT_MODULES"
+        )
+        assert _sync_llm_calls_in_async_bodies(path.read_text(), names), (
+            f"{module} no longer calls a sync LLM helper from an async handler — "
+            "#4068 is fixed, so remove it from _BATCH_ENRICHMENT_MODULES and let "
+            "the guard cover it"
+        )
+
+
+def test_the_widened_scan_is_not_vacuous():
+    """CONTROL, three ways — the widening's own three failure modes.
+
+    A derived-set guard can go quietly vacuous where a literal one cannot, so this
+    pins each way it could: an empty set, a scope that misses async bodies, and an
+    exemption that swallows a real helper.
+    """
+    names = _sync_llm_entry_points()
+
+    # 1. The derivation actually finds the known blocking helpers, including the
+    #    two the oscars route used to call.
+    for expected in (
+        "generate_market_disagreement_explanation",
+        "generate_oscars_category_preview",
+        "generate_oscars_movers_summary",
+    ):
+        assert expected in names, f"derivation lost {expected} — the scan is narrower than it reads"
+
+    # ...and does NOT sweep in the cheap null-check, or every route goes red for
+    # asking whether the LLM is configured at all.
+    assert "is_available" not in names
+
+    # 2. A planted call inside an async def is caught, and attributed.
+    planted = (
+        "async def get_thing(db):\n"
+        "    from app.services.llm import generate_oscars_category_preview\n"
+        "    return generate_oscars_category_preview('Best Picture', [])\n"
+    )
+    assert _sync_llm_calls_in_async_bodies(planted, names) == [
+        ("get_thing", "generate_oscars_category_preview")
+    ], "the widened scan missed a planted async-path call"
+
+    # 3. The same call in a SYNC body is not a finding: these helpers are meant to
+    #    be called, just not from the loop. A guard that forbade them everywhere
+    #    would forbid the task this issue's fix depends on.
+    sync_body = (
+        "def build_it():\n"
+        "    return generate_oscars_category_preview('Best Picture', [])\n"
+    )
+    assert _sync_llm_calls_in_async_bodies(sync_body, names) == []

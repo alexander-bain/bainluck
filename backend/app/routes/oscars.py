@@ -5,10 +5,8 @@ Aggregates prediction market odds (Polymarket + Kalshi) for the 98th Academy Awa
 groups by award category, merges cross-source nominees, and orders by ceremony presentation.
 """
 
-import asyncio
 import logging
 import re
-import time
 import unicodedata
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -21,6 +19,7 @@ from sqlalchemy.orm import selectinload
 from app.models import FuturesMarket
 from app.services import get_db
 from app.utils.odds_math import probability_to_american
+from app.utils.oscars_previews import read_published_previews
 
 logger = logging.getLogger(__name__)
 
@@ -199,37 +198,42 @@ def _get_ceremony_status() -> str:
 
 
 # ============================================================================
-# LLM preview cache (in-memory, 4h TTL)
+# LLM previews — read-only on this path
 # ============================================================================
-
-_LLM_CACHE: dict[str, tuple[str, float]] = {}  # key -> (text, timestamp)
-_LLM_CACHE_TTL = 4 * 3600  # 4 hours
-
-
-def _get_cached(key: str) -> str | None:
-    entry = _LLM_CACHE.get(key)
-    if entry and time.time() - entry[1] < _LLM_CACHE_TTL:
-        return entry[0]
-    return None
+#
+# This used to be a module-global dict with a 4h TTL, which could not hold: it is
+# per worker PROCESS, so `WEB_CONCURRENCY=2` kept two independent copies per dyno
+# and every merge emptied all of them. Two of three consecutive production calls
+# missed it. The store is now Redis — shared across processes and dynos, and
+# outliving a deploy — and it is written by the beat, never by a request.
 
 
-def _set_cached(key: str, value: str) -> None:
-    _LLM_CACHE[key] = (value, time.time())
+def _previews_redis():
+    """The shared client, or None if Redis is unreachable.
+
+    Never raises: previews are a decoration on this response, and a decoration may
+    not be able to fail a page.
+    """
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        return get_redis_client()
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("Oscars previews: no Redis client (%s)", exc)
+        return None
 
 
 # Max nominees to return per category
 _MAX_NOMINEES = 10
 
 
-@router.get("")
-async def get_oscars(
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    Get all Oscar award categories with aggregated prediction market odds.
+async def build_oscars_payload(db: AsyncSession) -> dict:
+    """Build the whole Oscars response EXCEPT `llm_previews`.
 
-    Returns categories ordered by ceremony presentation, with nominees
-    merged across Polymarket and Kalshi sources.
+    Shared by `GET /api/oscars` and the task that writes the previews
+    (`app/tasks/oscars_previews.py`), for the golf-commentary reason: the task must
+    describe exactly what the page shows, so both sides build it the same way here
+    rather than each keeping their own idea of what a nominee is (#3322).
     """
     # Query all Oscar-related futures markets (include closed/resolved for post-ceremony)
     query = (
@@ -459,62 +463,6 @@ async def get_oscars(
     ]
     film_nominations.sort(key=lambda f: f["expected_wins"], reverse=True)
 
-    # ========================================================================
-    # LLM previews — generate for major categories (async, cached)
-    # ========================================================================
-    llm_previews: dict[str, str] = {}
-
-    async def _generate_preview(cat: dict) -> tuple[str, str | None]:
-        """Generate or retrieve cached LLM preview for a category."""
-        cache_key = f"oscars_preview_{cat['key']}"
-        cached = _get_cached(cache_key)
-        if cached is not None:
-            return cat["key"], cached
-
-        try:
-            from app.services.llm import generate_oscars_category_preview
-            top_nominees = [
-                {
-                    "name": n["name"],
-                    "probability": n["probability"],
-                    "movement_24h": n["movement_24h"],
-                    "opening_probability": n["opening_probability"],
-                }
-                for n in cat["nominees"][:5]
-            ]
-            result = generate_oscars_category_preview(cat["name"], top_nominees)
-            if result:
-                _set_cached(cache_key, result)
-            return cat["key"], result
-        except Exception as e:
-            logger.warning("LLM preview failed for %s: %s", cat["key"], e)
-            return cat["key"], None
-
-    # Generate previews for major categories only
-    major_cats = [c for c in categories if c["is_major"]]
-    if major_cats:
-        preview_tasks = [_generate_preview(c) for c in major_cats]
-        results = await asyncio.gather(*preview_tasks, return_exceptions=True)
-        for r in results:
-            if isinstance(r, tuple) and r[1] is not None:
-                llm_previews[r[0]] = r[1]
-
-    # Generate movers summary
-    if biggest_movers:
-        movers_cache_key = "oscars_movers_summary"
-        cached_movers = _get_cached(movers_cache_key)
-        if cached_movers:
-            llm_previews["biggest_movers"] = cached_movers
-        else:
-            try:
-                from app.services.llm import generate_oscars_movers_summary
-                movers_text = generate_oscars_movers_summary(biggest_movers)
-                if movers_text:
-                    _set_cached(movers_cache_key, movers_text)
-                    llm_previews["biggest_movers"] = movers_text
-            except Exception as e:
-                logger.warning("LLM movers summary failed: %s", e)
-
     return {
         "ceremony_date": "2026-03-02T00:00:00-08:00",
         "ceremony_status": _get_ceremony_status(),
@@ -523,5 +471,27 @@ async def get_oscars(
         "total_categories": len(categories),
         "biggest_movers": biggest_movers,
         "film_nominations": film_nominations,
-        "llm_previews": llm_previews,
     }
+
+
+@router.get("")
+async def get_oscars(
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get all Oscar award categories with aggregated prediction market odds.
+
+    Returns categories ordered by ceremony presentation, with nominees
+    merged across Polymarket and Kalshi sources.
+
+    The `llm_previews` are READ here, never generated: they are written by the
+    `refresh-oscars-previews` beat into Redis. See `app/utils/oscars_previews.py`
+    for why (#3322 — six synchronous OpenAI calls made this handler take 10.83s
+    and parked the event loop for every other request on the same process).
+    """
+    payload = await build_oscars_payload(db)
+
+    previews, generated_at = read_published_previews(_previews_redis())
+    payload["llm_previews"] = previews
+    payload["llm_previews_generated_at"] = generated_at
+    return payload

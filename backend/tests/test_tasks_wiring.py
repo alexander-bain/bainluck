@@ -373,6 +373,7 @@ class TestBeatScheduleCompleteness:
         "recover-datagolf-participation",
         "poll-datagolf-inplay",
         "refresh-open-commentary",
+        "refresh-oscars-previews",
         "regrade-polymarket-under-signflip",
         "unresolve-datagolf-premature",
         "null-impossible-both-sides-openings",

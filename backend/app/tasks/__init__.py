@@ -32,6 +32,9 @@ from app.tasks.base import run_async
 # #2236: the live republish period is declared beside the live cache ceiling it
 # has to stay under, not beside the beat that consumes it. See feed_cache.py.
 from app.utils.feed_cache import FEED_LIVE_REPUBLISH_PERIOD_S
+# The beat interval and the published TTL are one decision (TTL = 2x interval), so
+# the schedule reads the constant rather than restating the number here (#3322).
+from app.utils.oscars_previews import PREVIEWS_REFRESH_SECONDS
 
 import time as _time
 
@@ -4537,6 +4540,18 @@ def refresh_open_commentary(self):
     return _tracked_run("refresh_open_commentary", _refresh_open_commentary())
 
 
+@celery_app.task(bind=True, soft_time_limit=120, time_limit=150, name="app.tasks.refresh_oscars_previews")
+def refresh_oscars_previews(self):
+    """Write the Oscars category previews `GET /api/oscars` reads (#3322).
+
+    The request path no longer generates them: six synchronous OpenAI calls on an
+    async handler measured 10.83s and parked the loop for every other request on
+    that process. Skips without an OpenAI call when there is nothing to preview.
+    See app/tasks/oscars_previews.py."""
+    from app.tasks.oscars_previews import _refresh_oscars_previews
+    return _tracked_run("refresh_oscars_previews", _refresh_oscars_previews())
+
+
 @celery_app.task(bind=True, soft_time_limit=300, time_limit=360, name="app.tasks.precompute_admin_audit_all")
 def precompute_admin_audit_all(self):
     """Precompute /api/admin/audit/all (4 grid subprocesses) into Redis (L2-90)."""
@@ -4650,6 +4665,19 @@ celery_app.conf.beat_schedule = {
         # call per run, at most. Background queue (runs the full golf aggregation).
         "task": "app.tasks.refresh_open_commentary",
         "schedule": 180.0,
+        "options": {"queue": "background"},
+    },
+    "refresh-oscars-previews": {
+        # #3322: the six category previews on GET /api/oscars are written here
+        # instead of on the request path, where they cost 10.83s and parked the
+        # event loop for every other request on the same worker process. Hourly,
+        # published with a 2h TTL so a stopped beat clears the previews rather
+        # than leaving text quoting a probability the page no longer shows.
+        # Self-gates on DATA (no major categories => no OpenAI call), so it costs
+        # one query when the markets are gone. Background queue: it runs the full
+        # Oscars aggregation and then talks to OpenAI.
+        "task": "app.tasks.refresh_oscars_previews",
+        "schedule": float(PREVIEWS_REFRESH_SECONDS),
         "options": {"queue": "background"},
     },
     "poll-mlb-pregame": {
