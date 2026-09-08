@@ -483,6 +483,15 @@ MUTANTS: list[tuple[str, pathlib.Path, str, str, str]] = [
         """            FuturesMarket.max_movement_24h.isnot(None),""",
     ),
     (
+        "M-POOL-IGNORES-CONDITIONS",
+        POOL,
+        "accept `conditions` and never apply them — the caller's gate is a no-op "
+        "on the fast arm only, so the legacy oracle still looks right",
+        """            FuturesMarket.max_movement_24h.isnot(None),
+            *conditions,""",
+        """            FuturesMarket.max_movement_24h.isnot(None),""",
+    ),
+    (
         "M-POOL-WRONG-COLUMN",
         POOL,
         "select the movement instead of the id — `market_id IN (floats)`",
