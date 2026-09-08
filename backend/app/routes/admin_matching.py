@@ -2238,6 +2238,8 @@ async def prediction_market_force_link(
         REJECT_EVENT_DATE_CONFLICT,
         REJECT_NO_CANDIDATE,
         REJECT_NO_MATCHUP,
+        MatchReceipt,
+        jsonable,
         record_out_of_band_attempt,
     )
 
@@ -2264,24 +2266,95 @@ async def prediction_market_force_link(
     ticker_date = extract_game_date_from_ticker(market.external_id)
     now = datetime.now(timezone.utc)
 
+    # #3755 follow-up: the trace the pipeline was already building and nobody
+    # was catching. ``_find_matching_event`` fills a receipt handed to it with
+    # the window it searched and one row per event it considered, carrying the
+    # verdict that dropped each — and this endpoint passed no receipt, so all
+    # of it was discarded and the operator got the bare word "no_event_found".
+    # That is the answer with the reasoning deleted: the next step was always to
+    # re-run the matcher by hand against today's events, which is the
+    # simulation ``match-trace`` does and which this module's own header says
+    # cannot answer "what happened".
+    #
+    # Write-only by contract — the docstring on ``_find_matching_event`` says
+    # the return value is untouched with and without a receipt, and its guard
+    # test asserts it. So this changes what the attempt REPORTS, never what it
+    # decides.
+    trace = MatchReceipt(
+        market_id=market_row["id"],
+        source=market_row["source"] or "",
+        external_id=market_row["external_id"],
+        market_name=market_row["name"],
+        phase=PHASE_ADMIN_REPAIR,
+        attempted_at=now,
+    )
+
+    def _considered() -> dict:
+        """What the pipeline looked at, for the response body.
+
+        ``candidates_considered`` is the RAW count and ``candidates`` is
+        ``MAX_TRACE_CANDIDATES`` of them, so a truncated list is legible as
+        truncated rather than reading as "that was all of them" (gotcha #53).
+        Same payload the stored row keeps, through the same two functions, so
+        the operator and the history cannot disagree.
+        """
+        return {
+            "search": jsonable(trace.detail),
+            "candidates_considered": len(trace.candidates),
+            "candidates": trace.candidate_payload(),
+        }
+
     async def _receipt(**kwargs) -> int:
         return await record_out_of_band_attempt(
-            market_row, phase=PHASE_ADMIN_REPAIR, now=now, **kwargs
+            market_row, phase=PHASE_ADMIN_REPAIR, now=now,
+            candidates=trace.candidates, **kwargs,
         )
 
     if not matchup:
+        # No trace to report: the pipeline never ran, so nothing was
+        # considered. Saying `candidates: []` here would be indistinguishable
+        # from "we searched and found nothing", which is a different answer.
         return {
             "status": "no_matchup",
             "receipts_written": await _receipt(reject_reason=REJECT_NO_MATCHUP),
         }
 
-    matched = await _find_matching_event(db, matchup, market, now, game_date_override=ticker_date)
+    # ``probe_allowed`` — this is ONE market, run by hand, by a person who has
+    # already decided the answer matters. The probe is the only thing that
+    # separates "no event anywhere carries these names" from "the event is in
+    # our table and the window excluded it", and only the second is our bug.
+    # The scheduled matcher rations it across thousands of rows a cycle; this
+    # caller has no such budget problem, and refusing it here would make the
+    # hand tool the WEAKER diagnosis of the two.
+    matched = await _find_matching_event(
+        db, matchup, market, now, game_date_override=ticker_date,
+        receipt=trace, probe_allowed=True,
+    )
     if not matched:
         return {
             "status": "no_event_found",
+            # The pipeline's OWN reason, not a blanket one. ``no_candidate``
+            # means nothing came back; when candidates came back and lost, the
+            # trace already says whether it was the name gate, the sport gate,
+            # the score floor or the window, and overwriting that with
+            # ``no_candidate`` files a matcher bug in the upstream-gap bucket —
+            # the same wrong-bucket class CERT-2227 closed for the sibling arm.
+            "reject_reason": trace.reject_reason or REJECT_NO_CANDIDATE,
+            **_considered(),
+            # ``list(matchup)`` used to stand where ``**trace.detail`` does, and
+            # it was a live 500: ``MatchupInfo`` is a ``__slots__`` class with no
+            # ``__iter__`` and no ``__bool__``, so the guard in front of it was
+            # always true and the call ALWAYS raised — on the most common exit
+            # this endpoint has. It survived a cert because every test in this
+            # file stubbed the matchup as a tuple, which is iterable; the real
+            # type is not. The parse is now reported under the names the
+            # matcher's own receipts already use (``team_a``, ``team_b``,
+            # ``format_type``, written by ``_find_matching_event``), so the two
+            # writers of this table describe a matchup the same way. Dropping
+            # the ``matchup`` key loses nothing: it never once reached Postgres.
             "receipts_written": await _receipt(
-                reject_reason=REJECT_NO_CANDIDATE,
-                detail={"matchup": list(matchup) if matchup else None},
+                reject_reason=trace.reject_reason or REJECT_NO_CANDIDATE,
+                detail=dict(trace.detail),
             ),
         }
 
@@ -2305,6 +2378,7 @@ async def prediction_market_force_link(
         return {
             "status": "duplicate_guard_blocked",
             "event_id": matched["event_id"],
+            **_considered(),
             "receipts_written": await _receipt(
                 reject_reason=(
                     REJECT_EVENT_DATE_CONFLICT
@@ -2324,6 +2398,11 @@ async def prediction_market_force_link(
         "home_team": matched["home_team"],
         "away_team": matched["away_team"],
         "score": matched["score"],
+        # An attach gets the trace too. "Why THIS event" is a question about the
+        # runners-up, and the chosen row is never dropped by the cap — so a
+        # wrong attach made by hand can be read afterwards against what it beat,
+        # instead of only against itself.
+        **_considered(),
         "receipts_written": await _receipt(
             linked_event_id=matched["event_id"],
             detail={
