@@ -7,17 +7,24 @@ eat, and the answer was *all of it*: `DEFAULT_TTL_S` is 60.0 and
 of `concepts` / `canonical_counts` the headroom was zero, `routes/feed.py` took
 the CERT-1864 refusal branch, and a fully-built page was thrown away.
 
-WHAT THAT COST, measured on production 2026-09-08 09:10-10:0xZ by forcing real
+WHAT THAT COST, measured on production 2026-09-08 from 09:10Z by forcing real
 builds on a novel `limit` — a novel response-cache key, the same code path and
-the same shared artifacts — and reading `cache.ttl_seconds`, which IS
-`live_total_age_headroom_s()` of the oldest counted artifact::
+the same shared artifacts — and reading `cache.stale_ttl_seconds`, which for a
+live payload IS `live_total_age_headroom_s()` of the oldest counted artifact::
 
-    n=20 forced builds
-    10%  ->  X-Feed-Cache: unavailable, cache.reason: input_age_ceiling,
+    n=53 forced builds
+    ~8%  ->  X-Feed-Cache: unavailable, cache.reason: input_age_ceiling,
              items: 0, total: 0, `total_age_ceiling` present in X-Feed-Stages,
              build_quality complete.   A BLANK DISCOVER FRONT PAGE.
     55%  ->  artifact age above the bound this file guards.
-    artifact age at the ceiling check: min 30s, p50 45.5s, max 60s.
+    artifact age at the ceiling check: min 0s, p50 44s, p90 56s, max 60s.
+
+⚠️ THE INSTRUMENT HAS A TRAP AND IT CAUGHT ME ONCE. Read
+`cache.stale_ttl_seconds`, never `cache.ttl_seconds`: the FRESH ttl carries a
+second clamp, `FEED_RESPONSE_TTL_LIVE_SECONDS` (30), so it saturates and every
+artifact younger than 30s reads back as exactly 30. A `60 - ttl_seconds` reading
+of this same run reported a floor of 30s that does not exist —
+`test_only_the_stale_ttl_carries_the_headroom` below pins the difference.
 
 `build_quality` being *complete* is why this wore the wrong name for so long:
 `_prewarm_one_shape` classifies the refusal as `outcome: empty` and keeps
@@ -88,6 +95,28 @@ class TestTheBoundIsDerivedNotChosen:
 
     def test_it_is_shorter_than_the_default_it_replaces(self):
         assert pic.live_artifact_ttl_ceiling_s() < pic.DEFAULT_TTL_S
+
+    def test_only_the_stale_ttl_carries_the_headroom(self):
+        """The instrument trap, pinned so the next reader does not repeat it.
+
+        Whoever measures this from outside reads `cache.*` off a forced build.
+        The FRESH ttl is `min(headroom, FEED_RESPONSE_TTL_LIVE_SECONDS)` and so
+        saturates at 30 — two artifacts 30 seconds apart in age report the same
+        number. The STALE ttl is `min(headroom, CEILING)` and, because the
+        ceiling IS the headroom's own maximum, it is the headroom exactly.
+        """
+        saturating, honest = fc.feed_response_cache_ttls(
+            live=True, oldest_artifact_age_s=0.0
+        )
+        assert saturating == fc.FEED_RESPONSE_TTL_LIVE_SECONDS
+        assert honest == fc.FEED_RESPONSE_STALE_TTL_LIVE_SECONDS
+
+        for age in (0.0, 5.0, 25.0, 29.0):
+            fresh, stale = fc.feed_response_cache_ttls(
+                live=True, oldest_artifact_age_s=age
+            )
+            assert fresh == fc.FEED_RESPONSE_TTL_LIVE_SECONDS, "fresh saturates"
+            assert stale == fc.live_total_age_headroom_s(age), "stale does not"
 
 
 class TestEveryCountedNamespaceFitsUnderTheCeiling:

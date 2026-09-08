@@ -260,14 +260,20 @@ def market_load_ttl_headroom_s() -> float:
 # away — the caller gets a truthful but EMPTY page and the warm rail reports
 # `outcome: empty` and publishes nothing.
 #
-# MEASURED ON PRODUCTION, 2026-09-08 09:10-10:0xZ, by forcing real builds on a
-# novel `limit` (a novel response-cache key, same code path, same artifacts) and
-# reading `cache.ttl_seconds`, which IS `live_total_age_headroom_s()`:
+# MEASURED ON PRODUCTION, 2026-09-08 09:10Z onward, by forcing real builds on a
+# novel `limit` (a novel response-cache key, same code path, same artifacts):
 #
-#     10% of cold builds returned `X-Feed-Cache: unavailable`,
+#     ~8% of cold builds returned `X-Feed-Cache: unavailable`,
 #     `cache.reason: input_age_ceiling`, ZERO items, `total_age_ceiling` in
 #     X-Feed-Stages, `build_quality` complete — a blank Discover front page.
-#     55% carried an artifact age above the bound this function sets.
+#     55% carried an artifact age above the bound this function sets;
+#     the age at the ceiling check ran min 0s, p50 44s, p90 56s, max 60s.
+#
+# ⚠️ READ `cache.stale_ttl_seconds`, NOT `cache.ttl_seconds`. Only the stale TTL
+# is the raw headroom. The fresh TTL is additionally clamped by
+# `FEED_RESPONSE_TTL_LIVE_SECONDS` (30), so it SATURATES: every artifact younger
+# than 30s reads back as exactly 30 and a naive `60 - ttl_seconds` invents a
+# floor at 30s that is an artifact of the instrument, not of the fleet.
 #
 # and it is the same event the warm rail counts as `empty` on 13-17% of passes
 # per shape (#3904's own table), which is what opens the mirror holes #3827 was
