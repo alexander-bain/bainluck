@@ -64,6 +64,35 @@ function MarketCardForSection({ market, sectionKey }: { market: LeagueMarket; se
 }
 
 /**
+ * ── #3964: will the card ABOVE actually draw anything? ──
+ *
+ * `/sport/boxing/boxing` printed `📋 UPCOMING MATCHES (10)` over empty space.
+ * Ten of the twelve markets the `matches` section was handed carry
+ * `top_outcomes: []`, every one of the three cards opens by returning null on
+ * an empty field, and the header and its chip were counting what the section
+ * was HANDED. So the page promised the reader ten matches and drew none.
+ *
+ * This is the CERT-859 rule one door further along — "the header counts what
+ * this section DRAWS, not what it was handed" — and the fix has to live here
+ * rather than in the cards, because a component that renders nothing cannot
+ * tell its parent it rendered nothing.
+ *
+ * The thresholds MIRROR the switch above, card for card, and that is the only
+ * correct way to write them: `SeriesCard` needs two outcomes to have two sides
+ * (`top_outcomes.length < 2 -> null`), `AwardCard` and `PropGroupCard` need
+ * one. A single shared `> 0` would keep a bare header over a one-outcome
+ * series market, which is the same defect with a different count.
+ *
+ * Applied to the CARDS bucket only, AFTER `partitionLeagueMarkets`. A ladder
+ * and a binary have their own renderers and their own contracts, and a filter
+ * ahead of the partition would judge them by a card's.
+ */
+function sectionCardWillDraw(market: LeagueMarket, sectionKey: string): boolean {
+  const needed = sectionKey === "series" ? 2 : 1;
+  return (market.top_outcomes?.length ?? 0) >= needed;
+}
+
+/**
  * ── UX-P074 (#1860), ruling 047, retrofit 3 ──
  *
  * ONE ROW PER BINARY. "A yes/no market is one question with one answer;
@@ -125,7 +154,10 @@ export default function LeagueMarketSection({
   // component renders it. Order is preserved within each bucket, so the
   // backend's importance sort still governs.
   const partition = partitionLeagueMarkets(markets);
-  const { cards, ladders } = partition;
+  const { ladders } = partition;
+  // #3964: drop the cards that will render nothing, so `rendered` below — and
+  // therefore the header and its chip — count what the reader gets.
+  const cards = partition.cards.filter((m) => sectionCardWillDraw(m, sectionKey));
   // UX-1052 item 8: when the page owns the board, this section draws none.
   const binaries = hoistBinaries ? [] : partition.binaries;
 
