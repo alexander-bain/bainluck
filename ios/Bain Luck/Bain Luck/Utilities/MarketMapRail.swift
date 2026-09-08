@@ -590,6 +590,106 @@ enum MarketMapRail {
         return start ..< (start + limit)
     }
 
+    // MARK: - Which rungs may share ONE combined-scoring ladder (#3925 item 2)
+
+    /// The sub-contest scopes a totals market names in its own title.
+    ///
+    /// #3925 item 2. The photographed card stacked these five rungs into one
+    /// ascending ladder headed "combined scoring" (event 15305795, `completed`):
+    ///
+    /// ```
+    ///  3.5+   Alexander Zverev vs. Luciano Darderi: Total Sets O/U 3.5   <- SETS, whole match
+    ///  4.5+   Alexander Zverev vs. Luciano Darderi: Total Sets O/U 4.5   <- SETS, whole match
+    ///  8.5+   Zverev vs. Darderi: Set 1 Games O/U 8.5                    <- GAMES, in ONE set
+    ///  9.5+   Zverev vs. Darderi: Set 1 Games O/U 9.5                    <- GAMES, in ONE set
+    /// 10.5+   Zverev vs. Darderi: Set 1 Games O/U 10.5                   <- GAMES, in ONE set
+    /// ```
+    ///
+    /// `4.5+` and `8.5+` read as neighbouring points on one scale while one
+    /// counts sets in a match and the other counts games in a single set.
+    ///
+    /// 🔴 **THIS IS NOT A SECOND COPY OF THE BACKEND'S RULE, AND THE DIFFERENCE
+    /// IS THE WHOLE REASON IT EXISTS HERE.** `events.py` already owns #3161's
+    /// `_match_scope_totals`, whose regexes these deliberately echo — and it is
+    /// documented FAIL-OPEN: `return match_scope or game_totals`. On this
+    /// specimen *both* families are non-match-scope (one wrong scope, one wrong
+    /// unit for the map it feeds), so nothing survives the filter, so the
+    /// backend serves all five **on purpose** rather than take the card down.
+    /// That decision is about WHICH RUNGS TO SERVE and it is right. This answers
+    /// the different question the serving side declined to: given two families
+    /// in one payload, WHICH ONE DOES A SINGLE AXIS DRAW. Changing the backend
+    /// to drop them would empty the card the fail-open exists to protect.
+    ///
+    /// 🟠 **SPORT-BLIND ON PURPOSE, WHERE THE BACKEND IS NOT.** #3161 warns that
+    /// "a sport gets a scope rule only by being NAMED", because `Total Rounds`
+    /// is the CORRECT match total for MMA and boxing. That warning guards the
+    /// **unit** half of its rule. It does not reach this one: no sport's
+    /// whole-contest total is called `Set 1`, `Map 1` or `1st Half`, so an
+    /// explicit ordinal sub-contest is safe to read without naming a sport.
+    /// The unit half is NOT mirrored here — a `Total Sets` rung is the wrong
+    /// unit for the map card, which is fixed in match games, but it is a true
+    /// statement about the whole match and this card takes its noun from the
+    /// markets (``SportVocab/totalsUnit(quotedBy:)``), so it can simply say
+    /// "combined sets".
+    ///
+    /// **Every pattern below was measured reachable** over linked
+    /// `futures_markets` names carrying `O/U` or `total`, production
+    /// 2026-09-08: `set N` **18,000** · `1st/2nd half` **36,348** ·
+    /// `first 5` **2,053** · `map N` **653** · `Nth quarter/period` **133**.
+    /// 🟢 `q1`–`q4` and `inning N` measured **0** and are therefore NOT
+    /// implemented — an unreachable pattern is a claim no evidence supports,
+    /// and the next reader would trust it.
+    static func namesASubContestScope(_ marketName: String?) -> Bool {
+        let name = (marketName ?? "").lowercased()
+        guard !name.isEmpty else { return false }
+        return Self.subContestScopeREs.contains {
+            $0.firstMatch(in: name, range: NSRange(name.startIndex..., in: name)) != nil
+        }
+    }
+
+    /// Compiled once — ``namesASubContestScope(_:)`` runs per rung, per redraw.
+    ///
+    /// `\bset\s*\d` is what keeps `Total Sets O/U 3.5` OUT of this: "set" does
+    /// match inside "sets", but what follows is `s`, not a digit. That is the
+    /// same boundary `_TENNIS_SET_SCOPED_TOTAL_RE` relies on, and
+    /// `testTheSetsUnitFamilyIsNotMistakenForASetScopedOne` is the guard.
+    private static let subContestScopeREs: [NSRegularExpression] = [
+        #"\bset\s*\d"#,
+        #"\bmap\s*\d"#,
+        #"\b(?:1st|first|2nd|second)\s+half\b"#,
+        #"\b(?:1st|2nd|3rd|4th|first|second|third|fourth)\s+(?:quarter|period)\b"#,
+        #"\bfirst\s+5\b"#,
+    ].compactMap { try? NSRegularExpression(pattern: $0) }
+
+    /// The indices of `marketNames` that one combined-scoring ladder may pool.
+    ///
+    /// #3925 item 2. Whole-contest rungs where there are any, everything
+    /// otherwise.
+    ///
+    /// 🔴 **FAIL-OPEN, AND THE NUMBER IS WHY.** Measured on production
+    /// 2026-09-08 over 21,928 tennis events: **3,941** carry both a
+    /// `Total Sets` and a `Set N Games` family — those are the pooled ladders
+    /// this repairs — but **4,451** carry a set-scoped family and NOTHING else.
+    /// An unconditional drop would empty the ladder on all 4,451, which is
+    /// `thresholds.isEmpty` and so `EmptyView()`: it would delete a card from
+    /// more pages than it fixed. Those keep exactly what they render today.
+    /// This is `_match_scope_totals`' own reasoning — "a map with two
+    /// wrong-scope rungs is worse than one without them; a map that is gone is
+    /// worse than both" — applied one layer out, deliberately, so the two sides
+    /// fail the same way rather than compounding.
+    ///
+    /// (Counts are over market NAMES, an upper bound on the served population:
+    /// `game_total` is classified at serve time, and a card also needs enough
+    /// rungs to draw. They size the risk, which is what they are for.)
+    ///
+    /// Order is preserved and no rung is reordered or reweighted — the caller
+    /// sorts by threshold, as it always has.
+    static func matchScopeLadderIndices(marketNames: [String?]) -> [Int] {
+        let all = Array(marketNames.indices)
+        let wholeContest = all.filter { !namesASubContestScope(marketNames[$0]) }
+        return wholeContest.isEmpty ? all : wholeContest
+    }
+
     // MARK: - Reading a MARGIN ladder once the game is over
 
     /// The margin a SIDE won by, from the game's home-signed final margin.

@@ -240,10 +240,22 @@ extension SportVocab {
     /// That last case is not hypothetical and it is why this takes the whole
     /// list rather than one name. The backend drops sets rungs from a tennis
     /// map whenever a match-scope rung survives (`_match_scope_tennis_totals`),
-    /// but that guard keys on the sport prefix — and real ATP/WTA matches are
-    /// currently classified `table_tennis` upstream, so they walk straight past
-    /// it. One served map today carries `"Total Sets O/U 2.5"` and
-    /// `"Set 1 Games O/U 8.5"` together (Swiatek v Podoroska, 2026-09-06).
+    /// yet one served map still carries `"Total Sets O/U 2.5"` and
+    /// `"Set 1 Games O/U 8.5"` together (Swiatek v Podoroska, 2026-09-06;
+    /// Zverev v Darderi, event 15305795, still doing it on 2026-09-08).
+    ///
+    /// 🔴 **CORRECTED 2026-09-08 (#3925 item 2).** This paragraph used to blame
+    /// the sport prefix — "real ATP/WTA matches are currently classified
+    /// `table_tennis` upstream, so they walk straight past it". **Measured, that
+    /// is false**: event 15305795 is `tennis_atp_us_open`, so
+    /// `_NON_MATCH_SCOPE_TOTAL_RES["tennis"]` applies and the guard DOES run.
+    /// It lets both families through because it is deliberately FAIL-OPEN
+    /// (`return match_scope or game_totals`) and here *neither* family is
+    /// match-scope — one is the wrong scope, one the wrong unit — so nothing
+    /// survives to replace them and serving all of them beats taking the card
+    /// down. Which family a single AXIS may then draw is a display question,
+    /// answered by ``MarketMapRail/matchScopeLadderIndices(marketNames:)``.
+    ///
     /// No single noun is true of both rungs, and this type's whole rule is that
     /// a number in the wrong unit is worse than an absent one *because it looks
     /// sourced* — so we state none.

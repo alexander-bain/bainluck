@@ -77,6 +77,18 @@ const NOT_PERIOD_PARSERS = new Map([
     join(IOS_ROOT, "Components/SpecialEventMarketsView.swift"),
     "classifies MARKET NAMES ('halftime result', 'overtime') into prop groups — never labels a period",
   ],
+  [
+    join(IOS_ROOT, "Utilities/MarketMapRail.swift"),
+    // #3925 item 2. Same reason as the entry above, and it is the reason the
+    // allowlist takes a sentence rather than a path: this file reads a MARKET
+    // NAME ('1st Half Total Goals O/U 1.5', '1st Quarter Total Points') to
+    // decide whether that rung is scoped to the whole contest and may share an
+    // axis with the others. It never renders a period, never interpolates one,
+    // and has no `raw` string to normalize — the output is a list of INDICES.
+    // Delegating to `PeriodLabel` would be the actual mistake: it answers
+    // "what do I call ESPN's clock string", which is a different question.
+    "reads MARKET NAMES for contest SCOPE ('1st Half …', '1st Quarter …') to pick which totals rungs share one ladder — returns indices, never labels a period",
+  ],
 ]);
 
 // The whole suite is meaningless if it is pointed at nothing — a path typo

@@ -38,26 +38,37 @@ struct TotalPointsSpectrumView: View {
     private var isDone: Bool { eventStatus == "completed" || eventStatus == "closed" }
     private var isPre: Bool { !isLive && !isDone }
 
-    /// Game-total thresholds sorted ascending with monotonicity enforced.
+    /// The game-total rungs this ladder draws, ascending.
+    ///
+    /// #3925 item 2 — **filtered to ONE contest scope first**, because
+    /// `marketType == "game_total"` is not the same question as "belongs on one
+    /// axis". The photographed card pooled two families under one "combined
+    /// scoring" heading: `Total Sets O/U 3.5 / 4.5` (sets, whole match) and
+    /// `Set 1 Games O/U 8.5 / 9.5 / 10.5` (games, inside ONE set), so `4.5+` and
+    /// `8.5+` sat next to each other as if on one scale. The rule, its
+    /// fail-open, and why this is not a duplicate of the backend's #3161 filter:
+    /// ``MarketMapRail/matchScopeLadderIndices(marketNames:)``.
+    ///
+    /// This also repairs ``unit`` for free, and that is the tell that the pool
+    /// was the bug: `totalsUnit` returns `""` when the names disagree, so the
+    /// card fell back to the word "scoring" precisely BECAUSE it was holding two
+    /// families. One family in, and the specimen names its own noun — "sets".
+    ///
+    /// 🟢 The old body sorted, then walked the sorted array building `result`
+    /// through an `if curProb > prevProb` whose two arms were **the same
+    /// `append`**, under a comment ("Clamp to previous to enforce
+    /// monotonicity") describing a clamp that was never written. It was
+    /// `sorted` spelled out over twelve lines and is deleted rather than carried
+    /// past a change to this very function — the next reader would otherwise
+    /// take it for a monotonicity guarantee the ladder does not have.
     private var thresholds: [GameMarketOutcome] {
-        let sorted = (gameMarkets.totals ?? [])
+        let candidates = (gameMarkets.totals ?? [])
             .filter { $0.marketType == "game_total" && ($0.overProbability ?? 0) > 0 }
-            .sorted { ($0.threshold ?? 0) < ($1.threshold ?? 0) }
 
-        var result: [GameMarketOutcome] = []
-        for item in sorted {
-            if let prev = result.last, let prevProb = prev.overProbability, let curProb = item.overProbability {
-                if curProb > prevProb {
-                    // Clamp to previous to enforce monotonicity
-                    result.append(item)
-                } else {
-                    result.append(item)
-                }
-            } else {
-                result.append(item)
-            }
-        }
-        return result
+        return MarketMapRail
+            .matchScopeLadderIndices(marketNames: candidates.map(\.marketName))
+            .map { candidates[$0] }
+            .sorted { ($0.threshold ?? 0) < ($1.threshold ?? 0) }
     }
 
     /// How many rungs the ladder draws, settled or not.
