@@ -21,7 +21,11 @@ import {
   CATEGORY_LABEL_FORMAT,
 } from "@/lib/chartTimeline";
 // #1003 guard: the single 0–1 ⇄ 0–100 axis conversion (see eventKeyStats).
-import { homeProbToChartAxis, chartAxisToHomeProb } from "@/lib/eventKeyStats";
+import {
+  homeProbToChartAxis,
+  chartAxisToHomeProb,
+  chartAxisPercents,
+} from "@/lib/eventKeyStats";
 import { separateLinesLabel, sourceHex, sourceLabel } from "@/lib/sourceColors";
 import { useAnalyticsContext } from "@/components/Analytics";
 import type {
@@ -1055,11 +1059,37 @@ export default function OddsChart({
       if (delta !== null) {
         const homeProb = delta; // 0–100 axis: the value IS the home probability
         chartData[i].calloutDelta = delta; // Stamp onto chartData point
+        // #3892 — ROUND THE PROBABILITY, NOT THE AXIS VALUE.
+        //
+        // This label sits directly under the hero and, since #3898 pinned the
+        // pre-match edge to the blend, prints THE SAME NUMBER. It was rounding
+        // the 0–100 axis value, which is `probability * 100` — and that product
+        // is not the quoted decimal. `0.575 * 100` is `57.49999999999999`, so
+        // `Math.round` gave 57 while the hero's `renderedPercent` gave 58.
+        //
+        // Read on production 2026-09-08 on `/events/15307463` (Khachanov, a US
+        // Open quarter-final quoted at 0.575): hero **58%**, this callout
+        // **57%**, one card, one number, two answers. Going back through the
+        // axis recovers the decimal the venue actually quoted, so both arms
+        // round the same input under the same rule.
+        //
+        // `chartAxisPercents` rather than the arithmetic inline: it is the
+        // tested home of this rule, it derives the second end so a complement
+        // pair cannot print 101, and an expression repeated at two call sites
+        // is a rule that can drift at one of them.
+        const percents = chartAxisPercents(homeProb);
+        // NO CALLOUT RATHER THAN A FALLBACK. The first draft of this kept
+        // `?? Math.round(homeProb)` for a non-finite axis value, which reads
+        // like a safety net and is not one: `Math.round(NaN)` is `NaN`, so the
+        // old code drew the literal text "NaN%" in that case. `null` here means
+        // the label is not drawn at all, which is the honest answer when there
+        // is no number — and it keeps the one rounding rule unduplicated.
+        if (percents.home === null || percents.away === null) return null;
         return {
           time: chartData[i].time,
           delta,
-          homeProb: Math.round(homeProb),
-          awayProb: Math.round(100 - homeProb),
+          homeProb: percents.home,
+          awayProb: percents.away,
         };
       }
     }
@@ -1261,11 +1291,22 @@ export default function OddsChart({
               {bookmakerEntries.map((entry) => {
                 const bookmaker = entry.dataKey.replace("_delta", "");
                 const homeProb = entry.value; // 0–100 axis
-                const awayProb = 100 - homeProb;
+                // #3892 — same rule as the edge callout above, and for the same
+                // reason: `toFixed(0)` on the axis value rounds
+                // `57.49999999999999` down to 57 where the contract says 58.
+                //
+                // It also rounded the two ends INDEPENDENTLY, so a book quoting
+                // an exact complement on the half-percent grid could print
+                // `57% / 43%` beside `58%` in the hero. Deriving the second end
+                // from the first keeps a sportsbook's own pair summing to 100.
+                const percents = chartAxisPercents(homeProb);
+                // A book with no usable number is omitted rather than listed
+                // with a placeholder — same reason as the callout above.
+                if (percents.home === null || percents.away === null) return null;
                 return (
                   <p key={bookmaker} className="text-xs text-text-muted">
-                    {bookmaker}: {homeProb.toFixed(0)}% /{" "}
-                    {awayProb.toFixed(0)}%
+                    {bookmaker}: {percents.home}% /{" "}
+                    {percents.away}%
                   </p>
                 );
               })}

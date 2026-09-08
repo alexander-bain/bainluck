@@ -19,7 +19,7 @@ import {
   CATEGORY_LABEL_FORMAT,
 } from "@/lib/chartTimeline";
 import { shouldWithholdProbability } from "@/lib/probabilityEvidence";
-import { renderedDuelPercents } from "@/lib/renderedPercent";
+import { renderedDuelPercents, renderedPercent } from "@/lib/renderedPercent";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -482,6 +482,46 @@ export function homeProbToChartAxis(homeProb: number): number {
 
 export function chartAxisToHomeProb(axisValue: number): number {
   return axisValue / 100;
+}
+
+/**
+ * The whole percents a CHART surface prints for one 0–100 axis value (#3892).
+ *
+ * ═══ WHY THIS IS A FUNCTION AND NOT TWO LINES AT THE CALL SITE ═══
+ *
+ * `OddsChart` printed whole percents off the axis value directly —
+ * `Math.round(homeProb)` in the edge callout, `.toFixed(0)` in the sportsbook
+ * tooltip. The axis value is `probability * 100`, and that product is not the
+ * decimal the venue quoted: `0.575 * 100` is `57.49999999999999`. So the
+ * callout drew **57%** underneath a **58%** hero on `/events/15307463` during
+ * the 2026 US Open quarter-finals, for one probability, on one card.
+ *
+ * The rule for "what whole percent does this probability print" is
+ * `renderedPercent`, and the only way a chart can obey it is to come back
+ * across this boundary first. Putting that here rather than inline is the same
+ * argument `homeProbToChartAxis` was extracted on, one floor up: an expression
+ * repeated at two call sites is a rule that can drift at one of them, and
+ * `probabilityInvariant.test.ts` was green through this entire bug precisely
+ * because it re-implemented the arithmetic instead of calling it.
+ *
+ * ═══ THE SECOND END IS DERIVED ═══
+ *
+ * Never rounded on its own. On the half-percent grid both ends can land on
+ * `.5` at once, so independent rounding prints 101 — the card-level half of the
+ * same contract (`renderedCardPercents`). Deriving `100 - home` keeps a
+ * complement pair summing to 100 by construction.
+ *
+ * Returns `null`s for a non-finite axis value, which is `renderedPercent`'s own
+ * answer for "no number here". A caller rendering into JSX must supply its own
+ * fallback rather than interpolating the null.
+ */
+export function chartAxisPercents(axisValue: number): {
+  home: number | null;
+  away: number | null;
+} {
+  const home = renderedPercent(chartAxisToHomeProb(axisValue));
+  if (home === null) return { home: null, away: null };
+  return { home, away: 100 - home };
 }
 
 /**
