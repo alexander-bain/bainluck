@@ -115,9 +115,17 @@ export function ConceptCard({
           </>
         ) : whatHit ? (
           <>
-            <div className="text-white text-xl font-black tracking-tight drop-shadow-lg">
-              {data.name}
-            </div>
+            {/* #3989: the same duplicate as the unsettled branch below — the
+                body <h3> already names the concept. `feedItemSuppressionReason`
+                admits a settled card only on a winner OR a summary, and this is
+                the winner-less arm, so `resultSummary` is what the hero has to
+                say here; the name comes back only if that guarantee ever fails,
+                so a fixed `h-44` hero can never go blank. */}
+            {!resultSummary && (
+              <div className="text-white text-xl font-black tracking-tight drop-shadow-lg">
+                {data.name}
+              </div>
+            )}
             <div className="mt-1.5 bg-white/20 text-white text-[11px] font-bold uppercase tracking-wider px-3 py-1 rounded-full">
               Final result
             </div>
@@ -130,16 +138,32 @@ export function ConceptCard({
                 (`feedItemSuppressionReason`: winner OR summary); without it web
                 would have to encode a narrower rule than native, and a
                 divergence between the two classifiers is the defect class this
-                queue is already closing twice over. */}
+                queue is already closing twice over.
+                #3989: now the hero's main line rather than a footnote under a
+                title, so it is sized to be read. */}
             {resultSummary && (
-              <div className="text-white/80 text-xs mt-1.5">{resultSummary}</div>
+              <div className="text-white/90 text-sm mt-1.5 px-2">{resultSummary}</div>
             )}
           </>
         ) : (
           <>
-            <div className="text-white text-2xl font-black tracking-tight drop-shadow-lg">
-              {data.name}
-            </div>
+            {/* #3989: this hero printed `data.name` and the body <h3> below
+                printed it AGAIN, ~100px apart, on every unsettled concept the
+                feed can admit — production read two leaf nodes both reading
+                exactly `Vuelta a España 2026`. The sibling `TournamentCard`
+                this card was modeled on never does that: its hero carries the
+                NUMBER, its body carries the name, once. The hero now names the
+                concept only when it has nothing else to say.
+                `feedItemSuppressionReason` admits an unsettled concept ONLY on
+                a usable bout or a usable leader, so this fallback is a backstop
+                against this renderer reading the payload more strictly than the
+                gate that let the card in — never the normal path — and it is
+                what keeps a fixed `h-44` hero from rendering blank. */}
+            {!bout && !leader && (
+              <div className="text-white text-2xl font-black tracking-tight drop-shadow-lg">
+                {data.name}
+              </div>
+            )}
             {/* #1939: the favourite, rendered ONLY on the unsettled branch. The
                 WHAT-HIT arms above take precedence, so a result can never be
                 displaced by a stale probability even if a future payload carried
@@ -169,27 +193,39 @@ export function ConceptCard({
               </div>
             )}
             {leader && (
-              <div className="mt-2 flex items-center justify-center flex-wrap gap-1.5">
-                <span className="text-white text-sm font-bold drop-shadow">
-                  {leader.name}
-                </span>
-                <span className="bg-white/20 text-white text-[11px] font-bold px-2 py-0.5 rounded-full">
+              <>
+                {/* #3989: with the redundant title gone, the probability takes
+                    the hero — `TournamentCard`'s grammar, and the right emphasis
+                    for a probability-first product. Deliberately NOT
+                    `AnimatedProbability`: that component prints an em-dash until
+                    an IntersectionObserver fires (so "—" in SSR) and splits the
+                    "%" into a child span, which would break both the reading and
+                    every `toContain("75%")` assertion on this card. */}
+                <div className="text-white text-5xl font-black tabular-nums tracking-tight drop-shadow-lg">
                   {Math.round(leader.probability * 100)}%
-                </span>
-                {movementLabel && (
-                  <span className="text-white/85 text-[11px] font-bold">
-                    {movementLabel}
+                </div>
+                <div className="mt-1 flex items-center justify-center flex-wrap gap-1.5">
+                  <span className="text-white text-sm font-bold drop-shadow">
+                    {leader.name}
                   </span>
-                )}
-                {/* A 52% favourite in a two-way fight and a 52% favourite in a
-                    30-rider field are different facts. Only worth saying when
-                    the field is bigger than a head-to-head. */}
-                {typeof leader.field_size === "number" && leader.field_size > 2 && (
-                  <span className="text-white/70 text-[11px]">
-                    of {leader.field_size}
-                  </span>
-                )}
-              </div>
+                  {movementLabel && (
+                    <span className="text-white/85 text-[11px] font-bold">
+                      {movementLabel}
+                    </span>
+                  )}
+                  {/* A 52% favourite in a two-way fight and a 52% favourite in a
+                      30-rider field are different facts. Only worth saying when
+                      the field is bigger than a head-to-head.
+                      #3989: the bare `of 30` read aloud as "seventy-five percent
+                      OF THIRTY" — an arithmetic claim (22.5), not a field size.
+                      The noun is the whole fix. */}
+                  {typeof leader.field_size === "number" && leader.field_size > 2 && (
+                    <span className="text-white/70 text-[11px]">
+                      field of {leader.field_size}
+                    </span>
+                  )}
+                </div>
+              </>
             )}
           </>
         )}

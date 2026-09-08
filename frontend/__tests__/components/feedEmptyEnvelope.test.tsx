@@ -345,8 +345,12 @@ describe("render routing — the leaf dispatcher fails closed", () => {
     );
     expect(html).toContain("Tadej Pogacar");
     expect(html).toContain("75%");
-    // The field-size qualifier: 75% of 30 is a different fact from 75% of 2.
-    expect(html).toContain("of 30");
+    // The field-size qualifier: a 75% favourite in a 30-rider field is a
+    // different fact from a 75% favourite in a two-way. #3989 gave it its noun —
+    // the bare `of 30` read as "seventy-five percent OF THIRTY", an arithmetic
+    // claim. Asserted with the noun so this stays a guard: `toContain("of 30")`
+    // would pass on both the fixed and the broken copy.
+    expect(html).toContain("field of 30");
   });
 
   test("FeedCard (Sports dispatcher) renders a LIVE concept's leader (#1939)", () => {
