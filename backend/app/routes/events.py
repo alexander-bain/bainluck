@@ -8722,23 +8722,59 @@ async def get_live_odds(sport_key: str):
         )
 
 
+def _cached_detail_payload(event_id: int, now: float) -> dict | None:
+    """The detail payload `get_event` would serve RIGHT NOW, or ``None``.
+
+    ONE freshness rule with ONE reader-visible answer, and that is the whole
+    point of it being a function (#3911, CERT-2239).
+
+    The chart's right edge is pinned to the point-in-time blend so that the hero
+    and the curve under it are one number (standing ruling #1). But the hero is
+    SERVED FROM THIS CACHE for up to `_EVENT_DETAIL_DEFAULT_TTL` while the
+    history route re-reads live rows on every request, so between two source
+    writes a reader gets a cached hero over a freshly-computed edge — measured
+    at 0.40 against 0.30, both on screen, both refreshed every 120s by the page
+    itself. Recomputing the hero on the chart's side cannot fix that: two
+    correct recomputations of a moving number still disagree with a cached one.
+    The chart has to read the number the hero is ACTUALLY RENDERING.
+
+    So this returns the served payload, and the TTL ladder lives here rather
+    than at each call site — a second copy of "is it still fresh" is the same
+    class of defect one level down.
+    """
+    entry = _event_detail_cache.get(event_id)
+    if entry is None:
+        return None
+    cached_at, cached_status, cached_resp = entry
+    if cached_status == "live":
+        ttl = _EVENT_DETAIL_LIVE_TTL
+    elif cached_status in SETTLED_STATUSES:
+        # Was `or` with no expiry at all — see `_EVENT_DETAIL_SETTLED_TTL`.
+        ttl = _EVENT_DETAIL_SETTLED_TTL
+    else:
+        ttl = _EVENT_DETAIL_DEFAULT_TTL
+    if now - cached_at >= ttl:
+        return None
+    return cached_resp
+
+
+#: The only `hero_probability_source` whose number IS the point-in-time blend.
+#: A settled hero, an `opening` fallback and `final-unresolved` are different
+#: claims, and pinning a curve's live edge to one of them would put a number on
+#: the chart that no aggregator produced. The payload says which it is, so the
+#: chart asks rather than infers.
+_PINNABLE_HERO_SOURCE = "blend"
+
+
 @router.get("/{event_id}")
 async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
     """Get event details with aggregated odds from all bookmakers."""
     import time as _time
     _now = _time.time()
     requested_event_id = event_id
-    if event_id in _event_detail_cache:
-        _cached_at, _cached_status, _cached_resp = _event_detail_cache[event_id]
-        if _cached_status == "live":
-            _ttl = _EVENT_DETAIL_LIVE_TTL
-        elif _cached_status in SETTLED_STATUSES:
-            # Was `or` with no expiry at all — see `_EVENT_DETAIL_SETTLED_TTL`.
-            _ttl = _EVENT_DETAIL_SETTLED_TTL
-        else:
-            _ttl = _EVENT_DETAIL_DEFAULT_TTL
-        if _now - _cached_at < _ttl:
-            return _cached_resp
+    _cached_resp = _cached_detail_payload(event_id, _now)
+    if _cached_resp is not None:
+        return _cached_resp
 
     result = await db.execute(
         select(Event)
@@ -12630,6 +12666,7 @@ def _pin_blend_edge(
     is_live: bool,
     is_finished: bool = False,
     now: datetime,
+    served_blend: float | None = None,
 ) -> bool:
     """Pin the blend line's right edge to the point-in-time blend (UX-P003).
 
@@ -12723,8 +12760,17 @@ def _pin_blend_edge(
     try:
         from app.utils.aggregation import compute_aggregate_probability
 
-        live_edge = compute_aggregate_probability(
-            event, event_status=getattr(event, "status", None)
+        # #3911: `served_blend` is the hero the detail route is CURRENTLY
+        # serving from its cache. Prefer it over a fresh computation — not
+        # because it is more accurate (it is up to one TTL old) but because it
+        # is the number on the same screen, and one number per question is the
+        # ruling. Recomputing here is only right when nothing is being served.
+        live_edge = (
+            served_blend
+            if served_blend is not None
+            else compute_aggregate_probability(
+                event, event_status=getattr(event, "status", None)
+            )
         )
         if live_edge is None:
             return False
@@ -13539,15 +13585,35 @@ async def get_event_odds_history(
     # event with no win-prob series at all), and those must not pay a lookup for
     # a pin that cannot fire.
     pin_event = event
+    served_blend = None
     if aggregate_line:
-        from app.utils.proven_duplicates import (
-            FoldedBlendView,
-            folded_probability_sources,
-        )
+        # THE NUMBER THE HERO IS ACTUALLY SHOWING, when one is being served.
+        # `_cached_detail_payload` applies the identical TTL ladder `get_event`
+        # applies, so "the detail route would serve this right now" is one
+        # question with one answer — see its docstring for the 0.40-over-0.30
+        # reproduction that made this necessary.
+        import time as _time
 
-        pin_event = FoldedBlendView(
-            event, await folded_probability_sources(db, event)
-        )
+        _served = _cached_detail_payload(event_id, _time.time())
+        if (
+            _served is not None
+            and _served.get("hero_probability_source") == _PINNABLE_HERO_SOURCE
+        ):
+            served_blend = _served.get("hero_probability")
+
+        if served_blend is None:
+            # Nothing is being served, so the chart computes it — from the same
+            # orientation-checked folded view `get_event` will compute it from
+            # on its next miss, which is what keeps the two in step across the
+            # boundary rather than only inside it.
+            from app.utils.proven_duplicates import (
+                FoldedBlendView,
+                folded_probability_sources,
+            )
+
+            pin_event = FoldedBlendView(
+                event, await folded_probability_sources(db, event)
+            )
 
     _pin_blend_edge(
         aggregate_line,
@@ -13555,6 +13621,7 @@ async def get_event_odds_history(
         is_live=(not is_finished and (event.status or "").lower() == "live"),
         is_finished=is_finished,
         now=now,
+        served_blend=served_blend,
     )
 
     # ── Inject terminal "final result" data point for completed events ──

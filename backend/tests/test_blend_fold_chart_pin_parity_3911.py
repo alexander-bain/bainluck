@@ -93,7 +93,7 @@ def _sources(now, **readings):
     }
 
 
-def _event_row(now):
+def _event_row(now, canon=None):
     """SCHEDULED, and starting soon.
 
     Not `completed`: `_EXCLUDE_WHEN_COMPLETED` drops kalshi and polymarket from
@@ -110,7 +110,9 @@ def _event_row(now):
         away_team_name="Stefanos Tsitsipas",
         commence_time=now + timedelta(hours=1),
         status="scheduled",
-        win_probability_sources=_sources(now, polymarket=CANON_PROB),
+        win_probability_sources=_sources(
+            now, polymarket=CANON_PROB if canon is None else canon
+        ),
     )
     event.sport = Sport(id=S_TENNIS, key="tennis_atp_us_open", name="US Open")
     return event
@@ -118,8 +120,15 @@ def _event_row(now):
 
 #: The twin as each fold's own projection returns it, oriented in agreement —
 #: what production holds for all 12 pairs (measured 2026-09-07).
-def _blend_fold_rows(now):
-    return [(GHOST_ID, "Shelton", "Tsitsipas", _sources(now, kalshi=TWIN_PROB))]
+def _blend_fold_rows(now, twin=None):
+    return [
+        (
+            GHOST_ID,
+            "Shelton",
+            "Tsitsipas",
+            _sources(now, kalshi=TWIN_PROB if twin is None else twin),
+        )
+    ]
 
 
 def _series_fold_rows():
@@ -189,9 +198,11 @@ class _RouteSession:
     more than one that merely runs correctly.
     """
 
-    def __init__(self, now):
+    def __init__(self, now, canon=None, twin=None):
         self.now = now
-        self.event = _event_row(now)
+        self.canon = CANON_PROB if canon is None else canon
+        self.twin = TWIN_PROB if twin is None else twin
+        self.event = _event_row(now, canon=self.canon)
         self.blend_fold_lookups = 0
         self.series_fold_lookups = 0
 
@@ -210,7 +221,7 @@ class _RouteSession:
             return _Result([])
         if is_blend_fold(sql):  # longer projection first — see the docstring
             self.blend_fold_lookups += 1
-            return _Result(_blend_fold_rows(self.now))
+            return _Result(_blend_fold_rows(self.now, twin=self.twin))
         if is_series_fold(sql):
             self.series_fold_lookups += 1
             return _Result(_series_fold_rows())
@@ -237,24 +248,42 @@ def both_routes(monkeypatch):
     monkeypatch.setattr(events_route, "_build_team_lookup", _no_teams)
     monkeypatch.setattr(events_route, "resolve_market_born_duplicate", _no_drain)
 
-    def _serve():
-        events_route._event_detail_cache.clear()
-        # ONE anchor for the pair, read HERE and not at import: the two routes
-        # must be asked about the same instant, and that instant must be now.
-        now = _now()
-        detail_session = _RouteSession(now)
-        history_session = _RouteSession(now)
-        detail = asyncio.run(get_event(CANON_ID, db=detail_session))
-        history = asyncio.run(
+    def _detail(session):
+        return asyncio.run(get_event(CANON_ID, db=session))
+
+    def _history(session):
+        return asyncio.run(
             get_event_odds_history(
                 event_id=CANON_ID,
                 hours=720,
                 response=MagicMock(headers={}),
-                db=history_session,
+                db=session,
             )
         )
+
+    def _serve(canon=None, twin=None, clear=True):
+        """One reader's page load: the detail call, then the chart call.
+
+        `clear` is the cache-boundary lever. A test that clears is testing the
+        fold; a test that does NOT clear is testing what a reader gets on the
+        page's next 120s refresh, with the hero served from a cache the chart
+        cannot see into — which is the whole of CERT-2239's finding.
+        """
+        if clear:
+            events_route._event_detail_cache.clear()
+        # ONE anchor for the pair, read HERE and not at import: the two routes
+        # must be asked about the same instant, and that instant must be now.
+        now = _now()
+        detail_session = _RouteSession(now, canon=canon, twin=twin)
+        history_session = _RouteSession(now, canon=canon, twin=twin)
+        detail = _detail(detail_session)
+        history = _history(history_session)
         return detail, history, history_session
 
+    _serve.detail = _detail
+    _serve.history = _history
+    _serve.session = _RouteSession
+    _serve.cache = events_route._event_detail_cache
     return _serve
 
 
@@ -302,16 +331,35 @@ class TestTheTwoRoutesAgree:
         assert raw == pytest.approx(CANON_PROB)
         assert raw != pytest.approx(BLENDED)
 
-    def test_the_history_route_issued_the_blend_fold_lookup(self, both_routes):
-        """The wiring, not only its effect.
+    def test_the_chart_folds_for_itself_when_no_hero_is_being_served(
+        self, both_routes
+    ):
+        """The wiring, not only its effect — on a cold cache.
 
-        The effect above could in principle be produced by a chart that never
-        folded but happened to blend to the same number; this cannot.
+        With nothing served, the chart computes the blend from its own folded
+        view, and it must actually issue the fold lookup to do it: the effect
+        above could otherwise be produced by a chart that never folded and
+        happened to blend to the same number.
+        """
+        both_routes.cache.clear()
+        session = both_routes.session(_now())
+        both_routes.history(session)
+
+        assert session.blend_fold_lookups == 1
+        assert session.series_fold_lookups >= 1
+
+    def test_the_chart_reads_the_served_hero_instead_of_re_deriving_it(
+        self, both_routes
+    ):
+        """And on a WARM cache it does not fold at all — it reads the number.
+
+        Two correct recomputations of a moving number still disagree with a
+        cached one, so the chart asks what the hero IS rather than what it
+        should be. The saved lookup is a side effect, not the point.
         """
         _, _, history_session = both_routes()
 
-        assert history_session.blend_fold_lookups == 1
-        assert history_session.series_fold_lookups >= 1
+        assert history_session.blend_fold_lookups == 0
 
     def test_a_chart_with_no_blend_line_pays_no_lookup(self, monkeypatch):
         """The cost side of the repair, stated as a test.
@@ -339,6 +387,77 @@ class TestTheTwoRoutesAgree:
         assert history.get("aggregate_line") is None
         assert session.blend_fold_lookups == 0
         assert events_route is not None  # import kept honest
+
+
+class TestTheCacheBoundary:
+    """🔴 CERT-2239's required repair, `HERO-BLEND-CACHE-BOUNDARY-PARITY-3911`.
+
+    The deterministic fold is not the whole ship. `get_event` serves its hero
+    from `_event_detail_cache` for up to `_EVENT_DETAIL_DEFAULT_TTL` (300s;
+    30s live), the history route re-reads live rows on EVERY request, and the
+    page refreshes both every 120s. So between two source writes a reader gets
+    a cached hero over a freshly-computed edge — reproduced by the grader at
+    0.40 against 0.30, both on one screen.
+
+    Every test above clears the cache before it runs and therefore cannot see
+    this. These do not clear it, which is the entire point.
+    """
+
+    def test_the_edge_follows_the_SERVED_hero_after_the_rows_move(
+        self, both_routes
+    ):
+        """Seed, move both rows, re-call both endpoints without clearing."""
+        seeded, _, _ = both_routes()  # clears, then seeds hero = 0.40
+        assert seeded["hero_probability"] == pytest.approx(BLENDED)
+
+        # Both venues move, hard and in the same direction, while the cache
+        # still holds the old hero. 0.20/0.10 blends to 0.10 — a quarter of
+        # what is being served, so nothing here can agree by coincidence.
+        moved_detail, moved_history, _ = both_routes(
+            canon=0.20, twin=0.10, clear=False
+        )
+
+        assert moved_detail["hero_probability"] == pytest.approx(BLENDED), (
+            "the detail route is still serving its cached hero — if this fails "
+            "the cache stopped working and the test below proves nothing"
+        )
+        assert _edge(moved_history) == pytest.approx(BLENDED)
+        assert _edge(moved_history) == pytest.approx(
+            moved_detail["hero_probability"]
+        )
+
+    def test_the_number_they_agree_on_is_not_the_stale_one_forever(
+        self, both_routes
+    ):
+        """Parity is not achieved by freezing the chart.
+
+        The obvious wrong fix is "always pin to whatever is cached". Once the
+        entry expires, BOTH surfaces must move to the new reading together —
+        otherwise this repair would trade a 300-second disagreement for a
+        permanent one.
+        """
+        both_routes()  # seed at 0.40
+        both_routes.cache.clear()  # what the TTL does, one line earlier
+
+        detail, history, _ = both_routes(canon=0.20, twin=0.10, clear=False)
+
+        assert detail["hero_probability"] == pytest.approx(0.10)
+        assert _edge(history) == pytest.approx(0.10)
+
+    def test_a_settled_hero_is_never_pinned_onto_the_curve(self, both_routes):
+        """Only a `blend` hero is pinnable, and the payload says which it is.
+
+        A settled hero, an `opening` fallback and `final-unresolved` are
+        different claims about a different number. Reading `hero_probability`
+        without reading `hero_probability_source` would put 1.0 on the right
+        edge of a live curve the moment a row went Final.
+        """
+        from app.routes.events import _PINNABLE_HERO_SOURCE
+
+        detail, _, _ = both_routes()
+
+        assert detail["hero_probability_source"] == _PINNABLE_HERO_SOURCE
+        assert _PINNABLE_HERO_SOURCE == "blend"
 
 
 class TestTheFixtureCannotExpire:
