@@ -34,6 +34,9 @@ import { outcomeDisplayNames } from "@/lib/outcomeLabels";
 // up — the heading is a phase claim about the cards under it, and a guard can
 // only judge that by rendering the section. See `HubUpcomingRail`'s header.
 import { HubUpcomingRail } from "@/components/hub/HubUpcomingRail";
+// #4036: the one system-wide settled language, shared with `PropGroupCard`
+// rather than restated here. See that file's header for why it is not private.
+import { SettledMark, isSettledOutcome } from "@/components/SettledOutcomeMark";
 
 // ---------------------------------------------------------------------------
 // Section display config: friendly labels + render order. Sections the backend
@@ -103,6 +106,15 @@ function OutcomeRow({ o, label }: { o: LeagueMarketOutcome; label: string }) {
   // zero, about something we did not measure (doctrine A3, honest or absent).
   // The whole track is withheld, not just the fill: a 0%-width bar inside a
   // visible track is the same lie with extra steps.
+  // #4036: a settled row is a RESULT, and this card was the last one still
+  // drawing it as a live price. `_serialize_outcomes` ships `settled`/`is_winner`
+  // precisely so "the payload carries the STATE and the component decides how to
+  // draw it" — and this component decided nothing, so #3868's bug stayed live
+  // here after it was fixed everywhere else. Measured on production 2026-09-08:
+  // 10 of 426 hub cards, including Zverev / Sinner / Alcaraz drawn at 99% / 99%
+  // / 97% in "Who will win a ATP Grand Slam in 2026?" with `is_winner: true` on
+  // all three.
+  const settled = isSettledOutcome(o);
   const pct = probabilityBarWidth(o.probability);
   return (
     <div className="flex items-center gap-2 py-1.5">
@@ -126,13 +138,22 @@ function OutcomeRow({ o, label }: { o: LeagueMarketOutcome; label: string }) {
       <span className="flex-1 min-w-0 text-[13px] text-text-secondary truncate">
         {label}
       </span>
-      {pct !== null && (
+      {/* #4036: the bar is a reading of a LIVE book, so a settled row does not
+          draw one — `PropGroupCard`'s rule, in its words: "a full purple bar
+          beside the word 'Won' is the same claim twice, in two different
+          vocabularies." Withheld before the null check, because a graded row
+          having a price is exactly the case that made this bug invisible. */}
+      {!settled && pct !== null && (
         <div className="w-20 h-1.5 rounded-full bg-surface-elevated overflow-hidden">
           <div className="h-full rounded-full bg-accent-brand" style={{ width: `${pct}%` }} />
         </div>
       )}
       <span className="w-10 text-right font-mono text-[13px] font-semibold text-text-primary">
-        {formatProbability(o.probability)}
+        {settled ? (
+          <SettledMark won={o.is_winner === true} />
+        ) : (
+          formatProbability(o.probability)
+        )}
       </span>
     </div>
   );
