@@ -53,9 +53,19 @@ def _env_int(name: str, default: int) -> int:
 
 
 # --- Deadline policy (mirrors the C55 heroku-router-contract/v1 policy) --------
-# These are AVAILABILITY safety bounds, not latency targets. COMPUTE_DEADLINE_MS
-# sits well under the 30s Heroku router H12 cutoff so a pathological cold build or
-# waiter coalesce fails fast / serves fallback instead of a router-level 503.
+# AVAILABILITY safety bounds, not latency targets. They are NOT all applied by the
+# serving path, and nothing at the point of declaration shows which are, so each is
+# marked (#3955 — the second time a reader took the unwired ones for wired). The
+# C55 evaluator judges observed behaviour against all of them either way;
+# tests/test_deadline_policy_enforcement_census_3955.py pins the classification.
+#
+#   ENFORCED       REDIS_OP_DEADLINE_MS — the bounded_redis_call default, below.
+#   CONTRACT-ONLY  ROUTER_TIMEOUT_MS is Heroku's H12 cutoff: an environmental fact
+#                  we stay under, never one we impose. COMPUTE_DEADLINE_MS is
+#                  superseded by the two whole-request budgets further down — a
+#                  per-stage bound cannot catch back-to-back attempts that are each
+#                  individually legal, which is the finding Queue 297 acted on.
+#                  DB_CHECKOUT_DEADLINE_MS has no pool-checkout hook applying it.
 REDIS_OP_DEADLINE_MS = _env_int("REQUEST_REDIS_OP_DEADLINE_MS", 600)
 ROUTER_TIMEOUT_MS = _env_int("REQUEST_ROUTER_TIMEOUT_MS", 30000)
 COMPUTE_DEADLINE_MS = _env_int("REQUEST_COMPUTE_DEADLINE_MS", 22000)

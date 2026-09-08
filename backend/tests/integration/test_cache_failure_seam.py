@@ -23,9 +23,15 @@ from app.utils import request_cache as rc
 from scripts.evals.cache_failure_resilience import evaluate_scenario
 from tests.conftest import unavailable_body
 
-# Production deadline policy — the real constants the code enforces, expressed in
-# the C55 policy shape. compute_deadline is a safety bound well under the router
-# cutoff, NOT a latency target (see request_cache.COMPUTE_DEADLINE_MS).
+# Production deadline policy in the C55 policy shape: the thresholds the evaluator
+# judges observed behaviour AGAINST. Not latency targets, and — the correction in
+# #3955 — not four bounds the serving path applies. Only redis_operation_deadline_ms
+# is enforced by code; router_timeout_ms is Heroku's H12 cutoff, and compute_ /
+# db_checkout_deadline_ms are declared bounds nothing wires today. All four are
+# genuinely consulted here (tightening any one of them reddens tests), so none is
+# decorative — but a scenario may exceed an unenforced bound in production without
+# anything stopping it, which is precisely what these tests cannot prove.
+# tests/test_deadline_policy_enforcement_census_3955.py pins which kind each is.
 POLICY = {
     "version": "queue-271/v1",
     "router_timeout_ms": rc.ROUTER_TIMEOUT_MS,
