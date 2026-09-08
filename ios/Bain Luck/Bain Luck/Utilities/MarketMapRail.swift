@@ -595,6 +595,70 @@ enum MarketMapRail {
         hasDistribution ? "Half margin distribution" : "Half margin"
     }
 
+    // MARK: - Whether a map may say PRE-GAME
+
+    /// Whether a market map may plot the tile captioned `PRE-GAME`.
+    ///
+    /// #3885, the margin-side twin of #3850 and the same root cause one card
+    /// higher on the same page. On event 15305476 (`Nationals 5 — Dodgers 7`,
+    /// `FINAL`) the Run margin map read
+    ///
+    /// ```
+    ///   FINAL             PRE-GAME
+    ///   Dodgers +2        Nationals +5.5
+    ///   Nationals +5.5  |                MISS
+    ///   Dodgers   +1.5  ██████████████   HIT
+    /// ```
+    ///
+    /// — the `PRE-GAME` tile naming **the very rung the card grades MISS two
+    /// lines below it**.
+    ///
+    /// 🔴 **NEITHER OF THE TWO NUMBERS THIS TILE CAN REACH IS A PRE-GAME
+    /// NUMBER, ONCE THE GAME IS OVER.** The tile draws
+    /// `sportSpread ?? closestToEvenMargin(parsed)`, and on a settled event:
+    ///
+    ///   * `sportSpread` is `event.currentOdds?.homeSpread` at the call site in
+    ///     `EventDetailView` — the CURRENT line by construction. On the specimen
+    ///     it is `-1.5`, captured `2026-09-07T05:06Z`, which is a settlement
+    ///     price wearing a pre-game caption.
+    ///   * ``MarketMapView/closestToEvenMargin(_:)`` picks the rung nearest a
+    ///     coin flip, which is a real question on a live book and a coin toss on
+    ///     a settled ladder where every line has resolved. The specimen's two
+    ///     spreads price `0.99` (Dodgers +1.5) and `0.02` (Nationals +5.5), so
+    ///     `|0.99 - 0.5| = 0.490` loses to `|0.02 - 0.5| = 0.480` **by a
+    ///     thousandth** and the LOSING side's deepest line takes the tile. On
+    ///     15305475 the same arithmetic hands it `Sox +1.5`, a line the window
+    ///     below no longer even draws.
+    ///
+    /// 🟠 **AND THERE IS NOTHING HONEST TO SUBSTITUTE — measured, not assumed.**
+    /// `events.opening_home_spread` / `opening_over_under` DO exist server-side
+    /// and are well populated (1,409 and 1,421 of 1,519 settled events in the
+    /// last 14 days, 92.8% / 93.6%; the specimen's are `-1.5` and `8.5`, and
+    /// that `8.5` is exactly the pre-game total #3850 went looking for). But
+    /// `GET /api/events/{id}` — the endpoint this card is rendered from — does
+    /// **not** serve them: its `opening_odds` carries `home_probability`,
+    /// `away_probability`, `favorite` and nothing else (re-read from production
+    /// 2026-09-08), and `OpeningOdds` in `CommonTypes.swift` has no field for
+    /// them either. Only `GET /api/events/{id}/debug` emits them. So the client
+    /// cannot draw a true pre-game line today at any price.
+    ///
+    /// That gap is worth closing and is filed separately — closing it would let
+    /// this card tell a genuinely good story (`PRE-GAME Dodgers +1.5` →
+    /// `FINAL Dodgers +2`). Until it is, #3823's rule stands: a number whose
+    /// tense you cannot vouch for is worse than no number. The `FINAL` tile
+    /// beside it already carries the whole story.
+    ///
+    /// 🟢 **NARROW ON PURPOSE.** Live and pre-game maps are untouched, so the
+    /// NFL projection marker pinned by
+    /// `SpreadRungTests.testTheNFLProjectionMarkerMovesAndThatIsTheFix`
+    /// (event 14780138, unsettled) cannot move. The live-tense cousin — a LIVE
+    /// card also captioning `currentOdds` "PRE-GAME" — is the one #3850
+    /// deliberately left out, and is left out here too rather than fixed in
+    /// passing on a state nobody has photographed.
+    static func drawsPregameMarker(isDone: Bool) -> Bool {
+        !isDone
+    }
+
     // MARK: - Where the mid axis label goes
 
     /// Where a map's middle axis label belongs.

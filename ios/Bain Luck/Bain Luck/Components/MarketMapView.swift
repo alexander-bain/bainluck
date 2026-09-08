@@ -369,15 +369,12 @@ struct MarketMapView: View {
         // has carried on the totals side since #3509. Without it a tennis SET
         // margin map would print the books' GAME line as its projection.
         let sportSpread = sportUnitLineApplies(data.unit) ? homeSpread : nil
-        let projValue = sportSpread != nil ? -(sportSpread!) : closestToEvenMargin(parsed)
+        let projValue = sportSpread != nil ? -(sportSpread!) : Self.closestToEvenMargin(parsed)
         if isDone {
             if let homeScoreValue = scoredHomeScore,
                let awayScoreValue = scoredAwayScore {
                 let margin = homeScoreValue - awayScoreValue
                 markers.append(MapMarker(id: "final", value: Double(margin), type: .final_, label: "FINAL", displayValue: "\(margin > 0 ? hAbbr : aAbbr) +\(abs(margin))"))
-            }
-            if let pv = projValue {
-                markers.append(MapMarker(id: "pre", value: pv, type: .pre, label: "PRE-GAME", displayValue: "\(pv > 0 ? hAbbr : aAbbr) +\(String(format: "%.1f", abs(pv)))"))
             }
         } else if isLive {
             if let homeScoreValue = scoredHomeScore,
@@ -385,13 +382,30 @@ struct MarketMapView: View {
                 let margin = homeScoreValue - awayScoreValue
                 markers.append(MapMarker(id: "actual", value: Double(margin), type: .actual, label: "ACTUAL", displayValue: "\(margin > 0 ? hAbbr : aAbbr) +\(abs(margin))"))
             }
-            if let pv = projValue {
-                markers.append(MapMarker(id: "proj", value: pv, type: .proj, label: "PROJECTION", displayValue: "\(pv > 0 ? hAbbr : aAbbr) +\(String(format: "%.1f", abs(pv)))"))
-            }
-        } else {
-            if let pv = projValue {
-                markers.append(MapMarker(id: "proj", value: pv, type: .proj, label: "PROJECTION", displayValue: "\(pv > 0 ? hAbbr : aAbbr) +\(String(format: "%.1f", abs(pv)))"))
-            }
+        }
+        // #3885 — THE TILE IN THE ISSUE'S PHOTOGRAPH, and now ONE statement of
+        // the rule instead of a copy inside each lifecycle branch. On the
+        // settled specimen it named `Nationals +5.5`, the rung this same card
+        // grades MISS two lines below, because on a settled ladder
+        // `closestToEvenMargin` is a coin toss. `drawsPregameMarker` carries the
+        // measurement and the reason there is nothing honest to put here
+        // instead.
+        //
+        // 🟢 On THIS card the settled branch was the only one that ever said the
+        // word: live and pre-game both drew `proj`/`PROJECTION`, identically,
+        // which is why the two copies collapse into one statement here with no
+        // change to either. `PRE-GAME` now never appears on a margin map at all.
+        // (The totals card below is NOT the same shape — its LIVE branch says
+        // `PRE-GAME` too — so it is gated separately rather than by a shared
+        // helper that would have to know which card it was on.)
+        if MarketMapRail.drawsPregameMarker(isDone: isDone), let pv = projValue {
+            markers.append(MapMarker(
+                id: "proj",
+                value: pv,
+                type: .proj,
+                label: "PROJECTION",
+                displayValue: "\(pv > 0 ? hAbbr : aAbbr) +\(String(format: "%.1f", abs(pv)))"
+            ))
         }
 
         let zeroPos = posOnRail(0, min: rangeMin, max: rangeMax)
@@ -532,9 +546,6 @@ struct MarketMapView: View {
             if let totalScore = settledTotal {
                 markers.append(MapMarker(id: "final", value: Double(totalScore), type: .final_, label: "FINAL", displayValue: vocab.withUnit("\(totalScore)")))
             }
-            if let ou = ouLine {
-                markers.append(MapMarker(id: "pre", value: ou, type: .pre, label: "PRE-GAME", displayValue: formatThreshold(ou)))
-            }
         } else if isLive {
             if scoreboardIsComparable,
                let homeScoreValue = scoredHomeScore,
@@ -544,13 +555,28 @@ struct MarketMapView: View {
                 markers.append(MapMarker(id: "actual", value: Double(totalScore), type: .actual, label: "ACTUAL", displayValue: "\(totalScore)"))
                 markers.append(MapMarker(id: "proj", value: proj, type: .proj, label: "PROJECTED", displayValue: "\(Int(proj.rounded()))"))
             }
-            if let ou = ouLine {
-                markers.append(MapMarker(id: "pre", value: ou, type: .pre, label: "PRE-GAME", displayValue: formatThreshold(ou)))
-            }
-        } else {
-            if let ou = ouLine {
-                markers.append(MapMarker(id: "proj", value: ou, type: .proj, label: "PROJECTION", displayValue: formatThreshold(ou)))
-            }
+        }
+        // #3885 — the margin card's twin on the same page, gated by the same
+        // rule and, as there, collapsed from a copy per branch into one
+        // statement. `ouLine` is `currentOdds.overUnder` or the threshold
+        // nearest a coin flip; once the game is over both are settlement
+        // prices. Unlike the margin card this one's LIVE branch really did say
+        // `PRE-GAME`, so the label stays lifecycle-dependent here — that live
+        // wording is #3850's filed-not-fixed cousin, left alone deliberately.
+        //
+        // 🟠 Dropping the settled marker can also narrow the rail, because
+        // `totalBounds` reads `markerValues` — correctly, since the rail no
+        // longer has to span a line the card will not draw. It only bites when
+        // `ouLine` came from the event-level number; a ladder-derived one is
+        // already in `allThresh` and moves nothing.
+        if MarketMapRail.drawsPregameMarker(isDone: isDone), let ou = ouLine {
+            markers.append(MapMarker(
+                id: isLive ? "pre" : "proj",
+                value: ou,
+                type: isLive ? .pre : .proj,
+                label: isLive ? "PRE-GAME" : "PROJECTION",
+                displayValue: formatThreshold(ou)
+            ))
         }
 
         // A TOTAL cannot be negative, and the -10 padding put the rail's left
@@ -693,10 +719,18 @@ struct MarketMapView: View {
         let rangeMax = bounds.max
         let density = buildDensityFromSpreads(parsed, rangeMin: rangeMin, rangeMax: rangeMax)
         let zeroPos = posOnRail(0, min: rangeMin, max: rangeMax)
-        let projValue = closestToEvenMargin(parsed)
+        let projValue = Self.closestToEvenMargin(parsed)
 
         var markers: [MapMarker] = []
-        if let pv = projValue {
+        // #3885 — the half cards are the shared-tile half of the issue, and they
+        // were WORSE than the full cards rather than the same: they carried no
+        // lifecycle branch of any kind, so `PRE-GAME` was printed over
+        // `closestToEvenMargin` in every state, settled included. The settled
+        // state is gated here; the label is left as it is in the other two,
+        // because before the off "PRE-GAME" is at least true, and changing it to
+        // the full card's "PROJECTION" is a wording change nobody has
+        // photographed and is not what #3885 asks for.
+        if MarketMapRail.drawsPregameMarker(isDone: isDone), let pv = projValue {
             markers.append(MapMarker(id: "pre", value: pv, type: .pre, label: "PRE-GAME", displayValue: "\(pv > 0 ? hAbbr : aAbbr) +\(String(format: "%.1f", abs(pv)))"))
         }
 
@@ -727,7 +761,10 @@ struct MarketMapView: View {
         let mapUnit = vocab.totalsUnit(quotedBy: outcomes.map(\.marketName))
 
         var markers: [MapMarker] = []
-        if let ou = thresholds.first(where: { abs($0.overProb - 0.5) < 0.1 })?.threshold {
+        // #3885 — as on `halfMarginCard` above: no lifecycle branch existed, so
+        // a settled half total captioned a settlement price `PRE-GAME` too.
+        if MarketMapRail.drawsPregameMarker(isDone: isDone),
+           let ou = thresholds.first(where: { abs($0.overProb - 0.5) < 0.1 })?.threshold {
             markers.append(MapMarker(id: "pre", value: ou, type: .pre, label: "PRE-GAME", displayValue: formatThreshold(ou)))
         }
 
@@ -1085,7 +1122,11 @@ struct MarketMapView: View {
     /// The `isHome ? margin : margin` ternary that used to be the last line was
     /// dead — both branches were the same expression. Deleted rather than left
     /// as a second place the rule could disagree with itself.
-    private func closestToEvenMargin(_ parsed: [SpreadRungs.Rung]) -> Double? {
+    /// #3885 made this `static` and internal — no behaviour change. It never
+    /// referenced `self`, and `SpreadRungTests` was reconstructing its one
+    /// line by hand (`nearestEven`) to assert the tie-break, which is a second
+    /// copy of exactly the rule that produced the bug. Tests now call it.
+    static func closestToEvenMargin(_ parsed: [SpreadRungs.Rung]) -> Double? {
         guard !parsed.isEmpty else { return nil }
         return parsed.min(by: { abs($0.probability - 0.5) < abs($1.probability - 0.5) })!.margin
     }
