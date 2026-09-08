@@ -566,6 +566,34 @@ async def _poll_kalshi_markets():
     # so partial progress always persists and successive runs drain the backlog.
     _task_started = time.monotonic()
     _LOOP_DEADLINE_S = 480.0  # stop ingesting ~2min before soft_time_limit=600
+    # #3192: the last moment a post-loop commence_time repair may START.
+    #
+    # This used to be `_LOOP_DEADLINE_S` as well, and one constant gating both
+    # was the bug: `_task_started` is assigned once and `time.monotonic()` never
+    # decreases, so tripping the ingest deadline closed the repair block
+    # DETERMINISTICALLY — not usually, not probabilistically. Any beat that
+    # reached 480s dropped every commence_time fix, at 14% of beats (7 of the
+    # last 50 measured on 2026-09-06). Ingest kept writing rows dated by a ~14d
+    # settlement backstop while the phase that re-dates them never ran, so open
+    # tennis rows dated >10d out went UP across such a poll (425 -> 463) and a
+    # WTA match played 2026-09-06 stayed filed as 2026-09-20.
+    #
+    # The ingest budget and the repair budget were never the same question. The
+    # loop yields to the deadline because there is always more to ingest and the
+    # next beat resumes from a cursor; the repairs are cheap, idempotent, and
+    # have nothing to resume from except another beat that happens to come in
+    # under budget. Starving them is the worse trade, and there was ~120s of
+    # unused margin below `soft_time_limit=600` to pay for it.
+    #
+    # 540 leaves 60s to the soft limit and 120s to the 660s hard limit for the
+    # last fix-up to finish. That is a TIGHTER worst case than it looks next to
+    # the old 480, because the old gate was checked ONCE, before the first of
+    # five sequential repairs, and never again: a beat entering the block at
+    # 479s could legitimately start its fifth repair well past 540 with no check
+    # at all. Every call site below now re-checks, so the interior gating is new
+    # safety that did not exist before, and it is what makes raising the entry
+    # bound the smaller half of this change rather than the risky one.
+    _POST_LOOP_DEADLINE_S = 540.0
     # #995: the FETCH itself was uncapped and blew the 660s hard limit → SIGKILL
     # before the create loop → a month of zero market creation. Bound the fetch
     # to the first ~240s so the create/process loop (and its incremental commits)
@@ -1495,6 +1523,13 @@ async def _poll_kalshi_markets():
         # that renders on the site and goes stale (KXMLBPLAYOFFS-26 last
         # updated 2026-07-24). `unreached_existing` is the number that
         # confirms or refutes that reading, per beat.
+        # #3192: bound BEFORE the try that assigns it. The post-loop block below
+        # rewrites this report's ring entry, and everything in here is
+        # best-effort by design (its own `except` only warns) — so without this
+        # line a failure anywhere above leaves `_report` unbound and the later
+        # reference raises UnboundLocalError inside the beat's own telemetry,
+        # turning a warned-about instrument failure into a real one.
+        _report = None
         try:
             from app.utils.kalshi_scan_report import (
                 KalshiScanReport,
@@ -1631,52 +1666,140 @@ async def _poll_kalshi_markets():
         # and run AFTER the create commit — deadline-guard them so a slow fix-up
         # can't push the task into the 660s wall. New markets are already
         # persisted; a skipped fix-up resumes next run.
-        if time.monotonic() - _task_started < _LOOP_DEADLINE_S:
+        # The order is load-bearing and is the order of this table:
+        #   * #1088's round-leader fix is deliberately separate from the
+        #     tournament-start fix above it (it targets OPEN round markets).
+        #   * #3403's tennis fix is the same class as golf/hockey — an OPEN
+        #     tennis match market's close_time is a ~14-day settlement backstop,
+        #     so its date is two weeks out until it settles.
+        #   * #3544's refinement is LAST on purpose: the market now holds the
+        #     venue's published hour but the page renders the EVENT, so it must
+        #     read markets that are already on their honest hour.
+        # Being last is also what makes the two tail entries the first casualties
+        # of a tight beat, which is why `post_loop_fixups_skipped` records names
+        # in order rather than a count.
+        # NAMES ONLY, never function references. Each fix-up below is called
+        # DIRECTLY and by name, and it has to stay that way: #3403's and #3544's
+        # wiring guards prove they are reached by AST-scanning this function for
+        # a call to each one, which is what catches "the repair is defined and
+        # nothing invokes it". Folding these five into a table of callables and
+        # looping `await _fix_fn()` passes every test of this function's
+        # BEHAVIOUR while making all four of those guards blind — the calls
+        # disappear from the AST and only `_fix_fn` remains. This tuple is the
+        # skip list for the never-entered case and nothing more.
+        _POST_LOOP_FIXUP_KEYS = (
+            "golf_commence_fixed",
+            "golf_round_dates_fixed",
+            "hockey_commence_fixed",
+            "tennis_commence_fixed",
+            "stand_in_event_starts_refined",
+        )
+        _post_loop_ran: dict = {}
+        _post_loop_skipped: list = []
+        _post_loop_failed: list = []
+
+        def _no_post_loop_budget(_key: str) -> bool:
+            """True when `_key` must be skipped, recording it as a casualty."""
+            if time.monotonic() - _task_started >= _POST_LOOP_DEADLINE_S:
+                _post_loop_skipped.append(_key)
+                return True
+            return False
+
+        # Post-commit: fix commence_time for golf, hockey and tennis markets.
+        # Kalshi sets commence_time = market close_time (resolution date), but
+        # calibration and feed need the actual event start date.
+        # #995 attempt-4: these open their OWN sessions (no statement_timeout)
+        # and run AFTER the create commit — deadline-guard them so a slow fix-up
+        # can't push the task into the 660s wall. New markets are already
+        # persisted; a skipped fix-up resumes next run.
+        # #3192: the guard is `_POST_LOOP_DEADLINE_S`, not the ingest deadline,
+        # and it is re-checked before EVERY call rather than once at the top.
+        if time.monotonic() - _task_started < _POST_LOOP_DEADLINE_S:
             _mark_phase("post_loop")
-            try:
-                golf_fixed = await _fix_golf_commence_times()
-                stats["golf_commence_fixed"] = golf_fixed
-            except Exception as e:
-                logger.warning("Golf commence_time fix failed: %s", e)
-                stats["golf_commence_fixed"] = 0
+            # Each block re-checks the budget and names itself when it is out of
+            # it, so the receipt lists EVERY casualty rather than only the first.
+            if not _no_post_loop_budget("golf_commence_fixed"):
+                try:
+                    golf_fixed = await _fix_golf_commence_times()
+                    stats["golf_commence_fixed"] = golf_fixed
+                    _post_loop_ran["golf_commence_fixed"] = golf_fixed
+                except Exception as e:
+                    logger.warning("Golf commence_time fix failed: %s", e)
+                    stats["golf_commence_fixed"] = 0
+                    _post_loop_failed.append("golf_commence_fixed")
 
             # #1088: per-round dates for round-leader/round-top markets (separate
             # from the tournament-start fix above; OPEN markets only).
-            try:
-                golf_round_fixed = await _fix_golf_round_leader_dates()
-                stats["golf_round_dates_fixed"] = golf_round_fixed
-            except Exception as e:
-                logger.warning("Golf round-leader date fix failed: %s", e)
-                stats["golf_round_dates_fixed"] = 0
+            if not _no_post_loop_budget("golf_round_dates_fixed"):
+                try:
+                    golf_round_fixed = await _fix_golf_round_leader_dates()
+                    stats["golf_round_dates_fixed"] = golf_round_fixed
+                    _post_loop_ran["golf_round_dates_fixed"] = golf_round_fixed
+                except Exception as e:
+                    logger.warning("Golf round-leader date fix failed: %s", e)
+                    stats["golf_round_dates_fixed"] = 0
+                    _post_loop_failed.append("golf_round_dates_fixed")
 
-            try:
-                hockey_fixed = await _fix_hockey_commence_times()
-                stats["hockey_commence_fixed"] = hockey_fixed
-            except Exception as e:
-                logger.warning("Hockey commence_time fix failed: %s", e)
-                stats["hockey_commence_fixed"] = 0
+            if not _no_post_loop_budget("hockey_commence_fixed"):
+                try:
+                    hockey_fixed = await _fix_hockey_commence_times()
+                    stats["hockey_commence_fixed"] = hockey_fixed
+                    _post_loop_ran["hockey_commence_fixed"] = hockey_fixed
+                except Exception as e:
+                    logger.warning("Hockey commence_time fix failed: %s", e)
+                    stats["hockey_commence_fixed"] = 0
+                    _post_loop_failed.append("hockey_commence_fixed")
 
             # #3403: same class as the golf/hockey fix-ups above — an OPEN
             # tennis match market's close_time is a ~14-day settlement
             # backstop, so its date is two weeks out until it settles.
-            try:
-                tennis_fixed = await _fix_tennis_commence_times()
-                stats["tennis_commence_fixed"] = tennis_fixed
-            except Exception as e:
-                logger.warning("Tennis commence_time fix failed: %s", e)
-                stats["tennis_commence_fixed"] = 0
+            if not _no_post_loop_budget("tennis_commence_fixed"):
+                try:
+                    tennis_fixed = await _fix_tennis_commence_times()
+                    stats["tennis_commence_fixed"] = tennis_fixed
+                    _post_loop_ran["tennis_commence_fixed"] = tennis_fixed
+                except Exception as e:
+                    logger.warning("Tennis commence_time fix failed: %s", e)
+                    stats["tennis_commence_fixed"] = 0
+                    _post_loop_failed.append("tennis_commence_fixed")
 
             # #3544: the market now holds the venue's published hour, but the
             # page renders the EVENT. Ordered AFTER the tennis fix-up on
             # purpose — it must read markets already on their honest hour.
-            try:
-                starts_refined = await _refine_stand_in_event_starts()
-                stats["stand_in_event_starts_refined"] = starts_refined
-            except Exception as e:
-                logger.warning("Stand-in event start refinement failed: %s", e)
-                stats["stand_in_event_starts_refined"] = 0
+            if not _no_post_loop_budget("stand_in_event_starts_refined"):
+                try:
+                    starts_refined = await _refine_stand_in_event_starts()
+                    stats["stand_in_event_starts_refined"] = starts_refined
+                    _post_loop_ran["stand_in_event_starts_refined"] = starts_refined
+                except Exception as e:
+                    logger.warning("Stand-in event start refinement failed: %s", e)
+                    stats["stand_in_event_starts_refined"] = 0
+                    _post_loop_failed.append("stand_in_event_starts_refined")
         else:
             stats["post_loop_skipped_deadline"] = True
+            _post_loop_skipped = list(_POST_LOOP_FIXUP_KEYS)
+
+        # #3192: carry the phase's outcome onto the receipt. The report was
+        # saved above for durability (it must survive a SIGKILL taken during
+        # exactly the phase that just ran), so this is an in-place head rewrite
+        # and NOT a second `save_scan_report` — that one ends in `lpush` and
+        # would put two ring entries in for one beat, halving every per-beat
+        # rate a reader computes off the history.
+        if _report is not None:
+            try:
+                from app.utils.kalshi_scan_report import update_scan_report_head
+
+                _report.post_loop_skipped_deadline = bool(
+                    stats.get("post_loop_skipped_deadline")
+                )
+                _report.post_loop_fixups_ran = dict(_post_loop_ran)
+                _report.post_loop_fixups_skipped = list(_post_loop_skipped)
+                _report.post_loop_fixups_failed = list(_post_loop_failed)
+                update_scan_report_head(_report)
+            except Exception as exc:
+                logger.warning(
+                    "poll_kalshi: post-loop receipt update failed: %s", exc
+                )
 
         _mark_phase("done")
 
