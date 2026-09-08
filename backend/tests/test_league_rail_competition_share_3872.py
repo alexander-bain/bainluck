@@ -211,6 +211,22 @@ def test_an_unnamed_row_is_never_held_back():
     assert _names(_share(rows)) == ["x0", "x1", "x2", "x3", "n0", "n1", "n2", "y"]
 
 
+def test_unnamed_rows_are_not_capped_among_themselves():
+    """More unnamed rows than the share, so counting them would be visible.
+
+    Two competitions make the share 4. The six unnamed rows must ALL be taken
+    ahead of the second competition's, because they are six separate absences
+    of evidence and not one six-row group.
+    """
+    rows = (
+        [Row(f"x{i}", "one") for i in range(2)]
+        + [Row(f"n{i}") for i in range(6)]
+        + [Row("y", "two")]
+    )
+    chosen = _names(_share(rows))
+    assert chosen == ["x0", "x1", "n0", "n1", "n2", "n3", "n4", "n5"]
+
+
 # ---------------------------------------------------------------------------
 # the directions a diversity cap gets wrong (gotcha #43, #1091)
 # ---------------------------------------------------------------------------

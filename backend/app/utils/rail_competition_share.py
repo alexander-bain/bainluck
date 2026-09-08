@@ -99,6 +99,16 @@ def equal_share_by_competition(
     # Nothing to share out. Returned by identity of the rule and not by a
     # caller's opt-out, so a league whose venue names one competition -- MLB,
     # NFL, NCAAF -- can never be reshaped by this module. See the header.
+    #
+    # 🔴 The ZERO half is load-bearing and the ONE half is belt-and-braces, and
+    # they are written as one branch because a reader should not have to work
+    # that out. At zero the share below would divide by it: every soccer league
+    # names no competition at all, so that is the common path and not a corner.
+    # At one, `limit // 1` is `limit` and the walk already returns `rows[:limit]`
+    # unchanged -- the branch states the guarantee the arithmetic happens to
+    # keep, so that a future change to how the share is computed cannot quietly
+    # take it away from MLB. A mutant that widens `<= 1` to `<= 0` therefore
+    # survives ON PURPOSE; one that removes the branch outright does not.
     if len(named) <= 1:
         return list(rows[:limit])
 
