@@ -67,6 +67,7 @@ that is counted and giving it a long TTL is the defect above, and
 from __future__ import annotations
 
 import math
+import os
 
 import pytest
 
@@ -136,6 +137,21 @@ class TestTheBoundIsDerivedNotChosen:
             pic.live_artifact_ttl_ceiling_s()
         )
         # The request path — coverable in principle, at a shorter bound.
+        #
+        # ⚠️ THE ONLY ENV-DERIVED TERM IN THIS TEST (integrator/247, on the sha
+        # that shipped it). The other three budgets are literals;
+        # `FEED_TOTAL_BUDGET_MS` is `_env_int("FEED_TOTAL_BUDGET_MS", 25000)`.
+        # Unset — as in CI — this reads 25000 and the arithmetic is `0 < 34 < 39`.
+        # Exported, as anyone running a local latency experiment on the request
+        # budget would, it reddens a test about the SHIPPED constants for a
+        # reason that has nothing to do with the change being tested. The claim
+        # is about what we ship, so it is not asserted about a number the
+        # environment chose.
+        if os.environ.get("FEED_TOTAL_BUDGET_MS"):
+            pytest.skip(
+                "FEED_TOTAL_BUDGET_MS is overridden in this environment; this "
+                "assertion is about the shipped default, not the resolved value"
+            )
         request_budget_s = FEED_TOTAL_BUDGET_MS / 1000.0
         assert 0 < ceiling - request_budget_s - reserve < (
             pic.live_artifact_ttl_ceiling_s()
