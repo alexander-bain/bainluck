@@ -109,7 +109,7 @@ def _install_population(monkeypatch):
     below is outside Tier 2's `except (ValueError, TypeError)`, so the first
     market resolving that way raises `TypeError: can't subtract offset-naive and
     offset-aware datetimes` and takes the WHOLE repair down into
-    `post_loop_fixups_failed`. Filed separately; deliberately not fixed here,
+    `post_loop_fixups_failed`. Filed as #3984 and deliberately not fixed here,
     because changing which tier a market resolves to would change the very
     numbers this ship publishes for the Queue #189 decision.
     """
