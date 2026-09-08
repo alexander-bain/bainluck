@@ -27,6 +27,10 @@ struct CalibrationView: View {
 struct CalibrationSurfaceView: View {
     @ObservedObject var viewModel: CalibrationViewModel
     @Environment(\.horizontalSizeClass) private var sizeClass
+    /// #3954: the Source Comparison columns are measured, and `.caption` resolves
+    /// against THIS, not against the app-level setting — see
+    /// `CalibrationSourceTableGeometry.CellFont.contentSizeCategory`.
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     /// Whether the loaded content is wrapped in a `ScrollView`. Always true in
     /// the app.
@@ -424,32 +428,51 @@ struct CalibrationSurfaceView: View {
 
     // MARK: - Source Comparison
 
+    /// #3954 — the numeric columns, sized against the strings this render will draw.
+    ///
+    /// Computed once for the whole table and handed to all three row kinds, because
+    /// a column only reads as a column if the header, the seven sources and the
+    /// Combined footer all agree on where it starts.
+    private var sourceNumericWidths: CalibrationSourceTableGeometry.NumericWidths {
+        let rows = viewModel.sourceRows
+        return CalibrationSourceTableGeometry.numericWidths(
+            n: [viewModel.formattedCohortOutcomes] + rows.map { fmtN($0.n) },
+            ece: [String(format: "%.1f", viewModel.cohortECE)]
+                + rows.map { metricString($0.ece, "%.1f") },
+            mce: [String(format: "%.1f", viewModel.cohortMCE)]
+                + rows.map { metricString($0.mce, "%.1f") },
+            brier: [String(format: "%.3f", viewModel.cohortBrier)]
+                + rows.map { metricString($0.brier, "%.3f") },
+            typeSize: dynamicTypeSize)
+    }
+
     private var sourceComparisonSection: some View {
-        cardSection("Source Comparison", sub: "How each data source performs independently, sorted by ECE (n-weighted, the headline metric). MCE is the worst-bucket sensitivity number. Lower is better.") {
+        let widths = sourceNumericWidths
+        return cardSection("Source Comparison", sub: "How each data source performs independently, sorted by ECE (n-weighted, the headline metric). MCE is the worst-bucket sensitivity number. Lower is better.") {
             VStack(spacing: 0) {
                 HStack(spacing: 0) {
                     Text("Source").frame(maxWidth: .infinity, alignment: .leading)
-                    Text("N").frame(width: 54, alignment: .trailing)
-                    Text("ECE").frame(width: 48, alignment: .trailing)
-                    Text("MCE").frame(width: 46, alignment: .trailing)
-                    Text("Brier").frame(width: 52, alignment: .trailing)
+                    Text("N").frame(width: widths.n, alignment: .trailing)
+                    Text("ECE").frame(width: widths.ece, alignment: .trailing)
+                    Text("MCE").frame(width: widths.mce, alignment: .trailing)
+                    Text("Brier").frame(width: widths.brier, alignment: .trailing)
                 }
                 .font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
                 .padding(.horizontal, 12).padding(.vertical, 8)
                 Divider()
                 ForEach(viewModel.sourceRows) { row in
-                    sourceRow(row)
+                    sourceRow(row, widths: widths)
                     if row.id != viewModel.sourceRows.last?.id { Divider().padding(.leading, 12) }
                 }
                 Divider()
                 HStack(spacing: 0) {
                     Text("Combined").font(.caption.weight(.semibold)).frame(maxWidth: .infinity, alignment: .leading)
-                    Text(viewModel.formattedCohortOutcomes).frame(width: 54, alignment: .trailing).monospacedDigit()
-                    Text(String(format: "%.1f", viewModel.cohortECE)).frame(width: 48, alignment: .trailing)
+                    Text(viewModel.formattedCohortOutcomes).frame(width: widths.n, alignment: .trailing).monospacedDigit()
+                    Text(String(format: "%.1f", viewModel.cohortECE)).frame(width: widths.ece, alignment: .trailing)
                         .monospacedDigit().foregroundStyle(viewModel.eceColor(viewModel.cohortECE)).fontWeight(.semibold)
-                    Text(String(format: "%.1f", viewModel.cohortMCE)).frame(width: 46, alignment: .trailing)
+                    Text(String(format: "%.1f", viewModel.cohortMCE)).frame(width: widths.mce, alignment: .trailing)
                         .monospacedDigit().foregroundStyle(.secondary)
-                    Text(String(format: "%.3f", viewModel.cohortBrier)).frame(width: 52, alignment: .trailing).monospacedDigit()
+                    Text(String(format: "%.3f", viewModel.cohortBrier)).frame(width: widths.brier, alignment: .trailing).monospacedDigit()
                 }
                 .font(.caption).padding(.horizontal, 12).padding(.vertical, 10)
                 .background(Color.systemGray5.opacity(0.5))
@@ -467,18 +490,22 @@ struct CalibrationSurfaceView: View {
         }
     }
 
-    private func sourceRow(_ row: CalSourceRow) -> some View {
+    private func sourceRow(
+        _ row: CalSourceRow, widths: CalibrationSourceTableGeometry.NumericWidths
+    ) -> some View {
         HStack(spacing: 0) {
-            HStack(spacing: 6) {
-                Circle().fill(sourceColor(row.source)).frame(width: 8, height: 8)
+            HStack(spacing: CalibrationSourceTableGeometry.dotSpacing) {
+                Circle().fill(sourceColor(row.source))
+                    .frame(width: CalibrationSourceTableGeometry.dotDiameter,
+                           height: CalibrationSourceTableGeometry.dotDiameter)
                 Text(row.name).lineLimit(1)
             }.frame(maxWidth: .infinity, alignment: .leading)
-            Text(fmtN(row.n)).frame(width: 54, alignment: .trailing).monospacedDigit()
-            metricText(row.ece, "%.1f").frame(width: 48, alignment: .trailing)
+            Text(fmtN(row.n)).frame(width: widths.n, alignment: .trailing).monospacedDigit()
+            metricText(row.ece, "%.1f").frame(width: widths.ece, alignment: .trailing)
                 .monospacedDigit().foregroundStyle(viewModel.eceColor(row.ece)).fontWeight(.semibold)
-            metricText(row.mce, "%.1f").frame(width: 46, alignment: .trailing)
+            metricText(row.mce, "%.1f").frame(width: widths.mce, alignment: .trailing)
                 .monospacedDigit().foregroundStyle(.secondary)
-            metricText(row.brier, "%.3f").frame(width: 52, alignment: .trailing).monospacedDigit()
+            metricText(row.brier, "%.3f").frame(width: widths.brier, alignment: .trailing).monospacedDigit()
         }
         .font(.caption).padding(.horizontal, 12).padding(.vertical, 10)
         .accessibilityElement(children: .combine)
@@ -493,8 +520,15 @@ struct CalibrationSurfaceView: View {
     /// table sorted "lower is better" read as a perfect score. There is no
     /// number to print here, so none is printed.
     private func metricText(_ value: Double?, _ format: String) -> Text {
-        guard let value else { return Text(verbatim: "\u{2014}") }
-        return Text(String(format: format, value))
+        Text(verbatim: metricString(value, format))
+    }
+
+    /// The same string `metricText` draws, so #3954's column model can measure the
+    /// cell without rendering it. One function, so a column can never be sized
+    /// against a string the table does not print.
+    private func metricString(_ value: Double?, _ format: String) -> String {
+        guard let value else { return "\u{2014}" }
+        return String(format: format, value)
     }
 
     // MARK: - Trading Activity
