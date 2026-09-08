@@ -367,6 +367,28 @@ class TestTheTitleReachesAGridLessPage:
         assert body.get("section_counts", {}).get("championship", {}).get("total") == 1
 
 
+#: The one live head-to-head in the section loop's whole candidate pool
+#: (`2698-F1-FINISH-AHEAD-SCOPE`). Named rather than inlined because the route
+#: arm asserts on the same row, and because a 90-character market name wrapped
+#: inside a list literal reads as a missing comma — to a reviewer and to CodeQL
+#: (`py/implicit-string-concatenation-in-list`).
+SAINZ_V_ALONSO = (
+    "F1: Will Carlos Sainz finish ahead of Fernando Alonso"
+    + " in the 2026 Drivers' Championship?"
+)
+
+#: The same question with the other preposition — "finish ahead AT" — which is
+#: why the pattern is `finish\w*\s+ahead` and not the phrase "finish ahead of".
+VERSTAPPEN_V_LECLERC = (
+    "Formula 1: Who will finish ahead at the 2022 Australian Grand Prix:"
+    + " Max Verstappen or Charles Leclerc?"
+)
+
+HAMILTON_V_VERSTAPPEN = (
+    "Will Lewis Hamilton finish ahead of Max Verstappen" + " in the French Grand Prix?"
+)
+
+
 class TestWhatTheSectionRefuses:
     """Tier 1 is not a synonym for outright. Measured on production 2026-09-08,
     un-filtering this section would have put 42 of `esports_cs2`'s 44 tier-1
@@ -394,14 +416,9 @@ class TestWhatTheSectionRefuses:
             # `event_id IS NULL`, dated 2026-12-06, `category='championship'`.
             # Two drivers compared over a season — no " vs ", no numbered
             # map/game/set — so the #2698 `_is_outright` called it a title.
-            "F1: Will Carlos Sainz finish ahead of Fernando Alonso in the"
-            " 2026 Drivers' Championship?",
-            # The venue writes BOTH prepositions for the same question, which is
-            # why the pattern is `finish\\w*\\s+ahead` and not the phrase.
-            "Formula 1: Who will finish ahead at the 2022 Australian Grand"
-            " Prix: Max Verstappen or Charles Leclerc?",
-            "Will Lewis Hamilton finish ahead of Max Verstappen in the French"
-            " Grand Prix?",
+            SAINZ_V_ALONSO,
+            VERSTAPPEN_V_LECLERC,
+            HAMILTON_V_VERSTAPPEN,
             # The named-relation shape, which reaches tier 5 today but is the
             # same class and must not depend on tier to be refused.
             "Spanish Grand Prix: Head-to-Head",
@@ -441,8 +458,7 @@ class TestWhatTheSectionRefuses:
         a predicate that is right in isolation and unwired serves nothing."""
         h2h = _market(
             market_id=7002,
-            name="F1: Will Carlos Sainz finish ahead of Fernando Alonso in the"
-            " 2026 Drivers' Championship?",
+            name=SAINZ_V_ALONSO,
             category="championship",
         )
         _serve_pool(mock_db, [US_OPEN_MENS, h2h])
