@@ -112,6 +112,40 @@ class TestTheBoundIsDerivedNotChosen:
     def test_it_is_shorter_than_the_default_it_replaces(self):
         assert pic.live_artifact_ttl_ceiling_s() < pic.DEFAULT_TTL_S
 
+    def test_no_single_ttl_could_have_covered_every_path(self):
+        """Why the bound is SCOPED and not universal — as arithmetic, not prose.
+
+        CERT-2244's follow-up asked whether the 39s bound intentionally
+        guarantees only the live rail. It does, and this is the reason: the three
+        paths that can build a live page carry three different budgets, and the
+        largest of them cannot be covered by ANY non-negative TTL. So "scoped" is
+        the only option available, and the live republish rail is the right scope
+        because it is the rail whose passes must publish for the mirror to live.
+
+        Pinned so that if someone later shortens the 120s rail's budget enough to
+        make a universal bound possible, this test is where they find out.
+        """
+        from app.tasks.precompute_category_pages import FEED_PREWARM_PASS_BUDGET_S
+        from app.utils.request_cache import FEED_TOTAL_BUDGET_MS
+
+        ceiling = fc.FEED_RESPONSE_STALE_TTL_LIVE_SECONDS
+        reserve = pic._LIVE_CEILING_ROUNDING_RESERVE_S
+
+        # The live rail — covered, and that IS the bound.
+        assert ceiling - fc.FEED_LIVE_REPUBLISH_BUDGET_S - reserve == (
+            pic.live_artifact_ttl_ceiling_s()
+        )
+        # The request path — coverable in principle, at a shorter bound.
+        request_budget_s = FEED_TOTAL_BUDGET_MS / 1000.0
+        assert 0 < ceiling - request_budget_s - reserve < (
+            pic.live_artifact_ttl_ceiling_s()
+        )
+        # The 120s warm rail — NOT coverable at any non-negative TTL.
+        assert ceiling - FEED_PREWARM_PASS_BUDGET_S - reserve < 0, (
+            "the 120s rail's budget now fits under the ceiling, so a universal "
+            "bound has become possible — reconsider the scoping above"
+        )
+
     def test_only_the_stale_ttl_carries_the_headroom(self):
         """The instrument trap, pinned so the next reader does not repeat it.
 
