@@ -951,6 +951,31 @@ def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
     time in three days, and the second time the `-k` band was named after the
     feature rather than after what the change touches. **A change that adds a
     `beat_schedule` entry runs THIS file, whatever the change is about.**
+
+    🔴 **RE-DERIVED at authority/066 (2026-09-08, #3366 / D50): 120 → 121,
+    explicit 75 → 76.** `stamp-soccer-statpal-fixtures-hourly`
+    (`crontab(minute=6)`, the fifth StatPal stamper) names `background`
+    explicitly, so the fall-through half is UNMOVED at **45** — the benign
+    direction this docstring reserves. Obtained by RUNNING the census below over
+    the assembled schedule, which printed `explicit 76 implicit 45 total 121`,
+    never by adding one to 120 (#1910). The cost declaration — four HTTP reads
+    per pass rather than the siblings' two, and why `background` — is on
+    `BACKGROUND_BEAT_COUNT`, along with the minute census that chose `:06`.
+
+    **Third time in four days, same cause, and the two notes above predicted it
+    verbatim.** The MLB note says this census "lives nowhere near the words a
+    StatPal change would think to select"; the containers note says the `-k`
+    band "was named after the feature rather than after what the change
+    touches". This lane then ran a band of EIGHT terms — `statpal or authority
+    or agreement or tasks_wiring or startup or schedule_adherence or anchor or
+    celery` — 3,145 tests green, and not one of those terms selects a file named
+    after `typeahead`. CI shard 2 went red on `76 == 75`.
+
+    So the lesson is not "use a wider band"; a wider band is what was tried. The
+    sentence in bold immediately above is the rule, and it is cheap to obey:
+    **a change touching `beat_schedule` runs `grep -rl beat_schedule tests/` in
+    addition to its own band.** That selects this file by what it READS, which
+    is the only property a beat change can know in advance.
     """
     from app.tasks import celery_app
     from app.utils.typeahead_beat_budget import BACKGROUND_BEAT_COUNT
@@ -967,9 +992,9 @@ def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
         elif named is None and conf.task_default_queue == "background":
             implicit += 1
 
-    assert explicit == 75, f"explicitly-routed background beats moved: {explicit}"
+    assert explicit == 76, f"explicitly-routed background beats moved: {explicit}"
     assert implicit == 45, f"default-queue fall-through moved: {implicit}"
-    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 120
+    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 121
 
     # ruling 110's two movers are OFF this queue and ON heavy — asserted here
     # too, so a silent revert cannot restore the count without being noticed.

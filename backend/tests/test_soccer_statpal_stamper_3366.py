@@ -55,6 +55,31 @@ JOIN_CORPUS = FIXTURES / "statpal_soccer_join_corpus_20260907.json"
 UTC = timezone.utc
 
 
+def _crontab_minutes(schedule) -> set[int]:
+    """Every minute of the hour a crontab fires on.
+
+    Expanded rather than string-compared because the beat schedule states a
+    minute in three different notations — `6`, `"*/15"`, `"0,30"` — and a guard
+    that only understood the literal form would silently pass a StatPal reader
+    running every fifteen minutes straight through soccer's window.
+    """
+    raw = str(schedule._orig_minute)
+    minutes: set[int] = set()
+    for part in raw.split(","):
+        part = part.strip()
+        if part == "*":
+            return set(range(60))
+        if part.startswith("*/"):
+            minutes.update(range(0, 60, int(part[2:])))
+        elif "-" in part:
+            span, _, step = part.partition("/")
+            lo, _, hi = span.partition("-")
+            minutes.update(range(int(lo), int(hi) + 1, int(step or 1)))
+        else:
+            minutes.add(int(part))
+    return minutes
+
+
 @pytest.fixture(scope="module")
 def daily_body() -> dict:
     return json.loads(DAILY_OFFSET1.read_text())
@@ -241,9 +266,25 @@ class TestTheSoccerLeagueSpec:
             assert spec.sport_key_is_prefix is False
 
     def test_it_is_not_in_LEAGUES_because_LEAGUES_is_keyed_on_OUR_sport_key(self):
-        """Absence with a reason, so it reads as a decision and not an omission."""
+        """Absence with a reason, so it reads as a decision and not an omission.
+
+        This absence used to carry a second meaning — soccer had no runner and
+        no beat entry — and that half is now false: it runs hourly at :06. What
+        survives is the narrow reason, which is about KEYS and nothing else.
+        `LEAGUES` is keyed on our `sports.key`; `SOCCER.sport_key` is `"soccer"`,
+        a StatPal-side prefix spanning ~40 of ours. Being scheduled did not give
+        soccer a key this dict could hold, so this assertion is unchanged while
+        the sentence next to it is not.
+        """
         assert not any(k.startswith("soccer") for k in task.LEAGUES)
         assert set(task.LEAGUES) == {"basketball_nba", "icehockey_nhl", "baseball_mlb"}
+        assert task.SOCCER.sport_key_is_prefix is True
+        # The half that is now false, pinned in its true direction so this test
+        # can never again be read as "soccer does not run".
+        from app.tasks import celery_app
+
+        scheduled = {e["task"] for e in celery_app.conf.beat_schedule.values()}
+        assert "app.tasks.stamp_soccer_statpal_fixtures" in scheduled
 
     def test_every_spec_names_a_pair_rule_and_a_fold(self):
         """`LeagueSpec.pair_rule` has NO default, so a half-configured sport
@@ -692,30 +733,104 @@ class TestTheSoccerJoinStrategy:
 
 
 class TestTheSoccerRunnerPlansRatherThanWrites:
-    """`apply` defaults to False here and True on the other three (D51)."""
+    """Soccer writes on a beat now, and the plan mode it was born in still works.
 
-    def test_the_soccer_runner_defaults_to_plan_only(self):
+    These two tests are the RETIRED form of the pair that pinned soccer dark.
+    They used to assert `apply is False` and "not scheduled", each with the
+    condition for lifting it written into the assertion message: soccer had
+    never run against production, so its first pass owed a receipt rather than
+    a beat entry (D51). That receipt was paid on 2026-09-08 — plan (1203
+    fixtures, 116 would-write, 0 ambiguous), backup (1,281 rows of pre-image),
+    apply (116 stamped), and a verification read against the DATABASE showing
+    116 anchors where there had been zero, 116 distinct events, 0 phantoms.
+
+    So the assertions invert rather than disappear. What must not be lost with
+    them is the property they were protecting, which was never "soccer does not
+    write" but "soccer does not write UNPLANNED" — that is
+    `test_a_plan_pass_that_FINDS_work_still_writes_nothing` below, which drives
+    the whole runner and is the guard that still has teeth.
+    """
+
+    def test_the_soccer_runner_applies_like_its_four_siblings(self):
         import inspect
 
-        soccer = inspect.signature(task._run_stamp_soccer_statpal_fixtures)
-        assert soccer.parameters["apply"].default is False
         for fn in (
+            task._run_stamp_soccer_statpal_fixtures,
             task._run_stamp_nba_statpal_fixtures,
             task._run_stamp_nhl_statpal_fixtures,
             task._run_stamp_mlb_statpal_fixtures,
         ):
             assert inspect.signature(fn).parameters["apply"].default is True
 
-    def test_the_celery_task_defaults_to_plan_only_and_is_not_scheduled(self):
+    def test_the_celery_task_is_scheduled_hourly_clear_of_every_statpal_reader(self):
+        """The beat entry, and the reason its minute is the one it is.
+
+        Asserting only "soccer is scheduled" would pass on any minute, including
+        the ones the census ruled out. Soccer's soft limit is 300s where its
+        siblings' is 240s, so the claim being pinned is about the WINDOW a pass
+        can occupy, not the minute it starts on: no StatPal reader of any kind
+        may fire inside :06–:11, and the pass may not reach the settlement
+        sweep's :31–:47.
+        """
+        from celery.schedules import crontab
+
         from app.tasks import celery_app
 
         name = "app.tasks.stamp_soccer_statpal_fixtures"
         assert name in celery_app.tasks
-        scheduled = {entry["task"] for entry in celery_app.conf.beat_schedule.values()}
-        assert name not in scheduled, (
-            "soccer has never run against production; its first pass owes a "
-            "receipt, not a beat entry (D51)"
+
+        entries = {
+            key: entry
+            for key, entry in celery_app.conf.beat_schedule.items()
+            if entry["task"] == name
+        }
+        assert len(entries) == 1, f"expected exactly one soccer beat entry, got {entries}"
+        entry = next(iter(entries.values()))
+        assert entry["options"]["queue"] == "background"
+
+        schedule = entry["schedule"]
+        assert isinstance(schedule, crontab)
+        assert str(schedule._orig_minute) == "6"
+        assert str(schedule._orig_hour) == "*", "hourly, like the four siblings"
+
+        window = {(6 + k) % 60 for k in range(6)}
+        assert not window & set(range(31, 48)), (
+            "a 300s pass must not reach the settlement sweep's :31-:47"
         )
+
+        # The beat entry passes no kwargs, so what it WRITES is decided by the
+        # Celery task's own default — a different object from the runner
+        # asserted above, and the one the scheduler actually calls. Flipping it
+        # back to False would leave a scheduled, green, hourly task that stamps
+        # nothing, which is the silent shape: soccer simply stops gaining
+        # anchors and no gate anywhere goes red.
+        assert "kwargs" not in entry or not entry.get("kwargs"), (
+            "the beat passes kwargs now, so the task default is no longer what "
+            "decides whether this pass writes — assert the kwargs instead"
+        )
+        import inspect
+
+        assert (
+            inspect.signature(celery_app.tasks[name].run).parameters["apply"].default
+            is True
+        )
+
+        # Every OTHER StatPal reader must sit outside the window soccer occupies.
+        for key, other in celery_app.conf.beat_schedule.items():
+            if key in entries or "statpal" not in other["task"]:
+                continue
+            other_schedule = other["schedule"]
+            if not isinstance(other_schedule, crontab):
+                # `sync-statpal-livescores` runs on a raw interval, not a
+                # crontab, so there is no minute to be clear OF — it overlaps
+                # everything by construction and is not what this guard is about.
+                continue
+            fires = _crontab_minutes(other_schedule)
+            assert not (fires & window), (
+                f"{key} fires at {sorted(fires & window)}, inside soccer's "
+                f":06-:11 window — the census picked :06 because no StatPal "
+                f"reader does"
+            )
 
     @pytest.mark.asyncio
     async def test_a_plan_pass_that_FINDS_work_still_writes_nothing(self, monkeypatch):
@@ -821,3 +936,150 @@ class TestTheSoccerRunnerPlansRatherThanWrites:
         # is its `statpal_id_space` collapse, and this is their first reader.
         assert anchors_w[0]["key"].source_id == "soccer:9544921"
         assert anchors_w[0]["key"].source == "statpal"
+
+    @pytest.mark.asyncio
+    async def test_an_unattended_pass_names_itself_so_one_hour_can_be_undone(
+        self, monkeypatch
+    ):
+        """`SOCCER-BEAT-RUN-ID-GUARD-3366`.
+
+        Soccer writes hourly and unattended, with the loosest matcher of the five
+        stampers, so every pass has to be nameable: the undo
+        (`restore --identity <id> --apply`) finds its rows by
+        `claim_context->>'apply_run_id'` and can do nothing for a pass that never
+        wrote one. The three siblings pass `None` here — the shared runner calls
+        them "the beat-driven leagues, which have no undo" — so this is soccer's
+        own property and a regression to the sibling behaviour would be silent:
+        the anchors would still be written, correctly, and simply stop being
+        reversible.
+
+        Three claims, and the last two are what stop the first from being
+        cosmetic: the id exists, it is in the BEAT namespace rather than the
+        script's `:apply:` one, and an explicitly supplied id is left alone.
+        """
+        start = datetime(2026, 9, 8, 19, 0, tzinfo=UTC)
+        fixture = _fixture(
+            "2026090812079", "Wrexham AFC", "Cardiff", start, fallback="9544921"
+        )
+        rows = [(1, "Wrexham", "Cardiff City", start, None, "scheduled")]
+
+        async def _drive(**kwargs):
+            contexts: list[dict] = []
+
+            class _Result:
+                rowcount = 1
+
+                def fetchall(self):
+                    return list(rows)
+
+            class _Session:
+                async def execute(self, statement, params=None):
+                    return _Result()
+
+                async def commit(self):
+                    return None
+
+                async def rollback(self):
+                    return None
+
+            @asynccontextmanager
+            async def _session():
+                yield _Session()
+
+            import app.tasks.base as task_base
+
+            monkeypatch.setattr(task_base, "get_task_session", _session)
+
+            async def _schedule(sport, day_offset=None):
+                return [fixture] if day_offset == 1 else []
+
+            monkeypatch.setattr(
+                task,
+                "get_statpal_service",
+                lambda: SimpleNamespace(
+                    get_schedule_fixtures=_schedule,
+                    get_live_fixtures=lambda sport: _empty(),
+                    close=_empty,
+                ),
+            )
+
+            async def _record_anchor(_s, *, event_id, key, claim_context=None):
+                contexts.append(claim_context or {})
+                return SimpleNamespace(outcome=WROTE)
+
+            monkeypatch.setattr(task, "record_anchor", _record_anchor)
+
+            summary = await task._run_stamp_soccer_statpal_fixtures(
+                now=start, **kwargs
+            )
+            return summary, contexts
+
+        async def _empty():
+            return []
+
+        summary, contexts = await _drive(apply=True)
+        assert summary["stamped"] == 1, "no write happened, so there is no id to read"
+        assert len(contexts) == 1
+        run_id = contexts[0].get("apply_run_id")
+        assert run_id, (
+            "an unattended soccer pass wrote an anchor with no `apply_run_id`; "
+            "`restore --identity` can never reach it"
+        )
+        assert run_id == f"{task.BEAT_RUN_ID_PREFIX}:20260908T190000Z"
+
+        # The namespace, not just the prefix constant: the script refuses a
+        # `:backup:` identity by name and reads `:apply:` as an attended write,
+        # so a beat pass must be neither.
+        assert run_id.startswith("authority:soccer_statpal_stamp:beat:")
+        assert ":apply:" not in run_id and ":backup:" not in run_id
+
+        # An operator's explicit id is never overridden — `cmd_apply` supplies
+        # its own and the two namespaces have to stay distinguishable.
+        _, operator = await _drive(
+            apply=True, apply_run_id="authority:soccer_statpal_stamp:apply:XYZ"
+        )
+        assert operator[0]["apply_run_id"] == (
+            "authority:soccer_statpal_stamp:apply:XYZ"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_plan_pass_mints_no_run_id_because_it_names_no_writes(
+        self, monkeypatch
+    ):
+        """A plan pass must reach the runner with `apply_run_id=None`.
+
+        Minting one unconditionally is invisible in behaviour — a plan writes
+        nothing either way — which is exactly why it needs a guard rather than
+        an argument. The cost lands later: an id that names zero writes is one
+        an operator can pass to `restore --identity`, and the restore will
+        cheerfully report zero rows reversed. "It returned" is not "it worked"
+        (gotcha #53), and a zero-row undo that reads as success is the worst
+        shape for a safety line to take.
+
+        This spies on the delegation rather than on `record_anchor`, because in
+        a plan pass no anchor is ever recorded and so there is nothing there to
+        read — the absence being tested has to be observed where the value is
+        passed, not where it would have been used.
+        """
+        seen: list[dict] = []
+
+        async def _spy(spec, *, apply, now=None, apply_run_id=None):
+            seen.append(
+                {"spec": spec, "apply": apply, "apply_run_id": apply_run_id}
+            )
+            return {}
+
+        monkeypatch.setattr(task, "_run_stamp_v1_statpal_fixtures", _spy)
+        now = datetime(2026, 9, 8, 19, 0, tzinfo=UTC)
+
+        await task._run_stamp_soccer_statpal_fixtures(apply=False, now=now)
+        assert seen[-1]["apply_run_id"] is None, (
+            "a plan pass minted a run id; it names no writes and a restore on "
+            "it would report zero rows reversed as though it had worked"
+        )
+
+        # The control: the same call path DOES mint when it is going to write,
+        # so the assertion above cannot be passing because minting is broken.
+        await task._run_stamp_soccer_statpal_fixtures(apply=True, now=now)
+        assert seen[-1]["apply_run_id"] == f"{task.BEAT_RUN_ID_PREFIX}:20260908T190000Z"
+        assert seen[-1]["spec"] is task.SOCCER
