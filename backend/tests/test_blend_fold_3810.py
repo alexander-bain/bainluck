@@ -331,24 +331,15 @@ class TestFoldedProbabilitySources:
 # whole ship vanishes with every test above still green. That is the trap
 # CERT-2208 blocked Fold B for, so these drive the real route.
 
-#: The blend fold's exact projection. Matched with `startswith`: `select(Event)`
-#: also mentions `events.home_team_name`, so a looser test captures the route's
-#: own entity lookup and `get_event` 404s on its own event.
-#:
-#: 🔴 Note the adjacency: this string EXTENDS `test_series_fold_3810`'s
-#: `SERIES_FOLD_SELECT`, so a rig that has to tell the two apart must test this
-#: longer one FIRST. Nothing does today — the series fold lives in
-#: `get_event_odds_history` and this one in `get_event` — but a future rig
-#: driving both routes would silently route one into the other's arm.
-BLEND_FOLD_SELECT = (
-    "SELECT events.id, events.home_team_name, events.away_team_name, "
-    "events.win_probability_sources"
-)
-
-
-def is_blend_fold(sql: str) -> bool:
-    """True when this statement is `folded_probability_sources`' lookup."""
-    return " ".join(sql.split()).startswith(BLEND_FOLD_SELECT)
+#: The blend fold's exact projection, and the predicate for it, now live in
+#: `test_series_fold_3810` — the rig-support module the history-route rigs
+#: already import. The adjacency this comment used to warn about ("a future rig
+#: driving both routes would silently route one into the other's arm") stopped
+#: being hypothetical with the #3911 repair, which put both folds on
+#: `get_event_odds_history`: it cost four red tests in that module. The fix is
+#: at the source — `is_series_fold` is now EXCLUSIVE of this projection — so a
+#: rig inherits the distinction instead of having to know about it.
+from tests.test_series_fold_3810 import is_blend_fold  # noqa: E402
 
 
 class _Result:

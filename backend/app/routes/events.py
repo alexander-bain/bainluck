@@ -13515,9 +13515,43 @@ async def get_event_odds_history(
         pass
 
     # ── UX-P003 / #3714: pin the blend line's right edge to the point-in-time blend ──
+    #
+    # ── #3911 repair, `HERO-BLEND-FOLD-CHART-PIN-PARITY-3911` ────────────────
+    #
+    # The pin exists to serve standing ruling #1 — card == hero == chart, one
+    # number per question — by making the right edge BE the point-in-time blend
+    # every other surface renders. Fold A moved that blend onto the twins'
+    # readings in `get_event`; this call still read the raw canonical row, so on
+    # a tagged pair the two numbers the fold was meant to reconcile came apart
+    # again at the same minute. Canonical polymarket 0.60 with an aligned twin's
+    # kalshi 0.40 gives a hero of 0.40 over an edge pinned to 0.60: two numbers,
+    # one screen, 20 rendered points apart — #3898's shape, rebuilt by the fix
+    # for its sibling.
+    #
+    # The SAME view the hero is computed from, so the two agree by construction
+    # rather than by two call sites remembering to. Orientation is checked
+    # inside `folded_probability_sources` for the reason it always is: a
+    # `win_probability_sources` entry is a HOME probability whose meaning comes
+    # from its own row's `home_team_name`.
+    #
+    # Bought only when there is a line to pin. `_pin_blend_edge` returns
+    # immediately on an empty `aggregate_line` (single-source charts, and every
+    # event with no win-prob series at all), and those must not pay a lookup for
+    # a pin that cannot fire.
+    pin_event = event
+    if aggregate_line:
+        from app.utils.proven_duplicates import (
+            FoldedBlendView,
+            folded_probability_sources,
+        )
+
+        pin_event = FoldedBlendView(
+            event, await folded_probability_sources(db, event)
+        )
+
     _pin_blend_edge(
         aggregate_line,
-        event,
+        pin_event,
         is_live=(not is_finished and (event.status or "").lower() == "live"),
         is_finished=is_finished,
         now=now,
