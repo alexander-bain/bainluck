@@ -102,12 +102,45 @@ final class DailyChallengeQuestionTests: XCTestCase {
     // MARK: - 2. The title printed twice
 
     func testAnEventWithNoFeedHeadlineNoLongerPrintsOneStringTwice() throws {
-        // THE PHOTOGRAPHED STATE. Before #3858 both lines read
-        // "Milwaukee Brewers vs Chicago Cubs", because `headline` fell back to the
-        // string `subject` was built from.
+        // THE PHOTOGRAPHED STATE. Before #3858 both lines read the same fixture
+        // name, because `headline` fell back to the string `subject` was built
+        // from. #3869 then flipped that fallback to AWAY-HOME, so the expected
+        // string here is the away side first — see
+        // `testTheFallbackHeadlineReadsAwayThenHome` below for why.
         let q = try XCTUnwrap(DailyChallengeViewModel.question(from: try brewersCubs()))
-        XCTAssertEqual(q.headline, "Milwaukee Brewers vs Chicago Cubs")
+        XCTAssertEqual(q.headline, "Chicago Cubs vs Milwaukee Brewers")
         XCTAssertNotEqual(q.subject, q.headline)
+    }
+
+    // MARK: - 2b. …and it reads away-home, like every other surface (#3869)
+
+    func testTheFallbackHeadlineReadsAwayThenHome() throws {
+        // #3869. One card, two surfaces, opposite orders: the phone printed
+        // "Milwaukee Brewers vs Chicago Cubs" (HOME first) for the very fixture
+        // web renders "Chicago Cubs vs Milwaukee Brewers"
+        // (`frontend/app/daily/page.tsx:156`). The convention is not a coin toss —
+        // ``EventState/suspendedSummary``'s doc comment states it outright, and
+        // this screen was the only place in the app that disagreed.
+        //
+        // Asserted as a whole string rather than a `hasPrefix`, so that swapping
+        // the two interpolations back cannot pass by accident.
+        let q = try XCTUnwrap(DailyChallengeViewModel.question(from: try brewersCubs()))
+        XCTAssertEqual(q.headline, "Chicago Cubs vs Milwaukee Brewers",
+                       "the fallback headline must read {away} vs {home}")
+    }
+
+    func testTheAwayFirstHeadlineDidNotMoveTheSideThePriceBelongsTo() throws {
+        // 🔴 THE REGRESSION #3869 COULD EASILY HAVE SHIPPED. `probability` is the
+        // HOME probability, so the subject must keep naming the HOME side even
+        // though the headline now leads with the away one. Anyone "tidying" these
+        // two lines into the same order inverts #3858's ship — the card would
+        // show the home price under the away team's name, which a reader cannot
+        // detect. Pinned together, in one test, precisely because the two strings
+        // now disagree on purpose and that looks like a bug to a future editor.
+        let q = try XCTUnwrap(DailyChallengeViewModel.question(from: try brewersCubs()))
+        XCTAssertEqual(q.headline, "Chicago Cubs vs Milwaukee Brewers")
+        XCTAssertEqual(q.subject, "Milwaukee Brewers to win")
+        XCTAssertEqual(q.probability, 0.56, accuracy: 0.0001)
     }
 
     func testAHeadlineThatAlreadySaysItDropsTheSubjectRatherThanRepeatIt() throws {
