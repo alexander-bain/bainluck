@@ -300,6 +300,86 @@ async def game_markets_client():
 
 
 @pytest.fixture
+async def upcoming_event_detail_client():
+    """Client with a seeded event that has NOT started yet (#3922).
+
+    Everything about it matches ``event_detail_client``'s specimen except the two
+    columns ``_maybe_set_opening_odds`` guards on, which is the whole comparison:
+    that fixture is ``live`` with a start an hour past, so its ``opening_*`` has
+    frozen and ``test_optional_nested_detail_blocks`` asserts the route serves it.
+    This one is still scheduled, so the same column is still being rewritten on
+    every poll and the route must withhold it.
+
+    A distinct event id, and the detail cache cleared: ``/api/events/{id}`` keys
+    an in-process payload cache by id, so reusing id 1 would serve this test the
+    other fixture's banked body and it would pass on a stale payload.
+    """
+    from app.main import app
+    from app.routes.events import _event_detail_cache, _game_markets_cache
+
+    _game_markets_cache.clear()
+    _event_detail_cache.clear()
+
+    event = _make_event(
+        id=6, home_team="Celtics", away_team="76ers", status="scheduled"
+    )
+    # Relative to the clock, never an absolute date: a literal future stamp is a
+    # fixture that goes red on its own anniversary (gotcha #44).
+    event.commence_time = datetime.now(timezone.utc) + timedelta(hours=8)
+    event.home_score = None
+    event.away_score = None
+    mock_session = _make_event_detail_session(event=event)
+
+    async def _mock_get_db():
+        yield mock_session
+
+    async def _mock_get_optional_user():
+        return None
+
+    app.dependency_overrides[get_db] = _mock_get_db
+    app.dependency_overrides[get_db_rw] = _mock_get_db
+    app.dependency_overrides[get_optional_user] = _mock_get_optional_user
+
+    with patch("app.main.init_db", new_callable=AsyncMock):
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as ac:
+            yield ac
+
+    _game_markets_cache.clear()
+    _event_detail_cache.clear()
+    app.dependency_overrides.clear()
+
+
+class TestUpcomingEventDetailWithholdsTheOpening:
+    """#3922 — the hero's "Opened X – Y" line and its "since open" arrow.
+
+    Both frontend blocks are gated on a non-null opening, so withholding the
+    object is what removes the two sentences. Measured on production 2026-09-08:
+    ``/events/15306813`` printed "Opened 24% – 76%" and "−2% Shelton since open"
+    while the books had actually opened him at 26.99% and the real move was −5pp.
+    """
+
+    async def test_an_upcoming_event_serves_no_opening_odds(
+        self, upcoming_event_detail_client
+    ):
+        resp = await upcoming_event_detail_client.get("/api/events/6")
+        body = resp.json()
+
+        assert resp.status_code == 200
+        assert "opening_odds" not in body, (
+            "the route published a pregame consensus that is still being "
+            "rewritten on every poll, which the page renders as an opening"
+        )
+        # THE CONTROL. Withholding the claim must not withhold the number it was
+        # sitting under — a change that blanked the hero would satisfy the
+        # assertion above and ship an empty page.
+        assert body["id"] == 6
+        assert body.get("hero_probability") is not None
+
+
+@pytest.fixture
 async def settled_game_markets_client():
     """Client with a COMPLETED event + a player-prop market, seeded with a
     production-shaped box score so the endpoint grades the prop (Queue #190

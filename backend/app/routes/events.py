@@ -29,6 +29,7 @@ from app.services.anchor_channel import (
     resolve_market_born_duplicate,
 )
 from app.utils.sport_keys import SPORT_PREFIX_TO_LLM_CATEGORY
+from app.utils.prematch_reading import opening_consensus_has_frozen
 from app.utils.prop_window import prop_window_closed
 from app.utils.event_rails import (
     live_first_order,
@@ -9105,7 +9106,18 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
         }
 
     # Include opening odds in event detail response for frontend fallback
-    if event.opening_home_probability is not None:
+    #
+    # ONLY ONCE THE PREGAME CONSENSUS HAS FROZEN (#3922). This object is what the
+    # hero's "Opened 24% – 76%" line and its "−2% Shelton since open" arrow are
+    # built from, and before the match starts `Event.opening_*` is still being
+    # rewritten on every poll — so both sentences described the books' price NOW.
+    # Measured 2026-09-08: the page said Shelton opened at 24% when the books
+    # opened him at 26.99%, and called −5pp of real movement −2%. The frontend
+    # already gates both blocks on a non-null opening, so withholding the object
+    # removes the claim without touching the level above it.
+    if event.opening_home_probability is not None and opening_consensus_has_frozen(
+        event.commence_time, event.status, datetime.now(timezone.utc)
+    ):
         response["opening_odds"] = {
             "home_probability": float(event.opening_home_probability),
             "away_probability": float(event.opening_away_probability) if event.opening_away_probability else round(1.0 - float(event.opening_home_probability), 4),
@@ -15473,7 +15485,15 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
     }
 
     # Include opening odds for transparency
-    if event.opening_home_probability:
+    #
+    # #3922, same rule as `get_event`: before the match starts `Event.opening_*`
+    # is this poll's book consensus, not an opening. The list formatter feeds the
+    # cards that print "Opened X/Y", so it withholds on the same predicate rather
+    # than growing its own — a card and the page it opens must not disagree about
+    # whether a match has an opening (the #3903 family's whole subject).
+    if event.opening_home_probability and opening_consensus_has_frozen(
+        event.commence_time, event.status, datetime.now(timezone.utc)
+    ):
         response["opening_odds"] = {
             "home_probability": float(event.opening_home_probability),
             "away_probability": float(event.opening_away_probability) if event.opening_away_probability else None,

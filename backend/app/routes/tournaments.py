@@ -35,6 +35,7 @@ from app.services import get_db
 from app.utils.hero_probability import blend_provenance, resolve_hero
 from app.utils.latest_observation import load_latest_observed_at
 from app.utils.market_liquidity import grade_liquidity
+from app.utils.prematch_reading import opening_consensus_has_frozen
 from app.utils.proven_duplicates import (
     FoldedBlendView,
     folded_probability_sources_batch,
@@ -686,6 +687,11 @@ async def _load_blends(
                 Event.home_team_name,
                 Event.away_team_name,
                 Event.status,
+                # #3922: `opening_consensus_has_frozen` needs BOTH of the
+                # writer's guards. `status` alone answers "scheduled" for a
+                # fixture whose start time has passed but whose status has not
+                # been advanced yet, and that row's opening HAS frozen.
+                Event.commence_time,
                 Event.home_score,
                 Event.away_score,
                 Event.completed_at,
@@ -711,6 +717,11 @@ async def _load_blends(
     # of it. Today's US Open hub carries 8 linked rows, measured at ~5 ms.
     folded_sources = await folded_probability_sources_batch(session, rows)
 
+    # ONE clock for the whole batch (#3922). Read per row, two fixtures starting
+    # in the same second could land on opposite sides of the freeze, and the hub
+    # would print an opening on one and withhold it on the other for no reason a
+    # reader could see.
+    now = datetime.now(timezone.utc)
     blends: dict[int, dict[str, Any]] = {}
     for row in rows:
         # A `Row` answers `getattr` for every column selected above, which is the
@@ -734,6 +745,21 @@ async def _load_blends(
         # class of lie as printing the wrong percentage (#3810's "they are one
         # ship" note).
         source_count, _freshest = blend_provenance(view)
+        # Read once per row, beside the `float()` coercions it gates, so the two
+        # sides of one opening can never be decided by two different answers.
+        if opening_consensus_has_frozen(row.commence_time, row.status, now):
+            open_home = (
+                float(row.opening_home_probability)
+                if row.opening_home_probability is not None
+                else None
+            )
+            open_away = (
+                float(row.opening_away_probability)
+                if row.opening_away_probability is not None
+                else (round(1.0 - open_home, 6) if open_home is not None else None)
+            )
+        else:
+            open_home = open_away = None
         blends[int(row.id)] = {
             "home_name": row.home_team_name,
             "away_name": row.away_team_name,
@@ -745,20 +771,19 @@ async def _load_blends(
             # number so the two can never come from different bases — the mixed
             # basis is what inverted #3903's arrow, and shipping them as one
             # object is what makes mixing them take deliberate effort.
-            "opening_home_probability": (
-                float(row.opening_home_probability)
-                if row.opening_home_probability is not None
-                else None
-            ),
-            "opening_away_probability": (
-                float(row.opening_away_probability)
-                if row.opening_away_probability is not None
-                else (
-                    round(1.0 - float(row.opening_home_probability), 6)
-                    if row.opening_home_probability is not None
-                    else None
-                )
-            ),
+            #
+            # ...AND ONLY ONCE IT HAS STOPPED MOVING (#3922). `Event.opening_*`
+            # is the LAST PREGAME consensus, rewritten on every poll until the
+            # match starts, so before the freeze it is the books' price NOW.
+            # Publishing it then gave the hub "Frances Tiafoe opened at 58%" over
+            # a 56.9% open, and an arrow measuring `blend_now − books_now` rather
+            # than movement. Withholding the pair routes this row through
+            # `orient_event_blend`'s existing `BLEND_HAS_NO_OPEN` branch, which
+            # already publishes the event's current pair and clears the venue's
+            # opening and move (CERT-2251/2252) — the level is unaffected, only
+            # the claim about where it came from.
+            "opening_home_probability": open_home,
+            "opening_away_probability": open_away,
         }
     return blends
 

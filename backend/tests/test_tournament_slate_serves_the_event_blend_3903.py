@@ -72,6 +72,7 @@ the weather.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -108,6 +109,18 @@ def _event(**overrides):
         "home_team": "Clara Burel",
         "away_team": "Yexin Ma",
         "status": "scheduled",
+        # ALREADY STARTED, so `Event.opening_*` has frozen and the loader may
+        # publish it (#3922). This file's subject is the NAME mapping, and a
+        # fixture sitting on the wrong side of that gate would make every
+        # assertion below depend on a rule it is not testing. `scheduled` with a
+        # start already past is the real state the `commence_time` column was
+        # added to catch — the status advance lags the first ball.
+        #
+        # A fixed past instant rather than an offset from `now`: this one may
+        # never expire, because a date in the past stays in the past (the
+        # reverse — a fixed FUTURE stamp — is the fixture that goes red on its
+        # own anniversary, and #3922's own pre-start tests use offsets for it).
+        "commence_time": datetime(2026, 9, 7, 17, 0, tzinfo=timezone.utc),
         "home_score": None,
         "away_score": None,
         "completed_at": None,
@@ -414,6 +427,8 @@ ROW_KEYS = (
     "id",
     *NAME_COLUMNS,
     "status",
+    # #3922: the loader now needs BOTH of the writer's freeze guards.
+    "commence_time",
     "home_score",
     "away_score",
     "completed_at",

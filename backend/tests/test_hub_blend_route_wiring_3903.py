@@ -146,13 +146,27 @@ class _Session:
         )
 
 
-def _event_columns() -> dict[str, Any]:
-    """The `events` row behind the hero, in the columns `resolve_hero` reads."""
+def _event_columns(*, commence_time: datetime | None = None) -> dict[str, Any]:
+    """The `events` row behind the hero, in the columns `resolve_hero` reads.
+
+    ``commence_time`` defaults to a fixture that has NOT started, which is the
+    production state this file was captured from and — since #3922 — the state
+    in which ``Event.opening_*`` is still being rewritten and may not be
+    published. Passed as an OFFSET from the current clock, never as the absolute
+    ``2026-09-08T21:30Z`` the ESPN stub carries: a fixed future stamp is a
+    fixture with an expiry date on it, and this one would flip sides of the gate
+    silently the next day and take the whole file red with it.
+    """
     return {
         "id": EVENT_ID,
         "home_team_name": HOME,
         "away_team_name": AWAY,
         "status": "scheduled",
+        "commence_time": (
+            commence_time
+            if commence_time is not None
+            else datetime.now(timezone.utc) + timedelta(hours=8)
+        ),
         "home_score": None,
         "away_score": None,
         "completed_at": None,
@@ -312,13 +326,26 @@ async def test_the_route_serves_the_event_number_on_a_linker_only_row(wired):
     assert row["pairing_source"] == "scoreboard"
     assert row["event_id"] == EVENT_ID
     assert row["price_basis"] == PRICE_BASIS_BLEND
-    assert row["blend_refusal"] is None
+    # `BLEND_HAS_NO_OPEN`, not `None`, since #3922 — read it with `price_basis`
+    # exactly as `orient_event_blend` documents: `blend` + this refusal is "the
+    # event's number, no arrow", which is the whole state this row is in. The
+    # LEVEL is still the event's, and that is what this test is about.
+    assert row["blend_refusal"] == "BLEND_HAS_NO_OPEN"
     assert row["sides"][0]["probability"] == pytest.approx(EVENT_NOW)
     # And it is genuinely not the venue's number, on the level...
     assert row["sides"][0]["probability"] != pytest.approx(VENUE_NOW)
-    # ...nor on the direction: the venue moved DOWN, the event has not moved.
+    # ...nor on the direction: the venue moved DOWN, and the row shows no arrow.
     assert VENUE_NOW - VENUE_OPEN < 0
-    assert row["sides"][0]["move"] == pytest.approx(0.0)
+    #
+    # THIS ASSERTION USED TO READ `== approx(0.0)` (#3922). The flat arrow was
+    # not a property of the market — `EVENT_NOW == EVENT_OPEN` here because both
+    # are 0.2381, the betting consensus, which `Event.opening_*` was tracking
+    # live rather than recording at the open. This fixture has not started, so
+    # the opening is withheld and the row states no movement instead of stating
+    # that there was none. The LEVEL assertions above are untouched, which is
+    # the split that keeps this test #3903's and not #3922's.
+    assert row["sides"][0]["move"] is None
+    assert row["sides"][0]["opening_probability"] is None
 
 
 async def test_the_route_asks_the_database_for_the_id_only_the_linker_knew(wired):
