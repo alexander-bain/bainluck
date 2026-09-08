@@ -208,6 +208,48 @@ class TestAMatchWithSomethingToShowKeepsTheTop:
         assert _order_under(live_first_order(NOW), rows)[0] == 91
 
 
+class TestWhatTheDemotionCostsAndWhereItStops:
+    """§3 — the consequence, stated as a test rather than left to be discovered.
+
+    🔴 A DEMOTION PAST THE CAP IS A DISAPPEARANCE FROM THE RAIL, and the rail
+    declares its cap in words rather than offering an expander
+    (`LeagueGameRail`: "Showing the next 8 — more exist"). Simulated against
+    production rows on 2026-09-08, `tennis_atp` + `tennis_atp_us_open` had
+    **thirteen** hollow live rows holding slots 1-13, and this clause sends every
+    one of them past slot 8. A reader then sees eight real matches and no live
+    card at all on a page where thirteen rows say `live`.
+
+    That is the right trade and it is deliberate: the rows are 99/1 bars off a
+    single venue price with no score, no set and no play snapshot, so there is
+    nothing on them to see; the event page, search and the Sports feed still
+    reach them; and #3946's wall-clock half moves them onto the "No Result
+    Reported" rail within three hours. It is NOT #3211 inverted — that was real
+    US Open matches on no rail at all, whereas a cap is a horizon the module's
+    own header already distinguishes from a gap.
+
+    What must not happen is the degenerate case going the same way, so it is
+    pinned below: a rail with nothing but hollow rows still shows them.
+    """
+
+    def test_a_rail_of_nothing_but_hollow_rows_still_shows_them_all(self):
+        """The demotion is a re-ranking, never a filter. A challenger-only page
+        with no scheduled games and no reported match keeps every row, in the
+        order it always had — losing the sort's tie-break here would empty the
+        page of a league that is genuinely playing."""
+        hollow_only = [
+            _row(30, "live", "2026-09-08 14:20:00"),
+            _row(31, "live", "2026-09-08 14:30:00"),
+            _row(32, "live", "2026-09-08 15:00:00"),
+        ]
+        assert _order_under(live_first_order(NOW), hollow_only) == [30, 31, 32]
+
+    def test_the_hollow_rows_keep_their_own_date_order_below_the_real_ones(self):
+        """Demoted as a group, not scrambled: the secondary `commence_time ASC`
+        still applies inside group 2, so the rail stays readable."""
+        order = _order_under(live_first_order(NOW), ATP_PAGE)
+        assert order[4:] == [1, 2, 3, 4]
+
+
 class TestQ438IsNotUndone:
     """§3 — a PREMATURE-live row keeps the position Q438 ruled it into.
 
