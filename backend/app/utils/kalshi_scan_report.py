@@ -304,6 +304,29 @@ class KalshiScanReport:
     #: are always the first to be cut, and the refinement is the half that
     #: reaches the rendered page.
     post_loop_fixups_skipped: List[str] = field(default_factory=list)
+    #: Fix-up name -> rows it WOULD have repaired, for the ones that ran behind
+    #: a kill switch and therefore wrote nothing (#3952).
+    #:
+    #: `_fix_golf_commence_times` is gated by Queue #189's verify-before-enable
+    #: switch (`golf_commence_fix:enabled` in Redis, default OFF, gotcha #21)
+    #: and its `fixed += 1` sits OUTSIDE the write branch, so it returns a
+    #: rehearsal total. Routed here rather than into `post_loop_fixups_ran`
+    #: because that map is documented as "rows it repaired", and a dry run
+    #: repairs none: the 12:45Z beat of 2026-09-08 published
+    #: `golf_commence_fixed: 3287` — 96% of the 3,419 Kalshi golf markets, a
+    #: population a WRITING repair would have drained months ago — and the
+    #: plain reading of that number is that golf dating is healthy when in
+    #: fact 714 of those markets still carry Kalshi's Sunday resolution date.
+    #:
+    #: The split is deliberately in the SAFE direction. `post_loop_fixups_ran`
+    #: carries 0 for such a key, so a reader who never learns this field exists
+    #: under-claims (0 repaired) rather than over-claims (3,287 repaired) — the
+    #: pairing is a bonus, never a prerequisite. A name here is still ALSO in
+    #: `post_loop_fixups_ran` with that 0, because "ran in rehearsal" must stay
+    #: distinguishable from "never started" (absent) and from "raised"
+    #: (`post_loop_fixups_failed`), which is the gotcha #53 distinction the
+    #: three fields above exist to keep.
+    post_loop_fixups_dry_run: Dict[str, int] = field(default_factory=dict)
 
     duration_s: float = 0.0
     notes: List[str] = field(default_factory=list)
