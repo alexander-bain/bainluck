@@ -25,6 +25,7 @@ import {
   homeProbToChartAxis,
   chartAxisToHomeProb,
   chartAxisPercents,
+  computeWinProbYAxis,
 } from "@/lib/eventKeyStats";
 import { separateLinesLabel, sourceHex, sourceLabel } from "@/lib/sourceColors";
 import { useAnalyticsContext } from "@/components/Analytics";
@@ -1014,8 +1015,27 @@ export default function OddsChart({
   // Single 0–100 win-probability axis (L2-131): the line is the HOME team's win
   // probability read straight up the scale. This replaces the old mirrored ±50
   // dual-axis where the same "80%" appeared both above and below center.
-  const yDomain: [number, number] = [0, 100];
-  const yTicks = [0, 25, 50, 75, 100];
+  //
+  // #3973: the SCALE is now the window the line lives in rather than the whole
+  // 0–100 range — a tennis market that spends its life inside 4 points drew as
+  // a horizontal line on the fixed axis. The direction, the meaning of the
+  // numbers and the 50% mark are unchanged; only the zoom moves. The rules and
+  // the production measurement behind them are in `computeWinProbYAxis`.
+  //
+  // Fed from `plottedProbKeys` — the same one list the forward-fill and
+  // `filteredPeriodBoundaries` read (see its docstring). That is deliberate: a
+  // series the chart draws but the axis did not size would be the one that runs
+  // off the plot, which is the exact class of bug this is fixing.
+  const { domain: yDomain, ticks: yTicks } = useMemo(() => {
+    const values: number[] = [];
+    for (const point of chartData) {
+      for (const key of plottedProbKeys) {
+        const v = point[key];
+        if (typeof v === "number") values.push(v);
+      }
+    }
+    return computeWinProbYAxis(values);
+  }, [chartData, plottedProbKeys]);
 
   // ── Compute lead change points (50% crossings) ──
   // Instead of creating a separate data array (which breaks Recharts categorical
@@ -1527,6 +1547,13 @@ export default function OddsChart({
             <YAxis
               domain={yDomain}
               ticks={yTicks}
+              // #3973: the domain is now narrower than the data can be, so
+              // the handful of samples outside it must be CLIPPED. recharts
+              // does not clamp their coordinates — it emits the true y and
+              // fits a clip path only when an axis asks for one. With this
+              // off, no clip path is fitted and the early spike is painted at
+              // its true height: outside the plot, over the card's chrome.
+              allowDataOverflow
               width={44}
               tick={{ fontSize: 13, fill: "#4B5563" }}
               tickLine={false}
@@ -1549,8 +1576,21 @@ export default function OddsChart({
                 moving it in would put a second `50%` on a chart that already has
                 one. The guard is on the class: no rendered text outside a
                 chart's plot bounds. */}
+            {/* #3973 pins `ifOverflow` rather than leaving it defaulted. The
+                axis is no longer always 0–100, so 50 is no longer always on it:
+                a market that never approaches 50 has no lead change, nothing
+                drawn at 50, and no use for a dashed rule welded to its plot
+                frame. `discard` (recharts' default, stated here because it is
+                now load-bearing) drops it in that case. The value that must
+                never appear is `extendDomain` — it would pull 50 back into the
+                domain and silently undo the zoom for every narrow market. Both
+                halves of #3525's reasoning below survive: whenever the line
+                touches 50, `computeWinProbYAxis` keeps 50 in the domain and on
+                the tick set, so the axis is still printing `50%` on this
+                exact line. */}
             <ReferenceLine
               y={50}
+              ifOverflow="discard"
               stroke="rgba(0,0,0,0.2)"
               strokeWidth={1.5}
               strokeDasharray="4 4"
