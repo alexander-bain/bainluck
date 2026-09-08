@@ -78,6 +78,11 @@ MOVERS_SUITE = ROOT / "tests" / "test_futures_movers_pool_bound.py"
 COLD_SUITE = (
     ROOT / "tests" / "integration" / "test_route_search_suggestions_cold_p124.py"
 )
+#: #3987's guard. In the oracle because the settled-outcome gate lives in the
+#: SAME `conditions` list this battery already mutates — a mutant that removes it
+#: would otherwise be graded by a suite that has no opinion about it and would
+#: survive silently, which is the hole this battery exists to prevent.
+SETTLED_SUITE = ROOT / "tests" / "test_search_suggestions_settled_outcome_3987.py"
 
 #: #2330 — see the module docstring. Derived from the worktree path so two
 #: checkouts of this repo never share a manifest or a backup directory.
@@ -88,7 +93,77 @@ BACKUP_DIR = f"/tmp/lat_p151_movers_pool_backups_{_TREE}"
 #: (id, target, description, old, new). `old` must appear EXACTLY once in
 #: `target` — a mutation that matches zero or many places is a harness bug
 #: reported as such, never counted as a kill.
+#:
+#: ⚠️ ANCHOR ON THE LINE, NOT ON ITS POSITION IN A LIST. M-GTE, M-THRESHOLD and
+#: M-SIGNED-FILTER used to end their anchors with `,\n    ]` — i.e. "and this is
+#: the LAST entry in `conditions`". Adding #3987's gate to that list turned all
+#: three into `anchor matched 0 times` at once: three silent HARNESS entries,
+#: which exit 2 and are not verdicts, so the battery stopped grading the very
+#: threshold it exists to pin. The tail bought no uniqueness — each line is
+#: already unique in the file — so it was pure brittleness against the next
+#: person who adds a condition. Do not put it back.
 MUTANTS: list[tuple[str, pathlib.Path, str, str, str]] = [
+    # ------------------------------------------- #3987, the settled-outcome gate
+    #
+    # 🔴 M-SET-TERSE IS THE ONE THAT MATTERS HERE, for the same reason M-JOIN
+    # matters above: it is the edit a careful reader would make. Four lines of
+    # `or_`/`and_` collapse to one comparison, the settled rows stay barred, and
+    # every test about the DEFECT keeps passing. What it silently does is drop
+    # every outcome whose `current_probability` is NULL — `NULL < 1.0` is NULL,
+    # not true — which was 4 live rows in the pool on the day this shipped, none
+    # of them settled. Only `test_an_unknown_probability_is_not_a_settled_one`
+    # can see it, which is the proof that the test is not decoration.
+    (
+        "M-SET-GONE",
+        ROUTE,
+        "drop the settled gate — 'Completed Match' is the top chip again",
+        """        or_(
+            FuturesOutcome.current_probability.is_(None),
+            and_(
+                FuturesOutcome.current_probability > 0.0,
+                FuturesOutcome.current_probability < 1.0,
+            ),
+        ),
+""",
+        "",
+    ),
+    (
+        "M-SET-TERSE",
+        ROUTE,
+        "collapse the gate to one comparison — NULL probabilities silently vanish",
+        """        or_(
+            FuturesOutcome.current_probability.is_(None),
+            and_(
+                FuturesOutcome.current_probability > 0.0,
+                FuturesOutcome.current_probability < 1.0,
+            ),
+        ),
+""",
+        """        FuturesOutcome.current_probability < 1.0,
+        FuturesOutcome.current_probability > 0.0,
+""",
+    ),
+    (
+        "M-SET-INCLUSIVE",
+        ROUTE,
+        "make the bounds inclusive — certainty is admitted again",
+        """            and_(
+                FuturesOutcome.current_probability > 0.0,
+                FuturesOutcome.current_probability < 1.0,
+            ),""",
+        """            and_(
+                FuturesOutcome.current_probability >= 0.0,
+                FuturesOutcome.current_probability <= 1.0,
+            ),""",
+    ),
+    (
+        "M-SET-WIDEN",
+        ROUTE,
+        "bar 'nearly certain' too — a product judgement nobody made, and it "
+        "removes real movers like the 0.98 rate-decision row",
+        "FuturesOutcome.current_probability < 1.0,",
+        "FuturesOutcome.current_probability < 0.95,",
+    ),
     # ---------------------------------------------------------------- shape
     (
         "M-JOIN",
@@ -154,22 +229,22 @@ MUTANTS: list[tuple[str, pathlib.Path, str, str, str]] = [
         "M-GTE",
         ROUTE,
         "`>= 0.02` instead of `> 0.02` — a flat market becomes a mover",
-        "        func.abs(FuturesOutcome.probability_change_24h) > 0.02,\n    ]",
-        "        func.abs(FuturesOutcome.probability_change_24h) >= 0.02,\n    ]",
+        "        func.abs(FuturesOutcome.probability_change_24h) > 0.02",
+        "        func.abs(FuturesOutcome.probability_change_24h) >= 0.02",
     ),
     (
         "M-THRESHOLD",
         ROUTE,
         "loosen the threshold to 1% — more chips, different chips",
-        "        func.abs(FuturesOutcome.probability_change_24h) > 0.02,\n    ]",
-        "        func.abs(FuturesOutcome.probability_change_24h) > 0.01,\n    ]",
+        "        func.abs(FuturesOutcome.probability_change_24h) > 0.02",
+        "        func.abs(FuturesOutcome.probability_change_24h) > 0.01",
     ),
     (
         "M-SIGNED-FILTER",
         ROUTE,
         "drop `abs` from the filter — every faller disappears",
-        "        func.abs(FuturesOutcome.probability_change_24h) > 0.02,\n    ]",
-        "        FuturesOutcome.probability_change_24h > 0.02,\n    ]",
+        "        func.abs(FuturesOutcome.probability_change_24h) > 0.02",
+        "        FuturesOutcome.probability_change_24h > 0.02",
     ),
     (
         "M-SIGNED-ORDER",
@@ -283,6 +358,7 @@ def _run_suite() -> int:
             str(SUITE),
             str(MOVERS_SUITE),
             str(COLD_SUITE),
+            str(SETTLED_SUITE),
             "-q",
             "--no-header",
             "-x",
