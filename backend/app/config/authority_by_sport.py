@@ -430,6 +430,70 @@ def authority_for(sport_key: Optional[str]) -> str:
     return AUTHORITY_BY_SPORT.get(sport_key, DEFAULT_AUTHORITY)
 
 
+#: The discovery states, as codes a reader can grep for. Published beside the
+#: prose so a caller can branch on the state without parsing a sentence.
+DISCOVERY_SCHEDULED = "SCHEDULED"
+DISCOVERY_BEAT_PARSES_NOTHING = "BEAT-WITHOUT-A-WORKING-PARSE"
+DISCOVERY_PARSER_MINTS_NO_ID = "PARSER-MINTS-NO-ID"
+DISCOVERY_NO_BEAT = "NO-BEAT"
+
+
+def discovery_state(sport_key: str) -> tuple[str, str]:
+    """Is there a WORKING StatPal discovery pass for `sport_key`, and if not, why?
+
+    Returns `(code, why)`. Split out of :func:`flip_permitted` by CERT-2245's
+    follow-up `SOCCER-3366-IDLESS-REFUSAL-REACHABILITY`, and the reason is the
+    interesting part.
+
+    🔴 A REFUSAL REASON THAT NOTHING CAN REACH IS NOT A REFUSAL REASON. Inside
+    `flip_permitted` this reasoning sits BELOW the measurement-population check,
+    which returns first and unconditionally. `soccer` is a measurement
+    population, so the `PARSER-MINTS-NO-ID` branch — written for soccer, about
+    soccer, carrying soccer's own 274/274 and 195/195 census — was unreachable
+    for the only sport it describes. Every operator reading soccer's agreement
+    row got "there is nothing here to flip" and no hint that the parser mints no
+    id, which is the build step that has to come FIRST.
+
+    So the fact is computed here, independently of every other refusal, and
+    `flip_permitted` and the agreement endpoint both read it. The endpoint
+    publishes it for every sport including the measurement populations, because
+    the question "does discovery work for this sport?" has an honest answer even
+    where "may it be flipped?" does not. Fixing reachability rather than
+    deleting the branch: the census is true and load-bearing, it was just
+    filed where soccer could never read it.
+
+    Total, like :func:`authority_for` — every input has an answer and none
+    raise.
+    """
+    if sport_key in DISCOVERY_SCHEDULED_SPORTS:
+        return DISCOVERY_SCHEDULED, (
+            f"{sport_key} is on the hourly `sync_statpal_schedules` beat and its "
+            "ingest parser reads the payload, so discovery can create a game we "
+            "missed — which is the thing an agreement streak is evidence about"
+        )
+    broken = DISCOVERY_BEAT_WITHOUT_A_WORKING_PARSE.get(sport_key)
+    if broken:
+        return DISCOVERY_BEAT_PARSES_NOTHING, (
+            f"The beat exists and does nothing: {broken}. Fixing that path is "
+            "a build step, not a wait"
+        )
+    # NOT folded into the bare "build a beat" ending below. They prescribe
+    # different work in different orders: told only to schedule a beat, a reader
+    # would schedule one over a parser that mints no id, and ruling 048 turns
+    # that into a duplicate of every row it reads. The reason has to name the
+    # parser first.
+    idless = DISCOVERY_PARSES_BUT_MINTS_NO_ID.get(sport_key)
+    if idless:
+        return DISCOVERY_PARSER_MINTS_NO_ID, (
+            f"The parser reads the fixtures and mints no id for them: {idless}. "
+            "Teaching it the id comes BEFORE scheduling a beat — this is a "
+            "build step, not a wait"
+        )
+    return DISCOVERY_NO_BEAT, (
+        "This is a build step (a `sync_statpal_schedules` beat), not a wait"
+    )
+
+
 def flip_permitted(
     sport_key: str, ledger_days: Iterable[dict[str, Any]]
 ) -> tuple[bool, str]:
@@ -497,28 +561,11 @@ def flip_permitted(
         # same seven MEETS days forever, because the only fixtures it is scored
         # over are the ones we already have. Reading the streak first and
         # reporting "6/7" would describe it as a wait.
-        broken = DISCOVERY_BEAT_WITHOUT_A_WORKING_PARSE.get(sport_key)
-        # The id-less state is reported by name too, and NOT folded into the
-        # bare "build a beat" ending. They prescribe different work in different
-        # orders: told only to schedule a beat, a reader would schedule one over
-        # a parser that mints no id, and ruling 048 turns that into a duplicate
-        # of every row it reads. The refusal has to name the parser first.
-        idless = DISCOVERY_PARSES_BUT_MINTS_NO_ID.get(sport_key)
-        if broken:
-            detail = (
-                f"The beat exists and does nothing: {broken}. Fixing that path is "
-                "a build step, not a wait"
-            )
-        elif idless:
-            detail = (
-                f"The parser reads the fixtures and mints no id for them: {idless}. "
-                "Teaching it the id comes BEFORE scheduling a beat — this is a "
-                "build step, not a wait"
-            )
-        else:
-            detail = (
-                "This is a build step (a `sync_statpal_schedules` beat), not a wait"
-            )
+        # Read from `discovery_state` rather than restated here, so the reason
+        # this refusal gives and the reason the agreement endpoint publishes
+        # cannot drift — and so the id-less branch stays exercised by the sports
+        # that reach it (CERT-2245's follow-up).
+        _, detail = discovery_state(sport_key)
         return False, (
             f"{sport_key} has no working StatPal discovery pass, so its agreement "
             "streak is measured only over games we already have — it cannot show "

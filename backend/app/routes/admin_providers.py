@@ -153,7 +153,7 @@ async def trigger_kalshi_poll(
     if not kalshi_key:
         raise HTTPException(
             status_code=400,
-            detail="KALSHI_API_KEY not configured. Add it to your environment variables."
+            detail="KALSHI_API_KEY not configured. Add it to your environment variables.",
         )
 
     # Queue the task to run in background (avoids Heroku's 30s timeout)
@@ -204,7 +204,9 @@ async def get_kalshi_task_status(
 async def debug_kalshi_discovery(
     request: Request,
     secret: str = Query(None, description="Admin secret for authorization"),
-    search: Optional[str] = Query(None, description="Search term to filter series (e.g., 'olympic')"),
+    search: Optional[str] = Query(
+        None, description="Search term to filter series (e.g., 'olympic')"
+    ),
 ):
     """
     Debug Kalshi series discovery: shows what series each category returns,
@@ -242,7 +244,7 @@ async def debug_kalshi_discovery(
                 titles = [s.get("title", s.get("ticker", "?")) for s in series_list]
                 tags_seen = set()
                 for s in series_list:
-                    for tag in (s.get("tags") or []):
+                    for tag in s.get("tags") or []:
                         tags_seen.add(tag)
                 category_results[category] = {
                     "count": len(tickers),
@@ -289,16 +291,20 @@ async def debug_kalshi_discovery(
                 cat = s.get("category", "")
                 tags = s.get("tags") or []
                 tags_str = ",".join(tags).lower()
-                if (search_lower in ticker.lower()
+                if (
+                    search_lower in ticker.lower()
                     or search_lower in title.lower()
                     or search_lower in cat.lower()
-                    or search_lower in tags_str):
-                    matches.append({
-                        "ticker": ticker,
-                        "title": title,
-                        "category": cat,
-                        "tags": tags,
-                    })
+                    or search_lower in tags_str
+                ):
+                    matches.append(
+                        {
+                            "ticker": ticker,
+                            "title": title,
+                            "category": cat,
+                            "tags": tags,
+                        }
+                    )
 
             search_results = {
                 "query": search,
@@ -384,7 +390,9 @@ async def trigger_polymarket_history_backfill(
     request: Request,
     secret: str = Query(None, description="Admin secret for authorization"),
     limit: int = Query(50, description="Max outcomes to process per run"),
-    fidelity: int = Query(60, description="Price granularity in minutes (60=hourly, 1440=daily)"),
+    fidelity: int = Query(
+        60, description="Price granularity in minutes (60=hourly, 1440=daily)"
+    ),
     interval: str = Query("max", description="Time range: 1h, 6h, 1d, 1w, max"),
 ):
     """
@@ -599,7 +607,9 @@ async def normalize_futures_probabilities(
             for snap in group_snaps:
                 old_prob = float(snap.probability)
                 new_prob = old_prob / total_prob
-                new_american = probability_to_american(new_prob) if new_prob > 0 else None
+                new_american = (
+                    probability_to_american(new_prob) if new_prob > 0 else None
+                )
 
                 if not dry_run:
                     snap.probability = new_prob
@@ -611,16 +621,18 @@ async def normalize_futures_probabilities(
                 if len(stats["sample_changes"]) < 10:
                     outcome_name = next(
                         (o.name for o in market.outcomes if o.id == snap.outcome_id),
-                        "?"
+                        "?",
                     )
-                    stats["sample_changes"].append({
-                        "market": market.name,
-                        "outcome": outcome_name,
-                        "bookmaker": bookmaker,
-                        "old_prob": round(old_prob, 6),
-                        "new_prob": round(new_prob, 6),
-                        "normalization_factor": round(total_prob, 4),
-                    })
+                    stats["sample_changes"].append(
+                        {
+                            "market": market.name,
+                            "outcome": outcome_name,
+                            "bookmaker": bookmaker,
+                            "old_prob": round(old_prob, 6),
+                            "new_prob": round(new_prob, 6),
+                            "normalization_factor": round(total_prob, 4),
+                        }
+                    )
 
         # Now recalculate current_probability and opening_probability
         # on each outcome using normalized snapshots
@@ -633,15 +645,21 @@ async def normalize_futures_probabilities(
             latest_by_bm: dict[str, FuturesOddsSnapshot] = {}
             for snap in outcome_snaps:
                 bm = snap.bookmaker
-                if bm not in latest_by_bm or snap.captured_at > latest_by_bm[bm].captured_at:
+                if (
+                    bm not in latest_by_bm
+                    or snap.captured_at > latest_by_bm[bm].captured_at
+                ):
                     latest_by_bm[bm] = snap
 
             if latest_by_bm:
                 avg_current = mean(
-                    float(s.probability) for s in latest_by_bm.values()
+                    float(s.probability)
+                    for s in latest_by_bm.values()
                     if s.probability is not None
                 )
-                new_american = probability_to_american(avg_current) if avg_current > 0 else None
+                new_american = (
+                    probability_to_american(avg_current) if avg_current > 0 else None
+                )
                 if not dry_run:
                     outcome.current_probability = avg_current
                     outcome.current_american_odds = new_american
@@ -650,15 +668,21 @@ async def normalize_futures_probabilities(
             earliest_by_bm: dict[str, FuturesOddsSnapshot] = {}
             for snap in outcome_snaps:
                 bm = snap.bookmaker
-                if bm not in earliest_by_bm or snap.captured_at < earliest_by_bm[bm].captured_at:
+                if (
+                    bm not in earliest_by_bm
+                    or snap.captured_at < earliest_by_bm[bm].captured_at
+                ):
                     earliest_by_bm[bm] = snap
 
             if earliest_by_bm:
                 avg_opening = mean(
-                    float(s.probability) for s in earliest_by_bm.values()
+                    float(s.probability)
+                    for s in earliest_by_bm.values()
                     if s.probability is not None
                 )
-                opening_american = probability_to_american(avg_opening) if avg_opening > 0 else None
+                opening_american = (
+                    probability_to_american(avg_opening) if avg_opening > 0 else None
+                )
                 if not dry_run:
                     outcome.opening_probability = avg_opening
                     outcome.opening_american_odds = opening_american
@@ -676,7 +700,8 @@ async def normalize_futures_probabilities(
 
 @router.post("/futures/retier")
 async def retier_futures_markets(
-    request: Request, secret: str = Query(None),
+    request: Request,
+    secret: str = Query(None),
     limit: int = Query(1000),
     db: AsyncSession = Depends(get_db_rw),
 ):
@@ -685,14 +710,13 @@ async def retier_futures_markets(
 
     from app.utils.market_label_normalization import compute_market_tier
 
-    result = await db.execute(
-        select(FuturesMarket).limit(limit)
-    )
+    result = await db.execute(select(FuturesMarket).limit(limit))
     markets = result.scalars().all()
     changed = 0
     for market in markets:
         new_tier = compute_market_tier(
-            market.name, market.category,
+            market.name,
+            market.category,
             sport_category=market.llm_sport_category,
         )
         if market.market_tier != new_tier:
@@ -730,16 +754,12 @@ async def sync_espn_teams(
     espn = get_espn_service()
 
     # Get our teams for this sport
-    sport_result = await db.execute(
-        select(Sport).where(Sport.key == sport_key)
-    )
+    sport_result = await db.execute(select(Sport).where(Sport.key == sport_key))
     sport = sport_result.scalar_one_or_none()
     if not sport:
         raise HTTPException(status_code=404, detail=f"Sport not found: {sport_key}")
 
-    teams_result = await db.execute(
-        select(Team).where(Team.sport_id == sport.id)
-    )
+    teams_result = await db.execute(select(Team).where(Team.sport_id == sport.id))
     our_teams = teams_result.scalars().all()
 
     if not our_teams:
@@ -751,7 +771,7 @@ async def sync_espn_teams(
         return {
             "status": "authority_dark",
             "message": "ESPN did not answer — no team list was received. This is "
-                       "NOT 'the league has no teams'; nothing was matched.",
+            "NOT 'the league has no teams'; nothing was matched.",
         }
     if not espn_teams:
         return {"status": "espn_error", "message": "Could not fetch teams from ESPN"}
@@ -759,7 +779,13 @@ async def sync_espn_teams(
     # Build lookup by name variations
     espn_lookup = {}
     for et in espn_teams:
-        for name in [et.name, et.display_name, et.short_name, et.nickname, et.abbreviation]:
+        for name in [
+            et.name,
+            et.display_name,
+            et.short_name,
+            et.nickname,
+            et.abbreviation,
+        ]:
             if name:
                 espn_lookup[name.lower()] = et
 
@@ -788,22 +814,26 @@ async def sync_espn_teams(
         if not espn_team and llm.is_available():
             best_score = 0
             for et in espn_teams:
-                score = llm.match_team_names_cached(team.name, et.display_name or et.name, sport_key)
+                score = llm.match_team_names_cached(
+                    team.name, et.display_name or et.name, sport_key
+                )
                 if score > best_score and score >= 0.8:
                     best_score = score
                     espn_team = et
                     match_type = f"llm_{score:.2f}"
 
         if espn_team:
-            matched.append({
-                "our_team": team.name,
-                "espn_team": espn_team.display_name or espn_team.name,
-                "espn_id": espn_team.espn_id,
-                "match_type": match_type,
-                "primary_color": espn_team.primary_color,
-                "secondary_color": espn_team.secondary_color,
-                "logo": espn_team.logo_url,
-            })
+            matched.append(
+                {
+                    "our_team": team.name,
+                    "espn_team": espn_team.display_name or espn_team.name,
+                    "espn_id": espn_team.espn_id,
+                    "match_type": match_type,
+                    "primary_color": espn_team.primary_color,
+                    "secondary_color": espn_team.secondary_color,
+                    "logo": espn_team.logo_url,
+                }
+            )
 
             if not dry_run:
                 # Update team with ESPN data
@@ -811,17 +841,26 @@ async def sync_espn_teams(
                 if espn_team.espn_id and team.espn_id != espn_team.espn_id:
                     team.espn_id = espn_team.espn_id
                     changed = True
-                if espn_team.primary_color and team.primary_color != espn_team.primary_color:
+                if (
+                    espn_team.primary_color
+                    and team.primary_color != espn_team.primary_color
+                ):
                     team.primary_color = espn_team.primary_color
                     changed = True
-                if espn_team.secondary_color and team.secondary_color != espn_team.secondary_color:
+                if (
+                    espn_team.secondary_color
+                    and team.secondary_color != espn_team.secondary_color
+                ):
                     team.secondary_color = espn_team.secondary_color
                     changed = True
                 if espn_team.logo_url and team.logo_url_small != espn_team.logo_url:
                     team.logo_url_small = espn_team.logo_url
                     team.logo_url_large = espn_team.logo_url
                     changed = True
-                if espn_team.abbreviation and team.abbreviation != espn_team.abbreviation:
+                if (
+                    espn_team.abbreviation
+                    and team.abbreviation != espn_team.abbreviation
+                ):
                     team.abbreviation = espn_team.abbreviation
                     changed = True
                 if espn_team.record and team.current_record != espn_team.record:
@@ -829,7 +868,12 @@ async def sync_espn_teams(
                     changed = True
 
                 # Build alternate names
-                alt_names = [espn_team.name, espn_team.display_name, espn_team.short_name, espn_team.nickname]
+                alt_names = [
+                    espn_team.name,
+                    espn_team.display_name,
+                    espn_team.short_name,
+                    espn_team.nickname,
+                ]
                 alt_names = [n for n in alt_names if n and n != team.name]
                 if alt_names:
                     team.alternate_names = alt_names
@@ -878,7 +922,9 @@ async def espn_teams_status(
             func.count().filter(Team.espn_id.isnot(None)).label("with_espn_id"),
             func.count().filter(Team.primary_color.isnot(None)).label("with_color"),
             func.count().filter(Team.logo_url_small.isnot(None)).label("with_logo"),
-            func.count().filter(Team.alternate_names.isnot(None)).label("with_alt_names"),
+            func.count()
+            .filter(Team.alternate_names.isnot(None))
+            .label("with_alt_names"),
         )
     )
     row = result.one()
@@ -889,7 +935,9 @@ async def espn_teams_status(
         "with_color": row.with_color,
         "with_logo": row.with_logo,
         "with_alt_names": row.with_alt_names,
-        "enrichment_pct": round(row.with_espn_id / row.total * 100, 1) if row.total > 0 else 0,
+        "enrichment_pct": (
+            round(row.with_espn_id / row.total * 100, 1) if row.total > 0 else 0
+        ),
     }
 
 
@@ -899,7 +947,9 @@ async def sync_espn_live_events(
     secret: str = Query(None, description="Admin secret for authorization"),
     sport_key: str = Query(..., description="Sport key to sync"),
     dry_run: bool = Query(False, description="Preview sync without saving"),
-    skip_llm: bool = Query(False, description="Skip LLM matching (faster, avoids timeout)"),
+    skip_llm: bool = Query(
+        False, description="Skip LLM matching (faster, avoids timeout)"
+    ),
     db: AsyncSession = Depends(get_db_rw),
 ):
     """
@@ -922,7 +972,7 @@ async def sync_espn_live_events(
         return {
             "status": "authority_dark",
             "message": "ESPN did not answer — the scoreboard was never received, "
-                       "which is not the same as an empty slate.",
+            "which is not the same as an empty slate.",
         }
     if not espn_events:
         return {"status": "no_events", "message": "No events from ESPN scoreboard"}
@@ -990,8 +1040,12 @@ async def sync_espn_live_events(
             espn_events,
             event.commence_time,
             is_name_match=lambda ee: (
-                names_match(home_names, ee.home_team.display_name or ee.home_team.name or "")
-                and names_match(away_names, ee.away_team.display_name or ee.away_team.name or "")
+                names_match(
+                    home_names, ee.home_team.display_name or ee.home_team.name or ""
+                )
+                and names_match(
+                    away_names, ee.away_team.display_name or ee.away_team.name or ""
+                )
             ),
             # FF1/#2058: this rail OVERWRITES an existing espn_id, so the id it
             # already holds is the one piece of identity evidence in the room.
@@ -1000,59 +1054,78 @@ async def sync_espn_live_events(
         if espn_event is not None:
             match_method = "name_match"
         elif _name_reason != "no-name-match":
-            refused.append({
-                "our_event": f"{event.away_team_name} @ {event.home_team_name}",
-                "reason": _name_reason,
-                "arm": "name_match",
-            })
+            refused.append(
+                {
+                    "our_event": f"{event.away_team_name} @ {event.home_team_name}",
+                    "reason": _name_reason,
+                    "arm": "name_match",
+                }
+            )
 
         # LLM fallback for unmatched events (skip if skip_llm=true to avoid timeout)
         if not espn_event and not skip_llm and llm.is_available():
+
             def _llm_match(ee) -> bool:
                 espn_home = ee.home_team.display_name or ee.home_team.name or ""
                 espn_away = ee.away_team.display_name or ee.away_team.name or ""
-                home_conf = llm.match_team_names_cached(event.home_team_name, espn_home, sport_key)
-                away_conf = llm.match_team_names_cached(event.away_team_name, espn_away, sport_key)
+                home_conf = llm.match_team_names_cached(
+                    event.home_team_name, espn_home, sport_key
+                )
+                away_conf = llm.match_team_names_cached(
+                    event.away_team_name, espn_away, sport_key
+                )
                 return home_conf >= 0.8 and away_conf >= 0.8
 
             espn_event, _llm_reason = select_authorized_espn_candidate(
-                espn_events, event.commence_time, is_name_match=_llm_match,
+                espn_events,
+                event.commence_time,
+                is_name_match=_llm_match,
                 anchor_espn_id=getattr(event, "espn_id", None),
             )
             if espn_event is not None:
                 match_method = "llm"
-                _espn_home = espn_event.home_team.display_name or espn_event.home_team.name or ""
-                _espn_away = espn_event.away_team.display_name or espn_event.away_team.name or ""
-                llm_matched.append({
-                    "our_event": f"{event.away_team_name} @ {event.home_team_name}",
-                    "espn_event": f"{_espn_away} @ {_espn_home}",
-                    "home_confidence": llm.match_team_names_cached(
-                        event.home_team_name, _espn_home, sport_key
-                    ),
-                    "away_confidence": llm.match_team_names_cached(
-                        event.away_team_name, _espn_away, sport_key
-                    ),
-                })
+                _espn_home = (
+                    espn_event.home_team.display_name or espn_event.home_team.name or ""
+                )
+                _espn_away = (
+                    espn_event.away_team.display_name or espn_event.away_team.name or ""
+                )
+                llm_matched.append(
+                    {
+                        "our_event": f"{event.away_team_name} @ {event.home_team_name}",
+                        "espn_event": f"{_espn_away} @ {_espn_home}",
+                        "home_confidence": llm.match_team_names_cached(
+                            event.home_team_name, _espn_home, sport_key
+                        ),
+                        "away_confidence": llm.match_team_names_cached(
+                            event.away_team_name, _espn_away, sport_key
+                        ),
+                    }
+                )
             elif _llm_reason != "no-name-match":
-                refused.append({
-                    "our_event": f"{event.away_team_name} @ {event.home_team_name}",
-                    "reason": _llm_reason,
-                    "arm": "llm",
-                })
+                refused.append(
+                    {
+                        "our_event": f"{event.away_team_name} @ {event.home_team_name}",
+                        "reason": _llm_reason,
+                        "arm": "llm",
+                    }
+                )
 
         if espn_event:
-            matched.append({
-                "our_event": f"{event.away_team_name} @ {event.home_team_name}",
-                "espn_event": espn_event.short_name,
-                "espn_id": espn_event.espn_id,
-                "status": espn_event.status,
-                "clock": espn_event.clock,
-                "period": espn_event.status_detail,
-                "home_score": espn_event.home_score,
-                "away_score": espn_event.away_score,
-                "broadcasts": espn_event.broadcasts,
-                "win_prob": espn_event.home_win_probability,
-            })
+            matched.append(
+                {
+                    "our_event": f"{event.away_team_name} @ {event.home_team_name}",
+                    "espn_event": espn_event.short_name,
+                    "espn_id": espn_event.espn_id,
+                    "status": espn_event.status,
+                    "clock": espn_event.clock,
+                    "period": espn_event.status_detail,
+                    "home_score": espn_event.home_score,
+                    "away_score": espn_event.away_score,
+                    "broadcasts": espn_event.broadcasts,
+                    "win_prob": espn_event.home_win_probability,
+                }
+            )
 
             if not dry_run:
                 changed = False
@@ -1065,14 +1138,20 @@ async def sync_espn_live_events(
                 # an admin sync that recreates a collision undoes the step-2
                 # repair as surely as a scheduled one does.
                 verdict, holder_id = await stamp_espn_id_if_unheld(
-                    db, event, espn_event.espn_id, context="admin sync-espn-live",
+                    db,
+                    event,
+                    espn_event.espn_id,
+                    context="admin sync-espn-live",
                 )
                 if verdict == STAMPED:
                     changed = True
                 elif verdict == REFUSED:
                     id_refusals.append(
-                        {"event_id": event.id, "espn_id": espn_event.espn_id,
-                         "holder_event_id": holder_id}
+                        {
+                            "event_id": event.id,
+                            "espn_id": espn_event.espn_id,
+                            "holder_event_id": holder_id,
+                        }
                     )
 
                 # Update game clock
@@ -1081,7 +1160,10 @@ async def sync_espn_live_events(
                     changed = True
 
                 # Update period
-                if espn_event.status_detail and event.period != espn_event.status_detail:
+                if (
+                    espn_event.status_detail
+                    and event.period != espn_event.status_detail
+                ):
                     event.period = espn_event.status_detail
                     changed = True
 
@@ -1102,6 +1184,7 @@ async def sync_espn_live_events(
                     # write mechanism on an admin repair path is not this
                     # queue's change — but do not copy this shape.
                     from app.utils.aggregation import stamp_source_reading
+
                     event.win_probability_sources = stamp_source_reading(
                         event.win_probability_sources,
                         "espn",
@@ -1177,8 +1260,12 @@ async def espn_events_status(
             func.count().filter(Event.game_clock.isnot(None)).label("with_clock"),
             func.count().filter(Event.period.isnot(None)).label("with_period"),
             func.count().filter(Event.venue_id.isnot(None)).label("with_venue"),
-            func.count().filter(Event.broadcast_info.isnot(None)).label("with_broadcast"),
-            func.count().filter(Event.espn_win_prob_home.isnot(None)).label("with_win_prob"),
+            func.count()
+            .filter(Event.broadcast_info.isnot(None))
+            .label("with_broadcast"),
+            func.count()
+            .filter(Event.espn_win_prob_home.isnot(None))
+            .label("with_win_prob"),
         )
     )
     row = result.one()
@@ -1225,16 +1312,22 @@ async def match_espn_teams(
     results = []
     for et in espn_teams:
         espn_name = et.display_name or et.name
-        score = llm.match_team_names_cached(our_team_name, espn_name, sport_key) if llm.is_available() else 0.0
+        score = (
+            llm.match_team_names_cached(our_team_name, espn_name, sport_key)
+            if llm.is_available()
+            else 0.0
+        )
 
         if score >= 0.5:  # Only show likely matches
-            results.append({
-                "espn_name": espn_name,
-                "espn_id": et.espn_id,
-                "abbreviation": et.abbreviation,
-                "confidence": score,
-                "primary_color": et.primary_color,
-            })
+            results.append(
+                {
+                    "espn_name": espn_name,
+                    "espn_id": et.espn_id,
+                    "abbreviation": et.abbreviation,
+                    "confidence": score,
+                    "primary_color": et.primary_color,
+                }
+            )
 
     # Sort by confidence
     results.sort(key=lambda x: x["confidence"], reverse=True)
@@ -1303,7 +1396,10 @@ async def backfill_box_scores(
     request: Request,
     secret: str = Query(None, description="Admin secret for authorization"),
     limit: int = Query(100, description="Max events to process"),
-    priority: str = Query("recent", description="'recent' (default) or 'calibration' (events with Kalshi props)"),
+    priority: str = Query(
+        "recent",
+        description="'recent' (default) or 'calibration' (events with Kalshi props)",
+    ),
 ):
     """
     Backfill ESPN box score data for completed events.
@@ -1325,8 +1421,11 @@ async def backfill_box_scores(
 
 @router.post("/espn/clear-unavailable")
 async def clear_espn_unavailable(
-    request: Request, secret: str = Query(None),
-    sport: str = Query(..., description="Sport key prefix to clear (e.g., 'icehockey')"),
+    request: Request,
+    secret: str = Query(None),
+    sport: str = Query(
+        ..., description="Sport key prefix to clear (e.g., 'icehockey')"
+    ),
     db: AsyncSession = Depends(get_db_rw),
 ):
     """Clear 'not_available' box_score_data on events so they get retried."""
@@ -1350,9 +1449,12 @@ async def clear_espn_unavailable(
 
 @router.post("/espn/backfill-ids")
 async def backfill_espn_ids(
-    request: Request, secret: str = Query(None),
+    request: Request,
+    secret: str = Query(None),
     days: int = Query(0, description="How many days back to scan (0 = all time)"),
-    sport: Optional[str] = Query(None, description="Sport key filter (e.g., basketball_nba)"),
+    sport: Optional[str] = Query(
+        None, description="Sport key filter (e.g., basketball_nba)"
+    ),
     dry_run: bool = Query(True, description="If true, report matches without updating"),
     limit: int = Query(500, description="Max events to process per call"),
     db: AsyncSession = Depends(get_db_rw),
@@ -1393,6 +1495,7 @@ async def backfill_espn_ids(
     # April 14 = 2am UTC April 15. We must check BOTH UTC date and previous
     # day to catch cross-midnight games.
     from collections import defaultdict
+
     groups: dict[tuple[str, str], list] = defaultdict(list)
     for event in events:
         if not event.sport:
@@ -1430,12 +1533,14 @@ async def backfill_espn_ids(
             if espn_events is None:
                 # AUTHORITY DARK (lane1/045) — reported, not folded into
                 # "unmatched", for the same reason a refused stamp is.
-                refused.append({
-                    "sport_key": sport_key,
-                    "date": date_str,
-                    "reason": "espn-authority-dark",
-                    "events": len(group_events),
-                })
+                refused.append(
+                    {
+                        "sport_key": sport_key,
+                        "date": date_str,
+                        "reason": "espn-authority-dark",
+                        "events": len(group_events),
+                    }
+                )
                 continue
 
             if not espn_events:
@@ -1447,11 +1552,13 @@ async def backfill_espn_ids(
                 def _orientation(ee) -> str | None:
                     espn_home = ee.home_team.display_name or ee.home_team.name or ""
                     espn_away = ee.away_team.display_name or ee.away_team.name or ""
-                    if (names_match(event.home_team_name, espn_home)
-                            and names_match(event.away_team_name, espn_away)):
+                    if names_match(event.home_team_name, espn_home) and names_match(
+                        event.away_team_name, espn_away
+                    ):
                         return "normal"
-                    if (names_match(event.home_team_name, espn_away)
-                            and names_match(event.away_team_name, espn_home)):
+                    if names_match(event.home_team_name, espn_away) and names_match(
+                        event.away_team_name, espn_home
+                    ):
                         return "swapped"
                     return None
 
@@ -1468,26 +1575,30 @@ async def backfill_espn_ids(
                 )
                 if ee is None:
                     if _reason != "no-name-match":
-                        refused.append({
-                            "event_id": event.id,
-                            "our_teams": f"{event.home_team_name} vs {event.away_team_name}",
-                            "date": date_str,
-                            "sport": sport_key,
-                            "reason": _reason,
-                        })
+                        refused.append(
+                            {
+                                "event_id": event.id,
+                                "our_teams": f"{event.home_team_name} vs {event.away_team_name}",
+                                "date": date_str,
+                                "sport": sport_key,
+                                "reason": _reason,
+                            }
+                        )
                     continue
 
                 espn_home = ee.home_team.display_name or ee.home_team.name or ""
                 espn_away = ee.away_team.display_name or ee.away_team.name or ""
-                matches.append({
-                    "event_id": event.id,
-                    "our_teams": f"{event.home_team_name} vs {event.away_team_name}",
-                    "espn_teams": f"{espn_home} vs {espn_away}",
-                    "espn_id": ee.espn_id,
-                    "date": date_str,
-                    "sport": sport_key,
-                    "orientation": _orientation(ee),
-                })
+                matches.append(
+                    {
+                        "event_id": event.id,
+                        "our_teams": f"{event.home_team_name} vs {event.away_team_name}",
+                        "espn_teams": f"{espn_home} vs {espn_away}",
+                        "espn_id": ee.espn_id,
+                        "date": date_str,
+                        "sport": sport_key,
+                        "orientation": _orientation(ee),
+                    }
+                )
 
                 if not dry_run:
                     # #2693 CERT-784: holder-checked (#2017). See the sibling
@@ -1496,12 +1607,18 @@ async def backfill_espn_ids(
                     # have cleared, and a raw stamp hands the contested id
                     # straight back.
                     verdict, holder_id = await stamp_espn_id_if_unheld(
-                        db, event, ee.espn_id, context="admin backfill-espn-ids",
+                        db,
+                        event,
+                        ee.espn_id,
+                        context="admin backfill-espn-ids",
                     )
                     if verdict == REFUSED:
                         id_refusals.append(
-                            {"event_id": event.id, "espn_id": ee.espn_id,
-                             "holder_event_id": holder_id}
+                            {
+                                "event_id": event.id,
+                                "espn_id": ee.espn_id,
+                                "holder_event_id": holder_id,
+                            }
                         )
                     # Also update win prob if ESPN has it
                     if ee.home_win_probability is not None:
@@ -1511,6 +1628,7 @@ async def backfill_espn_ids(
                         from app.utils.aggregation import (
                             stamp_source_reading as _stamp_espn,
                         )
+
                         event.win_probability_sources = _stamp_espn(
                             event.win_probability_sources,
                             "espn",
@@ -1529,15 +1647,21 @@ async def backfill_espn_ids(
     matched_event_ids = {m["event_id"] for m in matches}
     unmatched = []
     for event in events:
-        if event.id not in matched_event_ids and event.sport and event.sport.key in ESPN_SPORT_MAPPING:
+        if (
+            event.id not in matched_event_ids
+            and event.sport
+            and event.sport.key in ESPN_SPORT_MAPPING
+        ):
             date_str = event.commence_time.strftime("%Y%m%d")
-            unmatched.append({
-                "event_id": event.id,
-                "our_teams": f"{event.home_team_name} vs {event.away_team_name}",
-                "sport": event.sport.key,
-                "date": date_str,
-                "status": event.status,
-            })
+            unmatched.append(
+                {
+                    "event_id": event.id,
+                    "our_teams": f"{event.home_team_name} vs {event.away_team_name}",
+                    "sport": event.sport.key,
+                    "date": date_str,
+                    "status": event.status,
+                }
+            )
 
     return {
         "dry_run": dry_run,
@@ -1581,9 +1705,9 @@ async def rosters_teams_debug(
         return {"error": f"Sport '{sport_key}' not found"}
 
     result = await db.execute(
-        select(
-            Team.id, Team.name, Team.abbreviation, Team.roster_players
-        ).where(Team.sport_id == sport_row.id).order_by(Team.name)
+        select(Team.id, Team.name, Team.abbreviation, Team.roster_players)
+        .where(Team.sport_id == sport_row.id)
+        .order_by(Team.name)
     )
     teams = result.all()
 
@@ -1607,7 +1731,10 @@ async def rosters_teams_debug(
 async def trigger_roster_sync(
     request: Request,
     secret: str = Query(None, description="Admin secret for authorization"),
-    sport_key: Optional[str] = Query(None, description="Sport key (e.g., 'basketball_nba'). If omitted, syncs all supported sports."),
+    sport_key: Optional[str] = Query(
+        None,
+        description="Sport key (e.g., 'basketball_nba'). If omitted, syncs all supported sports.",
+    ),
 ):
     """Trigger roster sync from ESPN + MLB Stats API (runs as background Celery task).
 
@@ -1679,7 +1806,7 @@ async def trigger_mlb_win_prob_sync(
             "status": "queued",
             "task_id": task.id,
             "message": f"MLB win probability sync queued. "
-                       f"Use /api/admin/mlb/task/{task.id} to check status.",
+            f"Use /api/admin/mlb/task/{task.id} to check status.",
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to queue task: {str(e)}")
@@ -1755,7 +1882,9 @@ async def odds_api_daily_activity(
     db: AsyncSession = Depends(get_db),
     month: int = Query(2, description="Month (1-12)"),
     year: int = Query(2026, description="Year"),
-    table: str = Query("odds", description="Table to query: odds, futures, winprob, or all"),
+    table: str = Query(
+        "odds", description="Table to query: odds, futures, winprob, or all"
+    ),
 ):
     """Infer daily Odds API call volume from snapshot row counts.
 
@@ -1779,14 +1908,17 @@ async def odds_api_daily_activity(
 
     if table in ("odds", "all"):
         try:
-            odds_q = await db.execute(text("""
+            odds_q = await db.execute(
+                text("""
                 SELECT captured_at::date AS day,
                        COUNT(*) AS rows,
                        COUNT(DISTINCT event_id) AS events
                 FROM odds_snapshots
                 WHERE captured_at >= :start AND captured_at < :end
                 GROUP BY 1 ORDER BY 1
-            """), {"start": start, "end": end})
+            """),
+                {"start": start, "end": end},
+            )
             results["odds"] = [
                 {"date": str(r.day), "rows": r.rows, "events": r.events}
                 for r in odds_q.all()
@@ -1796,14 +1928,17 @@ async def odds_api_daily_activity(
 
     if table in ("futures", "all"):
         try:
-            futures_q = await db.execute(text("""
+            futures_q = await db.execute(
+                text("""
                 SELECT captured_at::date AS day,
                        COUNT(*) AS rows,
                        COUNT(DISTINCT outcome_id) AS outcomes
                 FROM futures_odds_snapshots
                 WHERE captured_at >= :start AND captured_at < :end
                 GROUP BY 1 ORDER BY 1
-            """), {"start": start, "end": end})
+            """),
+                {"start": start, "end": end},
+            )
             results["futures"] = [
                 {"date": str(r.day), "rows": r.rows, "outcomes": r.outcomes}
                 for r in futures_q.all()
@@ -1813,16 +1948,18 @@ async def odds_api_daily_activity(
 
     if table in ("winprob", "all"):
         try:
-            wp_q = await db.execute(text("""
+            wp_q = await db.execute(
+                text("""
                 SELECT captured_at::date AS day,
                        COUNT(*) AS rows
                 FROM win_prob_snapshots
                 WHERE captured_at >= :start AND captured_at < :end
                 GROUP BY 1 ORDER BY 1
-            """), {"start": start, "end": end})
+            """),
+                {"start": start, "end": end},
+            )
             results["winprob"] = [
-                {"date": str(r.day), "rows": r.rows}
-                for r in wp_q.all()
+                {"date": str(r.day), "rows": r.rows} for r in wp_q.all()
             ]
         except Exception as e:
             results["winprob_error"] = str(e)
@@ -1859,7 +1996,9 @@ async def statpal_usage(
         pct = round(count / daily_limit * 100, 1)
         current["daily_limit"] = daily_limit
         current["pct_used"] = pct
-        current["health"] = "critical" if pct > 80 else "warning" if pct > 50 else "healthy"
+        current["health"] = (
+            "critical" if pct > 80 else "warning" if pct > 50 else "healthy"
+        )
 
     return {
         "current": current,
@@ -2010,6 +2149,7 @@ async def statpal_authority_agreement(
         SWITCH_IS_WIRED,
         SWITCH_WIRING_NOTE,
         authority_for,
+        discovery_state,
         flip_permitted,
     )
     from app.services.authority_ledger import read_ledger_days
@@ -2051,6 +2191,35 @@ async def statpal_authority_agreement(
             # condition it describes (`SWITCH_CONSUMERS`).
             "switch_wired": SWITCH_IS_WIRED,
             "switch_note": SWITCH_WIRING_NOTE,
+        }
+
+        # Published for EVERY sport, including the measurement populations, and
+        # that is the whole point of it being here (CERT-2245's follow-up
+        # `SOCCER-3366-IDLESS-REFUSAL-REACHABILITY`).
+        #
+        # `flip_permitted` answers "may this be flipped?", and for a measurement
+        # population it answers "wrong question" and returns before it ever
+        # reaches the discovery reasoning. So soccer's `failover.why` told a
+        # reader there was nothing to flip and never mentioned that soccer's
+        # ingest parser mints no id — the build step that comes first, measured
+        # at 274 of 274 and 195 of 195 fixtures carrying none. The reason
+        # existed; soccer could not reach it.
+        #
+        # "Does discovery work for this sport?" has an honest answer even where
+        # "may it be flipped?" does not, so it is asked separately and answered
+        # for all of them. Same function `flip_permitted` reads, never a second
+        # copy: a disclosure written twice is a disclosure that drifts.
+        discovery_code, discovery_why = discovery_state(sport_key)
+        entry["authority"]["discovery"] = {
+            "code": discovery_code,
+            "why": discovery_why,
+            "note": (
+                "whether a StatPal DISCOVERY pass could create a game we are "
+                "missing, which is separate from whether this sport may be "
+                "flipped. A sport with no working discovery can still post a "
+                "perfect agreement row, because it is scored only over the "
+                "games we already have."
+            ),
         }
 
         # "If ESPN went dark for this sport RIGHT NOW, would anything happen?"
@@ -2180,7 +2349,9 @@ async def statpal_authority_agreement(
 async def trigger_statpal_schedule_sync(
     request: Request,
     secret: str = Query(None, description="Admin secret for authorization"),
-    sport_key: str = Query(None, description="Sport key (e.g., basketball_nba). If omitted, syncs all."),
+    sport_key: str = Query(
+        None, description="Sport key (e.g., basketball_nba). If omitted, syncs all."
+    ),
 ):
     """
     Trigger a StatPal schedule/fixture sync.
@@ -2199,7 +2370,7 @@ async def trigger_statpal_schedule_sync(
             "status": "queued",
             "task_id": task.id,
             "message": f"StatPal schedule sync queued{f' for {sport_key}' if sport_key else ' (all sports)'}. "
-                       f"Use /api/admin/statpal/task/{task.id} to check status.",
+            f"Use /api/admin/statpal/task/{task.id} to check status.",
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to queue task: {str(e)}")
@@ -2215,6 +2386,7 @@ async def statpal_probe_endpoints(
     _check_admin_secret(secret, request=request)
 
     from app.services.statpal_api import StatPalAPIService, is_available
+
     if not is_available():
         return {"error": "StatPal API key not configured"}
 
@@ -2223,14 +2395,30 @@ async def statpal_probe_endpoints(
 
     probes = [
         ("season-schedule (default)", "season-schedule", {}),
-        ("season-schedule (season=2025-2026)", "season-schedule", {"season": "2025-2026"}),
+        (
+            "season-schedule (season=2025-2026)",
+            "season-schedule",
+            {"season": "2025-2026"},
+        ),
         ("season-schedule (season=2026)", "season-schedule", {"season": "2026"}),
-        ("season-schedule (season=playoffs)", "season-schedule", {"season": "playoffs"}),
-        ("season-schedule (season=postseason)", "season-schedule", {"season": "postseason"}),
+        (
+            "season-schedule (season=playoffs)",
+            "season-schedule",
+            {"season": "playoffs"},
+        ),
+        (
+            "season-schedule (season=postseason)",
+            "season-schedule",
+            {"season": "postseason"},
+        ),
         ("fixtures (no params)", "fixtures", {}),
         ("schedule (no params)", "schedule", {}),
         ("upcoming-schedule", "upcoming-schedule", {}),
-        ("season-schedule (date=2026-05-11)", "season-schedule", {"date": "2026-05-11"}),
+        (
+            "season-schedule (date=2026-05-11)",
+            "season-schedule",
+            {"date": "2026-05-11"},
+        ),
         ("daily-schedule", "daily-schedule", {}),
         ("daily-schedule (date=today)", "daily-schedule", {"date": "2026-05-11"}),
         ("games", "games", {}),
@@ -2259,7 +2447,9 @@ async def statpal_probe_endpoints(
                 raw_debug["tournament_type"] = "dict"
                 raw_debug["tournament_keys"] = list(tournament.keys())[:10]
                 matches = tournament.get("match", [])
-                raw_debug["match_count"] = len(matches) if isinstance(matches, list) else "not_a_list"
+                raw_debug["match_count"] = (
+                    len(matches) if isinstance(matches, list) else "not_a_list"
+                )
                 raw_debug["tournament_league"] = tournament.get("league")
                 raw_debug["tournament_season"] = tournament.get("season")
                 raw_debug["tournament_id"] = tournament.get("id")
@@ -2271,14 +2461,20 @@ async def statpal_probe_endpoints(
                 for i, t in enumerate(tournament[:5]):
                     if isinstance(t, dict):
                         league = t.get("league", "?")
-                        match_count = len(t.get("match", [])) if isinstance(t.get("match"), list) else "?"
+                        match_count = (
+                            len(t.get("match", []))
+                            if isinstance(t.get("match"), list)
+                            else "?"
+                        )
                         raw_debug[f"tournament_{i}"] = {
                             "league": league,
                             "match_count": match_count,
                             "keys": list(t.keys())[:8],
                         }
             else:
-                raw_debug["tournament_type"] = type(tournament).__name__ if tournament else "missing"
+                raw_debug["tournament_type"] = (
+                    type(tournament).__name__ if tournament else "missing"
+                )
 
     for label, endpoint, params in probes:
         try:
@@ -2295,8 +2491,11 @@ async def statpal_probe_endpoints(
                 "future": len(future),
                 "latest_date": latest.isoformat()[:10] if latest else None,
                 "sample_future": [
-                    {"home": f.home_team, "away": f.away_team,
-                     "time": f.start_time.isoformat()[:16] if f.start_time else None}
+                    {
+                        "home": f.home_team,
+                        "away": f.away_team,
+                        "time": f.start_time.isoformat()[:16] if f.start_time else None,
+                    }
                     for f in future[:5]
                 ],
             }
@@ -2317,6 +2516,7 @@ async def statpal_fixture_debug(
     _check_admin_secret(secret, request=request)
 
     from app.services.statpal_api import StatPalAPIService, is_available
+
     if not is_available():
         return {"error": "StatPal API key not configured"}
 
@@ -2326,7 +2526,11 @@ async def statpal_fixture_debug(
     now = datetime.now(timezone.utc)
     none_count = sum(1 for f in fixtures if f.start_time is None)
     future = [f for f in fixtures if f.start_time and f.start_time > now]
-    past_week = [f for f in fixtures if f.start_time and (now - f.start_time).days < 7 and f.start_time <= now]
+    past_week = [
+        f
+        for f in fixtures
+        if f.start_time and (now - f.start_time).days < 7 and f.start_time <= now
+    ]
 
     return {
         "total_fixtures": len(fixtures),
@@ -2335,24 +2539,45 @@ async def statpal_fixture_debug(
         "future_fixtures": len(future),
         "past_week_fixtures": len(past_week),
         "sample_future": [
-            {"home": f.home_team, "away": f.away_team,
-             "start_time": f.start_time.isoformat() if f.start_time else None,
-             "status": f.status, "fixture_id": f.fixture_id}
+            {
+                "home": f.home_team,
+                "away": f.away_team,
+                "start_time": f.start_time.isoformat() if f.start_time else None,
+                "status": f.status,
+                "fixture_id": f.fixture_id,
+            }
             for f in future[:10]
         ],
         "sample_none_time": [
-            {"home": f.home_team, "away": f.away_team,
-             "fixture_id": f.fixture_id, "status": f.status}
-            for f in fixtures[:5] if f.start_time is None
+            {
+                "home": f.home_team,
+                "away": f.away_team,
+                "fixture_id": f.fixture_id,
+                "status": f.status,
+            }
+            for f in fixtures[:5]
+            if f.start_time is None
         ][:5],
-        "date_range": {
-            "earliest": min((f.start_time for f in fixtures if f.start_time), default=None),
-            "latest": max((f.start_time for f in fixtures if f.start_time), default=None),
-        } if fixtures else {},
+        "date_range": (
+            {
+                "earliest": min(
+                    (f.start_time for f in fixtures if f.start_time), default=None
+                ),
+                "latest": max(
+                    (f.start_time for f in fixtures if f.start_time), default=None
+                ),
+            }
+            if fixtures
+            else {}
+        ),
         "sample_all": [
-            {"home": f.home_team, "away": f.away_team,
-             "start_time": f.start_time.isoformat() if f.start_time else None,
-             "fixture_id": f.fixture_id, "status": f.status}
+            {
+                "home": f.home_team,
+                "away": f.away_team,
+                "start_time": f.start_time.isoformat() if f.start_time else None,
+                "fixture_id": f.fixture_id,
+                "status": f.status,
+            }
             for f in fixtures[-5:]
         ],
     }
@@ -2362,7 +2587,9 @@ async def statpal_fixture_debug(
 async def trigger_statpal_injury_sync(
     request: Request,
     secret: str = Query(None, description="Admin secret for authorization"),
-    sport_key: str = Query(None, description="Sport key (e.g., basketball_nba). If omitted, syncs all."),
+    sport_key: str = Query(
+        None, description="Sport key (e.g., basketball_nba). If omitted, syncs all."
+    ),
 ):
     """
     Trigger a StatPal injury report sync.
@@ -2380,7 +2607,7 @@ async def trigger_statpal_injury_sync(
             "status": "queued",
             "task_id": task.id,
             "message": f"StatPal injury sync queued. "
-                       f"Use /api/admin/statpal/task/{task.id} to check status.",
+            f"Use /api/admin/statpal/task/{task.id} to check status.",
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to queue task: {str(e)}")
@@ -2390,7 +2617,9 @@ async def trigger_statpal_injury_sync(
 async def trigger_statpal_play_sync(
     request: Request,
     secret: str = Query(None, description="Admin secret for authorization"),
-    sport_key: str = Query(None, description="Sport key. If omitted, syncs all live games."),
+    sport_key: str = Query(
+        None, description="Sport key. If omitted, syncs all live games."
+    ),
 ):
     """
     Trigger a StatPal play-by-play sync for live games.
@@ -2408,7 +2637,7 @@ async def trigger_statpal_play_sync(
             "status": "queued",
             "task_id": task.id,
             "message": f"StatPal play-by-play sync queued. "
-                       f"Use /api/admin/statpal/task/{task.id} to check status.",
+            f"Use /api/admin/statpal/task/{task.id} to check status.",
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to queue task: {str(e)}")
@@ -2435,7 +2664,7 @@ async def trigger_statpal_roster_sync(
             "status": "queued",
             "task_id": task.id,
             "message": f"StatPal roster sync queued. "
-                       f"Use /api/admin/statpal/task/{task.id} to check status.",
+            f"Use /api/admin/statpal/task/{task.id} to check status.",
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to queue task: {str(e)}")
@@ -2507,7 +2736,7 @@ async def trigger_statpal_standings_sync(
         "status": "queued",
         "task_id": task.id,
         "message": f"Standings sync queued. "
-                   f"Use /api/admin/statpal/task/{task.id} to check status.",
+        f"Use /api/admin/statpal/task/{task.id} to check status.",
     }
 
 
@@ -2530,7 +2759,7 @@ async def trigger_statpal_team_stats_sync(
         "status": "queued",
         "task_id": task.id,
         "message": f"Team stats sync queued. "
-                   f"Use /api/admin/statpal/task/{task.id} to check status.",
+        f"Use /api/admin/statpal/task/{task.id} to check status.",
     }
 
 
@@ -2552,6 +2781,7 @@ async def trigger_datagolf_poll(
     _check_admin_secret(secret, request=request)
 
     from app.tasks.datagolf import _poll_datagolf_markets
+
     try:
         result = await _poll_datagolf_markets()
         return {"status": "completed", "result": result}
@@ -2568,6 +2798,7 @@ async def trigger_datagolf_live_poll(
     _check_admin_secret(secret, request=request)
 
     from app.tasks.datagolf import _poll_datagolf_live
+
     try:
         result = await _poll_datagolf_live()
         return {"status": "completed", "result": result}
@@ -2584,6 +2815,7 @@ async def datagolf_debug_schedule(
     _check_admin_secret(secret, request=request)
 
     from app.services.datagolf_api import DataGolfAPIService
+
     service = DataGolfAPIService()
     try:
         data = await service._get("get-schedule", {"tour": "pga"})
@@ -2612,9 +2844,7 @@ async def datagolf_status(
 
     # Count DataGolf markets
     market_result = await db.execute(
-        select(func.count(FuturesMarket.id)).where(
-            FuturesMarket.source == "datagolf"
-        )
+        select(func.count(FuturesMarket.id)).where(FuturesMarket.source == "datagolf")
     )
     total_markets = market_result.scalar() or 0
 
@@ -2641,7 +2871,8 @@ async def datagolf_status(
     snap_result = await db.execute(
         select(func.count(FuturesOddsSnapshot.id)).where(
             FuturesOddsSnapshot.bookmaker == "datagolf_model",
-            FuturesOddsSnapshot.captured_at >= datetime.now(timezone.utc) - timedelta(hours=24),
+            FuturesOddsSnapshot.captured_at
+            >= datetime.now(timezone.utc) - timedelta(hours=24),
         )
     )
     recent_snapshots = snap_result.scalar() or 0
@@ -2651,6 +2882,7 @@ async def datagolf_status(
     try:
         from app.tasks.redis_state import get_redis_client
         from app.tasks.datagolf import LIVE_KEY_PREFIX, POLL_TOURS
+
         r = get_redis_client()
         for tour in POLL_TOURS:
             key = f"{LIVE_KEY_PREFIX}:{tour}"
@@ -2677,7 +2909,9 @@ async def datagolf_status(
             entry["tour"] = m.market_metadata.get("tour")
             entry["course"] = m.market_metadata.get("course")
             entry["has_leaderboard"] = "leaderboard" in m.market_metadata
-            entry["round_history_count"] = len(m.market_metadata.get("round_history", []))
+            entry["round_history_count"] = len(
+                m.market_metadata.get("round_history", [])
+            )
         latest_markets.append(entry)
 
     return {
@@ -2692,7 +2926,8 @@ async def datagolf_status(
 
 @router.get("/odds-api/sport-polling-status")
 async def sport_polling_status(
-    request: Request, secret: str = Query(None),
+    request: Request,
+    secret: str = Query(None),
 ):
     """Live polling status for each sport — shows 404 caches, adaptive slowdown, and skip reasons."""
     if not _check_admin_secret(secret, request=request):
@@ -2701,8 +2936,10 @@ async def sport_polling_status(
     from datetime import datetime, timezone
     from app.tasks.redis_state import get_redis_client
     from app.tasks.config import (
-        SPORT_POLLING_TIERS, SPORT_POLLING_DEFAULT_TIER,
-        SPORT_TIER_MULTIPLIERS, SPORT_REGION_OVERRIDES,
+        SPORT_POLLING_TIERS,
+        SPORT_POLLING_DEFAULT_TIER,
+        SPORT_TIER_MULTIPLIERS,
+        SPORT_REGION_OVERRIDES,
     )
     from app.utils.sport_keys import SPORT_LEAGUE_MAP
 
@@ -2719,7 +2956,9 @@ async def sport_polling_status(
         is_404 = bool(r.get(f"bainluck:sport_404:{sport_key}"))
 
         last_poll_raw = r.get(f"bainluck:last_poll:{sport_key}")
-        last_poll_ago = round(now_ts - float(last_poll_raw.decode())) if last_poll_raw else None
+        last_poll_ago = (
+            round(now_ts - float(last_poll_raw.decode())) if last_poll_raw else None
+        )
 
         unchanged_raw = r.get(f"bainluck:unchanged_count:{sport_key}")
         unchanged_count = int(unchanged_raw.decode()) if unchanged_raw else 0
@@ -2734,17 +2973,19 @@ async def sport_polling_status(
         elif last_poll_ago > 7200:
             status = "stale"
 
-        sports.append({
-            "sport": sport_key,
-            "tier": tier,
-            "multiplier": f"{multiplier}x",
-            "status": status,
-            "is_404_cached": is_404,
-            "last_poll_seconds_ago": last_poll_ago,
-            "unchanged_count": unchanged_count,
-            "region_override": region_override,
-            "effective_live_interval_s": 32 * multiplier,
-        })
+        sports.append(
+            {
+                "sport": sport_key,
+                "tier": tier,
+                "multiplier": f"{multiplier}x",
+                "status": status,
+                "is_404_cached": is_404,
+                "last_poll_seconds_ago": last_poll_ago,
+                "unchanged_count": unchanged_count,
+                "region_override": region_override,
+                "effective_live_interval_s": 32 * multiplier,
+            }
+        )
 
     cached_404 = [s for s in sports if s["is_404_cached"]]
 
