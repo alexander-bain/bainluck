@@ -24,9 +24,22 @@ settled, the caller has nothing left to read but `is_winner` — whose default i
 exactly the FALSE that same docstring says cannot mean "lost". The guard is in
 the right function and the wrong half.
 
-THE RULE THIS FILE PINS: **a loss needs a winner to be a loss against.** In a
-market where nobody is stamped a winner, "settled and not a winner" is not a
-result. Where one leg IS crowned, every #3868 clause applies unchanged.
+THE RULE THIS FILE PINS, in two halves that are both required:
+
+    no winner anywhere in the field   -> the stamp has nothing to be a loss against
+    AND 0.20 <= its own price < 0.97  -> and the book has not eliminated it
+
+CERT-2256 BLOCKED the first half on its own and was right: an open outright can
+hold a TRUTHFUL settled loser long before anyone is crowned. A Slam ladder
+eliminates players round by round and nobody wins until the final, so suppressing
+on "no winner" alone takes Iga Swiatek — out of this tournament, priced 2% — and
+puts her back to offering odds on a question that has been answered. That is
+#3868's bug on the very card this file is fixing. `TestATerminalLoserKeepsIts
+Result` is that block's named control.
+
+The field half is not redundant either, and dropping it was the first thing
+tried: a bare price band over-refuses 2,056 legs in fields that DO have a winner,
+530 of them priced >= 0.97.
 
 FIXTURES ARE REAL, read off production 2026-09-08 12:5xZ–13:0xZ by
 `POST /api/admin/db-query`, market ids in each docstring. Prices are quoted to
@@ -41,6 +54,7 @@ from app.routes.league_futures import (
     _field_has_a_winner,
     _live_first,
     _outcome_is_settled,
+    _price_contradicts_a_loss,
     _serialize_outcomes,
     _sorted_outcomes,
 )
@@ -187,11 +201,18 @@ class TestAFieldNobodyWonPrintsNoResult:
             (NFL_SECOND_HALF_TOTAL, "NE Patriots vs SEA Seahawks: 2nd Half Total"),
         ],
     )
-    def test_not_one_leg_reaches_the_card_as_a_result(self, field, label):
+    def test_no_leg_the_book_still_prices_reaches_the_card_as_a_result(self, field, label):
+        """Every leg the market is still quoting as a live contender loses its
+        stamp. Legs the book has written off keep theirs — that half is
+        `TestATerminalLoserKeepsItsResult`."""
         market = _market(label, "open", field)
         rows = _serialize_outcomes(_sorted_outcomes(market), market)
-        settled = [r["name"] for r in rows if r["settled"]]
-        assert settled == [], f"{label} has no winner, so it can report no losers"
+        wrongly_settled = [
+            r["name"]
+            for r in rows
+            if r["settled"] and r["probability"] is not None and 0.20 <= r["probability"] < 0.97
+        ]
+        assert wrongly_settled == [], f"{label} has no winner, so it can report no live loser"
 
     def test_sabalenka_is_a_percentage_again_and_it_is_her_own(self):
         """The headline. Named legs, not a count: a rule that turned every row
@@ -228,15 +249,107 @@ class TestAFieldNobodyWonPrintsNoResult:
         market = _market("WBC Bantamweight Title on January 1, 2027", "open", WBC_BANTAMWEIGHT)
         rows = _serialize_outcomes(_sorted_outcomes(market), market)
 
-        assert [r["name"] for r in rows[:2]] == ["Michael Angeletti", "Tenshin Nasukawa"]
-        assert [r["probability"] for r in rows[:2]] == [
+        assert [r["name"] for r in rows[:4]] == [
+            "Michael Angeletti",
+            "Tenshin Nasukawa",
+            "Andrew Cain",
+            "Takuma Inoue",
+        ]
+        assert [r["probability"] for r in rows[:4]] == [
             pytest.approx(0.370),
             pytest.approx(0.210),
+            pytest.approx(0.200),
+            pytest.approx(0.200),
         ]
-        # And no priced leg sinks below an unpriced one anywhere in the window.
-        priced = [i for i, r in enumerate(rows) if r["probability"] is not None]
-        unpriced = [i for i, r in enumerate(rows) if r["probability"] is None]
-        assert not unpriced or max(priced) < min(unpriced)
+        assert all(r["settled"] is False for r in rows[:4])
+        # The four em-dashes are still live legs and still shown — nobody has
+        # stamped them, so nothing here claims otherwise — but they no longer
+        # LEAD, which is the whole reader-visible complaint.
+        assert all(r["probability"] is None for r in rows[4:8])
+
+
+# ---------------------------------------------------------------------------
+# CERT-2256's BLOCK, AND ITS NAMED CONTROL
+# ---------------------------------------------------------------------------
+
+
+class TestATerminalLoserKeepsItsResult:
+    """CERT-2256: "an open ongoing outright can contain an authoritative
+    `api_settlement` loser before its eventual winner is crowned."
+
+    True, and it is this issue's own headline card. The US Open women's ladder
+    eliminates players round by round and nobody is crowned until the final, so
+    a field test alone erases every truthful elimination on it. The book is what
+    tells the two apart: an eliminated contender is quoted at a cent or two, and
+    a contender the market still rates is not.
+    """
+
+    #: Nine real eliminations on the very card #3617 is about, by name and
+    #: stored price. Asserted through `_outcome_is_settled` rather than the
+    #: payload BECAUSE the payload is `[:10]` and — correctly — none of these
+    #: reach it once the live contenders above them are restored. The window is
+    #: the ship working; the grade is what this class is about.
+    @pytest.mark.parametrize(
+        "name,price",
+        [
+            ("Iga Swiatek", 0.020),
+            ("Naomi Osaka", 0.020),
+            ("Jasmine Paolini", 0.010),
+            ("Jelena Ostapenko", 0.010),
+            ("Alexandra Eala", 0.010),
+            ("Barbora Krejcikova", 0.010),
+            ("Amanda Anisimova", 0.080),
+            ("Elina Svitolina", 0.110),
+            ("Karolina Muchova", 0.140),
+        ],
+    )
+    def test_a_player_the_book_has_written_off_still_reads_lost(self, name, price):
+        leg = next(o for o in SF_QUALIFIERS if o.name == name)
+        assert leg.current_probability == pytest.approx(price), "fixture drifted"
+        assert _outcome_is_settled(leg, "open", False) is True
+
+    def test_the_same_card_does_both_things_at_once(self):
+        """The point of the conjunction, in one place: ONE uncrowned field, the
+        favourite restored AND the eliminated player still graded."""
+        sabalenka = next(o for o in SF_QUALIFIERS if o.name == "Aryna Sabalenka")
+        swiatek = next(o for o in SF_QUALIFIERS if o.name == "Iga Swiatek")
+
+        assert _outcome_is_settled(sabalenka, "open", False) is False
+        assert _outcome_is_settled(swiatek, "open", False) is True
+
+    def test_the_eliminated_players_queue_behind_the_live_ones(self):
+        """And the card still reads correctly end to end: the restored
+        contenders take the visible slots and the graded tail sits behind them,
+        which is #3868's own ordering contract, unchanged."""
+        market = _market("US Open Women Singles: Semifinals Qualifiers", "open", SF_QUALIFIERS)
+        ordered = _live_first(_sorted_outcomes(market), "open")
+        names = [o.name for o in ordered]
+
+        assert names[:3] == ["Jessica Pegula", "Aryna Sabalenka", "Elena Rybakina"]
+        assert names.index("Aryna Sabalenka") < names.index("Iga Swiatek")
+
+    def test_a_leg_that_agrees_with_its_grade_is_never_promoted(self):
+        """The ceiling. A leg at 0.99 rendered as a percentage is "a graded row
+        dressed as an ordinary 100%" — #3868's original bug — so the refusal
+        stops below certainty even in an uncrowned field. 68 legs / 51 markets
+        sit here on production; they are a data defect (#3959)."""
+        field = [_stamped(1, "Certain", 0.99), _stamped(2, "Hopeless", 0.01)]
+        market = _market("An uncrowned field holding a near-certainty", "open", field)
+        rows = {r["name"]: r for r in _serialize_outcomes(_sorted_outcomes(market), market)}
+        assert rows["Certain"]["settled"] is True
+        assert rows["Hopeless"]["settled"] is True
+
+    def test_the_floor_and_ceiling_are_half_open_at_both_ends(self):
+        """Boundaries stated, so a `>` for a `>=` cannot pass silently."""
+        assert _price_contradicts_a_loss(_stamped(1, "at the floor", 0.20)) is True
+        assert _price_contradicts_a_loss(_stamped(2, "under it", 0.1999)) is False
+        assert _price_contradicts_a_loss(_stamped(3, "under the ceiling", 0.9699)) is True
+        assert _price_contradicts_a_loss(_stamped(4, "at the ceiling", 0.97)) is False
+
+    def test_no_price_is_not_a_contradiction(self):
+        """Absence of evidence (gotcha #53). The column is populated forward, so
+        a null price says nothing and the grade stands."""
+        assert _price_contradicts_a_loss(_o(1, "unpriced", None)) is False
 
 
 # ---------------------------------------------------------------------------
@@ -307,39 +420,48 @@ class TestACoherentFieldIsUntouched:
 # ---------------------------------------------------------------------------
 
 
-class TestTheRuleReadsTheFieldAndNotThePrice:
-    """The named repair on the issue was "refuse a result whose own price is
-    mid-band". It is not what shipped, and these two tests are the reason.
+class TestTheFieldTestIsNotRedundant:
+    """A bare price band was the mechanism #3617's comment named, and CERT-2256
+    is the reason a bare FIELD test is not the answer either. Both halves are
+    load-bearing and these tests pin the half a price band cannot do.
 
-    Measured on production 2026-09-08: a price floor (a) under-repairs its own
-    specimen — 12 of the 16 falsely-Lost legs on the WBC card sit at 0.19 and
-    below — and (b) over-refuses 2,056 legs in fields that DO have a winner, of
-    which 530 are priced >= 0.97 and would return to the card as an ordinary
-    "99%" for a leg the field's own winner contradicts. That is #3868's original
-    bug rebuilt, so the price does not get a vote.
+    Measured on production 2026-09-08: dropping the field test over-refuses
+    2,056 legs in markets that DO have a winner, 530 of them priced >= 0.97 —
+    those would return to the card as an ordinary "99%" for a leg the field's
+    own crown contradicts, which is #3868's original bug rebuilt.
     """
 
-    def test_the_whole_boxing_ladder_is_repaired_and_not_just_its_top(self):
+    def test_a_crowned_field_keeps_every_grade_however_the_book_prices_it(self):
+        """A coherent field is untouched at every price, including the band that
+        would trip the contradiction test on its own."""
+        crown = _o(0, "Winner", 0.99, is_winner=True, resolution_source="api_settlement")
+        for price in (0.01, 0.20, 0.50, 0.85, 0.99):
+            field = [crown, _stamped(1, "Loser", price)]
+            market = _market("A crowned field", "open", field)
+            rows = {r["name"]: r for r in _serialize_outcomes(_sorted_outcomes(market), market)}
+            assert rows["Loser"]["settled"] is True, price
+            assert _price_contradicts_a_loss(field[1]) is (0.20 <= price < 0.97), price
+
+    def test_the_price_alone_never_refuses_a_grade(self):
+        """The conjunction stated directly: the same leg, the same price, one
+        crowned field and one uncrowned, and only the uncrowned one refuses."""
+        leg = _stamped(1, "Contender", 0.62)
+        assert _price_contradicts_a_loss(leg) is True
+        assert _outcome_is_settled(leg, "open", True) is True
+        assert _outcome_is_settled(leg, "open", False) is False
+
+    def test_the_sub_floor_tail_of_the_boxing_ladder_is_left_alone(self):
+        """Honest about what this does NOT repair: 12 of the WBC card's 16
+        stamped legs sit at 0.19 and below and keep reading Lost, on a title
+        that resolves in 2027. They are wrong and they are #3959's, not the
+        renderer's — the book has written them off and the display has no
+        second signal to argue with."""
         market = _market("WBC Bantamweight Title on January 1, 2027", "open", WBC_BANTAMWEIGHT)
-        rows = _serialize_outcomes(_sorted_outcomes(market), market)
-        cheap = [r for r in rows if (r["probability"] or 0) < 0.20 and r["probability"]]
+        ordered = _live_first(_sorted_outcomes(market), "open")
+        cheap = [o for o in ordered if o.current_probability and o.current_probability < 0.20]
 
-        assert cheap, "the fixture must contain sub-0.20 legs or this proves nothing"
-        assert all(r["settled"] is False for r in cheap)
-
-    def test_moving_every_price_changes_no_verdict(self):
-        """Same field, same grades, different numbers. A rule that read the
-        price would answer differently; this one cannot."""
-        def flags(field):
-            market = _market("A field nobody won", "open", field)
-            return [r["settled"] for r in _serialize_outcomes(_sorted_outcomes(market), market)]
-
-        cheap = [_stamped(i, f"Leg {i}", 0.01 * i) for i in range(1, 8)]
-        dear = [_stamped(i, f"Leg {i}", 0.90 - 0.01 * i) for i in range(1, 8)]
-        assert flags(cheap) == flags(dear) == [False] * 7
-
-        crowned = [_o(0, "Winner", 0.5, is_winner=True, resolution_source="api_settlement")]
-        assert flags(crowned + cheap) == flags(crowned + dear) == [True] * 8
+        assert len(cheap) == 12
+        assert all(_outcome_is_settled(o, "open", False) is True for o in cheap)
 
 
 # ---------------------------------------------------------------------------

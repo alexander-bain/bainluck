@@ -1482,6 +1482,42 @@ def _field_has_a_winner(outcomes: list) -> bool:
     return any(getattr(o, "is_winner", None) is True for o in outcomes)
 
 
+#: A leg the book still prices as a live contender has not been eliminated.
+#:
+#: MEASURED, not chosen (production 2026-09-08 13:5xZ). On OPEN markets — the only
+#: ones in scope, and the only ones still being polled — a genuine settled loser's
+#: price has collapsed: over open fields carrying exactly one winner priced ≥0.90
+#: (so the book agrees with its own crown), **92.3% of settled losers sit below
+#: 0.20 and 75.5% below 0.02**, n=3,150. The mass above the floor is the frozen-
+#: price tail of markets the venue has closed while our row still reads `open`
+#: (gotcha #33), and it is exactly what the ceiling and the field test exclude.
+_TERMINAL_LOSER_CEILING = 0.20
+
+#: …and above this, refusing the grade would REBUILD #3868. A leg priced ≥0.97
+#: rendered as a percentage is "a graded row dressed as an ordinary 100%", which
+#: is the bug #3868 shipped to remove. 68 legs / 51 markets sit here; they are a
+#: data defect (#3959), not something the renderer should paper over by promoting
+#: them back to a near-certainty.
+_AGREES_WITH_ITS_GRADE = 0.97
+
+
+def _price_contradicts_a_loss(outcome) -> bool:
+    """Does this leg's own live price refuse the loss it has been stamped with?
+
+    ONE-DIRECTIONAL, and that is the whole design. A price may never CREATE a
+    grade — `_outcome_is_settled`'s first paragraph, unchanged since #3868 — and
+    this function is never asked whether something settled. It is asked only
+    whether a stamp is contradicted, and it can answer no.
+
+    NULL is not a contradiction. The column is populated forward, so absence of
+    a price is absence of evidence (gotcha #53) and the grade stands.
+    """
+    price = getattr(outcome, "current_probability", None)
+    if price is None:
+        return False
+    return _TERMINAL_LOSER_CEILING <= float(price) < _AGREES_WITH_ITS_GRADE
+
+
 def _outcome_is_settled(
     outcome, market_status: str | None = None, field_has_winner: bool = True
 ) -> bool:
@@ -1517,38 +1553,48 @@ def _outcome_is_settled(
     Never `is_winner is False` on its own: the column is nullable with
     `default=False`, so FALSE cannot tell "lost" from "nobody has looked".
 
-    🔴 AND A LOSS NEEDS A WINNER TO BE A LOSS AGAINST (#3617). The clause above
-    is the whole reason this one exists. Having established settlement from the
-    SOURCE, the caller has nothing left to read but `is_winner`, whose default
-    is exactly the FALSE this docstring has just said cannot mean "lost" — so
-    every leg of a market the venue never actually graded arrives at the card as
-    **Lost**. On 2026-09-08 that was `/sport/tennis/wta` telling a reader, during
-    the quarter-finals, that Sabalenka (69.5% to reach the semi-final), Pegula
-    (78.5%) and Rybakina (71.5%) had already failed to, while the 15% went to
-    three players who were out of the tournament.
+    🔴 AND A LOSS NEEDS BOTH A WINNER TO BE A LOSS AGAINST AND A PRICE THAT
+    ADMITS IT (#3617). The clause above is the whole reason this one exists.
+    Having established settlement from the SOURCE, the caller has nothing left to
+    read but `is_winner`, whose default is exactly the FALSE this docstring has
+    just said cannot mean "lost" — so every leg of a market the venue never
+    actually graded arrives at the card as **Lost**. On 2026-09-08 that was
+    `/sport/tennis/wta` telling a reader, during the quarter-finals, that
+    Sabalenka (69.5% to reach the semi-final), Pegula (78.5%) and Rybakina
+    (71.5%) had already failed to, while the 15% went to three players who were
+    out of the tournament.
 
-    The refusal is FIELD-LEVEL, not per-leg, because that is where the evidence
-    is: in a market where NOBODY is stamped a winner, "settled and not a winner"
-    is not a result — it is a stamp with nothing to be a loss against. Where one
-    leg IS crowned, the field is coherent and every clause above applies
-    unchanged, so the correct half of the same ladder keeps its results (the
+    TWO SIGNALS, BOTH REQUIRED, and the second one is CERT-2256's block. A field
+    test alone is not evidence of fabrication: **an open outright can hold a
+    truthful settled loser long before anyone is crowned** — a Slam ladder
+    eliminates players round by round and nobody wins until the final. Suppress
+    on "no winner" alone and Iga Swiatek, out of this tournament and priced 2%,
+    stops reading `Lost` and goes back to offering odds on a question that has
+    been answered, which is #3868's bug on the very card this is fixing.
+
+    So the refusal needs the field to have crowned nobody AND the leg's own book
+    to still be pricing it as a live contender:
+
+        no winner anywhere in the field   -> the stamp has nothing to be a loss against
+        AND 0.20 <= its own price < 0.97  -> and the book has not eliminated it
+
+    A terminal authoritative loser fails the second test — its price has
+    collapsed — and keeps its result. Sabalenka at 0.715 fails neither and gets
+    her percentage back. Measured basis for the floor and ceiling:
+    `_TERMINAL_LOSER_CEILING` / `_AGREES_WITH_ITS_GRADE` above.
+
+    THE FIELD TEST IS NOT REDUNDANT, and dropping it was the first thing tried.
+    A bare price band over-refuses **2,056 legs in fields that DO have a winner**
+    — 530 of them priced ≥0.97, which would render as an ordinary "99%" for a leg
+    the field's own crown contradicts. Requiring both leaves every coherent field
+    byte-identical, including the correct half of the same ladder: the
     QUARTERFINALS QUALIFIERS card, where Pegula/Sabalenka/Navarro genuinely did
-    win, is byte-identical after this change).
+    win, does not move.
 
-    MEASURED, because the alternative reading was the one first proposed and it
-    is wrong. The named repair was "refuse a result whose own price is mid-band".
-    On production that predicate (a) under-repairs its own specimen — 12 of the
-    16 falsely-Lost legs on the WBC Bantamweight card sit below any usable floor
-    — and (b) over-refuses 2,056 legs in fields that DO have a winner, of which
-    530 are priced ≥97%. Those 530 would render as an ordinary "99%" for a leg
-    the field's own winner contradicts, which is #3868's original bug, rebuilt.
-    Field coherence catches all four specimens on the issue whole and touches no
-    coherent field at all: 1,676 open markets / 5,882 stamped legs flip, and by
-    construction not one of them sits beside a "Won".
-
-    THE PRICE IS NEVER CONSULTED, here or anywhere in this function. It cannot
-    create a grade (the first paragraph) and it does not veto one either; the
-    only thing that overrules a stamp is the absence of the winner it implies.
+    THE PRICE STILL CANNOT CREATE A GRADE. It has exactly one power here, to
+    refuse one, and only alongside a field that crowned nobody. Certainty is
+    never read as settlement (the first paragraph) — `_price_contradicts_a_loss`
+    is never consulted unless a stamp already exists.
 
     SCOPED to the branch where the grade rests on the SOURCE alone, and written
     as `not can_write_winner(market_status, None)` rather than as a second
@@ -1566,7 +1612,11 @@ def _outcome_is_settled(
         return False
     if getattr(outcome, "is_winner", None) is True:
         return True
-    if not field_has_winner and not can_write_winner(market_status, None):
+    if (
+        not field_has_winner
+        and not can_write_winner(market_status, None)
+        and _price_contradicts_a_loss(outcome)
+    ):
         return False
     return can_write_winner(market_status, getattr(outcome, "resolution_source", None))
 
