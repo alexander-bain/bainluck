@@ -285,6 +285,107 @@ def normalize_pair(
     return round(a / total, 6), round(b / total, 6), round(total, 6), True
 
 
+#: What a row's numbers say they are ABOUT, published so a reader of the payload
+#: can tell the two bases apart without inferring it from `source_count` (#3903).
+#:
+#: `venue` is this module's original behaviour: one venue's two quotes, each side
+#: renormalized by the pair's own overround.  `blend` is the number the linked
+#: event's own page prints — `compute_aggregate_probability` over every source on
+#: the event — and it is what a row serves whenever it CAN.
+PRICE_BASIS_VENUE = "venue"
+PRICE_BASIS_BLEND = "blend"
+
+
+def orient_event_blend(
+    blend: Optional[dict[str, Any]], side_names: list[Optional[str]]
+) -> tuple[Optional[list[float]], Optional[list[float]], Optional[str]]:
+    """The linked event's hero pair, turned to face THIS row's side order (#3903).
+
+    Returns ``(current_pair, opening_pair, refusal)`` — the first two index-aligned
+    with ``side_names``, or the third naming why not.  Never a partial answer:
+    both pairs come back or neither does.
+
+    ═══ ALL OR NOTHING, BECAUSE A MIXED BASIS IS THE BUG ═══
+
+    #3903's most visible symptom was not the level (59 vs 60), it was the
+    **arrow**: Tiafoe read −2 on the hub and +2 on his own page.  That inversion
+    is what you get by taking "now" from one basis and "the open" from another —
+    the hub's open was the venue's 0.605 while the page's was the event's 0.5764,
+    so the same market movement pointed two ways.
+
+    So an event that cannot supply BOTH halves supplies neither, and the row
+    keeps the venue basis it has today, which is at least internally consistent.
+    Measured on production 2026-09-08: of 8 event-linked quarter-finals, 7 carried
+    an opening and 1 (Andreeva/Vondrousova, 15307447) did not — so this refusal is
+    a live case on the day it shipped, not a hypothetical.
+
+    ═══ ORIENTATION IS AN EXACT BIJECTION, OR IT REFUSES ═══
+
+    An ``events`` row names its sides ``home_team`` / ``away_team`` as free text,
+    and this module's posture is that nothing infers at request time.  It does not
+    have to here: the question is not "who does this name resemble" but "is there
+    exactly one way to lay two names over two names", which is decidable.
+    ``names_agree`` is the comparator the row builder ALREADY trusts to decide
+    whether ESPN's scoreboard is naming our two players (``pairing_agrees``, the
+    ``PAIRING_DISAGREES`` refusal), so orientation cannot disagree with the
+    fixture-level check standing next to it.
+
+    Two guards on top of it, both because ``names_agree`` is a MATCHER and a
+    matcher is permissive by design:
+
+    * **An empty name is rejected here, not delegated.**  ``names_agree``
+      documents that an empty name agrees with anything — correct for a matcher
+      deciding whether to withhold a fixture, catastrophic for a function
+      deciding which player a number belongs to.  A blank ``home_team`` would
+      otherwise fit both slots and the ambiguity test below would be the only
+      thing standing between a reader and a number under the wrong player's name.
+    * **Both layings are tried and exactly one must fit.**  If the straight and
+      the swapped orientation both agree, the names do not distinguish the
+      players and we refuse — the same shape as ``attribute_yes_side``'s
+      shared-token strip, where an ambiguity may only ever cause a refusal.
+    """
+    if not isinstance(blend, dict):
+        return None, None, "NO_BLEND"
+
+    home_name = blend.get("home_name")
+    away_name = blend.get("away_name")
+    if not str(home_name or "").strip() or not str(away_name or "").strip():
+        return None, None, "EVENT_SIDES_UNNAMED"
+    if len(side_names) != 2 or not all(str(n or "").strip() for n in side_names):
+        return None, None, "ROW_SIDES_UNNAMED"
+
+    straight = _names_agree(side_names[0], home_name) and _names_agree(
+        side_names[1], away_name
+    )
+    swapped = _names_agree(side_names[0], away_name) and _names_agree(
+        side_names[1], home_name
+    )
+    if straight == swapped:
+        # Both fit (the names do not distinguish the two players) or neither does
+        # (this event is not describing this fixture). One refusal, because a
+        # caller can act on neither, and guessing between them is the defect.
+        return None, None, "BLEND_ORIENTATION_UNCLEAR"
+
+    home_prob = _as_probability(blend.get("home_probability"))
+    away_prob = _as_probability(blend.get("away_probability"))
+    open_home = _as_probability(blend.get("opening_home_probability"))
+    open_away = _as_probability(blend.get("opening_away_probability"))
+    if home_prob is None or away_prob is None:
+        return None, None, "BLEND_UNPRICED"
+    if open_home is None or open_away is None:
+        # See "ALL OR NOTHING" above: no open means no basis for an arrow, and a
+        # borrowed one points the wrong way.
+        return None, None, "BLEND_HAS_NO_OPEN"
+
+    current = [home_prob, away_prob] if straight else [away_prob, home_prob]
+    opening = [open_home, open_away] if straight else [open_away, open_home]
+    return (
+        [round(p, 6) for p in current],
+        [round(p, 6) for p in opening],
+        None,
+    )
+
+
 def _side_view(
     entity_key: str,
     player: dict[str, Any],
@@ -430,6 +531,7 @@ def build_match_row(
     cutoff: Optional[datetime],
     event_ids: Optional[dict[str, int]] = None,
     order_of_play: Optional[dict[str, dict[str, Any]]] = None,
+    blends: Optional[dict[int, dict[str, Any]]] = None,
 ) -> tuple[Optional[dict[str, Any]], Optional[str]]:
     """ONE matchup -> one slate row, or a named reason it is not one.
 
@@ -439,6 +541,16 @@ def build_match_row(
     copy that agrees today.  Two surfaces each computing "the favourite" or
     "is this coherent" is the divergence bug in miniature; the standing ruling
     is that the blend is the product and one question gets one number.
+
+    ``blends`` (#3903) is what finally makes that last sentence true ACROSS the
+    tap, not just within this file.  Keyed by ``events.id``, each value is the
+    linked event's own hero pair — the number its page prints — and a row that
+    can be oriented onto one serves it instead of its own venue quote.  Until it
+    existed, this docstring's principle was contradicted three lines from the
+    bottom of its own return dict, where ``source_count: 1`` reported that the
+    row was pricing from a single venue while the page one tap away blended
+    three.  See ``orient_event_blend`` for the all-or-nothing rule and for why
+    the arrow, not the level, was the symptom that made this a p1.
 
     ``cutoff`` is the only difference between the two callers, and it is the
     reason this is a parameter rather than a constant:
@@ -707,6 +819,44 @@ def build_match_row(
                 view["probability"] - view["opening_probability"], 6
             )
 
+    # ═══ #3903: THE LINKED EVENT'S NUMBER WINS ═══
+    #
+    # OUR `events.id` for this fixture, hoisted above the pricing overlay because
+    # it is now an input to the numbers and not merely a link on the way out.
+    # Both routes to it are id-anchored and neither is a name match: the register
+    # may pin it directly, or `tournament_event_link` dereferences the pinned
+    # match-winner `market_id` through `futures_markets.event_id`.
+    event_id = matchup.get("event_id") or (event_ids or {}).get(
+        matchup.get("matchup_key")
+    )
+
+    price_basis = PRICE_BASIS_VENUE
+    blend_source_count: Optional[int] = None
+    blend_refusal: Optional[str] = None
+
+    # ONLY OVER A ROW THAT ALREADY PRINTS A COHERENT PAIR, and the bound is
+    # deliberate. This ship is "the number the reader sees is the right one", not
+    # "more rows get numbers": a blend reaching an UNPRICED row would turn a
+    # `priced: False` card into a priced one, and a blend reaching an INCOHERENT
+    # pair would print a confident split over the exact disagreement
+    # `normalize_pair` refuses to launder. Both are arguable improvements and
+    # neither is this issue; each would change which cards exist, which is a
+    # different blast radius and wants its own measurement. A row with no linked
+    # event is untouched by construction.
+    if event_id is not None and coherent and open_coherent:
+        blend_pair, blend_open, blend_refusal = orient_event_blend(
+            (blends or {}).get(int(event_id)),
+            [v["display_name"] for v in views],
+        )
+        if blend_pair is not None and blend_open is not None:
+            price_basis = PRICE_BASIS_BLEND
+            for index, view in enumerate(views):
+                view["probability"] = blend_pair[index]
+                view["opening_probability"] = blend_open[index]
+                view["move"] = round(blend_pair[index] - blend_open[index], 6)
+            count = ((blends or {}).get(int(event_id)) or {}).get("source_count")
+            blend_source_count = count if isinstance(count, int) and count > 0 else None
+
     # THE AND (UX-P135): the pair is as old as its older side.
     age = governing_age_hours(side_times, now)
     state = price_state(age)
@@ -741,8 +891,10 @@ def build_match_row(
         # the previous evening, so 94 of the 96 R128 fixtures now have a
         # standard `events` row. It is no longer true that "the draw has no
         # events rows" — that was measured before the ingest and expired.
-        "event_id": matchup.get("event_id")
-        or (event_ids or {}).get(matchup.get("matchup_key")),
+        #
+        # Resolved above rather than here since #3903, because it now decides the
+        # row's NUMBERS and not only where the card taps through to.
+        "event_id": event_id,
         "draw": matchup.get("draw"),
         "draw_label": draw_label(str(matchup.get("draw") or "")),
         "round": matchup.get("round"),
@@ -809,7 +961,18 @@ def build_match_row(
         "mixed_freshness": 0 < len(stale_sides) < len(views),
         "favourite": favourite,
         "has_moved": any(abs(m) > MOVE_DEAD_BAND for m in moves),
-        "source_count": 1,
+        # WHICH QUESTION THESE NUMBERS ANSWER (#3903) — `venue` or `blend`, on
+        # every row, so the payload states its basis instead of leaving a reader
+        # to infer it from a count. A row that WANTED the blend and could not have
+        # it says why in `blend_refusal`, which is this module's standing posture:
+        # named reasons, never a silent fallback (`props_dropped`, `stale_sides`,
+        # `price_state: unpriced` are the same discipline).
+        "price_basis": price_basis,
+        "blend_refusal": blend_refusal,
+        # HOW MANY SOURCES ACTUALLY FED THE NUMBER. The hardcoded `1` was true of
+        # a venue-priced row and was the payload-level tell for #3903: it sat
+        # beside an `event_id` whose page was blending three.
+        "source_count": blend_source_count or 1,
         # THE AND, again: a match row prints one pair, so it is as solid as its
         # thinner side. A 90/10 built from a traded favourite and an untraded
         # underdog is not a traded 90/10 — the underdog's book is half of it.
@@ -1201,6 +1364,19 @@ def authority_match_row(
         ),
         "favourite": favourite,
         "has_moved": any(abs(m) > MOVE_DEAD_BAND for m in moves),
+        # SAME SHAPE AS AN ORDINARY ROW (#3903), which
+        # `test_the_row_has_exactly_the_shape_an_ordinary_row_has` enforces and
+        # which caught these two the hour they were added.
+        #
+        # An authority row is ALWAYS the venue basis, and the reason is structural
+        # rather than an omission: it exists precisely because the register's
+        # pairing was withheld, so there is no registered fixture to carry an
+        # `event_id`, and therefore no linked event whose blend could be oriented
+        # onto it. `blend_refusal` stays `None` because nothing was refused —
+        # nothing was asked. A named refusal here would put a repair in somebody's
+        # queue for a lookup that is not defined on this row shape.
+        "price_basis": PRICE_BASIS_VENUE,
+        "blend_refusal": None,
         # `1` is a claim that a source priced this pairing, so it is only true
         # once one has. Unpriced it stays `0`, exactly as Q505 wrote it.
         "source_count": 1 if priced else 0,
@@ -1235,6 +1411,7 @@ def build_slate(
     order_of_play: Optional[dict[str, dict[str, Any]]] = None,
     order_of_play_complete: bool = True,
     authority_links: Optional[dict[str, dict[str, Any]]] = None,
+    blends: Optional[dict[int, dict[str, Any]]] = None,
 ) -> dict[str, Any]:
     """Assemble the daily slate payload.
 
@@ -1298,6 +1475,7 @@ def build_slate(
             cutoff=cutoff,
             event_ids=event_ids,
             order_of_play=order_of_play,
+            blends=blends,
         )
         if row is None:
             reason = reason or "UNKNOWN"
