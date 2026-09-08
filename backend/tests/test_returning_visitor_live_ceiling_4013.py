@@ -281,6 +281,34 @@ def _returning_headers():
     return {"x-session-id": _SESSION_ID}
 
 
+# 🔴 #4053 — THIS FILE MUST NOT ALSO BE ASSERTING THAT IT IS UNDER THE RATE LIMIT.
+#
+# The file drives `/api/feed` 22× as an ANONYMOUS client, and the anonymous budget
+# is a process-global 60-second fixed window at `_ANON_MAX = 60` (`utils/rate_limit`)
+# shared by every anon-route test in the pytest process. `scripts/ci_shard.py` packs
+# LPT-greedy, so adding ANY test file anywhere repacks the shards — measured, two new
+# files moved ~250 of shard 3's 366 — and this file lands behind a different set of
+# neighbours on every branch. Run behind enough of them inside one wall-clock minute
+# its requests are refused, and the assertions below read the 429 as a product
+# failure: `assert 429 == 200`, `KeyError: 'x-feed-cache'` (a 429 short-circuits in
+# middleware, so the route never runs and never sets its header), `anon key moved:
+# set()`. Measured on PR #4037: 22/22 in isolation on clean master, 9 failed twice
+# identically in shard 3. Isolation passes and the shard fails reproducibly — that is
+# a coupling to the neighbours, not a flake.
+#
+# `BYPASS_RATE_LIMITS` is the existing exemption hatch read by `_is_exempt`, and
+# `monkeypatch.setenv` unsets it again at teardown, so nothing leaks in either
+# direction: neighbours' spend cannot reach these assertions and these requests do
+# not spend the window the neighbours are counting.
+#
+# If the hatch is ever removed or renamed, this does NOT fail silently —
+# `TestTheseRequestsAreNotMeteredByTheirShardNeighbours` at the bottom of the file
+# proves the exemption still holds against a deliberately exhausted window.
+@pytest.fixture(autouse=True)
+def _not_metered(monkeypatch):
+    monkeypatch.setenv("BYPASS_RATE_LIMITS", "1")
+
+
 # --------------------------------------------------------------------------
 # THE OLD BEHAVIOUR. If these ever pass, the fix below is measuring nothing.
 # --------------------------------------------------------------------------
@@ -661,3 +689,81 @@ class TestTheHeadroomArithmetic:
         """If liveness detection breaks, the clamp silently stops applying."""
         assert payload_contains_live_event(_live_payload(time.time()))
         assert not payload_contains_live_event(_settled_payload(time.time()))
+
+
+# --------------------------------------------------------------------------
+# #4053 — THE GUARD FOR THE CLASS. Order-independent and red-first.
+# --------------------------------------------------------------------------
+
+
+class TestTheseRequestsAreNotMeteredByTheirShardNeighbours:
+    """Prove the exemption above still holds against an exhausted anon window.
+
+    An order-dependent guard would be no guard at all here: the autouse fixture
+    is per-test, so an earlier test that spent the budget would have its spend
+    discarded before the next one ran. Instead this test spends the shared window
+    ITSELF, on the same limiter singleton the middleware consults, and then asks
+    for the same page twice — once with the exemption withdrawn and once with it
+    in place.
+
+    The withdrawn arm is the control, and it is doing two jobs. It proves the
+    hazard is real (a spent window really does refuse this file's requests), and
+    it proves THE KEY MATCHES — if the bucket this test spends were not the
+    bucket the middleware charges, that arm would answer 200 and the test would
+    fail rather than quietly certifying an exemption of nothing.
+    """
+
+    #: Pinned rather than left to the transport: `_get_client_ip` reads
+    #: X-Forwarded-For position 0 before falling back to `request.client.host`,
+    #: so sending the header makes the bucket this test spends and the bucket the
+    #: middleware charges the same string by construction, on any client.
+    _PEER = "198.51.100.203"
+
+    def _spend_the_anon_window(self):
+        """Do what ~366 shard neighbours do between them inside one minute."""
+        import app.utils.rate_limit as rl_mod
+
+        anon_limit, _ = rl_mod._get_limits()
+        limiter = rl_mod._get_rate_limiter()
+        for _ in range(rl_mod._ANON_MAX):
+            limiter.hit(anon_limit, "rate_limit", self._PEER)
+        # The window is spent, not merely nearly spent.
+        assert not limiter.hit(
+            anon_limit, "rate_limit", self._PEER
+        ), "the anon window did not refuse after _ANON_MAX hits — this guard is measuring nothing"
+
+    @pytest.mark.asyncio
+    async def test_a_spent_anon_window_refuses_this_page_without_the_exemption(
+        self, monkeypatch
+    ):
+        """THE CONTROL. Withdraw the exemption and the 429 is right there."""
+        monkeypatch.delenv("BYPASS_RATE_LIMITS", raising=False)
+        self._spend_the_anon_window()
+
+        resp, _ = await _drive_feed(
+            redis=_SeededRedis({}),
+            monkeypatch=monkeypatch,
+            headers={**_returning_headers(), "x-forwarded-for": self._PEER},
+        )
+        assert resp.status_code == 429, (
+            "a fully spent anonymous window did not refuse the feed — either the "
+            "bucket keys diverged or the middleware stopped metering; either way "
+            "the arm below proves nothing until this one is red-capable again"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_spent_anon_window_does_not_reach_these_assertions(
+        self, monkeypatch
+    ):
+        """THE PROPERTY. Same spent window, exemption in place, page served."""
+        self._spend_the_anon_window()
+
+        resp, _ = await _drive_feed(
+            redis=_SeededRedis({}),
+            monkeypatch=monkeypatch,
+            headers={**_returning_headers(), "x-forwarded-for": self._PEER},
+        )
+        assert resp.status_code == 200, (
+            f"{resp.status_code} from a shard-mate's spent budget: every status "
+            "and header assertion in this file is a lottery on shard packing (#4053)"
+        )
