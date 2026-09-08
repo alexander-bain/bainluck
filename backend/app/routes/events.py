@@ -4441,7 +4441,8 @@ async def search_events(
     formatted_results = []
     sports_found = {}
 
-    # ONE lookup for the page's folds (#3937), before the loop rather than in it.
+    # The page's folds (#3937), batched before the loop rather than per row in
+    # it. Search returns at most `per_page` = 100, so this is one statement.
     folded_map = await folded_probability_sources_batch(db, events)
 
     for event in events:
@@ -8611,8 +8612,10 @@ async def list_events(
             # Time-series metrics are a bonus — don't fail the whole endpoint
             pass
 
-    # ONE lookup for the page's folds (#3937), before the formatting loop rather
-    # than inside it — see `folded_probability_sources_batch`.
+    # The page's folds (#3937), batched before the formatting loop rather than
+    # per row inside it — see `folded_probability_sources_batch`. This endpoint
+    # returns up to 500 events, which is `_FOLD_BATCH_ARMS`-chunked into 5
+    # statements rather than 500.
     folded_map = await folded_probability_sources_batch(db, events)
 
     # Format response with aggregated odds

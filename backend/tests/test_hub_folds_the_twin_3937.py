@@ -152,14 +152,32 @@ def _batch(eng, *event_ids):
 def _standard_page():
     """Two canonicals, each with a twin holding a venue the canonical lacks."""
     return _engine(
-        _event(CANON_ID, home="Ben Shelton", away="Carlos Alcaraz",
-               sources=dict(CANON_SOURCES)),
-        _event(TWIN_ID, home="Shelton", away="Alcaraz",
-               sources=dict(TWIN_SOURCES), tags=[duplicate_tag(CANON_ID)]),
-        _event(OTHER_ID, home="Karen Khachanov", away="Alexander Blockx",
-               sources={"betting": 0.5923}),
-        _event(OTHER_TWIN_ID, home="Khachanov", away="Blockx",
-               sources={"kalshi": 0.585}, tags=[duplicate_tag(OTHER_ID)]),
+        _event(
+            CANON_ID,
+            home="Ben Shelton",
+            away="Carlos Alcaraz",
+            sources=dict(CANON_SOURCES),
+        ),
+        _event(
+            TWIN_ID,
+            home="Shelton",
+            away="Alcaraz",
+            sources=dict(TWIN_SOURCES),
+            tags=[duplicate_tag(CANON_ID)],
+        ),
+        _event(
+            OTHER_ID,
+            home="Karen Khachanov",
+            away="Alexander Blockx",
+            sources={"betting": 0.5923},
+        ),
+        _event(
+            OTHER_TWIN_ID,
+            home="Khachanov",
+            away="Blockx",
+            sources={"kalshi": 0.585},
+            tags=[duplicate_tag(OTHER_ID)],
+        ),
     )
 
 
@@ -186,12 +204,60 @@ class TestTheBatchedFold:
         _, executed = _batch(_standard_page(), CANON_ID, OTHER_ID)
         assert executed == 1
 
+    def test_a_page_wider_than_one_chunk_is_CHUNKED_and_not_TRUNCATED(self):
+        """🔴 Every event is folded, however wide the page.
+
+        `_FOLD_BATCH_ARMS` bounds the `@>` arms in one statement because a
+        500-arm plan measured ~125 ms on production. A CAP would have been the
+        cheap way to bound it and would silently leave everything past the first
+        chunk on the divergent number — this ship's own bug, reintroduced as a
+        "limit". So the assertion is on BOTH halves: the statement count grows,
+        and the last canonical on an oversized page still gets its twin.
+        """
+        from app.utils.proven_duplicates import _FOLD_BATCH_ARMS
+
+        width = _FOLD_BATCH_ARMS * 2 + 1
+        # Ids held as plain ints: the `Event` objects are detached once
+        # `_engine`'s session closes, and reading `.id` off one then raises
+        # `DetachedInstanceError` rather than returning the number.
+        filler_ids = [9_000_000 + i for i in range(width - 1)]
+        eng = _engine(
+            _event(
+                CANON_ID,
+                home="Ben Shelton",
+                away="Carlos Alcaraz",
+                sources=dict(CANON_SOURCES),
+            ),
+            _event(
+                TWIN_ID,
+                home="Shelton",
+                away="Alcaraz",
+                sources=dict(TWIN_SOURCES),
+                tags=[duplicate_tag(CANON_ID)],
+            ),
+            *(
+                _event(fid, home=f"P{fid}", away=f"Q{fid}", sources={"betting": 0.5})
+                for fid in filler_ids
+            ),
+        )
+        ids = filler_ids + [CANON_ID]
+        folded, executed = _batch(eng, *ids)
+        assert executed == 3
+        assert len(folded) == width
+        # CANON_ID sorts LAST of these ids, so it lands in the final chunk — the
+        # one a cap would have dropped.
+        assert folded[CANON_ID]["kalshi"] == 0.22
+
     def test_every_event_gets_an_entry_even_with_no_twin(self):
         """Callers index the result unconditionally, so an unfolded event must
         still be a KEY — a `.get()` miss would blank the row's own readings."""
         eng = _engine(
-            _event(CANON_ID, home="Ben Shelton", away="Carlos Alcaraz",
-                   sources=dict(CANON_SOURCES)),
+            _event(
+                CANON_ID,
+                home="Ben Shelton",
+                away="Carlos Alcaraz",
+                sources=dict(CANON_SOURCES),
+            ),
         )
         folded, _ = _batch(eng, CANON_ID)
         assert folded == {CANON_ID: CANON_SOURCES}
@@ -217,14 +283,65 @@ class TestTheBatchedFold:
         assert folded[CANON_ID]["kalshi"] == 0.22
         assert folded[OTHER_ID]["kalshi"] == 0.585
 
+    def test_a_twin_is_not_folded_onto_a_LOOKALIKE_canonical_on_the_same_page(self):
+        """🔴 The tag, and ONLY the tag, attributes a twin.
+
+        The test above cannot fail this: when the two canonicals are different
+        fixtures, `orientation_agrees` refuses the cross-fold on the names alone,
+        so a batch that ignored tags entirely would still pass it. Measured — a
+        mutant replacing the tag lookup with "every twin onto every canonical"
+        went green on all 25 tests in this file before this case existed.
+
+        So the two canonicals here carry the SAME player names — one fixture the
+        hub renders and one it also renders (a rematch, a twin pair that has not
+        been merged, the same pairing in two rounds). Orientation cannot separate
+        them and the tag is the only thing left. If this reddens, the fold has
+        found a name route to a suppressed row, which is the absorption
+        ruling 048 bans.
+        """
+        rematch_id = CANON_ID + 900
+        eng = _engine(
+            _event(
+                CANON_ID,
+                home="Ben Shelton",
+                away="Carlos Alcaraz",
+                sources=dict(CANON_SOURCES),
+            ),
+            _event(
+                rematch_id,
+                home="Ben Shelton",
+                away="Carlos Alcaraz",
+                sources=dict(CANON_SOURCES),
+            ),
+            _event(
+                TWIN_ID,
+                home="Shelton",
+                away="Alcaraz",
+                sources=dict(TWIN_SOURCES),
+                tags=[duplicate_tag(CANON_ID)],
+            ),
+        )
+        folded, _ = _batch(eng, CANON_ID, rematch_id)
+        assert folded[CANON_ID]["kalshi"] == 0.22
+        assert "kalshi" not in folded[rematch_id]
+
     def test_a_swapped_twin_is_refused(self):
         """Orientation, for the reason the singular fold checks it: a reading is
         a HOME win probability whose meaning comes from its own row's names."""
         eng = _engine(
-            _event(CANON_ID, home="Ben Shelton", away="Carlos Alcaraz",
-                   sources=dict(CANON_SOURCES)),
-            _event(TWIN_ID, home="Alcaraz", away="Shelton",
-                   sources=dict(TWIN_SOURCES), tags=[duplicate_tag(CANON_ID)]),
+            _event(
+                CANON_ID,
+                home="Ben Shelton",
+                away="Carlos Alcaraz",
+                sources=dict(CANON_SOURCES),
+            ),
+            _event(
+                TWIN_ID,
+                home="Alcaraz",
+                away="Shelton",
+                sources=dict(TWIN_SOURCES),
+                tags=[duplicate_tag(CANON_ID)],
+            ),
         )
         folded, _ = _batch(eng, CANON_ID)
         assert folded[CANON_ID] == CANON_SOURCES
@@ -234,10 +351,19 @@ class TestTheBatchedFold:
         sport, same names, same time — only `event_tags` differs. A name/time
         route to the ghost is the absorption ruling 048 bans."""
         eng = _engine(
-            _event(CANON_ID, home="Ben Shelton", away="Carlos Alcaraz",
-                   sources=dict(CANON_SOURCES)),
-            _event(TWIN_ID, home="Shelton", away="Alcaraz",
-                   sources=dict(TWIN_SOURCES), tags=[duplicate_tag(CANON_ID + 1)]),
+            _event(
+                CANON_ID,
+                home="Ben Shelton",
+                away="Carlos Alcaraz",
+                sources=dict(CANON_SOURCES),
+            ),
+            _event(
+                TWIN_ID,
+                home="Shelton",
+                away="Alcaraz",
+                sources=dict(TWIN_SOURCES),
+                tags=[duplicate_tag(CANON_ID + 1)],
+            ),
         )
         folded, _ = _batch(eng, CANON_ID)
         assert folded[CANON_ID] == CANON_SOURCES
@@ -254,9 +380,7 @@ class TestTheBatchedFold:
         batched, _ = _batch(eng, CANON_ID, OTHER_ID)
         with Session(eng) as s:
             singular = asyncio.run(
-                folded_probability_sources(
-                    _CountingSession(s), s.get(Event, event_id)
-                )
+                folded_probability_sources(_CountingSession(s), s.get(Event, event_id))
             )
         assert batched[event_id] == singular
 
@@ -412,23 +536,34 @@ class TestTheListFormatter:
     would be the N+1 this ship exists to avoid.
     """
 
-    def _event_orm(self):
+    def _event_orm(self, sources=None):
         event = _event(
             CANON_ID,
             home="Ben Shelton",
             away="Carlos Alcaraz",
-            sources=dict(CANON_SOURCES),
+            sources=dict(CANON_SOURCES) if sources is None else sources,
         )
         event.sport = Sport(id=S_TENNIS, key="tennis_atp", name="ATP")
         return event
 
     def test_a_folded_source_set_reaches_the_hero(self):
-        """The formatter must read the fold, not the row it was handed."""
-        folded = {**CANON_SOURCES, **TWIN_SOURCES}
+        """🔴 The formatter must read the FOLD, not the row it was handed.
+
+        The canonical here holds NOTHING and the twin holds everything — the
+        strongest case, and the one #3937's body names ("the detail page prints
+        a number and the hub prints none"). A well-sourced canonical is the wrong
+        fixture for this assertion: `betting` at weight 3.0 dominates a weighted
+        median, so gaining a 0.8-weight venue usually does not move the hero and
+        a formatter that ignored the fold entirely would still print the same
+        percentage. Measured: with a well-sourced canonical, a mutant reverting
+        this line to `resolve_hero(event)` left this test green.
+        """
         response = events_route._format_event_with_aggregated_odds(
-            self._event_orm(), None, folded_sources=folded
+            self._event_orm(sources={}),
+            None,
+            folded_sources={"kalshi": {"value": 0.22}},
         )
-        assert response["hero_probability"] is not None
+        assert response["hero_probability"] == pytest.approx(0.22)
         assert response["hero_probability_source"] == "blend"
 
     def test_no_fold_supplied_is_the_unfolded_answer_and_not_a_crash(self):
@@ -436,12 +571,19 @@ class TestTheListFormatter:
 
         `None` means "this caller has not been taught to batch". The fold is
         strictly additive, so the unfolded hero is under-informed, never wrong
-        in the other direction — but it must still be a hero.
+        in the other direction — but it must still be a hero. The CONTROL for
+        the test above: same empty canonical, no fold, no number.
         """
         unfolded = events_route._format_event_with_aggregated_odds(
             self._event_orm(), None
         )
         assert unfolded["hero_probability"] is not None
+        assert (
+            "hero_probability"
+            not in events_route._format_event_with_aggregated_odds(
+                self._event_orm(sources={}), None
+            )
+        )
 
     def test_an_empty_fold_does_not_read_as_absent(self):
         """🔴 `{}` is a fold that found nothing; `None` is no fold at all.

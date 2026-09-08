@@ -514,6 +514,29 @@ def _tag_elements(tags: object) -> list[str]:
     return []
 
 
+#: How many `@>` arms may share one statement (#3937).
+#:
+#: `@>` is the ONLY form `ix_events_event_tags` can serve — it is a
+#: `gin (event_tags jsonb_path_ops)` index, and `jsonb_path_ops` supports
+#: containment and nothing else. The obvious one-arm alternative was measured on
+#: production and is a SEQ SCAN: `event_tags ?| array[...]` took 2.18 s for 8
+#: tags and 10.3 s for 500, against 3 ms and ~125 ms for the equivalent `OR` of
+#: `@>` arms. So the width has to be managed rather than designed away.
+#:
+#: Measured on production 2026-09-08 (EXPLAIN ANALYZE, planning + execution):
+#:
+#:      10 arms    5 ms          100 arms   32 ms
+#:      25 arms    6 ms          200 arms   31 ms
+#:      50 arms    9 ms          500 arms  ~125 ms, and the planner stopped
+#:                                         returning stable timings there
+#:
+#: CHUNKED RATHER THAN CAPPED. A cap would fold the first N events and silently
+#: leave the rest on the divergent number — the exact shape of bug this ship
+#: exists to remove, reintroduced as a "limit". Chunking folds every event
+#: whatever the page size and only costs an extra round trip per 100.
+_FOLD_BATCH_ARMS = 100
+
+
 async def folded_probability_sources_batch(db, events) -> dict[int, dict]:
     """:func:`folded_probability_sources` for a whole page, in ONE lookup (#3937).
 
@@ -541,17 +564,23 @@ async def folded_probability_sources_batch(db, events) -> dict[int, dict]:
 
     by_tag = {duplicate_tag(cid): cid for cid in canonicals}
 
-    rows = (
-        await db.execute(
-            select(
-                Event.id,
-                Event.home_team_name,
-                Event.away_team_name,
-                Event.win_probability_sources,
-                Event.event_tags,
-            ).where(or_(*(tagged_duplicate_of(cid) for cid in sorted(canonicals))))
+    ordered = sorted(canonicals)
+    rows: list[tuple] = []
+    for start in range(0, len(ordered), _FOLD_BATCH_ARMS):
+        chunk = ordered[start : start + _FOLD_BATCH_ARMS]
+        rows.extend(
+            (
+                await db.execute(
+                    select(
+                        Event.id,
+                        Event.home_team_name,
+                        Event.away_team_name,
+                        Event.win_probability_sources,
+                        Event.event_tags,
+                    ).where(or_(*(tagged_duplicate_of(cid) for cid in chunk)))
+                )
+            ).all()
         )
-    ).all()
 
     folded: dict[int, list[tuple[int, dict | None]]] = {}
     for twin_id, home, away, sources, tags in rows:

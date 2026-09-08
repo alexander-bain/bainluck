@@ -704,10 +704,11 @@ async def _load_blends(
     # Alcaraz 76% over a match page reading 77%, because canonical 15306813 holds
     # betting + Polymarket and its twin 15306391 holds the Kalshi reading.
     #
-    # ONE lookup for the whole page, not one per row: this loader is capped at
-    # `MAX_BLEND_EVENTS` fixtures and a per-row fold would be an N+1 on the first
-    # screen of a slam. That cost is exactly why #3810 left this surface
-    # unfolded, so paying it correctly is the ship rather than a detail of it.
+    # ONE lookup per `_FOLD_BATCH_ARMS` rows, not one per row: this loader is
+    # capped at `MAX_BLEND_EVENTS` fixtures and a per-row fold would be an N+1 on
+    # the first screen of a slam. That cost is exactly why #3810 left this
+    # surface unfolded, so paying it correctly is the ship rather than a detail
+    # of it. Today's US Open hub carries 8 linked rows, measured at ~5 ms.
     folded_sources = await folded_probability_sources_batch(session, rows)
 
     blends: dict[int, dict[str, Any]] = {}
