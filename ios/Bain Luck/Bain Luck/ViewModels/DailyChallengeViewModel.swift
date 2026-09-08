@@ -79,7 +79,54 @@ final class DailyChallengeViewModel: ObservableObject {
     /// The class is `@MainActor` as a whole, which would otherwise make the copy
     /// decisions unreachable from a test without hopping — the reason this view
     /// model had no tests at all before #3858.
-    nonisolated static func question(from item: FeedItem) -> DailyChallengeQuestion? {
+    ///
+    /// #3864 item 2 — NEVER ASK A READER TO PREDICT SOMETHING THAT HAS ALREADY
+    /// HAPPENED. Both the Watch (`WatchGuessPool`, L2-225) and web have carried
+    /// this guard for as long as they have had a deck; the phone never has. Its
+    /// whole filter was `p > 0.05, p < 0.95, id > 0` — three tests about a number
+    /// and an id, and no lifecycle test of any kind. A settled card keeps a
+    /// perfectly plausible-looking price, so without one the deck can serve a
+    /// Higher/Lower question whose answer is fixed, and then grade the guess
+    /// against it. That is Alex's standing "settled means settled", and it is the
+    /// fourth payment on it in as many sessions (#3821 → #3823 → #3859 → this).
+    ///
+    /// 🟠 **MEASURED BEFORE BUILDING, AND THE MEASUREMENT IS NARROWER THAN THE
+    /// HEADLINE.** Production, 2026-09-07 03:20 PT, against exactly what `load()`
+    /// requests (`/api/feed?limit=30&offset=0&event_pct=0.35`):
+    ///
+    /// - Of 54 event cards over three pulls, **30 were `completed`**, and **12 of
+    ///   those passed the old `p`/`id` filter** — i.e. were servable as questions.
+    /// - But in the order `load()` consumes them, the **first already-decided
+    ///   question sits at position 10 of 22**, and the deck is `prefix(5)`. So
+    ///   today the deck does NOT serve one.
+    ///
+    /// 🔴 Which is the reason to build it, stated honestly: the deck's correctness
+    /// here is **an accident of Discover's ranking, not a property of the Daily
+    /// Challenge**. This view model applies no stale gate of its own — it takes
+    /// whatever the feed hands it — and the margin is five cards. Four of the 22
+    /// askable questions in a single payload are already decided. Any re-rank, or
+    /// five leading cards failing the price filter, and a reader is asked to call
+    /// a game that finished hours ago.
+    ///
+    /// The event half is ``EventState/isFinished(_:)`` and the futures half is
+    /// ``FeedLifecycle/futuresIsSettled(_:now:)`` — the surfaces' own authorities,
+    /// not a fourth opinion. `FeedLifecycle` is the one web's `_futuresIsSettled`
+    /// mirrors field for field, and its `resolution_date` arm is the authority
+    /// that actually fires in production, because gotcha #33 means a settled
+    /// Kalshi market keeps `status='open'` forever.
+    ///
+    /// 🟠 **ITEM 1 OF #3864 IS DELIBERATELY NOT FIXED HERE.** The phone still
+    /// submits an events-table id as `user_predictions.market_id`. That half has a
+    /// product decision in it — futures-only would change what the Daily Challenge
+    /// *contains*, since this deck is event-heavy by request — and #3864 lays out
+    /// three options for Alex. This half has no decision in it, so it ships alone.
+    ///
+    /// - Parameter now: injected so a fixture cannot branch on the clock
+    ///   (gotcha #44). `load()` takes the default.
+    nonisolated static func question(
+        from item: FeedItem,
+        now: Date = Date()
+    ) -> DailyChallengeQuestion? {
         let probability: Double?
         let fallbackHeadline: String
         let subject: String
@@ -87,6 +134,12 @@ final class DailyChallengeViewModel: ObservableObject {
         let category: String?
 
         if let eventData = item.event {
+            // #3864 — a decided game is not a question. `isFinished` is the
+            // event page's own terminal test, kept in step with
+            // `frontend/lib/eventState.ts` and the backend's `SETTLED_STATUSES`.
+            // `suspended` is deliberately NOT refused: it is non-terminal, no
+            // result was ever reported, and the answer is not fixed.
+            guard !EventState.isFinished(eventData.status) else { return nil }
             probability = eventData.currentOdds?.homeProbability
             fallbackHeadline = "\(eventData.homeTeam) vs \(eventData.awayTeam)"
             subject = "\(eventData.homeTeam) to win"
@@ -95,6 +148,10 @@ final class DailyChallengeViewModel: ObservableObject {
             // quietly narrowing an analytics field while fixing copy.
             category = eventData.sport ?? item.futures?.llmSportCategory
         } else if let futuresData = item.futures, let top = futuresData.topOutcomes?.first {
+            // #3864 — the same refusal the Watch deck makes (L2-225), through the
+            // native authority web's `_futuresIsSettled` mirrors. Four arms:
+            // resolved flag, named winner, terminal status, past resolution date.
+            guard !FeedLifecycle.futuresIsSettled(futuresData, now: now) else { return nil }
             probability = top.probability
             fallbackHeadline = futuresData.name
             subject = top.name
