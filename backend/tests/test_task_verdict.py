@@ -389,6 +389,18 @@ class TestEnforcementScope:
             # `app/tasks/tournament_price_refresh.py`, in this same change.
             "tournament_price_refresh",
             "tournament_results_sync",
+            # #3879: the fourth price rail — the served Polymarket long tail,
+            # the population none of the other three is addressed by. Enrolled
+            # at BIRTH, in the change that gives it a beat, because it inherits
+            # the failure shape argued two comments up in full: it re-prices
+            # 22,034 markets nothing else reaches, and a run of it that wrote
+            # nothing leaves every one of them rendering an ageing number with
+            # no blank state and no error. Its terminal also carries the
+            # population census (`served_markets` / `stale_markets`), which is
+            # #3879's acceptance 2 — a refresh rail that silently stops must not
+            # read as healthy. Terminal comes from
+            # `polymarket_condition_refresh._terminal`.
+            "polymarket_condition_refresh",
             # #2077 (queue 419): the nightly settlement-capture sweep, enrolled
             # at BIRTH in the same change that gives it a beat. Terminal comes
             # from `settlement_sweep_runner._verdict`, which already separated

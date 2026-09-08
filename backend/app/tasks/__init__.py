@@ -935,6 +935,13 @@ HEAVY_TASKS = {
     # placing it there would close the queue rather than share it. It cannot
     # collide with the :15 precompute, and it is the only heavy beat at :50.
     "app.tasks.refresh_stale_futures_prices",
+    # #3879, hourly :08. Here for the same plain reading as the entry above and
+    # for no wider grant: its wall budget is 200s, which is precisely the
+    # multi-minute beat the background note forbids on a queue with ~one
+    # effective slot. It is NOT a big backfill — soft limit 300s, the #1609
+    # 300s class, not the 600-960s grinder class that
+    # `test_big_backfills_stay_off_heavy` keeps on background.
+    "app.tasks.refresh_stale_polymarket_conditions",
     # --- 🔄 `prewarm_live_feed_shapes` IS NO LONGER A MEMBER OF THIS SET. It was
     # added by D68-next below and REMOVED by #3765 (LAT-P179, Fable D51) on
     # 2026-09-07; it routes to `realtime` from `task_routes` above, where the
@@ -1433,6 +1440,37 @@ def refresh_registered_tournament_prices(self):
     from app.tasks.tournament_price_refresh import _refresh_registered_tournament_prices
     return _tracked_run(
         "tournament_price_refresh", _refresh_registered_tournament_prices()
+    )
+
+
+@celery_app.task(bind=True, soft_time_limit=300, time_limit=360,
+                 name="app.tasks.refresh_stale_polymarket_conditions")
+def refresh_stale_polymarket_conditions(self, budget: int = 0):
+    """Re-price the served Polymarket markets the other three rails cannot reach (#3879).
+
+    The discovery scan rotates a 20-page window under Gamma's offset-2000 cap,
+    `futures_price_refresh` is addressed by tier and traded volume, and
+    `refresh_registered_tournament_prices` is addressed by a committed register.
+    A market that is none of those things is written once at ingest and never
+    again: measured 2026-09-07, 56,721 of 76,006 served Polymarket futures legs
+    had not been read in 24 hours, 9,986 of them on tier-1 markets.
+
+    This one is addressed by a QUERY over served-and-stale legs, and asks Gamma
+    for those condition ids directly — the read that does not paginate and is
+    therefore not subject to the cap. Prices and, on a closed book with terminal
+    prices, grades; it never creates a market or an outcome. Full mechanism and
+    the blast radius: ``app/tasks/polymarket_condition_refresh``.
+
+    ``budget`` is a manual-run override for the per-run market cap.
+    """
+    from app.tasks.polymarket_condition_refresh import (
+        _refresh_stale_polymarket_conditions,
+    )
+
+    kwargs = {"budget": budget} if budget else {}
+    return _tracked_run(
+        "polymarket_condition_refresh",
+        _refresh_stale_polymarket_conditions(**kwargs),
     )
 
 
@@ -4690,6 +4728,24 @@ celery_app.conf.beat_schedule = {
         # precompute there fires at :15 and cannot collide with :50.
         "task": "app.tasks.refresh_stale_futures_prices",
         "schedule": crontab(minute=50),
+        "options": {"queue": "heavy"},
+    },
+    # #3879. Hourly at :08, the served long tail the three other price rails
+    # cannot address. `heavy` for the standing reason and stated as a literal so
+    # `test_heavy_beat_literals_match_their_effective_queue` can read it: its
+    # wall budget is 200s and background has ~one effective slot for ~40 beats.
+    #
+    # `:08` is chosen against the WHOLE heavy queue rather than against the
+    # rails it is related to. Its heavy neighbours are `:05`
+    # (match-prediction-markets) and `:12` (matching-reconciliation), which is
+    # the ordinary spacing on this lane, and it is 7 minutes clear of the Gamma
+    # discovery poll at `:15`, 30 after the Polymarket book refresh at `:38` and
+    # 18 after the price sweep at `:50` — so no two Gamma readers hold the rate
+    # limit at once. `test_schedule_sentinel_wiring` is what actually checks
+    # this; the paragraph is why, not the proof.
+    "refresh-stale-polymarket-conditions-hourly": {
+        "task": "app.tasks.refresh_stale_polymarket_conditions",
+        "schedule": crontab(minute=8),
         "options": {"queue": "heavy"},
     },
     # #3518/#3569. Hourly at :20, deliberately between the Kalshi poll (:45 every

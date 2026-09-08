@@ -1,0 +1,585 @@
+"""#3879 — the fourth price rail: the served Polymarket long tail.
+
+WHAT IS BEING GUARDED, AND WHY IT NEEDS GUARDING AT BIRTH.
+
+A stale futures ladder renders exactly like a fresh one. There is no blank
+state, no error and no missing card — the numbers simply age, wearing whatever
+freshness word the gates award them. Measured on production 2026-09-07: 56,721
+of 76,006 served Polymarket futures legs had not been re-read in 24 hours, and
+nothing anywhere said so. #3868 is what it looks like when someone finally reads
+one aloud on a page.
+
+So this rail's tests are mostly about the states in which it achieves nothing,
+because those are the states its own surface cannot show:
+
+* the selector could not run (which is NOT "there is nothing to do"),
+* nothing was stale (honest, and still never GREEN),
+* everything stale was already attempted this window (the opposite state, and it
+  gets its own reason rather than sharing that silence),
+* Gamma refused every batch,
+* markets came back and not one price landed.
+
+Plus the three properties the ship itself turns on: the unit of work is the
+whole MARKET, a batch that fails cannot wipe the run's other batches, and a
+market that could not be written is marked ATTEMPTED so it cannot sit at the
+head of a stalest-first ordering forever and starve the tail behind it.
+"""
+
+import app.tasks.polymarket_condition_refresh as rail
+import app.tasks.tournament_price_refresh as tournament_rail
+from app.utils.task_verdict import ENFORCED_TASKS, verdict_for
+
+
+class _Market:
+    """The one attribute the rail reads off a Gamma market before writing."""
+
+    def __init__(self, condition_id: str):
+        self.condition_id = condition_id
+
+
+class _Service:
+    def __init__(self, markets=None, raises: Exception | None = None, per_call=None):
+        self._markets = markets or []
+        self._raises = raises
+        #: One entry per call: a list of markets, or an Exception to raise.
+        self._per_call = list(per_call) if per_call is not None else None
+        self.calls: list[list[str]] = []
+        self.asked_include_closed: bool | None = None
+
+    async def get_markets_by_conditions(
+        self, conditions, batch_size=None, include_closed=False
+    ):
+        self.calls.append(list(conditions))
+        self.asked_include_closed = include_closed
+        if self._per_call is not None:
+            step = self._per_call[len(self.calls) - 1]
+            if isinstance(step, Exception):
+                raise step
+            return step
+        if self._raises is not None:
+            raise self._raises
+        return self._markets
+
+
+def _arm(
+    monkeypatch,
+    *,
+    candidates=None,
+    stale=0,
+    served=0,
+    selector_raises: Exception | None = None,
+    service=None,
+    writer=None,
+    skips=None,
+    marked=None,
+):
+    """Point the rail at scripted collaborators. No DB, no network, no Redis."""
+    import app.services.polymarket_api as poly
+
+    async def _select(*, stale_hours, limit):
+        if selector_raises is not None:
+            raise selector_raises
+        return list(candidates or []), stale, served
+
+    monkeypatch.setattr(rail, "_select_stale_conditions", _select)
+    monkeypatch.setattr(poly, "PolymarketAPIService", lambda *a, **k: service or _Service())
+    monkeypatch.setattr(rail, "_load_attempt_skips", lambda ids: set(skips or ()))
+    # `marked is not None`, never `marked or []`: an empty list is falsy, and the
+    # `or` form would quietly extend a throwaway list and report no marks at all.
+    sink = marked if marked is not None else []
+    monkeypatch.setattr(rail, "_mark_attempted", lambda ids: sink.extend(ids))
+    if writer is not None:
+        monkeypatch.setattr(tournament_rail, "_write_refreshed_prices", writer)
+
+
+async def _writes(markets, stats, *, now):
+    stats["outcomes_updated"] += 2 * len(markets)
+    stats["snapshots_written"] += 2 * len(markets)
+
+
+class TestThisRailCannotAchieveNothingQuietly:
+    """Five ways to refresh no prices. None of them may read GREEN."""
+
+    def test_the_rail_is_enrolled_so_its_terminal_is_authoritative(self):
+        # Enrolment WITHOUT a terminal is a no-op, and a terminal WITHOUT
+        # enrolment is ignored. Both halves, or neither is worth anything.
+        assert "polymarket_condition_refresh" in ENFORCED_TASKS
+
+    async def test_a_selector_that_could_not_run_is_failed_not_no_work(
+        self, monkeypatch
+    ):
+        """"I could not look" and "there is nothing to do" must never read the same."""
+        _arm(monkeypatch, selector_raises=RuntimeError("statement timeout"))
+        stats = await rail._refresh_stale_polymarket_conditions()
+
+        assert stats["terminal"] == "failed"
+        assert stats["reason"] == "selector_failed"
+        assert any("statement timeout" in e for e in stats["errors"])
+        assert verdict_for("polymarket_condition_refresh", stats).is_green is False
+
+    async def test_nothing_stale_is_no_work_and_still_never_green(self, monkeypatch):
+        _arm(monkeypatch, candidates=[], stale=0, served=22_034)
+        stats = await rail._refresh_stale_polymarket_conditions()
+
+        assert stats["terminal"] == "no_work"
+        assert stats["reason"] == "nothing_stale"
+        verdict = verdict_for("polymarket_condition_refresh", stats)
+        assert verdict.is_green is False
+        # Authoritative, so it BLOCKS the success counter rather than being
+        # waved through as a legacy return.
+        assert verdict.authoritative is True
+        assert verdict.blocks_success is True
+
+    async def test_everything_stale_already_attempted_gets_its_own_reason(
+        self, monkeypatch
+    ):
+        """The opposite state from the one above. One shared silence would hide
+        a rail whose whole budget is being eaten by markets it cannot write."""
+        _arm(
+            monkeypatch,
+            candidates=[(1, "0xaaa"), (2, "0xbbb")],
+            stale=2,
+            served=10,
+            skips={1, 2},
+        )
+        stats = await rail._refresh_stale_polymarket_conditions()
+
+        assert stats["terminal"] == "no_work"
+        assert stats["reason"] == "all_recently_attempted"
+        assert stats["skipped_recent_attempt"] == 2
+        assert verdict_for("polymarket_condition_refresh", stats).is_green is False
+
+    async def test_a_zero_budget_says_so_instead_of_borrowing_that_reason(
+        self, monkeypatch
+    ):
+        """Both leave `due` empty and they mean opposite things: this one
+        refreshed nothing BY INSTRUCTION, the one above could not."""
+        _arm(
+            monkeypatch,
+            candidates=[(1, "0xaaa"), (2, "0xbbb")],
+            stale=2,
+            served=10,
+        )
+        stats = await rail._refresh_stale_polymarket_conditions(budget=0)
+
+        assert stats["terminal"] == "no_work"
+        assert stats["reason"] == "no_budget"
+        assert stats["skipped_recent_attempt"] == 0
+        assert verdict_for("polymarket_condition_refresh", stats).is_green is False
+
+    async def test_every_batch_refused_by_gamma_is_failed_and_names_the_cause(
+        self, monkeypatch
+    ):
+        _arm(
+            monkeypatch,
+            candidates=[(1, "0xaaa")],
+            stale=1,
+            served=10,
+            service=_Service(raises=RuntimeError("gamma 429")),
+        )
+        stats = await rail._refresh_stale_polymarket_conditions()
+
+        assert stats["terminal"] == "failed"
+        assert stats["reason"] == "fetch_failed"
+        assert any("gamma 429" in e for e in stats["errors"])
+        assert verdict_for("polymarket_condition_refresh", stats).is_green is False
+
+    async def test_markets_returned_but_no_price_written_is_failed(self, monkeypatch):
+        """The zero-yield mutant. Everything 'worked' and nothing landed."""
+
+        async def _writes_nothing(markets, stats, *, now):
+            stats["unpriced"] += len(markets)
+
+        _arm(
+            monkeypatch,
+            candidates=[(1, "0xaaa")],
+            stale=1,
+            served=10,
+            service=_Service(markets=[_Market("0xaaa")]),
+            writer=_writes_nothing,
+        )
+        stats = await rail._refresh_stale_polymarket_conditions()
+
+        assert stats["terminal"] == "failed"
+        assert stats["reason"] == "no_prices_written"
+        assert stats["snapshots_written"] == 0
+        assert verdict_for("polymarket_condition_refresh", stats).is_green is False
+
+    async def test_a_run_that_wrote_prices_is_the_only_green(self, monkeypatch):
+        _arm(
+            monkeypatch,
+            candidates=[(1, "0xaaa")],
+            stale=1,
+            served=10,
+            service=_Service(markets=[_Market("0xaaa")]),
+            writer=_writes,
+        )
+        stats = await rail._refresh_stale_polymarket_conditions()
+
+        assert stats["terminal"] == "complete"
+        assert stats["reason"] == "prices_written"
+        assert verdict_for("polymarket_condition_refresh", stats).is_green is True
+
+
+class TestOneBadBatchCannotWipeTheRun:
+    """Gotcha #42, and it is sharper here than in a feed loop: the batches are
+    independent markets, so a single Gamma hiccup must cost those forty rows and
+    nothing else."""
+
+    async def test_a_failed_fetch_leaves_the_other_batch_written(self, monkeypatch):
+        conditions = [(i, f"0x{i:03x}") for i in range(rail.BATCH_SIZE + 1)]
+        service = _Service(
+            per_call=[RuntimeError("gamma 502"), [_Market("0xfff")]]
+        )
+        _arm(
+            monkeypatch,
+            candidates=conditions,
+            stale=len(conditions),
+            served=1_000,
+            service=service,
+            writer=_writes,
+        )
+        stats = await rail._refresh_stale_polymarket_conditions()
+
+        assert stats["batches"] == 2
+        assert stats["snapshots_written"] > 0
+        assert any("gamma 502" in e for e in stats["errors"])
+        # It wrote, so it is not `failed` — and it carries an error, so the
+        # contract downgrades it to PARTIAL rather than letting a half-run pass
+        # as healthy.
+        assert stats["terminal"] == "complete"
+        assert verdict_for("polymarket_condition_refresh", stats).is_green is False
+
+    async def test_a_write_that_raises_is_caught_per_batch(self, monkeypatch):
+        """The quietest failure this rail has: fetched fine, wrote nothing."""
+        calls = {"n": 0}
+
+        async def _second_batch_only(markets, stats, *, now):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("deadlock detected")
+            await _writes(markets, stats, now=now)
+
+        conditions = [(i, f"0x{i:03x}") for i in range(rail.BATCH_SIZE + 1)]
+        _arm(
+            monkeypatch,
+            candidates=conditions,
+            stale=len(conditions),
+            served=1_000,
+            service=_Service(markets=[_Market("0xaaa")]),
+            writer=_second_batch_only,
+        )
+        stats = await rail._refresh_stale_polymarket_conditions()
+
+        assert any("deadlock detected" in e for e in stats["errors"])
+        assert stats["snapshots_written"] > 0
+        assert verdict_for("polymarket_condition_refresh", stats).is_green is False
+
+
+class TestTheOrderingCannotStarveItsOwnTail:
+    """A stalest-first ordering over a population it cannot always write is a
+    fixed point waiting to happen: the rows that fail come back to the head of
+    the queue on every run, forever, and the tail behind them is never reached.
+    The ATTEMPT marker is what breaks it, so it is written on the attempt and
+    not on the success."""
+
+    async def test_a_batch_that_failed_is_still_marked_attempted(self, monkeypatch):
+        marked: list[int] = []
+        _arm(
+            monkeypatch,
+            candidates=[(7, "0xaaa")],
+            stale=1,
+            served=10,
+            service=_Service(raises=RuntimeError("gamma 429")),
+            marked=marked,
+        )
+        await rail._refresh_stale_polymarket_conditions()
+
+        assert marked == [7]
+
+    async def test_a_market_gamma_never_returns_is_still_marked(self, monkeypatch):
+        """`not_returned` is the shape that would otherwise loop forever: the id
+        is valid, the venue simply has nothing to say about it today."""
+        marked: list[int] = []
+        _arm(
+            monkeypatch,
+            candidates=[(7, "0xaaa"), (8, "0xbbb")],
+            stale=2,
+            served=10,
+            service=_Service(markets=[_Market("0xaaa")]),
+            writer=_writes,
+            marked=marked,
+        )
+        stats = await rail._refresh_stale_polymarket_conditions()
+
+        assert stats["not_returned"] == 1
+        assert sorted(marked) == [7, 8]
+
+    async def test_the_marker_expires_inside_the_staleness_window(self):
+        """A marker that outlived the window would retire the row instead of
+        rotating it — the same silence, one level down."""
+        assert rail._ATTEMPT_TTL_SECONDS == rail.SERVED_STALE_HOURS * 3600
+
+    def test_the_producer_window_is_below_the_bar_it_must_not_breach(self):
+        """#3879's acceptance is 24h on tier 1-2. A producer window EQUAL to the
+        bar makes the sweep permanently one cycle behind the breach it exists to
+        prevent (`futures_price_refresh.REGISTERED_REFRESH_MINUTES`'s lesson)."""
+        assert rail.SERVED_STALE_HOURS < 24
+
+
+class TestTheUnitOfWorkIsTheWholeMarket:
+    """A ladder with some legs from today and some from August is worse than a
+    wholly stale one: the reader cannot tell that two numbers beside each other
+    were observed thirteen days apart, and every comparison between them is
+    false."""
+
+    def test_selection_is_per_market_on_its_stalest_leg(self):
+        """A market is due when its STALEST ungraded leg is stale, so the whole
+        row is re-priced together rather than leg by leg."""
+        sql = " ".join(rail._CANDIDATE_SQL.split())
+        assert "MIN(COALESCE(fo.last_updated" in sql
+        assert "fo.is_winner IS NOT TRUE" in sql
+
+    def test_the_writer_is_the_shared_one_not_a_fork(self):
+        """Reuse is the correctness argument, not a convenience: a second writer
+        would be a second answer to what a Gamma market means for these rows —
+        including #3868's both-copies-of-the-condition lookup, which is the only
+        reason the ladder legs a league page renders get written at all."""
+        import inspect
+
+        source = inspect.getsource(rail._refresh_stale_polymarket_conditions)
+        assert (
+            "from app.tasks.tournament_price_refresh import _write_refreshed_prices"
+            in source
+        )
+
+    async def test_every_fetched_market_reaches_that_writer(self, monkeypatch):
+        """And it reaches it whole: the markets Gamma returned are handed over
+        as a batch, so every leg of each condition is written in one pass."""
+        seen: list[str] = []
+
+        async def _capture(markets, stats, *, now):
+            seen.extend(m.condition_id for m in markets)
+            await _writes(markets, stats, now=now)
+
+        _arm(
+            monkeypatch,
+            candidates=[(1, "0xaaa"), (2, "0xbbb")],
+            stale=2,
+            served=10,
+            service=_Service(markets=[_Market("0xaaa"), _Market("0xbbb")]),
+            writer=_capture,
+        )
+        await rail._refresh_stale_polymarket_conditions()
+
+        assert seen == ["0xaaa", "0xbbb"]
+
+    async def test_the_wall_budget_stops_between_markets_never_inside_one(
+        self, monkeypatch
+    ):
+        """A run that stopped mid-market would leave exactly the half-refreshed
+        ladder this rail exists to prevent."""
+        conditions = [(i, f"0x{i:03x}") for i in range(rail.BATCH_SIZE * 3)]
+        clock = {"t": 0.0}
+        monkeypatch.setattr(
+            rail.time, "monotonic", lambda: clock.__setitem__("t", clock["t"] + 100.0) or clock["t"]
+        )
+        _arm(
+            monkeypatch,
+            candidates=conditions,
+            stale=len(conditions),
+            served=1_000,
+            service=_Service(markets=[_Market("0xaaa")]),
+            writer=_writes,
+        )
+        stats = await rail._refresh_stale_polymarket_conditions()
+
+        # The clock passes 200s during the loop, so it stops early — and on a
+        # batch boundary, which is what `batches` being a whole number of
+        # completed fetches records.
+        assert stats["wall_exhausted"] is True
+        assert stats["batches"] < 3
+        # It wrote something, so it is PARTIAL and not `failed` — and never
+        # green, because a run the CLOCK bounded is a run whose sizing has
+        # stopped being true.
+        assert stats["terminal"] == "partial"
+        assert stats["reason"] == "wall_exhausted"
+        assert verdict_for("polymarket_condition_refresh", stats).is_green is False
+
+
+class TestTheOrderingIsAcceptanceOneMadeMechanical:
+    """#3879's acceptance 1 names tier 1 and 2 specifically, and a 1,200-market
+    budget over a 13,746-market population only meets it if those rows are taken
+    FIRST. The ordering is the whole guarantee; a budget without it is a
+    lottery."""
+
+    def test_tier_one_and_two_are_priority(self):
+        sql = " ".join(rail._CANDIDATE_SQL.split())
+        assert "fm.market_tier IN (1, 2)" in sql
+
+    def test_an_imminent_market_is_priority_whatever_its_tier(self):
+        """9,281 legs sit in the ≤2d bucket. An imminent question is the one a
+        reader is most likely to be looking at."""
+        sql = " ".join(rail._CANDIDATE_SQL.split())
+        assert f"make_interval(days => {rail.IMMINENT_DAYS})" in sql
+        assert rail.IMMINENT_DAYS == 2
+
+    def test_priority_leads_and_the_stalest_of_a_class_is_next(self):
+        """Within a class it is stalest-first, which is what stops a member of
+        that class being passed over twice for the same reason."""
+        sql = " ".join(rail._CANDIDATE_SQL.split())
+        assert "ORDER BY p.priority DESC, s.stalest ASC" in sql
+
+    def test_the_budget_and_the_window_are_one_sizing(self):
+        """1,200 x 12 = 14,400 against the 13,746 served markets measured on
+        production 2026-09-08. A budget that could not cover the population
+        inside one staleness window would leave a permanent unreachable tail
+        however the ordering was written."""
+        assert rail.MARKET_BUDGET * rail.SERVED_STALE_HOURS >= 13_746
+
+
+class TestTheFetchCanSeeAResult:
+    """#3868, inherited deliberately. `/markets?condition_ids=…` applies a
+    `closed=false` filter the caller never asked for, so without
+    `include_closed` a leg that settles stops coming back at all — it lands in
+    `not_returned`, nothing is written, and the last LIVE price is frozen on the
+    page for good."""
+
+    async def test_the_rail_asks_for_closed_books_too(self, monkeypatch):
+        service = _Service(markets=[_Market("0xaaa")])
+        _arm(
+            monkeypatch,
+            candidates=[(1, "0xaaa")],
+            stale=1,
+            served=10,
+            service=service,
+            writer=_writes,
+        )
+        await rail._refresh_stale_polymarket_conditions()
+
+        assert service.asked_include_closed is True
+
+
+class TestTheCensusTravelsWithEveryRun:
+    """#3879 acceptance 2: the staleness of the served population is readable
+    from the rail's own terminal, not only from an ad-hoc query. A refresh rail
+    that silently stops must not read as healthy — and this one's surface cannot
+    show that it stopped, because the pages keep rendering."""
+
+    async def test_a_working_run_reports_the_population_it_is_responsible_for(
+        self, monkeypatch
+    ):
+        _arm(
+            monkeypatch,
+            candidates=[(1, "0xaaa")],
+            stale=6_470,
+            served=22_034,
+            service=_Service(markets=[_Market("0xaaa")]),
+            writer=_writes,
+        )
+        stats = await rail._refresh_stale_polymarket_conditions()
+
+        assert stats["served_markets"] == 22_034
+        assert stats["stale_markets"] == 6_470
+
+    async def test_a_quiet_run_still_reports_it(self, monkeypatch):
+        """"13,746 served, none stale" is a healthy quiet run; "0 served" is a
+        broken selector wearing one. Without the census they are the same line."""
+        _arm(monkeypatch, candidates=[], stale=0, served=22_034)
+        stats = await rail._refresh_stale_polymarket_conditions()
+
+        assert stats["served_markets"] == 22_034
+        assert stats["stale_markets"] == 0
+
+    def test_the_census_costs_no_second_scan_on_a_working_run(self):
+        """Both numbers come off the selector the run already executed — a
+        window count taken before the LIMIT, and the pool's own size."""
+        sql = " ".join(rail._CANDIDATE_SQL.split())
+        assert "COUNT(*) OVER () AS stale_markets" in sql
+        assert "(SELECT COUNT(*) FROM pool) AS served_markets" in sql
+        assert "MATERIALIZED" in sql
+
+    async def test_the_budget_binding_is_reported_and_is_not_an_alarm(
+        self, monkeypatch
+    ):
+        """A steady-state rotation over 22,034 markets has the budget binding on
+        every run, forever. Reporting THAT as PARTIAL would be an alarm that can
+        never clear; the census is what carries the growth signal instead."""
+        conditions = [(i, f"0x{i:03x}") for i in range(5)]
+        _arm(
+            monkeypatch,
+            candidates=conditions,
+            stale=6_470,
+            served=22_034,
+            service=_Service(markets=[_Market("0xaaa")]),
+            writer=_writes,
+        )
+        stats = await rail._refresh_stale_polymarket_conditions(budget=2)
+
+        assert stats["conditions_requested"] == 2
+        assert stats["budget_exhausted"] is True
+        assert stats["terminal"] == "complete"
+        assert verdict_for("polymarket_condition_refresh", stats).is_green is True
+
+
+class TestTheEighthPriceAskerAsksTheSharedQuestion:
+    """CERT-452's finding, one rail later. That cert's census enumerated a fixed
+    dictionary of six price askers, so it could not discover a seventh — and the
+    seventh was `tournament_price_refresh`, running every ten minutes, filtering
+    on no liveness signal at all. This is the eighth, and it composes the shared
+    predicate rather than hand-copying a WHERE clause."""
+
+    def test_the_selector_composes_the_shared_predicate(self):
+        from app.utils import futures_liveness
+
+        def _norm(s: str) -> str:
+            return " ".join(s.split()).lower()
+
+        assert _norm(futures_liveness.LIVE_MARKET_SQL) in _norm(rail._CANDIDATE_SQL)
+
+    def test_the_census_fallback_composes_it_too(self):
+        """The two must report on the SAME population or the census describes a
+        set the rail does not sweep."""
+        from app.utils import futures_liveness
+
+        def _norm(s: str) -> str:
+            return " ".join(s.split()).lower()
+
+        assert _norm(futures_liveness.LIVE_MARKET_SQL) in _norm(rail._SERVED_COUNT_SQL)
+        assert "fm.external_id LIKE '0x%'" in rail._SERVED_COUNT_SQL
+
+    def test_it_filters_before_the_venue_fetch(self):
+        """A retired market must also stop costing a Gamma request."""
+        import inspect
+
+        source = inspect.getsource(rail._refresh_stale_polymarket_conditions)
+        assert source.index("_select_stale_conditions(") < source.index(
+            "get_markets_by_conditions("
+        )
+
+    def test_the_population_is_the_condition_keyed_one(self):
+        """Bare `0x…` rows only: those are the ids
+        `/markets?condition_ids=…` resolves. An event-keyed row addressed this
+        way is a request that cannot return."""
+        sql = " ".join(rail._CANDIDATE_SQL.split())
+        assert "fm.source = 'polymarket'" in sql
+        assert "fm.external_id LIKE '0x%'" in sql
+
+
+def test_the_module_never_creates_a_market_or_an_outcome():
+    """Stated as a test because it is the boundary between this rail and the
+    discovery scan: it re-prices rows that exist and nothing else."""
+    import inspect
+
+    source = inspect.getsource(rail)
+    assert "INSERT INTO futures_markets" not in source
+    assert "find_or_create" not in source
+
+
+def test_the_wall_budget_leaves_room_under_the_soft_limit():
+    """The task's soft limit is 300s. A loop budget at or above it would be
+    enforced by SIGTERM instead of by the check between batches — mid-market."""
+    from app.tasks import celery_app
+
+    task = celery_app.tasks["app.tasks.refresh_stale_polymarket_conditions"]
+    assert rail._TIME_BUDGET_S < task.soft_time_limit
