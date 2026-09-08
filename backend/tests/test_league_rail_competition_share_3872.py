@@ -400,3 +400,117 @@ def test_the_feeder_group_cannot_collide_with_a_venue_string():
     """It shares a namespace with whatever Kalshi writes in `competition`."""
     assert not is_tennis_feeder_circuit(None, None, RAIL_FEEDER_GROUP)
     assert "\x00" in RAIL_FEEDER_GROUP
+
+
+# ---------------------------------------------------------------------------
+# the fold itself — `_event_rail_groups`, the half that reads the venue
+# ---------------------------------------------------------------------------
+
+
+class _FakeResult:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def all(self):
+        return self._rows
+
+
+class _FakeDB:
+    """Just enough of an AsyncSession to answer one `select(...)`."""
+
+    def __init__(self, rows):
+        self._rows = rows
+        self.calls = 0
+
+    async def execute(self, _statement):
+        self.calls += 1
+        return _FakeResult(self._rows)
+
+
+#: (event_id, external_id, name, competition) exactly as production holds them.
+MARKET_ROWS = [
+    (
+        1,
+        "KXATPCHALLENGERMATCH-26SEP07BAXJON",
+        "Bax vs Jones",
+        "ATP Challenger Phan Thiet 3",
+    ),
+    (
+        2,
+        "KXATPCHALLENGERMATCH-26SEP07DERRYA",
+        "Derepasko vs Ryan Ziegann",
+        "ATP Challenger Shanghai",
+    ),
+    (3, "KXATPMATCH-26SEP08SHEALC", "Shelton vs Alcaraz", "US Open Men Singles"),
+    (
+        3,
+        "KXATPEXACTMATCH-26SEP08SHEALC",
+        "Ben Shelton vs Carlos Alcaraz: Exact Match Score",
+        "US Open Men Singles",
+    ),
+    (4, None, "Set 1 Winner: Derepasko vs Ziegann", None),
+]
+
+
+def _groups(rows):
+    import asyncio
+
+    from app.routes.league_futures import _event_rail_groups
+
+    return asyncio.run(
+        _event_rail_groups(
+            _FakeDB(rows), [1, 2, 3, 4], is_feeder=is_tennis_feeder_circuit
+        )
+    )
+
+
+def test_two_different_challenger_draws_fold_to_one_group():
+    """🔴 M7. Without this the share subdivides the circuit instead of thinning
+    it, and seven draws take seven of the eight slots one at a time."""
+    out = _groups(MARKET_ROWS)
+    assert out[1] == RAIL_FEEDER_GROUP
+    assert out[2] == RAIL_FEEDER_GROUP
+    assert out[1] == out[2]
+
+
+def test_a_slam_match_keeps_the_name_the_venue_gave_it():
+    assert _groups(MARKET_ROWS)[3] == "US Open Men Singles"
+
+
+def test_an_event_whose_venue_named_nothing_is_absent():
+    """Absent, not `None`-valued: the share must never hold it back."""
+    assert 4 not in _groups(MARKET_ROWS)
+
+
+def test_one_venue_naming_the_circuit_is_enough():
+    """The other venue's silence is not counter-evidence."""
+    rows = [
+        (7, "0xdeadbeef", "Phan Thiet 3: Timofei Derepasko vs Sam Ziegann", None),
+        (
+            7,
+            "KXATPCHALLENGERMATCH-26SEP07DERRYA",
+            "Derepasko vs Ryan Ziegann",
+            "ATP Challenger Phan Thiet 3",
+        ),
+    ]
+    import asyncio
+
+    from app.routes.league_futures import _event_rail_groups
+
+    out = asyncio.run(
+        _event_rail_groups(_FakeDB(rows), [7], is_feeder=is_tennis_feeder_circuit)
+    )
+    assert out[7] == RAIL_FEEDER_GROUP
+
+
+def test_no_event_ids_asks_the_database_nothing():
+    import asyncio
+
+    from app.routes.league_futures import _event_rail_groups
+
+    db = _FakeDB([])
+    assert (
+        asyncio.run(_event_rail_groups(db, [], is_feeder=is_tennis_feeder_circuit))
+        == {}
+    )
+    assert db.calls == 0
