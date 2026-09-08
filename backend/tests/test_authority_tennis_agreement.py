@@ -1060,7 +1060,13 @@ class TestNeitherDrawStartsAClockItCannotScore:
 
 class TestAMeasurementPopulationIsNeverASportKey:
     def test_both_tennis_keys_are_declared_as_populations(self):
-        assert MEASUREMENT_POPULATIONS == {SINGLES, DOUBLES}
+        # A SUBSET assertion, not an equality. This read `== {SINGLES, DOUBLES}`
+        # while tennis was the only population, which quietly made this test the
+        # gate on every future one: `soccer` joining in 2026-09-08 failed here,
+        # in a tennis file, with a message about tennis. What this class is for
+        # is that the tennis keys are declared and stamped — the count of
+        # populations is not tennis's business.
+        assert {SINGLES, DOUBLES} <= MEASUREMENT_POPULATIONS
         for key in MEASUREMENT_POPULATIONS:
             assert key in SHADOW_STAMPERS
 

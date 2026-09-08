@@ -184,18 +184,61 @@ SHADOW_STAMPERS: dict[str, str] = {
     "baseball_mlb": "stamp_mlb_statpal_fixtures",
     "tennis_singles": "link_tennis_statpal_fixtures",
     "tennis_doubles": "link_tennis_statpal_fixtures",
+    # Soccer's stamper became an hourly BEAT on 2026-09-08 (#3366), which is the
+    # condition this map states: "there is a dark id join for it and an
+    # agreement row to read". Its row was already banking before it was
+    # published here — identity `authority-agreement-ledger:soccer`, day 1 on
+    # 2026-09-08 — and for that whole time reading it meant knowing two
+    # non-obvious storage locations, because this map is what the endpoint
+    # iterates. A measured row nothing publishes is a row nobody reads.
+    "soccer": "stamp_soccer_statpal_fixtures",
 }
 
-#: The keys above that are MEASUREMENT POPULATIONS rather than `sports.key`s.
+
+@dataclass(frozen=True)
+class MeasurementPopulation:
+    """A `SHADOW_STAMPERS` key that is NOT a `sports.key`, and what it stands for.
+
+    Every other key in `SHADOW_STAMPERS` is a real `sports.key` you could join
+    `events` on. These are not, and the difference has to be loud, because a
+    reader who assumes otherwise writes `AUTHORITY_BY_SPORT["tennis_singles"]`
+    and flips nothing at all.
+
+    **Why this is a record and not a bare set.** It was a bare set until
+    2026-09-08, and the set was doing a second job it could not do: two call
+    sites branched on `key in MEASUREMENT_POPULATIONS` and then used
+    TENNIS-SPECIFIC content on the far side — a duplicate-id census hardcoded to
+    `s.key LIKE 'tennis%'`, and a scope note about "both draws". Correct while
+    tennis was the only population; the day soccer joined, the soccer row would
+    have published a count of TENNIS duplicates and a sentence about draws, both
+    with full confidence and neither about soccer.
+
+    That is the class, not the instance: the set says a key is special without
+    saying *how*, so each consumer has to guess, and the guess that works is the
+    one that names the only member. Carrying the scope beside the membership
+    means a new population cannot inherit its predecessor's numbers — it has to
+    state its own or fail `test_every_measurement_population_declares_its_scope`.
+
+    Fields:
+      `key_prefix` — the prefix our rows' real `sports.key`s actually start
+        with. Used to build the cross-key duplicate census LITERALLY, never by
+        binding into a `LIKE` (`_DUPLICATE_IDS`'s docstring has the reason: an
+        underscore in a bound key is a `LIKE` wildcard, so a scope named after
+        one sport can silently widen to another).
+      `our_keys_note` — how to describe our side's key vocabulary in an
+        operator-facing refusal, in the words that refusal needs.
+      `census_scope_note` — why the id-space census on this row cannot be split
+        the way the agreement numbers above it are.
+    """
+
+    key_prefix: str
+    our_keys_note: str
+    census_scope_note: str
+
+
+#: The populations, and the scope each one stands for.
 #:
-#: Every other key in `SHADOW_STAMPERS` is a real `sports.key` you could join
-#: `events` on. These two are not, and the difference has to be loud, because a
-#: reader who assumes otherwise writes `AUTHORITY_BY_SPORT["tennis_singles"]` and
-#: flips nothing at all — our tennis rows live under `tennis_atp`,
-#: `tennis_wta`, `tennis_other` and one key per tournament, 42 of them measured
-#: on production 2026-09-05.
-#:
-#: Two facts force the split, and they pull in opposite directions:
+#: TENNIS. Two facts force the split, and they pull in opposite directions:
 #:
 #:   * **Our 42 keys are ONE StatPal id space.** StatPal numbers every tennis
 #:     match in a single sequence and serves them from one endpoint family, which
@@ -209,12 +252,69 @@ SHADOW_STAMPERS: dict[str, str] = {
 #:     amount of matching could ever close: spec rule 5's unreachable-by-design,
 #:     manufactured by the shape of the denominator rather than by the data.
 #:
-#: So the honest unit is neither our key nor their space — it is the DRAW. Named
-#: apart here so `test_a_measurement_population_is_never_a_sport_key` can assert
-#: no flip switch, and no consumer of one, ever reads one of these as a sport.
-MEASUREMENT_POPULATIONS: frozenset[str] = frozenset(
-    {"tennis_singles", "tennis_doubles"}
-)
+#: So for tennis the honest unit is neither our key nor their space — it is the
+#: DRAW.
+#:
+#: SOCCER has the first half of tennis's shape and not the second. StatPal serves
+#: all of soccer from one endpoint family and numbers it in one sequence (a
+#: single `matches/live` board carried 195 matches across 113 leagues on
+#: 2026-09-07, ids unique across the board rather than per league), while our
+#: side spreads the same matches over the widest key vocabulary we have —
+#: `soccer_epl`, `soccer_fa_cup`, `soccer_argentina_primera_division`, 59 keys
+#: holding 39,700 rows measured on production 2026-09-08, every one of them
+#: prefixed `soccer_` so the census prefix below is exact. There is no second
+#: division of the population to make: unlike a doubles name, a soccer fixture
+#: from any league is admissible against any of our soccer rows, and the matcher
+#: is not refusing across that line. So soccer is ONE population over many keys.
+MEASUREMENT_POPULATION_SCOPES: dict[str, MeasurementPopulation] = {
+    "tennis_singles": MeasurementPopulation(
+        key_prefix="tennis",
+        our_keys_note=(
+            "our tennis rows are spread over 42 `sports.key`s and none of them "
+            "is this string"
+        ),
+        census_scope_note=(
+            "counted over the whole `tennis:` id space — both draws. StatPal "
+            "numbers singles and doubles in one sequence, so this census "
+            "cannot be split the way the agreement numbers above are; it is "
+            "the same figure on both tennis rows."
+        ),
+    ),
+    "tennis_doubles": MeasurementPopulation(
+        key_prefix="tennis",
+        our_keys_note=(
+            "our tennis rows are spread over 42 `sports.key`s and none of them "
+            "is this string"
+        ),
+        census_scope_note=(
+            "counted over the whole `tennis:` id space — both draws. StatPal "
+            "numbers singles and doubles in one sequence, so this census "
+            "cannot be split the way the agreement numbers above are; it is "
+            "the same figure on both tennis rows."
+        ),
+    ),
+    "soccer": MeasurementPopulation(
+        key_prefix="soccer",
+        our_keys_note=(
+            "our soccer rows are spread over 59 `sports.key`s — `soccer_epl`, "
+            "`soccer_fa_cup`, `soccer_argentina_primera_division` and the rest, "
+            "measured on production 2026-09-08 — and none of them is this string"
+        ),
+        census_scope_note=(
+            "counted over the whole `soccer:` id space — every league. StatPal "
+            "numbers all of soccer in one sequence and serves it from one "
+            "endpoint family, so this census has no league to partition on; it "
+            "spans all 59 of our soccer `sports.key`s."
+        ),
+    ),
+}
+
+#: The keys above that are MEASUREMENT POPULATIONS rather than `sports.key`s.
+#:
+#: Derived, so membership and scope can never disagree. Named apart so
+#: `test_a_measurement_population_is_never_a_sport_key` can assert no flip
+#: switch, and no consumer of one, ever reads one of these as a sport.
+MEASUREMENT_POPULATIONS: frozenset[str] = frozenset(MEASUREMENT_POPULATION_SCOPES)
 
 #: The bar a governing number must clear, on seven consecutive daily rows, before
 #: a sport's authority may be flipped (ledger spec rule 1, D50). Stated once,
