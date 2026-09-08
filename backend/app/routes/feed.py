@@ -2193,26 +2193,47 @@ async def get_feed(
         the TTL is used — the same shape as the detail route storing
         ``event.status`` beside its cached response.
 
-        ``oldest_artifact_age_s`` (CERT-1864) overrides the default "ask the
-        sink now". Two callers need that. The publish seam decides whether the
-        payload may be served AT ALL from one reading of the age and must spend
-        that same reading on the TTLs, or the decision and the number stamped
-        on the response come from two different instants — which is how a
-        payload judged to have 1 second of headroom gets published with a
-        zero-second TTL. And a payload SERVED FROM A PRIOR BUILD carries its own
-        age, not this request's inputs': asking the sink for it would charge a
-        stale-but-valid fallback for artifacts it was never built from.
+        ``oldest_artifact_age_s`` (CERT-1864) is the age the payload has already
+        spent. The publish seam passes it explicitly because it decides whether
+        the payload may be served AT ALL from one reading of the age and must
+        spend that same reading on the TTLs, or the decision and the number
+        stamped on the response come from two different instants — which is how
+        a payload judged to have 1 second of headroom gets published with a
+        zero-second TTL.
+
+        🔴 #4013: WHEN IT IS NOT PASSED, THE PAYLOAD'S OWN ORIGIN ANSWERS —
+        NOT THE SINK. A payload SERVED FROM A PRIOR BUILD carries its own age,
+        and this request's artifact sink knows nothing about it: on every read
+        tier the sink has consumed nothing, so it answers 0.0 and hands a page
+        that is already most of a minute old a brand-new full-length window.
+        That is not hypothetical. It was measured on production 2026-09-08:
+        the LAT-P089 inert share below republished a `shared_hit` whose content
+        was already 19.5s old under the private key with `stale_ttl=60`, and the
+        returning visitor read that mirror at 61.1s and 73.5s of content age
+        against a 60s ceiling — the whole of #4013.
+
+        The default is the safe answer rather than a thing nine call sites must
+        each remember, on the same reasoning that backdates `built_at` at one
+        origin instead of threading a parallel age field through every hop: a
+        tier added later inherits the bound instead of having to know about it.
+        The sink remains the fallback for a payload with NO origin — a
+        pre-CERT-409 entry, or one whose `cache` block was deliberately stripped
+        (the page base) — which is exactly the pre-#4013 behaviour, so an
+        unknown age is no weaker than it was and never stronger.
         """
+        if oldest_artifact_age_s is None:
+            _own_origin = _payload_built_at(payload)
+            oldest_artifact_age_s = (
+                max(0.0, time.time() - _own_origin)
+                if isinstance(_own_origin, (int, float))
+                else _pic.oldest_consumed_artifact_age_s(_shared_origins)
+            )
         return feed_response_cache_ttls(
             my_teams_only=my_teams_only,
             identified=bool(feed_user or feed_session_id),
             live=payload_contains_live_event(payload),
             # LAT-P230: the age the payload's INPUTS had already spent.
-            oldest_artifact_age_s=(
-                _pic.oldest_consumed_artifact_age_s(_shared_origins)
-                if oldest_artifact_age_s is None
-                else oldest_artifact_age_s
-            ),
+            oldest_artifact_age_s=oldest_artifact_age_s,
         )
 
     def _payload_built_at(payload):
@@ -2231,6 +2252,33 @@ async def get_feed(
             return None
         built_at = cache_meta.get("built_at")
         return built_at if isinstance(built_at, (int, float)) else None
+
+    def _live_ceiling_already_spent(payload, built_at):
+        """#4013: has this LIVE payload already spent the whole live ceiling?
+
+        The write side computes a TTL and trusts Redis to expire the entry on
+        time. That is one number bounding another number computed elsewhere,
+        which is the shape this file already names as the #2236 defect — so the
+        ceiling gets a second, independent enforcement at the point of SERVE,
+        where the only inputs are the payload in hand and the clock.
+
+        It is a backstop and is expected never to fire once the TTLs above are
+        right. It exists because the TTL is only as good as the last hop that
+        remembered to derive it, and the entry it protects against is the one
+        already sitting in Redis when a fix deploys — up to a full ceiling of
+        over-long private mirrors that no code change can retroactively shorten.
+
+        `None` for `built_at` does NOT refuse. A payload with no origin is a
+        pre-CERT-409 entry or a legitimate unknown, and refusing on an unknown
+        would trade a page that is probably fine for a guaranteed cold build.
+        Non-live payloads are untouched: this is the LIVE ceiling, and a page of
+        futures is allowed to be older than a page holding an in-progress score.
+        """
+        if not isinstance(built_at, (int, float)):
+            return False
+        if not payload_contains_live_event(payload):
+            return False
+        return (time.time() - built_at) >= FEED_RESPONSE_STALE_TTL_LIVE_SECONDS
 
     def _live_bounded_last_good(key):
         """Process-local last-good, with the live ceiling applied (#2216).
@@ -2322,11 +2370,22 @@ async def get_feed(
             )
             if _fresh.is_ok:
                 payload = _safe_cache_payload(_fresh.value)
+                # CERT-409 [P1]: read provenance BEFORE the metadata below
+                # overwrites it, and re-emit it, so the age survives both
+                # this hop and any later republication.
+                _hit_built_at = _payload_built_at(payload)
+                # #4013: a live entry that has already spent the ceiling is not
+                # served from this tier. Falling through is cheap and does NOT
+                # mean a cold build — the LAT-P089 share below reads the shared
+                # entry, which the warm rail keeps under the ceiling, so the
+                # ordinary outcome is a `shared_hit` with FRESHER content than
+                # the entry just refused. Only a reader whose shared entry is
+                # also gone pays a build, which is what #2216 asks for.
+                if payload is not None and _live_ceiling_already_spent(
+                    payload, _hit_built_at
+                ):
+                    payload = None
                 if payload is not None:
-                    # CERT-409 [P1]: read provenance BEFORE the metadata below
-                    # overwrites it, and re-emit it, so the age survives both
-                    # this hop and any later republication.
-                    _hit_built_at = _payload_built_at(payload)
                     _rc.remember_last_good(
                         _cache_key, payload, built_at=_hit_built_at
                     )
@@ -2366,8 +2425,16 @@ async def get_feed(
             )
             if _stale.is_ok:
                 payload = _safe_cache_payload(_stale.value)
+                _stale_built_at = _payload_built_at(payload)
+                # #4013, and this is the tier the breach was MEASURED on: the
+                # private `:stale` mirror served content at 61.1s and 73.5s
+                # against a 60s ceiling on production 2026-09-08. Same
+                # fall-through as the fresh tier above.
+                if payload is not None and _live_ceiling_already_spent(
+                    payload, _stale_built_at
+                ):
+                    payload = None
                 if payload is not None:
-                    _stale_built_at = _payload_built_at(payload)
                     _rc.remember_last_good(
                         _cache_key, payload, built_at=_stale_built_at
                     )
@@ -2683,6 +2750,16 @@ async def get_feed(
                     # private key. Leaving this site on the principal TTL would
                     # have fixed the bug everywhere except the surface that
                     # reported it.
+                    #
+                    # 🔴 #4013: AND SO DOES THE AGE THE SHARED ENTRY HAS
+                    # ALREADY SPENT. This is the site that broke the ceiling.
+                    # `_live_ttls` now reads `_shared_payload`'s own
+                    # `cache.built_at` (set two lines up as `_shared_built_at`),
+                    # so a 19.5s-old shared entry earns a 40s mirror here, not a
+                    # 60s one, and the private key dies AT the ceiling rather
+                    # than 19.5s past it. Nothing else on this path changed:
+                    # this is the same `min`-only clamp #2216 applies, given the
+                    # term it was never handed.
                     _inert_live = payload_contains_live_event(_shared_payload)
                     _inert_fresh_ttl, _inert_stale_ttl = _live_ttls(_shared_payload)
                     _shared_payload["cache"] = build_feed_cache_metadata(
@@ -2701,30 +2778,60 @@ async def get_feed(
                     # is the warmer's to publish — a request republishing it
                     # would extend its life indefinitely and turn a bounded
                     # staleness window into an unbounded one.
-                    try:
-                        _shared_json = _json_module.dumps(_shared_payload, default=str)
-
-                        async def _publish_inert_private(
-                            _client=_shared_redis,
-                            _json=_shared_json,
-                            _key=_cache_key,
-                            _fresh_ttl=_inert_fresh_ttl,
-                            _stale_ttl=_inert_stale_ttl,
-                        ):
-                            await _rc.bounded_redis_call(
-                                lambda: _client.setex(_key, _fresh_ttl, _json)
+                    #
+                    # #4013: a zero TTL means the shared entry has ALREADY spent
+                    # the whole live ceiling, and `live_total_age_headroom_s`
+                    # defines that as "not cached at all, so the next reader
+                    # rebuilds" — #2216's "past the ceiling the page is REBUILT,
+                    # not served older". Publishing it anyway is both the wrong
+                    # answer and an error: `SETEX` rejects a non-positive
+                    # expiry, and the raise would land inside the detached
+                    # background task where the `except` below cannot see it.
+                    #
+                    # 🔴 THE DELIBERATE LIMIT, NAMED RATHER THAN GLOSSED: this
+                    # caller is still SERVED the payload, even at zero headroom,
+                    # so a shared entry somehow past the ceiling is served past
+                    # the ceiling once. The private tiers above refuse in that
+                    # state; this one does not, and the asymmetry is the point.
+                    # Beneath a private tier sits this share — a cheaper source
+                    # of FRESHER content — so refusing there costs one Redis
+                    # read. Beneath this share sits nothing but a cold build
+                    # (2.30s p50), and the only way to reach here over-age is
+                    # for the anon entry's own bound to have already failed —
+                    # i.e. exactly the moment when refusing would hand every
+                    # reader a simultaneous cold build. That is the #1459
+                    # stampede this route is built to avoid, traded for one
+                    # stale page. Not republishing it is what stops the state
+                    # from spreading to a key the warm rail cannot reach.
+                    # `test_a_shared_entry_that_has_spent_the_ceiling_is_not_republished`
+                    # pins both halves so neither can be changed by accident.
+                    if _inert_fresh_ttl > 0 and _inert_stale_ttl > 0:
+                        try:
+                            _shared_json = _json_module.dumps(
+                                _shared_payload, default=str
                             )
-                            await _rc.bounded_redis_call(
-                                lambda: _client.setex(
-                                    f"{_key}:stale",
-                                    _stale_ttl,
-                                    _json,
+
+                            async def _publish_inert_private(
+                                _client=_shared_redis,
+                                _json=_shared_json,
+                                _key=_cache_key,
+                                _fresh_ttl=_inert_fresh_ttl,
+                                _stale_ttl=_inert_stale_ttl,
+                            ):
+                                await _rc.bounded_redis_call(
+                                    lambda: _client.setex(_key, _fresh_ttl, _json)
                                 )
-                            )
+                                await _rc.bounded_redis_call(
+                                    lambda: _client.setex(
+                                        f"{_key}:stale",
+                                        _stale_ttl,
+                                        _json,
+                                    )
+                                )
 
-                        _rc.schedule_background(_publish_inert_private())
-                    except Exception:
-                        pass
+                            _rc.schedule_background(_publish_inert_private())
+                        except Exception:
+                            pass
                     _previous_at = _record_feed_timing(
                         _timings, _started_at, _previous_at, "cache_shared_hit"
                     )
@@ -2829,7 +2936,21 @@ async def get_feed(
                 # Liveness is re-derived from the PAGE, not the base: the ttl
                 # reported to this caller describes what this caller was handed.
                 _pb_live = payload_contains_live_event(_base_page)
-                _pb_fresh_ttl, _pb_stale_ttl = _live_ttls(_base_page)
+                # #4013: passed EXPLICITLY, and this is the one read tier that
+                # has to. `render_feed_page_from_base` strips `cache` off the
+                # rendered page by design, so the payload cannot answer for its
+                # own age and `_live_ttls` would fall through to the sink — the
+                # 0.0 that hands an aged base a full-length window. The base's
+                # provenance lives on the stored LIST, which is where
+                # `_pb_built_at` just read it from.
+                _pb_age_s = (
+                    max(0.0, time.time() - _pb_built_at)
+                    if isinstance(_pb_built_at, (int, float))
+                    else 0.0
+                )
+                _pb_fresh_ttl, _pb_stale_ttl = _live_ttls(
+                    _base_page, oldest_artifact_age_s=_pb_age_s
+                )
                 _base_page["cache"] = build_feed_cache_metadata(
                     _pb_status,
                     ttl_seconds=_pb_fresh_ttl,
