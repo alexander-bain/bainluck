@@ -28,7 +28,6 @@ import datetime as dt
 import re
 from pathlib import Path
 
-import pytest
 from sqlalchemy.dialects import postgresql
 
 from app.models import FuturesOutcome
