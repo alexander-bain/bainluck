@@ -36,6 +36,57 @@ const W_VOLUME = 0.15;
 const W_AGREE = 0.15;
 const SOURCE_SATURATION = 3;
 
+// ── #3914: what counts as a SOURCE when the hero counts its own evidence ────
+//
+// `win_probability_sources` is a bag, not a list of readings. Alongside the
+// probabilities it carries `betting_book_count` — how many sportsbooks fed the
+// `betting` consensus, served as `{"value": 11.0}` in the same shape as a
+// probability — and the hero was counting it as a third opinion. That is not a
+// rounding difference: `SOURCE_SATURATION` is 3, so the spurious key SATURATES
+// the sources component and the tier flips (0.6471 moderate / 2 bars ->
+// 0.8235 high / 3 bars, across `CONFIDENCE_TIER_HIGH` = 0.7). Measured on
+// `/events/15306813` (Shelton v Alcaraz, US Open) on 2026-09-08.
+//
+// The rule mirrors the backend aggregator exactly: `effective_source_weights`
+// skips any key not in `SOURCE_WEIGHTS` (`backend/app/utils/aggregation.py`),
+// so the blend and the bars now agree on what a source IS. An ALLOWLIST and
+// not a denylist of known non-readings, deliberately — a denylist hands the
+// claim to the first non-reading nobody thought of, which is exactly how
+// `betting_book_count` got a bar. A new backend source that nobody mirrors
+// here is undercounted, which understates confidence; that is the safe
+// direction, and `__tests__/lib/heroConfidenceBookCount3914.test.ts` reads
+// SOURCE_WEIGHTS out of the Python and fails the moment the two sets part.
+export const PROBABILITY_SOURCE_KEYS: ReadonlySet<string> = new Set([
+  "final_result",
+  "betting",
+  "espn",
+  "stat_model",
+  "kalshi",
+  "polymarket",
+  "mlb",
+]);
+
+/**
+ * How many entries in a `win_probability_sources` bag are actually probability
+ * readings — the input `confidenceFromSources` wants for `sourceCount`.
+ *
+ * Counts the KEY, then requires a finite numeric `value`: a known source
+ * present but empty (an ingest that wrote the entry before the price arrived)
+ * is not evidence either. Returns 0 for null/undefined so callers can pass the
+ * field straight through.
+ */
+export function countProbabilitySources(
+  sources: Record<string, { value?: number | null } | null | undefined> | null | undefined
+): number {
+  if (!sources) return 0;
+  return Object.entries(sources).filter(
+    ([key, entry]) =>
+      PROBABILITY_SOURCE_KEYS.has(key) &&
+      typeof entry?.value === "number" &&
+      Number.isFinite(entry.value)
+  ).length;
+}
+
 export function scoreToTier(score: number): ConfidenceTier {
   if (score >= CONFIDENCE_TIER_HIGH) return "high";
   if (score >= CONFIDENCE_TIER_MODERATE) return "moderate";
