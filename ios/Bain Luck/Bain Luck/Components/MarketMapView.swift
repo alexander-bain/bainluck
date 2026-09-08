@@ -62,7 +62,7 @@ struct MarketMapView: View {
     }
     private var hAbbr: String { sides.home }
     private var aAbbr: String { sides.away }
-    private var isDone: Bool { eventStatus == "completed" || eventStatus == "closed" }
+    private var isDone: Bool { EventState.isFinished(eventStatus) }
     private var isLive: Bool { eventStatus == "live" }
     private var isPre: Bool { !isDone && !isLive }
     /// The sport's own words and rail width. Was a pair of local `switch`es
