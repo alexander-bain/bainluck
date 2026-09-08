@@ -930,3 +930,112 @@ def served_window_quality(
         "boring": boring,
         "types": types,
     }
+
+
+# ── why-now-coverage (D1, #4066) ─────────────────────────────────────────────
+#
+# `explanation-coverage@20` asks whether a card said ANYTHING. Every card on the
+# page passes it, and the page still cannot tell a reader why it is here this
+# morning: measured on production 2026-09-08 21:07Z, explanation coverage was
+# full and the why-now count over the first ten served cards was ZERO. The copy
+# was one of three things — a count of inventory ("2 related markets"),
+# provenance ("across 2 sources"), or a standing leader ("leads at 31%").
+#
+# This is the second metric, and it grades the OTHER question. A card carries a
+# why-now when its served copy names something that HAPPENED, anchored to a
+# time: a move today, a move since a named day, a new favourite, a resolution
+# window, a settled result. A shared question is a "what", not a "why now", so a
+# bundle passes on its members' signals — never on having a question.
+
+#: Phrases that mark a served string as naming a time-anchored development. Each
+#: is emitted by exactly one branch of `feed_reasons`, so this list is a
+#: vocabulary, not a heuristic — extend it in the same commit as the branch.
+WHY_NOW_MARKERS = (
+    "points today",
+    "point today",
+    "odds shifted",
+    "points since ",
+    "point since ",
+    "shifted since ",
+    "has shifted since ",
+    "new favorite",
+    "multiple ranking changes",
+    "resolving soon",
+    "resolving this week",
+    "resolves this week",
+    "resolving this month",
+    "resolves this month",
+    "moved most today",
+    "markets moving today",
+    "trading surge",
+    "starting soon",
+    "starting in under an hour",
+    "final",
+    "won as ",
+)
+
+#: Phrases that are a SELECTION FACT and never a why-now. Listed so the metric
+#: is explicit about what it is refusing rather than passing them by silence.
+NOT_A_WHY_NOW_MARKERS = (
+    "related markets",
+    " related",
+    "tracked by",
+    "across 2 sources",
+    "across 3 sources",
+    "leads at",
+    "race markets",
+)
+
+
+def _card_why_now(item: dict[str, Any]) -> str | None:
+    """The phrase that makes this card's copy a why-now, or None."""
+    texts = [
+        str(item.get("headline") or ""),
+        str(item.get("context_summary") or ""),
+        str(item.get("reason") or ""),
+    ]
+    data = item.get("data") if isinstance(item.get("data"), dict) else {}
+    # A bundle's own copy is its shared question; its why-now, if it has one,
+    # lives in the member rows the card prints underneath.
+    for member in data.get("items") or []:
+        if isinstance(member, dict):
+            texts.append(str(member.get("headline") or ""))
+            texts.append(str(member.get("context_summary") or ""))
+    for text in texts:
+        lowered = text.lower()
+        for marker in WHY_NOW_MARKERS:
+            if marker in lowered:
+                return marker
+    return None
+
+
+def why_now_coverage(
+    served_items: list[dict[str, Any]], *, top_n: int = 10
+) -> dict[str, Any]:
+    """How many of the first ``top_n`` SERVED cards say why they are here today.
+
+    The window is SERVED slots, for the same reason `served_window_quality`'s is:
+    a reader's first ten cards are the first ten cards, whatever type they are.
+    """
+    window = served_items[:top_n]
+    rows = []
+    for index, item in enumerate(window, start=1):
+        marker = _card_why_now(item)
+        rows.append(
+            {
+                "rank": index,
+                "type": item.get("type"),
+                "name": (item.get("data") or {}).get("name")
+                or (item.get("data") or {}).get("title")
+                or item.get("headline"),
+                "why_now": marker,
+                "served_copy": item.get("context_summary")
+                or item.get("headline")
+                or item.get("reason"),
+            }
+        )
+    return {
+        "slots": len(window),
+        "with_why_now": sum(1 for row in rows if row["why_now"]),
+        "items": rows,
+    }

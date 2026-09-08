@@ -1315,6 +1315,12 @@ export interface FeedBundleData {
   comparison_theme?: string | null;
   story_key?: string | null;
   group_id?: string | null;
+  // D1 clause c (#4066): the one sentence saying why these members belong
+  // together — the question they are all answers to. Replaces "· N related",
+  // which was a count of inventory. A group the backend cannot state a shared
+  // question for is not folded at all, so this is present on every bundle the
+  // feed serves; optional only for older cached payloads.
+  shared_question?: string | null;
   item_count: number;
   member_ids: (number | string | null)[];
   // Member feed items, ranked — rendered as the mini-ranked-peek + on expand.

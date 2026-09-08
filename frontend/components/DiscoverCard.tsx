@@ -180,6 +180,7 @@ function SingleCard({ item, onDismiss, positionIndex, showProbabilityHint, pinFo
           <ThemeBundleCard
             items={(item.data as FeedBundleData).items}
             title={(item.data as FeedBundleData).title}
+            sharedQuestion={(item.data as FeedBundleData).shared_question}
             storyKey={(item.data as FeedBundleData).story_key ?? (item.data as FeedBundleData).group_id}
             positionIndex={positionIndex}
           />

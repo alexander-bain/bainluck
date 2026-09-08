@@ -26,6 +26,7 @@ from app.utils.feed_quality_debug import (  # noqa: E402
     build_feed_quality_debug,
     load_default_ground_truth_items,
     served_window_quality,
+    why_now_coverage,
 )
 from app.utils.polymarket_email_ground_truth import (  # noqa: E402
     load_polymarket_email_ground_truth_report_from_env,
@@ -128,6 +129,21 @@ def main() -> int:
     served = served_window_quality(
         payload.get("items", []), ground_truth_items=ground_truth_items, top_n=20
     )
+    # D1 (#4066). Printed with the SERVED block because it grades the same
+    # window a reader sees, and because a page can be 20/20 on explanation
+    # coverage and 0/10 here — which is what it was on 2026-09-08.
+    why_now = why_now_coverage(payload.get("items", []), top_n=10)
+    print(
+        f"why-now-coverage@10 [SERVED — does the card say why it is here TODAY]: "
+        f"{why_now['with_why_now']}/{why_now['slots']}"
+    )
+    for row in why_now["items"]:
+        if not row["why_now"]:
+            print(
+                f"    NO WHY-NOW at slot {row['rank']} ({row['type']}): "
+                f"{row['name']} — {row['served_copy']!r}"
+            )
+    print()
     print(
         f"boring-rate@20 [SERVED — the target]: "
         f"{served['boring_count']}/{served['slots']} slots"

@@ -10,6 +10,13 @@ import { FuturesCard, FuturesCompactRow } from "./FuturesCard";
 interface ThemeBundleCardProps {
   items: FeedItem[];
   title: string;
+  /**
+   * The one sentence saying why these members belong together (D1 clause c,
+   * #4066) — "Who wins in 2028?", not "2 related". Absent only on a cached
+   * payload built before the backend served it; the header then falls back to
+   * the old count rather than rendering a blank line.
+   */
+  sharedQuestion?: string | null;
   storyKey?: string | null;
   positionIndex?: number;
 }
@@ -20,11 +27,19 @@ const PEEK_COUNT = 5;
 /**
  * Theme bundle (geopolitics archetype — Phase 1, slice 1).
  *
- * Collapsed: a header (theme label + "· N related") over a tight mini-ranked
- * peek of the top members. Expanded: the real member market cards (reuses
- * FuturesCard — no reinvented card). Folds same-conflict scatter into one slot.
+ * Collapsed: a header (theme label + the group's shared question) over a tight
+ * mini-ranked peek of the top members. Expanded: the real member market cards
+ * (reuses FuturesCard — no reinvented card). Folds same-conflict scatter into
+ * one slot.
+ *
+ * D1 clause c (#4066): the header's second line used to read "· 2 related".
+ * Seven of the twenty items served on 2026-09-08 were bundles and all seven said
+ * exactly that — a count of what is behind the chevron, which is navigation, not
+ * a reason to read. It now carries the question the members are all answers to.
+ * The count has not been lost: the peek rows beneath are the members, and
+ * "Show all N" still prints it.
  */
-export function ThemeBundleCard({ items, title, storyKey, positionIndex }: ThemeBundleCardProps) {
+export function ThemeBundleCard({ items, title, sharedQuestion, storyKey, positionIndex }: ThemeBundleCardProps) {
   const [expanded, setExpanded] = useState(false);
   const primary = items[0];
   const cat = primary?.type === "futures" ? (primary.data as FeedFuturesData).llm_sport_category : null;
@@ -53,14 +68,24 @@ export function ThemeBundleCard({ items, title, storyKey, positionIndex }: Theme
       {/* Theme header */}
       <button
         onClick={toggleExpanded}
-        className="w-full flex items-center justify-between px-4 py-2.5 bg-surface-elevated/50 hover:bg-surface-elevated transition-colors"
+        className="w-full flex items-center justify-between gap-3 px-4 py-2.5 bg-surface-elevated/50 hover:bg-surface-elevated transition-colors text-left"
         aria-expanded={expanded}
       >
-        <div className="flex items-center gap-2 min-w-0">
-          <span className={`${catStyle.bg} ${catStyle.text} text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full whitespace-nowrap`}>
-            {catStyle.emoji} {title}
+        {/* Two lines, not one: a question is a sentence and does not fit beside
+            the chip at 390px. The chip stays the category badge it was; the
+            question is the line the reader actually reads. */}
+        <div className="flex flex-col gap-1 min-w-0">
+          <span className="flex items-center gap-2 min-w-0">
+            <span className={`${catStyle.bg} ${catStyle.text} text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full whitespace-nowrap`}>
+              {catStyle.emoji} {title}
+            </span>
+            {!sharedQuestion && (
+              <span className="text-xs text-text-muted whitespace-nowrap">· {items.length} related</span>
+            )}
           </span>
-          <span className="text-xs text-text-muted whitespace-nowrap">· {items.length} related</span>
+          {sharedQuestion && (
+            <span className="text-sm font-semibold text-text-primary leading-snug">{sharedQuestion}</span>
+          )}
         </div>
         <svg className={`w-4 h-4 text-text-muted shrink-0 transition-transform ${expanded ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
           <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />

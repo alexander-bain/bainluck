@@ -154,6 +154,29 @@ OUTCOME_COLUMNS: tuple[str, ...] = (
     "external_id",
 )
 
+# D1 clause a (#4066) wanted `opening_captured_at` here — the day an opening
+# price was taken, which is what turns "moved 37.5 points from opening" into a
+# fact about a calendar. IT IS REFUSED, on the same measurement as
+# `last_updated` below and for the same reason: one timestamp per outcome, over
+# 6,904 outcomes, grew the fixture's envelope from 2,928,973 B to 3,289,739 B
+# (+12%) and the validator node count from 115,133 to 122,028. Every hard cap
+# still passed with headroom; what failed is the pair of calibration tests that
+# hold the fixture to the MEASURED production artifact, and re-deriving those
+# constants from a fixture I had just changed would turn the file into a
+# fixture testing itself — which is precisely the decoration LAT-P221 was
+# written to end.
+#
+# A market-level date was measured as the cheap alternative and REFUSED on the
+# data, not on taste: across the 93,481 top-5 outcomes of open markets that
+# carry an opening (production 2026-09-08), `opening_captured_at` sits within a
+# day of the market's own `created_at` for only 80,483 of them (86%), a mean
+# 4.41 days apart and a maximum of 214.9 days. Publishing `created_at` as "the
+# opening date" would date one card in seven wrongly, some by months.
+#
+# So the dated sentence exists and is tested in `feed_reasons`, and stays
+# unfed until the baseline it needs is built. Until then the undated form is
+# not published at all — see the demotion note in `generate_futures_reason`.
+
 # ux/1070 item 5 wanted a price AGE, and `last_updated` is deliberately NOT in
 # the outcome tuple above. It was added there once, and two guards in a row
 # priced that decision: `test_feed_outcome_projection_cert622` demanded the
