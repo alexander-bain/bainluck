@@ -254,6 +254,57 @@ class KalshiScanReport:
     #: to catch first.
     series_discovery: Dict[str, Any] = field(default_factory=dict)
 
+    # --- the post-loop commence_time repairs (#3192) ----------------------
+    #: True when the post-loop fix-up block never started, because the beat was
+    #: already past its budget by the time the ingest loop returned.
+    #:
+    #: This is the #2214 / #2927 / #3149 shape a fourth time, and the sharpest
+    #: of them: the task already SET `stats["post_loop_skipped_deadline"]`, and
+    #: nothing read it. It reached no artifact, so an operator looking at a beat
+    #: saw `loop_deadline_hit: true` and had no way to learn that a repair phase
+    #: had been dropped. `loop_deadline_hit` happened to imply it — one constant
+    #: gated both the loop's break and the block's entry, so tripping the first
+    #: closed the second deterministically — but nothing said so, and the two
+    #: gates are no longer the same constant, so it no longer implies it at all.
+    #:
+    #: What the dropped phase does: Kalshi stores `commence_time = close_time`,
+    #: a settlement backstop, so golf, hockey and tennis rows arrive dated by
+    #: when they RESOLVE rather than when they are played. On 2026-09-06 the
+    #: 06:46Z beat ingested 38 tennis markets and skipped the fix that dates
+    #: them; open tennis rows dated >10d out went 425 -> 463 across that poll,
+    #: because ingest kept adding +14d rows while the repair did not run. A WTA
+    #: match played 2026-09-06 was still filed 2026-09-20. It ran at 14% of
+    #: beats (7 of the last 50), i.e. roughly one poll in seven.
+    #:
+    #: Read it WITH `post_loop_fixups_ran` below, never alone: the pairing is
+    #: the invariant. True here must mean an empty map there.
+    post_loop_skipped_deadline: bool = False
+    #: Fix-up name -> rows it repaired, for the ones that ran to completion.
+    #: Absent from this map is not zero: a name here with a 0 ran and found
+    #: nothing to do, a name missing entirely did not complete (gotcha #53 — an
+    #: empty result and an absent result must not wear the same shape).
+    #:
+    #: A fix-up that raised is deliberately NOT recorded here as 0. It is in
+    #: `post_loop_fixups_failed` instead, because "ran and there was nothing to
+    #: repair" and "blew up and repaired nothing" are opposite readings that
+    #: happen to produce the same number, and the whole point of this block of
+    #: fields is that a repair which did not happen has to say so.
+    post_loop_fixups_ran: Dict[str, int] = field(default_factory=dict)
+    #: Fix-ups that started and raised. Distinct from both maps above: the
+    #: budget was there and it was spent, and nothing was repaired.
+    post_loop_fixups_failed: List[str] = field(default_factory=list)
+    #: Fix-ups the block declined to START because the beat was out of budget,
+    #: in the order they would have run.
+    #:
+    #: This is the half no flag could carry. The block runs five sequential
+    #: repairs and checks its budget before each, so a beat can now do the first
+    #: three and drop the last two — a partial state the old single boolean
+    #: could not express in either direction. It matters which two: tennis and
+    #: the #3544 stand-in event-start refinement are LAST in the order, so they
+    #: are always the first to be cut, and the refinement is the half that
+    #: reaches the rendered page.
+    post_loop_fixups_skipped: List[str] = field(default_factory=list)
+
     duration_s: float = 0.0
     notes: List[str] = field(default_factory=list)
 
@@ -342,6 +393,63 @@ def save_scan_report(report: KalshiScanReport) -> None:
         client.expire(_RING_KEY, _TTL_S)
     except Exception as exc:  # pragma: no cover - defensive
         logger.warning("kalshi scan report: save failed: %s", exc)
+
+
+def update_scan_report_head(report: KalshiScanReport) -> bool:
+    """Re-persist a report already saved by `save_scan_report`, in place.
+
+    Returns True when the ring head was rewritten.
+
+    **Why this is not just a second `save_scan_report` call.** That function
+    ends in `lpush` — it APPENDS. Calling it twice for one beat puts two ring
+    entries in for one run, so a 48-entry ring would cover 24 beats while still
+    reporting 48, and every per-beat rate a reader computes off the history
+    would silently halve. The ring is read that way today (the `series_discovery`
+    coverage reading of 2026-09-08 counted 24 of 24 entries), so this is a live
+    hazard and not a theoretical one.
+
+    **Why not simply move the single save to the end instead.** The early save
+    is load-bearing: it is what makes the report survive a SIGKILL during the
+    phase that runs after it. #3192 exists because that phase is the one that
+    gets cut when a beat runs long, so moving the save behind it would delete
+    the record in exactly the case the record is for.
+
+    So: save early for durability, then rewrite the head here.
+
+    The `started_at` match is the whole safety of the in-place write. `LSET 0`
+    is positional, and position 0 only belongs to this beat as long as no other
+    beat has pushed since. An overlapping or resumed run makes that false, and
+    clobbering a sibling's entry would be worse than the missing fields — so a
+    head that is not ours is left exactly as it is and the caller is told, via
+    False, that the update did not happen.
+    """
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        client = get_redis_client()
+        head = client.lindex(_RING_KEY, 0)
+        if head is None:
+            # Nothing to rewrite — `save_scan_report` never landed (its own
+            # failure is best-effort and already warned). Refresh the last key
+            # so the richer payload is at least the one a reader gets.
+            client.setex(_LAST_KEY, _TTL_S, json.dumps(report.to_dict()))
+            return False
+        if isinstance(head, bytes):
+            head = head.decode("utf-8")
+        if (json.loads(head) or {}).get("started_at") != report.started_at:
+            logger.warning(
+                "kalshi scan report: ring head is not this beat "
+                "(started_at mismatch) — leaving it alone, not rewriting"
+            )
+            return False
+
+        payload = json.dumps(report.to_dict())
+        client.setex(_LAST_KEY, _TTL_S, payload)
+        client.lset(_RING_KEY, 0, payload)
+        return True
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("kalshi scan report: head update failed: %s", exc)
+        return False
 
 
 def load_scan_report() -> Optional[Dict[str, Any]]:
