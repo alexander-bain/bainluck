@@ -169,6 +169,75 @@ def started_live(now):
     return and_(Event.status == "live", Event.commence_time <= now)
 
 
+def never_observed_columns():
+    """Has NOTHING that reports on play ever said a word about this row? — SQL.
+
+    The COLUMN half of
+    :func:`app.utils.event_completion.event_has_never_been_observed`, in the
+    same order and with the same meaning: every conjunct is a separate way for a
+    source to have spoken, and all of them must be silent. The Python predicate
+    is the definition; this is that definition written where an ``ORDER BY`` can
+    spend it.
+
+    🔴 THE SIXTH CONJUNCT — ``last_snapshot IS NULL`` — IS DELIBERATELY NOT HERE,
+    and it is a measurement rather than a shortcut. Reading it needs the
+    correlated form of :data:`~app.utils.event_completion.LAST_POST_COMMENCE_SNAPSHOT_SQL`
+    per candidate row, on a rail whose ORDER BY already leads with a ``CASE`` and
+    so cannot be served by any index (``upcoming_games_query`` says why it is
+    unfenced). Omitting it makes this SQL strictly MORE willing to call a row
+    unobserved than the Python predicate is: a row whose five columns are silent
+    but which carries a post-commence play snapshot would be demoted here and
+    protected there.
+
+    MEASURED, production 2026-09-08: of **3,490** events in seven days whose five
+    columns are all silent, **0** carry a post-commence ``win_prob_snapshots``
+    row from a non-venue source. The divergence is empty, not small — a play
+    source that has enough to write a win-probability snapshot has in practice
+    already written a score, a period or an anchor. ``odds_polling`` reaches the
+    same conclusion from the other side and orders its own checks on it: it asks
+    the column half FIRST, "because a False needs no query at all".
+
+    The asymmetry is also the safe direction to be wrong in. This clause only
+    ever moves a row DOWN a rail; the same predicate in
+    :func:`~app.utils.event_completion.wall_clock_bound_hours` takes a row's
+    ``live`` status away from it. A demotion that costs a slot and a status write
+    that costs liveness do not deserve the same price.
+    """
+    return and_(
+        Event.home_score.is_(None),
+        Event.away_score.is_(None),
+        Event.period.is_(None),
+        Event.espn_id.is_(None),
+        Event.statpal_fixture_id.is_(None),
+    )
+
+
+def started_live_and_observed(now):
+    """Being played, and something is reporting on it — the top of every rail.
+
+    Both ordering clauses lead with this, one definition, for the reason
+    :func:`started_live` gives: two copies and a surface sorts on one reading
+    while printing the other.
+    """
+    return and_(started_live(now), ~never_observed_columns())
+
+
+def started_live_but_unobserved(now):
+    """Being played as far as the clock knows, and nothing has ever said so.
+
+    ``started_live`` and not one word from any source that reports on play. The
+    only thing that has ever spoken about the row is a venue price, and the only
+    reason it says ``live`` is that a scheduled time passed.
+
+    🔴 ``started_live`` AND NOT MERELY ``never_observed_columns()``, so a
+    PREMATURE-live row is not caught by it. A fixture a month out has no score
+    either, and Q438's whole ruling is that it belongs in date order among the
+    scheduled games — not at the bottom of the rail with rows whose start time
+    has actually passed. It fails the time half, so it never reaches this arm.
+    """
+    return and_(started_live(now), never_observed_columns())
+
+
 def live_first_order(now):
     """Put what is ACTUALLY being played at the top. The ORDER BY twin of
     :func:`upcoming_rail_condition`, and deliberately its neighbour.
@@ -197,8 +266,51 @@ def live_first_order(now):
     A genuinely live game is unaffected: it satisfies both halves and still
     leads the rail. A premature-live row simply takes its place in date order,
     which is where a fixture a month out belongs.
+
+    ── 🔴 AND A THIRD GROUP, **LAST**: LIVE WITH NOTHING TO SHOW (#3946) ──
+
+    The clause above asks whether a row is being played. It cannot ask whether
+    anything is REPORTING on it, and on a tour rail that is nearly the whole
+    population: measured on production 2026-09-08, 73 of the 79 rows that were
+    ``live`` and started had no score, no period, no ESPN anchor and no StatPal
+    anchor — ``tennis_atp`` 16 of 16, ``soccer_other`` 20 of 20 — while every
+    genuinely-reported league in the same read was fully observed (Champions
+    League 2 of 2, ``tennis_wta_us_open`` 1 of 1, Eredivisie, Veikkausliiga and
+    the Saudi Pro League 1 of 1 each). So ``live``-first sorted the hollow rows
+    to the top of ``/sport/tennis/atp`` and the real tennis to the bottom:
+
+        1  live       Petkovic v Pellegrino          14:20Z   no score
+        2  live       Dellien v Meligeni Alves       14:20Z   no score
+        3  live       Varillas v Arnaboldi           14:20Z   no score
+        4  live       Scaglia v Bertrand             14:30Z   no score
+        5  scheduled  Frances Tiafoe v Alex Michelsen        17:30Z
+        …
+        8  scheduled  Ben Shelton v Carlos Alcaraz           00:30Z
+
+    🔴 IT IS NOT #3946's WALL CLOCK AND A SHORTER ONE WOULD NOT FIX IT. The
+    staleness half of that issue shipped first and was photographed: it took the
+    three named cards off the rail and three younger ones took their place, at
+    3.4h, inside the new bound and correctly so. A rule about how long a bad card
+    LASTS is not a rule about what the page LOOKS like, because there is always a
+    fresher cohort. A card with nothing to show has not earned the top of the
+    page at twenty minutes any more than at three hours, and that ordering needs
+    no clock at all.
+
+    🔴 GROUP **2**, NOT GROUP 1, and this is the part that is easy to get wrong.
+    Every caller pairs this clause with ``Event.commence_time.asc()``. A row that
+    started two hours ago has an EARLIER commence than tonight's fixture, so
+    merely levelling it with the scheduled games would sort it straight back to
+    the first slot and the change would read as a no-op. Below them is also where
+    it honestly belongs: its start time has passed and nothing reported an
+    ending, which is the same standing as the ``suspended`` rows on the
+    unreported rail one section down (:func:`suspended_rows`) — it simply has not
+    aged into that status yet.
     """
-    return case((started_live(now), 0), else_=1)
+    return case(
+        (started_live_and_observed(now), 0),
+        (started_live_but_unobserved(now), 2),
+        else_=1,
+    )
 
 
 def live_scheduled_settled_order(now):
@@ -217,11 +329,21 @@ def live_scheduled_settled_order(now):
     and the source guard written to catch it — a future raw-live row was
     promoted ahead of nearer scheduled games and then serialized as
     ``scheduled``. The guard is now an AST scan for that reason.
+
+    🔴 FOUR GROUPS SINCE #3946, and the hollow arm is tested BEFORE the
+    ``live``/``scheduled`` one because a started-live row with nothing to show
+    matches both and the first match wins. It lands between the upcoming games
+    and the finished ones: it is not upcoming (its start time has passed) and it
+    is not finished (nothing reported an ending), which is exactly the gap
+    :func:`unreported_rail_condition` was cut for. Completed moves 2 → 3 to make
+    room; nothing else about the ordering changes, and a premature-live row
+    still reaches branch two in date order for the reason above.
     """
     return case(
-        (started_live(now), 0),
+        (started_live_and_observed(now), 0),
+        (started_live_but_unobserved(now), 2),
         (Event.status.in_(("live", "scheduled")), 1),
-        else_=2,
+        else_=3,
     )
 
 
