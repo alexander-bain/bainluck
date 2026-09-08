@@ -354,7 +354,16 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
         </div>
 
         <div className="px-3 pb-3">
-          <div className="space-y-1.5 border-y border-surface-border py-2">
+          {/* #3999: `border-t`, not `border-y`. `ActionBar` below carries its own
+              unconditional `border-t`, so a bottom rule here drew a second
+              hairline 12px above the first with nothing between them — measured
+              on production at 390px: rows bottom edge y=291.5, ActionBar top
+              edge y=303.5. The leaderboard is the only format whose row
+              container ends in a rule, so it was the only one that stacked
+              them; every other format closes on ActionBar alone and is
+              untouched. The list still reads as closed because ActionBar's rule
+              is always drawn directly beneath it. */}
+          <div className="space-y-1.5 border-t border-surface-border py-2">
               {shownRows.map((row, index) => {
                 const probability = row.probability ?? 0;
                 // UX-P046: a nonzero probability must never print as "0%".
