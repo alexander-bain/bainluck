@@ -9,7 +9,7 @@
 //
 // Also dismisses the cookie banner, which otherwise covers real content in every full-page shot.
 import { createRequire } from 'module';
-import { existsSync, readdirSync } from 'fs';
+import { existsSync, readdirSync, unlinkSync } from 'fs';
 
 function findPlaywright() {
   const npx = `${process.env.HOME}/.npm/_npx`;
@@ -24,7 +24,43 @@ function findPlaywright() {
 
 const { chromium } = createRequire(findPlaywright())('playwright');
 const [url, out, clickText] = process.argv.slice(2);
-if (!url || !out) { console.error('usage: shop-shot.mjs <url> <out.png> [clickText]'); process.exit(2); }
+if (!url || !out) {
+  console.error('usage: shop-shot.mjs <url> <out.png> [clickText]');
+  console.error('  SHOT_CLICKS="step;step"  tap a SEQUENCE before shooting. A step starting');
+  console.error('                           with [ . or # is a CSS selector, else exact text.');
+  console.error('  SHOT_CLICK_OPTIONAL=1    restore the old best-effort taps (see #3932).');
+  process.exit(2);
+}
+
+// #3932: a tap that did not happen must not produce a pass-looking artifact.
+//
+// The old shape caught every click failure, printed CLICKFAIL to stderr, and
+// carried on to `ok = true` / exit 0 — so a shot of the UN-TAPPED page came back
+// with a filename saying otherwise, and `look.sh` (which only checks that a PNG
+// exists) read it as a clean pass. Under the LOOK RULE that PNG is the proof a
+// rendered-surface change is done, so for any surface behind a tap the proof was
+// unfalsifiable in the failing direction. ux/1052 already lost a pass this way.
+//
+// The sibling rail had already worked this out: `tools/look-local.mjs` exits 4 on
+// a click target it cannot find, because "a click that does not land must not
+// produce a PNG — exiting here is the only way the caller finds out". The two
+// halves of one rail disagreed; this is them agreeing.
+//
+// EXIT CODES ARE A STORY (gotcha #124): 2 usage, 3 a tap that did not land,
+// 1 anything else. `SHOT_CLICK_OPTIONAL=1` restores best-effort for a caller who
+// genuinely wants "tap it if it's there" — it is never the default, because the
+// default is what silently lied.
+const CLICK_OPTIONAL = process.env.SHOT_CLICK_OPTIONAL === '1';
+const envSteps = (process.env.SHOT_CLICKS || '').split(';').map((s) => s.trim()).filter(Boolean);
+if (envSteps.length && clickText) {
+  console.error(`SHOT_CLICKS overrides the positional click target "${clickText}"`);
+}
+const clickSteps = envSteps.length ? envSteps : (clickText ? [clickText] : []);
+
+// A failed run must not leave the PREVIOUS run's screenshot sitting at the path
+// this run's filename claims — that is the same class one level out, and it is
+// how a reader ends up judging a photograph of something else entirely.
+try { if (existsSync(out)) unlinkSync(out); } catch { /* best effort */ }
 
 const proxy = process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
 const args = ['--no-sandbox', '--single-process', '--disable-gpu', '--disable-crashpad', '--disable-dev-shm-usage'];
@@ -42,11 +78,72 @@ try {
     await page.getByRole('button', { name: /Decline|Accept/ }).first().click({ timeout: 6000 });
     await page.waitForTimeout(2500);
   } catch { /* no banner on this page */ }
-  if (clickText) {
+  // Each step in order; a step is a CSS selector when it starts with [ . or #,
+  // otherwise the exact visible text. Selectors are what make a surface behind a
+  // pill, an icon button or a `data-testid` reachable at all — `getByText` with
+  // `exact: true` can only ever address a visible-text node.
+  for (const step of clickSteps) {
+    // HOW A STEP IS READ, and why guessing is not good enough.
+    //
+    // The first cut used only the shorthand below — a step is a CSS selector if
+    // it starts with [ . or #, else it is text. That silently mis-read
+    // `a[href="/sport/football/nfl"]`, which starts with `a`, as a demand for a
+    // visible-text node reading literally `a[href="/sport/football/nfl"]`. Zero
+    // matches, and before this ship that was a screenshot of the un-tapped page.
+    // Tag-qualified selectors (`a[href=…]`, `button.pill`, `nav a`) are the
+    // normal way to address exactly the controls text cannot reach, so the
+    // heuristic was wrong for the main case it exists to serve.
+    //
+    // So: `css=` and `text=` say it outright and are never ambiguous. The
+    // shorthand stays for the [ . # forms already in the issue. A bare step is
+    // text, as the positional `clickText` always was.
+    let isSelector;
+    let sel = step;
+    if (step.startsWith('css=')) { isSelector = true; sel = step.slice(4); }
+    else if (step.startsWith('text=')) { isSelector = false; sel = step.slice(5); }
+    else { isSelector = /^[[.#]/.test(step); }
+    // `.filter({ visible: true })` BEFORE `.first()`, and it is load-bearing.
+    //
+    // The old line was a bare `.first()`, which takes the first node in DOM
+    // order whether or not it is on screen. Measured on bainluck.com at 390px:
+    // `getByText('Sports', { exact: true })` resolves THREE nodes, and node 0 is
+    // the desktop nav — `visible=false`, `boundingBox=null`. Playwright waits for
+    // actionability, so the click times out on an invisible element while the
+    // bottom-nav tab a reader can plainly see sits at node 2, untouched.
+    // `a[href="/sports"]` has the identical shape.
+    //
+    // That is this issue's own bug wearing responsive CSS: the rail reports on a
+    // node nobody can see. Silently it produced a screenshot of the un-tapped
+    // page; loudly (above) it would fail on targets that are right there. Fixing
+    // only the loudness would have turned a false pass into a false failure.
+    const all = isSelector ? page.locator(sel) : page.getByText(sel, { exact: true });
+    const target = all.filter({ visible: true }).first();
+    let landed = false;
     try {
-      await page.getByText(clickText, { exact: true }).first().click({ timeout: 10000 });
+      await target.click({ timeout: 15000 });
+      landed = true;
+    } catch (e) {
+      const why = e.message.split('\n')[0];
+      // Name the reading that failed, not just the failure. "no exact-text node
+      // reads `a[href=…]`" is a different problem from "the button is covered",
+      // and the caller cannot tell them apart from a bare timeout.
+      const hint = isSelector
+        ? ''
+        : ' — read as exact TEXT; if you meant a CSS selector, prefix it `css=`';
+      console.error(`CLICKFAIL ${step} :: ${why}${hint}`);
+      if (!CLICK_OPTIONAL) {
+        // Before the screenshot on purpose: exiting here is what guarantees no
+        // artifact exists to be mistaken for a pass.
+        await browser.close();
+        process.exit(3);
+      }
+    }
+    // Only on the success path. A `CLICKED` line printed after a CLICKFAIL is
+    // the same lie in miniature — the log would say the tap happened.
+    if (landed) {
       await page.waitForTimeout(6000);
-    } catch { console.error(`CLICKFAIL ${clickText}`); }
+      console.error(`CLICKED ${step}`);
+    }
   }
 
   // ux/1092: SHOT_SCROLL turns the full-page shot into a VIEWPORT shot.
