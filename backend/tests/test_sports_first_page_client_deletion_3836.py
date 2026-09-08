@@ -60,6 +60,7 @@ from __future__ import annotations
 import ast
 import inspect
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from app.routes import feed as feed_module
 from app.routes.feed import PersonalizationContext, apply_discover_display_chain
@@ -71,7 +72,41 @@ from app.utils.sports_first_page_rails import (
     swap_client_deleted_finished_off_first_page,
 )
 
-NOW = datetime(2026, 9, 7, 12, 0, 0, tzinfo=timezone.utc)
+#: The fixture anchor, and it MUST track the real clock.
+#:
+#: This was `datetime(2026, 9, 7, 12, 0, 0, tzinfo=timezone.utc)` — a fixed
+#: calendar instant — and it took master red roughly eighteen hours after it was
+#: written, on 2026-09-08.
+#:
+#: The reason is that this file has two families of test and only one of them
+#: gets to choose the clock. The direct callers pass `now=NOW` into
+#: `swap_client_deleted_finished_off_first_page` and are perfectly
+#: deterministic. `TestWiring` cannot: it exercises the real
+#: `apply_discover_display_chain`, whose signature has no `now` and which reads
+#: `datetime.now(timezone.utc)` internally. So the fixtures were dated against a
+#: frozen instant while the code under test judged them against the real one,
+#: and the gap between the two widened by one hour per hour.
+#:
+#: Once the gap passed `CLIENT_COMPLETED_MAX_AGE_HOURS` (8), the cards these
+#: tests build as FRESH — `hours_ago=1.0`, `hours_ago=2.0` — were themselves
+#: older than the threshold. Every candidate on the page was doomed, the swap
+#: correctly found no admissible replacement and declined, and
+#: `test_both_passes_fire_when_the_page_is_repetitive_AND_doomed` failed
+#: `assert 0 > 0`. The production code was right the whole time; the fixture had
+#: expired. Gotcha #44: a test anchor must not be a fixed point on the calendar
+#: when the thing it measures reads the wall clock.
+#:
+#: Anchoring to the real clock costs nothing in determinism here, because every
+#: age in this file is stated in whole or tenth hours and the nearest fixture to
+#: the eight-hour threshold sits 2.0 hours below it and 12.3 above — margins of
+#: hours against a sub-second import-to-assert drift.
+#:
+#: `test_the_fixture_anchor_is_not_a_hardcoded_instant` fails the moment this is
+#: frozen again. It parses this assignment rather than timing it, because an
+#: elapsed-time budget here is really a budget on how long the suite takes to
+#: run — the first attempt used one and failed CI at 404 seconds of
+#: collection-to-execution drift while the repair underneath it was working.
+NOW = datetime.now(timezone.utc)
 
 SPORTS = {
     "event_pct": 0.6,
@@ -246,6 +281,55 @@ class TestThePremise:
     def test_and_the_tail_really_does_offer_admissible_replacements(self):
         tail = _measured_pool()[20:]
         assert sum(1 for it in tail if not client_deletes_finished_card(it, now=NOW)) >= 4
+
+    def test_the_fixture_anchor_is_not_a_hardcoded_instant(self):
+        """The guard for the class, and it reads the SOURCE rather than a clock.
+
+        `TestWiring` drives the real `apply_discover_display_chain`, which takes
+        no `now` and reads `datetime.now(timezone.utc)` itself. So a fixture
+        anchor that is a fixed calendar instant is a fuse, not a constant: it
+        ages one hour per hour and the file goes red — everywhere, for good —
+        once the drift passes `CLIENT_COMPLETED_MAX_AGE_HOURS`. That happened on
+        2026-09-08, about eighteen hours after the anchor was written, and it
+        took the `deploy` job down with it, because a red CI skips deploy and
+        then NO lane's work reaches production.
+
+        Asserted against the module's own source, not against elapsed time. The
+        first version of this guard compared `NOW` to `datetime.now()` with a
+        five-minute budget and FAILED IN CI while the repair underneath it
+        worked: `NOW` binds at import, this assertion runs seven minutes later
+        in an eight-minute shard, and it measured 404 seconds of collection-to-
+        execution drift. That budget was really a bound on how long the suite
+        takes to run, which is not the defect and does not belong in a test.
+        Parsing the assignment has no such coupling — it is the same device
+        `test_the_swap_runs_AFTER_the_rail_cap_and_BEFORE_the_live_hoist` uses a
+        few classes down, and for the same reason.
+        """
+        tree = ast.parse(Path(__file__).read_text())
+        anchors = [
+            node.value
+            for node in tree.body
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(t, ast.Name) and t.id == "NOW" for t in node.targets
+            )
+        ]
+        assert len(anchors) == 1, "expected exactly one module-level NOW anchor"
+        value = anchors[0]
+        callee = value.func if isinstance(value, ast.Call) else None
+        is_now_call = (
+            isinstance(callee, ast.Attribute)
+            and callee.attr in ("now", "utcnow")
+        )
+        assert is_now_call, (
+            "the fixture anchor NOW must be derived from the real clock "
+            f"(`datetime.now(timezone.utc)`), but it is assigned "
+            f"`{ast.unparse(value)}`. The passes under test read the real "
+            "clock and cannot be given one — `apply_discover_display_chain` "
+            "has no `now` parameter — so a hardcoded instant makes every "
+            "'fresh' fixture doomed within hours and the swap declines "
+            "(gotcha #44)."
+        )
 
     def test_the_rail_cap_would_NOT_have_caught_this(self):
         """The measurement that re-scoped this ship. Exactly three cards share
