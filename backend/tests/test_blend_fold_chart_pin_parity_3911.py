@@ -85,6 +85,15 @@ BLENDED = 0.40
 SERIES_CANON_EDGE = 0.90
 SERIES_TWIN_EDGE = 0.85
 
+#: The `opening` hero — what `get_event` publishes when tier 1 is EMPTY. Chosen
+#: to collide with nothing else in this file so a test can name which number a
+#: surface picked up.
+OPENING_PROB = 0.33
+
+#: A real `None` is a meaningful value for `win_probability_sources` (it is the
+#: no-readings row), so the "caller said nothing" default cannot be `None`.
+_UNSET = object()
+
 
 def _sources(now, **readings):
     return {
@@ -93,7 +102,7 @@ def _sources(now, **readings):
     }
 
 
-def _event_row(now, canon=None):
+def _event_row(now, canon=None, sources=_UNSET):
     """SCHEDULED, and starting soon.
 
     Not `completed`: `_EXCLUDE_WHEN_COMPLETED` drops kalshi and polymarket from
@@ -110,8 +119,14 @@ def _event_row(now, canon=None):
         away_team_name="Stefanos Tsitsipas",
         commence_time=now + timedelta(hours=1),
         status="scheduled",
-        win_probability_sources=_sources(
-            now, polymarket=CANON_PROB if canon is None else canon
+        # `opening_*` is always populated: it is what the hero falls back to
+        # when tier 1 is empty, and the `opening`-hero arm below needs it.
+        opening_home_probability=OPENING_PROB,
+        opening_away_probability=round(1.0 - OPENING_PROB, 4),
+        win_probability_sources=(
+            _sources(now, polymarket=CANON_PROB if canon is None else canon)
+            if sources is _UNSET
+            else sources
         ),
     )
     event.sport = Sport(id=S_TENNIS, key="tennis_atp_us_open", name="US Open")
@@ -198,11 +213,12 @@ class _RouteSession:
     more than one that merely runs correctly.
     """
 
-    def __init__(self, now, canon=None, twin=None):
+    def __init__(self, now, canon=None, twin=None, sources=_UNSET, twin_sources=_UNSET):
         self.now = now
         self.canon = CANON_PROB if canon is None else canon
         self.twin = TWIN_PROB if twin is None else twin
-        self.event = _event_row(now, canon=self.canon)
+        self.twin_sources = twin_sources
+        self.event = _event_row(now, canon=self.canon, sources=sources)
         self.blend_fold_lookups = 0
         self.series_fold_lookups = 0
 
@@ -221,6 +237,10 @@ class _RouteSession:
             return _Result([])
         if is_blend_fold(sql):  # longer projection first — see the docstring
             self.blend_fold_lookups += 1
+            if self.twin_sources is not _UNSET:
+                return _Result(
+                    [(GHOST_ID, "Shelton", "Tsitsipas", self.twin_sources)]
+                )
             return _Result(_blend_fold_rows(self.now, twin=self.twin))
         if is_series_fold(sql):
             self.series_fold_lookups += 1
@@ -444,20 +464,51 @@ class TestTheCacheBoundary:
         assert detail["hero_probability"] == pytest.approx(0.10)
         assert _edge(history) == pytest.approx(0.10)
 
-    def test_a_settled_hero_is_never_pinned_onto_the_curve(self, both_routes):
-        """Only a `blend` hero is pinnable, and the payload says which it is.
+    def test_the_pin_honours_a_served_number_it_is_handed(self, both_routes):
+        """`served_blend` is used verbatim — the parameter, in isolation.
 
-        A settled hero, an `opening` fallback and `final-unresolved` are
-        different claims about a different number. Reading `hero_probability`
-        without reading `hero_probability_source` would put 1.0 on the right
-        edge of a live curve the moment a row went Final.
+        The composed path is proved above; this pins the seam itself, so a
+        future edit that keeps the plumbing and quietly recomputes anyway is a
+        failure here rather than a silent return to two numbers.
+        """
+        from app.routes.events import _pin_blend_edge
+
+        now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+        line = [{"timestamp": now.isoformat(), "home_probability": SERIES_CANON_EDGE}]
+        pinned = _pin_blend_edge(
+            line,
+            _event_row(now),
+            is_live=False,
+            is_finished=False,
+            now=now,
+            served_blend=0.123,
+        )
+
+        assert pinned is True
+        assert line[-1]["home_probability"] == pytest.approx(0.123)
+
+    def test_only_a_blend_hero_is_read_off_the_payload(self, both_routes):
+        """The source gate, stated honestly as BELT-AND-BRACES.
+
+        🔴 Mutating the `hero_probability_source` check out does NOT change
+        today's behaviour, and this test does not pretend otherwise. The reason
+        is that the two other heroes are already unreachable here: a settled
+        hero is refused by `_pin_blend_edge`'s own stand-down before it looks at
+        anything, and `final-unresolved` labels the very same `agg_prob` number,
+        so refusing it only costs a recompute that returns it again.
+
+        The gate stays because the alternative is a chart that reads a number
+        off a payload WITHOUT reading the payload's claim about what the number
+        is — keying on the field that mints the value rather than on today's
+        reachability. What is asserted is the contract: the pinnable source is
+        named, it is the one the fixture publishes, and it is `blend`.
         """
         from app.routes.events import _PINNABLE_HERO_SOURCE
 
         detail, _, _ = both_routes()
 
-        assert detail["hero_probability_source"] == _PINNABLE_HERO_SOURCE
         assert _PINNABLE_HERO_SOURCE == "blend"
+        assert detail["hero_probability_source"] == _PINNABLE_HERO_SOURCE
 
 
 class TestTheFixtureCannotExpire:
