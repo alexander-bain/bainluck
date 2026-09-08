@@ -272,6 +272,44 @@ def stamp_source_reading(
     return updated
 
 
+def source_observation_time(
+    row: Any, now: Optional[datetime] = None
+) -> Optional[datetime]:
+    """When the VENUE was last seen quoting the price on ``row`` (#4028).
+
+    The `updated_at` half of `stamp_source_reading` is an OBSERVATION time, and
+    a writer that passes its own `now()` is asserting it observed the venue at
+    that instant. A writer that merely re-read a row it already had is not, and
+    the difference is the whole bug: on 2026-09-08 the 15-minute matcher
+    re-stamped a Polymarket container whose outcomes had not been touched since
+    the previous evening, so a settled market held the freshest stamp on an
+    unstarted game, `_relative_staleness_multiplier` decayed the sportsbook
+    against it (3.0 -> 0.6084 under an undecayed 0.8), and the divergence gate
+    printed `Marlins 1% - 99% Mets` over the caption "18 sportsbooks".
+
+    THE GENERAL CLAUSE, because the decay is not the thing that is wrong:
+    relative recency assumes a source STOPS PUBLISHING WHEN IT STOPS KNOWING,
+    and that assumption was written down nowhere. A re-stamp is only honest when
+    it records a re-OBSERVATION. Ask it of any recency rule you add here: what
+    does a source that is dead but still transmitting do to it?
+
+    ``row`` is duck-typed, like everything else in this module: anything with a
+    ``last_updated``, which `futures_outcomes` documents as "when did the poller
+    last SEE this row" — exactly the question. Returns ``None`` when the row
+    cannot answer, and ``None`` means "you have no observation time, use your
+    own" — never "old". Clamped to ``now``, because a stamp in the future reads
+    as the freshest thing on the event and would decay every honest source
+    against a clock skew.
+    """
+    observed = _coerce_timestamp(getattr(row, "last_updated", None))
+    if observed is None:
+        return None
+    reference = now or datetime.now(timezone.utc)
+    if reference.tzinfo is None:
+        reference = reference.replace(tzinfo=timezone.utc)
+    return min(observed, reference)
+
+
 def wps_numeric_sql(source: str, column: str = "win_probability_sources") -> str:
     """SQL that reads one source's numeric probability out of the JSONB.
 
