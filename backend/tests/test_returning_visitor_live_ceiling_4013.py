@@ -613,3 +613,67 @@ class TestTheHeadroomArithmetic:
         """If liveness detection breaks, the clamp silently stops applying."""
         assert payload_contains_live_event(_live_payload(time.time()))
         assert not payload_contains_live_event(_settled_payload(time.time()))
+
+
+# --------------------------------------------------------------------------
+# THE CODEQL ANNOTATION ON THE CACHE KEY. Not part of #4013's mechanism, but
+# shipped with it because standing notice 32 refuses the sha otherwise.
+# --------------------------------------------------------------------------
+
+
+class TestTheCacheKeyDigestIsUnchangedByTheCodeqlAnnotation:
+    """`usedforsecurity=False` must be an annotation and nothing else.
+
+    CodeQL reads the principal ids hashed into a feed cache key as sensitive
+    input to a weak hash (`py/weak-sensitive-data-hashing`, HIGH), which blocks
+    every merge gate. The flag is the sanctioned way to say "this hash
+    authenticates nothing" — it derives a Redis key from a request shape, and a
+    collision costs a wrong cache entry, not a broken secret.
+
+    The digests below were captured from the function BEFORE the flag was added
+    and are frozen here. If a change ever moves one, the feed response cache
+    cold-starts on deploy for every key at once — which is a 2.30s p50 build
+    for every reader, not a cosmetic diff. That is worth a frozen constant.
+    """
+
+    _SHAPE = dict(
+        sport=None,
+        limit=200,
+        offset=0,
+        include_events=True,
+        include_futures=True,
+        tags=None,
+        event_pct=0.15,
+        my_teams_only=False,
+        mode="discover",
+    )
+
+    @pytest.mark.parametrize(
+        "kwargs,expected",
+        [
+            (
+                dict(user_id=None, session_id=None),
+                "feed_cache:2e0423972493e5a8bdff9d3307bed1c7",
+            ),
+            (
+                dict(user_id=None, session_id="returning-install-uuid-4013"),
+                "feed_cache:1f1b827af3024099499f5b2810977971",
+            ),
+            (
+                dict(user_id=42, session_id=None),
+                "feed_cache:717c51d67a63963206eb5bfc26d867e0",
+            ),
+            (
+                dict(user_id=None, session_id=None, category="politics"),
+                "feed_cache:1fc676a99155fdd5a550d000f73d8795",
+            ),
+            (
+                dict(user_id=7, session_id="x"),
+                "feed_cache:a4bbc61044de60171b4bdf067e7d0557",
+            ),
+        ],
+    )
+    def test_the_digest_is_byte_identical_to_the_pre_annotation_key(
+        self, kwargs, expected
+    ):
+        assert feed_response_cache_key(**kwargs, **self._SHAPE) == expected

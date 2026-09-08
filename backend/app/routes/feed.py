@@ -2831,6 +2831,14 @@ async def get_feed(
 
                             _rc.schedule_background(_publish_inert_private())
                         except Exception:
+                            # Swallowed on purpose. This backfill is an
+                            # OPTIMISATION — it saves the next open from this
+                            # install a DB context load — and the caller has
+                            # already been handed a complete payload above.
+                            # Failing the request because a speculative cache
+                            # write could not be scheduled would trade a served
+                            # page for a cold one. The next open simply takes
+                            # the shared read again.
                             pass
                     _previous_at = _record_feed_timing(
                         _timings, _started_at, _previous_at, "cache_shared_hit"

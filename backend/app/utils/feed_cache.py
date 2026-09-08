@@ -553,7 +553,20 @@ def feed_response_cache_key(
         # in `parts`, so a bare separator is forgeable. `cat=<len>:<value>` is
         # not: two different categories cannot produce the same prefix.
         parts = f"cat={len(category)}:{category}|{parts}"
-    return f"{FEED_RESPONSE_CACHE_PREFIX}:{hashlib.md5(parts.encode()).hexdigest()}"
+    # `usedforsecurity=False` is an ANNOTATION, not a behaviour change. This MD5
+    # derives a Redis cache key from a request shape; it authenticates nothing
+    # and guards nothing, and a collision costs a wrong cache entry rather than
+    # a broken secret. CodeQL's `py/weak-sensitive-data-hashing` cannot know
+    # that on its own and reads the principal ids in `parts` as sensitive input
+    # to a weak hash — a HIGH finding that blocks every merge gate under
+    # standing notice 32. The flag is the sanctioned way to say "not a security
+    # hash", and it leaves the digest byte-identical, which is load-bearing:
+    # changing the key would cold-start the entire feed response cache on
+    # deploy. `test_feed_cache_key_digest_is_unchanged_by_the_codeql_annotation`
+    # pins that identity against a frozen digest so the claim is checked rather
+    # than asserted.
+    digest = hashlib.md5(parts.encode(), usedforsecurity=False).hexdigest()
+    return f"{FEED_RESPONSE_CACHE_PREFIX}:{digest}"
 
 
 def feed_response_cache_ttl(
