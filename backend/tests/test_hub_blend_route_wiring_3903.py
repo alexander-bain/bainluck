@@ -389,11 +389,18 @@ async def test_the_loader_selects_columns_that_carry_the_names(wired):
 
 
 async def test_an_event_with_no_hero_leaves_the_row_on_the_venue_price(wired):
-    """Zverev v van de Zandschulp on 2026-09-08: the event page had NO number.
+    """A linked event that cannot answer keeps the venue quote, never blanks.
 
-    The hub still held a venue price and must go on showing it — a linked event
-    that cannot answer is a reason to keep the venue quote, never to blank a card
-    that had one.
+    THE CASE IS REAL AND IS A WINDOW, NOT A DEFECT — recorded that way on purpose.
+    Zverev v van de Zandschulp (`15307525`) served `hero_probability: null` with
+    zero sources at 10:55Z on 2026-09-08 and a full 10-book blend at 11:00Z: the
+    betting ingest simply had not written yet. Re-read before filing, so it was
+    never filed.
+
+    That window is exactly when this rung is load-bearing. Every linked row spends
+    some minutes there, and during them the hub already holds a perfectly good
+    venue price. Taking it away to honour the event would blank a card that had a
+    number, which is a worse answer than a slightly staler one.
     """
     wired.event_columns["win_probability_sources"] = {}
     wired.event_columns["opening_home_probability"] = None
