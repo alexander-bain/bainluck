@@ -746,21 +746,28 @@ class MatchReceipt:
             "actor": self.actor,
             "container_id": self.container_id,
             "candidates": self.candidate_payload(),
-            "detail": _jsonable(self.detail),
+            "detail": jsonable(self.detail),
             "first_attempted_at": self.attempted_at,
             "last_attempted_at": self.attempted_at,
             "attempt_count": 1,
         }
 
 
-def _jsonable(value: Any) -> Any:
-    """Coerce datetimes (and containers of them) so JSONB can hold the detail."""
+def jsonable(value: Any) -> Any:
+    """Coerce datetimes (and containers of them) so JSONB can hold the detail.
+
+    Public because the detail a receipt stores and the detail an admin endpoint
+    *returns* have to be the same shape. ``_find_matching_event`` fills
+    ``receipt.detail`` with raw ``datetime`` window bounds; the stored row runs
+    them through here, and force-link's response body must too, or the operator
+    reads a different rendering of the same search than the history keeps.
+    """
     if isinstance(value, datetime):
         return value.isoformat()
     if isinstance(value, dict):
-        return {k: _jsonable(v) for k, v in value.items()}
+        return {k: jsonable(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
-        return [_jsonable(v) for v in value]
+        return [jsonable(v) for v in value]
     return value
 
 
@@ -924,6 +931,7 @@ async def record_out_of_band_attempt(
     linked_event_id: Optional[int] = None,
     reject_reason: Optional[str] = None,
     detail: Optional[dict[str, Any]] = None,
+    candidates: Optional[list[CandidateTrace]] = None,
     now: Optional[datetime] = None,
     session_factory=None,
 ) -> int:
@@ -942,6 +950,18 @@ async def record_out_of_band_attempt(
     Exactly one of ``linked_event_id`` / ``reject_reason`` must be given; both
     or neither is a caller bug and raises, because "an attempt happened and we
     are not saying what it decided" is the row this table exists to prevent.
+
+    ``candidates`` IS THE DIFFERENCE BETWEEN A VERDICT AND AN EXPLANATION. A
+    hand-run attempt runs the same ``_find_matching_event`` the matcher does,
+    and that function already builds the whole trace — the window it searched,
+    every event it retrieved, and the verdict that dropped each one — into a
+    receipt handed to it. Without this parameter the caller had nowhere to put
+    that trace, so the stored row said ``no_candidate`` and stopped, which is
+    the reason without the evidence: it cannot distinguish "nothing in
+    ``events`` carries these names" from "the game is there and our window
+    excluded it", and those have opposite fixes. Optional, because the two
+    exits that refuse BEFORE the pipeline runs (no matchup extracted) have
+    genuinely considered nothing and must not pretend otherwise.
 
     NO ACTOR IS SET ON AN ATTACH, deliberately, and this is not an oversight to
     be fixed later. ``actor`` in this module means *who ended or moved a link*
@@ -980,6 +1000,8 @@ async def record_out_of_band_attempt(
         phase=phase,
         attempted_at=now or datetime.now(timezone.utc),
     )
+    for candidate in candidates or ():
+        receipt.trace(candidate)
     if linked_event_id is not None:
         receipt.link(linked_event_id, **(detail or {}))
     else:
@@ -1059,7 +1081,7 @@ def link_change_row(receipt: MatchReceipt) -> Optional[dict[str, Any]]:
         "actor": _validated_actor(receipt.actor),
         "previous_event_id": receipt.previous_event_id,
         "new_event_id": receipt.linked_event_id,
-        "detail": _jsonable(receipt.detail),
+        "detail": jsonable(receipt.detail),
         "changed_at": receipt.attempted_at,
     }
 
