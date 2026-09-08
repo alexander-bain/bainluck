@@ -128,6 +128,36 @@ def humanize_binary_outcome_name(
     # Strip leading "Will " for brevity
     label = re.sub(r"^Will\s+", "", label, flags=re.IGNORECASE).strip()
 
+    # #3517 — LENGTH WAS A PROXY FOR REDUNDANCY, AND THIS IS WHERE THE TWO COME
+    # APART. #3491 (below) refuses a label that does not FIT, on the reasoning
+    # that a chopped label is the question echoed back. A label that fits is
+    # echoed back just the same; it is only shorter. Found on the live feed
+    # 2026-09-08 20:25Z, `GET /api/feed?limit=30`, two cards on page one:
+    #
+    #   'China x Philippines military clash moved up 37.5 points from opening
+    #    in China x Philippines military clash before 2027?'
+    #   'China invade Taiwan by end of 2026 (4%) leads
+    #    Will China invade Taiwan by end of 2026?'
+    #
+    # The same words twice in one sentence, and the same words again as the
+    # hero above the title. Neither label is chopped: 33 and 34 characters.
+    #
+    # 🔴 THIS TEST IS TRUE FOR EVERY LABEL STRATEGY 2 CAN BUILD, and that is not
+    # a reason to drop it for a bare `return`. Strategy 2 constructs its label by
+    # DELETING A SUFFIX from the question — a trailing `?`, a date clause, a
+    # leading auxiliary — so its output is always a prefix of what the card
+    # prints directly below it, and the branch has no way to add information.
+    # Stating the property instead of assuming it means that if the label
+    # construction ever grows a step that genuinely rewrites the question rather
+    # than trimming it, that label ships, and this file does not have to be
+    # re-derived to find out why it may.
+    #
+    # The gate stays PAIR-WIDE for the reason #3491 gives below: `label` is the
+    # single string both sides are built from, so both sides collapse together
+    # and `("No", "Yes")` stays the canonical pair the web hero recognises.
+    if _restates_market_question(label, market_name):
+        return "Yes" if is_yes else "No"
+
     neg_label = f"Not: {label}"
 
     # #3491 — A LABEL THAT DOES NOT FIT IS NOT A LABEL, IT IS THE QUESTION
@@ -332,6 +362,30 @@ def _negates_market_question(label: str | None, market_name: str | None) -> bool
         return question_tokens[head].startswith(restatement_tokens[head])
 
     return restatement_tokens[:overlap] == question_tokens[:overlap]
+
+
+def _restates_market_question(label: str | None, market_name: str | None) -> bool:
+    """True when `label` says only what the market's own question already says.
+
+    The affirmative mirror of `_negates_market_question`: no negation marker to
+    strip, the same token comparison over the same normalisation, so the two
+    predicates cannot drift apart on how a question is read.
+
+    🔴 SCOPED TO MANUFACTURED LABELS BY ITS CALLER, NOT BY ITSELF. A genuine
+    Strategy 1 extraction is also a prefix of its question — `Anthropic` of
+    `Will Anthropic IPO first?` — and must survive, because it keeps the
+    question's PREDICATE out of the label and so still says something the title
+    beneath it does not. Strategy 1 returns before this is reached; calling this
+    on its output would collapse every one of them.
+    """
+    label_tokens = _comparable_tokens(label)
+    question_tokens = _comparable_tokens(market_name)
+    if not label_tokens or not question_tokens:
+        return False
+
+    # Only the LABEL is ever shortened; the question arrives whole.
+    overlap = min(len(label_tokens), len(question_tokens))
+    return label_tokens[:overlap] == question_tokens[:overlap]
 
 
 def _answering_side_label(label: str | None, market_name: str | None) -> str | None:

@@ -439,14 +439,15 @@ class TestHumanizeBinaryOutcomeName:
             == "OpenAI"
         )
 
-    def test_extracts_subject_with_the(self):
-        # "the Dodgers" — "the" is generic but "the Dodgers" is a valid entity
+    def test_a_generic_first_word_falls_through_to_the_bare_side(self):
+        # "the Dodgers" — "the" is generic, so Strategy 1 declines the subject
+        # and Strategy 2 would label the card `the Dodgers win the World
+        # Series` above a title reading `Will the Dodgers win the World
+        # Series?`. #3517 refuses the restatement; the title carries the name.
         result = humanize_binary_outcome_name(
             "Yes", "Will the Dodgers win the World Series?"
         )
-        # "the" is first word, so falls back to truncation
-        assert result != "Yes"
-        assert "Dodgers" in result
+        assert result == "Yes"
 
     def test_no_outcome_negates_subject(self):
         result = humanize_binary_outcome_name("No", "Will Anthropic IPO first?")
@@ -481,21 +482,23 @@ class TestHumanizeBinaryOutcomeName:
             == "Elon Musk"
         )
 
-    def test_generic_subject_falls_back_to_truncation(self):
+    def test_generic_subject_never_becomes_the_label(self):
         result = humanize_binary_outcome_name(
             "Yes", "Will there be a government shutdown?"
         )
-        assert result != "Yes"
+        # Not "there", and — #3517 — not `there be a government shutdown`
+        # either, which is the question with its auxiliary removed.
+        assert result == "Yes"
         assert result != "there"
-        assert "government shutdown" in result.lower()
 
-    def test_non_will_question_keeps_its_label_when_the_pair_fits(self):
-        # A question that does not open with "Will" still gets a Strategy 2
-        # label — refusal is about LENGTH, not about the auxiliary.
+    def test_non_will_question_takes_the_bare_side(self):
+        # Strategy 1 requires `Will <subject> <verb>`, so a question opening
+        # with any other auxiliary can only be labelled by Strategy 2 — and
+        # #3517 refuses every Strategy 2 label as a restatement.
         result = humanize_binary_outcome_name(
             "Yes", "Does Alcaraz reach the semifinals?"
         )
-        assert result == "Does Alcaraz reach the semifinals"
+        assert result == "Yes"
 
     def test_non_will_question_returns_the_side_when_the_pair_does_not_fit(self):
         # 38 characters, so the label itself would fit but `"Not: " + label`
