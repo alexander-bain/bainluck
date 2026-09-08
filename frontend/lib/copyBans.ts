@@ -162,8 +162,66 @@ export const VENUE_BANS: CopyBan[] = [
   },
 ];
 
+/**
+ * ═══ D91 (Alex, 2026-09-08): THE SUPPLIER *CLASS* WORDS, ONE SURFACE AT A TIME ═══
+ *
+ * `VENUE_BANS` above catches the two venue NAMES. It never caught the class
+ * words — `books`, `sportsbook`, `bookmaker` — and that gap is why the US Open
+ * hub was still printing *"62 of them are a sportsbook opening rather than a
+ * prediction market's, marked books beside the number"* twelve sessions after
+ * the "no source words" rule, through sweeps that were each real.
+ *
+ * Alex closed it: **attribution yes, narration no.** *"Small-font source marks
+ * on numbers stay and spread … What goes is venue language in prose — no 'the
+ * books' in captions, headlines or spoken sentences."* That is ruling 141's
+ * amended test exactly, so these ids join `ATTRIBUTION_AWARE_BANS` and are
+ * judged by `isSourceAttribution` rather than firing outright.
+ *
+ * ═══ WHY THIS GROUP IS SCOPED AND `VENUE_BANS` IS NOT ═══
+ *
+ * It is NOT in `ALL_COPY_BANS`, and that is a decision, not an oversight.
+ *
+ * The bundle scanner reads every chunk the site ships. The calibration page
+ * alone carries ~15 prose uses of *sportsbook* — "Sportsbook odds arrive in
+ * three shapes", "the gap is the cost of the fallback, not a finding about the
+ * books" — and D91 in the same breath protects that page: *"grids, exotic props
+ * and the calibration page name their sources."* A codebase-wide switch-on would
+ * therefore fail the gate on copy the ruling explicitly keeps, and this file's
+ * own recorded failure mode is a broad rule that fires on legitimate content and
+ * gets switched off within a week.
+ *
+ * So it follows **D86 = A — replaced quietly, surface by surface.** The
+ * tournament surfaces are surface one, because that is where Alex read it. Each
+ * later surface adds itself to a list here as its prose is fixed; the day the
+ * last one lands, this group moves into `ALL_COPY_BANS` and this comment goes.
+ *
+ * ⚠️ The precedent is `HISTORY_CLAIM_BANS` below — a group whose scope is WHERE
+ * the string lives, enforced at render rather than over the bundle. Same shape,
+ * same reason, and the same honest admission: outside the fence, this class is
+ * still ungated.
+ */
+export const SUPPLIER_PROSE_BANS: CopyBan[] = [
+  {
+    id: "supplier-books",
+    pattern: /\bbooks?\b/i,
+    why: 'a supplier CLASS word in prose — a mark beside a number may say "books"; a caption may not talk about our suppliers (D91, ruling 141 as amended)',
+  },
+  {
+    id: "supplier-sportsbook",
+    pattern: /\bsportsbooks?\b/i,
+    why: 'a supplier CLASS word in prose — a mark beside a number may name the class; a caption may not talk about our suppliers (D91, ruling 141 as amended)',
+  },
+  {
+    id: "supplier-bookmaker",
+    pattern: /\bbookmakers?\b/i,
+    why: "a supplier CLASS word in prose, and the one spelling no mark on the site uses (D91, ruling 141 as amended)",
+  },
+];
+
 /** The bans that answer to `isSourceAttribution` rather than firing outright. */
-const ATTRIBUTION_AWARE_BANS: ReadonlySet<string> = new Set(VENUE_BANS.map((b) => b.id));
+const ATTRIBUTION_AWARE_BANS: ReadonlySet<string> = new Set(
+  [...VENUE_BANS, ...SUPPLIER_PROSE_BANS].map((b) => b.id)
+);
 
 /**
  * Source captions the SHAPE rule cannot recognise, each with the reason.
@@ -190,8 +248,19 @@ export const ATTRIBUTION_LITERALS: { literal: string; why: string }[] = [
   },
 ];
 
-/** Words a source LABEL may carry without becoming a sentence about sourcing. */
-const LABEL_WORDS = /^(source|sources|and|vs|via|sportsbook|sportsbooks)$/i;
+/**
+ * Words a source LABEL may carry without becoming a sentence about sourcing.
+ *
+ * `book`/`books` joined `sportsbook`/`sportsbooks` under D91 (2026-09-08), which
+ * is the ruling that made this list load-bearing in a new way. Before it, the
+ * class words were unbanned everywhere and this set only had to stop a legitimate
+ * caption tripping the two venue NAMES. `SUPPLIER_PROSE_BANS` now fires on the
+ * class words too, so this set is what keeps Alex's *"small-font source marks on
+ * numbers stay"* true: the tournament list's 9px `books` marker is a clause of
+ * exactly one word, and that word has to be allowed to stand alone.
+ */
+const LABEL_WORDS =
+  /^(source|sources|and|vs|via|book|books|sportsbook|sportsbooks|bookmaker|bookmakers)$/i;
 
 /**
  * Where one clause ends and the next begins.
@@ -894,6 +963,18 @@ export const NO_READING_COPY_BANS: CopyBan[] = [
   ...ALL_COPY_BANS,
   ...HISTORY_CLAIM_BANS,
 ];
+
+/**
+ * The tournament surfaces' list: everything codebase-wide, plus surface one of
+ * D91's staged supplier-prose rollout. Applied by
+ * `__tests__/components/tournamentPlainLanguage.test.tsx`.
+ *
+ * Declared HERE and not beside `SUPPLIER_PROSE_BANS`, where it reads better,
+ * because it spreads `ALL_COPY_BANS` — a `const` referenced above its own
+ * declaration is a temporal-dead-zone throw at import, not a hoist, and it
+ * would take every consumer of this module down with it.
+ */
+export const TOURNAMENT_COPY_BANS: CopyBan[] = [...ALL_COPY_BANS, ...SUPPLIER_PROSE_BANS];
 
 export interface CopyBanHit {
   ban: CopyBan;

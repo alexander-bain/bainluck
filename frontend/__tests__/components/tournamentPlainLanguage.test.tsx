@@ -72,7 +72,7 @@ import TournamentMatches from "@/components/tournament/TournamentMatches";
 import TournamentProps from "@/components/tournament/TournamentProps";
 import TournamentResults from "@/components/tournament/TournamentResults";
 import { buildMatchList } from "@/lib/matchList";
-import { ALL_COPY_BANS, findBannedCopy } from "@/lib/copyBans";
+import { TOURNAMENT_COPY_BANS, findBannedCopy } from "@/lib/copyBans";
 import { readPlayoffGrid } from "@/lib/playoffGrid";
 import {
   curatedProps,
@@ -138,8 +138,21 @@ function visibleText(html: string): string {
  * `components/tournament/` names a venue either way today; the canary at the
  * bottom of this file pins both sides so the next chart legend on this page is
  * not blocked by a rule Alex withdrew.
+ *
+ * ═══ D91 (2026-09-08): THESE SURFACES CARRY ONE GROUP THE BUNDLE DOES NOT ═══
+ *
+ * `TOURNAMENT_COPY_BANS` = `ALL_COPY_BANS` + `SUPPLIER_PROSE_BANS`, the supplier
+ * CLASS words (`books`, `sportsbook`, `bookmaker`) that `VENUE_BANS` never
+ * covered. The tournament surfaces are surface one of a staged rollout (D86 = A)
+ * — see the long comment on `SUPPLIER_PROSE_BANS` for why it is not codebase-wide
+ * yet, which is the calibration page's protected prose.
+ *
+ * So "two consumers, one list, no drift" above is now "one list plus a fence",
+ * and the fence is deliberate. The canary at the bottom pins BOTH sides of this
+ * group too: the 9px `books` marker beside a number is attribution and must keep
+ * passing, a caption that talks about our suppliers must fail.
  */
-const BANNED = ALL_COPY_BANS;
+const BANNED = TOURNAMENT_COPY_BANS;
 
 function assertPlain(html: string, where: string) {
   const text = visibleText(html);
@@ -546,6 +559,40 @@ describe("UX-P145: the tournament surfaces speak the reader's language", () => {
     ).not.toThrow();
     expect(() =>
       assertPlain("<figcaption>Polymarket · Kalshi</figcaption>", "canary")
+    ).not.toThrow();
+
+    // ═══ D91: THE SUPPLIER CLASS WORDS, BOTH SIDES ═══
+    //
+    // BANNED — the exact caption this ship deleted from the US Open hub, and
+    // then each class word alone so a partial regex cannot hide behind the
+    // sentence. `\bbooks?\b` is the one that had never existed: `VENUE_BANS`
+    // only ever knew the two venue NAMES, which is why this sentence survived
+    // every sweep from 2026-08-27 to today.
+    expect(() =>
+      assertPlain(
+        "<p>62 of them are a sportsbook opening rather than a prediction " +
+          "market&rsquo;s, marked books beside the number.</p>",
+        "canary"
+      )
+    ).toThrow();
+    expect(() => assertPlain("<p>marked books beside the number</p>", "canary")).toThrow(/book/i);
+    expect(() =>
+      assertPlain("<p>a sportsbook opening rather than ours</p>", "canary")
+    ).toThrow(/sportsbook/i);
+    expect(() => assertPlain("<p>we read 12 bookmakers for this</p>", "canary")).toThrow(
+      /bookmaker/i
+    );
+
+    // ALLOWED — Alex's *"small-font source marks on numbers stay and spread"*.
+    // The tournament list's 9px marker is a one-word clause beside a figure;
+    // if this side ever goes red the ban has eaten the attribution D91 keeps.
+    expect(() =>
+      assertPlain('<span>73%</span><span class="text-[9px]">books</span>', "canary")
+    ).not.toThrow();
+    expect(() => assertPlain("<figcaption>Sportsbooks</figcaption>", "canary")).not.toThrow();
+    // D91's own worked example of the mark it wants, verbatim from the ruling.
+    expect(() =>
+      assertPlain("<figcaption>Kalshi · Polymarket · 7 sportsbooks</figcaption>", "canary")
     ).not.toThrow();
 
     // UX-P150, ruling 142: a promise about what the section WILL be.

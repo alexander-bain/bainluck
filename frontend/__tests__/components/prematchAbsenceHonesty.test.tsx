@@ -39,9 +39,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import TournamentResults from "@/components/tournament/TournamentResults";
 import {
+  BOOKS_MARKER,
   prematchAbsenceNote,
+  prematchAttribution,
   prematchCoverage,
-  prematchSourceNote,
   resultsForDraw,
   type TournamentResult,
   type TournamentResults as ResultsModel,
@@ -174,11 +175,21 @@ describe("ux/1034 A3 — why a finished row has no pre-match number", () => {
 // 111 of 245 rows carried a prior and 172 do — including Shelton–Hurkacz, the
 // row Alex read, at 68% labelled `books`.
 //
-// The sentence above those numbers says the grey figure is "what the market gave
-// that player". That is true of Kalshi and Polymarket and NOT of a sportsbook
-// median, and printing the second as the first on this exact list is the defect
-// ux/1034 A3 removed from the sentence beside it.
-describe("ux/1036 — a sportsbook prior says so", () => {
+// The sentence above those numbers used to say the grey figure is "what the
+// market gave that player". That is true of Kalshi and Polymarket and NOT of a
+// sportsbook median, and printing the second as the first on this exact list is
+// the defect ux/1034 A3 removed from the sentence beside it.
+//
+// ═══ D91 (Alex, 2026-09-08) — WHAT THESE THREE TESTS NOW READ ═══
+//
+// They asserted `prematchSourceNote`, the footer legend, which D91 deleted as
+// supplier narration in a caption. The rung is still labelled — by the per-row
+// marker, which is the attribution D91 keeps — so the assertions moved from the
+// aggregate sentence to `prematchAttribution`, the thing that actually decides.
+// The lead sentence no longer names a rung at all, which is why no caveat is
+// owed; that half is pinned in `hubRowNamesItsSource2747.test.tsx` against the
+// render. See the tombstone in `lib/tournamentResults.ts`.
+describe("ux/1036 — a sportsbook prior says so, on the row itself", () => {
   const row = (source: string | null) => ({
     matchup_key: `espn:${source ?? "none"}`,
     draw: "mens-singles",
@@ -197,27 +208,39 @@ describe("ux/1036 — a sportsbook prior says so", () => {
     source: "espn",
   }) as unknown as TournamentResult;
 
-  it("counts and names the books rows", () => {
-    // ux/1040 (CERT-812) EXTENDED this string rather than replacing what it
-    // asserted. Round one's note was the ONLY place the books rung was named,
-    // over a list that identified none of the rows it meant — which is what the
-    // block called "an aggregate footer about unidentified rows". The count is
-    // still correct and still asserted; it now also names the per-row marker it
-    // is a legend for. The test's own title always said "and NAMES the books
-    // rows", which round one did not do.
-    expect(prematchSourceNote([row("books"), row("kalshi")])).toBe(
-      "1 of them is a sportsbook opening rather than a prediction market's, " +
-        "marked books beside the number.",
-    );
+  /** Every player slot in these rows, which is what carries the attribution. */
+  const slotsOf = (...matches: TournamentResult[]) =>
+    matches.flatMap((match) => match.players.map((p) => prematchAttribution(p)));
+
+  it("marks the books rows and only the books rows", () => {
+    // The property CERT-812 actually required, read where it is now decided.
+    // A books slot wears the mark; a market slot does not. Both directions in
+    // one assertion so a change that marks everything cannot pass.
+    const [booksA, booksB, marketA, marketB] = slotsOf(row("books"), row("kalshi"));
+    expect(booksA.marker).toBe(BOOKS_MARKER);
+    expect(booksB.marker).toBe(BOOKS_MARKER);
+    expect(marketA.marker).toBeNull();
+    expect(marketB.marker).toBeNull();
   });
 
-  it("says nothing when every prior is a prediction market's", () => {
-    // Silent on today's whole served population, which is the point: a caveat
-    // printed under numbers it does not describe is noise.
-    expect(prematchSourceNote([row("kalshi"), row("polymarket")])).toBe("");
+  it("marks nothing when every prior is a prediction market's", () => {
+    // Silent on the market population, which is the point: a caveat printed on
+    // numbers it does not describe is noise.
+    const marks = slotsOf(row("kalshi"), row("polymarket")).map((a) => a.marker);
+    expect(marks).toEqual([null, null, null, null]);
   });
 
-  it("says nothing on a payload that predates the field", () => {
-    expect(prematchSourceNote([row(null)])).toBe("");
+  it("marks nothing on a payload that predates the field", () => {
+    // An ABSENT source is a prediction-market opening from `_prematch_by_pair`,
+    // not an unknown rung — it must not pick up the mark.
+    expect(slotsOf(row(null)).map((a) => a.marker)).toEqual([null, null]);
+  });
+
+  it("says the SAME venue-free clause on every rung (D65, and D91 keeps it)", () => {
+    // The one place a supplier word could still reach a screen reader on this
+    // list. One phrase for all four slots, so it cannot name the wrong venue.
+    const said = slotsOf(row("books"), row("kalshi")).map((a) => a.said);
+    expect(new Set(said).size).toBe(1);
+    expect(said[0]).not.toMatch(/sportsbook|\bbooks?\b|kalshi|polymarket/i);
   });
 });

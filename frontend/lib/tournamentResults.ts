@@ -706,62 +706,29 @@ export function prematchAbsenceNote(coverage: PrematchCoverage): string {
 }
 
 /**
- * ═══ WHAT CERT-812 BLOCKED, AND WHY THE COUNT BELOW WAS NEVER THE FIX ═══
+ * ═══ THE SUPPLIER FOOTNOTE THAT USED TO LIVE HERE (`prematchSourceNote`) ═══
  *
- * Alex: *"labelled when not a prediction market."* The grey figures on this list
- * are described as "what the market gave that player", and that sentence is only
- * true of the Kalshi and Polymarket rungs. A sportsbook median is a different
- * claim in the same shape, and ux/1034 A3 is the standing lesson about printing
- * one as the other on this exact list.
+ * It returned *"62 of them are a sportsbook opening rather than a prediction
+ * market's, marked books beside the number."* — the legend for the per-row
+ * marker, and the last supplier sentence on this page.
  *
- * Round one answered that with THIS FUNCTION ALONE — an aggregate footer saying
- * "N of them are a sportsbook opening" over a list of 172 rows that named none of
- * them. CERT-812: *"the Shelton–Hurkacz 68/32 books row renders bare percentages,
- * and each accessible sentence falsely says 'the market gave'; only an aggregate
- * footer says some unidentified rows are sportsbook openings."* A count is not an
- * attribution: it tells a reader that somewhere on this page a number means
- * something else, and leaves them unable to find out which.
+ * **D91 (Alex, 2026-09-08): attribution yes, narration no.** The small-font
+ * mark on a number stays; venue language in a caption goes. This was a caption.
  *
- * So the count stays — it is a true and useful summary — but it is now a LEGEND
- * for a per-row marker rather than the whole of the labelling, and
- * `prematchAttribution` below is what each row actually consumes.
+ * It is DELETED rather than reworded, and the reason is worth keeping because
+ * it is the trap: the sentence existed to take back the lead sentence above it,
+ * which read *"what the market gave that player"* and is false on a books row
+ * (CERT-812). Removing the caveat alone would have re-shipped that false claim.
+ * So D88 = A's own remedy applies instead — *"the pre-match number is labelled
+ * pre-match probability"* — and `TournamentResults` now opens with a sentence
+ * that names no rung. A lead sentence true of every rung needs no caveat.
  *
- * ═══ AND THE POPULATION WAS NEVER EMPTY ═══
- *
- * Round one's comment here read *"silent when every prior is a prediction-market
- * one — which is the whole served population today."* That was true when it was
- * written, against commit 1. Commit 2 (`76c463f4`) added `apply_books_prematch`,
- * which is the rung that fills exactly the rows this claimed could not be
- * reached — and the comment survived into it unchanged.
- *
- * Measured on the served hub payload 2026-09-03, replaying the shipped
- * `names_agree` bijection over the live rows: 245 result rows, 134 with no
- * market prior, **63 of those resolve to an event carrying opening odds and 61
- * pass the bijection**. So the list goes to 172 priors of which **61 (35%) are
- * sportsbook openings** — not zero, and not an edge case. Every one of them was
- * rendering a bare percentage under "the market gave".
+ * CERT-812's actual finding — *"a count is not an attribution"* — is unharmed:
+ * `prematchAttribution` marks the rows themselves, which is strictly more than
+ * the count ever said. Do not restore this function to explain the marker; the
+ * marker is the explanation. See `BOOKS_MARKER` below and the block comment on
+ * the footnote in `components/tournament/TournamentResults.tsx`.
  */
-export function prematchSourceNote(matches: TournamentResult[]): string {
-  let books = 0;
-  for (const match of matches) {
-    if (match.players.some(isBooksPrior)) books += 1;
-  }
-  if (books === 0) return "";
-  return (
-    `${books} of them ${books === 1 ? "is" : "are"} a sportsbook opening rather ` +
-    `than a prediction market's, marked ${BOOKS_MARKER} beside the number.`
-  );
-}
-
-/** Does this player's prior come from a rung that needs saying out loud? */
-function isBooksPrior(player: ResultPlayer): boolean {
-  return (
-    typeof player.prematch_probability === "number" &&
-    player.prematch_source != null &&
-    !isPredictionMarketSource(player.prematch_source)
-  );
-}
-
 /**
  * The visible marker a books number wears on this list.
  *
