@@ -71,17 +71,30 @@ jest.mock("@/components/Analytics", () => ({
 const BANNED = /\b(books?|bookmakers?|per-bookmaker)\b/i;
 
 /**
- * Visible text only.
+ * Visible text only — attributes and comments are not copy.
  *
- * Attributes are dropped BEFORE tags, because that order is what separates the
- * id from the label: `data-prematch-source="books"` must survive the ship and
- * must not be read as copy. Comments go too — a banned word in a JSX comment
- * ships in no bundle and is not a reader-facing string.
+ * `data-prematch-source="books"` must survive this ship and must not be read as
+ * a caption, which is the whole distinction this guard turns on. Dropping each
+ * tag WHOLE gets that for free: the attributes live inside the angle brackets,
+ * so `<[^>]*>` takes them with the tag and no separate attribute pass is needed.
+ *
+ * 🔴 THE SEPARATE ATTRIBUTE PASS THIS USED TO DO WAS A ReDoS, AND IT WAS ALSO
+ * REDUNDANT. It hand-rolled an attribute parser —
+ * `<([a-zA-Z][^\s/>]*)((?:\s+[^\s=/>]+(?:=(?:"[^"]*"|'[^']*'|[^\s>]+))?)*)\s*\/?>`
+ * — whose `(?:…)*` over an optional group backtracks exponentially, and CodeQL
+ * flagged it `js/redos` at high severity on the first CI run of this branch.
+ * Rebuilding it "safely" would have been the wrong instinct: the line beneath
+ * already removed everything it removed. Deleting it is the fix.
+ *
+ * Known and accepted limit: an attribute value containing a literal `>` ends
+ * the match early and leaves some attribute text in the output. That can only
+ * ADD text, so it can only produce a false positive on a guard whose assertions
+ * are all "this word is absent" — it can never hide a banned word. React
+ * escapes `>` to `&gt;` in attribute values anyway.
  */
 function visibleText(html: string): string {
   return html
     .replace(/<!--[\s\S]*?-->/g, " ")
-    .replace(/<([a-zA-Z][^\s/>]*)((?:\s+[^\s=/>]+(?:=(?:"[^"]*"|'[^']*'|[^\s>]+))?)*)\s*\/?>/g, "<$1>")
     .replace(/<[^>]*>/g, " ")
     .replace(/\s+/g, " ")
     .trim();
