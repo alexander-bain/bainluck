@@ -10,7 +10,20 @@ struct EventCardView: View {
     private var isLive: Bool { event.status == "live" }
     private var isFinished: Bool { EventState.isFinished(event.status) }
     /// live/048 + CERT-786 — the branch this card did not have.
-    private var isSuspended: Bool { EventState.isSuspended(event.status) }
+    ///
+    /// #4021 — and the CLOCK is part of the test. `suspended` is a status, not a
+    /// phase: event 416569 (Ohio State @ Texas) carried it four days BEFORE
+    /// kick-off, which handed a game nobody had played the settled treatment —
+    /// "No result reported" where its countdown belongs. `isScheduled` below
+    /// excludes `isSuspended`, so narrowing this one predicate is what hands a
+    /// future-dated row back to the pregame arm it belongs in. Changed here as
+    /// well as on the event page deliberately: #4002 exists because this card and
+    /// that page held separate opinions about `suspended`, and fixing one of them
+    /// would be the same mistake with the roles swapped.
+    private var isSuspended: Bool {
+        EventState.isSuspendedAndStarted(
+            event.status, commenceTime: event.commenceTime?.asDate)
+    }
     /// `isScheduled` was the card's default arm, and it was the only one of the
     /// three that did not actually test the status it names: anything not live
     /// and not finished was "scheduled", so a suspended match took the whole

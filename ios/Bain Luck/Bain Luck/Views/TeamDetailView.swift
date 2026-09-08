@@ -145,7 +145,8 @@ struct TeamDetailView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("\(prefix) \(opponent)").font(.subheadline).fontWeight(.medium)
                 HStack(spacing: 4) {
-                    StatusBadge(status: event.status)
+                    // #4021 — see StatusBadge: the suspended arm is clock-gated.
+                    StatusBadge(status: event.status, commenceTime: event.commenceTime)
                     if let commence = event.commenceTime {
                         RelativeTimeText(dateString: commence)
                     }
