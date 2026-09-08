@@ -7284,6 +7284,40 @@ _SUGGESTION_LINE_NUMBER_RE = re.compile(r"\(\s*[-+]\s*\d")
 #: the last of five refusals, not the first.
 _SUGGESTION_ENTITY_MAX_LEN = 40
 
+#: 🔴 #3987 DEFECT 2: A TOKEN THAT BEGINS WITH A DIGIT IS A THRESHOLD, NOT A NAME.
+#:
+#: #3675 fixed its instance (`Yes`) and not its grammar, and the grammar shipped
+#: a new instance: production served `Cut more than 25bps` — "Surging +94.5% —
+#: Bank of Korea rate decision..." — on 2026-09-08. Tapping it is worse than an
+#: empty page: `/search?q=Cut more than 25bps` tokenises to `cut`/`rate decision`
+#: and returns a scatter of rate-decision markets that does NOT include the Bank
+#: of Korea market the chip was about.
+#:
+#: The class was measured on production before this rule was written (top 40
+#: event-less movers, LAT-P269/LAT-P270): `At least 7%`, `At least 48%`,
+#: `Above 90`, `Above 20K`, `6 to 8 points`, `15+ points`, `32°C`,
+#: `Category 5 or above`, `3+ Trophies`, `Richard Neal, ≥10%`, `Hike 25bps`,
+#: `Valur Reykjavik 3 - 1 Thor Akureyri`. Thirty such rows in the live pool, and
+#: on inspection **every one of them is a ladder rung or a scoreline** — zero
+#: entities. The rule is one regex over that whole class rather than a denylist
+#: of the markers that produced today's instance (`at least`, `above`,
+#: `category`, `bps`), because a denylist of known-unknowns hands the claim to
+#: the first new state, which is precisely how `Yes` became `Cut more than 25bps`.
+#:
+#: ⚠️ TOKEN-INITIAL, NOT "CONTAINS A DIGIT", AND THE DIFFERENCE IS MEASURED. A
+#: digit glued after letters is part of a name: production carries `deadmau5`,
+#: `GENER8ION`, `T1` and `T1 Esports Academy` in open field markets, and
+#: `contains a digit` refuses all four. `(?<!\w)\d` keeps them.
+#:
+#: ⚠️ WHAT IT COSTS, SAID OUT LOUD: a proper noun whose name STARTS a token with
+#: a digit goes with the ladders — `Philadelphia 76ers`, `San Francisco 49ers`.
+#: `25bps` and `76ers` are not structurally distinguishable, so the trade is
+#: real and was taken deliberately: two franchise names lost from ONE section of
+#: the row (both still reachable through sections 1, 2, 4 and 5, which name teams
+#: from the EVENT and never from an outcome), against a class of chips that lead
+#: nowhere. Neither is in the moving pool today; both were checked.
+_SUGGESTION_NUMERIC_TOKEN_RE = re.compile(r"(?<!\w)\d")
+
 
 def _suggestion_is_prop_text(text: str) -> bool:
     """True when `text` names a line inside a market rather than a market.
@@ -7324,6 +7358,13 @@ def _suggestion_entity_name(outcome_name: str) -> Optional[str]:
     if ":" in name or " vs " in name.casefold() or " vs. " in name.casefold():
         return None
     if not any(ch.isalpha() for ch in name):
+        return None
+    # #3987 defect 2. LAST of the refusals, like the length bound above it: the
+    # market's own shape has already removed the ladder markets wholesale
+    # (`_SUGGESTION_MOVERS_EXCLUDED_SHAPES`), and this catches the threshold
+    # outcomes that live inside `field` markets — `Category 5 or above`,
+    # `3+ Trophies`, `Cut more than 25bps` — which no shape filter can see.
+    if _SUGGESTION_NUMERIC_TOKEN_RE.search(name):
         return None
     return name
 
@@ -7422,6 +7463,80 @@ _SUGGESTION_MOVERS_POOLED = os.getenv(
     "SEARCH_SUGGESTIONS_MOVERS_POOLED", "1"
 ).strip().lower() not in ("0", "false", "no")
 
+#: 🔴 #3987 DEFECT 2, THE STRUCTURAL HALF: MARKET SHAPES WHOSE OUTCOME NAMES ARE
+#: NEVER AN ENTITY.
+#:
+#: `futures_markets.market_type` (queue #194, written by `app.utils.market_shape`)
+#: already records what a market IS. Read on production 2026-09-08 over every
+#: open market carrying a `max_movement_24h`:
+#:
+#:     quantity          1,732   `At least 7%`, `Above 90`, `6 to 8 points`, `32°C`
+#:     container_member    982   `Yes` (a leg inside a parent market)
+#:     unshaped            459   `Yes` (a bare binary claim)
+#:     field             2,016   `Enzo Fernandez`, `Madonna`, `Wout Van Aert`
+#:     duel                380   `Joao Cunha Cunha`
+#:
+#: The first three shapes cannot produce a chip — every one of their outcome
+#: names is a ladder rung or the word `Yes`, which `_mover_chips` refuses at
+#: display time. Refusing them THERE is not free: `LIMIT 5` is in the statement,
+#: so five refused rows are five spent slots and section 3 serves nothing. That
+#: is exactly why #3987 defect 1's settled gate went into the query, and this is
+#: the same argument for the same reason.
+#:
+#: ⚠️ A DENYLIST, AND DELIBERATELY NOT AN ALLOWLIST — the opposite of the usual
+#: advice, because here the unknown is on the other side. `market_type` is
+#: NULLABLE and the backfill lags: 39 open markets had a NULL shape when this
+#: shipped and **all 39 were created that same day**, i.e. precisely the
+#: brand-new markets most likely to be moving. A sixth value (`participation`,
+#: 12 rows) is already in production and is not in the model's own comment. An
+#: allowlist of `('field','duel')` would silently drop both classes; a denylist
+#: fails OPEN into `_mover_chips`, which is a real defense and not a hope.
+_SUGGESTION_MOVERS_EXCLUDED_SHAPES = ("quantity", "unshaped", "container_member")
+
+
+def _suggestion_movers_market_conditions() -> tuple:
+    """Section 3's MARKET-level eligibility — #3987 defects 2 and 3.
+
+    Market-level on purpose: these go inside the pool (see
+    `movement_pool.market_pool_subquery`, which explains why the position is
+    load-bearing) and into the legacy arm's `WHERE`, so both arms rank the same
+    population and the equivalence oracle keeps grading them together.
+
+    🔴 DEFECT 3 IS THE TIER GATE SECTIONS 1 AND 2 HAVE AND THIS SECTION NEVER
+    DID. #3987 was filed on an ITF M25 futures tennis match reaching the row on
+    the same day the US Open was running — #3685's complaint arriving through
+    the other door. The predicate is the SAME helper sections 1 and 2 call, so
+    the three cannot drift, and `tier_12_sport_keys` (rather than the obvious
+    comprehension over `LEAGUE_TIERS`) is what keeps every Grand Slam match
+    eligible: `events` spells them `tennis_atp_us_open`, the table spells them
+    `tennis_us_open`, and a bare comprehension excludes the marquee (#2552).
+
+    ⚠️ `event_id IS NULL` IS AN ARM OF THE GATE, NOT AN OVERSIGHT. A league tier
+    is a fact about a GAME. Section 3's whole distinctive contribution is
+    markets that are not games — `EPL Playmaker Award`, `Vuelta a Espana: Green
+    Jersey Winner`, `MTV Video Music Awards`, `College GameDay Week 6 Location`
+    — and nothing else on the row can show them (1, 2 and 4 are event sections;
+    5 ranks by volume). Dropping this arm would not tighten the gate, it would
+    delete the section: 100% of the rows section 3 served in the measured
+    production sample were event-less.
+    """
+    from app.utils.highlights import tier_12_sport_keys
+
+    return (
+        or_(
+            FuturesMarket.market_type.is_(None),
+            FuturesMarket.market_type.notin_(_SUGGESTION_MOVERS_EXCLUDED_SHAPES),
+        ),
+        or_(
+            FuturesMarket.event_id.is_(None),
+            FuturesMarket.event_id.in_(
+                select(Event.id)
+                .join(Sport, Sport.id == Event.sport_id)
+                .where(Sport.key.in_(tier_12_sport_keys()))
+            ),
+        ),
+    )
+
 
 def _build_suggestion_movers_query(*, pooled: bool):
     """Section 3's query: the five biggest 24h movers in open futures markets.
@@ -7505,6 +7620,13 @@ def _build_suggestion_movers_query(*, pooled: bool):
         ),
     ]
 
+    # #3987 defects 2 and 3. MARKET-level, so they go where the markets are
+    # ranked: INSIDE the pool on the pooled arm (the superset proof is relative
+    # to the population the pool was cut from) and in the `WHERE` on the legacy
+    # arm. Both arms therefore rank the same population and the equivalence
+    # oracle keeps grading the gate.
+    market_conditions = _suggestion_movers_market_conditions()
+
     if pooled:
         # `market_id IN pool` carries the status filter — the pool is already
         # restricted to `_SUGGESTION_MOVERS_STATUSES` — so the join is not
@@ -7516,6 +7638,7 @@ def _build_suggestion_movers_query(*, pooled: bool):
                 market_pool_subquery(
                     pool_size=_SUGGESTION_MOVERS_POOL,
                     statuses=_SUGGESTION_MOVERS_STATUSES,
+                    conditions=market_conditions,
                 )
             ),
         )
@@ -7525,6 +7648,7 @@ def _build_suggestion_movers_query(*, pooled: bool):
             .join(FuturesMarket)
             .where(
                 FuturesMarket.status.in_(_SUGGESTION_MOVERS_STATUSES),
+                *market_conditions,
                 *conditions,
             )
         )

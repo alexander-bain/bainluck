@@ -47,6 +47,13 @@ the measurement that justifies its own number.
 section 3 has always counted `open` alone. Neither is wrong and this module is
 not the place to unify them — passing the statuses in keeps this function a
 shape and not a policy.
+
+**Eligibility.** `conditions` is the same arrangement for the same reason: which
+markets a surface is willing to rank is that surface's product judgement, and
+the two callers already disagree (#3987 gave search-suggestions a market-shape
+and league-tier gate that `/movers` does not want). What this module owns is
+WHERE those predicates go — see the parameter's own note, because the position
+is the part that is easy to get wrong and impossible to see afterwards.
 """
 
 from __future__ import annotations
@@ -56,7 +63,7 @@ from typing import Sequence
 from sqlalchemy import select
 
 
-def market_pool_subquery(*, pool_size: int, statuses: Sequence[str]):
+def market_pool_subquery(*, pool_size: int, statuses: Sequence[str], conditions: Sequence = ()):
     """The top-`pool_size` market ids by `max_movement_24h`, as a scalar subquery.
 
     Intended for `FuturesOutcome.market_id.in_(...)`. Because the pool is already
@@ -69,6 +76,23 @@ def market_pool_subquery(*, pool_size: int, statuses: Sequence[str]):
     answer, however far they have moved. That is the same trade `/api/futures/movers`
     has shipped since LAT-P108, and it is pinned by
     `test_a_market_with_null_max_movement_is_out_of_the_pool`.
+
+    🔴 `conditions` ARE APPLIED BEFORE THE TOP-N CUT, AND THAT POSITION IS THE
+    WHOLE POINT (#3987). The pool is a superset of the answer only relative to
+    the population it was cut from: filter INSIDE, and the pool is the top N of
+    the eligible markets and the proof above still holds word for word; filter
+    the pool's OUTPUT instead — `market_id IN pool AND <condition>` — and the
+    answer is "the eligible markets that happen to be in the top N of everything",
+    which silently loses every eligible mover ranked below N. Measured when
+    #3987 shipped: of the top 400 markets by `max_movement_24h`, only 42 were
+    event-attached, so the outside-the-pool spelling would have thrown away
+    ~97% of that gate's population without changing a single test.
+
+    ⚠️ THEREFORE EVERY CONDITION HERE MUST BE A PREDICATE ON `futures_markets`
+    ITSELF. An outcome-level predicate cannot go in the pool at all: the pool
+    ranks markets, one market carries many outcomes, and cutting the top N of
+    markets whose *some* outcome qualifies is not a bound on the outcomes that
+    do. Pass those to the outer query, where they belong.
     """
     # Imported inside the function: `app.models.models` imports a large part of
     # the ORM, and this module is imported from route modules at request time.
@@ -79,6 +103,7 @@ def market_pool_subquery(*, pool_size: int, statuses: Sequence[str]):
         .where(
             FuturesMarket.status.in_(tuple(statuses)),
             FuturesMarket.max_movement_24h.isnot(None),
+            *conditions,
         )
         .order_by(FuturesMarket.max_movement_24h.desc())
         .limit(pool_size)

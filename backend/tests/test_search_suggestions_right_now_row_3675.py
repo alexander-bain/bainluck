@@ -407,9 +407,22 @@ def test_a_prop_row_is_refused_even_when_its_event_could_have_named_a_team():
     assert _mover_chips(_production_movers()[:3]) == []
 
 
+#: Names for generated fixtures, and the digits are gone ON PURPOSE (#3987
+#: defect 2): `Player 1` is no longer an entity — a token that begins with a
+#: digit is a threshold — so a numbered fixture would now measure the new
+#: refusal instead of the cap it exists to measure. Market names may keep their
+#: numbers; the market name is never the chip's query.
+_FIXTURE_NAMES = ("Alfa", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot", "Golf", "Hotel")
+
+
 def test_the_chip_cap_is_the_sections_own_limit():
     rows = [
-        _outcome(f"Player {i}", market_id=i, market_name=f"Open {i} Winner", change=0.9 - i / 100)
+        _outcome(
+            f"Player {_FIXTURE_NAMES[i]}",
+            market_id=i,
+            market_name=f"Open {i} Winner",
+            change=0.9 - i / 100,
+        )
         for i in range(_SUGGESTION_MOVERS_LIMIT + 3)
     ]
     assert len(_mover_chips(rows)) == _SUGGESTION_MOVERS_LIMIT
