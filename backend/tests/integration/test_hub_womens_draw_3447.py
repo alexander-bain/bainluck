@@ -255,7 +255,7 @@ class TestAMismatchedExtraKeyIsLoud:
         """Fails at test time, not at request time, for any future hub."""
         for slug, cfg in HUB_CONFIGS.items():
             primary = _sport_category_for(cfg.sport_key)
-            for extra in cfg.extra_match_sport_keys:
+            for extra in cfg.sibling_sport_keys:
                 assert _sport_category_for(extra) == primary, (
                     f"hub {slug!r} pairs {cfg.sport_key!r} with {extra!r}, whose "
                     f"sport categories differ — the rail would silently empty"
@@ -264,11 +264,11 @@ class TestAMismatchedExtraKeyIsLoud:
 
 class TestTheTennisHubDeclaresTheWomensTour:
     def test_the_config_carries_it(self):
-        assert HUB_CONFIGS["tennis"].extra_match_sport_keys == ("tennis_wta",)
+        assert HUB_CONFIGS["tennis"].sibling_sport_keys == ("tennis_wta",)
 
     def test_no_other_hub_gained_a_scope_by_accident(self):
         widened = {
-            slug for slug, cfg in HUB_CONFIGS.items() if cfg.extra_match_sport_keys
+            slug for slug, cfg in HUB_CONFIGS.items() if cfg.sibling_sport_keys
         }
         assert widened == {"tennis"}
 
