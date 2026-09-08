@@ -1083,10 +1083,40 @@ async def _prewarm_feed_shape(
 
     items = payload.get("items") or []
     if not items:
-        logger.warning(
-            "Feed pre-warm produced an EMPTY feed for %s — keeping last-good", label
+        # LAT-P261 (#3904): SAY WHY. `outcome: empty` on its own is the reason
+        # this took three queues to name. An empty page and a REFUSED page are
+        # different events with different fixes, and the route already
+        # distinguishes them — it stamps `cache.reason` (`input_age_ceiling` for
+        # the CERT-1864 refusal) and a `cache.status` of `unavailable`. The rail
+        # was throwing that away and reporting a single undifferentiated word,
+        # so the only instrument pointed at this bug could not tell "the world
+        # is empty" from "we built a good page and declined to serve it".
+        #
+        # Carried onto the report rather than only into the log because the log
+        # buffer is ~3 minutes and the report is what
+        # `/api/admin/feed-live-prewarm/last` serves — an instrument that has to
+        # be caught in the act is not an instrument (gotcha #53: make the
+        # zero-yield case loud).
+        _cache_meta = payload.get("cache")
+        _reason = (
+            _cache_meta.get("reason") if isinstance(_cache_meta, dict) else None
         )
-        return {"outcome": "empty", "duration_s": duration_s}
+        _status = (
+            _cache_meta.get("status") if isinstance(_cache_meta, dict) else None
+        )
+        logger.warning(
+            "Feed pre-warm produced an EMPTY feed for %s (cache_status=%s "
+            "reason=%s) — keeping last-good",
+            label,
+            _status,
+            _reason,
+        )
+        return {
+            "outcome": "empty",
+            "duration_s": duration_s,
+            "empty_reason": _reason,
+            "cache_status": _status,
+        }
 
     # Publish under the key the route itself resolved (scope readback), so the
     # warmed key cannot drift from the key the request path reads.
