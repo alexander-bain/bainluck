@@ -41,6 +41,7 @@ import json
 
 import pytest
 
+from app import tasks as tasks_pkg
 from app.tasks import kalshi as kalshi_task
 from app.tasks import redis_state
 from app.utils import kalshi_scan_report as ksr
@@ -182,7 +183,6 @@ class TestTheRepairBudgetIsNotTheIngestBudget:
     def test_the_repair_budget_is_larger_than_the_ingest_budget(self):
         """Otherwise this ship does nothing: the block would still be closed by
         the moment the loop stops."""
-        assert kalshi_task and True
         src = inspect.getsource(kalshi_task._poll_kalshi_markets)
         post = float(src.split("_POST_LOOP_DEADLINE_S = ")[1].split("\n")[0])
         loop = float(src.split("_LOOP_DEADLINE_S = ")[1].split("#")[0].strip())
@@ -191,8 +191,6 @@ class TestTheRepairBudgetIsNotTheIngestBudget:
     def test_it_still_leaves_headroom_under_the_soft_time_limit(self):
         """540 must stay below `soft_time_limit=600` with room for the last
         repair to finish, or this trades a skipped fix-up for a SIGTERM."""
-        import app.tasks as tasks_pkg
-
         task_src = inspect.getsource(tasks_pkg)
         decl = task_src[task_src.index('name="app.tasks.poll_kalshi_markets"'):]
         soft = int(decl.split("soft_time_limit=")[1].split(",")[0])
