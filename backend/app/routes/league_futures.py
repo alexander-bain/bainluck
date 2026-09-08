@@ -298,6 +298,21 @@ def _league_has_championship_grid(sport_key: str) -> bool:
 #: not caught by the word alone.
 _WITHIN_MATCH_SCOPE = re.compile(r"\b(?:map|game|set)\s*\d", re.IGNORECASE)
 
+#: A head-to-head that never says " vs " (#2698 follow-up
+#: `2698-F1-FINISH-AHEAD-SCOPE`). "Will Carlos Sainz finish ahead of Fernando
+#: Alonso in the 2026 Drivers' Championship?" is two drivers compared over a
+#: whole season: no " vs ", no numbered map/game/set, so the `_is_outright`
+#: shipped with #2698 called it a title. The relation is the subject, not the
+#: trophy, and a section promising tournament WINNERS must not lead with it.
+#:
+#: `finish\w*\s+ahead` rather than "finish ahead of" because the venue writes
+#: both prepositions for the same question — "Who will finish ahead AT the 2022
+#: Australian Grand Prix: Max Verstappen or Charles Leclerc?" alongside "finish
+#: ahead OF" — and the class is the comparison, not the preposition.
+_HEAD_TO_HEAD = re.compile(
+    r"finish\w*\s+ahead\b|\bhead[-\s]?to[-\s]?head\b", re.IGNORECASE
+)
+
 
 def _is_outright(market: FuturesMarket) -> bool:
     """Is this the tournament's TITLE, or a matchup wearing a tier-1 badge? (#2698.)
@@ -341,9 +356,37 @@ def _is_outright(market: FuturesMarket) -> bool:
     MATCHER has linked, not about what the market IS: an unlinked "Set 1 Winner"
     row reaches this loop the moment matching misses it, which is the ordinary
     condition of a new tournament and not a rare one.
+
+    🔴 **THE " vs " TEST IS NOT THE WHOLE HEAD-TO-HEAD TEST** (follow-up
+    `2698-F1-FINISH-AHEAD-SCOPE`, added 2026-09-08). A head-to-head can name both
+    parties in prose and never write the word:
+
+        F1: Will Carlos Sainz finish ahead of Fernando Alonso
+            in the 2026 Drivers' Championship?     tier 1, open, dated 2026-12-06
+
+    Hence `_HEAD_TO_HEAD`. Measured before it was written, over the section
+    loop's REAL candidate pool on production — `status='open'`, `event_id IS
+    NULL`, `resolution_date >= now()`, tier 1/2/4, **13,579 rows** — the phrase
+    arm matches **exactly one row, the one above**. So this refuses one true
+    head-to-head and zero outrights; there is no legitimate title market in the
+    corpus phrased this way.
+
+    🔴 **AND IT WAS NEVER ON THE PAGE, WHICH IS WHY THIS IS DEFENCE AND NOT A
+    REPAIR.** The follow-up was raised as "it enters the new Tournament Winners
+    section". It does not, and did not: swept on 2026-09-08 after deploy, all 22
+    grid-less league payloads served **0** matchup-shaped rows in `futures`. This
+    row is held out one layer earlier, by `_league_scope_filters`, whose F1 name
+    arm is `%F1 %` — a space — while the name reads `F1:` with a colon. That is
+    the same trap this file's own notes already name: *`_league_scope_filters` is
+    not the pool*, and a predicate read in isolation cannot tell you what a page
+    serves. The guard is still worth having, because the thing holding the row
+    back is a typo-shaped pattern that anyone may widen, and on that day the
+    refusal has to already exist.
     """
     name_lower = (market.name or "").lower()
     if " vs " in name_lower or " vs. " in name_lower:
+        return False
+    if _HEAD_TO_HEAD.search(name_lower):
         return False
     return not _WITHIN_MATCH_SCOPE.search(name_lower)
 
