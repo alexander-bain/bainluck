@@ -129,11 +129,7 @@ router = APIRouter()
 LEAGUE_NAME_PATTERNS: dict[str, list[str]] = {
     "basketball_nba": ["NBA%", "%National Basketball%"],
     "basketball_wnba": ["WNBA%", "%Women_s National Basketball%"],
-    "basketball_ncaab": [
-        "%NCAA%Basketball%",
-        "%March Madness%",
-        "%College Basketball%",
-    ],
+    "basketball_ncaab": ["%NCAA%Basketball%", "%March Madness%", "%College Basketball%"],
     "icehockey_nhl": ["NHL%", "%National Hockey%", "%Stanley Cup%"],
     "baseball_mlb": ["MLB%", "%Major League Baseball%", "%World Series%"],
     "americanfootball_nfl": ["NFL%", "%National Football%", "%Super Bowl%"],
@@ -144,20 +140,8 @@ LEAGUE_NAME_PATTERNS: dict[str, list[str]] = {
     "soccer_germany_bundesliga": ["%Bundesliga%"],
     "soccer_uefa_champs_league": ["%Champions League%", "%UCL%"],
     "mma_mixed_martial_arts": ["%UFC%", "%Mixed Martial Arts%"],
-    "tennis_atp": [
-        "%ATP%",
-        "%Roland Garros ATP%",
-        "%Wimbledon%Men%",
-        "%US Open%Men%",
-        "%Australian Open%Men%",
-    ],
-    "tennis_wta": [
-        "%WTA%",
-        "%Roland Garros WTA%",
-        "%Wimbledon%Women%",
-        "%US Open%Women%",
-        "%Australian Open%Women%",
-    ],
+    "tennis_atp": ["%ATP%", "%Roland Garros ATP%", "%Wimbledon%Men%", "%US Open%Men%", "%Australian Open%Men%"],
+    "tennis_wta": ["%WTA%", "%Roland Garros WTA%", "%Wimbledon%Women%", "%US Open%Women%", "%Australian Open%Women%"],
     "boxing_boxing": ["%Boxing%", "%WBC%", "%WBA%", "%IBF%", "%WBO%"],
     "motorsport_f1": ["%Formula 1%", "%F1 %", "%Grand Prix%"],
     "motorsport_nascar": ["%NASCAR%"],
@@ -204,104 +188,51 @@ LEAGUE_TICKER_PREFIXES: dict[str, list[str]] = {
 # Generic awards ("MVP", "Rookie of the Year") are caught by tier == 3.
 _AWARD_KEYWORDS: list[str] = [
     # NBA
-    "defensive player of the year",
-    "sixth man",
-    "most improved",
-    "clutch player",
-    "finals mvp",
+    "defensive player of the year", "sixth man", "most improved",
+    "clutch player", "finals mvp",
     # NHL
-    "vezina",
-    "selke",
-    "norris",
-    "conn smythe",
-    "hart",
-    "calder",
-    "richard trophy",
-    "art ross",
-    "jack adams",
-    "lady byng",
+    "vezina", "selke", "norris", "conn smythe", "hart", "calder",
+    "richard trophy", "art ross", "jack adams", "lady byng",
     # MLB
-    "cy young",
-    "hank aaron",
-    "gold glove",
-    "silver slugger",
-    "reliever of the year",
-    "manager of the year",
-    "rookie of the year",
+    "cy young", "hank aaron", "gold glove", "silver slugger",
+    "reliever of the year", "manager of the year", "rookie of the year",
     # NFL
-    "comeback player",
-    "offensive player of the year",
-    "defensive player of the year",
-    "walter payton",
-    "offensive rookie",
-    "defensive rookie",
-    "coach of the year",
+    "comeback player", "offensive player of the year",
+    "defensive player of the year", "walter payton",
+    "offensive rookie", "defensive rookie", "coach of the year",
     # MMA / UFC
-    "fight of the year",
-    "fighter of the year",
-    "knockout of the year",
+    "fight of the year", "fighter of the year", "knockout of the year",
     "performance of the night",
 ]
 
 # Keywords that identify a market as a playoff series matchup.
 _SERIES_KEYWORDS: list[str] = [
-    "series",
-    "total games o/u",
-    "total games over",
+    "series", "total games o/u", "total games over",
 ]
 
 # Keywords for team/season-level props (not player stats).
 _PROPS_KEYWORDS: list[str] = [
-    "win total",
-    "win more than",
-    "win 100",
-    "win 90",
-    "win 80",
-    "division winner",
-    "make playoff",
-    "clinch",
-    "postseason",
-    "wild card",
-    "traded",
-    "be traded",
-    "trade",
-    "no-hitter",
-    "perfect game",
-    "draft",
-    "lottery",
-    "cover of madden",
-    "madden nfl",
-    "debut date",
-    "free agent",
-    "sweep",
-    "game 7",
-    "playoff win total",
-    "elimination",
-    "fired",
-    "general manager",
-    "head coach",
+    "win total", "win more than", "win 100", "win 90", "win 80",
+    "division winner", "make playoff", "clinch",
+    "postseason", "wild card",
+    "traded", "be traded", "trade",
+    "no-hitter", "perfect game",
+    "draft", "lottery",
+    "cover of madden", "madden nfl",
+    "debut date", "free agent",
+    "sweep", "game 7", "playoff win total", "elimination",
+    "fired", "general manager", "head coach",
     # Soccer
-    "relegation",
-    "promotion",
-    "golden boot",
-    "top scorer",
+    "relegation", "promotion", "golden boot", "top scorer",
     # MMA / UFC
-    "method of",
-    "distance",
-    "total rounds",
-    "finish",
+    "method of", "distance", "total rounds", "finish",
 ]
 
 # Sports where "vs" indicates an individual match/fight, not a playoff series.
 # Markets in these sports should go to "matches" section, not "series".
-_INDIVIDUAL_MATCH_SPORTS: frozenset[str] = frozenset(
-    {
-        "tennis",
-        "mma",
-        "boxing",
-        "esports",
-    }
-)
+_INDIVIDUAL_MATCH_SPORTS: frozenset[str] = frozenset({
+    "tennis", "mma", "boxing", "esports",
+})
 
 # Categories surfaced as a single, futures-ONLY hub: no per-game league split and
 # no per-tournament event grouping yet, so head-to-head matchup markets are pure
@@ -314,26 +245,13 @@ _CATEGORY_WIDE_FUTURES_ONLY: frozenset[str] = frozenset({"esports"})
 
 # Keywords for player-stat markets (season stats section).
 _SEASON_STAT_KEYWORDS: list[str] = [
-    "leader",
-    "scoring title",
-    "assists title",
-    "rebounds title",
-    "home run leader",
-    "batting average",
-    "era leader",
-    "strikeout leader",
-    "rushing leader",
-    "passing leader",
-    "receiving leader",
-    "goal leader",
-    "points leader",
-    "save leader",
-    "regular season record",
-    "regular season wins",
+    "leader", "scoring title", "assists title", "rebounds title",
+    "home run leader", "batting average", "era leader", "strikeout leader",
+    "rushing leader", "passing leader", "receiving leader",
+    "goal leader", "points leader", "save leader",
+    "regular season record", "regular season wins",
     # Soccer
-    "clean sheets",
-    "assist leader",
-    "top assists",
+    "clean sheets", "assist leader", "top assists",
 ]
 
 
@@ -834,9 +752,7 @@ def _format_game_brief(
         "sport": sport_key,
         "home_team": event.home_team_name,
         "away_team": event.away_team_name,
-        "commence_time": (
-            event.commence_time.isoformat() if event.commence_time else None
-        ),
+        "commence_time": event.commence_time.isoformat() if event.commence_time else None,
         # A FINAL card prefers this over commence_time for its date (gotcha #22
         # family): a Kalshi-sourced commence_time can be a close/resolution stamp.
         "completed_at": (
@@ -1071,9 +987,7 @@ def _schedule_league_refresh(rc, keys: ConceptCacheKeys, sport_key: str) -> None
             "app.tasks.refresh_league", args=[sport_key, token], queue="background"
         )
     except Exception:
-        logger.warning(
-            "league: refresh dispatch failed for %s", sport_key, exc_info=True
-        )
+        logger.warning("league: refresh dispatch failed for %s", sport_key, exc_info=True)
         if token:
             release_refresh_lock(rc, keys, token)
 
@@ -1100,7 +1014,8 @@ GAMES_RAIL_KEYS: tuple[str, ...] = (
 def is_empty_league(payload: dict) -> bool:
     """A league with no sections and no games on ANY rail has nothing on it."""
     return not (
-        payload.get("sections") or any(payload.get(rail) for rail in GAMES_RAIL_KEYS)
+        payload.get("sections")
+        or any(payload.get(rail) for rail in GAMES_RAIL_KEYS)
     )
 
 
@@ -1198,9 +1113,7 @@ async def build_and_cache_league(sport_key: str, db: AsyncSession, rc=None) -> d
 
 @router.get("/{sport_key}")
 async def get_league_futures(
-    sport_key: str = Path(
-        ..., description="Sport key (e.g., basketball_nba, icehockey_nhl)"
-    ),
+    sport_key: str = Path(..., description="Sport key (e.g., basketball_nba, icehockey_nhl)"),
     db: AsyncSession = Depends(get_db),
 ):
     """Get all open futures markets for a league, grouped by section."""
@@ -1505,16 +1418,10 @@ def _serialize_outcomes(sorted_outcomes: list, market=None) -> list[dict]:
             # resolves, settles or charts this outcome still addresses it by id
             # and is untouched by the label.
             "name": (labels or {}).get(o.name, o.name),
-            "probability": (
-                float(o.current_probability) if o.current_probability else None
-            ),
-            "opening_probability": (
-                float(o.opening_probability) if o.opening_probability else None
-            ),
+            "probability": float(o.current_probability) if o.current_probability else None,
+            "opening_probability": float(o.opening_probability) if o.opening_probability else None,
             "rank": o.rank,
-            "movement_24h": (
-                float(o.probability_change_24h) if o.probability_change_24h else None
-            ),
+            "movement_24h": float(o.probability_change_24h) if o.probability_change_24h else None,
             "team_id": o.team_id,
             # #3868: the STATE, so the card can draw a result instead of a
             # percentage. `is_winner` is passed through raw — including None,
@@ -1714,9 +1621,7 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
             "external_id": market.external_id,
             "market_tier": market.market_tier,
             "category": market.category,
-            "resolution_date": (
-                market.resolution_date.isoformat() if market.resolution_date else None
-            ),
+            "resolution_date": market.resolution_date.isoformat() if market.resolution_date else None,
             "outcome_count": len(market.outcomes),
             "top_outcomes": outcomes_data,
             "canonical_market_key": market.canonical_market_key,
@@ -1789,12 +1694,10 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
 
     # Sort within each section by market importance
     for section_name, items in sections.items():
-        items.sort(
-            key=lambda m: (
-                -(m.get("market_tier") or 99),
-                -(m.get("outcome_count") or 0),
-            )
-        )
+        items.sort(key=lambda m: (
+            -(m.get("market_tier") or 99),
+            -(m.get("outcome_count") or 0),
+        ))
 
     # Remove empty sections
     sections = {k: v for k, v in sections.items() if v}
@@ -1892,9 +1795,7 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
             scan_depth=RAIL_COMPETITION_SCAN_DEPTH if _is_feeder else 0,
         )
         _results_q = recent_results_query(sport_key, now, also_sport_keys=_also_keys)
-        _unreported_q = unreported_games_query(
-            sport_key, now, also_sport_keys=_also_keys
-        )
+        _unreported_q = unreported_games_query(sport_key, now, also_sport_keys=_also_keys)
         _g = await asyncio.wait_for(db.execute(_games_q), timeout=10)
         _g_events = list(_g.scalars().all())
         # ── #3872: one competition may not take the whole rail ──
@@ -2297,7 +2198,9 @@ async def build_linked_matches(
     now: datetime | None = None,
     also_sport_keys: Sequence[str] = (),
     is_prop: Callable[[str | None, str | None], object] | None = None,
-    is_undercard: Callable[[str | None, str | None, str | None], object] | None = None,
+    is_undercard: (
+        Callable[[str | None, str | None, str | None], object] | None
+    ) = None,
 ) -> list[dict]:
     """The head-to-head markets for this league's CURRENTLY PLAYABLE events.
 
@@ -2533,7 +2436,9 @@ async def build_linked_matches(
             "market_tier": market.market_tier,
             "category": market.category,
             "resolution_date": (
-                market.resolution_date.isoformat() if market.resolution_date else None
+                market.resolution_date.isoformat()
+                if market.resolution_date
+                else None
             ),
             "outcome_count": len(market.outcomes),
             "top_outcomes": _serialize_outcomes(sorted_outcomes, market),
