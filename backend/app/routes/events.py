@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import time
+from collections import Counter
 
 logger = logging.getLogger(__name__)
 from copy import deepcopy
@@ -12460,6 +12461,17 @@ async def _end_cap_hides_every_point(db, event_id: int, end_cap) -> bool:
     """
     from app.models.models import WinProbSnapshot
 
+    # #3810 asks over the CANONICAL row only, deliberately, while the chart
+    # query it guards folds the tagged twins in. The two can in principle
+    # disagree — a finished canonical holding no win-prob rows of its own, whose
+    # ghost's rows fall outside the cap, would not get the relaxation. Measured
+    # on production 2026-09-07 over all 12 tagged pairs: every ghost series
+    # STARTS inside its canonical's cap, and the two canonicals holding no
+    # win-prob rows at all are `scheduled`, so this helper is not reached for
+    # them. Folding here today buys nothing and costs the rewrite of the 13
+    # guards in `test_history_end_cap_hides_every_point` /
+    # `test_history_window_stale_open_event`, whose fake session predates the
+    # fold. Widen it when a measurement says the disagreement bites.
     earliest_win_prob = (
         await db.execute(
             select(func.min(WinProbSnapshot.captured_at)).where(
@@ -12972,12 +12984,37 @@ async def get_event_odds_history(
     # Build multi-source win probability history from generic table
     win_prob_history = {}
     win_prob_sources_meta = {}
+
+    # #3810 — draw the chart from the rows we declined to PRINT as well as our
+    # own. A source appears in the legend iff it has snapshot rows here, so on a
+    # tagged twin the venue whose prices landed on the ghost is simply absent:
+    # `/events/15305016` (Shelton v Tsitsipas, a Slam SF) plots Polymarket's 461
+    # readings and omits Kalshi's 1,446 because those 1,446 rows carry ghost
+    # 15304989's event_id.
+    #
+    # `folded_series_event_ids` returns `[event_id]` for an untagged event, so
+    # the query below compiles to the read it replaced. Nothing is merged,
+    # deleted or repointed — it is one indexed lookup and a wider `IN`.
+    #
+    # 🔴 OUTSIDE the try. The block below swallows every exception to tolerate a
+    # missing `win_prob_snapshots` table, and a fold that failed inside it would
+    # take the WHOLE chart down silently — every source gone, no error, on the
+    # exact pages this issue is about. `folded_series_event_ids` reads `events`,
+    # which always exists; if it fails the database is failing and that must
+    # surface (gotcha #53, and the same reasoning as `folded_event_ids`).
+    from app.utils.proven_duplicates import (
+        folded_series_event_ids,
+        series_row_for_each_source,
+    )
+
+    series_event_ids = await folded_series_event_ids(db, event_id)
+
     try:
         from app.models.models import WinProbSnapshot
         from app.config.win_prob_sources import WIN_PROB_SOURCES
 
         wp_query = select(WinProbSnapshot).where(
-            WinProbSnapshot.event_id == event_id,
+            WinProbSnapshot.event_id.in_(series_event_ids),
         )
         if cutoff is not None:
             wp_query = wp_query.where(WinProbSnapshot.captured_at >= cutoff)
@@ -12988,8 +13025,17 @@ async def get_event_odds_history(
         )
         wp_snapshots = wp_result.scalars().all()
 
-        # Group by source
+        # Group by source, taking each source's series from ONE row (#3810).
+        # Two rows' readings of one source are two partial recordings of the
+        # same price history; concatenating them interleaves a stray point into
+        # a clean line. See `series_row_for_each_source` for why the richest row
+        # wins rather than the canonical.
+        series_row = series_row_for_each_source(
+            Counter((s.source, s.event_id) for s in wp_snapshots), event_id
+        )
         for snap in wp_snapshots:
+            if series_row.get(snap.source) != snap.event_id:
+                continue
             source = snap.source
             if source not in win_prob_history:
                 win_prob_history[source] = []

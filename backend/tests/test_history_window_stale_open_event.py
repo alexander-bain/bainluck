@@ -96,6 +96,13 @@ class _Result:
         return self._rows[0] if self._rows else None
 
 
+# #3810: the fold adds a second read of `events`; `is_series_fold` tells it
+# apart from the route's own entity lookup. Defined beside the fold's own tests
+# so five rigs cannot drift apart — see `tests/test_series_fold_3810`.
+from tests.test_series_fold_3810 import fold_row as _fold_row  # noqa: E402
+from tests.test_series_fold_3810 import is_series_fold as _is_series_fold  # noqa: E402
+
+
 class _DispatchingSession:
     """Answers each query by the table it reads, HONOURING its time bounds.
 
@@ -113,6 +120,8 @@ class _DispatchingSession:
 
     async def execute(self, statement, *_a, **_kw):
         sql = str(statement)
+        if _is_series_fold(sql):
+            return _Result([_fold_row(self.event)])
         if "FROM events" in sql:
             return _Result([self.event])
         if "win_prob_snapshots" in sql:
@@ -135,8 +144,15 @@ def _datetime_params(statement) -> list[datetime]:
     return [v for v in params.values() if isinstance(v, datetime)]
 
 
+#: The specimen's own id, carried by every fake snapshot below. #3810 picks one
+#: event row per source, so a row with no `event_id` cannot be attributed and
+#: its whole series is dropped from the chart.
+_SPECIMEN_ID = 15300759
+
+
 def _snapshot(when, home_prob):
     return SimpleNamespace(
+        event_id=_SPECIMEN_ID,
         captured_at=when,
         source="kalshi",
         home_win_probability=home_prob,
@@ -152,7 +168,7 @@ def _snapshot(when, home_prob):
 
 def _specimen_event(now):
     return SimpleNamespace(
-        id=15300759,
+        id=_SPECIMEN_ID,
         status="scheduled",
         commence_time=now - timedelta(days=3),
         completed_at=None,
