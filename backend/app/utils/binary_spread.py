@@ -23,9 +23,77 @@ Example:
 import re
 import logging
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Sequence
 
 logger = logging.getLogger(__name__)
+
+
+# Fallback preference between venues when their readings are equally trusted.
+PROJECTION_SOURCE_ORDER: tuple[str, ...] = ("kalshi", "polymarket", "sportsbook")
+
+
+def _projection_source_rank(
+    implied: dict,
+    source: str,
+    order: Sequence[str],
+) -> tuple[float, int, str]:
+    """Sort key for one source's arm: best first.
+
+    Negated confidence so ``min``/``sorted`` read as "best first"; the trailing
+    name keeps two unknown sources at equal confidence deterministic.
+    """
+    entry = implied.get(source) or {}
+    try:
+        confidence = float(entry.get("confidence"))
+    except (TypeError, ValueError):
+        confidence = 0.0
+    try:
+        tie_break = order.index(source)
+    except ValueError:
+        tie_break = len(order)
+    return (-confidence, tie_break, source)
+
+
+def rank_projection_sources(
+    implied: Optional[dict],
+    order: Sequence[str] = PROJECTION_SOURCE_ORDER,
+) -> list[str]:
+    """Every source's arm, best first, by the rule ``select_projection_source`` picks with.
+
+    The ranked list exists so a caller that finds the best arm unusable can walk
+    to the next one instead of serving the unusable answer or nothing at all
+    (#3921 repair `3921-PROJECTION-SELECTION-CANNOT-EMIT-NEGATIVE-SCORES`).
+    """
+    if not implied:
+        return []
+    return sorted(implied, key=lambda s: _projection_source_rank(implied, s, order))
+
+
+def select_projection_source(
+    implied: Optional[dict],
+    order: Sequence[str] = PROJECTION_SOURCE_ORDER,
+) -> Optional[str]:
+    """Pick which source's implied value feeds the projected final score.
+
+    Highest ``confidence`` wins; ``order`` breaks ties. Until #3921 the choice
+    was position in ``order`` alone, so a Kalshi spread at confidence 0.3 beat
+    a sportsbook spread at confidence 1.0 sitting in the same dict — the
+    confidence was computed, serialised, and never read by the one thing it
+    was computed for.
+
+    A source missing from ``order`` is still eligible: it sorts after the
+    known ones rather than being dropped, so a venue added after this list
+    was written can never be silently discarded by an allowlist that predates
+    it. A missing or unparseable ``confidence`` sorts as 0.0 — still eligible,
+    because a sole arm is better than no projection, but never preferred over
+    an arm that states one.
+
+    This is ``rank_projection_sources(...)[0]`` and is kept as the name callers
+    use when they want the single best arm; the two can never disagree because
+    there is one ranking rule.
+    """
+    ranked = rank_projection_sources(implied, order)
+    return ranked[0] if ranked else None
 
 
 @dataclass
@@ -222,6 +290,86 @@ def projected_final_score(
         spread=spread,
         total=total,
     )
+
+
+def projection_is_renderable(projection: ProjectedScore) -> bool:
+    """Can this pair be shown to a reader as a final score?
+
+    A team cannot score a negative number of points, so a pair whose margin
+    exceeds its total is not a scoreline — it is proof that the spread and the
+    total came from two different quantities. Production served
+    ``7.9 – -6.4`` on a Detroit v Minnesota page (#3951) because a spread
+    derived from 1st-5-innings rungs (−14.25) was combined with a real
+    9-inning total (8.0).
+
+    This is the arithmetic invariant, not a plausibility heuristic: it asks
+    only whether ``|spread| <= total``, and so can never reject a pair that
+    describes one real game.
+    """
+    return projection.home_score >= 0 and projection.away_score >= 0
+
+
+def select_projected_final(
+    implied_spreads: Optional[dict],
+    implied_totals: Optional[dict],
+    order: Sequence[str] = PROJECTION_SOURCE_ORDER,
+) -> Optional[tuple[str, str, ProjectedScore]]:
+    """Best ``(spread_source, total_source, projection)`` whose scores are renderable.
+
+    **The pair each arm's own best choice makes is tried first and returned if
+    it is renderable**, so on every page whose projection is already a scoreline
+    this is ``select_projection_source`` twice over and nothing else — the
+    behaviour #3921 shipped, reached through the same call rather than through
+    an argument that two rankings must agree. Only when that pair is not a
+    scoreline does the walk begin, which is the whole of its job: the required
+    repair `3921-PROJECTION-SELECTION-CANNOT-EMIT-NEGATIVE-SCORES` asks that an
+    unusable pair fall back to the next valid source rather than be served.
+
+    ``None`` when no pair is renderable. Serving no projection is the correct
+    end of the walk: a reader who sees nothing has lost a number, while a
+    reader who sees ``8 – -6`` has been told something false about the game.
+    """
+    if not implied_spreads or not implied_totals:
+        return None
+
+    def attempt(spread_source, total_source):
+        spread = (implied_spreads.get(spread_source) or {}).get("spread")
+        total = (implied_totals.get(total_source) or {}).get("total")
+        if spread is None or total is None:
+            return None
+        projection = projected_final_score(spread, total)
+        if projection_is_renderable(projection):
+            return (spread_source, total_source, projection)
+        return None
+
+    # The pair #3921 would have served, tried on its own terms first.
+    preferred = attempt(
+        select_projection_source(implied_spreads, order),
+        select_projection_source(implied_totals, order),
+    )
+    if preferred is not None:
+        return preferred
+
+    pairs = [
+        (spread_source, total_source)
+        for spread_source in rank_projection_sources(implied_spreads, order)
+        for total_source in rank_projection_sources(implied_totals, order)
+    ]
+    pairs.sort(
+        key=lambda pair: (
+            _projection_source_rank(implied_spreads, pair[0], order)[0]
+            + _projection_source_rank(implied_totals, pair[1], order)[0],
+            _projection_source_rank(implied_spreads, pair[0], order)[1:],
+            _projection_source_rank(implied_totals, pair[1], order)[1:],
+        )
+    )
+
+    for spread_source, total_source in pairs:
+        found = attempt(spread_source, total_source)
+        if found is not None:
+            return found
+
+    return None
 
 
 # =========================================================================
