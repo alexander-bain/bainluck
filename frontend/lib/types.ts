@@ -415,7 +415,10 @@ export interface EventHistoryResponse {
   espn_snapshot_count?: number;
   pm_spread_data?: {
     implied_spreads: Record<string, {
+      /** Betting-line sign: negative = HOME favoured. */
       spread: number;
+      /** Chart axis: positive = HOME leading. Always `-spread` (#3948). */
+      home_margin?: number;
       confidence: number;
       contracts: Array<{ threshold: number; probability: number }>;
     }>;
