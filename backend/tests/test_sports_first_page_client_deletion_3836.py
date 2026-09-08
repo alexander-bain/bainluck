@@ -60,6 +60,7 @@ from __future__ import annotations
 import ast
 import inspect
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from app.routes import feed as feed_module
 from app.routes.feed import PersonalizationContext, apply_discover_display_chain
@@ -100,8 +101,11 @@ from app.utils.sports_first_page_rails import (
 #: the eight-hour threshold sits 2.0 hours below it and 12.3 above — margins of
 #: hours against a sub-second import-to-assert drift.
 #:
-#: `test_the_fixture_anchor_tracks_the_real_clock` fails the moment this is
-#: frozen again.
+#: `test_the_fixture_anchor_is_not_a_hardcoded_instant` fails the moment this is
+#: frozen again. It parses this assignment rather than timing it, because an
+#: elapsed-time budget here is really a budget on how long the suite takes to
+#: run — the first attempt used one and failed CI at 404 seconds of
+#: collection-to-execution drift while the repair underneath it was working.
 NOW = datetime.now(timezone.utc)
 
 SPORTS = {
@@ -278,29 +282,53 @@ class TestThePremise:
         tail = _measured_pool()[20:]
         assert sum(1 for it in tail if not client_deletes_finished_card(it, now=NOW)) >= 4
 
-    def test_the_fixture_anchor_tracks_the_real_clock(self):
-        """The guard for the class, not for the one line.
+    def test_the_fixture_anchor_is_not_a_hardcoded_instant(self):
+        """The guard for the class, and it reads the SOURCE rather than a clock.
 
         `TestWiring` drives the real `apply_discover_display_chain`, which takes
         no `now` and reads `datetime.now(timezone.utc)` itself. So a fixture
         anchor that is a fixed calendar instant is a fuse, not a constant: it
-        ages one hour per hour, and the file goes red — everywhere, for good —
-        once the drift passes `CLIENT_COMPLETED_MAX_AGE_HOURS`. That is exactly
-        what happened on 2026-09-08, about eighteen hours after the anchor was
-        written, and it took the deploy job down with it because a red master
-        skips `deploy` entirely.
+        ages one hour per hour and the file goes red — everywhere, for good —
+        once the drift passes `CLIENT_COMPLETED_MAX_AGE_HOURS`. That happened on
+        2026-09-08, about eighteen hours after the anchor was written, and it
+        took the `deploy` job down with it, because a red CI skips deploy and
+        then NO lane's work reaches production.
 
-        Re-freezing the anchor is the one edit that reintroduces the defect, so
-        it is the one edit this asserts against. Deliberately generous: five
-        minutes admits any real import-to-assert drift while still failing any
-        hardcoded date instantly.
+        Asserted against the module's own source, not against elapsed time. The
+        first version of this guard compared `NOW` to `datetime.now()` with a
+        five-minute budget and FAILED IN CI while the repair underneath it
+        worked: `NOW` binds at import, this assertion runs seven minutes later
+        in an eight-minute shard, and it measured 404 seconds of collection-to-
+        execution drift. That budget was really a bound on how long the suite
+        takes to run, which is not the defect and does not belong in a test.
+        Parsing the assignment has no such coupling — it is the same device
+        `test_the_swap_runs_AFTER_the_rail_cap_and_BEFORE_the_live_hoist` uses a
+        few classes down, and for the same reason.
         """
-        drift_seconds = abs((datetime.now(timezone.utc) - NOW).total_seconds())
-        assert drift_seconds < 300, (
-            f"the fixture anchor NOW is {drift_seconds / 3600:.1f} hours from "
-            "the real clock. The passes under test read the real clock, so a "
-            "frozen anchor makes every 'fresh' fixture doomed and the swap "
-            "declines. Anchor NOW to datetime.now(timezone.utc) (gotcha #44)."
+        tree = ast.parse(Path(__file__).read_text())
+        anchors = [
+            node.value
+            for node in tree.body
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(t, ast.Name) and t.id == "NOW" for t in node.targets
+            )
+        ]
+        assert len(anchors) == 1, "expected exactly one module-level NOW anchor"
+        value = anchors[0]
+        callee = value.func if isinstance(value, ast.Call) else None
+        is_now_call = (
+            isinstance(callee, ast.Attribute)
+            and callee.attr in ("now", "utcnow")
+        )
+        assert is_now_call, (
+            "the fixture anchor NOW must be derived from the real clock "
+            f"(`datetime.now(timezone.utc)`), but it is assigned "
+            f"`{ast.unparse(value)}`. The passes under test read the real "
+            "clock and cannot be given one — `apply_discover_display_chain` "
+            "has no `now` parameter — so a hardcoded instant makes every "
+            "'fresh' fixture doomed within hours and the swap declines "
+            "(gotcha #44)."
         )
 
     def test_the_rail_cap_would_NOT_have_caught_this(self):
