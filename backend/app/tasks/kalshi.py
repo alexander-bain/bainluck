@@ -1697,6 +1697,7 @@ async def _poll_kalshi_markets():
         _post_loop_ran: dict = {}
         _post_loop_skipped: list = []
         _post_loop_failed: list = []
+        _post_loop_dry_run: dict = {}
 
         def _no_post_loop_budget(_key: str) -> bool:
             """True when `_key` must be skipped, recording it as a casualty."""
@@ -1720,9 +1721,29 @@ async def _poll_kalshi_markets():
             # it, so the receipt lists EVERY casualty rather than only the first.
             if not _no_post_loop_budget("golf_commence_fixed"):
                 try:
-                    golf_fixed = await _fix_golf_commence_times()
+                    # #3952: this repair alone is behind Queue #189's
+                    # verify-before-enable kill switch, and its `fixed += 1` is
+                    # OUTSIDE the write branch, so in dry-run it returns a
+                    # rehearsal total. Read the switch HERE and pass it in,
+                    # rather than letting the repair read Redis and the receipt
+                    # read it a second time: two reads can disagree, and a
+                    # receipt naming a mode the repair did not run in is the
+                    # same bug one level up. The count is routed by mode below.
+                    golf_dry_run = not _golf_commence_fix_enabled()
+                    golf_fixed = await _fix_golf_commence_times(
+                        dry_run=golf_dry_run
+                    )
                     stats["golf_commence_fixed"] = golf_fixed
-                    _post_loop_ran["golf_commence_fixed"] = golf_fixed
+                    stats["golf_commence_dry_run"] = golf_dry_run
+                    # A dry run repaired NOTHING, and `post_loop_fixups_ran` is
+                    # documented as "rows it repaired" — so it gets the 0 (which
+                    # still says the repair RAN, unlike an absent key) and the
+                    # rehearsal total goes to the field that names the mode.
+                    if golf_dry_run:
+                        _post_loop_ran["golf_commence_fixed"] = 0
+                        _post_loop_dry_run["golf_commence_fixed"] = golf_fixed
+                    else:
+                        _post_loop_ran["golf_commence_fixed"] = golf_fixed
                 except Exception as e:
                     logger.warning("Golf commence_time fix failed: %s", e)
                     stats["golf_commence_fixed"] = 0
@@ -1795,6 +1816,7 @@ async def _poll_kalshi_markets():
                 _report.post_loop_fixups_ran = dict(_post_loop_ran)
                 _report.post_loop_fixups_skipped = list(_post_loop_skipped)
                 _report.post_loop_fixups_failed = list(_post_loop_failed)
+                _report.post_loop_fixups_dry_run = dict(_post_loop_dry_run)
                 update_scan_report_head(_report)
             except Exception as exc:
                 logger.warning(
