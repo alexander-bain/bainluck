@@ -14,7 +14,11 @@ import { renderedLeaderPercent } from "@/lib/renderedPercent";
 import type { FeedItem, FeedFuturesData } from "@/lib/types";
 import { CATEGORY_GRADIENTS, getCat } from "./constants";
 import { compactOutcomeName, feedContextSnippet, feedExpandedContext, resolvesLabel } from "./utils";
-import { AnimatedProbability, DismissBtn, TrendBadge, TemporalBadge, ActionBar, MovementBadge, ExpandableContextText, SignalBars, ForYouChip, dismissCornerPad } from "./shared";
+// `AnimatedProbability` was imported here and never used — dead on master too,
+// but CodeQL bills a pre-existing alert as NEW once you touch its line, so it
+// surfaced on this diff. Dropped rather than carried (note-level, no security
+// severity; it was never a merge blocker either way).
+import { DismissBtn, TrendBadge, TemporalBadge, ActionBar, MovementBadge, ExpandableContextText, SignalBars, ForYouChip, dismissCornerPad } from "./shared";
 import { forYouCue } from "@/lib/discover/forYouCue";
 import QuantityGroup from "../QuantityGroup";
 import type { ActionBarProps, CardActionCallbacks } from "./types";
