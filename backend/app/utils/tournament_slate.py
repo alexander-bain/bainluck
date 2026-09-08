@@ -302,10 +302,9 @@ def orient_event_blend(
     """The linked event's hero pair, turned to face THIS row's side order (#3903).
 
     Returns ``(current_pair, opening_pair, refusal)`` — the first two index-aligned
-    with ``side_names``, or the third naming why not.  Never a partial answer:
-    both pairs come back or neither does.
+    with ``side_names``, the third naming what could not be supplied.
 
-    ═══ ALL OR NOTHING, BECAUSE A MIXED BASIS IS THE BUG ═══
+    ═══ NO MIXED BASIS — AND THE UNIT IS THE ARROW, NOT THE ROW (CERT-2251) ═══
 
     #3903's most visible symptom was not the level (59 vs 60), it was the
     **arrow**: Tiafoe read −2 on the hub and +2 on his own page.  That inversion
@@ -313,11 +312,29 @@ def orient_event_blend(
     the hub's open was the venue's 0.605 while the page's was the event's 0.5764,
     so the same market movement pointed two ways.
 
-    So an event that cannot supply BOTH halves supplies neither, and the row
-    keeps the venue basis it has today, which is at least internally consistent.
+    The first version of this function drew the wrong conclusion from that.  It
+    made the whole ROW all-or-nothing: an event that could not supply an opening
+    supplied nothing, and the row kept the venue's number *and* the venue's arrow.
+    Internally consistent, and still printing 37% under a match page printing 38%
+    — the #3903 symptom surviving inside the fix for it.
+
+    The rule that actually follows is narrower.  **Never mix bases within one
+    claim.**  A level is one claim and a movement is another, so:
+
+    * both halves available  → the event's pair and the event's opening, refusal
+      ``None``;
+    * current only          → the event's pair, ``None`` opening, refusal
+      ``BLEND_HAS_NO_OPEN``, and **the caller must clear the venue's opening and
+      move** rather than leave them beside a number from another basis;
+    * neither               → ``None, None`` and a refusal, as before.
+
+    So ``refusal`` no longer means "nothing was applied". Read it with
+    ``price_basis``: ``blend`` + ``BLEND_HAS_NO_OPEN`` is "the event's number,
+    no arrow"; ``venue`` + a refusal is "nothing was taken".
+
     Measured on production 2026-09-08: of 8 event-linked quarter-finals, 7 carried
-    an opening and 1 (Andreeva/Vondrousova, 15307447) did not — so this refusal is
-    a live case on the day it shipped, not a hypothetical.
+    an opening and 1 (15307447) did not — so this is a live case on the day it
+    shipped, not a hypothetical.
 
     ═══ ORIENTATION IS AN EXACT BIJECTION, OR IT REFUSES ═══
 
@@ -373,9 +390,21 @@ def orient_event_blend(
     if home_prob is None or away_prob is None:
         return None, None, "BLEND_UNPRICED"
     if open_home is None or open_away is None:
-        # See "ALL OR NOTHING" above: no open means no basis for an arrow, and a
-        # borrowed one points the wrong way.
-        return None, None, "BLEND_HAS_NO_OPEN"
+        # THE ARROW IS REFUSED, THE NUMBER IS NOT (CERT-2251).
+        #
+        # This used to return `None, None` and the row kept the VENUE's current
+        # value as well as its arrow — so the hub printed 37% under a match page
+        # printing 38%, which is the #3903 symptom itself, surviving inside the
+        # fix for it. All-or-nothing was the right rule applied to the wrong
+        # unit: mixing an event "now" with a venue "open" is the bug, and
+        # declining to publish an event "now" we can orient is not the remedy.
+        #
+        # So the current pair comes back and the opening does not. The caller
+        # must CLEAR the venue opening and move rather than leave them beside a
+        # number from another basis — the whole point — and the refusal travels
+        # so the payload still says why the row shows no arrow.
+        current_only = [home_prob, away_prob] if straight else [away_prob, home_prob]
+        return [round(p, 6) for p in current_only], None, "BLEND_HAS_NO_OPEN"
 
     current = [home_prob, away_prob] if straight else [away_prob, home_prob]
     opening = [open_home, open_away] if straight else [open_away, open_home]
@@ -848,12 +877,21 @@ def build_match_row(
             (blends or {}).get(int(event_id)),
             [v["display_name"] for v in views],
         )
-        if blend_pair is not None and blend_open is not None:
+        if blend_pair is not None:
             price_basis = PRICE_BASIS_BLEND
             for index, view in enumerate(views):
                 view["probability"] = blend_pair[index]
-                view["opening_probability"] = blend_open[index]
-                view["move"] = round(blend_pair[index] - blend_open[index], 6)
+                if blend_open is None:
+                    # NO OPEN MEANS NO ARROW, AND NO ARROW MEANS CLEARING THE ONE
+                    # THAT IS THERE (CERT-2251). The venue's opening belongs to
+                    # the number we just replaced; leaving it would print the
+                    # event's level against the venue's origin, which is the
+                    # mixed basis this whole function exists to prevent.
+                    view["opening_probability"] = None
+                    view["move"] = None
+                else:
+                    view["opening_probability"] = blend_open[index]
+                    view["move"] = round(blend_pair[index] - blend_open[index], 6)
             count = ((blends or {}).get(int(event_id)) or {}).get("source_count")
             blend_source_count = count if isinstance(count, int) and count > 0 else None
 
@@ -1862,13 +1900,24 @@ def apply_event_blend_to_linked_rows(
         # this whole repair exists to remove, and re-creating it here for the
         # orientation-failure case would just move the silence.
         row["blend_refusal"] = refusal
-        if blend_pair is None or blend_open is None:
+        if blend_pair is None:
             continue
 
         for index, side in enumerate(sides):
             side["probability"] = blend_pair[index]
-            side["opening_probability"] = blend_open[index]
-            side["move"] = round(blend_pair[index] - blend_open[index], 6)
+            if blend_open is None:
+                # THE LEVEL TRAVELS, THE ARROW DOES NOT (CERT-2251). An event
+                # with a hero and no opening used to leave this row on the venue
+                # basis entirely, so the hub printed 37% under a match page
+                # printing 38% — the #3903 symptom surviving inside its own fix.
+                # The venue's opening is cleared rather than kept: it belongs to
+                # the number just replaced, and pairing it with the event's level
+                # is the mixed basis `orient_event_blend` exists to prevent.
+                side["opening_probability"] = None
+                side["move"] = None
+            else:
+                side["opening_probability"] = blend_open[index]
+                side["move"] = round(blend_pair[index] - blend_open[index], 6)
 
         row["price_basis"] = PRICE_BASIS_BLEND
         count = ((blends or {}).get(event_id) or {}).get("source_count")

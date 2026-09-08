@@ -388,7 +388,43 @@ async def test_the_loader_selects_columns_that_carry_the_names(wired):
     assert not {"home_team", "away_team"} & labels
 
 
-async def test_an_event_with_no_hero_leaves_the_row_on_the_venue_price(wired):
+async def test_a_hero_with_no_opening_still_reaches_the_row_through_the_route(wired):
+    """The required CERT-2251 regression: a hero with NO OPENING, through the route.
+
+    The block's counterexample. `orient_event_blend` used to return
+    ``None, None, BLEND_HAS_NO_OPEN`` for this state, so the linked hub row kept
+    the venue's current value AND the venue's arrow while the page it opens
+    served the event hero — hub 0.37 against event hero 0.38. #3903's symptom,
+    alive inside #3903's fix, reachable on the real first-screen route.
+
+    The level now travels and the arrow does not. The venue's opening is CLEARED
+    rather than kept: it belongs to the number that was just replaced, and
+    pairing it with the event's level is the mixed basis the all-or-nothing rule
+    was written to prevent — the rule was right, its unit was the row when it
+    should have been the claim.
+    """
+    wired.event_columns["opening_home_probability"] = None
+    wired.event_columns["opening_away_probability"] = None
+    row = _the_row(await _first_screen(wired))
+
+    assert row["event_id"] == EVENT_ID
+    # THE LEVEL IS THE EVENT'S, which is the whole finding.
+    assert row["price_basis"] == PRICE_BASIS_BLEND
+    assert row["sides"][0]["probability"] == pytest.approx(EVENT_NOW)
+    assert row["sides"][0]["probability"] != pytest.approx(VENUE_NOW)
+    # THE ARROW IS GONE, on both sides, rather than borrowed from the venue.
+    assert row["sides"][0]["opening_probability"] is None
+    assert row["sides"][1]["opening_probability"] is None
+    assert row["sides"][0]["move"] is None
+    assert row["sides"][1]["move"] is None
+    assert row["has_moved"] is False
+    # And it still says why there is no arrow.
+    assert row["blend_refusal"] == "BLEND_HAS_NO_OPEN"
+
+
+async def test_an_event_with_no_reading_at_all_leaves_the_row_on_the_venue_price(
+    wired,
+):
     """A linked event that cannot answer keeps the venue quote, never blanks.
 
     THE CASE IS REAL AND IS A WINDOW, NOT A DEFECT — recorded that way on purpose.
