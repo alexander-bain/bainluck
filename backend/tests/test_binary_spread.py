@@ -41,28 +41,28 @@ class TestBinaryToImpliedSpread:
         assert result is not None
         assert -3 < result.spread < 0
 
-    def test_massive_favorite(self):
-        """All contracts above 50% — extrapolate."""
+    def test_massive_favorite_derives_nothing(self):
+        """All contracts above 50% — the ladder does not locate a spread (#3965).
+
+        This used to extrapolate to ``-last * 1.5``. The crossover is somewhere
+        beyond 14.5 and the ladder does not say where, so there is nothing to
+        return.
+        """
         contracts = [
             {"threshold": 5.5, "probability": 0.90},
             {"threshold": 10.5, "probability": 0.80},
             {"threshold": 14.5, "probability": 0.65},
         ]
-        result = binary_to_implied_spread(contracts)
-        assert result is not None
-        assert result.spread < -14  # Beyond the highest threshold
-        assert result.confidence < 0.5  # Low confidence extrapolation
+        assert binary_to_implied_spread(contracts) is None
 
-    def test_big_underdog(self):
-        """All contracts below 50% — team unlikely to win by any margin."""
+    def test_big_underdog_derives_nothing(self):
+        """All contracts below 50% — same refusal from the other side (#3965)."""
         contracts = [
             {"threshold": 1.0, "probability": 0.40},
             {"threshold": 3.5, "probability": 0.25},
             {"threshold": 5.5, "probability": 0.15},
         ]
-        result = binary_to_implied_spread(contracts)
-        assert result is not None
-        assert result.confidence < 0.5
+        assert binary_to_implied_spread(contracts) is None
 
     def test_insufficient_data(self):
         """Need at least 2 contracts."""
