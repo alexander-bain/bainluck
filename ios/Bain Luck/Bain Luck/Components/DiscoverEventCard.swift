@@ -180,7 +180,7 @@ struct NativeEventDiscoverCard: View {
                     HStack(alignment: .center, spacing: 0) {
                         heroTeam(
                             label: cardSides.away, badge: cardBadges.away,
-                            avatar: event.avatar(home: false),
+                            slot: avatarSlot(home: false),
                             color: awayColor,
                             score: event.awayScore,
                             alignment: .leading
@@ -195,7 +195,7 @@ struct NativeEventDiscoverCard: View {
 
                         heroTeam(
                             label: cardSides.home, badge: cardBadges.home,
-                            avatar: event.avatar(home: true),
+                            slot: avatarSlot(home: true),
                             color: homeColor,
                             score: event.homeScore,
                             alignment: .trailing
@@ -347,39 +347,68 @@ struct NativeEventDiscoverCard: View {
         TeamShortName.abbreviationPair(away: event.awayTeam, home: event.homeTeam)
     }
 
+    /// The avatar decision for one side, exposed so the suite can pin the WIRING
+    /// and not merely the ladder: a correct ladder that this card does not call is
+    /// invisible from the outside, which is the shape #2977 actually was.
+    ///
+    /// `event.sport` deliberately, NOT this view's own `sportKey` — that one is the
+    /// first component only ("baseball"), and the ladder's flag rung matches on the
+    /// whole key ("soccer_fifa_world_cup").
+    func avatarSlot(home: Bool) -> TeamAvatarSlot {
+        teamAvatarSlot(
+            avatar: event.avatar(home: home),
+            teamName: home ? event.homeTeam : event.awayTeam,
+            sportKey: event.sport
+        )
+    }
+
+    /// The consolation prize: the team's colour, wearing its abbreviation.
+    private func badgeTile(badge: String, color: Color) -> some View {
+        RoundedRectangle(cornerRadius: 12)
+            .fill(color)
+            .frame(width: 52, height: 52)
+            .overlay(
+                Text(badge)
+                    .font(.caption.weight(.heavy))
+                    .foregroundStyle(.white)
+            )
+    }
+
     private func heroTeam(
         label: String,
         badge: String,
-        avatar: ParticipantAvatar,
+        slot: TeamAvatarSlot,
         color: Color,
         score: Int?,
         alignment: HorizontalAlignment
     ) -> some View {
         VStack(spacing: 6) {
-            if let logo = avatar.url, let url = URL(string: logo) {
-                AsyncImage(url: url) { img in
-                    // A crest is shown whole; a headshot fills the slot and is
-                    // cropped, because a portrait scaled to FIT a square becomes a
-                    // sliver (see `ParticipantAvatar.isPhotograph`).
-                    if avatar.isPhotograph {
-                        img.resizable().scaledToFill()
+            switch slot {
+            case let .image(url, isPhotograph):
+                AsyncImage(url: url) { phase in
+                    if let img = phase.image {
+                        // A crest is shown whole; a headshot fills the slot and is
+                        // cropped, because a portrait scaled to FIT a square becomes a
+                        // sliver (see `ParticipantAvatar.isPhotograph`).
+                        img.resizable()
+                            .aspectRatio(contentMode: isPhotograph ? .fill : .fit)
+                            .frame(width: 52, height: 52)
+                            .clipShape(RoundedRectangle(cornerRadius: isPhotograph ? 12 : 0, style: .continuous))
+                    } else if phase.error != nil {
+                        // A url that 404s used to leave a 52pt hole with a shadow on
+                        // it: `placeholder:` is the FAILURE state as well as the
+                        // loading one, so the card drew nothing at all. The tile at
+                        // least names the team.
+                        badgeTile(badge: badge, color: color)
                     } else {
-                        img.resizable().scaledToFit()
+                        // Loading: hold the space so the row does not jump.
+                        Color.clear.frame(width: 52, height: 52)
                     }
-                } placeholder: { EmptyView() }
-                .frame(width: 52, height: 52)
-                .clipShape(RoundedRectangle(cornerRadius: avatar.isPhotograph ? 12 : 0, style: .continuous))
+                }
                 .shadow(color: .black.opacity(0.3), radius: 6, x: 0, y: 2)
-            } else {
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(color)
-                    .frame(width: 52, height: 52)
+            case .tile:
+                badgeTile(badge: badge, color: color)
                     .shadow(color: .black.opacity(0.3), radius: 6, x: 0, y: 2)
-                    .overlay(
-                        Text(badge)
-                            .font(.caption.weight(.heavy))
-                            .foregroundStyle(.white)
-                    )
             }
 
             Text(label)

@@ -2292,7 +2292,13 @@ struct NativeGuessCard: View {
         let sides = NativeGuessCardContent.pair(event)
 
         return HStack(spacing: 10) {
-            teamBadge(label: sides.away, avatar: event.avatar(home: false), color: awayColor)
+            // #2977: the same ladder the Sports row climbs — `event.sport` whole,
+            // never a truncated key, or the flag rung stops seeing the World Cup.
+            teamBadge(
+                label: sides.away,
+                slot: teamAvatarSlot(avatar: event.avatar(home: false), teamName: event.awayTeam, sportKey: event.sport),
+                color: awayColor
+            )
 
             VStack(spacing: 4) {
                 Text(event.status == "live" ? (event.espn?.period ?? "LIVE") : (event.status == "completed" || event.status == "closed" ? "FINAL" : "VS"))
@@ -2306,25 +2312,35 @@ struct NativeGuessCard: View {
             }
             .frame(width: 42)
 
-            teamBadge(label: sides.home, avatar: event.avatar(home: true), color: homeColor)
+            teamBadge(
+                label: sides.home,
+                slot: teamAvatarSlot(avatar: event.avatar(home: true), teamName: event.homeTeam, sportKey: event.sport),
+                color: homeColor
+            )
         }
     }
 
-    private func teamBadge(label: String, avatar: ParticipantAvatar, color: Color) -> some View {
+    private func teamBadge(label: String, slot: TeamAvatarSlot, color: Color) -> some View {
         VStack(spacing: 6) {
-            if let logo = avatar.url, let url = URL(string: logo) {
-                AsyncImage(url: url) { img in
-                    // Crest fits; headshot fills and is cropped square — see
-                    // `ParticipantAvatar.isPhotograph`.
-                    if avatar.isPhotograph {
-                        img.resizable().scaledToFill()
+            switch slot {
+            case let .image(url, isPhotograph):
+                AsyncImage(url: url) { phase in
+                    if let img = phase.image {
+                        // Crest fits; headshot fills and is cropped square — see
+                        // `ParticipantAvatar.isPhotograph`.
+                        img.resizable()
+                            .aspectRatio(contentMode: isPhotograph ? .fill : .fit)
+                            .frame(width: 36, height: 36)
+                            .clipShape(RoundedRectangle(cornerRadius: isPhotograph ? 9 : 0, style: .continuous))
+                    } else if phase.error != nil {
+                        // `placeholder:` was the failure state too, so a dead url
+                        // drew a 36pt hole rather than the team's colour (#2977).
+                        RoundedRectangle(cornerRadius: 9).fill(color).frame(width: 36, height: 36)
                     } else {
-                        img.resizable().scaledToFit()
+                        Color.clear.frame(width: 36, height: 36)
                     }
-                } placeholder: { EmptyView() }
-                    .frame(width: 36, height: 36)
-                    .clipShape(RoundedRectangle(cornerRadius: avatar.isPhotograph ? 9 : 0, style: .continuous))
-            } else {
+                }
+            case .tile:
                 RoundedRectangle(cornerRadius: 9)
                     .fill(color)
                     .frame(width: 36, height: 36)

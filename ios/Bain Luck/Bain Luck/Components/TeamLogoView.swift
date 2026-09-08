@@ -19,17 +19,13 @@ struct TeamLogoView: View {
     @State private var loadFailed = false
     @State private var triedEspnFallback = false
 
-    /// For international sports, try flag URL first
-    private var flagFallbackURL: String? {
-        guard isInternationalSport(sportKey) else { return nil }
-        return flagURL(for: teamName, width: 80)
-    }
-
-    /// Resolve URL: primary url → flag (international) → ESPN fallback → nil
+    /// Resolve URL: primary url → flag (international) → ESPN fallback → nil.
+    ///
+    /// #2977: these rungs moved to `TeamAvatarLadder` unchanged, so the Discover
+    /// hero and the guess card climb the same ones instead of each stopping at the
+    /// first. This view is where the ladder came from; its behaviour is identical.
     private var resolvedURL: String? {
-        if let url, !url.isEmpty { return url }
-        if let flag = flagFallbackURL { return flag }
-        return espnTeamLogoURL(for: teamName)
+        teamAvatarURL(servedURL: url, teamName: teamName, sportKey: sportKey)
     }
 
     var body: some View {
@@ -162,6 +158,13 @@ private let espnTeamIDs: [String: (id: String, sport: String)] = [
     // MLB
     "arizona diamondbacks": ("29", "mlb"),
     "atlanta braves": ("15", "mlb"),
+    // The A's dropped the city. `teams.name` now serves "Athletics", which matched
+    // nothing, so both the Sports row and the Discover hero drew a letter "A" for
+    // a club ESPN still publishes at the same id (verified 200, 40x40 PNG,
+    // 2026-09-08). Photographed on the Sports row in
+    // `artifacts-native-067/AFTER-sports-tab.png`; the Oakland spelling stays for
+    // rows that still carry it.
+    "athletics": ("11", "mlb"),
     "baltimore orioles": ("1", "mlb"),
     "boston red sox": ("2", "mlb"),
     "chicago cubs": ("16", "mlb"),
