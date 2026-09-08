@@ -31,6 +31,7 @@ Three defects, all section 3's own, and one test class each:
 """
 
 import re
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -196,6 +197,10 @@ def _run_route(pairs, *, blend=0.5):
         SimpleNamespace(
             id=i + 1,
             status="live",
+            # #3728: the section reads the row's own start time now, and a row
+            # whose start has not happened is not served as `live`. These are
+            # games in progress, so their start is behind them.
+            commence_time=datetime.now(timezone.utc) - timedelta(minutes=40),
             home_team_name=home,
             away_team_name=away,
             # Inside the 0.35-0.65 tight-game band, in the flat production shape

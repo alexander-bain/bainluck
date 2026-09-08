@@ -158,10 +158,18 @@ class _RecordingDB:
 
 
 def _live(pairs):
+    """Games in progress: `status='live'` AND a start time already behind them.
+
+    Both halves matter since #3728 — section 1 reads the row's own
+    `commence_time` through `served_event_status`, so a fixture that omits it is
+    a fixture of a row the section is now right to refuse.
+    """
+    started = datetime.now(timezone.utc) - timedelta(minutes=40)
     return [
         SimpleNamespace(
             id=i + 1,
             status="live",
+            commence_time=started,
             home_team_name=home,
             away_team_name=away,
             win_probability_sources={"betting": 0.5},

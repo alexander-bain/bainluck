@@ -298,11 +298,20 @@ def _open_window_db():
 
 
 def _live_events(pairs):
-    """Live rows section 1 will read the blend off — all inside the tight band."""
+    """Live rows section 1 will read the blend off — all inside the tight band.
+
+    #3728: `status="live"` alone is no longer a live row. Section 1 puts every
+    surviving row through `served_event_status`, so a fixture without a start
+    time behind it models a row the section is now right to refuse.
+    """
+    from datetime import datetime, timedelta, timezone as _tz
+
+    started = datetime.now(_tz.utc) - timedelta(minutes=40)
     return [
         SimpleNamespace(
             id=900 + i,
             status="live",
+            commence_time=started,
             home_team_name=home,
             away_team_name=away,
             win_probability_sources={"betting": 0.5},
@@ -940,11 +949,18 @@ class TestSectionsThatHaveNeverRun:
         The count is the assertion that matters. A repair that added the odds query
         back and merely made it work would still pass a chip-shaped assertion.
         """
+        from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+
         redis_double(_FakeRedis())
         live = [
             SimpleNamespace(
                 id=1,
                 status="live",
+                # #3728: a game in progress has a start time behind it, and
+                # section 1 now checks. Without this the row is refused and the
+                # chip below is missing for a reason that has nothing to do with
+                # the blend this test is about.
+                commence_time=_dt.now(_tz.utc) - _td(minutes=40),
                 home_team_name="Aces",
                 away_team_name="Liberty",
                 # 🔴 #3671. BOTH OF THESE LINES ARE THE FIX, AND THE SECOND ONE
