@@ -1057,6 +1057,134 @@ export function computeSharedChartDomain(
 }
 
 // ---------------------------------------------------------------------------
+// Win-probability Y axis
+// ---------------------------------------------------------------------------
+
+/** The 0–100 axis every win-probability chart used before #3973. */
+export const FULL_WIN_PROB_Y_AXIS: WinProbYAxis = {
+  domain: [0, 100],
+  ticks: [0, 25, 50, 75, 100],
+};
+
+export interface WinProbYAxis {
+  domain: [number, number];
+  ticks: number[];
+}
+
+/** Below this many samples a percentile is not a percentile — keep the full axis. */
+const WIN_PROB_Y_MIN_SAMPLES = 12;
+/** Narrowest window we will ever show, so a 2-point wobble is not magnified into drama. */
+const WIN_PROB_Y_MIN_SPAN = 20;
+/** Grid the axis snaps to; 50 is a multiple of all three, so it is always ON the grid. */
+const WIN_PROB_Y_STEPS = [5, 10, 25];
+const WIN_PROB_Y_MAX_INTERVALS = 5;
+
+function percentile(sorted: number[], q: number): number {
+  const i = q * (sorted.length - 1);
+  const lo = Math.floor(i);
+  const hi = Math.min(lo + 1, sorted.length - 1);
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (i - lo);
+}
+
+/**
+ * The Y axis for the win-probability chart: the window the line actually lives
+ * in, rather than the whole 0–100 range (#3973).
+ *
+ * ═══ WHY THIS IS NOT JUST `[0, 100]` ANY MORE ═══
+ *
+ * A tennis match page measured on production: 1,588 plotted samples on
+ * `/events/15306813`, of which 98% sit between 21.5% and 27.8%. On a fixed
+ * 0–100 axis that entire market — every move a reader opened the page to see —
+ * is 6.8% of the plot's height, and renders as a horizontal line. Its sibling
+ * `/events/15306225` is the same shape: 98% of 2,000 samples inside 56.5–61.0.
+ *
+ * NOTE THE FILING'S CAUSE WAS WRONG AND THE FIX IS NOT WHAT IT ASKED FOR.
+ * #3973 is titled "a single early outlier stretches the chart to 0–100%".
+ * It does not: `yDomain` was a hardcoded literal, so the outlier stretched
+ * nothing. The flat line is what a fixed 0–100 axis does to any narrow market,
+ * outlier or none. The outlier matters only because it defeats the obvious
+ * repair — a plain min/max domain on `/events/15306813` is [21, 92], which is
+ * as flat as what it replaces. Hence percentiles, not extremes.
+ *
+ * ═══ THE FOUR RULES, AND WHAT EACH ONE IS PAYING FOR ═══
+ *
+ * 1. `p2..p98`, not min/max. 10 of those 1,588 samples (0.63%) are the early
+ *    spike; they are still DRAWN — the caller sets `allowDataOverflow`, which
+ *    fits a clip path confining them to the plot instead of letting them paint
+ *    over the card — but they no longer set the scale for the other 99.4%. At
+ *    0.6% of the series that is ~2px at the left edge, against a whole chart
+ *    flattened today.
+ *
+ * 2. 50 is forced in IF THE SERIES TOUCHES IT, and only then. The chart stamps
+ *    its lead-change diamonds at y=50 and draws a dashed reference line there,
+ *    so a domain that excluded 50 while the line crossed it would clip a marker
+ *    the "Lead changes (N)" chip is still counting. Conversely a market that
+ *    never approaches 50 has no lead changes and no reason to spend axis on it;
+ *    the caller leaves recharts' `ifOverflow="discard"` to drop the reference
+ *    line, because a reference line outside the plot is not a reference.
+ *    The test is raw min/max, not the percentiles: a SINGLE crossing print is
+ *    exactly the one that mints a marker, and p2 would throw it away.
+ *
+ * 3. A minimum span of 20 points. Without it a market that sat at 49–51 all
+ *    week would be magnified into a full-height thriller — the same lie as
+ *    today's flat line, pointing the other way.
+ *
+ * 4. Snap outward to a 5/10/25 grid anchored at 0. Anchoring at zero (rather
+ *    than at the domain's low end) is what keeps 50 on the tick set whenever it
+ *    is in range, which is what #3525 leaned on when it deleted the 50% line's
+ *    own label: "the left axis already prints 50% on this exact line".
+ *
+ * A market that genuinely uses the range is UNCHANGED: 10%–90% snaps to
+ * [0, 100] with ticks 0/25/50/75/100, byte for byte the old axis.
+ */
+export function computeWinProbYAxis(values: number[]): WinProbYAxis {
+  const finite = values.filter((v) => typeof v === "number" && Number.isFinite(v));
+  if (finite.length < WIN_PROB_Y_MIN_SAMPLES) return FULL_WIN_PROB_Y_AXIS;
+
+  const sorted = [...finite].sort((a, b) => a - b);
+  let lo = percentile(sorted, 0.02);
+  let hi = percentile(sorted, 0.98);
+
+  // Rule 2 — decided on the extremes, because one crossing print is one marker.
+  const touchesEven = sorted[0] <= 50 && sorted[sorted.length - 1] >= 50;
+  if (touchesEven) {
+    lo = Math.min(lo, 50);
+    hi = Math.max(hi, 50);
+  }
+
+  // Rule 3.
+  if (hi - lo < WIN_PROB_Y_MIN_SPAN) {
+    const mid = (lo + hi) / 2;
+    lo = mid - WIN_PROB_Y_MIN_SPAN / 2;
+    hi = mid + WIN_PROB_Y_MIN_SPAN / 2;
+  }
+
+  // Rule 4.
+  const step =
+    WIN_PROB_Y_STEPS.find((s) => (hi - lo) / s <= WIN_PROB_Y_MAX_INTERVALS) ??
+    WIN_PROB_Y_STEPS[WIN_PROB_Y_STEPS.length - 1];
+  let snappedLo = Math.max(0, Math.floor(lo / step) * step);
+  let snappedHi = Math.min(100, Math.ceil(hi / step) * step);
+
+  // Never leave 50 welded to the frame: a dashed line and a diamond drawn ON
+  // the top or bottom axis read as chart furniture, not as the even mark.
+  if (touchesEven && snappedHi === 50) snappedHi = Math.min(100, 50 + step);
+  if (touchesEven && snappedLo === 50) snappedLo = Math.max(0, 50 - step);
+
+  // Clamping at 0/100 can eat rule 3's floor back off (a market at 2–4% expands
+  // to [-7, 13] and then to [0, 13]); give the span back at the other end.
+  if (snappedHi - snappedLo < WIN_PROB_Y_MIN_SPAN) {
+    if (snappedLo === 0) snappedHi = Math.min(100, snappedLo + WIN_PROB_Y_MIN_SPAN);
+    else snappedLo = Math.max(0, snappedHi - WIN_PROB_Y_MIN_SPAN);
+  }
+
+  const ticks: number[] = [];
+  for (let t = snappedLo; t <= snappedHi; t += step) ticks.push(t);
+
+  return { domain: [snappedLo, snappedHi], ticks };
+}
+
+// ---------------------------------------------------------------------------
 // Shared chart time range
 // ---------------------------------------------------------------------------
 
