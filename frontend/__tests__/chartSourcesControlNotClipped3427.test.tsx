@@ -55,6 +55,33 @@
 //   * `min-w-0` alone — permits shrinking, does not cause wrapping.
 //
 // So the guard asserts the set, not the members.
+//
+// ═══ AMENDED BY #4083, 2026-09-08 — THE CHIP GROUP IS GONE ═══════════════════
+//
+// The chips in this row were a SECOND copy of the chart's own legend, sitting
+// directly under it, and #4083 deleted them (D91's restore: one source legend,
+// and it is the chart's). So the overflow this file was written for now has no
+// source — there is nothing left in the row to claim 336px beside a 74px
+// button.
+//
+// 🔴 THAT IS NOT A REASON TO DELETE THIS FILE. The bug was never "those seven
+// chips"; it was "a growable child in this row next to a button with no
+// `shrink-0`", and the row is still a flex row with a button in it. A guard
+// retired because today's instance is gone is a guard that has to be
+// rediscovered by the next reader of a 390px screenshot.
+//
+// So the rules split in two:
+//
+//   * UNCONDITIONAL — the button keeps `shrink-0` and the row buys no room by
+//     hiding its own contents. True of the row as it stands today.
+//   * CONDITIONAL — IF a chip group ever returns to this row, it wraps and it
+//     shrinks. Written as an implication because there is nothing to assert it
+//     over right now, and given a POSITIVE CONTROL below so that "the premise
+//     is false" can never be confused with "the rule is satisfied".
+//
+// The conditional half is the weak kind of assertion, so it is paired with
+// #4083's own guard (`chartFooterOneSourceLegend4083.test.tsx`), which asserts
+// the premise stays false. Between them: no chips, and if chips, wrapping ones.
 
 import { readFileSync } from "fs";
 import { join } from "path";
@@ -62,8 +89,8 @@ import { join } from "path";
 const PAGE = join(process.cwd(), "app/events/[id]/page.tsx");
 
 /**
- * The chart footer row: `border-t` + `justify-between`, holding the legend
- * chips and the `Sources` disclosure. Located by the button it contains rather
+ * The chart footer row: the `border-t` strip holding the disclosure (and, until
+ * #4083, the legend chips beside it). Located by the button it contains rather
  * than by a line number, so ordinary edits above it do not silently move the
  * guard onto a different element.
  */
@@ -76,23 +103,29 @@ function chartFooterRow(source: string): string {
   return source.slice(rowStart, button + 400);
 }
 
-describe("#3427 the chart's Sources control survives phone width", () => {
+/** True when the row carries a growable group of legend chips beside the button. */
+function hasChipGroup(row: string): boolean {
+  return /w-4 h-\[2px\]/.test(row) || /\.map\(\s*\(?\s*chip/.test(row);
+}
+
+describe("#3427 the chart's disclosure survives phone width", () => {
   const source = readFileSync(PAGE, "utf8");
   const row = chartFooterRow(source);
 
-  it("lets the legend chips wrap instead of overflowing the card", () => {
+  it("any legend chips in this row wrap instead of overflowing the card", () => {
     // The chips are what is allowed to grow, so they are what must give.
-    expect(row).toContain("flex-wrap");
+    // Vacuous today by #4083's design — the premise is what that guard holds.
+    if (hasChipGroup(row)) expect(row).toContain("flex-wrap");
   });
 
-  it("lets the chip group shrink below its intrinsic width", () => {
+  it("any chip group in this row can shrink below its intrinsic width", () => {
     // A flex item's default `min-width: auto` refuses to go below its content,
     // which is what let the group push the button out even inside a row that
     // had room to redistribute.
-    expect(row).toContain("min-w-0");
+    if (hasChipGroup(row)) expect(row).toContain("min-w-0");
   });
 
-  it("pins the Sources button so it is never the thing that gives", () => {
+  it("pins the disclosure button so it is never the thing that gives", () => {
     const buttonTag = row.slice(row.indexOf("<button"));
     expect(buttonTag).toContain("shrink-0");
   });
@@ -115,10 +148,24 @@ describe("#3427 the chart's Sources control survives phone width", () => {
       '<div className="px-4 sm:px-5 py-2 border-t border-surface-border ' +
       'flex items-center justify-between">' +
       '<div className="flex items-center gap-4">' +
+      '<div className="w-4 h-[2px] rounded" /><span>BainLuck</span>' +
       '<button className="flex items-center gap-1 px-2 py-1 rounded-md">';
 
+    // 🔴 THE PREMISE FIRES. Both conditional rules above are implications, and
+    // an implication whose premise is never satisfiable is a green test that
+    // asserts nothing. This is the row the bug shipped in: chips present, so
+    // both rules engage — and both fail it.
+    expect(hasChipGroup(shipped)).toBe(true);
     expect(shipped).not.toContain("flex-wrap");
     expect(shipped).not.toContain("min-w-0");
     expect(shipped.slice(shipped.indexOf("<button"))).not.toContain("shrink-0");
+  });
+
+  it("POSITIVE CONTROL: the premise is genuinely false on the row today", () => {
+    // The other half. If `hasChipGroup` had a typo it would read false on
+    // everything, the two implications would pass vacuously forever, and the
+    // control above would still be green. So the detector is exercised in both
+    // directions on real inputs, not just on a reconstruction.
+    expect(hasChipGroup(row)).toBe(false);
   });
 });

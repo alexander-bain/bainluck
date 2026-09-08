@@ -75,8 +75,6 @@ import {
 } from "@/lib/otherMarketGroups";
 import { sportVocab, marketMapSectionMounts, totalsMapRenders } from "@/lib/marketMapUtils";
 import { espnTeamLogoByName } from "@/lib/images";
-import { sourceLabel } from "@/lib/sourceColors";
-import { chartSourceChips } from "@/lib/chartSourceChips";
 import {
   useAnalytics,
   usePageTracking,
@@ -576,22 +574,6 @@ export default function EventPage({ params }: EventPageProps) {
     const timer = setTimeout(() => setLoadingTimedOut(true), 12000);
     return () => clearTimeout(timer);
   }, [eventLoading]);
-
-  /**
-   * The win-probability sources the chart actually DREW, as legend chips
-   * (ux/1034 B7). The rules and the measurement live in `chartSourceChips` —
-   * a Next.js page may not carry named exports, so the seam a guard can hold
-   * has to be a module.
-   *
-   * ABOVE THE LOADING/ERROR RETURNS, with every other hook on this page: a
-   * `useMemo` after an early return is a rules-of-hooks error and the ESLint
-   * gate fails the build on it — which is how this landed here rather than
-   * beside the strip it feeds.
-   */
-  const sourceChips = useMemo(
-    () => chartSourceChips(historyData?.win_prob_sources, historyData?.win_prob_history),
-    [historyData]
-  );
 
   if (eventLoading) {
     if (loadingTimedOut) {
@@ -1438,89 +1420,74 @@ export default function EventPage({ params }: EventPageProps) {
           ) : null}
         </div>
 
-        {/* Chart footer: Legend + Sources toggle */}
+        {/* Chart footer: the per-sportsbook table's disclosure */}
         {event.bookmaker_odds && event.bookmaker_odds.length > 0 && (
           <>
-            {/* #3427 — THE `Sources` CONTROL WAS PAINTED OFF THE PHONE EDGE.
-                At 390px this read "… — Kalshi — Polymarket  Sou": the word cut
-                mid-way and the chevron gone entirely, so a TAPPABLE control was
-                not merely ugly but unreachable.
+            {/* ═══ #4083 (D91's RESTORE): ONE SOURCE LEGEND, AND IT IS THE
+                CHART'S OWN ═══
 
-                THERE WAS NO WIDTH CALCULATION TO BE WRONG — that is what the
-                issue guessed and it is not what happened. This is a
-                `justify-between` row whose left child was a nowrap flex group
-                with no `min-w-0` and whose right child had no `shrink-0`, so the
-                chips took their full intrinsic width and the button was pushed
-                past the boundary. Measured at 390px: `px-4` leaves 358, four
-                chips are ≈336 with their gaps, the button ≈74 — over by ≈52,
-                which is exactly the missing "rces ⌄".
+                A second legend used to stand here — seven always-on chips
+                (`BainLuck`, `Sportsbooks`, `Kalshi`, `Polymarket`, `MLB Model`,
+                `Bain Luck Model`, `ESPN`) — directly beneath the chart legend
+                that already names the same seven. Measured on
+                `/events/15306264` at 390px, 2026-09-08T22:40Z, the card read:
 
-                IT BREAKS ON THE BEST-ATTACHED EVENTS, which is why it kept
-                turning up on marquee pages. Four chips means BainLuck +
-                sportsbooks + Kalshi + Polymarket; a two-chip page
-                (`/events/15305579`) rendered the control in full all along. The
-                richer the data, the more certainly the control disappeared.
+                    ——— Bain Luck        + 6 sources ⌄     <- OddsChart's legend
+                    ——— BainLuck   ——— Sportsbooks   ——— Kalshi
+                    ——— Polymarket ——— MLB Model     ——— ESPN     Sources ⌄
+                    ——— Bain Luck Model                          <- this strip
 
-                THE CHIPS WRAP AND THE BUTTON DOES NOT MOVE. Every chip is a
-                legend key for a line drawn above, so none of them may be
-                scrolled out of sight to buy room — `overflow-x-auto` would have
-                traded a hidden button for hidden sources. A second line of
-                chips costs a few pixels of height and keeps both. */}
-            <div className="px-4 sm:px-5 py-2 border-t border-surface-border flex items-center justify-between gap-2">
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 min-w-0">
-                <div className="flex items-center gap-1.5">
-                  <div className="w-4 h-[2px] rounded" style={{ backgroundColor: event.home_team_data?.primary_color || '#10B981' }} />
-                  <span className="text-[10px] text-text-muted">BainLuck</span>
-                </div>
-                {historyData?.bookmaker_history && Object.keys(historyData.bookmaker_history).length > 0 && (
-                  <div className="flex items-center gap-1.5">
-                    <div className="w-4 h-[2px] rounded bg-text-muted/40" />
-                    {/* #2442: through the source registry, so this chip and
-                        the chart legend beside it cannot spell one supplier
-                        two ways. */}
-                    <span className="text-[10px] text-text-muted">{sourceLabel("betting")}</span>
-                  </div>
-                )}
-                {/* ═══ ux/1034 B7: THE LEGEND READS THE PAYLOAD ═══
+                Alex, relayed 2026-09-08 2:05pm PT: *"we had this 99% right for
+                months, where the sourcing was clear without coming across as an
+                endorsement … the default was the BainLuck aggregated line, but
+                you could click in to see the underlying sources."* The click-in
+                is `+ N sources`, ratified as UX-P154 panel 3B — and it revealed
+                nothing, because this strip had already spread every source name
+                across three lines. An always-on roll-call of seven suppliers is
+                the half that reads as endorsement rather than as sourcing.
 
-                    Alex asked this to be VERIFIED, not built: "the legend must
-                    pick [Polymarket] up without a deploy." It could not, and
-                    that is why this changed.
+                THE SETS WERE IDENTICAL, so nothing is lost: `+ 6 sources`
+                counts `OddsChart`'s `resolvedSources`, and this strip was
+                `BainLuck` + `Sportsbooks` + those same six minus the sportsbook
+                aggregate. The surviving legend is also the STRICTER one — it is
+                keyed off the series the chart actually draws, so it honours the
+                stat-model wall-clock suppression that this strip did not, and
+                it links each chip to `/events/{id}/models`.
 
-                    The chip beside this one was
+                IT WAS ALSO WHERE WE SPELLED OUR OWN NAME WRONG. The chip above
+                was a hard-coded `BainLuck` sitting two rows under the chart's
+                `Bain Luck` — the one name we control, and the only one on the
+                card spelled two ways. #2442's rule ("through the source
+                registry, so this chip and the chart legend beside it cannot
+                spell one supplier two ways") was written for suppliers and left
+                the brand out; deleting the duplicate settles it rather than
+                adding a second place to keep in step.
 
-                      Object.keys(win_prob_sources).some(k => k contains 'kalshi')
-                        -> a hard-coded <span>Kalshi</span> in violet
+                ux/1034 B7's rule survives with it. Alex asked that the legend
+                "pick [Polymarket] up without a deploy"; `resolvedSources`
+                iterates `win_prob_history` and resolves every name and colour
+                through `SOURCE_COLORS`, which is the same registry this strip
+                was moved onto — so the payload still drives the list, one layer
+                up.
 
-                    — one hard-coded venue, present or absent. There was no
-                    branch for a second source at all, so no attachment could
-                    ever reach this strip. Measured on `/events/15293830` at
-                    2026-09-03T02:00Z: Polymarket had been attached since
-                    20:26Z the previous evening (145 points in
-                    `win_prob_history`, a full entry in `win_prob_sources`), the
-                    chart above was drawing its line, and the strip still read
-                    "BainLuck · Sportsbooks · Kalshi".
+                WHAT STAYS is the disclosure below, which never was a chart
+                legend: it opens `BookmakerTable`, whose own first column is
+                headed "Sportsbook". It was labelled `Sources`, which is why it
+                read as a second copy of `+ N sources` stacked under the first.
+                Naming the table it opens is what removes the collision.
 
-                    It also disagreed with the chart on COLOUR. `SOURCE_COLORS`
-                    is the one registry (L2-155: "same source, same colour,
-                    everywhere") and it puts Kalshi at #22c55e; this strip drew
-                    it violet, which matched nothing above it. Both facts now
-                    come from the same place the chart's own legend reads. */}
-                {sourceChips.map((chip) => (
-                  <div key={chip.key} className="flex items-center gap-1.5">
-                    <div
-                      className="w-4 h-[2px] rounded"
-                      style={{ backgroundColor: chip.color }}
-                    />
-                    <span className="text-[10px] text-text-muted">{chip.label}</span>
-                  </div>
-                ))}
-              </div>
+                #3427 (the control painted off the phone edge at 390px: "… —
+                Kalshi — Polymarket  Sou") was the chip group claiming its full
+                intrinsic width beside a button with no `shrink-0`. The chip
+                group is gone, so the overflow has no source — but the button
+                keeps `shrink-0`, and its guard now holds the rule that no chip
+                group returns to this row without wrapping. */}
+            <div className="px-4 sm:px-5 py-2 border-t border-surface-border flex items-center justify-end gap-2">
               <button
                 onClick={() => setSourcesOpen(!sourcesOpen)}
                 className="shrink-0 flex items-center gap-1 px-2 py-1 rounded-md hover:bg-surface-elevated transition-colors"
               >
-                <span className="text-[10px] text-text-muted font-medium">Sources</span>
+                <span className="text-[10px] text-text-muted font-medium">Sportsbooks</span>
                 <svg
                   className={`w-3 h-3 text-text-muted transition-transform duration-200 ${sourcesOpen ? 'rotate-180' : ''}`}
                   fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}
