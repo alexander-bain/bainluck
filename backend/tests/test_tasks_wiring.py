@@ -189,6 +189,13 @@ class TestBeatScheduleCompleteness:
         "run-freshness-watchdog",
         "poll-polymarket-hourly",
         "refresh-stale-futures-prices-hourly",
+        # #3879: the served Polymarket long tail — the population that is
+        # neither newly-started (the discovery scan's newest-first window), nor
+        # high-volume/tier-1 (the sweep above), nor register-pinned (the
+        # tournament rail), and is therefore written once at ingest and never
+        # again. Addressed by condition id, the one Gamma read the offset-2000
+        # cap does not bound.
+        "refresh-stale-polymarket-conditions-hourly",
         # #3518/#3569: the per-series re-read of games already linked to a live
         # or imminent event — the only path back for a linked market the frozen
         # main scan never revisits and the two price paths structurally cannot

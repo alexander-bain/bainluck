@@ -391,6 +391,18 @@ ENFORCED_TASKS = frozenset({
     # only some tours landed.
     "tournament_price_refresh",        # terminal + reason + snapshots_written
     "tournament_results_sync",         # terminal + reason + written + errors
+    # #3879: the fourth price rail, the served Polymarket long tail. Enrolled AT
+    # BIRTH (#1884) and in the same change that gives it a beat, because it is
+    # the sibling of the two above and shares their whole failure shape — a dead
+    # refresh rail does not blank a page, it lets every number on it age wearing
+    # whatever freshness word the gates award it. `failed` for a selector that
+    # could not run, every batch's fetch raising, or zero snapshots written from
+    # markets that were due; `no_work` (never GREEN) for "nothing was stale" and
+    # for "everything stale was attempted this window", which are opposite states
+    # and carry different `reason`s. Its summary also carries the population
+    # census — `served_markets` / `stale_markets` — so the rail's own terminal
+    # answers #3879 acceptance 2 rather than an ad-hoc query having to.
+    "polymarket_condition_refresh",    # terminal + reason + snapshots_written + census
     # #2077 (queue 419): the nightly settlement-capture sweep. Enrolled AT BIRTH
     # per #1884, and — per the trap this file spends thirty lines on — in the
     # same change that gives it a beat, because the terminal it needs already
