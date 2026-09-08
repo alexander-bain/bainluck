@@ -386,6 +386,57 @@ enum MarketMapRail {
         }
     }
 
+    /// The caption an **ungraded** rung prints, beside the percentage it is the
+    /// tense of — the other half of ``totalLadderResultLabel(_:)`` above, which
+    /// is what a rung says once it *can* be graded.
+    ///
+    /// #3925. THE PHOTOGRAPH: event 15305795 (`Darderi 0 — Zverev 3`,
+    /// `completed`), `artifacts-native-061/BEFORE-3925-tennis-15305795-s900-master-02d9979b.png`.
+    /// Five rungs of a finished match, every one of them captioned `PRE-GAME`
+    /// over a settlement price:
+    ///
+    /// ```
+    ///    3.5+   PRE-GAME   ▬▬▬▬▬▬▬▬   0%
+    ///    8.5+   PRE-GAME   ▬▬▬▬▬▬▬▬   0%
+    /// ```
+    ///
+    /// 🔴 **THIS IS #3850's DEFECT ON THE PATH #3850 COULD NOT REACH.** #3850
+    /// removed that caption by *replacing* it with a HIT/MISS badge — which only
+    /// happens where the card has a final to grade against. `finalTotal` is nil
+    /// on a settled game whose scoreboard does not count the widget's unit
+    /// (tennis reports SETS), so `result == nil`, the badge never renders, and
+    /// the caption #3850 deleted is still on screen. The two facts this card
+    /// needs are **different**: "the event is over" and "this card can grade" —
+    /// which is why both are parameters and neither is inferred from the other.
+    ///
+    /// 🟠 **THE NUMBER IS NOT WRONG; ONLY THE WORD OVER IT IS.** Measured on
+    /// that specimen: the `3.5` rung's `over_probability` is `0.001`, and the
+    /// match went 3 sets, so `Over 3.5` is genuinely false and `0%` is the
+    /// correct settled price. Nothing here touches the value — this names its
+    /// tense honestly instead of asserting the opposite one.
+    ///
+    /// 🟢 **THE SETTLED WORDS ARE NOT INVENTED HERE.** They are
+    /// ``SettledQuote/prefix``, the string this same event page already prints
+    /// two inches lower in its Additional Markets block ("settled — any
+    /// percentage is a last quote"), and which is held character-for-character
+    /// against `frontend/lib/settledQuote.ts` by the jest parity test. Uppercased
+    /// to match the register of the caption slot, exactly as `projectionBar`
+    /// uppercases its own label — a NEW constant here would be a second
+    /// settlement vocabulary on one screen, which is #1650.
+    ///
+    /// - Parameters:
+    ///   - finalTotal: the value the rungs are graded against, or nil when this
+    ///     card has none. Non-nil ⇒ nil caption: the verdict badge owns the row.
+    ///   - isSettled: whether the event is over. Callers pass the card's OWN
+    ///     lifecycle predicate rather than ``SettledQuote/isSettled(_:)``, so a
+    ///     rung cannot say "last quote" on a status for which the same card
+    ///     still draws its pre-game strip. Widening all of them together is a
+    ///     separate change, not this one.
+    static func spectrumRungCaption(finalTotal: Int?, isSettled: Bool) -> String? {
+        if finalTotal != nil { return nil }
+        return isSettled ? SettledQuote.prefix.uppercased() : "PRE-GAME"
+    }
+
     /// Which slice of a settled game's totals ladder is worth printing.
     ///
     /// #3823. THE PHOTOGRAPH: event 15305475 (Minnesota 1 — Chicago WS 10,

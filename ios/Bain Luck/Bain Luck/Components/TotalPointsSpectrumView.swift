@@ -362,6 +362,49 @@ struct TotalPointsSpectrumView: View {
         }
     }
 
+    /// The type the ungraded rung's caption is set in, as statics so the test
+    /// that sizes the column below cannot measure a different string to the one
+    /// the card draws. `MarketMapLadderTests` had to restate its font inline
+    /// because the view it measures is private, and then needed a second test to
+    /// pin the two together; exposing them removes that whole failure mode.
+    static let captionFont = Font.system(size: 8, weight: .semibold)
+    static let captionTracking: CGFloat = 0.5
+
+    /// How much room the ungraded rung's caption gets.
+    ///
+    /// #3925. **Measured, and here is the thing that measured it:**
+    /// `TotalPointsSpectrumRungCaptionTests.testTheCaptionColumnHoldsBothCaptions`
+    /// lays out every string ``MarketMapRail/spectrumRungCaption(finalTotal:isSettled:)``
+    /// can return, in the type above, and fails if any of them wants more room
+    /// than this. Run against a deliberately tiny constant it reports the answer:
+    ///
+    /// ```
+    /// 'LAST QUOTE' 58.666666666666664 pt, 'PRE-GAME' 49.0 pt
+    /// ```
+    ///
+    /// 🔴 **SO THE STRING SWAP ON ITS OWN WOULD HAVE SHIPPED A TRUNCATED
+    /// CAPTION.** The slot was a bare `.frame(width: 52)` that nothing had ever
+    /// measured. It holds `PRE-GAME` — by 3 pt — which is exactly why it never
+    /// looked like part of this bug; and it is **6.7 pt too small for the word
+    /// that replaces it**. `LAST QUO…`, or the whole caption dropped, would have
+    /// been a worse card than the one #3925 photographed, and no test that
+    /// checks the *string* could have caught it. This is #3552's class to the
+    /// letter — the fix's own truncation, found only because the column was
+    /// measured (`MarketMapLadderLayout.labelColumnWidth`, where
+    /// `Sabalenka +5.5` was eaten out of the ladder next to this one).
+    ///
+    /// 64 is the 58.7 pt measurement plus a deliberate 5.3 pt. The font is a
+    /// fixed `.system(size: 8)` rather than a text style, so it does not scale
+    /// with Dynamic Type and the margin only has to cover a future rewording —
+    /// which `testTheOldFiftyTwoPointColumnCouldNotHaveHeldTheSettledCaption`
+    /// requires to stay above 4 pt.
+    ///
+    /// The 12 pt comes out of the bar, the only flexible element in the row,
+    /// leaving it ~162 pt on the narrowest phone card. The bar is the data and
+    /// the caption is its tense, so `testWideningTheCaptionDidNotCostTheBarItsDominance`
+    /// holds the bar at more than twice this column.
+    static let captionColumnWidth: CGFloat = 64
+
     /// One rung of the ladder.
     ///
     /// #3850. A settled rung and an unsettled rung say different things, and the
@@ -417,12 +460,15 @@ struct TotalPointsSpectrumView: View {
                     .font(.caption.monospacedDigit().weight(.semibold))
                     .frame(width: 50, alignment: .leading)
 
-                if result == nil {
-                    Text("PRE-GAME")
-                        .font(.system(size: 8, weight: .semibold))
-                        .tracking(0.5)
+                if let caption = MarketMapRail.spectrumRungCaption(
+                    finalTotal: actualTotal, isSettled: isDone
+                ) {
+                    Text(caption)
+                        .font(Self.captionFont)
+                        .tracking(Self.captionTracking)
                         .foregroundStyle(.secondary)
-                        .frame(width: 52, alignment: .leading)
+                        .lineLimit(1)
+                        .frame(width: Self.captionColumnWidth, alignment: .leading)
                 }
 
                 GeometryReader { geo in
