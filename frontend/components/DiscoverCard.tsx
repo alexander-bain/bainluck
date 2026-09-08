@@ -185,9 +185,14 @@ function SingleCard({ item, onDismiss, positionIndex, showProbabilityHint, pinFo
             positionIndex={positionIndex}
           />
         ) : item.type === "bundle" ? (
+          // Every non-theme bundle — today that is `kind:"comparison"` — draws
+          // here, and it carries the same served `shared_question` the theme
+          // branch above does. Missing it is what CERT-2291 blocked D1 on: the
+          // sentence was on the wire and the card still printed "N markets".
           <GroupCard
             items={(item.data as FeedBundleData).items}
             title={(item.data as FeedBundleData).title}
+            sharedQuestion={(item.data as FeedBundleData).shared_question}
             positionIndex={positionIndex}
           />
         ) : null}
