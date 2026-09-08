@@ -9,7 +9,20 @@
 //
 // Also dismisses the cookie banner, which otherwise covers real content in every full-page shot.
 import { createRequire } from 'module';
-import { existsSync, readdirSync, unlinkSync } from 'fs';
+import { existsSync, readdirSync } from 'fs';
+// #3968: the decision logic lives in a browser-free module so it can be guarded
+// by `frontend/e2e/contract/lookClickContract.contract.test.js`. Importing THIS
+// file starts Chromium, so nothing in it is reachable from a test — which is why
+// #3932's behaviours shipped verified only by hand.
+import {
+  EXIT_CLICK_FAILED,
+  EXIT_USAGE,
+  clearStaleArtifact,
+  clickFailHint,
+  parseClickSteps,
+  parseScroll,
+  readStep,
+} from './shot-click-contract.mjs';
 
 function findPlaywright() {
   const npx = `${process.env.HOME}/.npm/_npx`;
@@ -29,7 +42,7 @@ if (!url || !out) {
   console.error('  SHOT_CLICKS="step;step"  tap a SEQUENCE before shooting. A step starting');
   console.error('                           with [ . or # is a CSS selector, else exact text.');
   console.error('  SHOT_CLICK_OPTIONAL=1    restore the old best-effort taps (see #3932).');
-  process.exit(2);
+  process.exit(EXIT_USAGE);
 }
 
 // #3932: a tap that did not happen must not produce a pass-looking artifact.
@@ -51,16 +64,16 @@ if (!url || !out) {
 // genuinely wants "tap it if it's there" — it is never the default, because the
 // default is what silently lied.
 const CLICK_OPTIONAL = process.env.SHOT_CLICK_OPTIONAL === '1';
-const envSteps = (process.env.SHOT_CLICKS || '').split(';').map((s) => s.trim()).filter(Boolean);
-if (envSteps.length && clickText) {
-  console.error(`SHOT_CLICKS overrides the positional click target "${clickText}"`);
-}
-const clickSteps = envSteps.length ? envSteps : (clickText ? [clickText] : []);
+const { steps: clickSteps, warning: clickWarning } = parseClickSteps({
+  envClicks: process.env.SHOT_CLICKS,
+  clickText,
+});
+if (clickWarning) console.error(clickWarning);
 
 // A failed run must not leave the PREVIOUS run's screenshot sitting at the path
 // this run's filename claims — that is the same class one level out, and it is
 // how a reader ends up judging a photograph of something else entirely.
-try { if (existsSync(out)) unlinkSync(out); } catch { /* best effort */ }
+clearStaleArtifact(out);
 
 const proxy = process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
 const args = ['--no-sandbox', '--single-process', '--disable-gpu', '--disable-crashpad', '--disable-dev-shm-usage'];
@@ -97,11 +110,7 @@ try {
     // So: `css=` and `text=` say it outright and are never ambiguous. The
     // shorthand stays for the [ . # forms already in the issue. A bare step is
     // text, as the positional `clickText` always was.
-    let isSelector;
-    let sel = step;
-    if (step.startsWith('css=')) { isSelector = true; sel = step.slice(4); }
-    else if (step.startsWith('text=')) { isSelector = false; sel = step.slice(5); }
-    else { isSelector = /^[[.#]/.test(step); }
+    const { isSelector, sel } = readStep(step);
     // `.filter({ visible: true })` BEFORE `.first()`, and it is load-bearing.
     //
     // The old line was a bare `.first()`, which takes the first node in DOM
@@ -127,15 +136,12 @@ try {
       // Name the reading that failed, not just the failure. "no exact-text node
       // reads `a[href=…]`" is a different problem from "the button is covered",
       // and the caller cannot tell them apart from a bare timeout.
-      const hint = isSelector
-        ? ''
-        : ' — read as exact TEXT; if you meant a CSS selector, prefix it `css=`';
-      console.error(`CLICKFAIL ${step} :: ${why}${hint}`);
+      console.error(`CLICKFAIL ${step} :: ${why}${clickFailHint(isSelector)}`);
       if (!CLICK_OPTIONAL) {
         // Before the screenshot on purpose: exiting here is what guarantees no
         // artifact exists to be mistaken for a pass.
         await browser.close();
-        process.exit(3);
+        process.exit(EXIT_CLICK_FAILED);
       }
     }
     // Only on the success path. A `CLICKED` line printed after a CLICKFAIL is
@@ -160,20 +166,20 @@ try {
   // way, because knowing a page is 53 screens tall is itself a finding.
   const docHeight = await page.evaluate(() => document.body.scrollHeight);
   const scroll = process.env.SHOT_SCROLL;
-  if (scroll === undefined || scroll === '') {
+  const shot = parseScroll(scroll);
+  if (shot.mode === 'error') {
+    console.error(shot.message);
+    process.exit(EXIT_USAGE);
+  }
+  if (shot.mode === 'fullPage') {
     await page.screenshot({ path: out, fullPage: true });
   } else {
-    const y = scroll === 'top' ? 0 : parseInt(scroll, 10);
-    if (Number.isNaN(y)) {
-      console.error(`SHOT_SCROLL must be a number of pixels or "top", got "${scroll}"`);
-      process.exit(2);
-    }
-    await page.evaluate((to) => window.scrollTo(0, to), y);
+    await page.evaluate((to) => window.scrollTo(0, to), shot.y);
     // Let lazy rails and any scroll-triggered animation settle before the shot.
     await page.waitForTimeout(2500);
     await page.screenshot({ path: out });
   }
-  console.error(`docHeight=${docHeight} mode=${scroll === undefined || scroll === '' ? 'fullPage' : `viewport@${scroll}`}`);
+  console.error(`docHeight=${docHeight} mode=${shot.mode === 'fullPage' ? 'fullPage' : `viewport@${scroll}`}`);
   ok = true;
   console.log(out);
 } catch (e) {
