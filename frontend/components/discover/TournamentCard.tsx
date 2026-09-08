@@ -6,7 +6,7 @@ import { tournamentEventKey, eventPath } from "@/lib/eventKey";
 import { formatTournamentTimingLabel } from "@/lib/gameTimeLabel";
 import { toTitleCaseAcronymSafe } from "@/lib/titleCase";
 import type { FeedTournamentData } from "@/lib/types";
-import { AnimatedProbability, DismissBtn, ActionBar, MovementBadge } from "./shared";
+import { AnimatedProbability, DismissBtn, ActionBar, MovementBadge, dismissCornerBadge } from "./shared";
 
 interface TournamentCardProps {
   data: FeedTournamentData;
@@ -70,8 +70,10 @@ export function TournamentCard({ data, liked, setLiked, onDismiss, onDetailClick
       <DismissBtn onDismiss={onDismiss} />
       <div className="relative h-44 flex flex-col items-center justify-center" style={{ background: "linear-gradient(135deg, #14532d, #166534)" }}>
         <div className="absolute top-3 left-3 bg-lime-600/15 text-lime-700 text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full">⛳ Golf</div>
+        {/* #3777: this pill and `DismissBtn` both claimed `top-3 right-3`, and
+            the button wins on `z-10`. Same 48px line as `TrendBadge`. */}
         {whatHit && (
-          <div className="absolute top-3 right-3 bg-white/20 text-white text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full">🏁 Final</div>
+          <div className={`absolute top-3 ${dismissCornerBadge(onDismiss)} bg-white/20 text-white text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full`}>🏁 Final</div>
         )}
         {leader && (
           <>

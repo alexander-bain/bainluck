@@ -4,7 +4,7 @@ import Link from "next/link";
 import type { FeedItem, FeedFuturesData } from "@/lib/types";
 import { getCat } from "./constants";
 import { feedContextSnippet, feedExpandedContext, resolvesLabel } from "./utils";
-import { DismissBtn, TrendBadge, ExpandableContextText, ActionBar, SignalBars, ForYouChip } from "./shared";
+import { DismissBtn, TrendBadge, ExpandableContextText, ActionBar, SignalBars, ForYouChip, dismissCornerPad } from "./shared";
 import { forYouCue } from "@/lib/discover/forYouCue";
 import type { ActionBarProps, CardActionCallbacks } from "./types";
 import { buildDiscoverShareUrl, formatShareProbability } from "@/lib/share";
@@ -65,8 +65,10 @@ export function ComparisonCard({
       {trending && <TrendBadge />}
 
       <div className="p-4">
-        {/* Header */}
-        <div className="flex items-center gap-1.5 mb-1">
+        {/* Header — #3777: `dismissCornerPad` keeps the resolution date out
+            from under the dismiss button, the same collision measured on the
+            heatmap and leaderboard cards. */}
+        <div className={`flex items-center gap-1.5 mb-1 ${dismissCornerPad(onDismiss)}`}>
           <span className="text-[10px] font-semibold uppercase tracking-[0.04em] text-text-muted">
             {catStyle.emoji} {category}
           </span>
