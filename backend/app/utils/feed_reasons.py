@@ -437,14 +437,21 @@ def generate_event_reason(
                 pct = round(winner_opening_prob * 100)
                 return f"Won as {pct}% underdog"
             return "Upset result"
-        if "major_prob_swing" in reasons:
-            if opening_home_prob is not None and home_probability is not None:
-                change = home_probability - opening_home_prob
-                direction_team = home_team if change > 0 else away_team
-                pct_change = abs(round(change * 100))
-                return f"{direction_team} odds shifted {pct_change}% during the game"
-            return ""
-        # Non-upset finished: card UI (score + opening odds) tells the story
+        # #4094 — NO INTRA-GAME MOVEMENT SENTENCE ON A FINAL CARD.
+        #
+        # This block used to answer `major_prob_swing` with "{team} odds shifted
+        # {n}% during the game" before it reached the return below. That sentence
+        # is the scoreboard restated: a game opens near 50/50 and ends at 100/0,
+        # so a finished game has a major swing by construction and the number is
+        # guaranteed, not newsworthy. Served on production 2026-09-08 as "San
+        # Francisco Giants odds shifted 27% during the game" over a 4-5 final the
+        # same card already printed.
+        #
+        # The upset branch above is the settled sentence that DOES earn its line,
+        # because it reads the result against the pre-game number rather than
+        # against the final one. Everything else falls through to the card UI,
+        # which already says it three ways: the Final chip, the score with the
+        # winner bolded, and each side's dimmed pre-game percentage.
         return ""
 
     # ── Live events ──────────────────────────────────────────────

@@ -279,8 +279,48 @@ struct EventCardView: View {
 
     // MARK: - Footer
 
+    /// Whether `EventCardView`'s footer row has anything to put in it.
+    ///
+    /// #4094 — `footer` is an unconditional child of the body's
+    /// `VStack(spacing: 8)`, and an `HStack` holding only a `Spacer()` is not an
+    /// `EmptyView`: it still takes its turn in the stack and still costs the 8pt
+    /// of spacing above it. That state was already reachable — a finished card
+    /// whose `reason` came back empty — but #4094 stops the backend captioning
+    /// settled games with "odds shifted N% during the game", which turns the
+    /// empty footer from a rare card into most of Just Happened. A strip of dead
+    /// space under every settled card is the wrong way to spend that fix.
+    ///
+    /// Lives out here as a pure function rather than as a `private var` on the
+    /// view because its whole job is to agree with the two `if` branches inside
+    /// `footerRow`, and a duplicated condition that nothing can test is exactly
+    /// the kind that drifts. The guard test pins both directions.
+    enum EventCardFooter {
+        static func hasContent(
+            reason: String?,
+            isLive: Bool,
+            awayOpening: Double?,
+            homeOpening: Double?
+        ) -> Bool {
+            if let reason, !reason.isEmpty { return true }
+            // Mirrors `footerRow`'s "Opened X/Y" branch: live, and BOTH sides
+            // priced. One side alone renders nothing, so it is not content.
+            return isLive && awayOpening != nil && homeOpening != nil
+        }
+    }
+
     @ViewBuilder
     private var footer: some View {
+        if EventCardFooter.hasContent(
+            reason: reason,
+            isLive: isLive,
+            awayOpening: event.openingOdds?.awayProbability,
+            homeOpening: event.openingOdds?.homeProbability
+        ) {
+            footerRow
+        }
+    }
+
+    private var footerRow: some View {
         HStack(spacing: 6) {
             if let reason, !reason.isEmpty {
                 reasonBadge(reason)

@@ -883,8 +883,22 @@ def get_highlight_label(result: HighlightResult) -> Optional[str]:
     if flags.is_playoff:
         return "Playoff game"
 
-    # Pre-game: significant line movement is a real trend worth labeling
-    if flags.probability_swing == "major":
+    # Pre-game: significant line movement is a real trend worth labeling.
+    #
+    # #4094 — "Line moving" is present progressive and pre-game by construction,
+    # and this branch carried no settled guard while every branch above it is
+    # gated on `flags.is_live`. So a finished game fell straight through to it —
+    # and a finished game has a major swing BY CONSTRUCTION, because it opens
+    # near 50/50 and ends at 100/0. The swing is the scoreboard restated, not a
+    # trend. Measured on production 2026-09-08: two of the three finished MLB
+    # cards on the feed (Cardinals @ Giants, Reds @ Dodgers) wore it over a game
+    # that was already final.
+    #
+    # `hours_since_finish` is the settled test, not `flags.is_recently_finished`:
+    # it is set unconditionally for every completed/closed row (see the finish
+    # cascade above), whereas `is_recently_finished` is a 24h ELIGIBILITY window
+    # that goes False again on an older game which is still just as final.
+    if flags.probability_swing == "major" and result.hours_since_finish is None:
         return "Line moving"
 
     return None
