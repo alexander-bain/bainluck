@@ -635,6 +635,11 @@ export default function EventPage({ params }: EventPageProps) {
   }
 
   // Resolve display probability based on game status (see eventKeyStats.ts)
+  //
+  // #4015 — `isSuspended` (the page's one `hasNoReportedResult` answer, computed
+  // above) decides the hero for a match that went dark: it reads the chart's last
+  // point rather than a `current_odds` the poller stopped rewriting hours earlier.
+  // Without it this page printed a 21-hour-old 90% directly above its own chart's 1%.
   const {
     homeProb,
     awayProb,
@@ -647,7 +652,14 @@ export default function EventPage({ params }: EventPageProps) {
     awayPct,
     openingHomePct,
     openingAwayPct,
-  } = resolveProbability(event, historyData, lastChartPoint, isLive, isFinished);
+  } = resolveProbability(
+    event,
+    historyData,
+    lastChartPoint,
+    isLive,
+    isFinished,
+    isSuspended,
+  );
 
   // #490: hero confidence signal (1-3 bars), computed client-side from the win-
   // prob sources already on the event + whether the line moved off open. Mirrors

@@ -69,9 +69,17 @@ function surfaces(
   historyData: EventHistoryResponse,
   isLive: boolean,
   isFinished: boolean,
+  noReportedResult: boolean = false,
 ) {
   const lastChartPoint = computeLastChartPoint(historyData, null, null);
-  const hero = resolveProbability(event, historyData, lastChartPoint, isLive, isFinished);
+  const hero = resolveProbability(
+    event,
+    historyData,
+    lastChartPoint,
+    isLive,
+    isFinished,
+    noReportedResult,
+  );
 
   // The chart's last plotted home value (0–100 axis): the blend when present,
   // else the same at-rest home the readout resolves to (chart's homeDelta path).
@@ -408,5 +416,108 @@ describe("UX-P003: card == hero == chart on a live game", () => {
     );
     // Finished still answers "what was expected pregame" (ruling #2 language).
     expect(finished.hero).toBe(35);
+  });
+});
+
+describe("#4015 — a match that went dark does not print a hero older than its own chart", () => {
+  /**
+   * Production payload, /events/15300276 (Jodar v Bu), read 2026-09-08.
+   *
+   * The two numbers come from THE SAME SOURCE, 21 hours apart. `current_odds`
+   * is the frozen `win_probability_sources` blob the live poller stopped
+   * rewriting when the match went dark; the Kalshi candlestick backfill went on
+   * extending the SERIES behind the chart for another 21 hours.
+   *
+   *   win_probability_sources.kalshi  0.895  @ 2026-09-02T00:00:54Z
+   *   win_prob_history.kalshi (last)  0.01   @ 2026-09-02T21:03:00Z
+   *
+   * `aggregate_line` is null on this payload — there is no blend line to hide
+   * behind, which is exactly why the hero fell through to `current_odds`.
+   */
+  const darkMatch = () =>
+    evt({
+      status: "suspended",
+      commence_time: "2026-09-01T00:00:00Z",
+      hero_probability: 0.895,
+      hero_probability_away: 0.105,
+      hero_probability_source: "blend",
+      current_odds: {
+        home_probability: 0.895,
+        away_probability: 0.105,
+        home_rendered_percent: 90,
+        away_rendered_percent: 10,
+        source: "aggregate",
+        bookmaker_count: 0,
+      } as never,
+    });
+
+  const darkHistory = () =>
+    hist({
+      aggregate_line: null as never,
+      win_prob_history: {
+        kalshi: [
+          { timestamp: "2026-09-01T15:56:00Z", home_probability: 0.465 },
+          { timestamp: "2026-09-02T20:55:00Z", home_probability: 0.015 },
+          { timestamp: "2026-09-02T21:03:00Z", home_probability: 0.01 },
+        ],
+      } as never,
+      win_prob_sources: { kalshi: { display_name: "Kalshi" } } as never,
+    });
+
+  test("the hero reads the chart's last point, not the frozen blob above it", () => {
+    const s = surfaces(darkMatch(), darkHistory(), false, false, true);
+
+    // The whole ship: ONE number on the page.
+    expect(new Set([s.hero, s.atRest, s.chartPlot, s.tooltip, s.scrub])).toEqual(
+      new Set([1]),
+    );
+    // And the pair is oriented — 1/99, not 1/1.
+    expect(s.heroAway).toBe(99);
+  });
+
+  test("it is the 90 that goes away — the pre-fix reading is gone, not merely joined", () => {
+    // A remedy-as-regression guard: asserting only `hero === 1` would also pass
+    // if the hero printed both. 90 was the defect; it must not survive anywhere
+    // in the resolved pair.
+    const s = surfaces(darkMatch(), darkHistory(), false, false, true);
+    expect(s.hero).not.toBe(90);
+    expect(s.heroAway).not.toBe(10);
+  });
+
+  test("the label attributes the source rather than asserting a verdict", () => {
+    const lastChartPoint = computeLastChartPoint(darkHistory(), null, null);
+    const hero = resolveProbability(
+      darkMatch(),
+      darkHistory(),
+      lastChartPoint,
+      false,
+      false,
+      true,
+    );
+    // "Kalshi", never "Live · …" — the match is not being played, and never
+    // "Aggregate", which is what it wrongly said while reading the frozen blob.
+    expect(hero.probSourceLabel).toBe("Kalshi");
+    expect(hero.probSourceLabel).not.toMatch(/Live/);
+  });
+
+  test("THE CONTROL: the same payload without the flag still shows the stale 90", () => {
+    // Pins the fix to the flag rather than to something else that changed in
+    // this file. If this ever reads 1, the new branch is firing for events it
+    // was never scoped to and the blast radius is wider than the ship.
+    const s = surfaces(darkMatch(), darkHistory(), false, false, false);
+    expect(s.hero).toBe(90);
+  });
+
+  test("with no usable chart point, a dark match keeps its current_odds hero", () => {
+    // The branch is gated on there BEING a series to fall back to. Blanking the
+    // hero for want of one would be a bigger regression than the staleness.
+    const s = surfaces(
+      darkMatch(),
+      hist({ aggregate_line: null as never, win_prob_history: {} as never }),
+      false,
+      false,
+      true,
+    );
+    expect(s.hero).toBe(90);
   });
 });
