@@ -3,7 +3,8 @@
 The defect: `poll_all_odds` is published every 30 s and takes ~118 s, so every
 tick added a copy. Production, 2026-09-05: `realtime` 282 → 349 deep with 85
 copies of one task queued against `--concurrency=4`, and
-`prewarm_live_feed_shapes` (40 s beat, `expires=40`) silently discarded on
+`prewarm_live_feed_shapes` (a 40 s beat then, 30 s since LAT-P182 (#3827); `expires` is
+one period either way) silently discarded on
 arrival for 131 minutes — no start, no failure, `health: healthy`, front page
 13.3 s cold.
 

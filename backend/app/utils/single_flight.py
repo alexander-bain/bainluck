@@ -15,10 +15,10 @@ p95 while actually holding 0.30 slots, because it is a fast task with a long
 tail.)
 
 The casualty was not odds polling — it was everything else sharing the queue.
-`prewarm_live_feed_shapes`, the 40 s rail that is the only thing that can hold a
-live-containing feed shape warm, carries `expires=40`, so once the queue's
-service latency passed 40 s **every one of its messages was discarded on
-arrival** — no start, no failure, `health: healthy`, and a front page costing
+`prewarm_live_feed_shapes`, the republish rail that is the only thing that can
+hold a live-containing feed shape warm, ran a 40 s period at the time and carries
+`expires` of exactly one period, so once the queue's service latency passed that
+period **every one of its messages was discarded on arrival** — no start, no failure, `health: healthy`, and a front page costing
 13.3 s cold instead of 0.2 s. (See `docs/gotchas-reference.md` and #3251: never
 "fix" that by raising `expires`; the bound is correct. Fix the producers.)
 

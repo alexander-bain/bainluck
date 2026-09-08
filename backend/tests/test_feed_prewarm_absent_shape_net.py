@@ -128,7 +128,7 @@ def test_a_first_paint_shape_with_no_stale_mirror_is_rebuilt():
 def test_a_healthy_rail_builds_nothing_and_the_net_stays_free():
     """The state on every ordinary pass, and it must cost no build at all.
 
-    `#2236`'s affordability argument for a 40s beat is that the idle pass is one
+    `#2236`'s affordability argument for a sub-minute beat is that the idle pass is one
     `HGETALL` and one `SETEX`. LAT-P112 may add reads to that and must not add
     work: with every mirror present the net's answer is the empty set and the
     pass still reports `no_live_shapes`.
@@ -197,7 +197,7 @@ def test_the_probe_reads_the_stale_mirror_and_never_the_head():
     for key in probed:
         assert key.endswith(":stale"), (
             f"probed {key!r} — reading the head makes this pass rebuild every "
-            "shape every 40s, which is the cost #2236's docstring refused"
+            "shape every republish period, which is the cost #2236's docstring refused"
         )
 
 
@@ -259,8 +259,8 @@ def test_the_net_changes_neither_term_of_the_2236_invariant():
     Stated as a test rather than as a comment because the tempting fix for "the
     net ran out of budget" is to widen `FEED_LIVE_REPUBLISH_BUDGET_S`, and every
     second of that widening comes out of the ceiling's margin — which since
-    LAT-P182 is a NAMED reserve for beat lateness
-    (`FEED_LIVE_REPUBLISH_MIN_HEADROOM_S`) and not spare wall. Before LAT-P182
+    LAT-P182 (#3827) is a NAMED reserve for beat lateness
+    (`FEED_LIVE_REPUBLISH_MIN_HEADROOM_S`) and not spare wall. Before LAT-P182 (#3827)
     there was no margin at all to take it from.
 
     🔴 **#3233 RE-ANCHORED THIS ON THE INTENT.** It used to match the source text
@@ -278,7 +278,7 @@ def test_the_net_changes_neither_term_of_the_2236_invariant():
         live_republish_target_headroom_s,
     )
 
-    # LAT-P182: the bound is the RESERVE, not zero. `>= 0` was the assertion that
+    # LAT-P182 (#3827): the bound is the RESERVE, not zero. `>= 0` was the assertion that
     # let 40 + 20 == 60 stand, and a weaker restatement of the rule sitting beside
     # the strict one is how the weak form gets believed.
     assert live_republish_headroom_s() >= FEED_LIVE_REPUBLISH_MIN_HEADROOM_S
