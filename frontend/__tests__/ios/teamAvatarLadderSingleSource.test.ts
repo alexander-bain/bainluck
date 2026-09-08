@@ -54,18 +54,17 @@ const REIMPLEMENTATION_TELLS: Array<[string, RegExp]> = [
 /**
  * Lines allowed to look like a short ladder, each with a stated reason — so
  * adding one is a decision rather than a silent widening.
+ *
+ * **EMPTY since #3988 shipped, and that is the point of recording it.** This map
+ * held exactly one entry: `OddsChartView.swift`'s `placeholder: { EmptyView() }`,
+ * parked because the chart gutter's 14pt crest is decoration beside a label that
+ * always renders, so its symptom was milder than the Discover hero's and it was
+ * filed as its own ship rather than widened into #2977. That ship landed — the
+ * gutter climbs the shared ladder and tells `phase.error` from loading — so the
+ * exception is gone rather than inherited. An allowlist that outlives its reason
+ * is how the next surface gets in for free.
  */
-const ALLOWED = new Map<string, Array<[string, string]>>([
-  [
-    join(IOS_ROOT, "Components/OddsChartView.swift"),
-    [
-      [
-        "placeholder: { EmptyView() }",
-        "#3988 — the chart gutter's 14pt crest is decoration beside a label that always renders, so its symptom is milder and it is filed as its own ship rather than widened into #2977",
-      ],
-    ],
-  ],
-]);
+const ALLOWED = new Map<string, Array<[string, string]>>([]);
 
 // A path typo would otherwise read as a clean pass — the unrunnable-check
 // failure mode this whole file exists to stop.
