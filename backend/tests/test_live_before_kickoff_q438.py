@@ -385,20 +385,32 @@ class TestThePositionAgreesWithTheLabel:
 
     NOW = datetime(2026, 9, 5, 18, 0, tzinfo=timezone.utc)
 
-    #: id, status, commence — the production specimen plus its two neighbours.
+    #: id, status, commence, home_score — the production specimen plus its two
+    #: neighbours. The score is what makes row 3 "genuinely being played" rather
+    #: than merely labelled so: since #3946 the clause asks whether anything has
+    #: REPORTED on the row, and a fixture with every signal silent is demoted.
+    #: Row 3 carried no score in this fixture's first version, which made the
+    #: sentence it is named for — "a genuinely live game still leads it" — true
+    #: of a row no source had ever spoken about.
     ROWS = (
-        (1, "live", "2026-10-06 18:00:00.000000"),      # 14969919, a month out
-        (2, "scheduled", "2026-09-05 23:30:00.000000"),  # kicks off tonight
-        (3, "live", "2026-09-05 17:00:00.000000"),      # genuinely being played
+        (1, "live", "2026-10-06 18:00:00.000000", None),  # 14969919, a month out
+        (2, "scheduled", "2026-09-05 23:30:00.000000", None),  # kicks off tonight
+        (3, "live", "2026-09-05 17:00:00.000000", 1),  # genuinely being played
     )
 
     def _order_under(self, clause, rows=None):
         """Execute the clause against a real `events` table and return the ids.
 
         The models' JSONB columns cannot be created under SQLite, so the table
-        is the three columns this ORDER BY actually touches. The EXPRESSION is
+        is only the columns this ORDER BY actually touches. The EXPRESSION is
         the shipping one — it renders `events.status` / `events.commence_time`
         by name, so it binds to this table unchanged.
+
+        #3946 widened that set: the clause now also reads the four columns that
+        say whether a source has reported on the row. They are created here for
+        the same reason the other three are — so the real expression binds — and
+        a row supplies its `home_score`; the other three stay NULL, which is the
+        production shape (`tennis_atp` populates none of them, ever).
         """
         from sqlalchemy import (
             Column, DateTime, Integer, MetaData, String, Table,
@@ -413,12 +425,18 @@ class TestThePositionAgreesWithTheLabel:
             Column("id", Integer, primary_key=True),
             Column("status", String),
             Column("commence_time", DateTime(timezone=True)),
+            Column("home_score", Integer),
+            Column("away_score", Integer),
+            Column("period", String),
+            Column("espn_id", String),
+            Column("statpal_fixture_id", String),
         )
         engine = create_engine("sqlite://")
         md.create_all(engine)
         with engine.begin() as conn:
             conn.exec_driver_sql(
-                "INSERT INTO events (id,status,commence_time) VALUES (?,?,?)",
+                "INSERT INTO events (id,status,commence_time,home_score) "
+                "VALUES (?,?,?,?)",
                 list(self.ROWS if rows is None else rows),
             )
             stmt = select(Event.id).order_by(clause, Event.commence_time.asc())
@@ -446,12 +464,13 @@ class TestThePositionAgreesWithTheLabel:
         assert self._order_under(raw) == [3, 1, 2]
 
     #: The four classes CERT-1924 requires the three-way clause to separate.
-    #: id, status, commence, and the status a public surface must PRINT.
+    #: id, status, commence, home_score, and the status a public surface must
+    #: PRINT. The score is on row 10 for the reason `ROWS` gives.
     FOUR_CLASSES = (
-        (10, "live", "2026-09-05 17:00:00.000000", "live"),       # being played
-        (11, "scheduled", "2026-09-05 23:30:00.000000", "scheduled"),  # tonight
-        (12, "live", "2026-09-11 18:00:00.000000", "scheduled"),  # premature
-        (13, "completed", "2026-09-04 23:30:00.000000", "completed"),  # finished
+        (10, "live", "2026-09-05 17:00:00.000000", 1, "live"),  # being played
+        (11, "scheduled", "2026-09-05 23:30:00.000000", None, "scheduled"),  # tonight
+        (12, "live", "2026-09-11 18:00:00.000000", None, "scheduled"),  # premature
+        (13, "completed", "2026-09-04 23:30:00.000000", None, "completed"),  # done
     )
 
     def test_the_futures_week_list_sorts_the_four_classes_correctly(self):
@@ -460,7 +479,7 @@ class TestThePositionAgreesWithTheLabel:
         them — then completed last."""
         from app.utils.event_rails import live_scheduled_settled_order
 
-        rows = [(i, s, c) for i, s, c, _ in self.FOUR_CLASSES]
+        rows = [(i, s, c, h) for i, s, c, h, _ in self.FOUR_CLASSES]
         assert self._order_under(
             live_scheduled_settled_order(self.NOW), rows=rows
         ) == [10, 11, 12, 13]
@@ -477,7 +496,7 @@ class TestThePositionAgreesWithTheLabel:
             (Event.status == "scheduled", 1),
             else_=2,
         )
-        rows = [(i, s, c) for i, s, c, _ in self.FOUR_CLASSES]
+        rows = [(i, s, c, h) for i, s, c, h, _ in self.FOUR_CLASSES]
         assert self._order_under(raw, rows=rows) == [10, 12, 11, 13]
 
     def test_the_position_matches_the_printed_status_for_every_class(self):
@@ -491,13 +510,15 @@ class TestThePositionAgreesWithTheLabel:
                 status, datetime.fromisoformat(commence).replace(tzinfo=timezone.utc),
                 self.NOW,
             )
-            for row_id, status, commence, _ in self.FOUR_CLASSES
+            for row_id, status, commence, _, _expected in self.FOUR_CLASSES
         }
-        assert served == {i: expected for i, _, _, expected in self.FOUR_CLASSES}
+        assert served == {
+            i: expected for i, _, _, _, expected in self.FOUR_CLASSES
+        }
 
         order = self._order_under(
             live_scheduled_settled_order(self.NOW),
-            rows=[(i, s, c) for i, s, c, _ in self.FOUR_CLASSES],
+            rows=[(i, s, c, h) for i, s, c, h, _ in self.FOUR_CLASSES],
         )
         # Every row printed `scheduled` sits in one contiguous block, in date
         # order, after the live one and before the completed one.
