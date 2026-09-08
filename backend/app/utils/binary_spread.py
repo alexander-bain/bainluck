@@ -32,6 +32,63 @@ logger = logging.getLogger(__name__)
 PROJECTION_SOURCE_ORDER: tuple[str, ...] = ("kalshi", "polymarket", "sportsbook")
 
 
+# Two bracketing rungs whose thresholds differ by less than this sit on the SAME
+# line — they can only come from two ladders pooled onto one event, never from
+# one ladder's own rungs.
+_SAME_LINE_EPSILON = 1e-9
+
+# Below this the two bracketing prices are the same price (the module's existing
+# notion of a degenerate straddle, kept as one constant so the interpolation and
+# the confidence rule cannot drift apart).
+_DEGENERATE_PROB_RANGE = 0.001
+
+# What a same-line DISAGREEMENT scores. The width-based formula reads a
+# zero-width bracket as a perfect one, so the least informative input available
+# earned the maximum score (#4035). The value is deliberately below the score
+# any single-point-gap ladder can reach, so a contradiction can never outrank a
+# real bracket — the arm survives to be served, it just stops being preferred.
+_CONTRADICTION_CONFIDENCE = 0.3
+
+
+def _threshold_order(contract: dict) -> tuple[float, float]:
+    """Deterministic sort key for a ladder's rungs: threshold, then price desc.
+
+    Sorting on threshold alone leaves rungs that share a threshold in whatever
+    order the rows arrived in, and the crossover walk takes the FIRST straddling
+    pair — so one pool answered two different ways depending on row order, which
+    no query guarantees (#4035). The production pool at 10.5 read
+    ``total=10.5 confidence=1.0`` or ``total=11.1 confidence=0.9`` from the same
+    three rows. Descending price within a threshold also keeps the walk's
+    "probability falls as the threshold rises" assumption true across the tie.
+    """
+    return (contract["threshold"], -contract["probability"])
+
+
+def _bracket_confidence(bracket_width: float, prob_range: float, divisor: float) -> float:
+    """Score how much the bracketing pair tells us, 0-1.
+
+    Normally that is how tightly the pair sits around the crossover: the narrower
+    the bracket, the better the interpolation is pinned.
+
+    The exception is a bracket of zero width, which cannot come from one ladder.
+    Two rungs on the SAME line come from two ladders pooled onto one event, and
+    then the width says nothing at all:
+
+    * priced the same (``prob_range`` below :data:`_DEGENERATE_PROB_RANGE`) the
+      ladders AGREE the line is a coin flip — genuinely the best evidence there
+      is, and it keeps the maximum score;
+    * priced apart they CONTRADICT each other, which the width-based formula
+      scored 1.0 — the maximum — for being maximally uninformative (#4035).
+
+    🔴 This is a *scoring* rule, not a refusal. #3965 made this module refuse to
+    invent a value it cannot locate; here the value IS located (both rungs name
+    one line), so the arm is still served and only its standing changes.
+    """
+    if bracket_width < _SAME_LINE_EPSILON and prob_range >= _DEGENERATE_PROB_RANGE:
+        return _CONTRADICTION_CONFIDENCE
+    return max(0.0, min(1.0, 1.0 - (bracket_width / divisor)))
+
+
 def _projection_source_rank(
     implied: dict,
     source: str,
@@ -178,7 +235,7 @@ def binary_to_implied_spread(
         return None
 
     # Sort by threshold ascending
-    sorted_contracts = sorted(contracts, key=lambda c: c["threshold"])
+    sorted_contracts = sorted(contracts, key=_threshold_order)
 
     # Find two adjacent contracts that straddle the crossover
     for i in range(len(sorted_contracts) - 1):
@@ -193,7 +250,7 @@ def binary_to_implied_spread(
         if low_prob >= crossover >= high_prob:
             # Linear interpolation
             prob_range = low_prob - high_prob
-            if prob_range < 0.001:
+            if prob_range < _DEGENERATE_PROB_RANGE:
                 # Degenerate case: both ~50%
                 spread = (low["threshold"] + high["threshold"]) / 2
             else:
@@ -202,7 +259,7 @@ def binary_to_implied_spread(
 
             # Confidence based on how tight the bracket is
             bracket_width = high["threshold"] - low["threshold"]
-            confidence = max(0.0, min(1.0, 1.0 - (bracket_width / 20.0)))
+            confidence = _bracket_confidence(bracket_width, prob_range, 20.0)
 
             return ImpliedSpread(
                 spread=-round(spread, 1),  # Negative = favorite
@@ -267,7 +324,7 @@ def binary_to_implied_total(
     if not contracts or len(contracts) < 2:
         return None
 
-    sorted_contracts = sorted(contracts, key=lambda c: c["threshold"])
+    sorted_contracts = sorted(contracts, key=_threshold_order)
 
     for i in range(len(sorted_contracts) - 1):
         low = sorted_contracts[i]
@@ -278,14 +335,14 @@ def binary_to_implied_total(
 
         if low_prob >= crossover >= high_prob:
             prob_range = low_prob - high_prob
-            if prob_range < 0.001:
+            if prob_range < _DEGENERATE_PROB_RANGE:
                 total = (low["threshold"] + high["threshold"]) / 2
             else:
                 fraction = (low_prob - crossover) / prob_range
                 total = low["threshold"] + fraction * (high["threshold"] - low["threshold"])
 
             bracket_width = high["threshold"] - low["threshold"]
-            confidence = max(0.0, min(1.0, 1.0 - (bracket_width / 10.0)))
+            confidence = _bracket_confidence(bracket_width, prob_range, 10.0)
 
             return ImpliedTotal(
                 total=round(total, 1),
