@@ -23,9 +23,52 @@ Example:
 import re
 import logging
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Sequence
 
 logger = logging.getLogger(__name__)
+
+
+# Fallback preference between venues when their readings are equally trusted.
+PROJECTION_SOURCE_ORDER: tuple[str, ...] = ("kalshi", "polymarket", "sportsbook")
+
+
+def select_projection_source(
+    implied: Optional[dict],
+    order: Sequence[str] = PROJECTION_SOURCE_ORDER,
+) -> Optional[str]:
+    """Pick which source's implied value feeds the projected final score.
+
+    Highest ``confidence`` wins; ``order`` breaks ties. Until #3921 the choice
+    was position in ``order`` alone, so a Kalshi spread at confidence 0.3 beat
+    a sportsbook spread at confidence 1.0 sitting in the same dict — the
+    confidence was computed, serialised, and never read by the one thing it
+    was computed for.
+
+    A source missing from ``order`` is still eligible: it sorts after the
+    known ones rather than being dropped, so a venue added after this list
+    was written can never be silently discarded by an allowlist that predates
+    it. A missing or unparseable ``confidence`` sorts as 0.0 — still eligible,
+    because a sole arm is better than no projection, but never preferred over
+    an arm that states one.
+    """
+    if not implied:
+        return None
+
+    def rank(source: str) -> tuple[float, int, str]:
+        entry = implied.get(source) or {}
+        try:
+            confidence = float(entry.get("confidence"))
+        except (TypeError, ValueError):
+            confidence = 0.0
+        try:
+            tie_break = order.index(source)
+        except ValueError:
+            tie_break = len(order)
+        # Negated confidence so `min` reads as "best first"; the trailing name
+        # keeps two unknown sources at equal confidence deterministic.
+        return (-confidence, tie_break, source)
+
+    return min(implied, key=rank)
 
 
 @dataclass

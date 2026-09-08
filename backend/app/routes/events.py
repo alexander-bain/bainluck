@@ -9680,6 +9680,34 @@ def _classify_from_ticker(external_id: str) -> str:
     return "other"
 
 
+#: `_classify_game_market` labels that price a PERIOD rather than the match.
+#: The projected final score is a full-game number, so a market wearing one of
+#: these labels is not one of its inputs (#3921).
+_PM_PERIOD_SCOPES = frozenset({
+    "half_total", "half_spread", "half_winner",
+    "quarter_total", "quarter_spread", "quarter_winner",
+})
+
+#: `_classify_game_market` labels that are a different QUANTITY from the game's
+#: combined total, and so may never price one (#3921). Each is a measured
+#: contaminant of the Giants v Cowboys / 49ers v Rams pools, not a precaution:
+#:
+#:   * ``spread`` — Kalshi phrases a margin "Dallas wins by over 10.5 points",
+#:     which a total extractor reads as a 10.5-point total. 25 of 79 contracts.
+#:   * ``team_total`` — "SF 49ers over 17.5 points scored" is ONE side's points.
+#:     20 contracts, and they dragged a real 47.9 total down to 19.7.
+#:   * ``player_prop`` / ``h2h`` / ``3ball`` — one athlete's line, never a score.
+#:
+#: A market may still contribute a SPREAD under these labels; only the total is
+#: refused. Labels that carry no quantity claim (``other``, ``moneyline``) stay
+#: eligible on purpose: Polymarket packs a game's spread AND total into a single
+#: market named only for the matchup, so an allowlist here would blank the
+#: projection on every NCAAF page (measured: 13 of 13).
+_PM_NON_GAME_TOTAL_SCOPES = frozenset({
+    "spread", "team_total", "player_prop", "h2h", "3ball",
+})
+
+
 # Ticker-prefix → period label.  Built once at import time alongside
 # _TICKER_PERIOD_MAP so _extract_period_from_ticker is a cheap dict lookup.
 _TICKER_PERIOD_LABEL: dict[str, str] = {}
@@ -13385,6 +13413,7 @@ async def get_event_odds_history(
             projected_final_score as calc_projected_score,
             extract_spread_threshold,
             extract_total_threshold,
+            select_projection_source,
         )
         from app.models.models import FuturesOddsSnapshot
 
@@ -13402,6 +13431,25 @@ async def get_event_odds_history(
 
         for market in linked_markets:
             source = market.source  # "kalshi" or "polymarket"
+            # What QUANTITY is this market about? Every outcome linked to the
+            # event used to be poured into one bucket per source, so the pool
+            # that priced the projection mixed quantities that are not the game
+            # (#3921). `_classify_game_market` is the same shipped classifier
+            # `_build_game_markets` sorts its own totals with (step 7).
+            scope = _classify_game_market(market.name or "", market.external_id)
+
+            # A period is not the game. Half and quarter markets price a
+            # fraction of the match on a fraction of the scale — on Giants v
+            # Cowboys they contributed 35 of the 79 "total" contracts, at
+            # thresholds a full game never sees. Step 7 routes exactly these
+            # labels away from its game totals; this path never did.
+            if scope in _PM_PERIOD_SCOPES:
+                continue
+
+            # Decided once per market, not once per outcome: whether this
+            # market is allowed to price the game's combined total at all.
+            may_price_total = scope not in _PM_NON_GAME_TOTAL_SCOPES
+
             for outcome in market.outcomes:
                 name = outcome.name or ""
                 prob = float(outcome.current_probability) if outcome.current_probability else None
@@ -13420,6 +13468,16 @@ async def get_event_odds_history(
                     })
                     continue
 
+                # Falling through to the total extractor is the bug: a market
+                # that prices some OTHER quantity still has outcome names full
+                # of "over N", and the extractor reads every one of them as a
+                # game total. A market prices the game's total or it does not.
+                # (That `extract_spread_threshold` cannot read Kalshi's own
+                # "Dallas wins by over 10.5 points" — which is why a spread
+                # market reached this line at all — is a separate defect, #3948.)
+                if not may_price_total:
+                    continue
+
                 # Try to extract total threshold
                 total_val = extract_total_threshold(name)
                 if total_val is not None:
@@ -13430,6 +13488,35 @@ async def get_event_odds_history(
                         "probability": prob,
                         "name": name,
                     })
+
+        # Sport-range guard on the totals — the same guard `_build_game_markets`
+        # already applies to its own totals (step 7a), mirrored here so both
+        # surfaces move together if it is ever retuned. This is the second half
+        # of a pair and catches a different contaminant than the scope gate
+        # above: that one drops markets that are the wrong QUANTITY for this
+        # game, this one drops a threshold on the wrong SCALE for this sport —
+        # a genuinely mis-linked market from another sport, which no scope label
+        # can detect because its label is perfectly correct.
+        # An unrecognised sport prefix keeps its contracts on purpose — we cannot
+        # fault a scale we do not hold, and suppressing a projection we cannot
+        # fault is the worse error.
+        pm_sport_prefix = (
+            event.sport.key.split("_")[0] if event.sport and event.sport.key else None
+        )
+        pm_total_range = (
+            _SPORT_TOTAL_RANGE.get(pm_sport_prefix) if pm_sport_prefix else None
+        )
+        if pm_total_range:
+            lo, hi = pm_total_range
+            for src in list(total_contracts_by_source):
+                in_range = [
+                    c for c in total_contracts_by_source[src]
+                    if lo <= c["threshold"] <= hi
+                ]
+                if in_range:
+                    total_contracts_by_source[src] = in_range
+                else:
+                    del total_contracts_by_source[src]
 
         # Derive implied values per source
         implied_spreads = {}
@@ -13481,23 +13568,18 @@ async def get_event_odds_history(
                     "contracts": [],
                 }
 
-        # Compute projected final score from best available data
-        # Priority: kalshi > polymarket > sportsbook
+        # Compute projected final score from the best available data — the arm
+        # with the highest confidence, kalshi > polymarket > sportsbook only as
+        # the tie-break (#3921).
         best_spread = None
-        best_spread_source = None
-        for src in ["kalshi", "polymarket", "sportsbook"]:
-            if src in implied_spreads:
-                best_spread = implied_spreads[src]["spread"]
-                best_spread_source = src
-                break
+        best_spread_source = select_projection_source(implied_spreads)
+        if best_spread_source is not None:
+            best_spread = implied_spreads[best_spread_source]["spread"]
 
         best_total = None
-        best_total_source = None
-        for src in ["kalshi", "polymarket", "sportsbook"]:
-            if src in implied_totals:
-                best_total = implied_totals[src]["total"]
-                best_total_source = src
-                break
+        best_total_source = select_projection_source(implied_totals)
+        if best_total_source is not None:
+            best_total = implied_totals[best_total_source]["total"]
 
         projected = None
         if best_spread is not None and best_total is not None:
