@@ -327,6 +327,43 @@ class KalshiScanReport:
     #: (`post_loop_fixups_failed`), which is the gotcha #53 distinction the
     #: three fields above exist to keep.
     post_loop_fixups_dry_run: Dict[str, int] = field(default_factory=dict)
+    #: Fix-up name -> per-tier breakdown of the count in `post_loop_fixups_ran`
+    #: for the same name, e.g.
+    #: ``{"golf_commence_fixed": {"datagolf_db": N, "schedule": N,
+    #: "heuristic": N}}`` (#3956).
+    #:
+    #: The count says how much would move; only this says how much of it is a
+    #: GUESS. `_fix_golf_commence_times` resolves each market through three
+    #: tiers — DataGolf's own stored tournament start, the live DataGolf
+    #: schedule, and a `close_time - 4.5 days` heuristic — and its own docstring
+    #: warns that the heuristic tier alone can rewrite ~every resolved golf
+    #: market (~1.7K markets / ~15.5K cal_prob outcomes). So the question Queue
+    #: #189's verify-before-enable gate actually asks (gotcha #21) is not "how
+    #: many" but "how many on Tier 3", and until this field existed the answer
+    #: went only to `logger.info` — unreachable, because `heroku logs` is EPERM
+    #: from the agent sandbox (gotcha #53's cousin: a number nobody can read is
+    #: not a published number).
+    #:
+    #: Counted over the markets the repair REPORTS, never the wider set it
+    #: merely considered. Every market in the query resolves to some tier (the
+    #: query requires a non-NULL commence_time, so Tier 3 always catches), but
+    #: only those whose target differs by >1h are counted as fixed — 3,393
+    #: considered vs 3,287 reported on 2026-09-08. Publishing the considered
+    #: split beside the reported count would describe 106 markets the repair
+    #: leaves alone, and those are the ones already ~correct, i.e. skewed toward
+    #: Tier 1 — so it would under-state the heuristic share and make enabling
+    #: look SAFER than it is. Invariant: the values here sum to the count.
+    post_loop_fixups_ran_detail: Dict[str, Dict[str, int]] = field(
+        default_factory=dict
+    )
+    #: The same breakdown for `post_loop_fixups_dry_run`, split by mode for the
+    #: same reason the counts are (#3952): a breakdown read against the other
+    #: mode's number is the over-claiming bug one field along. With Queue #189's
+    #: switch OFF — the default — the golf breakdown lands HERE and
+    #: `post_loop_fixups_ran_detail` stays empty.
+    post_loop_fixups_dry_run_detail: Dict[str, Dict[str, int]] = field(
+        default_factory=dict
+    )
 
     duration_s: float = 0.0
     notes: List[str] = field(default_factory=list)
