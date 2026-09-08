@@ -1,0 +1,158 @@
+name: LOOK rail guard
+
+# #4032 — the browser-backed half of the LOOK click contracts.
+#
+# WHY THIS IS NOT IN `e2e-contract`
+#
+# #3968 put the LOOK rail's decision logic in `tools/shot-click-contract.mjs`
+# and guarded it inside ci.yml's `e2e-contract` job, which is in `deploy:
+# needs:`. That job is safe to run on every push for one reason: it does no
+# install, no network and no browser download. Four of #3932's behaviours need
+# a layout engine, and putting Chromium in that job would destroy the property
+# that made a home available there at all — so they shipped verified only by
+# hand, twice.
+#
+# This workflow is that home. It is deliberately NOT a deploy gate: a hermetic
+# tooling guard going red must not block a product release, and buying that
+# would cost a ~150MB browser download on every push to master.
+#
+# WHY IT IS PATH-FILTERED AND HAS NO CRON
+#
+# `browser-audit.yml` was the issue's suggested host because it already has
+# Playwright. It is the wrong shape: every step in it is bound to a DEPLOYED
+# commit (a 40-hex sha input, a deployment wait, an origin allowlist, an
+# evidence manifest a separate filer consumes). A hermetic `file://` fixture is
+# not a production journey and must not appear in that manifest as though it
+# graded a deployment.
+#
+# That workflow's own header records the other half of the lesson: it caught two
+# real bugs in August and both sat unread for five days, because "a rail that
+# fails honestly into an empty room is barely better than one that lies". A
+# nightly cron here would repeat exactly that — nothing consumes this rail's
+# result, so a scheduled red would go unseen. The path filter is the honest
+# alternative: it runs on the pull request that touches the rail, where a red is
+# in front of the person who caused it. Nothing else can regress these
+# behaviours, because nothing else is involved in them.
+#
+# No `branches:` filter under `pull_request:` — see
+# `ciTriggerCoverage.contract.test.js`. A base-branch filter means a stacked PR
+# matches no trigger and gets NO RUN, which renders as an empty checks list
+# rather than a pending or failing one. `paths:` is a different thing and is
+# fine: it scopes WHICH pull requests this speaks on, and it never leaves a PR
+# it should have spoken on showing a false silence.
+
+on:
+  pull_request:
+    paths:
+      - "tools/shop-shot.mjs"
+      - "tools/shot-click-contract.mjs"
+      - "tools/look.sh"
+      - "frontend/e2e/browser-rail/**"
+      - "frontend/e2e/package.json"
+      - "frontend/e2e/package-lock.json"
+      - ".github/workflows/look-rail-guard.yml"
+  push:
+    branches: [master]
+    paths:
+      - "tools/shop-shot.mjs"
+      - "tools/shot-click-contract.mjs"
+      - "tools/look.sh"
+      - "frontend/e2e/browser-rail/**"
+      - "frontend/e2e/package.json"
+      - "frontend/e2e/package-lock.json"
+      - ".github/workflows/look-rail-guard.yml"
+  workflow_dispatch:
+
+# Least privilege. This runs a browser over local fixtures and files nothing.
+permissions:
+  contents: read
+
+concurrency:
+  group: look-rail-guard-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  browser-rail:
+    name: LOOK click rail (real browser, hermetic fixtures)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    defaults:
+      run:
+        working-directory: frontend/e2e
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/e2e/package-lock.json
+
+      - name: Install locked dependencies
+        # `npm ci`, never `npm install`: the lockfile is what pins Playwright to
+        # 1.48.2, and with it the exact Chromium build. Two runs that used
+        # different browser revisions would be grading different things while
+        # claiming the same result.
+        run: npm ci
+
+      - name: Install the Playwright-matched Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run the browser-backed click contracts
+        # NOT PIPED, and the summary is READ (gotcha #124 and this repo's
+        # long history with vacuous greens).
+        #
+        # `node --test` exits 0 when its glob matches nothing, so a rename that
+        # orphaned the suite would read exactly like a pass. Two independent
+        # backstops: the shell passes an unmatched glob through literally and
+        # node then fails on a path that does not exist, and the summary below
+        # is required to report a positive pass count with zero skips and zero
+        # failures. `contract/lookClickBrowserRail.contract.test.js` is the
+        # third, and the only one that runs on every push.
+        #
+        # `--test-reporter=tap` IS LOAD-BEARING, and this comment is here because
+        # the first cut of this step did not have it and would have failed every
+        # run. Node's default reporter is version- and TTY-dependent: it emits
+        # `ℹ pass 6`, not `# pass 6`. The greps below would have read a pass
+        # count of 0 out of a perfectly green suite and reported "the suite did
+        # not run" — a guard that can never pass, which is worse than no guard,
+        # because the fix for a permanently red gate is usually to delete it.
+        # TAP's summary shape is stable and specified, so it is pinned here
+        # rather than inherited. The contract fixture asserts this flag and the
+        # greps stay in step.
+        run: |
+          set -uo pipefail
+          node --test --test-reporter=tap browser-rail/*.test.js > /tmp/look-rail.txt 2>&1
+          RC=$?
+          echo "EXIT CODE: ${RC}"
+          cat /tmp/look-rail.txt
+
+          if [ "${RC}" -ne 0 ]; then
+            echo "::error::the LOOK rail's browser contracts failed (exit ${RC})"
+            exit 1
+          fi
+
+          PASS="$(grep -Eo '^# pass [0-9]+' /tmp/look-rail.txt | grep -Eo '[0-9]+' || echo 0)"
+          SKIPPED="$(grep -Eo '^# skipped [0-9]+' /tmp/look-rail.txt | grep -Eo '[0-9]+' || echo 0)"
+          FAILED="$(grep -Eo '^# fail [0-9]+' /tmp/look-rail.txt | grep -Eo '[0-9]+' || echo 0)"
+
+          echo "pass=${PASS} skipped=${SKIPPED} fail=${FAILED}"
+
+          # A green with nothing in it is the failure this rail exists to make
+          # impossible one level out; it must not be how the rail itself passes.
+          if [ "${PASS}" -lt 1 ]; then
+            echo "::error::exit 0 with ${PASS} passing tests — the suite did not run"
+            exit 1
+          fi
+          if [ "${SKIPPED}" -ne 0 ]; then
+            echo "::error::${SKIPPED} test(s) skipped — this suite must never skip; a missing browser is a failure, not an absence"
+            exit 1
+          fi
+          if [ "${FAILED}" -ne 0 ]; then
+            echo "::error::${FAILED} test(s) failed"
+            exit 1
+          fi

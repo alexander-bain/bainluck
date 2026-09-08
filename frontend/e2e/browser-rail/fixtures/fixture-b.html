@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>LOOK rail fixture B</title>
+    <!--
+      #4032 — the second surface, and the reason the multi-step guard can prove
+      anything at all.
+
+      `LandedOnB` exists ONLY on this page. That is what makes it evidence: the
+      guard's two-step sequence is `Sports;LandedOnB`, so a run that exits 0
+      cannot have clicked the hidden desktop nav in fixture A (whose link goes
+      nowhere) and cannot have stayed on fixture A. Exit 0 therefore proves
+      three things at once — visible-first selection picked the right node, the
+      click really navigated, and the step loop carried on to the new surface.
+
+      Asserting on the exit code rather than on the screenshot is deliberate:
+      pixels drag in fonts, rendering differences and a human judgement call,
+      and none of those are what regressed.
+    -->
+  </head>
+  <body>
+    <h1>LandedOnB</h1>
+  </body>
+</html>

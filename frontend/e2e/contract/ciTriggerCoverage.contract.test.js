@@ -67,6 +67,7 @@ const path = require("node:path");
 const REPO_ROOT = path.resolve(__dirname, "..", "..", "..");
 const CI_YML = path.join(REPO_ROOT, ".github", "workflows", "ci.yml");
 const CODEQL_YML = path.join(REPO_ROOT, ".github", "workflows", "codeql.yml");
+const LOOK_RAIL_YML = path.join(REPO_ROOT, ".github", "workflows", "look-rail-guard.yml");
 
 function readWorkflow(file = CI_YML) {
   assert.ok(
@@ -202,6 +203,12 @@ describe("CI trap #2: every pull request gets a CI run, whatever its base", () =
 const PR_WORKFLOWS = [
   { name: "ci.yml", file: CI_YML },
   { name: "codeql.yml", file: CODEQL_YML },
+  // #4032 — taking the invitation above: the third instance is one line here,
+  // not one rediscovery. This one carries a `paths:` filter, which is a
+  // different thing and is deliberate — it scopes WHICH pull requests the LOOK
+  // rail guard speaks on, and never leaves a PR it should have spoken on
+  // showing an empty checks list.
+  { name: "look-rail-guard.yml", file: LOOK_RAIL_YML },
 ];
 
 describe("CI trap #2, generalized: no PR-reporting workflow filters by base branch", () => {

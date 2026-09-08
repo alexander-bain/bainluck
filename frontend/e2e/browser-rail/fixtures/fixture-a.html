@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>LOOK rail fixture A</title>
+    <!--
+      #4032 — the hermetic page behind the LOOK rail's browser-backed guards.
+
+      WHY A FIXTURE AND NOT PRODUCTION
+
+      The two behaviours this page exists to hold are the ones #3968 could not
+      guard: they need a layout engine, so no amount of pure-function testing
+      reaches them. Pointing the guard at bainluck.com instead would buy the
+      layout engine and lose everything else — the assertion would then depend
+      on production markup nobody promised to keep, on the network, and on
+      whatever the feed happened to rank that morning. A guard that goes red
+      because a pill was renamed is a guard that gets deleted.
+
+      So: `file://`, no server, no network, no API. Every element below is here
+      because a specific measured production shape needed a stable stand-in.
+
+      WHAT EACH CONTROL STANDS IN FOR
+
+      1. `nav.desktop-only > a` — THE HIDDEN NODE, AND IT IS FIRST ON PURPOSE.
+         Measured on bainluck.com at 390px during #3932:
+         `getByText('Sports', { exact: true })` resolves THREE nodes and node 0
+         is the desktop nav — `visible=false`, `boundingBox=null`. Playwright
+         waits for actionability, so a bare `.first()` times out on an element
+         nobody can see while the tab a reader can plainly see sits further
+         down, untouched. `.filter({ visible: true })` before `.first()` is what
+         fixes it, and DOM ORDER IS THE WHOLE TEST: this node must stay above
+         the visible one or the guard silently stops proving anything.
+         `contract/lookClickBrowserRail.contract.test.js` pins that ordering.
+
+         It is hidden by a MEDIA QUERY rather than a bare `display:none`
+         because that is production's actual mechanism — responsive CSS is what
+         made the bug subtle, and a fixture that hides it unconditionally would
+         be testing an easier problem than the real one.
+
+      2. `a#visible-sports` — the tab a reader would tap. It NAVIGATES, which is
+         what lets the guard prove the click landed without reading pixels: the
+         second step of the sequence targets text that exists only on fixture B.
+
+      3. `button.pill` — THE EMOJI CONTROL. The NFL pill's text on production is
+         `🏈NFL`, so `getByText('NFL', { exact: true })` does not match it. That
+         is not a bug to fix, it is the reason `css=` exists, and the guard
+         asserts both halves: the bare text FAILS loudly (exit 3) and `css=`
+         lands (exit 0).
+
+      There is deliberately NO cookie banner here. `shop-shot.mjs` tries to
+      dismiss one and swallows the miss; letting that path run its full timeout
+      on every case proves the no-banner branch stays non-fatal.
+    -->
+    <style>
+      /* Hidden at phone width, shown on a desktop viewport — production's own
+         mechanism. The guard drives this page at SHOT_W=390, where the nav is
+         not visible and must therefore never be the click target. */
+      .desktop-only {
+        display: none;
+      }
+      @media (min-width: 900px) {
+        .desktop-only {
+          display: block;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <nav class="desktop-only">
+      <a href="nowhere.html">Sports</a>
+    </nav>
+
+    <main>
+      <a id="visible-sports" href="fixture-b.html">Sports</a>
+      <button class="pill" id="nfl-pill" type="button">🏈NFL</button>
+    </main>
+  </body>
+</html>

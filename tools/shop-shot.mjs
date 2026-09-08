@@ -15,6 +15,7 @@ import { existsSync, readdirSync } from 'fs';
 // file starts Chromium, so nothing in it is reachable from a test — which is why
 // #3932's behaviours shipped verified only by hand.
 import {
+  EXIT_CAMERA,
   EXIT_CLICK_FAILED,
   EXIT_USAGE,
   clearStaleArtifact,
@@ -187,4 +188,10 @@ try {
 } finally {
   await browser.close();
 }
-process.exit(ok ? 0 : 1);
+// The last place the exit-code vocabulary was still a literal (#4032 item 5).
+// `EXIT_CAMERA` is 1, so this changes no behaviour today — it changes what a
+// future edit has to do to stay coherent. Two of the three codes came from the
+// shared module and the third was typed here, which is exactly how a
+// vocabulary drifts: renumber `EXIT_CAMERA` and this line would have gone on
+// meaning the old thing while every reader of the constant meant the new one.
+process.exit(ok ? 0 : EXIT_CAMERA);
