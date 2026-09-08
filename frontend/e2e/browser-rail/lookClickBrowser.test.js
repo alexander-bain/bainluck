@@ -23,8 +23,11 @@ const { pathToFileURL } = require("node:url");
  * So four behaviours shipped verified only BY HAND, against production, twice
  * (#3932 and again #3968):
  *
- *   1. VISIBLE-FIRST SELECTION — `.filter({ visible: true })` before `.first()`.
+ *   1. VISIBLE-FIRST SELECTION — the visible node, not the first in DOM order.
  *      Needs a layout engine; a pure function cannot have an opinion about it.
+ *      Graded twice: once on whatever Playwright the machine resolves, and once
+ *      on the LOCKED build CI resolves — #4032's own first red run was that
+ *      divergence, and only the second reading can see it.
  *   2. EMOJI TEXT — the NFL pill reads `🏈NFL`, so `getByText('NFL', {exact})`
  *      misses. Needs real text-node matching.
  *   3. THE STEP LOOP through the browser path, actually advancing surfaces.
@@ -89,6 +92,29 @@ before(async () => {
 const OUT_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "look-rail-guard-"));
 let shotSeq = 0;
 const nextOut = () => path.join(OUT_DIR, `shot-${++shotSeq}.png`);
+
+/**
+ * A HOME with no `~/.npm/_npx` in it, which forces `findPlaywright()` down its
+ * fallback branch and onto the repo's own locked Playwright.
+ *
+ * This is not a tidiness measure. `findPlaywright()` prefers whatever the npx
+ * cache holds, so the authoring laptop ran 1.55.1 while CI — which has no such
+ * cache — ran the lockfile's 1.48.2, and the two disagreed about what
+ * `.filter({ visible: true })` means. See the forced-resolution case below.
+ *
+ * Overriding HOME also moves Playwright's browser cache, so the real one is
+ * handed back explicitly; otherwise every run under this env would fail on a
+ * missing executable rather than on the thing being tested.
+ */
+const LOCKFILE_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "look-rail-nonpx-"));
+const LOCKFILE_ENV = {
+  HOME: LOCKFILE_HOME,
+  PLAYWRIGHT_BROWSERS_PATH:
+    process.env.PLAYWRIGHT_BROWSERS_PATH ||
+    (process.platform === "darwin"
+      ? path.join(os.homedir(), "Library", "Caches", "ms-playwright")
+      : path.join(os.homedir(), ".cache", "ms-playwright")),
+};
 
 /**
  * Run `shop-shot.mjs` exactly as `look.sh` does — as a subprocess, read by its
@@ -164,6 +190,56 @@ describe("#4032 — the LOOK click rail, through a real browser", () => {
     assert.match(r.stderr, /CLICKED Sports/, "step 1 must report as landed");
     assert.match(r.stderr, /CLICKED LandedOnB/, "step 2 must run on the surface step 1 opened");
     assert.ok(fs.existsSync(r.out), "a landed sequence must leave a screenshot");
+  });
+
+  /**
+   * ITEM 1 AGAIN, ON THE PLAYWRIGHT CI ACTUALLY RESOLVES — the case that would
+   * have caught #4032's own first red run before it was pushed.
+   *
+   * The case above proves visible-first on whatever `findPlaywright()` happens
+   * to load, and on a laptop that is the npx cache (1.55.1 here). CI has no npx
+   * cache, so it falls through to the repo's lockfile (1.48.2), and the two
+   * builds do not agree:
+   *
+   *   1.48.2  getByText('Sports').filter({visible:true}) -> count 2, first = the HIDDEN decoy
+   *   1.55.1  the same expression                        -> count 1, first = the visible link
+   *
+   * `filter()`'s `visible` option arrived in 1.51, and an older Playwright does
+   * not reject the unknown key — it accepts the object and drops it. So the fix
+   * degraded, in silence, to the bare `.first()` it was written to replace: the
+   * laptop went green six for six and CI failed on this exact click with
+   * `CLICKFAIL Sports :: locator.click: Timeout 15000ms exceeded`.
+   *
+   * A version-independent form (`locator('visible=true')`, in the engine since
+   * 1.14) is the repair. This is the guard that keeps it honest, because the
+   * failure it protects against is invisible from the machine writing the code.
+   */
+  it("visible-first survives the OLDEST Playwright this can resolve, not just the newest installed", () => {
+    // ANTI-VACUITY. If either of these stops holding, the run below silently
+    // grades the same build as the case above and this test proves nothing.
+    assert.ok(
+      !fs.existsSync(path.join(LOCKFILE_HOME, ".npm", "_npx")),
+      "the forced HOME has an npx cache in it, so findPlaywright() will not reach the lockfile build"
+    );
+    const lock = JSON.parse(fs.readFileSync(path.join(E2E_ROOT, "package-lock.json"), "utf8"));
+    const pinned = lock.packages["node_modules/playwright"].version;
+    const installed = JSON.parse(
+      fs.readFileSync(path.join(E2E_ROOT, "node_modules", "playwright", "package.json"), "utf8")
+    ).version;
+    assert.equal(
+      installed,
+      pinned,
+      `frontend/e2e/node_modules holds Playwright ${installed} but the lockfile pins ${pinned} — run \`npm ci\` in frontend/e2e; this case is only meaningful against the pinned build`
+    );
+
+    const r = shoot({ env: { SHOT_CLICKS: "Sports;LandedOnB", ...LOCKFILE_ENV } });
+
+    assert.equal(
+      r.status,
+      0,
+      `the rail must pick the visible node under the LOCKED Playwright (${pinned}), not only under whatever npx cached.\nstderr:\n${r.stderr}`
+    );
+    assert.match(r.stderr, /CLICKED LandedOnB/, "the click must still land on the node that navigates");
   });
 
   /**

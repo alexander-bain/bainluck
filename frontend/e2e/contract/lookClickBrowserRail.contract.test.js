@@ -65,6 +65,18 @@ function codeOf(text) {
     .join("\n");
 }
 
+/**
+ * The same idea for JavaScript, and it is not optional here: the comment that
+ * EXPLAINS why an expression was removed necessarily quotes the expression, so
+ * a source scan that reads prose would go red on the very edit that fixed it.
+ */
+function jsCodeOf(text) {
+  return text
+    .split("\n")
+    .filter((line) => !/^\s*(\/\/|\/\*|\*)/.test(line))
+    .join("\n");
+}
+
 describe("#4032 — the browser-backed LOOK guard is actually wired up", () => {
   it("every piece of the rail exists", () => {
     for (const p of [BROWSER_TEST, FIXTURE_A, FIXTURE_B, WORKFLOW]) {
@@ -310,6 +322,65 @@ describe("#4032 — the browser-backed LOOK guard is actually wired up", () => {
       assert.ok(
         !/assert\.equal\(\s*r\.status,\s*[123]\s*\)/.test(src),
         "a hard-coded status literal would survive a renumbering that broke every caller"
+      );
+    });
+
+    it("visible-first is expressed in a form every resolvable Playwright understands", () => {
+      // MEASURED (#4032, on the same fixture, same viewport):
+      //
+      //   1.48.2  getByText(...).filter({visible:true}) -> count 2, first = the HIDDEN decoy
+      //   1.55.1  the same expression                   -> count 1, first = the visible link
+      //   both    getByText(...).locator('visible=true') -> count 1, first = the visible link
+      //
+      // `filter()`'s `visible` option landed in Playwright 1.51, and an older
+      // build does not reject the unknown key — it takes the object and drops
+      // it, so the fix degrades in silence to the bare `.first()` it replaced.
+      // `findPlaywright()` prefers `~/.npm/_npx` and falls back to this
+      // lockfile, so the authoring laptop and CI resolved different builds and
+      // disagreed about what the line meant: six green locally, red on CI.
+      //
+      // The rule is not "never use filter" — it is that the selection must not
+      // depend on an API newer than the version this repo pins, because the
+      // pinned version is what every machine without that cache will load.
+      const src = jsCodeOf(read(SHOP_SHOT));
+      const lock = JSON.parse(read(path.join(E2E_ROOT, "package-lock.json")));
+      const pinned = lock.packages["node_modules/playwright"].version;
+      const [major, minor] = pinned.split(".").map(Number);
+      const supportsFilterVisible = major > 1 || (major === 1 && minor >= 51);
+
+      // Without this, a stripper that ate the whole file would make the
+      // prohibition below pass for the emptiest possible reason.
+      assert.ok(src.includes("await target.click("), "comment stripping ate the code this test reads");
+      assert.ok(Number.isInteger(major) && Number.isInteger(minor), `unparseable Playwright pin: ${pinned}`);
+
+      assert.match(
+        src,
+        /\.locator\('visible=true'\)\.first\(\)/,
+        "shop-shot.mjs no longer selects the visible node through the `visible=true` engine, which is the only form 1.14 and 1.55 read the same way"
+      );
+      if (!supportsFilterVisible) {
+        assert.ok(
+          !/\.filter\(\s*\{\s*visible:/.test(src),
+          `shop-shot.mjs uses filter({visible}) while the lockfile pins Playwright ${pinned}, which silently ignores it — the click would fall back to the first node in DOM order, visible or not`
+        );
+      }
+    });
+
+    it("the browser suite grades the LOCKED Playwright, not just the newest one installed", () => {
+      // The pair above is only enforceable while something actually exercises
+      // the locked build. Without this case the browser suite would go on
+      // grading the laptop's npx cache, which is how the divergence shipped.
+      const src = read(BROWSER_TEST);
+      assert.match(src, /PLAYWRIGHT_BROWSERS_PATH/, "the forced-resolution case lost its browser cache handback");
+      assert.match(
+        src,
+        /LOCKFILE_ENV/,
+        "nothing forces findPlaywright() past the npx cache, so the suite cannot see a version divergence at all"
+      );
+      assert.match(
+        src,
+        /"node_modules",\s*"playwright"/,
+        "the forced case must check the installed build IS the pinned one, or it grades whatever happens to be there"
       );
     });
 
