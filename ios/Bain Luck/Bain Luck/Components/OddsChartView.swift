@@ -212,7 +212,7 @@ struct OddsChartView: View {
     }
 
     private var isGameStarted: Bool {
-        status == "live" || status == "completed" || status == "closed"
+        status == "live" || EventState.isFinished(status)
     }
 
     /// Show the All / Since Start picker only when the game has started
@@ -647,7 +647,7 @@ struct OddsChartView: View {
                 Circle().fill(.green).frame(width: 6, height: 6)
                 Text("Live").font(.caption2).fontWeight(.medium).foregroundStyle(.green)
             }
-        } else if status == "completed" || status == "closed" {
+        } else if EventState.isFinished(status) {
             HStack(spacing: 4) {
                 Circle().fill(.secondary).frame(width: 6, height: 6)
                 Text("Final").font(.caption2).fontWeight(.medium).foregroundStyle(.secondary)
@@ -736,7 +736,7 @@ struct OddsChartView: View {
     /// commence_time and the first data point, start from the first data point
     /// instead — prevents empty chart space from schedule delays.
     private var gameEndDate: Date? {
-        guard status == "completed" || status == "closed" else { return nil }
+        guard EventState.isFinished(status) else { return nil }
         // Prefer actual game data endpoints (ESPN, stat_model) over completedAt
         // (completedAt is a backend processing timestamp, often 30-45 min after game end)
         var candidates: [Date] = []
@@ -764,7 +764,7 @@ struct OddsChartView: View {
         var filtered = points
 
         // Always clip post-game data for completed games (prevents Kalshi/Polymarket drift toward 50%)
-        if (status == "completed" || status == "closed"), let endDate = gameEndDate {
+        if EventState.isFinished(status), let endDate = gameEndDate {
             filtered = filtered.filter { $0.date <= endDate }
         }
 

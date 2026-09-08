@@ -217,7 +217,7 @@ struct DiscoverView: View {
             if FeedLifecycle.futuresIsSettled(f, now: now) { return true }
         }
         if let e = item.event {
-            if e.status == "completed" || e.status == "closed" {
+            if EventState.isFinished(e.status) {
                 if let ct = e.commenceTime, let d = ct.asDate {
                     return now.timeIntervalSince(d) > 8 * 3600
                 }
@@ -648,7 +648,7 @@ struct DiscoverView: View {
                         NativeGuessCard(data: f, onNextQuestion: { scrollToNextGuessGrouped(proxy: proxy, after: idx, in: pageGrouped) }, onGuessCompleted: { incrementDaily() })
                     }
                 } else if isGuessSlot, item.type == "event", let e = item.event, e.currentOdds?.homeProbability != nil,
-                          e.status != "completed", e.status != "closed" {
+                          !EventState.isFinished(e.status) {
                     SwipeToDismiss(
                         onSwipeLeft: {
                             recordInteraction(for: item, action: .unlike, source: "swipe")
@@ -2301,11 +2301,11 @@ struct NativeGuessCard: View {
             )
 
             VStack(spacing: 4) {
-                Text(event.status == "live" ? (event.espn?.period ?? "LIVE") : (event.status == "completed" || event.status == "closed" ? "FINAL" : "VS"))
+                Text(event.status == "live" ? (event.espn?.period ?? "LIVE") : (EventState.isFinished(event.status) ? "FINAL" : "VS"))
                     .font(.system(size: 9, weight: .heavy))
                     .foregroundStyle(event.status == "live" ? .red : .secondary)
                 if let a = event.awayScore, let h = event.homeScore,
-                   (event.status == "live" || event.status == "completed" || event.status == "closed") {
+                   (event.status == "live" || EventState.isFinished(event.status)) {
                     Text("\(a)-\(h)")
                         .font(.caption.weight(.black).monospacedDigit())
                 }

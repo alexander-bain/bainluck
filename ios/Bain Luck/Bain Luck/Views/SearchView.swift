@@ -955,7 +955,7 @@ struct SearchView: View {
 
             Spacer()
 
-            if event.status == "completed" || event.status == "closed" {
+            if EventState.isFinished(event.status) {
                 if let away = event.awayScore, let home = event.homeScore {
                     Text("\(away) - \(home)")
                         .font(.subheadline)

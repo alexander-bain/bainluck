@@ -35,7 +35,7 @@ struct TotalPointsSpectrumView: View {
     private var countsTheUnit: Bool { vocab.scoreboardCountsTheUnit }
 
     private var isLive: Bool { eventStatus == "live" }
-    private var isDone: Bool { eventStatus == "completed" || eventStatus == "closed" }
+    private var isDone: Bool { EventState.isFinished(eventStatus) }
     private var isPre: Bool { !isLive && !isDone }
 
     /// The game-total rungs this ladder draws, ascending.

@@ -29,9 +29,13 @@ struct StatusBadge: View {
         return parts.isEmpty ? "LIVE" : parts.joined(separator: " ")
     }
 
+    /// The arms are an if/else chain rather than a `switch` on purpose: the
+    /// settled pair is `EventState.isFinished`, not two string literals this
+    /// file gets to spell for itself. #4002 was one private copy of that
+    /// vocabulary going stale; a badge is the last place a second copy belongs.
+    @ViewBuilder
     var body: some View {
-        switch status {
-        case "live":
+        if status == "live" {
             HStack(spacing: 4) {
                 Circle()
                     .fill(.red)
@@ -46,7 +50,7 @@ struct StatusBadge: View {
             .padding(.vertical, 2)
             .background(.red.opacity(0.1))
             .clipShape(Capsule())
-        case "completed", "closed":
+        } else if EventState.isFinished(status) {
             Text("FINAL")
                 .font(.caption2)
                 .fontWeight(.medium)
@@ -55,7 +59,27 @@ struct StatusBadge: View {
                 .padding(.vertical, 2)
                 .background(Color.cardBackgroundDark)
                 .clipShape(Capsule())
-        case "scheduled":
+        } else if EventState.isSuspended(status) {
+            // #4002 — the state that had no badge at all. It cannot borrow
+            // FINAL's grey silence: FINAL is read against a score, and this one
+            // is read against a hero that may have nothing else on it. The
+            // wording is `EventState.suspendedLabel` and NOT the bare word
+            // "Suspended" for the reason stated where it is defined — the same
+            // status covers a rain delay and a source going dark, and only one
+            // of those is a stoppage anybody reported.
+            HStack(spacing: 3) {
+                Image(systemName: "exclamationmark.circle")
+                    .font(.system(size: 8))
+                Text(EventState.suspendedLabel)
+                    .font(.caption2)
+                    .fontWeight(.medium)
+            }
+            .foregroundStyle(.orange)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(.orange.opacity(0.1))
+            .clipShape(Capsule())
+        } else if status == "scheduled" {
             if let commence = commenceTime, let date = commence.asDate, let countdown = formatCountdown(from: date) {
                 HStack(spacing: 3) {
                     Image(systemName: "clock")
@@ -72,7 +96,7 @@ struct StatusBadge: View {
             } else {
                 EmptyView()
             }
-        default:
+        } else {
             EmptyView()
         }
     }

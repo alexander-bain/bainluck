@@ -24,7 +24,7 @@ struct PlayerPropsCardView: View {
     private var awayAbbr: String {
         awayTeam.isEmpty ? "Away" : sides.away
     }
-    private var isDone: Bool { eventStatus == "completed" || eventStatus == "closed" }
+    private var isDone: Bool { EventState.isFinished(eventStatus) }
     private var isLive: Bool { eventStatus == "live" }
 
     private struct PlayerCard: Identifiable {

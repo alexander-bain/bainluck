@@ -56,7 +56,7 @@ struct EventDetailView: View {
 
         // For completed games: use last game data point, NOT completedAt
         // (completedAt is a backend processing timestamp, often 30-45 min after game end)
-        if event.status == "completed" || event.status == "closed" {
+        if EventState.isFinished(event.status) {
             let lastEspn = vm.history?.espnHistory?.last?.timestamp.asDate
             let lastOdds = vm.history?.history.last?.timestamp.asDate
             if let gameEnd = [lastEspn, lastOdds].compactMap({ $0 }).max(),
@@ -84,7 +84,15 @@ struct EventDetailView: View {
     }
 
     private var isLive: Bool { vm.event?.status == "live" }
-    private var isFinished: Bool { vm.event?.status == "completed" || vm.event?.status == "closed" }
+    /// #4002 — this page kept a PRIVATE COPY of a vocabulary `EventState`
+    /// already owns, and `suspended` (live/048) matched none of its arms. So
+    /// the hero drew no badge, no score, a grey `Proj. 3-2` where the score
+    /// belongs and a kick-off time for a match played four days earlier.
+    /// `EventCardView` took that exact repair under CERT-786 and this page did
+    /// not, because a copy is invisible to the fix applied to the original.
+    /// Read the vocabulary; never restate it.
+    private var isFinished: Bool { EventState.isFinished(vm.event?.status) }
+    private var isSuspended: Bool { EventState.isSuspended(vm.event?.status) }
     private var isScheduled: Bool { vm.event?.status == "scheduled" }
 
     private var isIPad: Bool { sizeClass == .regular }
@@ -465,16 +473,67 @@ struct EventDetailView: View {
 
     // MARK: - Hero Section (v2)
 
+    /// Whether the hero draws the two team scores.
+    ///
+    /// #4002 — the gate was `(isLive || isFinished) && …`, so a SUSPENDED game
+    /// drew no score even when it had one. On `15298408` (Yankees @ Padres,
+    /// played 2026-09-06, `status='suspended'`, final 3–4) the navigation title
+    /// one line above the hero read "Yankees 3 - Padres 4" while the hero
+    /// itself printed nothing under either crest. A suspended game is the state
+    /// where the score matters MOST: it is the only thing anybody got.
+    static func showsScore(status: String?, away: Int?, home: Int?) -> Bool {
+        guard away != nil, home != nil else { return false }
+        return status == "live" || EventState.isFinished(status) || EventState.isSuspended(status)
+    }
+
+    /// Whether "where to watch" still answers a question anybody has.
+    ///
+    /// #4002 — the hero's broadcast chip had NO status gate, so `15298408`
+    /// offered "MLB.TV, Padres.TV, YES" two days after the game was abandoned,
+    /// next to a 1:10 PM start time. A broadcast listing is a promise about the
+    /// future; on a game that is over or will never be resumed it is #3821's
+    /// false promise worn as a chip, and Alex's standing ruling that settled
+    /// means settled binds a chip as tightly as it binds a hero.
+    static func showsBroadcast(status: String?) -> Bool {
+        !EventState.isFinished(status) && !EventState.isSuspended(status)
+    }
+
+    /// Whether the projected final score is still a projection of anything.
+    ///
+    /// #4002 — the gate was `!isFinished`, which asks whether the game is over
+    /// and NOT whether a final can still arrive. Measured on production over
+    /// the 7 days to 2026-09-08: **184 suspended games carrying a projection**
+    /// against 1 live one. On every one of those the grey pair was the only
+    /// numbers on a hero that carried no state label at all — a projected final
+    /// for a match nobody will ever grade.
+    static func showsProjection(status: String?) -> Bool {
+        !EventState.isFinished(status) && !EventState.isSuspended(status)
+    }
+
+    /// #3014 — "Proj. 2-3" beside a LIVE badge on a game with no score reads as
+    /// the score, because it is the only pair of numbers on the hero and the
+    /// abbreviation is 10pt tertiary. Where a real score stands beside it the
+    /// abbreviation is unambiguous and stays short; where the score slot is
+    /// empty on a game already being played, the word is spelled out. Scoped to
+    /// live-and-scoreless on purpose: before kick-off nothing can be mistaken
+    /// for a score, and widening the label there would only widen the hero's
+    /// centre column, which is `fixedSize` and squeezes the crests.
+    static func projectionLabel(status: String?, hasScore: Bool) -> String {
+        (status == "live" && !hasScore) ? "Projected final" : "Proj."
+    }
+
     private func heroSection(_ event: EventDetail) -> some View {
         let colors = teamColors(event)
-        let hasScore = (isLive || isFinished) && event.homeScore != nil && event.awayScore != nil
+        let hasScore = EventDetailView.showsScore(
+            status: event.status, away: event.awayScore, home: event.homeScore)
 
         return VStack(spacing: 12) {
             // Top meta row: status badge + countdown + broadcast + date
             HStack(spacing: 8) {
                 heroStatusBadge(event)
                 Spacer()
-                if let broadcast = event.espn?.broadcast {
+                if let broadcast = event.espn?.broadcast,
+                   EventDetailView.showsBroadcast(status: event.status) {
                     HStack(spacing: 3) {
                         Image(systemName: "tv")
                             .font(.system(size: 8))
@@ -663,10 +722,11 @@ struct EventDetailView: View {
                     // the smallest honest fix — the projection is real and
                     // useful, it was simply anonymous.
                     if let phs = event.currentOdds?.projectedHomeScore, let pas = event.currentOdds?.projectedAwayScore,
-                       !isFinished {
+                       EventDetailView.showsProjection(status: event.status) {
                         let vocab = SportVocab.forSport(event.sport)
                         let pair = "\(Int(pas.rounded()))-\(Int(phs.rounded()))"
-                        Text("Proj. \(vocab.scoreboardCountsTheUnit ? pair : vocab.withUnit(pair))")
+                        let label = EventDetailView.projectionLabel(status: event.status, hasScore: hasScore)
+                        Text("\(label) \(vocab.scoreboardCountsTheUnit ? pair : vocab.withUnit(pair))")
                             .font(.system(size: 10))
                             .foregroundStyle(.tertiary)
                     }
@@ -739,14 +799,22 @@ struct EventDetailView: View {
 
     // MARK: - Hero Status Badge
 
+    /// #4002 — the arms are ORDERED, and `suspended` has to come before the
+    /// default. The default hands `StatusBadge` the literal `"scheduled"` plus
+    /// the event's own `commenceTime`; `formatCountdown` returns nil for a date
+    /// in the past, so the badge fell through to `EmptyView` and a match played
+    /// four days ago wore no label whatsoever. Silence read as "about to start"
+    /// because everything else on the meta row — the date, the broadcast — is
+    /// pregame furniture.
     @ViewBuilder
     private func heroStatusBadge(_ event: EventDetail) -> some View {
-        switch event.status {
-        case "live":
+        if event.status == "live" {
             StatusBadge(status: "live", gameClock: event.espn?.gameClock, period: event.espn?.period)
-        case "completed", "closed":
+        } else if EventState.isFinished(event.status) {
             StatusBadge(status: event.status)
-        default:
+        } else if EventState.isSuspended(event.status) {
+            StatusBadge(status: "suspended")
+        } else {
             StatusBadge(status: "scheduled", commenceTime: event.commenceTime)
         }
     }
@@ -755,7 +823,12 @@ struct EventDetailView: View {
 
     @ViewBuilder
     private func espnSection(_ event: EventDetail) -> some View {
-        let hasData = event.espn?.broadcast != nil || event.commenceTime != nil
+        // #4002 — the broadcast chip is gated by the same rule as the hero's, or
+        // the "Game Info" card re-offers "MLB.TV, Padres.TV, YES" for a game that
+        // finished two days ago one scroll below the hero that stopped doing it.
+        let showsBroadcast = event.espn?.broadcast != nil
+            && EventDetailView.showsBroadcast(status: event.status)
+        let hasData = showsBroadcast || event.commenceTime != nil
         if hasData {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 6) {
@@ -767,7 +840,7 @@ struct EventDetailView: View {
                         .fontWeight(.semibold)
                 }
                 HStack(spacing: 12) {
-                    if let broadcast = event.espn?.broadcast {
+                    if let broadcast = event.espn?.broadcast, showsBroadcast {
                         HStack(spacing: 5) {
                             Image(systemName: "tv")
                                 .font(.system(size: 10))
@@ -791,6 +864,17 @@ struct EventDetailView: View {
                                     .fontWeight(.medium)
                             } else if isLive {
                                 Text("Started \(date, format: .dateTime.hour().minute())")
+                                    .font(.caption)
+                                    .fontWeight(.medium)
+                            } else if isSuspended {
+                                // #4002 — `isFinished` and `isLive` each had a
+                                // tensed arm and `suspended` fell to the one
+                                // written for a game that has not happened: on
+                                // 15301312 this chip read "Sep 4 at 2:00 AM",
+                                // the identical sentence it prints for a fixture
+                                // next week. It DID start; the date stays
+                                // because the day is the surprising part.
+                                Text("Started \(date, format: .dateTime.month(.abbreviated).day()) at \(date, format: .dateTime.hour().minute())")
                                     .font(.caption)
                                     .fontWeight(.medium)
                             } else {

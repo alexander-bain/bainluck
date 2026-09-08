@@ -1613,7 +1613,7 @@ private struct StatPropsSection: View {
     var sportKey: String? = nil
 
     private var isLive: Bool { eventStatus == "live" }
-    private var isFinished: Bool { eventStatus == "completed" || eventStatus == "closed" }
+    private var isFinished: Bool { EventState.isFinished(eventStatus) }
     private var hasBoxScore: Bool { boxScore != nil && !(boxScore?.isEmpty ?? true) }
 
     private var meaningful: [RelatedFuture] {
