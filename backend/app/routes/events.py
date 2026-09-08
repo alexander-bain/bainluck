@@ -12578,6 +12578,30 @@ def _extend_win_prob_history_to_live_edge(
 _PREMATCH_EDGE_MAX_AGE = timedelta(minutes=2)
 
 
+def _blend_outlives_edge(event, last_ts: datetime, *, event_status=None) -> bool:
+    """Is the hero's blend built on a reading at least as new as this bucket? (#3898)
+
+    The measured half of the pre-match gate. ``_PREMATCH_EDGE_MAX_AGE`` asks the
+    wall clock how old the CHART's newest bucket is; this asks the column how new
+    the HERO's newest source is, and compares the two directly. A blend observed
+    after the bucket it would overwrite is, by construction, the better answer for
+    that edge — and it is already the number printed above the chart.
+
+    ``False`` whenever the answer is unknowable: an event with no stamped tier-1
+    source returns ``None`` from ``newest_source_reading_time`` and falls through
+    to the wall-clock arm exactly as before. This predicate can only ever ADD a
+    pin, never remove one.
+    """
+    from app.utils.aggregation import newest_source_reading_time
+
+    blend_ts = newest_source_reading_time(event, event_status)
+    if blend_ts is None:
+        return False
+    if blend_ts.tzinfo is None:
+        blend_ts = blend_ts.replace(tzinfo=timezone.utc)
+    return blend_ts >= last_ts
+
+
 def _pin_blend_edge(
     aggregate_line: list,
     event,
@@ -12621,10 +12645,35 @@ def _pin_blend_edge(
     The pre-match arm is deliberately weaker than the live one: it OVERWRITES the
     right edge, and never APPENDS. Nothing carries a pre-match series forward to
     the clock, so appending a "now" point to a quiet line would draw a fresh-
-    looking reading out of a stale one — #1561 rebuilt. It therefore fires only
-    while the edge is younger than ``_PREMATCH_EDGE_MAX_AGE``; past that the chart
-    keeps its own last real bucket, which contradicts nothing (it says "at 8:34 PM
-    it was 38%", not "38% now"). Live and finished behaviour is unchanged.
+    looking reading out of a stale one — #1561 rebuilt. Live and finished
+    behaviour is unchanged.
+
+    #3898 — WHY THE WALL-CLOCK GATE WAS NOT ENOUGH, AND WHAT REPLACED IT. The arm
+    above originally fired only while the edge was younger than
+    ``_PREMATCH_EDGE_MAX_AGE``. The defence written here for standing down past
+    that was:
+
+        the chart keeps its own last real bucket, which contradicts nothing
+        (it says "at 8:34 PM it was 38%", not "38% now")
+
+    **The chart does not say that.** It renders the right edge as a filled dot
+    carrying a bare percent label with no time attached to it, directly under the
+    hero. Read at 07:15Z on 2026-09-08, three of the seven drawable US Open match
+    pages printed two numbers for one match on one card: Shelton v Alcaraz
+    (15306813) a 21% hero over a curve labelled 24%, Pegula v Navarro (15306814)
+    79% over 77%, and 15306160 69% over 68%. Shelton's line held 0.215 — the hero's
+    own number — for every bucket but the last, which a lone 7-book snapshot at
+    06:07Z carried to 0.2373; 68 minutes later the two-minute gate was still the
+    only reason the reader saw it.
+
+    So the gate is no longer asked how old the CHART is. ``_blend_outlives_edge``
+    asks how new the HERO is: ``win_probability_sources`` stamps every reading it
+    feeds the blend, and a blend observed at or after the bucket it would overwrite
+    is the better answer for that edge. Nothing is stamped forward, no point is
+    appended and the series keeps its shape, so #1561 has nothing to fire on — the
+    edge cannot move later in time, only closer to the truth. The wall-clock arm
+    stays as the fallback for an event whose sources carry no stamp at all, which
+    is why this can only add pins and never take one away.
 
     The pre-match arm stands down for a settled row, and it takes TWO tests to
     say so because the right edge has two other owners and they do not agree on
@@ -12677,6 +12726,10 @@ def _pin_blend_edge(
                 "timestamp": edge_ts.isoformat(),
                 "home_probability": live_edge,
             })
+        elif last_ts is not None and _blend_outlives_edge(
+            event, last_ts, event_status=getattr(event, "status", None)
+        ):
+            aggregate_line[-1]["home_probability"] = live_edge
         elif last_ts is not None and edge_ts - last_ts <= _PREMATCH_EDGE_MAX_AGE:
             aggregate_line[-1]["home_probability"] = live_edge
         else:
