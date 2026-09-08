@@ -288,19 +288,66 @@ def test_upgrade_creates_all_four_tables_and_the_receipt_column(round_trip, pg):
         )
 
 
-def test_head_is_single_after_this_migration(round_trip):
-    """Two heads fail the Heroku release phase outright — the site does not
-    deploy at all. Read from the migrated database, not from the files."""
+def test_the_database_really_is_at_this_revision(round_trip):
+    """The upgrade landed where we think it did.
+
+    Split from the single-head check below, which is a fact about the migration
+    GRAPH and not about this database.
+    """
     result = _alembic(round_trip["url"], "current")
     assert result.returncode == 0, result.stderr
     assert THIS_REVISION in result.stdout, result.stdout
-    # `current` prints one line per head; more than one head means a branch.
-    head_lines = [
-        line
-        for line in result.stdout.splitlines()
-        if line.strip() and "(head)" in line
-    ]
-    assert len(head_lines) == 1, f"expected a single head, got: {head_lines}"
+
+
+def test_head_is_single_after_this_migration(round_trip):
+    """Two heads fail the Heroku release phase outright — the site does not
+    deploy at all.
+
+    ── THIS ASSERTION USED TO BE KEYED ON A MOVING FACT (#3879) ──────────────
+
+    It read `alembic current` on a database migrated to THIS_REVISION and
+    required a line containing `(head)`. That conflates two different claims:
+
+        A. this database is at the revision we just applied  (about the DB)
+        B. the migration graph has exactly one head          (about the FILES)
+
+    Only B can break the release phase, and `current` can only answer A. The
+    `(head)` marker appeared merely because `containers_phase1` happened to be
+    the newest revision in the tree when this was written — so the test was
+    guaranteed to red for whoever added the NEXT migration, however correct
+    their chain. #3879 was that migration: it chains onto `containers_phase1`,
+    which is therefore no longer the head, so `current` stopped printing the
+    marker and this failed while the graph remained perfectly linear.
+
+    A guard that fires on a fact its subject does not control is not a guard —
+    it is a tollbooth. So B is now asserted against `alembic heads`, which reads
+    the script directory and answers exactly the question the release phase
+    asks, and A has its own test above.
+    """
+    result = _alembic(round_trip["url"], "heads")
+    assert result.returncode == 0, result.stderr
+    heads = [line for line in result.stdout.splitlines() if line.strip()]
+    assert len(heads) == 1, (
+        "the migration graph has branched; the Heroku release phase runs "
+        f"`alembic upgrade head` and will refuse to deploy. heads={heads}"
+    )
+
+
+def test_this_revision_is_still_an_ancestor_of_head(round_trip):
+    """A successor may chain onto this migration; nothing may orphan it.
+
+    The replacement for the `(head)` check that keeps its real safety value.
+    Where the old form said "nothing may come after this" — a claim no
+    migration is entitled to make — this says "whatever comes after must still
+    build on it", which is the property that actually protects the containers
+    schema.
+    """
+    result = _alembic(round_trip["url"], "history", "-r", f"{THIS_REVISION}:heads")
+    assert result.returncode == 0, result.stderr
+    assert THIS_REVISION in result.stdout, (
+        f"{THIS_REVISION} is not on the path to head — the chain was rewritten "
+        f"around it\n{result.stdout}"
+    )
 
 
 # ---------------------------------------------------------------------------
