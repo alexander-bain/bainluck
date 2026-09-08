@@ -75,8 +75,15 @@ from app.utils.sports_first_page_rails import (
 #: The fixture anchor, and it MUST track the real clock.
 #:
 #: This was `datetime(2026, 9, 7, 12, 0, 0, tzinfo=timezone.utc)` — a fixed
-#: calendar instant — and it took master red roughly eighteen hours after it was
-#: written, on 2026-09-08.
+#: calendar instant — and it took master red on 2026-09-08.
+#:
+#: The fuse is 7 hours, not the eighteen this note used to claim. Detonation was
+#: measured directly (#3895): green at anchor+6.05h, RED at anchor+7.05h. It is
+#: derivable rather than folklore — the freshest card the fixture builds is
+#: `hours_ago=1.0`, so it reaches `CLIENT_COMPLETED_MAX_AGE_HOURS` (8) of REAL
+#: age 7 hours after the anchor. Eighteen hours was the gap until a push
+#: happened to run CI and notice, which is a property of the push schedule, not
+#: of this file.
 #:
 #: The reason is that this file has two families of test and only one of them
 #: gets to choose the clock. The direct callers pass `now=NOW` into
@@ -289,10 +296,11 @@ class TestThePremise:
         no `now` and reads `datetime.now(timezone.utc)` itself. So a fixture
         anchor that is a fixed calendar instant is a fuse, not a constant: it
         ages one hour per hour and the file goes red — everywhere, for good —
-        once the drift passes `CLIENT_COMPLETED_MAX_AGE_HOURS`. That happened on
-        2026-09-08, about eighteen hours after the anchor was written, and it
-        took the `deploy` job down with it, because a red CI skips deploy and
-        then NO lane's work reaches production.
+        once the drift passes `CLIENT_COMPLETED_MAX_AGE_HOURS`. Measured (#3895):
+        green at anchor+6.05h, RED at anchor+7.05h — the freshest card is
+        `hours_ago=1.0`, so it hits the 8-hour threshold seven hours after the
+        anchor. It took the `deploy` job down with it on 2026-09-08, because a
+        red CI skips deploy and then NO lane's work reaches production.
 
         Asserted against the module's own source, not against elapsed time. The
         first version of this guard compared `NOW` to `datetime.now()` with a
