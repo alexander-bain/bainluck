@@ -309,7 +309,7 @@ def live_artifact_ttl_ceiling_s() -> float:
         artifact_age_at_check  <=  TTL + (consumption -> ceiling check)
 
     The only hard bound in the system on that span is the live rail's own pass
-    budget — `_prewarm_one_shape` runs the route under
+    budget — `_prewarm_feed_shape` runs the route under
     ``asyncio.wait_for(timeout=FEED_LIVE_REPUBLISH_BUDGET_S)``, so a build that
     reaches the ceiling check at all took less than it. Hence::
 

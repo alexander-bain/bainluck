@@ -27,7 +27,7 @@ of this same run reported a floor of 30s that does not exist —
 `test_only_the_stale_ttl_carries_the_headroom` below pins the difference.
 
 `build_quality` being *complete* is why this wore the wrong name for so long:
-`_prewarm_one_shape` classifies the refusal as `outcome: empty` and keeps
+`_prewarm_feed_shape` classifies the refusal as `outcome: empty` and keeps
 last-good, which is the 13-17%-of-passes-per-shape `empty` rate #3904 tabulated
 and the mechanism behind the mirror holes #3827 was chasing.
 
@@ -76,7 +76,7 @@ class TestTheBoundIsDerivedNotChosen:
     def test_it_leaves_room_for_the_longest_build_the_rail_permits(self):
         """The whole point: budget-long build + max-age artifact still publishes.
 
-        `_prewarm_one_shape` runs the route under
+        `_prewarm_feed_shape` runs the route under
         `wait_for(timeout=FEED_LIVE_REPUBLISH_BUDGET_S)`, so this is the worst
         case that can reach the ceiling check at all.
         """
@@ -246,3 +246,81 @@ class TestSharingItselfSurvivesTheShorterTtl:
     @pytest.mark.parametrize("namespace", COUNTED_NAMESPACES)
     def test_sharing_is_not_switched_off(self, namespace):
         assert pic.shared_build_ttl_s(namespace) > 0
+
+
+class TestTheRailSaysWhyItWasEmpty:
+    """The observability half. `outcome: empty` with no reason is why this took
+    three queues to name — the rail could not tell "the world is empty" from "we
+    built a good page and declined to serve it"."""
+
+    @staticmethod
+    def _empty_branch(payload: dict) -> dict:
+        """Run `_prewarm_feed_shape`'s empty branch against a payload.
+
+        Reproduced rather than invoked: the real function needs a DB session, a
+        route call and a Redis client, none of which this claim depends on. The
+        assertion below pins that the SHAPE of what it returns carries the
+        reason, and `test_the_refusal_payload_is_shaped_as_assumed` pins that the
+        route really stamps the field being read.
+        """
+        cache_meta = payload.get("cache")
+        reason = cache_meta.get("reason") if isinstance(cache_meta, dict) else None
+        status = cache_meta.get("status") if isinstance(cache_meta, dict) else None
+        return {"outcome": "empty", "empty_reason": reason, "cache_status": status}
+
+    def test_a_refusal_is_reported_as_a_refusal(self):
+        refused = {
+            "items": [],
+            "cache": fc.build_feed_cache_metadata(
+                "unavailable",
+                ttl_seconds=0,
+                stale_ttl_seconds=0,
+                reason="input_age_ceiling",
+                live=True,
+            ),
+        }
+        out = self._empty_branch(refused)
+        assert out["outcome"] == "empty"
+        assert out["empty_reason"] == "input_age_ceiling"
+        assert out["cache_status"] == "unavailable"
+
+    def test_a_genuinely_empty_world_is_still_distinguishable(self):
+        """The other side of the same coin: no reason means no refusal, and a
+        successor must be able to tell that apart rather than assume."""
+        out = self._empty_branch({"items": [], "cache": {"status": "miss"}})
+        assert out["empty_reason"] is None
+        assert out["cache_status"] == "miss"
+
+    def test_a_payload_with_no_cache_block_does_not_raise(self):
+        """It runs on a beat and must never raise; a missing block reads as
+        unknown, not as a crash."""
+        assert self._empty_branch({"items": []})["empty_reason"] is None
+        assert self._empty_branch({"items": [], "cache": None})["empty_reason"] is None
+
+    def test_the_refusal_payload_is_shaped_as_assumed(self):
+        """The load-bearing coupling: the reader above is only correct if the
+        route really stamps `reason` on the refusal it returns. Read from the
+        same constructor `routes/feed.py` uses."""
+        meta = fc.build_feed_cache_metadata(
+            "unavailable",
+            ttl_seconds=0,
+            stale_ttl_seconds=0,
+            reason="input_age_ceiling",
+            live=True,
+        )
+        assert meta["status"] == "unavailable"
+        assert meta["reason"] == "input_age_ceiling"
+
+    def test_the_rail_reads_the_reason_it_is_given(self):
+        """Anchored to the production source, so deleting the field from
+        `_prewarm_feed_shape` fails HERE and not only in a post-deploy read."""
+        import inspect
+
+        from app.tasks import precompute_category_pages as pcp
+
+        source = inspect.getsource(pcp._prewarm_feed_shape)
+        assert '"empty_reason"' in source, (
+            "the rail stopped carrying the empty reason; #3904's instrument is "
+            "blind again"
+        )
+        assert '"cache_status"' in source
