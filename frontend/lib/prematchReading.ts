@@ -29,12 +29,13 @@
  * What it DOES own is the case where that key is absent. A feed response is
  * cached, so "the backend deployed it" is not "this payload carries it" — the
  * same reason `servedDuelPercents` exists. The fallback is `opening_odds`, and
- * the fallback is LABELLED `books`, because that is what `opening_odds` has
- * always been: the only writer of `Event.opening_*` is `_maybe_set_opening_odds`,
- * a median across whichever sportsbooks were still quoting (#1841). An
- * unlabelled fallback would be the old footnote with a new shape.
+ * the fallback is LABELLED as the sportsbook median it is, because that is what
+ * `opening_odds` has always been: the only writer of `Event.opening_*` is
+ * `_maybe_set_opening_odds`, a median across whichever sportsbooks were still
+ * quoting (#1841). An unlabelled fallback would be the old footnote with a new
+ * shape.
  *
- * ═══ WHY ONLY THE BOOKS RUNG IS LABELLED ═══
+ * ═══ WHY ONLY THE SPORTSBOOK RUNG IS LABELLED ═══
  *
  * Alex: *"labelled when not a prediction market."* A prediction-market opening
  * is the thing this product is about and reads as itself. A sportsbook median is
@@ -42,9 +43,11 @@
  * why that matters: the hub's old footnote made a claim about a venue from a
  * field that only ever described us, and it was false on the very row Alex read.
  *
- * The label is the generic word and never a venue name — there is no single book
- * to name (it is a median), and ruling 141 keeps venue names out of narrative
- * copy regardless.
+ * The label is the generic word and never a venue name — there is no single
+ * sportsbook to name (it is a median), and ruling 141 keeps venue names out of
+ * narrative copy regardless. Since notice 33 that generic word is
+ * `sportsbooks`; see `BOOKS_LABEL` for why it is not the same constant as the
+ * rung id.
  */
 
 import type { FeedEventData } from "@/lib/types";
@@ -52,6 +55,21 @@ import { servedDuelPercents } from "@/lib/servedDuelPercents";
 
 /** The rung a reading came from. Payload source ids, not display text. */
 export const BOOKS_SOURCE = "books";
+
+/**
+ * The word the card PRINTS for that rung (notice 33).
+ *
+ * 🔴 THIS IS A SEPARATE CONSTANT FROM `BOOKS_SOURCE` ON PURPOSE, and the two
+ * must never be folded back together. `sourceLabel` used to return
+ * `BOOKS_SOURCE` itself, so one string was doing two jobs — the id the payload
+ * carries and the guards key on (`data-prematch-source="books"`), and the text a
+ * reader is shown. Alex banned the second (*"we wouldn't EVER want to reference
+ * 'bookmakers'"*, notice 33) and nothing touches the first, which is why they
+ * had to come apart before the word could move. If a future edit makes the label
+ * follow the id again, the id goes back on the page.
+ */
+export const BOOKS_LABEL = "sportsbooks";
+
 const PREDICTION_MARKET_SOURCES = new Set(["kalshi", "polymarket"]);
 
 /**
@@ -174,5 +192,5 @@ function isUsable(value: number | null | undefined): value is number {
 }
 
 function sourceLabel(source: string): string | null {
-  return isPredictionMarketSource(source) ? null : BOOKS_SOURCE;
+  return isPredictionMarketSource(source) ? null : BOOKS_LABEL;
 }

@@ -164,7 +164,7 @@ describe("EventCard", () => {
     // L2-112: it is a different element making a different claim. The chip was
     // a live-weight number in the card's loudest slot; this is a grey
     // `text-[11px]` prior beside the name it is about, under an explicit
-    // `Pre-match · books` label. L2-112 removed a number that read as current.
+    // `Pre-match · sportsbooks` label. L2-112 removed a number that read as current.
     // #2764 adds one that says out loud that it is not.
     //
     // The assertion is kept — inverted — rather than deleted, so the pair is
@@ -173,7 +173,7 @@ describe("EventCard", () => {
     expect(html).toContain("55%");
     expect(html).toContain("45%");
     expect(html).toContain('data-testid="event-card-prematch-home"');
-    expect(html).toContain("Pre-match · books");
+    expect(html).toContain("Pre-match · sportsbooks");
 
     // The absence assertions above are only worth anything if they name
     // strings something actually emits. A PREGAME card renders the bar and the

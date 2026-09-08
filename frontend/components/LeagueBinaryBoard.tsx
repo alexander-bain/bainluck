@@ -50,7 +50,7 @@ const MOVER_MIN = 0.02;
 const VENUE_LABEL: Record<string, string> = {
   kalshi: "Kalshi",
   polymarket: "Polymarket",
-  odds_api: "Books",
+  odds_api: "Sportsbooks",
   datagolf: "DataGolf",
 };
 

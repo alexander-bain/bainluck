@@ -204,7 +204,7 @@ export const SUPPLIER_PROSE_BANS: CopyBan[] = [
   {
     id: "supplier-books",
     pattern: /\bbooks?\b/i,
-    why: 'a supplier CLASS word in prose — a mark beside a number may say "books"; a caption may not talk about our suppliers (D91, ruling 141 as amended)',
+    why: 'a word the site may not print AT ALL — not in prose and not as a mark (notice 33; the approved word is "sportsbooks")',
   },
   {
     id: "supplier-sportsbook",
@@ -214,14 +214,31 @@ export const SUPPLIER_PROSE_BANS: CopyBan[] = [
   {
     id: "supplier-bookmaker",
     pattern: /\bbookmakers?\b/i,
-    why: "a supplier CLASS word in prose, and the one spelling no mark on the site uses (D91, ruling 141 as amended)",
+    why: 'a word the site may not print AT ALL — not in prose and not as a mark (notice 33; the approved word is "sportsbooks")',
   },
 ];
 
-/** The bans that answer to `isSourceAttribution` rather than firing outright. */
-const ATTRIBUTION_AWARE_BANS: ReadonlySet<string> = new Set(
-  [...VENUE_BANS, ...SUPPLIER_PROSE_BANS].map((b) => b.id)
-);
+/**
+ * ═══ NOTICE 33 (Alex, 2026-09-08 2:00pm PT) — TWO OF THE THREE STOP BEING
+ * ATTRIBUTION-AWARE ═══
+ *
+ * D91 drew the line at PROSE, so all three class words above were judged by
+ * `isSourceAttribution` and a one-word mark beside a figure was allowed to say
+ * any of them. Alex then narrowed the vocabulary rather than the placement:
+ * *"we wouldn't EVER want to reference 'bookmakers'"*, and `books` with it. The
+ * approved word is `sportsbooks`.
+ *
+ * So the placement test still applies to `supplier-sportsbook` — that word is
+ * exactly what D91's *"small-font source marks on numbers stay and spread"*
+ * protects, and its own worked example is `Kalshi · Polymarket · 7 sportsbooks`.
+ * It does NOT apply to the other two: a banned word is banned wherever it sits,
+ * and leaving them attribution-aware would keep licensing the 9px `books`
+ * marker this ship exists to remove.
+ */
+const ATTRIBUTION_AWARE_BANS: ReadonlySet<string> = new Set([
+  ...VENUE_BANS.map((b) => b.id),
+  "supplier-sportsbook",
+]);
 
 /**
  * Source captions the SHAPE rule cannot recognise, each with the reason.
@@ -256,11 +273,18 @@ export const ATTRIBUTION_LITERALS: { literal: string; why: string }[] = [
  * class words were unbanned everywhere and this set only had to stop a legitimate
  * caption tripping the two venue NAMES. `SUPPLIER_PROSE_BANS` now fires on the
  * class words too, so this set is what keeps Alex's *"small-font source marks on
- * numbers stay"* true: the tournament list's 9px `books` marker is a clause of
- * exactly one word, and that word has to be allowed to stand alone.
+ * numbers stay"* true: the tournament list's 9px marker is a clause of exactly
+ * one word, and that word has to be allowed to stand alone.
+ *
+ * 🔴 `book`/`books`/`bookmaker`/`bookmakers` CAME BACK OUT under notice 33.
+ * They were here because a mark was allowed to say them; Alex has since banned
+ * the words themselves, so a standalone `books` is no longer a label that needs
+ * excusing — it is the defect. `sportsbook`/`sportsbooks` stay, because that is
+ * the word the mark is now supposed to use. This set exempts a word from being
+ * read as PROSE; it was never a licence, and after notice 33 the only class word
+ * it has left to exempt is the approved one.
  */
-const LABEL_WORDS =
-  /^(source|sources|and|vs|via|book|books|sportsbook|sportsbooks|bookmaker|bookmakers)$/i;
+const LABEL_WORDS = /^(source|sources|and|vs|via|sportsbook|sportsbooks)$/i;
 
 /**
  * Where one clause ends and the next begins.

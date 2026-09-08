@@ -123,7 +123,7 @@ function ChangeIndicator({ change }: { change: number | null | undefined }) {
 }
 
 const SOURCE_LABELS: Record<string, string> = {
-  odds_api: "Books",
+  odds_api: "Sportsbooks",
   kalshi: "Kalshi",
   polymarket: "Poly",
   datagolf: "DG",

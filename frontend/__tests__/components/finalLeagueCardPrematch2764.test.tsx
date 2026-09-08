@@ -90,7 +90,7 @@ jest.mock("@/hooks", () => ({
 }));
 
 import EventCard from "@/components/EventCard";
-import { BOOKS_SOURCE, PREMATCH_SAID } from "@/lib/prematchReading";
+import { BOOKS_LABEL, BOOKS_SOURCE, PREMATCH_SAID } from "@/lib/prematchReading";
 import type { Event } from "@/lib/types";
 
 const IN_THE_PAST = "2026-09-01T18:00:00Z";
@@ -215,7 +215,12 @@ describe("#2764 — the league/team/search FINAL card", () => {
 
   it("labels the reading as the sportsbook median it is, exactly once", () => {
     const html = render(makeEvent());
-    expect(testid(html, "event-card-prematch-label")).toBe(`Pre-match · ${BOOKS_SOURCE}`);
+    // `BOOKS_LABEL`, not `BOOKS_SOURCE` — and the difference is the whole of
+    // notice 33. This line read `${BOOKS_SOURCE}` because one constant was
+    // doing both jobs, so the test could not have caught the id being printed
+    // at a reader: it was asserting exactly that. The next assertion still
+    // pins the id on the attribute, where it belongs.
+    expect(testid(html, "event-card-prematch-label")).toBe(`Pre-match · ${BOOKS_LABEL}`);
     // ONE label for the pair, not one per row.
     expect(html.split('data-testid="event-card-prematch-label"')).toHaveLength(2);
   });

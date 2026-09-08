@@ -38,7 +38,7 @@
 import { ROUND_LABELS, ROUND_NAMES, type RoundName } from "./bracket";
 /* CERT-812: the one place that decides whether a rung needs saying out loud.
    Imported rather than re-declared — see `prematchAttribution`. */
-import { PREMATCH_SAID, isPredictionMarketSource } from "./prematchReading";
+import { BOOKS_LABEL, PREMATCH_SAID, isPredictionMarketSource } from "./prematchReading";
 import { formatProbabilityPercent } from "./probabilityDisplay";
 import { renderedDuelPercents } from "./renderedPercent";
 import type { PlayerImage } from "./slate";
@@ -730,16 +730,22 @@ export function prematchAbsenceNote(coverage: PrematchCoverage): string {
  * the footnote in `components/tournament/TournamentResults.tsx`.
  */
 /**
- * The visible marker a books number wears on this list.
+ * The visible marker a sportsbook-median number wears on this list.
  *
  * A WORD and not a glyph, because the two surfaces that already do this right
- * print the word (`Pre-match · books` in `FeedCard` and Discover's `EventCard`),
- * and this codebase has no superscript-legend convention to borrow — inventing
- * one here would be a seventh private answer to a question `prematchReading`
- * already owns. Lower case and 9px so it reads as a unit beside the figure
- * rather than as a second number.
+ * print the word (`Pre-match · sportsbooks` in `FeedCard` and Discover's
+ * `EventCard`), and this codebase has no superscript-legend convention to borrow
+ * — inventing one here would be a seventh private answer to a question
+ * `prematchReading` already owns. Lower case and 9px so it reads as a unit
+ * beside the figure rather than as a second number.
+ *
+ * 🔴 IT IS `BOOKS_LABEL`, NOT A SECOND COPY OF THE WORD. The comment above
+ * already argues that this marker and `FeedCard`'s must be the same string; up
+ * to notice 33 they were the same string only by coincidence, declared twice
+ * three files apart, and the word then had to move in both. Now there is one
+ * word and this is a re-export of it under the name this list's callers know.
  */
-export const BOOKS_MARKER = "books";
+export const BOOKS_MARKER = BOOKS_LABEL;
 
 /**
  * PER-VALUE ATTRIBUTION: what this one number is, in the two registers a row has
