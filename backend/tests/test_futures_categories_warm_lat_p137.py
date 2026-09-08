@@ -110,8 +110,13 @@ class _FakeRedis:
 
 
 class _Row:
+    #: `category_key`, not `llm_sport_category` — #4047 moved the `or "other"`
+    #: fallback out of the serialiser and into the statement's GROUP BY, so the
+    #: row the census reads now carries the coalesced KEY rather than the raw
+    #: column. A double still shaped like the column would be simulating a row
+    #: production can no longer produce.
     def __init__(self, key, count):
-        self.llm_sport_category = key
+        self.category_key = key
         self.count = count
 
 
