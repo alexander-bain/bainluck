@@ -533,10 +533,29 @@ def test_native_warm_shape_tracks_the_ios_first_page_limit():
 # --- The warmer must publish only good payloads, under the resolved key -------
 
 
+#: What `GET /api/feed` stamps on a page THIS request built (#3941).
+#:
+#: Every fixture in this file carries one, because a payload without a `cache`
+#: block is not a payload the route can produce: all thirteen of `get_feed`'s
+#: return sites stamp it, and the single exception (the `my_teams_only` +
+#: unauthenticated early return) returns zero items and cannot reach the rail's
+#: publish. The rail now refuses to republish a page it did not build, and it
+#: fails CLOSED on a payload that does not say — so a fixture that omits this is
+#: not "a simpler payload", it is a payload the production route never emits.
+_BUILT_CACHE_META = {
+    "status": "miss",
+    "ttl_seconds": 60,
+    "stale_ttl_seconds": 300,
+    "live": False,
+}
+
+
 def _run_warm(payload, *, rc=None, resolved_key="feed_cache:deadbeef"):
     """Drive `_prewarm_feed_shape` with a stubbed `get_feed`."""
     rc = rc or MagicMock()
     captured = {}
+    if isinstance(payload, dict) and "cache" not in payload:
+        payload = {**payload, "cache": dict(_BUILT_CACHE_META)}
 
     async def fake_get_feed(**kwargs):
         captured.update(kwargs)

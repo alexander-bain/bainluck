@@ -1003,6 +1003,7 @@ async def _prewarm_feed_shape(
     from app.utils.feed_cache import (
         FEED_PREWARM_KEY_SCOPE_KEY,
         FEED_PREWARM_SCOPE_KEY,
+        feed_payload_was_built_by_this_request,
         feed_response_cache_ttls,
         payload_contains_live_event,
     )
@@ -1116,6 +1117,68 @@ async def _prewarm_feed_shape(
             "duration_s": duration_s,
             "empty_reason": _reason,
             "cache_status": _status,
+        }
+
+    # #3941: THE THIRD REFUSAL, and it is the same refusal as the two above.
+    #
+    # Both gates above end in "keeping last-good": a pass that did not produce a
+    # good page must not overwrite the page that is already there. This one
+    # closes the case they were both written for and neither reached — a page
+    # the route DID NOT BUILD.
+    #
+    # When the input-age ceiling trips (CERT-1864), branch (b) of the route
+    # returns a still-valid PRIOR payload, and it is careful about it: the TTLs
+    # it stamps are computed from that payload's own age, not this request's, so
+    # a 55-second-old fallback gets the five seconds it has left. The rail then
+    # threw that away. `feed_response_cache_ttls` below is called without
+    # `oldest_artifact_age_s`, which defaults to `0.0` — and the page the route
+    # had just refused as too old was republished under a full 30s/60s window,
+    # by the one writer whose whole job is keeping this shape UNDER the ceiling.
+    # It defeated both existing gates on its merits: `build_quality` is
+    # "complete" (it WAS a complete build, merely an old one) and `items` is
+    # non-empty (that is the entire point of serving a prior page).
+    #
+    # 🔴 REFUSE, RATHER THAN HONOUR THE PAYLOAD'S OWN SHORTER TTL. Honouring it
+    # would also be sound arithmetic, and it was the other candidate. Refusing
+    # wins on three counts: it cannot overwrite an entry FRESHER than the
+    # fallback (the rail forces a rebuild, so it never read the live entry and
+    # cannot know); it keeps the provenance, because a republished `last_good`
+    # is served as a plain `hit` on the very next read and the refusal becomes
+    # unrecoverable from outside the process; and it is the answer the function
+    # already gives twice, so it adds no fourth policy to reason about.
+    #
+    # It is NOT #3841's fix and must not be mistaken for one. Nothing here
+    # passes an artifact age into the TTLs of a page this pass built, so the
+    # published window is byte-identical to today's on every healthy pass — the
+    # `artifact_TTL + PERIOD + lateness <= CEILING` arithmetic that forces
+    # `artifact_TTL <= 20` is never entered. This fires only when the route has
+    # already declined to build, which the post-#3904 baseline measured at
+    # 0 refusals in 164 samples.
+    if not feed_payload_was_built_by_this_request(payload):
+        _cache_meta = payload.get("cache")
+        _status = (
+            _cache_meta.get("status") if isinstance(_cache_meta, dict) else None
+        )
+        _reason = (
+            _cache_meta.get("reason") if isinstance(_cache_meta, dict) else None
+        )
+        # LOUD, on the report and not only in the ~3-minute log buffer, for the
+        # reason LAT-P261 (#3904) made this rail say WHY an empty pass was empty:
+        # an instrument that has to be caught in the act is not an instrument
+        # (gotcha #53). `/api/admin/feed-live-prewarm/last` serves this.
+        logger.warning(
+            "Feed pre-warm got a page it did not BUILD for %s (cache_status=%s "
+            "reason=%s) — keeping last-good rather than republishing it under a "
+            "fresh window (#3941)",
+            label,
+            _status,
+            _reason,
+        )
+        return {
+            "outcome": "not_built",
+            "duration_s": duration_s,
+            "cache_status": _status,
+            "not_built_reason": _reason,
         }
 
     # Publish under the key the route itself resolved (scope readback), so the

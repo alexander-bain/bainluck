@@ -345,7 +345,13 @@ def test_the_remembered_key_is_the_one_the_route_resolved():
         request = kwargs["request"]
         assert request.scope.get(FEED_PREWARM_SCOPE_KEY) is True
         request.scope[FEED_PREWARM_KEY_SCOPE_KEY] = "feed_cache:resolved-by-route"
-        return {"items": [{"id": "a"}], "total": 1}
+        # #3941: the rail republishes only a page the route says it BUILT, so
+        # the fixture carries the `cache` block the route always stamps.
+        return {
+            "items": [{"id": "a"}],
+            "total": 1,
+            "cache": {"status": "miss", "ttl_seconds": 60},
+        }
 
     @asynccontextmanager
     async def fake_session():

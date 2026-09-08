@@ -736,7 +736,14 @@ def test_the_pass_never_holds_more_sessions_than_the_concurrency_it_declares():
             f"bainluck:feed:{kwargs.get('mode') or 'discover'}:{kwargs['limit']}"
         )
         await asyncio.sleep(0.02)
-        return {"build_quality": "complete", "items": [{"id": 1}, {"id": 2}]}
+        # #3941: `cache.status` is how the rail knows this pass BUILT the page
+        # rather than being handed an older one; the route stamps it on every
+        # return that can carry items, so the stand-in does too.
+        return {
+            "build_quality": "complete",
+            "items": [{"id": 1}, {"id": 2}],
+            "cache": {"status": "miss", "ttl_seconds": 60},
+        }
 
     rc = _fake_rc({s["label"]: "1" for s in pcp.FEED_PREWARM_SHAPES})
     with patch("app.tasks.base.get_task_session", _counting_session), patch(

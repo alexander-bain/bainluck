@@ -647,6 +647,87 @@ def feed_response_cache_ttls(
     return fresh, stale
 
 
+# --- #3941: which `cache.status` values mean THIS REQUEST built the page ------
+#
+# The warm rail republishes whatever ``GET /api/feed`` hands back. That is only
+# safe for a payload the call itself BUILT. A payload the route recalled from a
+# prior build carries the prior build's age, and republishing it starts a fresh
+# window over content whose clock is already part-spent — which is how the
+# input-age ceiling (CERT-1864) came to be defeated by the very rail that exists
+# to keep pages under it: branch (b) returns a `last_good` page that is complete
+# and non-empty, so it passes both of the rail's existing refusal gates.
+#
+# 🔴 THIS IS AN ALLOWLIST AND THAT IS THE POINT. The obvious spelling is
+# "refuse `last_good`", and it is wrong for the reason a denylist of
+# known-unknowns is always wrong: the route stamps this field at TWELVE sites
+# today, and the thirteenth — whoever adds it — inherits permission to be
+# republished without anyone deciding that it should be. An allowlist hands the
+# new status the SAFE answer instead, which here is "keep last-good", the same
+# answer the degraded gate and the empty gate already give.
+# `test_feed_prewarm.py::test_every_cache_status_the_route_can_stamp_is_classified`
+# reads both sets out of `routes/feed.py` and fails on a status neither names,
+# so the classification cannot be skipped by forgetting it exists.
+#
+#: `cache.status` values that mean the responding request computed the page.
+FEED_BUILT_CACHE_STATUSES = frozenset(
+    {
+        # The build path proper (`routes/feed.py`, `_cache_status` at the
+        # publish stamp). All five are "the read did not serve it, so we built".
+        "miss",
+        "error",
+        "disabled",
+        "disabled_debug",
+        "disabled_reviewed_filter",
+        # A coalescing waiter's payload is the LEADER's fresh build, handed over
+        # through the single-flight future. Built now, by this process, for this
+        # key — the leader has already published it, so republishing is a
+        # no-op rather than a lie.
+        "coalesced",
+    }
+)
+
+#: `cache.status` values that mean the page came from an EARLIER build. Named
+#: rather than merely omitted, so the guard test above can prove the two sets
+#: partition everything the route can stamp.
+FEED_SERVED_FROM_PRIOR_CACHE_STATUSES = frozenset(
+    {
+        # The route's own Redis tiers.
+        "hit",
+        "stale_hit",
+        # LAT-P089's inert-principal share: an IDENTIFIED reader served the
+        # anonymous entry. Requires a user or session, so the anonymous rail
+        # cannot reach it — classified anyway, because "unreachable today" is
+        # not a classification.
+        "shared_hit",
+        "shared_stale_hit",
+        # LAT-P141's offset-independent page base, re-rendered into a page.
+        "page_base_hit",
+        "page_base_stale_hit",
+        # The process-local recall, including CERT-1864 branch (b) — the one
+        # this whole gate exists for.
+        "last_good",
+        # A truthful empty page. Caught by the rail's `not items` gate first;
+        # named here so the two sets partition, not because it is load-bearing.
+        "unavailable",
+    }
+)
+
+
+def feed_payload_was_built_by_this_request(payload: Any) -> bool:
+    """True when ``payload`` says the request that returned it BUILT it (#3941).
+
+    Fails CLOSED: a payload with no ``cache`` block, an unparseable one, or a
+    status in neither set above returns ``False``. The caller's safe action is
+    to publish nothing and leave the previous entry alone, so an unknown costs
+    one warm pass — where guessing "publishable" costs a full fresh window
+    stamped on a page the system has already refused as too old.
+    """
+    cache_meta = payload.get("cache") if isinstance(payload, dict) else None
+    if not isinstance(cache_meta, dict):
+        return False
+    return cache_meta.get("status") in FEED_BUILT_CACHE_STATUSES
+
+
 def build_feed_cache_metadata(
     status: str,
     *,
