@@ -60,20 +60,17 @@ struct TotalPointsSpectrumView: View {
         return result
     }
 
-    /// Pick up to 5 representative thresholds for the ladder.
+    /// How many rungs the ladder draws, settled or not.
+    static let ladderRowLimit = 5
+
+    /// Pick up to ``ladderRowLimit`` representative thresholds for the ladder.
     private var ladderThresholds: [GameMarketOutcome] {
-        if thresholds.count <= 5 { return thresholds }
-        let step = max(1, thresholds.count / 5)
-        var picks: [GameMarketOutcome] = []
-        var i = 0
-        while i < thresholds.count, picks.count < 5 {
-            picks.append(thresholds[i])
-            i += step
-        }
-        if picks.count < 5, let last = thresholds.last {
-            picks.append(last)
-        }
-        return picks
+        let picks = Self.ladderIndices(
+            sortedThresholds: thresholds.map { $0.threshold ?? 0 },
+            finalTotal: actualTotal,
+            limit: Self.ladderRowLimit
+        )
+        return picks.map { thresholds[$0] }
     }
 
     /// The threshold closest to 50% over probability — the implied O/U line.
@@ -207,7 +204,7 @@ struct TotalPointsSpectrumView: View {
                   let scored = pace.totalScored {
             liveStrip(ouLine: ouLine, paceTotal: paceTotal, scored: scored)
         } else if isDone, let actual = actualTotal {
-            finalStrip(ouLine: ouLine, actual: actual)
+            finalStrip(actual: actual)
         }
     }
 
@@ -275,33 +272,57 @@ struct TotalPointsSpectrumView: View {
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
-    private func finalStrip(ouLine: Double, actual: Int) -> some View {
-        let scaleMax = max(ouLine, Double(actual)) * 1.12
-        let diff = Double(actual) - ouLine
-        let covered = diff > 0
-        let actualColor = Color(hex: "#8B5CF6")
-
-        return VStack(alignment: .leading, spacing: 8) {
+    /// What the strip says once the game is over.
+    ///
+    /// #3850 — **THIS IS THE FRAME IN THE ISSUE'S PHOTOGRAPH**, and it was the
+    /// louder half of the bug, because it put the word and the number side by
+    /// side. On event 15305475 (`completed`) it rendered
+    ///
+    /// ```
+    /// Final total runs
+    ///   PRE-GAME  ████████▏   2.5
+    /// ```
+    ///
+    /// — `Final` and `PRE-GAME` inside one card, contradicting each other, over a
+    /// number belonging to neither.
+    ///
+    /// 🔴 **`2.5` WAS NOT THE PRE-GAME LINE; IT WAS A TIE BROKEN ARBITRARILY.**
+    /// The bar drew ``centerLine``, "the threshold closest to 50% over
+    /// probability" — a sound definition on a live book and a meaningless one on a
+    /// settled ladder, where every line has resolved to `0.99` or `0.01`. Both are
+    /// `0.49` away from `0.5`, so `min(by:)` returns whichever it sees first:
+    /// the LOWEST line, every time, on every settled game. The real pre-game line
+    /// on that card was **8.5** (recovered opening `0.465`, the only one anywhere
+    /// near a coin flip). The card printed the smallest number in the ladder and
+    /// called it the market's expectation.
+    ///
+    /// 🟠 **THERE IS NO HONEST PRE-GAME LINE TO SUBSTITUTE.** Measured on
+    /// production 2026-09-07 for this specimen: `opening_odds.over_under` is
+    /// **null**, `prematch_odds` is **null** outright, and `current_odds.over_under`
+    /// (10.6) is by construction the current one. Recovering it from the rungs'
+    /// `movement` runs into the same wall as ``ladderRow``: the payload carries no
+    /// capture timestamp, and 28 settled rows' "openings" were captured 52–172
+    /// minutes after first pitch. So the comparison this strip exists to draw
+    /// cannot be drawn honestly, and the sentence that framed it — "Actual came in
+    /// +8.5 vs pre-game expectation." — was measuring against that same tie-broken
+    /// `2.5` and goes with it.
+    ///
+    /// What is left is the one thing this card can vouch for, stated plainly.
+    /// `preGameStrip` and `liveStrip` are untouched: before and during the game
+    /// their "Pre-game" bar is a live book's own current line, which is a
+    /// different question from this one. (That LIVE label is arguably its own
+    /// small tense bug — filed separately rather than smuggled in here.)
+    private func finalStrip(actual: Int) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
             Text("Final total \(unit)")
                 .font(.caption)
                 .fontWeight(.semibold)
-            projectionBar(label: "Pre-game", value: ouLine, scaleMax: scaleMax,
-                          barColor: Color.secondary.opacity(0.55), labelColor: .secondary, bold: false)
-            projectionBar(label: "Actual", value: Double(actual), scaleMax: scaleMax,
-                          barColor: actualColor, labelColor: actualColor, bold: true)
-            HStack(spacing: 4) {
-                Text("Actual came in")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                Text("\(covered ? "+" : "")\(String(format: "%.1f", diff))")
-                    .font(.caption2.monospacedDigit().weight(.semibold))
-                    .foregroundStyle(covered ? Color(hex: "#10B981") : .red)
-                Text("vs pre-game expectation.")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
+            Text("\(actual)")
+                .font(.system(size: 28, weight: .bold, design: .monospaced))
+                .foregroundStyle(Color(hex: "#8B5CF6"))
         }
         .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.secondary.opacity(0.05))
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
@@ -321,9 +342,73 @@ struct TotalPointsSpectrumView: View {
         }
     }
 
+    /// #3850 — the colours the verdict badge has always used, lifted to statics
+    /// so `MarketMapView.ladderResultColor` and this badge cannot drift. That
+    /// function's own comment already says these two hexes are "TotalPointsSpectrumView's
+    /// own, to the hex, because that view already grades a settled totals ladder
+    /// on this same event page and two settled ladders in two colours is a third
+    /// bug" — this is the other end of that sentence.
+    static let verdictHit = Color(hex: "#10B981")
+    static let verdictMiss = Color.red
+    /// Nothing happened, so nothing is coloured as though it had — matching
+    /// `MarketMapView.ladderResultColor`.
+    static let verdictPush = Color.secondary
+
+    static func verdictColor(_ result: MarketMapRail.TotalLadderResult) -> Color {
+        switch result {
+        case .over: return verdictHit
+        case .under: return verdictMiss
+        case .push: return verdictPush
+        }
+    }
+
+    /// One rung of the ladder.
+    ///
+    /// #3850. A settled rung and an unsettled rung say different things, and the
+    /// bug was that this row said the unsettled thing either way.
+    ///
+    /// 🔴 **`PRE-GAME` WAS PRINTED UNCONDITIONALLY, OVER `overProbability` — WHICH
+    /// IS THE PRICE RIGHT NOW.** On a finished game that is the *settlement*
+    /// price, so the card captioned a settled 99% as a pre-game forecast. On the
+    /// photographed specimen (event 15305475, 11 runs) the `10.5` rung read
+    /// `PRE-GAME … 99%`; it opened at **32%**. The caption named a tense
+    /// explicitly, which is what makes it worse than #3823's rung, which only
+    /// implied one.
+    ///
+    /// 🟠 **WHY NOT JUST SHOW THE RECOVERED OPENING?** The issue offered that as
+    /// option (1) — every totals row carries `movement`, and
+    /// `current - movement` reconstructs a sane monotone opening curve
+    /// (`0.755 → 0.235` on this specimen). It is REFUSED, and not on taste:
+    ///
+    /// 1. **The client cannot tell a pre-game opening from a mid-game one.**
+    ///    `GET /api/events/{id}/game-markets` serves `movement` and **no capture
+    ///    timestamp** — measured 2026-09-07, the full key set of a totals row is
+    ///    `threshold · over_probability · source · market_type · market_name ·
+    ///    outcome_name · is_winner · resolution_source · movement · period`.
+    ///    Server-side, `futures_outcomes.opening_captured_at` says **28** of the
+    ///    566 settled totals rows that have an opening captured it **52–172
+    ///    minutes AFTER first pitch**. Captioning one of those `PRE-GAME` is the
+    ///    same bug wearing a fix, and from here it is undetectable.
+    /// 2. **Half the population has no opening at all** — **599 of 1,165** settled
+    ///    totals rows (51.4%) carry `opening_probability IS NULL`, so option (1)
+    ///    has nothing to show for them and the card would go mixed-tense.
+    ///
+    /// So: option (2), and the same move #3823 made — a number whose tense you
+    /// cannot vouch for is worse than no number. The BAR stays, exactly as #3823
+    /// left its own: it draws the step (0.99 above the final, 0.01 below) and was
+    /// never the thing making a false claim.
+    ///
+    /// 🟢 **THE PUSH COMES FREE.** The old grade was `Double(actual) >= threshold`,
+    /// which calls a line the game landed exactly on a HIT when it is a push.
+    /// Routing through ``MarketMapRail/totalLadderResult(threshold:finalTotal:)``
+    /// — the rule #3823 already wrote, tested and documented as being for exactly
+    /// this call site — fixes it without a second grader to drift out of step.
     private func ladderRow(_ item: GameMarketOutcome) -> some View {
         let prob = item.overProbability ?? 0
         let threshold = item.threshold ?? 0
+        let result = actualTotal.map {
+            MarketMapRail.totalLadderResult(threshold: threshold, finalTotal: $0)
+        }
 
         return VStack(spacing: 0) {
             Divider()
@@ -332,11 +417,13 @@ struct TotalPointsSpectrumView: View {
                     .font(.caption.monospacedDigit().weight(.semibold))
                     .frame(width: 50, alignment: .leading)
 
-                Text("PRE-GAME")
-                    .font(.system(size: 8, weight: .semibold))
-                    .tracking(0.5)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 52, alignment: .leading)
+                if result == nil {
+                    Text("PRE-GAME")
+                        .font(.system(size: 8, weight: .semibold))
+                        .tracking(0.5)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 52, alignment: .leading)
+                }
 
                 GeometryReader { geo in
                     ZStack(alignment: .leading) {
@@ -350,23 +437,20 @@ struct TotalPointsSpectrumView: View {
                 }
                 .frame(height: 5)
 
-                Text("\(Int((prob * 100).rounded()))%")
-                    .font(.system(size: 11).monospacedDigit().weight(.semibold))
-                    .frame(width: 32, alignment: .trailing)
-
-                if isDone, let actual = actualTotal {
-                    let hit = Double(actual) >= threshold
-                    Text(hit ? "HIT" : "MISS")
+                if let result {
+                    Text(MarketMapRail.totalLadderResultLabel(result))
                         .font(.system(size: 9, weight: .bold))
                         .tracking(0.3)
-                        .foregroundStyle(hit ? Color(hex: "#10B981") : .red)
+                        .foregroundStyle(Self.verdictColor(result))
                         .padding(.horizontal, 6)
                         .padding(.vertical, 3)
-                        .background((hit ? Color(hex: "#10B981") : Color.red).opacity(0.12))
+                        .background(Self.verdictColor(result).opacity(0.12))
                         .clipShape(RoundedRectangle(cornerRadius: 4))
                         .frame(width: 50)
                 } else {
-                    Spacer().frame(width: isDone ? 50 : 0)
+                    Text("\(Int((prob * 100).rounded()))%")
+                        .font(.system(size: 11).monospacedDigit().weight(.semibold))
+                        .frame(width: 32, alignment: .trailing)
                 }
             }
             .padding(.vertical, 8)
@@ -448,5 +532,78 @@ struct TotalPointsSpectrumView: View {
         value.truncatingRemainder(dividingBy: 1) == 0
             ? "\(Int(value))"
             : String(format: "%.1f", value)
+    }
+}
+
+// MARK: - Which rungs the ladder draws (#3850)
+
+extension TotalPointsSpectrumView {
+    /// The indices of ``thresholds`` this card should draw, in order.
+    ///
+    /// #3850. Two different questions, and the answer flips entirely once the
+    /// game is over — which is the whole reason this is one function rather than
+    /// a `prefix` at the call site.
+    ///
+    /// **Unsettled (`finalTotal == nil`)** — stride the whole ladder so the five
+    /// rungs span the range of lines on offer. Unchanged behaviour, moved here so
+    /// the settled branch has somewhere to live beside it.
+    ///
+    /// **Settled** — defer to ``MarketMapRail/settledLadderWindow(sortedThresholds:finalTotal:limit:)``,
+    /// the rule #3823 landed for the Runs-map ladder on this same event page.
+    ///
+    /// 🔴 **THE WINDOW IS NOT A COSMETIC HALF OF THIS FIX — WITHOUT IT THE FIX
+    /// SHOWS NOTHING.** #3823 put it this way: the window fault "is the one that
+    /// survives fixing the first". Measured on the specimen this issue was filed
+    /// against — event 15305475 (Minnesota 1 — Chicago WS 10, **11 runs**), whose
+    /// eleven lines run `2.5 … 12.5` — the stride picks `step = 11/5 = 2`, so
+    /// indices `0,2,4,6,8` = `2.5 · 4.5 · 6.5 · 8.5 · 10.5`. Every one of those is
+    /// under 11, so grading the OLD selection would have traded five identical
+    /// `99%`s for five identical `HIT`s and taught the reader nothing. It never
+    /// samples `11.5`, the first line the game failed to clear — the one rung that
+    /// says what the total actually was. `settledLadderWindow` centres on that
+    /// step, so the card reads `… 10.5 HIT · 11.5 MISS …` and **the reader gets
+    /// "11" off the step without the card printing the word**.
+    /// `testTheOldStrideWouldHaveShownFiveIdenticalVerdicts` is that measurement
+    /// as a test, so the argument cannot quietly stop being true.
+    ///
+    /// - Parameters:
+    ///   - sortedThresholds: the lines, ascending — `thresholds` already sorts.
+    ///   - finalTotal: the score this card may grade against, or nil while the
+    ///     game can still decide it. Gated by ``actualTotal``, which additionally
+    ///     requires the scoreboard to count this card's own unit.
+    ///   - limit: how many rungs to draw.
+    static func ladderIndices(
+        sortedThresholds: [Double],
+        finalTotal: Int?,
+        limit: Int
+    ) -> [Int] {
+        let count = sortedThresholds.count
+        guard count > 0, limit > 0 else { return [] }
+        guard count > limit else { return Array(0 ..< count) }
+
+        if let finalTotal {
+            return Array(MarketMapRail.settledLadderWindow(
+                sortedThresholds: sortedThresholds,
+                finalTotal: finalTotal,
+                limit: limit
+            ))
+        }
+
+        // The original carried a "top up with the last line if the stride ran
+        // short" branch here. It is DELETED rather than moved, because past this
+        // point it cannot fire: `step = floor(count/limit)` gives
+        // `count/step >= limit`, so the stride yields exactly `limit` picks
+        // whenever `count > limit`, which the guard above has already
+        // established. `testTheStrideAlwaysFillsTheLadder` sweeps every count
+        // from `limit + 1` to 40 and is the proof — dead code that looks like a
+        // safety net is worse than no net, because the next reader trusts it.
+        let step = max(1, count / limit)
+        var picks: [Int] = []
+        var i = 0
+        while i < count, picks.count < limit {
+            picks.append(i)
+            i += step
+        }
+        return picks
     }
 }
