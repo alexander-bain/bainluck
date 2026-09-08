@@ -5,8 +5,10 @@ ladder — `-first * 0.5` below the crossover, `-last * 1.5` above it. Both
 multipliers are invented, and the second one put a **-14.25 run** implied
 spread on `/events/15307194` off a Polymarket ladder priced 1.000 at every
 rung. `ScoreDifferentialChart` draws every non-sportsbook arm on presence
-alone (#3948), so that fabricated number was a chart line at +14.25 home
-margin next to a Kalshi line at +0.2.
+alone (#3948), plotting it as a flat line at +14.25 home margin next to a
+Kalshi line at +0.2 — from first pitch onward, since that chart is mounted
+behind `hasStarted`. Pre-game the arm is served and simply not yet drawn,
+which is why this is guarded at the derivation and not at the chart.
 
 Every fixture below is the production payload of 2026-09-08, read from
 `/api/events/{id}/history` while the defect was live, so a regression is
@@ -77,7 +79,7 @@ class TestOneSidedLadderDerivesNothing:
         branch with a different multiplier still fails.
         """
         result = binary_to_implied_spread(_contracts(PM_DEGENERATE_15307194))
-        if result is not None:  # pragma: no cover - the assertion below fails first
+        if result is not None:
             last = max(t for t, _ in PM_DEGENERATE_15307194)
             assert abs(home_margin_from_spread(result.spread)) <= last
         assert result is None
@@ -98,10 +100,11 @@ class TestOneSidedLadderDerivesNothing:
         `home_margin_from_spread`.
         """
         result = binary_to_implied_spread(_contracts(KALSHI_WRONG_SIDE_15307719))
-        assert result is None
-        # And the specific inversion never comes back.
-        if result is not None:  # pragma: no cover
+        # Checked BEFORE asserting the refusal, so that a regression reports the
+        # inversion itself rather than a bare "expected None".
+        if result is not None:
             assert home_margin_from_spread(result.spread) > -1.5
+        assert result is None
 
 
 class TestRefusalIsNarrow:
