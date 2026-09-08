@@ -308,7 +308,8 @@ describe("#2279 — both served or neither, in values", () => {
 function widgetDerivedPercents(home: number): [number, number] {
   const away = 1 - home;
   const leaderIsHome = home >= away;
-  const leaderPct = Math.round((leaderIsHome ? home : away) * 100);
+  // #3867: scale by 1000/10, matching contract version 5 and the shared arms.
+  const leaderPct = Math.round(((leaderIsHome ? home : away) * 1000) / 10);
   return leaderIsHome ? [100 - leaderPct, leaderPct] : [leaderPct, 100 - leaderPct];
 }
 
@@ -317,7 +318,7 @@ describe("#2279 — the widget's fallback IS the shared rule", () => {
     const src = code(WIDGET_CLIENT);
     expect(src).toMatch(/let leaderIsHome = homeProbability >= awayProbability/);
     expect(src).toMatch(
-      /let leaderPct = Int\(\s*\n\s*\(\(leaderIsHome \? homeProbability : awayProbability\) \* 100\)\.rounded\(\)\s*\n\s*\)/,
+      /let leaderPct = Int\(\s*\n\s*\(\(leaderIsHome \? homeProbability : awayProbability\) \* 1000 \/ 10\)\.rounded\(\)\s*\n\s*\)/,
     );
     expect(src).toMatch(/let derivedHomePct = leaderIsHome \? leaderPct : 100 - leaderPct/);
     expect(src).toMatch(/let derivedAwayPct = leaderIsHome \? 100 - leaderPct : leaderPct/);

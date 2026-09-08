@@ -25,13 +25,31 @@ import Foundation
 /// deliberately NOT Python's built-in `round`, which is banker's rounding and
 /// shipped wrong once already.
 ///
-/// The multiply happens BEFORE the rounding, in `Double`. That is load-bearing:
-/// `0.565 * 100` is `56.49999999999999`, not `56.5`, so the honest answer is 56
-/// in all three runtimes. Anything that "corrects" that with a decimal type
-/// would print 57 and silently leave the contract.
+/// The scaling happens BEFORE the rounding, in `Double`. That is load-bearing.
+///
+/// ## Why the scale is 1000/10 and not 100 (#3867, contract version 5)
+///
+/// This comment used to say the opposite: that `0.565 * 100` being
+/// `56.49999999999999` made **56** "the honest answer in all three runtimes", and
+/// that anything correcting it "with a decimal type would print 57 and silently
+/// leave the contract". The parity worry was right and is preserved — the scaling
+/// worry was not.
+///
+/// `* 100` is half-up on the double the wire value BECAME, not on the number it
+/// SENT. The venues quote on a half-percent grid, so `.xx5` is the common case
+/// here, and `* 100` lands a hair below the boundary for some of those values and
+/// exactly on it for others: `0.585` printed 59 while `0.565` printed 56 — one
+/// half rounding up, its neighbour down, for a reason no reader can see. Scaling
+/// by 1000 first recovers the quoted decimal, so a half rounds up, always.
+///
+/// This is still `Double`, still the same operations as the other two runtimes,
+/// so it is NOT the decimal type the old note warned about — parity was
+/// re-measured, not assumed. Exactly four three-decimal wire values move: 0.145,
+/// 0.285, 0.565, 0.575. And the rule changed in the CONTRACT first, which is the
+/// only way this line is allowed to change.
 nonisolated func renderedPercent(_ probability: Double?) -> Int? {
     guard let probability, probability.isFinite else { return nil }
-    return Int((probability * 100).rounded())
+    return Int((probability * 1000 / 10).rounded())
 }
 
 /// A two-outcome field is a complement pair when its members sum into this band.

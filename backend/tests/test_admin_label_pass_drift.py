@@ -251,12 +251,20 @@ def test_rendered_percent_matches_javascript_math_round_not_python_round():
     only interesting case. ``round(56.5)`` is 56 in Python (banker's) and 57 in
     ``Math.round`` (half-up); the surface is the authority."""
     # 0.125 and 0.625 are exactly representable, so they really do land on .5 —
-    # most decimals do not (0.565 * 100 is 56.4999…, where every rounding mode
-    # agrees on 56, which is why a casual test value proves nothing here).
+    # most decimals do not.
     assert round(0.125 * 100) == 12 and round(0.625 * 100) == 62  # Python, banker's
     assert rendered_percent(0.125) == 13  # Math.round, and what the page prints
     assert rendered_percent(0.625) == 63
-    assert rendered_percent(0.565) == 56  # 56.4999… — no boundary, all modes agree
+    # #3867 — this used to assert 56 here, on the reasoning that "0.565 * 100 is
+    # 56.4999…, where every rounding mode agrees on 56, which is why a casual test
+    # value proves nothing". Every rounding mode agreed on the DOUBLE; none of them
+    # was answering for the half-percent the venue actually quoted, and 0.585 (which
+    # is exactly 58.5) printed 59 right beside it. Contract version 5 scales by
+    # 1000/10 first, so a quoted half rounds up whichever side of the boundary its
+    # double falls on. The surface is still the authority — the surface moved too.
+    assert rendered_percent(0.565) == 57  # 56.4999… in double, 56.5 on the wire
+    assert rendered_percent(0.585) == 59  # exactly 58.5 — unchanged, the control
+    assert rendered_percent(0.5649) == 56  # below the half still rounds DOWN
     assert rendered_percent(0.5651) == 57
     assert rendered_percent(0.0) == 0
     assert rendered_percent(None) is None

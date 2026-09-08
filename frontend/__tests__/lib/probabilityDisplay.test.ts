@@ -6,6 +6,7 @@ import {
   ABOVE_NINETY_NINE_PERCENT,
 } from "@/lib/probabilityDisplay";
 import { formatProbability } from "@/lib/api";
+import { renderedPercent } from "@/lib/renderedPercent";
 
 /**
  * UX-P046 (#1688) — a nonzero probability must never print as "0%".
@@ -61,17 +62,45 @@ describe("formatProbabilityPercent", () => {
   });
 
   /**
-   * The other direction of gotcha #43: the fix must not restyle the 99% of rows
-   * that were already correct. Everything outside the two bands is byte-identical
-   * to the rounding it replaces.
+   * The other direction of gotcha #43: the BAND fix must not restyle the 99% of
+   * rows that were already correct. Everything outside the two bands prints
+   * exactly the contract's percent and nothing else.
+   *
+   * #3867: this compared against an inline `Math.round(p * 100)` — a second copy
+   * of the rounding rule, living in a test, which went red the moment the
+   * contract's rule changed. The comparison is now against `renderedPercent`
+   * itself, so this test asserts what it always meant to ("the bands are the only
+   * thing this function adds") and the rounding rule is pinned in exactly one
+   * place: the contract table.
    */
-  test("every value outside the two bands is unchanged from plain rounding", () => {
+  test("every value outside the two bands is unchanged from the contract's rounding", () => {
     for (let i = 1; i <= 999; i++) {
       const p = i / 1000;
-      const rounded = Math.round(p * 100);
+      const rounded = renderedPercent(p) as number;
       if (rounded <= 0 || rounded >= 100) continue;
       expect(formatProbabilityPercent(p)).toBe(`${rounded}%`);
     }
+  });
+
+  /**
+   * #3867 — the four wire values whose printed answer moves, asserted through
+   * THIS function rather than only through `renderedPercent`.
+   *
+   * Without these, someone reintroducing an inline `Math.round(prob * 100)` here
+   * would leave the contract suite green (it tests `renderedPercent` directly)
+   * while a hero and its own outcome rows printed different numbers for one
+   * probability — which is the whole failure #3867 describes.
+   */
+  test("a half-percent quote rounds up here too, not just in the contract helper", () => {
+    expect(formatProbabilityPercent(0.565)).toBe("57%");
+    expect(formatProbabilityPercent(0.575)).toBe("58%");
+    expect(formatProbabilityPercent(0.145)).toBe("15%");
+    expect(formatProbabilityPercent(0.285)).toBe("29%");
+    // Controls: already correct before #3867, and must not move.
+    expect(formatProbabilityPercent(0.585)).toBe("59%");
+    expect(formatProbabilityPercent(0.615)).toBe("62%");
+    // Below the half still rounds down — this is a rounding, not a nudge.
+    expect(formatProbabilityPercent(0.5649)).toBe("56%");
   });
 
   test("a non-finite value renders nothing rather than 'NaN%'", () => {

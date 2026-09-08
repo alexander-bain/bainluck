@@ -15,11 +15,26 @@ import { leaderFirstSlice } from "./discover/leaderOrder";
 // test beside it asserted the JavaScript answer in a comment while expecting the
 // Python one in the assertion. See the contract file for why a comment was never
 // going to hold this together.
+//
+// #3867 — WHY THE SCALE IS 1000/10 AND NOT 100. `Math.round(p * 100)` is not
+// half-up on the number the wire sent; it is half-up on the double that number
+// became. The venues quote on a half-percent grid, so `.xx5` is the common case,
+// and `p * 100` lands a hair BELOW the boundary for some of those values and
+// exactly ON it for others: 0.585 printed 59 while 0.565 printed 56, one half
+// rounding up and its neighbour down, for a reason invisible on screen. Scaling
+// by 1000 first recovers the quoted decimal, so a half rounds up, always.
+//
+// Exactly four three-decimal wire values move: 0.145, 0.285, 0.565, 0.575. This
+// stays in IEEE 754 double with the same operations as the other two runtimes —
+// re-measured against Python over the whole 4-decimal grid with zero
+// disagreements — so it is not the "decimal type" the old contract note warned
+// would break parity. The rule changed in the CONTRACT, which is the only way it
+// is allowed to change.
 
 export function renderedPercent(probability: number | null | undefined): number | null {
   if (probability === null || probability === undefined) return null;
   if (!Number.isFinite(probability)) return null;
-  return Math.round(probability * 100);
+  return Math.round((probability * 1000) / 10);
 }
 
 // ── The card-level half of the contract (#2060) ──────────────────────────────

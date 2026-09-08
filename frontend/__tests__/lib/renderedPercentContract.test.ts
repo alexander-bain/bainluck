@@ -355,8 +355,12 @@ d("native encodes the SAME rule", () => {
     .filter((l) => !l.trim().startsWith("///") && !l.trim().startsWith("//"))
     .join("\n");
 
-  it("multiplies before rounding, in Double", () => {
-    expect(code).toMatch(/\(probability \* 100\)\.rounded\(\)/);
+  it("scales before rounding, in Double", () => {
+    // #3867: contract version 5 scales by 1000/10 rather than 100, so that a
+    // `.xx5` quote rounds up whether or not `p * 100` reaches the boundary in
+    // IEEE 754. The assertion still pins the ARITHMETIC (scale first, in Double,
+    // no decimal type) — only the scale moved.
+    expect(code).toMatch(/\(probability \* 1000 \/ 10\)\.rounded\(\)/);
   });
 
   it("does not name a rounding rule other than the default half-away-from-zero", () => {
