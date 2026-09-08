@@ -47,6 +47,8 @@ import pytest
 from app.services.statpal_api import StatPalAPIService
 from app.utils.authority_agreement import (
     MEASUREMENT_HORIZON,
+    MEASUREMENT_POPULATION_SCOPES,
+    MEASUREMENT_POPULATIONS,
     MINIMUM_DENOMINATOR_RULING,
     MINIMUM_SCORED_DENOMINATOR,
     READ_FAILED,
@@ -981,11 +983,118 @@ def test_the_shadow_registry_names_only_sports_that_have_a_stamper():
     import app.tasks as tasks_pkg
 
     for sport_key, task_name in SHADOW_STAMPERS.items():
-        assert sport_key.islower() and "_" in sport_key
+        # Lowercase and whitespace-free, which is what a key has to be to be
+        # joined, logged and read back. NOT "contains an underscore" any more:
+        # that held only because every key was `sport_league` until `soccer`
+        # joined as a measurement population, and it was describing a
+        # coincidence rather than a requirement — a shape check that would have
+        # failed a correct entry.
+        assert sport_key.islower() and sport_key.split() == [sport_key]
         assert hasattr(tasks_pkg, task_name), (
             f"{sport_key} claims stamper {task_name}, which app.tasks does not "
             f"export"
         )
+
+
+# ---------------------------------------------------------------------------
+# A population carries its own scope. #3366, 2026-09-08.
+# ---------------------------------------------------------------------------
+
+
+class TestEveryMeasurementPopulationDeclaresItsScope:
+    """The class of defect: a new population inheriting its predecessor's scope.
+
+    `MEASUREMENT_POPULATIONS` was a bare set, and two call sites branched on
+    membership and then used TENNIS-SPECIFIC content on the far side — a
+    duplicate-id census hardcoded to `s.key LIKE 'tennis%'` and a scope note
+    about "both draws". Both were correct while tennis was the only member, and
+    both would have published confident tennis facts on the soccer row the day
+    soccer joined.
+
+    The set could not prevent that, because it says a key is special without
+    saying HOW, so each consumer has to guess and the guess that works is the
+    one that names the only member. These guards hold the replacement: the scope
+    travels with the membership, and a population that declares none fails here
+    rather than borrowing.
+    """
+
+    def test_membership_and_scope_cannot_disagree(self):
+        assert MEASUREMENT_POPULATIONS == frozenset(MEASUREMENT_POPULATION_SCOPES)
+
+    @pytest.mark.parametrize("key", sorted(MEASUREMENT_POPULATION_SCOPES))
+    def test_each_population_states_a_prefix_and_two_sentences(self, key):
+        scope = MEASUREMENT_POPULATION_SCOPES[key]
+        assert scope.key_prefix and scope.key_prefix.islower()
+        # A prefix is matched LITERALLY into a `LIKE`, so a wildcard in one
+        # would silently widen the census to another sport — the exact failure
+        # `_DUPLICATE_IDS`'s docstring refuses to risk by binding.
+        assert "%" not in scope.key_prefix and "_" not in scope.key_prefix
+        # Prose long enough to be an explanation rather than a label. A one-word
+        # note reads as present to a membership test and tells an operator
+        # nothing, which is the state this record exists to end.
+        assert len(scope.our_keys_note) > 40
+        assert len(scope.census_scope_note) > 40
+
+    def test_the_population_key_is_a_prefix_of_nothing_we_could_join_on(self):
+        """The whole reason these keys are named apart, asserted directly.
+
+        A population key that WAS a `sports.key` would make every refusal in
+        `flip_permitted` wrong: the caller would be told there is nothing to
+        flip about a string the database would have joined happily.
+        """
+        from app.utils.sport_keys import SPORT_LEAGUE_MAP
+
+        for key in MEASUREMENT_POPULATIONS:
+            assert key not in SPORT_LEAGUE_MAP
+
+    def test_no_population_borrows_another_populations_words(self):
+        """Two populations sharing a scope must be the SAME scope, not a copy.
+
+        Tennis's two draws legitimately share one — StatPal numbers them in one
+        sequence — so this is not "every note is unique". It is the narrower and
+        actually-load-bearing claim: a note may only be shared by keys that also
+        share the prefix it describes. Soccer reusing tennis's sentence would
+        pair a `soccer` prefix with a note about draws, and fail here.
+        """
+        by_note: dict[str, set[str]] = {}
+        for key, scope in MEASUREMENT_POPULATION_SCOPES.items():
+            by_note.setdefault(scope.census_scope_note, set()).add(scope.key_prefix)
+        for note, prefixes in by_note.items():
+            assert len(prefixes) == 1, (
+                f"one scope note is shared by populations with different key "
+                f"prefixes {sorted(prefixes)}, so it describes at most one of "
+                f"them: {note[:80]}..."
+            )
+
+    def test_soccer_is_a_population_and_says_soccer_things(self):
+        """The instance, named, so a revert cannot pass by deleting the class."""
+        scope = MEASUREMENT_POPULATION_SCOPES["soccer"]
+        assert scope.key_prefix == "soccer"
+        for text in (scope.our_keys_note, scope.census_scope_note):
+            assert "tennis" not in text.lower()
+            assert "draw" not in text.lower()
+
+    @pytest.mark.parametrize("key", sorted(MEASUREMENT_POPULATION_SCOPES))
+    def test_the_refusal_quotes_this_populations_own_words(self, key):
+        """CERT-1887's rule applied to a REASON rather than a count.
+
+        `flip_permitted`'s refusal is operator-facing and it is the sentence a
+        reader acts on. It used to state tennis's key vocabulary unconditionally,
+        so a soccer operator would have been handed a confident, checkable and
+        entirely irrelevant fact about 42 tennis keys — and would reasonably have
+        gone looking for the tennis keys their sport does not have.
+        """
+        from app.config.authority_by_sport import flip_permitted
+
+        scope = MEASUREMENT_POPULATION_SCOPES[key]
+        _permitted, why = flip_permitted(key, [])
+
+        assert "MEASUREMENT POPULATION" in why
+        assert scope.our_keys_note in why
+        # And no OTHER population's words rode along.
+        for other, other_scope in MEASUREMENT_POPULATION_SCOPES.items():
+            if other_scope.our_keys_note != scope.our_keys_note:
+                assert other_scope.our_keys_note not in why
 
 
 # ---------------------------------------------------------------------------

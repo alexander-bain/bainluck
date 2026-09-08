@@ -1930,6 +1930,40 @@ SELECT COUNT(*) AS duplicate_ids
        ) d
 """
 
+#: The same census for soccer, whose 59 `sports.key`s are one StatPal sequence.
+#:
+#: A separate literal rather than a prefix bound into the query above, for the
+#: second reason in that docstring: `:sport_key` inside a `LIKE` makes every real
+#: key a PATTERN. Every soccer key measured on production 2026-09-08 begins
+#: `soccer_`, so `'soccer%'` is exact here and reaches no other sport.
+_DUPLICATE_IDS_SOCCER = """
+SELECT COUNT(*) AS duplicate_ids
+  FROM (
+        SELECT e.statpal_fixture_id
+          FROM events e
+          JOIN sports s ON s.id = e.sport_id
+         WHERE s.key LIKE 'soccer%'
+           AND e.statpal_fixture_id IS NOT NULL
+         GROUP BY e.statpal_fixture_id
+        HAVING COUNT(*) > 1
+       ) d
+"""
+
+#: One literal census per measurement population, looked up BY KEY.
+#:
+#: The lookup is the point. This used to be an `if key in MEASUREMENT_POPULATIONS`
+#: branch straight into the tennis query, which was right while tennis was the
+#: only population and became wrong the moment soccer joined — the soccer row
+#: would have published a count of TENNIS duplicates, confidently and with no
+#: tell on the row. Keyed instead, so a population with no entry raises in
+#: `test_every_measurement_population_has_its_own_duplicate_census` rather than
+#: silently inheriting its predecessor's number.
+_DUPLICATE_IDS_BY_POPULATION: dict[str, str] = {
+    "tennis_singles": _DUPLICATE_IDS_TENNIS,
+    "tennis_doubles": _DUPLICATE_IDS_TENNIS,
+    "soccer": _DUPLICATE_IDS_SOCCER,
+}
+
 
 @router.get("/statpal/authority-agreement")
 async def statpal_authority_agreement(
@@ -1982,7 +2016,7 @@ async def statpal_authority_agreement(
     from app.tasks.redis_state import get_task_metrics
     from app.utils.authority_agreement import (
         FLIP_GATE_SUMMARY,
-        MEASUREMENT_POPULATIONS,
+        MEASUREMENT_POPULATION_SCOPES,
         SHADOW_STAMPERS,
     )
     from app.utils.authority_failover import would_fail_over_now
@@ -2087,19 +2121,19 @@ async def statpal_authority_agreement(
 
         prefix = statpal_id_space(sport_key)
         entry["live"] = {"anchor_prefix": prefix}
-        if sport_key in MEASUREMENT_POPULATIONS:
-            # The agreement numbers above ARE split by draw; the census below is
-            # not, and cannot be. StatPal numbers singles and doubles in one
-            # sequence, so an id-space census has no draw to filter on — the
-            # anchors it counts belong to both. Said on the row rather than left
-            # to be inferred, because the two halves of this entry are now
+        population = MEASUREMENT_POPULATION_SCOPES.get(sport_key)
+        if population is not None:
+            # The agreement numbers above may be split more finely than the
+            # census below can be — StatPal numbers a whole population in one
+            # sequence, so an id-space census has nothing to filter on and the
+            # anchors it counts belong to all of it. Said on the row rather than
+            # left to be inferred, because the two halves of this entry are then
             # scoped differently and nothing else on it would say so.
-            entry["live"]["scope_note"] = (
-                "counted over the whole `tennis:` id space — both draws. StatPal "
-                "numbers singles and doubles in one sequence, so this census "
-                "cannot be split the way the agreement numbers above are; it is "
-                "the same figure on both tennis rows."
-            )
+            #
+            # Taken from the population's own record, never written here: a
+            # sentence about "both draws" published on the soccer row would be
+            # describing tennis.
+            entry["live"]["scope_note"] = population.census_scope_note
         if prefix:
             census = (
                 await db.execute(
@@ -2107,8 +2141,10 @@ async def statpal_authority_agreement(
                     {"prefix": f"{prefix}:", "like_prefix": f"{prefix}:%"},
                 )
             ).first()
-            if sport_key in MEASUREMENT_POPULATIONS:
-                dupes = (await db.execute(text(_DUPLICATE_IDS_TENNIS))).first()
+            if population is not None:
+                dupes = (
+                    await db.execute(text(_DUPLICATE_IDS_BY_POPULATION[sport_key]))
+                ).first()
             else:
                 dupes = (
                     await db.execute(text(_DUPLICATE_IDS), {"sport_key": sport_key})

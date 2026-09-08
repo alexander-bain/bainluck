@@ -30,12 +30,15 @@ Three defect classes, each with its own band below:
     waited on when what it needed was a ruling.
 """
 
+from itertools import combinations
+
 from app.config import authority_by_sport as abs_module
 from app.config.authority_by_sport import (
     AUTHORITY_BY_SPORT,
     DEFAULT_AUTHORITY,
     DISCOVERY_BEAT_WITHOUT_A_WORKING_PARSE,
     DISCOVERY_NO_BEAT_AND_NO_PARSE,
+    DISCOVERY_PARSES_BUT_MINTS_NO_ID,
     DISCOVERY_SCHEDULED_SPORTS,
     ESPN,
     FLIP_EVIDENCE,
@@ -782,6 +785,13 @@ def test_every_stamped_sport_is_accounted_for_as_discoverable_or_named_broken():
         # different fixes, and tennis is in the second: filing it under the
         # second list would assert a scheduled task nobody has written.
         - set(DISCOVERY_NO_BEAT_AND_NO_PARSE)
+        # FOUR, and the fourth is the one that is not a lesser version of the
+        # others: soccer's ingest parser reads 274 of 274 and 195 of 195 pinned
+        # fixtures and mints an id for none of them. Filing it under "no parse"
+        # would send a reader to repair a parser that works; filing it under
+        # "build a beat" would have them schedule one that duplicates every
+        # soccer row we hold (ruling 048).
+        - set(DISCOVERY_PARSES_BUT_MINTS_NO_ID)
     )
     assert (
         not unaccounted
@@ -789,6 +799,7 @@ def test_every_stamped_sport_is_accounted_for_as_discoverable_or_named_broken():
     for named in (
         DISCOVERY_BEAT_WITHOUT_A_WORKING_PARSE,
         DISCOVERY_NO_BEAT_AND_NO_PARSE,
+        DISCOVERY_PARSES_BUT_MINTS_NO_ID,
     ):
         for sport_key, reason in named.items():
             assert len(reason) > 40, (
@@ -804,10 +815,22 @@ def test_the_two_discovery_exclusion_lists_do_not_overlap():
     both is a contradiction that would let either reason be quoted — and the
     refusal text a reader acts on would then be a coin toss.
     """
-    both = set(DISCOVERY_BEAT_WITHOUT_A_WORKING_PARSE) & set(
-        DISCOVERY_NO_BEAT_AND_NO_PARSE
-    )
-    assert not both, f"filed under two contradictory discovery states: {sorted(both)}"
+    named = {
+        "DISCOVERY_BEAT_WITHOUT_A_WORKING_PARSE": set(
+            DISCOVERY_BEAT_WITHOUT_A_WORKING_PARSE
+        ),
+        "DISCOVERY_NO_BEAT_AND_NO_PARSE": set(DISCOVERY_NO_BEAT_AND_NO_PARSE),
+        "DISCOVERY_PARSES_BUT_MINTS_NO_ID": set(DISCOVERY_PARSES_BUT_MINTS_NO_ID),
+    }
+    # Every PAIR, derived, rather than the one hand-written intersection this
+    # held while there were two lists. A third list added beside a two-way check
+    # is not covered by it, and the miss is silent.
+    for (a_name, a), (b_name, b) in combinations(named.items(), 2):
+        both = a & b
+        assert not both, (
+            f"filed under two contradictory discovery states "
+            f"({a_name} and {b_name}): {sorted(both)}"
+        )
 
 
 def test_no_sport_is_both_scheduled_and_named_broken():
@@ -815,6 +838,7 @@ def test_no_sport_is_both_scheduled_and_named_broken():
     for named in (
         DISCOVERY_BEAT_WITHOUT_A_WORKING_PARSE,
         DISCOVERY_NO_BEAT_AND_NO_PARSE,
+        DISCOVERY_PARSES_BUT_MINTS_NO_ID,
     ):
         clash = set(DISCOVERY_SCHEDULED_SPORTS) & set(named)
         assert not clash, f"discoverable AND named broken: {sorted(clash)}"
@@ -871,6 +895,61 @@ def test_the_discovery_refusal_does_not_shadow_the_no_stamper_one(monkeypatch):
     _permitted, why = flip_permitted("soccer_epl", _run_of(10, GATE_MEETS))
     assert "no shadow stamper" in why
     assert "discovery" not in why
+
+
+def test_soccer_is_filed_under_parses_but_mints_no_id_and_nowhere_else():
+    """The fourth state, pinned to the sport that forced it. #3366 / #3607.
+
+    Soccer's ingest parser is NOT blind — it returns a fixture for 274 of 274
+    and 195 of 195 pinned production items — so `DISCOVERY_NO_BEAT_AND_NO_PARSE`
+    would be a false claim about it, and would send the next reader to repair a
+    parser that works. What is missing is the id: 0 of those fixtures carry one,
+    and under ruling 048 an id-less claim CREATES, so a beat scheduled over this
+    parser duplicates every soccer row we hold, hourly.
+    """
+    assert "soccer" in DISCOVERY_PARSES_BUT_MINTS_NO_ID
+    assert "soccer" not in DISCOVERY_NO_BEAT_AND_NO_PARSE
+    assert "soccer" not in DISCOVERY_BEAT_WITHOUT_A_WORKING_PARSE
+    assert "soccer" not in DISCOVERY_SCHEDULED_SPORTS
+
+    reason = DISCOVERY_PARSES_BUT_MINTS_NO_ID["soccer"]
+    # The reason has to prescribe the parser BEFORE the beat, because the other
+    # order is the one that duplicates the table.
+    assert "fixture_id" in reason
+    assert "fallback_id_3" in reason
+
+
+def test_the_idless_refusal_names_the_parser_rather_than_asking_for_a_beat(
+    monkeypatch,
+):
+    """A real `sports.key` in the id-less state must not be told "build a beat".
+
+    Evidenced FULLY rather than leaning on soccer, which `flip_permitted`
+    refuses earlier and more strongly as a measurement population — so reading
+    soccer here would prove nothing about this clause. A stand-in key is given a
+    stamper, a governing number and ten perfect days, so the discovery clause is
+    the only thing left that can refuse it.
+    """
+    key = "soccer_epl"
+    monkeypatch.setattr(
+        abs_module, "SHADOW_STAMPERS", {**SHADOW_STAMPERS, key: f"stamp_{key}"}
+    )
+    monkeypatch.setattr(
+        abs_module,
+        "GOVERNING_IDENTITY_NUMBERS",
+        {**GOVERNING_IDENTITY_NUMBERS, key: ("ours_covered_pct",)},
+    )
+    monkeypatch.setattr(
+        abs_module,
+        "DISCOVERY_PARSES_BUT_MINTS_NO_ID",
+        {**DISCOVERY_PARSES_BUT_MINTS_NO_ID, key: "the parser mints no id for it"},
+    )
+
+    permitted, why = flip_permitted(key, _run_of(10, GATE_MEETS))
+    assert not permitted
+    assert "mints no id" in why
+    # The bare ending is the one that would get a duplicating beat scheduled.
+    assert "This is a build step (a `sync_statpal_schedules` beat)" not in why
 
 
 def test_a_discoverable_sport_is_unaffected_and_still_permits_at_seven():

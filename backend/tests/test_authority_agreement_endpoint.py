@@ -26,7 +26,11 @@ from __future__ import annotations
 import pytest
 
 from app.routes import admin_providers
-from app.utils.authority_agreement import READ_OK, SHADOW_STAMPERS
+from app.utils.authority_agreement import (
+    MEASUREMENT_POPULATIONS,
+    READ_OK,
+    SHADOW_STAMPERS,
+)
 from app.utils.provider_anchor_keys import statpal_id_space
 
 ROUTE_PATH = "/api/admin/statpal/authority-agreement"
@@ -51,6 +55,7 @@ class FakeSession:
         column_agrees=0,
         duplicate_ids=0,
         tennis_duplicate_ids=0,
+        soccer_duplicate_ids=0,
     ):
         self._anchors = anchors
         self._agrees = column_agrees
@@ -60,6 +65,11 @@ class FakeSession:
         # the other deliberately does not — and a fake that returned one number
         # for both could not tell a test that the endpoint picked the wrong one.
         self._tennis_dupes = tennis_duplicate_ids
+        # And separately again PER POPULATION, for the same reason one step
+        # further out. Aliasing soccer's answer to tennis's would make the
+        # defect this split was built to catch — the soccer row publishing a
+        # count of tennis duplicates — invisible to every test in this file.
+        self._soccer_dupes = soccer_duplicate_ids
         self.params: list[dict] = []
         self.statements: list[str] = []
 
@@ -71,6 +81,8 @@ class FakeSession:
             return _Result(_Row((self._anchors, self._agrees)))
         if sql == admin_providers._DUPLICATE_IDS_TENNIS:
             return _Result(_Row((self._tennis_dupes,)))
+        if sql == admin_providers._DUPLICATE_IDS_SOCCER:
+            return _Result(_Row((self._soccer_dupes,)))
         if sql == admin_providers._DUPLICATE_IDS:
             return _Result(_Row((self._dupes,)))
         raise AssertionError(
@@ -312,6 +324,95 @@ async def test_the_two_tennis_draws_share_one_id_space_and_say_so(call):
     for draw in draws:
         assert draw["live"]["anchor_prefix"] == "tennis"
         assert "both draws" in draw["live"]["scope_note"]
+
+
+async def test_every_measurement_population_has_its_own_duplicate_census(call):
+    """Named in `_DUPLICATE_IDS_BY_POPULATION`'s docstring: no silent inheritance.
+
+    The lookup must be total over the populations. A missing entry raises
+    `KeyError` inside the endpoint rather than answering zero — but only if
+    something asks, so this asks for all of them.
+    """
+    for key in MEASUREMENT_POPULATIONS:
+        assert key in admin_providers._DUPLICATE_IDS_BY_POPULATION, (
+            f"{key} is a measurement population with no duplicate census of its "
+            f"own; it would inherit another population's count"
+        )
+
+
+def test_each_population_census_is_scoped_to_its_own_key_prefix():
+    """The SQL BODY, which no fake in this file can check.
+
+    `FakeSession` dispatches by comparing against the very constants the
+    endpoint runs, so the two sides move together: widening
+    `_DUPLICATE_IDS_SOCCER` to `s.key LIKE '%'` keeps every routing test green
+    while the published count silently becomes every sport's duplicates. Found
+    by mutation — the one survivor of eight — so the scope literal is pinned
+    here directly rather than inferred from behaviour.
+    """
+    from app.utils.authority_agreement import MEASUREMENT_POPULATION_SCOPES
+
+    for key, scope in MEASUREMENT_POPULATION_SCOPES.items():
+        sql = admin_providers._DUPLICATE_IDS_BY_POPULATION[key]
+        assert f"s.key LIKE '{scope.key_prefix}%'" in sql, (
+            f"{key}'s duplicate census is not scoped to its own key prefix "
+            f"{scope.key_prefix!r}; it would count another population's rows"
+        )
+        # And no OTHER population's prefix appears — a census cannot be scoped
+        # to two things, and a leftover clause from a copied constant is
+        # exactly how the first one got there.
+        for other in MEASUREMENT_POPULATION_SCOPES.values():
+            if other.key_prefix != scope.key_prefix:
+                assert f"'{other.key_prefix}%'" not in sql
+
+
+async def test_the_soccer_row_publishes_soccer_duplicates_not_tennis_ones(call):
+    """The defect the per-population lookup exists to prevent, as a live control.
+
+    Distinct numbers per census, so an alias cannot pass: if the endpoint ran
+    the tennis statement for soccer, soccer's row would read 7 rather than 3 and
+    this fails. A fake returning one number for both censuses could not tell
+    these apart, which is why `FakeSession` answers them separately.
+    """
+    session = FakeSession(
+        anchors=121,
+        column_agrees=121,
+        duplicate_ids=1,
+        tennis_duplicate_ids=7,
+        soccer_duplicate_ids=3,
+    )
+    out = await call(metrics={"last_result_summary": {}}, session=session)
+    rows = {s["sport_key"]: s for s in out["sports"]}
+
+    assert rows["soccer"]["live"]["duplicate_ids"] == 3
+    assert rows["tennis_singles"]["live"]["duplicate_ids"] == 7
+    # And the per-key census is still reached by the real sport keys — the
+    # branch moved, so prove it did not swallow the other side.
+    assert rows["americanfootball_nfl"]["live"]["duplicate_ids"] == 1
+
+
+async def test_the_soccer_row_scope_note_is_about_soccer(call):
+    """A confident sentence about the wrong sport is the same defect as a count."""
+    out = await call(metrics={"last_result_summary": {}}, session=FakeSession())
+    soccer = next(s for s in out["sports"] if s["sport_key"] == "soccer")
+
+    assert soccer["live"]["anchor_prefix"] == "soccer"
+    note = soccer["live"]["scope_note"]
+    assert "soccer" in note
+    assert "draw" not in note.lower()
+    assert "tennis" not in note.lower()
+
+
+async def test_soccer_is_published_at_all_and_names_its_beat(call):
+    """#3366's ship: soccer's row was banking before anything published it.
+
+    Its ledger identity existed from 2026-09-08 and the only ways to read it
+    were `durable_state_snapshots` by identity or the task-metrics row — two
+    non-obvious locations, for a number D50 gates a flip on.
+    """
+    out = await call(metrics={"last_result_summary": {}}, session=FakeSession())
+    soccer = next(s for s in out["sports"] if s["sport_key"] == "soccer")
+    assert soccer["stamper"] == "stamp_soccer_statpal_fixtures"
 
 
 # ---------------------------------------------------------------------------

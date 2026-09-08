@@ -53,7 +53,7 @@ from typing import Any, Iterable, Optional
 from app.utils.authority_agreement import (
     FLIP_BAR_PCT,
     GOVERNING_IDENTITY_NUMBERS,
-    MEASUREMENT_POPULATIONS,
+    MEASUREMENT_POPULATION_SCOPES,
     SHADOW_STAMPERS,
 )
 
@@ -358,6 +358,52 @@ DISCOVERY_NO_BEAT_AND_NO_PARSE: dict[str, str] = {
     ),
 }
 
+#: Stamped and measured daily, with no `sync_statpal_schedules` beat, and an
+#: ingest parser that READS the fixtures but mints no id for any of them.
+#:
+#: A fourth list, and the reason is the same one that made the third necessary:
+#: the dicts above make claims in their names, and both claims are false here.
+#: Soccer's ingest parse is not blind — measured on the pinned production
+#: payloads with the shipped parsers, `_extract_match_items` +
+#: `_parse_single_fixture` return a fixture for **274 of 274** items in
+#: `statpal_soccer_matches_daily_offset1_20260907_fullcensus.json` and **195 of
+#: 195** in `statpal_soccer_matches_live_20260907_fullcensus.json`. Filing soccer
+#: under `DISCOVERY_NO_BEAT_AND_NO_PARSE` would send the next reader to repair a
+#: parser that already works.
+#:
+#: **What is actually missing is the id, and that is the worse half.** Of those
+#: same 274 and 195 fixtures, **0 carry a non-empty `fixture_id`**. The raw items
+#: carry no `id` at all — they carry `main_id` and `fallback_id_1/2/3` — and the
+#: authority read path anchors on `fallback_id_3` (`soccer:<fallback_id_3>`,
+#: #3366) while `main_id` is known to COLLIDE across competitions, which is why
+#: it is not the anchor. The ingest parser reaches for none of them.
+#:
+#: So the consequence is tennis's, arrived at from the other end, and it is
+#: ruling 048 that makes it certain: an id-less claim NEVER absorbs, it CREATES.
+#: A `sync-statpal-schedules-soccer` beat switched on today would read hundreds
+#: of real fixtures an hour, carry no id on any of them, match none of our 39,700
+#: existing soccer rows by anchor, and mint a second copy of each — hourly, on
+#: the sport with the widest key vocabulary we have. Teaching the ingest parser
+#: `fallback_id_3` is the first half of that work and is the half that makes the
+#: beat safe; it is not scheduled here, and the beat must not be until it is.
+#:
+#: This is a build step, not a wait — and it is the same discovery gap #3607
+#: measures from the agreement row's side. The write itself goes through
+#: `event_registry`, which is lane1's under D50/#2693.
+DISCOVERY_PARSES_BUT_MINTS_NO_ID: dict[str, str] = {
+    "soccer": (
+        "no sync-statpal-schedules-soccer beat exists, and the ingest parser "
+        "would mint no id if one did: _extract_match_items + "
+        "_parse_single_fixture return a fixture for 274 of 274 items in "
+        "statpal_soccer_matches_daily_offset1_20260907_fullcensus.json and 195 "
+        "of 195 in the live board, and 0 of either carry a non-empty "
+        "fixture_id — soccer items have no `id`, only main_id and "
+        "fallback_id_1/2/3, and the authority path anchors on fallback_id_3. "
+        "Under ruling 048 an id-less claim creates rather than absorbs, so such "
+        "a beat would mint a second copy of every soccer game hourly. #3607"
+    ),
+}
+
 #: For each sport that has flipped: the seven-day evidence it flipped on.
 #:
 #: Empty, because nothing has flipped. Each entry, when there is one, holds the
@@ -417,22 +463,28 @@ def flip_permitted(
     the second half is a YOUR-TURN entry Alex has seen, and no function can
     check that.
     """
-    if sport_key in MEASUREMENT_POPULATIONS:
-        # Asked before everything else, because this one is not a "no" about
-        # tennis at all — it is a "wrong question". `tennis_singles` is a draw we
-        # measure, not a row anything joins on: our tennis matches live under 42
-        # different `sports.key`s. A caller that flipped this string would flip
-        # nothing and would believe it had, which is worse than a refusal.
+    population = MEASUREMENT_POPULATION_SCOPES.get(sport_key)
+    if population is not None:
+        # Asked before everything else, because this one is not a "no" about the
+        # sport at all — it is a "wrong question". `tennis_singles` is a draw we
+        # measure and `soccer` is a StatPal id space; neither is a row anything
+        # joins on. A caller that flipped one of these strings would flip nothing
+        # and would believe it had, which is worse than a refusal.
         #
-        # The honest flip for tennis is per real `sports.key`, and it needs a
-        # ruling that says which of the 42 the measured draw stands for. That
-        # ruling does not exist and this file will not invent it.
+        # The honest flip is per real `sports.key`, and it needs a ruling saying
+        # which keys the measured population stands for. That ruling does not
+        # exist for either population and this file will not invent it.
+        #
+        # The clause naming OUR key vocabulary comes from the population's own
+        # record rather than being written here (CERT-1887's rule, applied to a
+        # reason rather than a count): a soccer operator told that "our tennis
+        # rows are spread over 42 `sports.key`s" has been handed a confident
+        # sentence about a sport they did not ask about.
         return False, (
-            f"{sport_key} is a MEASUREMENT POPULATION, not a sport key — our "
-            "tennis rows are spread over 42 `sports.key`s and none of them is "
-            "this string. There is nothing here to flip; a flip for tennis is "
-            "per real sport key and needs a ruling naming which keys a draw's "
-            "row stands for"
+            f"{sport_key} is a MEASUREMENT POPULATION, not a sport key — "
+            f"{population.our_keys_note}. There is nothing here to flip; a flip "
+            "for this population is per real sport key and needs a ruling naming "
+            "which keys its row stands for"
         )
     if sport_key not in SHADOW_STAMPERS:
         return False, (
@@ -446,17 +498,32 @@ def flip_permitted(
         # over are the ones we already have. Reading the streak first and
         # reporting "6/7" would describe it as a wait.
         broken = DISCOVERY_BEAT_WITHOUT_A_WORKING_PARSE.get(sport_key)
+        # The id-less state is reported by name too, and NOT folded into the
+        # bare "build a beat" ending. They prescribe different work in different
+        # orders: told only to schedule a beat, a reader would schedule one over
+        # a parser that mints no id, and ruling 048 turns that into a duplicate
+        # of every row it reads. The refusal has to name the parser first.
+        idless = DISCOVERY_PARSES_BUT_MINTS_NO_ID.get(sport_key)
+        if broken:
+            detail = (
+                f"The beat exists and does nothing: {broken}. Fixing that path is "
+                "a build step, not a wait"
+            )
+        elif idless:
+            detail = (
+                f"The parser reads the fixtures and mints no id for them: {idless}. "
+                "Teaching it the id comes BEFORE scheduling a beat — this is a "
+                "build step, not a wait"
+            )
+        else:
+            detail = (
+                "This is a build step (a `sync_statpal_schedules` beat), not a wait"
+            )
         return False, (
             f"{sport_key} has no working StatPal discovery pass, so its agreement "
             "streak is measured only over games we already have — it cannot show "
             "StatPal finding one we missed, which is the whole point of the flip. "
-            + (
-                f"The beat exists and does nothing: {broken}. Fixing that path is "
-                "a build step, not a wait"
-                if broken
-                else "This is a build step (a `sync_statpal_schedules` beat), "
-                "not a wait"
-            )
+            + detail
         )
     if not GOVERNING_IDENTITY_NUMBERS.get(sport_key):
         return False, (
