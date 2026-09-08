@@ -127,10 +127,12 @@ class TestTheClassifierKnowsWhatIsBeingCounted:
             ("New York M vs Miami: 2nd Inning Total", None, "inning_total"),
             ("New York M vs Miami: First 5 Innings Total", None, "half_total"),
             ("New York M vs Miami: Team Total", "KXMLBTEAMTOTAL-26SEP08NYMMIA", "team_total"),
-            # 🔴 Soccer fixtures sit under the `baseball_other` sport key
-            # (measured: 350 events, e.g. "Eldense vs Al-Ittifaq"), so the
-            # baseball classifier sees them. `\bbases\b` cannot reach "goals",
-            # and this arm is what keeps a future widening honest.
+            # 🔴 Soccer fixtures sit under the `baseball_other` sport key —
+            # 374 events measured 2026-09-08, ticker roots `KXCLUBF`/`KXURYPD`/
+            # `KXARGNACB`, filed as #4007 — so the baseball classifier sees them.
+            # `\bbases\b` cannot reach "goals", and `goals`/`games` were kept OUT
+            # of the rule deliberately rather than used to paper over #4007.
+            # This arm is what keeps a future widening honest.
             ("Eldense vs Al-Ittifaq: Total Goals", "KXCLUBFTOTAL-26JUL25CDEITT", "game_total"),
         ],
     )
