@@ -746,7 +746,10 @@ async def browse_futures(
     ]
 
     if category:
-        base_filters.append(FuturesMarket.llm_sport_category == category)
+        # #4047: the panel behind a category tile must contain what the tile
+        # counted. The census counts unclassified markets under `other`, so this
+        # has to as well, or the tile says 215 and the panel shows 206.
+        base_filters.append(_category_condition(category))
 
     if q:
         base_filters.append(FuturesMarket.name.ilike(f"%{q}%"))
@@ -926,13 +929,58 @@ async def list_futures_categories(
     return _publish_futures_categories(await _build_futures_categories(db))
 
 
+#: 🔴 #4047. THE KEY AN UNCLASSIFIED MARKET IS SHOWN UNDER — and the point is that
+#: it is ONE key, decided in ONE place, used by the census AND by every endpoint
+#: that takes a `category` from it.
+#:
+#: Production served `[('other', 206), ('other', 9)]` on 2026-09-08: two tiles in
+#: the `/search` grid, both reading "Other", with different counts. The census
+#: grouped by `llm_sport_category` and then wrote `row.llm_sport_category or
+#: "other"` — so `'other'` (we classified it as other) and `NULL` (we never
+#: classified it) arrived as separate groups wearing one name, because the
+#: rename happened AFTER the GROUP BY.
+#:
+#: It cost a reader more than a repeated tile. `CategoryBrowser` keys its grid on
+#: `cat.key` and tracks expansion as `expandedCategory === cat.key`, so tapping
+#: either tile highlighted BOTH and opened the same panel — and that panel asks
+#: `/browse?category=other`, which matched `llm_sport_category == 'other'` and
+#: therefore could never show the 9 rows behind the second tile.
+_UNCLASSIFIED_CATEGORY = "other"
+
+
+def _category_condition(category: str):
+    """The filter for a category key the census can emit. #4047.
+
+    ⚠️ WIDENED FOR EXACTLY ONE KEY, AND SPELLED AS A BRANCH RATHER THAN AS
+    `coalesce(llm_sport_category, 'other') == category`. The uniform spelling is
+    tidier and would put a function call on the left of every comparison — an
+    unindexable expression on a route whose own comment records that the
+    uncategorised call already reads 38,990 shared blocks (~305 MB). Every key
+    but this one keeps its plain, sargable equality; only `other` pays for the
+    OR, and only `other` needs it.
+    """
+    if category == _UNCLASSIFIED_CATEGORY:
+        return or_(
+            FuturesMarket.llm_sport_category == category,
+            FuturesMarket.llm_sport_category.is_(None),
+        )
+    return FuturesMarket.llm_sport_category == category
+
+
 async def _build_futures_categories(db: AsyncSession) -> dict:
     """Build the census from scratch. The pre-LAT-P122 route body, unchanged."""
     now = datetime.now(timezone.utc)
 
+    # #4047: the fallback belongs in the GROUP BY, not in the serialiser. Grouped
+    # on the raw column, `NULL` and `'other'` are two rows that the `or "other"`
+    # below then gave one name to.
+    category_key = func.coalesce(
+        FuturesMarket.llm_sport_category, _UNCLASSIFIED_CATEGORY
+    ).label("category_key")
+
     query = (
         select(
-            FuturesMarket.llm_sport_category,
+            category_key,
             func.count(FuturesMarket.id).label("count"),
         )
         .where(
@@ -945,7 +993,7 @@ async def _build_futures_categories(db: AsyncSession) -> dict:
             ~FuturesMarket.name.ilike('% vs %'),
             ~FuturesMarket.name.ilike('% vs. %'),
         )
-        .group_by(FuturesMarket.llm_sport_category)
+        .group_by(category_key)
         .order_by(func.count(FuturesMarket.id).desc())
     )
 
@@ -954,7 +1002,7 @@ async def _build_futures_categories(db: AsyncSession) -> dict:
 
     categories = [
         {
-            "key": row.llm_sport_category or "other",
+            "key": row.category_key,
             "count": row.count,
         }
         for row in rows
@@ -1038,7 +1086,9 @@ async def faceted_futures_search(
     ]
 
     if category:
-        conditions.append(FuturesMarket.llm_sport_category == category)
+        # #4047, same reason as `/browse`: this endpoint takes the same category
+        # keys the census emits, so it inherits the same definition of `other`.
+        conditions.append(_category_condition(category))
 
     if q:
         conditions.append(FuturesMarket.name.ilike(f"%{q}%"))

@@ -114,8 +114,13 @@ def _no_client():
 
 
 class _Row:
+    #: `category_key`, not `llm_sport_category` — #4047 moved the `or "other"`
+    #: fallback out of the serialiser and into the statement's GROUP BY, so the
+    #: row the census reads now carries the coalesced KEY rather than the raw
+    #: column. A double still shaped like the column would be simulating a row
+    #: production can no longer produce.
     def __init__(self, key, count):
-        self.llm_sport_category = key
+        self.category_key = key
         self.count = count
 
 
@@ -136,14 +141,22 @@ class _CountingSession:
 
     def __init__(self, rows=None):
         self.executions = 0
+        # #4047: the third row is `_Row("other", 123)`, not `_Row(None, 123)` —
+        # the coalesce is in the statement now, so a NULL key cannot reach the
+        # serialiser and a double that produces one is simulating a row
+        # production cannot emit.
         self._rows = rows if rows is not None else [
             _Row("politics", 6614),
             _Row("economics", 2902),
-            _Row(None, 123),
+            _Row("other", 123),
         ]
+        #: Kept so a test can assert on the statement itself, which is where
+        #: #4047 moved the NULL-to-`other` rule.
+        self.statements = []
 
-    async def execute(self, _query):
+    async def execute(self, query):
         self.executions += 1
+        self.statements.append(query)
         return _Result(self._rows)
 
 
@@ -454,11 +467,22 @@ def test_a_cold_reader_builds_and_publishes_what_the_next_one_will_read():
     assert built["total"] == 6614 + 2902 + 123
 
 
-def test_a_null_category_renders_as_other_exactly_as_it_did_before():
-    """The response shape is unchanged by this ship. `row.llm_sport_category or
-    "other"` is the pre-existing rule and it is carried across verbatim."""
+def test_a_null_category_still_renders_as_other_and_the_rule_moved_house():
+    """The guarantee is unchanged; the place it is enforced is not (#4047).
+
+    This test used to hand the serialiser a row whose category was `None` and
+    watch `row.llm_sport_category or "other"` rename it. That rename was the
+    bug: it ran AFTER the GROUP BY, so `NULL` and `'other'` reached the grid as
+    two tiles both labelled "Other". The fallback now lives in the statement, so
+    a `None` key can no longer arrive here at all — and asserting on a row that
+    production cannot produce would be testing a shape rather than the rule.
+
+    So the rule is asserted where it now lives (the emitted SQL carries the
+    coalesce), and the response shape is asserted on the row the statement
+    actually emits.
+    """
     rc = _FakeRedis()
-    session = _CountingSession(rows=[_Row(None, 123)])
+    session = _CountingSession(rows=[_Row("other", 123)])
 
     async def _go():
         with _client(rc):
@@ -466,6 +490,12 @@ def test_a_null_category_renders_as_other_exactly_as_it_did_before():
 
     body = _run(_go())
     assert body["categories"] == [{"key": "other", "count": 123}]
+
+    sql = str(session.statements[-1].compile()).lower()
+    assert "coalesce" in sql, (
+        "the NULL-to-`other` fallback is not in the statement, so it is back in "
+        "the serialiser and `other` can be emitted twice again"
+    )
 
 
 def test_no_redis_at_all_still_answers_and_still_builds_every_time():
