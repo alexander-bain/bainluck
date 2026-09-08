@@ -285,8 +285,19 @@ MATCHED = {
             ("a", "b"), MATCHED, "event_date",
             "duplicate_guard_blocked", mr.REJECT_EVENT_DATE_CONFLICT,
         ),
+        # The arm this table used to omit, and the omission is why the endpoint
+        # spent event_date_conflict on both for a release. See the parity test
+        # below for what the two reasons mean.
+        (
+            ("a", "b"), MATCHED, "sibling_date",
+            "duplicate_guard_blocked", mr.REJECT_ALREADY_LINKED_ELSEWHERE,
+        ),
     ],
-    ids=["no_matchup", "no_event_found", "duplicate_guard_blocked"],
+    ids=[
+        "no_matchup", "no_event_found",
+        "duplicate_guard_blocked_event_date",
+        "duplicate_guard_blocked_sibling_date",
+    ],
 )
 async def test_every_refusal_exit_writes_a_receipt(
     monkeypatch, force_link_harness, matchup, matched, refusal,
@@ -307,6 +318,73 @@ async def test_every_refusal_exit_writes_a_receipt(
     assert "linked_event_id" not in call
     # A refusal changed nothing, so nothing was committed.
     assert db.commits == 0
+
+
+@pytest.mark.asyncio
+async def test_the_two_guard_arms_are_two_different_reasons(
+    monkeypatch, force_link_harness
+):
+    """The parity property, not the two cases above.
+
+    The duplicate guard has two arms and the enum already documents them as a
+    pair: ``REJECT_EVENT_DATE_CONFLICT`` names ``_REFUSAL_EVENT_DATE`` in its own
+    docstring, and ``REJECT_ALREADY_LINKED_ELSEWHERE`` is defined as "a sibling
+    ticker for the same game is already on that event". The scheduled matcher
+    maps them apart; this hand-run endpoint spent one reason on both, so a
+    sibling refusal entered ``market_match_receipts`` as a date conflict and
+    #2706's ``GROUP BY reject_reason`` counted it in the wrong bucket for good.
+
+    Asserted as *distinctness* rather than two literals so that collapsing the
+    map back to a single reason fails here even if someone rewrites both rows of
+    the table above to agree with the collapse.
+    """
+    from app.tasks import prediction_market_matching as pmm
+
+    seen = {}
+    for arm in (pmm._REFUSAL_EVENT_DATE, pmm._REFUSAL_SIBLING_DATE):
+        force_link_harness.clear()
+        _configure(monkeypatch, matchup=("a", "b"), matched=MATCHED, refusal=arm)
+        result = await am.prediction_market_force_link(
+            request=None, secret="x", external_id=MARKET_ROW["external_id"],
+            db=_FakeDB(_FakeMarket()),
+        )
+        assert result["status"] == "duplicate_guard_blocked"
+        (call,) = force_link_harness
+        # The raw refusal still travels in detail — the reason is a bucket, the
+        # detail is the evidence, and #3755 wanted both.
+        assert call["detail"]["refusal"] == arm
+        seen[arm] = call["reject_reason"]
+
+    assert seen[pmm._REFUSAL_EVENT_DATE] != seen[pmm._REFUSAL_SIBLING_DATE], (
+        "both guard arms wrote the same reject_reason, so the receipt history "
+        "cannot tell a ticker-date conflict from a sibling already on the event"
+    )
+    assert seen[pmm._REFUSAL_EVENT_DATE] == mr.REJECT_EVENT_DATE_CONFLICT
+    assert seen[pmm._REFUSAL_SIBLING_DATE] == mr.REJECT_ALREADY_LINKED_ELSEWHERE
+    # Countable, not free text (line 4 of this module's contract).
+    assert set(seen.values()) <= mr.REJECT_REASONS
+
+
+def test_the_guard_arms_are_still_only_two():
+    """The endpoint maps one arm by name and lets ``else`` take the rest.
+
+    That is deliberate parity with the matcher's own call site rather than a
+    second opinion about the mapping — but an ``else`` is a catch-all, so a
+    THIRD refusal arm added upstream would be silently filed as
+    ``already_linked_elsewhere`` and nothing above would go red. Key on the
+    module that mints the arms, so the first new one fails here instead.
+
+    ``_check_duplicate_kalshi_linkage_reason`` lives in lane1's matcher (D39).
+    If this fails, the arm is theirs and the mapping is ours: add the case to
+    the endpoint and to the table above — do not delete this test.
+    """
+    from app.tasks import prediction_market_matching as pmm
+
+    arms = {n: v for n, v in vars(pmm).items() if n.startswith("_REFUSAL_")}
+    assert arms == {
+        "_REFUSAL_EVENT_DATE": "event_date",
+        "_REFUSAL_SIBLING_DATE": "sibling_date",
+    }, f"the duplicate guard's refusal arms changed: {arms}"
 
 
 @pytest.mark.asyncio

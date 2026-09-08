@@ -2230,9 +2230,11 @@ async def prediction_market_force_link(
     from app.tasks.prediction_market_matching import (
         _find_matching_event,
         _check_duplicate_kalshi_linkage_reason,
+        _REFUSAL_EVENT_DATE,
     )
     from app.utils.match_receipts import (
         PHASE_ADMIN_REPAIR,
+        REJECT_ALREADY_LINKED_ELSEWHERE,
         REJECT_EVENT_DATE_CONFLICT,
         REJECT_NO_CANDIDATE,
         REJECT_NO_MATCHUP,
@@ -2289,11 +2291,26 @@ async def prediction_market_force_link(
         db, matched["event_id"], market, ticker_date
     )
     if refusal is not None:
+        # #3755 follow-up: the guard has TWO arms and they are different answers,
+        # so the receipt must not spend one reason on both. The enum already says
+        # so — REJECT_EVENT_DATE_CONFLICT's docstring names ``_REFUSAL_EVENT_DATE``
+        # specifically, and REJECT_ALREADY_LINKED_ELSEWHERE is defined as "a
+        # sibling ticker for the same game is already on that event", which is
+        # exactly ``_REFUSAL_SIBLING_DATE``. This hand-run path was writing
+        # event_date_conflict for both, so a sibling refusal entered the history
+        # as a date conflict and #2706's ``GROUP BY reject_reason`` counted it in
+        # the wrong bucket for good. Mapping, not a new reason: identical to the
+        # matcher's own at prediction_market_matching.py's Pass-1 call site, which
+        # is the parity this closes.
         return {
             "status": "duplicate_guard_blocked",
             "event_id": matched["event_id"],
             "receipts_written": await _receipt(
-                reject_reason=REJECT_EVENT_DATE_CONFLICT,
+                reject_reason=(
+                    REJECT_EVENT_DATE_CONFLICT
+                    if refusal == _REFUSAL_EVENT_DATE
+                    else REJECT_ALREADY_LINKED_ELSEWHERE
+                ),
                 detail={"refusal": refusal, "candidate_event_id": matched["event_id"]},
             ),
         }
