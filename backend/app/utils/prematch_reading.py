@@ -59,7 +59,7 @@ UX-P114 gave.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping, Optional, Sequence
 
 # The two prediction-market rungs, in Alex's order. Source ids as the payload and
@@ -110,6 +110,66 @@ def _pair(home: Any, away: Any) -> Optional[tuple[float, float]]:
     if away_prob is None or abs(home_prob + away_prob - 1.0) > _COMPLEMENT_TOLERANCE:
         away_prob = round(1.0 - home_prob, 6)
     return home_prob, away_prob
+
+
+def opening_consensus_has_frozen(
+    commence_time: Any, status: Any, now: datetime
+) -> bool:
+    """May ``Event.opening_*`` be published as an OPENING yet? (#3922)
+
+    ``Event.opening_home_probability`` is not the price a market opened at. It is
+    the LAST PREGAME consensus: :func:`app.tasks.odds_polling._maybe_set_opening_odds`
+    rewrites it on **every** poll while the fixture is still scheduled, and stops
+    the moment it starts. The module docstring above already said so — "keeps
+    refreshing until the game starts and then freezes" — but three read paths
+    published it under the word "Opened" regardless.
+
+    Before the freeze that word is false twice over:
+
+    * **The number never happened.** Measured 2026-09-08 against the eight US
+      Open quarter-finals, the column disagreed with the books' own first-sight
+      median (earliest ``odds_snapshots`` capture, all 1-2 days pre-match) on
+      **8 of 8** rows — mean 2.6pp, worst 5.1pp. The hub said "Frances Tiafoe
+      opened at 58%" (he opened at 56.9%) over an event page saying Shelton
+      "Opened 24%" (26.99%) with "−2% since open" against a true −5pp.
+    * **The reference point moves while you watch.** Two reads of
+      ``/api/tournaments/us-open`` five minutes apart: three of eight matches
+      changed their *opening* (Sabalenka .6986→.7012, Andreeva .3783→.3819,
+      Zheng .2934→.2909) while their current did not move at all. An arrow whose
+      baseline drifts is not measuring the market.
+
+    And what it measures instead is the one thing Alex's standing ruling forbids
+    a surface to show. Before the freeze the column tracks the books' price NOW,
+    so ``blend − opening`` is not movement over time at all: it is
+    ``blend_now − books_now``, a source-disagreement gauge wearing a time label.
+    Where the blend is books-only it is structurally 0.0 — Zverev printed a flat
+    arrow on a day his book ran 84.7 → 85.9.
+
+    So this returns True on exactly the states in which the writer has STOPPED
+    writing, and it is written as the writer's own two guards inverted rather
+    than as an independent reading of them. A reader that decided freshness for
+    itself would be a second copy of that rule, free to drift; the whole defect
+    here is a column meaning one thing to its writer and another to its readers.
+
+    A missing ``commence_time`` and a missing ``status`` both leave the writer
+    free to overwrite, so both answer False — an unknown is never promoted to a
+    freeze, because the cost of publishing early is a false sentence and the
+    cost of withholding is silence.
+
+    The naive/aware coercion is not tidying. ``events.commence_time`` is
+    ``DateTime(timezone=True)`` so production always compares aware to aware, but
+    this predicate now sits on the event page's render path, where the bare
+    ``<=`` the writer can afford inside a task's error handling would be a
+    ``TypeError`` — i.e. a 500 on the hero — the first time any caller hands it a
+    naive stamp. Naive is read as UTC, which is what the column stores.
+    """
+    if isinstance(commence_time, datetime):
+        if commence_time.tzinfo is None:
+            commence_time = commence_time.replace(tzinfo=timezone.utc)
+        reference = now if now.tzinfo is not None else now.replace(tzinfo=timezone.utc)
+        if commence_time <= reference:
+            return True
+    return bool(status) and status != "scheduled"
 
 
 def prematch_source_rank(source: Any) -> int:
