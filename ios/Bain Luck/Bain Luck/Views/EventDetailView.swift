@@ -1363,8 +1363,15 @@ private struct GameSegmentsView: View {
                 ScrollView(.horizontal, showsIndicators: true) {
                     Grid(alignment: .trailing, horizontalSpacing: 4, verticalSpacing: 8) {
                         GridRow {
+                            // #3977 — the spacer above the team badges. It carries
+                            // the same floor as the badge and declares the column
+                            // leading-aligned, so two badges of unequal ink still
+                            // start their dots at the same x.
                             Text("")
-                                .frame(width: 44, alignment: .leading)
+                                .frame(
+                                    minWidth: GameSegmentTeamBadge.minimumWidthPoints,
+                                    alignment: .leading)
+                                .gridColumnAlignment(.leading)
                             ForEach(breakdown.segments) { segment in
                                 Text(segment.label)
                                     .font(.caption2.weight(.semibold))
@@ -1404,18 +1411,11 @@ private struct GameSegmentsView: View {
 
     private func segmentRow(team: String, color: Color, scores: [Int?], total: Int) -> some View {
         GridRow {
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(color)
-                    .frame(width: 7, height: 7)
-                Text(team)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-            }
             // UX-P090: 54 -> 44, matching the header row above. See the geometry
             // note there — the two must move together or the columns shear.
-            .frame(width: 44, alignment: .leading)
+            // #3977 moved both to a FLOOR and put the badge in its own type so a
+            // camera can measure it; the reasoning lives on `GameSegmentTeamBadge`.
+            GameSegmentTeamBadge(team: team, color: color)
 
             ForEach(Array(scores.enumerated()), id: \.offset) { _, score in
                 // `·` for an inning we never observed. Printing `0` there would
