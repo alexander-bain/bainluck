@@ -1828,8 +1828,21 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
             except Exception:
                 # Chrome, not content (gotcha #42): a rail that cannot read its
                 # competitions is still a rail. Fall back to the clock's order.
+                #
+                # 🔴 The league is NOT interpolated, and that is deliberate.
+                # `sport_key` is a path parameter, so a new log line carrying it
+                # is a `py/log-injection` finding (CodeQL called this one a
+                # medium-severity security vulnerability on the first push, and
+                # notice 32 refuses those). The neighbouring log calls do carry
+                # it and are not flagged only because they are untouched lines;
+                # inheriting a convention is not the same as it being safe.
+                # `logger.exception` prints the traceback, and the branch is
+                # reachable for exactly the two keys in
+                # `RAIL_COMPETITION_SHARE_LEAGUES`, so the count identifies the
+                # call as well as the key would.
                 logger.exception(
-                    "league page: competition share failed for %s", sport_key
+                    "league page: competition share failed over %d candidates",
+                    len(_g_events),
                 )
                 _g_events = _g_events[:UPCOMING_GAMES_LIMIT]
         _r = await asyncio.wait_for(db.execute(_results_q), timeout=10)
