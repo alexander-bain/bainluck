@@ -173,7 +173,7 @@ struct TotalPointsSpectrumView: View {
 
     private var header: some View {
         HStack {
-            Text("Projected scoring")
+            Text(MarketMapRail.spectrumSectionTitle(finalTotal: actualTotal))
                 .font(.subheadline)
                 .fontWeight(.semibold)
             Spacer()
@@ -331,7 +331,7 @@ struct TotalPointsSpectrumView: View {
 
     private var ladderView: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("Projected combined \(unit)")
+            Text(MarketMapRail.spectrumLadderTitle(finalTotal: actualTotal, unit: unit))
                 .font(.caption)
                 .fontWeight(.semibold)
                 .padding(.bottom, 4)

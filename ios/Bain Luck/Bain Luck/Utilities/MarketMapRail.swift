@@ -283,6 +283,60 @@ enum MarketMapRail {
         hasDistribution ? "Half \(unit) distribution" : "Half \(unit)"
     }
 
+    // MARK: - The tense the scoring-spectrum card may print
+
+    /// The section heading `TotalPointsSpectrumView` may print.
+    ///
+    /// #3905, and the same sentence-level rule as ``fullTotalSubtitle`` one card
+    /// lower on the same page. On event 15306209 (`Reds 3 — Dodgers 6`,
+    /// `completed`) the map above read "**Final** runs distribution" — #3763's
+    /// doing — while this card, over the same nine runs of the same finished
+    /// game, still read "**Projected** scoring" above a value tile saying
+    /// `Final total runs / 9` and a ladder grading `7.5+ HIT`. One screen, the
+    /// same settled quantity, called "Final" three times and "Projected" twice.
+    ///
+    /// 🔴 **THE PARAMETER IS THE FINAL ITSELF, NOT `isDone`, AND THAT IS THE
+    /// WHOLE FIX.** Every other subtitle on this page keys on `isDone` and is
+    /// right to; this one cannot, because "the event is over" and "this card has
+    /// a final to grade against" are different facts here. `actualTotal` is nil
+    /// on a settled game whose scoreboard does not count the widget's unit —
+    /// tennis reports SETS, so `SportVocab.scoreboardCountsTheUnit` is false and
+    /// the card has no combined-games total to state. `TotalPointsSpectrumView`
+    /// already branches on exactly that: with no final, `finalStrip` does not
+    /// render and every rung falls to the `PRE-GAME … 42%` arm of `ladderRow`.
+    ///
+    /// **Measured on production 2026-09-08, so this is a live card and not a
+    /// hypothetical:** event **15305795** (`Zverev def. Darderi`, `completed`)
+    /// serves **5** `game_total` thresholds, which is `ladderRowLimit` — enough
+    /// that `fullView` draws, with all five rungs captioned `PRE-GAME`. An
+    /// `isDone` gate would have headed that card "Final scoring" over five
+    /// PRE-GAME rungs: #3905's own defect, re-created by its fix, on a sport it
+    /// never looked at. Two more the same night (15305796, 15305728) render the
+    /// full card from 3 and 2 rungs, because the minimal card is pre-game-only.
+    ///
+    /// Passing the final that the rungs are graded with means the heading and
+    /// the verdicts beneath it read off ONE value and cannot disagree — the
+    /// invariant `TotalPointsSpectrumTenseTests` exists to hold.
+    ///
+    /// - Parameter finalTotal: what ``totalLadderResult(threshold:finalTotal:)``
+    ///   is being handed for this card's rungs — `nil` when there is none.
+    static func spectrumSectionTitle(finalTotal: Int?) -> String {
+        finalTotal == nil ? "Projected scoring" : "Final scoring"
+    }
+
+    /// The heading over the scoring spectrum's threshold ladder.
+    ///
+    /// #3905. The second of the card's two hard-coded strings, under the same
+    /// rule and the same parameter as ``spectrumSectionTitle(finalTotal:)`` —
+    /// "Projected combined runs" sat directly over `7.5+ HIT / 9.5+ MISS`.
+    ///
+    /// `unit` is the widget's own, read from the markets rather than the sport
+    /// (#3509), so this says "combined runs" on baseball and "combined scoring"
+    /// where neither the markets nor the sport declare a unit.
+    static func spectrumLadderTitle(finalTotal: Int?, unit: String) -> String {
+        finalTotal == nil ? "Projected combined \(unit)" : "Final combined \(unit)"
+    }
+
     // MARK: - Reading a totals ladder once the game is over
 
     /// What a totals line DID, once there is a final to grade it against.
