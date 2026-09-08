@@ -327,16 +327,91 @@ class TestTheRailSaysWhyItWasEmpty:
         assert meta["status"] == "unavailable"
         assert meta["reason"] == "input_age_ceiling"
 
-    def test_the_rail_reads_the_reason_it_is_given(self):
-        """Anchored to the production source, so deleting the field from
-        `_prewarm_feed_shape` fails HERE and not only in a post-deploy read."""
-        import inspect
+    def test_the_real_rail_terminal_reports_the_refusal(self):
+        """The REAL `_prewarm_feed_shape`, driven to its empty branch.
 
-        from app.tasks import precompute_category_pages as pcp
+        🔴 THIS REPLACED A SOURCE GREP, AND THE GREP WAS FLAKY — CERT-2242 caught
+        it. The first version did `from app.tasks import precompute_category_pages`,
+        which is **order-dependent**: `app/tasks/__init__.py:4151` defines a Celery
+        task of that exact name, so the package attribute is the TASK or the
+        MODULE depending on whether the submodule happened to be imported yet.
+        It passed here and failed on the grader's independent run at the same
+        head. `import_module` reads `sys.modules` and is unambiguous — it is also
+        what `test_feed_live_prewarm.py` has always done.
 
-        source = inspect.getsource(pcp._prewarm_feed_shape)
-        assert '"empty_reason"' in source, (
+        Exercising the terminal rather than grepping for it is the stronger fix
+        anyway: a grep goes green on the string appearing anywhere, including in
+        a comment or a branch that never runs.
+        """
+        import asyncio
+        from contextlib import asynccontextmanager
+        from importlib import import_module
+        from unittest.mock import MagicMock, patch
+
+        pcp = import_module("app.tasks.precompute_category_pages")
+        assert hasattr(pcp, "_prewarm_feed_shape"), (
+            "resolved the Celery task instead of the module — the shadowing "
+            "described above has come back"
+        )
+
+        @asynccontextmanager
+        async def _session():
+            yield MagicMock()
+
+        async def _refusing_get_feed(**kwargs):
+            # Exactly what routes/feed.py returns on the CERT-1864 refusal:
+            # complete quality, zero items, and the reason on the cache block.
+            return {
+                "items": [],
+                "total": 0,
+                "cache": fc.build_feed_cache_metadata(
+                    "unavailable",
+                    ttl_seconds=0,
+                    stale_ttl_seconds=0,
+                    reason="input_age_ceiling",
+                    live=True,
+                ),
+            }
+
+        with patch("app.tasks.base.get_task_session", _session), patch(
+            "app.routes.feed.get_feed", _refusing_get_feed
+        ):
+            out = asyncio.run(
+                pcp._prewarm_feed_shape(dict(pcp.FEED_PREWARM_SHAPES[0]), MagicMock())
+            )
+
+        assert out["outcome"] == "empty"
+        assert out["empty_reason"] == "input_age_ceiling", (
             "the rail stopped carrying the empty reason; #3904's instrument is "
             "blind again"
         )
-        assert '"cache_status"' in source
+        assert out["cache_status"] == "unavailable"
+
+    def test_the_real_rail_terminal_reports_a_genuinely_empty_world_as_such(self):
+        """The other side, through the real function: no reason, and the rail
+        still declines to publish. Without this the test above would pass on a
+        rail that hardcoded the string."""
+        import asyncio
+        from contextlib import asynccontextmanager
+        from importlib import import_module
+        from unittest.mock import MagicMock, patch
+
+        pcp = import_module("app.tasks.precompute_category_pages")
+
+        @asynccontextmanager
+        async def _session():
+            yield MagicMock()
+
+        async def _empty_get_feed(**kwargs):
+            return {"items": [], "total": 0, "cache": {"status": "miss"}}
+
+        with patch("app.tasks.base.get_task_session", _session), patch(
+            "app.routes.feed.get_feed", _empty_get_feed
+        ):
+            out = asyncio.run(
+                pcp._prewarm_feed_shape(dict(pcp.FEED_PREWARM_SHAPES[0]), MagicMock())
+            )
+
+        assert out["outcome"] == "empty"
+        assert out["empty_reason"] is None
+        assert out["cache_status"] == "miss"

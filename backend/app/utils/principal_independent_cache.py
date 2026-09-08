@@ -325,12 +325,36 @@ def live_artifact_ttl_ceiling_s() -> float:
     WHOLE pass budget when the measured span is ~1-3s, and it spends a whole
     second on a rounding term worth at most one. Both make the bound smaller.
 
-    WHAT THIS BUYS, stated so it can be checked rather than believed: a warm-rail
-    pass can no longer fail to publish *because of artifact age*. It says nothing
-    about `timeout`/`error`/`no_key`, which are different outcomes with different
-    causes, and it does not touch the ceiling itself — #2216 and CERT-1864 are
-    unchanged. The refusal stays exactly as correct as it was; what changes is
-    that the system stops manufacturing the condition that trips it.
+    WHAT THIS BUYS, AND ITS EXACT SCOPE — stated so it can be checked rather than
+    believed, because "no more refusals" would be a bigger claim than the
+    arithmetic supports (CERT-2242 follow-up `LAT-P261-REQUEST-BUDGET-PARITY`).
+
+    Guaranteed: **any build that completes within `FEED_LIVE_REPUBLISH_BUDGET_S`
+    cannot be refused for artifact age.** That covers the live republish rail by
+    construction — `_prewarm_live_feed_shapes` passes a deadline bounded by that
+    constant — which is the rail whose passes must publish for the mirror to
+    survive, and it is the rail #3904 is about.
+
+    NOT guaranteed, deliberately:
+
+    * The 120s warm rail budgets `FEED_PREWARM_PASS_BUDGET_S` (80s), so a shape
+      that turns out live AND spends more than 20s building can still land over
+      the ceiling.
+    * The request path has no whole-build deadline constant at all; it is bounded
+      only by the router.
+
+    Neither is a gap to close by widening this bound, and widening it would be
+    the wrong move: a live page assembled over forty-odd seconds genuinely IS too
+    stale to serve, which is what #2216 says. Both cases are far outside measured
+    behaviour — 182 production builds ran p50 1.19s / p95 1.92s / max 7.89s
+    against the 20s this bound charges them, so the margin in practice is roughly
+    an order of magnitude.
+
+    It also says nothing about `timeout`/`error`/`no_key`, which are different
+    outcomes with different causes, and it does not touch the ceiling itself —
+    #2216 and CERT-1864 are unchanged. The refusal stays exactly as correct as it
+    was; what changes is that the system stops manufacturing the condition that
+    trips it.
 
     WHAT IT COSTS. `concepts` rebuilds ~1.5x as often. LAT-P104 recorded that
     stage at 865-1249ms, but that number is from 2026-08 and is NOT today's: in
