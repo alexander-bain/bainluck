@@ -71,7 +71,32 @@ from app.utils.sports_first_page_rails import (
     swap_client_deleted_finished_off_first_page,
 )
 
-NOW = datetime(2026, 9, 7, 12, 0, 0, tzinfo=timezone.utc)
+#: 🔴 THE FIXTURE CLOCK MUST BE THE CLOCK THE CODE READS (#3886), and half this file's
+#: tests cannot inject one. `TestThePass` and its neighbours call
+#: `swap_client_deleted_finished_off_first_page(..., now=NOW)`, so for them any
+#: instant does — fixture and function share whatever `NOW` says. But
+#: `TestWiring` grades the real chain, and `apply_discover_display_chain` takes
+#: no `now`: it reads the wall clock. So when `NOW` was the literal
+#: `datetime(2026, 9, 7, 12, 0, 0)`, every wiring fixture aged at exactly the
+#: rate the wall clock ran away from that date, and the file was green only on
+#: the day it was written.
+#:
+#: It rotted in 19 hours. `CLIENT_COMPLETED_MAX_AGE_HOURS` is 8, and
+#: `test_both_passes_fire_when_the_page_is_repetitive_AND_doomed` builds its
+#: nine repetitive cards at `hours_ago=1.0` — fresh, kept by the client, and
+#: therefore the rail cap's job. Read against a wall clock a day later they were
+#: 19 hours old, so the client-deletion pass claimed all nine first and the cap
+#: had nothing left to swap: `assert meta["finished_rail_cap"]["swapped"] > 0`
+#: failed as `assert 0 > 0`. `backend-tests` is a bare `needs:` of `deploy`, so
+#: one rotted shard stopped every release on master, not just this file.
+#:
+#: Anchoring to `datetime.now(timezone.utc)` is what makes the offsets below
+#: mean what they say. Every one of them is RELATIVE (`hours_ago`), no test
+#: asserts a calendar date, and the pass thresholds are hours wide, so the
+#: seconds between this line and the chain's own `now()` cannot reach a
+#: boundary. Gotcha #44: a fixed date in a test that reads the wall clock is a
+#: time bomb with the fuse already lit — do not restore the literal.
+NOW = datetime.now(timezone.utc)
 
 SPORTS = {
     "event_pct": 0.6,
