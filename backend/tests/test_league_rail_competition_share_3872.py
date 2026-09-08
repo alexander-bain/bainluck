@@ -26,26 +26,36 @@ them all eight slots exactly as designed. It is the RULE that is wrong, and it
 is the same sentence #3640 already wrote for `/hub/tennis`: a clock is not a
 reason to bury the tournament during the tournament.
 
-── WHY NOT THE MECHANISM #3640 ALREADY SHIPPED ──
+── THE RULE, AND THE TWO THINGS PRODUCTION TAUGHT IT ──
 
-`is_tennis_feeder_circuit` names the Challenger circuit from venue-stated text
-and the hub sorts on it. It was the first thing tried here and it is not enough
-on its own, for two reasons that only show up on this surface:
+Each competition in play may take an EQUAL SHARE of the rail,
+`limit // competitions`, and the remainder is backfilled in the rail's own
+order. No tuned number: a cap tuned until one specimen appears is tuned to one
+day, and caps of 5, 4 and 3 were each tried and each spent the slots they freed
+on the six US Open DOUBLES matches stamped 18:00Z, ahead of Shelton–Alcaraz at
+18:30Z.
 
-* The hub's tier key sorts INSIDE the live band, deliberately, so that a live
-  Challenger still leads a Slam match that has not started. On the hub that cost
-  nothing. Here it fixes nothing at all: on 09-08 the Challengers WERE the live
-  band and the Slam was entirely scheduled, so a key that only reorders within
-  "live" leaves all eight slots exactly where they were.
-* Demoting the feeder circuit by a tuned cap still missed the specimen. Behind
-  the twelve Challengers sat six US Open DOUBLES matches all stamped 18:00Z,
-  ahead of Shelton–Alcaraz at 18:30Z. Caps of 5, 4 and 3 were each checked
-  against the measured population and every one of them spent the slots it
-  freed on doubles. A cap tuned until one specimen appears is tuned to one day.
+Both of the following were found by REPLAYING the rule on production's own rows,
+and neither was visible in a hand-written fixture. They are the reason that
+pre-flight is part of this ship and not a nicety.
 
-So the rule carries no tuned number: each competition in play may take an EQUAL
-SHARE, `limit // competitions`, and the remainder is backfilled in the rail's
-own order. On the measured population that is 8 // 4 = 2 apiece.
+1. **The feeder circuit has to be ONE group.** Shared out per tournament it is
+   not thinned, it is SUBDIVIDED: the window held SEVEN separate Challenger
+   draws, so the unfolded share is 8 // 9 = 0 → 1 and the circuit takes seven of
+   the eight slots one draw at a time. Replayed on the real rows, unfolded gives
+   Bax–Jones, Ymer–Kotov, Tobon–Kirci, Added–Masur, Kolar–Wallin, Seyboth
+   Wild–Ferrari, Sanchez Jover–Bueno and Tiafoe — no Shelton–Alcaraz.
+   `is_tennis_feeder_circuit`, #3640's own venue-stated predicate, is what says
+   which matches fold together. So the mechanism the hub already ships is not
+   bypassed here; it is what makes the share work.
+2. **The scan must be sized against the RANK of the row that must appear**, not
+   against the wall in front of it. The first guess was 24 — three times the
+   twelve LIVE Challenger rows — and reached no US Open row at all, because the
+   wall is every Challenger SCHEDULED before the Slam's first ball.
+
+Folded, with the scan deep enough: 3 groups, share 2, and the rail becomes two
+live Challengers, Tiafoe–Michelsen, two US Open doubles, Shelton–Alcaraz, Zverev
+and Khachanov.
 
 ── WHY IT CANNOT REACH MLB, THE NFL OR NCAAF ──
 
@@ -89,12 +99,16 @@ from sqlalchemy.dialects import postgresql
 from app.routes.league_futures import (
     RAIL_COMPETITION_SCAN_DEPTH,
     RAIL_COMPETITION_SHARE_LEAGUES,
+    RAIL_FEEDER_GROUP,
     UPCOMING_GAMES_LIMIT,
     upcoming_games_query,
 )
+from app.utils.event_tennis import is_tennis_feeder_circuit
 from app.utils.rail_competition_share import equal_share_by_competition
 
 NOW = datetime(2026, 9, 8, 8, 30, tzinfo=timezone.utc)
+
+FEEDER = RAIL_FEEDER_GROUP
 
 
 @dataclass
@@ -119,33 +133,54 @@ def _names(rows):
 # the specimen: the ATP rail as production actually held it on 2026-09-08
 # ---------------------------------------------------------------------------
 
-#: Natural order — `live_first_order` then `commence_time` — as measured. The
-#: twelve live Challengers first, then the scheduled rows by kickoff. Trimmed to
-#: the shape that decides the outcome; the real window held 94 feeder rows.
-PHAN = "ATP Challenger Phan Thiet 3"
-SHANGHAI = "ATP Challenger Shanghai"
+#: Natural order — `live_first_order` then `commence_time` — as production held
+#: it, with the RANKS measured rather than guessed:
+#:
+#:     107   candidate rows in the window
+#:      81   the first non-feeder row (Tiafoe–Michelsen, 17:00Z)
+#:     103   Shelton–Alcaraz, the semi-final the issue is about
+#:
+#: Trimmed to the shape that decides the outcome — the 80 feeder rows are stood
+#: in for by `_FEEDER_WALL` — and every group label is the one the venue wrote.
 DOUBLES = "US Open Men Doubles"
 SINGLES = "US Open Men Singles"
 
+#: The SEVEN separate Challenger draws in that window, as the venue spelled
+#: them. Seven DISTINCT competition strings and one errand, which is the whole
+#: reason the route folds them to `RAIL_FEEDER_GROUP` before the share sees
+#: them — and the count is load-bearing, not decoration: at seven the unfolded
+#: share is 8 // 9 = 0 → 1, and the circuit takes seven of the eight slots one
+#: draw at a time. An earlier version of this fixture guessed five, where the
+#: unfolded rule still happens to seat Shelton–Alcaraz, and the negative control
+#: below passed for the wrong reason until production was asked.
+CHALLENGER_DRAWS = (
+    "ATP Challenger Phan Thiet 3",
+    "ATP Challenger Istanbul 3",
+    "ATP Challenger Shanghai",
+    "ATP Challenger Tulln",
+    "ATP Challenger Cassis",
+    "ATP Challenger Genoa",
+    "ATP Challenger Seville",
+)
+
+_FEEDER_WALL = [Row(f"challenger-{i}", FEEDER) for i in range(80)]
+
+#: Shelton–Alcaraz, Zverev and Khachanov carry NO competition on production: the
+#: surname-only copies that DO carry "US Open Men Singles" are proven duplicates
+#: and never reach the rail. Faithfully reproduced, because "unnamed rows are
+#: never held back" is what puts them on the page.
 ATP_20260908 = [
-    Row("bax-jones", PHAN),
-    Row("derepasko-ziegann", PHAN),
-    Row("sach-truong", PHAN),
-    Row("purcell-pacheco", PHAN),
-    Row("oconnell-ellis", PHAN),
-    Row("cuong-weber", SHANGHAI),
-    Row("samrej-rawat", SHANGHAI),
-    Row("balsekar-shimizu", SHANGHAI),
-    Row("tiafoe-michelsen", None),
-    Row("carpico-ram", DOUBLES),
-    Row("miedler-arevalo", DOUBLES),
+    *_FEEDER_WALL,
+    Row("tiafoe-michelsen", SINGLES),
     Row("nys-andreozzi", DOUBLES),
-    Row("gonzalez-granollers", DOUBLES),
-    Row("heliovaara-cabral", DOUBLES),
     Row("krawietz-cash", DOUBLES),
-    Row("shelton-alcaraz", SINGLES),
-    Row("schnaitter-harrison", DOUBLES),
-    Row("bolelli-krajicek", DOUBLES),
+    Row("carpico-ram", DOUBLES),
+    Row("heliovaara-cabral", DOUBLES),
+    Row("gonzalez-granollers", DOUBLES),
+    Row("miedler-arevalo", DOUBLES),
+    Row("shelton-alcaraz", None),
+    Row("zverev-vandezandschulp", None),
+    Row("khachanov-blockx", None),
 ]
 
 
@@ -154,11 +189,17 @@ def test_the_us_open_semi_final_reaches_the_rail():
     assert "shelton-alcaraz" in _names(_share(ATP_20260908))
 
 
+def test_the_slams_other_marquee_singles_reach_it_too():
+    chosen = _names(_share(ATP_20260908))
+    assert "zverev-vandezandschulp" in chosen
+    assert "khachanov-blockx" in chosen
+    assert "tiafoe-michelsen" in chosen
+
+
 def test_the_challenger_circuit_no_longer_takes_every_slot():
     chosen = _share(ATP_20260908)
-    feeder = [r for r in chosen if r.competition in (PHAN, SHANGHAI)]
     assert len(chosen) == UPCOMING_GAMES_LIMIT
-    assert len(feeder) == 4, _names(chosen)
+    assert len([r for r in chosen if r.competition == FEEDER]) == 2, _names(chosen)
 
 
 def test_the_doubles_do_not_take_the_slots_the_challengers_gave_up():
@@ -168,13 +209,28 @@ def test_the_doubles_do_not_take_the_slots_the_challengers_gave_up():
 
 
 def test_the_rail_still_leads_with_what_is_being_played():
-    """`live_first_order` is untouched: the live Challengers still come first."""
-    assert _names(_share(ATP_20260908))[0] == "bax-jones"
+    """`live_first_order` is untouched: the live feeder rows still come first."""
+    assert _names(_share(ATP_20260908))[:2] == ["challenger-0", "challenger-1"]
 
 
-def test_every_competition_in_play_is_represented():
-    chosen = _share(ATP_20260908)
-    assert {r.competition for r in chosen} == {PHAN, SHANGHAI, DOUBLES, SINGLES, None}
+def test_the_feeder_circuit_must_be_ONE_group_not_five():
+    """🔴 The defect the fixture could not show and production did.
+
+    Left as five separate Challenger draws, the share does not thin the circuit
+    — it SUBDIVIDES it, handing each draw a slot of its own and filling the rail
+    before the scan ever reaches rank 81. One match from each of five feeder
+    tournaments is not an improvement on five from one.
+    """
+    unfolded = [
+        (
+            Row(r.name, CHALLENGER_DRAWS[i % len(CHALLENGER_DRAWS)])
+            if r.competition == FEEDER
+            else r
+        )
+        for i, r in enumerate(ATP_20260908)
+    ]
+    assert "shelton-alcaraz" not in _names(_share(unfolded))
+    assert "shelton-alcaraz" in _names(_share(ATP_20260908))
 
 
 # ---------------------------------------------------------------------------
@@ -314,16 +370,33 @@ def test_an_opted_in_rail_scans_past_its_cap():
     assert upcoming_games_query("tennis_atp", NOW)._limit == UPCOMING_GAMES_LIMIT + 1
 
 
-def test_the_scan_clears_the_measured_wall():
-    """12 live feeder rows stood between the cap and the first US Open row."""
-    assert RAIL_COMPETITION_SCAN_DEPTH >= 24
+def test_the_scan_reaches_the_row_the_issue_is_about():
+    """Sized against RANK, not against the wall in front of it.
+
+    Shelton–Alcaraz was row 103 of a 107-row window. The first guess here was
+    24 — three times the twelve LIVE feeder rows — and it reached none of the
+    US Open at all, because the wall is every Challenger scheduled before the
+    Slam's first ball and not the ones already on court.
+    """
+    assert RAIL_COMPETITION_SCAN_DEPTH >= 107
 
 
 def test_only_the_tennis_tours_opt_in():
-    assert RAIL_COMPETITION_SHARE_LEAGUES == {"tennis_atp", "tennis_wta"}
+    assert set(RAIL_COMPETITION_SHARE_LEAGUES) == {"tennis_atp", "tennis_wta"}
+
+
+def test_both_tours_use_the_shipped_venue_stated_predicate():
+    """#3640's, not a second opinion about what a Challenger is."""
+    assert set(RAIL_COMPETITION_SHARE_LEAGUES.values()) == {is_tennis_feeder_circuit}
 
 
 def test_the_combat_sports_are_left_alone():
     """#3640: a UFC prelim is on the card the reader came for."""
     for key in ("mma_mixed_martial_arts", "boxing_boxing"):
         assert key not in RAIL_COMPETITION_SHARE_LEAGUES
+
+
+def test_the_feeder_group_cannot_collide_with_a_venue_string():
+    """It shares a namespace with whatever Kalshi writes in `competition`."""
+    assert not is_tennis_feeder_circuit(None, None, RAIL_FEEDER_GROUP)
+    assert "\x00" in RAIL_FEEDER_GROUP

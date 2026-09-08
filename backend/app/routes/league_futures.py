@@ -51,6 +51,7 @@ from app.utils.event_concept_cache import (
     cache_keys,
     release_refresh_lock,
 )
+from app.utils.event_tennis import is_tennis_feeder_circuit
 from app.utils.proven_duplicates import not_a_proven_duplicate
 from app.utils.rail_competition_share import equal_share_by_competition
 from app.utils.sport_keys import (
@@ -128,7 +129,11 @@ router = APIRouter()
 LEAGUE_NAME_PATTERNS: dict[str, list[str]] = {
     "basketball_nba": ["NBA%", "%National Basketball%"],
     "basketball_wnba": ["WNBA%", "%Women_s National Basketball%"],
-    "basketball_ncaab": ["%NCAA%Basketball%", "%March Madness%", "%College Basketball%"],
+    "basketball_ncaab": [
+        "%NCAA%Basketball%",
+        "%March Madness%",
+        "%College Basketball%",
+    ],
     "icehockey_nhl": ["NHL%", "%National Hockey%", "%Stanley Cup%"],
     "baseball_mlb": ["MLB%", "%Major League Baseball%", "%World Series%"],
     "americanfootball_nfl": ["NFL%", "%National Football%", "%Super Bowl%"],
@@ -139,8 +144,20 @@ LEAGUE_NAME_PATTERNS: dict[str, list[str]] = {
     "soccer_germany_bundesliga": ["%Bundesliga%"],
     "soccer_uefa_champs_league": ["%Champions League%", "%UCL%"],
     "mma_mixed_martial_arts": ["%UFC%", "%Mixed Martial Arts%"],
-    "tennis_atp": ["%ATP%", "%Roland Garros ATP%", "%Wimbledon%Men%", "%US Open%Men%", "%Australian Open%Men%"],
-    "tennis_wta": ["%WTA%", "%Roland Garros WTA%", "%Wimbledon%Women%", "%US Open%Women%", "%Australian Open%Women%"],
+    "tennis_atp": [
+        "%ATP%",
+        "%Roland Garros ATP%",
+        "%Wimbledon%Men%",
+        "%US Open%Men%",
+        "%Australian Open%Men%",
+    ],
+    "tennis_wta": [
+        "%WTA%",
+        "%Roland Garros WTA%",
+        "%Wimbledon%Women%",
+        "%US Open%Women%",
+        "%Australian Open%Women%",
+    ],
     "boxing_boxing": ["%Boxing%", "%WBC%", "%WBA%", "%IBF%", "%WBO%"],
     "motorsport_f1": ["%Formula 1%", "%F1 %", "%Grand Prix%"],
     "motorsport_nascar": ["%NASCAR%"],
@@ -187,51 +204,104 @@ LEAGUE_TICKER_PREFIXES: dict[str, list[str]] = {
 # Generic awards ("MVP", "Rookie of the Year") are caught by tier == 3.
 _AWARD_KEYWORDS: list[str] = [
     # NBA
-    "defensive player of the year", "sixth man", "most improved",
-    "clutch player", "finals mvp",
+    "defensive player of the year",
+    "sixth man",
+    "most improved",
+    "clutch player",
+    "finals mvp",
     # NHL
-    "vezina", "selke", "norris", "conn smythe", "hart", "calder",
-    "richard trophy", "art ross", "jack adams", "lady byng",
+    "vezina",
+    "selke",
+    "norris",
+    "conn smythe",
+    "hart",
+    "calder",
+    "richard trophy",
+    "art ross",
+    "jack adams",
+    "lady byng",
     # MLB
-    "cy young", "hank aaron", "gold glove", "silver slugger",
-    "reliever of the year", "manager of the year", "rookie of the year",
+    "cy young",
+    "hank aaron",
+    "gold glove",
+    "silver slugger",
+    "reliever of the year",
+    "manager of the year",
+    "rookie of the year",
     # NFL
-    "comeback player", "offensive player of the year",
-    "defensive player of the year", "walter payton",
-    "offensive rookie", "defensive rookie", "coach of the year",
+    "comeback player",
+    "offensive player of the year",
+    "defensive player of the year",
+    "walter payton",
+    "offensive rookie",
+    "defensive rookie",
+    "coach of the year",
     # MMA / UFC
-    "fight of the year", "fighter of the year", "knockout of the year",
+    "fight of the year",
+    "fighter of the year",
+    "knockout of the year",
     "performance of the night",
 ]
 
 # Keywords that identify a market as a playoff series matchup.
 _SERIES_KEYWORDS: list[str] = [
-    "series", "total games o/u", "total games over",
+    "series",
+    "total games o/u",
+    "total games over",
 ]
 
 # Keywords for team/season-level props (not player stats).
 _PROPS_KEYWORDS: list[str] = [
-    "win total", "win more than", "win 100", "win 90", "win 80",
-    "division winner", "make playoff", "clinch",
-    "postseason", "wild card",
-    "traded", "be traded", "trade",
-    "no-hitter", "perfect game",
-    "draft", "lottery",
-    "cover of madden", "madden nfl",
-    "debut date", "free agent",
-    "sweep", "game 7", "playoff win total", "elimination",
-    "fired", "general manager", "head coach",
+    "win total",
+    "win more than",
+    "win 100",
+    "win 90",
+    "win 80",
+    "division winner",
+    "make playoff",
+    "clinch",
+    "postseason",
+    "wild card",
+    "traded",
+    "be traded",
+    "trade",
+    "no-hitter",
+    "perfect game",
+    "draft",
+    "lottery",
+    "cover of madden",
+    "madden nfl",
+    "debut date",
+    "free agent",
+    "sweep",
+    "game 7",
+    "playoff win total",
+    "elimination",
+    "fired",
+    "general manager",
+    "head coach",
     # Soccer
-    "relegation", "promotion", "golden boot", "top scorer",
+    "relegation",
+    "promotion",
+    "golden boot",
+    "top scorer",
     # MMA / UFC
-    "method of", "distance", "total rounds", "finish",
+    "method of",
+    "distance",
+    "total rounds",
+    "finish",
 ]
 
 # Sports where "vs" indicates an individual match/fight, not a playoff series.
 # Markets in these sports should go to "matches" section, not "series".
-_INDIVIDUAL_MATCH_SPORTS: frozenset[str] = frozenset({
-    "tennis", "mma", "boxing", "esports",
-})
+_INDIVIDUAL_MATCH_SPORTS: frozenset[str] = frozenset(
+    {
+        "tennis",
+        "mma",
+        "boxing",
+        "esports",
+    }
+)
 
 # Categories surfaced as a single, futures-ONLY hub: no per-game league split and
 # no per-tournament event grouping yet, so head-to-head matchup markets are pure
@@ -244,13 +314,26 @@ _CATEGORY_WIDE_FUTURES_ONLY: frozenset[str] = frozenset({"esports"})
 
 # Keywords for player-stat markets (season stats section).
 _SEASON_STAT_KEYWORDS: list[str] = [
-    "leader", "scoring title", "assists title", "rebounds title",
-    "home run leader", "batting average", "era leader", "strikeout leader",
-    "rushing leader", "passing leader", "receiving leader",
-    "goal leader", "points leader", "save leader",
-    "regular season record", "regular season wins",
+    "leader",
+    "scoring title",
+    "assists title",
+    "rebounds title",
+    "home run leader",
+    "batting average",
+    "era leader",
+    "strikeout leader",
+    "rushing leader",
+    "passing leader",
+    "receiving leader",
+    "goal leader",
+    "points leader",
+    "save leader",
+    "regular season record",
+    "regular season wins",
     # Soccer
-    "clean sheets", "assist leader", "top assists",
+    "clean sheets",
+    "assist leader",
+    "top assists",
 ]
 
 
@@ -309,17 +392,40 @@ UNREPORTED_LIMIT = 6
 #: the card the reader came for, so thinning it would be the same mistake
 #: pointed the other way. Tennis is here because a Challenger at Phan Thiet and
 #: a US Open semi-final are not the same errand, and the venue says so itself.
-RAIL_COMPETITION_SHARE_LEAGUES: frozenset[str] = frozenset(
-    {"tennis_atp", "tennis_wta"}
-)
+#: Signature: (external_id, name, competition) -> bool, and deliberately the
+#: same one `hub._UNDERCARD_CLASSIFIERS` uses, reading the same three
+#: venue-stated fields.
+RAIL_COMPETITION_SHARE_LEAGUES: dict[
+    str, Callable[[str | None, str | None, str | None], bool]
+] = {
+    "tennis_atp": is_tennis_feeder_circuit,
+    "tennis_wta": is_tennis_feeder_circuit,
+}
 
 #: How far past the cap an opted-in rail looks for the competitions the share is
-#: for. Measured, not guessed: on 2026-09-08 the ATP rail's candidate window
-#: held 12 live Challenger rows ahead of the first US Open row, so a scan that
-#: stopped at the cap of 8 would have had nothing else to offer and the share
-#: would have been a no-op. 24 clears that day's wall three times over and still
-#: bounds the work — these rows are hydrated, and only the chosen 8 travel on.
-RAIL_COMPETITION_SCAN_DEPTH = 24
+#: for.
+#:
+#: 🔴 **SIZED AGAINST THE RANK OF THE ROW THAT MUST APPEAR, NOT AGAINST THE
+#: SIZE OF THE WALL IN FRONT OF IT.** The first guess here was 24, on the
+#: reasoning that 12 live Challenger rows stood between the cap and the first US
+#: Open row. That was wrong, and replaying the rule on production's own rows is
+#: what caught it: the wall is not the LIVE rows, it is every Challenger match
+#: scheduled before the Slam's first ball. Measured 2026-09-08, `tennis_atp`
+#: candidate window, in the rail's own order:
+#:
+#:     107   candidate rows in the window
+#:      81   rank of the first non-feeder row (Tiafoe-Michelsen, 17:00Z)
+#:     103   rank of Shelton-Alcaraz, the semi-final the issue is about
+#:
+#: A scan of 33 rows reached none of them. So the depth covers the window with
+#: room, and the rail is built behind a Redis slot rather than per request, so
+#: the cost is paid on a build and not on a read.
+#:
+#: If a window ever runs deeper than this, the rule degrades to exactly today's
+#: behaviour — the share simply has nothing past the wall to offer — which is a
+#: silent no-op and not a new failure. That is the honest bound: the scan makes
+#: the fix reachable, it does not guarantee it.
+RAIL_COMPETITION_SCAN_DEPTH = 200
 
 
 def _rail_league_scope(sport_key: str, also_sport_keys: Sequence[str]):
@@ -346,20 +452,50 @@ def _rail_league_scope(sport_key: str, also_sport_keys: Sequence[str]):
     return Sport.key.in_(scope)
 
 
-async def _event_competitions(db: AsyncSession, event_ids: Sequence[int]) -> dict:
-    """What the VENUE calls the competition each of these events belongs to.
+#: The one group every feeder-circuit match shares, whatever tournament it is.
+#:
+#: 🔴 THIS FOLD IS THE SHIP, and it is what replaying the rule on production's
+#: own rows taught. Shared out per TOURNAMENT, the Challenger circuit does not
+#: get thinned at all — it gets subdivided. On 2026-09-08 the ATP window held
+#: five separate Challenger draws (Phan Thiet, Istanbul, Shanghai, Tulln,
+#: Cassis) and the equal share handed each of them a slot of its own, filling
+#: the rail eight-deep in Challengers before the scan ever reached rank 81. One
+#: match from each of eight feeder tournaments is not an improvement on eight
+#: from one; it is the same rail with more logos.
+#:
+#: The circuit is ONE errand to a reader, so it is one group, and
+#: `is_tennis_feeder_circuit` is what says which matches belong to it — the same
+#: venue-stated predicate `/hub/tennis` already sorts on (#3640), reading the
+#: same three fields, inferring nothing.
+RAIL_FEEDER_GROUP = "\x00feeder"
 
-    #3872. `events` has no competition column — the string lives on the linked
-    market, where Kalshi wrote it at ingest ("ATP Challenger Phan Thiet 3",
-    "US Open Men Singles", "US Open Men Doubles"). Same three-field, venue-stated
-    discipline as `is_tennis_feeder_circuit`: read only, never infer. An event
-    with no market, or a market whose venue said nothing, is simply absent from
-    the result and `equal_share_by_competition` leaves it alone.
+
+async def _event_rail_groups(
+    db: AsyncSession,
+    event_ids: Sequence[int],
+    *,
+    is_feeder: Callable[[str | None, str | None, str | None], bool],
+) -> dict:
+    """Which group each of these events shares the rail as — #3872.
+
+    `events` has no competition column. The string lives on the linked market,
+    where Kalshi wrote it at ingest ("ATP Challenger Phan Thiet 3", "US Open Men
+    Singles", "US Open Men Doubles"), so this reads the market and nothing else.
+    Same venue-stated discipline as `is_tennis_feeder_circuit`, and the same
+    three fields: read only, never infer. An event with no market, or one whose
+    venue named nothing and does not read as a feeder match, is simply absent
+    from the result — and `equal_share_by_competition` never holds those back.
+
+    A match the venue names as a feeder-circuit match answers to
+    `RAIL_FEEDER_GROUP` no matter which Challenger draw it is in; the constant
+    carries why. That verdict is taken over ALL of an event's markets, because
+    one venue naming the circuit is enough evidence and the other venue's
+    silence is not counter-evidence.
 
     One bounded statement on an indexed `event_id` IN-list of at most
     `UPCOMING_GAMES_LIMIT + 1 + RAIL_COMPETITION_SCAN_DEPTH` ids, not the second
-    ordered scan of the rail's own population that a SQL-side answer would
-    cost — #3677 measured that shape at 8,689 blocks for this league.
+    ordered scan of the rail's own population a SQL-side answer would cost
+    (#3677 measured that shape at 8,689 blocks for this league).
 
     `min()` rather than "the first row wins": an event carries several markets
     (a match, its exact-score prop, its handicaps) and a dict built from an
@@ -372,21 +508,26 @@ async def _event_competitions(db: AsyncSession, event_ids: Sequence[int]) -> dic
         db.execute(
             select(
                 FuturesMarket.event_id,
+                FuturesMarket.external_id,
+                FuturesMarket.name,
                 FuturesMarket.market_metadata["competition"].astext,
-            ).where(
-                FuturesMarket.event_id.in_(list(event_ids)),
-                FuturesMarket.market_metadata["competition"].astext.isnot(None),
-            )
+            ).where(FuturesMarket.event_id.in_(list(event_ids))),
         ),
         timeout=10,
     )
-    out: dict = {}
-    for event_id, competition in rows.all():
+    named: dict = {}
+    feeder: set = set()
+    for event_id, external_id, name, competition in rows.all():
+        if is_feeder(external_id, name, competition):
+            feeder.add(event_id)
         if not competition:
             continue
-        current = out.get(event_id)
+        current = named.get(event_id)
         if current is None or competition < current:
-            out[event_id] = competition
+            named[event_id] = competition
+    out: dict = {e: RAIL_FEEDER_GROUP for e in feeder}
+    for event_id, competition in named.items():
+        out.setdefault(event_id, competition)
     return out
 
 
@@ -693,7 +834,9 @@ def _format_game_brief(
         "sport": sport_key,
         "home_team": event.home_team_name,
         "away_team": event.away_team_name,
-        "commence_time": event.commence_time.isoformat() if event.commence_time else None,
+        "commence_time": (
+            event.commence_time.isoformat() if event.commence_time else None
+        ),
         # A FINAL card prefers this over commence_time for its date (gotcha #22
         # family): a Kalshi-sourced commence_time can be a close/resolution stamp.
         "completed_at": (
@@ -928,7 +1071,9 @@ def _schedule_league_refresh(rc, keys: ConceptCacheKeys, sport_key: str) -> None
             "app.tasks.refresh_league", args=[sport_key, token], queue="background"
         )
     except Exception:
-        logger.warning("league: refresh dispatch failed for %s", sport_key, exc_info=True)
+        logger.warning(
+            "league: refresh dispatch failed for %s", sport_key, exc_info=True
+        )
         if token:
             release_refresh_lock(rc, keys, token)
 
@@ -955,8 +1100,7 @@ GAMES_RAIL_KEYS: tuple[str, ...] = (
 def is_empty_league(payload: dict) -> bool:
     """A league with no sections and no games on ANY rail has nothing on it."""
     return not (
-        payload.get("sections")
-        or any(payload.get(rail) for rail in GAMES_RAIL_KEYS)
+        payload.get("sections") or any(payload.get(rail) for rail in GAMES_RAIL_KEYS)
     )
 
 
@@ -1054,7 +1198,9 @@ async def build_and_cache_league(sport_key: str, db: AsyncSession, rc=None) -> d
 
 @router.get("/{sport_key}")
 async def get_league_futures(
-    sport_key: str = Path(..., description="Sport key (e.g., basketball_nba, icehockey_nhl)"),
+    sport_key: str = Path(
+        ..., description="Sport key (e.g., basketball_nba, icehockey_nhl)"
+    ),
     db: AsyncSession = Depends(get_db),
 ):
     """Get all open futures markets for a league, grouped by section."""
@@ -1359,10 +1505,16 @@ def _serialize_outcomes(sorted_outcomes: list, market=None) -> list[dict]:
             # resolves, settles or charts this outcome still addresses it by id
             # and is untouched by the label.
             "name": (labels or {}).get(o.name, o.name),
-            "probability": float(o.current_probability) if o.current_probability else None,
-            "opening_probability": float(o.opening_probability) if o.opening_probability else None,
+            "probability": (
+                float(o.current_probability) if o.current_probability else None
+            ),
+            "opening_probability": (
+                float(o.opening_probability) if o.opening_probability else None
+            ),
             "rank": o.rank,
-            "movement_24h": float(o.probability_change_24h) if o.probability_change_24h else None,
+            "movement_24h": (
+                float(o.probability_change_24h) if o.probability_change_24h else None
+            ),
             "team_id": o.team_id,
             # #3868: the STATE, so the card can draw a result instead of a
             # percentage. `is_winner` is passed through raw — including None,
@@ -1562,7 +1714,9 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
             "external_id": market.external_id,
             "market_tier": market.market_tier,
             "category": market.category,
-            "resolution_date": market.resolution_date.isoformat() if market.resolution_date else None,
+            "resolution_date": (
+                market.resolution_date.isoformat() if market.resolution_date else None
+            ),
             "outcome_count": len(market.outcomes),
             "top_outcomes": outcomes_data,
             "canonical_market_key": market.canonical_market_key,
@@ -1635,10 +1789,12 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
 
     # Sort within each section by market importance
     for section_name, items in sections.items():
-        items.sort(key=lambda m: (
-            -(m.get("market_tier") or 99),
-            -(m.get("outcome_count") or 0),
-        ))
+        items.sort(
+            key=lambda m: (
+                -(m.get("market_tier") or 99),
+                -(m.get("outcome_count") or 0),
+            )
+        )
 
     # Remove empty sections
     sections = {k: v for k, v in sections.items() if v}
@@ -1728,15 +1884,17 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
         # #3872: an opted-in rail looks past its cap so the share below has
         # something to share. Every other league passes 0 and compiles the exact
         # statement it compiled before.
-        _shares_rail = sport_key in RAIL_COMPETITION_SHARE_LEAGUES
+        _is_feeder = RAIL_COMPETITION_SHARE_LEAGUES.get(sport_key)
         _games_q = upcoming_games_query(
             sport_key,
             now,
             also_sport_keys=_also_keys,
-            scan_depth=RAIL_COMPETITION_SCAN_DEPTH if _shares_rail else 0,
+            scan_depth=RAIL_COMPETITION_SCAN_DEPTH if _is_feeder else 0,
         )
         _results_q = recent_results_query(sport_key, now, also_sport_keys=_also_keys)
-        _unreported_q = unreported_games_query(sport_key, now, also_sport_keys=_also_keys)
+        _unreported_q = unreported_games_query(
+            sport_key, now, also_sport_keys=_also_keys
+        )
         _g = await asyncio.wait_for(db.execute(_games_q), timeout=10)
         _g_events = list(_g.scalars().all())
         # ── #3872: one competition may not take the whole rail ──
@@ -1756,13 +1914,15 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
         # formatter and every downstream reader still see at most the cap. The
         # deeper scan is a selection input and must not become a payload.
         _more_games = len(_g_events) > UPCOMING_GAMES_LIMIT
-        if _shares_rail and len(_g_events) > 1:
+        if _is_feeder and len(_g_events) > 1:
             try:
-                _comps = await _event_competitions(db, [e.id for e in _g_events])
+                _groups = await _event_rail_groups(
+                    db, [e.id for e in _g_events], is_feeder=_is_feeder
+                )
                 _g_events = equal_share_by_competition(
                     _g_events,
                     limit=UPCOMING_GAMES_LIMIT,
-                    competition_of=lambda e: _comps.get(e.id),
+                    competition_of=lambda e: _groups.get(e.id),
                 )
             except Exception:
                 # Chrome, not content (gotcha #42): a rail that cannot read its
@@ -2137,9 +2297,7 @@ async def build_linked_matches(
     now: datetime | None = None,
     also_sport_keys: Sequence[str] = (),
     is_prop: Callable[[str | None, str | None], object] | None = None,
-    is_undercard: (
-        Callable[[str | None, str | None, str | None], object] | None
-    ) = None,
+    is_undercard: Callable[[str | None, str | None, str | None], object] | None = None,
 ) -> list[dict]:
     """The head-to-head markets for this league's CURRENTLY PLAYABLE events.
 
@@ -2375,9 +2533,7 @@ async def build_linked_matches(
             "market_tier": market.market_tier,
             "category": market.category,
             "resolution_date": (
-                market.resolution_date.isoformat()
-                if market.resolution_date
-                else None
+                market.resolution_date.isoformat() if market.resolution_date else None
             ),
             "outcome_count": len(market.outcomes),
             "top_outcomes": _serialize_outcomes(sorted_outcomes, market),

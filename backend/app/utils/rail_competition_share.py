@@ -30,9 +30,23 @@ freed. A cap tuned until one specimen appears is tuned to one day.
 
 So the rule carries no tuned number. Each competition in play may take up to an
 EQUAL SHARE of the rail, `limit // competitions`, and the remainder is
-backfilled in the rail's own order so no slot is ever lost. On the measured
-population that is 8 // 4 = 2 apiece and the rail becomes four live Challengers,
-Tiafoe-Michelsen, two US Open doubles and Shelton-Alcaraz.
+backfilled in the rail's own order so no slot is ever lost.
+
+🔴 **WHAT COUNTS AS ONE COMPETITION IS THE CALLER'S ANSWER, NOT THIS MODULE'S,
+AND IT IS THE HALF THAT DECIDES THE OUTCOME.** Keyed on the venue's raw string,
+the Challenger circuit is not thinned by the share -- it is SUBDIVIDED. That
+window held SEVEN separate Challenger draws, so the share is 8 // 9 = 0 -> 1 and
+the circuit takes seven of the eight slots one draw at a time; replayed on the
+real rows it seats Bax-Jones, Ymer-Kotov, Tobon-Kirci, Added-Masur, Kolar-Wallin,
+Seyboth Wild-Ferrari, Sanchez Jover-Bueno and Tiafoe, and still no
+Shelton-Alcaraz. One match from each of seven feeder tournaments is not an
+improvement on seven from one; it is the same rail with more logos.
+
+`league_futures` therefore folds every match its venue names as feeder-circuit
+play into one group before calling this, using `is_tennis_feeder_circuit` --
+#3640's own predicate, already measured on this population. Folded, the
+measured rail is 3 groups and a share of 2: two live Challengers,
+Tiafoe-Michelsen, two US Open doubles, Shelton-Alcaraz, Zverev and Khachanov.
 
 🔴 **PROVABLY INERT WHERE THE VOCABULARY IS THIN, AND THAT IS WHY `C <= 1`
 RETURNS EARLY RATHER THAN COMPUTING A SHARE OF EIGHT.** The venue-stated
