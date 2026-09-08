@@ -201,3 +201,71 @@ describe("#3868 — settlement is a GRADE, never a certainty", () => {
     expect(html).not.toContain("Lost");
   });
 });
+
+// ---------------------------------------------------------------------------
+// CERT-2222 — a RETRACTION is not a result, and must not reach the card as one.
+//
+// `ungradeable_result` is the state of a leg whose stored loss the venue never
+// declared (CAL-P056, #1852). It asserts NO winner. The first repair read any
+// non-empty `resolution_source` as a grade, so a retracted leg serialized as
+// `settled: true, is_winner: false` and this component drew it as **Lost** —
+// telling the reader a player was knocked out of a tournament we had just
+// declared unknowable. A stale price is wrong; this wears the costume of a
+// result, which is worse.
+//
+// The backend now refuses it, so the contract this file pins is the other half:
+// what the component is handed for a retracted leg, and that it renders as a
+// live row. The payload below is exactly what `_serialize_outcomes` emits for
+// an open market carrying `ungradeable_result` — verified by the backend
+// companion `TestARetractionIsNotAResult`, not assumed here.
+// ---------------------------------------------------------------------------
+
+/** What the repaired backend emits for an open leg carrying a retraction. */
+const retracted = (
+  id: number,
+  name: string,
+  probability: number,
+): LeagueMarketOutcome => ({
+  id,
+  name,
+  probability,
+  opening_probability: null,
+  rank: null,
+  movement_24h: null,
+  team_id: null,
+  settled: false,
+  is_winner: false,
+});
+
+describe("#3868 / CERT-2222 — an ungradeable (retracted) leg on an open market", () => {
+  it("does NOT render as Lost", () => {
+    // The BLOCK's finding, in one assertion.
+    const html = render([retracted(221651268, "Jiri Lehecka", 0.21)]);
+    expect(html).not.toContain("Lost");
+    expect(html).not.toContain("Won");
+  });
+
+  it("keeps its price, because the leg is still trading", () => {
+    const html = render([retracted(221651268, "Jiri Lehecka", 0.21)]);
+    expect(html).toContain("21%");
+  });
+
+  it("stays live in a ladder where other legs really did settle", () => {
+    // The mixed case the BLOCK asked for: settled winner, settled loser, open
+    // child AND a retraction, all in one render. The real grades must keep
+    // their verdicts while the retraction keeps its number — a repair that
+    // simply stopped grading everything would fail this.
+    const html = render([
+      live(221651253, "Alexander Zverev", 0.885),
+      retracted(221651268, "Jiri Lehecka", 0.21),
+      settled(221651252, "Carlos Alcaraz", true),
+      settled(221651254, "Novak Djokovic", false),
+    ]);
+
+    expect(html).toContain("Jiri Lehecka");
+    expect(html).toContain("21%");
+    expect(html).toContain("Won");
+    expect(html).toContain("Lost");
+    expect(html).toContain("89%");
+  });
+});
