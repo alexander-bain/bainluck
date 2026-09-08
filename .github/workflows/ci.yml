@@ -1506,7 +1506,73 @@ jobs:
         with:
           fetch-depth: 0
 
+      # SHIP 2 (integrator/150, 2026-09-08). Measured baseline: 549 master merges
+      # in the preceding 7 days, 105 of them frontend-only by path, and ALL 105
+      # released Heroku -- this job had no path filter at all. Heroku serves the
+      # backend; Vercel deploys the frontend from the same push. Each needless
+      # release cycles `worker-heavy`, and a cycle mid-rebuild kills a running
+      # calibration beat (D45's cause of record).
+      #
+      # This is a STEP, not a `needs:` job, and deliberately so: read the comment
+      # above `golden-baseline-floor` (~line 214). A `needs:` dependency that is
+      # skipped skips its dependents too, so a scoping job would silently stop
+      # EVERY release rather than gate one. Keeping it in-job also keeps `deploy`
+      # present and green as a status check when the release is skipped.
+      #
+      # The decision itself lives in `tools/ci/heroku_deploy_scope.py` (allowlist,
+      # fail-closed) so it can be unit-tested against real inputs rather than
+      # re-stated in a test. `backend/tests/test_heroku_deploy_scope_wiring.py`
+      # guards both the logic and this wiring.
+      - name: Decide whether Heroku needs this commit
+        id: scope
+        run: |
+          set -o pipefail
+          BEFORE="${{ github.event.before }}"
+
+          # Fail closed on every diff we cannot actually take: a zero or absent
+          # `before` (branch creation), or a `before` whose object this checkout
+          # does not hold (force-push, pruned history). "Cannot compare" must
+          # read as "deploy", never as "nothing changed".
+          if [ -z "$BEFORE" ] \
+             || [ "$BEFORE" = "0000000000000000000000000000000000000000" ] \
+             || ! git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+            echo "Cannot resolve the previous master commit ($BEFORE) — deploying (fail-closed)."
+            echo "heroku_needed=1" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Write to a file rather than piping into the decider: a pipeline hands
+          # back the LAST command's exit code, and a git failure upstream would
+          # then arrive as a clean empty path list (gotcha #124).
+          if ! git diff --name-only "$BEFORE" "$GITHUB_SHA" > /tmp/changed-paths.txt; then
+            echo "git diff failed — deploying (fail-closed)."
+            echo "heroku_needed=1" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if ! python3 tools/ci/heroku_deploy_scope.py \
+                 --paths-from /tmp/changed-paths.txt > /tmp/scope-decision.txt; then
+            echo "Scope decider failed to run — deploying (fail-closed)."
+            echo "heroku_needed=1" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          DECISION="$(cat /tmp/scope-decision.txt)"
+          case "$DECISION" in
+            heroku_needed=0|heroku_needed=1) ;;
+            *)
+              echo "Unrecognised decision '$DECISION' — deploying (fail-closed)."
+              echo "heroku_needed=1" >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
+          esac
+          echo "$DECISION" >> "$GITHUB_OUTPUT"
+
       - name: Deploy to Heroku (never-backwards guarded)
+        # Skipped for a frontend-only commit. The step above fails closed, so an
+        # absent or unparseable decision still deploys. Gotcha #9 does not apply:
+        # this reads `steps.*`, not `secrets.*`.
+        if: steps.scope.outputs.heroku_needed == '1'
         run: |
           # Never-backwards guard (L2-57, reference point repaired for #3171).
           #
