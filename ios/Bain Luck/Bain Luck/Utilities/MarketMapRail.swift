@@ -285,6 +285,51 @@ enum MarketMapRail {
 
     // MARK: - The tense the scoring-spectrum card may print
 
+    /// Which tense EVERY string on the scoring-spectrum card is in.
+    ///
+    /// #3930, and it exists because this card has now been given the same third
+    /// state twice, by two fixes, fifteen minutes apart, in two of its three
+    /// strings — and they disagreed on screen:
+    ///
+    /// ```
+    /// Projected scoring            <- #3905 gave the headings two states
+    /// Projected combined scoring
+    ///    3.5+   LAST QUOTE   0%    <- #3929 gave the rungs three
+    /// ```
+    ///
+    /// One card, two tenses, on a match that had been over for hours. Neither
+    /// fix was wrong; the card simply had no single place to answer "what tense
+    /// am I in?", so the answer was written down three times and the third
+    /// rewrite only reached one of them.
+    ///
+    /// 🔴 **THE TWO FACTS ARE NOT ONE FACT, AND THAT IS THE WHOLE REASON THERE
+    /// ARE THREE CASES.** "The event is over" and "this card has a final to
+    /// grade against" come apart on any sport whose scoreboard does not count
+    /// the widget's unit — tennis reports SETS, so `scoreboardCountsTheUnit` is
+    /// false, `actualTotal` is nil, and a `completed` match lands in the middle
+    /// case. #3905's doc comment reasoned its way to exactly this and then had
+    /// only two cases to put the answer in, which is why it chose the safer
+    /// wrong one: heading a settled tennis card "Projected" is a smaller lie
+    /// than heading it "Final" over five ungraded rungs.
+    ///
+    /// - Parameters:
+    ///   - finalTotal: the value the rungs are graded against, or nil for none.
+    ///   - isSettled: whether the event is over.
+    enum SpectrumTense {
+        /// Not over. A forecast, and it says so.
+        case projected
+        /// Over, but this card cannot grade — the prices are frozen last quotes
+        /// and there is no final in this unit to state.
+        case settled
+        /// Over, with a final to grade every rung against.
+        case graded
+
+        static func of(finalTotal: Int?, isSettled: Bool) -> SpectrumTense {
+            if finalTotal != nil { return .graded }
+            return isSettled ? .settled : .projected
+        }
+    }
+
     /// The section heading `TotalPointsSpectrumView` may print.
     ///
     /// #3905, and the same sentence-level rule as ``fullTotalSubtitle`` one card
@@ -318,23 +363,59 @@ enum MarketMapRail {
     /// the verdicts beneath it read off ONE value and cannot disagree — the
     /// invariant `TotalPointsSpectrumTenseTests` exists to hold.
     ///
-    /// - Parameter finalTotal: what ``totalLadderResult(threshold:finalTotal:)``
-    ///   is being handed for this card's rungs — `nil` when there is none.
-    static func spectrumSectionTitle(finalTotal: Int?) -> String {
-        finalTotal == nil ? "Projected scoring" : "Final scoring"
+    /// 🟠 **#3930 GAVE THIS ITS THIRD STATE, AND CHOSE THE WORD DELIBERATELY.**
+    /// Everything above still holds — `finalTotal` still decides "Final", and a
+    /// settled tennis card still must not say it. What changed is that the
+    /// remaining case stopped being called "Projected" on a match that had been
+    /// over for hours. The word is `SettledQuote`'s own: this same screen prints
+    /// ``SettledQuote/sectionNote`` ("**settled** — any percentage is a last
+    /// quote") two inches lower, so "Settled scoring" joins the vocabulary the
+    /// page already speaks instead of opening a second one (#1650) — the same
+    /// reasoning, and the same source string, that ``spectrumRungCaption``
+    /// used for `LAST QUOTE`.
+    ///
+    /// The rejected alternative was a bare "Scoring" — drop the adjective
+    /// rather than pick one, on the argument that the rungs now carry the tense
+    /// per-row and a heading cannot then be wrong. It loses because the three
+    /// headings would read "Projected scoring" / "Scoring" / "Final scoring",
+    /// and the bare one does not read as deliberate restraint; it reads as a
+    /// string that failed to load. Alex's standing ruling is *settled means
+    /// settled* — one settled language across the app — and a card that goes
+    /// quiet about its tense is not speaking it.
+    ///
+    /// - Parameters:
+    ///   - finalTotal: what ``totalLadderResult(threshold:finalTotal:)`` is
+    ///     being handed for this card's rungs — `nil` when there is none.
+    ///   - isSettled: whether the event is over, the card's own lifecycle
+    ///     predicate. Only consulted when there is no final.
+    static func spectrumSectionTitle(finalTotal: Int?, isSettled: Bool) -> String {
+        switch SpectrumTense.of(finalTotal: finalTotal, isSettled: isSettled) {
+        case .projected: return "Projected scoring"
+        case .settled: return "Settled scoring"
+        case .graded: return "Final scoring"
+        }
     }
 
     /// The heading over the scoring spectrum's threshold ladder.
     ///
     /// #3905. The second of the card's two hard-coded strings, under the same
-    /// rule and the same parameter as ``spectrumSectionTitle(finalTotal:)`` —
+    /// rule and the same parameter as ``spectrumSectionTitle(finalTotal:isSettled:)`` —
     /// "Projected combined runs" sat directly over `7.5+ HIT / 9.5+ MISS`.
     ///
     /// `unit` is the widget's own, read from the markets rather than the sport
     /// (#3509), so this says "combined runs" on baseball and "combined scoring"
     /// where neither the markets nor the sport declare a unit.
-    static func spectrumLadderTitle(finalTotal: Int?, unit: String) -> String {
-        finalTotal == nil ? "Projected combined \(unit)" : "Final combined \(unit)"
+    ///
+    /// #3930 moved it to three states with its sibling above and for the same
+    /// reasons — the two headings are one sentence in two sizes and have never
+    /// been allowed to differ in tense
+    /// (`testTheCardsTwoHeadingsAreNeverInDifferentTenses`).
+    static func spectrumLadderTitle(finalTotal: Int?, unit: String, isSettled: Bool) -> String {
+        switch SpectrumTense.of(finalTotal: finalTotal, isSettled: isSettled) {
+        case .projected: return "Projected combined \(unit)"
+        case .settled: return "Settled combined \(unit)"
+        case .graded: return "Final combined \(unit)"
+        }
     }
 
     // MARK: - Reading a totals ladder once the game is over
@@ -432,9 +513,18 @@ enum MarketMapRail {
     ///     rung cannot say "last quote" on a status for which the same card
     ///     still draws its pre-game strip. Widening all of them together is a
     ///     separate change, not this one.
+    ///
+    /// 🟢 **#3930 ROUTED THIS THROUGH ``SpectrumTense`` WITHOUT CHANGING WHAT IT
+    /// RETURNS.** This function was already the only one of the card's three
+    /// strings that knew about all three states; the headings above have caught
+    /// up, and the switch is now shared so a fourth state cannot reach one of
+    /// them and miss the others — which is precisely how #3930 happened.
     static func spectrumRungCaption(finalTotal: Int?, isSettled: Bool) -> String? {
-        if finalTotal != nil { return nil }
-        return isSettled ? SettledQuote.prefix.uppercased() : "PRE-GAME"
+        switch SpectrumTense.of(finalTotal: finalTotal, isSettled: isSettled) {
+        case .projected: return "PRE-GAME"
+        case .settled: return SettledQuote.prefix.uppercased()
+        case .graded: return nil
+        }
     }
 
     /// Which slice of a settled game's totals ladder is worth printing.

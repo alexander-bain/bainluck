@@ -171,11 +171,21 @@ struct TotalPointsSpectrumView: View {
 
     // MARK: - Header
 
+    /// The two types the card's headings are set in, as statics for the same
+    /// reason ``captionFont`` is one: #3930 widens the vocabulary both of them
+    /// print, and a test that measured a *retyped* `.subheadline.semibold`
+    /// would be measuring a string the card does not draw. Neither slot has a
+    /// fixed frame, so what
+    /// `TotalPointsSpectrumTenseTests.testTheSettledHeadingsFitWhereTheShippingOnesDo`
+    /// asserts is relative: no new heading is wider than the longest one this
+    /// slot already ships.
+    static let sectionTitleFont = Font.subheadline.weight(.semibold)
+    static let ladderTitleFont = Font.caption.weight(.semibold)
+
     private var header: some View {
         HStack {
-            Text(MarketMapRail.spectrumSectionTitle(finalTotal: actualTotal))
-                .font(.subheadline)
-                .fontWeight(.semibold)
+            Text(MarketMapRail.spectrumSectionTitle(finalTotal: actualTotal, isSettled: isDone))
+                .font(Self.sectionTitleFont)
             Spacer()
             if sourceCount > 1 {
                 Text("\(sourceCount) sources")
@@ -331,9 +341,10 @@ struct TotalPointsSpectrumView: View {
 
     private var ladderView: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text(MarketMapRail.spectrumLadderTitle(finalTotal: actualTotal, unit: unit))
-                .font(.caption)
-                .fontWeight(.semibold)
+            Text(MarketMapRail.spectrumLadderTitle(
+                finalTotal: actualTotal, unit: unit, isSettled: isDone
+            ))
+                .font(Self.ladderTitleFont)
                 .padding(.bottom, 4)
 
             ForEach(Array(ladderThresholds.enumerated()), id: \.offset) { _, item in
