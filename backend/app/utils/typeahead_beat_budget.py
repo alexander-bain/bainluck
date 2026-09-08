@@ -1453,7 +1453,37 @@ def free_background_slots(
 #: nightly` at `:31`; it is clear of the two 15-and-17-entry pile-ups at `:45`
 #: and `:40`, and one minute after `precompute-discover-candidate-base` at
 #: `:46`.
-BACKGROUND_BEAT_COUNT = 120
+#:
+#: 🔴 RE-DERIVED at authority/066 (2026-09-08, #3366 / D50): **120 → 121,
+#: explicit 75 → 76.** One beat, explicitly routed here:
+#: `stamp-soccer-statpal-fixtures-hourly` at `crontab(minute=6)`, the fifth
+#: StatPal stamper. RE-DERIVED by RUNNING the census in
+#: `test_typeahead_beat_budget.py` over the assembled `beat_schedule`, which
+#: printed `explicit 76 implicit 45 total 121` — not by adding 1 to 120 (#1910).
+#: The fall-through half is UNMOVED at **45**: the beat names its queue rather
+#: than defaulting into it, the benign direction this guard reserves.
+#:
+#: Cost: four HTTP reads per pass rather than the siblings' two — three
+#: `matches/daily` boards plus the live one — a bounded candidate query across
+#: the `soccer%` sport-key prefix, and writes bounded by the fixtures not
+#: already anchored. The first pass wrote 116; steady state is the daily
+#: arrivals, because a row already stamped is `already_linked` and writes
+#: nothing. `background` rather than `heavy` (no multi-minute compute) and
+#: rather than `realtime` for the reason the four stampers above give: NOTHING
+#: READS THE ANCHOR YET. A producer with no reader has no claim on the live
+#: queue.
+#:
+#: `:06` by the minute census RUN over the assembled schedule (CERT-418), with
+#: one correction worth carrying: **the census must EXPAND `*/N`.** Read as
+#: literals `:06` looks empty; expanded it carries
+#: `precompute-discover-candidate-base` at `*/2`, which is inside every window
+#: in the hour by construction. And because this pass's soft limit is 300s
+#: rather than the siblings' 240s, the unit scored was the six-minute WINDOW,
+#: not the minute: `:06`–`:11` carries no StatPal reader of any kind and is
+#: clear of the settlement sweep's `:31`–`:47`. It is not the lowest-load
+#: window outright — `:24` is, at 11 — and `:24` is excluded because
+#: `link-tennis-statpal-fixtures-10min` fires in it.
+BACKGROUND_BEAT_COUNT = 121
 #: **UX-P139 re-derivation: 101 → 103, explicit 56 → 58, fall-through still 45.**
 #: Two beats added, both naming `background` explicitly:
 #: `refresh-registered-tournament-prices` (every 10 min, ~11 bounded Gamma calls
