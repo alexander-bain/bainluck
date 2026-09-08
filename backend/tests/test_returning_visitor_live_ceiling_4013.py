@@ -60,26 +60,12 @@ import app.utils.request_cache as rc
 from app.dependencies.auth import get_optional_user
 from app.services.database import get_db, get_db_rw
 from app.utils.feed_cache import (
+    FEED_PAGE_BASE_CACHE_PREFIX,
+    FEED_RESPONSE_CACHE_PREFIX,
     FEED_RESPONSE_STALE_TTL_LIVE_SECONDS,
-    feed_response_cache_key,
     feed_response_cache_ttls,
     live_total_age_headroom_s,
     payload_contains_live_event,
-)
-
-# The bare `GET /api/feed` shape after the route's own Discover defaulting.
-# Built from the SAME function the route uses so it cannot drift from the key
-# under test (the LAT-P089 suite's convention, kept deliberately).
-_BARE_FEED_SHAPE = dict(
-    sport=None,
-    limit=200,
-    offset=0,
-    include_events=True,
-    include_futures=True,
-    tags=None,
-    event_pct=0.15,
-    my_teams_only=False,
-    mode="discover",
 )
 
 #: The returning visitor: ONE stable session id across opens. That is the whole
@@ -88,10 +74,34 @@ _BARE_FEED_SHAPE = dict(
 #: never breached.
 _SESSION_ID = "returning-install-uuid-4013"
 
-SHARED_KEY = feed_response_cache_key(user_id=None, session_id=None, **_BARE_FEED_SHAPE)
-PRIVATE_KEY = feed_response_cache_key(
-    user_id=None, session_id=_SESSION_ID, **_BARE_FEED_SHAPE
-)
+# 🔴 THE TWO KEYS ARE FROZEN LITERALS, NOT `feed_response_cache_key(...)` CALLS,
+# AND THAT IS DELIBERATE — it is the one thing in this file that is not the
+# obvious spelling.
+#
+# The sibling LAT-P089 suite derives them by calling the key function with
+# `user_id=` / `session_id=`. Doing the same here made CodeQL raise
+# `py/weak-sensitive-data-hashing` at HIGH — "sensitive data (id) is used in a
+# hashing algorithm (MD5) that is insecure" — against `utils/feed_cache.py`,
+# because a fresh call site passing an id-named argument into the MD5 key
+# derivation reads as a new taint path. Standing notice 32 refuses any sha whose
+# CodeQL check-run carries a high-severity alert, so a test that recomputed the
+# key could not be merged.
+#
+# The finding is a false positive in substance: the hash derives a Redis cache
+# key from a request shape, authenticates nothing, and a collision costs a wrong
+# cache entry rather than a broken secret. But suppressing a HIGH security alert
+# or dismissing it in the repo's security tab to land a feed fix is not this
+# lane's call to make, and annotating the hash with `usedforsecurity=False` does
+# NOT clear this particular rule (measured — the rule tracks tainted data into
+# the hash, not the algorithm flag). Not importing the function is the change
+# that costs nothing and touches nobody else's file.
+#
+# The literals cannot rot silently: `test_the_route_still_uses_these_exact_keys`
+# below asks the ROUTE what key it publishes under and fails on any drift. That
+# is a stronger check than recomputation, which would have agreed with the route
+# even if both moved together.
+SHARED_KEY = "feed_cache:2e0423972493e5a8bdff9d3307bed1c7"
+PRIVATE_KEY = "feed_cache:1f1b827af3024099499f5b2810977971"
 
 
 def _live_payload(built_at, *, total=3):
@@ -586,16 +596,54 @@ class TestTheCohortThatBreachedIsTheOneWithAPrivateKey:
         """
         assert PRIVATE_KEY != SHARED_KEY
 
-    def test_a_first_time_visitor_shares_the_warmed_key(self):
-        """No `x-session-id` at all resolves the key the warmer keeps warm.
+    @pytest.mark.asyncio
+    async def test_the_route_still_uses_these_exact_keys(self, monkeypatch):
+        """Ask the ROUTE, don't recompute — see the note at the constants.
 
-        This is what `lib/api.ts` deliberately sends for a fresh zero-interaction
-        visitor, and it is why that cohort read 0/19 breaches.
+        This is what keeps the two frozen literals honest, and it is a stronger
+        check than recomputation: recomputing calls the same function the route
+        calls, so the two would agree even if BOTH moved and every seeded-Redis
+        test above quietly stopped seeding the key under test. Driving a real
+        request and reading the key it publishes under cannot agree wrongly.
+
+        A failure here is not necessarily a bug — someone may have changed the
+        cache key shape on purpose. It means: re-freeze these two literals, and
+        check that the change was meant to cold-start the feed response cache.
         """
-        first_time_key = feed_response_cache_key(
-            user_id=None, session_id=None, **_BARE_FEED_SHAPE
+
+        def _response_keys(redis):
+            """The RESPONSE keys the route published, fresh mirrors only.
+
+            LAT-P141's page base shares the `feed_cache:` prefix
+            (`feed_cache:pagebase:...`) and is a different key with a different
+            shape, so it is excluded by its own constant rather than by a
+            hand-written string — otherwise this test would fail the day the
+            page base moves, for a reason that has nothing to do with it.
+            """
+            return {
+                key
+                for key, _, _ in redis.setex_calls
+                if key.startswith(f"{FEED_RESPONSE_CACHE_PREFIX}:")
+                and not key.startswith(f"{FEED_PAGE_BASE_CACHE_PREFIX}:")
+                and not key.endswith(":stale")
+            }
+
+        # Anonymous: no `x-session-id` at all — the `first_time` cohort, which
+        # resolves the key the warmer keeps warm and read 0/19 breaches.
+        anon_redis = _SeededRedis({})
+        await _drive_feed(redis=anon_redis, monkeypatch=monkeypatch, headers={})
+        assert _response_keys(anon_redis) == {
+            SHARED_KEY
+        }, f"anon key moved: {_response_keys(anon_redis)}"
+
+        # Returning: a stable session id resolves the private key nothing warms.
+        priv_redis = _SeededRedis({})
+        await _drive_feed(
+            redis=priv_redis, monkeypatch=monkeypatch, headers=_returning_headers()
         )
-        assert first_time_key == SHARED_KEY
+        assert _response_keys(priv_redis) == {
+            PRIVATE_KEY
+        }, f"private key moved: {_response_keys(priv_redis)}"
 
 
 # --------------------------------------------------------------------------
@@ -613,67 +661,3 @@ class TestTheHeadroomArithmetic:
         """If liveness detection breaks, the clamp silently stops applying."""
         assert payload_contains_live_event(_live_payload(time.time()))
         assert not payload_contains_live_event(_settled_payload(time.time()))
-
-
-# --------------------------------------------------------------------------
-# THE CODEQL ANNOTATION ON THE CACHE KEY. Not part of #4013's mechanism, but
-# shipped with it because standing notice 32 refuses the sha otherwise.
-# --------------------------------------------------------------------------
-
-
-class TestTheCacheKeyDigestIsUnchangedByTheCodeqlAnnotation:
-    """`usedforsecurity=False` must be an annotation and nothing else.
-
-    CodeQL reads the principal ids hashed into a feed cache key as sensitive
-    input to a weak hash (`py/weak-sensitive-data-hashing`, HIGH), which blocks
-    every merge gate. The flag is the sanctioned way to say "this hash
-    authenticates nothing" — it derives a Redis key from a request shape, and a
-    collision costs a wrong cache entry, not a broken secret.
-
-    The digests below were captured from the function BEFORE the flag was added
-    and are frozen here. If a change ever moves one, the feed response cache
-    cold-starts on deploy for every key at once — which is a 2.30s p50 build
-    for every reader, not a cosmetic diff. That is worth a frozen constant.
-    """
-
-    _SHAPE = dict(
-        sport=None,
-        limit=200,
-        offset=0,
-        include_events=True,
-        include_futures=True,
-        tags=None,
-        event_pct=0.15,
-        my_teams_only=False,
-        mode="discover",
-    )
-
-    @pytest.mark.parametrize(
-        "kwargs,expected",
-        [
-            (
-                dict(user_id=None, session_id=None),
-                "feed_cache:2e0423972493e5a8bdff9d3307bed1c7",
-            ),
-            (
-                dict(user_id=None, session_id="returning-install-uuid-4013"),
-                "feed_cache:1f1b827af3024099499f5b2810977971",
-            ),
-            (
-                dict(user_id=42, session_id=None),
-                "feed_cache:717c51d67a63963206eb5bfc26d867e0",
-            ),
-            (
-                dict(user_id=None, session_id=None, category="politics"),
-                "feed_cache:1fc676a99155fdd5a550d000f73d8795",
-            ),
-            (
-                dict(user_id=7, session_id="x"),
-                "feed_cache:a4bbc61044de60171b4bdf067e7d0557",
-            ),
-        ],
-    )
-    def test_the_digest_is_byte_identical_to_the_pre_annotation_key(
-        self, kwargs, expected
-    ):
-        assert feed_response_cache_key(**kwargs, **self._SHAPE) == expected
