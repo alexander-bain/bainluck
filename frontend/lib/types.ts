@@ -403,6 +403,14 @@ export interface EventHistoryResponse {
    */
   period_markers?: Array<{ timestamp: string; period: string; source?: string }>;
   aggregate_line?: Array<{ timestamp: string; home_probability: number }>;
+  /**
+   * #3911: true iff the backend PINNED the last point of `aggregate_line` — i.e.
+   * iff that point is a claim about NOW rather than a real past bucket. It is
+   * the server's answer to "may this edge be replaced by the hero the page was
+   * served?", and the client must not re-derive it: the rule has four arms and
+   * two disagreeing owners for "settled". See `lib/chartEdgePin.ts`.
+   */
+  blend_edge_pinned?: boolean;
   points: number;
   espn_snapshot_count?: number;
   pm_spread_data?: {

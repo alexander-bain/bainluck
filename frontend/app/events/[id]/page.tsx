@@ -99,6 +99,7 @@ import { teamShortNames } from "@/lib/teamShortName";
 import EventHeroProbabilityPair from "@/components/EventHeroProbabilityPair";
 import { SignalBars } from "@/components/discover/shared";
 import { confidenceFromSources, countProbabilitySources } from "@/lib/confidence";
+import { pinChartEdgeToHero } from "@/lib/chartEdgePin";
 import {
   SPORT_KEY_TO_LEAGUE_PATH,
   hasAnyWinProbData,
@@ -455,7 +456,7 @@ export default function EventPage({ params }: EventPageProps) {
   }, [event?.commence_time, isLive, isFinished, isSuspended, hideStartClock]);
 
   const {
-    data: historyData,
+    data: servedHistory,
     error: historyError,
     isLoading: historyLoading,
     mutate: refreshHistory,
@@ -466,6 +467,25 @@ export default function EventPage({ params }: EventPageProps) {
     // exact shape of the LAT-P171/P172 duplicate-fetch defect.
     () => fetchEventHistory(eventId, EVENT_BOOT_HISTORY_HOURS),
     { refreshInterval: isLive ? LIVE_REFRESH_INTERVAL : SCHEDULED_REFRESH_INTERVAL }
+  );
+
+  // #3911: ONE number on the page, even when two workers answered it.
+  //
+  // The backend pins the blend line's right edge to the point-in-time blend so
+  // the curve ends where the hero sits — but `_event_detail_cache` is
+  // process-local, and the detail and history requests can land on different
+  // web workers. Worker A serves a hero cached up to 300s ago while worker B
+  // computes the edge from live rows: measured at 0.40 against 0.10.
+  //
+  // Applied HERE, at the single point every consumer downstream reads from, so
+  // the chart, the sparkline, `resolveProbability` and `lastChartPoint` cannot
+  // disagree with each other either. `pinChartEdgeToHero` returns the same
+  // object when nothing needs correcting, so this memo is identity-stable and
+  // the common case allocates nothing. Policy stays on the server — see
+  // `lib/chartEdgePin.ts`.
+  const historyData = useMemo(
+    () => pinChartEdgeToHero(servedHistory, event),
+    [servedHistory, event],
   );
 
   // Game-level markets (totals spectrum, player props)

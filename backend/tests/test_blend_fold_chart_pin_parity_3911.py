@@ -511,6 +511,124 @@ class TestTheCacheBoundary:
         assert detail["hero_probability_source"] == _PINNABLE_HERO_SOURCE
 
 
+class TestAcrossTwoWorkers:
+    """🔴 CERT-2243's required repair, `HERO-BLEND-CROSS-WORKER-SERVED-VERSION-PARITY-3911`.
+
+    `_event_detail_cache` is module-global, which on production means
+    PROCESS-local. The page fires two HTTP requests and they can land on
+    different web workers:
+
+        worker A  cached detail from before the venues moved  -> hero 0.40
+        worker B  empty cache, computes from live rows        -> edge 0.10
+
+    Both are individually correct and the reader sees two numbers. Reproduced
+    by the cert bus at exactly those values. `TestTheCacheBoundary` above shares
+    ONE module cache and structurally cannot see this.
+
+    A worker is simulated the only honest way: by swapping the module-global
+    dict itself, so worker B's route code really does run against a cache that
+    has never heard of worker A's response.
+    """
+
+    @staticmethod
+    def _worker_cache(monkeypatch, entries=None):
+        """Point `events.py` at a fresh, independent `_event_detail_cache`."""
+        from app.routes import events as events_route
+
+        cache = dict(entries or {})
+        monkeypatch.setattr(events_route, "_event_detail_cache", cache)
+        return cache
+
+    def test_the_two_workers_really_do_disagree(self, both_routes, monkeypatch):
+        """The premise, measured — otherwise the repair below proves nothing.
+
+        This is the state of the world the fix has to survive, not a state the
+        fix creates. It asserts the DISAGREEMENT, so if a future change makes
+        the caches shared this test goes red and tells the next reader that the
+        topology moved rather than silently passing.
+        """
+        now = _now()
+
+        worker_a = self._worker_cache(monkeypatch)
+        both_routes.detail(both_routes.session(now))  # seeds A at 0.40
+        assert worker_a, "worker A cached nothing — the premise is broken"
+
+        self._worker_cache(monkeypatch)  # worker B: a different, empty cache
+        history = both_routes.history(
+            both_routes.session(now, canon=0.20, twin=0.10)
+        )
+
+        hero_from_a = worker_a[CANON_ID][2]["hero_probability"]
+        assert hero_from_a == pytest.approx(BLENDED)
+        assert _edge(history) == pytest.approx(0.10), (
+            "worker B computed the moved blend, as it should"
+        )
+        assert hero_from_a != pytest.approx(_edge(history))
+
+    def test_the_served_pair_carries_what_the_page_needs_to_reconcile_them(
+        self, both_routes, monkeypatch
+    ):
+        """🔴 THE REPAIR. The page is the only place that holds both payloads.
+
+        The server cannot fix this alone — worker B has no way to learn what
+        worker A served. What it CAN do is say whether its own right edge is a
+        claim about *now*, so the client knows the edge is replaceable and by
+        what. `blend_edge_pinned` is that answer, and the client-side arm is
+        `frontend/lib/chartEdgePin.ts` + its cross-worker jest guard.
+
+        The policy deliberately does NOT travel: live-appends, pre-match
+        overwrites, the two-minute window and the two disagreeing owners of
+        "settled" all stay here.
+        """
+        now = _now()
+
+        worker_a = self._worker_cache(monkeypatch)
+        detail = both_routes.detail(both_routes.session(now))
+
+        self._worker_cache(monkeypatch)
+        history = both_routes.history(
+            both_routes.session(now, canon=0.20, twin=0.10)
+        )
+
+        assert history["blend_edge_pinned"] is True
+        assert detail["hero_probability_source"] == "blend"
+
+        # What the page then renders, by the rule `pinChartEdgeToHero` applies.
+        rendered_edge = (
+            detail["hero_probability"]
+            if history["blend_edge_pinned"]
+            and detail["hero_probability_source"] == "blend"
+            else _edge(history)
+        )
+        assert rendered_edge == pytest.approx(detail["hero_probability"])
+        assert rendered_edge == pytest.approx(
+            worker_a[CANON_ID][2]["hero_probability"]
+        )
+
+    def test_the_flag_is_false_when_there_is_nothing_to_replace(
+        self, both_routes, monkeypatch
+    ):
+        """A settled row does not hand the client a licence to overwrite.
+
+        `_pin_blend_edge` stands down on a settled row, so its answer is False
+        and the client leaves the terminal point alone. If the flag were simply
+        `bool(aggregate_line)` this would pass a settled hero of 1.0 onto a
+        curve the chart had already resolved for itself.
+        """
+        self._worker_cache(monkeypatch)
+        now = _now()
+        session = both_routes.session(now)
+        session.event.status = "completed"
+        session.event.home_score = 3
+        session.event.away_score = 0
+        session.event.completed_at = now - timedelta(hours=1)
+        session.event.commence_time = now - timedelta(hours=3)
+
+        history = both_routes.history(session)
+
+        assert history["blend_edge_pinned"] is False
+
+
 class TestTheFixtureCannotExpire:
     """#3895 (`EXPIRING-TEST-ANCHORS`) — and here the failure is SILENT.
 

@@ -13615,7 +13615,20 @@ async def get_event_odds_history(
                 event, await folded_probability_sources(db, event)
             )
 
-    _pin_blend_edge(
+    # 🔴 The RETURN VALUE travels (#3911, CERT-2243). `_event_detail_cache` is
+    # module-global and therefore PROCESS-local: on production the detail and
+    # history requests for one page load can land on different web workers, so
+    # worker A can serve a cached hero of 0.40 while worker B computes a fresh
+    # edge of 0.10 — reproduced by the cert bus at exactly those numbers. No
+    # amount of agreement WITHIN a process fixes a disagreement BETWEEN two.
+    #
+    # The only place that holds both payloads is the page, so the page performs
+    # the final pin — but it must not re-implement WHEN to pin (live vs
+    # pre-match vs settled, the two-minute edge window, the two settled owners
+    # that do not agree). That policy stays here, and only its ANSWER travels:
+    # the backend says whether this line's right edge is a "now" claim, the
+    # client supplies which number that claim should carry.
+    blend_edge_pinned = _pin_blend_edge(
         aggregate_line,
         pin_event,
         is_live=(not is_finished and (event.status or "").lower() == "live"),
@@ -13951,6 +13964,12 @@ async def get_event_odds_history(
         "moments": moments,
         "period_markers": period_markers,
         "aggregate_line": aggregate_line if aggregate_line else None,
+        # See `blend_edge_pinned` above: true iff the last point of
+        # `aggregate_line` is this route's claim about NOW rather than a real
+        # past bucket, and therefore iff the client may replace it with the
+        # hero it was served. False on a settled row, on a stale pre-match line
+        # and whenever there is no line at all.
+        "blend_edge_pinned": blend_edge_pinned,
         "pm_spread_data": pm_spread_data if pm_spread_data else None,
         "points": len(history),
         "bookmaker_count": len(bookmaker_history),
