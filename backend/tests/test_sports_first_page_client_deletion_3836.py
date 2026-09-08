@@ -71,7 +71,19 @@ from app.utils.sports_first_page_rails import (
     swap_client_deleted_finished_off_first_page,
 )
 
-NOW = datetime(2026, 9, 7, 12, 0, 0, tzinfo=timezone.utc)
+# Anchored to the real clock, not to a wall-clock date (gotcha #44: offset
+# FIRST, then truncate). Most tests below thread ``now=NOW`` into the function
+# under test, so a frozen anchor is harmless for them. The ``TestWiring`` tests
+# cannot: they exercise ``apply_discover_display_chain``, which takes no ``now``
+# and therefore reads ``datetime.now(timezone.utc)`` itself. Against a frozen
+# anchor those two clocks drift apart, and once the real clock passes
+# ``NOW + CLIENT_COMPLETED_MAX_AGE_HOURS`` every fixture card — including the
+# ones built to be FRESH — becomes one the client deletes, the swap correctly
+# declines for want of a renderable game, and the suite fails with no product
+# defect behind it. A literal date here is a time bomb: this one was lit at
+# ``NOW - 1h``, so it detonated at 2026-09-07T19:00:00Z, went red on the first
+# CI run after that, and took master's deploy down with it (#3889).
+NOW = datetime.now(timezone.utc)
 
 SPORTS = {
     "event_pct": 0.6,
