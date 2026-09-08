@@ -388,6 +388,71 @@ class TestWhatTheSectionRefuses:
         assert lf._is_outright(_market(market_id=1, name=name)) is False
 
     @pytest.mark.parametrize(
+        "name",
+        [
+            # THE SPECIMEN. Live on production 2026-09-08: tier 1, `open`,
+            # `event_id IS NULL`, dated 2026-12-06, `category='championship'`.
+            # Two drivers compared over a season — no " vs ", no numbered
+            # map/game/set — so the #2698 `_is_outright` called it a title.
+            "F1: Will Carlos Sainz finish ahead of Fernando Alonso in the"
+            " 2026 Drivers' Championship?",
+            # The venue writes BOTH prepositions for the same question, which is
+            # why the pattern is `finish\\w*\\s+ahead` and not the phrase.
+            "Formula 1: Who will finish ahead at the 2022 Australian Grand"
+            " Prix: Max Verstappen or Charles Leclerc?",
+            "Will Lewis Hamilton finish ahead of Max Verstappen in the French"
+            " Grand Prix?",
+            # The named-relation shape, which reaches tier 5 today but is the
+            # same class and must not depend on tier to be refused.
+            "Spanish Grand Prix: Head-to-Head",
+            "Azerbaijan Grand Prix: Head to Head",
+        ],
+    )
+    def test_head_to_heads_that_never_say_vs_are_not_outrights(self, name):
+        """`2698-F1-FINISH-AHEAD-SCOPE`.
+
+        Measured over the section loop's real candidate pool on production
+        (`open`, `event_id IS NULL`, `resolution_date >= now()`, tier 1/2/4 —
+        13,579 rows) the phrase arm matches exactly ONE row, the first specimen
+        here. One true head-to-head refused, zero outrights.
+        """
+        assert lf._is_outright(_market(market_id=1, name=name)) is False
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            # "ahead" WITHOUT "finish" is ordinary standings prose and must
+            # survive — the rule is the comparison, not the word.
+            "Who will lead the Drivers' Championship ahead of the summer break?",
+            # "head" without the relation. A regatta whose NAME starts "Head of"
+            # is the trap a bare `head` substring would spring.
+            "Head of the Charles Regatta: Winner",
+            # The control that must pass under both arms.
+            "F1 Drivers Champion",
+        ],
+    )
+    def test_the_head_to_head_refusal_does_not_eat_real_titles(self, name):
+        """A name-based refusal earns its place by what it LEAVES, so the
+        over-refusal arm is a test and not a comment."""
+        assert lf._is_outright(_market(market_id=1, name=name)) is True
+
+    async def test_a_head_to_head_never_reaches_the_section(self, client, mock_db):
+        """Proved through the route, for the same reason the " vs " case is:
+        a predicate that is right in isolation and unwired serves nothing."""
+        h2h = _market(
+            market_id=7002,
+            name="F1: Will Carlos Sainz finish ahead of Fernando Alonso in the"
+            " 2026 Drivers' Championship?",
+            category="championship",
+        )
+        _serve_pool(mock_db, [US_OPEN_MENS, h2h])
+
+        body = (await client.get("/api/leagues/tennis_atp")).json()
+
+        assert _section_of(body, "US Open Men's Singles Winner") == "futures"
+        assert _section_of(body, h2h.name) is None
+
+    @pytest.mark.parametrize(
         "name,category",
         [
             ("US Open Men's Singles Winner", "championship"),
