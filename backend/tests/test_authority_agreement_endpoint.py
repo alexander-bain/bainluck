@@ -111,11 +111,21 @@ def _agreement_row(**over):
             "pct": 100.0,
             "governs": True,
         },
-        "schedule": {"within": 243, "off_by_hours": 24, "wrong_day": 5,
-                     "time_missing": 0, "governs": False},
-        "anchors": {"anchored": 244, "unanchored": 28, "mismatch": 0,
-                    "polluted_column": 46, "pct_of_both": 89.71,
-                    "governs": False},
+        "schedule": {
+            "within": 243,
+            "off_by_hours": 24,
+            "wrong_day": 5,
+            "time_missing": 0,
+            "governs": False,
+        },
+        "anchors": {
+            "anchored": 244,
+            "unanchored": 28,
+            "mismatch": 0,
+            "polluted_column": 46,
+            "pct_of_both": 89.71,
+            "governs": False,
+        },
     }
     row.update(over)
     return row
@@ -189,7 +199,9 @@ async def test_the_banked_row_is_published_verbatim(call):
     assert nfl["agreement"] == banked
     assert nfl["last_pass_at"] == "2026-09-04T10:23:02.864712+00:00"
     assert nfl["pass_age_seconds"] >= 0
-    assert "identity governs" in out["gate"].lower() or "Identity governs" in out["gate"]
+    assert (
+        "identity governs" in out["gate"].lower() or "Identity governs" in out["gate"]
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -413,6 +425,46 @@ async def test_soccer_is_published_at_all_and_names_its_beat(call):
     out = await call(metrics={"last_result_summary": {}}, session=FakeSession())
     soccer = next(s for s in out["sports"] if s["sport_key"] == "soccer")
     assert soccer["stamper"] == "stamp_soccer_statpal_fixtures"
+
+
+async def test_every_sport_publishes_its_discovery_state(call):
+    """CERT-2245's follow-up `SOCCER-3366-IDLESS-REFUSAL-REACHABILITY`.
+
+    `flip_permitted` refuses a measurement population before it reaches any
+    discovery reasoning, so soccer could never surface the fact that its ingest
+    parser mints no id — the build step that comes first. The block is published
+    separately and for EVERY sport precisely so a short-circuited one still
+    gets an answer, and this asserts it at the payload rather than at the
+    function: deleting the route's block is the way this regresses.
+    """
+    from app.config.authority_by_sport import discovery_state
+
+    out = await call(metrics={"last_result_summary": {}}, session=FakeSession())
+    assert out["sports"], "nothing published"
+    for entry in out["sports"]:
+        block = entry["authority"]["discovery"]
+        code, why = discovery_state(entry["sport_key"])
+        # Read from the same function, never a second copy of the strings.
+        assert block["code"] == code, entry["sport_key"]
+        assert block["why"] == why, entry["sport_key"]
+        assert block["note"].strip()
+
+
+async def test_the_measurement_populations_still_get_a_discovery_answer(call):
+    """The whole point. These are the sports `flip_permitted` short-circuits."""
+    out = await call(metrics={"last_result_summary": {}}, session=FakeSession())
+    published = {s["sport_key"]: s for s in out["sports"]}
+    for key in MEASUREMENT_POPULATIONS:
+        assert key in published, key
+        assert published[key]["authority"]["discovery"]["code"], key
+
+    soccer = published["soccer"]["authority"]["discovery"]
+    assert soccer["code"] == "PARSER-MINTS-NO-ID"
+    # The census is the actionable part, and it is what was unreachable.
+    assert "274 of 274" in soccer["why"]
+    # ...and the flip refusal beside it still does NOT carry it, which is the
+    # asymmetry that made the fact invisible in the first place.
+    assert "274 of 274" not in published["soccer"]["authority"]["failover"]["why"]
 
 
 # ---------------------------------------------------------------------------
