@@ -127,9 +127,20 @@ def test_the_captured_pool_reproduces_the_report(rows):
         if None not in percents and sum(percents) != 100:
             broken.append((row["id"], percents))
 
-    assert len(broken) == 14, (
+    # 14 until #3867, 15 after, and the extra row is NOT a regression — it is the
+    # scalar rule getting stricter underneath this count. `Michigan Senate winner?`
+    # (109081) is quoted 0.565 / 0.435; contract version 4 rendered that naively as
+    # [56, 44], which happens to total 100, and version 5 renders [57, 44], which
+    # does not. So one more captured card now exhibits the #2060 defect under
+    # INDEPENDENT rounding. The card rule still normalizes it to 100 — that is
+    # asserted by `test_every_complement_pair_in_the_live_pool_now_sums_to_exactly_100`
+    # below, which passes unchanged.
+    #
+    # The direction that would mean trouble is this count going DOWN, which is the
+    # "fixture re-captured after the fix" case the assertion exists to catch.
+    assert len(broken) == 15, (
         "the fixture must still show the pre-fix behaviour; got "
-        f"{len(broken)} broken rows instead of 14"
+        f"{len(broken)} broken rows instead of 15"
     )
     assert EXEMPLAR_ID in {row_id for row_id, _ in broken}
 

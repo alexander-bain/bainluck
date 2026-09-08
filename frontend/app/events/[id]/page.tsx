@@ -112,6 +112,7 @@ import {
   computeLastChartPoint,
   defaultChartTimeRange,
 } from "@/lib/eventKeyStats";
+import { renderedPercent } from "@/lib/renderedPercent";
 
 interface EventPageProps {
   params: { id: string };
@@ -1636,7 +1637,9 @@ export default function EventPage({ params }: EventPageProps) {
                     </div>
                     <div className="space-y-2">
                       {matchup.outcomes.map((outcome, oidx) => {
-                        const pct = Math.round(outcome.probability * 100);
+                        // #3867 (CERT-2224 repair): the label routes through the
+                        // contract; `Math.max(pct, 2)` below is still the bar's geometry.
+                        const pct = renderedPercent(outcome.probability) ?? 0;
                         const isLeader = outcome.probability === Math.max(...matchup.outcomes.map(o => o.probability));
                         return (
                           <div key={oidx} className="flex items-center gap-3">

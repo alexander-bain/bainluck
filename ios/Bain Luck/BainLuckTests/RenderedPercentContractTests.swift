@@ -33,8 +33,14 @@ private let contractCases: [(probability: Double?, percent: Int?)] = [
     (0.375, 38),
     (0.625, 63),
     (0.875, 88),
-    (0.565, 56),
-    (0.575, 57),
+    (0.565, 57),
+    (0.575, 58),
+    (0.145, 15),
+    (0.285, 29),
+    (0.585, 59),
+    (0.615, 62),
+    (0.5649, 56),
+    (0.5651, 57),
     (0.9999, 100),
     (0.0001, 0),
 ]
@@ -111,12 +117,27 @@ final class RenderedPercentContractTests: XCTestCase {
         XCTAssertEqual(renderedPercent(0.625), 63)  // banker's: 62
     }
 
-    /// `0.565 * 100` is `56.49999999999999`, not `56.5`. An implementation that
-    /// "fixed" that with a decimal type would print 57 and leave the contract
-    /// while still looking more correct.
-    func testTheMultiplyHappensInDouble() {
-        XCTAssertEqual(renderedPercent(0.565), 56)
-        XCTAssertEqual(renderedPercent(0.575), 57)
+    /// #3867, contract version 5 — a half rounds UP whether or not the double
+    /// says so. `0.565 * 100` is `56.49999999999999`, so scaling by 100 printed
+    /// 56 here while `0.585` (exactly `58.5`) printed 59: two adjacent quotes off
+    /// the same half-percent grid, rounded opposite ways, for a reason invisible
+    /// on screen. This test asserted the old answers until #3867.
+    func testAHalfPercentRoundsUpEvenWhenTheDoubleFallsShort() {
+        XCTAssertEqual(renderedPercent(0.565), 57)  // p*100 = 56.49999999999999
+        XCTAssertEqual(renderedPercent(0.575), 58)  // p*100 = 57.49999999999999
+        XCTAssertEqual(renderedPercent(0.145), 15)  // p*100 = 14.499999999999998
+        XCTAssertEqual(renderedPercent(0.285), 29)  // p*100 = 28.499999999999996
+    }
+
+    /// The controls, which is why the test above is not just "everything moved up
+    /// one". `0.585` was already right and must stay right; a value a hair below
+    /// the half must still round DOWN, or the rule is a nudge rather than a
+    /// rounding.
+    func testTheBoundaryIsStillABoundary() {
+        XCTAssertEqual(renderedPercent(0.585), 59)   // exactly 58.5, correct before too
+        XCTAssertEqual(renderedPercent(0.615), 62)   // exactly 61.5, correct before too
+        XCTAssertEqual(renderedPercent(0.5649), 56)  // below the half — rounds down
+        XCTAssertEqual(renderedPercent(0.5651), 57)  // above the half — rounds up
     }
 
     /// No price and 0% are different cards, and the card fingerprint that gates

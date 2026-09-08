@@ -1,3 +1,5 @@
+import { renderedPercent } from "./renderedPercent";
+
 /**
  * UX-P046 — the single home for "what percentage does this probability print".
  *
@@ -73,10 +75,15 @@ export function formatProbabilityPercent(
   if (!Number.isFinite(prob)) return "—";
 
   const override = options?.rendered;
+  // #3867: the rounding rule is `renderedPercent`'s, not a second copy of it.
+  // This read `Math.round(prob * 100)` inline, which was the same rule until the
+  // contract moved to scaling by 1000 — at which point an inline copy would have
+  // printed 56 under a hero printing 57 for one probability. The non-null
+  // assertion is safe behind the `Number.isFinite` guard directly above.
   const rounded =
     override != null && Number.isFinite(override)
       ? override
-      : Math.round(prob * 100);
+      : (renderedPercent(prob) as number);
 
   // Strictly inside the interval, but rounding would claim a boundary.
   if (rounded <= 0 && prob > 0) return BELOW_ONE_PERCENT;

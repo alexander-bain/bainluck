@@ -81,7 +81,7 @@ actor WidgetAPIClient {
             // drift the way an unpinned copy would.
             let leaderIsHome = homeProbability >= awayProbability
             let leaderPct = Int(
-                ((leaderIsHome ? homeProbability : awayProbability) * 100).rounded()
+                ((leaderIsHome ? homeProbability : awayProbability) * 1000 / 10).rounded()
             )
             let derivedHomePct = leaderIsHome ? leaderPct : 100 - leaderPct
             let derivedAwayPct = leaderIsHome ? 100 - leaderPct : leaderPct

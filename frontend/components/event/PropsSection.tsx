@@ -42,6 +42,7 @@ import { isLikelyPersonName, isPersonFieldDomain } from "@/lib/eventConceptDispl
 import EntityImage from "@/components/EntityImage";
 import { groupByPropFamily, type PropFamilyGroup } from "@/lib/propFamily";
 import { propResultLabel, SETTLED_NO_GRADE_LABEL } from "@/lib/propGrade";
+import { renderedPercent } from "@/lib/renderedPercent";
 
 export type PropsState = "script" | "divergence" | "graded";
 
@@ -151,8 +152,12 @@ export function deriveState(eventStatus?: string | null): PropsState {
   return "script";
 }
 
+// #3867 (CERT-2224 repair): one rounding rule for every printed probability.
+// The em dash for absent data is unchanged — "no number" and "0%" are different
+// statements and only one of them is a probability.
 function pct(p: number | null | undefined): string {
-  return p == null ? "—" : `${Math.round(p * 100)}%`;
+  const whole = renderedPercent(p);
+  return whole == null ? "—" : `${whole}%`;
 }
 
 /**
