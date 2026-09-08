@@ -242,6 +242,59 @@ ODDS_API_TO_WIN_PROB_KEY: dict[str, str] = {
 
 
 # =============================================================================
+# 4b. TOUR_PARENT_SPORT_KEYS — the tours whose children are their own tournaments
+# =============================================================================
+#
+# A LEAGUE plays a season under one sport key. A TOUR does not: the ATP season
+# is a run of tournaments, and every tournament gets its own bucket —
+# `tennis_atp_us_open`, `tennis_atp_wimbledon`, 19 of them under `tennis_atp`
+# alone. The tour's own key keeps only what no tournament bucket claimed
+# (qualifiers, Challengers, ITF rows).
+#
+# So `/leagues/tennis_atp` scoped to `sports.key = 'tennis_atp'` asks for the
+# leftovers and renders the tour's own Grand Slam nowhere. Measured on
+# production 2026-09-07 over 14 days: `tennis_atp` held 593 suspended, 266
+# scheduled and **zero settled** rows, while `tennis_atp_us_open` held 117
+# settled rows carrying scores, `completed_at` and an `espn_id`. The page said
+# "no recent results" through the whole US Open (#3816).
+#
+# 🔴 THIS IS AN EXPLICIT SET, NOT A PREFIX RULE, AND THAT IS THE WHOLE POINT.
+# `key LIKE parent || '\_%'` looks like the same statement and is not: measured
+# against `sports`, 15 keys have prefix-children and only these two have
+# children that are the SAME competition. The rest would each be a bug —
+# `soccer_germany_bundesliga_women` folded into the men's page,
+# `cricket_the_hundred_womens` into the men's, `americanfootball_nfl_preseason`
+# into the NFL's results, and every `*_championship_winner` futures bucket onto
+# a games rail. A prefix rule reads as tidier and is wrong four different ways.
+#
+# Adding a tour here is a product decision about what one page means, so it is
+# made once, by name, where the sport-key vocabulary already lives.
+TOUR_PARENT_SPORT_KEYS: frozenset[str] = frozenset(
+    {
+        "tennis_atp",
+        "tennis_wta",
+    }
+)
+
+
+def tour_child_key_prefix(sport_key: str) -> str | None:
+    """The `LIKE` prefix matching one tour parent's tournament buckets.
+
+    ``None`` for every key that is not a tour parent — callers use that as the
+    signal to scope the way they always did, so a league page pays nothing for
+    this existing.
+
+    The underscore is escaped because ``_`` is a single-character wildcard in
+    ``LIKE``: unescaped, ``tennis_atp_%`` also matches ``tennisXatpY…``. No such
+    key exists today, which is exactly why an unescaped version would survive
+    review and then match the first key that does.
+    """
+    if sport_key not in TOUR_PARENT_SPORT_KEYS:
+        return None
+    return sport_key.replace("_", r"\_") + r"\_%"
+
+
+# =============================================================================
 # 5. SPORT_PREFIX_TO_LLM_CATEGORY — sport key prefix → LLM category
 # =============================================================================
 

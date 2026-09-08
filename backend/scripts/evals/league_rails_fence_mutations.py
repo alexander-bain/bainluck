@@ -143,7 +143,24 @@ MUTANTS: list[tuple[str, Path, str, str, str]] = [
     (
         "M5-route-keeps-an-inline-copy",
         ROUTE,
-        "        _results_q = recent_results_query(sport_key, now)",
+        # ── RE-TARGETED BY #3816 (lane1/174), the fourth drift in this file ──
+        #
+        # The needle was `recent_results_query(sport_key, now)`. #3816 gave a
+        # TOUR page the tournaments it stages — `/leagues/tennis_atp` rendered
+        # none of the US Open's 117 settled matches because they sit under
+        # `tennis_atp_us_open` — so the route now resolves a SCOPE first and the
+        # three builders take `_scope` instead of the bare key.
+        #
+        # Same drift, same refusal, same lesson as M6 and M7 record above: the
+        # scanner saw the needle zero times and said UNAPPLIED rather than
+        # reporting a kill it had not made. Fourth time it has earned its keep.
+        #
+        # The MUTATION is unchanged in meaning — put the pre-fix statement back
+        # in the route while the helper stays right — and its replacement keeps
+        # the single-key `Sport.key == sport_key` form on purpose: that is what
+        # the inline copy looked like, and it drops the fence either way, which
+        # is what this mutant is for.
+        "        _results_q = recent_results_query(_scope, now)",
         "        _results_q = (\n"
         "            select(Event)\n"
         "            .join(Sport, Sport.id == Event.sport_id)\n"
