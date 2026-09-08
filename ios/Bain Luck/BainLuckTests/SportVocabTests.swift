@@ -105,7 +105,7 @@ final class SportVocabTests: XCTestCase {
     // MARK: - #3465: the sentence is tensed to whether the match is over
 
     /// A settled US Open match (Tabilo 0-3 Zverev, event 15304537) read
-    /// *"Played games are not captured YET … The line below IS the books'
+    /// *"Played games are not captured YET … The line below IS the sportsbooks'
     /// PROJECTED game margin"* under a hero reading `FINAL · Zverev Win`.
     ///
     /// 🔴 BOTH DIRECTIONS. The damaging regression is the mirror one —
@@ -119,11 +119,11 @@ final class SportVocabTests: XCTestCase {
         XCTAssertEqual(
             vocab.projectedMarginNote(),
             "Played games are not captured yet — the scoreboard reports sets. "
-                + "The line below is the books' projected game margin.")
+                + "The line below is the sportsbooks' projected game margin.")
         XCTAssertEqual(
             vocab.projectedMarginNote(settled: true),
             "Played games were not captured — the scoreboard reported sets. "
-                + "The line below was the books' projected game margin.")
+                + "The line below was the sportsbooks' projected game margin.")
     }
 
     func testTheMapsNoteIsTensedToWhetherTheMatchIsOver() {
@@ -149,7 +149,7 @@ final class SportVocabTests: XCTestCase {
             XCTAssertTrue(live.contains("yet"), "a match still on IS still waiting: \(live)")
             XCTAssertTrue(live.contains("reports"))
             XCTAssertFalse(live.contains("reported"))
-            XCTAssertFalse(live.contains("was the books'"))
+            XCTAssertFalse(live.contains("was the sportsbooks'"))
         }
 
         for done in [vocab.projectedMarginNote(settled: true)!,

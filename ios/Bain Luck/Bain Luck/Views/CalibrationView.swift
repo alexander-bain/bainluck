@@ -498,7 +498,17 @@ struct CalibrationSurfaceView: View {
                 Circle().fill(sourceColor(row.source))
                     .frame(width: CalibrationSourceTableGeometry.dotDiameter,
                            height: CalibrationSourceTableGeometry.dotDiameter)
-                Text(row.name).lineLimit(1)
+                // #3966 (Alex, D92 = B): a name the label column cannot hold on
+                // one line WRAPS rather than truncating. #3954 measured the four
+                // numeric columns down to their ink and there is nothing left to
+                // take, so the only remaining trades were dropping a column,
+                // shortening the names, or spending a second line. B spends the
+                // line: it is the only one of the three that loses no
+                // information, and the uneven row height it costs is confined to
+                // the row that needed it.
+                Text(row.name)
+                    .lineLimit(CalibrationSourceTableGeometry.sourceNameLineLimit)
+                    .fixedSize(horizontal: false, vertical: true)
             }.frame(maxWidth: .infinity, alignment: .leading)
             Text(fmtN(row.n)).frame(width: widths.n, alignment: .trailing).monospacedDigit()
             metricText(row.ece, "%.1f").frame(width: widths.ece, alignment: .trailing)

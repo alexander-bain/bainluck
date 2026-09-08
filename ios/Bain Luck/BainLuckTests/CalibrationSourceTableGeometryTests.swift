@@ -104,7 +104,7 @@ final class CalibrationSourceTableGeometryTests: XCTestCase {
     /// green having proved nothing. Asserted first, by the same route the table uses.
     func testTheFixtureCarriesTheNamesThatTruncated() throws {
         let names = Set(try everySourceModel().sourceRows.map(\.name))
-        XCTAssertTrue(names.contains("Per-Bookmaker (Odds API)"),
+        XCTAssertTrue(names.contains("Per-sportsbook (Odds API)"),
                       "the longest source name is missing from the fixture; got \(names.sorted())")
         XCTAssertTrue(names.contains("Spreads (Odds API)"))
         XCTAssertTrue(names.contains("Totals (Odds API)"))

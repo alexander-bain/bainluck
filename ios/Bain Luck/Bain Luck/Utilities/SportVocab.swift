@@ -439,11 +439,11 @@ extension SportVocab {
         guard !scoreboardCountsTheUnit, !scoreboardUnit.isEmpty, !unit.isEmpty else { return nil }
         if settled {
             return "Played \(unit) were not captured — the scoreboard reported "
-                + "\(scoreboardUnit). The line below was the books' projected "
+                + "\(scoreboardUnit). The line below was the sportsbooks' projected "
                 + "\(unitSingular) margin."
         }
         return "Played \(unit) are not captured yet — the scoreboard reports "
-            + "\(scoreboardUnit). The line below is the books' projected "
+            + "\(scoreboardUnit). The line below is the sportsbooks' projected "
             + "\(unitSingular) margin."
     }
 }

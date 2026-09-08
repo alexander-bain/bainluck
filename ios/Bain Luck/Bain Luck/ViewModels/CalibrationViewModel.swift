@@ -832,13 +832,28 @@ final class CalibrationViewModel: ObservableObject {
         "tech": "Tech", "motorsports": "Motorsports",
     ]
 
+    /// **This map is what the phone prints, not the server's vocabulary.**
+    ///
+    /// `/api/calibration` publishes `source_labels` (owned by
+    /// `backend/app/utils/calibration_source_labels.py`), and this client has
+    /// never read it — `sourceDisplayName` looks the key up here and falls back
+    /// to `toTitleCaseAcronymSafe`. The web behaves the same way for a different
+    /// reason: `makeSourceLabeller` consults its own house-style map FIRST and
+    /// only falls through to the published label for keys it has no opinion
+    /// about. So a rename applied to the backend alone changes nothing a reader
+    /// sees on either client, and this entry has to move on its own account.
+    ///
+    /// `odds_api_bookmaker` is a payload key and stays as it is — it is a data
+    /// contract, not prose. Its NAME may not carry the word: standing notice 33
+    /// (Alex, 2026-09-08, on D92) bans "books"/"bookmaker(s)" from every string
+    /// the app draws, and D91 makes "sportsbooks" the approved word.
     private static let sourceDisplayNames: [String: String] = [
         "kalshi": "Kalshi",
         "polymarket": "Polymarket",
         "odds_api": "Odds API",
         "odds_api_spreads": "Spreads (Odds API)",
         "odds_api_totals": "Totals (Odds API)",
-        "odds_api_bookmaker": "Per-Bookmaker (Odds API)",
+        "odds_api_bookmaker": "Per-sportsbook (Odds API)",
     ]
 }
 

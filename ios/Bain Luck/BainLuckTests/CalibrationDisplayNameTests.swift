@@ -100,7 +100,7 @@ final class CalibrationDisplayNameTests: XCTestCase {
             "odds_api": "Odds API",
             "odds_api_spreads": "Spreads (Odds API)",
             "odds_api_totals": "Totals (Odds API)",
-            "odds_api_bookmaker": "Per-Bookmaker (Odds API)",
+            "odds_api_bookmaker": "Per-sportsbook (Odds API)",
         ]
         for (key, label) in expected {
             XCTAssertEqual(CalibrationViewModel.sourceDisplayName(key), label)
