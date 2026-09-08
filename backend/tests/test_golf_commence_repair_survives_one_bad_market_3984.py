@@ -67,7 +67,15 @@ class _Row:
 
 
 class _MockSession:
-    """Serves canned SELECT results in order; records every statement issued."""
+    """Serves canned SELECT results in order; records every statement issued.
+
+    The log holds `(sql, params)`, not just the SQL. Logging the statement text
+    alone makes any assertion about a WRITTEN VALUE vacuous — every run of this
+    repair emits byte-identical UPDATE text and carries the datetime in the
+    bound params, so a test comparing statements would pass no matter what
+    instant was written. A mutation that shifted the timezone survived exactly
+    that mistake.
+    """
 
     def __init__(self, results, log):
         self._results = list(results)
@@ -75,7 +83,7 @@ class _MockSession:
         self._log = log
 
     async def execute(self, stmt, params=None):
-        self._log.append(str(stmt))
+        self._log.append((str(stmt), params))
         if self._i < len(self._results):
             r = self._results[self._i]
             self._i += 1
@@ -83,7 +91,9 @@ class _MockSession:
         return _Result([])
 
     async def commit(self):
-        self._log.append("COMMIT")
+        # Same (sql, params) shape as every other entry, so readers can unpack
+        # the log uniformly.
+        self._log.append(("COMMIT", None))
 
     async def __aenter__(self):
         return self
@@ -181,6 +191,11 @@ async def test_a_bare_date_is_read_as_midnight_utc_not_shifted_by_a_local_zone(
     server's zone) would silently move every Tier-2 target by hours, which is
     the class of bug this repair exists to fix.
     """
+    def _written(log):
+        writes = [p for s, p in log if "UPDATE futures_markets" in s and p]
+        assert len(writes) == 1, f"expected exactly one market write, got {writes}"
+        return writes[0]["start"]
+
     m = _Row(id=1, name="Open Championship Winner", commence_time=_utc(2026, 7, 19, 18))
     log = _install(monkeypatch, [m], schedule=_BARE_DATE_SCHEDULE)
     await kalshi_task._fix_golf_commence_times(dry_run=False, detail={})
@@ -192,14 +207,16 @@ async def test_a_bare_date_is_read_as_midnight_utc_not_shifted_by_a_local_zone(
     log2 = _install(monkeypatch, [m2], schedule=offset_form)
     await kalshi_task._fix_golf_commence_times(dry_run=False, detail={})
 
-    def _updates(entries):
-        return [s for s in entries if "UPDATE futures_markets" in s]
-
-    assert _updates(log) and _updates(log2), "expected both runs to write"
-    # Same statement text AND both runs reached the write: the targets agree.
-    assert _updates(log) == _updates(log2), (
-        "the bare-date form and the offset form produced different writes — the "
-        "coercion moved the instant"
+    # Absolute, not merely self-consistent: midnight UTC on 2026-07-16, less the
+    # 18h eve-of-Round-1 convention the repair applies to every tier. Asserting
+    # only that the two forms AGREE would be satisfied by both being wrong in
+    # the same direction, which is what a changed default zone would do.
+    assert _written(log) == _utc(2026, 7, 15, 6), (
+        f"the bare date was not read as midnight UTC — wrote {_written(log)}, "
+        "so the coercion assumed some other zone and moved every Tier-2 target"
+    )
+    assert _written(log) == _written(log2), (
+        "the bare-date form and the offset form resolved to different instants"
     )
 
 
