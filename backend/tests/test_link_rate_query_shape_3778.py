@@ -32,19 +32,52 @@ function actually hands to `execute`, not against a compiled SQL string -- a
 string test on `LEFT OUTER JOIN events` would pass just as happily on a
 statement that selected the anchor columns from the wrong table.
 
-The three `_rejects_*` tests are the point of the file as much as the two
-positive ones: a shape guard that has never been shown to FAIL has not been
-shown to discriminate. They build the mutations by hand and require the same
-helper to refuse them.
+The `_rejects_*` tests are the point of the file as much as the positive ones:
+a shape guard that has never been shown to FAIL has not been shown to
+discriminate. They build the mutations by hand and require the same helper to
+refuse them.
+
+CERT-2226 granted the join guard above its token and named exactly one
+remaining gap, nonblocking, which the second half of this file closes:
+
+    inspect or forbid future predicates on `events` columns that could
+    null-reject the left join.
+
+An OUTER join is only half the protection. For a market with no event the
+joined `events` columns are all NULL, and *any* WHERE predicate on one of them
+evaluates to NULL rather than true -- so the row is filtered out. A single
+`Event.espn_id.isnot(None)` added to either `.where(...)` therefore drops every
+unlinked market while the join still reads `LEFT OUTER JOIN events` in the SQL
+and every assertion in the first half of this file still passes. `total`
+collapses onto `linked` and the published rate reads a permanent 100%: the same
+#3778 flattery the join guard exists to prevent, reached by the one door that
+guard does not watch. This is the standard "left join defeated by its own WHERE
+clause" trap, and it is a silent one -- nothing raises, the number just gets
+better.
+
+The rule enforced is a bright line rather than an attempt to decide which event
+predicates happen to be null-tolerant: **these two WHERE clauses filter the
+MARKET population, so they may reference `futures_markets` and nothing else.**
+The event row is joined to be *classified*, never to be filtered on. A genuine
+future need for an event-side predicate has an always-safe home -- the ON clause
+-- and putting it there trips the exact-onclause assertion above, which is the
+intended friction: a human then edits this guard deliberately, having read why.
 """
 
 import asyncio
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
+from sqlalchemy.sql import visitors
+from sqlalchemy.sql.elements import ColumnClause
 
 from app.models.models import Event, FuturesMarket
 from app.routes.admin_matching import _compute_link_rate
+
+#: The only table a link-rate WHERE clause may reference. An allowlist, not a
+#: denylist of `events`: a predicate on some third table joined in later is the
+#: same defect wearing a name this file has never heard of.
+WHERE_CLAUSE_TABLE = "futures_markets"
 
 #: label -> (table, column) every link-rate SELECT must carry for
 #: `_classify_attachment` to be able to grade an attachment at all.
@@ -147,6 +180,67 @@ def _assert_anchor_join_shape(statement, *, label):
     )
 
 
+def _where_clause_columns(statement):
+    """Every real table column referenced anywhere in `statement`'s WHERE.
+
+    `visitors.iterate` walks the whole predicate tree, so a column buried in an
+    `or_()`, an `in_()` or a `func.lower()` is found -- which matters, because
+    the production Kalshi filter wraps `external_id` in exactly that way and a
+    top-level-only check would be trivially evaded by one `lower()`.
+
+    Bind parameters and literals have no `.table` and are skipped.
+    """
+    where = statement.whereclause
+    if where is None:
+        return []
+    return [
+        element
+        for element in visitors.iterate(where)
+        if isinstance(element, ColumnClause)
+        and getattr(element, "table", None) is not None
+    ]
+
+
+def _assert_no_null_rejecting_predicate(statement, *, label):
+    """Raise AssertionError unless the WHERE filters markets and only markets.
+
+    See the module docstring: an event-side predicate silently converts the
+    OUTER join back into an INNER one, and no assertion in
+    `_assert_anchor_join_shape` can see it happen.
+    """
+    referenced = _where_clause_columns(statement)
+
+    # Non-vacuity first. With no WHERE at all -- or one that has stopped
+    # constraining the market population -- every assertion below passes
+    # trivially, and a guard that cannot fail is not a guard.
+    assert any(column.table.name == WHERE_CLAUSE_TABLE for column in referenced), (
+        f"{label}: the WHERE clause references no `{WHERE_CLAUSE_TABLE}` column "
+        "at all. Either the market filters were dropped -- which blows the "
+        "denominator open -- or this guard is now passing vacuously. Both need "
+        "a human."
+    )
+
+    offenders = sorted(
+        {
+            f"{column.table.name}.{column.name}"
+            for column in referenced
+            if column.table.name != WHERE_CLAUSE_TABLE
+        }
+    )
+    assert not offenders, (
+        f"{label}: the WHERE clause filters on {', '.join(offenders)}, which "
+        f"is not `{WHERE_CLAUSE_TABLE}`. For a market with no event those "
+        "columns are NULL, so the predicate is NULL rather than true and the "
+        "row is dropped -- the OUTER join is defeated by its own WHERE clause, "
+        "`total` collapses onto `linked`, and the published link rate reads a "
+        "permanent 100%. That is #3778's flattery restored through the one door "
+        "the join assertions do not watch, and nothing raises when it happens. "
+        "If the predicate is genuinely needed, it belongs in the ON clause "
+        "(where an unmatched row survives as NULLs); expect to update the "
+        "exact-onclause assertion in this file by hand when you do."
+    )
+
+
 def test_the_kalshi_query_can_grade_an_attachment():
     _assert_anchor_join_shape(_captured_statements()[0], label="kalshi")
 
@@ -199,3 +293,63 @@ def test_the_guard_rejects_a_right_label_on_a_wrong_source():
     )
     with pytest.raises(AssertionError, match="resolves to futures_markets.external_id"):
         _assert_anchor_join_shape(mislabelled, label="control")
+
+
+def test_the_kalshi_query_filters_only_markets():
+    _assert_no_null_rejecting_predicate(_captured_statements()[0], label="kalshi")
+
+
+def test_the_polymarket_query_filters_only_markets():
+    _assert_no_null_rejecting_predicate(_captured_statements()[1], label="polymarket")
+
+
+def test_the_guard_rejects_an_event_side_predicate():
+    """The mutation that passes every assertion in the first half of this file.
+
+    `LEFT OUTER JOIN events` is still in the SQL, both anchor columns still
+    resolve to `events`, the ON clause is still the FK -- and every unlinked
+    market is gone, because `NULL IS NOT NULL` is not true.
+    """
+    null_rejecting = (
+        select(
+            FuturesMarket.event_id,
+            Event.espn_id.label("event_espn_id"),
+            Event.external_id.label("event_external_id"),
+        )
+        .outerjoin(Event, FuturesMarket.event_id == Event.id)
+        .where(
+            FuturesMarket.source == "kalshi",
+            Event.espn_id.isnot(None),
+        )
+    )
+    # It really does pass the join guard -- that is the whole point of adding
+    # a second helper rather than tightening the first.
+    _assert_anchor_join_shape(null_rejecting, label="control")
+    with pytest.raises(AssertionError, match="events.espn_id"):
+        _assert_no_null_rejecting_predicate(null_rejecting, label="control")
+
+
+def test_the_guard_rejects_a_buried_event_side_predicate():
+    """A top-level-only check would wave this through; the traversal must not."""
+    buried = (
+        select(FuturesMarket.event_id)
+        .outerjoin(Event, FuturesMarket.event_id == Event.id)
+        .where(
+            FuturesMarket.source == "kalshi",
+            or_(
+                FuturesMarket.status == "open",
+                func.lower(Event.sport_id).in_(["1", "2"]),
+            ),
+        )
+    )
+    with pytest.raises(AssertionError, match="events.sport_id"):
+        _assert_no_null_rejecting_predicate(buried, label="control")
+
+
+def test_the_guard_rejects_a_statement_with_no_market_filter():
+    """Non-vacuity control: the offender check alone passes on an empty WHERE."""
+    unfiltered = select(FuturesMarket.event_id).outerjoin(
+        Event, FuturesMarket.event_id == Event.id
+    )
+    with pytest.raises(AssertionError, match="references no `futures_markets` column"):
+        _assert_no_null_rejecting_predicate(unfiltered, label="control")
