@@ -27,11 +27,18 @@ warm, the existing single-flight revalidation already maintains it, and no cache
 identity, Celery task signature or scope argument has to change.
 """
 
-from app.routes.hub import HUB_CONFIGS, merge_league_sections
-
+# The MODULE, not its names, and once — `TestTheWiring` monkeypatches attributes
+# on it, so it needs the module object anyway, and mixing `import x` with
+# `from x import y` for one module is what CodeQL's `py/import-and-import-from`
+# note is about.
+#
 # No `pytestmark`: `pytest.ini` sets `asyncio_mode = auto`, so the async tests in
 # `TestTheWiring` are collected without one and a module-level mark would only
 # warn on every sync test in the file.
+from app.routes import hub as hub_module
+
+HUB_CONFIGS = hub_module.HUB_CONFIGS
+merge_league_sections = hub_module.merge_league_sections
 
 
 def _card(market_id, name, *, tier=1, section="futures"):
@@ -197,8 +204,6 @@ class TestTheWiring:
         assert HUB_CONFIGS["tennis"].sibling_sport_keys == ("tennis_wta",)
 
     async def test_build_hub_reads_one_league_payload_per_tour(self, monkeypatch):
-        import app.routes.hub as hub_module
-
         read: list[str] = []
 
         async def _league(*, sport_key, db=None, **kwargs):
@@ -227,7 +232,6 @@ class TestTheWiring:
         men's sections down with it — turning a page that was half right into a
         page that is empty. The loss is PARTIAL: poorer, not broken.
         """
-        import app.routes.hub as hub_module
 
         async def _league(*, sport_key, db=None, **kwargs):
             if sport_key == "tennis_wta":
