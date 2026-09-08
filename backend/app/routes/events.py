@@ -13460,6 +13460,7 @@ async def get_event_odds_history(
             projected_final_score as calc_projected_score,
             extract_spread_threshold,
             extract_total_threshold,
+            margin_rung_on_home_axis,
             select_projected_final,
         )
         from app.models.models import FuturesOddsSnapshot
@@ -13530,6 +13531,28 @@ async def get_event_odds_history(
                         # (#3948) — which is how a spread contaminated a total
                         # pool in the first place.
                         outcome_may_price_total = False
+
+                # Kalshi's own phrasing first (#3948). It carries both teams'
+                # ladders in one market, so the rung is placed on the home-margin
+                # axis — negated AND inverted for an away rung — rather than
+                # appended as a bare magnitude. A rung whose side cannot be
+                # resolved returns None and is dropped: losing a rung costs
+                # precision, guessing a side inverts the scoreline.
+                margin_rung = margin_rung_on_home_axis(
+                    name,
+                    prob,
+                    event.home_team_name,
+                    event.away_team_name,
+                )
+                if margin_rung is not None:
+                    if source not in spread_contracts_by_source:
+                        spread_contracts_by_source[source] = []
+                    spread_contracts_by_source[source].append({
+                        "threshold": margin_rung["threshold"],
+                        "probability": margin_rung["probability"],
+                        "name": name,
+                    })
+                    continue
 
                 # Try to extract spread threshold
                 spread_val = extract_spread_threshold(name)

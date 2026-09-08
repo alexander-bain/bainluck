@@ -393,6 +393,128 @@ _TOTAL_THRESHOLD_RE = re.compile(
 )
 
 
+# Kalshi's own game-spread phrasing, which the patterns above cannot read:
+# "Dallas wins by over 10.5 points" (#3948). The unit is a closed set measured
+# across all 57,631 production rungs — points 28,837 / runs 20,547 / goals 8,247
+# — and is required rather than optional on purpose: "wins by over 10.5 outs"
+# is a player prop, and a margin parser that accepts any trailing word would
+# feed it to the game's spread ladder.
+_MARGIN_RUNG_RE = re.compile(
+    r"^\s*(?P<team>.+?)\s+wins?\s+by\s+over\s+"
+    r"(?P<threshold>\d+(?:\.\d+)?)\s*"
+    r"(?:points?|runs?|goals?)\s*$",
+    re.IGNORECASE,
+)
+
+
+def parse_margin_rung(text: str) -> Optional[tuple[str, float]]:
+    """Split "Dallas wins by over 10.5 points" into ``("Dallas", 10.5)``.
+
+    Returns ``None`` for anything that is not this phrasing, including the
+    legacy forms ``extract_spread_threshold`` already reads.
+    """
+    match = _MARGIN_RUNG_RE.match(text or "")
+    if not match:
+        return None
+    try:
+        return match.group("team").strip(), float(match.group("threshold"))
+    except (TypeError, ValueError):
+        return None
+
+
+def _name_tokens(name: Optional[str]) -> list[str]:
+    """Lowercase word tokens with punctuation removed. ``A's`` -> ``["as"]``."""
+    cleaned = re.sub(r"[^a-z0-9\s]", "", (name or "").lower())
+    return [token for token in cleaned.split() if token]
+
+
+def _rung_names_side(rung_tokens: list[str], side_tokens: list[str]) -> bool:
+    """Could this rung's team text be naming the team called ``side_tokens``?
+
+    Kalshi writes disambiguated short forms — ``New York G``, ``Chicago WS``,
+    ``Los Angeles D`` — never the event's full team name, so an equality test
+    against ``events.home_team_name`` matches nothing. Every rung token but the
+    last must match in place; the last may be a prefix of the next word
+    (``G`` -> ``Giants``) or the initials of the words that remain
+    (``WS`` -> ``White Sox``).
+    """
+    if not rung_tokens or not side_tokens or len(rung_tokens) > len(side_tokens):
+        return False
+    for rung_token, side_token in zip(rung_tokens[:-1], side_tokens):
+        if rung_token != side_token:
+            return False
+    last = rung_tokens[-1]
+    remaining = side_tokens[len(rung_tokens) - 1:]
+    if not remaining:
+        return False
+    if remaining[0].startswith(last):
+        return True
+    return last == "".join(token[0] for token in remaining)
+
+
+def resolve_rung_side(
+    team_text: str,
+    home_team_name: Optional[str],
+    away_team_name: Optional[str],
+) -> Optional[str]:
+    """``"home"``, ``"away"``, or ``None`` when the rung names neither or both.
+
+    🔴 ``None`` is a refusal, and callers must drop the rung rather than pick a
+    side. The market title cannot stand in for this: all three spread markets
+    measured for #3948 name the AWAY team first (``Dallas vs New York: Spread``
+    on a page whose home team is New York), so position in the title resolves
+    the sign backwards. Ambiguity is real rather than theoretical — a rung
+    reading only ``New York`` in Giants v Jets matches both sides, and guessing
+    there inverts the scoreline instead of merely losing a rung.
+    """
+    rung_tokens = _name_tokens(team_text)
+    names_home = _rung_names_side(rung_tokens, _name_tokens(home_team_name))
+    names_away = _rung_names_side(rung_tokens, _name_tokens(away_team_name))
+    if names_home and not names_away:
+        return "home"
+    if names_away and not names_home:
+        return "away"
+    return None
+
+
+def margin_rung_on_home_axis(
+    text: str,
+    probability: float,
+    home_team_name: Optional[str],
+    away_team_name: Optional[str],
+) -> Optional[dict]:
+    """One Kalshi margin rung as a contract on the HOME-MARGIN axis.
+
+    A Kalshi spread market carries BOTH teams' ladders in one pool, so the two
+    halves have to be put on one axis before `binary_to_implied_spread` — which
+    requires probability to fall as the threshold rises — can read them:
+
+    * a home rung keeps its threshold and its price;
+    * an away rung is **negated and inverted**: ``P(Dallas wins by over 1.5)``
+      is ``P(home margin > -1.5) = 1 - p``.
+
+    🔴 The inversion is the half that signing alone leaves out, and leaving it
+    out is worse than shipping nothing. Measured on event 14637256's real 25
+    rungs, sign-only produces 13 monotonicity violations and derives a spread of
+    0.5 points at confidence 0.85 — a confident wrong answer on a game the
+    market prices at 3 — where sign-and-invert produces 0 violations and 3.0 at
+    0.95 (`artifacts-lane1-183/validate_3948_design.py`).
+
+    ``None`` when the text is not a margin rung, or when the side cannot be
+    resolved.
+    """
+    parsed = parse_margin_rung(text)
+    if parsed is None:
+        return None
+    team_text, threshold = parsed
+    side = resolve_rung_side(team_text, home_team_name, away_team_name)
+    if side is None:
+        return None
+    if side == "home":
+        return {"threshold": threshold, "probability": probability}
+    return {"threshold": -threshold, "probability": 1.0 - probability}
+
+
 def extract_spread_threshold(text: str) -> Optional[float]:
     """Extract the spread threshold from a market title or outcome name."""
     m = _SPREAD_THRESHOLD_RE.search(text)
