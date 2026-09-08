@@ -35,6 +35,10 @@ from app.services import get_db
 from app.utils.hero_probability import blend_provenance, resolve_hero
 from app.utils.latest_observation import load_latest_observed_at
 from app.utils.market_liquidity import grade_liquidity
+from app.utils.proven_duplicates import (
+    FoldedBlendView,
+    folded_probability_sources_batch,
+)
 from app.utils.tournament_advancement import build_advancement
 from app.utils.tournament_board import TREND_DAYS, build_boards
 from app.utils.tournament_event_link import (
@@ -693,16 +697,42 @@ async def _load_blends(
         )
     ).all()
 
+    # THE FOLD, BATCHED (#3937). The event page reads its hero off a
+    # `FoldedBlendView`, so a match whose Kalshi price lives on a suppressed twin
+    # row blends three venues there and — until this call existed — two here.
+    # That is not a rounding difference: on 2026-09-08 the US Open hub printed
+    # Alcaraz 76% over a match page reading 77%, because canonical 15306813 holds
+    # betting + Polymarket and its twin 15306391 holds the Kalshi reading.
+    #
+    # ONE lookup for the whole page, not one per row: this loader is capped at
+    # `MAX_BLEND_EVENTS` fixtures and a per-row fold would be an N+1 on the first
+    # screen of a slam. That cost is exactly why #3810 left this surface
+    # unfolded, so paying it correctly is the ship rather than a detail of it.
+    folded_sources = await folded_probability_sources_batch(session, rows)
+
     blends: dict[int, dict[str, Any]] = {}
     for row in rows:
         # A `Row` answers `getattr` for every column selected above, which is the
         # whole interface `resolve_hero` asks for — it reads its inputs through
         # `getattr(..., default)` precisely so an ORM object, a row and a test
-        # stub are the same thing to it.
-        hero = resolve_hero(row)
+        # stub are the same thing to it. `FoldedBlendView` forwards everything it
+        # does not override, so the row keeps answering for all of them.
+        # The row's OWN sources are the default, never `None`. The batch promises
+        # an entry per event, but `FoldedBlendView(row, None)` would blank the
+        # readings the row already had — a missing key must degrade to today's
+        # unfolded answer, not to a hero that vanishes.
+        view = FoldedBlendView(
+            row, folded_sources.get(int(row.id), row.win_probability_sources)
+        )
+        hero = resolve_hero(view)
         if hero is None:
             continue
-        source_count, _freshest = blend_provenance(row)
+        # `blend_provenance` reads the SAME view, never the bare row: the source
+        # count drives the confidence bars and the age stamp drives the freshness
+        # line, and lighting two bars under a three-venue number is the same
+        # class of lie as printing the wrong percentage (#3810's "they are one
+        # ship" note).
+        source_count, _freshest = blend_provenance(view)
         blends[int(row.id)] = {
             "home_name": row.home_team_name,
             "away_name": row.away_team_name,

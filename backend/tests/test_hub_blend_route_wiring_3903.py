@@ -104,6 +104,11 @@ class _Session:
         #: mistake is visible, and asserting on a fixture instead would be a
         #: guard that cannot fail.
         self.blend_labels: list[str] = []
+        #: Rows the #3937 twin lookup returns, as the 5-tuples that query
+        #: selects. Empty by default: this card has no suppressed twin, so the
+        #: fold is a no-op here and every assertion below is unchanged by it.
+        self.twin_rows: list[tuple[Any, ...]] = []
+        self.twin_lookups = 0
 
     async def execute(self, stmt: Any) -> _Result:
         labels = [desc["name"] for desc in stmt.column_descriptions]
@@ -112,6 +117,14 @@ class _Session:
             # route should never get here; answering honestly rather than
             # raising keeps this fake from asserting a fact by accident.
             return _Result([])
+
+        if "event_tags" in labels:
+            # The #3937 batched fold. It is keyed on `event_tags`, not on an
+            # `IN` list, so it must be dispatched BEFORE the id-list branch
+            # below — that branch reads `whereclause.right.value` and this
+            # statement's whereclause is an `or_()` of `@>` arms with no `.right`.
+            self.twin_lookups += 1
+            return _Result(list(self.twin_rows))
 
         requested = sorted(
             {
