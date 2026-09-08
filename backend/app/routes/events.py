@@ -9829,6 +9829,29 @@ for _league in _KALSHI_PERIOD_LEAGUE_PREFIXES:
         _TICKER_PERIOD_MAP[f"kx{_league}{_q}spread"] = "quarter_spread"
         _TICKER_PERIOD_MAP[f"kx{_league}{_q}winner"] = "quarter_winner"
 
+#: Leagues whose per-inning tickers Kalshi ships (`KXMLBINNINGTOTAL-…-7`,
+#: `KXMLBINNINGWIN-…-3`). NAMED, never inferred — which is the whole point of
+#: #4001. #3992 asked `"inning" in ticker_lower`, and `KXPGAWINNINGSCORE`
+#: contains it, so golf's Winning Score classified as a baseball inning. A
+#: prefix table cannot collide that way: `kxpgawinningscore` does not START with
+#: `kxmlbinning…`. Same construction, and the same collision-freedom, as the
+#: half/quarter entries above.
+#:
+#: A new baseball league listing per-inning markets is one line here. That is the
+#: deliberate trade — a league we have not named keeps the old, loud failure
+#: (an inning read as the game) rather than the quiet one this fixes (someone
+#: else's market read as an inning).
+_KALSHI_INNING_LEAGUE_PREFIXES = ("mlb",)
+
+for _league in _KALSHI_INNING_LEAGUE_PREFIXES:
+    _TICKER_PERIOD_MAP[f"kx{_league}inningtotal"] = "inning_total"
+    _TICKER_PERIOD_MAP[f"kx{_league}inningspread"] = "inning_spread"
+    # Kalshi truncates this one: the ticker is `…INNINGWIN`, not `…INNINGWINNER`,
+    # unlike the half/quarter winners above. Measured on production 2026-09-08 —
+    # `KXMLBINNINGTOTAL` and `KXMLBINNINGWIN` are the only inning roots that
+    # exist, 1,170 markets each.
+    _TICKER_PERIOD_MAP[f"kx{_league}inningwin"] = "inning_winner"
+
 
 def _classify_from_ticker(external_id: str) -> str:
     """Derive market type from a Kalshi external_id (ticker).
@@ -9840,18 +9863,12 @@ def _classify_from_ticker(external_id: str) -> str:
     for prefix, mtype in _TICKER_PERIOD_MAP.items():
         if ticker_lower.startswith(prefix):
             return mtype
-    # Kalshi's per-inning tickers (`KXMLBINNINGTOTAL-…-7`, `KXMLBINNINGWIN-…-3`).
-    # Checked before the generic "total"/"winner" catch-alls below, which would
-    # otherwise call an inning the game (#3992). The name-based rule above
-    # already catches these when the market is named; this covers the tickers
-    # whose names carry no marker at all.
-    if "inning" in ticker_lower:
-        if "total" in ticker_lower:
-            return "inning_total"
-        if "spread" in ticker_lower:
-            return "inning_spread"
-        if "win" in ticker_lower:
-            return "inning_winner"
+    # Kalshi's per-inning tickers are entries in `_TICKER_PERIOD_MAP` above, and
+    # are matched as PREFIXES rather than searched for as a substring (#4001).
+    # `"inning" in ticker_lower` was the first cut of this rule (#3992) and it
+    # matches `KXPGAWINNINGSCORE` — `kxpgaw·inning·score` — so golf's Winning
+    # Score answered `inning_winner`, a baseball period, and would then have been
+    # dropped from the projection pool by `_PM_PERIOD_SCOPES`.
     # Catch-all for base types when no period prefix matched.
     if "spread" in ticker_lower:
         return "spread"
