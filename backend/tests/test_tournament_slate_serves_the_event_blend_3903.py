@@ -228,20 +228,35 @@ def test_a_match_with_no_linked_event_is_untouched():
     assert row["sides"][0]["move"] < 0
 
 
-def test_an_event_with_no_opening_keeps_the_venue_basis():
-    """Half a blend is refused: a mixed basis is what inverted the arrow.
+def test_an_event_with_no_opening_still_prints_the_events_number():
+    """THIS TEST ASSERTED THE OPPOSITE UNTIL CERT-2251, and the cert is right.
 
-    Live case on the day this shipped — Andreeva/Vondrousova (15307447) served a
-    hero and no `opening_odds`.
+    It used to read `..._keeps_the_venue_basis` and pin the row to the venue's
+    pair on the reasoning that "half a blend is refused: a mixed basis is what
+    inverted the arrow". The rule was correct and the UNIT was wrong. Applied to
+    the whole row it meant the hub printed 37% under a match page printing 38%
+    — #3903's own symptom, preserved by #3903's own fix, on the exact live case
+    the old docstring cited (15307447 serves a hero and no `opening_odds`).
+
+    Never mixing bases WITHIN ONE CLAIM is the rule that survives. A level is one
+    claim, a movement is another: the level comes from the event, and the arrow
+    is dropped rather than borrowed — including the venue opening that produced
+    it, which belongs to the number that was just replaced.
     """
     event = _event(opening_home_probability=None, opening_away_probability=None)
     row = _the_row(_linked_register(), _venue_prices(), _blend_entry(event))
 
-    assert row["price_basis"] == PRICE_BASIS_VENUE
+    assert row["price_basis"] == PRICE_BASIS_BLEND
+    # The refusal still travels — it now qualifies the ARROW, not the row. Read
+    # with `price_basis`: blend + this reason is "the event's number, no arrow".
     assert row["blend_refusal"] == "BLEND_HAS_NO_OPEN"
-    # It kept a COMPLETE venue pair rather than losing its arrow.
-    assert row["sides"][0]["probability"] == pytest.approx(0.589109, abs=1e-5)
-    assert row["sides"][0]["move"] is not None
+    # The EVENT's number (0.595), not the venue's de-vigged pair (0.589109) that
+    # the control above pins — so this cannot pass by the row being left alone.
+    assert row["sides"][0]["probability"] == pytest.approx(0.595, abs=1e-6)
+    # And no half-basis left behind: the venue's opening went with its number.
+    assert row["sides"][0]["opening_probability"] is None
+    assert row["sides"][0]["move"] is None
+    assert row["sides"][1]["opening_probability"] is None
 
 
 # ---------------------------------------------------------------------------

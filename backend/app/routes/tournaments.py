@@ -49,6 +49,7 @@ from app.utils.tournament_slate import (
     apply_books_prematch,
     apply_espn_event_links,
     apply_event_blend_slate,
+    apply_event_blend_to_linked_rows,
     event_blend_view,
     build_bracket,
     build_props,
@@ -1550,6 +1551,31 @@ async def _build_sections(
         # Stamped straight away, so nothing between here and the response can
         # read a slate row's `event_id` and get the pre-link answer.
         apply_espn_event_links(first["slate"], espn_links["by_espn"])
+        # AND THEN ASK THE BLEND AGAIN, BECAUSE THE LINK JUST CHANGED THE ANSWER
+        # (#3903, second seam). The line above is where a scoreboard-paired row
+        # first learns which `events` row it is; `build_slate` offered it the
+        # blend before that, when it had no event to orient onto. #3903 shipped,
+        # deployed, and left all 8 US Open quarter-finals reading
+        # `price_basis: "venue"` for exactly this reason.
+        #
+        # THE MAP HAS TO GROW FIRST. `slate_blends` was loaded off `by_matchup`
+        # plus the register's own pins; an id that only the ESPN linker resolves
+        # was never in it, so re-running the overlay against the existing map
+        # would refuse every one of these rows by name and change nothing.
+        #
+        # The extra read is bounded and conditional: only ids the first load did
+        # not already cover, only on a first-screen build, and skipped entirely
+        # when the linker resolved nothing new — which is the common case once a
+        # register carries its own pins.
+        _linked_ids = [
+            row.get("event_id")
+            for row in (first["slate"].get("matches") or [])
+            if isinstance(row.get("event_id"), int)
+            and row.get("event_id") not in slate_blends
+        ]
+        if _linked_ids:
+            slate_blends.update(await _load_blends(db, _linked_ids))
+        apply_event_blend_to_linked_rows(first["slate"], slate_blends)
         # HOW MANY OF TODAY'S ROWS THAT CHANNEL ACTUALLY OPENED (ux/1048).
         # `espn_linked` counts the map, and the map is resolved for the finished
         # list AND the slate together — so it can be healthy while every row on
