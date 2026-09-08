@@ -1698,6 +1698,9 @@ async def _poll_kalshi_markets():
         _post_loop_skipped: list = []
         _post_loop_failed: list = []
         _post_loop_dry_run: dict = {}
+        # #3956: fix-up name -> per-tier breakdown of that mode's count.
+        _post_loop_ran_detail: dict = {}
+        _post_loop_dry_run_detail: dict = {}
 
         def _no_post_loop_budget(_key: str) -> bool:
             """True when `_key` must be skipped, recording it as a casualty."""
@@ -1730,8 +1733,16 @@ async def _poll_kalshi_markets():
                     # receipt naming a mode the repair did not run in is the
                     # same bug one level up. The count is routed by mode below.
                     golf_dry_run = not _golf_commence_fix_enabled()
+                    # #3956: the per-tier breakdown of the markets the count
+                    # covers. Queue #189 cannot be decided from the count alone
+                    # — "3,287 would move" is only actionable next to "and N of
+                    # them are a 4.5-day guess". It went to logger.info, and
+                    # `heroku logs` is EPERM from the agent sandbox (notice 7),
+                    # so in practice the number did not exist for the operator
+                    # who has to make the call.
+                    golf_detail: dict[str, int] = {}
                     golf_fixed = await _fix_golf_commence_times(
-                        dry_run=golf_dry_run
+                        dry_run=golf_dry_run, detail=golf_detail
                     )
                     stats["golf_commence_fixed"] = golf_fixed
                     stats["golf_commence_dry_run"] = golf_dry_run
@@ -1739,11 +1750,16 @@ async def _poll_kalshi_markets():
                     # documented as "rows it repaired" — so it gets the 0 (which
                     # still says the repair RAN, unlike an absent key) and the
                     # rehearsal total goes to the field that names the mode.
+                    # The detail follows the count into the SAME mode's map, so
+                    # a breakdown can never be read against the other mode's
+                    # number (#3952's lesson, one field along).
                     if golf_dry_run:
                         _post_loop_ran["golf_commence_fixed"] = 0
                         _post_loop_dry_run["golf_commence_fixed"] = golf_fixed
+                        _post_loop_dry_run_detail["golf_commence_fixed"] = golf_detail
                     else:
                         _post_loop_ran["golf_commence_fixed"] = golf_fixed
+                        _post_loop_ran_detail["golf_commence_fixed"] = golf_detail
                 except Exception as e:
                     logger.warning("Golf commence_time fix failed: %s", e)
                     stats["golf_commence_fixed"] = 0
@@ -1817,6 +1833,10 @@ async def _poll_kalshi_markets():
                 _report.post_loop_fixups_skipped = list(_post_loop_skipped)
                 _report.post_loop_fixups_failed = list(_post_loop_failed)
                 _report.post_loop_fixups_dry_run = dict(_post_loop_dry_run)
+                _report.post_loop_fixups_ran_detail = dict(_post_loop_ran_detail)
+                _report.post_loop_fixups_dry_run_detail = dict(
+                    _post_loop_dry_run_detail
+                )
                 update_scan_report_head(_report)
             except Exception as exc:
                 logger.warning(
@@ -1876,8 +1896,21 @@ def _golf_commence_fix_enabled() -> bool:
         return False
 
 
-async def _fix_golf_commence_times(dry_run: bool | None = None) -> int:
+async def _fix_golf_commence_times(
+    dry_run: bool | None = None, detail: dict[str, int] | None = None
+) -> int:
     """Fix commence_time on Kalshi golf markets using DataGolf DB data.
+
+    ``detail``, when passed, is an OUT parameter: it is cleared and filled with
+    the per-tier breakdown of the markets counted in the return value, so a
+    caller can publish "how many of these are DataGolf truth vs a 4.5-day
+    guess" (#3956). It is opt-in rather than part of the return type because
+    the other two callers (`backfill_winners`, the admin endpoint) want only the
+    count, and widening the return would churn them for nothing.
+
+    The invariant worth keeping: ``sum(detail.values()) == <return value>``.
+    The breakdown describes the markets this repair reports, never the wider
+    set it merely considered.
 
     Kalshi sets commence_time = market close_time (= resolution date, typically
     Sunday evening). For calibration, we need commence_time to be the eve of
@@ -1969,9 +2002,27 @@ async def _fix_golf_commence_times(dry_run: bool | None = None) -> int:
         fixed = 0
         fixed_ids = []
         sample: list[tuple] = []  # bounded dry-run evidence: (id, name, old, new)
+        # Two breakdowns, and the difference between them is the whole point of
+        # #3956. `source_counts` counts every market a tier was RESOLVED for —
+        # which is all of them, since the query requires a non-NULL
+        # commence_time and Tier 3 therefore always catches. `fixed_source_counts`
+        # counts only the markets that then cross the >1h threshold and are
+        # actually reported as fixed.
+        #
+        # They differ (3,393 vs 3,287 on 2026-09-08), and only the second one
+        # answers the operator question Queue #189 turns on: "of the markets this
+        # would touch, how many get DataGolf truth and how many get a 4.5-day
+        # guess?" Publishing the first beside the reported count would be a tier
+        # split that silently describes 106 markets the repair leaves alone —
+        # and those are the ones already within an hour of correct, i.e. skewed
+        # toward Tier 1, so it would UNDER-state the heuristic share and make
+        # enabling look safer than it is. That is the same over-claiming shape
+        # #3952 removed from the count itself.
         source_counts = {"datagolf_db": 0, "schedule": 0, "heuristic": 0}
+        fixed_source_counts = {"datagolf_db": 0, "schedule": 0, "heuristic": 0}
         for m in markets:
             target_dt = None
+            tier: str | None = None
 
             # Normalize this Kalshi market's name to a tournament key
             tourn_key = _normalize_tournament(m.name, schedule)
@@ -1984,7 +2035,8 @@ async def _fix_golf_commence_times(dry_run: bool | None = None) -> int:
                 # Back up 18h to the eve of Round 1 (same convention
                 # as the old schedule path).
                 target_dt = dg_ct - timedelta(hours=18)
-                source_counts["datagolf_db"] += 1
+                tier = "datagolf_db"
+                source_counts[tier] += 1
 
             # Tier 2: DataGolf live schedule (current season)
             if (
@@ -1996,14 +2048,16 @@ async def _fix_golf_commence_times(dry_run: bool | None = None) -> int:
                     target_dt = datetime.fromisoformat(
                         schedule_by_key[tourn_key]
                     ) - timedelta(hours=18)
-                    source_counts["schedule"] += 1
+                    tier = "schedule"
+                    source_counts[tier] += 1
                 except (ValueError, TypeError):
                     pass
 
             # Tier 3: Heuristic fallback — close_time - 4.5 days
             if target_dt is None and m.commence_time:
                 target_dt = m.commence_time - timedelta(days=4, hours=12)
-                source_counts["heuristic"] += 1
+                tier = "heuristic"
+                source_counts[tier] += 1
 
             if (
                 target_dt
@@ -2019,6 +2073,8 @@ async def _fix_golf_commence_times(dry_run: bool | None = None) -> int:
                     )
                 fixed += 1
                 fixed_ids.append(m.id)
+                if tier:
+                    fixed_source_counts[tier] += 1
                 if len(sample) < 20:
                     sample.append((m.id, m.name, m.commence_time, target_dt))
 
@@ -2035,23 +2091,38 @@ async def _fix_golf_commence_times(dry_run: bool | None = None) -> int:
             await session.commit()
             logger.info(
                 "Fixed commence_time for %d Kalshi golf markets "
-                "(sources: %s, reset cal_probs on %d markets)",
+                "(sources of the fixed: %s; tiers considered across all %d: %s; "
+                "reset cal_probs on %d markets)",
                 fixed,
+                fixed_source_counts,
+                len(markets),
                 source_counts,
                 len(fixed_ids),
             )
         elif dry_run:
             logger.info(
                 "[DRY-RUN] golf commence fix would update %d/%d resolved markets "
-                "(sources=%s); would NULL cal_prob on their %d markets. "
+                "(sources of those %d: %s; tiers considered across all %d: %s); "
+                "would NULL cal_prob on their %d markets. "
                 "Set golf_commence_fix:enabled=1 in Redis to apply. "
                 "Sample (id, name, old -> new): %s",
                 fixed,
+                len(markets),
+                fixed,
+                fixed_source_counts,
                 len(markets),
                 source_counts,
                 len(fixed_ids),
                 [(s[0], s[1], str(s[2]), str(s[3])) for s in sample],
             )
+
+        # Fill the OUT parameter last, from the fixed-set counters only, so the
+        # published breakdown can never describe a wider population than the
+        # number it sits beside. Cleared first: a caller that reuses a dict
+        # across beats must not accumulate.
+        if detail is not None:
+            detail.clear()
+            detail.update(fixed_source_counts)
 
         return fixed
 
