@@ -529,6 +529,103 @@ def game_may_still_be_running(last_snapshot, now) -> bool:
     return (now - last_snapshot) < timedelta(minutes=STILL_ACTIVE_MINUTES)
 
 
+# ── A FORMAT'S MAXIMUM PROTECTS A MATCH THAT IS REPORTING (#3946) ────────────
+#
+#: The wall-clock bound for a live row that NOTHING has ever reported on, by
+#: sport prefix. A sport absent from this map keeps its ``SPORT_MAX_DURATIONS``
+#: entry unchanged — this is a narrowing for two measured sports, never a
+#: global clamp.
+#:
+#: WHY A SECOND NUMBER. ``SPORT_MAX_DURATIONS`` answers "how long can a match of
+#: this sport last", and its entries are sized by the LONGEST format the sport
+#: has: tennis is 6.0 because a Grand Slam five-setter can run that far. That
+#: maximum is the right bound for a match something is REPORTING on, because the
+#: still-running guard cannot distinguish "long" from "over" and the extra hours
+#: are what stop a five-setter being suspended mid-match. It is the wrong bound
+#: for a row nothing has ever reported on, because such a row cannot be the case
+#: the maximum was widened for — and paying the widening anyway is what put
+#: three scoreless ATP challenger matches, badged LIVE at 99%, above the US Open
+#: quarter-finals on ``/sport/tennis/atp`` for six and a half hours (#3946).
+#:
+#: MEASURED, production 2026-09-08.
+#:  * ``tennis`` = 3.0 — best-of-three. Every Slam row sits in its own sport key
+#:    (``tennis_atp_us_open``, ``tennis_wta_us_open``) AND carries an
+#:    ``espn_id``, so :func:`event_has_never_been_observed` excludes all of them
+#:    by construction; the rows this bound reaches are the ``tennis_atp`` /
+#:    ``tennis_wta`` / ``tennis_other`` tour rails, where 0 of 815 rows in seven
+#:    days ever carried a score, a period, an anchor or a play snapshot.
+#:  * ``soccer`` = 2.5 — measured p99 of real duration (``completed_at -
+#:    commence_time``) across 30 soccer leagues in fourteen days is 2.15h, and
+#:    the longest league p99 in that set is 2.62h excluding two rows whose
+#:    completion was itself derived. Soccer has no ``SPORT_MAX_DURATIONS`` entry
+#:    at all today, so these rows ride the 4.0h default.
+#:
+#: Deliberately NOT listed: ``baseball`` (MLB's own p99 real duration is 4.22h
+#: against a 5.0 maximum — half an hour of headroom is not worth the risk),
+#: ``americanfootball`` and ``golf`` (a 4h college game and an 8h round are
+#: ordinary, and neither appears in the unobserved population).
+UNOBSERVED_MAX_HOURS: dict[str, float] = {
+    "tennis": 3.0,
+    "soccer": 2.5,
+}
+
+
+def event_has_never_been_observed(
+    home_score, away_score, period, espn_id, statpal_fixture_id, last_snapshot
+) -> bool:
+    """Has ANYTHING that reports on play ever said a word about this row?
+
+    True ⇒ the only thing that has ever spoken about this match is a venue
+    price, and the only reason the row says ``live`` is that a scheduled time
+    passed (``scheduled → live`` promotes on the clock alone). Rung 4 of
+    ``EVENT-GRAPH-DOCTRINE`` §R, with nothing above it.
+
+    Every conjunct is a separate way for a source to have spoken, and all five
+    must be silent — a one-signal version of this test would be wrong, because
+    the signals are not interchangeable. Tennis never populates ``period``;
+    ``tennis_atp`` never populates ``espn_id``; a US Open match populates
+    ``espn_id`` from the moment it is discovered and its score only once play
+    starts. The anchors are what protect the marquee: an anchored row is one the
+    authority knows about and can settle, so it keeps its sport's full maximum
+    however quiet it happens to be right now.
+
+    ``last_snapshot`` must come from :data:`LAST_POST_COMMENCE_SNAPSHOT_SQL`
+    (venue prices already excluded) and NONE means "no play source has ever
+    captured this row post-commence" — a strictly stronger absence than the
+    staleness :func:`game_may_still_be_running` reads.
+    """
+    return (
+        home_score is None
+        and away_score is None
+        and period is None
+        and espn_id is None
+        and statpal_fixture_id is None
+        and last_snapshot is None
+    )
+
+
+def wall_clock_bound_hours(sport_key, sport_max_hours, never_observed: bool) -> float:
+    """How many hours past ``commence_time`` may this row keep claiming to be live?
+
+    The sport's own maximum, except for a row nothing has ever observed, which
+    gets the shorter of that maximum and its :data:`UNOBSERVED_MAX_HOURS` entry.
+    ``min`` and not a straight substitution: the unobserved bound narrows a
+    window, and a sport whose maximum is already shorter than its entry must not
+    have it WIDENED by this function.
+
+    Longest matching prefix wins, so a future ``tennis_atp_us_open`` entry would
+    beat ``tennis`` rather than depending on dict insertion order the way
+    ``get_max_duration_for_sport`` does.
+    """
+    if not never_observed:
+        return sport_max_hours
+    key = sport_key or ""
+    matching = [p for p in UNOBSERVED_MAX_HOURS if key.startswith(p)]
+    if not matching:
+        return sport_max_hours
+    return min(sport_max_hours, UNOBSERVED_MAX_HOURS[max(matching, key=len)])
+
+
 def venue_live_write_is_a_resurrection(status, completed_at) -> bool:
     """Would writing ``live`` here un-settle a row on a VENUE's say-so? (live/042)
 
