@@ -48,6 +48,7 @@ import {
   orderedSides,
   slateGroups,
   slateNotice,
+  slateRowFreshnessLabel,
   slateRowIsPresentedAsLive,
   type SlateData,
   type SlateMatch,
@@ -460,5 +461,90 @@ describe("formatting", () => {
     expect(formatSlateProbability(null)).toBe("—");
     expect(formatSlateProbability(0)).toBe("0%");
     expect(formatSlateProbability(0.725)).toBe("73%");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #3881 — the match-card age chip names what it is the age OF.
+//
+// On the US Open hub the first ROUND OF 16 card read
+//
+//     1:00 PM · MEN'S SINGLES   7 hours ago        <- amber
+//
+// for Cerundolo v Blockx, `scheduled`, commence_time 17:00Z — three and a half
+// hours in the FUTURE at the time of the shot. Three facts on one line and the
+// third had no noun, so it read as a claim about the match.
+//
+// Every other answer this function can give already names its own subject.
+// Only the plain-age branch — the common case — did not.
+// ---------------------------------------------------------------------------
+
+describe("the match age chip says what it is the age of (#3881)", () => {
+  const STALE = match({
+    probability_is_live: false,
+    price_state: "dark",
+    age_hours: 7,
+    mixed_freshness: false,
+    stale_sides: [],
+  });
+
+  it("an age carries its noun instead of standing alone", () => {
+    expect(slateRowFreshnessLabel(STALE)).toBe("Last number 7 hours ago");
+  });
+
+  it("no answer this function gives ever begins with a digit", () => {
+    // The class, not the instance: a bare number beside a start time is the
+    // defect, whatever the unit. Covers minutes, hours and days.
+    for (const ageHours of [0.25, 1, 7, 47, 20 * 24]) {
+      const label = slateRowFreshnessLabel(match({
+        probability_is_live: false,
+        price_state: "dark",
+        age_hours: ageHours,
+        mixed_freshness: false,
+        stale_sides: [],
+      }));
+      expect(label).not.toBeNull();
+      expect(label).not.toMatch(/^\d/);
+    }
+  });
+
+  it("RENDERS with the noun on the card, beside the start time", () => {
+    const html = render(slate({ matches: [STALE] }));
+    expect(html).toContain('data-testid="match-age"');
+    expect(html).toContain("Last number 7 hours ago");
+  });
+
+  it("the singular reads 'hour', not 'hours'", () => {
+    expect(slateRowFreshnessLabel(match({
+      probability_is_live: false,
+      price_state: "dark",
+      age_hours: 1,
+      mixed_freshness: false,
+      stale_sides: [],
+    }))).toBe("Last number 1 hour ago");
+  });
+
+  it("a row with NO reading keeps its own wording, unprefixed", () => {
+    // "no reading yet" already names its subject. "Last number no reading yet"
+    // is the failure this guard exists to catch.
+    const never = match({
+      probability_is_live: false,
+      price_state: "dark",
+      age_hours: null,
+      mixed_freshness: false,
+      stale_sides: [],
+    });
+    expect(slateRowFreshnessLabel(never)).toBe("no reading yet");
+  });
+
+  it("the branches that already named a subject are untouched", () => {
+    // Unpriced keeps ruling 138's wording...
+    expect(slateRowFreshnessLabel(match({
+      probability_is_live: false,
+      price_state: "unpriced",
+      priced: false,
+    }))).toBe("No probability yet");
+    // ...and a live row still says nothing at all.
+    expect(slateRowFreshnessLabel(match())).toBeNull();
   });
 });
