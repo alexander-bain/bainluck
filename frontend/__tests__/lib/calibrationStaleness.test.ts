@@ -116,6 +116,91 @@ describe("decideCalibrationStaleness", () => {
     });
   });
 
+  /**
+   * #4046 — a fallback TIER answering is not a claim about the artifact's AGE.
+   *
+   * Measured on production 2026-09-08. Publishing had just been repaired
+   * (#3893) and the curve was republishing hourly, on time — and the page told
+   * every reader, over a seven-minute-old artifact, that these numbers "are not
+   * being refreshed right now". `cache.status === "stale"` was doing double
+   * duty: it is set by whichever fallback tier answers, and `main` (2h TTL) is
+   * evicted ahead of `last_good` (7d) on a 50MB `allkeys-lru` instance, so a
+   * durable serve is documented steady state rather than an incident.
+   *
+   * The guard is the CLASS, not the string: a serving-tier signal may not be
+   * read as a statement about content age when the payload separately measures
+   * that age. Hence the pair — the current artifact loses the sentence, and
+   * every case where health is not positively proven keeps it.
+   */
+  describe("#4046: a fallback tier serving a CURRENT artifact", () => {
+    /** The 19:42Z production payload, verbatim in the fields that decide. */
+    const DURABLE_BUT_CURRENT = {
+      ...FROZEN_BANK,
+      cache: {
+        status: "stale",
+        reason: "main_key_absent_durable",
+        generated_at: "2026-09-08T19:16:16.079814+00:00",
+        age_s: 1563,
+      },
+      producer: { stalled: false, beats_missed: 0 },
+    };
+
+    it("does not tell a reader the curve is not being refreshed", () => {
+      const notice = decideCalibrationStaleness(DURABLE_BUT_CURRENT)!;
+      expect(notice.kind).not.toBe("last-good");
+      expect(stalenessHeadline(notice)).not.toMatch(/not being refreshed|last complete snapshot/i);
+    });
+
+    it("falls through to what the payload actually discloses", () => {
+      // The bank really is frozen over drift, so that — not the storage tier —
+      // is the honest subject of the banner.
+      expect(decideCalibrationStaleness(DURABLE_BUT_CURRENT)!.kind).toBe("frozen-inputs");
+    });
+
+    it("says nothing at all when a current fallback serve has nothing to disclose", () => {
+      // No envelope, no frozen bank, beat landing. The reader is looking at
+      // current numbers; which Redis key they came out of is not their problem.
+      expect(
+        decideCalibrationStaleness({
+          cache: { status: "stale", reason: "main_key_absent_durable", age_s: 300 },
+          producer: { stalled: false, beats_missed: 0 },
+        }),
+      ).toBeNull();
+    });
+
+    it("still reads a genuinely dated copy as last-good", () => {
+      // The three-day outage this banner was RIGHT about. `beats_missed` is the
+      // difference, and it must keep making it.
+      const notice = decideCalibrationStaleness({
+        ...FROZEN_BANK,
+        cache: { status: "stale", reason: "main_key_absent_durable", age_s: 264_000 },
+        producer: { stalled: true, beats_missed: 73 },
+      })!;
+      expect(notice.kind).toBe("last-good");
+      expect(notice.beatsMissed).toBe(73);
+    });
+
+    it.each([
+      ["no producer block at all (an older payload)", undefined],
+      ["a stalled beat", { stalled: true, beats_missed: 5 }],
+      ["one missed beat — health is not 'nearly current'", { stalled: false, beats_missed: 1 }],
+      ["an unknown artifact age, which the server publishes as stalled", { stalled: true, beats_missed: null }],
+      ["a beat count the payload could not state", { stalled: false, beats_missed: null }],
+      ["a non-boolean `stalled`", { stalled: "false" as unknown, beats_missed: 0 }],
+      ["a non-finite beat count", { stalled: false, beats_missed: Number.NaN }],
+    ])("fails closed to last-good on %s", (_label, producer) => {
+      // Gotcha #53, and the whole reason the downgrade is a POSITIVE proof of
+      // health: an unreadable producer must never become the one input that
+      // talks the banner out of a warning.
+      const notice = decideCalibrationStaleness({
+        ...FROZEN_BANK,
+        cache: { status: "stale", reason: "main_key_absent_durable", age_s: 1563 },
+        ...(producer === undefined ? {} : { producer }),
+      })!;
+      expect(notice.kind).toBe("last-good");
+    });
+  });
+
   describe("absence is never the reassuring reading", () => {
     it("a payload with no `availability` falls back to cache.status, not to fresh", () => {
       // An older cached artifact predates the envelope. It is not broken and it
