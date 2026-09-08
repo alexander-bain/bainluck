@@ -133,9 +133,28 @@ class TestTheTtlIsDerivedNotChosen:
 
 class TestTheTtlLeverBehavesLikeALever:
     def test_other_namespaces_are_untouched(self):
-        assert pic.shared_build_ttl_s("concepts") == pic.DEFAULT_TTL_S
-        assert pic.shared_build_ttl_s("canonical_counts") == pic.DEFAULT_TTL_S
+        """The lever is `market_load`'s and must not leak into its neighbours.
+
+        LAT-P261 (#3904) changed what "untouched" EVALUATES to without changing
+        what it MEANS. These two namespaces are counted against the live ceiling,
+        so they are now clamped to `live_artifact_ttl_ceiling_s()` — by the clamp,
+        never by `market_load`'s 120. The claim under test is still that raising
+        `market_load` moved nothing here, which is why the assertion is written
+        against the clamp and against `DEFAULT_TTL_S` as the pre-clamp value,
+        rather than against a literal that would hide which of the two bound.
+        """
+        assert pic.shared_build_ttl_s("concepts") == pic.live_artifact_ttl_ceiling_s()
+        assert (
+            pic.shared_build_ttl_s("canonical_counts")
+            == pic.live_artifact_ttl_ceiling_s()
+        )
+        assert pic.live_artifact_ttl_ceiling_s() < pic.DEFAULT_TTL_S
+        # The process-wide value carries no namespace, so no clamp applies.
         assert pic.shared_build_ttl_s() == pic.DEFAULT_TTL_S
+        # …and none of the three is `market_load`'s.
+        assert pic.shared_build_ttl_s("concepts") != pic.shared_build_ttl_s(
+            "market_load"
+        )
 
     def test_the_kill_switch_stays_absolute(self, monkeypatch):
         """A per-namespace default that could outlive the kill switch would mean
@@ -154,7 +173,8 @@ class TestTheTtlLeverBehavesLikeALever:
     def test_a_per_namespace_override_binds(self, monkeypatch):
         monkeypatch.setenv("FEED_SHARED_BUILD_TTL_S_MARKET_LOAD", "45")
         assert pic.shared_build_ttl_s("market_load") == 45.0
-        assert pic.shared_build_ttl_s("concepts") == pic.DEFAULT_TTL_S
+        # Unchanged claim, LAT-P261 value: overriding one namespace moves no other.
+        assert pic.shared_build_ttl_s("concepts") == pic.live_artifact_ttl_ceiling_s()
 
     def test_an_explicit_global_binds_a_namespace_with_a_builtin_default(
         self, monkeypatch
