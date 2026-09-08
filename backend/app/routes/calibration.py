@@ -37,7 +37,33 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _cache: dict = {"data": None, "timestamp": 0}
+
+#: Wall-clock backstop for the tier-1 memo, and NOTHING MORE since #4072.
+#:
+#: It has been 3600 since the endpoint shipped (``d3ae331d``, 2026-05-12), when
+#: tier 1 was the ONLY cache and a miss ran the whole multi-CTE aggregation live
+#: against Postgres on a public unauthenticated route. The hour was sized against
+#: THAT — the database. The precompute beat and the Redis tier arrived later, so
+#: what a memo miss costs today is one ``GET`` of a bounded key, and the constant
+#: has never been re-sized against its actual cost. It is left at 3600 because it
+#: now only governs a payload this process cannot date (see
+#: ``_memo_may_answer``), which is a case already declared degraded.
 CACHE_TTL = 3600
+
+#: #4072. The real bound on the tier-1 memo: how old the ARTIFACT it holds may be.
+#:
+#: ``precompute_calibration_main`` is hourly (:15, publishing ~70-100 s in), and
+#: the memo used to be bounded by an hour of WALL CLOCK from whenever the process
+#: happened to seed. Two equal periods with an arbitrary phase offset between
+#: them: a process that memoised the 20:16 artifact at 20:30 kept serving it
+#: until 21:30, and the 21:16 publish went unseen for 14 minutes. Measured twice
+#: in consecutive hours with no release in either window (lag ≥ 11m42s, ≥ 14m19s).
+#:
+#: Keying the bound to the payload's own ``generated_at`` removes the phase offset
+#: outright, because ``generated_at`` IS the publish clock: an artifact reaches
+#: this age at the moment its successor is due, so the memo lapses seconds before
+#: there is something newer to read rather than up to an hour after.
+PUBLISH_PERIOD_S = 3600
 
 #: #2007 / CAL-P076. The staged bank's as-of + drift, memoised per dyno. The two
 #: durable rows behind it are primary-key reads of bounded payloads, but tier 1
@@ -48,6 +74,42 @@ CACHE_TTL = 3600
 #: own ``staged_at`` so a stale read cannot make the disclosure look current.
 _staged_cache: dict = {"data": None, "timestamp": 0.0}
 STAGED_DISCLOSURE_TTL_S = 120.0
+
+
+def _memo_may_answer(
+    payload: Any, memoised_at: float, *, now: float, age_s: Optional[float]
+) -> bool:
+    """May tier 1 answer from process memory, or must it re-read Redis first?
+
+    ``age_s`` is the payload's own content age (``payload_age_s``), passed in
+    rather than recomputed because the caller needs it anyway for its ruling-025
+    declaration — one parse, one answer, no chance of the gate and the
+    declaration disagreeing about how old the same copy is.
+    """
+    if not isinstance(payload, dict):
+        return False
+
+    # Unchanged (Queue #284 Item 3): a stale-marked copy is deliberately NOT
+    # served from here. It stays honestly marked on every response, and every
+    # request re-attempts Redis main so a later fresh-main read replaces it
+    # promptly.
+    if payload.get("cache", {}).get("status") == "stale":
+        return False
+
+    if age_s is not None:
+        # #4072, the fix: bound the memo by the ARTIFACT's age, never by how long
+        # THIS process has happened to hold it. Once the copy is a full publish
+        # period old its successor is due, and re-reading Redis is the only way
+        # to find out whether it has landed.
+        return age_s < PUBLISH_PERIOD_S
+
+    # Age genuinely unknown — absent or unparseable ``generated_at``, which is
+    # never the same as zero (gotcha #53). A payload this process cannot date is
+    # already declared degraded by the caller, and refusing the memo outright
+    # would make it re-read Redis on EVERY request for as long as it is held,
+    # which is a lot of load to spend on a copy we have already stopped
+    # believing. The wall-clock backstop governs this case and no other.
+    return (now - memoised_at) < CACHE_TTL
 
 
 def _score_payload(payload: dict) -> dict:
@@ -1207,23 +1269,21 @@ async def public_calibration(
     #    disclosure, which refuses ``fresh``.
     staged_block = await _read_staged_disclosure(db, now=now)
 
-    # 1. In-process cache (survives between requests on same dyno). A
-    #    stale-marked copy (Tier 2b, main key absent) is deliberately NOT served
-    #    from here: it stays honestly marked on every response, but each request
-    #    re-attempts Redis main so a later fresh-main read replaces it promptly
-    #    (Queue #284 Item 3). TTL and compute behavior are unchanged.
-    if (
-        isinstance(_cache["data"], dict)
-        and (now - _cache["timestamp"]) < CACHE_TTL
-        and _cache["data"].get("cache", {}).get("status") != "stale"
-    ):
-        # Ruling 025: this tier re-derives the declaration from the CONTENT it is
-        # about to serve rather than replaying whatever the producing tier
-        # stamped an hour ago. The memo can only hold an unmarked copy admitted
-        # by the main tier, but it can hold it for up to CACHE_TTL, and "it was
-        # fresh when I stored it" is a claim about the past. Age only — no shape
-        # re-check, for the reason recorded at the main tier below.
-        memo_age = payload_age_s(_cache["data"])
+    # 1. In-process cache (survives between requests on same dyno). Admission is
+    #    ``_memo_may_answer``: stale-marked copies are excluded (Queue #284
+    #    Item 3) and, since #4072, so is any copy whose ARTIFACT has reached a
+    #    full publish period — otherwise this tier holds a superseded artifact
+    #    for up to an hour past the beat that replaced it. Compute behavior is
+    #    unchanged.
+    #
+    #    Ruling 025: this tier re-derives the declaration from the CONTENT it is
+    #    about to serve rather than replaying whatever the producing tier
+    #    stamped. The memo can only hold an unmarked copy admitted by the main
+    #    tier, and "it was fresh when I stored it" is a claim about the past.
+    #    Age only — no shape re-check, for the reason recorded at the main tier
+    #    below.
+    memo_age = payload_age_s(_cache["data"])
+    if _memo_may_answer(_cache["data"], _cache["timestamp"], now=now, age_s=memo_age):
         if _cache["data"].get("availability") == AVAILABILITY_DEGRADED:
             # A memo cannot HEAL. The copy stored here was already declared
             # unvalidated by the tier that admitted it, and re-deriving purely

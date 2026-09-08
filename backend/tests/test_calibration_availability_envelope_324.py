@@ -68,6 +68,23 @@ def _at(*, days_ago: float = 0.0) -> str:
     return (base - timedelta(days=days_ago)).isoformat()
 
 
+def _recent(*, minutes: float = 5.0) -> str:
+    """A stamp that is in the past AND younger than one publish period (#4072).
+
+    ``_at`` anchors an hour back and truncates to the hour, so the youngest stamp
+    it can produce is already 60-120 minutes old. Since #4072 the tier-1 memo
+    refuses an artifact that has reached ``PUBLISH_PERIOD_S``, so a test that
+    wants to prove something about the MEMO cannot date its payload with ``_at``
+    — the memo would decline it and the assertion would be satisfied by a lower
+    tier instead, which is a test that passes without exercising what it names.
+
+    Subtracting from ``now`` directly is safe here without ``_at``'s truncation
+    dance: the future-stamp hazard gotcha #44 guards against comes from the
+    fixed-hour-of-today idiom, and there is no fixed hour in this one.
+    """
+    return (datetime.now(timezone.utc) - timedelta(minutes=minutes)).isoformat()
+
+
 def _payload(*, outcomes: int = 1_000_000, version: str | None = None, generated_at=None):
     from app.tasks.precompute_calibration import CALIBRATION_POPULATION_VERSION
 
@@ -98,7 +115,16 @@ class _FakeRedis:
 
 
 class _DeadRedis:
+    #: ``calls`` exists so a memo test can assert the memo actually ANSWERED.
+    #: Without it, a tier-1 decline falls through to this client, raises, and is
+    #: rescued by tier 4 into the same ``degraded`` answer the test expected —
+    #: so the test goes on passing while no longer touching the tier it names.
+    #: That is not hypothetical: it is what #4072's gate did to two tests here.
+    def __init__(self):
+        self.calls = 0
+
     async def get(self, key):
+        self.calls += 1
         raise ConnectionError("Error 111 connecting to rediss://host:10819")
 
 
@@ -216,37 +242,50 @@ class TestEveryTierDeclares:
         """Tier 1 re-derives rather than replaying the stamp it stored.
 
         "It was fresh when I memoized it" is a claim about the past, and the memo
-        can hold a copy for a full CACHE_TTL.
+        can hold a copy for as long as ``_memo_may_answer`` admits it.
+
+        The payload is dated with ``_recent`` rather than ``_at``: since #4072 the
+        memo declines an artifact that has reached ``PUBLISH_PERIOD_S``, and an
+        ``_at`` stamp is at least an hour old, so the second read would be
+        answered by a lower tier and this test would stop testing the memo.
         """
         from app.routes import calibration
 
-        _use(monkeypatch, _FakeRedis(main=json.dumps(_payload())))
+        _use(monkeypatch, _FakeRedis(main=json.dumps(_payload(generated_at=_recent()))))
         _no_compute(monkeypatch)
 
         first = await calibration.public_calibration(db=object())
         assert first["availability"] == AVAILABILITY_FRESH
 
         # Second read cannot reach Redis at all — it must come off the memo.
-        _use(monkeypatch, _DeadRedis())
+        dead = _use(monkeypatch, _DeadRedis())
         second = await calibration.public_calibration(db=object())
         assert second["availability"] == AVAILABILITY_FRESH
         assert second["total_outcomes"] == 1_000_000
+        # ...and prove it: tier 1 answering means Redis was never consulted.
+        assert dead.calls == 0
 
     async def test_a_memo_of_an_unvalidated_copy_never_heals_to_fresh(self, monkeypatch):
         """An incomplete payload with a recent timestamp is recent AND still
-        incomplete — age alone must not upgrade the declaration."""
+        incomplete — age alone must not upgrade the declaration.
+
+        ``_recent``, not ``_at``, for the reason given in the memo test above: the
+        point here is that TIER 1 declines to heal, so tier 1 has to be the tier
+        that answers the second read.
+        """
         from app.routes import calibration
 
-        stub = {"buckets": [1, 2], "generated_at": _at(days_ago=0.01)}
+        stub = {"buckets": [1, 2], "generated_at": _recent()}
         _use(monkeypatch, _FakeRedis(main=json.dumps(stub)))
         _no_compute(monkeypatch)
 
         first = await calibration.public_calibration(db=object())
         assert first["availability"] == AVAILABILITY_DEGRADED
 
-        _use(monkeypatch, _DeadRedis())
+        dead = _use(monkeypatch, _DeadRedis())
         second = await calibration.public_calibration(db=object())
         assert second["availability"] == AVAILABILITY_DEGRADED
+        assert dead.calls == 0, "tier 1 must be the tier that declined to heal"
 
     async def test_dated_last_good_declares_stale(self, monkeypatch):
         from app.routes import calibration
