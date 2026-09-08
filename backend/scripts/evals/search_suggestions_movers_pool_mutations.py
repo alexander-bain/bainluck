@@ -83,6 +83,11 @@ COLD_SUITE = (
 #: would otherwise be graded by a suite that has no opinion about it and would
 #: survive silently, which is the hole this battery exists to prevent.
 SETTLED_SUITE = ROOT / "tests" / "test_search_suggestions_settled_outcome_3987.py"
+#: #3987 defects 2 and 3. In the oracle for the same reason as the line above,
+#: and one more: half of that gate lives INSIDE `movement_pool.py`'s pool (the
+#: `conditions` argument), so a mutation to the shared bound can now delete a
+#: product rule as well as a performance one, and only this suite grades it.
+GRAMMAR_SUITE = ROOT / "tests" / "test_search_suggestions_mover_grammar_3987.py"
 
 #: #2330 — see the module docstring. Derived from the worktree path so two
 #: checkouts of this repo never share a manifest or a backup directory.
@@ -211,6 +216,7 @@ MUTANTS: list[tuple[str, pathlib.Path, str, str, str]] = [
             .join(FuturesMarket)
             .where(
                 FuturesMarket.status.in_(_SUGGESTION_MOVERS_STATUSES),
+                *market_conditions,
                 *conditions,
             )
         )""",
@@ -220,9 +226,146 @@ MUTANTS: list[tuple[str, pathlib.Path, str, str, str]] = [
                 market_pool_subquery(
                     pool_size=_SUGGESTION_MOVERS_POOL,
                     statuses=_SUGGESTION_MOVERS_STATUSES,
+                    conditions=market_conditions,
                 )
             ),
         )""",
+    ),
+    # ------------------------------------ #3987 defects 2 and 3, the eligibility
+    #
+    # 🔴 M-SHAPE-ALLOWLIST AND M-TIER-NO-NULLARM ARE THE TWO THAT MATTER, and
+    # they fail in opposite directions. The first reads as a tidy-up — a
+    # denylist becomes an allowlist of the two shapes that actually produce
+    # chips — and silently drops every market whose shape has not been
+    # backfilled yet, which on production is the brand-new markets and nothing
+    # else. The second reads as tightening a gate — "movers must be on a tier
+    # 1-2 league" — and deletes the section, because a league tier is a fact
+    # about a GAME and every chip section 3 served in the measured sample was
+    # event-LESS. Both keep every test about the DEFECT green.
+    (
+        "M-SHAPE-GONE",
+        ROUTE,
+        "drop the market-shape gate — `Yes` legs and ladders retake the LIMIT",
+        """        or_(
+            FuturesMarket.market_type.is_(None),
+            FuturesMarket.market_type.notin_(_SUGGESTION_MOVERS_EXCLUDED_SHAPES),
+        ),
+""",
+        "",
+    ),
+    (
+        "M-SHAPE-ALLOWLIST",
+        ROUTE,
+        "flip the denylist to an allowlist — unwritten and new shapes vanish",
+        """        or_(
+            FuturesMarket.market_type.is_(None),
+            FuturesMarket.market_type.notin_(_SUGGESTION_MOVERS_EXCLUDED_SHAPES),
+        ),""",
+        """        FuturesMarket.market_type.in_(("field", "duel")),""",
+    ),
+    (
+        "M-SHAPE-NULLBLIND",
+        ROUTE,
+        "drop the NULL arm — a market shaped this morning is silently ineligible",
+        """        or_(
+            FuturesMarket.market_type.is_(None),
+            FuturesMarket.market_type.notin_(_SUGGESTION_MOVERS_EXCLUDED_SHAPES),
+        ),""",
+        """        FuturesMarket.market_type.notin_(_SUGGESTION_MOVERS_EXCLUDED_SHAPES),""",
+    ),
+    (
+        "M-SHAPE-NARROW",
+        ROUTE,
+        "keep only the ladders out — the `Yes` shapes come back",
+        '_SUGGESTION_MOVERS_EXCLUDED_SHAPES = ("quantity", "unshaped", "container_member")',
+        '_SUGGESTION_MOVERS_EXCLUDED_SHAPES = ("quantity",)',
+    ),
+    (
+        "M-TIER-GONE",
+        ROUTE,
+        "drop the tier gate — the ITF M25 match is back on US Open final day",
+        """        or_(
+            FuturesMarket.event_id.is_(None),
+            FuturesMarket.event_id.in_(
+                select(Event.id)
+                .join(Sport, Sport.id == Event.sport_id)
+                .where(Sport.key.in_(tier_12_sport_keys()))
+            ),
+        ),
+""",
+        "",
+    ),
+    (
+        "M-TIER-NO-NULLARM",
+        ROUTE,
+        "require every mover to be a game — deletes the section's whole output",
+        """        or_(
+            FuturesMarket.event_id.is_(None),
+            FuturesMarket.event_id.in_(
+                select(Event.id)
+                .join(Sport, Sport.id == Event.sport_id)
+                .where(Sport.key.in_(tier_12_sport_keys()))
+            ),
+        ),""",
+        """        FuturesMarket.event_id.in_(
+            select(Event.id)
+            .join(Sport, Sport.id == Event.sport_id)
+            .where(Sport.key.in_(tier_12_sport_keys()))
+        ),""",
+    ),
+    (
+        "M-TIER-TABLE-SPELLINGS",
+        ROUTE,
+        "inline the tier table's own spellings — every Grand Slam match excluded",
+        "                .where(Sport.key.in_(tier_12_sport_keys()))",
+        """                .where(
+                    Sport.key.in_(
+                        ("baseball_mlb", "americanfootball_nfl", "tennis_us_open")
+                    )
+                )""",
+    ),
+    (
+        "M-POOL-CONDITIONS-OUTSIDE",
+        ROUTE,
+        "filter the pool's OUTPUT instead of the pool — ~97% of the gate's "
+        "population is ranked and then thrown away",
+        """        query = select(FuturesOutcome).where(
+            *conditions,
+            FuturesOutcome.market_id.in_(
+                market_pool_subquery(
+                    pool_size=_SUGGESTION_MOVERS_POOL,
+                    statuses=_SUGGESTION_MOVERS_STATUSES,
+                    conditions=market_conditions,
+                )
+            ),
+        )""",
+        """        query = select(FuturesOutcome).join(FuturesMarket).where(
+            *conditions,
+            *market_conditions,
+            FuturesOutcome.market_id.in_(
+                market_pool_subquery(
+                    pool_size=_SUGGESTION_MOVERS_POOL,
+                    statuses=_SUGGESTION_MOVERS_STATUSES,
+                )
+            ),
+        )""",
+    ),
+    # ------------------------------------------- #3987 defect 2, the display rule
+    (
+        "M-DIGIT-GONE",
+        ROUTE,
+        "drop the threshold rule — `Cut more than 25bps` is a chip again",
+        """    if _SUGGESTION_NUMERIC_TOKEN_RE.search(name):
+        return None
+""",
+        "",
+    ),
+    (
+        "M-DIGIT-ANY",
+        ROUTE,
+        "widen it to any digit — `deadmau5`, `GENER8ION` and `T1` stop being names",
+        r'_SUGGESTION_NUMERIC_TOKEN_RE = re.compile(r"(?<!\w)\d")',
+        r'_SUGGESTION_NUMERIC_TOKEN_RE = re.compile(r"\d")',
     ),
     # ----------------------------------------------------- what a person sees
     (
@@ -359,6 +502,7 @@ def _run_suite() -> int:
             str(MOVERS_SUITE),
             str(COLD_SUITE),
             str(SETTLED_SUITE),
+            str(GRAMMAR_SUITE),
             "-q",
             "--no-header",
             "-x",

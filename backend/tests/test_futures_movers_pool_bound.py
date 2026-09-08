@@ -100,7 +100,13 @@ def _array_on_sqlite(type_, compiler, **kw):  # pragma: no cover - DDL shim
     return "JSON"
 
 
-from app.models.models import Base, FuturesMarket, FuturesOutcome  # noqa: E402
+from app.models.models import (  # noqa: E402
+    Base,
+    Event,
+    FuturesMarket,
+    FuturesOutcome,
+    Sport,
+)
 from app.routes import futures as futures_routes  # noqa: E402
 from app.routes.futures import (  # noqa: E402
     _MOVERS_POOL_MAX,
@@ -169,8 +175,20 @@ def _seed(session, markets):
 @pytest.fixture()
 def engine():
     eng = create_engine("sqlite://")
+    # `events` and `sports` are created even though no test row lands in them:
+    # section 3's eligibility gate (#3987 defect 3) carries an `event_id IN
+    # (SELECT ... JOIN sports ...)` arm, and a missing table is an
+    # OperationalError, not a filtered row. An empty `events` is also the
+    # honest fixture for the event-less markets every row below builds — the
+    # gate's `event_id IS NULL` arm is what lets them through.
     Base.metadata.create_all(
-        eng, tables=[FuturesMarket.__table__, FuturesOutcome.__table__]
+        eng,
+        tables=[
+            FuturesMarket.__table__,
+            FuturesOutcome.__table__,
+            Event.__table__,
+            Sport.__table__,
+        ],
     )
     return eng
 
