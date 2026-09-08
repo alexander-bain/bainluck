@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { formatProbability } from "@/lib/api";
 import type { LeagueMarket } from "@/lib/api";
+import { SettledMark, isSettledOutcome } from "@/components/SettledOutcomeMark";
 
 interface PropGroupCardProps {
   market: LeagueMarket;
@@ -15,35 +16,12 @@ function cleanPropName(name: string): string {
     .trim();
 }
 
-/**
- * #3868 (CERT-2215) — SETTLED MEANS SETTLED, on this card too.
- *
- * `/sport/tennis/atp` showed Carlos Alcaraz at 78% to reach a quarterfinal he
- * had already reached. The backend half of #3868 taught the refresh rail to read
- * the venue's settlement, which fixed the NUMBER — and a settled leg then
- * arrived here as a bare `probability: 1.0` and was drawn as an ordinary "100%".
- * A result rendered as a probability is still the card offering odds on a
- * question that has been answered.
- *
- * The words and the colours are `FuturesCard`'s, character for character, not a
- * second settled vocabulary invented on a second card — Alex's standing ruling
- * is one system-wide settled language.
- *
- * Reads the GRADE the payload carries and never `probability === 1`. Inferring
- * settlement from certainty would stamp a result on a live book at 0.9995,
- * which is what the Alcaraz leg genuinely read for a day before it closed.
- */
-function SettledMark({ won }: { won: boolean }) {
-  return won ? (
-    <span className="text-xs font-mono font-bold text-emerald-600">Won</span>
-  ) : (
-    <span className="text-xs font-mono text-text-muted">Lost</span>
-  );
-}
-
-function isSettled(o: { settled?: boolean }): boolean {
-  return o.settled === true;
-}
+// #3868 (CERT-2215) — SETTLED MEANS SETTLED, on this card too. #4036 lifted the
+// mark and the predicate into `components/SettledOutcomeMark` so the hub's own
+// `OutcomeRow`, which renders these same rows off the same payload and honoured
+// neither field, speaks the one settled language instead of a third dialect.
+// The rationale that used to live here lives in that file's header.
+const isSettled = isSettledOutcome;
 
 export default function PropGroupCard({ market }: PropGroupCardProps) {
   const outcomes = market.top_outcomes.slice(0, 6);
