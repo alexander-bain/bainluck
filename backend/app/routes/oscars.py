@@ -209,18 +209,36 @@ def _get_ceremony_status() -> str:
 
 
 def _previews_redis():
-    """The shared client, or None if Redis is unreachable.
+    """The shared ASYNC client, or None if Redis is unreachable.
 
-    Never raises: previews are a decoration on this response, and a decoration may
-    not be able to fail a page.
+    Async, not the 5s-bounded synchronous client, because this call sits on the
+    request path: see the note on ``read_published_previews``. Never raises —
+    previews are a decoration on this response, and a decoration may not be able to
+    fail a page.
     """
     try:
-        from app.tasks.redis_state import get_redis_client
+        from app.tasks.redis_state import get_async_redis_client
 
-        return get_redis_client()
+        return get_async_redis_client()
     except Exception as exc:  # pragma: no cover - defensive
         logger.warning("Oscars previews: no Redis client (%s)", exc)
         return None
+
+
+async def _release_previews_redis(rc) -> None:
+    """Return the connection to the pool. Cleanup may not fail a served page.
+
+    ``aclose`` is looked up rather than assumed so that a test double — or a client
+    version without it — costs nothing here instead of raising after the payload is
+    already built.
+    """
+    closer = getattr(rc, "aclose", None)
+    if closer is None:
+        return
+    try:
+        await closer()
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("Oscars previews: releasing the client failed (%s)", exc)
 
 
 # Max nominees to return per category
@@ -491,7 +509,11 @@ async def get_oscars(
     """
     payload = await build_oscars_payload(db)
 
-    previews, generated_at = read_published_previews(_previews_redis())
+    rc = _previews_redis()
+    try:
+        previews, generated_at = await read_published_previews(rc)
+    finally:
+        await _release_previews_redis(rc)
     payload["llm_previews"] = previews
     payload["llm_previews_generated_at"] = generated_at
     return payload

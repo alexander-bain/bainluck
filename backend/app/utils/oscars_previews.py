@@ -54,16 +54,23 @@ def build_previews_envelope(previews: dict[str, str]) -> str:
     )
 
 
-def read_published_previews(rc) -> tuple[dict[str, str], str | None]:
+async def read_published_previews(rc) -> tuple[dict[str, str], str | None]:
     """Read the published previews. Returns ``({}, None)`` for every failure.
 
     Absence is a normal state, not an error: before the first run of the beat, and
     for an interval after it stops, there are simply no previews and the page
     renders without them. A Redis outage degrades to the same place — the one thing
     this must never do is raise into a request handler for a decoration.
+
+    ``rc`` is an **async** client (``get_async_redis_client``), and that is the whole
+    point of this being a coroutine. The synchronous client is bounded at 5s
+    (gotcha #39) but a bound is not a yield: a sync ``get`` on the request path parks
+    the event loop for its round trip, which is the exact class of defect this ship
+    exists to remove. Trading six 1.8s LLM calls for one 2ms loop-block would still
+    leave the loop-blocking pattern in the handler for the next reader to copy.
     """
     try:
-        raw = rc.get(PREVIEWS_REDIS_KEY) if rc is not None else None
+        raw = await rc.get(PREVIEWS_REDIS_KEY) if rc is not None else None
     except Exception as exc:  # pragma: no cover - defensive
         logger.warning("Oscars previews read failed: %s", exc)
         return {}, None

@@ -15,7 +15,7 @@ These tests pin the three things that make the fix a fix rather than a move:
 """
 
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -42,11 +42,12 @@ def test_the_ttl_outlives_the_beat_that_writes_it():
     assert PREVIEWS_TTL_SECONDS > PREVIEWS_REFRESH_SECONDS
 
 
-def test_the_envelope_round_trips_through_a_redis_shaped_client():
-    rc = MagicMock()
+@pytest.mark.asyncio
+async def test_the_envelope_round_trips_through_a_redis_shaped_client():
+    rc = AsyncMock()
     rc.get.return_value = build_previews_envelope({"best_picture": "a blurb"}).encode()
 
-    previews, generated_at = read_published_previews(rc)
+    previews, generated_at = await read_published_previews(rc)
 
     assert previews == {"best_picture": "a blurb"}
     assert generated_at is not None, "the envelope must carry its own age"
@@ -72,23 +73,26 @@ def test_the_envelope_round_trips_through_a_redis_shaped_client():
         "no_previews_key",
     ],
 )
-def test_every_unreadable_state_degrades_to_no_previews(raw):
+@pytest.mark.asyncio
+async def test_every_unreadable_state_degrades_to_no_previews(raw):
     """Absence is a normal state. A decoration may not fail a page."""
-    rc = MagicMock()
+    rc = AsyncMock()
     rc.get.return_value = raw
 
-    assert read_published_previews(rc) == ({}, None)
+    assert await read_published_previews(rc) == ({}, None)
 
 
-def test_a_redis_outage_degrades_instead_of_raising():
-    rc = MagicMock()
+@pytest.mark.asyncio
+async def test_a_redis_outage_degrades_instead_of_raising():
+    rc = AsyncMock()
     rc.get.side_effect = ConnectionError("redis is down")
 
-    assert read_published_previews(rc) == ({}, None)
+    assert await read_published_previews(rc) == ({}, None)
 
 
-def test_a_malformed_entry_costs_only_its_own_preview():
-    rc = MagicMock()
+@pytest.mark.asyncio
+async def test_a_malformed_entry_costs_only_its_own_preview():
+    rc = AsyncMock()
     rc.get.return_value = json.dumps(
         {
             "previews": {
@@ -100,7 +104,7 @@ def test_a_malformed_entry_costs_only_its_own_preview():
         }
     )
 
-    previews, _ = read_published_previews(rc)
+    previews, _ = await read_published_previews(rc)
 
     assert previews == {
         "best_picture": "good"
@@ -141,13 +145,83 @@ def test_the_route_module_no_longer_keeps_a_per_process_cache():
     assert not hasattr(oscars_module, "_LLM_CACHE")
 
 
+def test_the_request_path_holds_no_synchronous_redis_call():
+    """The store the previews moved INTO may not re-introduce the defect.
+
+    `get_redis_client()` is bounded at 5s (gotcha #39), and a bound is not a yield:
+    a synchronous `get` on the request path parks the event loop for its round trip
+    — the same class as the six LLM calls this ship removed, just three orders of
+    magnitude smaller. Small enough to ship and small enough to copy, which is why
+    it is pinned rather than argued about.
+
+    Matched on the AST's imported NAMES, not on the source text: `get_redis_client`
+    is a substring of `get_async_redis_client`, so a text scan would either pass on
+    everything or fail on the correct client.
+    """
+    import ast
+    import inspect
+
+    from app.routes import oscars as oscars_module
+
+    imported = {
+        alias.name
+        for node in ast.walk(ast.parse(inspect.getsource(oscars_module)))
+        if isinstance(node, ast.ImportFrom)
+        for alias in node.names
+    }
+
+    assert "get_redis_client" not in imported, (
+        "the oscars request path imports the SYNCHRONOUS redis client; "
+        "use get_async_redis_client (see read_published_previews)"
+    )
+    assert inspect.iscoroutinefunction(
+        read_published_previews
+    ), "the preview read stopped being awaitable — it is back on the loop"
+
+
+@pytest.mark.asyncio
+async def test_the_client_is_released_even_when_the_read_fails():
+    """A pooled async client that is never closed leaks a connection per request.
+
+    Driven through the FAILING read specifically: the happy path would close it
+    anywhere, and the leak that costs you is the one on the error branch.
+    """
+    from app.routes import oscars as oscars_module
+
+    rc = AsyncMock()
+    rc.get.side_effect = ConnectionError("redis is down")
+
+    with patch.object(
+        oscars_module, "build_oscars_payload", return_value={"categories": []}
+    ), patch.object(oscars_module, "_previews_redis", return_value=rc):
+        body = await oscars_module.get_oscars(db=MagicMock())
+
+    rc.aclose.assert_awaited_once()
+    assert body["llm_previews"] == {}, "a dead Redis still serves the page"
+
+
+@pytest.mark.asyncio
+async def test_a_client_that_cannot_be_built_does_not_reach_the_release():
+    """`_previews_redis()` returns None on an unreachable Redis; releasing None is a
+    no-op, not an AttributeError one line after the payload was already built."""
+    from app.routes import oscars as oscars_module
+
+    with patch.object(
+        oscars_module, "build_oscars_payload", return_value={"categories": []}
+    ), patch.object(oscars_module, "_previews_redis", return_value=None):
+        body = await oscars_module.get_oscars(db=MagicMock())
+
+    assert body["llm_previews"] == {}
+    assert body["llm_previews_generated_at"] is None
+
+
 @pytest.mark.asyncio
 async def test_the_handler_reads_previews_and_calls_no_generator():
     """The whole ship, end to end: previews reach the response from the store."""
     from app.routes import oscars as oscars_module
 
     published = {"best_picture": "Sinners leads at 41%.", "biggest_movers": "Movers."}
-    rc = MagicMock()
+    rc = AsyncMock()
     rc.get.return_value = build_previews_envelope(published)
 
     built = {
@@ -180,7 +254,7 @@ async def test_an_empty_store_still_serves_the_page():
     """A cold Redis — before the beat's first run — must not cost the response."""
     from app.routes import oscars as oscars_module
 
-    rc = MagicMock()
+    rc = AsyncMock()
     rc.get.return_value = None
     built = {"ceremony_status": "post", "categories": [], "biggest_movers": []}
 
