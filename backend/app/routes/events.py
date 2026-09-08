@@ -9547,8 +9547,16 @@ _MATCHUP_SUBJECT_RE = re.compile(r"\b(?:vs\.?|at)\b", re.IGNORECASE)
 # already proved the `<non-matchup subject>: <stat> O/U <line>` shape, so a word may be
 # safe here and unsafe there. Widening the shared one instead would move markets on
 # paths this issue never measured.
+#
+# `outs` joined the list for #3995: "Sean Manaea: Outs Recorded O/U 16.5" proved the
+# shape, matched neither vocabulary, and so classified `game_total` — putting a
+# PITCHER'S outs line on the run ladder as a rung at 16.5, five runs past the top of
+# the real one. Measured on production 2026-09-08: 21 such markets across 18 events.
+# `\bouts\b` cannot match "strikeouts" — the preceding "e" is a word character, so the
+# opening `\b` fails — which is why the word is safe to add here even though
+# `_PLAYER_PROP_RE` already carries "strikeouts" for the looser question.
 _PLAYER_PROP_OU_STAT_RE = re.compile(
-    r"\b(?:bases|rbis?|walks|doubles|triples|singles)\b", re.IGNORECASE
+    r"\b(?:bases|rbis?|walks|doubles|triples|singles|outs)\b", re.IGNORECASE
 )
 
 
@@ -9654,6 +9662,30 @@ def _is_team_stat_market(name: str) -> bool:
 #: separation between a period market and the half-game aggregates #3951 pins.
 _SINGLE_INNING_RE = re.compile(r"\binning\b")
 
+#: A total of the WHOLE game that counts something other than the score (#3995).
+#:
+#: #3992 was the wrong SCOPE — an inning is a fraction of the contest. This is the
+#: other axis: the right scope, the wrong UNIT. Kalshi lists
+#: "New York M vs Miami: Total Bases" (`KXMLBTB`) beside "…: Total Runs"
+#: (`KXMLBTOTAL`), and "total" with no period marker and no "team" made it a
+#: `game_total`. Its five rungs — 2.0, 3.0, 4.0, 5.0, 6.0 — then interleaved with the
+#: real ladder's halves on one rail, so the Runs map read
+#: `0.5, 1.5, 2.0, 2.5, 3.0, 3.5 … 11.5` and alternated between two quantities every
+#: step. Measured on production 2026-09-08: 1,597 events carry it, 1,529 of them
+#: beside the `Total Runs` ladder it contaminates.
+#:
+#: Deliberately NOT the `_NON_MATCH_SCOPE_TOTAL_RES` registry, which is the other
+#: shape this could have taken. That filter DELETES the rung from the response, and
+#: it is fail-open per event, so it would have fixed only the 1,529 and dropped the
+#: market entirely on those. A label moves the rungs instead: they leave the run rail
+#: on all 1,597 and land in `other`, which the page already renders. Nothing is
+#: deleted anywhere, which is the difference between a classification and a filter.
+#:
+#: `\bbases\b` is scoped to the totals branch and cannot reach "Total Runs". The
+#: player-prop form ("Brandon Marsh: Total Bases O/U 2.5") is already `player_prop`
+#: by the check above this one, so ORDER is load-bearing: this must stay below it.
+_NON_SCORING_TOTAL_RE = re.compile(r"\bbases\b")
+
 
 def _classify_game_market(name: str, external_id: Optional[str] = None) -> str:
     """Classify a game-level market name into a type.
@@ -9716,6 +9748,11 @@ def _classify_game_market(name: str, external_id: Optional[str] = None) -> str:
             return "player_prop"
         if "team" in lower:
             return "team_total"
+        # Right scope, wrong unit: a whole-game total that counts bases, not runs
+        # (#3995). Below the player-prop check on purpose — "<Player>: Total Bases
+        # O/U 2.5" is a prop and has already returned.
+        if _NON_SCORING_TOTAL_RE.search(lower):
+            return "stat_total"
         if _SINGLE_INNING_RE.search(lower):
             return "inning_total"
         if any(x in lower for x in _HALF_PATTERNS):
@@ -9858,8 +9895,15 @@ _PM_PERIOD_SCOPES = frozenset({
 #: eligible on purpose: Polymarket packs a game's spread AND total into a single
 #: market named only for the matchup, so an allowlist here would blank the
 #: projection on every NCAAF page (measured: 13 of 13).
+#:   * ``stat_total`` — "…: Total Bases" is the whole game, counted in bases
+#:     (#3995). It reached this pool only because it wore `game_total`; its five
+#:     integer rungs sat INSIDE baseball's (0.5, 30) band, so the range guard could
+#:     not have refused them either. Named here rather than left to the accident
+#:     that its rungs happened not to move a crossover on the day it was measured —
+#:     #3948 is the standing lesson that removing one contaminant is what makes the
+#:     next one decide the answer.
 _PM_NON_GAME_TOTAL_SCOPES = frozenset({
-    "spread", "team_total", "player_prop", "h2h", "3ball",
+    "spread", "team_total", "player_prop", "h2h", "3ball", "stat_total",
 })
 
 #: Scopes that price neither arm of THIS game, read off an OUTCOME name.
