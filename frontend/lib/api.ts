@@ -1769,6 +1769,18 @@ export interface LeagueMarketOutcome {
   rank: number | null;
   movement_24h: number | null;
   team_id: number | null;
+  /**
+   * #3868 — this contender's question has been ANSWERED, so the card must draw
+   * a result and not a percentage. A grade, never a probability: a live book
+   * prints 0.9995 for a day before it settles, so certainty is not settlement.
+   *
+   * Optional for the whole of a split deploy — Vercel ships the frontend before
+   * Heroku, so an older payload carries neither field. Both read as absent, and
+   * absent renders exactly as it did before (#3508's rule).
+   */
+  settled?: boolean;
+  /** True won, false lost, null/absent nobody has looked. Only read when `settled`. */
+  is_winner?: boolean | null;
 }
 
 export interface LeagueMarket {

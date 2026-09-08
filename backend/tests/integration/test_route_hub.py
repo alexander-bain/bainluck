@@ -38,6 +38,9 @@ def _mock_outcome(*, outcome_id=1, name="Yes", probability=0.55, rank=1):
         probability_change_24h=0,
         rank=rank,
         team_id=None,
+  # #3868: the league/hub payload reads settlement off these two.
+        is_winner=False,
+        resolution_source=None,
     )
 
 

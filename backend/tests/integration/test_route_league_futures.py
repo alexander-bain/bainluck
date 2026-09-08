@@ -20,6 +20,10 @@ import pytest
 def _mock_outcome(
     *, outcome_id=1, name="Yes", probability=0.55, opening=None,
     rank=1, change_24h=0, team_id=None,
+    # #3868: the payload carries settlement state, so the fake carries the two
+    # columns it is read from. Defaults are the ungraded row, which is what
+    # every pre-existing case in this file means by an outcome.
+    is_winner=False, resolution_source=None,
 ):
     return SimpleNamespace(
         id=outcome_id,
@@ -29,6 +33,8 @@ def _mock_outcome(
         probability_change_24h=change_24h,
         rank=rank,
         team_id=team_id,
+        is_winner=is_winner,
+        resolution_source=resolution_source,
     )
 
 

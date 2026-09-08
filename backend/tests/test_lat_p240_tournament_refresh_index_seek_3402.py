@@ -138,7 +138,11 @@ def _market(**kw) -> PolymarketMarket:
 
 
 async def _run(monkeypatch, markets=None) -> RecordingSession:
-    session = RecordingSession([(YES_ID, "Yes"), (NO_ID, "No")])
+    # (id, name, external_id) — #3868 added the third column; the writer reads
+    # the side of the book off the id first, the name only as a fallback.
+    session = RecordingSession(
+        [(YES_ID, "Yes", "0x3402_yes"), (NO_ID, "No", "0x3402_no")]
+    )
 
     # A real async context manager, NOT an AsyncMock: a double built with
     # AsyncMock returns a coroutine from every method, so `async with
@@ -157,6 +161,10 @@ async def _run(monkeypatch, markets=None) -> RecordingSession:
         "snapshots_written": 0,
         "unpriced": 0,
         "volume_observed": 0,
+        # #3868's three, mirroring the task's own stats literal.
+        "legs_settled": 0,
+        "closed_without_result": 0,
+        "legs_reached_by_condition": 0,
     }
     await _write_refreshed_prices(
         markets if markets is not None else [_market()],

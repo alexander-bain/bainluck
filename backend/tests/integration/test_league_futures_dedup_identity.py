@@ -104,6 +104,9 @@ def _outcome(oid: int, name: str, prob: float, rank: int = 1):
         probability_change_24h=0,
         rank=rank,
         team_id=None,
+        # #3868: the payload reads settlement off these two.
+        is_winner=False,
+        resolution_source=None,
     )
 
 

@@ -55,6 +55,9 @@ class _Outcome:
         self.rank = None
         self.probability_change_24h = None
         self.team_id = None
+  # #3868: the league/hub payload reads settlement off these two.
+        self.is_winner = False
+        self.resolution_source = None
 
 
 class _Market:

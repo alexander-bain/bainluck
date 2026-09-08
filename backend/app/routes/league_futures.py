@@ -34,6 +34,8 @@ from app.utils.event_rails import (
     upcoming_rail_condition,
 )
 from app.utils.game_state import normalize_live_game_state
+from app.utils.kalshi_fabricated_loss import RETRACTION_SOURCE
+from app.utils.resolution_authority import can_write_winner
 from app.utils.matchup_sides import sided_yes_no_labels
 from app.utils.lifecycle import event_is_playable, served_event_status
 from app.utils.entity_page_tiers import (
@@ -1161,6 +1163,82 @@ def _effectively_resolved(sorted_outcomes: list) -> bool:
     return len(probs) >= 2 and all(p < 0.03 or p > 0.97 for p in probs)
 
 
+def _outcome_is_settled(outcome, market_status: str | None = None) -> bool:
+    """Has this contender's question already been answered? (#3868, CERT-2222.)
+
+    A GRADE, never a probability. `current_probability == 1.0` is what a settled
+    row happens to carry and is NOT the test: a live book can print 0.9995 for a
+    day before it settles (measured on the Alcaraz leg), and reading certainty as
+    settlement would stamp a result on a market that is still trading.
+
+    🔴 A NON-EMPTY `resolution_source` IS NOT A GRADE. CERT-2222 blocked exactly
+    that reading, and it was right: `ungradeable_result` is a RETRACTION — the
+    state of a leg whose stored loss the venue never declared (CAL-P056, #1852).
+    It asserts NO winner. Read as "settled, and `is_winner` is not True", it
+    reached the card as **Lost**, which tells the reader a player was knocked out
+    of a tournament we have explicitly declared unknowable. That is a worse lie
+    than the stale price #3868 started on, because it looks like a result.
+
+    So the test is the codebase's OWN status/source authority rule rather than a
+    fourth private one — `can_write_winner` (#845): a winner may stand on a
+    market that has actually settled, or on any market when an AUTHORITATIVE
+    (tier-3) venue settlement says so. That preserves the ship's intended path
+    exactly — the Alcaraz child is `status='open'` with `api_settlement`, which
+    is tier 3 and self-justifying — while an open leg carrying a tier-1
+    retraction, or a tier-0 guess, stays live and keeps its percentage.
+
+    The retraction is refused FIRST and unconditionally, before status and before
+    `is_winner`. `can_write_winner` would admit it on a `resolved` market, and a
+    row that is both retracted and crowned is a contradiction; in both cases the
+    honest render is the live one, because a retraction is precisely our
+    statement that we do not know.
+
+    Never `is_winner is False` on its own: the column is nullable with
+    `default=False`, so FALSE cannot tell "lost" from "nobody has looked".
+    """
+    if getattr(outcome, "resolution_source", None) == RETRACTION_SOURCE:
+        return False
+    if getattr(outcome, "is_winner", None) is True:
+        return True
+    return can_write_winner(market_status, getattr(outcome, "resolution_source", None))
+
+
+def _live_first(sorted_outcomes: list, market_status: str | None = None) -> list:
+    """Open contenders first, settled ones behind them. (#3868, CERT-2215.)
+
+    🔴 A SETTLED LEG MUST NOT TAKE A LIVE LEG'S SLOT. The card renders
+    `top_outcomes[:6]` off a list this function feeds, ranked by probability —
+    and a settled winner carries 1.0, which sorts above every live contender
+    there is. So the moment #3868 taught the refresh rail to grade a
+    round-by-round ladder, the eight already-through players would have filled
+    every visible slot of "TO REACH QUARTERFINALS" and pushed out the five
+    players actually still fighting for one. The reader would have lost the only
+    live question on the card, which is worse than the stale prices that started
+    this.
+
+    Settled rows are kept rather than dropped — a result is worth reading, and
+    Alex's standing ruling is that cards show results — but they queue behind the
+    live ones and the component renders them as Won/Lost, never as a percentage.
+
+    Winners before losers within the settled tail: "who got through" is the
+    interesting half, and a tail of Losts would bury it.
+
+    NOT folded into `_sorted_outcomes`, deliberately. That function feeds
+    `_effectively_resolved`, which reads `[0]` as "the leader" — reordering under
+    it would silently change which market the league page considers answered.
+    This is a DISPLAY ordering and it lives in the display function.
+    """
+    live, won, lost = [], [], []
+    for outcome in sorted_outcomes:
+        if not _outcome_is_settled(outcome, market_status):
+            live.append(outcome)
+        elif getattr(outcome, "is_winner", None) is True:
+            won.append(outcome)
+        else:
+            lost.append(outcome)
+    return live + won + lost
+
+
 def _serialize_outcomes(sorted_outcomes: list, market=None) -> list[dict]:
     """The top ten outcomes in the shape every league/hub card renders.
 
@@ -1168,6 +1246,11 @@ def _serialize_outcomes(sorted_outcomes: list, market=None) -> list[dict]:
     only in the market's NAME, and an outcome row cannot see it. Passing None
     keeps the raw venue labels — the pre-#3089 behaviour — so a caller that has
     no market in hand degrades to the status quo rather than guessing.
+
+    #3868 (CERT-2215) added `settled`/`is_winner` and the live-first ordering.
+    The payload carries the STATE and the component decides how to draw it; a
+    settled leg that travelled as a bare `probability: 1.0` is exactly how a
+    graded row reached `/sport/tennis/atp` dressed as an ordinary 100%.
     """
     labels = (
         sided_yes_no_labels(
@@ -1178,6 +1261,12 @@ def _serialize_outcomes(sorted_outcomes: list, market=None) -> list[dict]:
         if market is not None
         else None
     )
+    # #3868 (CERT-2222): the status half of the authority rule. `market=None` is
+    # a real caller shape (see above), and it degrades to the fail-safe rather
+    # than to a guess — `can_write_winner(None, …)` admits ONLY tier-3 venue
+    # settlements, so an unknown-status caller can never publish a soft grade.
+    market_status = getattr(market, "status", None)
+    ordered = _live_first(sorted_outcomes, market_status)
     return [
         {
             "id": o.id,
@@ -1190,8 +1279,13 @@ def _serialize_outcomes(sorted_outcomes: list, market=None) -> list[dict]:
             "rank": o.rank,
             "movement_24h": float(o.probability_change_24h) if o.probability_change_24h else None,
             "team_id": o.team_id,
+            # #3868: the STATE, so the card can draw a result instead of a
+            # percentage. `is_winner` is passed through raw — including None,
+            # which means "nobody has looked" and is not "lost".
+            "settled": _outcome_is_settled(o, market_status),
+            "is_winner": o.is_winner,
         }
-        for o in sorted_outcomes[:10]
+        for o in ordered[:10]
     ]
 
 
