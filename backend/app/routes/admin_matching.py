@@ -2304,6 +2304,25 @@ async def prediction_market_force_link(
             "candidates": trace.candidate_payload(),
         }
 
+    def _detail(**exit_specific) -> dict:
+        """The stored counterpart of ``_considered()``'s ``search``.
+
+        CERT-2236: the response published the searched window on every exit past
+        the matchup gate, and the durable row carried it on exactly one of them
+        — ``no_event_found`` passed ``trace.detail``, while a link and a
+        duplicate refusal stored only their own ``score`` / ``refusal`` fields.
+        So the claim these two writers keep the same account of one attempt was
+        true for the failing exit and false for the other two, and the history a
+        reader consults later was the thinner of the pair precisely when the
+        attempt SUCCEEDED — the case where "which window found this, and what
+        else was in it" is the question a wrong attach gets asked.
+
+        The common window goes in FIRST so an exit-specific key of the same name
+        wins; the pipeline's detail keys and these exits' are disjoint today, and
+        the ordering makes the exit the authority if that ever stops being true.
+        """
+        return {**trace.detail, **exit_specific}
+
     async def _receipt(**kwargs) -> int:
         return await record_out_of_band_attempt(
             market_row, phase=PHASE_ADMIN_REPAIR, now=now,
@@ -2314,8 +2333,17 @@ async def prediction_market_force_link(
         # No trace to report: the pipeline never ran, so nothing was
         # considered. Saying `candidates: []` here would be indistinguishable
         # from "we searched and found nothing", which is a different answer.
+        #
+        # CERT-2236: the enum travels here too, even though this status word is
+        # already self-describing, so that ``reject_reason`` is a key a caller
+        # can read on EVERY refusal exit rather than on the ones that happened
+        # to need it. A reader keying on ``status`` has to know which statuses
+        # subdivide; one keying on ``reject_reason`` gets the same countable
+        # bucket ``market_match_receipts`` groups by, which is the join the
+        # operator makes by hand today.
         return {
             "status": "no_matchup",
+            "reject_reason": REJECT_NO_MATCHUP,
             "receipts_written": await _receipt(reject_reason=REJECT_NO_MATCHUP),
         }
 
@@ -2354,7 +2382,7 @@ async def prediction_market_force_link(
             # the ``matchup`` key loses nothing: it never once reached Postgres.
             "receipts_written": await _receipt(
                 reject_reason=trace.reject_reason or REJECT_NO_CANDIDATE,
-                detail=dict(trace.detail),
+                detail=_detail(),
             ),
         }
 
@@ -2375,17 +2403,32 @@ async def prediction_market_force_link(
         # the wrong bucket for good. Mapping, not a new reason: identical to the
         # matcher's own at prediction_market_matching.py's Pass-1 call site, which
         # is the parity this closes.
+        #
+        # CERT-2236: materialized, not inlined into the ``_receipt`` call. While
+        # this enum was computed only as an argument down there, the two arms
+        # were a real distinction the DATABASE could read and the OPERATOR could
+        # not: both returned ``duplicate_guard_blocked`` and an event id, and
+        # nothing else. Those are opposite next steps — a date conflict means
+        # THIS market's ticker date disagrees with the event we picked, and a
+        # sibling refusal means the event is right and someone else's ticker got
+        # there first — so the person who just ran the tool by hand was told the
+        # link was refused and left to guess which. One name bound once, read by
+        # the response and the receipt, and they cannot drift.
+        duplicate_reason = (
+            REJECT_EVENT_DATE_CONFLICT
+            if refusal == _REFUSAL_EVENT_DATE
+            else REJECT_ALREADY_LINKED_ELSEWHERE
+        )
         return {
             "status": "duplicate_guard_blocked",
             "event_id": matched["event_id"],
+            "reject_reason": duplicate_reason,
             **_considered(),
             "receipts_written": await _receipt(
-                reject_reason=(
-                    REJECT_EVENT_DATE_CONFLICT
-                    if refusal == _REFUSAL_EVENT_DATE
-                    else REJECT_ALREADY_LINKED_ELSEWHERE
+                reject_reason=duplicate_reason,
+                detail=_detail(
+                    refusal=refusal, candidate_event_id=matched["event_id"]
                 ),
-                detail={"refusal": refusal, "candidate_event_id": matched["event_id"]},
             ),
         }
 
@@ -2405,11 +2448,11 @@ async def prediction_market_force_link(
         **_considered(),
         "receipts_written": await _receipt(
             linked_event_id=matched["event_id"],
-            detail={
-                "score": matched["score"],
-                "home_team": matched["home_team"],
-                "away_team": matched["away_team"],
-            },
+            detail=_detail(
+                score=matched["score"],
+                home_team=matched["home_team"],
+                away_team=matched["away_team"],
+            ),
         ),
     }
 

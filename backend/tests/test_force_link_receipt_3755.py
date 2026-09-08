@@ -319,6 +319,18 @@ async def test_every_refusal_exit_writes_a_receipt(
     # A refusal changed nothing, so nothing was committed.
     assert db.commits == 0
 
+    # CERT-2236: THE OPERATOR IS TOLD WHAT THE ROW IS TOLD. Asserting only the
+    # stored reason and the response ``status`` is what let both duplicate arms
+    # ship an identical response body — the database could tell a ticker-date
+    # conflict from a sibling already on the event, and the person who ran the
+    # tool could not, which is the one-word answer this endpoint exists to
+    # replace. Asserted as equality with the stored reason rather than against a
+    # second literal, so a mapping that drifts on one side fails here.
+    assert result["reject_reason"] == expected_reason, (
+        f"{expected_status} returned {result.get('reject_reason')!r} while "
+        f"storing {expected_reason!r}: the history and the operator disagree"
+    )
+
 
 @pytest.mark.asyncio
 async def test_the_two_guard_arms_are_two_different_reasons(
@@ -341,6 +353,7 @@ async def test_the_two_guard_arms_are_two_different_reasons(
     from app.tasks import prediction_market_matching as pmm
 
     seen = {}
+    returned = {}
     for arm in (pmm._REFUSAL_EVENT_DATE, pmm._REFUSAL_SIBLING_DATE):
         force_link_harness.clear()
         _configure(monkeypatch, matchup=("a", "b"), matched=MATCHED, refusal=arm)
@@ -353,16 +366,27 @@ async def test_the_two_guard_arms_are_two_different_reasons(
         # The raw refusal still travels in detail — the reason is a bucket, the
         # detail is the evidence, and #3755 wanted both.
         assert call["detail"]["refusal"] == arm
+        # CERT-2236: the response says it too. While the enum was computed only
+        # as an argument to the receipt call, this loop passed on two responses
+        # that were byte-identical.
+        assert result["reject_reason"] == call["reject_reason"]
+        returned[arm] = result["reject_reason"]
         seen[arm] = call["reject_reason"]
 
     assert seen[pmm._REFUSAL_EVENT_DATE] != seen[pmm._REFUSAL_SIBLING_DATE], (
         "both guard arms wrote the same reject_reason, so the receipt history "
         "cannot tell a ticker-date conflict from a sibling already on the event"
     )
+    assert returned[pmm._REFUSAL_EVENT_DATE] != returned[pmm._REFUSAL_SIBLING_DATE], (
+        "both guard arms RETURNED the same reject_reason, so the operator who "
+        "just ran the tool is told the link was refused and left to guess "
+        "whether the date or a sibling refused it — opposite next steps"
+    )
     assert seen[pmm._REFUSAL_EVENT_DATE] == mr.REJECT_EVENT_DATE_CONFLICT
     assert seen[pmm._REFUSAL_SIBLING_DATE] == mr.REJECT_ALREADY_LINKED_ELSEWHERE
     # Countable, not free text (line 4 of this module's contract).
     assert set(seen.values()) <= mr.REJECT_REASONS
+    assert set(returned.values()) <= mr.REJECT_REASONS
 
 
 def test_the_guard_arms_are_still_only_two():
@@ -975,3 +999,196 @@ async def test_the_unmatched_exit_survives_the_real_matchup_type(
     assert call["detail"]["format_type"] == "bare_matchup"
     # The broken key never once reached Postgres, so nothing consumes it.
     assert "matchup" not in call["detail"]
+
+
+# =============================================================================
+# Part 5 — CERT-2236. The parity Parts 1-4 asserted for ONE exit and claimed for
+#          all of them.
+#
+#          #3755's subject line is "returns AND stores". Part 3 held it for
+#          ``no_event_found`` — the only exit that passed ``trace.detail`` to
+#          the writer — while a link and a duplicate refusal stored just their
+#          own ``score`` / ``refusal`` fields. So the response published the
+#          searched window on all three exits and the durable row carried it on
+#          one, and the row was the thinner of the pair precisely when the
+#          attempt SUCCEEDED: "which window found this, and what else was in
+#          it" is the question a wrong attach gets asked a week later, by which
+#          time the response is gone and the row is all there is.
+#
+#          These drive the REAL pipeline for the same reason Part 3 does — with
+#          the search stubbed, ``trace.detail`` is empty and every assertion
+#          below passes vacuously on the broken code (the trap in
+#          r_a_component_that_no_ops_on_an_unrecognised_fixture...). The
+#          window keys asserted are the ones ``_find_matching_event`` really
+#          writes, so a rename upstream surfaces here instead of silently
+#          emptying the guard.
+# =============================================================================
+
+
+WINDOW_KEYS = {"window_start", "window_end", "windowed_candidates", "scoring_ref"}
+
+
+def _assert_search_reached_the_row(result, call, exit_name):
+    """The response's ``search`` and the stored ``detail`` are one account.
+
+    Compared through ``jsonable`` because the endpoint merges the RAW
+    ``trace.detail`` into the receipt (datetimes and all) and the row coerces on
+    the way to JSONB, while the response coerces on the way out — one function,
+    two call sites, asserted equal rather than assumed so.
+    """
+    stored = mr.jsonable(call["detail"])
+    assert WINDOW_KEYS <= set(stored), (
+        f"the {exit_name} receipt dropped the searched window "
+        f"{sorted(WINDOW_KEYS - set(stored))}: the operator was shown a window "
+        f"the history cannot reproduce"
+    )
+    for key, value in result["search"].items():
+        assert stored[key] == value, (
+            f"{exit_name}: response search[{key!r}]={value!r} but the stored "
+            f"row says {stored.get(key)!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_hand_made_attach_records_the_window_that_found_it(
+    force_link_harness, real_pipeline
+):
+    """THE REPAIR, success arm. A link stores the search, not only its score."""
+    db = _ScriptedDB(
+        [_PipelineMarket()],
+        [
+            _Event(21, "Aryna Sabalenka", "Linda Noskova", _clock() + timedelta(hours=1)),
+            _Event(22, "Aryna Sabalenka", "Linda Noskova", _clock() + timedelta(hours=30)),
+        ],
+    )
+
+    result = await _force_link(db)
+
+    assert result["status"] == "linked"
+    (call,) = force_link_harness
+    assert call["linked_event_id"] == 21
+    _assert_search_reached_the_row(result, call, "linked")
+    # The window did not displace the exit's own fields: merged BEFORE them.
+    assert call["detail"]["score"] == pytest.approx(result["score"])
+    assert call["detail"]["home_team"] == "Aryna Sabalenka"
+    assert call["detail"]["team_a"] == "Aryna Sabalenka"
+
+
+@pytest.mark.asyncio
+async def test_a_duplicate_refusal_records_the_window_and_names_its_arm(
+    monkeypatch, force_link_harness, real_pipeline
+):
+    """THE REPAIR, refusal arm — both halves of the BLOCK in one run.
+
+    The guard itself is lane1's (D39) and is stubbed; what is under test is the
+    endpoint's handling of its answer. The pipeline that BUILT the trace is
+    real, so ``trace.detail`` is genuinely populated and the parity assertion
+    has something to fail on.
+    """
+    from app.tasks import prediction_market_matching as pmm
+
+    async def _refuse(*a, **k):
+        return pmm._REFUSAL_SIBLING_DATE
+
+    monkeypatch.setattr(pmm, "_check_duplicate_kalshi_linkage_reason", _refuse)
+
+    db = _ScriptedDB(
+        [_PipelineMarket()],
+        [_Event(21, "Aryna Sabalenka", "Linda Noskova", _clock() + timedelta(hours=1))],
+    )
+
+    result = await _force_link(db)
+
+    assert result["status"] == "duplicate_guard_blocked"
+    assert result["event_id"] == 21
+    # The refused link is not made, and the trace survives the refusal.
+    assert db.commits == 0
+    assert result["reject_reason"] == mr.REJECT_ALREADY_LINKED_ELSEWHERE
+
+    (call,) = force_link_harness
+    _assert_search_reached_the_row(result, call, "duplicate_guard_blocked")
+    assert call["detail"]["refusal"] == pmm._REFUSAL_SIBLING_DATE
+    assert call["detail"]["candidate_event_id"] == 21
+    # It considered a real candidate and says so — a refusal is not an absence.
+    assert [c["event_id"] for c in result["candidates"]] == [21]
+
+
+@pytest.mark.asyncio
+async def test_every_refusal_exit_returns_the_enum_the_row_will_group_by(
+    monkeypatch, force_link_harness
+):
+    """The property behind Part 2's table: no refusal answers with a status alone.
+
+    Part 2 checks each exit it knows about. This checks the RULE — that a
+    response saying the link did not happen always carries the countable reason,
+    so a caller can read ``reject_reason`` without first learning which statuses
+    subdivide and which do not. ``duplicate_guard_blocked`` subdivides; that is
+    what the BLOCK found, and a fourth exit added later would repeat it.
+    """
+    from app.tasks import prediction_market_matching as pmm
+
+    exits = [
+        (None, None, None),
+        (("a", "b"), None, None),
+        (("a", "b"), MATCHED, pmm._REFUSAL_EVENT_DATE),
+        (("a", "b"), MATCHED, pmm._REFUSAL_SIBLING_DATE),
+    ]
+
+    for matchup, matched, refusal in exits:
+        force_link_harness.clear()
+        _configure(monkeypatch, matchup=matchup, matched=matched, refusal=refusal)
+        result = await am.prediction_market_force_link(
+            request=None, secret="x", external_id=MARKET_ROW["external_id"],
+            db=_FakeDB(_FakeMarket()),
+        )
+        assert result["status"] != "linked"
+        reason = result.get("reject_reason")
+        assert reason in mr.REJECT_REASONS, (
+            f"{result['status']} returned reject_reason={reason!r}, which is "
+            f"not a countable reason the receipt history groups by"
+        )
+        (call,) = force_link_harness
+        assert reason == call["reject_reason"]
+
+
+@pytest.mark.asyncio
+async def test_an_exit_specific_field_outranks_the_window_it_merges_over(
+    monkeypatch, force_link_harness
+):
+    """The merge ORDER, pinned so the docstring is not the only thing asserting it.
+
+    ``_detail`` puts the common window in first so an exit's own key of the same
+    name wins. The two sets are disjoint today — this fails the moment they stop
+    being, rather than letting the pipeline's value shadow the endpoint's and
+    make a linked receipt report a score that is not the score it linked on.
+    """
+    from app.tasks import prediction_market_matching as pmm
+    from app.utils import prediction_market_matching as pmm_utils
+    from app.utils.prediction_market_matching import MatchupInfo
+
+    monkeypatch.setattr(
+        pmm_utils, "extract_matchup_with_ticker_fallback",
+        lambda *a, **k: MatchupInfo("a", "b", yes_team="a", format_type="will_win"),
+    )
+
+    async def _fake_find(session, matchup, market, now, **kwargs):
+        # A collision planted on purpose: the pipeline claims a `score` too.
+        kwargs["receipt"].detail.update({"score": -1.0, "window_start": NOW})
+        return MATCHED
+
+    async def _no_refusal(*a, **k):
+        return None
+
+    monkeypatch.setattr(pmm, "_find_matching_event", _fake_find)
+    monkeypatch.setattr(pmm, "_check_duplicate_kalshi_linkage_reason", _no_refusal)
+
+    result = await _force_link(_ScriptedDB([_PipelineMarket()]))
+
+    assert result["status"] == "linked"
+    (call,) = force_link_harness
+    assert call["detail"]["score"] == MATCHED["score"], (
+        "the merged window overwrote the exit's own score: the receipt now "
+        "reports a score the link was not made on"
+    )
+    # The non-colliding window key still came through.
+    assert call["detail"]["window_start"] == NOW
