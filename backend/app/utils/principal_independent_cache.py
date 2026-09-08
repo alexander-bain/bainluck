@@ -260,14 +260,20 @@ def market_load_ttl_headroom_s() -> float:
 # away — the caller gets a truthful but EMPTY page and the warm rail reports
 # `outcome: empty` and publishes nothing.
 #
-# MEASURED ON PRODUCTION, 2026-09-08 09:10Z onward, by forcing real builds on a
-# novel `limit` (a novel response-cache key, same code path, same artifacts):
+# MEASURED ON PRODUCTION, 2026-09-08 09:12-10:02Z, 182 forced builds on a novel
+# `limit` (a novel response-cache key, same code path, same shared artifacts):
 #
-#     ~8% of cold builds returned `X-Feed-Cache: unavailable`,
+#     5/182 = 2.7% returned `X-Feed-Cache: unavailable`,
 #     `cache.reason: input_age_ceiling`, ZERO items, `total_age_ceiling` in
 #     X-Feed-Stages, `build_quality` complete — a blank Discover front page.
-#     55% carried an artifact age above the bound this function sets;
-#     the age at the ceiling check ran min 0s, p50 44s, p90 56s, max 60s.
+#     `concepts` was consumed on 5/5. 51% of builds carried an artifact age
+#     above the bound this function sets; the age at the ceiling check ran
+#     min 0s, p50 40s, p90 55s, max 60s, on a payload that was live 182/182.
+#
+# Five events is small — read 2.7% as roughly 1-6%, not as three significant
+# figures. What the five DO establish, because each carries the full diagnostic
+# signature above, is that the mechanism is real, is firing on production, and
+# produces a blank front page rather than a slow one.
 #
 # ⚠️ READ `cache.stale_ttl_seconds`, NOT `cache.ttl_seconds`. Only the stale TTL
 # is the raw headroom. The fresh TTL is additionally clamped by
@@ -326,9 +332,14 @@ def live_artifact_ttl_ceiling_s() -> float:
     unchanged. The refusal stays exactly as correct as it was; what changes is
     that the system stops manufacturing the condition that trips it.
 
-    WHAT IT COSTS. `concepts` is an 865-1249ms stage (LAT-P104) and rebuilds
-    ~1.5x as often. That cost is paid once per generation FLEET-WIDE, not per
-    request — `get_or_build` holds a per-key lock — and the live rail alone
+    WHAT IT COSTS. `concepts` rebuilds ~1.5x as often. LAT-P104 recorded that
+    stage at 865-1249ms, but that number is from 2026-08 and is NOT today's: in
+    the 182 production builds measured for this ship the `concepts` stage never
+    once exceeded 103ms, so the cost being bought here is a fraction of what the
+    older figure would suggest. (Quoted rather than dropped because the two are
+    worth comparing — but do not spend the old number as if it were current.)
+    That cost is paid once per generation FLEET-WIDE, not per request —
+    `get_or_build` holds a per-key lock — and the live rail alone
     consumes these artifacts every `FEED_LIVE_REPUBLISH_PERIOD_S`, far inside
     this TTL, so the sharing LAT-P229 measured is not affected. `CLOCK_BUCKET_S`
     is 3600, so no key rotates faster than this and LAT-P104's "the key never
