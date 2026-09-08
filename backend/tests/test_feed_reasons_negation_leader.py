@@ -324,10 +324,26 @@ class TestNonWillInterrogatives:
         "Would a recession start before July?",
     ]
 
-    # #3491 — the eight now reach the same sentence down TWO different roads.
-    # Listed as data so the split itself is asserted rather than assumed; see
-    # `test_only_an_unfittable_label_collapses_to_the_bare_side`.
-    BARE_SIDE_MARKETS = {"Is the Fed cutting rates in September?"}
+    # Strategy 1 needs `Will <subject> <verb>`, so a non-"Will" question can
+    # only ever be labelled by Strategy 2. #3517 refuses every Strategy 2 label
+    # as a restatement, so under the current rule ALL EIGHT take the upstream
+    # road and none reaches the predicate. Kept as data rather than folded away
+    # because the split is what the tests below assert; see
+    # `test_only_a_strategy_1_label_still_reaches_the_predicate` for what keeps
+    # this class from going vacuous now that its own road is closed.
+    BARE_SIDE_MARKETS = set(NON_WILL_MARKETS)
+
+    # The road that IS still open. Strategy 1 extracts a subject and negates it,
+    # and that label restates nothing — the question's predicate stays out of
+    # it — so it ships, and `_answering_side_label` is the only thing standing
+    # between it and the reader. These are the specimens that keep the
+    # predicate under test after #3517 closed the Strategy 2 road.
+    STRATEGY_1_MARKETS = [
+        "Will Anthropic IPO first?",
+        "Will Alcaraz reach the semifinals?",
+        "Will Djokovic win another major?",
+        "Will Bitcoin reach $100k by December 2026?",
+    ]
 
     @pytest.mark.parametrize("market", NON_WILL_MARKETS)
     def test_the_producers_own_no_label_never_reaches_the_reader(self, market):
@@ -345,24 +361,51 @@ class TestNonWillInterrogatives:
         assert summary == "No leads at 72%"
         assert "..." not in summary
 
-        if market in self.BARE_SIDE_MARKETS:
-            # #3491: the producer refuses to manufacture a label it would have
-            # to chop, so there is nothing for the collapse to catch. The
-            # defect cannot exist upstream of the predicate here.
-            assert label == "No"
-        else:
-            # Unchanged road: the producer still manufactures a restatement and
-            # `_answering_side_label` is what keeps it off the page.
-            assert label != "No", "precondition: the producer must manufacture a label"
-            # Scoped per UX-P238-5: "No" alone is a substring of the defect.
-            assert label not in summary
+        # #3517: the producer refuses a label that only restates the question,
+        # so there is nothing left for the collapse to catch on this road. The
+        # defect cannot exist upstream of the predicate for any of the eight.
+        assert label == "No"
+        assert market in self.BARE_SIDE_MARKETS
 
-    def test_only_an_unfittable_label_collapses_to_the_bare_side(self):
-        """#3491 must fire on the echo and on NOTHING else in this set.
+    @pytest.mark.parametrize("market", STRATEGY_1_MARKETS)
+    def test_the_predicate_still_catches_the_label_strategy_1_ships(self, market):
+        """The road #3517 left open, walked end to end.
 
-        Both directions in one assertion: a rule that collapsed everything, or
-        collapsed nothing, fails here. Seven of these eight still carry a
-        manufactured label after the change.
+        🔴 THIS IS WHAT STOPS THE CLASS ABOVE GOING VACUOUS. Once the producer
+        refuses every Strategy 2 label, "the label never reaches the reader" is
+        satisfied trivially by a producer that emits nothing — so the predicate
+        needs a specimen the producer really does still manufacture. Strategy 1
+        is it: `Not Anthropic` is a genuine negation label, it restates nothing,
+        it ships, and `_answering_side_label` is the only thing between it and
+        the sentence.
+        """
+        label = humanize_binary_outcome_name("No", market)
+        assert label.startswith("Not "), (
+            "precondition: the producer must manufacture a label for this road "
+            "to be under test at all"
+        )
+
+        summary = generate_futures_context_summary(
+            highlight_reasons=[],
+            market_name=market,
+            leader_name=label,
+            leader_probability=0.72,
+            headline="",
+        )
+        assert summary == "No leads at 72%"
+        # Scoped per UX-P238-5: "No" alone is a substring of the defect.
+        assert label not in summary
+
+    def test_every_non_will_question_now_takes_the_upstream_road(self):
+        """Both directions in one place: the eight collapse, the four do not.
+
+        A rule that collapsed everything fails the second half; a rule that
+        collapsed nothing fails the first. #3491's version of this test pinned
+        one collapse out of eight, because the gate was length. #3517 makes the
+        gate redundancy, and every Strategy 2 label is a restatement, so the
+        split moved to the STRATEGY boundary — which is where it belongs, since
+        that is the boundary that decides whether the question's predicate
+        survives into the label.
         """
         collapsed = {
             market
@@ -371,14 +414,28 @@ class TestNonWillInterrogatives:
         }
         assert collapsed == self.BARE_SIDE_MARKETS
 
-    def test_the_exact_cert_624_sentence_is_gone(self):
-        label = humanize_binary_outcome_name("No", self.ALCARAZ_MARKET)
-        assert label == "Not: Does Alcaraz reach the semifinals"
+        kept = {
+            market
+            for market in self.STRATEGY_1_MARKETS
+            if humanize_binary_outcome_name("No", market) != "No"
+        }
+        assert kept == set(self.STRATEGY_1_MARKETS)
 
+    def test_the_exact_cert_624_sentence_is_gone(self):
+        # #3517 closed this one road further upstream than CERT-624 did: the
+        # label is no longer manufactured, so the predicate is never asked.
+        assert humanize_binary_outcome_name("No", self.ALCARAZ_MARKET) == "No"
+
+        # The predicate is still the backstop, and CERT-624's mechanism is what
+        # makes it work on a non-"Will" question, so it stays pinned against the
+        # cert's verbatim label rather than retired with the road that fed it.
+        # Hand-written HERE and only here, and named as such: this is the one
+        # place in the file where the producer cannot supply the specimen.
+        cert_624_label = "Not: Does Alcaraz reach the semifinals"
         summary = generate_futures_context_summary(
             highlight_reasons=[],
             market_name=self.ALCARAZ_MARKET,
-            leader_name=label,
+            leader_name=cert_624_label,
             leader_probability=0.72,
             headline="",
         )
@@ -502,9 +559,10 @@ class TestLiveNonWillMarkets:
         ),
     ]
 
-    # #3491 — of the three real rows, the two long ones no longer get a
-    # manufactured label at all. Pinned as data; asserted below.
-    BARE_SIDE_IDS = {58945765, 58948958}
+    # #3491 collapsed the two long ones. #3517 collapses the third as well:
+    # `Not: Is Earth flat` is short, and it is still nothing but the question
+    # with its auxiliary moved behind a marker. Pinned as data; asserted below.
+    BARE_SIDE_IDS = {34191685, 58945765, 58948958}
 
     @pytest.mark.parametrize("market_id,market,probability", LIVE)
     def test_live_no_side_leader_names_the_side(self, market_id, market, probability):
@@ -521,19 +579,18 @@ class TestLiveNonWillMarkets:
         assert summary == f"No leads at {round(probability * 100)}%"
         assert "..." not in summary
 
-        if market_id in self.BARE_SIDE_IDS:
-            assert label == "No", market_id
-        else:
-            # Precondition: the producer really does manufacture the label.
-            assert label not in ("No", "Yes"), market_id
-            assert label not in summary
+        assert label == "No", market_id
+        assert market_id in self.BARE_SIDE_IDS
 
-    def test_the_two_long_live_rows_are_the_ones_that_collapse(self):
-        """Pins the #3491 split across the three real production rows.
+    def test_all_three_live_rows_now_collapse(self):
+        """Pins the #3517 split across the three real production rows.
 
-        `Is Earth flat?` is short enough to keep `Not: Is Earth flat`, so this
-        also proves the change is length-driven and not a blanket collapse of
-        every non-"Will" question.
+        Under #3491 `Is Earth flat?` was short enough to keep
+        `Not: Is Earth flat`, and that was read as proof the change was
+        length-driven. It is the specimen #3517 turns on: two words of the
+        question is still the question, and the card prints it in full one line
+        below. The reader-facing sentence was already `No leads at 98%` down
+        both roads — what moves here is the HERO, which took the label direct.
         """
         collapsed = {
             market_id
@@ -541,10 +598,8 @@ class TestLiveNonWillMarkets:
             if humanize_binary_outcome_name("No", market) == "No"
         }
         assert collapsed == self.BARE_SIDE_IDS
-        assert (
-            humanize_binary_outcome_name("No", "Is Earth flat?")
-            == "Not: Is Earth flat"
-        )
+        assert humanize_binary_outcome_name("No", "Is Earth flat?") == "No"
+        assert humanize_binary_outcome_name("Yes", "Is Earth flat?") == "Yes"
 
     def test_a_team_abbreviation_is_not_an_auxiliary(self):
         """`WAS Commanders vs DAL Cowboys` — a real open row, id 59659430.
