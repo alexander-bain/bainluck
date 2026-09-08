@@ -478,6 +478,7 @@ async def _write_refreshed_prices(
         complementary_book,
     )
     from app.utils.odds_math import probability_to_american
+    from app.utils.price_change_stamp import price_observed_at_value
     from app.utils.winner_field_coherence import DUPLICATE_CONDITION_LEG_SQL
 
     async with get_task_session() as session:
@@ -755,6 +756,17 @@ async def _write_refreshed_prices(
                         current_yes_bid=bid,
                         current_yes_ask=ask,
                         last_updated=now,
+                        # #3879. THE OBSERVED INSTANT, not `func.now()`, and
+                        # deliberately the SAME `now` the snapshot's
+                        # `captured_at` takes twenty lines down — Q428's rule
+                        # ("the book travels with the price it produced")
+                        # applied to the clock as well as to the book. A leg
+                        # whose freshness stamp and whose history row disagreed
+                        # by a transaction would be two observations wearing one
+                        # timestamp, which is the defect Q428 is about.
+                        price_observed_at=price_observed_at_value(
+                            FuturesOutcome.price_observed_at, value, observed_at=now
+                        ),
                     )
                 )
                 stats["outcomes_updated"] += 1

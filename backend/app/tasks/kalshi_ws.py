@@ -72,7 +72,10 @@ async def _run_kalshi_ws_consumer():
         LiveBlendRefresher, event_ids_for_outcomes,
     )
     from app.tasks.ws_liveness import report as _report_liveness
-    from app.utils.price_change_stamp import price_changed_at_value
+    from app.utils.price_change_stamp import (
+        price_changed_at_value,
+        price_observed_at_value,
+    )
 
     api_key_id = os.getenv("KALSHI_API_KEY_ID")
     has_key = os.getenv("KALSHI_RSA_PRIVATE_KEY") or os.getenv("KALSHI_PRIVATE_KEY_PATH")
@@ -213,6 +216,13 @@ async def _run_kalshi_ws_consumer():
                                 FuturesOutcome.current_probability,
                                 FuturesOutcome.price_changed_at,
                                 prob,
+                            ),
+                            # #3879. A socket is the FRESHEST writer on the
+                            # board, and before this it could not say so: the
+                            # freshness question was answered by clocks it does
+                            # not move. Same lesson as Q460 one column later.
+                            price_observed_at=price_observed_at_value(
+                                FuturesOutcome.price_observed_at, prob
                             ),
                         )
                     )

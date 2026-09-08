@@ -23,7 +23,11 @@ from app.utils.winner_field_coherence import (
     count_near_certain,
     field_is_incoherent,
 )
-from app.utils.price_change_stamp import price_changed_at_value  # #2024
+from app.utils.price_change_stamp import (  # #2024, #3879
+    price_changed_at_value,
+    price_observed_at_insert,
+    price_observed_at_value,
+)
 from app.utils.futures_liveness import preserve_venue_settled  # #2222
 from app.utils.pair_opening_coherence import (
     OK as PAIR_OPENING_OK,
@@ -1389,6 +1393,9 @@ async def _process_event_batch(
                                 FuturesOutcome.price_changed_at,
                                 prob,
                             ),
+                            "price_observed_at": price_observed_at_value(  # #3879
+                                FuturesOutcome.price_observed_at, prob
+                            ),
                         }
                         if sub_has_open:
                             over_update["opening_probability"] = func.coalesce(
@@ -1408,6 +1415,7 @@ async def _process_event_batch(
                             opening_captured_at=sub_opening_at,
                             rank=1,
                             volume=sub_vol,
+                            price_observed_at=price_observed_at_insert(prob),  # #3879
                         ).on_conflict_do_update(
                             index_elements=["market_id", "external_id"],
                             set_=over_update,
@@ -1505,6 +1513,9 @@ async def _process_event_batch(
                                     FuturesOutcome.price_changed_at,
                                     under_prob,
                                 ),
+                                "price_observed_at": price_observed_at_value(  # #3879
+                                    FuturesOutcome.price_observed_at, under_prob
+                                ),
                             }
                             if sub_under_has_open:
                                 under_update["opening_probability"] = func.coalesce(
@@ -1524,6 +1535,9 @@ async def _process_event_batch(
                                 opening_captured_at=sub_under_opening_at,
                                 rank=2,
                                 volume=sub_vol,
+                                price_observed_at=price_observed_at_insert(  # #3879
+                                    under_prob
+                                ),
                             ).on_conflict_do_update(
                                 index_elements=["market_id", "external_id"],
                                 set_=under_update,
@@ -1647,6 +1661,9 @@ async def _process_event_batch(
                             FuturesOutcome.price_changed_at,
                             prob,
                         ),
+                        "price_observed_at": price_observed_at_value(  # #3879
+                            FuturesOutcome.price_observed_at, prob
+                        ),
                     }
                     if has_real_trading:
                         update_set["opening_probability"] = func.coalesce(
@@ -1671,6 +1688,7 @@ async def _process_event_batch(
                         opening_american_odds=opening_american,
                         opening_captured_at=opening_at,
                         rank=rank,
+                        price_observed_at=price_observed_at_insert(prob),  # #3879
                     ).on_conflict_do_update(
                         index_elements=["market_id", "external_id"],
                         set_=update_set,
@@ -2028,6 +2046,9 @@ async def _refresh_linked_polymarket_books(deadline_s: float | None = None) -> d
                                     ),
                                     opening_captured_at=now if has_real_trading else None,
                                     rank=rank,
+                                    price_observed_at=price_observed_at_insert(  # #3879
+                                        prob
+                                    ),
                                     # Explicit, and load-bearing: the column is
                                     # `boolean NULL DEFAULT false`, so an INSERT
                                     # that omits it stores an affirmative graded

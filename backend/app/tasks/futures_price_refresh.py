@@ -840,7 +840,10 @@ async def _write_prices(
     """
     from app.models.models import FuturesOddsSnapshot, FuturesOutcome
     from app.utils.odds_math import probability_to_american
-    from app.utils.price_change_stamp import price_changed_at_value
+    from app.utils.price_change_stamp import (
+        price_changed_at_value,
+        price_observed_at_value,
+    )
     from sqlalchemy import func, update as sa_update
 
     if not priced:
@@ -907,6 +910,12 @@ async def _write_prices(
                         FuturesOutcome.current_probability,
                         FuturesOutcome.price_changed_at,
                         side_prob,
+                    ),
+                    # #3879: and this records that the price was SEEN. A
+                    # refresher that moves nothing still proves the leg is
+                    # reachable, which is the only thing that number measures.
+                    price_observed_at=price_observed_at_value(
+                        FuturesOutcome.price_observed_at, side_prob
                     ),
                 )
             )

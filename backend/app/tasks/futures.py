@@ -10,7 +10,11 @@ from sqlalchemy import func
 from app.services.odds_api import OddsAPIService
 from app.tasks.base import get_task_session, run_async
 from app.utils.market_settlement import settled_values
-from app.utils.price_change_stamp import price_changed_at_value  # #2024
+from app.utils.price_change_stamp import (  # #2024, #3879
+    price_changed_at_value,
+    price_observed_at_insert,
+    price_observed_at_value,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -327,6 +331,7 @@ async def _poll_futures_odds():
                                 opening_american_odds=american,
                                 opening_captured_at=now,
                                 rank=rank,
+                                price_observed_at=price_observed_at_insert(prob),  # #3879
                             ).on_conflict_do_update(
                                 index_elements=["market_id", "external_id"],
                                 set_={
@@ -338,6 +343,9 @@ async def _poll_futures_odds():
                                         FuturesOutcome.current_probability,
                                         FuturesOutcome.price_changed_at,
                                         prob,
+                                    ),
+                                    "price_observed_at": price_observed_at_value(  # #3879
+                                        FuturesOutcome.price_observed_at, prob
                                     ),
                                 }
                             ).returning(FuturesOutcome.id)
