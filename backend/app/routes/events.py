@@ -7475,6 +7475,34 @@ def _build_suggestion_movers_query(*, pooled: bool):
     conditions = [
         FuturesOutcome.probability_change_24h.isnot(None),
         func.abs(FuturesOutcome.probability_change_24h) > 0.02,
+        # 🔴 #3987. A CERTAINTY IS NOT A MOVEMENT. An outcome at probability 1.0
+        # has not surged, it has RESOLVED — and because `probability_change_24h`
+        # is largest exactly when a thing resolves, ranking by |change| was
+        # actively BIASED TOWARD settled outcomes. On production `635faf8c` the
+        # single biggest mover on the row was `Completed Match` at
+        # `current_probability = 1.0000`, promoted as "Surging +99.0%": the
+        # standing *settled means settled* ruling, broken on a discovery surface.
+        #
+        # This is an ELIGIBILITY rule, not a display rule, so it belongs here and
+        # not in `_mover_chips` — a settled row filtered at display time has
+        # already consumed one of the five `LIMIT` slots, and the specimen above
+        # was rank 1, so the row would simply have served four chips.
+        #
+        # In `conditions` (rather than on one arm) so BOTH arms carry it and
+        # `test_pooled_arm_equals_the_full_scan_oracle` keeps grading it.
+        #
+        # ⚠️ WRITTEN OUT RATHER THAN AS `current_probability < 1.0` BECAUSE THE
+        # COLUMN IS NULLABLE. `NOT (NULL >= 1.0)` is NULL, not true, so the terse
+        # spelling would have silently dropped every outcome whose probability is
+        # unknown — 4 live rows in the pool of 2,047 when this shipped, none of
+        # them settled. Unknown is not resolved; those rows stay.
+        or_(
+            FuturesOutcome.current_probability.is_(None),
+            and_(
+                FuturesOutcome.current_probability > 0.0,
+                FuturesOutcome.current_probability < 1.0,
+            ),
+        ),
     ]
 
     if pooled:
