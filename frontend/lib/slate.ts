@@ -414,6 +414,25 @@ export function formatMove(move: number | null): string {
   return `${sign}${Math.abs(points).toFixed(0)}`;
 }
 
+/**
+ * The same badge, from a delta that is ALREADY in whole printed points (#2951).
+ *
+ * `formatMove` takes a probability and rounds it here, which is the third of
+ * three independent roundings of one relationship and the reason a row could
+ * print `+1` between two numbers that both read 63%. Where the caller has
+ * computed the delta as the difference of the two PRINTED levels
+ * (`renderedDuelMovePoints`), there is nothing left to round and rounding again
+ * is exactly the mistake — so this only applies the glyph.
+ *
+ * The minus is U+2212, matching `formatMove`, because the two badges appear in
+ * the same list and an ASCII hyphen sets narrower beside `tabular-nums`.
+ */
+export function formatMovePoints(points: number | null): string {
+  if (points === null || !Number.isFinite(points) || points === 0) return "";
+  const sign = points > 0 ? "+" : "−";
+  return `${sign}${Math.abs(points)}`;
+}
+
 export function moveDirection(move: number | null): "up" | "down" | "flat" {
   if (move === null || !Number.isFinite(move)) return "flat";
   if (move > 0.003) return "up";

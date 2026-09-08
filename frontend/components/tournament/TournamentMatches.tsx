@@ -21,13 +21,12 @@ import {
   type MatchListSide,
   type MatchRoundKey,
 } from "@/lib/matchList";
-import { renderedDuelPercents } from "@/lib/renderedPercent";
+import { renderedDuelMovePoints, renderedDuelPercents } from "@/lib/renderedPercent";
 import { matchupEventHref, type MatchupEventIds } from "@/lib/tournamentEventLink";
 import {
   dayHeading,
-  formatMove,
+  formatMovePoints,
   localDayKey,
-  moveDirection,
   slateEmptyState,
   type SlateEmptyState,
   type SlateNotice,
@@ -163,12 +162,20 @@ function SideLine({
   entry,
   favourite,
   percent,
+  movePoints,
 }: {
   side: MatchListSide;
   entry: MatchListEntry;
   favourite: boolean;
   /** This side's whole percent, rounded WITH its opponent. `null` when unpriced. */
   percent: number | null;
+  /**
+   * This side's move IN PRINTED POINTS — `percent` minus the same side's
+   * printed opening (#2951). Computed in `MatchRow` for the same reason
+   * `percent` is: a side alone knows neither its opponent nor, therefore, what
+   * either end of its own move rounds to.
+   */
+  movePoints: number | null;
 }) {
   if (side.placeholder !== "none") {
     // NEVER a bare em-dash (UX-P137, ruling 3). A round-one hole is a register
@@ -185,8 +192,17 @@ function SideLine({
     );
   }
 
-  const move = formatMove(side.move);
-  const direction = moveDirection(side.move);
+  // THE BADGE IS THE DIFFERENCE OF THE TWO PRINTED LEVELS (#2951), not a third
+  // rounding of the raw delta. `formatMove(side.move)` printed `+1` between two
+  // numbers that both read 63%. A sub-point move now shows no badge rather than
+  // a badge the row's own arithmetic contradicts.
+  const move = movePoints === null || movePoints === 0 ? "" : formatMovePoints(movePoints);
+  // THE COLOUR FOLLOWS THE SIGN THAT IS PRINTED, not the raw move. Reading
+  // `moveDirection(side.move)` here would let a row draw `+1` in the red used
+  // for a fall: the raw delta can sit inside that function's 0.3pt dead band
+  // while the two printed levels still differ by a whole point, and "flat" is
+  // not "up", so the ternary below would take its else branch.
+  const direction = (movePoints ?? 0) > 0 ? "up" : "down";
 
   return (
     <div
@@ -396,6 +412,12 @@ function MatchRow({
     entry.sides[0].matchProbability,
     entry.sides[1].matchProbability
   );
+  /* #2951: and ONE rounding for the movement, from the same two levels the row
+     is about to print — so `shown − badge = opened` holds on screen. */
+  const [firstMovePoints, secondMovePoints] = renderedDuelMovePoints(
+    [entry.sides[0].matchProbability, entry.sides[1].matchProbability],
+    [entry.sides[0].openingProbability, entry.sides[1].openingProbability]
+  );
 
   return (
     <li
@@ -511,6 +533,7 @@ function MatchRow({
               side={entry.sides[0]}
               entry={entry}
               percent={firstPercent}
+              movePoints={firstMovePoints}
               favourite={
                 !entry.decided &&
                 (entry.sides[0].matchProbability ?? 0) >=
@@ -521,6 +544,7 @@ function MatchRow({
               side={entry.sides[1]}
               entry={entry}
               percent={secondPercent}
+              movePoints={secondMovePoints}
               favourite={
                 !entry.decided &&
                 (entry.sides[1].matchProbability ?? 0) >

@@ -180,6 +180,54 @@ export function renderedDuelPercents(
   return [awayPct, homePct];
 }
 
+// ── A DUEL's MOVEMENT, in the same arithmetic as the two numbers it sits
+//    between (#2951) ────────────────────────────────────────────────────────
+//
+// `renderedDuelPercents` above fixed the LEVEL: a card could not print 101,
+// because the pair is rounded once, together. The DELTA never got the same
+// treatment. It was `Math.round(move * 100)` on the raw difference, computed
+// from one side alone — so the badge and the two percentages beside it were
+// three independent roundings of one relationship, and they disagree whenever
+// their fractional parts straddle a boundary.
+//
+// Measured on the US Open hub, 2026-09-03, rendered and read from the DOM:
+// **6 of 10 rows contradicted themselves** (`Carlos Alcaraz +6 93%`, "opened at
+// 88%" — 93 − 88 is 5). Still live 2026-09-08 on the Women's quarter-finals:
+// `Coco Gauff +1 63%` over "opened at 63%", a badge claiming a move between two
+// identical printed numbers (now `0.6300`, open `0.6250`; both levels round to
+// 63, the delta rounds to +1).
+//
+// THE RULE: the printed delta is the DIFFERENCE OF THE PRINTED LEVELS. Not the
+// rounded difference — the difference of the roundings. That is the only
+// definition under which `shown − badge = opened` is true on the reader's
+// screen, which is the whole reason the row prints all three.
+//
+// It follows that a real but sub-point move renders as no badge at all rather
+// than as `+1` between two equal numbers. That is the correct trade: the row's
+// job is to be arithmetically honest about what it shows, and a half-point move
+// the levels cannot express is a move the row cannot claim. The DEAD BAND in
+// `moveDirection` is a separate, looser question (is this worth colouring) and
+// is deliberately left alone.
+//
+// Both pairs go through `renderedDuelPercents`, so a complement pair is rounded
+// once at BOTH ends — an opening pair is as capable of summing to 101 as a
+// current one, and rounding it any other way would reintroduce the same defect
+// one step back.
+
+export function renderedDuelMovePoints(
+  currentPair: [number | null | undefined, number | null | undefined],
+  openingPair: [number | null | undefined, number | null | undefined],
+): Array<number | null> {
+  const now = renderedDuelPercents(currentPair[0], currentPair[1]);
+  const open = renderedDuelPercents(openingPair[0], openingPair[1]);
+  return [0, 1].map((index) => {
+    const a = now[index];
+    const b = open[index];
+    if (a === null || b === null) return null;
+    return a - b;
+  });
+}
+
 // ── A MARKET's own outcome rows, when there are exactly two of them (#2831) ──
 //
 // UX-P114 fixed the duel for surfaces that print a GAME's two teams. It reached
