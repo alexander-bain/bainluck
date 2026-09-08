@@ -335,20 +335,29 @@ def live_artifact_ttl_ceiling_s() -> float:
     constant — which is the rail whose passes must publish for the mirror to
     survive, and it is the rail #3904 is about.
 
-    NOT guaranteed, deliberately:
+    NOT guaranteed, deliberately, and here is each one's arithmetic:
 
-    * The 120s warm rail budgets `FEED_PREWARM_PASS_BUDGET_S` (80s), so a shape
-      that turns out live AND spends more than 20s building can still land over
-      the ceiling.
-    * The request path has no whole-build deadline constant at all; it is bounded
-      only by the router.
+    * **The request path** budgets `request_cache.FEED_TOTAL_BUDGET_MS` (25s,
+      env-overridable), spent at `routes/feed.py:2074`. `39 + 25 = 64`, so a
+      request build that spends its WHOLE budget can still land over the ceiling.
+      Covering it would need `60 - 25 - 1 = 34`.
+    * **The 120s warm rail** budgets `FEED_PREWARM_PASS_BUDGET_S` (80s), so a
+      shape that turns out live and spends it can too. Covering THAT would need a
+      negative TTL: `60 - 80 - 1 < 0`. It cannot be covered at any bound.
 
-    Neither is a gap to close by widening this bound, and widening it would be
-    the wrong move: a live page assembled over forty-odd seconds genuinely IS too
-    stale to serve, which is what #2216 says. Both cases are far outside measured
-    behaviour — 182 production builds ran p50 1.19s / p95 1.92s / max 7.89s
-    against the 20s this bound charges them, so the margin in practice is roughly
-    an order of magnitude.
+    That last line is why this is scoped rather than universal — **no single TTL
+    can guarantee every path**, so the bound is set against the rail whose passes
+    must publish for the mirror to survive, which is the rail #3904 is about.
+    Widening it toward 34 would buy the request path a guarantee it does not need
+    and still leave the 80s rail uncovered.
+
+    And neither gap is one to close by widening at all: a live page assembled over
+    forty-odd seconds genuinely IS too stale to serve, which is what #2216 says.
+    Both are also far outside measured behaviour — 182 production builds ran
+    p50 1.19s / p95 1.92s / max 7.89s against the 20s this bound charges them, so
+    the worst build actually observed lands at `39 + 7.89 = 47s` against a 59s
+    trigger. The blank pages this ship removes were never caused by slow builds;
+    they were caused by the artifact reaching 60s on its own.
 
     It also says nothing about `timeout`/`error`/`no_key`, which are different
     outcomes with different causes, and it does not touch the ceiling itself —
