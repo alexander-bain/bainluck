@@ -2108,6 +2108,12 @@ async def _fix_golf_commence_times(
                         tier = "schedule"
                         source_counts[tier] += 1
                     except (ValueError, TypeError):
+                        # Unparseable schedule date: leave `target_dt` None and
+                        # fall through to Tier 3's heuristic, which is the whole
+                        # point of having a tier below this one. Deliberately
+                        # not counted as a row error — the market IS evaluated,
+                        # just on a lower tier, and the receipt already says so
+                        # by counting it under `heuristic`.
                         pass
 
                 # Tier 3: Heuristic fallback — close_time - 4.5 days
