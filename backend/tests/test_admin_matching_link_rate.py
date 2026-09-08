@@ -3,8 +3,12 @@
 from datetime import datetime, timezone
 
 from app.routes.admin_matching import (
+    ATTACH_ANCHORED,
+    ATTACH_SELF_MINTED,
+    ATTACH_UNLINKED,
     _LINK_RATE_NON_GAME_CATEGORIES,
     _LINK_RATE_SPORT_CATEGORIES,
+    _classify_attachment,
     _is_obvious_non_game_market_name,
     _is_polymarket_matcher_game_level,
     _is_upstream_coverage_gap_market,
@@ -173,3 +177,97 @@ def test_raw_rate_re_adds_excluded_upstream_gap():
     assert honest == 79.0
     assert raw == round(79 / 140 * 100, 1)
     assert honest >= raw
+
+
+# =============================================================================
+# #3778 -- attached to WHAT: the anchored / self_minted split
+# =============================================================================
+#
+# `linked` means `event_id IS NOT NULL` and nothing else, so a market attached
+# to an event row its OWN ingest minted scores exactly like one attached to a
+# row ESPN anchored. A twin-generating ingest and a healthy one therefore
+# publish the same number, and the metric cannot fall. Measured on production
+# 2026-09-07, open markets with events commencing in the last 14 days: kalshi
+# 27.3% self-minted (309/1,130), polymarket 78.7% (9,184/11,670), while the
+# Kalshi ATP/WTA receipt read 244/244 (100%), flat, and the US Open men's
+# semi-final page rendered with no Kalshi curve.
+
+
+def test_an_unlinked_market_is_neither_anchored_nor_self_minted():
+    assert _classify_attachment(None, None, None) == ATTACH_UNLINKED
+    # A NULL event_id wins even if ids somehow arrive: there is no row to grade.
+    assert _classify_attachment(None, "182780", "x") == ATTACH_UNLINKED
+
+
+def test_an_espn_anchored_event_is_anchored():
+    assert _classify_attachment(15305016, "182722", None) == ATTACH_ANCHORED
+
+
+def test_a_provider_anchored_event_is_anchored():
+    """`external_id` counts: the point is that SOME other source can find the
+    same row, not that ESPN specifically did."""
+    assert _classify_attachment(15305016, None, "odds_api:abc123") == ATTACH_ANCHORED
+
+
+def test_an_event_row_with_neither_id_is_self_minted():
+    assert _classify_attachment(15304989, None, None) == ATTACH_SELF_MINTED
+
+
+def test_the_split_is_exhaustive_and_the_buckets_do_not_overlap():
+    """Every reachable input lands in exactly one bucket.
+
+    A classifier that can return something else would make
+    `sport_data[f"linked_{attachment}"]` raise KeyError inside the request
+    path, so this is a contract with the caller and not decoration.
+    """
+    seen = {
+        _classify_attachment(eid, espn, ext)
+        for eid in (None, 15305016)
+        for espn in (None, "", "182722")
+        for ext in (None, "", "odds_api:abc")
+    }
+    assert seen == {ATTACH_UNLINKED, ATTACH_ANCHORED, ATTACH_SELF_MINTED}
+
+
+def test_an_empty_string_id_is_not_an_anchor():
+    """`''` is an absence wearing a value. Anchoring on it would let a blank
+    column re-flatter exactly the number this split exists to deflate."""
+    assert _classify_attachment(15304989, "", "") == ATTACH_SELF_MINTED
+
+
+def test_the_split_is_non_vacuous_on_a_mixed_cohort():
+    """#3778 acceptance item 3, and the one that catches a broken splitter.
+
+    A cohort that happens to be all-anchored greens a splitter that has been
+    wired to a column that is always NULL, or that classifies everything as
+    anchored. The fixture is the two real rows from the US Open men's
+    semi-final window, which differ in the only field that matters: ghost
+    15304989 (espn NULL, the two Kalshi markets, the page that lost its
+    curve) and real 15305016 (espn 182722). Both buckets must be occupied.
+    """
+    cohort = [
+        # (event_id, espn_id, external_id) -- the real pair, recorded.
+        (15304989, None, None),
+        (15305016, "182722", None),
+    ]
+    buckets = [_classify_attachment(*row) for row in cohort]
+    assert buckets.count(ATTACH_ANCHORED) >= 1, "no anchored row: splitter is vacuous"
+    assert buckets.count(ATTACH_SELF_MINTED) >= 1, (
+        "no self_minted row: a splitter reading an always-NULL column would "
+        "pass every all-anchored cohort and report the flattering number again"
+    )
+
+
+def test_self_minted_is_not_reported_as_a_duplicate_count():
+    """A naming contract, pinned because the misreading is the likely one.
+
+    `self_minted` means 'an attachment this metric cannot grade', NOT 'a
+    ghost'. A row with neither id can be the only row for a contest nobody
+    else lists -- most of Polymarket's 78.7% is that, not twins. The twin
+    question belongs to #3582 / #2693.
+    """
+    doc = _classify_attachment.__doc__ or ""
+    assert "NOT A SYNONYM FOR GHOST" in doc.upper(), (
+        "the constraint that stops a reader quoting self_minted as a duplicate "
+        "count must travel with the function that mints the label"
+    )
