@@ -141,7 +141,24 @@ final class DailyChallengeViewModel: ObservableObject {
             // result was ever reported, and the answer is not fixed.
             guard !EventState.isFinished(eventData.status) else { return nil }
             probability = eventData.currentOdds?.homeProbability
-            fallbackHeadline = "\(eventData.homeTeam) vs \(eventData.awayTeam)"
+            // #3869 — AWAY-HOME, the order every other surface already uses. This
+            // screen was the only place in the app that read home-first, so the
+            // same fixture was "Milwaukee Brewers vs Chicago Cubs" on the phone
+            // and "Chicago Cubs vs Milwaukee Brewers" on web
+            // (`frontend/app/daily/page.tsx:156`). Not a preference call between
+            // two defensible orders: the convention is written down in
+            // ``EventState/suspendedSummary``'s doc comment — "the away crest is
+            // drawn first and the title reads '{away} @ {home}'" — and web and
+            // every native card follow it.
+            //
+            // 🟢 THE SUBJECT DELIBERATELY DOES NOT MOVE. `probability` is
+            // `homeProbability`, so the side named below the headline must stay
+            // the HOME side or #3858's ship (the number has an owner) silently
+            // inverts. Headline order is a reading convention; subject order is a
+            // truth claim about whose price this is. They are not the same edit,
+            // and `testTheNamedSideIsTheONEThePriceIsFor` fails if this is ever
+            // "fixed" for symmetry.
+            fallbackHeadline = "\(eventData.awayTeam) vs \(eventData.homeTeam)"
             subject = "\(eventData.homeTeam) to win"
             id = eventData.id
             // Keeps the original expression's fallback exactly, rather than
