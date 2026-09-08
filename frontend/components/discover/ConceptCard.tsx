@@ -15,7 +15,7 @@ import { buildDiscoverShareUrl } from "@/lib/share";
 import { eventPath } from "@/lib/eventKey";
 import type { FeedConceptData } from "@/lib/types";
 import { conceptHeadlineBout } from "@/lib/eventConceptDisplay";
-import { DismissBtn, ActionBar } from "./shared";
+import { DismissBtn, ActionBar, dismissCornerBadge } from "./shared";
 import { formatConceptMovement } from "./utils";
 
 interface ConceptCardProps {
@@ -86,13 +86,17 @@ export function ConceptCard({
         <div className="absolute top-3 left-3 bg-white/20 text-white text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full">
           {domainLabel}
         </div>
+        {/* #3777: these two pills and `DismissBtn` both claimed `top-3 right-3`,
+            and the button wins on `z-10` — the `● Live` pill rendered as `● L`
+            with the word under the button. `dismissCornerBadge` steps them onto
+            the same 48px line `TrendBadge` already uses. */}
         {whatHit && (
-          <div className="absolute top-3 right-3 bg-white/20 text-white text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full">
+          <div className={`absolute top-3 ${dismissCornerBadge(onDismiss)} bg-white/20 text-white text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full`}>
             🏁 Final
           </div>
         )}
         {isLive && (
-          <div className="absolute top-3 right-3 flex items-center gap-1 bg-white/20 text-white text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full">
+          <div className={`absolute top-3 ${dismissCornerBadge(onDismiss)} flex items-center gap-1 bg-white/20 text-white text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full`}>
             <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
             Live
           </div>

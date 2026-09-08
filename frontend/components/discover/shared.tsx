@@ -155,6 +155,49 @@ export function DismissBtn({ onDismiss }: { onDismiss?: () => void }) {
   );
 }
 
+// ── The dismiss button's corner (#3777) ──
+
+/**
+ * Keeps the rest of a card clear of the corner `DismissBtn` occupies.
+ *
+ * `DismissBtn` is `absolute`, so it reserves NO layout space. Anything else
+ * that reaches the same corner — an in-flow row ending flush right, or a
+ * second badge pinned to `top-3 right-3` — is simply painted underneath it,
+ * and the button's opaque `bg-black/30` means "underneath" is "invisible".
+ *
+ * Measured on production 2026-09-08 at 390px, by intersecting the button's
+ * rect with every text run and glyph in its own card: 23 of 35 dismissible
+ * Discover cards had something under it. Every leaderboard card (16/16) lost
+ * all three confidence bars at 100% coverage, and every heatmap card (7/7)
+ * lost the year off its "Resolves …" date. The image variants A and B were
+ * clean, and clean by construction — their top rows are left-aligned, so
+ * nothing reaches the corner in the first place.
+ *
+ * `TrendBadge` below already solved this for itself with `right-12`, so 48px
+ * from the card's right edge is this file's existing line. These two helpers
+ * extend that line to the other claimants rather than inventing a second
+ * convention:
+ *
+ * - `dismissCornerBadge` — for a badge that is itself `absolute top-3`.
+ * - `dismissCornerPad`   — for an in-flow row. `pr-9` (36px) sits inside a
+ *   `p-3` container's 12px inset to land on the same 48px line. A row in a
+ *   `p-4` container over-reserves by 4px, which is deliberate: one constant
+ *   that is always safe beats per-container arithmetic that drifts the first
+ *   time someone changes a padding.
+ *
+ * Both are no-ops when the card is not dismissible. `FuturesCard` also renders
+ * on `/preferences`, inside `ThemeBundleCard` and in `GroupedFeedRenderer`,
+ * none of which pass `onDismiss`; those must not pay for a button that is
+ * never drawn.
+ */
+export function dismissCornerPad(onDismiss?: () => void): string {
+  return onDismiss ? "pr-9" : "";
+}
+
+export function dismissCornerBadge(onDismiss?: () => void): string {
+  return onDismiss ? "right-12" : "right-3";
+}
+
 // ── Trend Badge ──
 
 export function TrendBadge() {

@@ -14,7 +14,7 @@ import { renderedLeaderPercent } from "@/lib/renderedPercent";
 import type { FeedItem, FeedFuturesData } from "@/lib/types";
 import { CATEGORY_GRADIENTS, getCat } from "./constants";
 import { compactOutcomeName, feedContextSnippet, feedExpandedContext, resolvesLabel } from "./utils";
-import { AnimatedProbability, DismissBtn, TrendBadge, TemporalBadge, ActionBar, MovementBadge, ExpandableContextText, SignalBars, ForYouChip } from "./shared";
+import { AnimatedProbability, DismissBtn, TrendBadge, TemporalBadge, ActionBar, MovementBadge, ExpandableContextText, SignalBars, ForYouChip, dismissCornerPad } from "./shared";
 import { forYouCue } from "@/lib/discover/forYouCue";
 import QuantityGroup from "../QuantityGroup";
 import type { ActionBarProps, CardActionCallbacks } from "./types";
@@ -213,7 +213,10 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
         {trending && <TrendBadge />}
 
         <div className="p-4">
-          <div className="flex items-center gap-1.5 mb-1">
+          {/* #3777: `dismissCornerPad` keeps the resolution date out from under
+              the dismiss button. Measured before the fix: 7 of 7 heatmap cards
+              on production had ~21% of "Resolves <date>" covered — the year. */}
+          <div className={`flex items-center gap-1.5 mb-1 ${dismissCornerPad(onDismiss)}`}>
             <span className="text-[10px] font-semibold uppercase tracking-[0.04em] text-text-muted">{catStyle.emoji} {category}</span>
             <span className="ml-auto text-[11px] text-text-muted">{resolveText}</span>
           </div>
@@ -313,7 +316,11 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
           {/* L2-160 — muted category header (no internal-taxonomy "Distribution"
               pill; ruling: no internal taxonomy pills). Matches the handoff's
               leaderboard header + the sibling ComparisonCard treatment. */}
-          <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
+          {/* #3777: `dismissCornerPad` keeps the confidence glyph out from under
+              the dismiss button. Measured before the fix: 16 of 16 leaderboard
+              cards on production had all three bars covered 100%, so the
+              how-well-sourced signal was invisible at phone width. */}
+          <div className={`mb-1.5 flex flex-wrap items-center gap-1.5 ${dismissCornerPad(onDismiss)}`}>
             <span className="text-[10px] font-semibold uppercase tracking-[0.04em] text-text-muted">{catStyle.emoji} {category}</span>
             <TemporalBadge badge={data.temporal_badge} />
             <span className="ml-auto flex items-center gap-1.5 text-[11px] text-text-muted">
