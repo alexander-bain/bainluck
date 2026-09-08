@@ -798,6 +798,23 @@ class TestTheSoccerRunnerPlansRatherThanWrites:
             "a 300s pass must not reach the settlement sweep's :31-:47"
         )
 
+        # The beat entry passes no kwargs, so what it WRITES is decided by the
+        # Celery task's own default — a different object from the runner
+        # asserted above, and the one the scheduler actually calls. Flipping it
+        # back to False would leave a scheduled, green, hourly task that stamps
+        # nothing, which is the silent shape: soccer simply stops gaining
+        # anchors and no gate anywhere goes red.
+        assert "kwargs" not in entry or not entry.get("kwargs"), (
+            "the beat passes kwargs now, so the task default is no longer what "
+            "decides whether this pass writes — assert the kwargs instead"
+        )
+        import inspect
+
+        assert (
+            inspect.signature(celery_app.tasks[name].run).parameters["apply"].default
+            is True
+        )
+
         # Every OTHER StatPal reader must sit outside the window soccer occupies.
         for key, other in celery_app.conf.beat_schedule.items():
             if key in entries or "statpal" not in other["task"]:
