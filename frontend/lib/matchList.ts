@@ -53,11 +53,14 @@ import {
 import { orientLinescore, type SlateLinescore } from "./linescore";
 import { isPredictionMarketSource } from "./prematchReading";
 import { matchupEventHref, type MatchupEventIds } from "./tournamentEventLink";
+import {
+  renderedDuelMovePoints,
+  renderedDuelPercents,
+} from "./renderedPercent";
 import { BOOKS_MARKER } from "./tournamentResults";
 import {
   formatSlateProbability,
   matchBroadcast,
-  moveDirection,
   slateRowFreshnessLabel,
   slateRowIsPresentedAsLive,
   slateStalenessLabel,
@@ -519,13 +522,37 @@ export function matchDetailNote(entry: {
   }
 
   // The biggest mover of the two. One sentence per row, never two.
-  const moved = entry.sides
-    .filter((side) => moveDirection(side.move) !== "flat")
-    .sort((a, b) => Math.abs(b.move ?? 0) - Math.abs(a.move ?? 0))[0];
-  if (moved && moved.openingProbability !== null) {
-    return `${moved.displayName} opened at ${formatSlateProbability(
-      moved.openingProbability
-    )}.`;
+  //
+  // THE SENTENCE IS THE THIRD RENDERING OF ONE RELATIONSHIP (#2951), and it used
+  // to round independently of the other two: `formatSlateProbability` is a bare
+  // per-side `Math.round`, so it could name an opening the row's badge did not
+  // subtract and its level did not come from. `93%`, `+6`, "opened at 88%".
+  //
+  // Both ends now come from the same pair rounding the row prints, so the
+  // sentence states the badge's own baseline by construction:
+  //
+  //     printed level − printed badge = printed opening
+  //
+  // and the sentence appears on exactly the rows that show a badge. A move too
+  // small to survive the rounding shows neither — which is right, because case
+  // 2 in the ruling above earns this sentence by naming *the origin of a delta
+  // the row displays*. With no delta displayed there is no origin to give, and
+  // the sentence would be the bare restatement ruling 6 deleted.
+  const openingPoints = renderedDuelPercents(
+    entry.sides[0]?.openingProbability ?? null,
+    entry.sides[1]?.openingProbability ?? null
+  );
+  const movePoints = renderedDuelMovePoints(
+    [entry.sides[0]?.matchProbability, entry.sides[1]?.matchProbability],
+    [entry.sides[0]?.openingProbability, entry.sides[1]?.openingProbability]
+  );
+  const movedIndex = [0, 1]
+    .filter((index) => (movePoints[index] ?? 0) !== 0)
+    .sort(
+      (a, b) => Math.abs(movePoints[b] as number) - Math.abs(movePoints[a] as number)
+    )[0];
+  if (movedIndex !== undefined && openingPoints[movedIndex] !== null) {
+    return `${entry.sides[movedIndex].displayName} opened at ${openingPoints[movedIndex]}%.`;
   }
   return null;
 }
