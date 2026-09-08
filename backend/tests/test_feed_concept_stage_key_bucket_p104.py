@@ -550,11 +550,18 @@ async def test_a_second_cold_build_35s_later_reuses_the_concept_stage(
         f"{len(counting_concepts['personalization'])} time(s)"
     )
 
+    # LAT-P261 (#3904): named separately so a future tightening of the
+    # counted-artifact bound below STEP_S fails HERE, by name, instead of
+    # looking like the key rotation defect this file was written about.
+    assert STEP_S < shared_build_ttl_s("concepts"), (
+        f"the {STEP_S}s gap this test shares across no longer fits inside the "
+        f"{shared_build_ttl_s('concepts')}s concepts TTL"
+    )
     assert len(counting_concepts["concepts"]) == 1, (
         "the concept stage was built "
         f"{len(counting_concepts['concepts'])} times across two cold builds "
-        f"{STEP_S}s apart, inside one {DEFAULT_TTL_S}s TTL — the key turned while "
-        "the artifact was still fresh"
+        f"{STEP_S}s apart, inside one {shared_build_ttl_s('concepts')}s TTL — "
+        "the key turned while the artifact was still fresh"
     )
 
 
@@ -606,12 +613,24 @@ async def test_widening_the_key_did_not_widen_staleness():
     # generic cache probe.
     key = ("all", (), time_bucket(ANCHOR, clock_bucket_s()))
 
+    # LAT-P261 (#3904): read the TTL `concepts` is actually GIVEN rather than
+    # `DEFAULT_TTL_S`. It is now clamped by `live_artifact_ttl_ceiling_s()` so
+    # that an artifact can never age a live page past the #2216 ceiling and get
+    # the whole build refused. The claim under test is unchanged — the TTL is
+    # the staleness bound and it still bites — and asking the real function
+    # keeps that claim true the next time the bound moves.
+    concepts_ttl = shared_build_ttl_s("concepts")
+    assert concepts_ttl < DEFAULT_TTL_S, (
+        "expected the counted-artifact clamp to be binding here; if it is not, "
+        "this test is no longer proving what it says it proves"
+    )
+
     await get_or_build("concepts", key, _build, clock=lambda: ticks["t"])
-    ticks["t"] = 1000.0 + DEFAULT_TTL_S - 1.0
+    ticks["t"] = 1000.0 + concepts_ttl - 1.0
     await get_or_build("concepts", key, _build, clock=lambda: ticks["t"])
     assert builds["n"] == 1, "rebuilt inside the TTL"
 
-    ticks["t"] = 1000.0 + DEFAULT_TTL_S + 1.0
+    ticks["t"] = 1000.0 + concepts_ttl + 1.0
     await get_or_build("concepts", key, _build, clock=lambda: ticks["t"])
     assert builds["n"] == 2, (
         "the concept stage was reused past its TTL; the key widened but the "

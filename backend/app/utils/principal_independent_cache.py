@@ -250,6 +250,169 @@ def market_load_ttl_headroom_s() -> float:
     return market_load_ttl_ceiling_s() - TTL_S_BY_NAMESPACE["market_load"]
 
 
+# --- LAT-P261 (#3904): a COUNTED artifact may not spend the whole ceiling -----
+#
+# LAT-P230 made artifact age COUNT against the #2216 live ceiling. It never
+# bounded how much of that ceiling one artifact is allowed to eat, and the answer
+# was "all of it": `DEFAULT_TTL_S` is 60.0 and the ceiling is 60. So at the end
+# of every generation of `concepts` / `canonical_counts` the headroom is zero,
+# `routes/feed.py` takes the CERT-1864 refusal branch, and the build is thrown
+# away — the caller gets a truthful but EMPTY page and the warm rail reports
+# `outcome: empty` and publishes nothing.
+#
+# MEASURED ON PRODUCTION, 2026-09-08 09:12-10:02Z, 182 forced builds on a novel
+# `limit` (a novel response-cache key, same code path, same shared artifacts):
+#
+#     5/182 = 2.7% returned `X-Feed-Cache: unavailable`,
+#     `cache.reason: input_age_ceiling`, ZERO items, `total_age_ceiling` in
+#     X-Feed-Stages, `build_quality` complete — a blank Discover front page.
+#     `concepts` was consumed on 5/5. 51% of builds carried an artifact age
+#     above the bound this function sets; the age at the ceiling check ran
+#     min 0s, p50 40s, p90 55s, max 60s, on a payload that was live 182/182.
+#
+# Five events is small — read 2.7% as roughly 1-6%, not as three significant
+# figures. What the five DO establish, because each carries the full diagnostic
+# signature above, is that the mechanism is real, is firing on production, and
+# produces a blank front page rather than a slow one.
+#
+# ⚠️ READ `cache.stale_ttl_seconds`, NOT `cache.ttl_seconds`. Only the stale TTL
+# is the raw headroom. The fresh TTL is additionally clamped by
+# `FEED_RESPONSE_TTL_LIVE_SECONDS` (30), so it SATURATES: every artifact younger
+# than 30s reads back as exactly 30 and a naive `60 - ttl_seconds` invents a
+# floor at 30s that is an artifact of the instrument, not of the fleet.
+#
+# and it is the same event the warm rail counts as `empty` on 13-17% of passes
+# per shape (#3904's own table), which is what opens the mirror holes #3827 was
+# chasing.
+#
+# 🔴 THE SYMMETRY IS THE RULE, and it is the thing to keep. A namespace either
+# has its age COUNTED against the live ceiling or it does not:
+#
+#   * counted (everything not in `LIVENESS_INERT_NAMESPACES`) — then its TTL
+#     must fit UNDER the ceiling with room for the build that consumes it, or it
+#     can refuse the very page it exists to make faster;
+#   * not counted (`market_load`) — then its own cadence bounds it and
+#     `market_load_ttl_ceiling_s()` is that bound. It is deliberately NOT
+#     clamped here: clamping an artifact whose age nobody counts would undo
+#     LAT-P230's ship for no correctness gain at all.
+#
+# Neither half held for `concepts` / `canonical_counts`: their age was counted
+# AND they were free to spend every second of the ceiling.
+def live_artifact_ttl_ceiling_s() -> float:
+    """The longest TTL an artifact whose age is COUNTED may be given.
+
+    Derived, not chosen, from two constants that are already declared and
+    already guarded in `feed_cache` — on the same reasoning as
+    `market_load_ttl_ceiling_s()`, and for the same reason as #2236: a literal
+    here would be a fourth number nobody compares to the other three.
+
+    The refusal at `routes/feed.py` fires once
+    ``live_total_age_headroom_s(age) <= 0``, and that function rounds the age UP,
+    so the true trigger is ``age > CEILING - 1``. The age it is handed is the
+    age at the CHECK, which is the age at consumption plus however long the rest
+    of the build took::
+
+        artifact_age_at_check  <=  TTL + (consumption -> ceiling check)
+
+    The only hard bound in the system on that span is the live rail's own pass
+    budget — `_prewarm_feed_shape` runs the route under
+    ``asyncio.wait_for(timeout=FEED_LIVE_REPUBLISH_BUDGET_S)``, so a build that
+    reaches the ceiling check at all took less than it. Hence::
+
+        TTL + FEED_LIVE_REPUBLISH_BUDGET_S <= FEED_RESPONSE_STALE_TTL_LIVE_SECONDS - 1
+
+    Conservative in the safe direction twice over: it charges every build the
+    WHOLE pass budget when the measured span is ~1-3s, and it spends a whole
+    second on a rounding term worth at most one. Both make the bound smaller.
+
+    WHAT THIS BUYS, AND ITS EXACT SCOPE — stated so it can be checked rather than
+    believed, because "no more refusals" would be a bigger claim than the
+    arithmetic supports (CERT-2242 follow-up `LAT-P261-REQUEST-BUDGET-PARITY`).
+
+    Guaranteed: **any build that completes within `FEED_LIVE_REPUBLISH_BUDGET_S`
+    cannot be refused for artifact age.** That covers the live republish rail by
+    construction — `_prewarm_live_feed_shapes` passes a deadline bounded by that
+    constant — which is the rail whose passes must publish for the mirror to
+    survive, and it is the rail #3904 is about.
+
+    NOT guaranteed, deliberately, and here is each one's arithmetic:
+
+    * **The request path** budgets `request_cache.FEED_TOTAL_BUDGET_MS` (25s,
+      env-overridable), spent at `routes/feed.py:2074`. `39 + 25 = 64`, so a
+      request build that spends its WHOLE budget can still land over the ceiling.
+      Covering it would need `60 - 25 - 1 = 34`.
+    * **The 120s warm rail** budgets `FEED_PREWARM_PASS_BUDGET_S` (80s), so a
+      shape that turns out live and spends it can too. Covering THAT would need a
+      negative TTL: `60 - 80 - 1 < 0`. It cannot be covered at any bound.
+
+    That last line is why this is scoped rather than universal — **no single TTL
+    can guarantee every path**, so the bound is set against the rail whose passes
+    must publish for the mirror to survive, which is the rail #3904 is about.
+    Widening it toward 34 would buy the request path a guarantee it does not need
+    and still leave the 80s rail uncovered.
+
+    And neither gap is one to close by widening at all: a live page assembled over
+    forty-odd seconds genuinely IS too stale to serve, which is what #2216 says.
+    Both are also far outside measured behaviour — 182 production builds ran
+    p50 1.19s / p95 1.92s / max 7.89s against the 20s this bound charges them, so
+    the worst build actually observed lands at `39 + 7.89 = 47s` against a 59s
+    trigger. The blank pages this ship removes were never caused by slow builds;
+    they were caused by the artifact reaching 60s on its own.
+
+    It also says nothing about `timeout`/`error`/`no_key`, which are different
+    outcomes with different causes, and it does not touch the ceiling itself —
+    #2216 and CERT-1864 are unchanged. The refusal stays exactly as correct as it
+    was; what changes is that the system stops manufacturing the condition that
+    trips it.
+
+    WHAT IT COSTS. `concepts` rebuilds ~1.5x as often. LAT-P104 recorded that
+    stage at 865-1249ms, but that number is from 2026-08 and is NOT today's: in
+    the 182 production builds measured for this ship the `concepts` stage never
+    once exceeded 103ms, so the cost being bought here is a fraction of what the
+    older figure would suggest. (Quoted rather than dropped because the two are
+    worth comparing — but do not spend the old number as if it were current.)
+    That cost is paid once per generation FLEET-WIDE, not per request —
+    `get_or_build` holds a per-key lock — and the live rail alone
+    consumes these artifacts every `FEED_LIVE_REPUBLISH_PERIOD_S`, far inside
+    this TTL, so the sharing LAT-P229 measured is not affected. `CLOCK_BUCKET_S`
+    is 3600, so no key rotates faster than this and LAT-P104's "the key never
+    discards a fresh entry" is untouched.
+
+    A function and not a bare `assert` at import time, for the reason
+    `live_republish_headroom_s()` gives: a guard should FAIL loudly and by name
+    rather than take the web dyno down.
+    """
+    from app.utils.feed_cache import (
+        FEED_LIVE_REPUBLISH_BUDGET_S,
+        FEED_RESPONSE_STALE_TTL_LIVE_SECONDS,
+    )
+
+    return float(
+        FEED_RESPONSE_STALE_TTL_LIVE_SECONDS
+        - FEED_LIVE_REPUBLISH_BUDGET_S
+        - _LIVE_CEILING_ROUNDING_RESERVE_S
+    )
+
+
+#: The one second `live_total_age_headroom_s()` spends rounding the age UP.
+#: Named rather than inlined so the next reader of the arithmetic above can see
+#: which term is the `math.ceil` and which are real cadences.
+_LIVE_CEILING_ROUNDING_RESERVE_S = 1
+
+
+def live_artifact_ttl_headroom_s(namespace: str) -> float:
+    """Slack in the LAT-P261 bound for `namespace`. Negative means it is violated.
+
+    Reads the TTL the namespace would actually be GIVEN, so an operator override
+    or a future entry in `TTL_S_BY_NAMESPACE` is measured rather than assumed —
+    the failure mode `market_load_ttl_headroom_s()` was written against, one
+    namespace over.
+    """
+    if namespace in LIVENESS_INERT_NAMESPACES:
+        return float("inf")
+    return live_artifact_ttl_ceiling_s() - shared_build_ttl_s(namespace)
+
+
 #: The clock-bucket width for a shared key that carries one (LAT-P104).
 #:
 #: **A key that rotates faster than the TTL discards entries that are still
@@ -480,9 +643,20 @@ def shared_build_ttl_s(namespace: Optional[str] = None) -> float:
     4. ``TTL_S_BY_NAMESPACE[namespace]`` — the built-in per-namespace default.
     5. ``DEFAULT_TTL_S``.
 
+    LAT-P261 (#3904) then applies `live_artifact_ttl_ceiling_s()` as a CLAMP over
+    2-5, for any namespace whose age is counted against the live ceiling. It is
+    not a sixth precedence level and it is not a preference: it can only ever
+    SHORTEN, which is the same discipline `feed_response_cache_ttls()` applies to
+    the ceiling itself. An operator may still turn sharing off or shorten it —
+    every lever that made things safer still works — they simply cannot lengthen
+    a counted artifact past the point where it refuses the page it feeds. The
+    kill switch keeps outranking everything, including this.
+
     Called with no `namespace` it is the process-wide value, byte-identical to the
-    pre-LAT-P230 behaviour — which is what `clock_bucket_s()` still wants, since
-    the bucket it clamps belongs to `concepts`.
+    pre-LAT-P230 behaviour and deliberately UNCLAMPED — which is what
+    `clock_bucket_s()` still wants. That call is asking "how wide is the bucket",
+    not "how long may this artifact live", and no artifact is ever handed this
+    answer: every `get_or_build` passes its namespace.
     """
     global_raw = os.environ.get("FEED_SHARED_BUILD_TTL_S")
     global_ttl = _parse_ttl(global_raw)
@@ -491,22 +665,24 @@ def shared_build_ttl_s(namespace: Optional[str] = None) -> float:
     if global_ttl == 0.0:
         return 0.0
 
-    if namespace is not None:
-        # (2)
-        namespace_ttl = _parse_ttl(os.environ.get(_namespace_ttl_env(namespace)))
-        if namespace_ttl is not None:
-            return namespace_ttl
+    resolved: float
+    if namespace is not None and (
+        (namespace_ttl := _parse_ttl(os.environ.get(_namespace_ttl_env(namespace))))
+        is not None
+    ):
+        resolved = namespace_ttl  # (2)
+    elif global_ttl is not None:
+        resolved = global_ttl  # (3)
+    elif namespace is not None and namespace in TTL_S_BY_NAMESPACE:
+        resolved = TTL_S_BY_NAMESPACE[namespace]  # (4)
+    else:
+        resolved = DEFAULT_TTL_S  # (5)
 
-    # (3)
-    if global_ttl is not None:
-        return global_ttl
-
-    # (4)
-    if namespace is not None and namespace in TTL_S_BY_NAMESPACE:
-        return TTL_S_BY_NAMESPACE[namespace]
-
-    # (5)
-    return DEFAULT_TTL_S
+    # LAT-P261: the clamp. `LIVENESS_INERT_NAMESPACES` is defined further down
+    # the module and read here at CALL time, never at import time.
+    if namespace is not None and namespace not in LIVENESS_INERT_NAMESPACES:
+        return min(resolved, live_artifact_ttl_ceiling_s())
+    return resolved
 
 
 def clock_bucket_s() -> float:
