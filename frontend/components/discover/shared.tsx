@@ -155,11 +155,38 @@ export function DismissBtn({ onDismiss }: { onDismiss?: () => void }) {
   );
 }
 
+// ── The top-right badge slot (#3777) ─────────────────────────────────────────
+//
+// `DismissBtn` above sits at `top-3 right-3` with `z-10`. ANY badge placed at
+// those same coordinates is drawn underneath it, and on production at 390px the
+// first card of the default landing page — Vuelta a España 2026, live — read
+//
+//     ● L                    (the rest of "Live" under the × button)
+//
+// `right-12` clears the 28px button plus its gutter. The number is not new: the
+// trend badge below has always used it, having hit this collision first and
+// solved it locally. That local solution is exactly why the other three badges
+// still had the bug — a convention that lives in one component's class string is
+// a convention two other components never hear about.
+//
+// So it is a constant. Not for brevity (it saves nothing) but because the defect
+// being fixed IS drift between call sites, and a fix that leaves three
+// hand-copied strings behind has fixed today's instance of it and not the class.
+//
+// TRADEOFF, STATED RATHER THAN HIDDEN: `DismissBtn` renders nothing when a card
+// has no `onDismiss`, and this offset does not know that, so such a card carries
+// ~36px of empty gutter to the right of its badge. That is the behaviour
+// `TrendBadge` has always had; it is invisible against a 176px-tall gradient
+// header, and it is a much smaller cost than an unreadable LIVE pill. Making it
+// conditional would mean threading `onDismiss` through three badge call sites —
+// re-creating the per-site knowledge this constant exists to remove.
+export const TOP_RIGHT_BADGE = "absolute top-3 right-12 z-10";
+
 // ── Trend Badge ──
 
 export function TrendBadge() {
   return (
-    <div className="absolute top-3 right-12 z-10 flex items-center gap-1 bg-orange-500/90 text-white text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full">
+    <div className={`${TOP_RIGHT_BADGE} flex items-center gap-1 bg-orange-500/90 text-white text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full`}>
       🔥 Trending
     </div>
   );

@@ -6,7 +6,7 @@ import { tournamentEventKey, eventPath } from "@/lib/eventKey";
 import { formatTournamentTimingLabel } from "@/lib/gameTimeLabel";
 import { toTitleCaseAcronymSafe } from "@/lib/titleCase";
 import type { FeedTournamentData } from "@/lib/types";
-import { AnimatedProbability, DismissBtn, ActionBar, MovementBadge } from "./shared";
+import { AnimatedProbability, DismissBtn, ActionBar, MovementBadge, TOP_RIGHT_BADGE } from "./shared";
 
 interface TournamentCardProps {
   data: FeedTournamentData;
@@ -71,7 +71,7 @@ export function TournamentCard({ data, liked, setLiked, onDismiss, onDetailClick
       <div className="relative h-44 flex flex-col items-center justify-center" style={{ background: "linear-gradient(135deg, #14532d, #166534)" }}>
         <div className="absolute top-3 left-3 bg-lime-600/15 text-lime-700 text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full">⛳ Golf</div>
         {whatHit && (
-          <div className="absolute top-3 right-3 bg-white/20 text-white text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full">🏁 Final</div>
+          <div className={`${TOP_RIGHT_BADGE} bg-white/20 text-white text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full`}>🏁 Final</div>
         )}
         {leader && (
           <>

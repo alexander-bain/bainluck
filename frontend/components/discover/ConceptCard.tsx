@@ -15,7 +15,7 @@ import { buildDiscoverShareUrl } from "@/lib/share";
 import { eventPath } from "@/lib/eventKey";
 import type { FeedConceptData } from "@/lib/types";
 import { conceptHeadlineBout } from "@/lib/eventConceptDisplay";
-import { DismissBtn, ActionBar } from "./shared";
+import { DismissBtn, ActionBar, TOP_RIGHT_BADGE } from "./shared";
 import { formatConceptMovement } from "./utils";
 
 interface ConceptCardProps {
@@ -87,12 +87,12 @@ export function ConceptCard({
           {domainLabel}
         </div>
         {whatHit && (
-          <div className="absolute top-3 right-3 bg-white/20 text-white text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full">
+          <div className={`${TOP_RIGHT_BADGE} bg-white/20 text-white text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full`}>
             🏁 Final
           </div>
         )}
         {isLive && (
-          <div className="absolute top-3 right-3 flex items-center gap-1 bg-white/20 text-white text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full">
+          <div className={`${TOP_RIGHT_BADGE} flex items-center gap-1 bg-white/20 text-white text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full`}>
             <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
             Live
           </div>
