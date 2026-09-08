@@ -128,7 +128,9 @@ class _Session:
         # naming `Event.home_team` yields the label `home_team`, so `home_team_name`
         # would be MISSING here and `resolve_hero`/`orient_event_blend` would fail
         # by name — the CERT-2235 defect, reproduced rather than papered over.
-        return _Result([_Row({label: self.event_columns.get(label) for label in labels})])
+        return _Result(
+            [_Row({label: self.event_columns.get(label) for label in labels})]
+        )
 
 
 def _event_columns() -> dict[str, Any]:
