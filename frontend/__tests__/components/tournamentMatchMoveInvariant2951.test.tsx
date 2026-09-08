@@ -242,6 +242,31 @@ describe("#2951 — the badge is the difference of the two printed levels", () =
     expect(matchDetailNote(matchListFromSlate([match])[0])).toBeNull();
   });
 
+  /**
+   * THE SENTENCE'S OWN ROUNDING, isolated.
+   *
+   * Added because a mutation that put the sentence back on
+   * `formatSlateProbability` SURVIVED every other case in this file: on ordinary
+   * values a bare `Math.round(p * 100)` and `renderedPercent`'s `p * 1000 / 10`
+   * agree, so the fixtures could not tell them apart and the sentence half of
+   * the fix was untested.
+   *
+   * `0.565` is one of exactly four three-decimal wire values where they differ
+   * (#3867's note on this file's own contract): `0.565 * 100` is 56.49999… and
+   * rounds DOWN, while the scaled form recovers the quoted decimal and rounds
+   * up. So the old sentence said "opened at 56%" under a row printing 62% with
+   * a `+5` badge — 62 − 5 = 57, and the sentence named 56.
+   */
+  it("the origin uses the row's rounding, not a bare per-side Math.round", () => {
+    const match = movedMatch([0.38, 0.62], [0.435, 0.565], ["Other", "Mover"]);
+    const html = render([match]);
+
+    expect(printedPercents(html)).toEqual([62, 38]);
+    expect(printedMoves(html)).toEqual([5, -5]);
+    // 62 − 5 = 57. `Math.round(0.565 * 100)` is 56 and would not close.
+    expect(printedOpening(matchDetailNote(matchListFromSlate([match])[0]))).toBe(57);
+  });
+
   // ── The other direction (gotcha #43): an honest row is left alone ──────────
 
   it("an ordinary multi-point move still prints its badge and its origin", () => {
