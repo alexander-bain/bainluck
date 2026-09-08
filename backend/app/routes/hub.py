@@ -77,19 +77,33 @@ class HubConfig:
     sport_key: str
     # ── UX-P182 (#3447): a hub is a SPORT, a league key is a TOUR ──
     #
-    # Sibling league scopes whose matches also belong on this hub. `/hub/tennis`
-    # is the site's only tennis surface and was declared `tennis_atp`, so on US
-    # Open finals weekend its rail carried 126 cards — 80 of them men's
-    # Challenger matches — and not one women's match, while the page's own
-    # starred MARQUEE card was the Women's US Open Winner. Sabalenka, Swiatek,
-    # Gauff and Osaka rendered nowhere on it.
+    # The sibling tours whose markets belong on this hub. `/hub/tennis` is the
+    # site's only tennis surface and was declared `tennis_atp`, so on US Open
+    # finals weekend its rail carried 126 cards — 80 of them men's Challenger
+    # matches — and not one women's match, while the page's own starred MARQUEE
+    # card was the Women's US Open Winner. Sabalenka, Swiatek, Gauff and Osaka
+    # rendered nowhere on it.
     #
-    # This widens the MATCHES rail only, not `get_league_futures`: `/api/leagues/
-    # tennis_atp` is a tour page and is right to be one tour. Every key must
-    # share the primary's `llm_sport_category` — `_league_scope_filters` raises
-    # otherwise, and `test_route_hub.py` asserts it over every config so a bad
-    # pairing fails at test time rather than emptying a rail in production.
-    extra_match_sport_keys: tuple[str, ...] = field(default_factory=tuple)
+    # 🔴 IT FEEDS BOTH RAILS SINCE #3938, and the two spend it differently:
+    #   * the MATCHES rail passes it to `build_linked_matches` as
+    #     `also_sport_keys`, which widens ONE query's league clause;
+    #   * the SECTIONS read one `get_league_futures` payload PER TOUR and compose
+    #     them (`merge_league_sections`).
+    # Neither widens `/api/leagues/<tour>` itself, which is the invariant UX-P182
+    # stated and this keeps: a tour page is right to be one tour, and its Redis
+    # slot must never hold a hub's two-tour answer.
+    #
+    # 🔴 IT WAS `extra_match_sport_keys` UNTIL #3938. The name was accurate while
+    # only one rail read it and would have become a lie the moment the other did
+    # — and the alternative, a second field naming the same tuple, is the copy
+    # this codebase keeps paying for elsewhere (`event_rails`' header). One
+    # tuple, one meaning: the tours this hub is made of.
+    #
+    # Every key must share the primary's `llm_sport_category` —
+    # `_league_scope_filters` raises otherwise, and `test_route_hub.py` asserts it
+    # over every config so a bad pairing fails at test time rather than emptying
+    # a rail in production.
+    sibling_sport_keys: tuple[str, ...] = field(default_factory=tuple)
     # domain of the event-concept lister used for the "upcoming" rail. None means
     # this competition has no grouped event pages yet (sections-only hub).
     concept_domain: str | None = None
@@ -247,7 +261,7 @@ HUB_CONFIGS: dict[str, HubConfig] = {
         sport_key="tennis_atp",
         # UX-P182 (#3447): the women's draw. Both tours are `llm_sport_category
         # = "tennis"`; only the league clause differs (KXWTA*/%WTA%/llm_league).
-        extra_match_sport_keys=("tennis_wta",),
+        sibling_sport_keys=("tennis_wta",),
         concept_domain="tennis",
         # UX-P180 (#2167): tennis earns the props split. Registered for ufc and
         # boxing only until now, which is why tennis ranking props had no route
@@ -434,6 +448,65 @@ def _schedule_refresh(rc, keys: ConceptCacheKeys, slug: str) -> None:
         release_refresh_lock(rc, keys, token)
 
 
+def merge_league_sections(primary: dict, sibling: dict) -> dict:
+    """One hub's sections, composed from two tours' league payloads. #3938.
+
+    The tennis hub is one SPORT made of two TOURS, and each tour's markets arrive
+    as a separate `get_league_futures` payload — see the read in `build_hub` for
+    why it is two reads and not one wider query. This is the join.
+
+    Three decisions, each of which could have gone another way:
+
+    🔴 **Sorted by `market_tier`, not concatenated.** A plain concatenation would
+    put every men's row above every women's row in every section, forever — the
+    women's US Open winner would arrive on the page and land second behind the
+    men's, by construction rather than by merit. `build_league` orders its own
+    pool `market_tier ASC NULLS LAST` and that is the order this restores over
+    the union. Python's sort is stable, so tour order breaks a tie and the
+    primary keeps the top slot when two rows are genuinely equal — a tie-break,
+    which is a different thing from a rule.
+
+    🔴 **Deduplicated by market `id`.** Two tour scopes can name one market: a
+    mixed-doubles or a combined-event market can satisfy both league clauses, and
+    the same row served twice is the duplicate-card complaint (#2263) arriving
+    through a new door. First occurrence wins, so the primary tour's copy is the
+    one kept and the sort above then decides where it sits.
+
+    🔴 **Section keys the sibling has and the primary does not are KEPT**, at the
+    end. Dropping them would silently make the hub's vocabulary the primary
+    tour's vocabulary: a section that exists only because the women's draw has it
+    is exactly the content this ship is about. The primary's key order leads,
+    because that is the order the page has always rendered.
+
+    Neither payload is mutated: the caller's `sections` dict shares its list
+    objects with a Redis-cached payload, and mutating one in place re-tiers every
+    page that reads that slot (live/103's `census_sections` lesson, #3964).
+    """
+    merged: dict = {}
+    for name in [*primary, *(k for k in sibling if k not in primary)]:
+        rows = [*(primary.get(name) or []), *(sibling.get(name) or [])]
+        seen: set = set()
+        deduped = []
+        for row in rows:
+            market_id = row.get("id") if isinstance(row, dict) else None
+            if market_id is not None:
+                if market_id in seen:
+                    continue
+                seen.add(market_id)
+            deduped.append(row)
+        # `nulls last` in Python: an untiered market sorts after every tiered one,
+        # which is what `market_tier ASC NULLS LAST` means in the query this
+        # restores. A row with no tier at all is not a row with tier 0.
+        merged[name] = sorted(
+            deduped,
+            key=lambda r: (
+                r.get("market_tier") is None if isinstance(r, dict) else True,
+                (r.get("market_tier") if isinstance(r, dict) else None) or 0,
+            ),
+        )
+    return merged
+
+
 async def build_hub(cfg: HubConfig, db: AsyncSession) -> dict:
     """Build one hub payload from the database. Never raises.
 
@@ -467,7 +540,31 @@ async def build_hub(cfg: HubConfig, db: AsyncSession) -> dict:
                 upcoming = []
                 losses.append(("hub_upcoming_lister_failed", LOSS_PARTIAL))
 
-    # Futures / awards / props via the shared league-futures endpoint.
+    # Futures / awards / props via the shared league-futures endpoint — ONE READ
+    # PER TOUR (#3938), composed here.
+    #
+    # This read was `cfg.sport_key` alone, so the tennis hub's TOURNAMENT WINNERS
+    # section could only ever carry the men's draw: on 2026-09-08 `tennis_atp`
+    # served `futures: ["US Open Men's Singles Winner"]` and `tennis_wta` served
+    # `futures: ["US Open Women's Singles Winner"]`, and only the first reached
+    # the page. UX-P182 fixed the same asymmetry on the MATCHES rail and said in
+    # as many words that it "widens the matches rail only, not
+    # `get_league_futures`"; the sections were the half left behind.
+    #
+    # 🔴 COMPOSED FROM EACH TOUR'S OWN PAYLOAD, NOT FROM A WIDER QUERY, and that
+    # is the whole design. `/api/leagues/tennis_atp` is a TOUR page and is right
+    # to be one tour, so `also_sport_keys` must not reach `build_league` — and it
+    # could not travel there safely anyway, because the payload is Redis-cached
+    # under `league_cache_keys(sport_key)` and a two-tour build written to that
+    # key would poison the tour page's own slot with the hub's answer. Reading
+    # the sibling's own endpoint sidesteps both: the slot is already warm, the
+    # existing single-flight revalidation already maintains it, and no cache
+    # identity, task signature or scope argument has to change.
+    #
+    # 🔴 ONE `try` PER TOUR (gotcha #42). A shared one would let a `tennis_wta`
+    # hiccup blank the men's sections too — the exact trade this ship exists to
+    # refuse, aimed the other way. A sibling that fails is a PARTIAL loss: the
+    # page is poorer, not broken.
     sections: dict = {}
     try:
         league = await get_league_futures(sport_key=cfg.sport_key, db=db)
@@ -480,6 +577,24 @@ async def build_hub(cfg: HubConfig, db: AsyncSession) -> dict:
         logger.exception("hub league_futures failed for %s", cfg.slug)
         sections = {}
         losses.append(("hub_league_futures_failed", LOSS_DEGRADED))
+
+    for sibling_key in cfg.sibling_sport_keys:
+        try:
+            sibling = await get_league_futures(sport_key=sibling_key, db=db)
+        except Exception:
+            logger.exception(
+                "hub sibling league_futures failed for %s (%s)", cfg.slug, sibling_key
+            )
+            losses.append(("hub_sibling_league_futures_failed", LOSS_PARTIAL))
+            continue
+        sections = merge_league_sections(
+            sections,
+            {
+                k: v
+                for k, v in (sibling.get("sections") or {}).items()
+                if k not in cfg.hide_sections
+            },
+        )
 
     # ── UX-P180 (#2167): the matches rail reads the markets that ARE linked ──
     #
@@ -526,7 +641,7 @@ async def build_hub(cfg: HubConfig, db: AsyncSession) -> dict:
         linked_matches = await build_linked_matches(
             cfg.sport_key,
             db,
-            also_sport_keys=cfg.extra_match_sport_keys,
+            also_sport_keys=cfg.sibling_sport_keys,
             is_prop=classifier,
             is_undercard=undercard,
         )
