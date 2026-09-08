@@ -84,6 +84,13 @@ function hierarchySlugCandidates(sportSlug: string): string[] {
 }
 
 const SECTION_META: Record<string, { label: string; order: number }> = {
+  // #2698. Grid-less leagues (tennis, boxing, MMA, F1, NASCAR, esports) have no
+  // championship grid, so their title markets arrive as a `futures` section
+  // instead. Without an entry here the heading rendered the raw key. Order -1
+  // because on those pages this section IS the grid — "who wins the US Open"
+  // belongs above the matchups, in the slot the grid occupies everywhere else.
+  // `/hub/[competition]` already labels the same key "Tournament Winners".
+  futures: { label: "Tournament Winners", order: -1 },
   series: { label: "Playoff Series", order: 0 },
   matches: { label: "Upcoming Matches", order: 0 },
   awards: { label: "Awards", order: 1 },

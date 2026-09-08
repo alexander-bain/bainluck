@@ -19,6 +19,7 @@ from sqlalchemy import select, and_, or_, exists, literal_column
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload
 
+from app.config.league_configs import get_league_for_sport_key
 from app.models import Event, FuturesMarket, Sport
 from app.routes.events import (
     _build_team_lookup,
@@ -150,6 +151,31 @@ LEAGUE_NAME_PATTERNS: dict[str, list[str]] = {
     "esports_valorant": ["%Valorant%"],
 }
 
+#: Names a league's own patterns must NOT match, applied to the NAME arm only.
+#:
+#: 🔴 `ILIKE` HAS NO WORD BOUNDARY, so `%US Open%Men%` matches "US Open
+#: **Wo·men's** Singles Winner" — the substring is there, spelled inside the very
+#: word that was supposed to exclude it. Measured on production 2026-09-08, the
+#: `tennis_atp` futures pool held THREE championship rows and one of them was the
+#: WOMEN'S US Open winner, admitted by the men's pattern. It was invisible only
+#: because the championship section was dropped before rendering (#2698); the
+#: moment that section renders, the men's tour page shows the women's title
+#: market. The same spelling accident is in `%Wimbledon%Men%` and
+#: `%Australian Open%Men%`.
+#:
+#: Anti-patterns rather than tighter positive patterns because the positive form
+#: cannot express it: `%Men's US Open%` matches "Wo·men's US Open" too, so every
+#: word order a source might use re-opens the hole. One exclusion closes all of
+#: them, including the ones no source has written yet.
+#:
+#: NAME ARM ONLY, deliberately. `LEAGUE_TICKER_PREFIXES` and `llm_league` are
+#: id-anchored tour statements from the venue; the name is the guess. A
+#: `KXATP…`-tickered market that happens to mention "women" is still an ATP
+#: market and keeps its place (gotcha #32's shape: an id beats a string).
+LEAGUE_NAME_ANTI_PATTERNS: dict[str, list[str]] = {
+    "tennis_atp": ["%Women%", "%Ladies%"],
+}
+
 # Sport key → Kalshi external_id prefix for precise filtering
 LEAGUE_TICKER_PREFIXES: dict[str, list[str]] = {
     "basketball_nba": ["KXNBA"],
@@ -242,6 +268,125 @@ _INDIVIDUAL_MATCH_SPORTS: frozenset[str] = frozenset({
 # surface title/winner markets in a "futures" section rather than hiding them.
 # (#159-era lesson: esports data is messy — build only what honestly stands.)
 _CATEGORY_WIDE_FUTURES_ONLY: frozenset[str] = frozenset({"esports"})
+
+
+def _league_has_championship_grid(sport_key: str) -> bool:
+    """Does a championship GRID exist for this key? (#2698.)
+
+    The championship section is skipped on the reasoning that "the grid IS the
+    rendering of this family". That is true for the 14 leagues that HAVE one and
+    false for the 15 that do not, and nothing in the route ever asked which it
+    was — so a grid-less league counted its title markets as `shown` and served
+    none of them. Measured on production 2026-09-08, `/api/leagues/tennis_atp`
+    reported `championship: {total: 3, shown: 3}` over a `sections` dict holding
+    only `matches` and `more_markets`, during the US Open, with the men's US Open
+    winner among the three.
+
+    Asks the grid's OWN registry rather than a hand-kept set: `/api/playoffs/
+    {slug}` 404s exactly when `get_league_config` misses, and that resolver is
+    reached from a sport key by `get_league_for_sport_key`. A hand-kept set is
+    how `_CATEGORY_WIDE_FUTURES_ONLY` came to hold one string for one hub while
+    fourteen other grid-less leagues went unnoticed for a year.
+    """
+    return get_league_for_sport_key(sport_key) is not None
+
+
+#: A market whose subject is one numbered unit INSIDE a match — a map, a game, a
+#: set. Written against the names the venues actually publish ("… - Map 1
+#: Winner", "… - Game 4 Winner", "Set 1 Winner: …"), digit required, so a
+#: tournament called "Game Awards" or a market about "the set of finalists" is
+#: not caught by the word alone.
+_WITHIN_MATCH_SCOPE = re.compile(r"\b(?:map|game|set)\s*\d", re.IGNORECASE)
+
+
+def _is_outright(market: FuturesMarket) -> bool:
+    """Is this the tournament's TITLE, or a matchup wearing a tier-1 badge? (#2698.)
+
+    🔴 "TIER 1/2/4" IS NOT "OUTRIGHT", and the difference is what stops this fix
+    from becoming a worse bug than the one it repairs. `_assign_section` returns
+    `championship` for every tier-1 row, and the tier-1 population of a grid-less
+    league is mostly not titles. Measured on production 2026-09-08 over each
+    league's real futures pool (the section loop's own rows — `event_id IS NULL`,
+    which already withholds every matchup our matcher has linked):
+
+        esports_cs2   44 rows — 41 `game_prop`, 42 named "… vs … - Map N Winner"
+        esports_lol   13 rows — 10 `game_prop`, 12 matchup-named
+        tennis_atp     3 rows —  0 of either
+        boxing/f1/nascar/mma — 0 matchup-named
+
+    So rendering the section unfiltered would put "Counter-Strike: Azuolas vs G2
+    Ares - Map 1 Winner" under a heading that promises tournament winners, on the
+    two pages where the promise is hardest to keep.
+
+    🔴 **`category` IS NOT THE TEST, and measuring is the only reason this
+    function is not built on it.** The first draft admitted
+    `championship`/`award`/`mvp` and refused the rest, which reads sensible and
+    is wrong in BOTH directions on the same scan:
+
+      * `LoL: G2 NORD vs BIG (BO5) - Prime League 1st Division` is stored
+        `category='championship'` and is a matchup.
+      * The esports hub's futures section is LIVE today and 51 of its 80 rows
+        are not `championship` — 49 `game_prop` rows reading "Will FaZe Clan make
+        playoffs?" / "Will T1 be a 2027 VCT Pacific partner team?", plus two
+        `other` rows that are outright winners ("Which Club will win the EWC Club
+        Championship?"). A category allowlist would have deleted all 51 from a
+        surface that serves them correctly right now.
+
+    So the test is the market's SCOPE, read off the name the venue published: a
+    head-to-head, or one numbered unit inside a match, is not an outright.
+    Everything else in the title family is.
+
+    Deliberately NOT relying on `event_id IS NULL` for this. Today that predicate
+    happens to withhold most matchups, but it is a statement about how much our
+    MATCHER has linked, not about what the market IS: an unlinked "Set 1 Winner"
+    row reaches this loop the moment matching misses it, which is the ordinary
+    condition of a new tournament and not a rare one.
+    """
+    name_lower = (market.name or "").lower()
+    if " vs " in name_lower or " vs. " in name_lower:
+        return False
+    return not _WITHIN_MATCH_SCOPE.search(name_lower)
+
+
+def _league_futures_admits(market: FuturesMarket) -> bool:
+    """May this outright lead a LEAGUE page's Tournament Winners section? (#2698.)
+
+    `_is_outright` asks what the market IS. This asks whether it is still a
+    question, and it exists because the answer was about to be photographed:
+    the section sorts by outcome count, so on 2026-09-08 the ATP page's brand-new
+    section would have led with
+
+        ATP 1000 Montreal: Winner    69 outcomes, resolution_date NULL,
+                                     untouched since 2026-07-31 — 38 days,
+                                     for a tournament that ended in August
+
+    and put the US Open winner, the entire point of the ship, second. WTA had
+    the same shape with Toronto (89 outcomes, 35 days). A dead tournament above
+    the live one is a worse page than the empty section it replaces.
+
+    THE TEST IS THE MISSING DATE, NOT THE AGE. `updated_at` looks like the
+    obvious instrument and is the wrong one twice over: it cannot attribute a
+    touch to the ingest path, and 78 of the esports hub's 80 rows are >7 days
+    untouched on a surface that serves them correctly today — a staleness floor
+    would have deleted a working section to fix two rows. What the two corpses
+    have that the live rows do not is `resolution_date IS NULL`, which is also
+    the only reason they cleared the pool's own date floor
+    (`resolution_date IS NULL OR >= now`). A tournament winner market that
+    cannot say when it is answered is not a question we can put at the top of a
+    page.
+
+    Measured over every league this branch newly serves: it removes exactly
+    THREE rows — Montreal (38d), Toronto (35d) and `EWC 2026 CS2: Winner` (28d)
+    — and all three are dead. Zero live rows lost across boxing (8), MMA (45),
+    F1 (10) and NASCAR (8), which all carry dates.
+
+    The honest bound: this is a 3-for-3 heuristic, not a proof. A genuinely live
+    outright whose venue never published a resolution date is hidden by it —
+    the same thing the section does to everything today, so the failure is a
+    smaller version of the bug, not a new one. The real repair is the field
+    itself (#2644), which is calibration's under D36.
+    """
+    return _is_outright(market) and market.resolution_date is not None
 
 # Keywords for player-stat markets (season stats section).
 _SEASON_STAT_KEYWORDS: list[str] = [
@@ -1261,8 +1406,27 @@ def _league_scope_filters(
             for prefix in LEAGUE_TICKER_PREFIXES.get(key, []):
                 league_conditions.append(FuturesMarket.external_id.ilike(f"{prefix}%"))
 
-            for pattern in LEAGUE_NAME_PATTERNS.get(key, []):
-                league_conditions.append(FuturesMarket.name.ilike(pattern))
+            # The NAME arm, qualified by this key's own anti-patterns
+            # (`LEAGUE_NAME_ANTI_PATTERNS` — ILIKE has no word boundary). Scoped
+            # PER KEY, never to the whole OR: `/hub/tennis` passes `tennis_atp`
+            # plus `tennis_wta`, and a global "not women's" would empty the very
+            # rail #3447 built. Each tour excludes what is not its own; a hub that
+            # asks for both gets both back through the sibling's branch.
+            name_conditions = [
+                FuturesMarket.name.ilike(pattern)
+                for pattern in LEAGUE_NAME_PATTERNS.get(key, [])
+            ]
+            if name_conditions:
+                anti = LEAGUE_NAME_ANTI_PATTERNS.get(key, [])
+                if anti:
+                    league_conditions.append(
+                        and_(
+                            or_(*name_conditions),
+                            *[~FuturesMarket.name.ilike(p) for p in anti],
+                        )
+                    )
+                else:
+                    league_conditions.extend(name_conditions)
 
             # Also match llm_league if set
             league_short = key.split("_", 1)[1] if "_" in key else key
@@ -1570,6 +1734,31 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
                 # No championship grid exists for these hubs — surface the
                 # title/winner markets in a dedicated "futures" section instead of
                 # dropping them (they are the whole point of the esports hub).
+                #
+                # #2698 left this branch EXACTLY as it was, deliberately. The
+                # esports hub is the live surface the new rule below was modelled
+                # on, 80 rows of it, and a rule that can regress the thing it was
+                # modelled on is a rule nobody can grade. Its matchups are already
+                # dropped in SQL (`_league_scope_filters`), so it needs none of
+                # the tests below.
+                section = "futures"
+            elif not _league_has_championship_grid(sport_key) and _league_futures_admits(
+                market
+            ):
+                # #2698. "Already on the grid" is only true where a grid EXISTS.
+                # For the 15 registered leagues with no `/api/playoffs/{slug}` —
+                # tennis, boxing, MMA, F1, NASCAR, the esports leagues — the skip
+                # was the only thing between the reader and the one market the
+                # whole tournament is about. The old test was a hand-kept set
+                # holding the single string "esports", so it fired for the esports
+                # HUB and for nothing else, while fourteen grid-less leagues
+                # counted their titles as `shown` and served none. This asks the
+                # grid's own registry (`_league_has_championship_grid`), which
+                # answers for all fifteen and keeps answering for the sixteenth.
+                #
+                # `_league_futures_admits` is what makes it safe: titles in,
+                # matchups and answered-nowhere corpses out. Tier 1 is not a
+                # synonym for outright.
                 section = "futures"
             else:
                 # UX-P062 (#1743) + Alex's 2026-08-11 amendment: the grid IS the
