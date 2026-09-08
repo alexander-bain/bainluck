@@ -7,17 +7,22 @@ eat, and the answer was *all of it*: `DEFAULT_TTL_S` is 60.0 and
 of `concepts` / `canonical_counts` the headroom was zero, `routes/feed.py` took
 the CERT-1864 refusal branch, and a fully-built page was thrown away.
 
-WHAT THAT COST, measured on production 2026-09-08 from 09:10Z by forcing real
+WHAT THAT COST, measured on production 2026-09-08 09:12-10:02Z by forcing real
 builds on a novel `limit` — a novel response-cache key, the same code path and
 the same shared artifacts — and reading `cache.stale_ttl_seconds`, which for a
 live payload IS `live_total_age_headroom_s()` of the oldest counted artifact::
 
-    n=53 forced builds
-    ~8%  ->  X-Feed-Cache: unavailable, cache.reason: input_age_ceiling,
-             items: 0, total: 0, `total_age_ceiling` present in X-Feed-Stages,
-             build_quality complete.   A BLANK DISCOVER FRONT PAGE.
-    55%  ->  artifact age above the bound this file guards.
-    artifact age at the ceiling check: min 0s, p50 44s, p90 56s, max 60s.
+    n=182 forced builds, live payload 182/182
+    5 (2.7%) ->  X-Feed-Cache: unavailable, cache.reason: input_age_ceiling,
+                 items: 0, total: 0, `total_age_ceiling` in X-Feed-Stages,
+                 build_quality complete.   A BLANK DISCOVER FRONT PAGE.
+                 `concepts` consumed on 5/5.
+    51%      ->  artifact age above the bound this file guards.
+    artifact age at the ceiling check: min 0s, p50 40s, p90 55s, max 60s.
+
+Five events is small: read 2.7% as roughly 1-6%. The five establish that the
+mechanism is real and user-visible, not how much of the rail's empty rate it
+accounts for — see "what is NOT settled" below.
 
 ⚠️ THE INSTRUMENT HAS A TRAP AND IT CAUGHT ME ONCE. Read
 `cache.stale_ttl_seconds`, never `cache.ttl_seconds`: the FRESH ttl carries a
@@ -28,8 +33,19 @@ of this same run reported a floor of 30s that does not exist —
 
 `build_quality` being *complete* is why this wore the wrong name for so long:
 `_prewarm_feed_shape` classifies the refusal as `outcome: empty` and keeps
-last-good, which is the 13-17%-of-passes-per-shape `empty` rate #3904 tabulated
-and the mechanism behind the mirror holes #3827 was chasing.
+last-good — the same word it uses for a genuinely empty world.
+
+⚠️ WHAT IS **NOT** SETTLED, stated here so nobody inherits it as established.
+#3904 tabulated a 13-17% `empty` rate per shape per pass. This ship proves the
+refusal mechanism is real, fires on production and produces those exact
+symptoms; it does NOT prove the refusal is all of that 13-17%. The two rates are
+not directly comparable — an isolated forced build samples one random moment,
+while a rail pass builds five shapes concurrently off the SAME artifacts twice
+per artifact generation, which is also why #3904's empties clustered across
+shapes far above chance (8 passes with 3 simultaneous empties against 1.8
+expected). The honest position is a strong circumstantial case with a named,
+measured mechanism. The post-deploy read decides it, and the `empty_reason`
+field added alongside this ship is what will name any second cause.
 
 WHAT THIS SHIP DOES AND DOES NOT DO. It does not touch the ceiling. #2216 and
 CERT-1864 are unchanged and the refusal stays exactly as correct as it was — a
