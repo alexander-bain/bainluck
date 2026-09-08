@@ -34,6 +34,7 @@
 
 import { motion } from "@/components/motion";
 import { fadeIn } from "@/lib/animations";
+import { renderedPercent } from "@/lib/renderedPercent";
 
 /** One stage on the path. */
 export interface AdvancementStage {
@@ -107,7 +108,7 @@ export default function AdvancementPath({
                   p.resolved ? "text-accent-live" : ""
                 }`}
               >
-                {p.resolved ? "✓ clinched" : `${Math.round(p.prob * 100)}%`}
+                {p.resolved ? "✓ clinched" : `${renderedPercent(p.prob)}%`}
               </span>
             </div>
           </div>

@@ -23,6 +23,7 @@
  */
 
 import type { SettledOutcome } from "@/lib/eventOutcome";
+import { renderedPercent } from "@/lib/renderedPercent";
 
 export interface SettledOutcomeHeroProps {
   /** `null` when nothing authoritative named a winner — draw, or not graded yet. */
@@ -118,7 +119,7 @@ export default function SettledOutcomeHero({
               }`}
             >
               {wasUnderdog ? "Upset · " : ""}
-              {Math.round(winnerPregameProb * 100)}% pregame
+              {renderedPercent(winnerPregameProb)}% pregame
             </span>
           )}
         </>

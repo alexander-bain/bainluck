@@ -18,6 +18,8 @@
  * number been moving just now — that the full chart answers slowly.
  */
 
+import { renderedPercent } from "@/lib/renderedPercent";
+
 export interface SparkPoint {
   timestamp: string;
   value: number;
@@ -204,7 +206,7 @@ export default function LiveSparkline({
       viewBox={`0 0 ${width} ${height}`}
       className={className}
       role="img"
-      aria-label={`Last ${windowMinutes} minutes: ${Math.round(firstValue * 100)}% to ${Math.round(lastValue * 100)}%`}
+      aria-label={`Last ${windowMinutes} minutes: ${renderedPercent(firstValue)}% to ${renderedPercent(lastValue)}%`}
       data-testid="live-sparkline"
       data-point-count={windowed.length}
     >

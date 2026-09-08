@@ -15,6 +15,7 @@ import {
   settledSectionNote,
   SETTLED_QUOTE_PREFIX,
 } from "@/lib/settledQuote";
+import { renderedPercent } from "@/lib/renderedPercent";
 
 interface SpecialEventMarketsProps {
   data: GameMarketsResponse;
@@ -48,7 +49,14 @@ function OutcomeBar({
   /** #2086: the game is over, so this number is a frozen quote, not a chance. */
   settled: boolean;
 }) {
-  const percent = Math.round(outcome.prob * 100);
+  // #3867's ORIGINAL SURFACE. Alex filed the issue against these rows: on
+  // `/events/15306225` the served 0.565 printed 56% and 0.145 printed 14% while
+  // 0.585 and 0.615 printed 59% and 62%, one half rounding up and its neighbour
+  // down for a reason invisible on screen. Moving the rule into the contract did
+  // not reach this line, because this line was a second copy of the rule
+  // (CERT-2224). It is the contract's now; the bar's WIDTH below stays raw
+  // geometry, which is a picture and not a claim.
+  const percent = renderedPercent(outcome.prob) ?? 0;
   // A finished GAME settles every row; a finished SET settles only the rows
   // that asked about it. Both end in the same render, because both are the same
   // statement to a reader: this number stopped being a chance.
