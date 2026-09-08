@@ -916,12 +916,12 @@ class TestUnobservedBoundThroughTheNets:
         # lower.
         import inspect
 
-        import app.tasks.espn_sync as mod
         from app.tasks.config import SPORT_MAX_DURATIONS
+        from app.tasks.espn_sync import _transition_event_statuses_impl
         from app.utils.event_completion import UNOBSERVED_MAX_HOURS
 
         assert min(UNOBSERVED_MAX_HOURS.values()) < min(SPORT_MAX_DURATIONS.values())
-        source = inspect.getsource(mod._transition_event_statuses_impl)
+        source = inspect.getsource(_transition_event_statuses_impl)
         assert "min(UNOBSERVED_MAX_HOURS.values())" in source, (
             "the sweep floor must know about the narrower bound or the rule "
             "silently fetches nothing to apply it to"
