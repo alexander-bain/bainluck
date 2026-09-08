@@ -8858,7 +8858,36 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
         db, [event.home_team_name, event.away_team_name]
     )
 
-    response = _format_event(event, gei_percentiles, team_lookup=team_lookup)
+    # ── #3810 Fold A: the BLEND reads the rows we declined to print ──────────
+    #
+    # #2693 folded the market book onto the canonical and #3810's Fold B folded
+    # the chart's time series. The hero number is the half left behind: it does
+    # not read `win_prob_snapshots` at all, it reads this row's
+    # `win_probability_sources` — so a tagged pair could draw Kalshi's curve
+    # under a number that had never heard of Kalshi. Measured on the 12 tagged
+    # US Open pairs (issue #3810): 11 have Kalshi on the ghost and none on the
+    # canonical.
+    #
+    # AFTER the Q050 drain above, which can repoint `event`/`event_id` at a
+    # different row — folding the id the caller asked for rather than the row we
+    # are about to render would fold the wrong twins.
+    #
+    # One indexed lookup, read-side only: `FoldedBlendView` wraps the ORM row
+    # rather than assigning to it, so nothing here can reach a flush
+    # (acceptance 4 — ruling 048 permits the read and forbids the write).
+    from app.utils.proven_duplicates import (
+        FoldedBlendView,
+        folded_probability_sources,
+    )
+    folded_sources = await folded_probability_sources(db, event)
+    blend_view = FoldedBlendView(event, folded_sources)
+
+    response = _format_event(
+        event,
+        gei_percentiles,
+        team_lookup=team_lookup,
+        probability_sources=folded_sources,
+    )
 
     # Compute deterministic tags, then merge in stored LLM-enriched tags
     # (competitive_structure, stakes, narrative, audience) from background enrichment.
@@ -8893,7 +8922,17 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
     # matching the feed endpoint. This blends all sources (sportsbooks, ESPN,
     # Kalshi, Polymarket, stat model) with SOURCE_WEIGHTS for consistency.
     from app.utils.aggregation import compute_aggregate_probability
-    agg_prob = compute_aggregate_probability(event)
+    # `blend_view`, not `event` — the folded sources (#3810 Fold A). The
+    # aggregator is passed the merged dict and is otherwise untouched, so the
+    # folded readings are weighted, decayed, capped and status-excluded exactly
+    # as they would have been had they arrived on the canonical (acceptance 1).
+    # That last one is load-bearing and is the reason this is not a visible
+    # change on a FINISHED page: `_EXCLUDE_WHEN_COMPLETED` drops kalshi and
+    # polymarket once a game is over, so a completed twin pair whose ghost holds
+    # only market sources blends to the same number it does today. The hero
+    # moves on the SCHEDULED and LIVE pairs — which is where a reader is
+    # actually asking the page what it thinks will happen.
+    agg_prob = compute_aggregate_probability(blend_view)
 
     if latest_snapshots:
         # latest_snapshots already contains only the most recent per bookmaker
@@ -14641,12 +14680,37 @@ def _format_team_data(team) -> dict:
     return data
 
 
-def _format_event(event: Event, gei_percentiles: dict = None, team_lookup: dict = None) -> dict:
+def _format_event(
+    event: Event,
+    gei_percentiles: dict = None,
+    team_lookup: dict = None,
+    probability_sources: dict = None,
+) -> dict:
     """Format event for API response.
 
     Args:
         team_lookup: Optional dict mapping team names to Team objects for color/logo data.
+        probability_sources: #3810 Fold A — the event's ``win_probability_sources``
+            with any source only its suppressed twins hold folded in. Optional and
+            defaulting to None so the nine other call sites compile to exactly the
+            read they had before; only `get_event` folds today, because it is the
+            only one of them that renders a hero. Passed as a VALUE rather than
+            assigned onto ``event`` because the fold is read-side only — see
+            ``FoldedBlendView``.
     """
+    # Named once, used by both source blocks below. `is not None` and not `or`:
+    # an event whose twins add nothing folds to `{}`, and `{} or x` would fall
+    # back to the unfolded column and quietly undo the fold's own refusals.
+    #
+    # `getattr` with a default because the blocks that consume this sit inside a
+    # `try/except AttributeError` guarding "columns may not exist yet" — reading
+    # the column bare out here would raise past that guard for the callers it
+    # was written for. Falsy either way, so those blocks skip exactly as before.
+    _wps = (
+        probability_sources
+        if probability_sources is not None
+        else getattr(event, "win_probability_sources", None)
+    )
     response = {
         "id": event.id,
         "external_id": event.external_id,
@@ -14763,7 +14827,7 @@ def _format_event(event: Event, gei_percentiles: dict = None, team_lookup: dict 
             espn_data["broadcast"] = event.broadcast_info
         if event.espn_win_prob_home is not None:
             espn_data["win_probability"] = float(event.espn_win_prob_home)
-        if event.win_probability_sources:
+        if _wps:
             # #1829: serialise NUMBERS here, never raw JSONB entries. iOS types
             # this `[String: WinProbValue]?` and `WinProbValue` THROWS on
             # anything that is not a Double or a String — and a throw inside
@@ -14775,7 +14839,7 @@ def _format_event(event: Event, gei_percentiles: dict = None, team_lookup: dict 
             # essentially every event. Normalising fixes both.
             from app.utils.aggregation import parse_source_entry as _parse_src
             _norm_sources = {}
-            for _sk, _sv in event.win_probability_sources.items():
+            for _sk, _sv in _wps.items():
                 _num, _ = _parse_src(_sv)
                 if _num is not None:
                     _norm_sources[_sk] = _num
@@ -14786,12 +14850,12 @@ def _format_event(event: Event, gei_percentiles: dict = None, team_lookup: dict 
             response["espn"] = espn_data
 
         # Also expose win_probability_sources at top level with source metadata
-        if event.win_probability_sources:
+        if _wps:
             try:
                 from app.config.win_prob_sources import WIN_PROB_SOURCES
                 from app.utils.aggregation import parse_source_entry
                 wp_sources = {}
-                for src_key, src_value in event.win_probability_sources.items():
+                for src_key, src_value in _wps.items():
                     if src_key.startswith("_"):
                         continue
                     # #1829: `value` stays a bare NUMBER on the wire. The column
