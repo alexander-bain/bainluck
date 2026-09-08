@@ -124,7 +124,19 @@ jobs:
         # TAP's summary shape is stable and specified, so it is pinned here
         # rather than inherited. The contract fixture asserts this flag and the
         # greps stay in step.
+        #
+        # `set +e` IS LOAD-BEARING, and this comment is here because the first
+        # cut did not have it and the first red run produced ZERO diagnostic
+        # output. GitHub invokes a `run:` block as `bash -e {0}` — errexit is on
+        # before the first line of the script, and `set -uo pipefail` does not
+        # clear it. So `node --test` exiting non-zero killed the step AT that
+        # line: `RC=$?` never ran, the `cat` never ran, and the suite's entire
+        # output sat unread in a file the runner then threw away. A failing gate
+        # that cannot say why it failed is the same class of defect as a gate
+        # that lies (gotcha #124): the redirect is there so the output can be
+        # read in one block, which only works if the step survives to read it.
         run: |
+          set +e
           set -uo pipefail
           node --test --test-reporter=tap browser-rail/*.test.js > /tmp/look-rail.txt 2>&1
           RC=$?

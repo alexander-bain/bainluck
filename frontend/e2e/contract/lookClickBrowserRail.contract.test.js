@@ -193,6 +193,37 @@ describe("#4032 — the browser-backed LOOK guard is actually wired up", () => {
         "the summary greps parse TAP; without the flag they parse the wrong format and the gate can never pass"
       );
     });
+
+    it("a red run can still say why it went red", () => {
+      // MEASURED, on this workflow's first red run: it produced no diagnostic
+      // output at all. GitHub invokes `run:` as `bash -e {0}`, so errexit is on
+      // before the script's first line and `set -uo pipefail` does not clear
+      // it — the failing `node --test` killed the step on the spot, and the
+      // suite's output died unread inside the redirect that exists to let it be
+      // printed in one block. The redirect is deliberate (gotcha #124: never
+      // pipe a gate, so the exit code stays node's own), which means the step
+      // MUST survive its own failure to read the file back.
+      const run = config.slice(config.indexOf("node --test"));
+      const preamble = config.slice(0, config.indexOf("node --test"));
+
+      assert.match(
+        preamble,
+        /set \+e/,
+        "the run block does not clear errexit before the suite; a failing suite would exit the step before its output is printed"
+      );
+      assert.ok(
+        run.includes("cat /tmp/look-rail.txt"),
+        "nothing prints the captured output, so a red run says only that it was red"
+      );
+      assert.ok(
+        run.includes('echo "EXIT CODE: ${RC}"'),
+        "the exit code's VALUE is the story (gotcha #124) — 1 is a result, anything else is the harness"
+      );
+      assert.ok(
+        !/^\s*set -e\b/m.test(run),
+        "errexit is switched back on after the suite runs, which re-arms the failure this guards against"
+      );
+    });
   });
 
   describe("the fixtures still hold the shapes the suite depends on", () => {
