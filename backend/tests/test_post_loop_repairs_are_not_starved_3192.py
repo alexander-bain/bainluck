@@ -78,6 +78,30 @@ def _calls_in(node):
     }
 
 
+def _post_loop_gate():
+    """The `if` guarding the post-loop block, identified by its own body.
+
+    Anchored on `_mark_phase("post_loop")` rather than on source position,
+    because every position-based anchor here has a decoy: the helper
+    `_no_post_loop_budget` contains a `time.monotonic()` comparison against the
+    same constant and is defined FIRST.
+    """
+    for node in ast.walk(_poller_body()):
+        if not isinstance(node, ast.If):
+            continue
+        for child in ast.walk(node):
+            if (
+                isinstance(child, ast.Call)
+                and isinstance(child.func, ast.Name)
+                and child.func.id == "_mark_phase"
+                and child.args
+                and isinstance(child.args[0], ast.Constant)
+                and child.args[0].value == "post_loop"
+            ):
+                return node
+    raise AssertionError("the post-loop block's `if` was not found")
+
+
 class _Redis:
     """Just enough Redis to exercise the ring, including `lindex`/`lset`."""
 
@@ -137,13 +161,23 @@ class TestTheRepairBudgetIsNotTheIngestBudget:
 
     def test_the_post_loop_block_is_gated_on_the_post_loop_deadline(self):
         """The re-merge trap: both constants can exist while the `if` that
-        matters still reads the ingest one, which restores the bug exactly."""
-        src = inspect.getsource(kalshi_task._poll_kalshi_markets)
-        block = src[src.index("_POST_LOOP_FIXUP_KEYS"):]
-        gate = block[block.index("if time.monotonic()"):]
-        gate = gate[:gate.index("\n")]
-        assert "_POST_LOOP_DEADLINE_S" in gate, gate
-        assert "_LOOP_DEADLINE_S" not in gate.replace("_POST_LOOP_DEADLINE_S", "")
+        matters still reads the ingest one, which restores the bug exactly.
+
+        Found by AST, not by a character window. The first written version
+        sliced from `_POST_LOOP_FIXUP_KEYS` to the next `if time.monotonic()`
+        and asserted on that line — which is the one inside
+        `_no_post_loop_budget`, not the block's own gate. It passed with the
+        real gate mutated back to `_LOOP_DEADLINE_S`: a guard for this exact
+        regression that did not catch it.
+        """
+        gate = _post_loop_gate()
+        names = {n.id for n in ast.walk(gate.test) if isinstance(n, ast.Name)}
+        assert "_POST_LOOP_DEADLINE_S" in names, names
+        assert "_LOOP_DEADLINE_S" not in names, (
+            "the post-loop block is gated on the INGEST deadline again — "
+            "tripping the loop deadline once more closes this block "
+            "deterministically, which is the whole of #3192"
+        )
 
     def test_the_repair_budget_is_larger_than_the_ingest_budget(self):
         """Otherwise this ship does nothing: the block would still be closed by
@@ -304,6 +338,38 @@ class TestTheThreeOutcomesAreDistinguishable:
         d = r.to_dict()
         assert "tennis_commence_fixed" not in d["post_loop_fixups_ran"]
         assert d["post_loop_fixups_failed"] == ["tennis_commence_fixed"]
+
+    def test_the_POLLER_records_a_failure_as_a_failure(self):
+        """The three tests around this one build the dataclass by hand, so they
+        prove the SHAPE can express three states and nothing about whether the
+        beat writes them. Recording a crashed fix-up as `_post_loop_ran[k] = 0`
+        survives all of them — it was mutated in and every one stayed green.
+
+        Asserted over each handler's AST: an `except` around a repair may add to
+        `_post_loop_failed` and may never touch `_post_loop_ran`, because a 0
+        there reads as "ran, nothing to repair" — the opposite of what happened.
+        """
+        handlers = [
+            h
+            for node in ast.walk(_poller_body())
+            if isinstance(node, ast.Try)
+            for h in node.handlers
+            if "_post_loop" in ast.dump(h)
+        ]
+        assert len(handlers) == len(FIXUPS), len(handlers)
+        for h in handlers:
+            dumped = ast.dump(h)
+            assert "_post_loop_failed" in dumped
+            assert "_post_loop_ran" not in dumped, (
+                "a fix-up that raised is being recorded in `post_loop_fixups_ran` "
+                "— a 0 there is indistinguishable from a repair that ran and "
+                "found nothing to do"
+            )
+
+    def test_every_repair_has_a_named_failure_arm(self):
+        src = inspect.getsource(kalshi_task._poll_kalshi_markets)
+        for key, _fn in FIXUPS:
+            assert f'_post_loop_failed.append("{key}")' in src, key
 
     def test_skipped_for_budget_is_not_failed(self):
         r = _report(post_loop_fixups_skipped=["tennis_commence_fixed"])
