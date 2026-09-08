@@ -44,6 +44,7 @@ from app.utils.entity_page_tiers import (
     AVAILABILITY_EMPTY,
     AVAILABILITY_FRESH,
     AVAILABILITY_STALE,
+    is_unpriced_card,
     resolve_entity_tier,
 )
 from app.utils.event_concept_cache import (
@@ -1514,10 +1515,11 @@ def _effectively_resolved(sorted_outcomes: list) -> bool:
     return len(probs) >= 2 and all(p < 0.03 or p > 0.97 for p in probs)
 
 
-def _drawable_sections(sections: dict) -> tuple[dict, dict]:
+def _drawable_sections(sections: dict, *, now: datetime) -> tuple[dict, dict, dict]:
     """Keep only rows a client can turn into a card, and count what came off.
 
-    Returns ``(served_sections, no_outcome_dropped)`` — #3964 defect 2.
+    Returns ``(served_sections, no_outcome_dropped, unpriced_dropped)`` — #3964
+    defect 2 and #3980, which are the same rule reached one step apart.
 
     A row whose ``top_outcomes`` is empty draws NOTHING, anywhere: every card the
     league sections route to opens by returning null on an empty field
@@ -1527,6 +1529,33 @@ def _drawable_sections(sections: dict) -> tuple[dict, dict]:
     empty space, and the ten carried ``outcome_count: 0`` — the markets have no
     ``futures_outcomes`` rows at all, so this is a real absence and not a
     serialization artifact.
+
+    #3980 — AND A CARD WHOSE EVERY OUTCOME IS PRICELESS DRAWS NAMES AND NO
+    NUMBERS, which on a product whose whole promise is the number is the same
+    absence wearing furniture. ``WBC Flyweight Title on January 1, 2027`` served
+    nineteen fighters, ten returned, **every one of them ``probability: null``
+    and ``opening_probability: null``** — never a price, so not a stale-price or
+    settlement artifact — and the page drew six names, six em-dashes and
+    ``+13 more``. ``is_unpriced_card`` is the predicate that already decides this
+    for ``/api/hub/tennis``; calling it here is a WIRING fix, not a new rule. Its
+    own docstring says why it is public: *a surface that RENDERS the sections must
+    be able to drop exactly the rows this module COUNTS as dropped, and the only
+    way those two can never disagree is for both to call one function.* This route
+    counted them and served them anyway, which is how ``shown + dropped`` exceeded
+    ``total`` in twelve sections across ten leagues.
+
+    THE RETENTION DIRECTION IS THE HALF THAT COSTS SOMETHING, and it is deliberate
+    in two places. **One priced leg is enough**: the WBC Cruiserweight card (Jai
+    Opetaia 60%, five em-dashes under him) stays, because it answers its question
+    and the unpriced legs beneath a real number are #3617(b) working as designed.
+    And **settled is never unpriced** — ``is_unpriced_card`` tests that first, so a
+    finished market keeps its receipts under the standing "settled means settled"
+    ruling rather than being deleted for having no live price.
+
+    The two counters stay SEPARATE and are returned separately. ``no_outcomes`` is
+    a row with nothing under it at all — an ingest gap (#3412) — and ``unpriced``
+    is a row we have and cannot price. Merging them would hide the first inside
+    the second, and they have different owners.
 
     A section left with nothing is REMOVED rather than served empty, because an
     empty list is still a key and a key is what a client draws a heading from.
@@ -1538,15 +1567,23 @@ def _drawable_sections(sections: dict) -> tuple[dict, dict]:
     getting it backwards would silently re-tier every affected page.
     """
     served: dict = {}
-    dropped: dict = {}
+    no_outcome_dropped: dict = {}
+    unpriced_dropped: dict = {}
     for name, rows in sections.items():
-        drawable = [m for m in rows if m.get("top_outcomes")]
-        gone = len(rows) - len(drawable)
-        if gone:
-            dropped[name] = gone
+        drawable: list = []
+        for market in rows:
+            # Emptiness is tested FIRST and keeps its own name even when the row
+            # is settled, so #3964's counter means exactly what it meant before.
+            if not market.get("top_outcomes"):
+                no_outcome_dropped[name] = no_outcome_dropped.get(name, 0) + 1
+                continue
+            if is_unpriced_card(market, now=now):
+                unpriced_dropped[name] = unpriced_dropped.get(name, 0) + 1
+                continue
+            drawable.append(market)
         if drawable:
             served[name] = drawable
-    return served, dropped
+    return served, no_outcome_dropped, unpriced_dropped
 
 
 def _field_has_a_winner(outcomes: list) -> bool:
@@ -2365,10 +2402,20 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
     # arriving, which is the half that reaches EVERY client — the iOS app decodes
     # the same `sections` off `/api/leagues/{key}` and never saw that fix.
     #
+    # #3980 — AND NEITHER IS A CARD WHOSE EVERY OUTCOME IS PRICELESS. Same rule,
+    # one step along: six fighters, six em-dashes and a `+13 more`, ranked `#1`..
+    # `#6` by a basis the card never shows. `is_unpriced_card` is the predicate
+    # `/api/hub/tennis` has always used for this; the league route counted its
+    # rows as `unpriced` and served them anyway, which is why `shown + dropped`
+    # exceeded `total` in twelve sections. Settled rows and any card with at least
+    # one price are kept — see the helper for why both are deliberate.
+    #
     # The drop is DECLARED, never silent (spec §4, and the same rule the price
     # skip already obeys): `no_outcomes` is its own counter with its own name, so
     # "we had nothing to draw" can never be read as "the league had nothing".
-    sections, no_outcome_dropped = _drawable_sections(sections)
+    sections, no_outcome_dropped, unpriced_dropped = _drawable_sections(
+        sections, now=now
+    )
 
     tiering = resolve_entity_tier(
         census_sections,
@@ -2394,14 +2441,18 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
     # `sections` entirely, and reporting nothing about it is precisely the silent
     # truncation clause 3 forbids.
     section_counts: dict[str, dict[str, int]] = {}
-    for name in set(tiering["per_section"]) | set(resolved_skipped) | set(
-        no_outcome_dropped
+    for name in (
+        set(tiering["per_section"])
+        | set(resolved_skipped)
+        | set(no_outcome_dropped)
+        | set(unpriced_dropped)
     ):
         s = tiering["per_section"].get(
             name, {"total": 0, "answers": 0, "unpriced": 0, "settled": 0}
         )
         skipped = resolved_skipped.get(name, 0)
         no_outcomes = no_outcome_dropped.get(name, 0)
+        unpriced_gone = unpriced_dropped.get(name, 0)
         section_counts[name] = {
             # `total` is what we HAD before the price skip, so "showing X of Y" is
             # true about the league rather than true about the leftovers.
@@ -2412,7 +2463,16 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
             # `/api/leagues/boxing_boxing` published `{total: 12, shown: 12,
             # dropped: 10}`: twelve rows called shown, ten of them undrawable,
             # and `shown + dropped` exceeding `total` by the size of the lie.
-            "shown": s["total"] - no_outcomes,
+            #
+            # #3980 takes the unpriced cards off it too, for the same reason and
+            # by the same subtraction — they are now dropped from the payload, so
+            # counting them as `shown` would re-open the hole one step along. With
+            # both terms off, `shown + dropped == total` holds identically for
+            # every section the payload SERVES. It cannot hold for the two
+            # census-only sections (`championship` is rendered by the grid,
+            # `games` is synthesized from fixtures); neither is in `sections` and
+            # neither ever loses a row here, so both keep the counts they had.
+            "shown": s["total"] - no_outcomes - unpriced_gone,
             "dropped": s["unpriced"] + skipped,
             "answers": s["answers"],
             # Named separately from `dropped` because the reasons are not
