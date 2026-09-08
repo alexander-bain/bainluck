@@ -1471,7 +1471,20 @@ def _effectively_resolved(sorted_outcomes: list) -> bool:
     return len(probs) >= 2 and all(p < 0.03 or p > 0.97 for p in probs)
 
 
-def _outcome_is_settled(outcome, market_status: str | None = None) -> bool:
+def _field_has_a_winner(outcomes: list) -> bool:
+    """Did anybody WIN this market? (#3617.)
+
+    Pass the market's WHOLE outcome list — `_sorted_outcomes(market)`, which is
+    every row — never a truncated top-N. A window that happens to exclude the
+    winner would report a coherent field as an incoherent one and turn every
+    real result on the card back into a price.
+    """
+    return any(getattr(o, "is_winner", None) is True for o in outcomes)
+
+
+def _outcome_is_settled(
+    outcome, market_status: str | None = None, field_has_winner: bool = True
+) -> bool:
     """Has this contender's question already been answered? (#3868, CERT-2222.)
 
     A GRADE, never a probability. `current_probability == 1.0` is what a settled
@@ -1503,11 +1516,58 @@ def _outcome_is_settled(outcome, market_status: str | None = None) -> bool:
 
     Never `is_winner is False` on its own: the column is nullable with
     `default=False`, so FALSE cannot tell "lost" from "nobody has looked".
+
+    🔴 AND A LOSS NEEDS A WINNER TO BE A LOSS AGAINST (#3617). The clause above
+    is the whole reason this one exists. Having established settlement from the
+    SOURCE, the caller has nothing left to read but `is_winner`, whose default
+    is exactly the FALSE this docstring has just said cannot mean "lost" — so
+    every leg of a market the venue never actually graded arrives at the card as
+    **Lost**. On 2026-09-08 that was `/sport/tennis/wta` telling a reader, during
+    the quarter-finals, that Sabalenka (69.5% to reach the semi-final), Pegula
+    (78.5%) and Rybakina (71.5%) had already failed to, while the 15% went to
+    three players who were out of the tournament.
+
+    The refusal is FIELD-LEVEL, not per-leg, because that is where the evidence
+    is: in a market where NOBODY is stamped a winner, "settled and not a winner"
+    is not a result — it is a stamp with nothing to be a loss against. Where one
+    leg IS crowned, the field is coherent and every clause above applies
+    unchanged, so the correct half of the same ladder keeps its results (the
+    QUARTERFINALS QUALIFIERS card, where Pegula/Sabalenka/Navarro genuinely did
+    win, is byte-identical after this change).
+
+    MEASURED, because the alternative reading was the one first proposed and it
+    is wrong. The named repair was "refuse a result whose own price is mid-band".
+    On production that predicate (a) under-repairs its own specimen — 12 of the
+    16 falsely-Lost legs on the WBC Bantamweight card sit below any usable floor
+    — and (b) over-refuses 2,056 legs in fields that DO have a winner, of which
+    530 are priced ≥97%. Those 530 would render as an ordinary "99%" for a leg
+    the field's own winner contradicts, which is #3868's original bug, rebuilt.
+    Field coherence catches all four specimens on the issue whole and touches no
+    coherent field at all: 1,676 open markets / 5,882 stamped legs flip, and by
+    construction not one of them sits beside a "Won".
+
+    THE PRICE IS NEVER CONSULTED, here or anywhere in this function. It cannot
+    create a grade (the first paragraph) and it does not veto one either; the
+    only thing that overrules a stamp is the absence of the winner it implies.
+
+    SCOPED to the branch where the grade rests on the SOURCE alone, and written
+    as `not can_write_winner(market_status, None)` rather than as a second
+    literal `{"resolved", "closed"}`: passing a null source asks that function
+    the exact question — "would this market's STATUS license a winner by
+    itself?" — so the scope cannot drift from the authority rule it belongs to.
+    A genuinely `resolved`/`closed` field with no winner is a different animal (a
+    void) and is left exactly as #3868 draws it.
+
+    Defaults to `True` — the STATUS QUO — so a caller that does not pass it gets
+    #3868's behaviour rather than a new one. Both production call sites compute
+    it from the whole field; see `_field_has_a_winner`.
     """
     if getattr(outcome, "resolution_source", None) == RETRACTION_SOURCE:
         return False
     if getattr(outcome, "is_winner", None) is True:
         return True
+    if not field_has_winner and not can_write_winner(market_status, None):
+        return False
     return can_write_winner(market_status, getattr(outcome, "resolution_source", None))
 
 
@@ -1535,10 +1595,21 @@ def _live_first(sorted_outcomes: list, market_status: str | None = None) -> list
     `_effectively_resolved`, which reads `[0]` as "the leader" — reordering under
     it would silently change which market the league page considers answered.
     This is a DISPLAY ordering and it lives in the display function.
+
+    #3617 IS THE SECOND HALF OF THE SAME CARD, and this function is where the
+    reader met it. A mis-stamped field does not merely mislabel a row, it
+    INVERTS the card: on `/sport/boxing/boxing` the four legs promoted to the
+    visible top of "WBC Bantamweight Title on January 1, 2027" were live only
+    because nobody had stamped them, and carried no price at all, while the six
+    legs demoted behind them were the ones with numbers. The reader got a title
+    ladder topped by em-dashes. Deriving the field's coherence HERE, from this
+    function's own argument, fixes the ordering and the labels together —
+    there is one predicate and both halves read it.
     """
+    field_has_winner = _field_has_a_winner(sorted_outcomes)
     live, won, lost = [], [], []
     for outcome in sorted_outcomes:
-        if not _outcome_is_settled(outcome, market_status):
+        if not _outcome_is_settled(outcome, market_status, field_has_winner):
             live.append(outcome)
         elif getattr(outcome, "is_winner", None) is True:
             won.append(outcome)
@@ -1559,6 +1630,11 @@ def _serialize_outcomes(sorted_outcomes: list, market=None) -> list[dict]:
     The payload carries the STATE and the component decides how to draw it; a
     settled leg that travelled as a bare `probability: 1.0` is exactly how a
     graded row reached `/sport/tennis/atp` dressed as an ordinary 100%.
+
+    #3617 withholds `settled` from a field nobody won, which is the ONLY lever
+    there is: `PropGroupCard` draws Won/Lost off `o.settled === true` and reads
+    nothing else, so the false result is unmakeable from here and no component
+    changes.
     """
     labels = (
         sided_yes_no_labels(
@@ -1574,6 +1650,11 @@ def _serialize_outcomes(sorted_outcomes: list, market=None) -> list[dict]:
     # than to a guess — `can_write_winner(None, …)` admits ONLY tier-3 venue
     # settlements, so an unknown-status caller can never publish a soft grade.
     market_status = getattr(market, "status", None)
+    # #3617: derived from the WHOLE field, before the `[:10]` window below — a
+    # winner sitting in position 11 is still a winner, and reading coherence off
+    # the truncated payload would turn a coherent card's results back into
+    # prices. `_live_first` derives the same flag from the same list.
+    field_has_winner = _field_has_a_winner(sorted_outcomes)
     ordered = _live_first(sorted_outcomes, market_status)
     return [
         {
@@ -1590,7 +1671,7 @@ def _serialize_outcomes(sorted_outcomes: list, market=None) -> list[dict]:
             # #3868: the STATE, so the card can draw a result instead of a
             # percentage. `is_winner` is passed through raw — including None,
             # which means "nobody has looked" and is not "lost".
-            "settled": _outcome_is_settled(o, market_status),
+            "settled": _outcome_is_settled(o, market_status, field_has_winner),
             "is_winner": o.is_winner,
         }
         for o in ordered[:10]
