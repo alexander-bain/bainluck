@@ -99,6 +99,11 @@ class _Session:
     def __init__(self, event_columns: dict[str, Any]) -> None:
         self.event_columns = event_columns
         self.blend_id_batches: list[list[int]] = []
+        #: The labels the REAL `select()` asked for, captured off the statement
+        #: rather than restated here — this is the only place the CERT-2235
+        #: mistake is visible, and asserting on a fixture instead would be a
+        #: guard that cannot fail.
+        self.blend_labels: list[str] = []
 
     async def execute(self, stmt: Any) -> _Result:
         labels = [desc["name"] for desc in stmt.column_descriptions]
@@ -116,6 +121,7 @@ class _Session:
             }
         )
         self.blend_id_batches.append(requested)
+        self.blend_labels = labels
         if EVENT_ID not in requested:
             return _Result([])
         # Built from the labels the statement actually asked for. A `select()`
@@ -368,11 +374,14 @@ async def test_the_loader_selects_columns_that_carry_the_names(wired):
 
     `Event.home_team` is a `relationship()`. It compiles without error into a
     boolean comparison landing in an unnamed key, so the mistake is invisible
-    until a row is read. This pins the labels the statement asks for.
+    until a row is read. This reads the labels off the statement the route
+    actually issued — asserting on this file's own fixture instead would be a
+    guard that could never fail.
     """
     await _first_screen(wired)
 
-    labels = set(wired.event_columns)
+    labels = set(wired.blend_labels)
+    assert labels, "the route issued no `events` statement to inspect"
     assert {"home_team_name", "away_team_name"} <= labels
     assert not {"home_team", "away_team"} & labels
 

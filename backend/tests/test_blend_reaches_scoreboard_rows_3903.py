@@ -351,8 +351,15 @@ def test_a_row_already_on_the_blend_basis_is_never_displaced():
     assert _the_row(slate)["sides"][0]["probability"] == pytest.approx(first)
 
 
-def test_an_unpriced_row_is_not_given_a_number_it_never_had():
-    """The bound: this ship changes numbers, not which cards exist."""
+def test_a_blank_row_built_by_the_real_builder_is_left_blank():
+    """The bound as the route meets it: no prices, no numbers, no card invented.
+
+    NOTE WHICH RAIL CATCHES THIS ONE. A builder-made unpriced row carries `None`
+    on both sides, so `normalize_pair` refuses it as incoherent and the `priced`
+    check never runs. That makes this a test of the OUTCOME and not of the bound;
+    the bound itself is exercised by the test below, which had to hand-build a
+    row because no builder emits the shape it needs.
+    """
     slate = build_slate(
         _register(),
         prices={},
@@ -370,3 +377,51 @@ def test_an_unpriced_row_is_not_given_a_number_it_never_had():
     assert row["priced"] is False
     assert row["price_basis"] == PRICE_BASIS_VENUE
     assert row["sides"][0]["probability"] is None
+
+
+def test_a_coherent_but_unpriced_row_is_still_refused():
+    """The `priced` bound on its own, with coherence deliberately satisfied.
+
+    Hand-built, because nothing in `tournament_slate` currently emits a row that
+    is `priced: False` and carries a coherent pair — which is exactly why this
+    matters: the check is redundant TODAY and is the only thing standing between
+    a future rung that fills probabilities and a card that silently becomes
+    priced. `apply_event_blend_slate` (#3729) already fills numbers and sets
+    `priced` itself, one rung further down this same route.
+
+    Without this test the bound is unreachable code that no mutation can kill,
+    and the docstring's claim about it would be unbacked.
+    """
+    slate = {
+        "matches": [
+            {
+                "event_id": EVENT_ID,
+                "priced": False,
+                "price_basis": PRICE_BASIS_VENUE,
+                "blend_refusal": None,
+                "sides": [
+                    {
+                        "entity_key": f"espn:athlete:{HOME_ID}",
+                        "display_name": HOME,
+                        "probability": VENUE_NOW,
+                        "opening_probability": VENUE_OPEN,
+                        "move": round(VENUE_NOW - VENUE_OPEN, 6),
+                    },
+                    {
+                        "entity_key": f"espn:athlete:{AWAY_ID}",
+                        "display_name": AWAY,
+                        "probability": round(1 - VENUE_NOW, 4),
+                        "opening_probability": round(1 - VENUE_OPEN, 4),
+                        "move": round(VENUE_OPEN - VENUE_NOW, 6),
+                    },
+                ],
+            }
+        ]
+    }
+
+    moved = apply_event_blend_to_linked_rows(slate, _blends())
+    row = slate["matches"][0]
+
+    assert moved == 0
+    assert row["price_basis"] == PRICE_BASIS_VENUE
+    assert row["sides"][0]["probability"] == pytest.approx(VENUE_NOW)
