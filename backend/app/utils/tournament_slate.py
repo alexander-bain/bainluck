@@ -1775,6 +1775,125 @@ def apply_espn_event_links(
     return linked
 
 
+def apply_event_blend_to_linked_rows(
+    slate: dict[str, Any],
+    blends: Optional[dict[int, dict[str, Any]]],
+) -> int:
+    """The event's number, on rows whose ``event_id`` arrived AFTER the build (#3903).
+
+    ═══ WHY A SECOND PASS EXISTS AT ALL ═══
+
+    ``build_match_row`` applies the blend inline, which is correct and reaches
+    every REGISTER-paired row.  It reaches none of the rows the US Open hub
+    actually rendered on 2026-09-08, and the reason is ordering:
+
+        1. ``build_slate`` builds today's quarter-finals through
+           ``authority_match_row`` (``pairing_source="scoreboard"``), which
+           returns ``event_id: None``.
+        2. ``apply_espn_event_links`` runs AFTERWARDS and backfills the
+           ``event_id`` onto exactly those rows.
+
+    So at the moment the blend was offered, the row had no event to orient onto;
+    by the time it had one, nothing was left to ask.  #3903 merged, deployed, and
+    every one of the 8 quarter-final rows still read ``price_basis: "venue"``
+    with ``blend_refusal: null`` — no refusal, because nothing had been refused:
+    nothing had been asked.
+
+    The comment that hid this sat beside ``authority_match_row``'s static
+    ``price_basis``.  It said an authority row is always the venue basis because
+    "there is no registered fixture to carry an ``event_id``".  That is true of
+    the ``authority`` pairing and **false of the ``scoreboard`` one**, because
+    the linker fifty lines above exists to give it one.
+
+    ═══ WHY IT RE-DERIVES COHERENCE INSTEAD OF READING THE ROW'S FLAG ═══
+
+    Through ``normalize_pair``, the same function both builders use, rather than
+    trusting the published ``coherent`` / ``opening_raw_sum``.  A second pass that
+    read a flag would be reading the FIRST pass's opinion of numbers this pass is
+    about to replace, and the two could drift apart in exactly the way a row on
+    two bases already has.
+
+    ═══ THE BOUNDS ARE THE SAME ONES, DELIBERATELY ═══
+
+    Priced rows only, coherent pairs only, both ends present.  A blend reaching an
+    unpriced row would turn a ``priced: False`` card into a priced one, and a
+    blend over an incoherent pair prints a confident split across the exact
+    disagreement ``normalize_pair`` refuses to launder.  Both are arguable
+    improvements, neither is this issue, and each changes WHICH CARDS EXIST —
+    a different blast radius wanting its own measurement.
+
+    A row already on the blend basis is never touched: the inline pass is the
+    upper rung and a second answer must not displace the first.
+
+    Mutates ``slate`` and returns how many rows this pass moved onto the blend.
+    """
+    rows = slate.get("matches") or []
+    applied = 0
+
+    for row in rows:
+        event_id = row.get("event_id")
+        if not isinstance(event_id, int):
+            continue
+        if row.get("price_basis") == PRICE_BASIS_BLEND:
+            continue
+        if not row.get("priced"):
+            continue
+
+        sides = row.get("sides") or []
+        if len(sides) != 2:
+            continue
+
+        _a, _b, _raw, coherent = normalize_pair(
+            sides[0].get("probability"), sides[1].get("probability")
+        )
+        _ao, _bo, _oraw, open_coherent = normalize_pair(
+            sides[0].get("opening_probability"), sides[1].get("opening_probability")
+        )
+        if not (coherent and open_coherent):
+            continue
+
+        blend_pair, blend_open, refusal = orient_event_blend(
+            (blends or {}).get(event_id),
+            [str(side.get("display_name") or "") for side in sides],
+        )
+        # THE REFUSAL IS RECORDED EVEN WHEN NOTHING CHANGES. A row that now has an
+        # event and still shows a venue price must say why — that silent
+        # `price_basis: "venue"` with `blend_refusal: null` is the exact shape
+        # this whole repair exists to remove, and re-creating it here for the
+        # orientation-failure case would just move the silence.
+        row["blend_refusal"] = refusal
+        if blend_pair is None or blend_open is None:
+            continue
+
+        for index, side in enumerate(sides):
+            side["probability"] = blend_pair[index]
+            side["opening_probability"] = blend_open[index]
+            side["move"] = round(blend_pair[index] - blend_open[index], 6)
+
+        row["price_basis"] = PRICE_BASIS_BLEND
+        count = ((blends or {}).get(event_id) or {}).get("source_count")
+        if isinstance(count, int) and count > 0:
+            row["source_count"] = count
+
+        # THE DERIVED FIELDS MOVE WITH THE NUMBERS THEY DESCRIBE. `favourite` and
+        # `has_moved` were computed by the builder from the VENUE pair; leaving
+        # them would let a row name one player the favourite while printing the
+        # larger number beside the other — the same class of two-answers-one-card
+        # defect as #3903 itself, introduced by its own fix.
+        row["favourite"] = (
+            sides[0].get("entity_key")
+            if (sides[0].get("probability") or 0) >= (sides[1].get("probability") or 0)
+            else sides[1].get("entity_key")
+        )
+        moves = [s.get("move") for s in sides if s.get("move") is not None]
+        row["has_moved"] = any(abs(m) > MOVE_DEAD_BAND for m in moves)
+
+        applied += 1
+
+    slate["blend_linked"] = applied
+    return applied
+
+
 #: WHY A SLATE ROW STILL CARRIES NO NUMBER, once its own event has been asked.
 #:
 #: On its own field and NOT in ``liquidity_reasons``: that list is the prediction
