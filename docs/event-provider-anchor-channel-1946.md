@@ -1,6 +1,14 @@
 # The provider-anchor channel for `events` — design (#1946)
 
-**Status: DESIGN ONLY. No code, no migration, no schema change ships with this document.**
+**Status: SHIPPED — this document is the design record, not the current state.** The channel exists:
+`EventProviderAnchor` in `backend/app/models/models.py`, the table via
+`backend/alembic/versions/anchors_and_captures.py`, and writers in `tasks/stamp_nfl_statpal_fixtures.py`,
+`tasks/stamp_v1_statpal_fixtures.py`, `tasks/link_tennis_statpal_fixtures.py`,
+`tasks/repair_event_espn_id.py` and `tasks/matching_reconciliation.py`. Production held **9,035
+`event_provider_anchors` rows** when this line was written (2026-09-08). Read what follows as the
+argument for the shape, and the code as the authority on the shape. *(Header corrected under
+directive 150's doc-drift item; the original read "DESIGN ONLY. No code, no migration, no schema
+change ships with this document.")*
 Queue 365, lane1, 2026-08-17. Deliverable requested by the FABLE directive: (a) the schema
 decision argued rather than asserted, (b) a migration-slot request to the Integrator, (c) how
 ruling 048's bounding clause reads once the channel exists.
