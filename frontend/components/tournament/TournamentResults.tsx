@@ -14,7 +14,6 @@ import {
   prematchAttribution,
   prematchCoverage,
   prematchPercents,
-  prematchSourceNote,
   resultScoreLine,
   resultsEmptyReason,
   resultsForDraw,
@@ -518,9 +517,6 @@ export default function TournamentResults({
      `with_prematch`, which is the all-draws total. A footnote that says "12 of
      76" under a list of 24 is a footnote about a different list. */
   const prior = prematchCoverage(matches);
-  /* ux/1036: whether any of those priors is a sportsbook opening rather than a
-     prediction market's, which is a different claim and has to say so. */
-  const sourceNote = prematchSourceNote(matches);
   /* #2450: the total says which population it is over, or says nothing. */
   const population = resultsPopulationNote(matches);
   /* #2568, and the payload's own "NO SILENT CAPS" rule applied to the reader:
@@ -614,22 +610,31 @@ export default function TournamentResults({
           data-held-without-opening={prior.heldWithoutOpening}
           data-untied={prior.untied}
         >
-          The grey figure beside a name is what the market gave that player{" "}
+          The grey figure beside a name is that player&rsquo;s probability{" "}
           <b className="font-semibold text-text-secondary">before the match started</b> —
           its opening number, not a reading taken after the result was known.{" "}
-          {/* ux/1036, Alex: "labelled when not a prediction market."
+          {/* ═══ D88 = A + D91 (Alex, 2026-09-08): WHY THE SUPPLIER SENTENCE IS
+              GONE AND THE LEAD SENTENCE CHANGED IN THE SAME EDIT ═══
 
-              CERT-812 corrected two things about this block. The comment that
-              stood here claimed the books population was "empty on today's
-              served payload" — written against commit 1 and left unchanged by
-              commit 2, which added the very rung that fills it. Measured, it is
-              61 of 172 priors. And this note was the ONLY place the distinction
-              was drawn, over a list that named none of the rows it meant; it is
-              now the legend for the per-row marker `prematchAttribution` sets,
-              not the whole of the labelling. */}
-          {sourceNote && (
-            <span data-testid="results-prematch-source-note">{sourceNote} </span>
-          )}
+              This paragraph used to open "what the market gave that player" and
+              then spend a whole sentence taking it back: *"62 of them are a
+              sportsbook opening rather than a prediction market's, marked books
+              beside the number."* Both halves were ux/1036's answer to Alex's
+              *"labelled when not a prediction market"*, and CERT-812 is why the
+              second half exists at all — the lead sentence is FALSE on a books
+              row, so a caveat had to follow it.
+
+              D91 bans exactly that caveat: *"no 'the books' in captions"*.
+              Deleting it alone would have re-shipped CERT-812's false claim, so
+              the fix is one level up — D88's own words, *"the pre-match number
+              is labelled pre-match probability"*. A lead sentence that names no
+              rung is true of every rung, and then nothing needs taking back.
+
+              The attribution did not go anywhere. D91 keeps the small-font mark
+              beside each number (`prematchAttribution`.`marker`, below), which
+              is CERT-812's real remedy — per-row, not an aggregate count that
+              told a reader some unidentified rows meant something else. The
+              count went with the sentence because the marks say which. */}
           {prior.withPrior < prior.total && (
             <>
               Shown on{" "}

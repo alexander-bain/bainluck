@@ -53,7 +53,6 @@ import TournamentResults from "@/components/tournament/TournamentResults";
 import {
   BOOKS_MARKER,
   prematchAttribution,
-  prematchSourceNote,
   type ResultPlayer,
   type TournamentResult,
   type TournamentResults as ResultsModel,
@@ -459,23 +458,61 @@ describe("one decision, one owner", () => {
 
 // ───────────────────────── the footer is now a legend ───────────────────────
 
-describe("the footnote stops being the only attribution", () => {
-  test("it names the marker so the count points at findable rows", () => {
-    const note = prematchSourceNote(MATCHES);
-    expect(note).toContain(BOOKS_MARKER);
-    expect(note).toMatch(/^61 of them are a sportsbook opening/);
-  });
-
-  test("it is silent when nothing needs the caveat (CONTROL)", () => {
-    const marketOnly = (withSource("kalshi").matches as unknown as TournamentResult[]);
-    expect(prematchSourceNote(marketOnly)).toBe("");
-  });
-
-  test("the legend and the rows agree on the count", () => {
+/**
+ * D91 (Alex, 2026-09-08) deleted `prematchSourceNote`, which these three tests
+ * used to assert — *"61 of them are a sportsbook opening rather than a
+ * prediction market's, marked books beside the number."* It was a caption that
+ * talked about our suppliers, and D91's rule is attribution yes, narration no.
+ *
+ * **The protection they existed for is not weakened, it is inverted.** CERT-812's
+ * finding was *"a count is not an attribution"* — the footnote told a reader that
+ * some unidentified rows meant something else and left them unable to find out
+ * which. The per-row marker was the remedy; the count was the thing being
+ * remedied. So the count going away finishes CERT-812 rather than undoing it,
+ * and what has to be pinned now is the stronger pair: every books row still
+ * wears its mark, and the caption no longer says a supplier word at all.
+ */
+describe("D91: the rows carry the attribution and the caption says nothing", () => {
+  test("every books row is still marked — 61 matches, both players", () => {
     const html = `${render("mens-singles")}${render("womens-singles")}`;
     const marked = (html.match(/data-testid="result-prematch-marker"/g) ?? []).length;
-    // 61 matches, both players marked.
     expect(marked).toBe(122);
-    expect(prematchSourceNote(MATCHES)).toContain("61 of them");
+    // The mark is the WORD D91 protects, not an empty span.
+    expect(html).toContain(`>${BOOKS_MARKER}<`);
+  });
+
+  test("the footnote no longer narrates a supplier", () => {
+    const html = `${render("mens-singles")}${render("womens-singles")}`;
+    const note = html.match(/data-testid="results-prematch-note"[^>]*>([\s\S]*?)<\/p>/)?.[1];
+    // An extractor that returns nothing turns every `not.toMatch` below into a
+    // pass for the wrong reason. Pin that it found the real paragraph first.
+    expect(note).toBeDefined();
+    const text = note!.replace(/<[^>]*>/g, " ");
+    expect(text.length).toBeGreaterThan(80);
+    expect(text).toContain("before the match started");
+    // The deleted sentence, and each supplier word it was built from.
+    expect(text).not.toMatch(/sportsbook/i);
+    expect(text).not.toMatch(/\bbooks?\b/i);
+    expect(text).not.toMatch(/prediction market/i);
+    // The legend's own container is gone rather than rendering empty.
+    expect(html).not.toContain("results-prematch-source-note");
+  });
+
+  test("the lead sentence names no rung, which is why no caveat is owed", () => {
+    // CERT-812's actual complaint: "what the market gave that player" is false
+    // on a books row. D88 = A replaced it with a phrase true of every rung. If
+    // this reverts, the deleted caption has to come back with it.
+    const html = render("mens-singles");
+    expect(html).not.toContain("what the market gave");
+    expect(html).toMatch(/is that player&#x27;s probability|is that player’s probability/);
+  });
+
+  test("a prediction-market-only draw still renders the note (CONTROL)", () => {
+    // The old control asserted the LEGEND went silent on a market-only payload.
+    // The note itself must not go silent — it explains the grey figure — so the
+    // control now pins that the paragraph survives with no marker inside it.
+    const html = render("mens-singles", withSource("kalshi"));
+    expect(html).toContain('data-testid="results-prematch-note"');
+    expect(html).not.toContain('data-testid="result-prematch-marker"');
   });
 });
