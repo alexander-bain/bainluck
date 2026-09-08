@@ -166,12 +166,56 @@ export function decideCalibrationStaleness(
   data: CalibrationStalenessInput | null | undefined,
 ): CalibrationStalenessNotice | null {
   const availability = asString(data?.availability);
-  const cacheStatus = data?.cache?.status;
-  const isLastGood = cacheStatus === "stale";
   // `availability` absent => no envelope on this payload => the only authority
   // is `cache.status`. Do NOT read absence as `fresh`, and do NOT read it as a
   // problem either: it is an older artifact, and it says so by saying nothing.
   const serverRefusedFresh = availability !== null && availability !== AVAILABILITY_FRESH;
+
+  // Tri-state on purpose, and only a literal boolean counts. `undefined` (an
+  // older payload with no `producer` block) and a non-boolean both land on
+  // `null` = "the server did not tell us", which is a different claim from
+  // "the beat is fine" and must never collapse into it.
+  //
+  // Read before `isLastGood` rather than after, because since #4046 the
+  // producer verdict is an INPUT to that decision — see below.
+  const producer = data?.producer;
+  const producerStalled =
+    typeof producer === "object" && producer !== null && typeof producer.stalled === "boolean"
+      ? producer.stalled
+      : null;
+  const beatsMissed =
+    typeof producer === "object" && producer !== null ? asCount(producer.beats_missed) : null;
+
+  // #4046 — the serving TIER and the artifact's AGE are different facts, and
+  // this line used to state the second by reading the first.
+  //
+  // `cache` is the block a fallback tier attaches when it answers. For three
+  // days that was only ever true of a genuinely dated copy, so `cache.status
+  // === "stale"` and "the artifact is old" were the same bit and nobody had to
+  // separate them. Then publishing was repaired (#3893) and the page went on
+  // telling readers, over a seven-minute-old curve, that these numbers "are not
+  // being refreshed right now" — because `main` (2h TTL) is evicted ahead of
+  // `last_good` (7d) on a 50MB `allkeys-lru` instance, so a fallback serve is
+  // documented steady state (`precompute_calibration.py`, "Prefers the fresh
+  // `main` key and falls back to the durable `last_good`"). Which tier answered
+  // is our storage's business; it is not a claim about the numbers.
+  //
+  // So the tier still OPENS the question and the producer settles it. The
+  // `last-good` sentence asserts two things — the artifact is old, and nothing
+  // is replacing it — and `beats_missed` is the server's own arithmetic on
+  // exactly that: it is `age // interval_s`, recomputed at serve time in
+  // `_serve` from the payload's `generated_at`, on the durable path as much as
+  // the main one. `beats_missed === 0` means not one scheduled hourly publish
+  // has been missed, which refutes both halves of the sentence at once.
+  //
+  // Deliberately a POSITIVE proof of health, so every unreadable case keeps
+  // today's behaviour: `null` (no producer block, or an unknown artifact age —
+  // which the server publishes as `stalled: true`, never as healthy) leaves
+  // `isLastGood` set. Gotcha #53: absence is not the reassuring reading, and
+  // this must not become the one place that reads it that way.
+  const servedFromFallbackTier = data?.cache?.status === "stale";
+  const producerProvenCurrent = producerStalled === false && beatsMissed === 0;
+  const isLastGood = servedFromFallbackTier && !producerProvenCurrent;
 
   if (!isLastGood && !serverRefusedFresh) return null;
 
@@ -186,18 +230,6 @@ export function decideCalibrationStaleness(
   const unitsDrifted = stagedMeasured ? asCount(staged.units_drifted) : null;
   const unitsDriftUnknown = stagedMeasured ? asCount(staged.units_drift_unknown) : null;
   const unitsBanked = stagedMeasured ? asCount(staged.units_banked) : null;
-
-  // Tri-state on purpose, and only a literal boolean counts. `undefined` (an
-  // older payload with no `producer` block) and a non-boolean both land on
-  // `null` = "the server did not tell us", which is a different claim from
-  // "the beat is fine" and must never collapse into it.
-  const producer = data?.producer;
-  const producerStalled =
-    typeof producer === "object" && producer !== null && typeof producer.stalled === "boolean"
-      ? producer.stalled
-      : null;
-  const beatsMissed =
-    typeof producer === "object" && producer !== null ? asCount(producer.beats_missed) : null;
 
   const common = {
     generatedAt,
@@ -216,6 +248,12 @@ export function decideCalibrationStaleness(
   // subsumes "its inputs are old". Leading with the frozen-inputs sentence there
   // would tell a reader the curve is being refreshed while the server is
   // explicitly serving a copy that is not.
+  //
+  // #4046 narrowed what reaches here rather than reordering it: the precedence
+  // was never wrong, its GUARD was — it fired on a fallback serve of a current
+  // artifact, where "no beat is replacing it" is simply untrue and the stronger
+  // fact is therefore not a fact at all. A dated last-good still outranks
+  // everything below.
   if (isLastGood) {
     return {
       kind: "last-good",
