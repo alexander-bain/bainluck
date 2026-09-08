@@ -1,0 +1,253 @@
+{
+ "livescores": {
+  "sport": "tennis",
+  "tournament": [
+   {
+    "id": "13486",
+    "name": "Atp - Doubles: Us Open (Usa), Hard",
+    "match": [
+     {
+      "date": "08.09.2026",
+      "id": "2632636",
+      "status": "Finished",
+      "tb": "False",
+      "time": "20:10",
+      "player": [
+       {
+        "dp1": "170309",
+        "dp2": "221525",
+        "game_score": "",
+        "id": "345377",
+        "name": "Carpico/ Filin",
+        "s1": "6.6",
+        "s2": "6",
+        "s3": "4",
+        "s4": "",
+        "s5": "",
+        "serve": "False",
+        "totalscore": "1",
+        "winner": "False"
+       },
+       {
+        "dp1": "1670",
+        "dp2": "6040",
+        "game_score": "",
+        "id": "60432",
+        "name": "Ram/ Salisbury",
+        "s1": "7.8",
+        "s2": "4",
+        "s3": "6",
+        "s4": "",
+        "s5": "",
+        "serve": "False",
+        "totalscore": "2",
+        "winner": "True"
+       }
+      ]
+     },
+     {
+      "date": "08.09.2026",
+      "id": "2632857",
+      "status": "Finished",
+      "tb": "False",
+      "time": "20:30",
+      "player": [
+       {
+        "dp1": "1932",
+        "dp2": "4781",
+        "game_score": "",
+        "id": "27362",
+        "name": "Gonzalez/ Molteni",
+        "s1": "3",
+        "s2": "3",
+        "s3": "",
+        "s4": "",
+        "s5": "",
+        "serve": "False",
+        "totalscore": "0",
+        "winner": "False"
+       },
+       {
+        "dp1": "21215",
+        "dp2": "1102",
+        "game_score": "",
+        "id": "75277",
+        "name": "Granollers/ Zeballos",
+        "s1": "6",
+        "s2": "6",
+        "s3": "",
+        "s4": "",
+        "s5": "",
+        "serve": "False",
+        "totalscore": "2",
+        "winner": "True"
+       }
+      ]
+     },
+     {
+      "date": "08.09.2026",
+      "id": "2632641",
+      "status": "Set 1",
+      "tb": "True",
+      "time": "22:15",
+      "player": [
+       {
+        "dp1": "5113",
+        "dp2": "1960",
+        "game_score": "4",
+        "id": "153198",
+        "name": "Nys/ Roger-Vasselin",
+        "s1": "6.4",
+        "s2": "",
+        "s3": "",
+        "s4": "",
+        "s5": "",
+        "serve": "False",
+        "totalscore": "0",
+        "winner": "False"
+       },
+       {
+        "dp1": "1843",
+        "dp2": "41690",
+        "game_score": "3",
+        "id": "333476",
+        "name": "Andreozzi/ Guinard",
+        "s1": "6.3",
+        "s2": "",
+        "s3": "",
+        "s4": "",
+        "s5": "",
+        "serve": "True",
+        "totalscore": "0",
+        "winner": "False"
+       }
+      ]
+     },
+     {
+      "date": "08.09.2026",
+      "id": "2632941",
+      "status": "Set 1",
+      "tb": "False",
+      "time": "22:55",
+      "player": [
+       {
+        "dp1": "3182",
+        "dp2": "85385",
+        "game_score": "40",
+        "id": "254558",
+        "name": "Heliovaara/ Patten",
+        "s1": "2",
+        "s2": "",
+        "s3": "",
+        "s4": "",
+        "s5": "",
+        "serve": "True",
+        "totalscore": "0",
+        "winner": "False"
+       },
+       {
+        "dp1": "38846",
+        "dp2": "128275",
+        "game_score": "30",
+        "id": "361439",
+        "name": "Cabral/ Tracy",
+        "s1": "1",
+        "s2": "",
+        "s3": "",
+        "s4": "",
+        "s5": "",
+        "serve": "False",
+        "totalscore": "0",
+        "winner": "False"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "id": "13510",
+    "name": "Wta - Doubles: Us Open (Usa), Hard",
+    "match": [
+     {
+      "date": "08.09.2026",
+      "id": "2633065",
+      "status": "Finished",
+      "tb": "False",
+      "time": "19:10",
+      "player": [
+       {
+        "dp1": "4806",
+        "dp2": "11261",
+        "game_score": "",
+        "id": "260923",
+        "name": "Siniakova/ Townsend",
+        "s1": "6",
+        "s2": "6",
+        "s3": "",
+        "s4": "",
+        "s5": "",
+        "serve": "False",
+        "totalscore": "2",
+        "winner": "True"
+       },
+       {
+        "dp1": "19084",
+        "dp2": "127318",
+        "game_score": "",
+        "id": "325359",
+        "name": "Bucsa/ Melichar-Martinez",
+        "s1": "4",
+        "s2": "2",
+        "s3": "",
+        "s4": "",
+        "s5": "",
+        "serve": "False",
+        "totalscore": "0",
+        "winner": "False"
+       }
+      ]
+     },
+     {
+      "date": "08.09.2026",
+      "id": "2633066",
+      "status": "Finished",
+      "tb": "False",
+      "time": "20:40",
+      "player": [
+       {
+        "dp1": "1058",
+        "dp2": "10577",
+        "game_score": "",
+        "id": "296722",
+        "name": "Hsieh S-/Ostapenko",
+        "s1": "5",
+        "s2": "3",
+        "s3": "",
+        "s4": "",
+        "s5": "",
+        "serve": "False",
+        "totalscore": "0",
+        "winner": "False"
+       },
+       {
+        "dp1": "7989",
+        "dp2": "68056",
+        "game_score": "",
+        "id": "362105",
+        "name": "Mertens/ Shnaider",
+        "s1": "7",
+        "s2": "6",
+        "s3": "",
+        "s4": "",
+        "s5": "",
+        "serve": "False",
+        "totalscore": "2",
+        "winner": "True"
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ }
+}

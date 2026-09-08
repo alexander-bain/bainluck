@@ -54,10 +54,26 @@ one hides the finding while stamping half of it. It is reported and left alone
 (D35: matching symptoms are filed until lane1/#2693 lands; this task is not
 allowed to fix them).
 
-**Doubles are refused before the question is asked.** StatPal writes a pair as
-`"Galloway/ Goransson"`; the sweep's token fallback caught 30+ false
-doubles-to-singles hits before doubles were excluded. All 32 doubles fixtures on
-the measurement day matched nothing.
+**Doubles are joined on the unordered surname pair, not on the singles matcher.**
+StatPal writes a pair as `"Galloway/ Goransson"` and we write `"Galloway/
+Goransson"` or `"Galloway/Goransson"`; the sweep's token fallback caught 30+
+false doubles-to-SINGLES hits, so doubles were refused outright and every
+doubles fixture StatPal published went unlinked — 0 of the 11 the measurement
+joined on 2026-09-08 carried an anchor.
+
+Refusing the population was the right first move and the wrong resting place:
+the reason the fallback failed is that it read a pair as a bag of tokens, and
+`authority_tennis_names.tennis_names_agree` — the identity the AGREEMENT row has
+been scored on since CERT-1948 — does not. It keys a doubles side on
+`doubles_key`, the sorted pair of folded surnames, and a doubles name can never
+equal a singles key, so the hits that motivated the refusal are unreachable by
+construction rather than by exclusion. Both teams must agree, in one orientation
+or the other; **one team agreeing is not a match** — `Guarachi/Sherif` v
+`Danilina/Krunic` and our `Maria/Sonmez` v `Danilina/Krunic` are two different
+matches in one draw, eight hours apart, and a one-team rule pairs them.
+
+A pair either side of which cannot be read as exactly two players is not
+half-matched: it is `DOUBLES_UNREADABLE`, counted and receipted.
 
 WHAT IT WRITES
 ══════════════
@@ -140,6 +156,7 @@ from app.utils.authority_tennis_agreement import (
     build_tennis_agreements,
     tennis_measurement_bounds,
 )
+from app.utils.authority_tennis_names import doubles_key, tennis_names_agree
 from app.utils.provider_anchor_keys import (
     STATPAL_ID_SPACE_TENNIS,
     statpal_anchor_key,
@@ -325,7 +342,10 @@ class LinkRun:
     """
 
     fixtures_read: int = 0
-    doubles_skipped: int = 0
+    #: Doubles fixtures whose pair could not be read as two players on both
+    #: sides. NOT "doubles we do not do" — that bucket is gone, and it was
+    #: renamed rather than reused so a reader cannot mistake one for the other.
+    doubles_unreadable: list[dict[str, Any]] = field(default_factory=list)
     already_linked: int = 0
     linked: int = 0
     ambiguous: list[dict[str, Any]] = field(default_factory=list)
@@ -346,7 +366,7 @@ class LinkRun:
     def summary(self) -> dict[str, Any]:
         return {
             "fixtures_read": self.fixtures_read,
-            "doubles_skipped": self.doubles_skipped,
+            "doubles_unreadable": len(self.doubles_unreadable),
             "already_linked": self.already_linked,
             "linked": self.linked,
             "ambiguous": len(self.ambiguous),
@@ -363,6 +383,44 @@ def _is_doubles(fixture: StatPalFixture) -> bool:
     return DOUBLES_MARKER in (fixture.home_team or "") or DOUBLES_MARKER in (
         fixture.away_team or ""
     )
+
+
+def doubles_pair_matches(
+    statpal_pair: tuple[Optional[str], Optional[str]],
+    our_pair: tuple[Optional[str], Optional[str]],
+) -> bool:
+    """Do these two doubles matches have the same two TEAMS?
+
+    The doubles counterpart of `tennis_name_matching.pair_matches`, and a
+    separate function rather than a branch inside it because the two join on
+    different things: a singles side is one player resolved through
+    `our_tennis_keys`, a doubles side is `doubles_key`'s sorted pair of folded
+    surnames. `tennis_names_agree` refuses to read one as the other, which is
+    what makes the doubles-to-singles hits that closed this arm unreachable here
+    — they cannot be produced, rather than being excluded afterwards.
+
+    Both orientations, for the reason `pair_matches` gives: StatPal's
+    first-listed team is not our home side in any reliable way.
+
+    **Both teams must agree.** The failure this guards is not hypothetical: on
+    2026-09-04 StatPal published `Guarachi/ Sherif` v `Danilina/ Krunic` and we
+    held `Maria/Sonmez` v `Danilina/Krunic` eight hours later — one shared team,
+    two different matches of the same draw. A rule that accepted one agreeing
+    team would stamp the second-round match's id onto the first-round row.
+
+    A pairing that reads BOTH ways is refused for `pair_matches`' reason: the
+    orientation would be decided by which arm ran first. In doubles that shape
+    means one team key on both sides of a match, which is a row to report and
+    never a row to stamp.
+    """
+    sp_a, sp_b = statpal_pair
+    our_a, our_b = our_pair
+
+    straight = tennis_names_agree(our_a, sp_a) and tennis_names_agree(our_b, sp_b)
+    crossed = tennis_names_agree(our_b, sp_a) and tennis_names_agree(our_a, sp_b)
+    if straight and crossed:
+        return False
+    return straight or crossed
 
 
 #: `_link_one`'s own outcome for "the column was already claimed between the
@@ -408,7 +466,14 @@ PRIOR_VANISHED = "VANISHED"
 PRIOR_STATES_THAT_ARE_A_LINK = frozenset({PRIOR_PAIRED})
 
 #: The four things one fixture can be. A verdict, not a score.
-VERDICT_DOUBLES = "DOUBLES"
+#:
+#: `DOUBLES_UNREADABLE` is what is left of the old blanket `DOUBLES` refusal. It
+#: is deliberately NOT the same name: the old one meant "this task does not do
+#: doubles" and covered every doubles fixture there was, and a reader who found
+#: the old string still in the counters would conclude the arm had not shipped.
+#: This one means one specific thing — a pair neither side of which reads as
+#: exactly two players — and a fixture in it is a receipt, not a policy.
+VERDICT_DOUBLES_UNREADABLE = "DOUBLES_UNREADABLE"
 VERDICT_LINK = "LINK"
 VERDICT_AMBIGUOUS = "AMBIGUOUS"
 VERDICT_UNMATCHED = "UNMATCHED"
@@ -427,8 +492,15 @@ def classify_fixture(
     carries all of them, because "two rows matched" without saying which two is
     a count, and the receipt has to be actionable.
     """
-    if _is_doubles(fixture):
-        return VERDICT_DOUBLES, []
+    doubles = _is_doubles(fixture)
+    if doubles and not (
+        doubles_key(fixture.home_team) and doubles_key(fixture.away_team)
+    ):
+        # One side is a pair and the other is not, or a side does not split into
+        # exactly two players. Not a doubles match we can key, and not a singles
+        # one either — matching it on whichever half parses is how a doubles
+        # fixture ends up stamped on a singles row.
+        return VERDICT_DOUBLES_UNREADABLE, []
 
     if fixture.start_time is None:
         # No start time is not a wide window, it is no window. Matching on names
@@ -436,14 +508,13 @@ def classify_fixture(
         # same two players' meeting a year later.
         return VERDICT_UNMATCHED, []
 
+    agrees = doubles_pair_matches if doubles else pair_matches
     matches = [
         c
         for c in pool
         if c.get("commence_time") is not None
         and abs(c["commence_time"] - fixture.start_time) <= MATCH_WINDOW
-        and pair_matches(
-            (fixture.home_team, fixture.away_team), (c["home"], c["away"])
-        )
+        and agrees((fixture.home_team, fixture.away_team), (c["home"], c["away"]))
     ]
     if not matches:
         return VERDICT_UNMATCHED, []
@@ -771,8 +842,12 @@ async def _run_link_tennis_statpal_fixtures(
         for fixture in fixtures:
             verdict, matches = classify_fixture(fixture, pool)
 
-            if verdict == VERDICT_DOUBLES:
-                run.doubles_skipped += 1
+            if verdict == VERDICT_DOUBLES_UNREADABLE:
+                # A pair we cannot key. Receipted rather than counted, because
+                # the only way this bucket ever empties is someone reading the
+                # names in it (gotcha #53: a bare count cannot say whether the
+                # zero is health or silence).
+                run.doubles_unreadable.append(_receipt(fixture))
                 continue
 
             # ── ASKED BEFORE THE CANDIDATE IS CONSIDERED, not only on the miss
