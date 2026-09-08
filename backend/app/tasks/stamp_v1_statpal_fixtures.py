@@ -414,11 +414,29 @@ SOCCER = LeagueSpec(
 #: `soccer_uefa_champs_league`, ~40 more, growing per league — while StatPal
 #: serves and numbers all of it as one sport (CERT-2189). So `SOCCER.sport_key`
 #: is the StatPal-side id space, not one of ours, and a dict keyed on our
-#: `sports.key` cannot hold it. Wiring soccer's row selection across those keys
-#: is the caller's question and is not answered here: **this league has no
-#: runner and no beat entry yet, by design.** What exists is the spec, the read
-#: and the join, plan-only, so the first pass that does run can be measured
-#: before it writes (D51).
+#: `sports.key` cannot hold it.
+#:
+#: **Soccer now HAS a runner and a beat entry** (`stamp_soccer_statpal_fixtures`,
+#: `crontab(minute=6)`); what it does not have is a key this dict can be keyed
+#: on, which is a different fact and the only one this absence still records.
+#: Read `sport_key_is_prefix` for how the row selection spans those ~40 keys —
+#: it is the spec field that answers the question this dict cannot.
+
+#: Namespace for the run id an UNATTENDED soccer pass stamps onto every anchor
+#: it inserts, so the hourly writer's work can be named and undone one pass at a
+#: time.
+#:
+#: A sibling of the four prefixes in `scripts/soccer_statpal_stamp_3366.py`
+#: (`:plan`, `:backup`, `:apply`, `:restore`) and deliberately a FIFTH rather
+#: than a reuse of `:apply`. The script's undo refuses a `:backup` identity by
+#: name and treats an `:apply` one as an operator's attended write; a beat pass
+#: is neither, and an operator reading `claim_context` should be able to tell
+#: "the hourly channel did this" from "someone ran the script" without going to
+#: the ledger. The string is duplicated across the two files rather than
+#: imported because `app/` must not import from `scripts/`, and the coupling is
+#: a CLI argument — the restore takes the id as text and never parses it.
+BEAT_RUN_ID_PREFIX = "authority:soccer_statpal_stamp:beat"
+
 LEAGUES: dict[str, LeagueSpec] = {
     NBA.sport_key: NBA,
     NHL.sport_key: NHL,
@@ -1332,7 +1350,11 @@ async def _run_stamp_v1_statpal_fixtures(
 
     `apply_run_id` stamps every anchor this invocation inserts, so an operator
     undo can find its own writes in the table instead of inferring them (see
-    `_claim_context`). None for the beat-driven leagues, which have no undo.
+    `_claim_context`). None for the three beat-driven leagues, which have no
+    undo; soccer's beat mints its own per pass — see
+    `_run_stamp_soccer_statpal_fixtures`, which is the one league whose matcher
+    is a token subset rather than an equality and so the one whose hourly writes
+    are worth being able to name.
     """
     from app.tasks.base import get_task_session
 
@@ -1691,26 +1713,79 @@ async def _run_stamp_mlb_statpal_fixtures(
 
 async def _run_stamp_soccer_statpal_fixtures(
     *,
-    apply: bool = False,
+    apply: bool = True,
     now: Optional[datetime] = None,
     apply_run_id: Optional[str] = None,
 ) -> dict[str, Any]:
-    """Soccer, and **`apply` defaults to False here where it defaults to True above.**
+    """Soccer, and **`apply` defaults to True here now that the first pass has run.**
 
-    That inversion is the whole of this league's current state and is not a
-    stylistic choice. The three v1 leagues have been writing for days against a
-    measured population; soccer's first pass has never run against production,
-    it selects rows across ~40 of our sport keys rather than one, and its
-    matcher is a token subset rather than an equality — so the first thing it
-    owes is a receipt, not a write.
+    This default was False for as long as soccer's first pass was hypothetical,
+    and the condition that held it there was named rather than vague: the three
+    v1 leagues had been writing for days against a measured population while
+    soccer had never run against production, selects rows across ~40 of our
+    sport keys rather than one, and matches on a token subset rather than an
+    equality — so what it owed first was a receipt, not a write.
 
-    D51 governs the flip: a pass that writes needs a backup and a one-command
-    restore, and the plan pass is what sizes them. The plan replayed at
-    2026-09-07 06:30Z over the live boards and 108 production rows said 80
-    linked, **0 ambiguous in either direction, and all 80 columns empty** — so
-    the first apply would be 80 inserts and 0 overwrites. Nothing is written
-    until that has been reproduced by a real pass and the restore line exists.
+    **That receipt exists, so the default flips with it.** D51's rails were
+    walked end to end on 2026-09-08:
+
+      * plan at 07:01:00Z — 1203 fixtures read, 116 would-write, 0 ambiguous,
+        0 already_linked;
+      * backup `authority:soccer_statpal_stamp:backup:20260908T070242Z` —
+        1,281 rows of pre-image over the 09-06→09-15 window, a superset of the
+        116 touched;
+      * apply `authority:soccer_statpal_stamp:apply:20260908T070443Z` — 116
+        stamped, 0 ambiguous, matching the plan exactly;
+      * verified in the database rather than off the receipt: 116 anchors on
+        `source='statpal' AND source_id LIKE 'soccer:%'` where there had been
+        **zero**, manifest joined on both `event_id` AND `source_id` at 116/116,
+        116 distinct events so no row was written twice, and 0 phantoms
+        re-checked against the apply's own manifest ids.
+
+    The one-command restore is banked and is the same line whatever runs it:
+    `scripts/soccer_statpal_stamp_3366.py restore --identity <apply-run-id>
+    --apply`. Each pass mints its own `apply_run_id`, so a beat pass is undone
+    by naming that pass — a restore printing non-zero `reattributed` means a
+    later pass owns those rows and is the one to restore instead.
+
+    **What the flip buys is the difference between a night and a channel.** A
+    one-shot apply anchors the fixtures that existed the night it ran; tomorrow's
+    soccer has no anchors at all, and the 116 decay as their games finish. This
+    league's whole ship is that every soccer game exists on the site before any
+    market lists it, and a channel that only ran once cannot carry it.
+
+    Still DARK in the sense D50 means: this writes `events.statpal_fixture_id`
+    and the `('statpal', 'soccer:<fallback_id_3>', 'game')` anchor, nothing
+    reads either, it NEVER creates a row, ambiguity refuses rather than guesses,
+    and a column holding a different id is receipted as a contradiction and
+    never overruled.
+
+    **Every writing pass is nameable, including the unattended ones.** The three
+    siblings run with `apply_run_id=None` — the shared runner's docstring calls
+    them "the beat-driven leagues, which have no undo" — and soccer deliberately
+    does not join them there. Its matcher is a token subset rather than an
+    equality, which is what buys 67 links of a pinned 90 where equality gets 17,
+    and it is also why `SOCCER-NAMED-RESERVE-QUALIFIER-3366` is carried rather
+    than closed: `Real Madrid` still matches `Real Madrid Castilla`, and only the
+    ±1h window plus refuse-unless-exactly-one stands behind that. An hourly
+    writer with the loosest matcher of the five is the last one that should be
+    unattributable.
+
+    So a beat pass mints `BEAT_RUN_ID_PREFIX:<UTC stamp>` and stamps it into
+    every anchor it inserts, and the ordinary undo line reaches it unchanged:
+
+        scripts/soccer_statpal_stamp_3366.py restore --identity <that id> --apply
+
+    That works with no banked receipt because `_load_manifest` falls back to the
+    anchors' own `apply_run_id` — the path written for an apply that died before
+    banking, which is the same shape as a pass nobody was watching. An explicit
+    `apply_run_id` (what `cmd_apply` passes) is never overridden, so operator
+    applies keep their own `:apply:` namespace and the two are told apart in the
+    table rather than by memory.
     """
+    if apply and apply_run_id is None:
+        stamp = (now or datetime.now(timezone.utc)).strftime("%Y%m%dT%H%M%SZ")
+        apply_run_id = f"{BEAT_RUN_ID_PREFIX}:{stamp}"
     return await _run_stamp_v1_statpal_fixtures(
         SOCCER, apply=apply, now=now, apply_run_id=apply_run_id
     )

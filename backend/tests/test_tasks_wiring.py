@@ -239,6 +239,11 @@ class TestBeatScheduleCompleteness:
         # by the same census). The only one of the four whose season is in
         # progress, so the only one whose `livescores` read does work today.
         "stamp-mlb-statpal-fixtures-hourly",
+        # #3366 / D50 — soccer shadow stamp, dark (background, hourly, :06 by
+        # the same census, scored over the six-minute WINDOW because its soft
+        # limit is 300s rather than 240s). The fifth stamper and the first that
+        # had to buy its schedule with a measured first pass under D51.
+        "stamp-soccer-statpal-fixtures-hourly",
         "sync-statpal-rosters-daily",
         "sync-statpal-team-stats-weekly",
         "sync-statpal-standings-daily",

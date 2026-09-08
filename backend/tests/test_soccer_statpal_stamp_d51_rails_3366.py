@@ -545,7 +545,16 @@ class TestTheWriterRecordsWhatItWrote:
     """
 
     @staticmethod
-    async def _drive(monkeypatch, *, outcome, held=None, run_id="run-xyz"):
+    async def _drive(monkeypatch, *, outcome, held=None, run_id="run-xyz", shared=False):
+        """`shared=True` calls the SHARED runner instead of soccer's wrapper.
+
+        The distinction exists because the two layers now answer differently.
+        Soccer's wrapper mints a run id for any writing pass that was not given
+        one, so `run_id=None` can no longer reach the runner through it — while
+        the three sibling leagues still pass `None` and must keep behaving the
+        way they always have. The "no run id" cases below are about THAT
+        behaviour, so they address the layer that still has it.
+        """
         from contextlib import asynccontextmanager
         from types import SimpleNamespace
 
@@ -611,9 +620,14 @@ class TestTheWriterRecordsWhatItWrote:
 
         monkeypatch.setattr(task, "record_anchor", _record_anchor)
 
-        result = await task._run_stamp_soccer_statpal_fixtures(
-            apply=True, now=start, apply_run_id=run_id
-        )
+        if shared:
+            result = await task._run_stamp_v1_statpal_fixtures(
+                task.SOCCER, apply=True, now=start, apply_run_id=run_id
+            )
+        else:
+            result = await task._run_stamp_soccer_statpal_fixtures(
+                apply=True, now=start, apply_run_id=run_id
+            )
         return result, contexts, executed
 
     @pytest.mark.asyncio
@@ -627,13 +641,46 @@ class TestTheWriterRecordsWhatItWrote:
         )
 
     @pytest.mark.asyncio
-    async def test_a_scheduled_pass_writes_no_run_id_at_all(self, monkeypatch):
-        """The four beat leagues have no undo, so the key is absent rather than
-        null — otherwise `->>'apply_run_id'` has to be null-guarded everywhere."""
+    async def test_a_pass_with_no_run_id_omits_the_key_rather_than_nulling_it(
+        self, monkeypatch
+    ):
+        """A league with no undo leaves the key ABSENT, not present-and-null —
+        otherwise `->>'apply_run_id'` has to be null-guarded everywhere.
+
+        Driven through the shared runner because that is where the behaviour
+        lives and who still relies on it: NBA, NHL and MLB all write with
+        `apply_run_id=None`. Soccer's wrapper now mints one (its matcher is the
+        loosest of the five, so its unattended writes are worth naming), and the
+        test below pins that — but the two facts are about different layers and
+        collapsing them would leave the siblings' behaviour untested.
+        """
         from app.services.anchor_channel import WROTE
 
-        _, contexts, _ex = await self._drive(monkeypatch, outcome=WROTE, run_id=None)
+        _, contexts, _ex = await self._drive(
+            monkeypatch, outcome=WROTE, run_id=None, shared=True
+        )
         assert contexts and "apply_run_id" not in contexts[0]
+
+    @pytest.mark.asyncio
+    async def test_soccers_wrapper_mints_a_run_id_the_shared_runner_would_not(
+        self, monkeypatch
+    ):
+        """The counterpart of the test above, and the reason it needed `shared`.
+
+        Same inputs, same `run_id=None`, one layer apart: the shared runner
+        omits the key and soccer's wrapper supplies one. Asserted as a PAIR so
+        neither can quietly become the other.
+        """
+        from app.services.anchor_channel import WROTE
+
+        import app.tasks.stamp_v1_statpal_fixtures as task
+
+        _, contexts, _ex = await self._drive(
+            monkeypatch, outcome=WROTE, run_id=None, shared=False
+        )
+        assert contexts and contexts[0]["apply_run_id"].startswith(
+            f"{task.BEAT_RUN_ID_PREFIX}:"
+        )
 
     @pytest.mark.asyncio
     async def test_a_stamp_records_both_halves_as_written(self, monkeypatch):
@@ -708,12 +755,39 @@ class TestTheWriterRecordsWhatItWrote:
         assert self._attributions(executed) == []
 
     @pytest.mark.asyncio
-    async def test_a_scheduled_pass_attributes_nothing(self, monkeypatch):
-        """The four beat leagues have no undo and no run id to record."""
+    async def test_a_pass_with_no_run_id_attributes_nothing(self, monkeypatch):
+        """No run id, nothing to attribute — the siblings' path (see above)."""
         from app.services.anchor_channel import CONFIRMED
 
-        _, _, executed = await self._drive(monkeypatch, outcome=CONFIRMED, run_id=None)
+        _, _, executed = await self._drive(
+            monkeypatch, outcome=CONFIRMED, run_id=None, shared=True
+        )
         assert self._attributions(executed) == []
+
+    @pytest.mark.asyncio
+    async def test_soccers_scheduled_pass_attributes_its_confirmed_column_write(
+        self, monkeypatch
+    ):
+        """And soccer, going through its wrapper, DOES attribute.
+
+        The CONFIRMED path is the one where the anchor already existed and only
+        the column is ours (CERT-2220). Before the beat existed this could only
+        happen under an operator's `--identity`; now it happens hourly, and an
+        unattributed column write on that path is precisely the row a later undo
+        cannot tell from somebody else's.
+        """
+        from app.services.anchor_channel import CONFIRMED
+
+        import app.tasks.stamp_v1_statpal_fixtures as task
+
+        _, _, executed = await self._drive(
+            monkeypatch, outcome=CONFIRMED, run_id=None, shared=False
+        )
+        attributions = self._attributions(executed)
+        assert len(attributions) == 1, (
+            "soccer's hourly pass wrote a column it did not attribute"
+        )
+        assert attributions[0]["run_id"].startswith(f"{task.BEAT_RUN_ID_PREFIX}:")
 
     @pytest.mark.asyncio
     async def test_a_plan_pass_names_its_rows_and_commits_nothing(self, monkeypatch):

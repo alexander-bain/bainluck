@@ -3489,16 +3489,44 @@ def stamp_mlb_statpal_fixtures(self, apply=True):
 
 @celery_app.task(bind=True, soft_time_limit=300, time_limit=330,
                  name="app.tasks.stamp_soccer_statpal_fixtures")
-def stamp_soccer_statpal_fixtures(self, apply=False):
-    """Plan (not yet write) the StatPal contest each soccer row is (#3366, D50).
+def stamp_soccer_statpal_fixtures(self, apply=True):
+    """Stamp each soccer row with the StatPal contest it is (#3366, #2867, D50).
 
-    **`apply` defaults to FALSE here and TRUE on the three stampers above, and
-    there is no beat entry for this task.** Both are deliberate. Soccer's first
-    pass has never run against production, it selects rows across ~40 of our
-    sport keys instead of one, and it matches on a token subset rather than on
-    equality — so what it owes first is a receipt. D51 governs the flip: the
-    plan pass is what sizes the backup and the one-command restore, and it runs
-    on demand until it has.
+    **`apply` defaulted to FALSE and there was no beat entry, until the first
+    pass paid for both.** The condition was named, not vague: soccer had never
+    run against production, it selects rows across ~40 of our sport keys instead
+    of one, and it matches on a token subset rather than on equality — so what
+    it owed first was a receipt. D51 governs the flip, and its rails were walked
+    end to end on 2026-09-08: plan (1203 fixtures, 116 would-write, 0 ambiguous),
+    backup (1,281 rows of pre-image over 09-06→09-15), apply (116 stamped,
+    matching the plan exactly), and a verification read that went to the DATABASE
+    rather than the receipt — 116 anchors where there had been **zero**, manifest
+    joined on both `event_id` and `source_id` at 116/116, 116 distinct events,
+    0 phantoms re-checked against the apply's own manifest.
+
+    So the flip is what turns a night into a channel. A one-shot apply anchors
+    only the fixtures alive the night it ran; tomorrow's soccer would have none,
+    and this league's ship is that every soccer game exists on the site before
+    any market lists it.
+
+    Undo is per-pass, and soccer is the only one of the five stampers for which
+    that is true. The three siblings write with `apply_run_id=None` and have no
+    undo at all; soccer's beat mints
+    `authority:soccer_statpal_stamp:beat:<UTC stamp>` per pass and stamps it
+    into every anchor it inserts, so
+
+        scripts/soccer_statpal_stamp_3366.py restore --identity <that id> --apply
+
+    reverses one hour's writes and nothing else. It needs no banked receipt —
+    the restore falls back to the anchors' own `apply_run_id`. A restore
+    reporting non-zero `reattributed` means a later pass owns those rows and is
+    the one to restore instead.
+
+    The reason soccer pays for this and the siblings do not is its matcher: a
+    token subset rather than an equality (67 links of a pinned 90 where equality
+    gets 17), with `SOCCER-NAMED-RESERVE-QUALIFIER-3366` still open — `Real
+    Madrid` matches `Real Madrid Castilla` and only the ±1h window plus
+    refuse-unless-exactly-one stands behind it.
 
     Three things are soccer's alone and each is a named field on its
     `LeagueSpec` rather than a branch in the shared runner:
@@ -5757,6 +5785,51 @@ celery_app.conf.beat_schedule = {
         # vocabulary. NHL's preseason opens 2026-09-19 and is the next.
         "task": "app.tasks.stamp_mlb_statpal_fixtures",
         "schedule": crontab(minute=21),
+        "options": {"queue": "background"},
+    },
+    "stamp-soccer-statpal-fixtures-hourly": {
+        # #3366 / #2867 / D50. The fifth StatPal stamper and the first whose
+        # first pass had to be bought before it could be scheduled: soccer went
+        # from ZERO provider anchors to 116 on 2026-09-08 under D51's rails
+        # (plan → backup → apply → a verification read against the database),
+        # and this entry is what stops that being a single night. The 116 decay
+        # as their games finish; a channel is what the ship needs.
+        #
+        # :06 by the same census, RUN over the assembled schedule on 2026-09-08
+        # rather than read off this file (CERT-418) — and run with `*/N`
+        # intervals EXPANDED, which is the correction that picked this minute.
+        # Reading `_orig_minute` as a literal says :06 is empty; expanding it
+        # says :06 carries one fire, `precompute-discover-candidate-base` at
+        # `*/2`. That task is inside every window in the hour by construction,
+        # so it is not a discriminator between minutes, but a census that cannot
+        # see it is not measuring the thing it claims to.
+        #
+        # Because soccer's soft limit is 300s rather than the siblings' 240s,
+        # the minute alone is not the whole question, so the census scored the
+        # six-minute WINDOW a pass can occupy. :06–:11 contains **no StatPal
+        # reader of any kind** — no sibling stamper, no schedule sync, no tennis
+        # linker, no roster sync — and is clear of the settlement sweep's
+        # :31–:47. Among the windows that clear both of those bars it also
+        # carries the lowest total load, 14 fires.
+        #
+        # It is NOT the lowest-load window in the hour outright; :24 is, at 11.
+        # :24 is disqualified because `link-tennis-statpal-fixtures-10min` fires
+        # in it, and StatPal separation is the constraint this census exists to
+        # satisfy — stating the raw minimum without that exclusion would be
+        # quoting a number from a different question.
+        #
+        # Why not :25, continuing the :17/:19/:21/:23 run of the other four: a
+        # 300s pass starting there ends at :30, the heaviest minute in the hour,
+        # and on the doorstep of the sweep. The four siblings sit two minutes
+        # apart because each of them fits in 240s; soccer does not inherit that
+        # spacing, it inherits the reason for it.
+        #
+        # Nearest StatPal neighbour is `sync-statpal-schedules-nfl` at :03,
+        # three minutes ahead — the four schedule syncs are themselves staggered
+        # at one-minute intervals (:00/:01/:02/:03), so three minutes is wider
+        # than the separation they already tolerate among themselves.
+        "task": "app.tasks.stamp_soccer_statpal_fixtures",
+        "schedule": crontab(minute=6),
         "options": {"queue": "background"},
     },
     "recategorize-other-daily": {
