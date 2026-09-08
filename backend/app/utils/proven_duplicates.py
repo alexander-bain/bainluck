@@ -91,6 +91,7 @@ different match's markets onto the page.
 
 from __future__ import annotations
 
+import json
 import re
 
 from sqlalchemy import Boolean, String, func, or_, select
@@ -484,3 +485,123 @@ async def folded_probability_sources(db, event) -> dict:
         and orientation_agrees(event.home_team_name, event.away_team_name, home, away)
     ]
     return merge_probability_sources(event.win_probability_sources, oriented)
+
+
+def _tag_elements(tags: object) -> list[str]:
+    """``event_tags`` as a list of strings, whatever shape the driver handed back.
+
+    JSONB arrives from asyncpg as a real ``list``, which is the production path
+    and the first branch. The guard suite's SQLite renders the same column as
+    the serialised text (that is the whole reason
+    :class:`_TaggedDuplicateOf` carries a portable ``LIKE`` arm at all), so a
+    ``str`` is decoded rather than iterated — iterating one would yield single
+    CHARACTERS and match no tag, which is a batch that silently folds nothing
+    while every Postgres test stays green.
+
+    Anything else, and anything that fails to decode, is no tags. This is a
+    read-side accelerator: an unparseable bag means the batch declines to fold
+    that row and the surface prints exactly what it prints today.
+    """
+    if isinstance(tags, list):
+        return [t for t in tags if isinstance(t, str)]
+    if isinstance(tags, str):
+        try:
+            decoded = json.loads(tags)
+        except ValueError:
+            return []
+        if isinstance(decoded, list):
+            return [t for t in decoded if isinstance(t, str)]
+    return []
+
+
+#: How many `@>` arms may share one statement (#3937).
+#:
+#: `@>` is the ONLY form `ix_events_event_tags` can serve — it is a
+#: `gin (event_tags jsonb_path_ops)` index, and `jsonb_path_ops` supports
+#: containment and nothing else. The obvious one-arm alternative was measured on
+#: production and is a SEQ SCAN: `event_tags ?| array[...]` took 2.18 s for 8
+#: tags and 10.3 s for 500, against 3 ms and ~125 ms for the equivalent `OR` of
+#: `@>` arms. So the width has to be managed rather than designed away.
+#:
+#: Measured on production 2026-09-08 (EXPLAIN ANALYZE, planning + execution):
+#:
+#:      10 arms    5 ms          100 arms   32 ms
+#:      25 arms    6 ms          200 arms   31 ms
+#:      50 arms    9 ms          500 arms  ~125 ms, and the planner stopped
+#:                                         returning stable timings there
+#:
+#: CHUNKED RATHER THAN CAPPED. A cap would fold the first N events and silently
+#: leave the rest on the divergent number — the exact shape of bug this ship
+#: exists to remove, reintroduced as a "limit". Chunking folds every event
+#: whatever the page size and only costs an extra round trip per 100.
+_FOLD_BATCH_ARMS = 100
+
+
+async def folded_probability_sources_batch(db, events) -> dict[int, dict]:
+    """:func:`folded_probability_sources` for a whole page, in ONE lookup (#3937).
+
+    Same answer as calling the singular form per event — the batch is a cost
+    change, not a semantics change, and ``test_the_batch_agrees_with_the_singular_fold``
+    pins that equivalence rather than trusting it.
+
+    The reason it has to exist rather than the hub just looping: a list surface
+    renders up to ``MAX_BLEND_EVENTS`` fixtures, and a per-row fold is an N+1 —
+    the same sizing that kept the hub and the list formatter OUT of #3810's
+    Fold A and left #3903's one-number ship able to reopen. One ``OR`` of
+    ``@>`` arms is a single BitmapOr over ``ix_events_event_tags``, so a page of
+    400 costs one round trip instead of 400.
+
+    Returns an entry for EVERY event passed, folded or not, so a caller can
+    index the result unconditionally; an event with no twins gets its own
+    ``win_probability_sources`` back. Errors are not swallowed, for the reason
+    given in :func:`folded_event_ids`.
+    """
+    canonicals = {int(event.id): event for event in events}
+    if not canonicals:
+        # `or_()` of nothing compiles to a constant-false WHERE, so this is a
+        # round trip that cannot return a row. Skip it rather than pay it.
+        return {}
+
+    by_tag = {duplicate_tag(cid): cid for cid in canonicals}
+
+    ordered = sorted(canonicals)
+    rows: list[tuple] = []
+    for start in range(0, len(ordered), _FOLD_BATCH_ARMS):
+        chunk = ordered[start : start + _FOLD_BATCH_ARMS]
+        rows.extend(
+            (
+                await db.execute(
+                    select(
+                        Event.id,
+                        Event.home_team_name,
+                        Event.away_team_name,
+                        Event.win_probability_sources,
+                        Event.event_tags,
+                    ).where(or_(*(tagged_duplicate_of(cid) for cid in chunk)))
+                )
+            ).all()
+        )
+
+    folded: dict[int, list[tuple[int, dict | None]]] = {}
+    for twin_id, home, away, sources, tags in rows:
+        # One twin may be tagged against several canonicals on this page. Reading
+        # ITS OWN tags is what attributes it to the right one: the `OR` above
+        # tells us the row matched SOME arm, never which, and guessing would fold
+        # a different match's venue onto the card.
+        for tag in _tag_elements(tags):
+            canonical_id = by_tag.get(tag)
+            if canonical_id is None or canonical_id == twin_id:
+                continue
+            canonical = canonicals[canonical_id]
+            if not orientation_agrees(
+                canonical.home_team_name, canonical.away_team_name, home, away
+            ):
+                continue
+            folded.setdefault(canonical_id, []).append((twin_id, sources))
+
+    return {
+        canonical_id: merge_probability_sources(
+            event.win_probability_sources, folded.get(canonical_id, [])
+        )
+        for canonical_id, event in canonicals.items()
+    }

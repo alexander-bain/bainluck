@@ -373,12 +373,23 @@ class _CapturingSession:
     cartesian join to Postgres. So the SQL is asserted too.
     """
 
-    def __init__(self, rows):
+    def __init__(self, rows, twin_rows=()):
         self._rows = rows
+        #: Rows the #3937 batched twin lookup returns. Empty by default — this
+        #: fixture's event has no suppressed duplicate, so the fold is a no-op
+        #: and every assertion in this file is unchanged by it.
+        self._twin_rows = list(twin_rows)
         self.statements = []
 
     async def execute(self, statement):
         self.statements.append(statement)
+        if any(
+            desc["name"] == "event_tags" for desc in statement.column_descriptions
+        ):
+            # The #3937 fold, dispatched on the labels the statement itself asked
+            # for. It must NOT receive `self._rows`: those are the loader's rows,
+            # and the fold unpacks 5-tuples.
+            return _FakeResult(self._twin_rows)
         return _FakeResult(self._rows)
 
 

@@ -91,7 +91,11 @@ from app.utils.search_match_class import (
     Evidence as _SearchEvidence,
 )
 from app.utils.feed_market_quality import has_no_real_price
-from app.utils.proven_duplicates import not_a_proven_duplicate
+from app.utils.proven_duplicates import (
+    FoldedBlendView,
+    folded_probability_sources_batch,
+    not_a_proven_duplicate,
+)
 
 # Search scope vocabularies (live/048, CERT-786). The event search has FOUR
 # status enumerations — the primary path and the fuzzy-corrected fallback, each
@@ -4437,9 +4441,14 @@ async def search_events(
     formatted_results = []
     sports_found = {}
 
+    # The page's folds (#3937), batched before the loop rather than per row in
+    # it. Search returns at most `per_page` = 100, so this is one statement.
+    folded_map = await folded_probability_sources_batch(db, events)
+
     for event in events:
         formatted = _format_event_with_aggregated_odds(
-            event, aggregated_odds_map.get(event.id), gei_percentiles, team_lookup
+            event, aggregated_odds_map.get(event.id), gei_percentiles, team_lookup,
+            folded_sources=folded_map.get(event.id),
         )
         formatted_results.append(formatted)
 
@@ -8603,6 +8612,12 @@ async def list_events(
             # Time-series metrics are a bonus — don't fail the whole endpoint
             pass
 
+    # The page's folds (#3937), batched before the formatting loop rather than
+    # per row inside it — see `folded_probability_sources_batch`. This endpoint
+    # returns up to 500 events, which is `_FOLD_BATCH_ARMS`-chunked into 5
+    # statements rather than 500.
+    folded_map = await folded_probability_sources_batch(db, events)
+
     # Format response with aggregated odds
     return {
         "events": [
@@ -8610,6 +8625,7 @@ async def list_events(
                 e, aggregated_odds_map.get(e.id), gei_percentiles,
                 team_lookup=team_lookup,
                 time_series_metrics=ts_metrics_map.get(e.id),
+                folded_sources=folded_map.get(e.id),
             )
             for e in events
         ],
@@ -15146,8 +15162,21 @@ def _format_event_with_latest_odds(event: Event, latest_odds: Optional[OddsSnaps
     return response
 
 
-def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], gei_percentiles: dict = None, team_lookup: dict = None, time_series_metrics=None) -> dict:
-    """Format event for API response with aggregated odds from multiple bookmakers."""
+def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], gei_percentiles: dict = None, team_lookup: dict = None, time_series_metrics=None, folded_sources: Optional[dict] = None) -> dict:
+    """Format event for API response with aggregated odds from multiple bookmakers.
+
+    ``folded_sources`` is this event's #3810 fold — its own readings plus any
+    source only a suppressed twin holds — which the caller obtained for the whole
+    page in one lookup (:func:`folded_probability_sources_batch`, #3937). It is a
+    parameter rather than a lookup here because this function is SYNC and runs
+    once per row: awaiting inside it is impossible and looping the caller would
+    be the N+1 that kept this surface unfolded in the first place.
+
+    ``None`` means the caller did not fold, and the hero is then computed off the
+    event exactly as before. That is the honest default for a caller that has not
+    been taught to batch — an unfolded number is under-informed, never wrong in
+    the other direction (the fold is strictly additive).
+    """
     response = _format_event(event, gei_percentiles, team_lookup=team_lookup)
 
     current_home_prob = None
@@ -15249,7 +15278,13 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
     # call `resolve_hero`, so the failure mode the old comment here warned about
     # ("two independent copies of the same six lines") is structurally gone
     # rather than merely fixed again.
-    _hero = resolve_hero(event)
+    # #3937 — and both now read the same SOURCE SET too. Calling one helper is
+    # only half of "one number": `get_event` folds a suppressed twin's readings
+    # in and this arm did not, so a twin-paired match could still print two
+    # different percentages from one shared function.
+    _hero = resolve_hero(
+        FoldedBlendView(event, folded_sources) if folded_sources is not None else event
+    )
     if _hero is not None:
         response["hero_probability"] = _hero.home_probability
         response["hero_probability_away"] = _hero.away_probability
