@@ -149,6 +149,29 @@ def _kalshi_spread_market():
     )
 
 
+def _polymarket_derivable_contamination():
+    """The same matchup-named market, but with rungs that CROSS 50%.
+
+    Production's rows are all priced 1.000, which is faithful and is why the
+    page broke — but a ladder that never crosses 50% is underivable, so a
+    fixture built from it cannot tell the outcome-level pass apart from the
+    renderable-pair walk. Mutating the pass away left all 13 tests green
+    against the faithful fixture; this one exists so that can never happen
+    again. The thresholds are a first-five line (2.5/3.5 runs) crossing at 3.0
+    against Kalshi's real 8.0.
+    """
+    return _market(
+        "polymarket",
+        [
+            _outcome("1st 5 Innings O/U 2.5", 0.72),
+            _outcome("1st 5 Innings O/U 3.5", 0.28),
+            _outcome("Luke Keaschall: Home Runs O/U 0.5", 0.70),
+            _outcome("Luke Keaschall: Home Runs O/U 1.5", 0.30),
+        ],
+        name="Detroit Tigers vs. Minnesota Twins",
+    )
+
+
 def _polymarket_matchup_market():
     """Polymarket's matchup-named market, carrying the scope in its OUTCOMES.
 
@@ -307,6 +330,71 @@ def test_a_player_prop_outcome_prices_neither_arm():
     assert "team_total" in _PM_OUTCOME_NEVER_PRICES_THE_GAME
     assert "spread" not in _PM_OUTCOME_NEVER_PRICES_THE_GAME
     assert _classify_game_market("Luke Keaschall: Home Runs O/U 0.5", None) == "player_prop"
+
+
+async def test_derivable_contamination_is_dropped_by_the_pass_not_by_the_walk():
+    """The outcome pass has to carry its own weight, on a pool that derives.
+
+    A first-five ladder crossing at 3.0 runs pairs with a −1.5 run line to give
+    `2.2 – 0.8` — both scores nonnegative, so the renderable-pair walk is
+    perfectly happy with it and every assertion about negative scores passes
+    while the page shows a three-run projection for a nine-inning game. Only
+    the outcome-level pass keeps that pool from forming, so only this test
+    fails when the pass is mutated away.
+    """
+    projection = await _projection(
+        _event(),
+        futures_markets=[
+            _kalshi_total_market(),
+            _kalshi_spread_market(),
+            _polymarket_derivable_contamination(),
+        ],
+    )
+    totals = projection.get("implied_totals") or {}
+    assert "polymarket" not in totals, (
+        "a first-five ladder must never reach the game-total pool, even when it "
+        "derives cleanly and produces a renderable pair"
+    )
+    final = projection["projected_final"]
+    assert final["total_source"] == "kalshi"
+    assert 6.0 <= final["home_score"] + final["away_score"] <= 10.0
+
+
+async def test_a_spread_labelled_outcome_cannot_slip_into_the_total_pool():
+    """The one line in the outcome pass that today's corpus cannot reach.
+
+    Measured over the 15,452 distinct outcome names on the 660 scheduled/live
+    events: 194 classify `spread`, 153 of those defeat
+    `extract_spread_threshold` — and **0** of them also parse as a total, so
+    nothing in production reaches this branch right now. It is kept, and tested
+    here, because it guards the exact class that caused #3921: the classifier
+    cannot route a name to the spread branch if the name contains "total",
+    "o/u" or "over", but the total extractor also reads "exceeds", "above" and
+    "N or more", and those three words leave the branch reachable. `#3948` will
+    move names between these categories when it teaches the spread extractor
+    Kalshi's phrasing, which is exactly when an untested guard would fail
+    silently.
+    """
+    from app.utils.binary_spread import (
+        extract_spread_threshold,
+        extract_total_threshold,
+    )
+
+    slippery = "Handicap exceeds 2.5"
+    assert _classify_game_market(slippery, None) == "spread"
+    assert extract_spread_threshold(slippery) is None
+    assert extract_total_threshold(slippery) == 2.5
+
+    market = _market(
+        "polymarket",
+        [_outcome(slippery, 0.72), _outcome("Handicap exceeds 3.5", 0.28)],
+        name="Detroit Tigers vs. Minnesota Twins",
+    )
+    projection = await _projection(
+        _event(), futures_markets=[market, _kalshi_total_market(), _kalshi_spread_market()]
+    )
+    assert "polymarket" not in (projection.get("implied_totals") or {})
+    assert projection["projected_final"]["total_source"] == "kalshi"
 
 
 # ---------------------------------------------------------------------------
