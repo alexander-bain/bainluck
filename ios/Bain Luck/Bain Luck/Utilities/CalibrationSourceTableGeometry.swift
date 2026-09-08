@@ -50,6 +50,14 @@ import UIKit
 /// #3954 deliberately left open. Tracked with the renders and three costed
 /// options in #3966.
 ///
+/// **#3966 — ANSWERED. Alex ruled D92 = B: the name wraps.** `sourceNameLineLimit`
+/// below is that ruling, and it is the reason no later change should reach back
+/// for the numeric columns: they are not the constraint any more. The two options
+/// not taken are recorded because they will look tempting again — dropping `MCE`
+/// and `Brier` at compact width frees ~72pt and costs half the numbers on a phone,
+/// and shortening the names to `Per-sportsbook` gives up exactly the provider
+/// disambiguation #3954 existed to protect.
+///
 /// Note the shape of the near-miss that hid this: a synthetic fixture of
 /// same-length outcome counts renders every name in full at 402pt, and production
 /// does not, because the column widths are a function of the DIGITS in the cells
@@ -73,6 +81,29 @@ enum CalibrationSourceTableGeometry {
     /// numbers never touch the value beside them. Deliberately smaller than the ~14pt
     /// of slack the old literals carried: that slack is the label's.
     static let numericGutter: Double = 6
+
+    /// #3966 (Alex, D92 = B) — how many lines a source name may spend.
+    ///
+    /// TWO, not `nil`. An unbounded label lets one pathological name set the
+    /// height of a row in a table whose whole job is to be scanned, and the
+    /// decision Alex made was specifically "wrap onto a second line".
+    ///
+    /// **That leaves a third line's worth of truncation still reachable, and this
+    /// comment is where that is admitted rather than hidden.** Whether two lines
+    /// hold today's longest name is a claim about drawn text, and the tests in
+    /// this area cannot make it: a raster assertion cannot read characters, and
+    /// the arithmetic model that could was measured wrong by ~21pt in the
+    /// SAFE-LOOKING direction while #3954 was being built (see the fit note on
+    /// `testTheTableRendersAtEveryPhoneWidthAndReflowsWithIt`). So the guards
+    /// below prove only that a name too long for one line takes two — the claim
+    /// that the second line is enough is carried by the 375pt and 402pt
+    /// screenshots on #3966's PR, and it is re-owed by anyone who adds a longer
+    /// name.
+    ///
+    /// A constant rather than a literal at the call site because the guard has to
+    /// be able to say what it is checking against: a test that hard-codes `2`
+    /// keeps passing after the view stops asking for it.
+    static let sourceNameLineLimit: Int = 2
 
     /// The four numeric columns, in the order the table draws them.
     struct NumericWidths: Equatable {
