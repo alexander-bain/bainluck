@@ -12,8 +12,22 @@ import SwiftUI
 final class CenteredPageContentTests: XCTestCase {
 
     /// Nothing else in these renders is this colour, so any of it is the marker.
+    ///
+    /// A marker with a fixed `width`, for the VERTICAL tests. Do not use it to
+    /// measure a width cap: a fixed-width `Color` inside `.frame(maxWidth:)`
+    /// leaves the *container* expanding and the ink 200pt wide either way, so
+    /// both cap assertions would pass whatever the cap did. Use
+    /// ``expandingMarker(height:)`` there.
     private func marker(width: CGFloat, height: CGFloat) -> some View {
         Color(red: 1, green: 0, blue: 0).frame(width: width, height: height)
+    }
+
+    /// A marker that takes every point of width it is offered, so the ink
+    /// bounds ARE the width the cap resolved to.
+    private func expandingMarker(height: CGFloat) -> some View {
+        Color(red: 1, green: 0, blue: 0)
+            .frame(height: height)
+            .frame(maxWidth: .infinity)
     }
 
     // MARK: - The defect
@@ -81,21 +95,20 @@ final class CenteredPageContentTests: XCTestCase {
     /// The cap binds, and what it caps stays horizontally centred.
     func testWideContentIsCappedAndCentred() {
         let image = render(
-            CenteredPageContent(maxContentWidth: 560) {
-                marker(width: 200, height: 100).frame(maxWidth: .infinity)
-            },
+            CenteredPageContent(maxContentWidth: 560) { expandingMarker(height: 100) },
             width: 834, height: 600
         )
         guard let ink = inkBounds(in: image) else {
             return XCTFail("the marker did not render at all")
         }
         XCTAssertEqual(
+            ink.width, 560, accuracy: 2,
+            "an expanding marker in a 560-capped column drew \(Int(ink.width))pt "
+            + "inside an 834pt page — the cap did not bind"
+        )
+        XCTAssertEqual(
             ink.midX, 417, accuracy: 3,
             "the capped column must sit in the middle of the 834pt page"
-        )
-        XCTAssertLessThan(
-            ink.maxX - ink.minX, 570,
-            "the marker expanded past the 560pt cap"
         )
     }
 
@@ -103,15 +116,17 @@ final class CenteredPageContentTests: XCTestCase {
     /// quietly narrow a caller that did not ask for a column.
     func testTheDefaultAppliesNoWidthCap() {
         let image = render(
-            CenteredPageContent {
-                marker(width: 200, height: 100).frame(maxWidth: .infinity)
-            },
+            CenteredPageContent { expandingMarker(height: 100) },
             width: 834, height: 600
         )
         guard let ink = inkBounds(in: image) else {
             return XCTFail("the marker did not render at all")
         }
-        XCTAssertGreaterThan(ink.maxX - ink.minX, 800)
+        XCTAssertEqual(
+            ink.width, 834, accuracy: 2,
+            "the default cap is `.infinity`, so an expanding marker must draw "
+            + "the whole 834pt page; it drew \(Int(ink.width))pt"
+        )
     }
 
     // MARK: - Raster helpers
@@ -146,6 +161,12 @@ final class CenteredPageContentTests: XCTestCase {
 
     private func render<V: View>(_ view: V, width: CGFloat, height: CGFloat) -> UIImage {
         let host = UIHostingController(rootView: view.frame(width: width, height: height))
+        // The window inherits an ambient safe area from the simulator's screen,
+        // and a `ScrollView` turns that into a content inset — measured at 31pt
+        // here, which shifted every vertical reading below by the same 31pt and
+        // is a fact about this harness, not about the layout under test. The
+        // viewport these tests talk about is exactly `width` × `height`.
+        host.safeAreaRegions = []
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: width, height: height))
         window.rootViewController = host
         window.isHidden = false
