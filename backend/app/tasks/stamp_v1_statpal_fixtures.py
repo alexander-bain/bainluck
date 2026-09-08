@@ -514,6 +514,67 @@ UPDATE events
    AND statpal_fixture_id IS NULL
 """
 
+#: Attribute a column write whose anchor was already on file (CERT-2211).
+#:
+#: `record_anchor` writes `claim_context` on the INSERT and never on the
+#: conflict path, so a CONFIRMED anchor carries no `apply_run_id` — and on that
+#: path the column write's only record was the in-memory manifest, which is not
+#: durable until the whole pass banks. Lose the process before `_bank` and the
+#: committed column write is un-undoable: the restore plans nothing and leaves
+#: it. So the writer records it here instead, in the same transaction as the
+#: column write, under a key of its own.
+#:
+#: `column_write_run_id` is deliberately NOT `apply_run_id`. The two say
+#: different things and the undo owes them different treatment: `apply_run_id`
+#: means *this invocation inserted this anchor* (clear the column, delete the
+#: anchor), `column_write_run_id` means *this invocation wrote the column onto a
+#: correspondence that already existed* (clear the column, LEAVE THE ANCHOR).
+#: Collapsing them would have the undo delete a correspondence it did not create.
+#:
+#: `event_id` is in the WHERE so this can only ever annotate an anchor already
+#: naming our event: it never repoints and never deletes.
+#:
+#: THE OWNER IS WHOEVER'S COLUMN VALUE IS STANDING, NOT WHOEVER WROTE FIRST
+#: (CERT-2216). The first version guarded on `NOT (claim_context ?
+#: 'column_write_run_id')`, making the first writer the permanent owner. That
+#: read as conservative and was the defect: a restore clears the column and
+#: LEAVES the incumbent anchor — it must, the anchor is not ours to delete — so
+#: the stale key stays behind. A second apply then wins the NULL-column update,
+#: commits a real column write, and finds the attribution refused. Lose the
+#: process before `_bank` and that write has neither receipt nor attribution:
+#: `_load_manifest` returns zero rows and the undo silently leaves it standing —
+#: CERT-2211's defect again, one apply/restore cycle later.
+#:
+#: Replacing is safe, and the EXISTS is what makes it say so on its own. This
+#: statement runs only after `SET_FIXTURE_ID` — `WHERE statpal_fixture_id IS
+#: NULL` — returned rowcount 1 in this same transaction, so the column was empty
+#: a moment ago and now holds our id. Any earlier `column_write_run_id` therefore
+#: describes a value that is already gone, and the row it points at is not
+#: undoable by that run any more. The EXISTS re-states that in SQL rather than
+#: leaning on the caller's control flow: annotate only while the event's column
+#: actually holds the id being attributed. A caller that reached here without
+#: winning the write writes nothing.
+#:
+#: gotcha: `NOT (claim_context ? 'k')` is NULL — not true — when the column is
+#: NULL, which is why the guard that replaced it tests a JOINed value instead of
+#: a key's absence. `COALESCE` still wraps the merge target for the same reason:
+#: `NULL || jsonb` is NULL, which would erase the incumbent's own context.
+ATTRIBUTE_COLUMN_WRITE = """
+UPDATE event_provider_anchors
+   SET claim_context = COALESCE(claim_context, '{}'::jsonb)
+                       || jsonb_build_object('column_write_run_id', CAST(:run_id AS text))
+ WHERE source = :source
+   AND source_id = :source_id
+   AND id_kind = :id_kind
+   AND event_id = :event_id
+   AND EXISTS (
+         SELECT 1
+           FROM events e
+          WHERE e.id = event_provider_anchors.event_id
+            AND e.statpal_fixture_id = :fixture_id
+       )
+"""
+
 
 def is_statpal_contest_id(value: Optional[str]) -> bool:
     """Is this column value a StatPal id at all, or `statpal_live_...` (#2963)?
@@ -644,6 +705,21 @@ class StampRun:
     live_unkeyable: list[dict[str, Any]] = field(default_factory=list)
     sources_read: list[str] = field(default_factory=list)
     read_failures: list[str] = field(default_factory=list)
+    #: THE UNDO MANIFEST (CERT-2207). One entry per write this pass **committed**,
+    #: appended after the commit that made it durable, naming both halves and
+    #: which of them this pass actually wrote. An operator restore replays these
+    #: exact pairs under a CAS instead of re-deriving ownership from a snapshot
+    #: taken minutes earlier — the difference between undoing what happened and
+    #: undoing what was predicted.
+    #:
+    #: Appended on the commit rather than before it so a row that raised or was
+    #: rolled back can never appear here: everything in this list is on disk.
+    committed_writes: list[dict[str, Any]] = field(default_factory=list)
+    #: The same shape from a PLAN pass, which commits nothing. These are the rows
+    #: a subsequent apply would stamp, named rather than counted, so the phantom
+    #: check (`commence_time_source='polymarket' AND espn_id IS NULL`, #3840) can
+    #: be answered over real ids BEFORE the first write rather than after it.
+    planned_writes: list[dict[str, Any]] = field(default_factory=list)
 
     def summary(self) -> dict[str, Any]:
         return {
@@ -662,6 +738,11 @@ class StampRun:
             "unmatched_rows": len(self.unmatched_rows),
             "collisions": len(self.collisions),
             "write_refusals": len(self.write_refusals),
+            # `stamped` counts links; this counts DURABLE WRITES, so the
+            # anchor-only path is in here and is not in `stamped`. The two
+            # disagreeing is the normal case, not a discrepancy.
+            "committed_writes": len(self.committed_writes),
+            "planned_writes": len(self.planned_writes),
             "unknown_team_names": sorted(set(self.unknown_team_names)),
             "stats_id": {
                 "present": self.stats_id_present,
@@ -1091,15 +1172,33 @@ async def _candidates(
     ]
 
 
-def _claim_context(spec: LeagueSpec, fixture: StatPalFixture) -> dict[str, Any]:
+def _claim_context(
+    spec: LeagueSpec,
+    fixture: StatPalFixture,
+    apply_run_id: Optional[str] = None,
+) -> dict[str, Any]:
     """What the anchor records about how this claim was reached.
 
     `statpal_stats_id` is in here and nowhere else that matters: NHL's second id
     is real and different from the one being anchored, and which of the two
     should anchor a game is program step 5's question. Carried where it is
     visible, never substituted for the id in the key.
+
+    `apply_run_id` IS THE UNDO'S ONLY DURABLE ANCHOR (CERT-2207). `record_anchor`
+    writes `claim_context` on the INSERT and never on the conflict path, so an
+    anchor carrying this run id is one **this invocation inserted** — not one
+    that merely appeared since some snapshot was taken. That distinction is the
+    whole finding: a restore that infers ownership from "empty at backup,
+    populated now" mis-attributes every row that entered the window during the
+    45 minutes the backup stays valid, and deletes an anchor whose column it
+    then declines to clear. Ownership has to be recorded by the writer, in the
+    same transaction as the write, or it is a guess.
+
+    Omitted entirely when there is no operator run — the four scheduled leagues
+    write through a beat, so a `null` here would put a key on ~750 anchors that
+    only ever means "not this mechanism".
     """
-    return {
+    context: dict[str, Any] = {
         "written_by": "stamp_v1_statpal_fixtures",
         "league": spec.label,
         "statpal_start": (
@@ -1107,10 +1206,29 @@ def _claim_context(spec: LeagueSpec, fixture: StatPalFixture) -> dict[str, Any]:
         ),
         "statpal_stats_id": fixture.stats_id,
     }
+    if apply_run_id:
+        context["apply_run_id"] = apply_run_id
+    return context
+
+
+def _anchor_source_id(spec: LeagueSpec, fixture: StatPalFixture) -> Optional[str]:
+    """The `source_id` this pass would write for one contest, or None.
+
+    The undo deletes by the exact triple, so it needs the same string the writer
+    used rather than one rebuilt from a prefix and an id — `statpal_anchor_key`
+    is the single place that composes it and D55 has already changed the rule
+    once.
+    """
+    key = statpal_anchor_key(fixture.fixture_id, statpal_id_space(spec.sport_key))
+    return key.source_id if key is not None else None
 
 
 async def _write_link(
-    session, spec: LeagueSpec, fixture: StatPalFixture, candidate: dict
+    session,
+    spec: LeagueSpec,
+    fixture: StatPalFixture,
+    candidate: dict,
+    apply_run_id: Optional[str] = None,
 ) -> str:
     """Write both shapes for one game. Returns the anchor outcome.
 
@@ -1125,19 +1243,47 @@ async def _write_link(
     if not (result.rowcount or 0):
         return LOST_RACE
 
+    key = statpal_anchor_key(fixture.fixture_id, statpal_id_space(spec.sport_key))
     written = await record_anchor(
         session,
         event_id=candidate["id"],
-        key=statpal_anchor_key(
-            fixture.fixture_id, statpal_id_space(spec.sport_key)
-        ),
-        claim_context=_claim_context(spec, fixture),
+        key=key,
+        claim_context=_claim_context(spec, fixture, apply_run_id),
     )
+
+    if written.outcome == CONFIRMED and apply_run_id and key is not None:
+        # The column write above is committed with this transaction, and the
+        # anchor that would have carried its run id was already on file, so
+        # `record_anchor` discarded our claim context on the conflict path.
+        # Record the write on the incumbent instead — same transaction, so the
+        # attribution cannot outlive a rollback or be lost with the process.
+        #
+        # We got here only because the guarded UPDATE above won, so this run's
+        # value is the one standing and this run is the one that owes the undo:
+        # any `column_write_run_id` already there names a value that has since
+        # been cleared. `fixture_id` rides along so the statement can check that
+        # for itself rather than trusting this branch (CERT-2216).
+        await session.execute(
+            text(ATTRIBUTE_COLUMN_WRITE),
+            {
+                "run_id": apply_run_id,
+                "source": key.source,
+                "source_id": key.source_id,
+                "id_kind": key.id_kind,
+                "event_id": candidate["id"],
+                "fixture_id": fixture.fixture_id,
+            },
+        )
+
     return written.outcome
 
 
 async def _write_anchor_only(
-    session, spec: LeagueSpec, fixture: StatPalFixture, candidate: dict
+    session,
+    spec: LeagueSpec,
+    fixture: StatPalFixture,
+    candidate: dict,
+    apply_run_id: Optional[str] = None,
 ) -> str:
     """Complete the pair for a row whose column is already correct.
 
@@ -1153,7 +1299,8 @@ async def _write_anchor_only(
         key=statpal_anchor_key(
             fixture.fixture_id, statpal_id_space(spec.sport_key)
         ),
-        claim_context=_claim_context(spec, fixture) | {"column_was_already_set": True},
+        claim_context=_claim_context(spec, fixture, apply_run_id)
+        | {"column_was_already_set": True},
     )
     return written.outcome
 
@@ -1175,9 +1322,18 @@ def _note_unknown_names(run: StampRun, spec: LeagueSpec, *names: Optional[str]) 
 
 
 async def _run_stamp_v1_statpal_fixtures(
-    spec: LeagueSpec, *, apply: bool = True, now: Optional[datetime] = None
+    spec: LeagueSpec,
+    *,
+    apply: bool = True,
+    now: Optional[datetime] = None,
+    apply_run_id: Optional[str] = None,
 ) -> dict[str, Any]:
-    """One pass for one league. `apply=False` plans and writes nothing."""
+    """One pass for one league. `apply=False` plans and writes nothing.
+
+    `apply_run_id` stamps every anchor this invocation inserts, so an operator
+    undo can find its own writes in the table instead of inferring them (see
+    `_claim_context`). None for the beat-driven leagues, which have no undo.
+    """
     from app.tasks.base import get_task_session
 
     now = now or datetime.now(timezone.utc)
@@ -1340,15 +1496,24 @@ async def _run_stamp_v1_statpal_fixtures(
                     run.anchored_only += 1
                 else:
                     run.stamped += 1
+                    run.planned_writes.append(
+                        {
+                            "event_id": candidate["id"],
+                            "fixture_id": fixture.fixture_id,
+                            "anchor_source_id": _anchor_source_id(spec, fixture),
+                        }
+                    )
                 continue
 
             try:
                 if verdict == VERDICT_ANCHOR_ONLY:
                     outcome = await _write_anchor_only(
-                        session, spec, fixture, candidate
+                        session, spec, fixture, candidate, apply_run_id
                     )
                 else:
-                    outcome = await _write_link(session, spec, fixture, candidate)
+                    outcome = await _write_link(
+                        session, spec, fixture, candidate, apply_run_id
+                    )
             except Exception as e:  # one bad row never wipes the pass (#42)
                 await session.rollback()
                 logger.exception(
@@ -1383,6 +1548,22 @@ async def _run_stamp_v1_statpal_fixtures(
                 continue
 
             await session.commit()
+            # The manifest entry goes in AFTER the commit, so the list is a
+            # record of what is on disk rather than of what was attempted. Both
+            # flags are recorded rather than inferred: `column_written` is false
+            # on the anchor-only path because there was no column write to undo,
+            # and `anchor_written` is false when `record_anchor` CONFIRMED an
+            # anchor that was already there — deleting that one would remove a
+            # correspondence this pass did not create.
+            run.committed_writes.append(
+                {
+                    "event_id": candidate["id"],
+                    "fixture_id": fixture.fixture_id,
+                    "anchor_source_id": _anchor_source_id(spec, fixture),
+                    "column_written": verdict != VERDICT_ANCHOR_ONLY,
+                    "anchor_written": outcome == WROTE,
+                }
+            )
             if verdict == VERDICT_ANCHOR_ONLY:
                 # CONFIRMED here means the anchor already named this event, so
                 # nothing was missing and nothing was written; WROTE means the
@@ -1483,6 +1664,10 @@ async def _run_stamp_v1_statpal_fixtures(
         "unmatched_row_receipts": run.unmatched_rows,
         "collision_receipts": run.collisions,
         "write_refusal_receipts": run.write_refusals,
+        # The undo manifest and its plan-pass twin. Named `_receipts` like every
+        # other list here so one reader rule covers the whole dict.
+        "committed_write_receipts": run.committed_writes,
+        "planned_write_receipts": run.planned_writes,
     }
 
 
@@ -1505,7 +1690,10 @@ async def _run_stamp_mlb_statpal_fixtures(
 
 
 async def _run_stamp_soccer_statpal_fixtures(
-    *, apply: bool = False, now: Optional[datetime] = None
+    *,
+    apply: bool = False,
+    now: Optional[datetime] = None,
+    apply_run_id: Optional[str] = None,
 ) -> dict[str, Any]:
     """Soccer, and **`apply` defaults to False here where it defaults to True above.**
 
@@ -1523,4 +1711,6 @@ async def _run_stamp_soccer_statpal_fixtures(
     the first apply would be 80 inserts and 0 overwrites. Nothing is written
     until that has been reproduced by a real pass and the restore line exists.
     """
-    return await _run_stamp_v1_statpal_fixtures(SOCCER, apply=apply, now=now)
+    return await _run_stamp_v1_statpal_fixtures(
+        SOCCER, apply=apply, now=now, apply_run_id=apply_run_id
+    )
