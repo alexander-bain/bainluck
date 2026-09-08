@@ -9648,6 +9648,13 @@ def _is_team_stat_market(name: str) -> bool:
     ))
 
 
+#: One inning, not a run of them. `\binning\b` matches "2nd Inning Total" and
+#: "1st Inning Winner" and CANNOT match "First 5 Innings Total" — the plural's
+#: trailing "s" is a word character, so the closing `\b` fails. That is the whole
+#: separation between a period market and the half-game aggregates #3951 pins.
+_SINGLE_INNING_RE = re.compile(r"\binning\b")
+
+
 def _classify_game_market(name: str, external_id: Optional[str] = None) -> str:
     """Classify a game-level market name into a type.
 
@@ -9669,9 +9676,19 @@ def _classify_game_market(name: str, external_id: Optional[str] = None) -> str:
     # half-game lines as full-game ones — a 2.5-run "total" for a 9-inning
     # game. Ordinal-vs-word is the same distinction the list already draws
     # either side of it ("1st half" AND "first half").
+    # `first inning`/`1st inning` USED to live here, which made a single inning a
+    # "half". It is not one, and only the FIRST inning was ever caught — Kalshi
+    # ships one market per inning (`KXMLBINNINGTOTAL-…-2` … `-9`), so innings 2-9
+    # wore `game_total` and poured 16 rungs at 0.5 and 1.5 into the pool that
+    # prices the projection (#3992). An inning is a PERIOD, and every inning is.
+    #
+    # Singular `inning` vs plural `innings` is what separates the two families,
+    # and it is exact: "2nd Inning Total" is one inning, "First 5 Innings Total"
+    # is half the game and must stay `half_total` (#3951 pins it). `\binning\b`
+    # cannot match "innings" — the trailing "s" is a word character, so the
+    # right-hand `\b` fails.
     _HALF_PATTERNS = ("1st half", "1h", "2nd half", "2h", "first half", "second half",
-                      "first 5 innings", "1st 5 innings", "f5 innings", "f5",
-                      "first inning", "1st inning")
+                      "first 5 innings", "1st 5 innings", "f5 innings", "f5")
     _QUARTER_PATTERNS = ("1st quarter", "2nd quarter", "3rd quarter", "4th quarter",
                          "1q", "2q", "3q", "4q")
 
@@ -9699,6 +9716,8 @@ def _classify_game_market(name: str, external_id: Optional[str] = None) -> str:
             return "player_prop"
         if "team" in lower:
             return "team_total"
+        if _SINGLE_INNING_RE.search(lower):
+            return "inning_total"
         if any(x in lower for x in _HALF_PATTERNS):
             return "half_total"
         if any(x in lower for x in _QUARTER_PATTERNS):
@@ -9716,6 +9735,8 @@ def _classify_game_market(name: str, external_id: Optional[str] = None) -> str:
             return "player_prop"
         return "game_total"
     if "spread" in lower or "margin" in lower or "handicap" in lower:
+        if _SINGLE_INNING_RE.search(lower):
+            return "inning_spread"
         if any(x in lower for x in _HALF_PATTERNS):
             return "half_spread"
         if any(x in lower for x in _QUARTER_PATTERNS):
@@ -9732,6 +9753,8 @@ def _classify_game_market(name: str, external_id: Optional[str] = None) -> str:
     if _PLAYER_PROP_RE.search(name):
         return "player_prop"
     if "moneyline" in lower or "winner" in lower or "win" in lower:
+        if _SINGLE_INNING_RE.search(lower):
+            return "inning_winner"
         if any(x in lower for x in _HALF_PATTERNS):
             return "half_winner"
         if any(x in lower for x in _QUARTER_PATTERNS):
@@ -9780,6 +9803,18 @@ def _classify_from_ticker(external_id: str) -> str:
     for prefix, mtype in _TICKER_PERIOD_MAP.items():
         if ticker_lower.startswith(prefix):
             return mtype
+    # Kalshi's per-inning tickers (`KXMLBINNINGTOTAL-…-7`, `KXMLBINNINGWIN-…-3`).
+    # Checked before the generic "total"/"winner" catch-alls below, which would
+    # otherwise call an inning the game (#3992). The name-based rule above
+    # already catches these when the market is named; this covers the tickers
+    # whose names carry no marker at all.
+    if "inning" in ticker_lower:
+        if "total" in ticker_lower:
+            return "inning_total"
+        if "spread" in ticker_lower:
+            return "inning_spread"
+        if "win" in ticker_lower:
+            return "inning_winner"
     # Catch-all for base types when no period prefix matched.
     if "spread" in ticker_lower:
         return "spread"
@@ -9796,6 +9831,16 @@ def _classify_from_ticker(external_id: str) -> str:
 _PM_PERIOD_SCOPES = frozenset({
     "half_total", "half_spread", "half_winner",
     "quarter_total", "quarter_spread", "quarter_winner",
+    # An inning is a period too (#3992). Kalshi ships one market per inning, so
+    # innings 2-9 contributed 16 rungs at 0.5 and 1.5 — measured on Mets v
+    # Marlins (15307196) — to a pool whose real ladder is `Total Runs` 1.5-11.5.
+    # The crossover walk met the contaminated low end first and derived a 1.5-run
+    # total at confidence 1.0 against a sportsbook 8.0, so the projection served
+    # `1.5 - 0.0` and the page rendered NO projection at all (it requires both
+    # scores > 0). The sport-range guard cannot catch this: baseball's band is
+    # (0.5, 30) and every contaminating rung sits inside it. Only the scope label
+    # can, which is what that guard's own comment says scope labels are for.
+    "inning_total", "inning_spread", "inning_winner",
 })
 
 #: `_classify_game_market` labels that are a different QUANTITY from the game's
