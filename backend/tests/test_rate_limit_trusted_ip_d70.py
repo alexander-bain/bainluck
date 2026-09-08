@@ -22,6 +22,7 @@ asserted the first would pass just as happily against the total-bypass version.
 
 import pytest
 
+import app.utils.rate_limit as rate_limit_module
 from app.utils.rate_limit import (
     RateLimitMiddleware,
     _get_client_ip,
@@ -31,6 +32,13 @@ from app.utils.rate_limit import (
 
 TRUSTED = "198.51.100.7"
 STRANGER = "203.0.113.99"
+
+#: The ceilings as the module DEFINES them, read at import time. pytest imports
+#: every test module during collection, before it runs a single test body, so
+#: this is the genuine default (`60/minute` / `600/minute`) and not something an
+#: earlier case left behind. The `_isolate` teardown restores to these and the
+#: last class in this file asserts they survived.
+_PRISTINE = (rate_limit_module.ANON_RATE_LIMIT, rate_limit_module.TRUSTED_RATE_LIMIT)
 
 
 def _make_request(xff=None, client=None):
@@ -73,19 +81,58 @@ def _make_app(anon_limit="3/minute", trusted_limit="8/minute"):
 @pytest.fixture(autouse=True)
 def _isolate(monkeypatch):
     """Every test starts with no allowlist and no Redis, so the in-memory
-    fallback path is the one under test and no state leaks between cases."""
+    fallback path is the one under test and no state leaks between cases.
+
+    THE CEILINGS ARE RESTORED TOO, and that half is not optional. `_make_app`
+    lowers `ANON_RATE_LIMIT` to `3/minute` by assigning the MODULE GLOBAL, so
+    without this the whole pytest process keeps a 3-request anon ceiling after
+    this file runs — the real default is `60/minute`. Every later test in the
+    same worker that makes a fourth request from one address then gets a `429`,
+    and it reads as that test's bug rather than as this file's leak.
+
+    That is not hypothetical. It cost a full CI red on 2026-09-08: adding ONE new
+    test file anywhere in the repo re-packs `ci_shard.py`'s LPT-greedy split, this
+    file landed in shard 4 next to `test_returning_visitor_live_ceiling_4013.py`
+    for the first time, and nine of that file's tests failed on `assert 429 == 200`
+    and `KeyError: 'x-feed-cache'` (a refused response carries no such header).
+    Reproduced in 1.8s with exactly two files:
+
+        pytest tests/test_rate_limit_trusted_ip_d70.py \
+               tests/test_returning_visitor_live_ceiling_4013.py
+
+    Neither file was at fault in what it ASSERTS, and 4013 passes alone. The
+    ordering is not stable either — it is a function of measured durations — so
+    the next lane to add a test file draws a different, equally arbitrary pair.
+    A leak that only fires on a re-pack is worse than a red: it accuses a
+    stranger.
+    """
     import app.utils.rate_limit as rl_mod
 
     monkeypatch.delenv("RATE_LIMIT_TRUSTED_IPS", raising=False)
     monkeypatch.delenv("REDIS_URL", raising=False)
     monkeypatch.delenv("REDIS_TLS_URL", raising=False)
     monkeypatch.delenv("BYPASS_RATE_LIMITS", raising=False)
+
+    # Captured BEFORE any test body runs, so a restore always returns the values
+    # the module was imported with rather than a previous case's override.
+    saved_ceilings = (rl_mod.ANON_RATE_LIMIT, rl_mod.TRUSTED_RATE_LIMIT)
+
     rl_mod._trusted_ip_cache = ("", frozenset())
     rl_mod._async_rl_redis = None
     rl_mod._async_rl_unavailable = True
     yield
     rl_mod._trusted_ip_cache = ("", frozenset())
     rl_mod._async_rl_unavailable = False
+
+    rl_mod.ANON_RATE_LIMIT, rl_mod.TRUSTED_RATE_LIMIT = saved_ceilings
+    # The parsed limits are memoised off those strings, so restoring the strings
+    # alone would leave the 3/minute objects in place. Dropping the singletons
+    # makes the next caller re-parse from the restored values.
+    rl_mod._anon_limit = None
+    rl_mod._auth_limit = None
+    rl_mod._admin_limit = None
+    rl_mod._trusted_limit = None
+    rl_mod._rate_limiter = None
 
 
 # ---------------------------------------------------------------------------
@@ -238,3 +285,42 @@ class TestTrustedCeilingEndToEnd:
         for _ in range(3):
             assert client.get("/api/calibration", headers=hdr).status_code == 200
         assert client.get("/api/calibration", headers=hdr).status_code == 429
+
+
+class TestThisFileLeavesTheCeilingsAsItFoundThem:
+    """The guard for the class of bug the `_isolate` restore closes.
+
+    Every test above lowers `ANON_RATE_LIMIT` to `3/minute` through a module
+    global, which is the only way to make the two ceilings distinguishable in a
+    handful of requests. That is fine to DO and fatal to LEAVE: the next test in
+    the same pytest worker inherits a 3-request ceiling and fails on a `429` it
+    did nothing to earn, in a file that has no connection to rate limiting.
+
+    Placed last on purpose — it is the state AFTER this file's tests that the
+    rest of the suite actually inherits. `_PRISTINE` is captured at import time,
+    during collection and before any test body has run, so it is the value the
+    module was defined with and not a previous case's override.
+    """
+
+    def test_the_anon_and_trusted_ceilings_are_the_module_defaults(self):
+        # Read through the module object, never through a `from` import: the
+        # point is what the ATTRIBUTE holds now, and a name bound at import time
+        # would keep reading the pristine value and pass unconditionally.
+        live = (
+            rate_limit_module.ANON_RATE_LIMIT,
+            rate_limit_module.TRUSTED_RATE_LIMIT,
+        )
+
+        assert live == _PRISTINE, (
+            "this file leaked its lowered ceilings into the rest of the run. "
+            f"expected {_PRISTINE}, found {live}. Whatever runs next in this "
+            "worker will start failing on 429s that belong to this file — see "
+            "the `_isolate` docstring for the CI red it caused."
+        )
+
+    def test_the_parsed_singletons_were_dropped_so_the_strings_are_believed(self):
+        """Restoring the strings alone is not enough: the parsed limit objects
+        are memoised off them, so a stale `3/minute` object would outlive a
+        correct `60/minute` string and the leak would survive its own fix."""
+        assert rate_limit_module._anon_limit is None
+        assert rate_limit_module._trusted_limit is None
