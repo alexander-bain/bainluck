@@ -686,6 +686,8 @@ def build_match_detail(
     prices: dict[int, dict[str, Any]],
     result: Optional[dict[str, Any]],
     now: datetime,
+    event_ids: Optional[dict[str, int]] = None,
+    blends: Optional[dict[int, dict[str, Any]]] = None,
 ) -> Optional[dict[str, Any]]:
     """The whole match page, or ``None`` when the register does not hold it.
 
@@ -703,7 +705,28 @@ def build_match_detail(
 
     # `cutoff=None`: a page ABOUT one fixture is not a claim the fixture is
     # upcoming. See `build_match_row`.
-    row, refusal = build_match_row(reg, matchup, prices=prices, now=now, cutoff=None)
+    #
+    # `blends` (#3903) is forwarded for the reason this function exists at all:
+    # UX-P149 routed this page through the LIST's row builder so the two could
+    # not compute "the favourite" two ways. Serving the linked event's blend on
+    # the hub and this page's own venue quote would have re-opened exactly that
+    # seam one surface over — the hub and its own match page disagreeing, which
+    # is #3903 with different nouns.
+    #
+    # `event_ids` travels with it for a reason that is easy to miss: the row
+    # builder keys the blend on the event id it RESOLVES, and its register-pinned
+    # route (`matchup["event_id"]`) is populated for only some fixtures. This
+    # route is reached BY event id, so it always knows the answer — withholding
+    # it would leave the caller passing a blend the builder could never look up.
+    row, refusal = build_match_row(
+        reg,
+        matchup,
+        prices=prices,
+        now=now,
+        cutoff=None,
+        event_ids=event_ids,
+        blends=blends,
+    )
     if row is None:
         # The register holds the matchup but it cannot be rendered as a match —
         # an unmapped side, an unregistered player. Honest 404 over a half page

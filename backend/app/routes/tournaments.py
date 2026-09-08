@@ -32,6 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Event, FuturesMarket, FuturesOddsSnapshot, FuturesOutcome
 from app.services import get_db
+from app.utils.hero_probability import blend_provenance, resolve_hero
 from app.utils.latest_observation import load_latest_observed_at
 from app.utils.market_liquidity import grade_liquidity
 from app.utils.tournament_advancement import build_advancement
@@ -623,6 +624,99 @@ async def _load_series(
     return dict(series)
 
 
+#: How many linked events one slate build may load blends for.
+#:
+#: A slam main draw pins 96 fixtures per singles draw and `resolve_matchup_events`
+#: resolves every one it can, so this is sized to cover a full two-draw register
+#: with slack rather than to trim a day's card. It is a bound on a PRIMARY-KEY
+#: `IN` list, not a filter on what a reader may see: the query is one indexed
+#: lookup and the cap exists so a register that grows an order of magnitude
+#: cannot silently turn one request into an unbounded read (`MAX_PROPS_PER_MATCH`
+#: is the same discipline one module over).
+MAX_BLEND_EVENTS = 400
+
+
+async def _load_blends(
+    session: AsyncSession, event_ids: list[int]
+) -> dict[int, dict[str, Any]]:
+    """The hero pair each linked ``events`` row publishes, keyed by event id (#3903).
+
+    THIS IS THE NUMBER THE EVENT PAGE PRINTS, computed by the same
+    ``resolve_hero`` both arms of ``routes/events.py`` now call — not a
+    re-derivation that agrees today.  The whole defect being fixed is two
+    surfaces computing one answer twice, so a loader that re-implemented the
+    cascade here would ship the bug it was sent to remove.
+
+    Returns plain dicts.  ``tournament_slate`` is pure logic with no database in
+    its import graph and it stays that way: the ORM row is read here, at the
+    boundary, and what crosses into the builder is data.
+
+    A row that resolves no hero contributes NO KEY — never a key with ``None``
+    behind it. ``orient_event_blend`` refuses on a missing entry by name
+    (``NO_BLEND``), and an entry that exists but holds nothing would land in the
+    same refusal by a longer road while looking, in a payload dump, like a blend
+    we had and dropped.
+    """
+    if not event_ids:
+        return {}
+
+    rows = (
+        await session.execute(
+            select(
+                Event.id,
+                Event.home_team,
+                Event.away_team,
+                Event.status,
+                Event.home_score,
+                Event.away_score,
+                Event.completed_at,
+                Event.win_probability_sources,
+                Event.espn_win_prob_home,
+                Event.opening_home_probability,
+                Event.opening_away_probability,
+            ).where(Event.id.in_(sorted(set(event_ids))[:MAX_BLEND_EVENTS]))
+        )
+    ).all()
+
+    blends: dict[int, dict[str, Any]] = {}
+    for row in rows:
+        # A `Row` answers `getattr` for every column selected above, which is the
+        # whole interface `resolve_hero` asks for — it reads its inputs through
+        # `getattr(..., default)` precisely so an ORM object, a row and a test
+        # stub are the same thing to it.
+        hero = resolve_hero(row)
+        if hero is None:
+            continue
+        source_count, _freshest = blend_provenance(row)
+        blends[int(row.id)] = {
+            "home_name": row.home_team,
+            "away_name": row.away_team,
+            "home_probability": hero.home_probability,
+            "away_probability": hero.away_probability,
+            "source": hero.source,
+            "source_count": source_count,
+            # THE EVENT'S OWN OPEN, travelling beside the event's own current
+            # number so the two can never come from different bases — the mixed
+            # basis is what inverted #3903's arrow, and shipping them as one
+            # object is what makes mixing them take deliberate effort.
+            "opening_home_probability": (
+                float(row.opening_home_probability)
+                if row.opening_home_probability is not None
+                else None
+            ),
+            "opening_away_probability": (
+                float(row.opening_away_probability)
+                if row.opening_away_probability is not None
+                else (
+                    round(1.0 - float(row.opening_home_probability), 6)
+                    if row.opening_home_probability is not None
+                    else None
+                )
+            ),
+        }
+    return blends
+
+
 async def _with_link_overlay(
     slug: str, register: dict[str, Any]
 ) -> tuple[dict[str, Any], int]:
@@ -983,6 +1077,13 @@ async def get_event_tournament(
         prices=prices,
         result=result,
         now=now,
+        # ONE ROW, BECAUSE THIS ROUTE IS ALREADY KEYED ON THE EVENT (#3903). The
+        # hub serves the linked event's blend; this page is reached FROM the hub
+        # for the same fixture, so serving its venue quote instead would rebuild
+        # #3903 between the two surfaces that share a row builder specifically so
+        # they could not disagree.
+        event_ids={matchup_key: event_id} if isinstance(event_id, int) else None,
+        blends=await _load_blends(db, [event_id]),
     )
 
     return {
@@ -1227,6 +1328,34 @@ async def _build_sections(
         else {"by_event": {}, "by_matchup": {}, "reason_counts": {}}
     )
 
+    # THE NUMBER EACH LINKED EVENT'S OWN PAGE PRINTS (#3903). One indexed
+    # primary-key read, and it hangs off `event_links` rather than off the
+    # register because the only rows worth loading are the ones a slate row can
+    # actually be oriented onto. FIRST-SCREEN ONLY, for the same reason the links
+    # above are: its consumer is the slate row, and a `rest`-only build assembles
+    # no slate to spend it on.
+    #
+    # BOTH ROUTES TO AN EVENT ID, because `build_match_row` reads both and a
+    # loader that covered only one would leave a silent minority of rows on the
+    # venue basis with no refusal to explain it: the register may PIN
+    # `matchup["event_id"]` itself, and that pin WINS over the resolver's, so it
+    # is exactly the set a `by_matchup`-only read would miss.
+    slate_blends = (
+        await _load_blends(
+            db,
+            [
+                event_id
+                for event_id in (
+                    list(event_links["by_matchup"].values())
+                    + [m.get("event_id") for m in reg.matchups]
+                )
+                if isinstance(event_id, int)
+            ],
+        )
+        if want_first
+        else {}
+    )
+
     # ONE READ, BOTH HALVES OF THE DAY (Q463). The cached ESPN payload carries
     # the decided matches AND the ones still to play; hoisted above the slate
     # because the slate needs the second half to know what is on. Still a single
@@ -1265,6 +1394,7 @@ async def _build_sections(
             # exactly the case where absence must not be trusted.
             order_of_play_complete=espn.get("order_of_play_complete") is True,
             authority_links=authority_links,
+            blends=slate_blends,
         )
         # WHICH SCOREBOARD THE CARD ABOVE WAS BUILT FROM (#3304). `live`,
         # `last_good` or `unavailable` — set by `_espn_results`, stamped here so

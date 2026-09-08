@@ -44,11 +44,11 @@ from app.utils.event_completion import (
     is_retired_event_status,
 )
 from app.utils.graded_card import rendered_duel_percents
-from app.utils.settled_hero import (
-    FINAL_UNRESOLVED_SOURCE,
-    is_finished_status,
-    resolve_settled_hero,
-)
+from app.utils.hero_probability import resolve_hero
+# `resolve_settled_hero` survives here for the graded-card gate around L12626,
+# which asks the settled question on its own account. The hero cascade itself
+# left with #3903 — see `utils/hero_probability`.
+from app.utils.settled_hero import resolve_settled_hero
 from app.utils import (
     moneyline_to_probability,
     project_scores,
@@ -9033,39 +9033,21 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
     # publishes the loser as the favorite (5 of 44 sampled, ESPN-verified). The
     # settled result outranks it. Gated to `completed` only; `closed` scores are
     # frozen mid-game and invert the winner — see app/utils/settled_hero.
-    _settled_hero = resolve_settled_hero(
-        status=event.status,
-        home_score=event.home_score,
-        away_score=event.away_score,
-        completed_at=event.completed_at,
-    )
-    if _settled_hero is not None:
-        response["hero_probability"] = _settled_hero.home_probability
-        response["hero_probability_away"] = _settled_hero.away_probability
-        response["hero_probability_source"] = _settled_hero.source
-        response["hero_settled_result"] = _settled_hero.result
-    elif agg_prob is not None:
-        response["hero_probability"] = agg_prob
-        response["hero_probability_away"] = round(1.0 - agg_prob, 6)
-        # CERT-1938: the game can be OVER without us being able to name a winner —
-        # a tennis match whose result lives in the tournament container, a row we
-        # have not graded yet. Serving those as "blend" is what let 15293846
-        # publish an 84% forecast six days after the match was decided. The number
-        # is unchanged; only the claim about it is. See `settled_hero` for why the
-        # finished set is wider than the resolvable one.
-        response["hero_probability_source"] = (
-            FINAL_UNRESOLVED_SOURCE
-            if is_finished_status(event.status)
-            else "blend"
-        )
-    elif event.opening_home_probability is not None:
-        response["hero_probability"] = float(event.opening_home_probability)
-        response["hero_probability_away"] = (
-            float(event.opening_away_probability)
-            if event.opening_away_probability is not None
-            else round(1.0 - float(event.opening_home_probability), 6)
-        )
-        response["hero_probability_source"] = "opening"
+    # ═══ #3903: THE CASCADE IS NOW ONE FUNCTION, IN ONE PLACE ═══
+    #
+    # The six lines this replaces existed TWICE in this file — the comment on the
+    # second copy said so, and said why ("fixing one is how a lane ships half a
+    # fix") — and the US Open hub was about to need them a third time. Three
+    # copies of "one number per question" is the ruling losing to its own
+    # implementation, so they moved to `app/utils/hero_probability.resolve_hero`
+    # and every surface reads that. Behaviour here is unchanged, arm for arm.
+    _hero = resolve_hero(event)
+    if _hero is not None:
+        response["hero_probability"] = _hero.home_probability
+        response["hero_probability_away"] = _hero.away_probability
+        response["hero_probability_source"] = _hero.source
+        if _hero.settled_result is not None:
+            response["hero_settled_result"] = _hero.settled_result
 
     # Box score data for player props display
     if event.box_score_data and not event.box_score_data.get("error"):
@@ -15011,37 +14993,17 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
     # `get_event` serves the detail page; they are two independent copies of the
     # same six lines, and fixing one is how a lane ships half a fix. Same gate,
     # same helper.
-    _settled_hero = resolve_settled_hero(
-        status=event.status,
-        home_score=event.home_score,
-        away_score=event.away_score,
-        completed_at=event.completed_at,
-    )
-    if _settled_hero is not None:
-        response["hero_probability"] = _settled_hero.home_probability
-        response["hero_probability_away"] = _settled_hero.away_probability
-        response["hero_probability_source"] = _settled_hero.source
-        response["hero_settled_result"] = _settled_hero.result
-    elif _blend is not None:
-        response["hero_probability"] = _blend
-        response["hero_probability_away"] = round(1.0 - _blend, 6)
-        # CERT-1938 — SECOND ARM, same reasoning as `get_event` above. The two
-        # copies of this block are why the first cut needed both; a label that is
-        # honest on the detail page and stale on every list surface is the same
-        # bug wearing a different route.
-        response["hero_probability_source"] = (
-            FINAL_UNRESOLVED_SOURCE
-            if is_finished_status(event.status)
-            else "blend"
-        )
-    elif event.opening_home_probability is not None:
-        response["hero_probability"] = float(event.opening_home_probability)
-        response["hero_probability_away"] = (
-            float(event.opening_away_probability)
-            if event.opening_away_probability is not None
-            else round(1.0 - float(event.opening_home_probability), 6)
-        )
-        response["hero_probability_source"] = "opening"
+    # #3903 — SECOND ARM. There is no longer a second arm to keep in step: both
+    # call `resolve_hero`, so the failure mode the old comment here warned about
+    # ("two independent copies of the same six lines") is structurally gone
+    # rather than merely fixed again.
+    _hero = resolve_hero(event)
+    if _hero is not None:
+        response["hero_probability"] = _hero.home_probability
+        response["hero_probability_away"] = _hero.away_probability
+        response["hero_probability_source"] = _hero.source
+        if _hero.settled_result is not None:
+            response["hero_settled_result"] = _hero.settled_result
 
     # Compute highlight data (Level 1 + Level 2 if time_series available)
     highlight_result = compute_highlight(
