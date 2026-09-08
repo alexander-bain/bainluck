@@ -36,7 +36,14 @@ struct DailyChallengeView: View {
         VStack(spacing: 0) {
             progressBar
 
-            ScrollView {
+            // #3865 — the question is centred in the viewport and capped to a
+            // readable column. Before this it was a plain `ScrollView` with no
+            // Spacer, no maxHeight and no size-class branch of any kind, which
+            // pinned it to the top of every screen: 38% of an iPhone and 65%
+            // of an iPad were empty *below* the answer buttons. Both idioms
+            // fell out of that one absence, so the fix is not gated on
+            // `horizontalSizeClass` — see DailyChallengeLayout for the widths.
+            CenteredPageContent(maxContentWidth: DailyChallengeLayout.maxContentWidth) {
                 VStack(spacing: 24) {
                     streakBadge
 
@@ -67,7 +74,7 @@ struct DailyChallengeView: View {
                     if let result = vm.lastResult {
                         resultBanner(result)
                     } else {
-                        HStack(spacing: 16) {
+                        HStack(spacing: DailyChallengeLayout.answerButtonSpacing) {
                             Button {
                                 vm.guess("higher")
                             } label: {
@@ -90,7 +97,7 @@ struct DailyChallengeView: View {
                         }
                     }
                 }
-                .padding()
+                .padding(DailyChallengeLayout.pagePadding)
             }
         }
     }
