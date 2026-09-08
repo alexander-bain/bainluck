@@ -110,7 +110,7 @@ def test_a_first_paint_shape_with_no_stale_mirror_is_rebuilt():
     One shape's mirror is missing and every other mirror is present. Only the
     missing one may be rebuilt — a net that rebuilds its neighbours is a second
     warm rail wearing a safety net's name, and it would put four extra cold
-    builds on the realtime queue every 40 seconds.
+    builds on the realtime queue every `FEED_LIVE_REPUBLISH_PERIOD_S`.
     """
     labels = _all_labels()
     gone = labels[0]
@@ -149,9 +149,9 @@ def test_a_label_with_no_remembered_key_is_skipped_and_not_built():
     Immediately after a deploy the shape-key hash is empty, and "I do not know
     this shape's key" must mean "do nothing" rather than "assume the worst and
     rebuild". Assuming the worst would make every deploy trigger five cold
-    builds on the realtime queue inside the first 40 seconds — the moment that
-    queue is least able to absorb them. The net arms itself per shape, as the
-    host rail warms each one and records its key.
+    builds on the realtime queue inside the first `FEED_LIVE_REPUBLISH_PERIOD_S`
+    — the moment that queue is least able to absorb them. The net arms itself
+    per shape, as the host rail warms each one and records its key.
     """
     labels = _all_labels()
     rc = _fake_rc(shape_keys={}, present_keys=[])
@@ -413,7 +413,8 @@ def test_the_absent_reader_fails_to_empty_not_to_everything():
 
     Same direction rule as `_live_prewarm_labels`, and for a sharper reason: a
     reader that treated an error as "gone" would turn one transient Redis blip
-    into five cold feed builds every 40 seconds until it cleared.
+    into five cold feed builds every `FEED_LIVE_REPUBLISH_PERIOD_S` until it
+    cleared.
     """
     rc = MagicMock()
     rc.hgetall.side_effect = RuntimeError("redis down")
