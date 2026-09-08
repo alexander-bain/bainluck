@@ -225,8 +225,17 @@ class TestNothingElseMoves:
             ("Reds vs. Cardinals: O/U 10.5", "game_total"),
             # A matchup subject means the line belongs to the GAME, whatever the
             # stat word says — this one is in the LAT-P154 fixtures verbatim.
-            ("Chiefs vs. Bills: Total Bases", "game_total"),
-            ("Yankees at Red Sox: Total Bases O/U 12.5", "game_total"),
+            #
+            # #3995 refined the LABEL without touching that claim: both still
+            # belong to the game and neither is a person's line
+            # (`test_a_matchup_subject_is_never_a_person` below is the arm that
+            # says so, and it is unchanged). They are the game counted in BASES,
+            # so they answer `stat_total` — a whole-game total that may never
+            # price the game's RUNS. Asserting `game_total` here was asserting
+            # the defect #3995 fixes: those rungs sorted onto the run ladder and
+            # capped its prices through `_enforce_monotonicity`.
+            ("Chiefs vs. Bills: Total Bases", "stat_total"),
+            ("Yankees at Red Sox: Total Bases O/U 12.5", "stat_total"),
             # Team stat markets keep their own branch.
             ("Cleveland at LA: Points", "team_total"),
             # Kalshi's shape, where the player is named in the OUTCOME and the
