@@ -17,11 +17,24 @@ first: ``cache.built_at`` on a served response is the artifact ORIGIN
 (``time.time() - oldest_consumed_artifact_age_s``, routes/feed.py, CERT-1864), so
 ``now - built_at`` on a reader's response is the TOTAL content age — artifact age
 and response-cache age already summed, with neither term recoverable from the
-other. 111 production samples over 310s on a live evening bounded the SUM (p50
-41.3s, p95 57.7s, max 60.16s, one read past the 60s live ceiling) and could not
-split it. At the publish instant the two have not yet mixed: the response age is
-zero, so ``now - built_at`` is the artifact age alone. That instant is exactly
-where ``_prewarm_feed_shape`` writes.
+other. 244 production samples over 730s on a live evening bounded the SUM (p50
+33.1s, p95 56.9s, max 61.6s) and could not split it. At the publish instant the
+two have not yet mixed: the response age is zero, so ``now - built_at`` is the
+artifact age alone. That instant is exactly where ``_prewarm_feed_shape`` writes.
+
+AND THE COHORT SPLIT IS WHAT THE AGGREGATE HID — the audit's instruction to
+measure first-time / returning / signed-in SEPARATELY is what found the harm.
+Same evening, 56 reads, all three arms live on every read:
+
+    first_time   (no session id, served the warm shared entry) max  59.9s, 0/19 over
+    new_session  (a fresh session id each open)                max  55.8s, 0/19 over
+    returning    (a stable session id, i.e. `stale_hit`)       max 108.9s, 10/18 over
+
+So the warm rail keeps the cohort it serves honest, and the ceiling breach lands
+entirely on the RETURNING visitor, at a p50 of 68.5s against a 60s ceiling —
+close to the ~115s #3841 predicted. That cohort is served from ``stale_hit`` on
+its own ``s:<uuid>`` key, which no rail republishes. Filed separately; the
+mechanism is NOT proven to be this warmer's, and this file does not claim it is.
 
 WHAT THIS IS NOT — and the tests that hold the line. It is not the one-liner
 #3841 sketches. Spending the age shortens the published window to
@@ -128,9 +141,11 @@ def test_the_rail_records_the_artifact_age_it_published_under():
         "the rail published a live page without recording how old its inputs "
         "were — #3841's acceptance asks for exactly this number first"
     )
-    # Wall-clock, so bound it rather than pinning it: the fixture's origin is
-    # 25s back and the pass adds only its own microseconds.
-    assert 25.0 <= result["artifact_age_s"] < 27.0
+    # Wall-clock, so bound it rather than pinning it. The upper bound is
+    # deliberately loose: a loaded CI runner adds real seconds between the
+    # fixture's origin and the publish, and this test is about the number
+    # REACHING the report, not about its precision.
+    assert 25.0 <= result["artifact_age_s"] < 40.0
 
 
 def test_an_unmeasured_age_is_reported_as_none_and_never_as_zero():
@@ -180,7 +195,9 @@ def test_recording_the_age_does_not_shorten_the_published_window():
     )
     # The age still reached the report — equality above is not silence.
     assert old_result["artifact_age_s"] >= 55.0
-    assert fresh_result["artifact_age_s"] < 2.0
+    # Loose for the CI-runner reason above; anything under the reserve proves
+    # the fresh arm was measured as fresh.
+    assert fresh_result["artifact_age_s"] < fc.FEED_LIVE_REPUBLISH_MIN_HEADROOM_S
 
 
 def test_the_body_published_is_unchanged_by_the_measurement():
@@ -227,19 +244,44 @@ def test_an_over_ceiling_live_publication_is_named_by_the_rail(caplog):
     ), "an over-ceiling live publication was not named in the log"
 
 
-def test_a_page_within_the_ceiling_is_not_warned_about(caplog):
+def test_a_page_within_the_reserve_is_not_warned_about(caplog):
     """The positive control's opposite: a fresh-input pass stays quiet.
 
-    Without this the warning above passes for a rail that warns unconditionally,
-    which would be an alarm nobody reads rather than an instrument.
+    🔴 THIS TEST IS WHY THE THRESHOLD IS THE RESERVE AND NOT THE CEILING. The
+    first draft warned on ``age + stale_ttl > CEILING``, and because
+    ``PERIOD + BUDGET + MIN_HEADROOM == 60 == CEILING`` exactly, that is true for
+    ANY age above zero — including the milliseconds a healthy pass spends between
+    the artifact's origin and the publish. It passed on this laptop and went red
+    in CI on a loaded runner, which is the flakiest possible way to be told that
+    the rail would have warned on every live publication in production.
+
+    Without this control the warning above passes for a rail that warns
+    unconditionally, which is an alarm nobody reads rather than an instrument.
     """
     with caplog.at_level("WARNING"):
         _run_warm(_built_live_payload(artifact_age_s=0.0))
 
-    assert not any(
-        "#3841" in rec.getMessage()
-        for rec in caplog.records
-    )
+    assert not any("#3841" in rec.getMessage() for rec in caplog.records)
+
+
+def test_the_warning_threshold_is_the_rails_own_reserve(caplog):
+    """Just under the reserve is silent; just over it speaks.
+
+    Pinned against ``FEED_LIVE_REPUBLISH_MIN_HEADROOM_S`` itself rather than a
+    retyped literal, so moving the reserve moves this boundary with it — the
+    constant is the one already sized against measurement (LAT-P179), and a
+    second copy here would be the next thing to drift.
+    """
+    reserve = fc.FEED_LIVE_REPUBLISH_MIN_HEADROOM_S
+
+    with caplog.at_level("WARNING"):
+        _run_warm(_built_live_payload(artifact_age_s=reserve - 5.0))
+    assert not any("#3841" in rec.getMessage() for rec in caplog.records)
+
+    caplog.clear()
+    with caplog.at_level("WARNING"):
+        _run_warm(_built_live_payload(artifact_age_s=reserve + 2.0))
+    assert any("#3841" in rec.getMessage() for rec in caplog.records)
 
 
 def test_a_non_live_page_is_never_warned_about_however_old_its_inputs(caplog):

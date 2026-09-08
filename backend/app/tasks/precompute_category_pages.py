@@ -1001,6 +1001,7 @@ async def _prewarm_feed_shape(
     from app.tasks.base import get_task_session
     from app.routes.feed import get_feed
     from app.utils.feed_cache import (
+        FEED_LIVE_REPUBLISH_MIN_HEADROOM_S,
         FEED_PREWARM_KEY_SCOPE_KEY,
         FEED_PREWARM_SCOPE_KEY,
         FEED_RESPONSE_STALE_TTL_LIVE_SECONDS,
@@ -1277,9 +1278,24 @@ async def _prewarm_feed_shape(
     # rail reporting `outcome: ok` while publishing an over-age live page is the
     # "it returned is not it worked" shape (gotcha #53), and the ~3-minute log
     # buffer is why the number also rides the report below.
+    #
+    # 🔴 THE THRESHOLD IS THE RESERVE, NOT THE CEILING, AND THE DIFFERENCE IS THE
+    # WHOLE FINDING. `PERIOD + BUDGET + MIN_HEADROOM == 60 == CEILING` exactly, so
+    # `age + stale_ttl > CEILING` is true for ANY age above zero — including the
+    # milliseconds every healthy pass spends between the artifact's origin and
+    # this line. Written that way the rail warns on every live publication, which
+    # is an alarm nobody reads rather than an instrument; CI caught exactly that
+    # (`test_a_page_within_the_ceiling_is_not_warned_about`, red on a loaded
+    # runner and green on this laptop, which is the flakiest possible way to
+    # learn it). `FEED_LIVE_REPUBLISH_MIN_HEADROOM_S` is the seconds of slack the
+    # rail already holds for beat lateness, so an age below it is inside
+    # tolerance the system has explicitly reserved, while an age above it cannot
+    # be explained by elapsed build time and is a page the ceiling exists to
+    # stop. A constant already sized against measurement (LAT-P179: 1.4s worst
+    # observed lateness over 21 samples, so ~7x it), not a number chosen here.
     if live and _artifact_age_s is not None:
         _total_age_s = _artifact_age_s + stale_ttl
-        if _total_age_s > FEED_RESPONSE_STALE_TTL_LIVE_SECONDS:
+        if _artifact_age_s > FEED_LIVE_REPUBLISH_MIN_HEADROOM_S:
             logger.warning(
                 "Feed pre-warm published a LIVE %s built from %.1fs-old shared "
                 "inputs under a %ds window — a reader may be served %.1fs of "
