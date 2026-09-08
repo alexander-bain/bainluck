@@ -9116,7 +9116,22 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
     # copies of "one number per question" is the ruling losing to its own
     # implementation, so they moved to `app/utils/hero_probability.resolve_hero`
     # and every surface reads that. Behaviour here is unchanged, arm for arm.
-    _hero = resolve_hero(event)
+    #
+    # 🔴 `blend_view`, NOT `event` (#3810 Fold A + #3903). These two ships met in
+    # a merge that git resolved with no conflict, because they edited different
+    # lines: #3903 replaced the cascade that CONSUMES the blend, while Fold A
+    # changed which sources it is computed FROM. The textual merge kept both and
+    # silently dropped the fold — `resolve_hero(event)` recomputes from the raw
+    # row, so a twin-paired hero fell back to the canonical's own reading (0.60
+    # where the folded answer is 0.40) while every other consumer below still
+    # used the folded `agg_prob`. The page then disagreed with itself.
+    #
+    # `resolve_hero` reads every input off a plain attribute and `FoldedBlendView`
+    # forwards everything it does not override, so the wrapper is exactly the
+    # "lightweight row wrapper" that module's docstring says it accepts. The
+    # settled and opening arms are unaffected: the view changes only
+    # `win_probability_sources`.
+    _hero = resolve_hero(blend_view)
     if _hero is not None:
         response["hero_probability"] = _hero.home_probability
         response["hero_probability_away"] = _hero.away_probability

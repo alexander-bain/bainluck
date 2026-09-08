@@ -595,6 +595,24 @@ class TestTheRealRoute:
         That is the half-fold this ship exists to avoid: a two-source legend over
         a number blended from one. Patching the aggregator to read `_event`
         reproduces `compute_aggregate_probability(event)` precisely.
+
+        🔴 TWO bindings are patched because the name resolves in two modules,
+        and the `hero_probability` one is the load-bearing half — MEASURED, not
+        assumed: drop it and this test passes while the hero is still folded
+        (it did exactly that when #3903 landed). Since #3903 the hero cascade
+        lives in `app.utils.hero_probability.resolve_hero`, which does a
+        MODULE-LEVEL `from app.utils.aggregation import
+        compute_aggregate_probability`, so its binding is captured at import and
+        patching the `aggregation` module alone never reaches it.
+
+        The `aggregation` patch is kept anyway, and NOT because this test's
+        assertions need it — dropping it alone leaves this test green. It is
+        kept so the mutant is a faithful reproduction: `routes/events.py`
+        imports the same function inside the request function to compute
+        `agg_prob`, which still feeds `current_odds` and `hero_home_prob`. A
+        mutant that flipped the hero to the raw row while leaving those folded
+        would be a state the codebase cannot actually be in, and a control that
+        models an impossible state is not a control.
         """
         real = compute_aggregate_probability
 
@@ -604,6 +622,10 @@ class TestTheRealRoute:
 
         monkeypatch.setattr(
             "app.utils.aggregation.compute_aggregate_probability", _ignores_the_fold
+        )
+        monkeypatch.setattr(
+            "app.utils.hero_probability.compute_aggregate_probability",
+            _ignores_the_fold,
         )
         payload, _ = serve(
             _route_event(sources=None),
