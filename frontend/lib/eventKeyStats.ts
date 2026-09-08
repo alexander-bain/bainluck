@@ -582,6 +582,7 @@ function withRenderedPercents(
  *   - Scheduled: current betting consensus
  *   - Live: current live odds (history cross-check for reliability) + opening
  *   - Completed/Closed: opening odds ("what was expected before the game")
+ *   - No reported result: the chart's last point — see `noReportedResult`
  */
 export function resolveProbability(
   event: EventDetailResponse,
@@ -589,6 +590,20 @@ export function resolveProbability(
   lastChartPoint: ActiveChartPoint | null,
   isLive: boolean,
   isFinished: boolean,
+  /**
+   * #4015 — the match started and nobody reported how it ended
+   * (`hasNoReportedResult`: `suspended`, or `scheduled` long past its kickoff).
+   *
+   * Passed IN rather than derived from `event` here on purpose: the broad test
+   * reads the clock, and this function is otherwise a pure function of its
+   * arguments — the property `probabilityInvariant.test.ts` and the twelve-clock
+   * sweep both lean on. `app/events/[id]/page.tsx` already computes it once for
+   * the rest of the page, so there is one answer, not two.
+   *
+   * Defaults false, so every caller that predates this keeps its exact
+   * behaviour.
+   */
+  noReportedResult: boolean = false,
 ): ResolvedProbability {
   const odds = event.current_odds;
   const opening = event.opening_odds;
@@ -729,6 +744,42 @@ export function resolveProbability(
     // already render a no-probability state.
     homeProb = null;
     awayProb = null;
+  } else if (noReportedResult && lastChartPoint && lastChartPoint.probKnown !== false) {
+    // #4015 — THE MATCH STARTED AND NOBODY REPORTED HOW IT ENDED, so leave the
+    // pair null and let the win_prob_history fallback below fill it from the
+    // chart's own last point.
+    //
+    // This state is not "scheduled". `current_odds` is a point-in-time snapshot
+    // that the live poller stops rewriting the moment a match goes dark, while
+    // the snapshot SERIES behind the chart keeps being extended — by the Kalshi
+    // candlestick backfill, hours later. So the two drift apart, and the hero
+    // ends up printing a reading OLDER than the chart directly beneath it.
+    //
+    // Measured on production 2026-09-08, /events/15300276 (Jodar v Bu), where
+    // both numbers come from the SAME source:
+    //
+    //   win_probability_sources.kalshi  0.895  @ 2026-09-02T00:00:54Z  -> hero  90%
+    //   win_prob_history.kalshi (last)  0.01   @ 2026-09-02T21:03:00Z  -> chart  1%
+    //
+    // 21 hours apart, on one screen at 390px without scrolling, with the hero
+    // captioned "Aggregate" and the chart captioned "Jodar 1% — Bu 99%".
+    //
+    // The live branch above already settles which one wins — "the hero must read
+    // the SAME number so a lagged sportsbook consensus never contradicts the
+    // chart on screen". A match that has gone dark is the same defect with a
+    // slower clock, so it gets the same answer rather than a second rule.
+    //
+    // Deliberately NOT suppressing the hero instead: the chart still draws the
+    // whole journey to 1%, so blanking the number removes information without
+    // removing the contradiction. The fallback labels the pair by SOURCE
+    // ("Kalshi"), which attributes the reading rather than asserting a Bain Luck
+    // verdict, and the header still says "No result reported" — so the page says
+    // "the market last had Bu at 99%; nobody reported the finish", which is the
+    // whole honest statement.
+    //
+    // Gated on there BEING a usable chart point: with no series to fall back to,
+    // a stale `current_odds` still beats an empty hero, so such an event keeps
+    // exactly the behaviour it has today.
   } else {
     // Scheduled: current betting consensus
     homeProb = odds?.home_probability ?? null;
