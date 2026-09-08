@@ -168,7 +168,11 @@ def binary_to_implied_spread(
         crossover: The probability to interpolate at (default 0.50).
 
     Returns:
-        ImpliedSpread with the interpolated spread, or None if not enough data.
+        ImpliedSpread with the interpolated spread, or None when the ladder
+        does not locate one — either fewer than two rungs, or no adjacent pair
+        straddling ``crossover``. A ladder whose rungs all sit on one side of
+        50% implies nothing and says so by returning None (#3965); it is never
+        extrapolated past its own last rung.
     """
     if not contracts or len(contracts) < 2:
         return None
@@ -209,30 +213,40 @@ def binary_to_implied_spread(
                 upper_prob=high_prob,
             )
 
-    # Edge cases: all above or all below crossover
-    if sorted_contracts[0]["probability"] < crossover:
-        # All below 50% — team is a big underdog at every threshold
-        return ImpliedSpread(
-            spread=-sorted_contracts[0]["threshold"] * 0.5,
-            confidence=0.3,
-            lower_threshold=0,
-            upper_threshold=sorted_contracts[0]["threshold"],
-            lower_prob=crossover,
-            upper_prob=sorted_contracts[0]["probability"],
-        )
-
-    if sorted_contracts[-1]["probability"] > crossover:
-        # All above 50% — team is a massive favorite at every threshold
-        last = sorted_contracts[-1]
-        return ImpliedSpread(
-            spread=-last["threshold"] * 1.5,
-            confidence=0.3,
-            lower_threshold=last["threshold"],
-            upper_threshold=last["threshold"] * 2,
-            lower_prob=last["probability"],
-            upper_prob=crossover,
-        )
-
+    # No rung crosses 50%, so this ladder does not locate a spread and we
+    # refuse rather than invent one (#3965).
+    #
+    # Until now the two one-sided cases each extrapolated past the end of the
+    # ladder — `-first * 0.5` when every rung sat below the crossover,
+    # `-last * 1.5` when every rung sat above it. Both multipliers are
+    # arbitrary, and the second one is how `/events/15307194` came to serve an
+    # implied spread of **-14.25 runs** (`-9.5 * 1.5`) off a Polymarket ladder
+    # priced 1.000 at all twenty of its rungs: a dead price surface that says
+    # nothing was read as the most lopsided baseball game ever played.
+    #
+    # 🔴 The extrapolation is not merely imprecise — on the signed home-margin
+    # axis #3948 introduced, it can land on the WRONG SIDE of its own data.
+    # `-last * 1.5` treats the threshold as a positive magnitude, so a negative
+    # rung is pushed further negative instead of toward the crossover. Measured
+    # on `/events/15307719` (Nippon-Ham at SoftBank): rungs `-2.5 @ 0.770` and
+    # `-1.5 @ 0.685`. Probability falls as the threshold rises, so
+    # `P(home_margin >= -1.5) = 0.685` puts the 50% crossover ABOVE -1.5 — yet
+    # the branch returned `home_margin = -2.25`, below every threshold the
+    # ladder priced. It is the two sign conventions colliding again; see
+    # `home_margin_from_spread`.
+    #
+    # Measured cost of refusing, over the 318 scheduled/live events in the ±48h
+    # window that actually render projections (2026-09-08): the all-below
+    # branch fired **0 times**, the all-above branch **3 times**. Two were this
+    # defect and both events keep their projection, because their Kalshi arm
+    # already crosses cleanly and already outranks on confidence (0.85 vs 0.3);
+    # the third was the wrong-signed NPB arm above. **0 correct projections
+    # lost.** What goes away is the rendered line: `ScoreDifferentialChart`
+    # draws every non-sportsbook arm on presence alone, so the -14.25 was a
+    # chart line at +14.25 home margin beside a Kalshi line at +0.2.
+    #
+    # `binary_to_implied_total` has never had these branches and already
+    # returns None here; the two derivations now agree.
     return None
 
 
