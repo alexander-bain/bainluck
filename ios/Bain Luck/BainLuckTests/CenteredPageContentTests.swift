@@ -65,28 +65,46 @@ final class CenteredPageContentTests: XCTestCase {
 
     /// Content TALLER than the viewport must start at the top and scroll.
     ///
-    /// The tempting one-liner for the test above is `.frame(height:)` instead
-    /// of `.frame(minHeight:)`. It centres the short case identically and
-    /// clips the tall case into a box that cannot be scrolled — so a phone at
-    /// large Dynamic Type would lose the answer buttons off the bottom while
-    /// the screenshot of the ordinary case looked perfect.
-    func testTallContentStartsAtTheTopAndIsNotCentredIntoAClip() {
+    /// The tempting spelling is `.frame(height:)` instead of
+    /// `.frame(minHeight:)`. It centres the short case identically, so it
+    /// passes the test above; on tall content it centres a 900pt child in a
+    /// 600pt box and pushes the child's HEAD 150pt above the viewport, where
+    /// the scroll view cannot reach it — a phone at large Dynamic Type would
+    /// silently lose the top of the question while the ordinary screenshot
+    /// looked perfect.
+    ///
+    /// A full-height marker cannot see that: both spellings paint red from the
+    /// top edge to the bottom edge of the frame, and this test passed against
+    /// the broken one until the mutation run caught it. So the marker is only
+    /// the top **20pt** of the content, and the assertion is that the head is
+    /// still on screen.
+    func testTallContentKeepsItsHeadOnScreenRatherThanCentringItOutOfReach() {
         let image = render(
-            CenteredPageContent { marker(width: 200, height: 900) },
+            CenteredPageContent {
+                VStack(spacing: 0) {
+                    marker(width: 200, height: 20)
+                    // Not red, so `inkBounds` ignores it — it is only here to
+                    // make the content 900pt tall in a 600pt viewport.
+                    Color(red: 0, green: 0, blue: 1).frame(width: 200, height: 880)
+                }
+            },
             width: 402, height: 600
         )
         guard let ink = inkBounds(in: image) else {
-            return XCTFail("the marker did not render at all")
+            return XCTFail(
+                "the head of the content did not render at all — 900pt of "
+                + "content was centred in the 600pt viewport, so its top 150pt "
+                + "sits above the scroll view and cannot be reached"
+            )
         }
         XCTAssertLessThan(
             ink.minY, 4,
-            "900pt of content in a 600pt viewport must begin at the top "
-            + "(measured \(Int(ink.minY))pt down); anything else means it was "
-            + "centred, and centring tall content scrolls its head off screen"
+            "the head of 900pt of content in a 600pt viewport must sit at the "
+            + "top (measured \(Int(ink.minY))pt down)"
         )
-        XCTAssertGreaterThan(
-            ink.maxY, 590,
-            "the content must fill the viewport and continue past it"
+        XCTAssertEqual(
+            ink.height, 20, accuracy: 2,
+            "the whole 20pt head must be visible, not part of it"
         )
     }
 
