@@ -239,13 +239,19 @@ class TestAVenueMayNotUnSettleARow:
 class _Ev:
     def __init__(self, id, sport_key, commence_time, status="live",
                  home_score=None, away_score=None, win_probability_sources=None,
-                 home="Jesper de Jong", away="Francesco Passaro"):
+                 home="Jesper de Jong", away="Francesco Passaro",
+                 period=None, espn_id=None, statpal_fixture_id=None):
         self.id = id
         self.status = status
         self.commence_time = commence_time
         self.completed_at = None
         self.home_score = home_score
         self.away_score = away_score
+        # #3946: the net now reads every field a source could have written, so
+        # a stand-in that omits them is a stand-in for a row that cannot exist.
+        self.period = period
+        self.espn_id = espn_id
+        self.statpal_fixture_id = statpal_fixture_id
         self.win_probability_sources = win_probability_sources or {}
         self.home_team_name = home
         self.away_team_name = away

@@ -23,7 +23,9 @@ import pytest
 from app.utils.event_completion import (
     STILL_ACTIVE_MINUTES,
     derive_completed_at,
+    event_has_never_been_observed,
     game_may_still_be_running,
+    wall_clock_bound_hours,
 )
 
 UTC = timezone.utc
@@ -262,13 +264,18 @@ class _Ev:
     """Mutable stand-in for an Event row — the net assigns to it directly."""
 
     def __init__(self, id, sport_key, commence_time, home_score=None, away_score=None,
-                 win_probability_sources=None):
+                 win_probability_sources=None, period=None, espn_id=None,
+                 statpal_fixture_id=None):
         self.id = id
         self.status = "live"
         self.commence_time = commence_time
         self.completed_at = None
         self.home_score = home_score
         self.away_score = away_score
+        # #3946: the other four ways a source can have spoken about this row.
+        self.period = period
+        self.espn_id = espn_id
+        self.statpal_fixture_id = statpal_fixture_id
         self.win_probability_sources = win_probability_sources or {}
         self.home_team_name = "Home"
         self.away_team_name = "Away"
@@ -470,12 +477,21 @@ class _OddsEv:
     object — the assertions read the row the way the database would.
     """
 
-    def __init__(self, id, sport_key, commence_time, statpal_end_time=None):
+    def __init__(self, id, sport_key, commence_time, statpal_end_time=None,
+                 home_score=None, away_score=None, period=None, espn_id=None,
+                 statpal_fixture_id=None):
         self.id = id
         self.status = "live"
         self.commence_time = commence_time
         self.completed_at = None
         self.statpal_end_time = statpal_end_time
+        # #3946: every way a source can have spoken about this row, so the
+        # unobserved narrowing can be exercised through the real closer.
+        self.home_score = home_score
+        self.away_score = away_score
+        self.period = period
+        self.espn_id = espn_id
+        self.statpal_fixture_id = statpal_fixture_id
         self.win_probability_sources = {}
         self.home_team_name = "Home"
         self.away_team_name = "Away"
@@ -738,3 +754,214 @@ class TestOddsNetEvidenceRules:
         )
         assert (held.status, done.status) == ("live", "suspended")
         assert outcome == {"closed": 0, "suspended": 1}
+
+
+# ---------------------------------------------------------------------------
+# #3946 — A FORMAT'S MAXIMUM PROTECTS A MATCH THAT IS REPORTING.
+#
+# WHAT A READER SAW. `https://bainluck.com/sport/tennis/atp` at 390px on
+# 2026-09-08, during US Open quarter-final week: the top THREE cards were
+# scoreless ATP challenger matches badged `● LIVE` at 99/1, 5.6h, 5.6h and 5.1h
+# past their start, with Tiafoe–Michelsen — a real US Open match — pushed
+# fourth, below the fold. The tour page sorts live-first, so blast radius is a
+# function of POSITION, not volume.
+#
+# WHY THE NETS LEFT THEM THERE, and it is not that they were missing. Both nets
+# gate on `SPORT_MAX_DURATIONS`, and tennis is 6.0 because a Grand Slam
+# five-setter can run that long. Those rows were suspended — at 6.5 hours.
+#
+# The maximum is the right bound for a match something is REPORTING on, because
+# the still-running guard cannot tell "long" from "over". It is the wrong bound
+# for a row nothing has ever reported on: such a row cannot be the five-setter
+# the widening was for.
+#
+# MEASURED, production 2026-09-08 (db-query):
+#   * 104 of 108 live rows carried no score, no period, no espn_id, no StatPal
+#     fixture id and no post-commence play snapshot. 66 were `tennis_atp`.
+#   * 0 of 815 `tennis_atp`/`tennis_wta`/`tennis_other` rows in seven days ever
+#     carried ANY of those five. Every US Open row carries an `espn_id` from
+#     discovery, and every completed one carries a set score.
+#   * Real soccer duration (completed_at - commence_time) p99 across 30 leagues
+#     in fourteen days: 2.15h. Soccer has no maximum of its own and rides 4.0.
+# ---------------------------------------------------------------------------
+
+
+class TestUnobservedWallClockBound:
+    """The predicate and the lookup, before either net is asked about them."""
+
+    def test_a_row_nothing_ever_reported_on_is_unobserved(self):
+        assert event_has_never_been_observed(None, None, None, None, None, None) is True
+
+    @pytest.mark.parametrize("field,value", [
+        ("home_score", 0),
+        ("away_score", 0),
+        ("period", "2nd Set"),
+        ("espn_id", "401778901"),
+        ("statpal_fixture_id", "77123"),
+        ("last_snapshot", NOW),
+    ])
+    def test_any_single_source_speaking_ends_the_unobserved_claim(self, field, value):
+        # Each conjunct on its own, because the signals are NOT interchangeable:
+        # tennis never populates `period`, `tennis_atp` never populates
+        # `espn_id`, and a zero score is a score. A one-signal version of this
+        # rule over a mixed population is the CERT-2256 error.
+        kwargs = dict(home_score=None, away_score=None, period=None, espn_id=None,
+                      statpal_fixture_id=None, last_snapshot=None)
+        kwargs[field] = value
+        assert event_has_never_been_observed(**kwargs) is False
+
+    def test_a_zero_zero_score_still_counts_as_reported(self):
+        # 0-0 is what a source SAID, not an absence — the `is None` test is the
+        # whole difference and a falsy check would erase it.
+        assert event_has_never_been_observed(0, 0, None, None, None, None) is False
+
+    def test_an_observed_row_keeps_its_sports_full_maximum(self):
+        assert wall_clock_bound_hours("tennis_atp_us_open", 6.0, False) == 6.0
+
+    def test_an_unobserved_tennis_row_gets_the_narrower_bound(self):
+        assert wall_clock_bound_hours("tennis_atp", 6.0, True) == 3.0
+
+    def test_a_sport_with_no_entry_is_untouched_even_when_unobserved(self):
+        # A narrowing for two measured sports, never a global clamp: an 8h golf
+        # round and a 4.5h college football game are ordinary.
+        assert wall_clock_bound_hours("golf_pga", 8.0, True) == 8.0
+        assert wall_clock_bound_hours("americanfootball_ncaaf", 4.5, True) == 4.5
+        assert wall_clock_bound_hours("baseball_mlb", 5.0, True) == 5.0
+
+    def test_the_bound_can_only_narrow_never_widen(self):
+        # `min`, not substitution. A sport whose maximum is already shorter than
+        # its entry must not be handed extra hours by this function.
+        assert wall_clock_bound_hours("soccer_epl", 1.5, True) == 1.5
+
+    def test_the_longest_matching_prefix_wins(self):
+        # So a future best-of-five entry beats `tennis` on merit rather than on
+        # dict insertion order, which is what decides `get_max_duration_for_sport`.
+        from app.utils import event_completion as ec
+
+        with_slam = dict(ec.UNOBSERVED_MAX_HOURS, tennis_atp_us_open=6.0)
+        original = ec.UNOBSERVED_MAX_HOURS
+        try:
+            ec.UNOBSERVED_MAX_HOURS = with_slam
+            assert ec.wall_clock_bound_hours("tennis_atp_us_open", 6.0, True) == 6.0
+            assert ec.wall_clock_bound_hours("tennis_atp", 6.0, True) == 3.0
+        finally:
+            ec.UNOBSERVED_MAX_HOURS = original
+
+
+class TestUnobservedBoundThroughTheNets:
+    """The lookup being CORRECT is not the lookup being CALLED (queue 067)."""
+
+    @pytest.mark.asyncio
+    async def test_the_specimen_challenger_match_comes_off_the_live_board(self):
+        # Lomakin vs Peliwo: `tennis_atp`, 5.6h past start, nothing ever
+        # reported. Under the sport maximum it keeps the LIVE badge for another
+        # 55 minutes and keeps the top of the ATP page with it.
+        ev = _Ev(101, "tennis_atp", NOW - timedelta(hours=5, minutes=38))
+        _, stats = await _run_net([ev], {}, NOW)
+        assert ev.status == "suspended"
+        assert stats["live_to_suspended"] == 1
+        assert stats["suspended_unobserved"] == 1
+        assert ev.completed_at is None, "still nothing claiming the match ended"
+
+    @pytest.mark.asyncio
+    async def test_a_slam_five_setter_keeps_the_full_six_hours(self):
+        # THE COLLATERAL TEST, and the one that would have to fail for this
+        # change to be a bad trade. A US Open match carries an `espn_id` from
+        # discovery, so it is observed however quiet the feeds are — and at 4h
+        # into a five-setter it must still read LIVE.
+        ev = _Ev(102, "tennis_atp_us_open", NOW - timedelta(hours=4),
+                 espn_id="401778901")
+        _, stats = await _run_net([ev], {}, NOW)
+        assert ev.status == "live"
+        assert stats["live_to_suspended"] == 0
+
+    @pytest.mark.asyncio
+    async def test_an_unobserved_row_inside_the_narrower_bound_is_held(self):
+        # The bound is a bound, not a licence: 2.9h into a best-of-three is a
+        # match that may well still be on court.
+        ev = _Ev(103, "tennis_atp", NOW - timedelta(hours=2, minutes=54))
+        _, stats = await _run_net([ev], {}, NOW)
+        assert ev.status == "live"
+        assert stats["live_to_suspended"] == 0
+
+    @pytest.mark.asyncio
+    async def test_a_tennis_row_that_ever_showed_a_score_keeps_the_maximum(self):
+        # 4h in with a set score: observed, so the widening still applies.
+        ev = _Ev(104, "tennis_atp", NOW - timedelta(hours=4), home_score=1,
+                 away_score=2)
+        _, stats = await _run_net([ev], {}, NOW)
+        assert ev.status == "live"
+        assert stats["live_to_suspended"] == 0
+
+    @pytest.mark.asyncio
+    async def test_a_play_snapshot_defeats_the_narrower_bound_too(self):
+        # A source reporting on the match makes it observed, so it gets the full
+        # 6.0h — and then, at 7h, the still-running guard holds it a second
+        # time. That is the long five-setter both bounds exist to protect, and
+        # BOTH halves have to be true for it to survive.
+        ev = _Ev(105, "tennis_atp", NOW - timedelta(hours=7))
+        _, stats = await _run_net([ev], {105: NOW - timedelta(minutes=5)}, NOW)
+        assert ev.status == "live"
+        assert stats["held_still_running"] == 1
+        assert stats["live_to_suspended"] == 0
+
+    @pytest.mark.asyncio
+    async def test_the_query_floor_reaches_the_narrowest_bound(self):
+        # THE WIRING TRAP THIS CHANGE COULD MOST EASILY HAVE FALLEN INTO. The
+        # sweep's floor was `min(SPORT_MAX_DURATIONS.values())` = 3.0, and
+        # soccer's unobserved bound is 2.5 — so a floor left alone would never
+        # FETCH a soccer row between 3.0h and 3.5h and the rule would suspend
+        # nothing while reading as correct. Asserted against the real floor:
+        # this row is inside the old floor's reach only because the new one is
+        # lower.
+        import inspect
+
+        from app.tasks.config import SPORT_MAX_DURATIONS
+        from app.tasks.espn_sync import _transition_event_statuses_impl
+        from app.utils.event_completion import UNOBSERVED_MAX_HOURS
+
+        assert min(UNOBSERVED_MAX_HOURS.values()) < min(SPORT_MAX_DURATIONS.values())
+        source = inspect.getsource(_transition_event_statuses_impl)
+        assert "min(UNOBSERVED_MAX_HOURS.values())" in source, (
+            "the sweep floor must know about the narrower bound or the rule "
+            "silently fetches nothing to apply it to"
+        )
+
+    @pytest.mark.asyncio
+    async def test_an_unobserved_soccer_row_is_suspended_at_three_hours(self):
+        # Real soccer duration p99 is 2.15h and soccer has no maximum of its
+        # own, so these rows ride the 4.0h default today.
+        ev = _Ev(106, "soccer_other", NOW - timedelta(hours=3, minutes=6))
+        _, stats = await _run_net([ev], {}, NOW)
+        assert ev.status == "suspended"
+        assert stats["suspended_unobserved"] == 1
+
+    @pytest.mark.asyncio
+    async def test_the_odds_net_narrows_on_the_same_rule(self):
+        # The Eredivisie specimen: 3.2h past kick-off, 43 bookmaker snapshots,
+        # the last 147 minutes old, nothing ever reported. Both nets must agree
+        # on when a row stops being entitled to claim it is live, or the one
+        # that runs first decides.
+        #
+        # `last_snap: None` and not merely stale, because that is what the row
+        # carried: 43 bookmaker snapshots is 43 rows in `odds_snapshots`, which
+        # `LAST_POST_COMMENCE_SNAPSHOT_SQL` does not read at all. No play source
+        # ever captured it.
+        ev = _OddsEv(107, "soccer_netherlands_eredivisie",
+                     NOW - timedelta(hours=3, minutes=12))
+        _, outcome = await _run_odds_net(
+            [ev], {107: {"recent": 0, "total": 43, "last_snap": None}}
+        )
+        assert (ev.status, outcome) == ("suspended", {"closed": 0, "suspended": 1})
+
+    @pytest.mark.asyncio
+    async def test_the_odds_net_still_holds_an_observed_row_to_its_maximum(self):
+        # The control: same sport, same quiet books, same elapsed time — but a
+        # score on the row, so the default 4.0h still applies and it stays live.
+        ev = _OddsEv(108, "soccer_netherlands_eredivisie",
+                     NOW - timedelta(hours=3, minutes=12), home_score=1,
+                     away_score=1)
+        _, outcome = await _run_odds_net(
+            [ev], {108: {"recent": 0, "total": 43, "last_snap": None}}
+        )
+        assert (ev.status, outcome) == ("live", {"closed": 0, "suspended": 0})

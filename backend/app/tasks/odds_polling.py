@@ -175,9 +175,11 @@ async def detect_and_close_stale_events(session) -> dict:
     The suspending arm requires ALL of:
     1. It's currently "live" status
     2. ALL of:
-       a. It has been live longer than its sport's own maximum duration
-          (``get_max_duration_for_sport`` — 5.0h for baseball, 3.5h for
-          basketball, 6.0h for tennis), AND
+       a. It has been live longer than ``wall_clock_bound_hours`` — its sport's
+          own maximum duration (``get_max_duration_for_sport`` — 5.0h for
+          baseball, 3.5h for basketball, 6.0h for tennis), narrowed to
+          ``UNOBSERVED_MAX_HOURS`` for a row nothing has ever reported on
+          (#3946), AND
        b. Bookmakers were pricing it and every one of them has now been quiet
           for ODDS_STALE_MINUTES, AND
        c. No source anywhere has captured a post-commence snapshot inside
@@ -204,7 +206,9 @@ async def detect_and_close_stale_events(session) -> dict:
     """
     from app.utils.event_completion import (
         EVENT_SUSPENDED,
+        event_has_never_been_observed,
         game_may_still_be_running,
+        wall_clock_bound_hours,
     )
 
     now = datetime.now(timezone.utc)
@@ -259,10 +263,45 @@ async def detect_and_close_stale_events(session) -> dict:
             # has elapsed. Before that, elapsed time says nothing: extra
             # innings, overtime and rain delays are ordinary, and a quiet
             # bookmaker at 90 minutes is a quiet bookmaker, not a final whistle.
-            max_hours = get_max_duration_for_sport(
-                event.sport.key if event.sport else ""
+            sport_key = event.sport.key if event.sport else ""
+            max_hours = get_max_duration_for_sport(sport_key)
+
+            # #3946: the same narrowing espn_sync's net applies, from the same
+            # helper, so the two nets cannot drift on when a row stops being
+            # entitled to claim it is live. The maximum is sized by a sport's
+            # longest format; a row nothing has ever reported on is not that
+            # match. The specimen this arm owns is a Eredivisie fixture found
+            # 3.2h past kick-off with 43 bookmaker snapshots, the last of them
+            # 147 minutes old, and no score, period, anchor or play snapshot
+            # ever — held live purely by soccer's 4.0h default.
+            # The cheap half of the predicate first, by passing NO snapshot:
+            # that asks "is every COLUMN silent?", and a False needs no query at
+            # all because a source has already spoken. Only a row that clears
+            # the column half — and only while the narrower bound could still
+            # change the outcome — pays for the snapshot lookup.
+            last_snap = None
+            last_snap_loaded = False
+            never_observed = event_has_never_been_observed(
+                event.home_score,
+                event.away_score,
+                event.period,
+                event.espn_id,
+                event.statpal_fixture_id,
+                None,
             )
-            if hours_since_start <= max_hours:
+            if never_observed and hours_since_start <= max_hours:
+                last_snap = await _last_post_commence_snapshot(session, event.id)
+                last_snap_loaded = True
+                never_observed = event_has_never_been_observed(
+                    event.home_score,
+                    event.away_score,
+                    event.period,
+                    event.espn_id,
+                    event.statpal_fixture_id,
+                    last_snap,
+                )
+            bound_hours = wall_clock_bound_hours(sport_key, max_hours, never_observed)
+            if hours_since_start <= bound_hours:
                 held_within_max_duration += 1
                 continue
 
@@ -339,8 +378,10 @@ async def detect_and_close_stale_events(session) -> dict:
             if should_close:
                 # One query answers both "is it still being played?" and "when
                 # did it end?" — the shared basis that keeps this net and
-                # espn_sync's from disagreeing about either.
-                last_snap = await _last_post_commence_snapshot(session, event.id)
+                # espn_sync's from disagreeing about either. Reused if the
+                # unobserved test above already paid for it on this row.
+                if not last_snap_loaded:
+                    last_snap = await _last_post_commence_snapshot(session, event.id)
 
                 if game_may_still_be_running(last_snap, now):
                     # Some source captured this event within the last
@@ -383,10 +424,11 @@ async def detect_and_close_stale_events(session) -> dict:
                 suspended_count += 1
                 logger.info(
                     "live/048 suspended event %s (%s vs %s): %s, %.1fh since "
-                    "start (sport max %.1fh). Not closed — a quiet book is not "
-                    "a final whistle.",
+                    "start (bound %.1fh, sport max %.1fh, unobserved=%s). Not "
+                    "closed — a quiet book is not a final whistle.",
                     event.id, event.home_team_name, event.away_team_name,
-                    close_reason, hours_since_start, max_hours,
+                    close_reason, hours_since_start, bound_hours, max_hours,
+                    never_observed,
                 )
 
         except Exception as e:

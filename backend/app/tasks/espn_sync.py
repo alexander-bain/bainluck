@@ -1775,7 +1775,11 @@ async def _transition_event_statuses_impl() -> dict:
     - scheduled → live: commence_time <= now (game has started)
     - live → suspended: commence_time + max_duration has passed AND no source
       that REPORTS ON the game has captured a post-commence snapshot in the last
-      30 min. Non-terminal, deliberately — see below.
+      30 min. Non-terminal, deliberately — see below. Since #3946 the duration
+      is ``wall_clock_bound_hours``, not the sport maximum flat: a row NOTHING
+      has ever reported on — no score, no period, no authority anchor, no play
+      snapshot ever — cannot be the long five-setter the tennis maximum was
+      widened for, so it does not inherit the widening.
     - suspended → live: a source that reports on the game is captured again.
 
     That second condition was claimed here for a long time but never actually
@@ -1817,7 +1821,10 @@ async def _transition_event_statuses_impl() -> dict:
     """
     from app.tasks.base import get_task_session
     from app.tasks.config import SPORT_MAX_DURATIONS
-    from app.utils.event_completion import commence_time_is_a_reported_start
+    from app.utils.event_completion import (
+        UNOBSERVED_MAX_HOURS,
+        commence_time_is_a_reported_start,
+    )
 
     stats = {"scheduled_to_live": 0, "live_to_suspended": 0, "suspended_to_live": 0}
 
@@ -1873,7 +1880,17 @@ async def _transition_event_statuses_impl() -> dict:
 
         # Find the minimum max_duration across all sports so we only
         # fetch events that could possibly qualify for transition.
-        min_max_hours = min(SPORT_MAX_DURATIONS.values())
+        #
+        # #3946: the floor has to know about BOTH bounds. `UNOBSERVED_MAX_HOURS`
+        # narrows the wall clock for a row nothing has ever reported on, and
+        # soccer's 2.5 is below the shortest sport maximum (3.0) — so a floor
+        # taken from `SPORT_MAX_DURATIONS` alone would never fetch the rows the
+        # narrower bound exists for, and the whole rule would read as correct
+        # while suspending nothing. Queue 067's lesson, one function over: a
+        # guard is not wired by being correct.
+        min_max_hours = min(
+            min(SPORT_MAX_DURATIONS.values()), min(UNOBSERVED_MAX_HOURS.values())
+        )
 
         live_result = await session.execute(
             select(Event)
@@ -1901,7 +1918,9 @@ async def _transition_event_statuses_impl() -> dict:
         from app.utils.event_completion import (
             EVENT_SUSPENDED,
             LAST_POST_COMMENCE_SNAPSHOT_SQL,
+            event_has_never_been_observed,
             game_may_still_be_running,
+            wall_clock_bound_hours,
         )
 
         last_snaps: dict = {}
@@ -1915,6 +1934,10 @@ async def _transition_event_statuses_impl() -> dict:
             }
 
         stats["held_still_running"] = 0
+        # Counted separately from `live_to_suspended` so the narrower bound can
+        # never hide inside the total it contributes to: "how many did the
+        # unobserved rule reach today" is a question the log must answer.
+        stats["suspended_unobserved"] = 0
 
         for event in live_events:
             sport_key = event.sport.key if event.sport else ""
@@ -1924,8 +1947,23 @@ async def _transition_event_statuses_impl() -> dict:
                     max_hours = duration
                     break
 
+            # #3946. A sport maximum is sized by the LONGEST format the sport
+            # has — tennis is 6.0 for a Slam five-setter — and that widening is
+            # what protects a long match the still-running guard cannot tell
+            # apart from a finished one. A row nothing has ever reported on
+            # cannot be that match, so it does not inherit the widening.
+            never_observed = event_has_never_been_observed(
+                event.home_score,
+                event.away_score,
+                event.period,
+                event.espn_id,
+                event.statpal_fixture_id,
+                last_snaps.get(event.id),
+            )
+            bound_hours = wall_clock_bound_hours(sport_key, max_hours, never_observed)
+
             hours_since_start = (now - event.commence_time).total_seconds() / 3600
-            if hours_since_start > max_hours + 0.5:
+            if hours_since_start > bound_hours + 0.5:
                 last_snap = last_snaps.get(event.id)
                 if game_may_still_be_running(last_snap, now):
                     # Leave it live. The next pass re-checks, and a real source
@@ -1960,13 +1998,17 @@ async def _transition_event_statuses_impl() -> dict:
                 #      Measured cost of removing it: 6 rows in fourteen days.
                 event.status = EVENT_SUSPENDED
                 stats["live_to_suspended"] += 1
+                if never_observed:
+                    stats["suspended_unobserved"] += 1
                 logger.info(
                     "live/048 suspended event %s (%s vs %s): %.1fh since start "
-                    "exceeds the %.1fh %s maximum and no play-reporting source "
-                    "has been captured. Not closed, not graded — only an "
-                    "authority post or a venue settlement ends a match.",
+                    "exceeds the %.1fh %s bound (sport maximum %.1fh, "
+                    "unobserved=%s) and no play-reporting source has been "
+                    "captured. Not closed, not graded — only an authority post "
+                    "or a venue settlement ends a match.",
                     event.id, event.home_team_name, event.away_team_name,
-                    hours_since_start, max_hours, sport_key or "default",
+                    hours_since_start, bound_hours, sport_key or "default",
+                    max_hours, never_observed,
                 )
 
         # --- suspended → live (the door back) ---
