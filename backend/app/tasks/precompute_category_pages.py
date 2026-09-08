@@ -1001,8 +1001,10 @@ async def _prewarm_feed_shape(
     from app.tasks.base import get_task_session
     from app.routes.feed import get_feed
     from app.utils.feed_cache import (
+        FEED_LIVE_REPUBLISH_MIN_HEADROOM_S,
         FEED_PREWARM_KEY_SCOPE_KEY,
         FEED_PREWARM_SCOPE_KEY,
+        FEED_RESPONSE_STALE_TTL_LIVE_SECONDS,
         feed_payload_was_built_by_this_request,
         feed_response_cache_ttls,
         payload_contains_live_event,
@@ -1203,6 +1205,52 @@ async def _prewarm_feed_shape(
     ttl, stale_ttl = feed_response_cache_ttls(
         my_teams_only=False, identified=False, live=live
     )
+
+    # --- #3841: MEASURE the age of the inputs, and do not spend it -----------
+    #
+    # #3841 asks for one number before it asks for a fix, and it is right to:
+    # "how often does a warmer-published live entry actually carry a NON-ZERO
+    # artifact age" decides whether this is a p2 or a footnote. Nothing recorded
+    # it, so nobody could answer, and the issue has been re-argued for seven
+    # consecutive queues on an unmeasured premise.
+    #
+    # 🔴 IT CANNOT BE MEASURED FROM OUTSIDE, WHICH IS WHY IT IS RECORDED HERE.
+    # LAT-P268 tried: `cache.built_at` on a served response is the artifact
+    # ORIGIN (`time.time() - oldest_consumed_artifact_age_s`, routes/feed.py,
+    # CERT-1864), so `now - built_at` on a reader's response is the TOTAL content
+    # age — artifact age and response-cache age already summed, with no term
+    # recoverable from the other. 111 production samples over 310s on a live
+    # evening bounded the sum (p50 41.3s, p95 57.7s, max 60.16s, 1 read past the
+    # 60s live ceiling) and could not separate it. At the publish instant those
+    # two terms have not yet been mixed: the response age is zero and `now -
+    # built_at` IS the artifact age, alone. That instant happens exactly here.
+    #
+    # This is the shared-reuse sink's own reading, carried in the payload the
+    # route just stamped — not a second age computation, which #3841's acceptance
+    # explicitly rules out.
+    #
+    # 🔴 RECORDED, NEVER SPENT. It is deliberately NOT passed to
+    # `feed_response_cache_ttls` above, and `test_the_rail_does_not_pass_an_
+    # artifact_age_into_its_own_ttls` holds that line. Spending it shortens the
+    # published window to `CEILING - age`, and the republish invariant needs the
+    # whole of it: `PERIOD + BUDGET + MIN_HEADROOM == 30 + 20 + 10 == 60 ==
+    # FEED_RESPONSE_STALE_TTL_LIVE_SECONDS`, an identity whose own comment says
+    # "the reserve is spent". So today's constants leave EXACTLY ZERO room for a
+    # non-zero artifact age, and any amount of it spent here comes out of the
+    # seconds this beat is allowed to run late before a reader eats a cold build.
+    # That is the trade #3827 and the external audit both refuse ("shortening TTL
+    # in isolation can bring cold builds back"), and it is why the fourth term
+    # needs the ceiling arithmetic re-derived rather than one keyword argument.
+    # The number below is what that re-derivation has been missing.
+    _artifact_age_s = None
+    _cache_meta = payload.get("cache")
+    if isinstance(_cache_meta, dict) and isinstance(
+        _cache_meta.get("built_at"), (int, float)
+    ):
+        _artifact_age_s = round(
+            max(0.0, _time.time() - float(_cache_meta["built_at"])), 3
+        )
+
     body = json.dumps(payload, default=str)
     rc.setex(cache_key, ttl, body)
     rc.setex(f"{cache_key}:stale", stale_ttl, body)
@@ -1223,20 +1271,63 @@ async def _prewarm_feed_shape(
     # same reason the cache key is: it is the route's own answer and cannot
     # disagree with what a reader is served. Never raises.
     record_served_market_ids(rc, label, market_ids_in_feed_payload(payload))
+    # #3841: LOUD when this publication is the one the ceiling exists to stop.
+    # `stale_ttl` is the window just stamped and `_artifact_age_s` is what the
+    # inputs had already spent, so their SUM is the oldest total content age a
+    # reader can be served off this entry. Past the ceiling, say so by name — the
+    # rail reporting `outcome: ok` while publishing an over-age live page is the
+    # "it returned is not it worked" shape (gotcha #53), and the ~3-minute log
+    # buffer is why the number also rides the report below.
+    #
+    # 🔴 THE THRESHOLD IS THE RESERVE, NOT THE CEILING, AND THE DIFFERENCE IS THE
+    # WHOLE FINDING. `PERIOD + BUDGET + MIN_HEADROOM == 60 == CEILING` exactly, so
+    # `age + stale_ttl > CEILING` is true for ANY age above zero — including the
+    # milliseconds every healthy pass spends between the artifact's origin and
+    # this line. Written that way the rail warns on every live publication, which
+    # is an alarm nobody reads rather than an instrument; CI caught exactly that
+    # (`test_a_page_within_the_ceiling_is_not_warned_about`, red on a loaded
+    # runner and green on this laptop, which is the flakiest possible way to
+    # learn it). `FEED_LIVE_REPUBLISH_MIN_HEADROOM_S` is the seconds of slack the
+    # rail already holds for beat lateness, so an age below it is inside
+    # tolerance the system has explicitly reserved, while an age above it cannot
+    # be explained by elapsed build time and is a page the ceiling exists to
+    # stop. A constant already sized against measurement (LAT-P179: 1.4s worst
+    # observed lateness over 21 samples, so ~7x it), not a number chosen here.
+    if live and _artifact_age_s is not None:
+        _total_age_s = _artifact_age_s + stale_ttl
+        if _artifact_age_s > FEED_LIVE_REPUBLISH_MIN_HEADROOM_S:
+            logger.warning(
+                "Feed pre-warm published a LIVE %s built from %.1fs-old shared "
+                "inputs under a %ds window — a reader may be served %.1fs of "
+                "total content age against a %ds ceiling (#3841)",
+                label,
+                _artifact_age_s,
+                stale_ttl,
+                _total_age_s,
+                FEED_RESPONSE_STALE_TTL_LIVE_SECONDS,
+            )
     logger.info(
-        "Pre-warmed %s feed in %.1fs (%d items, ttl=%ds, stale=%ds, live=%s)",
+        "Pre-warmed %s feed in %.1fs (%d items, ttl=%ds, stale=%ds, live=%s, "
+        "artifact_age=%ss)",
         label,
         duration_s,
         len(items),
         ttl,
         stale_ttl,
         live,
+        _artifact_age_s,
     )
     return {
         "outcome": "ok",
         "duration_s": duration_s,
         "items": len(items),
         "live": live,
+        # #3841's missing number, on the report `/api/admin/feed-live-prewarm/last`
+        # serves. `None` means the route stamped no `built_at` and is reported as
+        # such rather than as a zero — an unmeasured age and a measured zero are
+        # the two answers this issue turns on, and #3841 is only a footnote if the
+        # zero is the MEASURED one (gotcha #53 / the empty-200 rule, #53).
+        "artifact_age_s": _artifact_age_s,
     }
 
 
