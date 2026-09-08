@@ -3156,7 +3156,7 @@ async def _phase2_persist_group_reading(
     """
     from app.models.models import Event, FuturesOutcome
     from app.tasks.snapshots import _create_or_update_win_prob_snapshot
-    from app.utils.aggregation import stamp_source_reading
+    from app.utils.aggregation import source_observation_time, stamp_source_reading
 
     refs = [ref for ref in (group or [])]
     if not refs:
@@ -3225,8 +3225,23 @@ async def _phase2_persist_group_reading(
     )
     # #1829: value + write time (a linked market can stop updating long before
     # anything notices it has).
+    #
+    # #4028: and when it does, THIS writer is the one that hides it. This task
+    # runs every 15 minutes over rows it already has; it re-derives a number, it
+    # does not re-observe a venue. Defaulting `stamp_source_reading`'s own `now`
+    # here therefore declared a frozen price fresh every quarter hour, and since
+    # the hero's decay is relative to the freshest stamp ON THE SAME EVENT, the
+    # ghost's heartbeat decayed the real sportsbook instead of itself. So stamp
+    # the ORIGINATING outcome's observation time — `reading.outcome`, the row the
+    # number actually came from, not the group's primary (CERT-767's lesson). A
+    # healthy poll leaves `last_updated` at ~now, so this is inert on every live
+    # source and only ever bites the dead ones. `None` = the row cannot say, and
+    # then this writer's own clock is the honest answer, exactly as before.
     _pm_wps = stamp_source_reading(
-        _pm_r.scalar_one_or_none(), anchor.source, round(home_prob, 4)
+        _pm_r.scalar_one_or_none(),
+        anchor.source,
+        round(home_prob, 4),
+        now=source_observation_time(reading.outcome),
     )
     await session.execute(
         update(Event)
