@@ -21,6 +21,7 @@ import {
   latestBlendPoint,
   resolveProbability,
 } from "../../lib/eventKeyStats";
+import { renderedPercent } from "../../lib/renderedPercent";
 import type {
   EventHistoryResponse,
   EventDetailResponse,
@@ -41,8 +42,21 @@ function evt(partial: Partial<EventDetailResponse>): EventDetailResponse {
   } as unknown as EventDetailResponse;
 }
 
+// #3892 — THIS SUITE USED TO RE-IMPLEMENT THE RULE IT WAS GUARDING.
+//
+// `pct` was `Math.round(frac * 100)`, which is not what any of these surfaces
+// do: the hero calls `renderedPercent`, whose whole purpose is that
+// `probability * 100` is NOT the quoted decimal (`0.575 * 100` is
+// `57.49999999999999`). So when #3867 changed the rule in the contract, every
+// assertion below kept passing — the model and the chart had BOTH kept the old
+// rule, and agreeing with each other is exactly what this file checks.
+//
+// It went green while production printed a 58% hero over a 57% chart callout on
+// `/events/15307463`. A guard that models the function instead of calling it can
+// only ever prove the model self-consistent, which is why the displayed integer
+// now comes from the contract itself.
 const pct = (frac: number | null): number | null =>
-  frac === null ? null : Math.round(frac * 100);
+  frac === null ? null : renderedPercent(frac);
 
 /**
  * The integer home-% each event-detail surface would DISPLAY for one payload,
@@ -71,8 +85,12 @@ function surfaces(
   return {
     hero: pct(hero.homeProb),
     atRest: pct(lastChartPoint?.homeProb ?? null),
-    chartPlot: chartAxis === null ? null : Math.round(chartAxis),
-    tooltip: tooltipHome === null ? null : Math.round(tooltipHome),
+    // #3892 — the chart arms come back through `chartAxisToHomeProb` before
+    // rounding, mirroring what `OddsChart` now does. Rounding the axis value
+    // directly is the defect: it rounds `probability * 100` rather than the
+    // decimal the venue quoted.
+    chartPlot: chartAxis === null ? null : pct(chartAxisToHomeProb(chartAxis)),
+    tooltip: tooltipHome === null ? null : pct(chartAxisToHomeProb(tooltipHome)),
     scrub: pct(scrubHomeFrac),
     heroAway: pct(hero.awayProb),
   };
@@ -112,6 +130,38 @@ describe("cross-surface invariant: hero == readout == chart == tooltip == scrub"
     expect(new Set([s.hero, s.atRest, s.chartPlot, s.tooltip, s.scrub])).toEqual(
       new Set([20]),
     );
+  });
+
+  test("#3892 — a half-percent blend: every surface prints 58, and none prints 57", () => {
+    // The value this suite was blind to. `0.575 * 100` is `57.49999999999999`,
+    // so the arms that rounded the AXIS printed 57 while the hero printed 58 —
+    // and both were green here because the model rounded the same wrong way.
+    //
+    // This case is the reason the case list matters as much as the assertion:
+    // every other blend in this file (0.2, 0.81, 0.01) rounds identically under
+    // both rules, so the suite had no input that could tell them apart.
+    const s = surfaces(
+      evt({ status: "live" }),
+      hist({
+        aggregate_line: [
+          { timestamp: "2026-09-08T09:00:00Z", home_probability: 0.575 },
+        ],
+      }),
+      true,
+      false,
+    );
+    expect(new Set([s.hero, s.atRest, s.chartPlot, s.tooltip, s.scrub])).toEqual(
+      new Set([58]),
+    );
+    expect(s.chartPlot).not.toBe(57); // the value production drew on 2026-09-08
+
+    // `heroAway` is each end rounded INDEPENDENTLY, which is what this helper
+    // measures — 0.425 -> 43. It is NOT what the page prints: the hero pair
+    // derives its second end (`renderedCardPercents`), so the screen reads
+    // 58 / 42. Asserted here as the unpaired value on purpose, because that is
+    // what makes the derivation load-bearing rather than decorative — 58 + 43
+    // is 101, and the deriving is the only reason the reader never sees it.
+    expect(s.heroAway).toBe(43);
   });
 
   test("#1003 case — no blend, no win_prob_history: history FRACTION shows as 81, never 1", () => {
