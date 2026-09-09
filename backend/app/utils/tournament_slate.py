@@ -2472,6 +2472,123 @@ def _scoreboard_result_row(
     }
 
 
+def _half_registered_result_row(
+    draw: str, found: dict[str, Any], entries: list[Optional[dict[str, Any]]]
+) -> Optional[tuple[dict[str, Any], dict[str, Any]]]:
+    """A decided match with ONE registered side, or ``None`` (#4280).
+
+    Returns ``(row, pinned_entry)`` — the caller needs the register entry back
+    to count its avatar step, which is a fact about the pinned slot and not
+    about the row.
+
+    ═══ WHY A HALF ROW IS PUBLISHED AT ALL ═══
+
+    ``build_results`` drops a match unless BOTH sides resolve, and the reason is
+    sound: a score printed under the wrong two names looks entirely plausible.
+    But the rule was doing more than that.  Measured on production 2026-09-09
+    14:47Z, **19 main-draw matches** were dropped for one unresolvable side —
+    Swiatek's round of 16, Keys' third round, Medvedev's and Paul's first
+    rounds among them.  A registered contender's own result was disappearing
+    because of their OPPONENT's name.
+
+    The refusal that matters is *naming the wrong person*, and that is not what
+    this is.  ESPN named both sides; we simply do not carry one of them.  So the
+    row is published with the side we hold PINNED (seed, verified face) and the
+    side we do not carry named by the scoreboard, exactly as #4124 already does
+    for a draw the register has never heard of — ``source_pairing: "mixed"``
+    rather than ``"scoreboard"``, because half of it IS the register's.
+
+    ═══ WHAT IT REFUSES, AND WHY EACH REFUSAL IS THE SAME ONE ═══
+
+    * The scoreboard did not identify the unheld side (no ``entity_keys``
+      entry) — then it is not "a player we lack", it is an unnamed side, and
+      publishing it would print a score against nobody.
+    * The winner normalizes to neither side — the same drop the registered path
+      already makes, counted the same way, for the same reason.
+
+    NO PRE-MATCH PROBABILITY, ever.  ``_prematch_by_pair`` is keyed on the two
+    REGISTER entity keys, so a half row has no key to look up; carrying the
+    pinned side's prior alone would print one number against a two-sided
+    question.  ``None`` on both slots is the honest answer and the renderer
+    already states it.
+    """
+    from app.services.espn_tennis import COMPLETION_UNKNOWN, normalize_name
+
+    names = [str(n) for n in (found.get("players") or [])]
+    espn_keys = found.get("entity_keys") or []
+    if len(names) != 2 or len(entries) != 2 or len(espn_keys) != 2:
+        return None
+
+    pinned_index = 0 if entries[0] is not None else 1
+    pinned = entries[pinned_index]
+    other_index = 1 - pinned_index
+    if pinned is None or entries[other_index] is not None:
+        return None
+    other_key = espn_keys[other_index]
+    if not other_key:
+        return None
+
+    # The register's spelling for the side we hold, ESPN's for the side we do
+    # not — each name comes from the source that is authoritative for it. Built
+    # in the scoreboard's own order, so the row reads the way the match did.
+    pinned_side = (
+        str(pinned.get("entity_key")),
+        str(pinned.get("display_name") or ""),
+        pinned,
+    )
+    other_side = (str(other_key), names[other_index], None)
+    sides: list[tuple[str, str, Optional[dict[str, Any]]]] = (
+        [pinned_side, other_side] if pinned_index == 0 else [other_side, pinned_side]
+    )
+
+    winner_normalized = found.get("winner_normalized")
+    winner_key: Optional[str] = None
+    for key, name, _entry in sides:
+        if normalize_name(name) == winner_normalized:
+            winner_key = key
+            break
+    if winner_key is None:
+        return None
+
+    row = {
+        # The register has no matchup for a pair it only half carries, so the
+        # competition id is the stable key — the same fallback the registered
+        # path takes when its own matchup has been retired.
+        "matchup_key": f"espn:{found.get('espn_competition_id')}",
+        "draw": draw,
+        "draw_label": draw_label(draw),
+        "round": found.get("espn_round") or "",
+        "players": [
+            {
+                "entity_key": key,
+                "display_name": name,
+                "seed": entry.get("seed") if entry else None,
+                "is_winner": key == winner_key,
+                "image": player_image(entry) if entry else None,
+                "prematch_probability": None,
+                "prematch_source": None,
+            }
+            for key, name, entry in sides
+        ],
+        "winner_entity_key": winner_key,
+        "score": found.get("score"),
+        "completion": found.get("completion") or COMPLETION_UNKNOWN,
+        "completed_at": found.get("completed_at"),
+        "source_round": found.get("espn_round"),
+        "source": "espn",
+        # ONE SIDE OURS, ONE SIDE THE SCOREBOARD'S. Named rather than implied so
+        # no consumer has to infer it from a missing seed — the exact reason
+        # #4124 put `source_pairing` on every row instead of only on its own.
+        "source_pairing": "mixed",
+        "espn_competition_id": (
+            str(found["espn_competition_id"])
+            if found.get("espn_competition_id") is not None
+            else None
+        ),
+    }
+    return row, pinned
+
+
 def build_results(
     register: dict[str, Any],
     *,
@@ -2560,6 +2677,7 @@ def build_results(
     unregistered_pair = 0
     winner_mismatch = 0
     scoreboard_sourced = 0
+    mixed_pairings = 0
     # Slots on REGISTER-PINNED rows only — see the ruling-8 note in the
     # docstring. Accumulated rather than derived from `len(rows)`, which since
     # #4124 also counts rows the register does not back.
@@ -2592,6 +2710,27 @@ def build_results(
             ]
             if len(entries) != 2 or any(entry is None for entry in entries):
                 if draw in registered_draws:
+                    # ONE SIDE OURS IS STILL A RESULT (#4280). A registered
+                    # contender's own match was being dropped for their
+                    # opponent's name — 19 main-draw matches on 2026-09-09.
+                    # `None` falls through to the count, so every refusal
+                    # `_half_registered_result_row` makes lands exactly where it
+                    # landed before this branch existed.
+                    half = _half_registered_result_row(draw, found, entries)
+                    if half is not None:
+                        row, pinned = half
+                        rows.append(row)
+                        mixed_pairings += 1
+                        # ONE pinned slot, not two: `player_slots` is the
+                        # ruling-8 image-coverage denominator over slots the
+                        # REGISTER pins, and this row pins one of its two.
+                        registered_slots += 1
+                        image = player_image(pinned)
+                        if image and image.get("url"):
+                            with_face += 1
+                        elif image and image.get("flag_url"):
+                            with_flag += 1
+                        continue
                     unregistered_pair += 1
                     continue
                 row = _scoreboard_result_row(draw, found)
@@ -2711,6 +2850,13 @@ def build_results(
         # tournament whose two players the register does not both carry — most
         # of the qualifying draw, by design.
         "unregistered_pairs": unregistered_pair,
+        # HOW MANY OF THOSE WERE RECOVERED WITH ONE SIDE PINNED (#4280).
+        # `unregistered_pairs` used to carry both populations under one name, so
+        # nobody could tell "the register has never heard of either of these
+        # people" from "we hold one of them and lost the row anyway". These two
+        # now split it, and the second is the one that was costing readers a
+        # registered contender's own result.
+        "mixed_pairings": mixed_pairings,
         "winner_not_registered": winner_mismatch,
         # How many of `matches` carry a pre-match probability (UX-P146). The
         # section prints this ratio: a prior shown on 12 rows and absent on 64

@@ -589,7 +589,12 @@ export default function TournamentResults({
      the same shape as the three above — a coverage qualifier on a total — and
      it now takes the same treatment: `data-population-note`. Nothing else about
      it changes, and `resultsPopulationNote` stays exported and unit-tested for
-     exactly the reason the KEEP THESE POPULATED paragraph gives. */
+     exactly the reason the KEEP THESE POPULATED paragraph gives.
+
+     ── #4280 ADDENDUM: `data-mixed-pairings` joins them. `unregistered_pairs`
+     used to carry two populations under one name; the half-pinned rows are now
+     published, so the attribute pair says which is which. An attribute and not
+     a sentence, for the reason this whole paragraph exists. */
   return (
     <section
       data-testid="tournament-results"
@@ -604,6 +609,7 @@ export default function TournamentResults({
       data-completion={completion ?? undefined}
       data-population-note={population ?? undefined}
       data-unregistered-pairs={results?.unregistered_pairs ?? undefined}
+      data-mixed-pairings={results?.mixed_pairings ?? undefined}
     >
       <h2 className="mb-2 mt-6 text-xs font-bold uppercase tracking-[0.07em] text-text-muted">
         Finished
