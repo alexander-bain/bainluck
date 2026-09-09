@@ -4,6 +4,7 @@ import { useState } from "react";
 import { trackEvent } from "@/lib/analytics";
 import { getDiscoverItemAnalytics, recordDiscoverInteraction, sendDiscoverInteraction } from "@/lib/discoverInteractions";
 import type { FeedItem, FeedFuturesData } from "@/lib/types";
+import { BundleActionBar } from "./BundleActionBar";
 import { getCat } from "./constants";
 import { FuturesCompactRow } from "./FuturesCard";
 
@@ -104,6 +105,18 @@ export function GroupCard({ items, title, sharedQuestion, positionIndex }: Group
           Show {rest.length} more
         </button>
       )}
+
+      {/* #4428 — the same footer the theme sibling grows, from the same component.
+          This card renders NO member card in either state (every row is a
+          `FuturesCompactRow`), so before this it had no action bar anywhere at
+          all, expanded or not. Wiring one sibling and not the other is the
+          failure #4425 was: four branches, three linked. */}
+      <BundleActionBar
+        items={items}
+        title={title}
+        sharedQuestion={sharedQuestion}
+        positionIndex={positionIndex}
+      />
     </div>
   );
 }

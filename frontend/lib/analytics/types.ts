@@ -653,6 +653,18 @@ export interface FeedCardActionParams {
   personalized?: boolean;
   surface: 'discover' | 'discover_guess';
   /**
+   * #4428 — set only by a BUNDLE's own action bar (`BundleActionBar`), never by
+   * a member's card. That is the whole reason they are here: `FuturesCard` logs
+   * `feed_card_action` for the members inside a bundle too, so without a marker
+   * "did anyone use the group's Share?" is unanswerable.
+   *
+   * Both keys are already in `analytics/sanitize.ts`'s `ALLOWED_PARAM_KEYS`
+   * (`theme_bundle_expand` sends them), so they reach GA4. A new key would have
+   * been stripped at that boundary in silence — L2-217's failure mode.
+   */
+  story_key?: string;
+  member_count?: number;
+  /**
    * Market shape (Queue 310) — makes "do quantity ladders out-tap fields?"
    * answerable, which needs the shape on BOTH the tap and the impression.
    *
