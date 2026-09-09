@@ -629,12 +629,6 @@ private let sourceColors: [String: Color] = [
     "kalshi": Color.green,
     "odds_api": Color(white: 0.6),
 ]
-private let sourceLabels: [String: String] = [
-    "odds_api": "Sportsbooks",
-    "kalshi": "Kalshi",
-    "polymarket": "Polymarket",
-]
-
 /// Merged view of the same outcome across sources.
 private struct MergedTeamFuture: Identifiable {
     var primary: TeamFutureItem
@@ -1210,8 +1204,8 @@ private struct MyTeamFuturesCard: View {
                     Text("\(count) sources")
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
-                } else if let source = futures.source {
-                    Text(source.capitalized)
+                } else if let source = SourceLabels.label(for: futures.source) {
+                    Text(source)
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                 }

@@ -381,14 +381,7 @@ private struct FuturesBrowseOutcomeRow: View {
 private struct FuturesSourceBadge: View {
     let source: String
 
-    private var label: String {
-        switch source {
-        case "polymarket": return "Polymarket"
-        case "kalshi": return "Kalshi"
-        case "odds_api": return "Sportsbooks"
-        default: return source.capitalized
-        }
-    }
+    private var label: String? { SourceLabels.label(for: source) }
 
     private var color: Color {
         switch source {
@@ -400,13 +393,15 @@ private struct FuturesSourceBadge: View {
     }
 
     var body: some View {
-        Text(label)
-            .font(.system(size: 10, weight: .semibold, design: .rounded))
-            .foregroundStyle(color)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 2)
-            .background(color.opacity(0.12))
-            .clipShape(Capsule())
+        if let label {
+            Text(label)
+                .font(.system(size: 10, weight: .semibold, design: .rounded))
+                .foregroundStyle(color)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 2)
+                .background(color.opacity(0.12))
+                .clipShape(Capsule())
+        }
     }
 }
 

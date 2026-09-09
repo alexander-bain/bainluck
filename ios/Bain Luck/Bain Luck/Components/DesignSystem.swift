@@ -156,29 +156,36 @@ struct DeltaBadge: View {
 struct SourceChip: View {
     let source: String
 
-    private var config: (color: Color, label: String, bg: Color) {
+    /// nil when the app cannot name the source — the chip renders nothing rather
+    /// than title-casing a raw key onto the screen (#4135). "cross"/"merged" are
+    /// this chip's own pseudo-sources for the comparison surfaces, not market
+    /// sources, so they stay local to it.
+    private var config: (color: Color, label: String, bg: Color)? {
         switch source.lowercased() {
         case "kalshi": return (DS.kalshiGreen, "Kalshi", DS.kalshiGreen.opacity(0.08))
         case "polymarket": return (DS.blue, "Polymarket", DS.blue.opacity(0.08))
         case "cross", "merged": return (DS.textSecondary, "Cross-Source", DS.trackBg)
-        default: return (DS.textMuted, source.capitalized, DS.trackBg)
+        default:
+            guard let label = SourceLabels.label(for: source.lowercased()) else { return nil }
+            return (DS.textMuted, label, DS.trackBg)
         }
     }
 
     var body: some View {
-        let c = config
-        HStack(spacing: 5) {
-            Circle()
-                .fill(c.color)
-                .frame(width: 5, height: 5)
-            Text(c.label)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(c.color == DS.textSecondary ? DS.textPrimary : c.color)
+        if let c = config {
+            HStack(spacing: 5) {
+                Circle()
+                    .fill(c.color)
+                    .frame(width: 5, height: 5)
+                Text(c.label)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(c.color == DS.textSecondary ? DS.textPrimary : c.color)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(c.bg)
+            .clipShape(Capsule())
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(c.bg)
-        .clipShape(Capsule())
     }
 }
 
