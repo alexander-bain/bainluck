@@ -30,7 +30,7 @@ final class TournamentHubRenderSmokeTests: XCTestCase {
             .padding(16)
             .frame(width: 390)
 
-        let renderer = ImageRenderer(content: surface)
+        let renderer = rendererForMeasurement(surface)
         renderer.scale = scale
         let image = try XCTUnwrap(renderer.uiImage, "\(name) produced no raster")
         XCTAssertGreaterThan(image.size.width, 0)

@@ -37,7 +37,7 @@ final class TournamentCardRenderSmokeTests: XCTestCase {
         )
         .frame(width: 360)
 
-        let renderer = ImageRenderer(content: card)
+        let renderer = rendererForMeasurement(card)
         renderer.scale = 2
         let image = try XCTUnwrap(renderer.uiImage, "\(name) produced no raster")
         XCTAssertGreaterThan(image.size.width, 0)

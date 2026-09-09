@@ -79,7 +79,7 @@ final class OddsChartNoReadingsTests: XCTestCase {
         )
         .frame(width: 390)
 
-        let renderer = ImageRenderer(content: view)
+        let renderer = rendererForMeasurement(view)
         renderer.scale = 3
         let image = try XCTUnwrap(renderer.uiImage, "\(name) produced no raster")
         let png = try XCTUnwrap(image.pngData(), "\(name) produced no PNG data")
@@ -101,7 +101,7 @@ final class OddsChartNoReadingsTests: XCTestCase {
             preloadedHistory: payload
         )
         .frame(width: 390)
-        let renderer = ImageRenderer(content: view)
+        let renderer = rendererForMeasurement(view)
         renderer.scale = 3
         let image = try XCTUnwrap(renderer.uiImage, "\(name) produced no raster")
         return image.size.height

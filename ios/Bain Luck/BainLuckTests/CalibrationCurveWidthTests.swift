@@ -40,7 +40,7 @@ final class CalibrationCurveWidthTests: XCTestCase {
     }
 
     private func raster(_ view: some View, name: String) throws -> (Data, CGSize) {
-        let renderer = ImageRenderer(content: view)
+        let renderer = rendererForMeasurement(view)
         renderer.scale = 2
         let image = try XCTUnwrap(renderer.uiImage, "\(name) produced no raster")
         let png = try XCTUnwrap(image.pngData(), "\(name) produced no PNG data")
@@ -57,7 +57,7 @@ final class CalibrationCurveWidthTests: XCTestCase {
     /// The defect, measured: the section must not be wider than the card it is in.
     func testTheCurveSectionFitsTheCardWidth() throws {
         let vm = try model()
-        let host = UIHostingController(rootView: AnyView(section(vm)))
+        let host = hostForMeasurement(AnyView(section(vm)))
         let fitted = host.sizeThatFits(in: CGSize(width: Self.cardWidth,
                                                   height: .greatestFiniteMagnitude))
         print("L2-238 curve section fitted size: \(fitted) (card width \(Self.cardWidth))")
@@ -72,7 +72,7 @@ final class CalibrationCurveWidthTests: XCTestCase {
     /// plus a multi-line subtitle proves it did.
     func testTheSubtitleWrapsInsteadOfTruncating() throws {
         let vm = try model()
-        let host = UIHostingController(rootView: AnyView(section(vm)))
+        let host = hostForMeasurement(AnyView(section(vm)))
         let fitted = host.sizeThatFits(in: CGSize(width: Self.cardWidth,
                                                   height: .greatestFiniteMagnitude))
 
@@ -139,7 +139,7 @@ final class CalibrationCurveWidthTests: XCTestCase {
         XCTAssertFalse(vm.includeThin, "the cohort filter default moved")
         // Chart geometry: the section's height is chart(300) + chrome, so a
         // changed chart height would move it out of this window.
-        let host = UIHostingController(rootView: AnyView(section(vm)))
+        let host = hostForMeasurement(AnyView(section(vm)))
         let fitted = host.sizeThatFits(in: CGSize(width: Self.cardWidth,
                                                   height: .greatestFiniteMagnitude))
         XCTAssertGreaterThan(fitted.height, 300, "the 300pt chart is gone")

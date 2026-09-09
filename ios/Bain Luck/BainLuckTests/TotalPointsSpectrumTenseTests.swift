@@ -341,7 +341,7 @@ final class TotalPointsSpectrumTenseTests: XCTestCase {
 
     @MainActor
     private func naturalWidth(of string: String, font: Font) -> CGFloat {
-        let host = UIHostingController(rootView: Text(string).font(font).lineLimit(1))
+        let host = hostForMeasurement(Text(string).font(font).lineLimit(1))
         host.view.setNeedsLayout()
         host.view.layoutIfNeeded()
         return host.sizeThatFits(

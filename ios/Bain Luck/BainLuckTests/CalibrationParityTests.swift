@@ -269,7 +269,7 @@ final class CalibrationParityTests: XCTestCase {
         XCTAssertFalse(vm.isIncompatible, "q267 is in the shipped compatible set, so the curve must render")
 
         let view = CalibrationSurfaceView(viewModel: vm, scrolls: false).frame(width: 390)
-        let renderer = ImageRenderer(content: view)
+        let renderer = rendererForMeasurement(view)
         renderer.scale = 2
         let image = try XCTUnwrap(renderer.uiImage, "the production payload produced no raster")
         XCTAssertGreaterThan(image.size.width, 0)

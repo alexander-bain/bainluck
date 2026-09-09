@@ -24,7 +24,7 @@ final class NumericSuffixRenderTests: XCTestCase {
     }
 
     private func rasterize<V: View>(_ view: V, name: String) throws -> Data {
-        let renderer = ImageRenderer(content: view.frame(width: 360))
+        let renderer = rendererForMeasurement(view.frame(width: 360))
         renderer.scale = 2
         let image = try XCTUnwrap(renderer.uiImage, "\(name) produced no raster")
         XCTAssertGreaterThan(image.size.width, 0)
