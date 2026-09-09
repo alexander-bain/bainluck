@@ -48,11 +48,13 @@ import {
   buildProviderPanels,
   providerKpiDetail,
   shapeBreakdownNote,
+  shapeBreakdownProviders,
 } from "@/lib/calibrationProviderPanels";
 // UX-P128: which Source Comparison rows are measurements, in what order, and
 // the sentence By Source owes for the ones the cohort emptied.
 import {
   orderSourceRows,
+  sourceRowsExcludedFromRollup,
   withheldSourcesNote,
 } from "@/lib/calibrationSourceRows";
 // CAL-P043 (#1643): the page's bucket math and its parity record live in one
@@ -1325,17 +1327,34 @@ export default function CalibrationPage() {
               `=== false`. The `null` rows — sportsbook lines, where the test
               does not apply — were named nowhere, so the two counts silently
               fell 40,075 short of the population this page claims. */}
-          </details>
 
-          {/* DELIBERATELY OUTSIDE the disclosure above, and this is the one
-              judgment call in item (b). Alex asked for the redundant COHORT
-              CHART to be folded away; this note is not that chart, it is the
-              page's population arithmetic — the only place a reader can check
-              that the parts add up (L2-236's fix for a real 40,075-row
-              shortfall). Folding it would also have hidden it from the browser
-              rail, whose strongest claim on this page reads it: `innerText`
-              does not return a closed `<details>`, so the fold would have
-              turned a rendered proof into a silent one. */}
+          {/* #4340 / notice 34 — NOW INSIDE THE FOLD, and the reason the old
+              comment gave for keeping it out no longer holds.
+
+              It used to sit outside this `<details>`, deliberately, on the
+              argument that `innerText` does not return a closed disclosure and
+              folding it would hide the page's population arithmetic from the
+              browser rail. That argument made a reader carry four lines of
+              coverage arithmetic so a probe could read it — exactly the shape
+              notice 34's failing-self-audit clause names, and its remedy is
+              that the NUMBERS travel as data, not as prose.
+
+              They already do, on elements the rail already reads:
+
+                moved      = [data-testid=calibration-cohort-toggle]     data-moved-n
+                sportsbook = [data-testid=calibration-cohort-toggle]     data-not-applicable-n
+                untraded   = [data-testid=calibration-cohort-toggle]     data-unchanged-n
+                traded     = moved + sportsbook  ( = data-cohort-n on the default view)
+                total      = [data-testid=calibration-population-count]  data-full-n
+
+              So no attribute was added: a second copy of a count is a drift
+              risk, and the rail's `partition.sums_to_population` +
+              `partition.cohort_is_moved_plus_not_applicable` claims already
+              assert the same chain the sentence spells out. `cohort-copy.spec`
+              reads those instead of this innerText.
+
+              L2-236's protection is unchanged — the parts still add up and a
+              reader who wants to check them is one click away. */}
           {cohort.partitionNote && (
             <p
               className="text-xs text-text-muted mt-3 text-center"
@@ -1344,6 +1363,7 @@ export default function CalibrationPage() {
               {cohort.partitionNote}
             </p>
           )}
+          </details>
         </section>
       ) : (
         <section className="bg-surface-card rounded-xl p-5 border border-surface-border">
@@ -1411,38 +1431,79 @@ export default function CalibrationPage() {
           reasoning is quoted in `lib/calibrationProviderPanels.ts` (ruling 055:
           a resolution that changes a decision is a decision, and it is recorded
           where the next reader will look, not deleted). */}
-      <section id="by-source" className="bg-surface-card rounded-xl p-5 border border-surface-border scroll-mt-4">
+      {/* #4340 / notice 34: the three facts the head used to spell out in prose
+          now travel as DATA on the section, from the SAME derivations the
+          folded sentences are built from — `shapeBreakdownProviders` and
+          `sourceRowsExcludedFromRollup`, not a second filter that has to be
+          kept in step. Empty string = "none", which is a value; the attribute
+          is always present, so a probe can tell "nothing withheld" from "the
+          section did not render" (gotcha #53). */}
+      <section
+        id="by-source"
+        className="bg-surface-card rounded-xl p-5 border border-surface-border scroll-mt-4"
+        data-testid="calibration-by-source-section"
+        data-thin-floor={MIN_CHART_BUCKET_N}
+        data-shape-breakdown-providers={
+          shapeBreakdownProviders(providerPanels).map(p => p.label).join("|")
+        }
+        data-withheld-sources={
+          sourceRowsExcludedFromRollup(sourceRows).map(r => r.label).join("|")
+        }
+      >
         <h2 className="text-title-3 text-text-primary mb-1">By Source<CohortTag cohort={cohort} /></h2>
-        <p className="text-xs text-text-muted mb-4">
-          One panel per data provider &mdash; the same three rows as Source Comparison above &mdash;
-          all on the same 0&ndash;100% axis so the curves are directly comparable, and each panel
-          states its own sample size, because the providers differ by more than 28x in how much of
-          the curve they carry. Error bars are the 95% CI (wider = less certain). Every bucket is
-          shown &mdash; well-sampled buckets are solid dots, small-sample ones
-          (&lt;{MIN_CHART_BUCKET_N.toLocaleString()} outcomes) are faded hollow dots with wide error
-          bars, so you can see exactly how much data stands behind each point rather than having any
-          hidden. Click any point for example outcomes, or select a provider tab for the full-width
-          view.
-        </p>
-        {/* Derived from the built panels, never from a condition that implies
-            them — UX-P075's PROXY_FOOTNOTE lesson. If no provider has more than
-            one shape, there is no disclosure and this says nothing.
+        {/* #4340 / notice 34 — ONE SHORT CAPTION, then the charts.
 
-            ⚠️ Deliberately OUTSIDE the disclosure it describes: `innerText` does
-            not return a closed `<details>`, so a sentence folded into the thing
-            it announces is invisible to the browser rail and to a reader who
-            never opens it. UX-P075 nearly hid this page's population arithmetic
-            the same way. */}
-        {providerShapeNote && (
-          <p className="text-xs text-text-muted mb-4" data-testid="calibration-shape-annex-note">
-            {providerShapeNote}
-          </p>
-        )}
-        {withheldNote && (
-          <p className="text-xs text-text-muted mb-4" data-testid="calibration-withheld-sources-note">
-            {withheldNote}
-          </p>
-        )}
+            Until this change the reader met three consecutive grey paragraphs,
+            ~30 lines at 390px, before a single curve was drawn: the 28x
+            sample-spread justification, the error-bar and hollow-dot key, the
+            clause "so you can see exactly how much data stands behind each
+            point rather than having any hidden" (written to answer a reviewer,
+            not a reader), the shape-annex announcement, and the sentence about
+            a provider whose panel is not on the page at all.
+
+            None of it was wrong. All of it was method, limitation and coverage
+            — the three things notice 34 takes off a reader's screen. The
+            caption below says what the card IS; everything else moved one click
+            away into `calibration-panels-key`, which is the same fold idiom
+            "The overall split" and "Show the math" already use on this page. */}
+        <p className="text-xs text-text-muted mb-3" data-testid="calibration-by-source-caption">
+          One panel per data provider, all on the same 0&ndash;100% axis. Tap any point for example
+          outcomes, or a provider tab for the full-width view.
+        </p>
+        {/* The drawing key and the two derived notes. Folded, and the numbers a
+            probe needs travel as data on the section above (`data-thin-floor`,
+            `data-shape-breakdown-providers`, `data-withheld-sources`) — notice
+            34's failing-self-audit remedy, so nothing that was measurable
+            becomes unmeasurable by being folded.
+
+            The notes are still DERIVED from the built panels and rows, never
+            from a condition that implies them (UX-P075's PROXY_FOOTNOTE
+            lesson): when no provider has more than one shape, and when nothing
+            is withheld, this fold holds the key alone. */}
+        <details className="mb-4 group" data-testid="calibration-panels-key">
+          <summary className="cursor-pointer text-xs text-accent-brand hover:underline list-none flex items-center gap-2">
+            <span className="text-text-muted group-open:rotate-90 transition-transform">&#9654;</span>
+            How these panels are drawn
+          </summary>
+          <div className="mt-2 space-y-2">
+            <p className="text-xs text-text-muted" data-testid="calibration-panels-key-note">
+              Every bucket is shown. Solid dots are well-sampled; faded hollow dots are under{" "}
+              {MIN_CHART_BUCKET_N.toLocaleString()} outcomes. Error bars are the 95% CI &mdash;
+              wider means less certain. Each panel states its own sample size, and the providers
+              differ by more than 28x in how much of the curve they carry.
+            </p>
+            {providerShapeNote && (
+              <p className="text-xs text-text-muted" data-testid="calibration-shape-annex-note">
+                {providerShapeNote}
+              </p>
+            )}
+            {withheldNote && (
+              <p className="text-xs text-text-muted" data-testid="calibration-withheld-sources-note">
+                {withheldNote}
+              </p>
+            )}
+          </div>
+        </details>
         <div className="flex flex-wrap gap-2 mb-4">
           <TabButton label="All" active={!activeProvider} onClick={() => { setActiveProvider(null); setDrillIn(null); }} />
           {providerPanelData.map(p => (

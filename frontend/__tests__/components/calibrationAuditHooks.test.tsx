@@ -117,6 +117,13 @@ const SINGLETON_HOOKS = [
   "calibration-shape-annex-note",
   "calibration-buckets-in-band-note",
   "calibration-price-basis-note",
+  // #4340 / notice 34 — By Source's head is now ONE caption plus one fold, and
+  // the three facts its three paragraphs used to spell out travel as data on
+  // the section. All four are anchors a later reword could delete silently.
+  "calibration-by-source-section",
+  "calibration-by-source-caption",
+  "calibration-panels-key",
+  "calibration-panels-key-note",
 ] as const;
 
 // UX-P078 (Alex ruling 2026-08-14(b) item 3): By Source collapsed to one panel
@@ -349,21 +356,58 @@ describe("the hooks carry the machine-readable state the rail grades on", () => 
     expect(block).toContain("data-ece-basis={p.eceBasis}");
   });
 
-  test("the shape breakdown is a DISCLOSURE, and its announcement sits outside it", () => {
-    // UX-P075's near-miss, guarded: `innerText` does not return a closed
-    // `<details>`, so a sentence folded into the thing it announces is
-    // invisible to the browser rail AND to a reader who never opens it.
-    // `calibration-shape-annex-note` must therefore be declared BEFORE the
-    // `<details>` that contains the shape panels.
-    const note = SOURCE.indexOf('data-testid="calibration-shape-annex-note"');
+  test("the shape breakdown is a DISCLOSURE, and the shape panels are inside it", () => {
+    // The shape panels must be INSIDE the breakdown — that is what "the annex
+    // moved" means. If they drift back out, By Source is five panels again.
     const details = SOURCE.indexOf('data-testid="calibration-shape-breakdown"');
-    expect(note).toBeGreaterThan(-1);
     expect(details).toBeGreaterThan(-1);
-    expect(note).toBeLessThan(details);
-    // And the shape panels must be INSIDE it — that is what "the annex moved"
-    // means. If they drift back out, By Source is five panels again.
     const shapePanel = SOURCE.indexOf('data-testid="calibration-source-panel"');
     expect(shapePanel).toBeGreaterThan(details);
+  });
+
+  test("the shape announcement is folded, and what it announces is not", () => {
+    // #4340 / notice 34 REVERSES half of the rule this test used to carry.
+    //
+    // It used to require `calibration-shape-annex-note` to sit OUTSIDE the
+    // disclosure, because `innerText` does not return a closed `<details>` and
+    // a folded sentence is invisible to the browser rail. True — and the price
+    // was three grey paragraphs standing between a phone reader and the first
+    // curve. Notice 34's failing-self-audit clause settles the trade the other
+    // way: the prose folds, and the fact it carried travels as data.
+    //
+    // What the reader keeps is the AFFORDANCE, which was never the sentence:
+    // `<summary>Break out the shapes (n)</summary>` is always visible inside
+    // the provider panel, so nothing announced by the folded note is itself
+    // hidden. A note announcing a control the reader can already see is the
+    // definition of prose that earns nothing.
+    const note = SOURCE.indexOf('data-testid="calibration-shape-annex-note"');
+    const key = SOURCE.indexOf('data-testid="calibration-panels-key"');
+    const keyEnd = SOURCE.indexOf("</details>", key);
+    expect(key).toBeGreaterThan(-1);
+    expect(keyEnd).toBeGreaterThan(key);
+    expect(note).toBeGreaterThan(key);
+    expect(note).toBeLessThan(keyEnd);
+    // The affordance itself is NOT folded away with the sentence.
+    expect(SOURCE).toContain("Break out the shapes (");
+  });
+
+  test("By Source publishes as data every fact its head stopped spelling out", () => {
+    // The remedy notice 34 names, asserted as a contract rather than trusted.
+    // Each of these replaced a clause a reader used to be handed:
+    //   data-thin-floor                → "small-sample ones (<1,000 outcomes)"
+    //   data-shape-breakdown-providers → "Sportsbooks (Odds API) publishes …"
+    //   data-withheld-sources          → "DataGolf has no outcomes in this …"
+    const i = SOURCE.indexOf('data-testid="calibration-by-source-section"');
+    expect(i).toBeGreaterThan(-1);
+    const block = SOURCE.slice(i, i + 600);
+    expect(block).toContain("data-thin-floor={MIN_CHART_BUCKET_N}");
+    expect(block).toContain("data-shape-breakdown-providers=");
+    expect(block).toContain("data-withheld-sources=");
+    // DERIVED from the same calls the folded sentences are built from. A second
+    // filter here and the attribute could name a provider the sentence does
+    // not — the drift `shapeBreakdownNote`'s own header was written about.
+    expect(block).toContain("shapeBreakdownProviders(providerPanels)");
+    expect(block).toContain("sourceRowsExcludedFromRollup(sourceRows)");
   });
 
   test("the matched table's thin floor is the SAME number its caption cites", () => {

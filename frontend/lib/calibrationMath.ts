@@ -370,8 +370,16 @@ export function compareMatchedBuckets(
     `${widest.label} band, where price-moved outcomes run ${signedPp(wm.errorPp)}pp against ` +
     `${signedPp(wu.errorPp)}pp for price-unchanged — a ` +
     `${Math.abs(widest.gapPp as number).toFixed(1)}pp difference on ` +
-    `${(wm.n + wu.n).toLocaleString()} outcomes. Comparing inside a bucket holds the ` +
-    `predicted-probability mix fixed, which the two headline figures above cannot do.`;
+    `${(wm.n + wu.n).toLocaleString()} outcomes.`;
+  // #4340 / notice 34. This used to close with "Comparing inside a bucket holds
+  // the predicted-probability mix fixed, which the two headline figures above
+  // cannot do." — a method note, written to pre-empt a reviewer's mix-shift
+  // objection, printed to every reader of the page. The objection it answers is
+  // real and the answer is the WHOLE REASON this function exists, so it did not
+  // disappear: it is the header comment on `compareMatchedBuckets` and the
+  // subject of the test "it disagrees with the aggregate reading, which is the
+  // reason it exists". A reader gets the observation; the defence of the method
+  // belongs where a reviewer looks.
 
   return { rows, widest, comparedN, notApplicableN, closeCount, sentence };
 }
