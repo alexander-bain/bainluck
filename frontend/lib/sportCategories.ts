@@ -858,21 +858,50 @@ export function servedSportNameIsRaw(
 }
 
 /**
- * The label a reader should see for a sport row. #4350 / #4358.
+ * True when `LEAGUE_DISPLAY` names this league by hand.
  *
- * Neither source is right on its own, and picking one is how #4358 happened:
- * #4247 routed every search chip through `getLeagueDisplay`, which fixed the
- * 15 raw rows and re-cased "Dutch Eredivisie" into "NETHERLANDS EREDIVISIE".
- * The map is a KEY parser — it has no word for the 161 brands
- * (`soccer_germany_liga3` -> "GERMANY LIGA3", not "3. Liga - Germany";
- * `aussierules_aflw` -> "AFLW", not "AFL Women's"). The server has no word for
- * the 15 buckets. So: prefer what the server called it, and fall back to the
- * map only when the server's answer IS the key.
+ * The distinction matters because `getLeagueDisplay` answers for every key it
+ * is ever given: a curated entry when it has one, a key parse when it does not.
+ * Both come back as a plain string, so a caller cannot tell "Wimbledon" (a
+ * person wrote that) from "GERMANY LIGA3" (a `split("_")` produced that)
+ * without asking the map directly.
+ */
+export function hasCuratedLeagueName(sportKey: string): boolean {
+  return Object.prototype.hasOwnProperty.call(LEAGUE_DISPLAY, sportKey);
+}
+
+/**
+ * The label a reader should see for a sport row. #4350 / #4358 / #4381.
+ *
+ * THREE sources, in this order, because no two of them agree and each is the
+ * right answer somewhere:
+ *
+ *  1. **The curated map**, when it names this key by hand. This is the word a
+ *     reader uses: "US Open", "Wimbledon", "Stanley Cup", "March Madness".
+ *  2. **The served name**, when it is a real brand. The map has no word for
+ *     114 of the 176 rows (`soccer_germany_liga3` -> "GERMANY LIGA3", not
+ *     "3. Liga - Germany"; `aussierules_aflw` -> "AFLW", not "AFL Women's").
+ *  3. **The key parse**, for the 15 rows that store their own key as their
+ *     name ("mma_other" -> "Other MMA"). The server has no word for those.
+ *
+ * #4381 is why (1) exists. The first version of this function had only (2) and
+ * (3) — "prefer what the server called it" — which is right for the 114 and
+ * WRONG for the 17 the map names by hand, because on those the server's name
+ * is a catalogue entry and the map's is English: "ATP US Open" over "US Open",
+ * "NHL Championship Winner" over "Stanley Cup", "US Presidential Elections
+ * Winner" over "US Election". It shipped in #4362 and put "ATP US Open" in a
+ * filter chip directly above cards reading "US OPEN", during the US Open.
+ *
+ * So the rule is not "trust the server" or "trust the map" — it is that a
+ * hand-written label beats a generated one, whichever side generated it.
  */
 export function getSportLabel(
   sportKey: string,
   servedName?: string | null,
 ): string {
+  if (hasCuratedLeagueName(sportKey)) {
+    return LEAGUE_DISPLAY[sportKey];
+  }
   return servedSportNameIsRaw(sportKey, servedName)
     ? getLeagueDisplay(sportKey)
     : (servedName as string).trim();

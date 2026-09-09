@@ -23,6 +23,7 @@ import {
   getLeagueTier,
   getLeagueDisplay,
   getSportLabel,
+  hasCuratedLeagueName,
   getSportGroupLabel,
   servedSportNameIsRaw,
   getLeagueDisplayWithEmoji,
@@ -527,6 +528,133 @@ describe('getLeagueDisplay', () => {
       expect(src).toContain('getSportLabel(sportKey, sport?.name)'); // survival
       expect(src).not.toContain('getLeagueDisplay(sportKey)'); // the blind swap
       expect(src).not.toContain('{sport?.name ||');
+    });
+  });
+
+  /**
+   * #4381 — A HAND-WRITTEN LABEL BEATS A GENERATED ONE, WHICHEVER SIDE WROTE IT.
+   *
+   * #4358's fix said "prefer what the server called it". That is right for the
+   * 117 rows the map has no word for and wrong for the 44 it names by hand,
+   * because on those the server's `name` is a catalogue entry and the map's is
+   * English. Measured against `/api/sports` (176 rows, production, 2026-09-09)
+   * the first version overrode 17 curated labels, including every tennis major.
+   *
+   * It shipped in #4362 and was visible within the hour on /search?q=Alcaraz:
+   * a filter chip reading "ATP US Open" directly above game cards reading
+   * "US OPEN" — one screen, one tournament, two names, during the US Open.
+   */
+  describe('#4381 a curated label outranks the served name', () => {
+    /**
+     * [key, served name, the word a reader should see]. Every row here is a
+     * real production pair that the served-name-first rule got wrong. The
+     * finals are the ones that read worst: nobody calls it the "NHL
+     * Championship Winner".
+     */
+    const CURATED_OVER_SERVED: Array<[string, string, string]> = [
+      ['tennis_atp_us_open', 'ATP US Open', 'US Open'],
+      ['tennis_atp_wimbledon', 'ATP Wimbledon', 'Wimbledon'],
+      ['tennis_atp_french_open', 'ATP French Open', 'French Open'],
+      ['basketball_euroleague', 'Basketball Euroleague', 'EuroLeague'],
+      ['icehockey_nhl_championship_winner', 'NHL Championship Winner', 'Stanley Cup'],
+      ['basketball_ncaab_championship_winner', 'NCAAB Championship Winner', 'March Madness'],
+      ['baseball_mlb_world_series_winner', 'MLB World Series Winner', 'World Series'],
+      ['golf_masters_tournament_winner', 'Masters Tournament Winner', 'Masters'],
+      ['politics_us_presidential_election_winner', 'US Presidential Elections Winner', 'US Election'],
+    ];
+
+    test.each(CURATED_OVER_SERVED)(
+      '%s ignores the served "%s" and prints "%s"',
+      (key, servedName, expected) => {
+        expect(getSportLabel(key, servedName)).toBe(expected);
+      }
+    );
+
+    /**
+     * The control. Every pair above must be one where the two sources actually
+     * DISAGREE — otherwise the block passes against the broken implementation
+     * too and guards nothing. This is the assertion that fails if someone
+     * reverts `getSportLabel` to server-first.
+     */
+    test('every pair genuinely disagrees, so the block can fail', () => {
+      for (const [key, servedName, expected] of CURATED_OVER_SERVED) {
+        expect(servedName).not.toBe(expected);
+        expect(hasCuratedLeagueName(key)).toBe(true);
+        // What the broken rule returned. If this ever equals `expected` the
+        // pair has stopped being a specimen and must be replaced, not deleted.
+        expect(servedSportNameIsRaw(key, servedName)).toBe(false);
+      }
+    });
+
+    /**
+     * Survival, both directions. #4381 must not undo #4358 or #4247 — a repair
+     * that breaks the thing it was built on is not a repair.
+     */
+    test('the two earlier ships still work', () => {
+      // #4358: branded rows the map has no word for keep the served brand.
+      expect(hasCuratedLeagueName('soccer_netherlands_eredivisie')).toBe(false);
+      expect(getSportLabel('soccer_netherlands_eredivisie', 'Dutch Eredivisie')).toBe('Dutch Eredivisie');
+      expect(getSportLabel('soccer_australia_aleague', 'A-League')).toBe('A-League');
+      // #4247: raw rows still reach the map's family word.
+      expect(getSportLabel('soccer_other', 'soccer_other')).toBe('Other Soccer');
+      expect(getSportLabel('mma_other', 'mma_other')).toBe('Other MMA');
+    });
+
+    /**
+     * A curated key must win even when the server has nothing to say, which is
+     * the path an older or cached payload takes.
+     */
+    test('a curated label survives a missing served name', () => {
+      expect(getSportLabel('tennis_atp_us_open', null)).toBe('US Open');
+      expect(getSportLabel('tennis_atp_us_open', undefined)).toBe('US Open');
+      expect(getSportLabel('tennis_atp_us_open', '  ')).toBe('US Open');
+    });
+
+    /**
+     * THE ONE THING THIS REPAIR MAKES WORSE, PINNED SO IT IS NOT REDISCOVERED.
+     *
+     * Curated labels are shorter than served ones, so preferring them can make
+     * two keys collapse to one word. Measured across all 176 production rows:
+     *
+     *   map only (master until 08:40 today)  2 collisions
+     *   served-first (#4362, briefly live)   0
+     *   curated-first (this fix)             1
+     *
+     * The one is `tennis_atp_us_open` and `golf_us_open_winner`, both "US Open"
+     * — which is what master printed for months before #4362 briefly masked it,
+     * so this restores the old behaviour rather than inventing a new fault. The
+     * repair also FIXES the other one: soccer and handball both printed
+     * "GERMANY BUNDESLIGA" and now take their distinct served names.
+     *
+     * It is left alone deliberately. Renaming a curated label is a wording
+     * decision that changes every surface reading the map, which is not a
+     * regression repair's business (#4391 carries it). Both chips draw their
+     * own emoji, 🎾 and ⛳, so the search surface still distinguishes them.
+     */
+    test('the known "US Open" collision is exactly one pair, and no more', () => {
+      const collide = ['tennis_atp_us_open', 'golf_us_open_winner'];
+      const labels = collide.map((k) => getSportLabel(k, null));
+      expect(new Set(labels).size).toBe(1); // still colliding — stated, not hidden
+      expect(labels[0]).toBe('US Open');
+      // The pair this repair un-collides, and the assertion that fails if
+      // someone "simplifies" the rule back to map-first for everything.
+      expect(getSportLabel('soccer_germany_bundesliga', 'Bundesliga - Germany')).not.toBe(
+        getSportLabel('handball_germany_bundesliga', 'Handball-Bundesliga')
+      );
+    });
+
+    /**
+     * `hasCuratedLeagueName` asks the map, so it must not be fooled by keys
+     * inherited from Object.prototype — `getSportLabel('constructor', …)` would
+     * otherwise return a function and render as "[object Function]".
+     */
+    test('a prototype key is not mistaken for a curated entry', () => {
+      for (const key of ['constructor', 'toString', 'hasOwnProperty', '__proto__']) {
+        expect(hasCuratedLeagueName(key)).toBe(false);
+      }
+      expect(getSportLabel('constructor', 'Constructors Championship')).toBe(
+        'Constructors Championship'
+      );
     });
   });
 });
