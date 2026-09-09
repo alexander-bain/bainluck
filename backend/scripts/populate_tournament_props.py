@@ -272,25 +272,25 @@ CURATION: dict[str, dict] = {
 #: numbers do not sum to 100 and must never be normalised so they do (the same
 #: rule the cycling GC field carries).  The title is his, verbatim.
 #:
-#: THE HOOK KEEPS "TWO SEPARATE QUESTIONS", AND THAT IS A RULING, NOT AN
-#: OVERSIGHT (#4334).  The notice-34 sweep of 2026-09-09 removed three sibling
-#: hooks that described our market's shape, and by the letter of the phrase ban
-#: this one goes too.  It does not, because **ruling 143 clause 4** decided this
-#: exact sentence on the merits: the two legs are independent binaries that do
-#: not sum to 100, Alex's own title (*who* wins) reads as a race, and the
-#: ruling's words are that the hook is therefore *"load-bearing rather than
-#: decorative"*.  Alex's own enumeration in #4125 item 1 does not list it either.
+#: THIS CARD IS OUT OF THE #4334 SWEEP'S SCOPE, AND THAT IS THE WHOLE POINT.
+#: The notice-34 pass of 2026-09-09 removed three sibling hooks that described
+#: our market's shape.  This one reads the same way to notice 34 and the
+#: opposite way to **ruling 143 clause 4**, which decided this exact sentence on
+#: the merits — the two legs are independent binaries that do not sum to 100,
+#: Alex's own title (*who* wins) reads as a race, and the ruling's words are
+#: that the hook is *"load-bearing rather than decorative"*.  Alex's #4125 item
+#: 1 enumeration does not list it either.
 #:
-#: A later general notice does not silently overturn an earlier specific ruling
-#: on the same sentence — so the exemption is NAMED in
-#: `tournament_register.HOOK_BANS_EXEMPT_BY_RULING`, guarded as an exact set,
-#: and put to Alex as a lettered call rather than decided by a lane.
+#: A lane does not settle a conflict between two of Alex's own rules by picking
+#: one, in either direction.  So the sweep does not touch this card, the ban
+#: list does not carry its phrasing, and the call is with Alex — default
+#: Thu 2026-09-11 6pm PT, ux executing.
 FAMILY_CURATION: dict[str, dict] = {
     "{} grand slam wins in 2026": {
         "key": "second-major",
         "title": "Who wins a second major this year?",
-        # EXEMPT, BY RULING 143 CLAUSE 4 — not an oversight. See
-        # `HOOK_BANS_EXEMPT_BY_RULING`.
+        # UNTOUCHED BY THE #4334 SWEEP, ON PURPOSE — see the "separate
+        # questions" note in `MARKET_CONSTRUCTION_PHRASES`.
         "hook": (
             "Both already have one in 2026. These are two separate questions — "
             "they could both do it, or neither."
@@ -666,7 +666,7 @@ def main() -> int:
     construction = [
         (spec.get("key"), spec.get("hook"), phrase)
         for spec in list(curation.values()) + list(FAMILY_CURATION.values())
-        for phrase in [describes_our_market(spec.get("hook"), key=spec.get("key"))]
+        for phrase in [describes_our_market(spec.get("hook"))]
         if phrase
     ]
     if construction:

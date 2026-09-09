@@ -240,7 +240,18 @@ MARKET_CONSTRUCTION_PHRASES: tuple[str, ...] = (
     "the market asks",
     "this market asks",
     "the market is asking",
-    "separate questions",
+    # 🔴 "separate questions" IS DELIBERATELY ABSENT.  It is the phrasing on the
+    # `second-major` card, *"These are two separate questions — they could both
+    # do it, or neither."*, and it is the one hook this ban has NOT been ruled
+    # on: notice 34 reads it as construction, **ruling 143 clause 4** decided
+    # that exact sentence on the merits and calls it *"load-bearing rather than
+    # decorative"*, and Alex's own #4125 item 1 enumeration does not list it.
+    # A lane does not get to settle that by choosing which rule to hold, in
+    # either direction — so this ban covers the phrasings that have been ruled
+    # on, that card is untouched by the #4334 sweep, and the call is with Alex
+    # (default Thu 2026-09-11 6pm PT, ux executing).  Add this phrase the moment
+    # he rules; `test_the_unruled_phrasing_is_deliberately_out_of_the_ban`
+    # exists so the absence is a decision on the record and not an oversight.
     "separate markets",
     "one market for",
     "a single market",
@@ -257,37 +268,12 @@ MARKET_CONSTRUCTION_PHRASES: tuple[str, ...] = (
 )
 
 
-#: ═══ ONE HOOK IS EXEMPT, BY A RULING, AND THE EXEMPTION IS NAMED ═══
-#:
-#: ``second-major`` carries *"These are two separate questions — they could both
-#: do it, or neither."*, which the phrase ban above catches and which is
-#: nevertheless STAYING.  **Ruling 143 clause 4** decided this exact sentence on
-#: the merits: the card's two legs are independent binaries that must never be
-#: normalised to 100, Alex's own title (*who* wins) reads as a race, and the
-#: ruling's words are that the hook is *"load-bearing rather than decorative"*.
-#: Alex's enumeration in #4125 item 1 does not list it among the strings to
-#: remove either.
-#:
-#: 🔴 A LATER GENERAL NOTICE DOES NOT SILENTLY OVERTURN AN EARLIER SPECIFIC
-#: RULING on the same sentence.  Notice 34 and ruling 143 genuinely disagree
-#: here, so this is a lettered call for Alex, not a lane's to make — and until
-#: he makes it the disagreement is written down in the code rather than
-#: resolved by whichever rule the sweeper happened to be holding.  A silent
-#: hole in the predicate would have hidden exactly that.
-HOOK_BANS_EXEMPT_BY_RULING: dict[str, str] = {
-    "second-major": "ruling 143 clause 4 — the non-exclusivity is load-bearing",
-}
-
-
-def describes_our_market(hook: str | None, *, key: str | None = None) -> str | None:
+def describes_our_market(hook: str | None) -> str | None:
     """Return the offending phrase when a hook describes our market's shape.
 
-    ``None`` — the safe answer — for an absent hook, for every hook that talks
-    about the world (including one reporting what a market *says*), and for a
-    prop whose ``key`` a ruling has exempted.
+    ``None`` — the safe answer — for an absent hook and for every hook that
+    talks about the world, including one that reports what a market *says*.
     """
-    if key is not None and key in HOOK_BANS_EXEMPT_BY_RULING:
-        return None
     lowered = (hook or "").lower()
     return next((p for p in MARKET_CONSTRUCTION_PHRASES if p in lowered), None)
 

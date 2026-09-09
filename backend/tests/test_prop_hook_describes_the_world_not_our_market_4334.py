@@ -22,15 +22,20 @@ That is the grey text Alex named at 4pm on 2026-09-08 ("all the grey text is
 madness, and shouldn't be user-facing at all"), and notice 34 is the rule: a
 method note goes in the PR, the artifact, or a tooltip — never the page body.
 
-🔴 A FIFTH SENTENCE MATCHES THE BAN AND IS STAYING.  `second-major` reads
-*"Both already have one in 2026. These are two separate questions — they could
-both do it, or neither."*, and #4334 asked for the second clause to go.  It does
-not go: **ruling 143 clause 4** decided that exact sentence on the merits (two
-independent binaries that must not sum to 100, under a title Alex wrote as a
-race) and called the hook *"load-bearing rather than decorative"*, and Alex's
-own #4125 item 1 enumeration does not list it.  A later general notice does not
-silently overturn an earlier specific ruling, so the conflict is recorded as a
-NAMED exemption a test pins, and referred to Alex as a lettered call.
+🔴 A FIFTH HOOK READS THE SAME WAY AND IS NOT THIS SHIP'S TO TOUCH.
+`second-major` carries *"These are two separate questions — they could both do
+it, or neither."*  Notice 34 reads that as construction; **ruling 143 clause 4**
+decided that exact sentence on the merits (two independent binaries that must
+not sum to 100, under a title Alex wrote as a race) and calls it *"load-bearing
+rather than decorative"*; Alex's own #4125 item 1 enumeration does not list it.
+
+A lane does not settle a conflict between two of Alex's own rules by choosing
+which one to hold — **in either direction**.  So this sweep leaves that card
+exactly as it found it, the ban list does not carry its phrasing, and the call
+is with Alex (default Thu 2026-09-11 6pm PT, ux executing).  This file asserts
+nothing about whether that sentence should stay or go; the one thing it does
+assert is that its absence from the ban is a DECISION and not an oversight, so
+the next sweep finds the reason instead of the gap.
 
 🔴 THE BAN IS ON STRUCTURE, NOT ON THE WORD "MARKET", and that is the whole
 difficulty of the class.  What a market SAYS is legitimate reader content, and
@@ -54,7 +59,7 @@ from pathlib import Path
 import pytest
 
 from app.utils.tournament_register import (
-    HOOK_BANS_EXEMPT_BY_RULING,
+    MARKET_CONSTRUCTION_PHRASES,
     describes_our_market,
     load_register,
     us_open_2026_contract,
@@ -72,8 +77,6 @@ from scripts.populate_tournament_props import (
 SENTENCES_A_READER_SAW = (
     "The market asks about the American men as a group, not one at a time.",
     "One market for the whole American contingent, with a rung for one right through seven.",
-    "Both already have one in 2026. These are two separate questions — they could both do it, or neither.",
-    # ^ caught by the PHRASE, exempt by its prop KEY. Both halves are asserted.
     "She won here last year — and with the US Open the last major of 2026, this market is now exactly that question.",
 )
 
@@ -105,9 +108,9 @@ def _committed_props() -> list[dict]:
 
 def test_no_committed_hook_describes_our_market():
     offenders = [
-        (p.get("key"), p.get("hook"), describes_our_market(p.get("hook"), key=p.get("key")))
+        (p.get("key"), p.get("hook"), describes_our_market(p.get("hook")))
         for p in _committed_props()
-        if describes_our_market(p.get("hook"), key=p.get("key"))
+        if describes_our_market(p.get("hook"))
     ]
     assert offenders == [], (
         "a committed prop hook explains how the card is built, which notice 34 "
@@ -120,12 +123,12 @@ def test_the_curation_maps_the_script_writes_from_are_clean_too():
     offenders = [
         (spec.get("key"), spec.get("hook"))
         for spec in list(CURATION.values()) + list(FAMILY_CURATION.values())
-        if describes_our_market(spec.get("hook"), key=spec.get("key"))
+        if describes_our_market(spec.get("hook"))
     ]
     assert offenders == [], f"a curation map still carries a construction hook: {offenders}"
 
 
-def test_the_four_sentences_a_reader_saw_are_each_caught():
+def test_the_three_sentences_a_reader_saw_are_each_caught():
     """Red-first, against production text.
 
     Without this the ship's assertion could pass on a predicate that catches
@@ -210,33 +213,27 @@ def test_the_script_refuses_a_construction_hook_at_runtime(tmp_path, capsys, sen
     assert register_path.read_text() == committed
 
 
-# ── THE EXEMPTION, PINNED IN BOTH DIRECTIONS ────────────────────────────────
+# ── THE ONE THING LEFT UNSWEPT, AND WHY ────────────────────────────────────
 
 
-def test_exactly_one_hook_is_exempt_and_a_ruling_names_it():
-    """An exemption nobody can add quietly.
+def test_the_unruled_phrasing_is_deliberately_out_of_the_ban():
+    """An absence on the record, so the next sweep reads a reason not a gap.
 
-    Widening this set is the one way to reintroduce the class without any test
-    going red, so the set is asserted by value and each entry has to carry the
-    ruling it rests on.
+    `second-major`'s *"These are two separate questions …"* is the one hook two
+    of Alex's rules disagree about (notice 34 vs ruling 143 clause 4), and it
+    is with him as a lettered call.  Until he rules, the ban covers the
+    phrasings that HAVE been ruled on and this sweep leaves that card alone.
+
+    🔴 This test takes no side.  It does not assert the sentence should stay,
+    and it does not assert it should go — only that the ban's silence about it
+    is deliberate.  Add the phrase the moment Alex rules; deleting this test is
+    then the right move, and its failure message says so.
     """
-    assert set(HOOK_BANS_EXEMPT_BY_RULING) == {"second-major"}
-    assert "ruling 143" in HOOK_BANS_EXEMPT_BY_RULING["second-major"]
-
-
-def test_the_exempt_hook_is_caught_by_the_phrase_and_spared_only_by_its_key():
-    """The exemption is a decision, not a gap in the predicate.
-
-    If the phrase list ever stopped matching this sentence the exemption would
-    become invisible, and the next sweep would have nothing to read.
-    """
+    assert "separate questions" not in MARKET_CONSTRUCTION_PHRASES, (
+        "the ban now covers the second-major phrasing — if Alex has ruled it "
+        "out, sweep that card in the same change and delete this test; if he "
+        "has not, a lane has just settled a conflict between two of his rules"
+    )
+    # …and the sweep genuinely did not touch that card.
     prop = next(p for p in _committed_props() if p["key"] == "second-major")
-    assert describes_our_market(prop["hook"]) == "separate questions"
-    assert describes_our_market(prop["hook"], key="second-major") is None
-
-
-def test_the_ruling_143_sentence_is_still_on_the_card():
-    """Notice 34 sweeps come round again; this one is not theirs to take."""
-    prop = next(p for p in _committed_props() if p["key"] == "second-major")
-    assert "two separate questions" in prop["hook"]
-    assert "both do it, or neither" in prop["hook"]
+    assert prop["hook"].startswith("Both already have one in 2026.")
