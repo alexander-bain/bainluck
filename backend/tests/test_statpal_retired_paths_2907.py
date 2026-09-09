@@ -77,7 +77,10 @@ def test_retired_accessor_is_absent_from_the_statpal_client(name):
 
 @pytest.mark.parametrize("name", RETIRED_MODELS)
 def test_retired_model_is_absent(name):
-    import app.services.statpal_api as statpal_api
+    # `from app.services import ...` and not `import app.services.statpal_api`:
+    # importing the same module both ways in one file is CodeQL
+    # `py/import-and-import-from` (a note, not a security finding, but avoidable).
+    from app.services import statpal_api
 
     assert not hasattr(statpal_api, name), (
         f"{name} is back in statpal_api. It only ever carried the output of a "
