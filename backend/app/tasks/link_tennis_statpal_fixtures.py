@@ -158,7 +158,7 @@ from app.utils.authority_tennis_agreement import (
     build_tennis_agreements,
     tennis_measurement_bounds,
 )
-from app.utils.authority_tennis_names import doubles_key, tennis_names_agree
+from app.utils.authority_tennis_names import doubles_side_keys, tennis_names_agree
 from app.utils.provider_anchor_keys import (
     STATPAL_ID_SPACE_TENNIS,
     statpal_anchor_key,
@@ -396,10 +396,18 @@ def doubles_pair_matches(
     The doubles counterpart of `tennis_name_matching.pair_matches`, and a
     separate function rather than a branch inside it because the two join on
     different things: a singles side is one player resolved through
-    `our_tennis_keys`, a doubles side is `doubles_key`'s sorted pair of folded
-    surnames. `tennis_names_agree` refuses to read one as the other, which is
-    what makes the doubles-to-singles hits that closed this arm unreachable here
-    — they cannot be produced, rather than being excluded afterwards.
+    `our_tennis_keys`, a doubles side is `doubles_teams_agree`'s unordered pair
+    of `(surname, initial)` keys. `tennis_names_agree` refuses to read one as the
+    other, which is what makes the doubles-to-singles hits that closed this arm
+    unreachable here — they cannot be produced, rather than being excluded
+    afterwards.
+
+    Until #4095 the doubles side of that comparison was `doubles_key`'s sorted
+    pair of whole folded strings, which is what this paragraph used to say. It is
+    named here because `doubles_key` still EXISTS and still means something — it
+    is the doubles IDENTITY, what `register_identity` and the agreement row's
+    denominator score on — so a reader who finds it in the tree and assumes it is
+    also the join is making exactly the mistake this correction exists to stop.
 
     Both orientations, for the reason `pair_matches` gives: StatPal's
     first-listed team is not our home side in any reliable way.
@@ -496,12 +504,26 @@ def classify_fixture(
     """
     doubles = _is_doubles(fixture)
     if doubles and not (
-        doubles_key(fixture.home_team) and doubles_key(fixture.away_team)
+        doubles_side_keys(fixture.home_team) and doubles_side_keys(fixture.away_team)
     ):
-        # One side is a pair and the other is not, or a side does not split into
-        # exactly two players. Not a doubles match we can key, and not a singles
-        # one either — matching it on whichever half parses is how a doubles
-        # fixture ends up stamped on a singles row.
+        # One side is a pair and the other is not, a side does not split into
+        # exactly two players, or a side is initials all the way down and names
+        # nobody. Not a doubles match we can key, and not a singles one either —
+        # matching it on whichever half parses is how a doubles fixture ends up
+        # stamped on a singles row.
+        #
+        # THIS GATE MUST BE THE JOIN'S OWN READER (#4095 follow-up
+        # `ALIGN-DOUBLES-READABILITY-CONTRACT`). It used to be `doubles_key`,
+        # which asks a weaker question: `doubles_key` reads `S-/ Ostapenko` as a
+        # clean pair of strings, while `doubles_teams_agree` — via
+        # `doubles_side_keys` — refuses it, because `S-` names no player. A
+        # fixture in that gap passed the readability check and then agreed with
+        # nothing, so it was published as UNMATCHED: a receipt that reads "StatPal
+        # has a match we do not" about a match we may well hold, which is the
+        # false-absence class #4095 exists to kill, produced here by our own
+        # parse. Tightening can never cost a link — `doubles_side_keys` is
+        # strictly stricter than `doubles_key`, and a fixture it refuses could not
+        # have agreed with any candidate anyway (asserted, not argued).
         return VERDICT_DOUBLES_UNREADABLE, []
 
     if fixture.start_time is None:
