@@ -4365,7 +4365,7 @@ def _numeric_source_probs(win_probability_sources) -> list[float]:
     ``bainluck_aggregate``, our own blend, which must never be counted as an
     independent opinion about the blend. Serving and counting are different
     questions and are allowlisted separately;
-    ``test_source_registry_is_the_display_allowlist_4120`` pins that
+    ``test_a_value_ios_cannot_decode_never_reaches_the_wire_4120`` pins that
     ``SOURCE_WEIGHTS`` is a subset of the display registry so the two can differ
     without contradicting each other.
     """

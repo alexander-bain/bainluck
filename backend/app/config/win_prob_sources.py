@@ -116,40 +116,6 @@ WIN_PROB_SOURCES = {
 }
 
 
-def is_displayable_source(source_key: object) -> bool:
-    """Is this ``win_probability_sources`` key a SOURCE, or is it metadata? (#4120)
-
-    ``Event.win_probability_sources`` is a JSONB grab-bag. Alongside the real
-    sources it carries writer metadata that shares the column purely because the
-    column was convenient: ``betting_book_count`` (an integer, on 1,348 events),
-    ``statpal_injuries`` (an ARRAY of injury dicts, on 89) and
-    ``statpal_injuries_updated`` (an ISO string). The aggregator has always known
-    the difference — ``_tier1_readings`` skips anything outside ``SOURCE_WEIGHTS``,
-    and `test_betting_consensus_book_count_1841` pins the count as metadata — but
-    the two serialisers in `routes/events.py` did not, so a reader was shown:
-
-        statpal_injuries      : [{"team": "Getafe", "player": "A. Abqar", ...}]
-        betting_book_count    : 5.0
-        statpal_injuries_updated : "2026-09-07T18:20:01.048986+00:00"
-
-    beside Kalshi and the sportsbook consensus, each labelled with its own
-    snake_case key. Measured on production event 15296356 on 2026-09-08: three of
-    the five "sources" on the page were not sources.
-
-    THIS REGISTRY IS THE ALLOWLIST, not a hand-written denylist of the keys we
-    happen to know about today. A denylist hands the claim to the first new
-    metadata key anyone adds; membership here is a positive statement that
-    something is a source a reader may be shown, and it carries the D91 name so
-    the wire never needs a client-side mapping to be readable.
-
-    `test_source_registry_is_the_display_allowlist_4120` asserts
-    ``SOURCE_WEIGHTS`` is a SUBSET of this registry, so a new weighted source
-    cannot be silently filtered out of the page by the very guard that keeps the
-    metadata off it. That subset check is what makes an allowlist safe here.
-    """
-    return isinstance(source_key, str) and source_key in WIN_PROB_SOURCES
-
-
 def get_source_meta(source_key: str) -> dict | None:
     """Get metadata for a source, or None if unknown."""
     return WIN_PROB_SOURCES.get(source_key)

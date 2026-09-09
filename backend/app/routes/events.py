@@ -15475,20 +15475,9 @@ def _format_event(
             # `statpal_injuries` live in this same JSONB as ARRAYS); stamping
             # `{"value": ..., "updated_at": ...}` would have made it fire on
             # essentially every event. Normalising fixes both.
-            #
-            # #4120: numeric is not the same test as "is a source". The filter
-            # above was written to keep the ARRAYS out, and it does — but
-            # `betting_book_count` is an integer, so it sailed through and was
-            # served here as `betting_book_count: 5.0`, inside a map iOS types as
-            # `[String: Double]` of PROBABILITIES. A count of sportsbooks
-            # decoding cleanly as a probability is worse than a decode failure,
-            # because nothing complains. Ask the registry instead.
-            from app.config.win_prob_sources import is_displayable_source
             from app.utils.aggregation import parse_source_entry as _parse_src
             _norm_sources = {}
             for _sk, _sv in _wps.items():
-                if not is_displayable_source(_sk):
-                    continue
                 _num, _ = _parse_src(_sv)
                 if _num is not None:
                     _norm_sources[_sk] = _num
@@ -15501,27 +15490,11 @@ def _format_event(
         # Also expose win_probability_sources at top level with source metadata
         if _wps:
             try:
-                from app.config.win_prob_sources import (
-                    WIN_PROB_SOURCES,
-                    is_displayable_source,
-                )
+                from app.config.win_prob_sources import WIN_PROB_SOURCES
                 from app.utils.aggregation import parse_source_entry
                 wp_sources = {}
                 for src_key, src_value in _wps.items():
-                    # #4120. The only filter here used to be a leading
-                    # underscore, so every metadata key in the column was served
-                    # as a source, labelled with its own snake_case key because
-                    # `display_name` falls back to `src_key`. Worse, when
-                    # `parse_source_entry` returns None the `value` below falls
-                    # back to the RAW entry — so `statpal_injuries` shipped the
-                    # entire injuries array as a source's probability.
-                    #
-                    # The registry is the allowlist and `final_result` was added
-                    # to it in the same commit, because it is a real source
-                    # (weight 5.0) that had no display entry and was therefore
-                    # printing its own key on 311 events. See
-                    # `is_displayable_source` for the measured specimen.
-                    if not is_displayable_source(src_key):
+                    if src_key.startswith("_"):
                         continue
                     # #1829: `value` stays a bare NUMBER on the wire. The column
                     # now holds `{"value": x, "updated_at": ...}`, and assigning
@@ -15532,9 +15505,41 @@ def _format_event(
                     # the iOS decoder. The write time is exposed as a SIBLING,
                     # never inside `value`.
                     numeric, updated_at = parse_source_entry(src_value)
+                    # #4120 — AND THE `else src_value` FALLBACK BELOW WAS DOING
+                    # EXACTLY WHAT THE PARAGRAPH ABOVE FORBIDS.
+                    #
+                    # `parse_source_entry` returns None for anything that is not
+                    # a number or a `{"value": number}` wrapper, and this line
+                    # then shipped the RAW entry. This column is a grab-bag:
+                    # `statpal_injuries` is an ARRAY of injury dicts (89 events)
+                    # and `statpal_injuries_updated` is an ISO STRING (89), so
+                    # both went onto the wire as a "source" whose probability was
+                    # an array or a date, labelled with their own snake_case key.
+                    #
+                    # For iOS that is not cosmetic, it is fatal, and the comment
+                    # above predicted it. `WinProbValue` accepts Double or String
+                    # and THROWS on anything else; `decodeIfPresent` only swallows
+                    # an ABSENT key, so a present-but-wrong-type value propagates
+                    # out through `[String: WinProbSource]` and fails the whole
+                    # `EventDetail`. Reproduced against the shipped model
+                    # definitions: the served payload for event 15296356 throws
+                    # `typeMismatch at winProbabilitySources.statpal_injuries.value`
+                    # and the same payload minus that entry decodes. **The iOS
+                    # event page could not render those 89 events at all.**
+                    #
+                    # So the gate is the SHAPE, not the key. `betting_book_count`
+                    # is numeric and stays on the wire deliberately: it is not a
+                    # source, but iOS consumes it to label the sportsbook row
+                    # "Sportsbooks (14)" (`WinProbSourceCatalog`), and both
+                    # clients already keep it out of their source LISTS with
+                    # their own allowlists (`PROBABILITY_SOURCE_KEYS` #3914,
+                    # `realSourceKeys`). Filtering it here would silently take
+                    # that count away from the app.
+                    if numeric is None:
+                        continue
                     source_config = WIN_PROB_SOURCES.get(src_key, {})
                     wp_sources[src_key] = {
-                        "value": numeric if numeric is not None else src_value,
+                        "value": numeric,
                         "display_name": source_config.get("display_name", src_key),
                         "type": source_config.get("source_type", "model"),
                         "color": source_config.get("color", "#6b7280"),
