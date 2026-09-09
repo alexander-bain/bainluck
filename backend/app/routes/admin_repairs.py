@@ -26,7 +26,7 @@ transactional session and RETURNS its own before/after census in the response bo
              | event-espn-id | label-store-converge
              | label-defect-routes
              | polymarket-sport-category-census | polymarket-sport-category
-             | polymarket-senate-category
+             | polymarket-senate-category | kalshi-nhl-prop-category
              | polymarket-leg-label-census | polymarket-leg-label
              | authority-id-collisions | weather-shelf-disease }
     (the registry below is authoritative; this list had already drifted two
@@ -50,7 +50,9 @@ transactional session and RETURNS its own before/after census in the response bo
      two polymarket-leg-label entries in the commit that registered them.
      Re-synced again 2026-09-02, lane1/058, adding authority-id-collisions in
      the commit that registered it. Re-synced again 2026-09-09, lane1b/106,
-     adding polymarket-senate-category in the commit that registered it.)
+     adding polymarket-senate-category in the commit that registered it.
+     Re-synced again 2026-09-09, lane1b/109, adding kalshi-nhl-prop-category in
+     the commit that registered it.)
 
 Repairs whose signature declares ``limit`` / ``sport`` / ``newest_first`` /
 ``offset`` / ``after_id`` / ``after_date`` / ``plan_hash`` / ``expected_blank`` /
@@ -472,6 +474,41 @@ _REPAIRS = {
     # wire this to a beat; it is a terminating repair, not a standing job.
     "polymarket-senate-category": (
         "app.tasks.repair_polymarket_senate_category",
+        "repair",
+    ),
+    # #4365 part 2 (lane1b/109): two Kalshi NHL game props stored `basketball`.
+    # Same two-gate shape as the certed `repair_kalshi_senate_category` — frozen
+    # id bound AND the SHIPPED `_categorize_kalshi_market` independently agreeing
+    # per row — with `hockey` as the target, which is why it is a sibling module
+    # and not a widening of that one (its `TARGET_CATEGORY` is pinned by a guard
+    # forbidding every sport token in its literals).
+    #
+    # 🔴 The issue called this class "latent, blast radius 0 stored rows". It is
+    # 2, and the cause is not the one filed. `_STAT_TO_SPORT` does map `points`
+    # and `assists` to basketball despite both being core NHL stats — but the
+    # ticker branch runs first and covers `KXNHLPTS`/`KXNHLAST` TODAY. It did not
+    # in April 2026, when these two rows were written, and #1888's
+    # `coalesce(nullif(existing,'other'), new)` has frozen them since. So the
+    # bound here is the residue of a closed gap, not of a live one.
+    #
+    # Measured, not assumed: all 1,609 rows matching the game-prop shape
+    # `^.+ (at|vs\.?|@) .+: *(points|assists)` and stored `basketball` were
+    # replayed through the shipped classifier; it disagreed on exactly these 2
+    # and agreed on the other 1,607, which gate 2 therefore refuses.
+    #
+    # Reader-visible: `frontend/app/futures/[id]/page.tsx:958-965` builds the
+    # end-of-page rail's heading AND its contents from `llm_sport_category`, so
+    # both pages currently end in a MORE BASKETBALL rail of college-basketball
+    # championships under a settled Penguins/Flyers prop.
+    #
+    # Writes `llm_sport_category` ONLY. Safe against "settled means settled": a
+    # taxonomy badge is never a result, and no price, outcome, `is_winner` or
+    # resolution field is read or written. D51: every planned row carries its
+    # `before` and the payload carries a runnable `restore_sql`, on the dry run
+    # as well as the apply. Takes no bounds — the population is the frozen list.
+    # ATTENDED ONLY: never wire this to a beat; it is a terminating repair.
+    "kalshi-nhl-prop-category": (
+        "app.tasks.repair_kalshi_nhl_prop_category",
         "repair",
     ),
     # #1796/#1902 (queue 369): the attended event-CREATE consumer. Alex approved
