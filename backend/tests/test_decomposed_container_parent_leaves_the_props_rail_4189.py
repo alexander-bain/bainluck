@@ -62,7 +62,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.routes.events import (
-    _decomposed_container_parent_ids,
+    _decomposed_container_parent_candidates,
     _game_markets_cache,
     get_game_markets,
 )
@@ -175,8 +175,27 @@ def _db_for(event, markets, outcomes):
     return db
 
 
-def _the_production_group(*, include_children=True, parent_shape="field"):
-    """The real `polymarket:986558` group, parent plus (optionally) children."""
+def _the_production_group(
+    *, include_children=True, parent_shape="field", child_state="renderable"
+):
+    """The real `polymarket:986558` group, parent plus (optionally) children.
+
+    🔴 `child_state` EXISTS BECAUSE `include_children=False` WAS THE WRONG
+    CONTROL, and CERT-2335 is the receipt. "No child rows" and "child rows that
+    render nothing" are different states, and only the first one was tested — so
+    fourteen tests passed over a payload that, in the second state, came back
+    entirely empty. Removing the rows removes them from the suppression
+    predicate too, which is precisely the arm that cannot fail.
+
+    The three states are the three ways a child can be SERVED without being
+    RENDERED, which is the distinction the whole repair turns on:
+
+    * ``renderable``   — the production shape: two real, distinct prices.
+    * ``no_outcomes``  — the row is served and has no outcomes at all. The
+                         render loop's first gate drops it.
+    * ``no_real_price``— the row is served with outcomes, but every price is
+                         zero, so `has_no_real_price` drops it.
+    """
     markets = [
         _make_market(
             id=PARENT_ID,
@@ -194,20 +213,27 @@ def _the_production_group(*, include_children=True, parent_shape="field"):
             markets.append(
                 _make_market(id=mid, name=name, market_type=shape, group_id=GROUP)
             )
+            if child_state == "no_outcomes":
+                continue
             # Two real, distinguishable prices so a survivor is identifiable.
-            outcomes.append(
-                _make_outcome(id=7000 + n * 2, market_id=mid, name="Yes", probability=0.3950)
+            yes, no = (
+                (0.0, 0.0) if child_state == "no_real_price" else (0.3950, 0.6050)
             )
             outcomes.append(
-                _make_outcome(id=7001 + n * 2, market_id=mid, name="No", probability=0.6050)
+                _make_outcome(id=7000 + n * 2, market_id=mid, name="Yes", probability=yes)
+            )
+            outcomes.append(
+                _make_outcome(id=7001 + n * 2, market_id=mid, name="No", probability=no)
             )
     return markets, outcomes
 
 
-async def _payload(*, include_children=True, parent_shape="field"):
+async def _payload(*, include_children=True, parent_shape="field", child_state="renderable"):
     event = _make_event()
     markets, outcomes = _the_production_group(
-        include_children=include_children, parent_shape=parent_shape
+        include_children=include_children,
+        parent_shape=parent_shape,
+        child_state=child_state,
     )
     return await get_game_markets(event.id, _db_for(event, markets, outcomes))
 
@@ -263,7 +289,7 @@ class TestTheContainerParentLeavesTheRail:
 
     def test_the_helper_names_the_parent_and_only_the_parent(self):
         markets, _ = _the_production_group()
-        assert _decomposed_container_parent_ids(markets) == {PARENT_ID}
+        assert _decomposed_container_parent_candidates(markets) == {PARENT_ID}
 
 
 # ------------------------------------------------- the control arm (mutants) --
@@ -355,7 +381,79 @@ class TestAParentWithNoServedChildrenStays:
 
     def test_the_helper_names_nobody_when_the_group_is_alone(self):
         markets, _ = _the_production_group(include_children=False)
-        assert _decomposed_container_parent_ids(markets) == set()
+        assert _decomposed_container_parent_candidates(markets) == set()
+
+
+class TestAServedChildIsNotYetARenderedChild:
+    """🔴 CERT-2335. THE ARM THE FIRST CONTROL COULD NOT REACH.
+
+    `TestAParentWithNoServedChildrenStays` removes the child ROWS — which also
+    removes them from the suppression predicate, so that arm can never fail. The
+    dangerous state is the one in between: the child rows ARE served, so they
+    suppress the parent, and then they are dropped by a gate further down the
+    render loop and emit nothing themselves. Parent gone, children gone, group
+    gone.
+
+    The cert's independent falsifier is `child_state="no_outcomes"` below: it
+    kept the parent and all nine children, removed only the children's outcomes,
+    and got an entirely empty payload out of the shipped code — while the
+    fourteen submitted tests stayed green.
+
+    Both states are ways a market can be counted as served and still not reach
+    the page, which is why the repair observes EMISSION instead of predicting it.
+    """
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("child_state", ["no_outcomes", "no_real_price"])
+    async def test_children_that_render_nothing_do_not_delete_the_group(
+        self, child_state
+    ):
+        payload = await _payload(child_state=child_state)
+        assert _every_rendered_name(payload), (
+            f"with children served but unrenderable ({child_state}), the parent "
+            "was suppressed and the children emitted nothing — the whole market "
+            "vanished from the page. A parent may only be dropped in favour of "
+            "children a reader can actually see."
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("child_state", ["no_outcomes", "no_real_price"])
+    async def test_and_what_survives_is_the_PARENT_not_a_husk(self, child_state):
+        """Non-empty is not enough — the surviving rows must be the parent's.
+
+        Without this, a payload carrying some unrelated section would satisfy
+        the assertion above while the match itself was still missing.
+        """
+        payload = await _payload(child_state=child_state)
+        rendered = " ".join(_every_rendered_name(payload))
+        assert "Mirra Andreeva" in rendered, (
+            "the parent is the group's only remaining representation and its "
+            "rows are what the reader must be left with"
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_renderable_case_is_unchanged_by_the_repair(self):
+        """The control on the control: when children DO render, the parent still
+        goes. Otherwise this repair would have quietly undone #4189 itself."""
+        payload = await _payload(child_state="renderable")
+        rendered = _every_rendered_name(payload)
+        assert rendered, "the renderable case must still serve the children"
+        assert not any("Set 1 Winner" in n and "US Open WTA:" in n for n in rendered), (
+            "a sub-market TITLE is back on the rail — the repair has undone the "
+            "suppression it was supposed to make safe"
+        )
+
+    def test_the_candidate_helper_still_only_names_candidates(self):
+        """The predicate is unchanged, and that is deliberate.
+
+        The repair did not tighten this set — a tightened predicate would still
+        be a prediction, and the per-type branches below it can emit nothing for
+        reasons no predicate can see. It moved the VERDICT to the render loop
+        instead. So the parent is still a candidate in both broken states.
+        """
+        for child_state in ("no_outcomes", "no_real_price"):
+            markets, _ = _the_production_group(child_state=child_state)
+            assert _decomposed_container_parent_candidates(markets) == {PARENT_ID}
 
 
 class TestShapesThisRuleMustNotTouch:
@@ -363,13 +461,13 @@ class TestShapesThisRuleMustNotTouch:
         """`market_type` is nullable and the backfill lags ingest, so an
         unshaped parent keeps today's behaviour rather than being guessed at."""
         markets, _ = _the_production_group(parent_shape=None)
-        assert PARENT_ID not in _decomposed_container_parent_ids(markets)
+        assert PARENT_ID not in _decomposed_container_parent_candidates(markets)
 
     def test_a_field_market_in_no_group_is_left_alone(self):
         markets, _ = _the_production_group()
         for m in markets:
             m.group_id = None
-        assert _decomposed_container_parent_ids(markets) == set()
+        assert _decomposed_container_parent_candidates(markets) == set()
 
     def test_a_field_market_whose_group_holds_no_members_is_left_alone(self):
         """Two `field` markets sharing a group is not a decomposition."""
@@ -377,7 +475,7 @@ class TestShapesThisRuleMustNotTouch:
             _make_market(id=1, name="A", market_type="field", group_id=GROUP),
             _make_market(id=2, name="B", market_type="field", group_id=GROUP),
         ]
-        assert _decomposed_container_parent_ids(markets) == set()
+        assert _decomposed_container_parent_candidates(markets) == set()
 
     def test_children_in_a_different_group_do_not_suppress_the_parent(self):
         markets = [
@@ -389,4 +487,4 @@ class TestShapesThisRuleMustNotTouch:
                 group_id="polymarket:999999",
             ),
         ]
-        assert _decomposed_container_parent_ids(markets) == set()
+        assert _decomposed_container_parent_candidates(markets) == set()

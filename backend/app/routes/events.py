@@ -10161,8 +10161,26 @@ _NON_SCORING_TOTAL_RE = re.compile(r"\bbases\b")
 _DECOMPOSED_MEMBER_SHAPES = (SHAPE_CONTAINER_MEMBER, SHAPE_QUANTITY)
 
 
-def _decomposed_container_parent_ids(markets: list) -> set[int]:
-    """The `field` parents whose own children are in the SAME served set (#4189).
+def _decomposed_container_parent_candidates(markets: list) -> set[int]:
+    """The `field` parents that MIGHT be redundant — the candidates, not the verdict.
+
+    🔴 THIS SET IS NOT A SUPPRESSION LIST, AND CERT-2335 IS WHY IT SAYS SO IN THE
+    NAME. The first cut of this ship called the same set
+    `_decomposed_container_parent_ids` and skipped every id in it. Being in the
+    served list is not the same as reaching the page: the render loop drops a
+    market that has no outcomes, that `has_no_real_price`, or whose name is a
+    placeholder — all AFTER this ran. So a group could suppress its parent with
+    children that then emitted nothing, and the whole market vanished. The cert's
+    falsifier kept the parent and all nine children, removed only the children's
+    OUTCOMES, and got an entirely empty payload; the submitted tests missed it
+    because their control removed the child ROWS, which is a different state.
+
+    The verdict now belongs to the render loop, which suppresses a candidate only
+    once its group has actually EMITTED a row — see `_emitted_member_group_ids`
+    at the call site. This function only answers "which parents are worth
+    watching", and being wrong here can no longer delete anything.
+
+    ═══ THE ORIGINAL FINDING (#4189) ═══
 
     Polymarket game events arrive as one container plus nested sub-markets
     (gotcha #18). Decomposition already splits them: on event 15307447 the
@@ -10181,12 +10199,10 @@ def _decomposed_container_parent_ids(markets: list) -> set[int]:
     eight rows at one identical price (the parent's single price, stamped onto
     every decomposed leg) next to a bare player name.
 
-    🔴 THE MEMBERS MUST BE IN THE SERVED SET, NOT MERELY IN THE GROUP. The
-    parent is only redundant when the reader can see its children instead; if
-    decomposition has not run, or the children were dropped upstream by
-    `has_no_real_price`, the parent is the only representation this event has
-    and suppressing it would delete the market rather than de-duplicate it. So
-    this reads `markets` — the list actually being rendered — never the group.
+    THE MEMBERS MUST BE IN THE SERVED SET, NOT MERELY IN THE GROUP — so this
+    reads `markets`, never the group. That is necessary and, as CERT-2335
+    showed, nowhere near sufficient: "in the served list" and "on the page" are
+    two different facts, and only the second one makes a parent redundant.
 
     Scope measured on production 2026-09-08: 12,687 (group_id, event_id) pairs
     hold a `field` parent alongside decomposed members, so this is a class, not
@@ -11341,17 +11357,88 @@ async def _build_game_markets(
     # Only reads box_score_data for completed/closed events — None otherwise.
     _prop_ctx = _build_prop_grade_context(event) if event_is_finished else None
 
-    # #4189: a decomposed container parent is not served beside its own
-    # children. Computed once over the served set, not per market.
-    decomposed_parents = _decomposed_container_parent_ids(markets)
+    # #4189 / CERT-2335: a decomposed container parent is not served beside its
+    # own children — but only once those children have actually REACHED THE
+    # PAGE. `_decomposed_container_parent_candidates` can only say a parent is
+    # worth watching; whether its children render is decided below, by the gates
+    # in this very loop.
+    #
+    # 🔴 SERVED CHILD ≠ RENDERED CHILD. Three gates further down drop a market
+    # after it has been counted as "served": no outcomes, `has_no_real_price`,
+    # and a placeholder name. The first cut of this ship suppressed on the
+    # served set, so children that were present-but-dropped took the parent with
+    # them and the group rendered NOTHING.
+    #
+    # The fix is ordering, not a second copy of the gates. Candidate parents are
+    # moved to the END of the iteration, so by the time one is judged its own
+    # group has already had every chance to emit, and the question becomes a
+    # fact we have observed rather than one we predicted: `_emitted` below grows
+    # only when a market actually appended a row. A copied predicate would have
+    # to re-derive all three gates AND the per-type branches that can still emit
+    # nothing (a total whose threshold parses out of neither the outcome nor the
+    # market name appends no row at all), and it would drift the first time one
+    # of them changed.
+    #
+    # Non-candidate markets keep their original position, so the only rows that
+    # move are a redundant parent's — and those are rows that get emitted at all
+    # only in the fallback case where its group turned out to render nothing,
+    # i.e. where the parent is the group's sole representation anyway.
+    _parent_candidates = _decomposed_container_parent_candidates(markets)
+    if _parent_candidates:
+        markets = [m for m in markets if m.id not in _parent_candidates] + [
+            m for m in markets if m.id in _parent_candidates
+        ]
+
+    #: Buckets the loop appends rendered rows to. Growth in the total is the
+    #: definition of "this market reached the page", which is why it is measured
+    #: rather than predicted.
+    _row_buckets = (
+        totals_thresholds,
+        player_props,
+        spreads,
+        period_markets,
+        matchups,
+        other_markets,
+    )
+
+    def _rendered_row_count() -> int:
+        return sum(len(b) for b in _row_buckets)
+
+    #: `group_id`s that have had at least one DECOMPOSED MEMBER emit a row.
+    _emitted_member_group_ids: set = set()
+    #: `(group_id, row count when it started)` for the member currently being
+    #: rendered. Its verdict is read at the TOP of the NEXT iteration rather
+    #: than at the bottom of this one, because the body below has outer-level
+    #: `continue`s and more can be added; a bottom-of-body tally would be
+    #: skipped by any of them and would silently under-count emissions —
+    #: failing toward suppressing a parent whose children rendered nothing,
+    #: which is the exact defect CERT-2335 caught.
+    _pending_member: tuple | None = None
 
     for market in markets:
+        if _pending_member is not None:
+            if _rendered_row_count() > _pending_member[1]:
+                _emitted_member_group_ids.add(_pending_member[0])
+            _pending_member = None
+
         market_outcomes = outcomes_by_market.get(market.id, [])
         if not market_outcomes:
             continue
 
-        if market.id in decomposed_parents:
+        # A candidate parent is dropped only if its own group has already put
+        # something on the page. Candidates are iterated last, so every member
+        # of this group has been through the loop and flushed by now.
+        if (
+            market.id in _parent_candidates
+            and market.group_id in _emitted_member_group_ids
+        ):
             continue
+
+        if (
+            market.group_id
+            and (market.market_type or "") in _DECOMPOSED_MEMBER_SHAPES
+        ):
+            _pending_member = (market.group_id, _rendered_row_count())
 
         # #921 slice 2: don't render no-real-price or placeholder-team markets on
         # event pages. No real price = every outcome null/zero OR top outcome
