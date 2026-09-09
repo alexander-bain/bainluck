@@ -161,12 +161,28 @@ import {
 } from "@/lib/tournament/hubBoot";
 import { mergeTournamentSections, type TournamentPayload } from "@/lib/tournament";
 
-type Tab = "tournament" | "bracket";
-
-const TABS: { id: Tab; label: string }[] = [
-  { id: "tournament", label: "Tournament" },
-  { id: "bracket", label: "Bracket" },
-];
+/* ═══ THE TAB BAR IS GONE — ALEX, 2026-09-08 4:00pm PT (#4125, item 5) ═══
+ *
+ * *"The bracket section feels empty. Build it straight into the Tournament tab;
+ * we wouldn't need that level of tab hierarchy."*
+ *
+ * `Tab`, `TABS` and the `tab` state went with it. The page is one scroll:
+ * chart, matches, results, board, more predictions, then the playoff grid.
+ *
+ * 🔴 READ THE DIAGNOSIS ABOVE BEFORE RESTORING IT. The long comment at the top
+ * of this file works out which content belongs on which tab, and every word of
+ * that reasoning is about what a reader meets FIRST — it is a ranking problem
+ * wearing a navigation costume. A second tab answers it by hiding half the page
+ * behind a click, and Alex's complaint is that the half behind the click looked
+ * empty *because nobody clicked*. Ordering solves the same problem without the
+ * hiding, so if the grid is ever judged too heavy for page one the fix is to
+ * move it further down the scroll, not to put a door in front of it.
+ *
+ * ⚠️ ITEM 1 OF THE SAME REVIEW IS NOT HERE, and that is not an oversight: the
+ * grey-text removal landed first as #4122 (live/112, `2e982387`) and went
+ * further than this lane's draft did — nine blocks including `grid-legend`.
+ * One owner per issue (notice 6); that ship is theirs and this file does not
+ * re-open it. */
 
 /**
  * `TOURNAMENT_SHELL` / `TOURNAMENT_COLUMNS` live in
@@ -187,7 +203,6 @@ export default function TournamentPage() {
   const [data, setData] = useState<TournamentPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<Tab>("tournament");
   /**
    * The draw on screen, or `null` for "the payload has not opened one yet".
    *
@@ -433,41 +448,29 @@ export default function TournamentPage() {
           </p>
         </header>
 
-        <div className="flex border-b border-surface-border bg-surface-card" role="tablist">
-          {TABS.map((entry) => (
-            <button
-              key={entry.id}
-              role="tab"
-              type="button"
-              aria-selected={tab === entry.id}
-              onClick={() => setTab(entry.id)}
-              className={`flex-1 border-b-2 py-3 text-[13.5px] font-semibold ${
-                tab === entry.id
-                  ? "border-text-primary text-text-primary"
-                  : "border-transparent text-text-muted"
-              }`}
-            >
-              {entry.label}
-            </button>
-          ))}
-        </div>
 
         {/* The gender pill shows on the Bracket tab too once the draw exists,
             because the grid is one draw's field — but NOT before it, where
             ruling 1 deliberately shows both boards unfiltered and a pill would
             offer to filter something that is not filtered. */}
-        {(tab === "tournament" || data.draw_released) && (
-          <DrawToggle
+        {/* Unconditional since the tabs went (#4125 item 5): the old gate was
+            `tab === "tournament" || data.draw_released`, whose left arm is now
+            always true. A gate that is always true is one a later reader
+            "fixes" by honouring the right arm again — which would hide the
+            pill before the draw is released. */}
+        <DrawToggle
             draw={draw}
-            onSelect={(id) => {
-              setDrawChoice(id);
-              setSelection(null);
-            }}
-          />
-        )}
+          onSelect={(id) => {
+            setDrawChoice(id);
+            setSelection(null);
+          }}
+        />
 
         <div className="px-4 pb-16 lg:px-6">
-          {tab === "tournament" && (
+          {/* Unconditional since the tabs went. The container is kept rather
+              than unwrapped so this ship's diff stays reviewable — unwrapping
+              re-indents ~130 untouched lines and buries the change. */}
+          {(
             /**
              * TWO COLUMNS AT `lg`, ONE BELOW IT (UX-P145).
              *
@@ -601,7 +604,13 @@ export default function TournamentPage() {
             </div>
           )}
 
-          {tab === "bracket" && (
+          {/* ═══ THE BRACKET, INLINE — ALEX ITEM 5 (#4125) ═══
+              Was `{tab === "bracket" && …}`, one click away and reading as an
+              empty section because a reader had to guess it was there. It is
+              the last block on the same scroll now: chart, matches, results,
+              board, more predictions, grid. Same component, same props, same
+              full width — only the door is gone. */}
+          {(
             <div className="mt-6">
               {/* THE PLAYOFF GRID (UX-P139). It no longer waits for the draw:
                   its cells come from round-advancement markets that are live
