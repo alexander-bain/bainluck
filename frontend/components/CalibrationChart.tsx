@@ -13,6 +13,17 @@ const REAUTHOR_BELOW = 0.85;
 /** Nothing useful is drawable narrower than this; below it the card itself is the bug. */
 const MIN_REAUTHORED_W = 260;
 
+/** padL 55 + padR 20 — the component's own horizontal padding, so a caller-free `plotW` can be
+ *  derived inside the pure function. Kept beside the pads it mirrors; a test pins the two equal. */
+const AXIS_PAD_X = 75;
+
+/** #4400: the pitch, in the READER's pixels, below which two x-axis labels stop reading as two
+ *  numbers. Measured on production (`tools/cal-axis-overlap-1073.mjs`, master `2bf1d499`): the
+ *  widest label, `100%`, paints 29.4px of ink at 1:1 on every chart on the page, at both 390px and
+ *  1280px. 32 is that plus ~2.5px of gap — the smallest separation at which `90%` and `100%` are
+ *  still two things. Not a round number by accident: it is one measurement plus one gap. */
+const MIN_LABEL_PITCH_PX = 32;
+
 export interface ChartGeometry {
   width: number;
   height: number;
@@ -32,6 +43,23 @@ export interface ChartGeometry {
  * padL+padR and padT+padB are both 75, which is why a re-authored `height = width` is exactly a
  * SQUARE plot — the right shape for two axes that are both a fixed 0–100%, and close to the shape
  * of the By Source panels that were already legible.
+ *
+ * #4400 — WHY THE LABEL STEP IS NOT KEYED ON `reauthored`.
+ *
+ * It used to be, and that read the wrong question. Re-authoring answers "is the TYPE too small";
+ * label density answers "is there ROOM for eleven numbers", and a chart can fail the second while
+ * passing the first — which is exactly what the seven By Source panels do. Authored at 330x260 and
+ * 300x230, they measure 0.903 and 0.907 of their card, comfortably above the 0.85 trigger, so they
+ * are never re-authored; but their plot is only 255 and 225 units wide, so eleven labels get 25.5px
+ * and 22.5px of pitch for 29.4px of ink. Measured on production at BOTH widths, `90%` and `100%`
+ * overlapped by 1.4px and 4.4px — the axis reading as `…80%90%100%`.
+ *
+ * So the step is decided on the on-screen pitch, `(plotW / 10) * scale`, whichever geometry won.
+ * That SUBSUMES the old rule rather than sitting beside it: the shipped re-authored case (a 700-unit
+ * chart in the 324px card at 390px) still gets 24.9px of pitch and still thins to every 20%, and the
+ * rule now also reaches the panels that were never re-authored. Where the two rules disagree — a
+ * re-authored chart wide enough for eleven legible labels, ~660px of viewport — the pitch is right
+ * and "re-authored ⇒ 20" was a proxy. Gridlines stay every 10% in every arm; only labels thin.
  */
 export function chartGeometry(
   authoredW: number,
@@ -39,13 +67,17 @@ export function chartGeometry(
   containerW: number | null,
 ): ChartGeometry {
   const reauthored = containerW != null && containerW < authoredW * REAUTHOR_BELOW;
-  if (!reauthored) {
-    return { width: authoredW, height: authoredH, reauthored: false, xLabelStep: 10 };
-  }
-  const width = Math.max(MIN_REAUTHORED_W, containerW!);
-  // Eleven "100%" labels need ~28px each and a re-authored plot gives ~25px per tick, so they are
-  // thinned to every 20%. The gridlines stay every 10%, so no resolution is lost — only the smear.
-  return { width, height: width, reauthored: true, xLabelStep: 20 };
+  const width = reauthored ? Math.max(MIN_REAUTHORED_W, containerW!) : authoredW;
+  const height = reauthored ? width : authoredH;
+
+  // The SVG is drawn at `width` px unless `maxWidth: 100%` clamps it to a narrower container, so
+  // the scale is that clamp and nothing else. A re-authored chart is 1:1 by construction, and an
+  // unmeasured one (server render, first paint) has no scale to know — both fall out as 1.
+  const scale = containerW != null && containerW < width ? containerW / width : 1;
+  const labelPitch = ((width - AXIS_PAD_X) / 10) * scale;
+  const xLabelStep = labelPitch < MIN_LABEL_PITCH_PX ? 20 : 10;
+
+  return { width, height, reauthored, xLabelStep };
 }
 
 interface CalPoint {
@@ -152,6 +184,9 @@ export default function CalibrationChart({
       viewBox={`0 0 ${width} ${boxH}`}
       data-authored-width={authoredW}
       data-reauthored={reauthored ? "true" : "false"}
+      // #4400: the label decision, readable by a production probe. Notice 34 — a number a probe
+      // needs lives in a data-attribute, never in prose on the reader's screen.
+      data-x-label-step={xLabelStep}
       className="block mx-auto"
       // #4330: `height` is a presentation attribute, so it sets the CSS height and nothing
       // overrode it, while `maxWidth` shrank only the width. Below 700px `preserveAspectRatio`
