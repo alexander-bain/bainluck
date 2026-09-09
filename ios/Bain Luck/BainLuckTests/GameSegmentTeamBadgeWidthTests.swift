@@ -44,7 +44,7 @@ final class GameSegmentTeamBadgeWidthTests: XCTestCase {
     private func renderedWidth<V: View>(
         _ view: V, at size: DynamicTypeSize, _ label: String
     ) throws -> CGFloat {
-        let renderer = ImageRenderer(content: view.environment(\.dynamicTypeSize, size))
+        let renderer = rendererForMeasurement(view, at: size)
         // Points, not pixels — every number in this file is a layout width.
         renderer.scale = 1
         let image = try XCTUnwrap(renderer.uiImage, "\(label) produced no raster")

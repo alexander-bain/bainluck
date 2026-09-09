@@ -44,7 +44,7 @@ final class CalibrationRenderSmokeTests: XCTestCase {
         // docs). Every branch, section and colour decision below it is the real
         // production body.
         let view = CalibrationSurfaceView(viewModel: vm, scrolls: false).frame(width: 390)
-        let renderer = ImageRenderer(content: view)
+        let renderer = rendererForMeasurement(view)
         renderer.scale = 2
         let image = try XCTUnwrap(renderer.uiImage, "\(name) produced no raster")
         XCTAssertGreaterThan(image.size.width, 0, "\(name) rendered zero-width")
@@ -206,7 +206,7 @@ final class CalibrationRenderSmokeTests: XCTestCase {
         XCTAssertNotNil(vm.data, "\(name): the curve was discarded")
 
         let view = CalibrationSurfaceView(viewModel: vm, scrolls: false).frame(width: 390)
-        let renderer = ImageRenderer(content: view)
+        let renderer = rendererForMeasurement(view)
         renderer.scale = 2
         let image = try XCTUnwrap(renderer.uiImage, "\(name) produced no raster")
         let png = try XCTUnwrap(image.pngData())
@@ -292,7 +292,7 @@ final class CalibrationRenderSmokeTests: XCTestCase {
                 .environment(\.horizontalSizeClass, envelope.regular ? .regular : .compact)
                 .environment(\.dynamicTypeSize, envelope.size)
                 .frame(width: envelope.width)
-            let renderer = ImageRenderer(content: view)
+            let renderer = rendererForMeasurement(view)
             renderer.scale = 2
             let image = try XCTUnwrap(renderer.uiImage, "\(envelope.name) produced no raster")
             XCTAssertGreaterThan(image.size.height, 100, "\(envelope.name) collapsed")

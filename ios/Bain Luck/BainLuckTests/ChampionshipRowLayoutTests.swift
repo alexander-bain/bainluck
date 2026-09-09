@@ -404,7 +404,7 @@ final class ChampionshipRowLayoutTests: XCTestCase {
 
     @MainActor
     private func render<V: View>(_ view: V, width: CGFloat) -> UIImage {
-        let host = UIHostingController(rootView: view.frame(width: width))
+        let host = hostForMeasurement(view.frame(width: width))
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: width, height: 1200))
         window.rootViewController = host
         window.isHidden = false
@@ -427,7 +427,7 @@ final class ChampionshipRowLayoutTests: XCTestCase {
     /// width.
     @MainActor
     private func renderedHeight<V: View>(of view: V, width: CGFloat) -> CGFloat {
-        let host = UIHostingController(rootView: view.frame(width: width))
+        let host = hostForMeasurement(view.frame(width: width))
         host.view.frame = CGRect(x: 0, y: 0, width: width, height: 2000)
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: width, height: 2000))
         window.rootViewController = host
@@ -444,7 +444,7 @@ final class ChampionshipRowLayoutTests: XCTestCase {
     /// The width the view asks for when nothing constrains it.
     @MainActor
     private func naturalWidth<V: View>(of view: V) -> CGFloat {
-        let host = UIHostingController(rootView: view)
+        let host = hostForMeasurement(view)
         host.view.setNeedsLayout()
         host.view.layoutIfNeeded()
         return host.sizeThatFits(

@@ -191,7 +191,7 @@ final class TotalPointsSpectrumRungCaptionTests: XCTestCase {
 
     @MainActor
     private func naturalWidth<V: View>(of view: V) -> CGFloat {
-        let host = UIHostingController(rootView: view)
+        let host = hostForMeasurement(view)
         host.view.setNeedsLayout()
         host.view.layoutIfNeeded()
         return host.sizeThatFits(

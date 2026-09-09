@@ -62,7 +62,7 @@ final class LiveSparklineRenderSmokeTests: XCTestCase {
             minimumSpan: minimumSpan,
             now: Date())
 
-        let renderer = ImageRenderer(content: view)
+        let renderer = rendererForMeasurement(view)
         renderer.scale = Self.scale
         let image = try XCTUnwrap(renderer.uiImage, "\(name) produced no raster")
         let png = try XCTUnwrap(image.pngData(), "\(name) produced no PNG data")
@@ -89,7 +89,7 @@ final class LiveSparklineRenderSmokeTests: XCTestCase {
             height: Self.height,
             minimumSpan: LiveSparklineChart.minimumSpan,
             now: Date())
-        let renderer = ImageRenderer(content: view)
+        let renderer = rendererForMeasurement(view)
         renderer.scale = Self.scale
         guard let image = renderer.uiImage else {
             print("Sparkline render [\(name)]: no raster — the glyph drew nothing")

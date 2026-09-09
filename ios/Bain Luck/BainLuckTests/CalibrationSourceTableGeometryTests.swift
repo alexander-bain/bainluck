@@ -191,7 +191,7 @@ final class CalibrationSourceTableGeometryTests: XCTestCase {
             let view = CalibrationSurfaceView(
                 viewModel: CalibrationViewModel(preloaded: data), scrolls: false)
                 .frame(width: width)
-            let renderer = ImageRenderer(content: view)
+            let renderer = rendererForMeasurement(view)
             renderer.scale = 2
             let image = try XCTUnwrap(renderer.uiImage, "\(width)pt produced no raster")
             XCTAssertEqual(image.size.width, width, accuracy: 1,

@@ -178,7 +178,7 @@ final class CenteredPageContentTests: XCTestCase {
     }
 
     private func render<V: View>(_ view: V, width: CGFloat, height: CGFloat) -> UIImage {
-        let host = UIHostingController(rootView: view.frame(width: width, height: height))
+        let host = hostForMeasurement(view.frame(width: width, height: height))
         // The window inherits an ambient safe area from the simulator's screen,
         // and a `ScrollView` turns that into a content inset — measured at 31pt
         // here, which shifted every vertical reading below by the same 31pt and
