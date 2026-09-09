@@ -21,8 +21,23 @@ import { useEffect, useState } from 'react';
  */
 
 interface LiveAgeStampProps {
-  /** ISO timestamp of the freshest source write. */
+  /**
+   * ISO timestamp of the OLDEST fact the hero is showing (#4469) — see
+   * `lib/event/heroFreshness`. It used to be the freshest price write, which is
+   * how this badge came to print a green `live · 6s ago` over a score eight
+   * minutes old.
+   */
   updatedAt: string | null | undefined;
+  /**
+   * Which fact `updatedAt` belongs to, so the admission has a subject.
+   *
+   * Tooltip and screen reader ONLY. Standing notice 34 keeps method notes out of
+   * the page body, and CERT-411 round 2 is why an age without a subject is not
+   * good enough: a mark that says "8m" while the reader is looking at a
+   * probability that ticked a second ago has to say WHICH thing is 8m old, or it
+   * has traded one wrong impression for another.
+   */
+  oldestFact?: "price" | "score" | null;
   /** Whether the SSE stream is currently delivering. */
   connected: boolean;
 }
@@ -39,7 +54,11 @@ function ageSeconds(updatedAt: string | null | undefined): number | null {
   return Math.max(0, Math.round((Date.now() - parsed) / 1000));
 }
 
-export default function LiveAgeStamp({ updatedAt, connected }: LiveAgeStampProps) {
+export default function LiveAgeStamp({
+  updatedAt,
+  oldestFact = null,
+  connected,
+}: LiveAgeStampProps) {
   const [age, setAge] = useState<number | null>(() => ageSeconds(updatedAt));
 
   useEffect(() => {
@@ -61,10 +80,25 @@ export default function LiveAgeStamp({ updatedAt, connected }: LiveAgeStampProps
           : 'bg-emerald-500/15 text-emerald-600'
       }`}
       // The number is the visible thing; the state is what a screen reader needs.
+      //
+      // "Waiting for a fresh price" was the only stale sentence this had, and on
+      // a live tennis hero it is false in the most misleading direction: the
+      // price is seconds old and the SCORE is what is behind (#4469). Keyed on
+      // `oldestFact` so the sentence describes the fact the age actually came
+      // from; with no fact named it says exactly what it always said.
       aria-label={
         stale
-          ? `Last update ${label}. Waiting for a fresh price.`
-          : `Live. Updated ${label}.`
+          ? oldestFact === "score"
+            ? `Score last confirmed ${label}. The probability is newer.`
+            : `Last update ${label}. Waiting for a fresh price.`
+          : oldestFact === "score"
+            ? `Live. Score confirmed ${label}.`
+            : `Live. Updated ${label}.`
+      }
+      title={
+        oldestFact === "score"
+          ? `Score last confirmed ${label}. The probability is newer.`
+          : undefined
       }
     >
       <span
