@@ -683,41 +683,26 @@ export default function TournamentProps({
   }
 
   const shown = expanded ? visible : visible.slice(0, COLLAPSED_LIST_COUNT);
-  // WHETHER ANY CARD OWES THE READER AN AGE. The definition line is printed
-  // once per section and only when something on screen needs it — a definition
-  // standing over a section of live numbers is a footnote about nothing.
-  // An incomplete comparison prints its own sentence instead of an age chip, so
-  // it does not summon the definition of an age nothing on screen is showing.
+
+  // ═══ `anyQuiet` AND `anyThin` ARE GONE WITH THE TWO LEGENDS (#4125 item 1) ═══
   //
-  // ⚠️ AND NEITHER DOES A SETTLED CARD (UX-P211), for exactly that reason and
-  // not a new one. A settled card is never `fresh` — `propIsPresentedAsLive`
-  // refuses it — so it satisfied this test while having already dropped its age
-  // chip, and the section printed the definition of a unit that appeared
-  // nowhere beneath it.
-  const anyQuiet = shown.some(
-    (market) =>
-      propIncompleteComparison(market) === null &&
-      propSettlement(market) === null &&
-      propFreshness(market).state !== "fresh"
-  );
-  // The same gate for the mark, over the CARD and every row it prints: a field
-  // card can be unmarked itself while a tail row inside it carries a mark, and
-  // an unexplained symbol is worse than the number it sits beside.
+  // Both existed for one purpose each: to gate a section-level explainer on
+  // whether the symbol it explained was actually on screen. That was the right
+  // rule — "a key to a symbol that is not on screen is furniture" — and the two
+  // predicates were careful, hard-won things: `anyQuiet` had to exclude settled
+  // and incomplete-comparison cards because those drop their age chip, and
+  // `anyThin` had to scan the card AND every row inside it because a field card
+  // can be unmarked while a tail row is marked (UX-P211 / CERT-516).
   //
-  // ⚠️ A SETTLED CARD CONTRIBUTES NEITHER (UX-P211, CERT-516's second half).
-  // This scanned every card's outcomes regardless of settlement, so a section
-  // whose only marks had just been suppressed still printed the legend for
-  // them — an explainer for a symbol that is not on screen, about a trade
-  // nobody can make. The card gate and this one have to agree or one of them
-  // is describing a page that is not being rendered.
-  const anyThin = shown.some(
-    (market) =>
-      propSettlement(market) === null &&
-      (isMarked(readLiquidity(market.liquidity)) ||
-        (market.outcomes ?? []).some((outcome) =>
-          isMarked(readLiquidity(outcome.liquidity))
-        ))
-  );
+  // Notice 34 removes the explainers, so it removes the only question those
+  // predicates answered. They are deleted rather than left computed: an unused
+  // gate is a gate somebody re-uses for a different question later, and neither
+  // of these means what its name suggests out of context.
+  //
+  // ⚠️ NOTHING ELSE READ THEM. Per-card freshness comes from `propFreshness`
+  // inside `FreshnessMark`, and the marks come from `LiquidityMark` reading each
+  // card's and each row's own `liquidity` — both per-item, neither sectional.
+  // The chips and marks on the cards are unchanged.
 
   return (
     <section data-testid="tournament-props" data-considered={curated.considered}>
@@ -754,9 +739,11 @@ export default function TournamentProps({
         * that the choice was never between once and four times, it was between
         * the page body and a tooltip.
         *
-        * `FRESHNESS_DEFINITION` is unchanged and still exported. `anyQuiet` is
-        * still computed and still drives the per-card status, which is the part
-        * a reader acts on. */}
+        * `FRESHNESS_DEFINITION` is unchanged and still exported. The per-card
+        * status a reader actually acts on comes from `propFreshness` inside
+        * `FreshnessMark`, per card — it never came from this paragraph, and the
+        * `anyQuiet` gate that only existed to show or hide the paragraph is
+        * deleted above. */}
 
       {/* ═══ THE MARK EXPLAINS ITSELF ON HOVER; THE PARAGRAPH IS GONE ═══
         *
