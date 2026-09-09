@@ -66,14 +66,61 @@ def _clean_text(value: Any) -> str:
 # as a numeric threshold. Without this, any digit inside a title becomes a rung
 # — "The Bombing of Pan Am 103" scored 103.0 and sorted between the 1s and 3s
 # of a Netflix ladder, and "June 30, 2027" scored 30.
+#
+# The `\d-\d` range branch lives apart from the rest (see `_is_threshold_shaped`)
+# because it is the one branch a NON-measurement can satisfy by accident.
 _THRESHOLD_SHAPED_RE = re.compile(
     r"[$%<>+]"                     # $6,000 · 45% · <130m · 9m+
-    r"|\d\s*[-–]\s*\d"             # 7-8m · 160-170m
     r"|\d\s*[kmbt]\b"              # 6m · 1.5t
     r"|\b(?:bps|bp)\b"             # 1 (25 bps)
     r"|\b(?:under|over|above|below|at least|at most|more than|less than)\b",
     re.I,
 )
+
+_RANGE_SHAPED_RE = re.compile(r"\d\s*[-–]\s*\d")  # 7-8m · 160-170m · 80–83
+_LETTER_RE = re.compile(r"[A-Za-z]")
+
+
+def _is_threshold_shaped(label: str) -> bool:
+    """Does this label read as a numeric threshold at all?
+
+    #4226. The `\\d-\\d` branch was the whole shape test for a bare range, and a
+    bare range is exactly what an IDENTIFIER looks like once you stop reading
+    the words around it. Measured on production 2026-09-09, that branch was
+    minting rungs out of:
+
+      * model versions — "Claude Opus 4-6 Thinking" and "Claude Opus 4-7" both
+        scored (4.0, '', 'exact'), so the six-model field "Top AI model in
+        September?" was drawn as a two-rung ladder at ONE value and the 71%
+        favourite had no rung at all;
+      * scorelines — "Barcelona SC 0 - 1 Delfin SC" scored 0.0, turning a
+        16-scoreline field into a ladder of repeated goal counts;
+      * founding years riding along with a scoreline — "Como 1907 2 - 2 RB
+        Leipzig" scored **1907**, because the shape test matched `2 - 2` while
+        `_compact_value_thresholds` took the FIRST number in the label.
+
+    Same class as #3567 ("SF 49ers" -> 49.0): a number inside a proper noun.
+
+    The separator, measured rather than guessed: a real range OPENS its label.
+    Across the 9,779 production outcome labels carrying a `\\d-\\d` and no other
+    threshold shape, every one of the 2,890 with no letters before the range is
+    a genuine band ("72-73°F", "80–83", "7-8m"), and every one of the 4,901 with
+    letters before it is an identifier — a scoreline ("Draw 1-1", "Exact Score:
+    0-2", "Frances Tiafoe wins 3-2", "FC Dallas 2 - 2 Portland Timbers"), a
+    model version, or a date range whose rung would be the day number
+    ("September 15 - 30, 2026" -> 15). So a bare `\\d-\\d` with letters to its
+    LEFT earns no rung.
+
+    Labels carrying a unit, a comparator or a k/m/b/t suffix never reach this
+    test — they are shaped on their own account, which is why "Republican
+    0-3%", "Under 4-6 inches" and "1 (25 bps)" are unaffected.
+    """
+    if _THRESHOLD_SHAPED_RE.search(label):
+        return True
+    match = _RANGE_SHAPED_RE.search(label)
+    if not match:
+        return False
+    return not _LETTER_RE.search(label[: match.start()])
 
 # Two rungs whose values differ by more than this factor cannot be the same
 # ladder — it means the label set was parsed on mixed scales. Bail out rather
@@ -114,7 +161,7 @@ def _outcome_threshold_value(label: str) -> tuple[float, str, str] | None:
     both also produced duplicate rungs — "1 (25 bps)" became a rung at 1 AND a
     rung at 25 in the same Fed ladder.
     """
-    if not _THRESHOLD_SHAPED_RE.search(label):
+    if not _is_threshold_shaped(label):
         return None
     compact = _compact_value_thresholds(label)
     if compact:

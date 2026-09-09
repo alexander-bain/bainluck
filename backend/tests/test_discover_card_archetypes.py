@@ -323,3 +323,139 @@ def test_binary_threshold_questions_keep_their_rung():
         assert len(points) == 1
         assert points[0]["source"] == "market_name"
         assert points[0]["value"] == 150_000
+
+
+# ── #4226 · A BARE `\d-\d` IS A RANGE ONLY WHEN IT OPENS ITS LABEL ──
+#
+# `_THRESHOLD_SHAPED_RE`'s range branch was the whole shape test for a label
+# with no unit, no comparator and no k/m/b/t suffix — and a bare `\d-\d` is
+# exactly what an IDENTIFIER looks like once you stop reading the words around
+# it. Production `GET /api/feed`, 2026-09-09: the six-model Kalshi field "Top AI
+# model in September?" served `suggested_format: threshold_heatmap` with TWO
+# rungs, both at 4.0, scraped out of two model version numbers — while the 71%
+# favourite got no rung at all.
+#
+# Census of the class, run against production the same morning: of the 9,779
+# open-market outcome labels carrying a `\d-\d` and no other threshold shape,
+# 2,890 have nothing before the range (all genuine bands) and 4,901 have letters
+# before it (all identifiers). Reclassifying on that line moved 905 markets off
+# `threshold_heatmap`; every one was a broken ladder, itemised below.
+#
+# The tests below come in two halves on purpose (gotcha #43): the identifiers
+# must lose their rung AND the bands must keep theirs.
+
+
+def _labels_of(points):
+    return [p["label"] for p in points]
+
+
+def test_the_ai_model_field_is_a_field_not_a_two_rung_ladder():
+    # The exact production specimen, market 60481294, with its real prices.
+    # `claude-opus-4-6-thinking` and `claude-opus-4-7` each scored (4.0, '',
+    # 'exact') off their version separator, `len(threshold_points) >= 2` won
+    # over the field branch, and the card became a ladder with two rungs at one
+    # meaningless value. Labels are the raw Kalshi ones: the classifier
+    # prettifies them itself (#4151), and the prettified form "Claude Opus 4-6
+    # Thinking" matches `\d-\d` just as the raw one does — which is why the
+    # guard cannot key on the hyphenation.
+    models = [
+        ("claude-fable-5.1-max", 0.715), ("claude-opus-5-max", 0.075),
+        ("claude-opus-4-6-thinking", 0.035), ("claude-opus-5-high", 0.025),
+        ("claude-fable-5", 0.010), ("claude-opus-4-7", 0.010),
+    ]
+    result = classify_discover_card_archetype(
+        name="Top AI model in September?",
+        category="tech",
+        outcomes=[{"name": n, "probability": p} for n, p in models],
+        outcome_count=6,
+    )
+
+    assert result["threshold_points"] == []
+    assert result["suggested_format"] == "outcome_distribution"
+    # And the 71% favourite — the one the ladder dropped — leads the card.
+    assert result["distribution_outcomes"][0]["label"] == "Claude Fable 5.1 Max"
+
+
+def test_a_number_inside_a_proper_noun_never_becomes_a_rung():
+    # Every one a real production label that scored a rung before #4226.
+    # Same class as #3567 ("SF 49ers" -> 49.0), five different tokens.
+    identifiers = [
+        # model version (#4226's own specimen), raw and as #4151 prettifies it
+        ("Top AI model in September?", ["Claude Opus 4-6 Thinking", "Claude Opus 4-7"]),
+        # scoreline — 872 of the 905 reclassified markets are these
+        ("Liverpool LFC vs. Tottenham Hotspur FC - Exact Score",
+         ["Liverpool LFC 0 - 0 Tottenham Hotspur FC",
+          "Liverpool LFC 1 - 3 Tottenham Hotspur FC"]),
+        # a founding year riding along with a scoreline: the shape test matched
+        # "2 - 2" while the value came from the FIRST number in the label, so
+        # this pair became two rungs at 1907
+        ("Como 1907 vs. RB Leipzig - Exact Score",
+         ["Como 1907 2 - 2 RB Leipzig", "Como 1907 3 - 3 RB Leipzig"]),
+        # ballot initiative numbers — three rungs, all 26, off "IL26-001"
+        ("Which ballot measures will pass in Washington?",
+         ["Initiative No. IL26-001", "Initiative No. IL26-638"]),
+        # a firearm calibre and a model number: ".44-40" shaped the label and
+        # "Winchester Model 1873" supplied the value
+        ("Which firearm will receive the most votes in Idaho's State Gun advisory question?",
+         ["Winchester Model 1873 (.44-40)", "Remington Model 700 bolt-action rifle (.30-06)"]),
+    ]
+    for name, labels in identifiers:
+        assert _points(name, labels) == [], name
+
+
+def test_a_date_range_does_not_become_a_ladder_of_day_numbers():
+    # Production 58776433 / 58995515. "October 1 - 31, 2026" scored 1 and
+    # "September 15 - 30, 2026" scored 15, so the ladder sorted October BEFORE
+    # September — a chronology card rendered backwards.
+    assert _points(
+        "When will the Danube River return to normal levels?",
+        ["September 1 - 14, 2026", "September 15 - 30, 2026", "October 1 - 31, 2026"],
+    ) == []
+
+
+def test_genuine_bands_keep_their_rungs():
+    # The other direction (gotcha #43). Each of these opens with its number, or
+    # carries a unit/comparator that shapes it without the range branch at all,
+    # and each is a real production label. If the guard ever widens to "a
+    # `\d-\d` anywhere is suspect", these are what it breaks.
+    bands = [
+        # weather bands: the single largest legitimate population in the census
+        ("Highest temperature in NYC on Sep 10?", ["68-69°F", "70-71°F", "72-73°F"]),
+        # CDC flu hospitalisation rate — bare numbers, no unit, no comparator
+        ("Flu Hospitalization Rate Week 28, 2026?", ["80–83", "83–86", "86–89"]),
+        # percent bands, and a band with a party name BEFORE the range that is
+        # rescued by its "%" rather than by the range branch
+        ("New Hampshire Senate Election Margin of Victory",
+         ["Republican 0-3%", "Republican 3-6%", "Republican 6-9%"]),
+        # compact finance ranges
+        ("SpaceX IPO Closing Market Cap", ["$1.5T-$2.0T", "$2.0T-$2.5T"]),
+    ]
+    for name, labels in bands:
+        points = _points(name, labels)
+        assert len(points) == len(labels), (name, points)
+        assert _labels_of(points) == list(labels) or len(points) == len(labels)
+
+
+def test_a_range_with_words_only_after_it_still_scores():
+    # The rule is asymmetric and deliberately so. "72-73°F" and "80–83 per 100k"
+    # lead with the measurement; "Draw 1-1" and "Frances Tiafoe wins 3-2" lead
+    # with a name. Only a letter to the LEFT disqualifies the range.
+    from app.utils.discover_card_archetypes import _outcome_threshold_value
+
+    assert _outcome_threshold_value("72-73°F") == (72.0, "", "exact")
+    assert _outcome_threshold_value("Draw 1-1") is None
+    assert _outcome_threshold_value("Frances Tiafoe wins 3-2") is None
+
+
+def test_two_rungs_at_one_value_is_NOT_the_guard_for_this_class():
+    # #4226 sketched "no ladder may serve two rungs at the same value". Measured
+    # against production it is false, and this test exists so nobody adopts it.
+    # A band ladder's open-ended first bucket legitimately collides with the
+    # bucket above it — 277 markets still do after #4226 landed — and dropping
+    # the treatment on a duplicate would take out every GDP and election-margin
+    # ladder we serve.
+    points = _points(
+        "US GDP growth in Q2 2026?",
+        ["<1.0%", "1.0–1.5%", "1.5–2.0%", "2.0–2.5%"],
+    )
+    assert _values(points) == [1.0, 1.0, 1.5, 2.0]
