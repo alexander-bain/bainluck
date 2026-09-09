@@ -1030,7 +1030,9 @@ struct EventDetailView: View {
         // #4284 — the NAMED rows, not the payload. Unnameable keys draw no row, so
         // asking `bookmakerOdds` here would open a disclosure onto an "INDIVIDUAL
         // SPORTSBOOKS" heading with nothing under it. The list the header promises
-        // is the list this condition has to be about.
+        // is the list this condition has to be about. #4406 widens the gap between
+        // the two: priceless keys draw no row either, so a game every book skipped
+        // now correctly draws no heading instead of a heading over eighteen names.
         let bookmakers = Self.namedBookmakerRows(event.bookmakerOdds ?? [])
         if !sourceEntries.isEmpty || !bookmakers.isEmpty {
             VStack(spacing: 0) {
@@ -1114,10 +1116,16 @@ struct EventDetailView: View {
     /// `.fixedSize` (#3966): `lineLimit` alone still truncates when a parent
     /// proposes one line's height.
     @ViewBuilder
+    ///
+    /// #4406 — `probabilities` is not optional here either. Both lists that call
+    /// this now carry a pair on every row (`WinProbSourceCatalog.Entry` always
+    /// did; `NamedBookmakerRow` does since #4406), so the two `if let`s this
+    /// function used to hold could only ever draw the state the issue
+    /// photographed: a label, and white space where the bar and the numbers go.
     private func sourceProbabilityRow(
         label: String,
         font: Font,
-        probabilities: (away: Double, home: Double)?,
+        probabilities: (away: Double, home: Double),
         colors: (away: Color, home: Color),
         columns: EventSourceLabelColumn.Columns
     ) -> some View {
@@ -1132,9 +1140,7 @@ struct EventDetailView: View {
             case .inline:
                 HStack(spacing: EventSourceLabelColumn.interColumnSpacing) {
                     labelText
-                    if let probabilities {
-                        probabilityBarAndNumbers(probabilities, colors: colors, columns: columns)
-                    }
+                    probabilityBarAndNumbers(probabilities, colors: colors, columns: columns)
                 }
             case .stacked:
                 VStack(
@@ -1142,11 +1148,9 @@ struct EventDetailView: View {
                     spacing: EventSourceLabelColumn.stackedLineSpacing
                 ) {
                     labelText
-                    if let probabilities {
-                        HStack(spacing: EventSourceLabelColumn.interColumnSpacing) {
-                            probabilityBarAndNumbers(
-                                probabilities, colors: colors, columns: columns)
-                        }
+                    HStack(spacing: EventSourceLabelColumn.interColumnSpacing) {
+                        probabilityBarAndNumbers(
+                            probabilities, colors: colors, columns: columns)
                     }
                 }
             }
@@ -1229,14 +1233,17 @@ struct EventDetailView: View {
         }
     }
 
-    /// The away–home pair a bookmaker row draws, or `nil` if it draws none.
+    /// The away–home pair a bookmaker row draws, or `nil` if the book quoted no
+    /// price on this game — in which case, since #4406, there is no row.
     ///
     /// Extracted for #4208 so the width model and the row read the SAME rule. The
     /// column is sized from the strings the list prints, and a row prints numbers
-    /// only when it has both sides — if this predicate and the `if let` below it
-    /// ever disagreed, the column would be measured against a set of strings the
-    /// view does not draw, which is a width bug that no screenshot would show
-    /// (the column would simply be too wide, silently).
+    /// only when it has both sides — if this predicate and the row ever
+    /// disagreed, the column would be measured against a set of strings the view
+    /// does not draw, which is a width bug that no screenshot would show (the
+    /// column would simply be too wide, silently). They can no longer disagree:
+    /// this predicate is now what decides the row EXISTS, so every row the model
+    /// measures is a row the view draws, and every row the view draws has both.
     private static func bookmakerProbabilities(
         _ bm: BookmakerOdds
     ) -> (away: Double, home: Double)? {
@@ -1247,13 +1254,21 @@ struct EventDetailView: View {
     }
 
     /// One row the book table will actually draw: the brand a reader sees, and
-    /// the pair it prints, if it has both.
+    /// the pair it prints.
+    ///
+    /// #4406 — `probabilities` is NOT optional, and that is the fix rather than a
+    /// tidy-up. A row is a name AND a number; a book with no number has no row.
+    /// Holding the pair as optional is what let twelve of eighteen rows reach the
+    /// screen as bare brands, and no ban-shaped guard can see that state because
+    /// it is an OMISSION — nothing wrong is written, a number is simply absent
+    /// (#4478's lesson from #2279). Making it non-optional makes the empty row
+    /// unrepresentable: the compiler, not a test, is what refuses it now.
     struct NamedBookmakerRow: Identifiable {
         /// The payload key. Stable across refreshes, and never drawn.
         let id: String
         /// The brand, resolved through `SourceLabels`. Never a raw key.
         let label: String
-        let probabilities: (away: Double, home: Double)?
+        let probabilities: (away: Double, home: Double)
     }
 
     /// The book table's rows: named, in payload order, capped.
@@ -1273,16 +1288,33 @@ struct EventDetailView: View {
     /// the same rule `sportsbookChips(for:)` follows, and the reason the caller
     /// must ask whether this array is empty rather than asking the payload
     /// (`bookmakerOdds` non-empty no longer implies a table).
+    ///
+    /// #4406 — and a PRICELESS key yields no row either, for the same reason: a
+    /// section headed "Individual sportsbooks" whose rows are names with nothing
+    /// beside them tells the reader nothing and reads as broken. Measured on
+    /// production 2026-09-09, 45 of 180 `bookmaker_odds` rows across 11 games
+    /// carried `null` on both sides — 2 of 18 on a live game, 13 of 18 on a
+    /// completed one. It is a book that did not quote this game, not a settled-
+    /// game artifact, and there is nothing to say about it.
+    ///
+    /// 🔴 SO THE PRICE FILTER RUNS BEFORE THE CAP, exactly as the naming does,
+    /// and for the identical reason spelt out above. Drawn on the specimen in
+    /// the issue (15307197, eighteen books in alphabetical payload order): six of
+    /// the first ten quoted nothing, so cap-first drew four numbers and left
+    /// LowVig, MyBookie and Rebet — three real prices, at positions 14, 15 and 16
+    /// — outside the window unseen. Filtering first draws all seven. Both
+    /// orderings agree on every payload of ten or fewer, so only a fixture larger
+    /// than the cap can tell them apart.
     static func namedBookmakerRows(
         _ bookmakers: [BookmakerOdds], limit: Int = 10
     ) -> [NamedBookmakerRow] {
         bookmakers
             .compactMap { bm -> NamedBookmakerRow? in
                 guard let key = bm.bookmaker,
-                      let label = SourceLabels.sportsbookName(for: key)
+                      let label = SourceLabels.sportsbookName(for: key),
+                      let probabilities = bookmakerProbabilities(bm)
                 else { return nil }
-                return NamedBookmakerRow(
-                    id: key, label: label, probabilities: bookmakerProbabilities(bm))
+                return NamedBookmakerRow(id: key, label: label, probabilities: probabilities)
             }
             .prefix(limit)
             .map { $0 }
@@ -1306,8 +1338,14 @@ struct EventDetailView: View {
         // #4208 — as in `sourceContent`. Only rows carrying BOTH prices draw
         // numbers, so the strings measured are the ones that survive that filter;
         // measuring every bookmaker would charge the column for rows it never
-        // prints. A list where no row has both draws no numbers at all and falls
-        // back to the model's own floor.
+        // prints.
+        //
+        // #4406 moved that filter UPSTREAM into `namedBookmakerRows`, so this
+        // list is now every row and every row has a pair — the flatMap no longer
+        // needs to skip anything. The claim above is unchanged and now trivially
+        // true. The old "a list where no row has both draws no numbers at all"
+        // case is gone with it: such a list has no rows, so `sourcesToggle`
+        // draws no heading over it.
         //
         // #4284 — and the labels measured are the BRANDS, because the brands are
         // what the rows draw. Sizing on the keys is not conservative, it is just
@@ -1317,8 +1355,8 @@ struct EventDetailView: View {
         let columns = EventSourceLabelColumn.columns(
             labels: rows.map(\.label),
             values: rows.flatMap { row -> [String] in
-                guard let pair = row.probabilities else { return [] }
-                return [formatProbability(pair.away), formatProbability(pair.home)]
+                [formatProbability(row.probabilities.away),
+                 formatProbability(row.probabilities.home)]
             },
             availableWidth: sourceRowWidth,
             typeSize: dynamicTypeSize,
