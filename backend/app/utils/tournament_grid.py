@@ -119,6 +119,12 @@ from app.utils.tournament_board import (
     governing_age_hours,
     price_state,
 )
+from app.utils.tournament_progress import (
+    EMPTY_PROGRESS,
+    VERDICT_OUT,
+    VERDICT_REACHED,
+    DrawProgress,
+)
 from app.utils.tournament_register import TournamentRegister, ROUNDS, player_image
 
 logger = logging.getLogger(__name__)
@@ -159,6 +165,13 @@ CELL_NO_MARKET = "no_market"
 #: THE ALARM STATES. Registered but the price never loaded / never registered.
 CELL_UNLINKED = "unlinked"
 CELL_UNREGISTERED = "unregistered"
+
+#: The two notes a ``settled`` cell decided by the DRAW rather than by the
+#: market carries (#4174). They are read by ``frontend/lib/playoffGrid.ts`` —
+#: ``reached`` draws a tick and ``out`` a dash — so they are a contract, not
+#: prose, and the reader-facing sentence is composed there.
+SETTLED_REACHED = "reached"
+SETTLED_OUT = "out"
 
 ALARM_STATES = (CELL_UNLINKED, CELL_UNREGISTERED)
 PRICED_STATES = (CELL_LIVE, CELL_STALE, CELL_DARK)
@@ -453,7 +466,10 @@ def _price_cell(
 
 
 def evaluate_column_sums(
-    columns: list[dict[str, Any]], rows: list[dict[str, Any]]
+    columns: list[dict[str, Any]],
+    rows: list[dict[str, Any]],
+    *,
+    progress: Optional[DrawProgress] = None,
 ) -> list[dict[str, Any]]:
     """Alex's ruling-4 sum check, per column.
 
@@ -469,20 +485,53 @@ def evaluate_column_sums(
     while one that sums HIGH is the market disagreeing with arithmetic.  Both
     are reported with the coverage count beside them so the reader can tell
     which they are looking at.
+
+    ═══ THE DENOMINATOR IS WHAT IS STILL TO BE WON (#4174) ═══
+
+    Sixteen players reach the round of 16 across the whole tournament, and once
+    the round has been played every one of those places is taken.  Comparing
+    what is left to quote against ``16`` then asks the column a question that
+    was answered yesterday, and the ratio it prints is not the number its own
+    name claims: measured on production 2026-09-09, the men's R16 column read
+    ``23.48 / 16 = 1.47x`` while the round had been over for two days.
+
+    So the target is ``slots - (players proven to have reached this round)``,
+    taken over the WHOLE field rather than over the grid's rows, and the sum
+    runs over exactly the cells that are still open — a cell the draw has
+    already decided is ``settled`` and carries no probability, so it drops out
+    of both sides at once.  ``slots`` and ``decided_rows`` travel beside the
+    result so the reduction is legible and not a silent rebasing.
+
+    A column with nothing left to decide is ``settled``: a finished check, not
+    a failed one.  Without a ``progress`` this is exactly the old behaviour —
+    every slot open, every priced cell counted.
     """
+    prog = progress or EMPTY_PROGRESS
     out: list[dict[str, Any]] = []
     for column in columns:
         key = column["key"]
-        expected = ROUND_SLOTS.get(key)
+        slots = ROUND_SLOTS.get(key)
+        expected = prog.open_slots(key, slots)
         priced = [
             row["cells"][key]
             for row in rows
             if row["cells"].get(key, {}).get("probability") is not None
         ]
+        # Rows this column is over for — the draw settled them, so they are
+        # neither a coverage hole nor a contributor.
+        decided_rows = sum(
+            1
+            for row in rows
+            if row["cells"].get(key, {}).get("state") == CELL_SETTLED
+        )
         total = sum(cell["probability"] for cell in priced)
         ratio = (total / expected) if expected else None
         verdict = "unchecked"
-        if expected is not None and priced:
+        if expected == 0:
+            # Every place in this round has been won. There is nothing left for
+            # a probability to be about.
+            verdict = "settled"
+        elif expected is not None and priced:
             verdict = (
                 "pass"
                 if abs((ratio or 0.0) - 1.0) <= COLUMN_SUM_TOLERANCE
@@ -492,9 +541,17 @@ def evaluate_column_sums(
             "key": key,
             "short_label": column["short_label"],
             "sum": round(total, 4),
+            # What the OPEN cells have to add up to. Named `expected` because
+            # that is the field every reader of this shape already reads as the
+            # target; `slots` beside it says what it was reduced from.
             "expected": expected,
+            "slots": slots,
             "ratio": round(ratio, 4) if ratio is not None else None,
             "priced_rows": len(priced),
+            "decided_rows": decided_rows,
+            # Rows still in the draw for this round that we have no number for.
+            # The honest half of an `under`: it is coverage, not a market.
+            "uncovered_rows": max(len(rows) - len(priced) - decided_rows, 0),
             "total_rows": len(rows),
             "verdict": verdict,
         })
@@ -576,6 +633,7 @@ def build_playoff_grid(
     prices: dict[int, dict[str, Any]],
     draw: str,
     now: datetime,
+    progress: Optional[DrawProgress] = None,
 ) -> dict[str, Any]:
     """The grid for one draw.
 
@@ -601,7 +659,23 @@ def build_playoff_grid(
     Venus Williams — so a rows-from-the-board-only grid would drop 128 priced
     markets, 20 of the men's 44 rows among them.  Their title cell is an honest
     ``no_market``; their reach cells are real prices.
+
+    ═══ A PLAYED ROUND IS A RESULT, NOT A FORECAST (#4174) ═══
+
+    ``progress`` carries what the draw has already decided — see
+    ``tournament_progress``.  Where it proves a player reached a round, or
+    proves they are out of the tournament, that cell is ``settled`` and
+    publishes NO probability, because the standing ruling is that settled means
+    settled and a probability beside a result is the defect that ruling names.
+
+    This is not a filter and it removes no row.  It is the same rule the cell
+    states already carry, applied to the one source of truth the grid was not
+    reading: the tournament's own scoreboard.  A cell the results cannot speak
+    to is untouched — ``progress`` proves things, it never assumes them — so a
+    cold results cache degrades to exactly the previous behaviour rather than
+    to an emptier grid.
     """
+    prog = progress or EMPTY_PROGRESS
     reg = TournamentRegister(register)
     cells_by_key = reg.reach_cells(draw)
 
@@ -682,7 +756,22 @@ def build_playoff_grid(
 
         for name in reach_rounds:
             reach = cells_by_key.get((str(entity_key), name))
-            if reach is None:
+            decided = prog.verdict(entity_key, name)
+            if decided is not None:
+                # ── THE DRAW ANSWERED THIS ONE. Ahead of the register lookup on
+                # purpose: an `unregistered` alarm about a question the
+                # tournament has already settled is an alarm about nothing, and
+                # a player who is out does not need a quarter-final market.
+                cells[name] = _cell(
+                    CELL_SETTLED,
+                    note=SETTLED_REACHED if decided == VERDICT_REACHED else SETTLED_OUT,
+                )
+                # WHERE THEY WENT OUT, so a dash can say something. Four dashes
+                # in a row is the shape of a player who lost in the third round
+                # and the shape of a player we know nothing about; this is the
+                # difference, and it rides the cell's own tooltip.
+                cells[name]["settled_round"] = prog.eliminated.get(str(entity_key))
+            elif reach is None:
                 # ── THE SECOND ALARM. A column exists because some player in
                 # this draw has a cell for it; this player does not. Nobody
                 # censused the pair. Never blank, never inferred from the
@@ -705,7 +794,18 @@ def build_playoff_grid(
 
         # THE TITLE COLUMN IS THE BOARD'S OWN CELL, not a re-blend of it.
         title_probability = board_row.get("probability")
-        if board_row.get("state") not in (None, "live"):
+        title_decided = prog.title_verdict(entity_key)
+        if title_decided is not None:
+            # #4174: seventeen eliminated men were still carrying a 1% outright
+            # each on quarter-final morning, which is the whole of that
+            # column's overround. An outright quote on a player who is out is
+            # a book nobody re-settled, not a chance.
+            cells["title"] = _cell(
+                CELL_SETTLED,
+                note="won" if title_decided == VERDICT_REACHED else SETTLED_OUT,
+            )
+            cells["title"]["settled_round"] = prog.eliminated.get(str(entity_key))
+        elif board_row.get("state") not in (None, "live"):
             cells["title"] = _cell(CELL_SETTLED, note=str(board_row.get("state")))
         elif title_probability is None:
             cells["title"] = _cell(
@@ -770,7 +870,12 @@ def build_playoff_grid(
         # NON-ZERO IS RED. The amendment's whole point: these are defects with
         # a named fix (link the market), not a data quirk to be explained.
         "alarm_cells": alarms,
-        "column_sums": evaluate_column_sums(columns, rows),
+        # How much of this grid the tournament itself has answered. Reported so
+        # a reader of the payload can tell a grid that went quiet from one that
+        # got decided — the two look identical in `priced_cells` alone.
+        "settled_cells": counts.get(CELL_SETTLED, 0),
+        "decided_matches": prog.decided_matches,
+        "column_sums": evaluate_column_sums(columns, rows, progress=prog),
         "monotonicity_violations": evaluate_monotonicity(columns, rows),
     }
 
@@ -781,8 +886,15 @@ def build_grids(
     boards: list[dict[str, Any]],
     prices: dict[int, dict[str, Any]],
     now: datetime,
+    progress: Optional[dict[str, DrawProgress]] = None,
 ) -> dict[str, Any]:
-    """One grid per board, keyed by draw."""
+    """One grid per board, keyed by draw.
+
+    ``progress`` is ``tournament_progress.build_progress``' output, keyed the
+    same way. A draw missing from it settles nothing, which is the honest
+    reading of "we hold no results for this draw".
+    """
+    by_draw = progress or {}
     return {
         board["draw"]: build_playoff_grid(
             register,
@@ -790,6 +902,7 @@ def build_grids(
             prices=prices,
             draw=board["draw"],
             now=now,
+            progress=by_draw.get(board["draw"]),
         )
         for board in boards
     }
@@ -809,6 +922,8 @@ __all__ = [
     "PRICED_STATES",
     "ROUNDS",
     "ROUND_SLOTS",
+    "SETTLED_OUT",
+    "SETTLED_REACHED",
     "build_grids",
     "build_playoff_grid",
     "evaluate_column_sums",

@@ -446,15 +446,37 @@ describe("ruling 4 — the semifinal column and the sum check", () => {
   });
 
   it("counts an under-summing column without explaining it in prose", () => {
+    // #4174: `uncovered_rows` is the coverage count now — players STILL IN THE
+    // DRAW that nobody quotes. It used to be `total_rows - priced_rows`, which
+    // counted a player who lost in the third round as a missing market. The
+    // number is machine-readable only; #4278 took the sentence off the page.
     const model = grid({
       column_sums: [
-        { key: "R16", short_label: "R16", sum: 13.667, expected: 16, ratio: 0.854,
-          priced_rows: 44, total_rows: 56, verdict: "under" },
+        { key: "R16", short_label: "R16", sum: 13.667, expected: 16, slots: 16,
+          ratio: 0.854, priced_rows: 44, decided_rows: 0, uncovered_rows: 12,
+          total_rows: 56, verdict: "under" },
       ],
     });
     const html = renderToStaticMarkup(<PlayoffGrid grid={model} />);
     expect(html).not.toContain("12 of 56 players have no market");
+    expect(html).not.toContain("12 players have no market");
     expect(html).toContain('data-sum-failing="1"');
+    expect(html).toContain('data-sum-columns="1"');
+  });
+
+  it("a decided column is a finished check, not a failed one (#4174)", () => {
+    // The QF column read `0.63 of 8` on a morning when all eight
+    // quarter-finalists were already known, and every probe reading
+    // `data-sum-failing` was told the grid had failed its own check.
+    const model = grid({
+      column_sums: [
+        { key: "QF", short_label: "QF", sum: 0, expected: 0, slots: 8, ratio: null,
+          priced_rows: 0, decided_rows: 56, uncovered_rows: 0, total_rows: 56,
+          verdict: "settled" },
+      ],
+    });
+    const html = renderToStaticMarkup(<PlayoffGrid grid={model} />);
+    expect(html).toContain('data-sum-failing="0"');
     expect(html).toContain('data-sum-columns="1"');
   });
 
@@ -831,6 +853,41 @@ describe("the cell vocabulary", () => {
     expect(gridCellGlyph(cell({ state: "unlinked" }))).toBe("!");
   });
 
+  it("a player who is THROUGH gets a tick, not the out dash (#4174)", () => {
+    // The draw decides these two, not the market: `reached` is "they are in
+    // this round", `out` is "they are not in the tournament". Both used to
+    // arrive as a stale probability with a bar under it.
+    expect(gridCellGlyph(cell({ state: "settled", note: "reached" }))).toBe("✓");
+    expect(gridCellGlyph(cell({ state: "settled", note: "out" }))).toBe("—");
+  });
+
+  it("a decided cell says what happened, in words (#4174)", () => {
+    expect(
+      gridCellExplanation(cell({ state: "settled", note: "reached" }), "To reach the semi-finals")
+    ).toBe("To reach the semi-finals. Reached.");
+    expect(
+      gridCellExplanation(
+        cell({ state: "settled", note: "out", settled_round: "R32" }),
+        "To reach the final"
+      )
+    ).toBe("To reach the final. Out in the third round.");
+    // No exit round on the cell, and no invented one either.
+    expect(
+      gridCellExplanation(cell({ state: "settled", note: "out" }), "To win the title")
+    ).toBe("To win the title. Out of the tournament.");
+    // A round key we have no words for stays off the screen.
+    expect(
+      gridCellExplanation(
+        cell({ state: "settled", note: "out", settled_round: "R9999" }),
+        "To win the title"
+      )
+    ).toBe("To win the title. Out of the tournament.");
+    // The market's own terminal word still reads as it always did.
+    expect(
+      gridCellExplanation(cell({ state: "settled", note: "eliminated" }), "SF")
+    ).toBe("SF. Settled: eliminated.");
+  });
+
   it("formats an age without ever claiming to know one it does not", () => {
     expect(formatAge(0.4)).toBe("24m");
     expect(formatAge(27)).toBe("27h");
@@ -855,14 +912,26 @@ describe("the cell vocabulary", () => {
     expect(
       columnSumSentence({ key: "SF", short_label: "SF", sum: 4.0, expected: 4,
         ratio: 1, priced_rows: 44, total_rows: 56, verdict: "pass" })
-    ).toContain("4 places — as it should");
+    ).toContain("4 places still to be won — as it should");
   });
 
   it("does not write \"1 places\" on the title column", () => {
+    const sentence = columnSumSentence({
+      key: "title", short_label: "Title", sum: 1.21, expected: 1,
+      ratio: 1.21, priced_rows: 36, total_rows: 56, verdict: "over",
+    });
+    expect(sentence).toContain("against 1 place ");
+    expect(sentence).not.toContain("1 places");
+  });
+
+  it("names the target as what is still to be won, not the round's size", () => {
+    // #4174: two of the four semi-final places were already taken, and the
+    // column was being asked to add up to four.
     expect(
-      columnSumSentence({ key: "title", short_label: "Title", sum: 1.21, expected: 1,
-        ratio: 1.21, priced_rows: 36, total_rows: 56, verdict: "over" })
-    ).toContain("against 1 place.");
+      columnSumSentence({ key: "SF", short_label: "SF", sum: 1.8, expected: 2, slots: 4,
+        ratio: 0.9, priced_rows: 10, decided_rows: 40, uncovered_rows: 6,
+        total_rows: 56, verdict: "pass" })
+    ).toContain("2 places still to be won");
   });
 });
 

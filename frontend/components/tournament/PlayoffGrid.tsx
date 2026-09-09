@@ -497,7 +497,13 @@ export default function PlayoffGrid({
   const marked = markedCellCount(grid);
   /* The deleted `grid-sum-check` disclosure's two numbers, kept machine-readable
      — see the block above this component. Same treatment as `data-marked`. */
-  const sumFailing = grid.columnSums.filter((check) => check.verdict !== "pass").length;
+  /* #4174: `settled` is a FINISHED check, not a failed one. A round whose places
+     have all been won has nothing left for a probability to be about, and
+     counting it here made a coherent grid report itself broken to every probe
+     reading this attribute. */
+  const sumFailing = grid.columnSums.filter(
+    (check) => check.verdict !== "pass" && check.verdict !== "settled"
+  ).length;
 
   return (
     <section

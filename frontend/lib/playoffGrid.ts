@@ -72,6 +72,12 @@ export interface GridCell {
   is_alarm: boolean;
   freshest_observed_at?: string | null;
   partially_unlinked?: boolean;
+  /**
+   * #4174. On a `settled` cell the DRAW decided, the round the player went out
+   * in — so four dashes in a row can say "lost in the third round" instead of
+   * looking like four holes.
+   */
+  settled_round?: string | null;
   /** UX-P157. How thin the market behind this cell is — see `lib/liquidity`. */
   liquidity?: string | null;
   liquidity_reasons?: string[] | null;
@@ -104,11 +110,23 @@ export interface GridColumnSum {
   key: string;
   short_label: string;
   sum: number;
+  /**
+   * The places in this round still to be WON — `slots` minus the players the
+   * draw has already put there (#4174). It is what the open numbers in the
+   * column have to add up to, and it is the target `columnSumSentence` names.
+   */
   expected: number | null;
+  /** How many places the round holds in total. `expected` before any were won. */
+  slots?: number | null;
   ratio: number | null;
   priced_rows: number;
+  /** Rows this column is over for: the draw settled them. */
+  decided_rows?: number;
+  /** Rows still in the draw here that nobody quotes. The honest half of `under`. */
+  uncovered_rows?: number;
   total_rows: number;
-  verdict: "pass" | "over" | "under" | "unchecked";
+  /** `settled`: every place is taken, so there is nothing left to check. */
+  verdict: "pass" | "over" | "under" | "unchecked" | "settled";
 }
 
 export interface GridMonotonicityViolation {
@@ -472,7 +490,11 @@ export function formatGridCell(cell: GridCell): string | null {
 export function gridCellGlyph(cell: GridCell): string {
   switch (cell.state) {
     case "settled":
-      return cell.note === "won" ? "✓" : "—";
+      // #4174: `reached` joins `won`. A player who is IN the semi-final is not
+      // a player who lost, and the dash was saying the second thing about the
+      // first — the same two-states-one-mark confusion the note above is
+      // about, one row over.
+      return cell.note === "won" || cell.note === "reached" ? "✓" : "—";
     case "no_market":
       return "";
     case "unlinked":
@@ -503,6 +525,41 @@ export function gridCellExplanation(cell: GridCell, columnLabel: string): string
   return reveal === null ? base : `${base} ${reveal}`;
 }
 
+/**
+ * The round a player went out in, in words a reader uses (#4174).
+ *
+ * The register's keys and nothing else — an unknown key yields `null` and the
+ * sentence stays short rather than printing `R64` at somebody.
+ */
+const EXIT_ROUND_WORDS: Record<string, string> = {
+  qualifying: "in qualifying",
+  R128: "in the first round",
+  R64: "in the second round",
+  R32: "in the third round",
+  R16: "in the round of 16",
+  QF: "in the quarter-finals",
+  SF: "in the semi-finals",
+  F: "in the final",
+};
+
+/**
+ * What a `settled` cell says, for `title=` and for screen readers.
+ *
+ * Three kinds reach here and they mean different things: the market resolved
+ * (the note is the venue's own terminal word), the DRAW decided it (#4174 —
+ * `reached` or `out`), or the board handed over a non-live state. Only the
+ * second knows where a player went out, and it says so when it does.
+ */
+function settledSentence(cell: GridCell): string {
+  if (cell.note === "reached") return "Reached.";
+  if (cell.note === "won") return "Won it.";
+  if (cell.note === "out") {
+    const where = cell.settled_round ? EXIT_ROUND_WORDS[cell.settled_round] : null;
+    return where ? `Out ${where}.` : "Out of the tournament.";
+  }
+  return `Settled: ${cell.note ?? "decided"}.`;
+}
+
 function gridCellStateExplanation(cell: GridCell, columnLabel: string): string {
   switch (cell.state) {
     case "live":
@@ -513,7 +570,7 @@ function gridCellStateExplanation(cell: GridCell, columnLabel: string): string {
     case "dark":
       return `${columnLabel}. No reading in over two days.`;
     case "settled":
-      return `${columnLabel}. Settled: ${cell.note ?? "decided"}.`;
+      return `${columnLabel}. ${settledSentence(cell)}`;
     case "no_market":
       // UX-P145: the fallback said "Neither source prices this question" —
       // *prices* as a verb, and *source* is our word for the venues.
@@ -544,6 +601,13 @@ export function formatAge(hours: number | null | undefined): string {
  * usually coverage — the field is bigger than the market prices. Over is the
  * market disagreeing with arithmetic, which is a real property of thin binaries
  * and not something the page is entitled to correct.
+ *
+ * #4174: the target is the places STILL TO BE WON, not the round's full slot
+ * count, because once a round has been played its places are taken and asking
+ * what is left to add up to sixteen is asking yesterday's question. `slots`
+ * travels beside it so the reduction is stated rather than assumed, and an
+ * `under` counts only the players still in the draw who have no market — an
+ * eliminated player is not a coverage hole.
  */
 export function columnSumSentence(check: GridColumnSum): string {
   const target = check.expected ?? 0;
@@ -551,15 +615,18 @@ export function columnSumSentence(check: GridColumnSum): string {
   // "1 places" is the kind of thing a reader files under "nobody looked at
   // this", which is the opposite of what a check is for.
   const places = `${target} place${target === 1 ? "" : "s"}`;
+  const uncovered = check.uncovered_rows ?? check.total_rows - check.priced_rows;
   switch (check.verdict) {
+    case "settled":
+      return `${check.short_label} is decided — every place has been won.`;
     case "pass":
-      return `${check.short_label} adds to ${total} against ${places} — as it should.`;
+      return `${check.short_label} adds to ${total} against ${places} still to be won — as it should.`;
     case "under":
-      return `${check.short_label} adds to ${total}, under the ${places} available: ${
-        check.total_rows - check.priced_rows
-      } of ${check.total_rows} players have no market for it.`;
+      return `${check.short_label} adds to ${total}, under the ${places} still to be won: ${uncovered} ${
+        uncovered === 1 ? "player has" : "players have"
+      } no market for it.`;
     case "over":
-      return `${check.short_label} adds to ${total} against ${places}. The market is giving out more chances than can happen; we show what it quotes rather than scaling it down.`;
+      return `${check.short_label} adds to ${total} against ${places} still to be won. The market is giving out more chances than can happen; we show what it quotes rather than scaling it down.`;
     default:
       return `${check.short_label} has no numbers to check yet.`;
   }
