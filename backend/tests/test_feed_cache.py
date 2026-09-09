@@ -343,12 +343,14 @@ def test_an_unknown_kind_still_participates_if_it_carries_either_field():
     for the two conventional fields rather than straight to ``"?"`` — so the guard
     above is what enforces the map, and an untaught kind is still identified in
     the meantime instead of silently costing the token its resolution."""
-    assert _feed_edition_member(
-        {"type": "novel_kind", "data": {"key": "abc"}}
-    ) == "novel_kind:abc"
-    assert _feed_edition_member(
-        {"type": "novel_kind", "data": {"id": 12}}
-    ) == "novel_kind:12"
+    assert (
+        _feed_edition_member({"type": "novel_kind", "data": {"key": "abc"}})
+        == "novel_kind:abc"
+    )
+    assert (
+        _feed_edition_member({"type": "novel_kind", "data": {"id": 12}})
+        == "novel_kind:12"
+    )
 
 
 def test_a_card_with_no_identity_is_still_positional():
