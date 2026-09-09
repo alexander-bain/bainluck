@@ -1737,6 +1737,9 @@ class TestFeedQualityDebug:
             "No",
             0.55,
             now,
+            # UX-P251: written when the two clocks were one row. Stated
+            # explicitly so each case still measures the blocker it names.
+            newest_outcome_at=now,
         )
 
         assert trace["eligible"] is True
@@ -1768,6 +1771,9 @@ class TestFeedQualityDebug:
             0.92,
             now,
             sport_category="basketball",
+            # UX-P251: written when the two clocks were one row. Stated
+            # explicitly so each case still measures the blocker it names.
+            newest_outcome_at=now,
         )
 
         assert trace["eligible"] is False
@@ -1799,6 +1805,9 @@ class TestFeedQualityDebug:
             0.92,
             now,
             sport_category="politics",
+            # UX-P251: written when the two clocks were one row. Stated
+            # explicitly so each case still measures the blocker it names.
+            newest_outcome_at=now,
         )
 
         assert trace["eligible"] is True
@@ -1830,6 +1839,9 @@ class TestFeedQualityDebug:
             0.91,
             now,
             sport_category="hockey",
+            # UX-P251: written when the two clocks were one row. Stated
+            # explicitly so each case still measures the blocker it names.
+            newest_outcome_at=now,
         )
 
         assert trace["eligible"] is True
@@ -1861,6 +1873,9 @@ class TestFeedQualityDebug:
             0.91,
             now,
             sport_category="hockey",
+            # UX-P251: written when the two clocks were one row. Stated
+            # explicitly so each case still measures the blocker it names.
+            newest_outcome_at=now,
         )
 
         assert trace["eligible"] is False
@@ -1901,6 +1916,9 @@ class TestFeedQualityDebug:
             0.69,
             now,
             sport_category="basketball",
+            # UX-P251: written when the two clocks were one row. Stated
+            # explicitly so each case still measures the blocker it names.
+            newest_outcome_at=now,
         )
 
         assert trace["eligible"] is False
@@ -1933,6 +1951,9 @@ class TestFeedQualityDebug:
             0.65,
             now,
             sport_category="basketball",
+            # UX-P251: written when the two clocks were one row. Stated
+            # explicitly so each case still measures the blocker it names.
+            newest_outcome_at=now,
         )
 
         assert trace["eligible"] is True
@@ -1964,6 +1985,9 @@ class TestFeedQualityDebug:
             0.69,
             now,
             sport_category="politics",
+            # UX-P251: written when the two clocks were one row. Stated
+            # explicitly so each case still measures the blocker it names.
+            newest_outcome_at=now,
         )
 
         assert trace["eligible"] is True
@@ -1995,6 +2019,9 @@ class TestFeedQualityDebug:
             0.65,
             now,
             sport_category="hockey",
+            # UX-P251: written when the two clocks were one row. Stated
+            # explicitly so each case still measures the blocker it names.
+            newest_outcome_at=now,
         )
 
         assert trace["eligible"] is True
@@ -2032,6 +2059,9 @@ class TestFeedQualityDebug:
             0.60,
             now,
             sport_category="basketball",
+            # UX-P251: written when the two clocks were one row. Stated
+            # explicitly so each case still measures the blocker it names.
+            newest_outcome_at=now,
         )
 
         assert trace["eligible"] is True
@@ -2056,6 +2086,9 @@ class TestFeedQualityDebug:
             1.0,
             now,
             sport_category="health",
+            # UX-P251: written when the two clocks were one row. Stated
+            # explicitly so each case still measures the blocker it names.
+            newest_outcome_at=now,
         )
 
         assert trace["eligible"] is False
@@ -2080,6 +2113,9 @@ class TestFeedQualityDebug:
             0.0,
             now,
             sport_category="politics",
+            # UX-P251: written when the two clocks were one row. Stated
+            # explicitly so each case still measures the blocker it names.
+            newest_outcome_at=now,
         )
 
         assert trace["eligible"] is False
@@ -2110,6 +2146,9 @@ class TestFeedQualityDebug:
             0.13,
             now,
             sport_category="golf",
+            # UX-P251: written when the two clocks were one row. Stated
+            # explicitly so each case still measures the blocker it names.
+            newest_outcome_at=now,
         )
 
         assert trace["eligible"] is False

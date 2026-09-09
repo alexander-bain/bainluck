@@ -352,6 +352,9 @@ def _trace(market, **kwargs):
         NOW,
         sport_category=market.llm_sport_category,
         **kwargs,
+        # UX-P251: written when the two clocks were one row. Stated
+        # explicitly so each case still measures the blocker it names.
+        newest_outcome_at=market.updated_at,
     )
 
 

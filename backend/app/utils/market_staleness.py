@@ -402,6 +402,92 @@ def expired_ladder_rungs(
     return expired
 
 
+def _as_utc(value) -> datetime | None:
+    """A stamp, normalised to UTC — or ``None`` for anything that is not one.
+
+    Naive stamps are read as UTC: comparing a naive and an aware datetime raises
+    ``TypeError``, and it would raise at request time rather than in any test.
+
+    The ``isinstance`` is not defensive noise. This reads a column straight off
+    whatever object the caller has, and the one caller sits inside
+    ``_score_futures``'s per-market ``try/except`` — so a non-datetime here does
+    not surface as an error, it surfaces as a card that silently vanished. The
+    DB column is ``DateTime(timezone=True)``, so a non-datetime is never a
+    legitimate stamp and reading it as "no evidence" is the right answer.
+    """
+    if not isinstance(value, datetime):
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
+
+
+#: How long a market's prices may stand still before the market is treated as
+#: over. **This is NOT the parent row's threshold and must never be folded into
+#: it** — see `prices_have_stopped` for the measurement that separates them.
+PRICES_STOPPED_DAYS = 14
+
+
+def prices_have_stopped(
+    newest_outcome_at: datetime | None,
+    now: datetime,
+    *,
+    max_days: float = PRICES_STOPPED_DAYS,
+) -> bool:
+    """Has this market's pricing stopped altogether? (UX-P251)
+
+    ``None`` — no outcome carries a stamp — is **False**. That is "no evidence",
+    not evidence of death; a writer that never sets the column must not take its
+    whole source dark.
+
+    ═══ 🔴 WHY THIS IS A SEPARATE BLOCKER WITH A SEPARATE NUMBER ═══
+
+    The first version of this ship folded the prices' clock into
+    ``market.updated_at`` — took the older of the two stamps and let the four
+    existing staleness blockers run on the result at their own ``2`` days. It
+    was green, its guard was green, and its battery killed 10 of 11 mutants.
+    **A census by market tier is what caught it**, before merge and by one query:
+
+        tier 3: 17 of 17 admitted markets blocked — 100%
+        tier 4:  6 of 7                          —  86%
+
+    Those are not dead markets. They are ``NFC East Division Winner``,
+    ``College Football Heisman Trophy Winner``, ``NHL Pacific Division Winner``,
+    ``Top Fantasy Rookie QB/RB/TE/WR``, the Biletnikoff and Doak Walker awards —
+    **season futures, priced four days ago, on the eve of the NFL season.** A
+    low-liquidity season future legitimately does not reprice daily, and the
+    parent-row clock had been accidentally protecting every one of them.
+
+    Two clocks measuring different things must not share a constant. The parent
+    stamp answers "is the poller still visiting this row" and 2 days is right
+    for it. This one answers "has anybody moved a price" and needs a threshold
+    from the price distribution, which is strongly bimodal — measured on
+    production 2026-09-01, over the 3,409 candidate markets the parent clock
+    admits:
+
+        > 2d   601 blocked      <- kills the whole season-futures shelf
+        > 7d   137
+        > 14d  107   <-- chosen
+        > 21d  107
+        > 30d  103
+        > 45d   67
+
+    Flat from 14 to 30: **almost nothing is frozen between two weeks and a
+    month**, so 14 sits at the start of the plateau with a fortnight of margin
+    below it. It catches the bridesmaids card (59 days) and everything above it,
+    and spares all 464 markets that merely price weekly.
+
+    Being a separate blocker also means the ``#1090`` broaden pass cannot relax
+    it: the two ``*_days`` knobs that pass varies reach the four parent-clock
+    blockers only. A market whose prices stopped a fortnight ago should not come
+    back merely because the pool is thin, and now it cannot.
+    """
+    stamp = _as_utc(newest_outcome_at)
+    if stamp is None:
+        return False
+    return (now - stamp).total_seconds() / 86400 > max_days
+
+
 def is_probability_extreme(probability: float | None) -> bool:
     """True if the leader probability is at a dead extreme (<2% or >98%)."""
     if probability is None:

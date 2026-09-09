@@ -391,6 +391,41 @@ def _price_polled_at(outcomes: Iterable[Any]) -> Any:
     return max(stamps) if stamps else None
 
 
+def price_poll_stamp(market: Any) -> Any:
+    """`price_polled_at` for a market on EITHER carrier shape (UX-P251).
+
+    The same value reaches a reader by two different routes and a caller must
+    not have to know which one it holds:
+
+    * a market rebuilt by `from_plain` carries the value ALREADY FOLDED, on the
+      row, because `to_plain` reduced it at build time. Its outcomes do **not**
+      carry `last_updated` — that column is `OUTCOME_LOAD_ONLY_EXTRA`,
+      deliberately loaded and deliberately not on the wire — so re-deriving it
+      from them there would read `None` off every outcome.
+    * a market from a plain ORM query (`_score_sports_mode_futures`) has no
+      derived column at all, because `price_polled_at` is not a database column;
+      but its outcomes DO carry `last_updated`, because `market_load_options()`
+      projects it.
+
+    Reading the folded value first and falling back to the fold is therefore not
+    a defensive `or` — it is the two carriers, in the order that makes each one
+    authoritative where it is the one that exists.
+
+    Both branches use `__dict__.get`, never `getattr`, for this module's usual
+    reason: a deferred attribute lazy-loads and raises `MissingGreenlet` on the
+    async feed path, inside the per-item serializer, which empties the whole
+    futures pool rather than dropping one card (gotcha #42). That also makes the
+    degradation safe in the one case neither branch covers — a market rehydrated
+    from a snapshot written by an OLDER build, which has neither the derived key
+    nor the outcome column: it reads `None`, "we do not know", never a wrong
+    stamp.
+    """
+    state = market.__dict__
+    if "price_polled_at" in state:
+        return state["price_polled_at"]
+    return _price_polled_at(state.get("outcomes") or [])
+
+
 def to_plain(markets: Iterable[Any]) -> dict[str, Any]:
     """Convert hydrated ORM markets into the shareable plain-data artifact.
 
@@ -522,6 +557,7 @@ __all__ = [
     "FuturesOutcomeSnapshot",
     "SportSnapshot",
     "market_load_options",
+    "price_poll_stamp",
     "to_plain",
     "from_plain",
     "is_snapshot_payload",
