@@ -52,6 +52,12 @@ final class LoneProbabilityNamesItsSideTests: XCTestCase {
         // takes 61 and this side takes the remaining 39 (`renderedDuelPercents`).
         // Written out because the first draft of this table said 40, and the
         // suite — correctly — refused it.
+        //
+        // 🔴 AND THE SCREENSHOT ON THE PR SHOWS THIS ROW AT 40%, WHICH IS NOT A
+        // CONTRADICTION. These probabilities are FROZEN at 04:40 PT; this one
+        // had moved to 0.3982/0.6018 by the 05:02 frame, which the same rule
+        // renders as 40. A live price moving is what a fixture exists to be
+        // immune to — do not "correct" this row against a later reading.
         Row(away: "Alexander Blockx", home: "Karen Khachanov",
             awayProbability: 0.395, homeProbability: 0.605, expected: 39),
         Row(away: "Botic van de Zandschulp", home: "Alexander Zverev",
