@@ -1068,6 +1068,8 @@ _AMBIGUOUS_EVIDENCE = frozenset({
     # MLB/NFL team names that are ordinary nouns.
     "giants", "angels", "athletics", "rays", "marlins", "chargers", "bills",
     "saints", "bears", "titans", "eagles", "cardinals", "browns",
+    # NHL team name that is also the upper chamber of the US Congress (#4229).
+    "senators",
 })
 
 # Evidence that genuinely commits to a domain. These run IN ADDITION to
@@ -1080,6 +1082,24 @@ _STRONG_EVIDENCE_PATTERNS = [
     (re.compile(r"\b(rotten\s+tomatoes|tomatometer|box\s+office|opening\s+weekend)\b", re.I), "entertainment"),
     (re.compile(r"\b(valorant|most\s+kills|single\s+map|esports)\b", re.I), "esports"),
     (re.compile(r"\b(mayoral|next\s+governor|ballot\s+measure)\b", re.I), "politics"),
+    # "Senators" is the Ottawa (NHL) and Belleville (AHL) clubs AND the upper
+    # chamber of the US Congress (#4229 — 17 rows, incl. a "Fed Chair" card
+    # badged HOCKEY on production). Weakening the noun alone is not enough:
+    # "Which Senators will vote for Kari Lake?" carries no other evidence, so a
+    # 1-point hockey match would still win unopposed. What commits is the
+    # legislative CONSTRUCTION, not the noun — a hockey team does not vote on a
+    # nominee, get confirmed, or lose a re-election. Keyed as senate/senator
+    # CO-OCCURRING with a legislative act, in either order, so that
+    # "Senators vs. Maple Leafs" and "OTT Senators at TOR Maple Leafs: Points"
+    # match nothing here and stay hockey. Same shape as the `\bdarts\b` rule
+    # above: name the phrase that commits, never the ambiguous token.
+    (re.compile(
+        r"\b(?:senate|senators?)\b(?=.{0,90}?\b(?:vote[sd]?|voting|confirm\w*|"
+        r"re-?election|reelect\w*|impeach\w*|convict\w*|nominee|nomination|"
+        r"filibuster|cloture|caucus|incumbent)\b)"
+        r"|\b(?:vote[sd]?|voting|confirm\w*|re-?election|reelect\w*|impeach\w*|"
+        r"convict\w*|nominee|nomination|filibuster|cloture)\b"
+        r"(?=.{0,90}?\b(?:senate|senators?)\b)", re.I), "politics"),
     (re.compile(r"\bchess\b", re.I), "chess"),
     (re.compile(r"\bsnooker\b", re.I), "snooker"),
     # Track and field. Deliberately does NOT match bare "athletics": that word is
