@@ -7,6 +7,7 @@ import { fetchTeamPage, fetchChampionshipGrid, fetchTeamPropFamilies } from "@/l
 import type { TeamPageResponse, TeamFutureItem, PropFamily } from "@/lib/api";
 import type { ChampionshipGridResponse } from "@/lib/types";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
+import { getSiteUrl } from "@/lib/siteUrl";
 import LoadingState from "@/components/LoadingState";
 import { getLeagueDisplay } from "@/lib/sportCategories";
 import { isGameLive, assignGameNumbers } from "@/lib/teamGames";
@@ -205,7 +206,7 @@ export default function TeamPage() {
       "@type": "SportsOrganization",
       name: leagueLabel,
     },
-    url: `https://bainluck.com/sport/${sport}/${league}/team/${teamSlug}`,
+    url: `${getSiteUrl()}/sport/${sport}/${league}/team/${teamSlug}`,
   };
 
   return (

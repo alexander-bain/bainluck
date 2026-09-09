@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ScorecardAnalytics } from "./ScorecardAnalytics";
+import { getSiteUrl } from "@/lib/siteUrl";
 
 interface ScorecardPageProps {
   searchParams: Promise<{
@@ -20,7 +21,7 @@ export async function generateMetadata({ searchParams }: ScorecardPageProps): Pr
   const streak = params.streak || "0";
   const best = params.best || "0";
 
-  const ogImageUrl = `https://bainluck.com/api/og/stats?accuracy=${accuracy}&total=${total}&correct=${correct}&streak=${streak}&best=${best}`;
+  const ogImageUrl = `${getSiteUrl()}/api/og/stats?accuracy=${accuracy}&total=${total}&correct=${correct}&streak=${streak}&best=${best}`;
   const description = `${accuracy}% accurate across ${total} predictions on Bain Luck!`;
 
   return {

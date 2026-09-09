@@ -1,6 +1,10 @@
 import type { MetadataRoute } from "next";
 
-const BASE = "https://bainluck.com";
+import { getSiteUrl } from "@/lib/siteUrl";
+
+// LAT-P278: `www`, not the apex — the apex 301s, and a sitemap that lists the
+// redirecting host hands search two identities for one page.
+const BASE = getSiteUrl();
 
 /**
  * Static sitemap of the durable, public marketing + category surfaces. Dynamic

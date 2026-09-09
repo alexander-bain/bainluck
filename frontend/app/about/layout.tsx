@@ -10,7 +10,7 @@ export const metadata: Metadata = {
     title: "What is Bain Luck? Probability, not betting",
     description:
       "Six sources, one number — the world's honest guess at what happens next, graded in public.",
-    url: "https://bainluck.com/about",
+    url: "/about",
   },
   twitter: {
     card: "summary_large_image",

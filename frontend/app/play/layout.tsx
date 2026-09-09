@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 
+import { defaultShareCard } from "@/lib/shareCard";
+
 export const metadata: Metadata = {
   title: "Play",
   description: "A fun, kid-safe rating game — swipe real predictions and guess the odds.",
@@ -9,7 +11,11 @@ export const metadata: Metadata = {
   openGraph: {
     title: "Bain Luck Play",
     description: "A fun, kid-safe rating game — swipe real predictions and guess the odds.",
-    url: "https://bainluck.com/play",
+    url: "/play",
+    // LAT-P278: explicit, not inherited. `/discover/stats` proved the
+    // root card does not reliably reach a route that declares its own
+    // `openGraph` — see `lib/shareCard.ts`.
+    images: defaultShareCard(),
   },
 };
 

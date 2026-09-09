@@ -12,6 +12,7 @@ import BottomNav from "@/components/BottomNav";
 import DesktopNav from "@/components/DesktopNav";
 import Footer from "@/components/Footer";
 import { BUILD_META_NAME, frontendCommitSha } from "@/lib/buildInfo";
+import { getSiteUrl } from "@/lib/siteUrl";
 import { Suspense } from "react";
 // LAT-P200: these three were `dynamic(..., { ssr: false })` right here, and
 // because this file is a Server Component that split never happened — see the
@@ -70,7 +71,11 @@ export const metadata: Metadata = {
     "Polymarket",
     "calibration",
   ],
-  metadataBase: new URL("https://bainluck.com"),
+  // LAT-P278: `www`, not the apex. The apex 301s here, so an apex canonical was
+  // a redirect hop for every unfurler and a second identity for search to split
+  // across. Everything below is RELATIVE and resolves against this one line —
+  // see `lib/siteUrl.ts` for the measurement and for why the literal lives once.
+  metadataBase: new URL(getSiteUrl()),
   alternates: { canonical: "/" },
   robots: { index: true, follow: true },
   openGraph: {
@@ -79,10 +84,13 @@ export const metadata: Metadata = {
     title: "Bain Luck — Prediction Market Discovery",
     description:
       "See what the world thinks will happen. Explore prediction markets as intuitive probabilities.",
-    url: "https://bainluck.com",
+    url: "/",
   },
   twitter: {
-    card: "summary",
+    // LAT-P278: `summary` renders a ~120px thumbnail and crops a 1200x630 card
+    // to a square. Every route that ships an `opengraph-image` was already
+    // 1200x630, so the small card was throwing away an image we already had.
+    card: "summary_large_image",
     title: "Bain Luck — Prediction Market Discovery",
     description:
       "See what the world thinks will happen. Explore prediction markets as intuitive probabilities.",
@@ -94,7 +102,7 @@ const JSON_LD = {
   "@context": "https://schema.org",
   "@type": "WebApplication",
   name: "Bain Luck",
-  url: "https://bainluck.com",
+  url: getSiteUrl(),
   description:
     "Prediction market discovery platform that translates betting and prediction markets into intuitive probabilities.",
   applicationCategory: "FinanceApplication",

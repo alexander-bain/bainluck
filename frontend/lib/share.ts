@@ -1,10 +1,10 @@
-const DEFAULT_SITE_URL = "https://bainluck.com";
+// LAT-P278: the origin (and the NEXT_PUBLIC_SITE_URL override that used to live
+// here) moved to `lib/siteUrl.ts` so the site names ONE host. A share link is
+// the single most load-bearing caller — it is the URL a stranger actually
+// receives — so it must not be the one that still says the apex.
+import { getSiteUrl } from "./siteUrl";
 
 export type ShareContentType = "event" | "futures" | "grid";
-
-function getSiteUrl(): string {
-  return (process.env.NEXT_PUBLIC_SITE_URL || DEFAULT_SITE_URL).replace(/\/$/, "");
-}
 
 export function buildShareUrl(
   path: string,

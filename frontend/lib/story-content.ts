@@ -31,7 +31,11 @@ export const STORY_ONE_LINER =
 export const STORY_ANTI_THESIS = {
   heading: "The same knowledge as a betting app. None of the pull.",
   lines: [
-    "You see exactly what the sharpest markets know — who's likely to win, what's likely to happen, how the odds are moving right now.",
+    // LAT-P278 (D91, markets are not actors): this read "what the sharpest
+    // markets know". A market does not know anything — it is a price, and the
+    // sentence that says otherwise is the same animism Alex struck off the
+    // tournament pages. The claim is unchanged; only the actor is.
+    "You see exactly what the sharpest prices imply — who's likely to win, what's likely to happen, how the odds are moving right now.",
     "But there's zero enticement. No odds formats, ever. Nothing to deposit, nothing to buy. Just the probability, clean.",
   ],
 };
