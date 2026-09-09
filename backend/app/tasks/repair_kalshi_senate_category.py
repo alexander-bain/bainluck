@@ -216,8 +216,19 @@ async def repair(session, apply: bool = False) -> dict[str, Any]:
             "classifier": verdict,
         }
         if row.source != "kalshi":
-            # Polymarket rows self-heal on their own poll; this rail must not
-            # race the writer that owns them.
+            # 🔴 This used to read "Polymarket rows self-heal on their own poll;
+            # this rail must not race the writer that owns them." The module
+            # docstring above already retracts that (lane1b/106): a writer only
+            # rewrites a row it is HANDED, and Polymarket discovery's ~10.6h scan
+            # never hands it these. CERT-2397 disclosed this copy as still
+            # standing; it is the reason the false claim survived a builder and a
+            # grader in the first place, so it is corrected rather than deleted.
+            #
+            # The real reason: this rail's evidence is a Kalshi ticker read by
+            # the Kalshi classifier. A row from another venue has no such
+            # evidence and must not be judged by it. Polymarket's half is
+            # `repair_polymarket_senate_category`, which gates on the venue's own
+            # tags.
             refused.append({**record, "reason": "not_kalshi"})
         elif verdict != TARGET_CATEGORY:
             # THE GATE THAT MAKES THE ID LIST SAFE.
