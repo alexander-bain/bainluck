@@ -45,7 +45,14 @@ const SOURCE_LABELS: Record<string, string> = {
   betonlineag: "BetOnline",
   betus: "BetUS",
   wynnbet: "WynnBet",
-  espnbet: "ESPN Bet",
+  // #4311 — the brand styles itself `ESPN BET`, and the iOS map already said so
+  // while this one said "ESPN Bet". Two halves of one product spelling one
+  // sportsbook two ways, on a key with 1,467 rows in `odds_snapshots` over the
+  // 24h to 2026-09-09, so both spellings were on real screens. The web moved
+  // rather than iOS because the brand's own styling is the all-caps one.
+  // `clientsSpellOneBrandOneWay4311` now compares the two maps directly, so the
+  // next brand added to one client cannot drift from the other the same way.
+  espnbet: "ESPN BET",
   fanatics: "Fanatics",
   fliff: "Fliff",
   hardrockbet: "Hard Rock",

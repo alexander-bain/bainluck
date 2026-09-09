@@ -61,7 +61,7 @@ const PRODUCTION_KEYS: Array<[string, string]> = [
   ["fliff", "Fliff"],
   ["ballybet", "Bally Bet"],
   ["betparx", "betPARX"],
-  ["espnbet", "ESPN Bet"],
+  ["espnbet", "ESPN BET"], // #4311: matched to iOS, the brand's own styling
   ["rebet", "Rebet"],
   ["hardrockbet", "Hard Rock"],
   ["betanysports", "BetAnySports"],
