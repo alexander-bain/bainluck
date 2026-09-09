@@ -303,21 +303,28 @@ private struct TournamentHubResultCard: View {
                 }
             }
 
-            HStack(spacing: 8) {
-                Image(systemName: "checkmark.circle.fill")
-                    .font(.footnote)
-                    .foregroundStyle(DS.emerald)
-                Text(row.winnerName)
-                    .font(.subheadline.weight(.bold))
-                    .foregroundStyle(DS.textPrimary)
-                    .lineLimit(1)
-                Text("def.")
-                    .font(.caption)
-                    .foregroundStyle(DS.textMuted)
-                Text(row.loserName)
-                    .font(.subheadline)
-                    .foregroundStyle(DS.textSecondary)
-                    .lineLimit(1)
+            // #4142: the two players STACK, each with what the market made them
+            // before a ball was struck. This is the shape `TournamentHubMatchCard`
+            // above already uses for a live match — name left, number right, one
+            // row per side — so the hub's finished rows and its upcoming rows are
+            // one card family rather than two bespoke ones (notice 35).
+            //
+            // Stacking is also what makes the prior fit. The old single line was
+            // `✓ Winner def. Loser`; hanging two percentages off it put five text
+            // elements in one 375pt row, which is the truncation class #4107 and
+            // #4109 are already open on. A side per row gives each name the width
+            // it had before and the number a fixed right edge.
+            VStack(spacing: 6) {
+                resultSide(
+                    name: row.winnerName,
+                    prematchText: row.winnerPrematchText,
+                    isWinner: true
+                )
+                resultSide(
+                    name: row.loserName,
+                    prematchText: row.loserPrematchText,
+                    isWinner: false
+                )
             }
 
             if let score = row.score {
@@ -330,6 +337,44 @@ private struct TournamentHubResultCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(DS.cardBg, in: RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(DS.border, lineWidth: 0.5))
+    }
+
+    /// One player of a finished match: who they are, and what they were.
+    ///
+    /// The loser's tick is `.hidden()` rather than absent so both names start on
+    /// the same x — reserving the space keeps the column without inventing a
+    /// second piece of iconography to mean "not the winner".
+    ///
+    /// VoiceOver gets the sentence the sighted layout implies. Dropping the
+    /// literal "def." was safe visually (the tick and the weight carry it, as
+    /// they do on the web) but it was the only thing a screen reader had, so the
+    /// row states its own outcome instead of spelling out a checkmark.
+    private func resultSide(name: String, prematchText: String?, isWinner: Bool) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.footnote)
+                .foregroundStyle(DS.emerald)
+                .opacity(isWinner ? 1 : 0)
+            Text(name)
+                .font(.subheadline.weight(isWinner ? .bold : .regular))
+                .foregroundStyle(isWinner ? DS.textPrimary : DS.textSecondary)
+                .lineLimit(1)
+            Spacer(minLength: 6)
+            if let prematchText {
+                Text(prematchText)
+                    .font(.subheadline.monospacedDigit())
+                    .foregroundStyle(DS.textMuted)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(
+            [
+                isWinner ? "Winner, \(name)" : "\(name)",
+                prematchText.map { "pre-match \($0)" }
+            ]
+            .compactMap { $0 }
+            .joined(separator: ", ")
+        )
     }
 }
 
