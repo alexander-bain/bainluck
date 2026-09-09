@@ -45,6 +45,21 @@
  * Deliberately absent: "Rangers" and "Kings", which are trailing MASCOTS in
  * North American leagues (Texas Rangers, LA Kings) as well as English club
  * words, so shortening them is right more often than it is wrong.
+ *
+ * #4250 — the second block is the THREE-and-four-letter half of the same idea,
+ * and it was missing because the `length <= 2` clause below reads like it
+ * covers the club-initial case. It does not: "Sunderland AFC" is three letters
+ * long, so the event hero printed the away side as **"AFC"** against a
+ * full-length "Manchester City FC" (production, 2026-09-09, phone width). The
+ * iPhone's `TeamShortName.swift` has caught `afc` since #3374; only the browser
+ * was wrong, and the guard named for single-sourcing the two reads the Swift
+ * alone. `teamDesignatorParityAcrossClients.test.ts` now compares the sets.
+ *
+ * Counts are distinct multi-word `events` team names, both sides, whole
+ * population, measured 2026-09-09. Deliberately absent from this block:
+ * "RFS" (2) — "FC RFS" and "FK RFS" are Riga Football School's own name, so
+ * they must keep shortening — and "USA" (8), "EMEA", "NXT", "KOI", which name
+ * somebody.
  */
 const CLUB_TYPE_SUFFIXES: ReadonlySet<string> = new Set([
   "united", // 24
@@ -60,6 +75,34 @@ const CLUB_TYPE_SUFFIXES: ReadonlySet<string> = new Set([
   "club", // 3
   "academy", // 2
   "sporting", // 1
+  // #4250, measured as TRAILING tokens the <= 2 rule is one letter too short for.
+  "afc", // 68  Barrow AFC, Ashington AFC, Athlone Town AFC
+  "wfc", // 8   Arsenal WFC, Manchester City WFC
+  "sad", // 8   Portimonense SAD (the Spanish/Portuguese legal suffix)
+  "lfc", // 2   Liverpool LFC
+  "pfk", // 2   Neftçi PFK
+  "nps", // 2   Volos NPS
+  // #4250, carried over from the Swift's set so the two clients agree. These
+  // are club initials that appear LEADING far more often than trailing
+  // ("PSV Eindhoven"), so most have no measured trailing count here; they cost
+  // nothing when they never fire and they keep the parity guard green.
+  "cfc",
+  "aik",
+  "tsv",
+  "vfb",
+  "vfl",
+  "bsc",
+  "ssc",
+  "psv",
+  "gif",
+  "bif",
+  "fsv",
+  "spvgg",
+  "rkc",
+  "nec",
+  "atletico",
+  "women",
+  "res",
 ]);
 
 function alphanumeric(token: string): string {
@@ -105,6 +148,10 @@ export function isDoublesPair(name: string): boolean {
  * "AC", "W", "B", "II" are all caught without naming any of them. It also
  * catches a handful of genuine two-letter surnames ("Ann Li" -> keeps
  * "Ann Li"); that costs compactness and never correctness.
+ *
+ * #4250 is the lesson that the clause stops one letter short of the club
+ * initials it looks like it covers, which is why the set above now carries a
+ * three-letter block and this file has a cross-client parity guard.
  */
 export function isNonDistinctiveTrailingWord(token: string): boolean {
   const bare = alphanumeric(token);
@@ -114,6 +161,10 @@ export function isNonDistinctiveTrailingWord(token: string): boolean {
   // Squad markers: "U21", "U23", and bare reserve numbers.
   if (/^u\d{1,2}$/i.test(bare)) return true;
   if (/^\d+$/.test(bare)) return true;
+  // #4250 — a roman numeral is a reserve side ("Ludogorets III") or a person's
+  // generational suffix ("Kai Kamaka III"); 6 distinct names, and neither one
+  // is called "III". "II" and "IV" already fall to the length clause.
+  if (/^i{2,3}$/i.test(bare)) return true;
   return false;
 }
 

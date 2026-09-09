@@ -49,6 +49,31 @@
 //     stop being shortened        471   (10.0%)
 //     keep `.pop()` unchanged   4,230   (90.0%)
 //
+// ── #4250 MOVED THIS PIN BY EIGHT ───────────────────────────────────────────
+//
+// The `length <= 2` clause is one letter too short for a THREE-letter club
+// initial, so "Sunderland AFC" rendered as **"AFC"** on the live event hero
+// (2026-09-09, phone width) while the iPhone, whose set already listed `afc`,
+// rendered it correctly. Adding the measured three- and four-letter block
+// moves exactly eight names of this corpus, every one of them from a
+// designator to the thing it qualifies:
+//
+//     Wrexham AFC            -> was "AFC"
+//     Skellefteå AIK         -> was "AIK"
+//     Petro Atletico         -> was "Atletico"
+//     AVS Futebol SAD        -> was "SAD"
+//     FC Cartagena SAD       -> was "SAD"
+//     Ervin Fuller III       -> was "III"
+//     Robert Meriwether III  -> was "III"
+//     William Foster III     -> was "III"
+//
+//     stop being shortened        479   (10.2%)
+//     keep `.pop()` unchanged   4,222   (89.8%)
+//
+// This corpus is `teams`-derived and holds ONE name ending in "AFC"; the
+// `events` population that #4250 measured holds 68. Different tables, and the
+// header note above about `teams` being 43% duplicate rows is why.
+//
 // 10.0% is the honest size. It is smaller than the issue's 65% and it is still
 // a p1, because the output on those 471 is a word that names nobody, mid-EPL
 // season, on the event page.
@@ -226,15 +251,39 @@ describe("UX-1065: the measured population", () => {
     expect(new Set(NAMES).size).toBe(4701);
   });
 
-  it("471 of 4,701 distinct names (10.0%) stop being shortened", () => {
+  it("479 of 4,701 distinct names (10.2%) stop being shortened", () => {
     const changed = NAMES.filter((n) => teamShortName(n) !== n.split(" ").pop());
-    expect(changed).toHaveLength(471);
-    expect(Math.round((changed.length / NAMES.length) * 1000) / 10).toBe(10.0);
+    expect(changed).toHaveLength(479);
+    expect(Math.round((changed.length / NAMES.length) * 1000) / 10).toBe(10.2);
   });
 
-  it("the other 90% keep split-pop output byte for byte", () => {
+  /**
+   * #4250 — the eight this corpus gained, named rather than counted, so the
+   * pin above cannot be re-baselined by anyone who has not looked at what
+   * moved. Every one goes designator -> the thing the designator qualifies.
+   */
+  it("the eight #4250 added are each a designator giving way to a name", () => {
+    const gained: Record<string, string> = {
+      "Wrexham AFC": "AFC",
+      "Skellefteå AIK": "AIK",
+      "Petro Atletico": "Atletico",
+      "AVS Futebol SAD": "SAD",
+      "FC Cartagena SAD": "SAD",
+      "Ervin Fuller III": "III",
+      "Robert Meriwether III": "III",
+      "William Foster III": "III",
+    };
+    for (const [name, wasShownAs] of Object.entries(gained)) {
+      expect(NAMES).toContain(name);
+      expect(name.split(" ").pop()).toBe(wasShownAs);
+      expect(teamShortName(name)).toBe(name);
+    }
+    expect(Object.keys(gained)).toHaveLength(479 - 471);
+  });
+
+  it("the other 89.8% keep split-pop output byte for byte", () => {
     const same = NAMES.filter((n) => teamShortName(n) === n.split(" ").pop());
-    expect(same).toHaveLength(4230);
+    expect(same).toHaveLength(4222);
   });
 
   it("FAILS SAFE: every output is the last word or the full name, never a new string", () => {
