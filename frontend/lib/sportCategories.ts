@@ -835,6 +835,63 @@ export function getLeagueDisplay(leagueKey: string): string {
 }
 
 /**
+ * True when a served sport row has no name — it stores its own key where a
+ * brand belongs ("mma_other", "esports"). 15 of the 176 rows `/api/sports`
+ * serves are like this; the other 161 carry a real brand.
+ */
+export function servedSportNameIsRaw(
+  sportKey: string,
+  servedName?: string | null,
+): boolean {
+  if (!servedName || !servedName.trim()) {
+    return true;
+  }
+  return servedName.trim().toLowerCase() === sportKey.trim().toLowerCase();
+}
+
+/**
+ * The label a reader should see for a sport row. #4350 / #4358.
+ *
+ * Neither source is right on its own, and picking one is how #4358 happened:
+ * #4247 routed every search chip through `getLeagueDisplay`, which fixed the
+ * 15 raw rows and re-cased "Dutch Eredivisie" into "NETHERLANDS EREDIVISIE".
+ * The map is a KEY parser — it has no word for the 161 brands
+ * (`soccer_germany_liga3` -> "GERMANY LIGA3", not "3. Liga - Germany";
+ * `aussierules_aflw` -> "AFLW", not "AFL Women's"). The server has no word for
+ * the 15 buckets. So: prefer what the server called it, and fall back to the
+ * map only when the server's answer IS the key.
+ */
+export function getSportLabel(
+  sportKey: string,
+  servedName?: string | null,
+): string {
+  return servedSportNameIsRaw(sportKey, servedName)
+    ? getLeagueDisplay(sportKey)
+    : (servedName as string).trim();
+}
+
+/**
+ * The group label ("Soccer", "Ice Hockey") for a sport row, or undefined.
+ *
+ * The same 15 rows carry a machine-derived group alongside the raw name —
+ * "Mma", "Icehockey", "Americanfootball" — while their branded siblings carry
+ * "Ice Hockey" and "Aussie Rules". One row is raw in both fields or neither,
+ * so the name test above decides this too rather than a second heuristic.
+ */
+export function getSportGroupLabel(
+  sportKey: string,
+  servedName?: string | null,
+  servedGroup?: string | null,
+): string | undefined {
+  const served = servedGroup?.trim() || undefined;
+  if (!servedSportNameIsRaw(sportKey, servedName)) {
+    return served;
+  }
+  // `esports` resolves to no category; its served group is already correct.
+  return getCategoryForLeague(sportKey)?.name ?? served;
+}
+
+/**
  * Get full display with emoji for a league.
  */
 export function getLeagueDisplayWithEmoji(leagueKey: string): string {
