@@ -336,6 +336,53 @@ async def _statpal_standby_reading(sport_key: str) -> tuple[str, str]:
     return schedule, live
 
 
+def _gate_on_unreadable_ledger(sport_key: str, ledger_why: str) -> tuple[bool, str]:
+    """The gate, asked when the durable ledger could not be READ at all. #4443.
+
+    `read_ledger_days` returning `None` is not `[]`. `[]` is "measured, nothing
+    there"; `None` is "we could not look" — a degraded snapshot store.
+
+    This used to be `(False, ledger_why)` unconditionally, with the comment "an
+    outage in the snapshot store can never open this gate". **That was correct
+    before D104 and is not correct after it.** Before D104 the ledger WAS the
+    evidence, so no ledger honestly meant no permission. After D104 the ledger
+    is a MONITOR for a ruled sport: Alex retired the proof days on 2026-09-09
+    and kept the daily fold running as an observation. Refusing football
+    because the monitor's store is degraded refuses on the monitor rather than
+    on evidence — and it does so in the exact hour the ruling exists for, since
+    ESPN going dark and the snapshot store going away are not independent
+    events. One broad incident produces both.
+
+    SO WHY NOT `if sport_key in FLIP_RULED_WITHOUT_STREAK: return True, ...`?
+    Because that is a second copy of "which sports are exempt", living in the
+    caller, free to drift from the gate. Instead the gate is asked with an
+    EMPTY ledger, and the answer is taken as given. That is sound because of a
+    property of `flip_permitted` that is worth stating out loud: **`[]` can
+    permit a ruled sport and nothing else.** Every other route to `True` in
+    that function runs through `compute_streak`, and an empty ledger makes it
+    return `None`, which refuses. `flip_permitted` already renders this case
+    correctly too — its D104 branch is asked BEFORE the `streak is None`
+    refusal. The pure function was right all along; only this caller never let
+    it answer. `test_only_a_ruled_sport_can_pass_the_gate_on_an_empty_ledger`
+    pins the property against every measured sport, so adding a fifth re-checks
+    it rather than inheriting it.
+
+    The failed read stays in the reported `why` on BOTH arms. Ignoring the
+    monitor as an authority is the ruling; dropping it from the receipt would
+    make an outage indistinguishable from a healthy monitor in every record we
+    keep.
+    """
+    from app.config.authority_by_sport import flip_permitted
+
+    permitted, why = flip_permitted(sport_key, [])
+    if not permitted:
+        # Byte for byte today's behaviour for every unruled sport: refused,
+        # carrying the ledger's own reason rather than a streak verdict that
+        # was never computed.
+        return False, ledger_why
+    return True, f"{why}. NOTE — the monitor could not be read on this pass: {ledger_why}"
+
+
 async def _decide_failovers(espn_data: dict, fetch_keys, stats: dict) -> dict:
     """Per sport ESPN did not answer for: who serves it, and does anything act?
 
@@ -377,11 +424,8 @@ async def _decide_failovers(espn_data: dict, fetch_keys, stats: dict) -> dict:
             gate = flip_permitted(sport_key, [])
         else:
             days, ledger_why = await read_ledger_days(sport_key)
-            # A ledger we could not read is not a streak of zero and is not a
-            # permission either. It refuses, carrying its own reason, so an
-            # outage in the snapshot store can never open this gate.
             gate = (
-                (False, ledger_why)
+                _gate_on_unreadable_ledger(sport_key, ledger_why)
                 if days is None
                 else flip_permitted(sport_key, days)
             )
