@@ -920,9 +920,17 @@ _NON_SPORT_ACTION_RE = re.compile(
 # Polymarket writer only updates `llm_sport_category` when the new value is not
 # "other". They are left where they are and raised as a taxonomy question rather
 # than moved somewhere else that is also wrong.
+#
+# `hantavirus` added 2026-09-09 (#4264): "Hantavirus pandemic in 2026?" held page-one
+# slot 5 under a 🌤 WEATHER chip. `pandemic` already caught that one, but its sibling
+# "Hantavirus vaccine in 2026?" named no other disease word and was the single row the
+# weather-shelf census could not reach. `vaccine` was measured as the alternative and
+# NOT added: across the tech, other and weather shelves it matched exactly one open
+# market — that same hantavirus row — so it buys nothing `hantavirus` does not, while
+# widening the pattern into vaccine-policy titles nobody has censused.
 _EPIDEMIOLOGY_RE = re.compile(
     r"\b(?:measles|influenza|\bflu\b|h5n1|bird\s+flu|covid|coronavirus|"
-    r"polio|ebola|mpox|monkeypox|cholera|dengue|malaria|"
+    r"polio|ebola|mpox|monkeypox|cholera|dengue|malaria|hantavirus|"
     r"outbreak|epidemic|pandemic|hospitalization\s+rate|"
     r"cdc\b|who\s+declares?)\b",
     re.I,
@@ -955,10 +963,33 @@ _WORD_BINGO_RE = re.compile(
 #: market belongs, not a defect. Re-shelving politics is somebody's decision, not a
 #: side effect of fixing tech.
 #:
-#: A market already filed under `health` or `weather` is left alone — re-deciding a
-#: correct answer is how two classifiers start disagreeing — and a SPORT category is
-#: never touched here, because the caller's sport-promotion arms run first and win.
+#: A market already filed under `health` is left alone — re-deciding a correct answer
+#: is how two classifiers start disagreeing — and a SPORT category is never touched
+#: here, because the caller's sport-promotion arms run first and win.
 _SUBJECT_OVERRIDE_SOURCES = frozenset({"tech", "other"})
+
+#: The EPIDEMIOLOGY arm may also correct the `weather` shelf. #4264, measured
+#: 2026-09-09 on production: 22 open Polymarket markets sit on `weather` while their
+#: titles say ebola (18), flu hospitalization rate (4 counted here via the shared
+#: pattern), pandemic, measles or hantavirus. One of them — "Hantavirus pandemic in
+#: 2026?" — held page-one slot 5 wearing a 🌤 WEATHER chip.
+#:
+#: The clause above still holds; what it assumed does not. "Re-deciding a correct
+#: answer" presumes `weather` IS a correct answer, and for a hantavirus pandemic it
+#: is not. CAL-P132 censused the `tech` shelf and scoped its fix to what it had
+#: measured; the `weather` shelf was never censused. These are the same defect one
+#: shelf over.
+#:
+#: Only the epidemiology arm widens. `_WEATHER_HAZARD_RE` still cannot fire on a row
+#: already filed `weather`, so this override can still never re-decide a market into
+#: the shelf it is already on, and the stated epidemiology-beats-weather ordering is
+#: what makes the widened arm safe: a title has to name a disease to move.
+#:
+#: The control that bounds it, re-run every ship: the 982 open weather-shelf markets
+#: whose titles name earthquakes, volcanoes, sea ice, El Niño, ski resorts or a white
+#: Christmas must STAY weather. A blanket "the weather shelf is suspect" sweep is a
+#: bigger regression than the bug.
+_EPIDEMIOLOGY_OVERRIDE_SOURCES = _SUBJECT_OVERRIDE_SOURCES | {"weather"}
 
 
 def misfiled_subject(market_name: str, current_category: Optional[str]) -> Optional[str]:
@@ -971,26 +1002,31 @@ def misfiled_subject(market_name: str, current_category: Optional[str]) -> Optio
 
     Deliberately conservative in both directions:
 
-    * It never fires on a market already filed under `health` or `weather` — there is
-      nothing to correct, and re-deciding a correct answer is how two classifiers
-      start disagreeing.
+    * It never fires on a market already filed under `health` — there is nothing to
+      correct, and re-deciding a correct answer is how two classifiers start
+      disagreeing.
+    * It never returns `"weather"` for a market already filed `weather`, so it can
+      still never re-decide a market into the shelf it is already on.
     * It never fires on a sport category. A "Flu Game" basketball market stays
       basketball, because the caller only consults this after its sport-promotion
       arms have had their turn.
     * It never fires on a word-bingo market, whose subject is the speaker.
     * Epidemiology beats weather when a title somehow contains both, because a
       disease outbreak during a hurricane is a health market. Stated rather than
-      left to pattern order.
+      left to pattern order — and since #4264 this ordering is load-bearing rather
+      than defensive: the epidemiology arm is the one allowed to correct `weather`,
+      so a title has to name a disease to leave that shelf.
     """
     if not market_name:
         return None
-    if (current_category or "other") not in _SUBJECT_OVERRIDE_SOURCES:
+    current = current_category or "other"
+    if current not in _EPIDEMIOLOGY_OVERRIDE_SOURCES:
         return None
     if _WORD_BINGO_RE.search(market_name):
         return None
     if _EPIDEMIOLOGY_RE.search(market_name):
         return "health"
-    if _WEATHER_HAZARD_RE.search(market_name):
+    if current in _SUBJECT_OVERRIDE_SOURCES and _WEATHER_HAZARD_RE.search(market_name):
         return "weather"
     return None
 

@@ -193,3 +193,59 @@ def test_the_deciding_arm_is_reported(tags, title, group_names, expected_arm):
     a second time. Widening an ops metric silently is how a dashboard starts lying.
     """
     assert _arm_for(tags, title, group_names) == expected_arm
+
+
+# --------------------------------------------------------------------------
+# #4264 — arm 4 reaches the `weather` shelf, through the real tag path
+# --------------------------------------------------------------------------
+#
+# `misfiled_subject` is a pure function; passing it "weather" proves nothing about
+# whether the poller ever hands it a weather-shelf row. Arm 4 only runs when arms
+# 1-3 declined AND `llm_sport_category in NON_SPORT_CATEGORIES`. These drive the
+# cascade the way the poller does — from the venue's own tags — so the guard fails
+# if a future edit reorders the arms or drops `weather` out of NON_SPORT_CATEGORIES.
+#
+# The 22 production rows are all `source = 'polymarket'`, so this IS their write path.
+
+
+@pytest.mark.parametrize(
+    "tags,title",
+    [
+        (["Weather"], "Hantavirus pandemic in 2026?"),
+        (["Weather"], "Will Uganda have an Ebola case in 2026?"),
+        (["Climate"], "Flu Hospitalization Rate Week 22, 2026?"),
+        (["Weather"], "Hantavirus vaccine in 2026?"),
+        (["Weather"], "Measles cases in U.S. in 2026?"),
+    ],
+)
+def test_arm_4_moves_a_disease_market_off_the_weather_shelf(tags, title):
+    assert _tags_to_category(tags)[1] == "weather", "precondition: the tag shelves it weather"
+    assert _resolve(tags, title) == ("health", "health")
+    assert _arm_for(tags, title) == "subject"
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "Will a supervolcano erupt before 2050?",
+        "Highest temperature in Phoenix in July?",
+        "How many named storms in the 2026 Atlantic season?",
+        "Arctic sea ice extent below 4 million km2 in 2026?",
+        "White Christmas in NYC in 2026?",
+    ],
+)
+def test_arm_4_leaves_a_genuine_weather_market_on_the_weather_shelf(title):
+    """The control, at the cascade level. 982 open markets depend on it."""
+    assert _resolve(["Weather"], title) == ("weather", "weather")
+    assert _arm_for(["Weather"], title) == "tag"
+
+
+def test_arm_3_still_beats_arm_4_on_the_weather_shelf():
+    """A sport title tagged `Weather` is still promoted to the sport, not to health.
+
+    Arm 4 running on a new shelf must not give it a way past the promotion arm.
+    """
+    assert _resolve(["Weather"], "Who will win the 2027 NBA Championship?") == (
+        "championship",
+        "basketball",
+    )
