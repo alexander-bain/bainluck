@@ -326,7 +326,7 @@ describe("UX-P145: the desktop layout exists", () => {
       // against a 358px box that is really 332 — so a five-column men's draw
       // was declared a fit and the Title column was clipped away instead of
       // scrolling to. See `lib/playoffGrid.ts` for the production measurement.
-      expect(gridWidthPx(5)).toBe(406);
+      expect(gridWidthPx(5)).toBe(446); // 54px value tracks since #4171
       expect(gridScrolls(5)).toBe(true);
       expect(gridScrolls(6)).toBe(true);
       // "Sparingly" still binds where it can be honoured.

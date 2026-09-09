@@ -164,9 +164,12 @@ describe("no cell is ever blank", () => {
     }
   });
 
-  it("a no-market cell says NO MKT, not a dot or a dash", () => {
-    // "·" is a fact about the layout; "no mkt" is a fact about the world, and
-    // UX-P137's ruling 2 exists because the reader could not tell them apart.
+  it("a no-market cell prints NOTHING, and still says what it is (#4171 item 2)", () => {
+    // It printed NO MKT. Alex, notice 34, about this page: "if a number cannot
+    // be shown honestly, leave the space empty". UX-P137's ruling 2 wanted the
+    // reader to be able to tell a hole from a layout artifact, and since
+    // UX-P157 the CELL carries that sentence itself — so this asserts BOTH
+    // halves: the jargon is off the screen AND the answer is still on the cell.
     const html = renderToStaticMarkup(
       <PlayoffGrid
         grid={grid({
@@ -192,14 +195,37 @@ describe("no cell is ever blank", () => {
         })}
       />
     );
-    expect(html).toContain("no mkt");
+    // 1. THE WORDS ARE GONE — in any casing, anywhere in the markup.
+    expect(html.toLowerCase()).not.toContain("no mkt");
+
+    // 2. THE FOUR CELLS ARE STILL THERE, and each one still answers for itself.
+    //    Without this the test above is passed perfectly by a grid that stopped
+    //    rendering the row — the removal mutant that matters.
+    const noMarketCells = [
+      ...html.matchAll(/data-testid="grid-cell"[^>]*data-state="no_market"[^>]*/g),
+    ];
+    expect(noMarketCells).toHaveLength(4);
     expect(html).toContain("No R16 market at kalshi, polymarket");
+    for (const key of ["R16", "QF", "SF", "F"]) {
+      expect(html).toContain(`No ${key} market at kalshi, polymarket`);
+    }
+
+    // 3. AND THE EMPTY CELL STILL OCCUPIES ITS BOX, so the `title` that now
+    //    carries the whole answer has something to hover. A zero-width span is
+    //    how "we moved it to the tooltip" quietly becomes "we deleted it".
+    const emptyBoxes = html.match(/<span aria-hidden="true">\u00a0<\/span>/g) ?? [];
+    expect(emptyBoxes).toHaveLength(4);
+
+    // 4. It is NOT the settled dash — that glyph means "this player is out",
+    //    which is a different claim from "nobody quoted this".
+    expect(gridCellGlyph(cell({ state: "settled", note: "eliminated" }))).toBe("—");
+    expect(gridCellGlyph(cell({ state: "no_market" }))).toBe("");
+
     // The censused absence is NOT an alarm, and the banner must not fire.
     expect(html).not.toContain('data-testid="grid-alarm-banner"');
     /* #4122 (notice 34): the legend that aggregated "K say NO MKT" is gone —
-       it was a coverage count plus an explanation of our own emptiness. Ruling
-       3 is untouched and is asserted above: the CELL still prints "no mkt" and
-       still carries its own sentence. The count is on the section for probes. */
+       it was a coverage count plus an explanation of our own emptiness. The
+       count is on the section for probes. */
     expect(html).not.toContain('data-testid="grid-legend"');
     expect(html).toContain('data-no-market="4"');
   });
@@ -441,12 +467,17 @@ describe("ruling 5 — wide rounds scroll rather than lose a column", () => {
   it("counts a row's PADDING and GAPS, not only its tracks (#3072)", () => {
     // The old formula was `name + n × col` — tracks only. A row is
     // `px-3.5` + name + `gap-1.5` + col + `gap-1.5` + col …, so five columns
-    // need 28 + 118 + 230 + 30 = 406px, not 348.
+    // need 28 + 118 + 270 + 30 = 446px, not 348.
+    //
+    // (#4171 widened the phone value track 46 → 54 because the cell stopped
+    // being only a number: `100%` + `gap-1` + `LiquidityMark` measures 51px.
+    // Every figure in this describe moved by 8px per column with it; the shape
+    // of the arithmetic — padding and gaps counted, not only tracks — did not.)
     expect(GRID_ROW_PADDING_PX).toBe(14);
     expect(GRID_GAP_PX).toBe(6);
-    expect(gridWidthPx(5)).toBe(406);
-    expect(gridWidthPx(6)).toBe(458);
-    expect(gridWidthPx(3)).toBe(302);
+    expect(gridWidthPx(5)).toBe(446);
+    expect(gridWidthPx(6)).toBe(506);
+    expect(gridWidthPx(3)).toBe(326);
   });
 
   it("THE #3072 DEFECT: the men's five-column draw scrolls, because it does not fit", () => {
@@ -462,7 +493,8 @@ describe("ruling 5 — wide rounds scroll rather than lose a column", () => {
 
   it("…and 'sparingly' still binds — the first week's grid does not scroll", () => {
     // Ruling 5 is applied here, not weakened: clipping a column IS excluding
-    // data. A three-column grid fits (302 <= 332) and stays still.
+    // data. A three-column grid fits (326 <= 332, still true at #4171's 54px
+    // track — the widening was sized to keep this verdict) and stays still.
     expect(gridScrolls(3)).toBe(false);
     expect(gridScrolls(2)).toBe(false);
   });
@@ -473,11 +505,11 @@ describe("ruling 5 — wide rounds scroll rather than lose a column", () => {
     expect(html).toContain('data-scrolls="true"');
     expect(html).toContain("overflow-x-auto");
     // The floor is the row's whole width ROUNDED UP so the scroll end lands on
-    // a snap point (#3087, second half) — `gridWidthPx(5)` = 406 would leave the
-    // end at 74, which is where the QF column hid half a number behind the
+    // a snap point (#3087, second half) — `gridWidthPx(5)` = 446 would leave the
+    // end at 114, which is where the QF column hid half a number behind the
     // sticky name. `gridScrollFloorPx` is what the component pins.
     expect(html).toContain(`min-width:${gridScrollFloorPx(5)}px`);
-    expect(gridScrollFloorPx(5)).toBe(436);
+    expect(gridScrollFloorPx(5)).toBe(452);
     expect(gridScrollFloorPx(5)).toBeGreaterThan(gridWidthPx(5));
     // The column that was being clipped is present and named.
     expect(html).toContain('data-kind="title"');
@@ -509,12 +541,13 @@ describe("ruling 5 — wide rounds scroll rather than lose a column", () => {
 describe("#3087 — a scrolled grid keeps the name beside the number", () => {
   it("THE DEFECT: at full scroll the rows read 's Alcaraz' unless the name sticks", () => {
     // Measured on production 2026-09-04 11:02 PT, 390px viewport, the men's
-    // five-column grid: the card's scroller is 332 wide over 406 of content, so
-    // `scrollLeft` reaches 74 — and 74px is most of the 118px name track. The
+    // five-column grid: the card's scroller is 332 wide over 446 of content
+    // (406 when this was measured, before #4171's wider track), so `scrollLeft`
+    // reaches 114 — and any of that is most of the 118px name track. The
     // header at that offset reads `R16 QF SF FINAL TITLE` and the rows read
     // `s Alcaraz` / `nder Z…` / `Medve…`. Sticky is what puts the two halves of
     // the sentence on screen at once.
-    expect(gridWidthPx(5) - GRID_CARD_CONTENT_PX).toBe(74);
+    expect(gridWidthPx(5) - GRID_CARD_CONTENT_PX).toBe(114);
 
     const five = grid({ columns: COLUMNS.slice(0, 5) });
     const html = renderToStaticMarkup(<PlayoffGrid grid={five} />);
@@ -608,7 +641,7 @@ describe("#3087 — a scrolled grid keeps the name beside the number", () => {
     expect(Number(padding![1])).toBe(138);
     // Which puts the rest positions at 0 and one column-plus-gap along, where
     // the reader can read QF→TITLE whole.
-    expect(GRID_COLUMN_WIDTH_PX + GRID_GAP_PX).toBe(52);
+    expect(GRID_COLUMN_WIDTH_PX + GRID_GAP_PX).toBe(60);
     expect(GRID_SCROLL_SNAP).toContain("lg:snap-none");
   });
 
@@ -628,10 +661,10 @@ describe("#3087 — a scrolled grid keeps the name beside the number", () => {
       // …and it never over-pads: at most one step of gutter.
       expect(gridScrollFloorPx(columns) - gridWidthPx(columns)).toBeLessThan(step);
     }
-    // Five columns: 406 overflows 332 by 74, which rounds to 104 → floor 436.
-    expect(gridScrollFloorPx(5)).toBe(436);
-    // Four columns: overflows by 22, rounds to 52 → floor 384.
-    expect(gridScrollFloorPx(4)).toBe(384);
+    // Five columns: 446 overflows 332 by 114, which rounds to 120 → floor 452.
+    expect(gridScrollFloorPx(5)).toBe(452);
+    // Four columns: 386 overflows by 54, rounds to one whole step → floor 392.
+    expect(gridScrollFloorPx(4)).toBe(392);
   });
 
   it("A SCROLLING PHONE GRID HAS FIXED VALUE TRACKS, or the floor is eaten", () => {
@@ -762,7 +795,8 @@ describe("the cell vocabulary", () => {
   it("glyphs a settled cell by its result, not by a shared dash", () => {
     expect(gridCellGlyph(cell({ state: "settled", note: "won" }))).toBe("✓");
     expect(gridCellGlyph(cell({ state: "settled", note: "eliminated" }))).toBe("—");
-    expect(gridCellGlyph(cell({ state: "no_market" }))).toBe("no mkt");
+    // #4171 item 2 — a no-market cell prints nothing; see its own test above.
+    expect(gridCellGlyph(cell({ state: "no_market" }))).toBe("");
     expect(gridCellGlyph(cell({ state: "unlinked" }))).toBe("!");
   });
 

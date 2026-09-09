@@ -29,13 +29,18 @@ import {
  *
  * ═══ THE FOUR RULINGS THAT SHAPE IT ═══
  *
- * **Ruling 3 (as amended) — no cell is ever blank.** Every cell prints
- * something, and the something says what it is. A priced cell prints its
- * number; a settled cell prints the result; a `no_market` cell says "no mkt"
- * because both sources were asked and neither carries the question; an
- * `unlinked` or `unregistered` cell prints an alarm and names the market that
- * did not resolve. The last two are OUR defect and are styled as one — Alex:
- * "the fix is linking the real markets".
+ * **Ruling 3 (as amended twice) — every cell says what it is, and since #4171
+ * one of them says it without words.** A priced cell prints its number; a
+ * settled cell prints the result; an `unlinked` or `unregistered` cell prints
+ * an alarm and names the market that did not resolve — OUR defect, styled as
+ * one, Alex: *"the fix is linking the real markets"*.
+ *
+ * A `no_market` cell now prints NOTHING. It printed `NO MKT`, and notice 34
+ * (Alex, 2026-09-08 4:00pm PT, about this page) is *"if a number cannot be
+ * shown honestly, leave the space empty"*. The ruling's original point — that
+ * a reader must be able to tell a hole from a layout artifact — is kept by the
+ * per-cell `title` and `sr-only` sentence UX-P157 added, not by a word in the
+ * track; see `gridCellGlyph`, which carries the whole argument.
  *
  * **Ruling 4 — the semifinal column is here.** It was missing because UX-P138
  * capped the grid at three reach columns and SF was the fourth. There is no
@@ -48,16 +53,17 @@ import {
  * **Ruling 5 — wide rounds scroll.** `overflow-x-auto` with the header and the
  * rows inside the same scroller so they cannot drift apart. Since #3072 the
  * arithmetic behind that verdict counts a row's padding and gaps as well as its
- * tracks, so the men's five-column draw scrolls (406px against a measured 332px
+ * tracks, so the men's five-column draw scrolls (446px against a measured 332px
  * card) where it used to be clipped; a three-column first-week grid still does
- * not. Since #3087 the name track sticks while it scrolls — see
+ * not (326 ≤ 332, unchanged by #4171's wider track). Since #3087 the name track
+ * sticks while it scrolls — see
  * `GRID_STICKY_NAME`, because a number without the name beside it is half a
  * sentence.
  *
  * ═══ WHAT THE READER SEES WHEN A ROW HAS NO MARKETS ═══
  *
  * 28 of 80 board contenders have no round-advancement market at either source
- * — Sinner among them. His row is four "no mkt" cells and a title price, which
+ * — Sinner among them. His row is four empty cells and a title price, which
  * looks alarming until you read it, so the row carries an explicit reason
  * rather than four bare cells.
  *
@@ -91,7 +97,7 @@ const ALARM_STATES = new Set(["unlinked", "unregistered"]);
  * and asserts they equal the exported constants.
  */
 export const GRID_SIZING =
-  "[--grid-name-w:118px] [--grid-col-w:46px] lg:[--grid-name-w:236px] lg:[--grid-col-w:84px]";
+  "[--grid-name-w:118px] [--grid-col-w:54px] lg:[--grid-name-w:236px] lg:[--grid-col-w:84px]";
 
 /**
  * ═══ #3087 (third pass): A FLEXIBLE VALUE TRACK EATS THE SCROLL FLOOR ═══
@@ -127,9 +133,9 @@ export const GRID_SIZING =
  * they agree with what shipped before any of #3087.
  */
 export const GRID_COL_TRACK_FLEX =
-  "[--grid-col-track:minmax(46px,1fr)] lg:[--grid-col-track:minmax(84px,1fr)]";
+  "[--grid-col-track:minmax(54px,1fr)] lg:[--grid-col-track:minmax(84px,1fr)]";
 export const GRID_COL_TRACK_FIXED =
-  "[--grid-col-track:46px] lg:[--grid-col-track:minmax(84px,1fr)]";
+  "[--grid-col-track:54px] lg:[--grid-col-track:minmax(84px,1fr)]";
 
 /**
  * ═══ THE NAME TRACK STAYS WHEN THE GRID SCROLLS (#3087) ═══
@@ -287,6 +293,7 @@ function Cell({
   };
 
   if (text === null) {
+    const glyph = gridCellGlyph(cell);
     return (
       <span
         {...shared}
@@ -295,7 +302,13 @@ function Cell({
         }`}
       >
         <span className="sr-only">{explanation}</span>
-        <span aria-hidden="true">{gridCellGlyph(cell)}</span>
+        {/* #4171 item 2: a `no_market` cell's glyph is now the empty string, so
+            it would collapse to a zero-width box — and a zero-width box is not
+            a hover target, which would take the cell's `title` (the sentence
+            that replaced the words on screen) away from the reader at the same
+            moment the words left. The NBSP keeps the line box and the target
+            while painting nothing. */}
+        <span aria-hidden="true">{glyph === "" ? "\u00a0" : glyph}</span>
       </span>
     );
   }
