@@ -54,6 +54,14 @@ nonisolated struct TournamentHubPresentation: Equatable, Sendable {
         /// "Retired" / "Walkover". Nil for an ordinary final — a retirement is
         /// not a scoreline and must not be printed as one.
         let completionNote: String?
+        /// What the market made each side BEFORE the match, e.g. "41%" — the
+        /// number that lets a finished row say Tiafoe won as an underdog
+        /// (#4142, D65). Nil when the server sent no prior for that side, and
+        /// nil is rendered as NOTHING: an absent prior leaves the space empty
+        /// rather than printing a dash or a sentence explaining the gap
+        /// (notice 34).
+        let winnerPrematchText: String?
+        let loserPrematchText: String?
     }
 
     nonisolated struct BoardRow: Equatable, Sendable, Identifiable {
@@ -326,7 +334,41 @@ nonisolated struct TournamentHubPresentation: Equatable, Sendable {
         }
         if match.startIsTbd == true { return "Time TBD" }
         guard let iso = match.scheduledDate, let date = isoDate(iso) else { return "Time TBD" }
-        return startTimeFormatter.string(from: date)
+        return startTimeText(for: date, now: Date())
+    }
+
+    /// "7:20 PM" today, "Tomorrow 8:30 AM" tomorrow, "Wed 8:30 AM" later (#4134).
+    ///
+    /// The bug was a bare clock: `Next up` printed "8:30 AM" for a match that is
+    /// not today, so three rows read as three times on one morning when two of
+    /// them were the following day. The day is part of the time, not a footnote
+    /// about it — notice 34 forbids explaining this in a caption, so it goes in
+    /// the string itself.
+    ///
+    /// `now` is a parameter and not `Date()` because a formatter that branches
+    /// on the clock cannot be tested by a gate that reads the clock too
+    /// (gotcha #44): the caller supplies today, the test supplies a fixed day.
+    nonisolated static func startTimeText(
+        for date: Date,
+        now: Date,
+        calendar: Calendar = .current
+    ) -> String {
+        let time = startTimeFormatter.string(from: date)
+        if calendar.isDate(date, inSameDayAs: now) { return time }
+        if calendar.isDateInTomorrow(date) { return "Tomorrow \(time)" }
+
+        // Inside the week ahead a weekday is the shortest unambiguous label a
+        // reader can act on; past it the weekday wraps around and starts lying,
+        // so the date has to appear.
+        let days = calendar.dateComponents(
+            [.day],
+            from: calendar.startOfDay(for: now),
+            to: calendar.startOfDay(for: date)
+        ).day ?? 0
+        if days > 0 && days < 7 {
+            return "\(weekdayFormatter.string(from: date)) \(time)"
+        }
+        return "\(shortDateFormatter.string(from: date)) \(time)"
     }
 
     private static func resultRow(_ result: TournamentHubResult, eventId: Int?) -> ResultRow? {
@@ -349,6 +391,18 @@ nonisolated struct TournamentHubPresentation: Equatable, Sendable {
 
         let score = (result.score?.isEmpty == false) ? result.score : nil
 
+        // #4142 / D65: "a result without the prior probability is half the
+        // story on a probability product" (the web arm's words, UX-P146). The
+        // pair is rounded ONCE, TOGETHER — `matchRow` above does the same for a
+        // live match and `prematchPercents` does it on the web — because two
+        // independently-correct roundings of one question print 101. All ten
+        // rows this hub shows today are exact complements, so the trap is live,
+        // not theoretical.
+        let priorPercents = renderedDuelPercents(
+            away: winner.prematchProbability,
+            home: loser.prematchProbability
+        )
+
         return ResultRow(
             id: result.id,
             eventId: eventId,
@@ -359,8 +413,23 @@ nonisolated struct TournamentHubPresentation: Equatable, Sendable {
             winnerName: winner.displayName,
             loserName: loser.displayName,
             score: score,
-            completionNote: note
+            completionNote: note,
+            winnerPrematchText: prematchText(winner.prematchProbability, priorPercents.first ?? nil),
+            loserPrematchText: prematchText(loser.prematchProbability, priorPercents.last ?? nil)
         )
+    }
+
+    /// A prior we do not have prints NOTHING, not a dash.
+    ///
+    /// `formatProbabilityOrDash` is the right call for a column that must keep
+    /// its shape — a board row, a price strip. A finished result is a sentence,
+    /// and an em-dash trailing a player's name reads as a claim about the
+    /// match rather than about our data. So this returns `String?` and the view
+    /// omits the element entirely (notice 34: leave the space empty, never
+    /// explain the emptiness).
+    private static func prematchText(_ probability: Double?, _ rendered: Int?) -> String? {
+        guard let probability else { return nil }
+        return formatProbability(probability, renderedPercent: rendered)
     }
 
     private static func boardSection(
@@ -792,5 +861,20 @@ private let startTimeFormatter: DateFormatter = {
     let f = DateFormatter()
     f.dateStyle = .none
     f.timeStyle = .short
+    return f
+}()
+
+/// "Wed" — the day carried alongside `startTimeFormatter`'s clock (#4134).
+/// Localised and in the device's zone, like the time it prefixes.
+private let weekdayFormatter: DateFormatter = {
+    let f = DateFormatter()
+    f.setLocalizedDateFormatFromTemplate("EEE")
+    return f
+}()
+
+/// "Sep 15" — for a start far enough out that a weekday would wrap around.
+private let shortDateFormatter: DateFormatter = {
+    let f = DateFormatter()
+    f.setLocalizedDateFormatFromTemplate("MMMd")
     return f
 }()

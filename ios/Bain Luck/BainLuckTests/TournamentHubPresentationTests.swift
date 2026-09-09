@@ -154,6 +154,152 @@ final class TournamentHubPresentationTests: XCTestCase {
         XCTAssertFalse(finals.isEmpty, "an ordinary final carries no completion note")
     }
 
+    // MARK: - #4142: a finished row says what the market made each side
+
+    /// The denominator is asserted, not just the hits.
+    ///
+    /// "Some rows carry a prior" passes just as happily on a payload where one
+    /// row does and nine do not. The fixture is four results of which exactly
+    /// three were priced before play and one — the qualifying retirement — was
+    /// not, so the test states 3 AND states 1, and a regression that drops
+    /// priors moves one of the two numbers.
+    func testAFinishedRowCarriesWhatTheMarketMadeEachSide() throws {
+        let p = try liveFixture()
+        XCTAssertEqual(p.results.count, 4, "the fixture's eligible denominator")
+
+        let priced = p.results.filter { $0.winnerPrematchText != nil }
+        XCTAssertEqual(
+            priced.count, 3,
+            "three main-draw results carry a prior on both sides in the fixture")
+        XCTAssertEqual(
+            p.results.filter { $0.winnerPrematchText == nil }.count, 1,
+            "and the qualifying retirement carries none — the control")
+
+        // The exact strings, because "not nil" would survive rendering the
+        // loser's number against the winner's name.
+        let eala = try XCTUnwrap(p.results.first { $0.winnerName == "Alexandra Eala" })
+        XCTAssertEqual(eala.winnerPrematchText, "86%")
+        XCTAssertEqual(eala.loserPrematchText, "14%")
+
+        // And the underdog case Alex asked for: a winner the market had behind.
+        let fritz = try XCTUnwrap(p.results.first { $0.winnerName == "Taylor Fritz" })
+        XCTAssertEqual(fritz.winnerPrematchText, "86%")
+        XCTAssertEqual(fritz.loserPrematchText, "14%")
+    }
+
+    /// A prior we do not have prints NOTHING — not an em-dash.
+    ///
+    /// `formatProbabilityOrDash` is the reflex on this surface and it is the
+    /// wrong reflex here: an em-dash trailing a player's name on a finished row
+    /// reads as a statement about the match. Notice 34 says leave the space
+    /// empty and do not explain it, so the field is `nil` and the view omits
+    /// the element.
+    func testAnAbsentPriorPrintsNothingRatherThanADash() throws {
+        let p = try liveFixture()
+        let unpriced = try XCTUnwrap(
+            p.results.first { $0.completionNote == "Retired" },
+            "the qualifying retirement is the fixture's unpriced row")
+        XCTAssertNil(unpriced.winnerPrematchText)
+        XCTAssertNil(unpriced.loserPrematchText)
+        XCTAssertNotEqual(unpriced.winnerPrematchText, absentProbabilityMarker)
+    }
+
+    /// The pair is rounded ONCE, together — a finished row cannot print 101.
+    ///
+    /// Every priced pair in the fixture happens to round cleanly, so asserting
+    /// this on the fixture alone would pass without the rule existing. 0.505 /
+    /// 0.495 is the case that separates them: rounded independently they are
+    /// 51 and 50.
+    func testThePrematchPairIsRoundedTogetherSoAFinishedRowCannotPrint101() {
+        let p = TournamentHubPresentation(
+            response: decode(Self.pricedResultJSON(winner: 0.505, loser: 0.495)))
+        let row = p.results.first
+        XCTAssertEqual(row?.winnerPrematchText, "51%")
+        XCTAssertEqual(
+            row?.loserPrematchText, "49%",
+            "rounded on its own 0.495 prints 50, and 51 + 50 is the 101 this rule exists to stop")
+    }
+
+    // MARK: - #4134: `Next up` says WHICH DAY, not just a clock time
+
+    /// The bug: three upcoming rows read "7:20 PM · 8:30 AM · 9:30 AM" and two
+    /// of them were the next day.
+    ///
+    /// `now` is injected rather than read, so this asserts the branches instead
+    /// of asserting whatever today happens to be (gotcha #44).
+    func testNextUpNamesTheDayWhenAStartIsNotToday() throws {
+        // ONE calendar for both halves. The day comparison and the strings are
+        // not independent: `startTimeText` decides "is this today" with the
+        // calendar it is handed, while the formatters render in the device's
+        // zone. Handing it a zone the formatters do not share makes the two
+        // disagree near midnight — which is a bug in a test that forces it, and
+        // the reason production passes `.current`.
+        let calendar = Calendar.current
+
+        // Offset FIRST from a fixed anchor, then set the clock (gotcha #44):
+        // an anchor that branches on today's date is not fixed.
+        let anchor = try XCTUnwrap(calendar.date(from: DateComponents(
+            timeZone: calendar.timeZone, year: 2026, month: 9, day: 8,
+            hour: 19, minute: 0)))
+        func at(dayOffset: Int, _ hour: Int, _ minute: Int) throws -> Date {
+            let day = try XCTUnwrap(calendar.date(byAdding: .day, value: dayOffset, to: anchor))
+            return try XCTUnwrap(calendar.date(
+                bySettingHour: hour, minute: minute, second: 0, of: day))
+        }
+        func text(_ date: Date) -> String {
+            TournamentHubPresentation.startTimeText(for: date, now: anchor, calendar: calendar)
+        }
+
+        // Today keeps the bare clock — the day is only worth a reader's
+        // attention when it is not the one they are standing in.
+        let todayLate = try at(dayOffset: 0, 21, 30)
+        XCTAssertEqual(
+            text(todayLate), startTimeFormatterTestMirror(todayLate),
+            "a start later today is still just a time")
+
+        let tomorrowMorning = try at(dayOffset: 1, 8, 30)
+        XCTAssertTrue(
+            text(tomorrowMorning).hasPrefix("Tomorrow "),
+            "the 8:30 AM row that reads as this morning is tomorrow morning")
+        XCTAssertTrue(
+            text(tomorrowMorning).hasSuffix(startTimeFormatterTestMirror(tomorrowMorning)),
+            "naming the day must not cost the time")
+
+        // Later in the week: a weekday, which is shorter than a date and still
+        // unambiguous inside seven days. Asserted against Foundation's own
+        // symbol table rather than against the formatter under test, so this
+        // cannot pass by agreeing with itself.
+        let friday = try at(dayOffset: 3, 8, 30)
+        let symbol = calendar.shortWeekdaySymbols[calendar.component(.weekday, from: friday) - 1]
+        let fridayText = text(friday)
+        XCTAssertTrue(fridayText.contains(symbol), "expected \(symbol) in \(fridayText)")
+        XCTAssertFalse(fridayText.contains("Tomorrow"))
+
+        // Past seven days a weekday would wrap around and start lying, so the
+        // date has to appear instead.
+        let far = try at(dayOffset: 12, 8, 30)
+        let farText = text(far)
+        XCTAssertFalse(farText.contains("Tomorrow"))
+        XCTAssertFalse(
+            farText.contains(
+                calendar.shortWeekdaySymbols[calendar.component(.weekday, from: far) - 1]),
+            "twelve days out is a date, not a weekday: \(farText)")
+        XCTAssertTrue(farText.hasSuffix(startTimeFormatterTestMirror(far)))
+    }
+
+    /// The bare clock, formatted the way the row's time half is.
+    ///
+    /// Deliberately a local mirror and not a hook into the production
+    /// formatter: these assertions are about the DAY the string names, and
+    /// reaching into the file's private formatter would make the time half
+    /// agree with itself by construction.
+    private func startTimeFormatterTestMirror(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.dateStyle = .none
+        f.timeStyle = .short
+        return f.string(from: date)
+    }
+
     // MARK: - Event links: the second channel, and no dead chevrons
 
     func testFinishedMatchesLinkToAnEventPageWhenTheFeedResolvesThem() throws {
@@ -326,6 +472,26 @@ final class TournamentHubPresentationTests: XCTestCase {
      "results": {"matches": []}, "boards": [], "bracket": {},
      "event_links": {"by_espn": {"182735": 15300835}}, "broadcasts": []}
     """
+
+    /// One finished match, both sides priced — for the pair-rounding rule the
+    /// production fixture cannot exercise.
+    private static func pricedResultJSON(winner: Double, loser: Double) -> String {
+        """
+        {"slug": "us-open", "title": "US Open 2026",
+         "slate": {"matches": []},
+         "results": {"matches": [{
+            "matchup_key": "espn:1", "draw_label": "Men's Singles", "round": "R64",
+            "winner_entity_key": "w", "score": "7-6, 7-6", "completion": "final",
+            "completed_at": "2026-09-08T20:00:00Z",
+            "players": [
+              {"entity_key": "w", "display_name": "W", "is_winner": true,
+               "prematch_probability": \(winner)},
+              {"entity_key": "l", "display_name": "L", "is_winner": false,
+               "prematch_probability": \(loser)}]}]},
+         "boards": [], "bracket": {},
+         "event_links": {"by_espn": {}}, "broadcasts": []}
+        """
+    }
 
     private static func twoSidedJSON(homeProbability: Double, awayProbability: Double) -> String {
         """
