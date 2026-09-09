@@ -8,6 +8,100 @@ from datetime import datetime, timezone, timedelta
 from app.utils.pulse import PulseDataPoint
 
 
+# ---------------------------------------------------------------------------
+# #4090 — no test file can leak `app.utils.rate_limit`'s module globals
+# ---------------------------------------------------------------------------
+#: The module-level names in ``app.utils.rate_limit`` that an ASSIGNMENT can
+#: move, and that restoring by assignment therefore actually restores. Anything
+#: whose import-time value is a scalar, a tuple or ``None`` qualifies; a module,
+#: a function, a class, a ``typing`` alias and the module logger do not, and
+#: neither would a mutable container (which a test would mutate IN PLACE, where
+#: rebinding the name cures nothing). ``test_no_test_file_can_leak_the_rate_limit
+#: _globals_4090.py`` pins the excluded set so a new global of that shape has to
+#: be a decision rather than a silent gap.
+_RATE_LIMIT_RESTORABLE_TYPES = (str, int, float, bool, tuple, type(None))
+
+
+def _rate_limit_module_state() -> dict:
+    """Snapshot every restorable module global in ``app.utils.rate_limit``."""
+    import app.utils.rate_limit as _rl
+
+    return {
+        name: value
+        for name, value in vars(_rl).items()
+        if not name.startswith("__")
+        and isinstance(value, _RATE_LIMIT_RESTORABLE_TYPES)
+    }
+
+
+#: Captured at CONFTEST IMPORT time, which is before collection imports a single
+#: test module — so no test file's module-level statement can be inside it. This
+#: is the distinction that made the 2026-09-08/09 reds so expensive: both
+#: per-file restores capture at FIXTURE SETUP instead, which faithfully restores
+#: a PREVIOUS file's pollution and then lets the file's own import-anchored guard
+#: fire and accuse itself. A snapshot has to be older than every test to be a
+#: pristine one.
+_RATE_LIMIT_PRISTINE = _rate_limit_module_state()
+
+
+def _restore_rate_limit_module_state() -> None:
+    """Put every snapshotted global back to the value the module defined it with.
+
+    A plain function rather than fixture-body-only code so the guard file can
+    execute the real restore instead of a copy of it.
+    """
+    import app.utils.rate_limit as _rl
+
+    for name, value in _RATE_LIMIT_PRISTINE.items():
+        setattr(_rl, name, value)
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limit_module_state():
+    """Give every test the rate limiter as the module defined it (#4090).
+
+    ``app/utils/rate_limit.py`` keeps its whole configuration in module globals
+    — the four ceiling strings, their four integer twins, the fixed-window
+    parameters, the memoised parsed-limit singletons, the shared limiter, the
+    trusted-IP cache and the async-redis latch. All of it is process-global and
+    none of it was reset between tests, so a file that lowered a ceiling to make
+    a limit reachable in five requests handed that ceiling to every test that ran
+    after it IN THE SAME WORKER.
+
+    That is not hypothetical and it is not one file's mistake. It reddened CI
+    three times on 2026-09-08 (#4053, #4065, #4090) and each red named a file the
+    diff never touched, because ``scripts/ci_shard.py`` packs shards LPT-greedy
+    over the collected files: ADDING ANY TEST FILE ANYWHERE re-partitions every
+    shard and puts a new stranger downstream of the leak. The last one skipped a
+    production deploy.
+
+    Two leaks are still live on master as this lands, which is why the cure
+    belongs here rather than in one more per-file fixture:
+
+    * ``tests/test_rate_limit.py`` leaves ``_async_rl_unavailable`` **True**
+      (measured: ``False`` at import, ``True`` after the file). That latch is
+      a ONE-WAY DOOR — ``_get_async_rl_redis`` returns ``None`` forever once it
+      is set — so every later test in the worker silently exercises the memory
+      fallback instead of the async-redis path it means to be testing, and
+      nothing about the failure would say so.
+    * the same file assigns ``_RL_CHECK_TIMEOUT`` directly and its own fixture
+      never restores it; it currently lands back on the default only because the
+      last test that touches it happens to choose ``0.6``.
+
+    Restoring ``_rate_limiter`` to ``None`` also drops the shared in-memory
+    budget, so the 60/minute anonymous ceiling can no longer be spent
+    cumulatively by earlier files — the mechanism #4090 was originally filed on.
+
+    Ordering composes with the two per-file fixtures rather than fighting them:
+    a conftest autouse fixture is set up BEFORE a module's own, so
+    ``test_rate_limit.py`` and ``test_rate_limit_trusted_ip_d70.py`` now capture
+    a pristine module, lower what they need, and restore it twice.
+    """
+    _restore_rate_limit_module_state()
+    yield
+    _restore_rate_limit_module_state()
+
+
 @pytest.fixture(autouse=True)
 def _reset_request_cache_state():
     """Isolate the process-local request-cache primitives (Queue 271).
