@@ -312,8 +312,12 @@ def test_the_slug_pattern_cannot_be_made_to_backtrack():
             "the pattern backtracks exponentially (CodeQL py/redos). Keep "
             "'.' out of the token half."
         )
-    assert done.returncode == 0, done.stderr
-    assert "ok" in done.stdout
+    else:
+        # In `else`, not after the block: `pytest.fail` is NoReturn but CodeQL
+        # cannot see that, and read `done` as possibly-unbound
+        # (py/uninitialized-local-variable, alert #2245 on PR #4230).
+        assert done.returncode == 0, done.stderr
+        assert "ok" in done.stdout
 
 
 def test_the_pattern_mirrored_in_this_file_still_matches_the_module():
