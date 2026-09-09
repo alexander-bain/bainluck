@@ -26,6 +26,7 @@ transactional session and RETURNS its own before/after census in the response bo
              | event-espn-id | label-store-converge
              | label-defect-routes
              | polymarket-sport-category-census | polymarket-sport-category
+             | polymarket-senate-category
              | polymarket-leg-label-census | polymarket-leg-label
              | authority-id-collisions | weather-shelf-disease }
     (the registry below is authoritative; this list had already drifted two
@@ -48,7 +49,8 @@ transactional session and RETURNS its own before/after census in the response bo
      commit that registered them. Re-synced again 2026-09-01, Q499, adding the
      two polymarket-leg-label entries in the commit that registered them.
      Re-synced again 2026-09-02, lane1/058, adding authority-id-collisions in
-     the commit that registered it.)
+     the commit that registered it. Re-synced again 2026-09-09, lane1b/106,
+     adding polymarket-senate-category in the commit that registered it.)
 
 Repairs whose signature declares ``limit`` / ``sport`` / ``newest_first`` /
 ``offset`` / ``after_id`` / ``after_date`` / ``plan_hash`` / ``expected_blank`` /
@@ -434,6 +436,42 @@ _REPAIRS = {
     # state, not a standing job.
     "polymarket-sport-category": (
         "app.tasks.repair_polymarket_sport_category",
+        "repair",
+    ),
+    # #4229 (lane1b/106): the POLYMARKET half of the senate/hockey defect, which
+    # the Kalshi backfill at `edf9fe13` does not touch and no poll will ever
+    # reach. Six enumerated Polymarket EVENT ids — the "Fed Chair" card #4229 was
+    # filed about among them — re-asked at `gamma/events/{id}` and moved to
+    # whatever the SHIPPED cascade says, via the sibling rail's own
+    # `classify_event_payload`. It has no sport rules of its own.
+    #
+    # 🔴 Why it is enumerated rather than a category drain like its sibling: the
+    # suspect category here would be `hockey`, i.e. tens of thousands of real NHL
+    # rows and one venue call each, to move six events. The bound was measured
+    # against the VENUE (notice 26), not our mirror: all 74 senate-named
+    # Polymarket events stored under a sport were re-asked on 2026-09-09 and 68
+    # came back `hockey` — genuinely Ottawa/Belleville. Those 68 are not an
+    # exclusion list; the gate refused them on the venue's own answer, which is
+    # how this rail proves it is safe instead of asserting it.
+    #
+    # Includes four RESOLVED events beyond the two the issue names, found by
+    # censusing what the rule matches rather than what the defect occupies. Safe
+    # because `llm_sport_category` is a taxonomy badge, never a result: no price,
+    # outcome, `is_winner` or resolution field is read or written, so "settled
+    # means settled" is untouched.
+    #
+    # Writes `llm_sport_category` ONLY, by Core UPDATE, compare-and-set on the
+    # value read. Deliberately NOT `category`: the poller's own `update_set` does
+    # not contain it (INSERT-time only), so writing it would make this rail do
+    # something ingest never does. Nothing is written on 429/5xx/timeout
+    # (`indeterminate`, #36), on 404 (`not_at_venue`), when the cascade returns
+    # None/"other" (`refused_other`), or when the venue agrees (`venue_agrees`).
+    # D51: every planned row carries its `before` and the payload carries a
+    # runnable `restore_sql`, on the dry run as well as the apply.
+    # Takes no bounds — the population is the frozen list. ATTENDED ONLY: never
+    # wire this to a beat; it is a terminating repair, not a standing job.
+    "polymarket-senate-category": (
+        "app.tasks.repair_polymarket_senate_category",
         "repair",
     ),
     # #1796/#1902 (queue 369): the attended event-CREATE consumer. Alex approved
