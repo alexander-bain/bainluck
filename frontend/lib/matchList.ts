@@ -399,61 +399,24 @@ export function liveMatchLabel(entry: {
 }
 
 /**
- * WHAT AN UNPRICED ROW MAY SAY ABOUT ITSELF (UX-P142, corrected by #2690).
+ * THE UNPRICED ROW'S PARAGRAPH IS GONE (notice 34, #4125 item 1).
  *
- * ═══ THE SENTENCE WAS RIGHT ABOUT A POPULATION IT NO LONGER DESCRIBES ═══
+ * `unpricedDetailNote` lived here from UX-P142 until it was deleted below in
+ * `matchDetailNote`. Its history is worth keeping because it is a good record
+ * of a sentence being made *more* accurate three times and still being wrong
+ * to print: UX-P142 wrote *"Nobody is quoting this match yet. It is in the
+ * draw with no probability against it."* against a measured population (96 of
+ * 113 slate rows unpriced, none live or decided); the AUTHORITY builder reused
+ * `priced: false` for ESPN-paired rows, which CAN be live, so #2690 caught it
+ * under a match in its third set; the repair narrowed it to what the row knows
+ * — where the match stands, that we hold no probability, and an explicit
+ * refusal of the inference that no venue listed one.
  *
- * UX-P142 wrote *"Nobody is quoting this match yet. It is in the draw with no
- * probability against it."* against a measured population, and the reasoning
- * held: on ceremony day the released main draw is 96 registered fixtures four
- * days out, and `tournament_slate.py` says why nobody lists them — *"nobody
- * quotes a first round before qualifying finishes"*. Both clauses were true of
- * every row that could reach them. `payload-2026-08-27.json` still proves it:
- * 96 of 113 slate rows unpriced, and **not one of them live or decided.**
- *
- * Then the AUTHORITY builder landed. It reuses the same `priced: false` flag
- * for ESPN-paired rows, and those rows CAN be live — #2690 caught this sentence
- * under a match in its third set, while `/sports` priced it 51/49 and
- * `/events/15300190` drew it a chart with five lead changes. Both clauses had
- * become false at once: the site was quoting the match, and it was not "in the
- * draw", it was being played.
- *
- * ═══ WHY THE FIX IS NOT THE ONE #2690 PROPOSED ═══
- *
- * The issue suggests *"We can't show a price for this match yet"*. That is a
- * ruling-138 violation (`price` is trading vocabulary; the word is
- * PROBABILITY) and `tournamentPlainLanguage` would reject it at the render.
- *
- * Nor may the sentence name a REASON. #2690 measures `priced: false` and
- * `event_id: null` coinciding 2 for 2 and calls linkage "the whole defect" —
- * but that is one afternoon, not the mechanism. `tournament_slate.py:790-809`
- * lists FOUR ways a row arrives unpriced: no link; a link whose sides do not
- * cover both athletes; a link whose outcomes we hold no probability for; and
- * `len(loaded_by_key) != 2`, one side priced and the other not. "We could not
- * tie this match to a market" would be a NEW false sentence on three of them.
- *
- * ═══ SO IT STATES ONLY WHAT THE ROW KNOWS ═══
- *
- * Where the match stands (which the row does know, and which is the fact
- * UX-P142 wanted — the fixture is real), that we have no probability, and an
- * explicit refusal of the inference. The refusal is not invented here: it is
- * the closing clause `prematchAbsenceNote` already ships on this same page.
- * That function and this one describe the same absence, and until now one
- * refused the claim about the world while the other asserted it.
+ * That last version was true of every row that could reach it. It was still a
+ * paragraph about our coverage on a reader's screen, which is the thing notice
+ * 34 bans regardless of accuracy. The honest empty (`"No probability yet"`,
+ * `slate.ts`) says the same thing in two words and says it as an ANSWER.
  */
-function unpricedDetailNote(entry: {
-  decided: boolean;
-  liveState: "in_progress" | "upcoming" | null;
-}): string {
-  const standing = entry.decided
-    ? "This match is over"
-    : entry.liveState === "in_progress"
-      ? "This match is under way"
-      : "This match is in the draw";
-  // Second clause verbatim from UX-P142; third verbatim from the sibling
-  // `prematchAbsenceNote`, so the page refuses this inference in one voice.
-  return `${standing} with no probability against it. That is not a statement about whether a venue listed one.`;
-}
 
 /**
  * Does this row have TWO NUMBERS THAT DISAGREE — the one state the page is
@@ -494,13 +457,24 @@ export function matchDetailNote(entry: {
   /** Absent reads as priced — every row before UX-P142 was. */
   priced?: boolean;
 }): string | null {
-  if (entry.priced === false) {
-    // FOURTH CASE (UX-P142), re-aimed by #2690 — see `unpricedDetailNote`.
-    return unpricedDetailNote(entry);
-  }
-  if (!entry.coherent) {
-    return "The two numbers for this match do not agree yet, so we are not showing a split.";
-  }
+  // ═══ THE ROW MAY DESCRIBE THE MATCH, NEVER OUR PIPELINE (notice 34) ═══
+  //
+  // Two branches used to answer "why is there no number here?" in a paragraph
+  // under the card. Alex's words on this page were *"all the grey text is
+  // madness, and shouldn't be user-facing at all"*, and notice 34 closes with
+  // the exact instruction: **if a number cannot be shown honestly, leave the
+  // space empty; do not explain the emptiness in a paragraph.**
+  //
+  // The space is not blank. `slate.ts` already answers, in two words and as
+  // `kind: "answer"`, where the number would be: **"No probability yet"**. The
+  // paragraph was a second, longer answer to a question the row had already
+  // answered — and the longer one talked about us (our coverage, our joins,
+  // what we are "not showing") rather than about the match.
+  //
+  // So both go, and the survivors below are exactly the ones that state a fact
+  // about the MATCH: the upset (case 3) and the opening (case 4). That is the
+  // line this function now holds, and the guard names it that way.
+  if (entry.priced === false || !entry.coherent) return null;
 
   if (entry.decided) {
     const winner = entry.sides.find((side) => side.isWinner);

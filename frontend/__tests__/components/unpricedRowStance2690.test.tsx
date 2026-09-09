@@ -2,6 +2,14 @@
  * UX-1042 / #2690 — AN UNPRICED HUB ROW STATES ITS OWN IGNORANCE, NOT THE
  * WORLD'S.
  *
+ * ⚠️ SUPERSEDED BY #4332 (notice 34): the sentence this file was written to
+ * CORRECT has since been REMOVED. The assertions below are re-aimed rather than
+ * deleted — the fixture work and the two specimens (a LIVE unpriced row, a
+ * DECIDED one) are the hardest part of this file and #4332's own guard has
+ * neither. Everything above the "THE SHIP" divider is the original record and
+ * is still true; read it as history, and see `matchList.ts`'s tombstone for why
+ * three rounds of making the sentence more accurate never saved it.
+ *
  * ═══ THE DEFECT ═══
  *
  * `/tournaments/us-open` printed *"Nobody is quoting this match yet. It is in
@@ -50,7 +58,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import TournamentMatches from "@/components/tournament/TournamentMatches";
 import { findBannedCopy } from "@/lib/copyBans";
-import { buildMatchList, matchDetailNote } from "@/lib/matchList";
+import { buildMatchList } from "@/lib/matchList";
 import type { SlateMatch } from "@/lib/slate";
 import type { TournamentPayload } from "@/lib/tournament";
 
@@ -94,29 +102,23 @@ function renderRows(rows: SlateMatch[]): string {
 }
 
 /**
- * The one sentence on a row, read off the render rather than the library.
+ * The notes on a row, read off the render rather than the library.
  *
- * ANCHORED ON `data-testid="match-detail-note"`, which predates this diff, so
- * every arm below can run on the parent too. An extractor keyed on the NEW
- * wording makes every test that uses it arm-dependent — including the ones
- * labelled CONTROL, which then go red for a reason that has nothing to do with
- * the claim they make. The red arm caught exactly that and this is the repair.
+ * ANCHORED ON `data-testid="match-detail-note"`, which predates all of this, so
+ * every arm can run on the parent too. An extractor keyed on the WORDING makes
+ * every test that uses it arm-dependent — including the ones labelled CONTROL,
+ * which then go red for a reason that has nothing to do with the claim they
+ * make.
  *
- * It also reports its own yield: one row in, one note out, or it throws with
- * the counts rather than silently returning the wrong row's sentence.
+ * Returns the LIST. The previous version threw unless it found exactly one
+ * note, which was right while every row had one; under #4332 an unpriced row
+ * has none, and "there is no note" is now the assertion rather than the error
+ * case. Callers that expect exactly one still say so, explicitly.
  */
-function noteFor(rows: SlateMatch[]): string {
-  const html = renderRows(rows);
-  const notes = [
-    ...html.matchAll(/data-testid="match-detail-note"[^>]*>([^<]*)</g),
-  ].map((m) => m[1]);
-  if (notes.length !== 1) {
-    throw new Error(
-      `expected exactly 1 detail note for ${rows.length} row(s), found ` +
-        `${notes.length} in ${html.length} bytes: ${JSON.stringify(notes)}`
-    );
-  }
-  return notes[0].replace(/\s+/g, " ").trim();
+function notesFor(rows: SlateMatch[]): string[] {
+  return [...renderRows(rows).matchAll(/data-testid="match-detail-note"[^>]*>([^<]*)</g)].map(
+    (m) => m[1].replace(/\s+/g, " ").trim()
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -147,54 +149,62 @@ describe("the corpus, and how the live row was built", () => {
 });
 
 // ---------------------------------------------------------------------------
-// THE SHIP
+// THE SHIP — SUPERSEDED BY #4332, AND THIS IS WHAT REPLACED IT
 // ---------------------------------------------------------------------------
 
-describe("an unpriced row no longer speaks for every venue in the world", () => {
-  it("THE DEFECT: a LIVE unpriced row does not claim nobody is quoting it", () => {
-    const note = noteFor([LIVE_UNPRICED_ROW]);
-    expect(note).not.toContain("Nobody is quoting");
-    expect(note).toContain("not a statement about whether a venue listed one");
+/**
+ * #2690's ship was a sentence made ACCURATE. #4332's is the same sentence
+ * REMOVED, under notice 34: a row may describe the match, never our pipeline.
+ *
+ * Both were right in their turn, and the pair is worth keeping as one record —
+ * the paragraph was corrected twice (UX-P142 → #2690 → the venue-refusal
+ * clause) and every correction left it a paragraph about our coverage on a
+ * reader's screen. Accuracy was never the axis it failed on.
+ *
+ * The assertions below are re-aimed, not deleted, because this file owns two
+ * specimens #4332's own guard does not have: a LIVE unpriced row (the authority
+ * overlay) and a DECIDED one. Those were exactly the states #2690 proved the
+ * sentence could not describe, so they are exactly the states most worth
+ * checking now say nothing at all.
+ */
+describe("an unpriced row says nothing about our pipeline, in every state", () => {
+  it("THE LIVE ROW — #2690's specimen — renders no note at all", () => {
+    expect(notesFor([LIVE_UNPRICED_ROW])).toEqual([]);
   });
 
-  it("THE DEFECT'S SECOND HALF: a match being played is not 'in the draw'", () => {
-    const note = noteFor([LIVE_UNPRICED_ROW]);
-    expect(note).toContain("This match is under way");
-    expect(note).not.toContain("in the draw");
+  it("THE DECIDED ROW renders no note either", () => {
+    expect(notesFor([DECIDED_UNPRICED_ROW])).toEqual([]);
   });
 
-  it("an unpriced row that is OVER says so", () => {
-    expect(noteFor([DECIDED_UNPRICED_ROW])).toContain("This match is over");
+  it("THE UPCOMING ROW — the population UX-P142 was RIGHT about — is silent too", () => {
+    // The sentence was true of this row for its whole life. It still goes:
+    // notice 34 bans the shape, not the inaccuracy.
+    expect(notesFor([UNPRICED[0]])).toEqual([]);
   });
 
-  it("the row still says the fact UX-P142 shipped it for: there is no number", () => {
-    for (const rows of [[LIVE_UNPRICED_ROW], [UNPRICED[0]], [DECIDED_UNPRICED_ROW]]) {
-      expect(noteFor(rows)).toContain("with no probability against it");
-    }
-  });
-
-  it("every sentence the branch can produce passes the ruling-138/141/142 bans", () => {
-    for (const state of [null, "upcoming", "in_progress"] as const) {
-      for (const decided of [false, true]) {
-        const note = matchDetailNote({
-          coherent: false,
-          decided,
-          liveState: state,
-          score: null,
-          priced: false,
-          sides: [{} as never, {} as never],
-        })!;
-        expect(findBannedCopy(note)).toEqual([]);
+  it("no arm leaks any clause of the retired paragraph", () => {
+    for (const rows of [[LIVE_UNPRICED_ROW], [DECIDED_UNPRICED_ROW], [UNPRICED[0]]]) {
+      const html = renderRows(rows);
+      for (const phrase of [
+        "Nobody is quoting",
+        "no probability against it",
+        "not a statement about whether a venue listed one",
+        "This match is under way",
+        "This match is over",
+      ]) {
+        expect(html).not.toContain(phrase);
       }
     }
   });
 
-  it("COUNTER-CASE: #2690's own suggested copy would have been rejected here", () => {
-    // The issue proposes "We can't show a price for this match yet". It is a
-    // ruling-138 violation, so the fix a reader writes straight from the issue
-    // goes red — which is the reason this assertion exists rather than a note.
-    const hits = findBannedCopy("We can't show a price for this match yet");
-    expect(hits.map((h) => h.ban.id)).toContain("price-family");
+  it("every state's row is still FULLY DRAWN, and still answers", () => {
+    // Without this the whole block above passes on a component that renders
+    // nothing — the empty-render trap that makes a `not.toContain` suite lie.
+    for (const rows of [[LIVE_UNPRICED_ROW], [DECIDED_UNPRICED_ROW], [UNPRICED[0]]]) {
+      const html = renderRows(rows);
+      expect(html.length).toBeGreaterThan(500);
+      expect(html).toContain("No probability yet");
+    }
   });
 });
 
@@ -203,35 +213,34 @@ describe("an unpriced row no longer speaks for every venue in the world", () => 
 // ---------------------------------------------------------------------------
 
 describe("CONTROL: nothing else about the row moved", () => {
-  it("CONTROL: an UPCOMING unpriced row still reads 'in the draw'", () => {
-    // The population UX-P142 was written for, and the one it was right about.
-    // Verified green on the parent, which is why it is anchored on the bare
-    // "in the draw" both arms print rather than on this diff's full clause.
-    const note = noteFor([UNPRICED[0]]);
-    expect(note).toContain("in the draw");
-    expect(note).not.toContain("under way");
-    expect(note).not.toContain("This match is over");
-  });
-
-  it("CONTROL: the row still refuses the incoherent branch's sentence", () => {
-    expect(noteFor([LIVE_UNPRICED_ROW])).not.toContain("do not agree");
-  });
-
-  it("CONTROL: an incoherent PRICED row keeps its own sentence", () => {
-    expect(
-      matchDetailNote({
-        coherent: false,
-        decided: false,
-        liveState: "in_progress",
-        score: null,
-        sides: [{} as never, {} as never],
-      })
-    ).toContain("do not agree");
-  });
-
   it("CONTROL: priced rows are untouched — the fixture still renders 17 of them", () => {
     const html = renderRows(PRICED);
     expect(html).not.toContain("with no probability against it");
     expect(html).not.toContain("Nobody is quoting");
+    expect(PRICED).toHaveLength(17);
+  });
+
+  it("CONTROL: a priced row that EARNS a sentence still prints one", () => {
+    // The sweep removed two branches, not the feature. If `matchDetailNote`
+    // had been gutted, every assertion above would still pass and this one
+    // would not.
+    const withOpening = {
+      ...PRICED[0],
+      sides: [
+        { ...(PRICED[0].sides?.[0] as object), probability: 0.72, opening_probability: 0.68 },
+        { ...(PRICED[0].sides?.[1] as object), probability: 0.28, opening_probability: 0.32 },
+      ],
+    } as unknown as SlateMatch;
+    const notes = notesFor([withOpening]);
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toMatch(/opened at \d+%/);
+  });
+
+  it("COUNTER-CASE: #2690's own suggested copy would still have been rejected", () => {
+    // The issue proposed "We can't show a price for this match yet" — a
+    // ruling-138 violation. Kept because the ban rail is what stopped the
+    // obvious fix, and it must keep working now the branch is gone.
+    const hits = findBannedCopy("We can't show a price for this match yet");
+    expect(hits.map((h) => h.ban.id)).toContain("price-family");
   });
 });
