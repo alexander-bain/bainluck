@@ -36,7 +36,9 @@ lane; the original commit is cherry-picked, so Alex's authorship and message are
 - Auth is an `access_key` query param; every endpoint is GET; base `statpal.io/api/v1/{sport}/…`, soccer on `/v2`.
 - A malformed call is **HTTP 200 with body `invalid-request`** — never "no data". Parse for it; test for it.
 - Refresh classes: livescores / live-plays / soccer live odds = 5–15 s products; `daily`, schedules, standings,
-  rosters, injuries = 1–12 h products and the vendor asks for ≤10 reads/hour/endpoint. Rate-limit → backoff, 429 re-raises.
+  injuries = 1–12 h products and the vendor asks for ≤10 reads/hour/endpoint. Rate-limit → backoff, 429 re-raises.
+  (**`rosters` was in this list and should not have been** — the vendor publishes no roster path for any sport;
+  §3 has the two independent venue reads and #2907 deleted the accessor, the task and the beat.)
 - Livescores remember ~24 h. History is ours to keep (we do); StatPal is not a backfill source.
 - `user-request-count` is the meter; its response echoes the key — count only, never the body, in any artifact.
 
@@ -53,10 +55,26 @@ lane; the original commit is cherry-picked, so Alex's authorship and message are
 | Cricket / F1 / handball / volleyball / horse racing | schedules exist | — | cricket's "status" is free text incl. dismissal strings (`lbw b X`) | Not fronts. Cricket status is a parser trap. |
 
 ## 3. What we use today vs what the plan buys
-Used (sync task): livescores (30 s), season-schedule / daily / upcoming (hourly per sport), rosters, injuries (every 20 min),
-standings, team-stats, NFL live-plays. **Seven of the paths our client calls are not in the spec at all** (`/{sport}/teams`,
+
+> 🔴 **CORRECTED 2026-09-09 (#2907, authority/083). The paragraph below said the undocumented
+> surface "answers today". It does not, and it never did within measurement.** Every one of those
+> paths 404s with the production key, and the client methods that called them are now DELETED —
+> `get_teams`, `get_roster`, `get_team_stats`, `get_player_stats`, `get_game_detail`,
+> `get_play_by_play`, plus the three beats that drove them (`sync-statpal-live-plays`,
+> `sync-statpal-rosters-daily`, `sync-statpal-team-stats-weekly`).
+>
+> Two methods agree (notice 26): the vendor's compiled spec publishes **54 paths**, none of them a
+> teams/roster/team-stats/player-stats/per-fixture-playbyplay path for any sport; and a keyed live
+> probe 404s on all of them while `/v1/nba/standings`, `/v1/nfl/live-plays` and
+> `/v2/soccer/injuries-suspensions` answer 200 from the same shell. The cost of believing the old
+> sentence: `scoring_plays` held **0 rows lifetime**, **0 of 52,346** events ever carried
+> `statpal_plays`, and the 60-second beat banked **632 successes a day** doing it.
+> Re-read the spec before trusting any path list here; this reading expires 2026-12-09.
+
+Used (sync task): livescores (30 s), season-schedule / daily / upcoming (hourly per sport), injuries (hourly, soccer only),
+standings. **Seven of the paths our client used to call are not in the spec at all** (`/{sport}/teams`,
 `/injuries`, `/fixtures/{id}`, `/fixtures/{id}/playbyplay`, `/teams/{id}/roster|stats`, `/players/{id}/stats`) — a
-legacy surface the vendor has already dropped from its documentation. It answers today; nothing promises tomorrow.
+legacy surface the vendor has already dropped from its documentation *and from its servers*.
 
 Unused and on the plan:
 - **Tennis `daily/{d}`** (the schedule), `tournament-list/{type}`, `tournament/{id}`, `livestats`, `standings`.
@@ -70,9 +88,19 @@ Unused and on the plan:
 - 15-second livescores (we poll at 30 s) and the whole meter (0.66% used).
 
 ## 4. Adopt, in this order (each is a named ship, each rides an issue)
-1. **Get off the undocumented paths** (authority lane, step 1b; rides "nothing goes blank"): rosters →
-   `/rosters/{abbr}`, injuries → `/injuries/{abbr}`, team stats → `/team-stats/{abbr}`, play-by-play → `/live-plays`,
-   drop `get_game_detail`/`get_player_stats` until a documented path exists. Small, testable, removes a silent-vanish risk.
+1. ~~**Get off the undocumented paths**~~ — **DONE 2026-09-09 (#2907), but NOT the way this line
+   proposed, and the difference is measured.** The replacements named here do not exist either:
+   `/{sport}/rosters/{abbr}` and `/{sport}/team-stats/{id}` both return **HTTP 500** on every
+   argument tried (`BOS`, `TOR`, `ZZZ`, numeric team id), and `/{sport}/injuries/{abbr}` is not in
+   the vendor's spec — the only injuries product is soccer's, already wired as
+   `injuries-suspensions`. So there was nothing to move TO, and the ship was subtraction:
+   the six accessors and their three beats are deleted, guarded by
+   `backend/tests/test_statpal_retired_paths_2907.py`.
+
+   **The one live remainder, filed not built:** `/nfl/live-plays` answers 200 (8,705 B measured
+   2026-09-09) and is the real path for NFL play-by-play — but as a whole-league dump keyed by
+   `contestid`, not a per-fixture list, so it needs a new parser and a new join. It is a rewrite,
+   not the repoint this line assumed.
 2. **Tennis `daily` as the fixture source for the hub — for TOMORROW onward only** (authority step 4 + ux/1047's
    slate). **CORRECTED 9/3:** `daily` is *not* the day's order of play. There is no `d0`, and it fails as an
    **HTTP 500** — not a 404, not `invalid-request` — so today's play is unobtainable from this endpoint. `d1`

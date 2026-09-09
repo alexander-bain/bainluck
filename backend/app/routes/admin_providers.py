@@ -2417,61 +2417,6 @@ async def trigger_statpal_injury_sync(
         raise HTTPException(status_code=500, detail=f"Failed to queue task: {str(e)}")
 
 
-@router.post("/statpal/sync-plays")
-async def trigger_statpal_play_sync(
-    request: Request,
-    secret: str = Query(None, description="Admin secret for authorization"),
-    sport_key: str = Query(None, description="Sport key. If omitted, syncs all live games."),
-):
-    """
-    Trigger a StatPal play-by-play sync for live games.
-
-    Fetches recent plays from live games to provide context for probability
-    movements and Pulse calculations.
-    """
-    _check_admin_secret(secret, request=request)
-
-    from app.tasks import sync_statpal_live_plays
-
-    try:
-        task = sync_statpal_live_plays.delay(sport_key=sport_key)
-        return {
-            "status": "queued",
-            "task_id": task.id,
-            "message": f"StatPal play-by-play sync queued. "
-                       f"Use /api/admin/statpal/task/{task.id} to check status.",
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to queue task: {str(e)}")
-
-
-@router.post("/statpal/sync-rosters")
-async def trigger_statpal_roster_sync(
-    request: Request,
-    secret: str = Query(None, description="Admin secret for authorization"),
-    sport_key: str = Query(None, description="Sport key. If omitted, syncs all."),
-):
-    """
-    Trigger a StatPal roster sync (supplements ESPN roster data).
-
-    Only updates teams that don't already have roster data from ESPN.
-    """
-    _check_admin_secret(secret, request=request)
-
-    from app.tasks import sync_statpal_rosters
-
-    try:
-        task = sync_statpal_rosters.delay(sport_key=sport_key)
-        return {
-            "status": "queued",
-            "task_id": task.id,
-            "message": f"StatPal roster sync queued. "
-                       f"Use /api/admin/statpal/task/{task.id} to check status.",
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to queue task: {str(e)}")
-
-
 @router.get("/statpal/task/{task_id}")
 async def get_statpal_task_status(
     request: Request,
@@ -2507,13 +2452,22 @@ async def statpal_status(
     return {
         "api_key_configured": is_available(),
         "mapped_sports": list(STATPAL_SPORT_MAPPING.keys()),
+        # #2907, CERT-2381's repair. This dict is a DIRECTORY an operator reads
+        # to find out what they can trigger, so an entry for a route that no
+        # longer exists is not cosmetic — it is the same false-success shape the
+        # retirement removed one layer down. `sync_plays`, `sync_rosters` and
+        # `sync_team_stats` outlived their routes by one commit: the status call
+        # kept answering 200 and advertising all three while POSTing any of them
+        # returned 404.
+        #
+        # Pinned by `tests/test_statpal_status_route_contract_2907.py`, which
+        # resolves every value here against the mounted app rather than against a
+        # second list — a contract asserted from the app's own route table cannot
+        # drift from it, and a list retyped in a test is a second thing to forget.
         "endpoints": {
             "sync_schedules": "POST /api/admin/statpal/sync-schedules",
             "sync_injuries": "POST /api/admin/statpal/sync-injuries",
-            "sync_plays": "POST /api/admin/statpal/sync-plays",
-            "sync_rosters": "POST /api/admin/statpal/sync-rosters",
             "sync_standings": "POST /api/admin/statpal/sync-standings",
-            "sync_team_stats": "POST /api/admin/statpal/sync-team-stats",
             "task_status": "GET /api/admin/statpal/task/{task_id}",
         },
     }
@@ -2538,29 +2492,6 @@ async def trigger_statpal_standings_sync(
         "status": "queued",
         "task_id": task.id,
         "message": f"Standings sync queued. "
-                   f"Use /api/admin/statpal/task/{task.id} to check status.",
-    }
-
-
-@router.post("/statpal/sync-team-stats")
-async def trigger_statpal_team_stats_sync(
-    request: Request,
-    secret: str = Query(None, description="Admin secret for authorization"),
-    sport_key: str = Query(None, description="Optional: limit to one sport key"),
-):
-    """Trigger StatPal team stats sync (weekly task, runs Monday 9:00 AM UTC)."""
-    _check_admin_secret(secret, request=request)
-
-    from app.tasks import sync_statpal_team_stats
-
-    try:
-        task = sync_statpal_team_stats.delay(sport_key=sport_key)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to queue task: {e}")
-    return {
-        "status": "queued",
-        "task_id": task.id,
-        "message": f"Team stats sync queued. "
                    f"Use /api/admin/statpal/task/{task.id} to check status.",
     }
 

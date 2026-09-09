@@ -1512,7 +1512,32 @@ def free_background_slots(
 #: because the two sides' text agrees — while the composed tree is 123. The prose
 #: blocks conflict; the constant does not. **Re-run the census on the composed
 #: tree after any rebase and before any merge**, and do not trust a clean merge.
-BACKGROUND_BEAT_COUNT = 122
+BACKGROUND_BEAT_COUNT = 120
+#: 🔴 RE-DERIVED at authority/083 (2026-09-09, #2907): 122 → **120**, explicit
+#: UNMOVED at 77, fall-through **45 → 43**. And this is the FIRST entry in this
+#: whole block that moves the number DOWN — every other re-derivation here adds a
+#: beat. Two beats were RETIRED: `sync-statpal-rosters-daily` and
+#: `sync-statpal-team-stats-weekly`, both default-queue fall-through, both asking
+#: StatPal for paths the venue does not publish (`{sport}/teams`,
+#: `{sport}/teams/{id}/roster`, `{sport}/teams/{id}/stats`). A third,
+#: `sync-statpal-live-plays`, was retired in the same change and does NOT appear
+#: in either half of this census — it named `realtime`, so it was never on this
+#: queue. That asymmetry is why the number had to be RUN and not reasoned about:
+#: three beats were deleted and the total fell by two.
+#:
+#: RE-DERIVED by running the census over the assembled `beat_schedule`, which
+#: printed `explicit 77 implicit 43 total 120`, never by subtracting from 122
+#: (#1910 cuts both ways — arithmetic is forbidden in the shrinking direction for
+#: the same reason it is forbidden in the growing one).
+#:
+#: The direction is the benign one this guard reserves: the fall-through half —
+#: the half the test exists to watch — got smaller, and nothing was moved onto
+#: the default. The merge hazard flagged below still applies and is SHARPER here:
+#: a lane adding a background beat this week writes `BACKGROUND_BEAT_COUNT = 123`
+#: against a base of 122 while this branch writes 120, and the composed answer is
+#: 121 — a number neither side's text contains. Re-run the census after any
+#: rebase; a clean textual merge means nothing here.
+#:
 #: **UX-P139 re-derivation: 101 → 103, explicit 56 → 58, fall-through still 45.**
 #: Two beats added, both naming `background` explicitly:
 #: `refresh-registered-tournament-prices` (every 10 min, ~11 bounded Gamma calls

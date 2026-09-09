@@ -232,7 +232,12 @@ class TestBeatScheduleCompleteness:
         "sync-statpal-schedules-mlb",
         "sync-statpal-schedules-nfl",
         "sync-statpal-injuries",
-        "sync-statpal-live-plays",
+        # `sync-statpal-live-plays` was RETIRED 2026-09-09 (#2907, authority/083)
+        # along with `sync-statpal-rosters-daily` and
+        # `sync-statpal-team-stats-weekly`: all three asked for paths the venue
+        # does not publish. `tests/test_statpal_retired_paths_2907.py` asserts
+        # they stay gone, so removing them here does not weaken the wiring guard
+        # — it moves the assertion from "must be scheduled" to "must not be".
         "sync-statpal-livescores",
         # #2867 / D59 — the forward half of the tennis link (realtime, 10 min).
         "link-tennis-statpal-fixtures-10min",
@@ -251,8 +256,6 @@ class TestBeatScheduleCompleteness:
         # limit is 300s rather than 240s). The fifth stamper and the first that
         # had to buy its schedule with a measured first pass under D51.
         "stamp-soccer-statpal-fixtures-hourly",
-        "sync-statpal-rosters-daily",
-        "sync-statpal-team-stats-weekly",
         "sync-statpal-standings-daily",
         "mark-resolved-futures",
         "backfill-winners",

@@ -960,39 +960,12 @@ class TestDataclasses:
         assert f.home_score is None
         assert f.end_time is None
 
-    def test_player_defaults(self):
-        from app.services.statpal_api import StatPalPlayer
-        p = StatPalPlayer(player_id="1", name="John Doe")
-        assert p.position is None
-        assert p.jersey_number is None
-        assert p.status is None
-
     def test_injury_defaults(self):
         from app.services.statpal_api import StatPalInjury
         i = StatPalInjury(player_id="1", player_name="John", team="TeamA")
         assert i.injury_type == ""
         assert i.status == ""
         assert i.detail is None
-
-    def test_play_event_defaults(self):
-        from app.services.statpal_api import StatPalPlayEvent
-        p = StatPalPlayEvent(description="Touchdown")
-        assert p.play_id is None
-        assert p.period is None
-        assert p.team is None
-
-    def test_team_defaults(self):
-        from app.services.statpal_api import StatPalTeam
-        t = StatPalTeam(team_id="1", name="Test Team")
-        assert t.short_name is None
-        assert t.abbreviation is None
-
-    def test_game_detail_defaults(self):
-        from app.services.statpal_api import StatPalGameDetail
-        g = StatPalGameDetail(fixture_id="1", status="live")
-        assert g.plays == []
-        assert g.injuries == []
-        assert g.home_team == ""
 
 
 # =============================================================================
