@@ -35,6 +35,10 @@ const SWIFT = join(
   "../../ios/Bain Luck/Bain Luck/Utilities/TeamShortName.swift",
 );
 const WEB = join(__dirname, "../lib/teamShortName.ts");
+const SWIFT_PAIR_FIXTURES = join(
+  __dirname,
+  "../../ios/Bain Luck/BainLuckTests/TeamShortNamePairTests.swift",
+);
 
 /** Every `"token"` inside the named bracketed literal, comments stripped. */
 function tokensInLiteral(source: string, opener: RegExp): string[] {
@@ -113,6 +117,152 @@ describe("#4250 — one team-short-name rule, two clients", () => {
       expect(webSuffixes).toContain(token);
       expect(isNonDistinctiveTrailingWord(token)).toBe(true);
     }
+  });
+});
+
+/**
+ * #4271 — the class this file could not see, and now can.
+ *
+ * #4250 added `state`, `calcio`, `academy`, `sporting` and `wfc` to the Swift
+ * designator set. `TeamShortNamePairTests.swift` carries 234 production fixture
+ * rows whose expected strings were captured BEFORE that, so 22 of them went on
+ * asserting the pre-#4250 outputs and the Swift suite went red the moment #4250
+ * landed on master (`ae83f1d1`). Nothing stopped it: **CI compiles no Swift**,
+ * so every gate in the merge path — notices 13, 18, 28 and 32 alike — passed a
+ * commit whose own test suite was failing 44 assertions.
+ *
+ * Compiling Swift in CI is the real repair and is not this ship. What IS
+ * available is that the defect is a property of the fixture TEXT, checkable by
+ * a source scan in jest, which CI does run:
+ *
+ *     if a fixture's team NAME ends in a Swift designator, that side's expected
+ *     label must be the whole name — never a truncation of it
+ *
+ * because `TeamShortName.short` returns the full name for exactly those, and a
+ * pair rule that only ever GROWS a label can never hand back less. Every one of
+ * the 21 stale label expectations violates this ("Hove Albion WFC" for
+ * "Brighton and Hove Albion WFC", "Calcio" for "Sassuolo Calcio", "Diego State"
+ * for "San Diego State"); every corrected one satisfies it.
+ *
+ * The designator set is READ FROM THE SWIFT, never transcribed — a transcribed
+ * copy is the third implementation this whole file exists to prevent — and the
+ * check is deliberately scoped to LISTED tokens, so it re-implements no part of
+ * `isDesignator` (the trailing-founding-year clause is not mirrored here, and
+ * rows like "US Catanzaro 1929" are simply not examined).
+ */
+interface PairFixture {
+  away: string;
+  home: string;
+  awayLabel: string;
+  homeLabel: string;
+}
+
+/** Every `(…)` fixture row of the two tables in `TeamShortNamePairTests.swift`. */
+function pairFixtures(source: string): PairFixture[] {
+  const rows: PairFixture[] = [];
+  for (const line of source.split("\n")) {
+    if (!line.trim().startsWith('("')) continue;
+    const s = Array.from(line.matchAll(/"([^"]*)"/g), (m) => m[1]);
+    // `colliding` rows carry the historical shared label in slot 2; `clean`
+    // rows do not. Both put the two expected LABELS immediately before the two
+    // expected badges, so the labels are always slots -4 and -3.
+    if (s.length !== 7 && s.length !== 6) continue;
+    rows.push({
+      away: s[0],
+      home: s[1],
+      awayLabel: s[s.length - 4],
+      homeLabel: s[s.length - 3],
+    });
+  }
+  return rows;
+}
+
+/** The rows that violate the invariant, as readable strings. */
+function truncatedDesignatorNames(
+  fixtures: PairFixture[],
+  designators: ReadonlySet<string>,
+): string[] {
+  const endsInDesignator = (name: string) => {
+    const words = name.trim().split(/\s+/);
+    if (words.length < 2) return false;
+    const last = words[words.length - 1].replace(/^[().,]+|[().,]+$/g, "");
+    return designators.has(last.toLowerCase());
+  };
+  const bad: string[] = [];
+  for (const row of fixtures) {
+    if (endsInDesignator(row.away) && row.awayLabel !== row.away) {
+      bad.push(`${row.away} → ${row.awayLabel}`);
+    }
+    if (endsInDesignator(row.home) && row.homeLabel !== row.home) {
+      bad.push(`${row.home} → ${row.homeLabel}`);
+    }
+  }
+  return bad;
+}
+
+describe("#4271 — the iPhone's pair fixtures agree with the iPhone's designator set", () => {
+  const fixtureSource = readFileSync(SWIFT_PAIR_FIXTURES, "utf8");
+  const fixtures = pairFixtures(fixtureSource);
+  const swift = new Set(swiftDesignators);
+
+  /**
+   * The reachability check. A row parser that matches nothing returns `[]`, and
+   * the invariant below then passes having examined no fixture at all — the
+   * failure mode that let the stale rows survive in the first place.
+   */
+  it("the fixture tables were actually found and parsed", () => {
+    expect(fixtures.length).toBeGreaterThanOrEqual(230);
+    expect(fixtures).toContainEqual({
+      away: "Clemson Tigers",
+      home: "LSU Tigers",
+      awayLabel: "Clemson Tigers",
+      homeLabel: "LSU Tigers",
+    });
+    // …and the invariant must have real work to do, or it proves nothing.
+    const examined = fixtures.filter((r) =>
+      [r.away, r.home].some((n) => {
+        const w = n.trim().split(/\s+/);
+        return w.length > 1 && swift.has(w[w.length - 1].toLowerCase());
+      }),
+    );
+    expect(examined.length).toBeGreaterThanOrEqual(40);
+  });
+
+  it("no fixture expects a designator-ending club to render as a truncation of itself", () => {
+    expect(truncatedDesignatorNames(fixtures, swift)).toEqual([]);
+  });
+
+  /**
+   * The control. An invariant that cannot fail is not an invariant, so the
+   * three shapes that actually shipped red are fed back through the same
+   * predicate and must all be caught.
+   */
+  it("catches the rows that shipped red", () => {
+    const stale: PairFixture[] = [
+      {
+        away: "Arsenal WFC",
+        home: "Brighton and Hove Albion WFC",
+        awayLabel: "Arsenal WFC",
+        homeLabel: "Hove Albion WFC",
+      },
+      {
+        away: "Sassuolo Calcio",
+        home: "FC Augsburg",
+        awayLabel: "Calcio",
+        homeLabel: "Augsburg",
+      },
+      {
+        away: "San Diego State",
+        home: "Portland State",
+        awayLabel: "Diego State",
+        homeLabel: "Portland State",
+      },
+    ];
+    expect(truncatedDesignatorNames(stale, swift)).toEqual([
+      "Brighton and Hove Albion WFC → Hove Albion WFC",
+      "Sassuolo Calcio → Calcio",
+      "San Diego State → Diego State",
+    ]);
   });
 });
 

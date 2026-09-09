@@ -55,13 +55,37 @@ final class TeamShortNamePairTests: XCTestCase {
     ///
     /// This is not a sample: it is all 114 pairs out of the 24,016 distinct
     /// (away, home) pairs in the window that collapsed onto one label.
+    ///
+    /// The third column is HISTORY — the one word the bare last-word rule of
+    /// #3374 printed for both sides. It is what the failure message quotes, and
+    /// it is deliberately not re-derived: for 19 of these rows nothing collides
+    /// any more, because #4250 made `Academy`, `State`, `Calcio` and `WFC`
+    /// designators and each side now returns its own full name before the pair
+    /// rule is ever consulted.
+    ///
+    /// **#4271 — those 19 rows were captured before #4250 and were never
+    /// re-derived, so this table asserted the pre-#4250 outputs and the whole
+    /// file went red the moment #4250 landed.** CI compiles no Swift, so
+    /// nothing in the merge path could see it. The rows now carry the outputs
+    /// the shipped rule produces, which are also the outputs the BROWSER has
+    /// produced since UX-1065 (#2936) — `state`, `calcio`, `academy` and
+    /// `sporting` have been in `CLUB_TYPE_SUFFIXES` all along, so what changed
+    /// in #4250 was the iPhone catching up to the site, not a new rule. Every
+    /// updated expectation is a club's own full name in place of a truncation
+    /// of it ("Hove Albion WFC" → "Brighton and Hove Albion WFC", "Calcio" →
+    /// "Sassuolo Calcio", "Diego State" → "San Diego State").
+    ///
+    /// The invariant that would have caught it, and now runs in jest where CI
+    /// can see it, is in `frontend/__tests__/teamDesignatorParityAcrossClients.test.ts`:
+    /// no row of this table may expect a designator-ending name to render as
+    /// anything but that name in full.
     private static let colliding: [(String, String, String, (String, String), (String, String))] = [
         ("3DMAX Academy", "B8 Academy", "Academy", ("3DMAX Academy", "B8 Academy"), ("3DM", "B8A")),
         ("AA Internacional Limeira SP", "Guarani FC SP", "SP", ("Internacional Limeira SP", "Guarani FC SP"), ("INT", "GUA")),
         ("AD San Carlos", "Inter San Carlos", "Carlos", ("AD San Carlos", "Inter San Carlos"), ("SAN", "INT")),
         ("Aris Thessaloniki", "PAOK Thessaloniki", "Thessaloniki", ("Aris Thessaloniki", "PAOK Thessaloniki"), ("ARI", "PAO")),
-        ("Arsenal WFC", "Brighton and Hove Albion WFC", "WFC", ("Arsenal WFC", "Hove Albion WFC"), ("ARS", "HOV")),
-        ("B8 Academy", "Inner Circle Academy", "Academy", ("B8 Academy", "Circle Academy"), ("B8A", "CIR")),
+        ("Arsenal WFC", "Brighton and Hove Albion WFC", "WFC", ("Arsenal WFC", "Brighton and Hove Albion WFC"), ("ARS", "BRI")),
+        ("B8 Academy", "Inner Circle Academy", "Academy", ("B8 Academy", "Inner Circle Academy"), ("B8A", "INN")),
         ("Baam Esports", "Pyramid IV Esports", "Esports", ("Baam Esports", "Pyramid IV Esports"), ("BAA", "PYR")),
         ("Barca eSports GC", "GIANTX GC", "GC", ("eSports GC", "GIANTX GC"), ("ESP", "GIA")),
         ("Barca eSports GC", "Karmine Corp GC", "GC", ("eSports GC", "Corp GC"), ("ESP", "COR")),
@@ -81,9 +105,9 @@ final class TeamShortNamePairTests: XCTestCase {
         ("Dplus KIA Challengers", "KT Rolster Challengers", "Challengers", ("KIA Challengers", "Rolster Challengers"), ("KIA", "ROL")),
         ("DRX Challengers", "Hanwha Life Esports Challengers", "Challengers", ("DRX Challengers", "Esports Challengers"), ("DRX", "ESP")),
         ("Estral Esports", "Ei Nerd Esports", "Esports", ("Estral Esports", "Nerd Esports"), ("EST", "NER")),
-        ("Eternal Fire Academy", "Vitality Academy", "Academy", ("Fire Academy", "Vitality Academy"), ("FIR", "VIT")),
+        ("Eternal Fire Academy", "Vitality Academy", "Academy", ("Eternal Fire Academy", "Vitality Academy"), ("ETE", "VIT")),
         ("Evil Geniuses GC", "Arashi GC", "GC", ("Geniuses GC", "Arashi GC"), ("GEN", "ARA")),
-        ("ex-Sashi Academy", "Inner Circle Academy", "Academy", ("ex-Sashi Academy", "Circle Academy"), ("EXS", "CIR")),
+        ("ex-Sashi Academy", "Inner Circle Academy", "Academy", ("ex-Sashi Academy", "Inner Circle Academy"), ("EXS", "INN")),
         ("FC Inter Turku", "TPS Turku", "Turku", ("Inter Turku", "TPS Turku"), ("INT", "TPS")),
         ("FC Lokomotiv 1929 Sofia", "PFC Slavia Sofia", "Sofia", ("Lokomotiv 1929 Sofia", "PFC Slavia Sofia"), ("LOK", "PFC")),
         ("FC Universitatea Cluj", "FC CFR 1907 Cluj", "Cluj", ("FC Universitatea Cluj", "CFR 1907 Cluj"), ("UNI", "CFR")),
@@ -101,7 +125,7 @@ final class TeamShortNamePairTests: XCTestCase {
         ("FK Spartak 1918 Varna", "PFC Cherno More Varna", "Varna", ("Spartak 1918 Varna", "Cherno More Varna"), ("SPA", "CHE")),
         ("FK Spartak Moskva", "FK Dinamo Moskva", "Moskva", ("Spartak Moskva", "Dinamo Moskva"), ("SPA", "DIN")),
         ("Fram Reykjavik", "Vikingur Reykjavik", "Reykjavik", ("Fram Reykjavik", "Vikingur Reykjavik"), ("FRA", "VIK")),
-        ("Frosinone Calcio", "US Sassuolo Calcio", "Calcio", ("Frosinone Calcio", "Sassuolo Calcio"), ("FRO", "SAS")),
+        ("Frosinone Calcio", "US Sassuolo Calcio", "Calcio", ("Frosinone Calcio", "US Sassuolo Calcio"), ("FRO", "SAS")),
         ("Fukuoka SoftBank Hawks Gaming", "Ground Zero Gaming", "Gaming", ("Hawks Gaming", "Zero Gaming"), ("HAW", "ZER")),
         ("Gentle Mates GC", "Barca eSports GC", "GC", ("Mates GC", "eSports GC"), ("MAT", "ESP")),
         ("Gentle Mates GC", "GIANTX GC", "GC", ("Mates GC", "GIANTX GC"), ("MAT", "GIA")),
@@ -111,11 +135,11 @@ final class TeamShortNamePairTests: XCTestCase {
         ("Gimnasia Y Tiro de Salta", "CA Central Norte Salta", "Salta", ("de Salta", "Norte Salta"), ("DES", "NOR")),
         ("Hanwha Life Esports Challengers", "DRX Challengers", "Challengers", ("Esports Challengers", "DRX Challengers"), ("ESP", "DRX")),
         ("Hanwha Life Esports Challengers", "OKSavingsBank BRION Challengers", "Challengers", ("Esports Challengers", "BRION Challengers"), ("ESP", "BRI")),
-        ("Indiana State", "Southeast Missouri State", "State", ("Indiana State", "Missouri State"), ("IND", "MIS")),
-        ("Inner Circle Academy", "ex-Sashi Academy", "Academy", ("Circle Academy", "ex-Sashi Academy"), ("CIR", "EXS")),
+        ("Indiana State", "Southeast Missouri State", "State", ("Indiana State", "Southeast Missouri State"), ("IND", "SOU")),
+        ("Inner Circle Academy", "ex-Sashi Academy", "Academy", ("Inner Circle Academy", "ex-Sashi Academy"), ("INN", "EXS")),
         ("Inner Circle Esports", "FUT Esports", "Esports", ("Circle Esports", "FUT Esports"), ("CIR", "FUT")),
         ("Instituto de Córdoba", "Central Córdoba", "Córdoba", ("de Córdoba", "Central Córdoba"), ("DEC", "CEN")),
-        ("Iowa State", "Southeast Missouri State", "State", ("Iowa State", "Missouri State"), ("IOW", "MIS")),
+        ("Iowa State", "Southeast Missouri State", "State", ("Iowa State", "Southeast Missouri State"), ("IOW", "SOU")),
         ("Jackson State Tigers", "Tennessee State Tigers", "Tigers", ("Jackson State Tigers", "Tennessee State Tigers"), ("JAC", "TEN")),
         ("JD Gaming", "Dragon Ranger Gaming", "Gaming", ("JD Gaming", "Ranger Gaming"), ("JDG", "RAN")),
         ("JSK Esports", "Pyramid IV Esports", "Esports", ("JSK Esports", "Pyramid IV Esports"), ("JSK", "PYR")),
@@ -127,14 +151,14 @@ final class TeamShortNamePairTests: XCTestCase {
         ("Liga MX All-Stars", "MLS All-Stars", "All-Stars", ("MX All-Stars", "MLS All-Stars"), ("MXA", "MLS")),
         ("Lokomotiv Moscow", "CSKA Moscow", "Moscow", ("Lokomotiv Moscow", "CSKA Moscow"), ("LOK", "CSK")),
         ("MTK Budapest", "Ujpest FC Budapest", "Budapest", ("MTK Budapest", "Ujpest FC Budapest"), ("MTK", "UJP")),
-        ("Nicholls State", "Mississippi Valley State", "State", ("Nicholls State", "Valley State"), ("NIC", "VAL")),
-        ("Nongshim Esports Academy", "T1 Academy", "Academy", ("Esports Academy", "T1 Academy"), ("ESP", "T1A")),
+        ("Nicholls State", "Mississippi Valley State", "State", ("Nicholls State", "Mississippi Valley State"), ("NIC", "MIS")),
+        ("Nongshim Esports Academy", "T1 Academy", "Academy", ("Nongshim Esports Academy", "T1 Academy"), ("NON", "T1A")),
         ("ODDIK Academy", "paiN Academy", "Academy", ("ODDIK Academy", "paiN Academy"), ("ODD", "PAI")),
         ("OKSavingsBank BRION Challengers", "DRX Challengers", "Challengers", ("BRION Challengers", "DRX Challengers"), ("BRI", "DRX")),
         ("OKSavingsBank BRION Challengers", "Hanwha Life Esports Challengers", "Challengers", ("BRION Challengers", "Esports Challengers"), ("BRI", "ESP")),
         ("One More Esports", "Baam Esports", "Esports", ("More Esports", "Baam Esports"), ("MOR", "BAA")),
         ("One More Esports", "Pyramid IV Esports", "Esports", ("One More Esports", "Pyramid IV Esports"), ("ONE", "PYR")),
-        ("paiN Gaming Academy", "Vivo Keyd Stars Academy", "Academy", ("Gaming Academy", "Stars Academy"), ("GAM", "STA")),
+        ("paiN Gaming Academy", "Vivo Keyd Stars Academy", "Academy", ("paiN Gaming Academy", "Vivo Keyd Stars Academy"), ("PAI", "VIV")),
         ("Passion Academy", "Phantom Academy", "Academy", ("Passion Academy", "Phantom Academy"), ("PAS", "PHA")),
         ("PFC CSKA Sofia", "FK Septemvri Sofia", "Sofia", ("CSKA Sofia", "Septemvri Sofia"), ("CSK", "SEP")),
         ("PFC Levski Sofia", "FC Lokomotiv 1929 Sofia", "Sofia", ("PFC Levski Sofia", "Lokomotiv 1929 Sofia"), ("PFC", "LOK")),
@@ -143,20 +167,20 @@ final class TeamShortNamePairTests: XCTestCase {
         ("Phantom Academy", "Vitality Academy", "Academy", ("Phantom Academy", "Vitality Academy"), ("PHA", "VIT")),
         ("Pyramid IV Esports", "3BL Esports", "Esports", ("Pyramid IV Esports", "3BL Esports"), ("PYR", "3BL")),
         ("Radu Mihai Papoe", "Cezar Gabriel Papoe", "Papoe", ("Mihai Papoe", "Gabriel Papoe"), ("MIH", "GAB")),
-        ("RED Academy", "Vivo Keyd Stars Academy", "Academy", ("RED Academy", "Stars Academy"), ("RED", "STA")),
-        ("RED Canids Academy", "BESTIA Academy", "Academy", ("Canids Academy", "BESTIA Academy"), ("CAN", "BES")),
-        ("RED Canids Academy", "paiN Academy", "Academy", ("Canids Academy", "paiN Academy"), ("CAN", "PAI")),
+        ("RED Academy", "Vivo Keyd Stars Academy", "Academy", ("RED Academy", "Vivo Keyd Stars Academy"), ("RED", "VIV")),
+        ("RED Canids Academy", "BESTIA Academy", "Academy", ("RED Canids Academy", "BESTIA Academy"), ("RED", "BES")),
+        ("RED Canids Academy", "paiN Academy", "Academy", ("RED Canids Academy", "paiN Academy"), ("RED", "PAI")),
         ("Rodina Moscow", "Dinamo Moscow", "Moscow", ("Rodina Moscow", "Dinamo Moscow"), ("ROD", "DIN")),
         ("Rosario Central", "Barracas Central", "Central", ("Rosario Central", "Barracas Central"), ("ROS", "BAR")),
-        ("Sacramento State", "Mississippi Valley State", "State", ("Sacramento State", "Valley State"), ("SAC", "VAL")),
-        ("San Diego State", "Portland State", "State", ("Diego State", "Portland State"), ("DIE", "POR")),
+        ("Sacramento State", "Mississippi Valley State", "State", ("Sacramento State", "Mississippi Valley State"), ("SAC", "MIS")),
+        ("San Diego State", "Portland State", "State", ("San Diego State", "Portland State"), ("SAN", "POR")),
         ("SK Artis Brno", "FC Zbrojovka Brno", "Brno", ("Artis Brno", "Zbrojovka Brno"), ("ART", "ZBR")),
         ("SK Slavia Praha", "AC Sparta Praha", "Praha", ("Slavia Praha", "Sparta Praha"), ("SLA", "SPA")),
         ("Slavia Tu Kosice", "Lokomotiva Kosice", "Kosice", ("Tu Kosice", "Lokomotiva Kosice"), ("TUK", "LOK")),
-        ("South Carolina State", "Savannah State", "State", ("Carolina State", "Savannah State"), ("CAR", "SAV")),
-        ("South Carolina State", "Virginia State", "State", ("Carolina State", "Virginia State"), ("CAR", "VIR")),
+        ("South Carolina State", "Savannah State", "State", ("South Carolina State", "Savannah State"), ("SOU", "SAV")),
+        ("South Carolina State", "Virginia State", "State", ("South Carolina State", "Virginia State"), ("SOU", "VIR")),
         ("Spartak Moscow", "Dinamo Moscow", "Moscow", ("Spartak Moscow", "Dinamo Moscow"), ("SPA", "DIN")),
-        ("T1 Academy", "Nongshim Esports Academy", "Academy", ("T1 Academy", "Esports Academy"), ("T1A", "ESP")),
+        ("T1 Academy", "Nongshim Esports Academy", "Academy", ("T1 Academy", "Nongshim Esports Academy"), ("T1A", "NON")),
         ("The Huns Esports", "Not A Squad Esports", "Esports", ("Huns Esports", "Squad Esports"), ("HUN", "SQU")),
         ("Thor Akureyri", "KA Akureyri", "Akureyri", ("Thor Akureyri", "KA Akureyri"), ("THO", "KAA")),
         ("Turun Palloseura", "Kuopion Palloseura", "Palloseura", ("Turun Palloseura", "Kuopion Palloseura"), ("TUR", "KUO")),
@@ -199,6 +223,21 @@ final class TeamShortNamePairTests: XCTestCase {
     /// every other page in the app. These 120 pairs are sampled from the 23,902
     /// that already read correctly, and every one must come back BYTE-IDENTICAL
     /// to what the single-name rule returns today.
+    ///
+    /// "Byte-identical to the SINGLE-NAME rule" is the invariant, and it is what
+    /// the two `TeamShortName.short` cross-checks below actually assert — not
+    /// "frozen forever". Three rows moved in #4271 because the single-name rule
+    /// itself moved underneath them, and each is the defect this file exists to
+    /// remove rather than a widening:
+    ///
+    ///   - `Sassuolo Calcio` read **"Calcio"** / `CAL`, and `Inner Circle
+    ///     Academy` read **"Academy"** / `ACA` — a club-type word standing in
+    ///     for a club, which is #3374's photographed bug exactly.
+    ///   - `US Catanzaro 1929` badged `USC`. Its label was already the full
+    ///     name (a trailing founding year has been a designator since #3374),
+    ///     so only the badge moved, and it moved because #4271 added the
+    ///     Italian society initials that `glyphs` must skip. `CAT` names the
+    ///     club; `USC` names a different one in another sport.
     private static let clean: [(String, String, (String, String), (String, String))] = [
         ("Atletico Paranaense", "Corinthians", ("Paranaense", "Corinthians"), ("PAR", "COR")),
         ("FK Novi Pazar", "FK Mladost Lucani", ("Pazar", "Lucani"), ("PAZ", "LUC")),
@@ -208,7 +247,7 @@ final class TeamShortNamePairTests: XCTestCase {
         ("Italy", "USA", ("Italy", "USA"), ("ITA", "USA")),
         ("SC Recife", "Ceará SC", ("Recife", "Ceará SC"), ("REC", "CEA")),
         ("Lea Ma", "Reese Brantmeier", ("Ma", "Brantmeier"), ("MA", "BRA")),
-        ("US Catanzaro 1929", "Vicenza", ("US Catanzaro 1929", "Vicenza"), ("USC", "VIC")),
+        ("US Catanzaro 1929", "Vicenza", ("US Catanzaro 1929", "Vicenza"), ("CAT", "VIC")),
         ("Bouzkova", "Swiatek", ("Bouzkova", "Swiatek"), ("BOU", "SWI")),
         ("Huddersfield Town AFC", "Cambridge United FC", ("Huddersfield Town AFC", "Cambridge United FC"), ("HUD", "CAM")),
         ("RB Leipzig", "Como 1907", ("Leipzig", "Como 1907"), ("LEI", "COM")),
@@ -310,7 +349,7 @@ final class TeamShortNamePairTests: XCTestCase {
         ("Indiana Fever", "Portland Fire", ("Fever", "Fire"), ("FEV", "FIR")),
         ("Como", "Liverpool", ("Como", "Liverpool"), ("COM", "LIV")),
         ("Korpatsch", "Sherif Ahmed Abdelaziz", ("Korpatsch", "Abdelaziz"), ("KOR", "ABD")),
-        ("Sassuolo Calcio", "FC Augsburg", ("Calcio", "Augsburg"), ("CAL", "AUG")),
+        ("Sassuolo Calcio", "FC Augsburg", ("Sassuolo Calcio", "Augsburg"), ("SAS", "AUG")),
         ("San Francisco 49ers", "Seattle Seahawks", ("49ers", "Seahawks"), ("49E", "SEA")),
         ("Moulton FC", "Sherwood Colliery FC", ("Moulton FC", "Sherwood Colliery FC"), ("MOU", "SHE")),
         ("Maria", "Bartunkova", ("Maria", "Bartunkova"), ("MAR", "BAR")),
@@ -319,7 +358,7 @@ final class TeamShortNamePairTests: XCTestCase {
         ("Varvara Lepchenko", "Alina Korneeva", ("Lepchenko", "Korneeva"), ("LEP", "KOR")),
         ("100 Thieves", "KRÜ Esports", ("Thieves", "Esports"), ("THI", "ESP")),
         ("YANG", "Oh", ("YANG", "Oh"), ("YAN", "OH")),
-        ("Honvéd", "Inner Circle Academy", ("Honvéd", "Academy"), ("HON", "ACA")),
+        ("Honvéd", "Inner Circle Academy", ("Honvéd", "Inner Circle Academy"), ("HON", "INN")),
     ]
 
     func testPairsThatAlreadyReadCorrectlyAreUntouched() {
