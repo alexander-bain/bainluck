@@ -11,7 +11,7 @@
  * Shape `duel` → kernel `split` (see lib/marketShape.ts).
  */
 
-import { teamShortName, teamShortNames } from "@/lib/teamShortName";
+import { teamCrestBadge, teamShortNames } from "@/lib/teamShortName";
 import { KernelCard, type KernelState, type KernelGrade } from "./KernelCard";
 import type { AngleValue } from "./AngleBadge";
 import { CATEGORY_GRADIENTS } from "../constants";
@@ -45,12 +45,15 @@ export interface DuelKernelProps {
   winner?: "home" | "away" | null;
 }
 
-// UX-1065 (#2936): the crest fallback took the LAST word, so "Altrincham FC"
-// and "Hartlepool United FC" both painted "FC" — two identical crests on one
-// card. Taking three characters of the pair-aware short name instead gives
-// "ALT" and "HAR", and leaves "Los Angeles Lakers" -> "LAK" unchanged.
+// #4466: the last-word rule is right for `<place> <nickname>` and wrong for
+// every `<place> <club-type>` and `<place> <place> <name>` — "Paris Saint
+// Germain" painted **GER**, and because the stored spelling is an input the
+// same club painted **SAI** on the hyphenated row the same afternoon. This is
+// the crest slot, so it takes the initials lever — `teamCrestBadge`, the 64px
+// sibling of the `teamCrestInitials` the shared card paints, which carries the
+// measurement and the accepted costs.
 function abbr(team: string): string {
-  return teamShortName(team).slice(0, 3).toUpperCase();
+  return teamCrestBadge(team);
 }
 
 function Crest({ team, color, logo, score, show }: { team: string; color: string; logo?: string | null; score?: number | null; show: boolean }) {

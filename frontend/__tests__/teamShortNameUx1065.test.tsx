@@ -411,6 +411,16 @@ describe("UX-1065: the rendered sentence", () => {
         categoryEmoji: "*",
       }),
     );
+    // #4466 rewrote the crest slot and this pair is UNCHANGED by it, which is
+    // the point of leaving the control here. "Hartlepool United FC" is three
+    // tokens, but "United" and "FC" are both club-type words, so only
+    // "Hartlepool" identifies anybody and the last-word rule still answers it
+    // -> "HAR". An earlier draft of #4466 counted raw tokens instead and moved
+    // this to "HUF"; the same arithmetic turned "Warrington Town FC" into
+    // "WTF", which is how the draft was caught.
+    //
+    // UX-1065's invariant is what the last line states: the two sides differ,
+    // and neither is the word "FC".
     expect(markup).toContain(">HAR<");
     expect(markup).toContain(">ALT<");
     expect(markup).not.toContain(">FC<");
@@ -428,7 +438,12 @@ describe("UX-1065: the rendered sentence", () => {
         categoryEmoji: "*",
       }),
     );
-    expect(markup).toContain(">LAK<");
+    // #4466: "Boston Celtics" is two parts and is UNCHANGED, which is the half
+    // of this control that was actually guarding UX-1065 — the club-type rule
+    // must not eat a nickname. "Los Angeles Lakers" is three parts and now
+    // reads "LAL" rather than "LAK"; that is the Lakers' own abbreviation and
+    // it is the deliberate, measured cost of fixing the fragment class.
+    expect(markup).toContain(">LAL<");
     expect(markup).toContain(">CEL<");
   });
 
