@@ -382,6 +382,285 @@ final class ChampionshipRowLayoutTests: XCTestCase {
                        + "width; measured \(widths)")
     }
 
+    // MARK: - #4328: the reader's text size is the third dimension
+
+    /// Every size the reader can choose, not the one the suite happens to pin.
+    ///
+    /// 🔴 THIS SWEEP IS THE POINT OF #4328, AND ITS ABSENCE WAS MY OWN SHIP'S
+    /// DOING. `testEachBadgeColumnHoldsTheWidestRowItCanEverBeAskedToDraw` above
+    /// sweeps trend × probability and is a good guard — at `.large`. #4207 routed
+    /// every hosted measurement through `hostForMeasurement`, which pins the
+    /// content size so a verdict stops depending on whatever Dynamic Type the
+    /// simulator was left at. That was right, and the cost, unnoticed until a
+    /// screenshot showed `1…`, is that a column validated at exactly one text
+    /// size is validated at exactly one text size. The answer is not to unpin the
+    /// size — determinism was the whole point — but to sweep it on purpose.
+    private let everyTextSize: [(name: String, size: DynamicTypeSize)] = [
+        ("xSmall", .xSmall), ("small", .small), ("medium", .medium),
+        ("large", .large), ("xLarge", .xLarge), ("xxLarge", .xxLarge),
+        ("xxxLarge", .xxxLarge),
+        ("a11y1", .accessibility1), ("a11y2", .accessibility2),
+        ("a11y3", .accessibility3), ("a11y4", .accessibility4),
+        ("a11y5", .accessibility5),
+    ]
+
+    /// The two card widths this app actually renders at: the measured phone card
+    /// (137.3 pt, `artifacts-native-039/`) and an iPad-class one.
+    private let everyCardWidth: [(name: String, content: CGFloat)] = [
+        ("iPhone", 137.3), ("iPad", 368.0),
+    ]
+
+    /// The widest thing each column is asked to draw, measured at `size` — the
+    /// same element-wise max the view's `ChampionshipColumnsKey` takes over its
+    /// rows, so the rule is asked the question the card asks it.
+    @MainActor
+    private func measuredColumns(
+        for stages: [ProgressionStageData], at size: DynamicTypeSize
+    ) -> ChampionshipColumnWidths {
+        stages.reduce(ChampionshipColumnWidths.zero) { widths, stage in
+            widths.merged(with: ChampionshipColumnWidths(
+                label: naturalWidth(of: Text(stage.label).font(.caption), at: size),
+                badges: naturalWidth(of: ChampionshipStageBadges(stage: stage), at: size)))
+        }
+    }
+
+    /// The defect, stated as the reason a constant cannot be the answer.
+    ///
+    /// `Text(formatProb(prob))` is `.font(.caption)` — a text style, so it grows
+    /// with the reader's setting. The trend badge beside it is
+    /// `.font(.system(size: 9))` — a point size, so it does not. A single number
+    /// cannot describe a column with one half that scales and one that does not,
+    /// at twelve sizes, which is why 76 was right at exactly one of them.
+    @MainActor
+    func testAFixedColumnIsWideEnoughAtOneTextSizeAndShortAboveIt() throws {
+        // `<1%` with a 100.0% trend is the widest content the badge can draw
+        // (`testEachBadgeColumnHoldsTheWidestRowItCanEverBeAskedToDraw` sweeps to
+        // the same worst case; this is that row).
+        let widest = try stage("k", "L", probability: 0.004, trend: 1.0)
+
+        var shortfalls: [(String, CGFloat)] = []
+        for (name, size) in everyTextSize {
+            let wanted = naturalWidth(of: ChampionshipStageBadges(stage: widest), at: size)
+            if wanted > ChampionshipRowLayout.valueBadgeWidth {
+                shortfalls.append((name, wanted - ChampionshipRowLayout.valueBadgeWidth))
+            }
+        }
+
+        // BOTH directions. The constant is genuinely enough at and below `.large`
+        // — a guard that only said "76 is too small" would be satisfied by making
+        // it 500 and starving every bar on the page (#3580).
+        XCTAssertEqual(
+            shortfalls.map(\.0), ["xLarge", "xxLarge", "xxxLarge", "a11y1", "a11y2",
+                                  "a11y3", "a11y4", "a11y5"],
+            "the shipping 76 pt column holds the widest badge at `.large` and is "
+            + "short at every size above it — starting at `.xLarge`, which is ONE "
+            + "notch up from the default and four below the first accessibility "
+            + "setting. #4328 is filed as an accessibility defect and it is not "
+            + "only one: any reader who has nudged the text up at all can lose the "
+            + "number. Measured shortfalls: \(shortfalls.map { "\($0.0) +\(Int($0.1))pt" })")
+
+        let atA11y3 = try XCTUnwrap(shortfalls.first { $0.0 == "a11y3" })
+        XCTAssertGreaterThan(
+            atA11y3.1, 30,
+            "at `.accessibility3` the badge wants 41 pt more than the column has, "
+            + "and `lineLimit(1)` turned that into `1…` — the number the row "
+            + "exists to show (#4328's photograph, AFTER-4108-a11y.png)")
+    }
+
+    /// The ship: at every text size, on every card this app draws, the badge gets
+    /// at least the width it needs — and it needs less than the card has.
+    @MainActor
+    func testEveryTextSizeGetsAColumnThatHoldsItsOwnProbability() throws {
+        for (sizeName, size) in everyTextSize {
+            for (cardName, content) in everyCardWidth {
+                let stages = try brewersStages()
+                let columns = ChampionshipRowLayout.columns(
+                    measured: measuredColumns(for: stages, at: size), for: stages)
+                let shape = ChampionshipRowLayout.shape(
+                    contentWidth: content, columns: columns)
+
+                // What the row hands the badges. In two of the three shapes that
+                // is the column; in the third it is the whole card, which is the
+                // only reason `.badgesAboveBar` exists.
+                let given = shape == .badgesAboveBar ? content : columns.badges
+
+                for stage in stages {
+                    let taken = sizeWhenOffered(
+                        given, to: ChampionshipStageBadges(stage: stage), at: size)
+                    XCTAssertLessThanOrEqual(
+                        taken.width, given + 0.5,
+                        "\(sizeName)/\(cardName) (\(shape)): the badge came out "
+                        + "\(taken.width) pt inside the \(given) pt it was given, "
+                        + "so it is being squeezed and something on it truncates")
+                }
+            }
+        }
+    }
+
+    /// The other half of that trade: the bar may not be paid for out of the
+    /// number, nor the number out of the bar.
+    @MainActor
+    func testTheBarStillResolvesWhatItDrawsAtEveryTextSize() throws {
+        for (sizeName, size) in everyTextSize {
+            for (cardName, content) in everyCardWidth {
+                let stages = try brewersStages()
+                let columns = ChampionshipRowLayout.columns(
+                    measured: measuredColumns(for: stages, at: size), for: stages)
+                let bar = ChampionshipRowLayout.barWidth(
+                    contentWidth: content, columns: columns)
+                XCTAssertGreaterThanOrEqual(
+                    bar, ChampionshipRowLayout.minBarWidth,
+                    "\(sizeName)/\(cardName): the bar came out \(bar) pt. Below "
+                    + "\(ChampionshipRowLayout.minBarWidth) it cannot resolve one "
+                    + "percentage point and it is decoration again (#3580)")
+            }
+        }
+    }
+
+    /// 🔴 THE CONTROL FOR THE TEST ABOVE, AND THE REASON `.badgesAboveBar` HAD TO
+    /// EXIST RATHER THAN BEING A WIDER COLUMN.
+    ///
+    /// At the top sizes there is no arrangement in which the bar and the badges
+    /// share a line: the badge alone wants more than the phone card has. Without
+    /// this the previous test could be satisfied by a rule that never chose the
+    /// third shape at all, and it would still read green.
+    @MainActor
+    func testAtTheTopSizesTheBarAndTheBadgeCannotShareALine() throws {
+        let stages = try brewersStages()
+        let content: CGFloat = 137.3
+        var takesTheThirdShape: [String] = []
+
+        for (sizeName, size) in everyTextSize {
+            let columns = ChampionshipRowLayout.columns(
+                measured: measuredColumns(for: stages, at: size), for: stages)
+            let shape = ChampionshipRowLayout.shape(contentWidth: content, columns: columns)
+            guard shape == .badgesAboveBar else { continue }
+            takesTheThirdShape.append(sizeName)
+
+            // Necessity: the third shape is only allowed where the second one
+            // genuinely cannot work, or it is a gratuitous relayout.
+            XCTAssertLessThan(
+                content - ChampionshipRowLayout.spacing - columns.badges,
+                ChampionshipRowLayout.minBarWidth,
+                "\(sizeName): a \(columns.badges) pt badge beside a bar in a 137.3 pt "
+                + "card leaves the bar "
+                + "\(content - ChampionshipRowLayout.spacing - columns.badges) pt, "
+                + "which clears the minimum — so this row should have stacked")
+        }
+
+        XCTAssertEqual(
+            takesTheThirdShape, ["a11y2", "a11y3", "a11y4", "a11y5"],
+            "the measured boundary on the production phone card. Below it the badge "
+            + "and the bar still fit on a line together; from `.accessibility2` up "
+            + "they do not, at any column width, which is why widening the column "
+            + "was not on its own an answer to #4328")
+    }
+
+    /// And where even the full card cannot hold the badge on one line, the badge
+    /// takes two — it does not overflow the card and it does not truncate.
+    @MainActor
+    func testTheBadgeTakesASecondLineRatherThanOverflowTheCard() throws {
+        let widest = try stage("k", "L", probability: 0.004, trend: 1.0)
+        let content: CGFloat = 137.3
+
+        let oneLine = naturalWidth(of: ChampionshipStageBadges(stage: widest), at: .accessibility5)
+        XCTAssertGreaterThan(
+            oneLine, content,
+            "precondition: at `.accessibility5` the one-line badge wants \(oneLine) pt "
+            + "and the card has \(content) — if this ever fits, the second arm is "
+            + "unreachable and this test is proving nothing")
+
+        let squeezed = sizeWhenOffered(
+            content, to: ChampionshipStageBadges(stage: widest), at: .accessibility5)
+        XCTAssertLessThanOrEqual(
+            squeezed.width, content,
+            "offered the whole card it still came out \(squeezed.width) pt wide, so "
+            + "it overflowed instead of reflowing")
+
+        // Two lines, not one truncated line: the arrangement is what gave.
+        //
+        // The second line is only as tall as the trend badge — a fixed 9 pt font
+        // (#4109) next to a probability that scales — so the height grows by 13 pt
+        // here, not by half again. Asserting a ratio would be asserting that the
+        // two halves of the badge scale together, which is the very thing they do
+        // not do.
+        let oneLineHeight = sizeWhenOffered(
+            .greatestFiniteMagnitude, to: ChampionshipStageBadges(stage: widest),
+            at: .accessibility5).height
+        XCTAssertGreaterThan(
+            squeezed.height, oneLineHeight + 5,
+            "the squeezed badge is \(squeezed.height) pt tall against \(oneLineHeight) "
+            + "unconstrained. Unchanged height means it stayed on one line and lost "
+            + "characters instead — which is the defect (#4328)")
+        XCTAssertLessThan(
+            squeezed.width, oneLine,
+            "and it must be NARROWER than the one-line arrangement, or nothing "
+            + "reflowed and the extra height came from somewhere else")
+
+        // One size down it must NOT reflow: a badge that always stacks would pass
+        // every assertion above and would be a different, gratuitous change.
+        let a11y4 = sizeWhenOffered(
+            content, to: ChampionshipStageBadges(stage: widest), at: .accessibility4)
+        XCTAssertEqual(
+            a11y4.height,
+            sizeWhenOffered(.greatestFiniteMagnitude, to: ChampionshipStageBadges(stage: widest),
+                            at: .accessibility4).height,
+            accuracy: 0.5,
+            "at `.accessibility4` the one-line badge fits the card, so it must stay "
+            + "on one line")
+    }
+
+    /// 🔴 THE DEFAULT-SIZE RENDER MAY NOT MOVE. The constants are a floor and a
+    /// measurement may only raise them, precisely so that this fix costs the
+    /// reader who has changed nothing exactly nothing.
+    @MainActor
+    func testTheDefaultSizeRenderIsUntouched() throws {
+        let stages = try brewersStages()
+        let measured = measuredColumns(for: stages, at: .large)
+        XCTAssertLessThan(
+            measured.badges, ChampionshipRowLayout.valueBadgeWidth,
+            "precondition: at `.large` the widest badge measures \(measured.badges) pt "
+            + "against a 76 pt column, so the measurement is SMALLER and the floor "
+            + "is what makes this a no-op")
+
+        let columns = ChampionshipRowLayout.columns(measured: measured, for: stages)
+        XCTAssertEqual(columns.badges, ChampionshipRowLayout.valueBadgeWidth)
+        XCTAssertEqual(
+            ChampionshipRowLayout.barWidth(contentWidth: 137.3, columns: columns),
+            ChampionshipRowLayout.barWidth(contentWidth: 137.3, stages: stages),
+            accuracy: 0.01,
+            "the measured path and the constant path must give the phone card the "
+            + "same bar at `.large` — 53.3 pt, the number pinned off "
+            + "artifacts-native-039/")
+        XCTAssertEqual(
+            ChampionshipRowLayout.shape(contentWidth: 137.3, columns: columns), .stacked)
+    }
+
+    /// The label column had the same fault and it was already short — at the
+    /// default size, on a label production serves today.
+    @MainActor
+    func testTheLabelColumnHoldsTheStageNamesTheApiActuallySends() throws {
+        // The four labels in `/api/events/15305463/team-progression`, read 2026-09-06.
+        let served = ["Make Playoffs", "Division", "AL / NL Champ", "World Series"]
+        let widest = try XCTUnwrap(
+            served.map { ($0, naturalWidth(of: Text($0).font(.caption))) }
+                .max { $0.1 < $1.1 })
+
+        XCTAssertGreaterThan(
+            widest.1, ChampionshipRowLayout.labelWidth,
+            "'\(widest.0)' wants \(widest.1) pt at `.large` and the column is "
+            + "\(ChampionshipRowLayout.labelWidth) — so the one-line shape has been "
+            + "wrapping this label on iPad since it shipped. The comment on "
+            + "`labelWidth` measured 'Make Playoffs' and stopped there")
+
+        let stages = try brewersStages()
+        let columns = ChampionshipRowLayout.columns(
+            measured: measuredColumns(for: stages, at: .large), for: stages)
+        XCTAssertGreaterThanOrEqual(
+            columns.label, widest.1,
+            "the measured column must hold it")
+    }
+
     // MARK: - The view has to actually consult the rule
 
     /// A rule the view does not call is a description, not a decider — and every
@@ -420,6 +699,65 @@ final class ChampionshipRowLayoutTests: XCTestCase {
             + "the card before reaching them.")
     }
 
+    /// #4328's half of the same question: does the CARD change shape when the
+    /// reader's text size changes, or only the arithmetic in `ChampionshipRowLayout`?
+    ///
+    /// Every test above this one measures the rule. The rule could be perfect and
+    /// the card could still draw `1…`, because until this ship the card asked for
+    /// `badgeWidth(for:)` — a constant — and never told anyone what its rows
+    /// wanted. So render the real card at two text sizes and read the bar.
+    ///
+    /// 🔴 THE SHIP IS THE BAR GETTING SHORTER, WHICH LOOKS LIKE A REGRESSION AND
+    /// IS THE FIX. On master the bar measures the same at both sizes: the column
+    /// is 76 pt whatever the reader does, so the bar keeps its 85 pt and the
+    /// probability inside those 76 pt is what gives. Here the badge takes the room
+    /// it needs and the bar takes what is left. A test asserting the bar did not
+    /// move would be asserting the defect.
+    @MainActor
+    func testTheRenderedCardGivesTheNumberItsRoomAtAccessibilitySizes() throws {
+        let probability = 0.96
+        let trend = 0.0258
+        let card = ChampionshipPathView(
+            progression: try brewersAtRedsProgression(
+                stageJSON: stageJSON("division", "Division",
+                                     probability: probability, trend: trend)),
+            homeTeamColor: Self.barColor, awayTeamColor: Self.barColor)
+
+        // The width the card itself works out at this render width, not a literal.
+        // `ChampionshipPathView` insets its whole body by `.padding()` — 16 pt a
+        // side — before the two cards divide what is left, and leaving that out
+        // was how #3580's fit formula came to believe it had room for a bar.
+        let pagePadding: CGFloat = 16
+        let content = ChampionshipRowLayout.teamCardContentWidth(
+            totalWidth: 402 - pagePadding * 2, cardCount: 2)
+        let row = try stage("division", "Division", probability: probability, trend: trend)
+
+        for (name, size) in [("large", DynamicTypeSize.large),
+                             ("a11y3", .accessibility3)] {
+            let columns = ChampionshipRowLayout.columns(
+                measured: measuredColumns(for: [row], at: size), for: [row])
+            let expected = ChampionshipRowLayout.barWidth(
+                contentWidth: content, columns: columns) * probability
+            let drawn = longestRun(of: Self.barColor, in: render(card, width: 402, at: size))
+
+            XCTAssertEqual(
+                drawn, expected, accuracy: 6,
+                "\(name): the card drew a \(drawn) pt fill where the rule says "
+                + "\(expected) pt (badge column \(columns.badges)). A card that "
+                + "ignores the measurement draws the same bar at every text size")
+        }
+
+        // And the discriminating clause: the two sizes must DIFFER. Equal bars are
+        // what master draws, and what a fix that never reached the view would.
+        let large = longestRun(of: Self.barColor, in: render(card, width: 402, at: .large))
+        let a11y3 = longestRun(of: Self.barColor, in: render(card, width: 402, at: .accessibility3))
+        XCTAssertLessThan(
+            a11y3, large - 20,
+            "the bar measured \(large) pt at `.large` and \(a11y3) pt at "
+            + "`.accessibility3`. On master both are 81.6 pt, because the 76 pt "
+            + "column never moves and the probability truncates inside it instead")
+    }
+
     /// Nothing else in the card is this colour, so any run of it is bar.
     private static let barColor = Color(red: 1, green: 0, blue: 0)
 
@@ -450,8 +788,10 @@ final class ChampionshipRowLayoutTests: XCTestCase {
     }
 
     @MainActor
-    private func render<V: View>(_ view: V, width: CGFloat) -> UIImage {
-        let host = hostForMeasurement(view.frame(width: width))
+    private func render<V: View>(
+        _ view: V, width: CGFloat, at size: DynamicTypeSize = .large
+    ) -> UIImage {
+        let host = hostForMeasurement(view.frame(width: width), at: size)
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: width, height: 1200))
         window.rootViewController = host
         window.isHidden = false
@@ -490,13 +830,26 @@ final class ChampionshipRowLayoutTests: XCTestCase {
 
     /// The width the view asks for when nothing constrains it.
     @MainActor
-    private func naturalWidth<V: View>(of view: V) -> CGFloat {
-        let host = hostForMeasurement(view)
+    private func naturalWidth<V: View>(of view: V, at size: DynamicTypeSize = .large) -> CGFloat {
+        let host = hostForMeasurement(view, at: size)
         host.view.setNeedsLayout()
         host.view.layoutIfNeeded()
         return host.sizeThatFits(
             in: CGSize(width: CGFloat.greatestFiniteMagnitude,
                        height: CGFloat.greatestFiniteMagnitude)).width
+    }
+
+    /// What the view actually comes out as when it is offered `width` — which is
+    /// not the same question as `naturalWidth`, and is the one #4328 is about.
+    @MainActor
+    private func sizeWhenOffered<V: View>(
+        _ width: CGFloat, to view: V, at size: DynamicTypeSize
+    ) -> CGSize {
+        let host = hostForMeasurement(view, at: size)
+        host.view.setNeedsLayout()
+        host.view.layoutIfNeeded()
+        return host.sizeThatFits(
+            in: CGSize(width: width, height: CGFloat.greatestFiniteMagnitude))
     }
 
     /// Brewers @ Reds as production serves it — **both** cards, because the card
