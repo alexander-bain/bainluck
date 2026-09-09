@@ -30,7 +30,7 @@ import inspect
 
 import pytest
 
-from app.tasks import repair_polymarket_senate_category as rail
+from app.tasks import celery_app, repair_polymarket_senate_category as rail
 
 
 # ---------------------------------------------------------------------------
@@ -599,8 +599,6 @@ def test_the_dispatcher_header_names_the_repair():
 
 def test_the_rail_is_not_wired_to_a_beat():
     """ATTENDED ONLY — a terminating repair over six ids is not a standing job."""
-    from app.tasks import celery_app
-
     schedule = celery_app.conf.beat_schedule or {}
     for name, entry in schedule.items():
         assert "senate" not in str(entry.get("task", "")).lower(), (
