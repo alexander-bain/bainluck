@@ -18,6 +18,7 @@ a key that quietly stops being served.
 """
 
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 from sqlalchemy import inspect
 
@@ -36,6 +37,49 @@ def _event(sport: Sport | None) -> Event:
         status="scheduled",
         home_score=None,
         away_score=None,
+    )
+
+
+def _stub_event(sport) -> SimpleNamespace:
+    """A namespace event, mirroring the fixture shape used across the suite.
+
+    Every column `_format_event` reads is present, because a fake missing a
+    column the formatter reads is not a lighter fixture — it is a fake that
+    cannot tell whether the formatter works (live/073's wording, still true).
+    """
+    return SimpleNamespace(
+        id=15191315,
+        external_id="odds-api-15191315",
+        sport=sport,
+        home_team_name="Minnesota Twins",
+        away_team_name="Philadelphia Phillies",
+        commence_time=datetime(2026, 9, 12, 11, 0, tzinfo=timezone.utc),
+        completed_at=None,
+        status="scheduled",
+        home_score=None,
+        away_score=None,
+        box_score_data=None,
+        llm_gender=None,
+        llm_level=None,
+        llm_league=None,
+        llm_importance=None,
+        espn_id=None,
+        period=None,
+        game_clock=None,
+        broadcast_info=None,
+        espn_win_prob_home=None,
+        win_probability_sources=None,
+        raw_ei=None,
+        ei_metadata=None,
+        opening_home_probability=None,
+        opening_away_probability=None,
+        opening_home_spread=None,
+        opening_over_under=None,
+        opening_favorite=None,
+        closing_home_probability=None,
+        closing_away_probability=None,
+        odds_snapshots=[],
+        standings_context=None,
     )
 
 
@@ -85,6 +129,32 @@ def test_an_event_with_no_sport_serves_null_for_both():
 
     assert data["sport"] is None
     assert data["sport_name"] is None
+
+
+def test_a_sport_stub_without_a_name_degrades_instead_of_raising():
+    """The arm CI taught this file.
+
+    `SimpleNamespace(key=...)` is the established sport stub across ~18 test
+    modules, and the first version of this change read `.name` bare — which
+    turned every one of them into a tripwire for a field they do not care
+    about.  Four tests in `test_probability_range_invariant.py` went red on
+    shard 3 for exactly that.
+
+    `Sport.name` is `nullable=False`, so this default is unreachable against a
+    real row; it exists so that adding a field to a payload is not a change to
+    every fixture in the suite.  Degrading to None is also correct on the wire:
+    the client treats a missing name like a raw one and falls back to its map,
+    which is the pre-#4368 behaviour.
+
+    The event is a namespace too, not an ORM `Event`: SQLAlchemy reaches for
+    `_sa_instance_state` when a plain object is assigned to the `sport`
+    relationship, so a stub sport can only be reached through a stub event —
+    which is exactly the shape the modules that broke already use.
+    """
+    data = _format_event(_stub_event(SimpleNamespace(key="baseball_mlb")))
+
+    assert data["sport"] == "baseball_mlb"
+    assert data["sport_name"] is None  # degraded, not raised
 
 
 def test_a_transient_sport_needs_no_session_to_serve_its_name():

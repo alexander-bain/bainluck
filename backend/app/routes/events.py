@@ -15970,7 +15970,17 @@ def _format_event(
         # own key in `name` ("mma_other"), so a client still needs the map as a
         # fallback. Serving the name is what lets it prefer, which it could not
         # do before. Clients: `getSportLabel` in frontend/lib/sportCategories.ts.
-        "sport_name": event.sport.name if event.sport else None,
+        #
+        # `getattr` rather than `.name`, for the same reason `_wps` above uses
+        # one. `Sport.name` is `nullable=False`, so a real row always has it and
+        # this default is unreachable in production — but `SimpleNamespace(
+        # key=...)` is the established sport stub across ~18 test modules, and a
+        # bare `.name` turns every one of them into a tripwire for a field they
+        # do not care about (four in `test_probability_range_invariant.py` went
+        # red on exactly that). Degrading to None is also the honest answer for
+        # a caller that has one: the client treats a missing name like a raw one
+        # and falls back to its map, which is the pre-#4368 behaviour.
+        "sport_name": getattr(event.sport, "name", None) if event.sport else None,
         "home_team": event.home_team_name,
         "away_team": event.away_team_name,
         "commence_time": event.commence_time.isoformat(),
