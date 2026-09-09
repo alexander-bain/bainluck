@@ -62,7 +62,12 @@ from tests.test_authority_failover_3473 import (  # noqa: F401 — `dispatches` 
     dispatches,
 )
 
-UNRULED = "basketball_nba"
+#: A sport D104 has NOT ruled, so its refusal must still carry the ledger's own
+#: failed-read reason. Moved from `basketball_nba` to `icehockey_nhl` when the
+#: NBA shipped as the second ruled release (#4493) — the specimen moves, the
+#: test stays, exactly as `STILL_GATED` in `test_authority_failover_3473` has
+#: now done twice.
+UNRULED = "icehockey_nhl"
 
 #: What `read_ledger_days` hands back when the snapshot store cannot be read.
 #: `None` for the days — NOT `[]`. The distinction is the whole defect: `[]` is
