@@ -117,6 +117,15 @@ final class DiscoverViewModel: ObservableObject {
     /// with `items`, whose publish already re-runs any dependent view body.
     private(set) var itemsVersion = 0
 
+    /// #4110: the `edition` of the list currently on screen — which ordered list
+    /// the reader is looking at, not how fresh it is. Set by every writer that
+    /// paints, alongside `items`, so the next response can be compared against
+    /// what was actually painted rather than against the last thing decoded.
+    /// Nil means we painted a list whose ordering we cannot vouch for (an older
+    /// cached body, or an empty refusal), which `DiscoverFeedReconcile.decision`
+    /// treats as "not equal".
+    private(set) var paintedEdition: String?
+
     /// Provenance of the data that FIRST became renderable for the current load
     /// (L2-208 Item 2 / C67 P2): `true` when the last-good cache seed produced the
     /// first renderable cards, `false` when the network did. Captured ONCE per load
@@ -349,6 +358,11 @@ final class DiscoverViewModel: ObservableObject {
                 } else {
                     let mergeStart = Date()
                     items = Self.interleave(renderable)
+                    // #4110: record WHICH ordered list this paint is, so the
+                    // network response that follows can tell whether it is the
+                    // same one. A pre-`edition` cached body leaves this nil, which
+                    // the decision reads as "not equal" — the safe direction.
+                    paintedEdition = cached.response.edition
                     // First paint provenance: the cache seed produced first paint.
                     if firstDataFromCache == nil { firstDataFromCache = true }
                     // Freeze the render-generation token from the cache seed
@@ -518,7 +532,24 @@ final class DiscoverViewModel: ObservableObject {
                 // page dropped, identity-free, on the network path only.
                 reportSuppressedEnvelopes(response.items)
                 let mergeStart = Date()
-                items = Self.interleave(renderable)
+                // #4110: THE FIX. This used to be an unconditional
+                // `items = Self.interleave(renderable)`, which re-derived the
+                // whole order from a different input than the boot seed had — so
+                // a card the reader was mid-way through could move or vanish the
+                // moment the network answered. Now the server's own edition token
+                // decides whether a reorder is legal at all.
+                switch DiscoverFeedReconcile.decision(
+                    paintedCount: items.count,
+                    paintedEdition: paintedEdition,
+                    incomingEdition: response.edition
+                ) {
+                case .repaint:
+                    items = Self.interleave(renderable)
+                case .reconcile:
+                    items = DiscoverFeedReconcile.merge(
+                        painted: items, incoming: renderable, key: Self.itemKey)
+                }
+                paintedEdition = response.edition
                 // First paint provenance: only stamp network when the cache seed
                 // did NOT already produce first paint this load — a background
                 // revalidation behind a served cache must not relabel the render
@@ -820,6 +851,11 @@ final class DiscoverViewModel: ObservableObject {
     @MainActor
     func rebindForIdentityChange() async {
         items = []
+        // #4110: the painted edition belongs to the list being cleared. Leaving
+        // it set would let the next identity's first response compare against
+        // the previous identity's ordering — and an accidental match would
+        // reconcile one account's feed into another's.
+        paintedEdition = nil
         nextOffset = 0
         hasMore = true
         isShowingCachedContent = false
@@ -1090,14 +1126,35 @@ final class DiscoverViewModel: ObservableObject {
             // network path too, so count it here as well.
             reportSuppressedEnvelopes(response.items)
             let loadedIds = Set(items.map(Self.itemKey))
-            let fresh = renderable.filter { !loadedIds.contains(Self.itemKey($0)) }
+            var fresh = renderable.filter { !loadedIds.contains(Self.itemKey($0)) }
+
+            // #4110: page N's token must match the list it is being merged into.
+            // If it does not, the edition rolled mid-scroll and these cards belong
+            // to a DIFFERENT ordered list, so they cannot be spliced into this one.
+            //
+            // Routed into the existing duplicate-only path rather than given a
+            // terminal of its own: that path advances the offset and keeps
+            // scanning FORWARD on the server's own `has_more`, bounded by
+            // `maxPageScans`. So a transient roll costs one page and recovers by
+            // itself, a permanent one ends the scroll honestly at the bound, and
+            // neither drops a card into a list it does not belong to.
+            if let pageEdition = response.edition, pageEdition != paintedEdition {
+                fresh = []
+            }
 
             if !fresh.isEmpty {
                 // Real new content (may be lifecycle-stale — the view's stale
                 // gate filters it and, if the whole page was rot, re-triggers
                 // this method because items.count changed). Either way this is a
                 // terminating, honest step forward.
-                items = Self.interleave(items + fresh)
+                //
+                // #4110: appended, never re-interleaved. This was
+                // `interleave(items + fresh)`, which re-derived the order of every
+                // already-painted card on every scroll — the same wholesale-reorder
+                // defect as the network path, just triggered by the reader instead
+                // of by the clock. The new page is interleaved among ITSELF so the
+                // page keeps its category diversity; the painted prefix does not move.
+                items = items + Self.interleave(fresh)
                 hasMore = response.hasMore
                 error = nil
                 return
