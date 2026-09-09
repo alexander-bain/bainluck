@@ -4,6 +4,7 @@ import { useState } from "react";
 import { trackEvent } from "@/lib/analytics";
 import { getDiscoverItemAnalytics, recordDiscoverInteraction, sendDiscoverInteraction } from "@/lib/discoverInteractions";
 import type { FeedItem, FeedFuturesData } from "@/lib/types";
+import { BundleActionBar } from "./BundleActionBar";
 import { getCat } from "./constants";
 import { FuturesCard, FuturesCompactRow } from "./FuturesCard";
 
@@ -123,6 +124,21 @@ export function ThemeBundleCard({ items, title, sharedQuestion, storyKey, positi
           ))}
         </div>
       )}
+
+      {/* #4428 — OUTSIDE both branches, so the bundle has a Like and a Share in
+          either state. Collapsed it was the only thing in the subtree that could
+          have carried one (no member card is mounted); expanded, the members'
+          own bars can only act on a member, never on the group the header names.
+          It sits on the card's own background rather than inside the expanded
+          block's tint, which is what makes it read as the bundle's footer and
+          not as a sixth member's. */}
+      <BundleActionBar
+        items={items}
+        title={title}
+        sharedQuestion={sharedQuestion}
+        storyKey={storyKey}
+        positionIndex={positionIndex}
+      />
     </div>
   );
 }

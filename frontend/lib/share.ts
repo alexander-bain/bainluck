@@ -164,3 +164,90 @@ export function buildLadderShareText(
     `across ${rungCount} ${noun}${rungCount === 1 ? "" : "s"} on Bain Luck.`
   );
 }
+
+/** One bundle member, reduced to the three things a share sentence can say about it. */
+export interface BundleShareMember {
+  /** The market's question, exactly as the bundle's row prints it. */
+  name: string;
+  /** The outcome the percent speaks for — `heroOutcome`'s pick — or null when unpriced. */
+  leaderLabel: string | null;
+  /**
+   * The percent ALREADY FORMATTED by the surface — `56%`, or either of the two
+   * boundary forms `probabilityDisplay.ts` owns — or null.
+   *
+   * ⚠️ Those two forms are named here in BACKTICKS and not in quotes on purpose:
+   * `probabilityDisplay.test.ts`'s anti-drift guard walks `lib/` and `components/`
+   * for the quoted literal and requires exactly one module to hold it. It cannot
+   * tell a doc comment from a second implementation — and it should not have to,
+   * because a comment that spells the string is how the second implementation
+   * gets written. This file spelled it and went red in CI.
+   *
+   * A string and not a probability on purpose: `FuturesCompactRow` prints
+   * `formatProbabilityPercent(p, { rendered: renderedLeaderPercent(...) })`, and
+   * a builder that re-rounded the raw probability would be the second copy of a
+   * rule that already moved once (#3867) — the share would then quote a number
+   * the reader cannot find on the card it came from.
+   */
+  percent: string | null;
+}
+
+/** The most members a bundle share will name, however short their names are. */
+const BUNDLE_SHARE_MEMBERS = 3;
+
+/** The length a bundle share fits itself to — `truncateShareText`'s own cap. */
+const BUNDLE_SHARE_MAX = 180;
+
+/**
+ * The share sentence for a BUNDLE — #4428.
+ *
+ * A bundle has no detail page, so what it can share is what it IS: the question
+ * its members all answer, and how those members currently answer it. Alex, on
+ * Discover the morning of 2026-09-09: grouped cards "have no share". Measured
+ * that morning, 0 of 5 bundles on page one carried one while 13 of 14 single
+ * cards did.
+ *
+ * Named members and not just a count because the count is the thing the header
+ * already stopped printing (D1 clause c, #4066): "5 related" is inventory, and a
+ * share that says only "5 markets" hands a stranger nothing to be interested in.
+ *
+ * ⚠️ The member list is a PREFIX, never a summary, and the count always rides at
+ * the end. Naming two of five and saying there are five is honest; naming two and
+ * letting them read as all of them is not. Members with no priced leader are
+ * dropped rather than printed bare — "2028 Republican presidential nominee: " is
+ * a defect in a share sheet, where there is no card underneath to explain it.
+ *
+ * ⚠️ IT DROPS A WHOLE MEMBER RATHER THAN LETTING THE CAP CUT ONE IN HALF. The
+ * sentence is assembled member by member and stops before it crosses the cap, so
+ * `truncateShareText` below is a backstop for a monstrous question and not the
+ * normal path. A blind `slice(0, 3)` then truncate produced
+ * `"… · Jon Ossoff 17% (2028 Democratic presidential nomi..."` on the very first
+ * three-member bundle it met, which reads as a broken share, not a short one.
+ *
+ * The leader leads and the market follows in parentheses, rather than
+ * `name: leader`, because a bundle member's name is very often itself a question
+ * — five of the five bundles on page one on 2026-09-09 had at least one — and
+ * `"2028 U.S. Presidential Election winner?: J.D. Vance 23%"` is unreadable.
+ */
+export function buildBundleShareText(
+  question: string,
+  members: readonly BundleShareMember[],
+  totalCount: number,
+  maxMembers = BUNDLE_SHARE_MEMBERS,
+): string {
+  const tail = `${totalCount} market${totalCount === 1 ? "" : "s"} on Bain Luck.`;
+  const compose = (parts: readonly string[]) =>
+    `${question} — ${[...parts, tail].join(" · ")}`;
+
+  const priced = members
+    .filter((m) => m.leaderLabel && m.percent)
+    .slice(0, Math.max(0, maxMembers))
+    .map((m) => `${m.leaderLabel} ${m.percent} (${m.name})`);
+
+  const named: string[] = [];
+  for (const part of priced) {
+    if (compose([...named, part]).length > BUNDLE_SHARE_MAX) break;
+    named.push(part);
+  }
+
+  return truncateShareText(compose(named), BUNDLE_SHARE_MAX);
+}
