@@ -350,18 +350,84 @@ def stage_graded_winner(outcomes) -> str | None:
     return None
 
 
-def cycling_status(status: str | None, resolution_date, now) -> str:
-    """upcoming / live / settled. A Grand Tour runs ~3 weeks, so the 'live' window is
-    wide: within 25 days before resolution_date (Kalshi resolution is race-end/close;
-    gotcha #14) counts as in progress."""
+#: Fallback only: the old proximity band, for a race with no calendar entry.
+#: `resolution_date` is the market CLOSE/settle date (gotcha #14), not the race, so
+#: this is a guess at "a 3-week grand tour is probably in progress" and nothing more.
+_CYCLING_FALLBACK_BAND_DAYS = 25
+
+
+def cycling_status(status: str | None, resolution_date, now, concept_key: str | None = None) -> str:
+    """upcoming / live / settled for a bike race.
+
+    ASK THE CALENDAR (#4449). "live" is a claim the reader can check — the card wears
+    the same pulsing red `● LIVE` pill a Champions League match at 67' wears — so it
+    has to be anchored on the race, and the only thing here that knows the race is
+    `majors_calendar.yaml`. The old rule was a 25-day band before `resolution_date`,
+    which is the market CLOSE date (gotcha #14): the Vuelta 2026 is ridden Aug 22 –
+    Sep 13 and its GC market closes Sep 19, so the band kept `status: "live"` for six
+    days after the race finished. `marquee_pin_state` suppresses the pill for the
+    first 36h of that, which left ~Sep 15 12:00Z → Sep 19 with a finished Grand Tour
+    wearing the live pill and drawing the `+35` live bonus in `_score_event_concept`
+    — the largest term in that function, and the reason the card holds page one.
+
+    The event page has read the calendar since queue #249 (`concept_date_window`);
+    this is the same repair for the feed card, and the sibling of #4433 in F1.
+
+    Window → status, via the one clock in `majors_calendar.calendar_window_state`:
+      - "upcoming" → upcoming. A race that has not started cannot be live. The card
+        keeps its slot through the `days_until` ranking terms, not through a lie.
+      - "live"     → live.
+      - "whathit"  → **settled**. The race is over; "settled means settled". It stays
+        on the feed for its T+36h WHAT-HIT window because `_score_event_concepts`
+        admits a settled concept precisely while `marquee_pin_state` says "whathit",
+        and it still scores 45 there (base 30 + major 15), so the champion card is
+        not lost. This 36h is also the grace the `date_confidence: approximate`
+        entries need — a race running a day past its listed end is not called
+        finished, which was #4433's other arm.
+      - "past"     → settled.
+
+    Two market signals still outrank the calendar, both in the safe direction:
+    a venue grade (resolved/closed/settled/final), and a `resolution_date` that has
+    already PASSED — a market cannot close before the thing it prices has happened,
+    so a closed market means the race is over no matter how stale the yaml is. That
+    second arm is the pre-existing guard `test_a_finished_race_is_still_filtered_out`
+    pins, and dropping it would let a wrong calendar row resurrect a finished race.
+    The calendar only ever governs the window it can actually know: the race itself.
+
+    With no calendar entry — a race the yaml has never heard of — nothing has
+    changed: the old band decides, because a rough guess beats no answer.
+    Conservative: no key, no entry and no date → upcoming."""
     if (status or "").lower() in ("resolved", "closed", "settled", "final"):
         return "settled"
     if resolution_date is not None:
         try:
             if resolution_date < now:
                 return "settled"
+        except TypeError:
+            pass
+    if concept_key:
+        try:
+            from app.utils.majors_calendar import (
+                calendar_entry_by_concept_key,
+                calendar_window_state,
+            )
+
+            window = calendar_window_state(
+                calendar_entry_by_concept_key().get(str(concept_key)), now
+            )
+        except Exception:
+            window = None
+        if window == "live":
+            return "live"
+        if window == "upcoming":
+            return "upcoming"
+        if window in ("whathit", "past"):
+            return "settled"
+    if resolution_date is not None:
+        try:
+            # A past `resolution_date` already returned "settled" above.
             days = (resolution_date - now).total_seconds() / 86400
-            if days <= 25:  # a 3-week grand tour is "in progress"
+            if days <= _CYCLING_FALLBACK_BAND_DAYS:
                 return "live"
         except TypeError:
             pass
@@ -453,16 +519,20 @@ async def list_cycling_concepts(
     for slug, g in per_race.items():
         cfg = g["cfg"]
         res = g["resolution"]
-        status = cycling_status(g["status"], res, now)
+        key = f"event:cycling:{slug}"
+        status = cycling_status(g["status"], res, now, concept_key=key)
         if status not in statuses:
             continue
         concepts.append(
             {
-                "key": f"event:cycling:{slug}",
+                "key": key,
                 "name": cfg.display,
                 "domain": "cycling",
                 "status": status,
-                "start_date": res.isoformat() if res is not None else None,
+                # The RACE start, not the market close (#4449). `concept_date_window`
+                # is the same calendar read the event page has used since queue #249;
+                # it falls back to `res` when the yaml has no entry for this race.
+                "start_date": concept_date_window(slug, res)[0],
                 "is_major": True,  # Grand Tours are majors
                 "entry_count": g["markets"],
                 "latest_commence": res,
@@ -547,7 +617,12 @@ class CyclingEventAdapter:
         if winner is None:
             return None
 
-        event_status = cycling_status(winner.status, winner.resolution_date, now)
+        event_status = cycling_status(
+            winner.status,
+            winner.resolution_date,
+            now,
+            concept_key=f"event:cycling:{cfg.slug}",
+        )
 
         competitors = []
         for o in real_outcomes:
