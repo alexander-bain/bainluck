@@ -1,5 +1,17 @@
 import SwiftUI
 
+/// The Sources list's own width, so #4107's label column can be clamped against
+/// the room the row actually has. A preference key rather than a
+/// `UIScreen.main.bounds` read: gotcha #27 — Stage Manager can hand back a
+/// background scene, and this file's neighbours have been walked off that API
+/// deliberately.
+private struct SourceRowWidthKey: PreferenceKey {
+    static let defaultValue: Double = 0
+    static func reduce(value: inout Double, nextValue: () -> Double) {
+        value = max(value, nextValue())
+    }
+}
+
 // MARK: - View
 
 struct EventDetailView: View {
@@ -8,7 +20,23 @@ struct EventDetailView: View {
     @State private var countdownText: String?
     @State private var countdownTimer: Timer?
     @State private var selectedPlayPoint: GamePlayPoint?
-    @State private var showSources = false
+    /// Closed for every reader. Starts open only when the LOOK rig asks
+    /// (`-launch_expand_sections`), which is the only way this list can be
+    /// photographed — the rig cannot tap a chevron. See `LaunchRig`.
+    @State private var showSources = LaunchRig.expandsCollapsedSections()
+    /// The width of a row in the sources disclosure, reported by the
+    /// `GeometryReader` behind the whole panel, so both lists inside it can size
+    /// their label column against the room the row actually has rather than a
+    /// literal. `0` until the first layout pass.
+    ///
+    /// Measured on the PANEL and not on either list, because the two lists render
+    /// under independent conditions. An event with sportsbook odds and no
+    /// aggregate sources draws the books list alone — the disclosure's own toggle
+    /// says "Individual Sportsbooks" for exactly that case — and if only the
+    /// sources list published this, that event would leave it `0` forever. `0`
+    /// means "not measured yet", which `maximumLabelWidth` deliberately treats as
+    /// UNCLAMPED, so the books column would have quietly lost the bar's floor.
+    @State private var sourceRowWidth: Double = 0
     @State private var refreshCountdown: Int = 0
     @State private var refreshCountdownTimer: Timer?
     private var sharedChartDomain: ClosedRange<Date>? {
@@ -1042,6 +1070,22 @@ struct EventDetailView: View {
                     }
                 }
             }
+            // #4107 — measured HERE, on the panel, rather than behind either
+            // list. Both lists draw rows of this width, but they render under
+            // independent conditions, so a measurement scoped to one of them is
+            // missing on every event that draws only the other. Publishing from
+            // the panel also means the width is already known when the reader
+            // expands the disclosure, instead of the first frame being sized on
+            // unclamped ink.
+            .background(
+                GeometryReader { geo in
+                    Color.clear.preference(
+                        key: SourceRowWidthKey.self, value: geo.size.width)
+                }
+            )
+            .onPreferenceChange(SourceRowWidthKey.self) { width in
+                sourceRowWidth = width
+            }
         }
     }
 
@@ -1055,18 +1099,30 @@ struct EventDetailView: View {
     /// hero reads, and the same bar the book table uses.
     private func sourceContent(_ event: EventDetail, entries: [WinProbSourceCatalog.Entry]) -> some View {
         let colors = teamColors(event)
+        // #4107 — sized against the labels THIS render draws, at THIS view's text
+        // size. The old 118pt literal was correct at `.large` and nowhere else:
+        // `Sportsbooks (14)` is 99.9pt at default and 142.1pt at xxxLarge, which
+        // is where Alex's truncation actually came from. See
+        // `EventSourceLabelColumn` for the measurements and for why
+        // `.minimumScaleFactor` is gone rather than raised.
+        let labelWidth = EventSourceLabelColumn.width(
+            for: entries.map(\.label),
+            availableWidth: sourceRowWidth,
+            typeSize: dynamicTypeSize)
         return VStack(spacing: 0) {
             ForEach(entries) { entry in
                 let homeProbability = entry.homeProbability
                 let awayProbability = 1 - homeProbability
-                HStack(spacing: 6) {
-                    // Wider than the bookmaker column below it: these labels carry
-                    // a book count ("Sportsbooks (10)"), which truncates at 90.
+                HStack(spacing: EventSourceLabelColumn.interColumnSpacing) {
                     Text(entry.label)
                         .font(.caption.weight(.medium))
-                        .frame(width: 118, alignment: .leading)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.85)
+                        .frame(width: labelWidth, alignment: .leading)
+                        // Both are load-bearing (#3966): `lineLimit(2)` alone
+                        // still truncates when the parent proposes one line's
+                        // height. This only engages past the clamp, at the
+                        // largest accessibility sizes.
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
 
                     ProbabilityBar(
                         awayProb: awayProbability, homeProb: homeProbability,
@@ -1076,14 +1132,21 @@ struct EventDetailView: View {
                     )
                     .frame(maxWidth: .infinity)
 
+                    // Read from the same model that sizes the label, so the two
+                    // cannot drift: the whole defect was a layout number that
+                    // stopped describing its layout.
                     Text(formatProbability(awayProbability))
                         .font(.caption2.monospacedDigit())
-                        .frame(width: 36, alignment: .trailing)
+                        .frame(
+                            width: EventSourceLabelColumn.numericColumnWidth,
+                            alignment: .trailing)
                     Text(formatProbability(homeProbability))
                         .font(.caption2.monospacedDigit())
-                        .frame(width: 36, alignment: .trailing)
+                        .frame(
+                            width: EventSourceLabelColumn.numericColumnWidth,
+                            alignment: .trailing)
                 }
-                .padding(.horizontal, 16)
+                .padding(.horizontal, EventSourceLabelColumn.horizontalPadding)
                 .padding(.vertical, 4)
             }
         }
@@ -1103,17 +1166,35 @@ struct EventDetailView: View {
 
     private func bookmakerContent(_ event: EventDetail) -> some View {
         let colors = teamColors(event)
-        let bookmakers = event.bookmakerOdds ?? []
+        let bookmakers = Array((event.bookmakerOdds ?? []).prefix(10))
+        // #4107 — the SAME defect as `sourceContent` above, one function down and
+        // in the same visual list: a hardcoded label column that never tracked
+        // Dynamic Type. This one was 90pt, which is the exact literal the Sources
+        // column was raised FROM. Photographed at xxxLarge on a 375pt phone it cut
+        // `betanysportsbook` and `betonlineag` to `betanysp…` / `betonline…` while
+        // the two rows above them — already fixed — read in full, which is a worse
+        // read than the original bug: it looks deliberate.
+        //
+        // Sized off the same `sourceRowWidth`, because both lists are children of
+        // the same disclosure and therefore the same width. Measured `.regular`,
+        // which is the face THIS list draws in.
+        let labelWidth = EventSourceLabelColumn.width(
+            for: bookmakers.map { $0.bookmaker ?? "Unknown" },
+            availableWidth: sourceRowWidth,
+            typeSize: dynamicTypeSize,
+            weight: .regular)
         return VStack(spacing: 0) {
-            ForEach(bookmakers.prefix(10), id: \.bookmaker) { bm in
+            ForEach(bookmakers, id: \.bookmaker) { bm in
                 let awayProb = bm.awayProbability ?? bm.awayMoneyline.map { moneylineToProbability($0) }
                 let homeProb = bm.homeProbability ?? bm.homeMoneyline.map { moneylineToProbability($0) }
 
-                HStack(spacing: 6) {
+                HStack(spacing: EventSourceLabelColumn.interColumnSpacing) {
                     Text(bm.bookmaker ?? "Unknown")
                         .font(.caption)
-                        .frame(width: 90, alignment: .leading)
-                        .lineLimit(1)
+                        .frame(width: labelWidth, alignment: .leading)
+                        // Both load-bearing together (#3966), as in `sourceContent`.
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
 
                     if let awayProbability = awayProb, let homeProbability = homeProb {
                         ProbabilityBar(
@@ -1126,13 +1207,17 @@ struct EventDetailView: View {
 
                         Text(formatProbability(awayProbability))
                             .font(.caption2.monospacedDigit())
-                            .frame(width: 36, alignment: .trailing)
+                            .frame(
+                                width: EventSourceLabelColumn.numericColumnWidth,
+                                alignment: .trailing)
                         Text(formatProbability(homeProbability))
                             .font(.caption2.monospacedDigit())
-                            .frame(width: 36, alignment: .trailing)
+                            .frame(
+                                width: EventSourceLabelColumn.numericColumnWidth,
+                                alignment: .trailing)
                     }
                 }
-                .padding(.horizontal, 16)
+                .padding(.horizontal, EventSourceLabelColumn.horizontalPadding)
                 .padding(.vertical, 4)
             }
         }

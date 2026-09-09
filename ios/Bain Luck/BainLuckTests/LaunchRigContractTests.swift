@@ -37,6 +37,7 @@ final class LaunchRigContractTests: XCTestCase {
         XCTAssertNil(LaunchRig.route(defaults: defaults))
         XCTAssertFalse(LaunchRig.showsDebugCounts(defaults: defaults))
         XCTAssertNil(LaunchRig.scrollOffset(defaults: defaults))
+        XCTAssertFalse(LaunchRig.expandsCollapsedSections(defaults: defaults))
     }
 
     func testEmptyAndWhitespaceRouteOpensNothing() {
@@ -121,6 +122,19 @@ final class LaunchRigContractTests: XCTestCase {
         XCTAssertFalse(LaunchRig.showsDebugCounts(defaults: defaults))
     }
 
+    /// #4107 — the flag that makes a disclosure-hidden list photographable.
+    func testExpandSectionsReadsTheLaunchArgumentStringForms() {
+        for yes in ["YES", "1", "true"] {
+            defaults.set(yes, forKey: LaunchRig.expandSectionsKey)
+            XCTAssertTrue(
+                LaunchRig.expandsCollapsedSections(defaults: defaults),
+                "simctl passes \(yes) as a string; it must still read as on"
+            )
+        }
+        defaults.set(false, forKey: LaunchRig.expandSectionsKey)
+        XCTAssertFalse(LaunchRig.expandsCollapsedSections(defaults: defaults))
+    }
+
     // MARK: - The key names ARE the interface
 
     /// Rename any of these and every script in `tools/` goes back to
@@ -129,6 +143,7 @@ final class LaunchRigContractTests: XCTestCase {
         XCTAssertEqual(LaunchRig.routeKey, "launch_route")
         XCTAssertEqual(LaunchRig.debugCountsKey, "launch_debug_counts")
         XCTAssertEqual(LaunchRig.scrollKey, "launch_scroll")
+        XCTAssertEqual(LaunchRig.expandSectionsKey, "launch_expand_sections")
     }
 
     // MARK: - Photographing below the fold (`--scroll`)

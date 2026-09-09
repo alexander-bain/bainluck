@@ -71,6 +71,30 @@ enum LaunchRig {
         defaults.bool(forKey: debugCountsKey)
     }
 
+    // MARK: - Photographing what is behind a disclosure
+
+    /// Launch-argument key that starts collapsed disclosure sections OPEN.
+    ///
+    /// `xcrun simctl launch <sim> <bundle> -launch_expand_sections YES`.
+    static let expandSectionsKey = "launch_expand_sections"
+
+    /// Whether a collapsed section should start open for the camera.
+    ///
+    /// The event page's Sources list is behind a `@State` chevron that defaults
+    /// closed, and the rig cannot tap — `-launch_scroll` moves a scroll view, it
+    /// does not press a button. So no screenshot of that list had ever been
+    /// taken, and #4107 (a hardcoded 118pt label column that never tracked
+    /// Dynamic Type) sat unmeasured behind it: not because the defect was subtle
+    /// but because the surface was unreachable.
+    ///
+    /// This is the same gap `-launch_scroll` was built to close, and the same
+    /// argument applies — a defect nobody can photograph is a defect nobody can
+    /// prove fixed. Off unless asked for, so the chevron a reader sees is
+    /// unchanged and still starts closed.
+    static func expandsCollapsedSections(defaults: UserDefaults = .standard) -> Bool {
+        defaults.bool(forKey: expandSectionsKey)
+    }
+
     // MARK: - Photographing what is BELOW the fold
 
     /// Launch-argument key carrying how far down the page to scroll, in POINTS,
