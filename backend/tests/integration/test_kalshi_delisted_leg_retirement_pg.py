@@ -174,6 +174,26 @@ def _stats():
     }
 
 
+def _reach_stats():
+    """`_stats()` plus the #4253 reach arm's own keys.
+
+    Kept as a superset rather than folded into `_stats` so the batched arm's
+    tests keep asserting against exactly the keys that arm touches — a shared
+    dict would let a reach-arm counter go missing without any batched test
+    noticing it had ever been there.
+    """
+    return _stats() | {
+        "kalshi_legs_retired": 0,
+        "unreached_markets_found": 0,
+        "unreached_markets_checked": 0,
+        "unreached_legs_retired": 0,
+        "unreached_no_control": 0,
+        "unreached_control_delisted": 0,
+        "unreached_control_indeterminate": 0,
+        "unreached_budget_exhausted": False,
+    }
+
+
 async def _run(session, market, venue, stats=None):
     """Scan for candidates, then confirm and retire. Returns (stats, retired)."""
     from app.tasks.futures_price_refresh import (
@@ -512,3 +532,198 @@ class TestTheBudget:
         # The overflow is left for the next pass, not silently dropped.
         leftover = await _row(db, market.id, f"KXIPOTEST-L{over - 1:03d}")
         assert float(leftover.current_probability) == pytest.approx(1.0)
+
+
+class TestTheReachArmSeesWhatTheSelectorCannot:
+    """#4253 reach arm — the differential no mock can show.
+
+    The ship's whole claim is that two queries disagree about one row: the
+    staleness-gated selector `_CANDIDATE_SQL` cannot return an actively traded
+    market, and `_KALSHI_UNREACHED_FROZEN_SQL` can. That is a statement about
+    real SQL — a six-hour interval anti-join over `futures_odds_snapshots`, a
+    correlated `NOT EXISTS` over the table being selected, and `= ANY(:ids)`
+    binding — and a fake session that returns canned rows would assert it
+    against itself.
+
+    Seeded to look exactly like production `108559` (OpenAI, $1,083,106): an
+    open, high-volume Kalshi ladder with two frozen-certain legs, no crowned
+    sibling, and a price captured MINUTES ago.
+    """
+
+    @staticmethod
+    async def _snapshot(session, market_id, ticker, *, age_minutes):
+        from sqlalchemy import select
+
+        from app.models.models import FuturesOddsSnapshot, FuturesOutcome
+
+        outcome_id = await session.scalar(
+            select(FuturesOutcome.id).where(
+                FuturesOutcome.market_id == market_id,
+                FuturesOutcome.external_id == ticker,
+            )
+        )
+        session.add(
+            FuturesOddsSnapshot(
+                outcome_id=outcome_id,
+                bookmaker="kalshi",
+                probability=0.73,
+                captured_at=datetime.now(timezone.utc)
+                - timedelta(minutes=age_minutes),
+            )
+        )
+        await session.commit()
+
+    @staticmethod
+    async def _selector_ids(session):
+        from app.tasks.futures_price_refresh import _CANDIDATE_SQL
+
+        rows = (
+            await session.execute(
+                _CANDIDATE_SQL,
+                {
+                    "stale_hours": 6,
+                    "volume_floor": 10000,
+                    "value_pool_limit": 500,
+                    "unpriced_pool_limit": 500,
+                },
+            )
+        ).fetchall()
+        return {r[0] for r in rows}
+
+    @staticmethod
+    async def _reach_ids(session, exclude=()):
+        from app.tasks.futures_price_refresh import (
+            KALSHI_UNREACHED_MARKET_LIMIT,
+            _KALSHI_UNREACHED_FROZEN_SQL,
+        )
+
+        rows = (
+            await session.execute(
+                _KALSHI_UNREACHED_FROZEN_SQL,
+                {
+                    "exclude_ids": list(exclude),
+                    "market_limit": KALSHI_UNREACHED_MARKET_LIMIT,
+                },
+            )
+        ).fetchall()
+        return {r[0] for r in rows}
+
+    async def test_a_freshly_priced_market_is_invisible_to_the_selector_and_visible_here(
+        self, db
+    ):
+        market = await _seed(
+            db,
+            [
+                ("KXIPOTEST-25SEP01", 1.0, False),
+                ("KXIPOTEST-25NOV01", 1.0, False),
+                ("KXIPOTEST-27JUN01", 0.73, False),
+            ],
+        )
+        # A price captured twelve minutes ago — production 108555's real age when
+        # the defect was measured, against a six-hour gate.
+        await self._snapshot(db, market.id, "KXIPOTEST-27JUN01", age_minutes=12)
+
+        assert market.id not in await self._selector_ids(db), (
+            "the staleness gate should hide an actively traded market — if this "
+            "fails the premise of the whole ship has changed"
+        )
+        assert market.id in await self._reach_ids(db), (
+            "#4253's reach arm must see exactly the market the selector cannot"
+        )
+
+    async def test_a_quiet_market_is_reachable_by_both(self, db):
+        """The negative control: staleness is the ONLY thing that differed."""
+        market = await _seed(
+            db,
+            [("KXIPOTEST-25SEP01", 1.0, False), ("KXIPOTEST-27JUN01", 0.73, False)],
+        )
+        await self._snapshot(db, market.id, "KXIPOTEST-27JUN01", age_minutes=60 * 9)
+
+        assert market.id in await self._selector_ids(db)
+        assert market.id in await self._reach_ids(db)
+
+    async def test_the_batch_is_excluded_so_no_market_is_swept_twice(self, db):
+        market = await _seed(db, [("KXIPOTEST-25SEP01", 1.0, False)])
+        await self._snapshot(db, market.id, "KXIPOTEST-25SEP01", age_minutes=5)
+
+        assert market.id in await self._reach_ids(db)
+        assert market.id not in await self._reach_ids(db, exclude=[market.id])
+
+    async def test_a_crowned_sibling_withdraws_the_whole_market_from_the_arm(self, db):
+        """CERT-2394's safety argument, re-asserted on the new query's own terms."""
+        market = await _seed(
+            db,
+            [
+                ("KXIPOTEST-25SEP01", 1.0, False),
+                ("KXIPOTEST-26JAN01", 0.4, True),
+            ],
+        )
+        await self._snapshot(db, market.id, "KXIPOTEST-26JAN01", age_minutes=5)
+
+        assert market.id not in await self._reach_ids(db)
+
+    async def test_the_arm_retires_only_after_its_control_answers_live(self, db):
+        """End to end on real Postgres: control 200, candidates 404, legs withdrawn."""
+        from app.tasks.futures_price_refresh import _sweep_unreached_kalshi_frozen
+
+        market = await _seed(
+            db,
+            [
+                ("KXIPOTEST-25SEP01", 1.0, False),
+                ("KXIPOTEST-25NOV01", 1.0, False),
+                ("KXIPOTEST-27JUN01", 0.73, False),
+            ],
+        )
+        await self._snapshot(db, market.id, "KXIPOTEST-27JUN01", age_minutes=12)
+
+        venue = _FakeKalshi(
+            {
+                "KXIPOTEST-27JUN01": True,   # the control, still listed
+                "KXIPOTEST-25SEP01": False,  # observed 404
+                "KXIPOTEST-25NOV01": False,  # observed 404
+            }
+        )
+        stats = _reach_stats()
+        await _sweep_unreached_kalshi_frozen(db, venue, [], stats)
+
+        assert venue.asked[0] == "KXIPOTEST-27JUN01", (
+            "the control must be probed FIRST or it licenses nothing"
+        )
+        assert stats["unreached_legs_retired"] == 2
+        for ticker in ("KXIPOTEST-25SEP01", "KXIPOTEST-25NOV01"):
+            row = await _row(db, market.id, ticker)
+            assert row.current_probability is None
+            assert row.current_american_odds is None
+            # The withdrawal must not advertise itself as a fresh reading: this
+            # column is what freshness consumers read (CERT-2382).
+            assert row.last_updated == _SEEDED_AT
+        # and the control leg keeps its real price
+        control = await _row(db, market.id, "KXIPOTEST-27JUN01")
+        assert float(control.current_probability) == pytest.approx(0.73)
+
+    async def test_a_dead_control_refuses_the_whole_market_on_real_rows(self, db):
+        """The purged-series shape: nothing may be withdrawn."""
+        from app.tasks.futures_price_refresh import _sweep_unreached_kalshi_frozen
+
+        market = await _seed(
+            db,
+            [
+                ("KXIPOTEST-25SEP01", 1.0, False),
+                ("KXIPOTEST-27JUN01", 0.73, False),
+            ],
+        )
+        await self._snapshot(db, market.id, "KXIPOTEST-27JUN01", age_minutes=12)
+
+        venue = _FakeKalshi(
+            {"KXIPOTEST-27JUN01": False, "KXIPOTEST-25SEP01": False}
+        )
+        stats = _reach_stats()
+        await _sweep_unreached_kalshi_frozen(db, venue, [], stats)
+
+        assert stats["unreached_control_delisted"] == 1
+        assert stats["unreached_legs_retired"] == 0
+        assert venue.asked == ["KXIPOTEST-27JUN01"], (
+            "a market with no licence must not spend calls on its candidates"
+        )
+        survivor = await _row(db, market.id, "KXIPOTEST-25SEP01")
+        assert float(survivor.current_probability) == pytest.approx(1.0)

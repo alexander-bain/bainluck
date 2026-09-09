@@ -164,6 +164,12 @@ class TestSelectionPredicate:
             # outcomes overwritten.
             "tournament._LIVE_REGISTERED_CONDITIONS_SQL":
                 _tpr._LIVE_REGISTERED_CONDITIONS_SQL,
+            # #4253 reach arm: the ninth. It selects live Kalshi markets whose
+            # delisted legs the staleness-gated batch can never reach, and it
+            # WRITES (withdraws a price), so a liveness clause that skipped it
+            # would let the reach arm retire legs on a market the other eight
+            # have already retired.
+            "task._KALSHI_UNREACHED_FROZEN_SQL": fpr._KALSHI_UNREACHED_FROZEN_SQL.text,
         }
         for name, sql in askers.items():
             assert shared in _normalise(sql), f"{name} does not compose LIVE_MARKET_SQL"
@@ -195,7 +201,12 @@ class TestSelectionPredicate:
         # Went 9 -> 8 when the guard's two registered statements became one
         # (`_REGISTERED_SQL`): a REMOVED asker is as much a census event as an
         # added one, because the number is what makes the dictionary honest.
-        enrolled = 8
+        #
+        # 8 -> 9 for #4253's reach arm (`_KALSHI_UNREACHED_FROZEN_SQL`). This
+        # guard worked exactly as designed: the arm was written, the suite went
+        # red here, and the number was not touched until the asker was enrolled
+        # in the dictionary above.
+        enrolled = 9
         found = sum(
             inspect.getsource(mod).count("{LIVE_MARKET_SQL}")
             + inspect.getsource(mod).count("{ELIGIBLE_POOL_SQL}")
@@ -221,8 +232,9 @@ class TestSelectionPredicate:
         # interpolation and the module carries the result. Assert on the source:
         # there is no module-level constant to read for this one.
         assert "{LIVE_MARKET_SQL}" in _MODULE_SRC
-        assert _MODULE_SRC.count("{LIVE_MARKET_SQL}") == 4, (
-            "both pool branches, the by-id selector, the reachability census"
+        assert _MODULE_SRC.count("{LIVE_MARKET_SQL}") == 5, (
+            "both pool branches, the by-id selector, the reachability census, "
+            "and #4253's reach arm (_KALSHI_UNREACHED_FROZEN_SQL)"
         )
         # #3315: the census now composes the whole ELIGIBLE POOL, not just the
         # liveness clause. A census that kept the liveness bounds but not the

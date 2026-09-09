@@ -1128,6 +1128,94 @@ _KALSHI_MARKET_NOW_GRADED_SQL = text(
 )
 
 
+#: Markets carrying frozen-certain legs that the PRICE pass will never hand us.
+#:
+#: 🔴 THE SWEEP SHIPPED WITH ITS REACH INVERTED, AND THIS IS THAT HALF.
+#: :func:`_scan_kalshi_frozen_certain` is passed the ids of :data:`_CANDIDATE_SQL`'s
+#: batch, and that query ends in a six-hour staleness anti-join — a market enters
+#: it only after six hours of price silence. An ACTIVELY TRADED market is
+#: re-priced continuously, therefore never goes stale, therefore never enters the
+#: batch, therefore its delisted legs were never checked. Not "later": never. The
+#: sweep reached quiet markets and missed busy ones, while reader harm scales with
+#: busy-ness — the exact opposite of the ordering we want.
+#:
+#: Measured on production 2026-09-09, of 35 open Kalshi markets holding
+#: frozen-certain legs, **15 were unreachable this way** — every one of them a
+#: ``KXIPO*`` "When will X officially announce an IPO?" ladder, 54 stuck legs
+#: between them, led by OpenAI at $1,083,106 of volume. Its page's HERO number
+#: read ``100%`` / "Yes" off a leg for "Before Sep 1, 2025", ten months after that
+#: date passed and with the market's own live legs at 41/63/73%. Both stuck legs
+#: answered 404 at the venue while a 2027 sibling answered 200.
+#:
+#: Ordered by volume DESC so the budget, if it ever binds, is spent where the most
+#: readers are. ``:exclude_ids`` drops the markets the price loop already handled,
+#: so the two populations never pay for the same leg twice.
+_KALSHI_UNREACHED_FROZEN_SQL = text(
+    f"""
+    SELECT fm.id, fm.volume
+      FROM futures_markets fm
+     WHERE fm.source = 'kalshi'
+       AND {LIVE_MARKET_SQL}
+       AND NOT (fm.id = ANY(:exclude_ids))
+       AND EXISTS (
+             SELECT 1
+               FROM futures_outcomes fo
+              WHERE fo.market_id = fm.id
+                AND fo.current_probability = 1.0
+                AND fo.is_winner IS NOT TRUE
+                AND fo.external_id IS NOT NULL
+           )
+       AND NOT EXISTS (
+             SELECT 1
+               FROM futures_outcomes crowned
+              WHERE crowned.market_id = fm.id
+                AND crowned.is_winner IS TRUE
+           )
+     ORDER BY fm.volume DESC NULLS LAST
+     LIMIT :market_limit
+    """
+)
+
+#: The per-market POSITIVE CONTROL, and the reason this pass is allowed to exist.
+#:
+#: The batched arm gets its venue-reachability proof for free: it retires only
+#: AFTER a successful price read on that same market, so a 404 on one leg cannot
+#: be the venue being down. This pass has no such read — nothing here was priced —
+#: so it must buy the same proof, and it buys it per market: one leg we believe is
+#: still listed is probed FIRST, and only a definite ``True`` licenses reading any
+#: 404 in that market as a delisting. ``False``/``None`` decline the whole market,
+#: which is gotcha #53 in its original form: "we could not reach it" must never be
+#: spent as evidence of absence.
+#:
+#: The control is the NON-candidate leg with the freshest ``last_updated`` —
+#: the leg we most recently got a real number for, which is the strongest stored
+#: evidence that the venue still serves this series. Picking the candidate legs'
+#: own siblings matters: a control from another market would prove the venue is up
+#: but not that THIS series is still listed, and a purged series is precisely the
+#: case that must not retire silently.
+_KALSHI_CONTROL_LEG_SQL = text(
+    """
+    SELECT fo.external_id
+      FROM futures_outcomes fo
+     WHERE fo.market_id = :market_id
+       AND fo.external_id IS NOT NULL
+       AND (fo.current_probability IS DISTINCT FROM 1.0)
+     ORDER BY fo.last_updated DESC NULLS LAST
+     LIMIT 1
+    """
+)
+
+#: Markets the unreached arm may examine in one pass.
+#:
+#: Bounds wall clock, not correctness: each market costs one control call plus one
+#: call per candidate leg, all of them counted against the SAME
+#: :data:`KALSHI_DELISTED_CHECK_BUDGET` as the batched arm, so the pass's total
+#: venue spend is unchanged in the worst case. 20 covers today's whole unreachable
+#: population (15 markets) with headroom, and the set is self-draining — a retired
+#: leg's ``current_probability`` is NULL and never matches again.
+KALSHI_UNREACHED_MARKET_LIMIT = 20
+
+
 async def _scan_kalshi_frozen_certain(session, market_ids: list[int]) -> dict[int, list[str]]:
     """Candidate legs for :data:`_KALSHI_FROZEN_CERTAIN_SQL`, grouped by market.
 
@@ -1208,6 +1296,106 @@ async def _retire_delisted_kalshi_legs(
                 len(confirmed), market_id,
             )
     return retired
+
+
+async def _sweep_unreached_kalshi_frozen(
+    session, service, exclude_ids: list[int], stats: dict
+) -> None:
+    """Retire delisted legs on live Kalshi markets the price pass never selects.
+
+    The batched arm rides on :data:`_CANDIDATE_SQL`'s six-hour staleness gate and
+    so cannot see an actively traded market — see
+    :data:`_KALSHI_UNREACHED_FROZEN_SQL` for the measurement and the reader harm.
+    This arm addresses that population by its own query and pays for the
+    reachability proof the batched arm gets free, one control call per market.
+
+    Shares ``KALSHI_DELISTED_CHECK_BUDGET`` with the batched arm and runs AFTER
+    it, so the budget is spent on priced markets first and this arm takes what is
+    left; both directions of that ordering were considered and this one keeps the
+    existing arm's behaviour bit-for-bit when the budget binds.
+
+    Never raises: a failure here must not cost the pass its prices.
+    """
+    if stats["delisted_checks"] >= KALSHI_DELISTED_CHECK_BUDGET:
+        stats["unreached_budget_exhausted"] = True
+        return
+    try:
+        rows = (
+            await session.execute(
+                _KALSHI_UNREACHED_FROZEN_SQL,
+                {
+                    "exclude_ids": list(exclude_ids),
+                    "market_limit": KALSHI_UNREACHED_MARKET_LIMIT,
+                },
+            )
+        ).fetchall()
+    except Exception as exc:
+        await session.rollback()
+        stats["errors"].append(f"kalshi unreached scan: {exc}")
+        return
+
+    stats["unreached_markets_found"] = len(rows)
+    if not rows:
+        return
+
+    candidates = await _scan_kalshi_frozen_certain(session, [int(r[0]) for r in rows])
+    for market_id, _volume in rows:
+        market_id = int(market_id)
+        tickers = candidates.get(market_id)
+        if not tickers:
+            continue
+        if stats["delisted_checks"] >= KALSHI_DELISTED_CHECK_BUDGET:
+            stats["delisted_check_budget_hit"] = True
+            stats["unreached_budget_exhausted"] = True
+            break
+
+        control = await session.scalar(
+            _KALSHI_CONTROL_LEG_SQL, {"market_id": market_id}
+        )
+        if not control:
+            # Every leg in the market is a candidate, so there is nothing left to
+            # prove the series is still listed with. Decline: this is the shape a
+            # wholly purged series has, and it is the one that must not retire on
+            # a 404 that means "the series is gone", not "this leg is gone".
+            stats["unreached_no_control"] += 1
+            continue
+
+        stats["delisted_checks"] += 1
+        try:
+            control_live = await service.market_exists(control)
+        except Exception as exc:  # pragma: no cover - defensive
+            stats["errors"].append(f"kalshi control {control}: {exc}")
+            continue
+        await asyncio.sleep(0.15)
+        if control_live is not True:
+            # False = the control leg is gone too, so a 404 on a candidate proves
+            # nothing about that candidate specifically. None = we could not tell.
+            # Both decline, and they are counted apart because they are different
+            # news: one is a stale control, the other is an unreachable venue.
+            if control_live is False:
+                stats["unreached_control_delisted"] += 1
+            else:
+                stats["unreached_control_indeterminate"] += 1
+            continue
+
+        stats["unreached_markets_checked"] += 1
+        try:
+            retired = await _retire_delisted_kalshi_legs(
+                session, service, market_id, tickers, stats
+            )
+            await session.commit()
+        except Exception as exc:
+            await session.rollback()
+            stats["errors"].append(f"kalshi unreached retire {market_id}: {exc}")
+            continue
+        if retired:
+            stats["kalshi_legs_retired"] += retired
+            stats["unreached_legs_retired"] += retired
+            logger.info(
+                "futures_price_refresh: withdrew %s delisted Kalshi leg(s) on "
+                "unreached market %s (control %s live) — #4253 reach arm",
+                retired, market_id, control,
+            )
 
 
 async def _fetch_polymarket_prices(service, event_ids: list[str]) -> tuple[dict, dict]:
@@ -1409,6 +1597,19 @@ async def _refresh_stale_futures_prices(
         # be shown to be working on the passes where it doesn't.
         "delisted_refused_market_graded": 0,
         "delisted_check_budget_hit": False,
+        # The #4253 reach arm (`_sweep_unreached_kalshi_frozen`). Reported
+        # unconditionally, same rule as above: `unreached_markets_found` at 0 and
+        # `unreached_markets_checked` at 0 are DIFFERENT passes — the first says
+        # the backlog is drained, the second says every market in it declined its
+        # own control — and a report that cannot tell them apart is the report
+        # that let this population sit unswept since the arm shipped.
+        "unreached_markets_found": 0,
+        "unreached_markets_checked": 0,
+        "unreached_legs_retired": 0,
+        "unreached_no_control": 0,
+        "unreached_control_delisted": 0,
+        "unreached_control_indeterminate": 0,
+        "unreached_budget_exhausted": False,
         "errors": [],
         "by_source": {},
         "remaining_stale": None,
@@ -1792,6 +1993,24 @@ async def _refresh_stale_futures_prices(
                                     retired, market["id"], market["external_id"],
                                 )
                     await asyncio.sleep(0.15)
+
+                # #4253 reach arm, LAST: the batched loop above spends the
+                # delisted budget first, so adding this cannot change what that
+                # arm does on any pass — when the budget binds, this one simply
+                # gets nothing. See `_KALSHI_UNREACHED_FROZEN_SQL`.
+                #
+                # Scoped inside `if kalshi_markets:` deliberately. A pass with an
+                # empty Kalshi batch skips the arm, which costs nothing the arm
+                # is for: it is idempotent, its population self-drains, and in
+                # production the batch is never empty (1,044 Kalshi markets
+                # attempted on the 22:53Z pass measured 2026-09-09). Hoisting it
+                # out would dedent the whole block for a case that does not occur.
+                await _sweep_unreached_kalshi_frozen(
+                    session,
+                    kalshi_service,
+                    [m["id"] for m in kalshi_markets],
+                    stats,
+                )
 
         # Two TTLs, because there are two clocks. An identity market marked for
         # 6h would be unreachable for five hours after every refresh, which is
