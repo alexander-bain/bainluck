@@ -348,14 +348,28 @@ nonisolated struct TournamentHubPresentation: Equatable, Sendable {
     /// `now` is a parameter and not `Date()` because a formatter that branches
     /// on the clock cannot be tested by a gate that reads the clock too
     /// (gotcha #44): the caller supplies today, the test supplies a fixed day.
+    ///
+    /// **AND THE "Tomorrow" BRANCH DID NOT HONOUR IT.** It read
+    /// `calendar.isDateInTomorrow(date)`, which is defined against the real
+    /// system clock and ignores `now` entirely — the one rule the paragraph above
+    /// states, broken on the next line but one. In production the two agree,
+    /// because the caller passes `Date()`; the leak is invisible there and only
+    /// a test that supplies a different day can see it. One did, from midnight
+    /// on 2026-09-09: a fixed anchor of Sep 8 asking about Sep 8 + 1 day stopped
+    /// being "tomorrow" the moment the real date rolled over, so the suite went
+    /// permanently red — not intermittently, and in a module nobody had touched.
+    ///
+    /// Every branch is now derived from ONE day-delta against `now`, so there is
+    /// no second notion of today left to disagree with the first. That is also
+    /// why `isDate(_:inSameDayAs:)` is gone: it was correct, but a reader
+    /// checking this function for clock leaks should not have to evaluate two
+    /// different date APIs to convince themselves.
     nonisolated static func startTimeText(
         for date: Date,
         now: Date,
         calendar: Calendar = .current
     ) -> String {
         let time = startTimeFormatter.string(from: date)
-        if calendar.isDate(date, inSameDayAs: now) { return time }
-        if calendar.isDateInTomorrow(date) { return "Tomorrow \(time)" }
 
         // Inside the week ahead a weekday is the shortest unambiguous label a
         // reader can act on; past it the weekday wraps around and starts lying,
@@ -365,6 +379,9 @@ nonisolated struct TournamentHubPresentation: Equatable, Sendable {
             from: calendar.startOfDay(for: now),
             to: calendar.startOfDay(for: date)
         ).day ?? 0
+
+        if days == 0 { return time }
+        if days == 1 { return "Tomorrow \(time)" }
         if days > 0 && days < 7 {
             return "\(weekdayFormatter.string(from: date)) \(time)"
         }
