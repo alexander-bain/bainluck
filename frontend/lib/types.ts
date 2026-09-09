@@ -163,6 +163,16 @@ export interface Event {
   id: number;
   external_id: string;
   sport: string | null;
+  /**
+   * The league's display name as the server stores it ("Dutch Eredivisie"),
+   * or null when the row has no sport. #4368.
+   *
+   * Optional because it was added to `_format_event` after the fact and a
+   * cached or older payload will not carry it — `getSportLabel` treats a
+   * missing name exactly like a raw one and falls back to the key parser, so
+   * an absent field degrades to the previous behaviour rather than to blank.
+   */
+  sport_name?: string | null;
   home_team: string;
   away_team: string;
   commence_time: string;
