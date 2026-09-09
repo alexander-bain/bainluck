@@ -411,15 +411,17 @@ describe("UX-1065: the rendered sentence", () => {
         categoryEmoji: "*",
       }),
     );
-    // #4466 moved the THREE-part side of this pair: the crest slot now takes
-    // initials when a name has 3+ parts, because the trailing token there is a
-    // fragment of a compound rather than a name ("Paris Saint Germain" was
-    // painting "GER"). "Hartlepool United FC" is three parts -> "HUF";
-    // "Altrincham FC" is two, so the last-word rule still answers it -> "ALT".
+    // #4466 rewrote the crest slot and this pair is UNCHANGED by it, which is
+    // the point of leaving the control here. "Hartlepool United FC" is three
+    // tokens, but "United" and "FC" are both club-type words, so only
+    // "Hartlepool" identifies anybody and the last-word rule still answers it
+    // -> "HAR". An earlier draft of #4466 counted raw tokens instead and moved
+    // this to "HUF"; the same arithmetic turned "Warrington Town FC" into
+    // "WTF", which is how the draft was caught.
     //
-    // UX-1065's invariant is untouched and is what the last line states: the
-    // two sides differ, and neither is the word "FC".
-    expect(markup).toContain(">HUF<");
+    // UX-1065's invariant is what the last line states: the two sides differ,
+    // and neither is the word "FC".
+    expect(markup).toContain(">HAR<");
     expect(markup).toContain(">ALT<");
     expect(markup).not.toContain(">FC<");
   });

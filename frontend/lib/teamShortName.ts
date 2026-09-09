@@ -222,31 +222,63 @@ export function teamCrestInitials(name: string | null | undefined): string {
  * is *right* for the American `<place> <nickname>` convention and, thanks to
  * CLUB_TYPE_SUFFIXES above, for `<place> <club-type>` too — "Boston Celtics" is
  * "CEL", "Ipswich Town" is "IPS", "Altrincham FC" is "ALT". Where it has no
- * chance is a name of THREE or more parts, where the trailing token is a
- * fragment of a compound rather than a name anybody uses. So: three or more
- * parts (splitting on hyphens as well as spaces, which is what makes the two
- * PSG spellings agree) takes initials; two parts keeps the shipped behaviour
- * exactly.
+ * chance is a name whose DISTINCTIVE part is three or more words, because then
+ * the trailing token is a fragment of a compound rather than a name anybody
+ * uses. So: take initials only of the tokens that identify the club, and only
+ * when there are three or more of them; anything else keeps the shipped
+ * behaviour exactly. Hyphens split like spaces, which is what makes the two
+ * PSG spellings agree.
  *
- * MEASURED, with these functions and not an approximation of them, over 1,000
- * production fixtures from the trailing 24h where both sides are multi-word,
- * counting fixtures whose two badges come out IDENTICAL:
+ * IT IS NOT A BARE WORD COUNT, AND THAT IS THE WHOLE DESIGN. A first version
+ * of this function took initials of every token once the name had three parts.
+ * Measured over the WHOLE production name population (19,675 distinct
+ * multi-part `events` team names, 2026-09-09) that rule introduced 33 badges
+ * that were not there before and that nobody may ship:
  *
- *     teamShortName().slice(0,3)      11
- *     teamCrestInitials (2 glyphs)    15   <- REJECTED, worse than shipping
- *     this function                    5
+ *     "Warrington Town FC"    -> W,T,F  -> "WTF"   (and 11 more `<W> Town FC`)
+ *     "FC Akhmat Grozny"      -> F,A,G  -> "FAG"
+ *     "FC Universitatea Cluj" -> F,U,C  -> "FUC"
+ *     "Al Sadd SC"            -> A,S,S  -> "ASS"
  *
- * The middle row is why this is not simply `teamCrestInitials`, which #4466's
- * body suggests and which is right for the 20px tile: at two glyphs the Mets
- * and the Yankees are both "NY". (A first pass at this census approximated
- * `teamShortName` in Python as a bare last-word rule, reported 48 vs 14, and
- * inverted the answer — the proxy did not know about CLUB_TYPE_SUFFIXES.)
+ * Every one of those is a club-type or article token — "FC", "SC", "Town",
+ * "Al" — being counted as if it identified somebody. `isNonDistinctiveTrailing‐
+ * Word` already knows exactly which tokens those are (it is what makes
+ * `teamShortName` right on "Ipswich Town"), so this filters through it FIRST
+ * and the whole class disappears structurally: "Warrington Town FC" keeps
+ * "WAR", "FC Akhmat Grozny" keeps "GRO", "Al Sadd SC" keeps "SAD", while
+ * "Paris Saint Germain" — three tokens that all identify the club — still
+ * becomes "PSG".
  *
- * ACCEPTED COST: 40% of the badges on this surface change, all of them within
- * the 3+-part population where the old value was a fragment. Some are plainly
- * better ("New York Mets" MET -> NYM, "Los Angeles Lakers" LAK -> LAL); some
- * trade familiarity for consistency ("Boston Red Sox" SOX -> BRS). Two pinned
- * controls in `teamShortNameUx1065.test.tsx` move with it and say why.
+ * MEASURED, with these functions and not an approximation of them, over the
+ * COMPLETE population of fixtures in a window (not a sample), counting the
+ * fixtures whose two sides paint the SAME badge:
+ *
+ *                              ±24h (443 fixtures)   ±7d (3,261 fixtures)
+ *     teamShortName().slice(0,3)        6                    35
+ *     teamCrestInitials (2 glyphs)      6                    28
+ *     this function                     2                    17
+ *
+ * Both windows are the COMPLETE set of fixtures whose two sides are multi-word,
+ * reconciled against their own `COUNT(*)` and pulled in hash chunks because the
+ * ±7d one exceeds the 1,000-row cap. No fixture that discriminates today stops
+ * discriminating (BROKE = 0 on both), and 18 of the ±7d collisions are removed.
+ *
+ * `teamCrestInitials` is rejected because at two glyphs the Mets and the
+ * Yankees are both "NY"; it barely improves on shipping. (A first pass at this
+ * census approximated `teamShortName` in Python as a bare last-word rule and
+ * reported numbers that inverted the answer — the proxy did not know about
+ * CLUB_TYPE_SUFFIXES. Re-measured through the actual TypeScript. A second pass
+ * sampled 1,000 rows ordered by `commence_time DESC`, which is not a window at
+ * all but the furthest-FUTURE fixtures, and read a tie. Both wrong numbers were
+ * on this comment before the population was taken exhaustively.)
+ *
+ * ACCEPTED COST: 21.4% of the 19,675 names change, all within the population
+ * where the old value was a fragment. Some are plainly better ("New York Mets"
+ * MET -> NYM, "Los Angeles Lakers" LAK -> LAL); some trade familiarity for
+ * consistency ("Boston Red Sox" SOX -> BRS). Two pinned controls in
+ * `teamShortNameUx1065.test.tsx` move with it and say why. Nothing gets SHORTER
+ * than it is today (badges under three glyphs: 210 on master, 77 here; newly
+ * shortened: 0) and no name newly paints an unshippable badge.
  *
  * A DOUBLES PAIR IS NOT TOUCHED. #3110 pinned this tile at three letters of the
  * first surname ("SIN", "HUN") and that decision is not #4466's to reopen — a
@@ -255,15 +287,104 @@ export function teamCrestInitials(name: string | null | undefined): string {
 export function teamCrestBadge(name: string | null | undefined): string {
   const full = (name ?? "").trim();
   if (!full) return "";
+  // #3110 pinned the doubles tile at three letters of the first surname, and
+  // that decision is not this function's to reopen — so a pair keeps the
+  // shipped expression untouched, including its edge cases.
   if (isDoublesPair(full)) return teamShortName(full).slice(0, 3).toUpperCase();
-  const parts = full.split(/[\s‐-―-]+/).filter(Boolean);
-  if (parts.length < 3) return teamShortName(full).slice(0, 3).toUpperCase();
-  return parts
-    .map(word => word.charAt(0))
-    .join("")
-    .slice(0, 3)
-    .toUpperCase();
+  // Hyphen splits like a space so that "Paris Saint-Germain" and "Paris Saint
+  // Germain" — both live on production the same afternoon — agree.
+  const distinctive = full
+    .split(/[\s‐-―-]+/)
+    .filter(Boolean)
+    .filter(token => !isNonDistinctiveTrailingWord(token));
+  const shipped = teamShortName(full).slice(0, 3).toUpperCase();
+  const candidate =
+    distinctive.length < 3
+      ? shortNameBadge(full, distinctive)
+      : distinctive
+          .map(word => word.charAt(0))
+          .join("")
+          .slice(0, 3)
+          .toUpperCase();
+  // Backstop for the residue the token filter cannot reach: a three-part PERSON
+  // name is all-distinctive by construction ("Ana Sofia Sanchez" -> "ASS"), and
+  // no filter that keeps "Paris Saint Germain" working can tell the two apart
+  // from the string alone. The surname is the right badge for a person anyway,
+  // so reverting to the shipped value is the correct answer, not just a censor.
+  //
+  // The test is "do not INTRODUCE one", not "never emit one": 43 names already
+  // paint a badge in this set on master ("Shirak Gyumri" -> "SHI") by the
+  // untouched last-word rule, and silently re-lettering those is a different
+  // change on another lane's evidence. Filed separately as #4537.
+  if (UNSHIPPABLE_BADGES.has(candidate) && !UNSHIPPABLE_BADGES.has(shipped)) {
+    return shipped;
+  }
+  return candidate;
 }
+
+/**
+ * The last-word badge — the shipped rule — with its own fragment case closed.
+ *
+ * `teamShortName` FAILS SAFE by returning the full name when it cannot find a
+ * distinctive trailing word (see its header). That is right for a NAME slot and
+ * wrong for a three-glyph badge, because slicing a multi-word string prints a
+ * fragment with a space in it, which is the very thing #4466 is named after:
+ *
+ *     "AC Milan U20"          -> teamShortName gives it all back -> "AC "
+ *     "1. FC Heidenheim 1846"                                    -> "1. "
+ *     "Al Sadd SC"                                               -> "AL "
+ *
+ * Measured over the whole production population (19,675 distinct multi-part
+ * `events` team names, 2026-09-09): 207 names paint a badge containing
+ * whitespace, and all 207 already do so on master — this is a pre-existing
+ * defect of the same class, not one this change introduces. The distinctive
+ * tokens are already computed by the caller, so the fix is to use them:
+ * "AC Milan U20" is "MIL", "1. FC Heidenheim 1846" is "HEI", "Al Sadd SC" is
+ * "SAD", "APIA Leichhardt FC" is "AL".
+ *
+ * WHY TWO DISTINCTIVE TOKENS GIVE TWO INITIALS RATHER THAN THREE LETTERS OF THE
+ * LAST ONE. The latter reads better on the specimens ("APIA Leichhardt FC" ->
+ * "LEI" rather than "AL") and I wrote it that way first on exactly that basis.
+ * Measured, it is worse on every axis that matters: ±7d collisions 15 -> 26,
+ * five fixtures newly painting one badge on both sides ("Grenoble Foot 38" and
+ * "Clermont Foot 63" are both "FOO"), and seven new unshippable badges
+ * ("South Shields FC" -> "SHI", "San Diego FC" -> "DIE"). Initials keep the
+ * discriminating token.
+ *
+ * This closes 182 of the 207. The 25 it does NOT close are all doubles pairs
+ * ("An Lin / Yi Yang" -> "AN "), which take the #3110-pinned path above and are
+ * that issue's decision rather than this one's. Filed as #4535.
+ */
+function shortNameBadge(full: string, distinctive: string[]): string {
+  const sliced = teamShortName(full).trim().slice(0, 3);
+  // The test is on the SLICE, not on the short name. `teamShortName` handing
+  // back a multi-word string is only visible when the first word is shorter
+  // than the badge — "AC Milan U20" cuts to "AC ", but "Abbey Hey FC" cuts to
+  // "Abb", which is a clean prefix and stays exactly as it shipped. Testing the
+  // short name instead re-lettered 963 names that were never broken.
+  if (!/\s/.test(sliced)) return sliced.toUpperCase();
+  if (distinctive.length === 1) return distinctive[0].slice(0, 3).toUpperCase();
+  if (distinctive.length === 2) {
+    return distinctive.map(word => word.charAt(0)).join("").toUpperCase();
+  }
+  // Nothing in the name identifies anybody ("3K FC"). Three glyphs of the name
+  // itself still beats a slice that ends in a space.
+  return alphanumeric(full).slice(0, 3).toUpperCase();
+}
+
+/**
+ * Three-glyph strings that may never appear on a crest, whatever produces them.
+ *
+ * This is a BACKSTOP, not the fix: the structural cases are removed by
+ * filtering non-distinctive tokens above, and this catches what is left when
+ * three genuinely-distinctive words happen to spell something. Kept explicit
+ * and short — a badge is three uppercase letters, so a substring matcher would
+ * be all false positives.
+ */
+const UNSHIPPABLE_BADGES: ReadonlySet<string> = new Set([
+  "ASS", "FAG", "FUC", "FUK", "CUM", "COC", "COK", "CNT", "KKK",
+  "NIG", "SHT", "TIT", "TWA", "WTF", "JIZ", "PIS", "SEX", "HOE",
+]);
 
 /**
  * One side's compact name. Prefer this only where the other side is genuinely

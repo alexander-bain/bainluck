@@ -21,26 +21,33 @@
 // club conventions `<place> <club-type>` and `<place> <place> <name>` dominate
 // outside North America.
 //
-// Measured with the REAL helpers over 1,000 production fixtures from the
-// trailing 24h where both sides are multi-word, counting fixtures on which the
-// two badges come out IDENTICAL:
+// Measured with the REAL helpers over the COMPLETE set of fixtures in a window
+// whose two sides are both multi-word — not a sample — counting the fixtures on
+// which the two sides paint the SAME badge:
 //
-//     teamShortName().slice(0,3)   11   <- what shipped
-//     teamCrestInitials (2 glyphs) 15   <- WORSE; Mets and Yankees both "NY"
-//     teamCrestBadge    (3 glyphs)  2
+//                              ±24h (443)   ±7d (3,261)
+//     teamShortName().slice(0,3)    6            35      <- what shipped
+//     teamCrestInitials (2 glyphs)  6            28      <- Mets and Yankees both "NY"
+//     teamCrestBadge                2            17
 //
 // The middle row is why this ships `teamCrestBadge` and not the two-glyph
-// helper #4466's body suggests: a first pass at this census approximated
-// `teamShortName` in Python as a bare last-word rule and reported 48 vs 14,
-// which inverted the answer. The Python proxy did not know about
-// CLUB_TYPE_SUFFIXES, so it "collided" on pairs the real function already
-// separates ("Cheltenham Town" is "CHE", not "TOW"). Re-measured through the
-// actual TypeScript, two glyphs is a REGRESSION on collisions and three is a
-// 5.5x improvement.
+// helper #4466's body suggests. THREE numbers were wrong on this comment before
+// the population was taken properly, and each was wrong a different way:
+//
+//   1. A first pass approximated `teamShortName` in Python as a bare last-word
+//      rule and reported 48 vs 14, inverting the answer — the proxy did not
+//      know about CLUB_TYPE_SUFFIXES, so it "collided" on pairs the real
+//      function already separates ("Cheltenham Town" is "CHE", not "TOW").
+//   2. A second pass used the real TypeScript but sampled `LIMIT 1000 ORDER BY
+//      commence_time DESC`, which is not a window at all — it is the 1,000
+//      furthest-FUTURE fixtures — and read a tie, 3 vs 3.
+//   3. The numbers 11 / 15 / 5 and 11 / 15 / 2 were both on this file at once,
+//      disagreeing with each other, which is what prompted the re-measurement.
+//
+// The windows above are pulled in hash chunks (±7d exceeds the 1,000-row
+// db-query cap) and each is reconciled against its own COUNT(*).
 //
 // Three glyphs also gives the abbreviations a fan uses — PSG, LAL, NYM, NYY.
-// The accepted cost is that a two-word name only has two initials: "Ipswich
-// Town" is "IT" (was "IPS") and "Real Madrid" is "RM" (was "MAD").
 //
 // ── THE THIRD CALL SITE, AND WHY THE SCAN STRIPS COMMENTS ───────────────────
 //
@@ -157,6 +164,93 @@ describe("#4466 the badge derivation", () => {
     expect(teamCrestBadge("Caen Handball")).not.toBe(
       teamCrestBadge("Fenix Toulouse Handball"),
     );
+  });
+});
+
+describe("#4466 the badge is never a word nobody may ship", () => {
+  // THE CLASS THAT NEARLY SHIPPED. The first version of `teamCrestBadge` took
+  // initials of every token once the name had three parts. Scanned over the
+  // whole production name population (19,675 distinct multi-part `events` team
+  // names, 2026-09-09) that rule INTRODUCED 33 badges that master does not
+  // paint — including all twelve `<W> Town FC` clubs rendering "WTF". None of
+  // them appears in a fixture list anyone would think to write down; they were
+  // found by scanning the population for the output, which is the only way this
+  // class is visible.
+  const INTRODUCED_BY_THE_NAIVE_RULE: [string, string][] = [
+    ["Warrington Town FC", "WTF"],
+    ["Whitby Town FC", "WTF"],
+    ["Witham Town FC", "WTF"],
+    ["FC Akhmat Grozny", "FAG"],
+    ["FC Universitatea Cluj", "FUC"],
+    ["Al Sadd SC", "ASS"],
+    ["Al-Sailiya SC", "ASS"],
+    ["Ku Keon Kang", "KKK"],
+  ];
+
+  it.each(INTRODUCED_BY_THE_NAIVE_RULE)(
+    "%s does not paint %s",
+    (name, banned) => {
+      expect(teamCrestBadge(name)).not.toBe(banned);
+    },
+  );
+
+  it("resolves those names to the club, not merely to something else", () => {
+    // "not banned" is satisfied by returning "" or "X". Pin the real answers so
+    // the ban cannot be passed by degrading the badge.
+    expect(teamCrestBadge("Warrington Town FC")).toBe("WAR");
+    expect(teamCrestBadge("FC Akhmat Grozny")).toBe("GRO");
+    expect(teamCrestBadge("FC Universitatea Cluj")).toBe("CLU");
+    expect(teamCrestBadge("Al Sadd SC")).toBe("SAD");
+  });
+
+  it("keeps a three-part PERSON name on the surname", () => {
+    // The residue the token filter cannot reach: a person's three names are all
+    // distinctive, so nothing in the string distinguishes "Ana Sofia Sanchez"
+    // from "Paris Saint Germain". The surname is the right badge for a person
+    // anyway, which is why the backstop reverts rather than censors.
+    expect(teamCrestBadge("Ana Sofia Sanchez")).toBe("SAN");
+    expect(teamCrestBadge("Abhinav Sanjeev Shanmugam")).toBe("SHA");
+  });
+
+  it("still gives PSG initials — the backstop did not swallow the fix", () => {
+    // The control that proves the filter and the backstop are narrow. If either
+    // over-fired, this is the assertion that fails.
+    expect(teamCrestBadge("Paris Saint Germain")).toBe("PSG");
+  });
+});
+
+describe("#4466 the badge is never a truncated fragment", () => {
+  // `teamShortName` FAILS SAFE by handing back the full name when it can find
+  // no distinctive trailing word. Slicing that prints a fragment with a space
+  // in it — 207 names on master, which is the same defect #4466 is named after
+  // arriving by a second route.
+  it.each([
+    ["AC Milan U20", "MIL"],
+    ["1. FC Heidenheim 1846", "HEI"],
+    ["Al Sadd SC", "SAD"],
+  ])("%s paints %s and not a slice ending in a space", (name, want) => {
+    expect(teamCrestBadge(name)).toBe(want);
+    expect(teamCrestBadge(name)).not.toMatch(/\s/);
+  });
+
+  it("leaves a clean three-letter prefix alone", () => {
+    // The narrowing that matters. Testing the SHORT NAME for whitespace instead
+    // of the SLICE re-lettered 963 names that were never broken: "Abbey Hey FC"
+    // cuts to "Abb", which has no space in it and is what shipped.
+    expect(teamCrestBadge("Abbey Hey FC")).toBe("ABB");
+    expect(teamCrestBadge("APIA Leichhardt FC")).toBe("API");
+  });
+
+  it("prefers two initials to three letters of the last token", () => {
+    // Measured: resolving the two-distinctive-token case to the last token
+    // reads better on specimens ("APIA Leichhardt FC" -> "LEI") and is worse on
+    // every axis — ±7d collisions 15 -> 26, five fixtures newly painting one
+    // badge on both sides, and seven new unshippable badges. This is that
+    // decision pinned by its worst case.
+    expect(teamCrestBadge("Grenoble Foot 38")).not.toBe(
+      teamCrestBadge("Clermont Foot 63"),
+    );
+    expect(teamCrestBadge("South Shields FC")).not.toBe("SHI");
   });
 });
 
