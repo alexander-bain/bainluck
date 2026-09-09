@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import type { GameMarketsResponse } from "@/lib/api";
 import {
   buildMarketSection,
+  FALLBACK_CATEGORY,
   MAX_CARDS_PER_CATEGORY,
   MAX_OUTCOMES_PER_CARD,
   type DecidedSetsWinner,
@@ -239,15 +240,57 @@ export default function SpecialEventMarkets({
         {section.categories.map((cat) => {
           const shownCards = cat.cards.slice(0, MAX_CARDS_PER_CATEGORY);
           const restCards = cat.cards.slice(MAX_CARDS_PER_CATEGORY);
+          /* #4286. Compared against the exported constant rather than the
+             literal `"Other Markets"`, so renaming the bucket cannot silently
+             turn this suppression off and leave the duplication back on the
+             page with no test failing. */
+          const isLoneFallback =
+            section.categories.length === 1 && cat.title === FALLBACK_CATEGORY;
           return (
             <div
               key={cat.title}
               className="bg-surface-card border border-surface-border rounded-xl shadow-sm p-4"
             >
-              <div className="mb-3">
-                <div className="font-semibold">{cat.title}</div>
-                <div className="text-xs text-text-muted">{cat.subtitle}</div>
-              </div>
+              {/* ── #4286: THREE NAMES FOR ONE IDEA, IN FOUR LINES ──────────
+                  A reader on a settled event met, before a single market:
+
+                      Additional Markets      <- the section heading
+                      settled
+                      Other Markets           <- this card's title
+                      additional markets      <- this card's subtitle
+
+                  `Other Markets` is the FALLBACK bucket — "gap K11", the one
+                  rows land in when no category pattern claims them — and this
+                  module's own header records that on MLB it took 100% of rows
+                  on 6 of 6 games. So it is very often the section's ONLY card,
+                  and when it is, its title says the heading again and its
+                  subtitle says it a third time.
+
+                  Two suppressions, both about information rather than length:
+
+                  * The subtitle is now `""` for the fallback (see
+                    `categorizeMarketName`) and an empty subtitle draws nothing.
+                    Every real category keeps its own — `scoring & flow`,
+                    `statistical milestones` — because those say something the
+                    title does not.
+                  * The fallback's TITLE is dropped only when it is the
+                    section's ONLY card. With a sibling beside it the title is
+                    load-bearing — it is the one thing distinguishing the two —
+                    so it stays, and the guard asserts that direction too.
+
+                  🔴 NOT A NOTICE-34 CHANGE, and it must not be extended into
+                  one. These are HEADINGS, not diagnostic prose: no coverage
+                  count, no method note, no limitation. It sits one line under
+                  #4167's notice-34 sweep and the temptation to treat it the
+                  same way is obvious and wrong. */}
+              {(!isLoneFallback || cat.subtitle) && (
+                <div className="mb-3">
+                  {!isLoneFallback && <div className="font-semibold">{cat.title}</div>}
+                  {cat.subtitle && (
+                    <div className="text-xs text-text-muted">{cat.subtitle}</div>
+                  )}
+                </div>
+              )}
               <div className="space-y-3">
                 {shownCards.map((item) => (
                   <PropMiniCard key={item.name} item={item} settled={settled} />
