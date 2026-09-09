@@ -44,7 +44,12 @@ import pytest
 
 from app.services.anchor_channel import CONFIRMED, STALE_INCUMBENT, WROTE
 from app.services.statpal_api import StatPalFixture, StatPalUpstreamError
-from app.utils.authority_agreement import READ_FAILED, READ_OK
+from app.utils.authority_agreement import (
+    MISMATCH_IN_SPACE_IS,
+    MISMATCH_OUT_OF_SPACE_IS,
+    READ_FAILED,
+    READ_OK,
+)
 
 #: `app/tasks/__init__.py` registers task attributes that shadow submodules of
 #: the same name, so a dotted import can hand back the task object instead of
@@ -309,6 +314,18 @@ async def test_a_clean_stamp_writes_the_column_and_the_anchor_and_commits(drive)
         "anchored": 1,
         "unanchored": 0,
         "mismatch": 0,
+        # #4263. `measured: True` is the assertion that matters here, and it is
+        # about the TASK, not about the function: it can only be true if this
+        # stamper actually handed its `anchor_space` over. Both zeros are the
+        # empty split of an empty `mismatch`, which is what a clean pass looks
+        # like — and they are `0` rather than absent because the pass DID look.
+        "mismatch_split": {
+            "measured": True,
+            "in_published_space": 0,
+            "not_in_published_space": 0,
+            "in_published_space_is": MISMATCH_IN_SPACE_IS,
+            "not_in_published_space_is": MISMATCH_OUT_OF_SPACE_IS,
+        },
         "polluted_column": 0,
         "pct_of_both": 100.0,
         "governs": False,

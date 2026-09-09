@@ -1660,6 +1660,13 @@ async def _run_stamp_v1_statpal_fixtures(
         window=(window_start, window_end),
         measurement_window=(measure_start, measure_end),
         is_anchor_id=is_statpal_contest_id,
+        # #4263. The same evidence `classify_fixture` already splits
+        # `FOREIGN_ID_SPACE` off `CONTRADICTION` with, handed to the measurement
+        # that gates the flip so the two halves of this task stop disagreeing
+        # about whether the distinction exists. This is the ANCHORING endpoint's
+        # publication; `build_agreement_row` unions it with the fixtures it was
+        # given, which is what keeps a live-board anchor from reading foreign.
+        published_ids=anchor_space,
     )
 
     # D50's seven-day count, folded into the durable ledger and attached to the

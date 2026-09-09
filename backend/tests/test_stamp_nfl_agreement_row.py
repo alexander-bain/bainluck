@@ -341,6 +341,12 @@ async def test_a_fabricated_column_reaches_the_row_as_its_own_bucket(drive):
     assert anchors["polluted_column"] == 1
     assert anchors["anchored"] == 0
     assert anchors["unanchored"] == 0
+    # #4263. NFL hands its own publication over — the season-schedule read IS
+    # the publication for this sport — so the mismatch split is measured here,
+    # not degraded. Asserted in the task's own suite because the function can
+    # only ever prove it CAN split; whether this stamper passes the evidence is
+    # a fact about the call site.
+    assert anchors["mismatch_split"]["measured"] is True
 
 
 # ---------------------------------------------------------------------------
