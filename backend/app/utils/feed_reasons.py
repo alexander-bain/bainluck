@@ -11,6 +11,10 @@ from datetime import datetime, timezone
 from typing import NamedTuple, Optional
 
 from app.utils.graded_card import rendered_percent
+from app.utils.outcome_display_names import (
+    display_outcome_name,
+    display_outcome_names,
+)
 
 #: Words about our own machinery — the ordering of our leaderboard, the number of
 #: rows we hold for a question, whether our sources agree with each other. None of
@@ -134,6 +138,17 @@ def humanize_binary_outcome_name(
 
     Only used for feed card display — never mutates the underlying data.
     """
+    # #4151 — a venue slug is not "Yes"/"No", so it used to fall straight
+    # through this function and be SPOKEN in the sentence: `claude-fable-5.1-max
+    # leads at 68%`. Resolved here rather than at the call site because the
+    # sentence and the outcome ROW are humanized on two separate paths, and if
+    # only one of them learned the display name the card would state a name it
+    # does not print one line below — the #4146 defect, rebuilt.
+    if outcome_name:
+        displayed = display_outcome_name(outcome_name, market_name)
+        if displayed != outcome_name:
+            return displayed
+
     if not outcome_name or outcome_name.strip().lower() not in {"yes", "no"}:
         return outcome_name
 
@@ -258,9 +273,17 @@ def humanize_outcome_names_for_feed(
     Returns a NEW list (does not mutate the input). Only applies
     humanization when ALL outcomes are Yes/No (i.e., a true binary market).
     Multi-outcome markets with named choices are left untouched.
+
+    #4151 — EXCEPT that "a named choice" was doing a lot of work in that last
+    sentence. A field market whose names are venue slugs reaches the early
+    return below and its rows print `claude-fable-5.1-max`, so venue slugs are
+    resolved FIRST, before the all-binary test that would otherwise skip them.
     """
     if not top_outcomes:
         return top_outcomes
+
+    # #4151 — before the binary gate: a slug market is by definition not binary.
+    top_outcomes = display_outcome_names(top_outcomes, market_name)
 
     # Only humanize if every outcome is Yes or No
     all_binary = all(
