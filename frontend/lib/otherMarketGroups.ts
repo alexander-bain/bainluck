@@ -54,6 +54,14 @@ export const MAX_CARDS_PER_CATEGORY = 5;
 /** Category that collects rows whose label names a player statistic. */
 export const PLAYER_PROPS_CATEGORY = "Player Props";
 
+/**
+ * The bucket a row lands in when no `CATEGORY_PATTERNS` entry claims it — "gap
+ * K11" in this file's own header. Named rather than spelled out at each of its
+ * use sites so the render can ask *"is this the fallback?"* without matching a
+ * literal, which is the check #4286 needs.
+ */
+export const FALLBACK_CATEGORY = "Other Markets";
+
 export interface OtherMarketRow {
   market_name?: string | null;
   outcome_name?: string | null;
@@ -209,7 +217,18 @@ export function categorizeMarketName(name: string): { category: string; subtitle
   for (const { pattern, category, subtitle } of CATEGORY_PATTERNS) {
     if (pattern.test(name)) return { category, subtitle };
   }
-  return { category: "Other Markets", subtitle: "additional markets" };
+  /* #4286: THE FALLBACK'S SUBTITLE WAS THE SECTION HEADING, LOWER-CASED.
+     A reader met `Additional Markets` (section), then `Other Markets` (card),
+     then `additional markets` (card subtitle) — three names for one idea in
+     four lines, before a single market appeared. The first two at least locate
+     you; the third carries no information any reader could act on, so it is
+     empty and the render skips an empty subtitle.
+
+     Empty rather than removed from the type: every other category has a real
+     subtitle that says something its title does not (`scoring & flow`,
+     `statistical milestones`), and widening the field to optional would push a
+     null check onto every call site to describe one bucket. */
+  return { category: FALLBACK_CATEGORY, subtitle: "" };
 }
 
 /** `Set 1 Winner: Swiatek vs Zheng` → scope `Set 1`, sides `Swiatek` / `Zheng`. */
@@ -539,7 +558,7 @@ const CATEGORY_ORDER = [
   PLAYER_PROPS_CATEGORY,
   "Player Performance",
   "Novelty Props",
-  "Other Markets",
+  FALLBACK_CATEGORY,
 ];
 
 /** The most sets a tennis match can contain — five, and only in the men's draw. */
