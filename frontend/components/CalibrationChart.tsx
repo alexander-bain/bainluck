@@ -67,7 +67,15 @@ export default function CalibrationChart({
       height={height}
       viewBox={`0 0 ${width} ${height}`}
       className="block mx-auto"
-      style={{ fontFamily: "-apple-system, system-ui, sans-serif", maxWidth: "100%" }}
+      // #4330: `height` is a presentation attribute, so it sets the CSS height and nothing
+      // overrode it, while `maxWidth` shrank only the width. Below 700px `preserveAspectRatio`
+      // then drew a 157px-tall chart centred in the 340px box it was still given, and the two
+      // transparent bands (91px and 107px on the page's two wide-and-short call sites) read to a
+      // phone reader as the card being broken. `height: auto` lets the viewBox's aspect ratio
+      // set the height once the width is constrained. Measured on production: every band → 0px
+      // at 390px with `drawn` byte-identical, and all nine charts identical at 1280px, where the
+      // max-width never binds. Probe: tools/chart-letterbox-1067.mjs.
+      style={{ fontFamily: "-apple-system, system-ui, sans-serif", maxWidth: "100%", height: "auto" }}
     >
       <rect width={width} height={height} fill="white" rx="8" />
 
