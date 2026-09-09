@@ -349,6 +349,46 @@ def is_available() -> bool:
     return bool(os.getenv("STATPAL_API_KEY"))
 
 
+#: The sports whose schedule is served ONE CALENDAR BOARD AT A TIME, so
+#: `get_schedule_fixtures` requires a `day_offset` from them and from nobody
+#: else.
+#:
+#: Stated once so a caller can ASK instead of re-deriving it. The nearest
+#: existing predicate — `"{day}" in _SCHEDULE_ENDPOINTS[sport]`, used by
+#: `get_fixtures` — catches tennis and MISSES soccer, because soccer's day token
+#: is a query parameter (`matches/daily?offset=N`) rather than a path segment. A
+#: caller reaching for that marker concludes soccer needs no token, which is the
+#: shape of #4320.
+#:
+#: Module level rather than on the class, beside `is_available` and for its
+#: reason: this is a fact about StatPal's product that callers consult BEFORE
+#: deciding to construct a client, not behaviour of one.
+DAY_BOARD_SPORTS: frozenset[str] = frozenset({"tennis", "soccer"})
+
+
+def schedule_can_cover_today(sport: str) -> bool:
+    """Can this sport's schedule endpoint answer about a window including today?
+
+    **THERE IS NO d0 FOR EITHER DAY-BOARD SPORT**, and that is the whole content
+    of this predicate. Tennis's `daily/d0` answers HTTP 500; soccer's
+    `matches/daily?offset=0` answers 200 with `matches/live` wearing a schedule
+    URL and is refused BY NAME in `get_schedule_fixtures`. Nor do the
+    neighbouring boards close over today: a board runs ~25.5h from 23:00Z the
+    previous day to 00:30–00:45Z the next (measured — see
+    `StatPalAPIService.SOCCER_DAILY_OFFSETS`), so `d-1` ends ~00:45Z today and
+    `d1` begins ~23:00Z today, leaving ~22 hours of today reachable from no
+    board at all.
+
+    So for these two, "what does StatPal's schedule say is on right now" has no
+    answer, and a caller must not manufacture one by picking a token. Today's
+    play is `get_live_fixtures` and only that.
+
+    Season-schedule sports answer about a whole season in one call, which
+    includes today — they are the `True` case.
+    """
+    return sport not in DAY_BOARD_SPORTS
+
+
 class StatPalAPIService(BaseAPIClient):
     """
     Client for the StatPal sports data API.
