@@ -101,6 +101,21 @@ const iosPresent = existsSync(RESOLVER) && existsSync(IOS_ROOT);
 const d = iosPresent ? describe : describe.skip;
 
 d("#4135 — the app names a source or draws none", () => {
+  /**
+   * Slice a declaration's body, and PROVE the slice — a scoping regex that
+   * silently matches nothing turns every assertion below it into a vacuous
+   * pass. (#4134 shipped a guard that tested a helper nothing called; this is
+   * the same failure wearing different clothes.)
+   */
+  function slice(relPath: string, declaration: string): string {
+    const source = stripComments(readFileSync(join(IOS_ROOT, relPath), "utf8"));
+    const start = source.indexOf(declaration);
+    expect([relPath, declaration, start > -1]).toEqual([relPath, declaration, true]);
+    const body = source.slice(start, start + 900);
+    expect(body.length).toBeGreaterThan(declaration.length);
+    return body;
+  }
+
   describe("the raw-key fallback is gone, as a discovered property", () => {
     it("no view title-cases a market source onto the screen", () => {
       const offenders = swiftFiles(IOS_ROOT)
@@ -142,21 +157,6 @@ d("#4135 — the app names a source or draws none", () => {
   });
 
   describe("every surface that draws a source reaches the one resolver", () => {
-    /**
-     * Slice a declaration's body, and PROVE the slice — a scoping regex that
-     * silently matches nothing turns every assertion below it into a vacuous
-     * pass. (#4134 shipped a guard that tested a helper nothing called; this is
-     * the same failure wearing different clothes.)
-     */
-    function slice(relPath: string, declaration: string): string {
-      const source = stripComments(readFileSync(join(IOS_ROOT, relPath), "utf8"));
-      const start = source.indexOf(declaration);
-      expect([relPath, declaration, start > -1]).toEqual([relPath, declaration, true]);
-      const body = source.slice(start, start + 900);
-      expect(body.length).toBeGreaterThan(declaration.length);
-      return body;
-    }
-
     // Every site the tree had, discovered by grepping for the old switch. Each
     // must now ASK the resolver rather than carry its own copy of the answer.
     const sites: Array<[string, string]> = [
@@ -186,6 +186,84 @@ d("#4135 — the app names a source or draws none", () => {
       const myStuff = readFileSync(join(IOS_ROOT, "Views/MyStuffView.swift"), "utf8");
       expect(myStuff).not.toContain("private let sourceLabels");
       expect(myStuff).toContain("private let sourceColors");
+    });
+  });
+
+  describe("#4284 — the event page's book table draws brands, not keys", () => {
+    /**
+     * The same defect as #4135, on the fifth surface: `bookmakerContent` drew
+     * `bm.bookmaker ?? "Unknown"`, so every event page in the app printed
+     * `betonlineag`, `lowvig` and `betus` while `SourceLabels` two files away
+     * already knew them as BetOnline, LowVig and BetUS.
+     *
+     * A raw CONTRIBUTOR key does not match `RAW_KEY_FALLBACK` above — that
+     * pattern is about `source.capitalized`, and this site never title-cased
+     * anything, it just printed the key. So the class needs its own pattern, or
+     * the scan that exists to catch "a key reached the screen" reads green while
+     * one does.
+     */
+    const RAW_BOOKMAKER_FALLBACK = /\.bookmaker\s*\?\?\s*"/;
+
+    it("no view falls back to a raw bookmaker key", () => {
+      const offenders = swiftFiles(IOS_ROOT)
+        .flatMap((path) => {
+          const rel = path.slice(IOS_ROOT.length + 1);
+          return stripComments(readFileSync(path, "utf8"))
+            .split("\n")
+            .filter((line) => RAW_BOOKMAKER_FALLBACK.test(line))
+            .map((line) => `${rel} — ${line.trim()}`);
+        })
+        .sort();
+
+      expect(offenders).toEqual([]);
+    });
+
+    it("that scan would have fired before the fix", () => {
+      // Both pre-fix lines, copied verbatim from origin/master 8d0abc64 — the
+      // row and the width model each carried their own copy.
+      for (const line of [
+        `                    label: bm.bookmaker ?? "Unknown",`,
+        `            labels: bookmakers.map { $0.bookmaker ?? "Unknown" },`,
+      ]) {
+        expect([line, RAW_BOOKMAKER_FALLBACK.test(line)]).toEqual([line, true]);
+      }
+      // …and it is not firing on a comment that merely quotes them: this file's
+      // own Swift doc comments name the deleted code, which is exactly how a
+      // `not.toContain` scan reds on the explanation of its own fix.
+      const detail = readFileSync(join(IOS_ROOT, "Views/EventDetailView.swift"), "utf8");
+      expect(RAW_BOOKMAKER_FALLBACK.test(detail)).toBe(true);
+      expect(RAW_BOOKMAKER_FALLBACK.test(stripComments(detail))).toBe(false);
+    });
+
+    it("the rows are built by asking the resolver", () => {
+      expect(slice("Views/EventDetailView.swift", "static func namedBookmakerRows(")).toContain(
+        "SourceLabels.sportsbookName(for:"
+      );
+    });
+
+    it("the width model measures the brand the row draws, not the key", () => {
+      // #4208/#4233's invariant: the column is sized on the strings the list
+      // prints. Measuring keys is wrong in BOTH directions — `betonlineag` is
+      // wider than "BetOnline", `betmgm` narrower than "BetMGM" — and no
+      // screenshot shows a column that is merely the wrong width.
+      const body = slice("Views/EventDetailView.swift", "private func bookmakerContent(");
+      expect(body).toContain("rows.map(\\.label)");
+      expect(body).not.toContain("$0.bookmaker");
+
+      // And the row DRAWS the brand. Measuring `\.label` while drawing `\.id`
+      // would size the column correctly and still print the key — a mutant no
+      // Swift test can see, because which field the view passes is view code.
+      expect(body).toContain("label: row.label");
+      expect(body).not.toContain("label: row.id");
+    });
+
+    it("the disclosure asks for named rows before promising a table", () => {
+      // An unnameable key draws no row, so `bookmakerOdds` being non-empty no
+      // longer implies a table — asking the payload here opens the disclosure
+      // onto an "Individual sportsbooks" heading with nothing under it.
+      expect(slice("Views/EventDetailView.swift", "private func sourcesToggle(")).toContain(
+        "namedBookmakerRows("
+      );
     });
   });
 

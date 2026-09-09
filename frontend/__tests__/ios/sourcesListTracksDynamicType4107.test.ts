@@ -199,6 +199,11 @@ describe("#4107 the Sources list label column", () => {
 const bookmakerContent = withoutComments(
   functionBody(eventDetail, "private func bookmakerContent(_ event: EventDetail)"),
 );
+// #4284 — the book table's rows are built here now: named through `SourceLabels`,
+// then capped. The width model and the `ForEach` both read what this returns.
+const namedRows = withoutComments(
+  functionBody(eventDetail, "static func namedBookmakerRows("),
+);
 
 describe.each([
   ["sourceContent", sourceContent],
@@ -386,17 +391,25 @@ describe.each([
  */
 describe("#4208 the books column measures the rows it actually draws", () => {
   it("derives the measured values through the same predicate as the row", () => {
+    // #4284 — the predicate moved once more, and this pin moved with it rather
+    // than being relaxed. `namedBookmakerRows` now calls `bookmakerProbabilities`
+    // ONCE per book and both halves read the result off the row, so the drift
+    // this guards — measuring through one rule and drawing through another —
+    // stopped being possible rather than merely being tested for. The call must
+    // still be the only way a pair is obtained, so it is pinned where it went.
+    expect(namedRows).toContain("bookmakerProbabilities(bm)");
     expect(bookmakerContent).toContain(
-      "guard let pair = Self.bookmakerProbabilities(bm) else { return [] }",
+      "guard let pair = row.probabilities else { return [] }",
     );
-    // #4233 — the row is shared now, so the predicate's OTHER use moved with it:
-    // the list hands the same optional over and the row decides whether to draw
-    // the bar. Both halves still named, because a list that measured through the
-    // predicate and drew through something else is the drift this pins.
-    expect(bookmakerContent).toContain(
-      "probabilities: Self.bookmakerProbabilities(bm)",
-    );
+    expect(bookmakerContent).toContain("probabilities: row.probabilities");
     expect(sourceRow).toContain("if let probabilities {");
+
+    // …and the two halves read ONE array, which is what makes the above true.
+    // Two `namedBookmakerRows` calls in this function would re-open the gap with
+    // both pins still green (the cap and the naming are order-dependent).
+    expect(bookmakerContent).toContain("labels: rows.map(\\.label)");
+    expect(bookmakerContent).toContain("ForEach(rows)");
+    expect(bookmakerContent.match(/namedBookmakerRows\(/g)).toHaveLength(1);
   });
 
   it("never substitutes a made-up price for a row that has none", () => {
