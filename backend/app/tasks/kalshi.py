@@ -453,6 +453,40 @@ def _kalshi_yes_probability(
     return None
 
 
+#: The venue status of a leg Kalshi has WITHDRAWN. Not a lifecycle state the
+#: way ``closed``/``settled``/``finalized`` are — those are how a market ends,
+#: and their last price is the answer. ``inactive`` is how a market is taken
+#: back: the venue stops quoting it and the leg never resolves.
+_KALSHI_WITHDRAWN_STATUS = "inactive"
+
+
+def _is_withdrawn_leg(status: Optional[str]) -> bool:
+    """Has the venue withdrawn this leg?
+
+    #4356. Kalshi listed ``KXNFLFIRSTTD-26SEP10SFLAR-LARNONE`` at 23:15Z on
+    2026-09-02, then opened ``…-NONE`` 35 minutes later and marked the first
+    ``inactive``. The two carry byte-identical ``rules_primary``,
+    ``rules_secondary`` AND ``custom_strike`` (same ``football_player`` and
+    ``football_team`` UUIDs) — the venue's own listing says they are ONE
+    outcome it duplicated and took back, not two outcomes.
+
+    We kept quoting the withdrawn one at 0.390 from its last readable book, so
+    the First Touchdown card opened with "No Touchdown 39%" above every real
+    player while the live leg said 2%. It looked freshly updated because
+    ``_refresh_linked_game_books`` fetches ``status=None`` and repriced it every
+    pass; ``_poll_kalshi_markets`` fetches ``status="open"`` (gotcha #33) and so
+    could neither correct it nor clear it.
+
+    Deliberately ONE status and not "anything that is not ``active``": a
+    ``closed``/``settled``/``finalized`` leg's final price is data we must keep
+    (gotcha #21), and clearing those would wipe the closing lines calibration
+    reads. Measured against the venue 2026-09-09 over 3,898 legs of six linked
+    game series: ``active`` 663, ``finalized`` 3,234, ``inactive`` **1** — this
+    one. It is an anomaly, not a lifecycle stage.
+    """
+    return (status or "").strip().lower() == _KALSHI_WITHDRAWN_STATUS
+
+
 def _kalshi_category_to_internal(kalshi_category: Optional[str]) -> str:
     """Map Kalshi category to internal category."""
     if not kalshi_category:
@@ -3086,6 +3120,14 @@ async def _refresh_linked_game_books(deadline_s: float | None = None) -> dict:
     * **It never invents a price.** An unreadable book creates the row with
       ``current_probability = NULL`` — #3518's state exactly — and updates
       nothing on an existing row.
+    * **It never quotes a leg the venue has withdrawn** (#4356). A
+      ``status="inactive"`` leg is not an unreadable book: the venue has taken
+      the outcome back. Its stored price is CLEARED rather than left frozen,
+      and a withdrawn leg we do not already hold is not created. This is the
+      one case where the pass writes a price DOWN, and it exists because
+      declining to write is what froze a withdrawn leg at 39% on the top row of
+      a live NFL card. ``_poll_kalshi_markets`` cannot do this job: it fetches
+      ``status="open"`` (gotcha #33) and never sees a withdrawn leg at all.
     * **It never overwrites a graded row.** Both writes carry
       ``is_winner IS NOT TRUE`` (gotcha #21, and ``IS NOT TRUE`` rather than
       ``IS NULL`` because unsettled is stored as FALSE — #2199's first live
@@ -3127,6 +3169,10 @@ async def _refresh_linked_game_books(deadline_s: float | None = None) -> dict:
         "outcomes_created_priced": 0,
         "outcomes_created_unpriced": 0,
         "outcomes_repriced": 0,
+        # #4356. Kept apart from `books_unreadable`: a withdrawn leg is a fact
+        # about the LISTING, an unreadable book is a fact about the QUOTE.
+        "outcomes_withdrawn_cleared": 0,
+        "outcomes_withdrawn_skipped": 0,
         "snapshots_written": 0,
         "books_unreadable": 0,
         "deadline_hit": False,
@@ -3203,18 +3249,38 @@ async def _refresh_linked_game_books(deadline_s: float | None = None) -> dict:
                     venue_names = kalshi_outcome_names(row.name, venue_markets)
 
                     for offset, venue_market in enumerate(venue_markets, 1):
-                        prob = _kalshi_yes_probability(
-                            venue_market.yes_bid,
-                            venue_market.yes_ask,
-                            venue_market.last_price,
+                        # #4356. A leg the venue has WITHDRAWN never carries a
+                        # price, whatever its last book said. Read BEFORE the
+                        # book so a withdrawn leg cannot be counted as an
+                        # unreadable one: those are different facts, and
+                        # `books_unreadable` is the gauge that says the venue
+                        # went quiet on us.
+                        withdrawn = _is_withdrawn_leg(venue_market.status)
+                        prob = (
+                            None
+                            if withdrawn
+                            else _kalshi_yes_probability(
+                                venue_market.yes_bid,
+                                venue_market.yes_ask,
+                                venue_market.last_price,
+                            )
                         )
-                        if prob is None:
+                        if prob is None and not withdrawn:
                             stats["books_unreadable"] += 1
                         american = (
                             probability_to_american(prob)
                             if prob is not None and 0 < prob < 1
                             else None
                         )
+
+                        if withdrawn and venue_market.ticker not in existing:
+                            # #4356. Never MINT a row for a leg the venue has
+                            # taken back: it can never be priced and can never
+                            # resolve, so it would be a permanent priceless row
+                            # on the card. Not a retirement (nothing is deleted,
+                            # gotcha #53) — simply declining to start.
+                            stats["outcomes_withdrawn_skipped"] += 1
+                            continue
 
                         if venue_market.ticker not in existing:
                             # `row.name` is our stored name for the EVENT, which
@@ -3249,6 +3315,54 @@ async def _refresh_linked_game_books(deadline_s: float | None = None) -> dict:
                                 stats["outcomes_created_unpriced"] += 1
                             else:
                                 stats["outcomes_created_priced"] += 1
+                        elif withdrawn:
+                            # #4356. CLEAR, not "decline to write". Declining
+                            # freezes the old value, which is the whole defect:
+                            # the stale 0.390 survived every pass precisely
+                            # because this loop only ever wrote a price UP.
+                            #
+                            # Same two guards as the main poll's null-out block,
+                            # for the same two reasons: never wipe a graded row
+                            # (gotcha #21) and never wipe a captured closing
+                            # line, which is calibration's evidence.
+                            result = await session.execute(
+                                sa_update(FuturesOutcome)
+                                .where(
+                                    FuturesOutcome.market_id == row.id,
+                                    FuturesOutcome.external_id == venue_market.ticker,
+                                    FuturesOutcome.is_winner.isnot(True),
+                                    FuturesOutcome.calibration_probability.is_(None),
+                                    # Idempotent: once cleared, stop restamping
+                                    # `last_updated` every pass — that column is
+                                    # a freshness gate other code reads.
+                                    FuturesOutcome.current_probability.isnot(None),
+                                )
+                                .values(
+                                    current_probability=None,
+                                    current_american_odds=None,
+                                    current_yes_bid=None,
+                                    current_yes_ask=None,
+                                    # Found by re-running #2024's consumer audit
+                                    # for this new stamp site, not guessed:
+                                    # `update_max_movement` only nulls this for
+                                    # rows whose stamp has gone STALE, and the
+                                    # fresh stamp below spares the row — so a
+                                    # withdrawn leg would keep a 24h delta
+                                    # describing a price that no longer exists.
+                                    probability_change_24h=None,
+                                    last_updated=func.now(),
+                                    # #2024. A price GOING AWAY is a price
+                                    # change, and the only one this write makes.
+                                    price_changed_at=price_changed_at_value(
+                                        FuturesOutcome.current_probability,
+                                        FuturesOutcome.price_changed_at,
+                                        None,
+                                    ),
+                                )
+                            )
+                            if result.rowcount:
+                                stats["outcomes_withdrawn_cleared"] += 1
+                            continue
                         elif prob is not None:
                             result = await session.execute(
                                 sa_update(FuturesOutcome)

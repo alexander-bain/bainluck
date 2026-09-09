@@ -107,7 +107,42 @@ POLL_STAMP_COUNTS = {
     # this pass's selector entirely). It carries the conditional
     # `price_changed_at` beside the unconditional touch stamp, so a
     # refreshed-but-unmoved price still does not read as a move.
-    "app/tasks/kalshi.py": 6,
+    # 6 -> 7 (#4356). `_refresh_linked_game_books` gained the one write in this
+    # file that takes a price DOWN: a leg the venue has WITHDRAWN
+    # (`status="inactive"`) has its stored price CLEARED. Declining to write was
+    # the defect — it froze `KXNFLFIRSTTD-26SEP10SFLAR-LARNONE` at 0.390 on the
+    # top row of a live NFL card after Kalshi took the outcome back.
+    #
+    # THE AUDIT RE-RUN RATHER THAN THE COUNT BUMPED, which is what this census
+    # asks for by name. Taking the five audited consumers in turn:
+    #
+    #   • `routes/playoffs.py` (the severe one — a stale stamp DROPS an outcome
+    #     from the grid). Out of scope by SELECTOR, the same way the 5 -> 6 site
+    #     above is: this pass only ever touches markets with an `event_id`, and
+    #     a playoff grid renders championship fields, which carry none. The
+    #     direction is safe regardless — a fresher stamp can only make that gate
+    #     more permissive, never blank a row.
+    #   • `tasks/__init__.py` (`update_max_movement` nulls
+    #     `probability_change_24h` once a stamp goes stale). This site would
+    #     have SPARED the row and left a 24h delta describing a price that no
+    #     longer exists — so the write nulls that column itself, in the same
+    #     statement. That is a real finding of this audit, not a formality.
+    #   • `routes/admin_judgments.py` (the #2019 sampler's price-age floor).
+    #     Keys on `price_changed_at` first, and this write stamps it honestly:
+    #     a price going away IS a price change (#2024). The market stays
+    #     legitimately fresh on its other eighteen legs.
+    #   • `routes/oscars.py` — a max() fold, insensitive either way.
+    #   • `tasks/futures.py` — the odds-API poller's 24h zeroing branch, a
+    #     different source's rows entirely.
+    #
+    # Unlike every other site in this census the stamp here is CONDITIONAL
+    # (`WHERE current_probability IS NOT NULL`), so it fires once when the leg
+    # is withdrawn and never restamps an unchanged row. By this file's own
+    # reasoning for excluding `backfill_winners.py` — the row genuinely changed,
+    # so the stamp is honest — it is arguably not #2024's surface at all. It is
+    # counted anyway, because the classifier is textual and a site that hides
+    # from the census is worth more trouble than one that is explained in it.
+    "app/tasks/kalshi.py": 7,
     # 7 -> 9 (UX-P157, #2256). The per-condition sub-market upsert began writing
     # `volume_24h`, and its `volume_updated_at` stamp comes with it on both the
     # insert and the conflict-update path — the same pair the PARENT event
@@ -475,7 +510,13 @@ PRICE_CHANGE_STAMPERS = {
     # game's leg. Written through the same `price_changed_at_value` helper as
     # every other writer of this column, so the two Kalshi price paths cannot
     # leave "the price moved" meaning two different things.
-    "app/tasks/kalshi.py": 3,
+    # 3 -> 4 (#4356): the withdrawn-leg CLEAR in the same function. It stamps
+    # the change with `None` as the new price, exactly as the main poll's
+    # null-out block does — a price GOING AWAY is a price change, and it is the
+    # only one that write makes. Through the shared helper for the reason above:
+    # this is now the third Kalshi path that can move the column, and a fourth
+    # reading of "the price moved" is what #1951 forbids.
+    "app/tasks/kalshi.py": 4,
     "app/tasks/polymarket.py": 3,
     "app/tasks/futures.py": 1,
     # #2199. Its one price write carries the conditional change-stamp beside the
