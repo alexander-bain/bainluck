@@ -138,7 +138,12 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Mapping, Optional
 
-from app.config.authority_by_sport import ESPN, STATPAL, authority_for
+from app.config.authority_by_sport import (
+    ESPN,
+    STATPAL,
+    authority_for,
+    flip_permitted,
+)
 
 # --- Readings: what one provider told us about one sport, on one pass --------
 #
@@ -805,3 +810,66 @@ def would_fail_over_now(
         gate=gate,
         standing=standing,
     )
+
+
+def gate_on_unreadable_ledger(sport_key: str, ledger_why: str) -> tuple[bool, str]:
+    """The gate, asked when the durable ledger could not be READ at all. #4443.
+
+    `read_ledger_days` returning `None` is not `[]`. `[]` is "measured, nothing
+    there"; `None` is "we could not look" — a degraded snapshot store.
+
+    This used to be `(False, ledger_why)` unconditionally, with the comment "an
+    outage in the snapshot store can never open this gate". **That was correct
+    before D104 and is not correct after it.** Before D104 the ledger WAS the
+    evidence, so no ledger honestly meant no permission. After D104 the ledger
+    is a MONITOR for a ruled sport: Alex retired the proof days on 2026-09-09
+    and kept the daily fold running as an observation. Refusing football
+    because the monitor's store is degraded refuses on the monitor rather than
+    on evidence — and it does so in the exact hour the ruling exists for, since
+    ESPN going dark and the snapshot store going away are not independent
+    events. One broad incident produces both.
+
+    SO WHY NOT `if sport_key in FLIP_RULED_WITHOUT_STREAK: return True, ...`?
+    Because that is a second copy of "which sports are exempt", living in the
+    caller, free to drift from the gate. Instead the gate is asked with an
+    EMPTY ledger, and the answer is taken as given. That is sound because of a
+    property of `flip_permitted` that is worth stating out loud: **`[]` can
+    permit a ruled sport and nothing else.** Every other route to `True` in
+    that function runs through `compute_streak`, and an empty ledger makes it
+    return `None`, which refuses. `flip_permitted` already renders this case
+    correctly too — its D104 branch is asked BEFORE the `streak is None`
+    refusal. The pure function was right all along; only its callers never let
+    it answer. `test_only_a_ruled_sport_can_pass_the_gate_on_an_empty_ledger`
+    pins the property against every measured sport, so adding a fifth re-checks
+    it rather than inheriting it.
+
+    The failed read stays in the reported `why` on BOTH arms. Ignoring the
+    monitor as an authority is the ruling; dropping it from the receipt would
+    make an outage indistinguishable from a healthy monitor in every record we
+    keep.
+
+    **WHY IT LIVES HERE RATHER THAN IN THE RUNTIME THAT FIRST NEEDED IT (#4531).**
+    It was born private in `tasks/espn_sync`, which is the only place that ACTS
+    on it — and that is exactly how the admin projection came to disagree with
+    the runtime. `routes/admin_providers` answers "if ESPN went dark right now,
+    would anything happen?" by running the real decision (:func:`would_fail_over_now`
+    immediately above), but it built the `gate` argument itself with the very
+    `(False, ledger_why)` line D104 retired. So on a pass where the monitor was
+    unreadable the disclosure said `would_fire_if_espn_went_dark: false` for a
+    ruled sport while the runtime failed over — the disclosure contradicting the
+    behaviour it discloses, in the one place a human checks before ruling on a
+    flip.
+
+    A disclosure may not re-derive its subject's logic, and "the gate" is not
+    only `flip_permitted` — it is `flip_permitted` **plus how its argument is
+    built when the ledger will not read**. Both halves have to be shared for the
+    two answers to be the same answer, so this half moved next to
+    :func:`would_fail_over_now`, where the discloser already looks.
+    """
+    permitted, why = flip_permitted(sport_key, [])
+    if not permitted:
+        # Byte for byte the behaviour before #4443 for every unruled sport:
+        # refused, carrying the ledger's own reason rather than a streak verdict
+        # that was never computed.
+        return False, ledger_why
+    return True, f"{why}. NOTE — the monitor could not be read on this pass: {ledger_why}"
