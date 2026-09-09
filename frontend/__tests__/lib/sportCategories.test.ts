@@ -611,6 +611,39 @@ describe('getLeagueDisplay', () => {
     });
 
     /**
+     * THE ONE THING THIS REPAIR MAKES WORSE, PINNED SO IT IS NOT REDISCOVERED.
+     *
+     * Curated labels are shorter than served ones, so preferring them can make
+     * two keys collapse to one word. Measured across all 176 production rows:
+     *
+     *   map only (master until 08:40 today)  2 collisions
+     *   served-first (#4362, briefly live)   0
+     *   curated-first (this fix)             1
+     *
+     * The one is `tennis_atp_us_open` and `golf_us_open_winner`, both "US Open"
+     * — which is what master printed for months before #4362 briefly masked it,
+     * so this restores the old behaviour rather than inventing a new fault. The
+     * repair also FIXES the other one: soccer and handball both printed
+     * "GERMANY BUNDESLIGA" and now take their distinct served names.
+     *
+     * It is left alone deliberately. Renaming a curated label is a wording
+     * decision that changes every surface reading the map, which is not a
+     * regression repair's business (#4391 carries it). Both chips draw their
+     * own emoji, 🎾 and ⛳, so the search surface still distinguishes them.
+     */
+    test('the known "US Open" collision is exactly one pair, and no more', () => {
+      const collide = ['tennis_atp_us_open', 'golf_us_open_winner'];
+      const labels = collide.map((k) => getSportLabel(k, null));
+      expect(new Set(labels).size).toBe(1); // still colliding — stated, not hidden
+      expect(labels[0]).toBe('US Open');
+      // The pair this repair un-collides, and the assertion that fails if
+      // someone "simplifies" the rule back to map-first for everything.
+      expect(getSportLabel('soccer_germany_bundesliga', 'Bundesliga - Germany')).not.toBe(
+        getSportLabel('handball_germany_bundesliga', 'Handball-Bundesliga')
+      );
+    });
+
+    /**
      * `hasCuratedLeagueName` asks the map, so it must not be fooled by keys
      * inherited from Object.prototype — `getSportLabel('constructor', …)` would
      * otherwise return a function and render as "[object Function]".
