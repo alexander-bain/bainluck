@@ -67,14 +67,32 @@ import hub from "../fixtures/tournamentHubBooksRung.20260903T0310Z.json";
 
 const RESULTS = (hub as unknown as { results: ResultsModel }).results;
 
-/** Tags stripped, entities decoded, whitespace flattened — what a reader reads. */
+const ENTITIES: Record<string, string> = {
+  "&#x27;": "'",
+  "&rsquo;": "'",
+  "&apos;": "'",
+  "&mdash;": "—",
+  "&quot;": '"',
+  "&amp;": "&",
+};
+
+/**
+ * Tags stripped, entities decoded, whitespace flattened — what a reader reads.
+ *
+ * ONE PASS, from a table, and not a chain of `.replace()` calls. CodeQL caught
+ * the chain on this very file (`js/double-escaping`, alert 2225, high): decoding
+ * `&amp;` to `&` before `&quot;` means the literal text `&amp;quot;` comes out
+ * as `"` — decoded twice. A single scan cannot double-decode, because each match
+ * is consumed once and the replacement is never re-examined.
+ *
+ * It matters here beyond tidiness: this helper feeds a list of BANNED phrases.
+ * A decoder that mangles text is a decoder that can make a banned sentence stop
+ * matching, and the guard would go quietly green with the prose back on the page.
+ */
 function visibleText(html: string): string {
   return html
     .replace(/<[^>]*>/g, " ")
-    .replace(/&#x27;|&rsquo;|&apos;/g, "'")
-    .replace(/&mdash;/g, "—")
-    .replace(/&amp;/g, "&")
-    .replace(/&quot;/g, '"')
+    .replace(/&(?:#x27|rsquo|apos|mdash|quot|amp);/g, (m) => ENTITIES[m] ?? m)
     .replace(/\s+/g, " ")
     .trim();
 }
