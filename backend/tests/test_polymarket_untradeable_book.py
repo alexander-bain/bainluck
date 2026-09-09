@@ -262,12 +262,25 @@ class TestForwardOnlyByConstruction:
         # forwarding line", which is the sort of drift that makes a structural
         # count stop being readable.
         DELEGATION = "prob, _source = _resolve_market_probability_with_source(market)"
+        # #4000 added a FOURTH caller, and it is deliberately not a write path:
+        # `_unpriced_leg_external_ids` asks the resolver a question ("is the venue
+        # quoting anything at all?") and returns condition ids. It writes nothing,
+        # so "skip rather than null" is not a property it can have.
+        #
+        # It is excluded BY ITS EXACT TEXT rather than by relaxing the count,
+        # because the count is the whole guard: #1578's finding was that a new
+        # write path can be added without anyone re-reading the audit. Bumping 3
+        # to 4 would buy this one caller at the price of the next one arriving
+        # unexamined. `test_the_retirement_probe_is_not_a_write_path` below pins
+        # what this exclusion assumes, so the two cannot drift.
+        RETIREMENT_PROBE = "if _resolve_market_probability(market) is not None:"
         call_sites = [
             i for i, line in enumerate(src.splitlines())
             if ("_resolve_market_probability(market)" in line
                 or "_resolve_market_probability_with_source(market)" in line)
             and not line.lstrip().startswith("def ")
             and line.strip() != DELEGATION
+            and line.strip() != RETIREMENT_PROBE
         ]
         assert len(call_sites) == 3, (
             f"expected 3 resolver call sites, found {len(call_sites)} — a new "
@@ -280,6 +293,33 @@ class TestForwardOnlyByConstruction:
                 f"call site at line {i + 1} does not skip on None — it may be "
                 "nulling an existing stored price (gotcha #21)"
             )
+
+    def test_the_retirement_probe_is_not_a_write_path(self):
+        """What the #4000 exclusion above assumes, asserted rather than trusted.
+
+        The exclusion is only safe while `_unpriced_leg_external_ids` stays a pure
+        question. The moment it grows an upsert it becomes exactly the unaudited
+        fourth write path the count exists to catch — and the exclusion would hide
+        it. So the probe's own function is pinned as write-free here.
+        """
+        from app.tasks import polymarket
+
+        block = inspect.getsource(polymarket._unpriced_leg_external_ids)
+        for writer in ("pg_insert", "session.execute", "update(", ".values(", "set_="):
+            assert writer not in block, (
+                f"`_unpriced_leg_external_ids` now contains {writer!r} — it is a "
+                "write path and must be audited against #1578, not excluded from "
+                "the call-site count"
+            )
+        assert "async def" not in block, "a pure probe needs no session"
+
+        # And the write it feeds withdraws prices ONLY — never a grade (gotcha #21,
+        # the reason this class exists), and never an opening (calibration truth).
+        writer_src = inspect.getsource(polymarket._retire_unpriced_legs)
+        values = writer_src[writer_src.index(".values(") :]
+        assert "is_winner" not in values
+        assert "opening_probability" not in values
+        assert "is_winner.isnot(True)" in writer_src
 
     def test_parent_market_path_no_longer_bypasses_the_guard(self):
         """Path 4 — the least-guarded write, per the #1578 audit.
