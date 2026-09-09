@@ -57,6 +57,31 @@ SOURCE_ACRONYMS: frozenset[str] = frozenset(
     {"ai", "api", "espn", "mlb", "nba", "nfl", "nhl", "pga", "ufc", "wta"}
 )
 
+#: Tokens the GENERATED name must spell differently, because the key's own word
+#: is one a reader may never see.
+#:
+#: Standing notice 33 (Alex, 2026-09-08): "books"/"bookmaker(s)" never reach a
+#: reader; D91 makes "sportsbooks" the approved word. Wire keys are exempt —
+#: ``odds_api_bookmaker`` stays ``odds_api_bookmaker`` — but this module's
+#: fallback exists to turn a wire key INTO reader-facing text, so the exemption
+#: stops exactly at :func:`prettify_source_key`.
+#:
+#: WHY A TRANSLATION AND NOT ONE MORE CURATED ENTRY. #4067 fixed every label
+#: that exists, on both clients, and the frontend's own prettifier grew
+#: ``houseStyleSupplierWords`` for precisely this reason. This side did not.
+#: The next ``odds_api_bookmaker_v2`` arrives with NO curated entry, falls
+#: through here, and is published in ``source_labels`` as "Odds API Bookmaker
+#: V2" — to iOS and to every other client — with every guard that pins today's
+#: keys still green. A denylist of known-unknowns hands the claim to the first
+#: new one; rewriting the TOKEN closes the class. Mirrors
+#: ``SOURCE_TOKEN_REWRITES`` in ``frontend/lib/calibrationProviders.ts``.
+SOURCE_TOKEN_REWRITES: dict[str, str] = {
+    "bookmaker": "sportsbook",
+    "bookmakers": "sportsbooks",
+    "book": "sportsbook",
+    "books": "sportsbooks",
+}
+
 #: The top-level key the serving layer publishes the vocabulary under, and the
 #: two fields inside each entry.
 #:
@@ -86,13 +111,17 @@ def prettify_source_key(raw: str) -> str:
     It is a floor, not a fix — which is why :data:`LABEL_DECLARED_FIELD` rides
     alongside it, so "nobody has named this" stays visible in the payload
     instead of being papered over by a plausible-looking string.
+
+    The floor is also where notice 33 is enforced for keys nobody has curated:
+    :data:`SOURCE_TOKEN_REWRITES` respells the banned supplier words, so no
+    input can make this function hand a reader one.
     """
     tokens = [t for t in raw.replace("-", "_").replace(" ", "_").split("_") if t]
     if not tokens:
         return raw
     out = []
     for token in tokens:
-        lower = token.lower()
+        lower = SOURCE_TOKEN_REWRITES.get(token.lower(), token.lower())
         out.append(lower.upper() if lower in SOURCE_ACRONYMS else lower.capitalize())
     return " ".join(out)
 
