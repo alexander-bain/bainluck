@@ -86,11 +86,13 @@ final class EventBookmakerNamesTests: XCTestCase {
 
         // The row is a NAME plus a PRICE, and renaming it must not cost it the
         // price. Without this, a `namedBookmakerRows` that returned every brand
-        // with `probabilities: nil` would pass every other test in this file and
-        // draw eight labelled rows with no bars and no numbers.
-        XCTAssertEqual(rows.compactMap { $0.probabilities }.count, 8)
-        XCTAssertEqual(rows.first?.probabilities?.away ?? 0, 0.49, accuracy: 0.0001)
-        XCTAssertEqual(rows.first?.probabilities?.home ?? 0, 0.51, accuracy: 0.0001)
+        // with no pair would pass every other test in this file and draw eight
+        // labelled rows with no bars and no numbers. Since #4406 the type says
+        // so — `probabilities` is not optional — and this is what the type is
+        // worth: eight rows, eight pairs, no arithmetic in between.
+        XCTAssertEqual(rows.count, 8)
+        XCTAssertEqual(rows.first?.probabilities.away ?? 0, 0.49, accuracy: 0.0001)
+        XCTAssertEqual(rows.first?.probabilities.home ?? 0, 0.51, accuracy: 0.0001)
     }
 
     /// Every key production served in the 24h to 2026-09-09 10:30Z draws a brand.
@@ -190,14 +192,77 @@ final class EventBookmakerNamesTests: XCTestCase {
             ["LowVig", "DraftKings", "BetMGM"])
     }
 
-    /// #4208's rule, unchanged: a row missing either side draws no numbers, and
-    /// therefore contributes no string to the width model. It still draws its
-    /// brand — the reader learns the book is in the market.
-    func testARowMissingOneSideKeepsItsBrandAndDrawsNoNumbers() throws {
-        let rows = EventDetailView.namedBookmakerRows(
-            try Self.bookmakers("[\(Self.row("betmgm", home: nil))]"))
-        XCTAssertEqual(rows.map(\.label), ["BetMGM"])
-        XCTAssertNil(rows.first?.probabilities?.away)
+    /// #4406 REVERSES #4208's disposal of this row, and the reversal is the ship.
+    ///
+    /// #4208 left a priceless book its brand on the reasoning that "the reader
+    /// learns the book is in the market". Photographed, that reasoning does not
+    /// survive: on 15307197 it put twelve bare names under a heading promising
+    /// sportsbooks, three of them consecutive, and a reader cannot tell that
+    /// screen from a broken one. The width claim #4208 actually needed — that a
+    /// numberless row contributes no string to the column — is preserved in the
+    /// strongest possible form, because there is no such row to contribute one.
+    ///
+    /// Both halves of the pair are tested. `bookmakerProbabilities` needs BOTH
+    /// sides, so a row with one is as priceless as a row with none, and a filter
+    /// written as `away == nil` would keep the half-priced row and draw `43%`
+    /// with nothing opposite it.
+    func testARowMissingEitherSideIsNotDrawnAtAll() throws {
+        for missing in ["home", "away"] {
+            let json = missing == "home"
+                ? Self.row("betmgm", home: nil)
+                : Self.row("betmgm", away: nil)
+            let rows = EventDetailView.namedBookmakerRows(try Self.bookmakers("[\(json)]"))
+            XCTAssertTrue(
+                rows.isEmpty,
+                "a book quoting only the \(missing == "home" ? "away" : "home") side drew a row")
+        }
+    }
+
+    /// A book that quoted nothing is not a row, and a payload of nothing but
+    /// those is not a table — so `sourcesToggle` draws no heading over it, the
+    /// same way it already refuses a payload of only unnameable keys.
+    func testAPayloadOfOnlyPricelessBooksYieldsNoTable() throws {
+        let json = ["draftkings", "fanduel", "betmgm"]
+            .map { Self.row($0, away: nil, home: nil) }
+            .joined(separator: ",")
+        XCTAssertTrue(EventDetailView.namedBookmakerRows(try Self.bookmakers("[\(json)]")).isEmpty)
+    }
+
+    /// 🔴 THE SPECIMEN IN #4406, IN ITS OWN PAYLOAD ORDER, AT THE REAL CAP.
+    ///
+    /// `GET /api/events/15307197` (Angels 6 – Sox 1), read from production at
+    /// 21:10Z on 2026-09-09: eighteen books, alphabetical, eleven of them `null`
+    /// on both sides. This is the frame in the issue and it is the whole ship in
+    /// one assertion — but note WHICH failure it is pinning.
+    ///
+    /// Six of the first ten quoted nothing. So the shipped order (name, cap at
+    /// ten, then let the view skip the priceless) drew FOUR numbers, and LowVig,
+    /// MyBookie and Rebet — positions 14, 15 and 16, all three carrying real
+    /// prices — never reached the reader at all. Removing the empty rows without
+    /// moving the filter above the cap would draw those same four and call it
+    /// fixed. Seven is the number that proves the ordering.
+    func testTheSpecimenDrawsSevenPricedBooksIncludingThreeThatWereBelowTheCap() throws {
+        let payload = [
+            ("ballybet", false), ("betanysports", true), ("betmgm", true),
+            ("betonlineag", true), ("betparx", false), ("betrivers", false),
+            ("betus", true), ("bovada", false), ("draftkings", false),
+            ("espnbet", false), ("fanatics", false), ("fanduel", false),
+            ("fliff", false), ("hardrockbet", false), ("lowvig", true),
+            ("mybookieag", true), ("rebet", true), ("williamhill_us", false),
+        ]
+        let json = payload
+            .map { key, priced in
+                priced ? Self.row(key) : Self.row(key, away: nil, home: nil)
+            }
+            .joined(separator: ",")
+        let rows = EventDetailView.namedBookmakerRows(try Self.bookmakers("[\(json)]"))
+
+        XCTAssertEqual(
+            rows.map(\.label),
+            ["BetAnySports", "BetMGM", "BetOnline", "BetUS", "LowVig", "MyBookie", "Rebet"])
+        // Said as the reader's own count, so a future change that drops the three
+        // below the cap fails with the sentence rather than with an index.
+        XCTAssertEqual(rows.count, 7, "the reader sees fewer numbers than the payload carries")
     }
 
     /// Two keys can share one brand — Caesars bought William Hill US, and the

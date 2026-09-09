@@ -7,7 +7,7 @@
 # LaunchRigContractTests), hands it to the one router, and lands on the screen.
 #
 # Usage:
-#   tools/native-shoot.sh <label> [route] [--counts] [--cooled] [--scroll N]
+#   tools/native-shoot.sh <label> [route] [--counts] [--cooled] [--scroll N] [--expand]
 #
 #   tools/native-shoot.sh discover
 #   tools/native-shoot.sh g1 '' --counts --cooled
@@ -20,6 +20,17 @@
 #   --cooled   seed the 11-category cooled interaction profile #1221 needs to be
 #              visible at all — on a clean install the defect does not appear
 #   --scroll N photograph N POINTS down the page instead of the top viewport
+#   --expand   open the sections that start collapsed (the event page's Sources
+#              disclosure, and anything else reading LaunchRig)
+#
+# WHY --expand EXISTS (native/086, #4406): the app has honoured
+# `-launch_expand_sections` since the flag was added — LaunchRig documents it,
+# LaunchRigContractTests pins it, `EventDetailView.showSources` reads it — and no
+# tool ever passed it, so every surface behind a disclosure was unphotographable
+# by this rig. That is the same hole `--scroll` was built to close, one layer in:
+# a shot of a closed disclosure is not a shot of what is inside it, and #4406's
+# twelve numberless sportsbook rows live inside one. A LOOK that cannot open the
+# section is a LOOK that reports the chevron.
 #
 # ONE SHOT IS ONE VIEWPORT. iPhone 17 is 402×874 points, and an event page runs
 # past 3,000 — so until `--scroll` existed, the margin maps, the half maps and
@@ -64,10 +75,12 @@ shift $(( $# > 2 ? 2 : $# ))
 COUNTS=""
 COOLED=""
 SCROLL=""
+EXPAND=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --counts) COUNTS=1 ;;
     --cooled) COOLED=1 ;;
+    --expand) EXPAND=1 ;;
     --scroll)
       SCROLL="${2:?--scroll needs a point count, e.g. --scroll 1600}"
       shift
@@ -111,6 +124,7 @@ ARGS=(-suppress_notification_prompt YES -bainluck_telemetry_consent none -discov
 [ -n "$ROUTE" ]  && ARGS+=(-launch_route "$ROUTE")
 [ -n "$COUNTS" ] && ARGS+=(-launch_debug_counts YES)
 [ -n "$SCROLL" ] && ARGS+=(-launch_scroll "$SCROLL")
+[ -n "$EXPAND" ] && ARGS+=(-launch_expand_sections YES)
 
 xcrun simctl launch "$SIM" "$BUNDLE" "${ARGS[@]}" >/dev/null 2>&1
 
