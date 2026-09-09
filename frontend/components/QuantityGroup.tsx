@@ -146,6 +146,20 @@ export default function QuantityGroup({
   const interactive = typeof onRungSelect === "function";
   const headerHint = hint ?? (interactive ? "tap a rung for its history" : undefined);
 
+  // #4404 — the numeric track is a fixed 2.75rem, which is exactly what "≥ 95",
+  // "$90K+" and an exact-score "2–1" need, and 18px short of a unit-bearing label.
+  // A soccer totals ladder therefore printed "≥ 0.5goals" as TWO lines with the
+  // operator orphaned above the number it qualifies — 32 rungs across the live
+  // /sports page at 390px, four per card. The track is now sized to the longest
+  // label this ladder actually prints: still ONE width for every rung, so two
+  // rungs at the same percentage still draw the same bar (#1574 acceptance c),
+  // and never a wrap — past 45% of the card it ellipsises instead. A ladder whose
+  // labels all fit keeps the `w-11` class byte-for-byte, so the numeric ladders
+  // that were already right are provably untouched.
+  const NUMERIC_TRACK_CH = 5; // what 2.75rem holds at 13px in the mono face
+  const longestLabelChars = ordered.reduce((m, r) => Math.max(m, r.label.length), 0);
+  const roomyNumericTrack = !wideLabels && longestLabelChars > NUMERIC_TRACK_CH;
+
   const inner = (
     <>
       {(title || headerHint) && (
@@ -182,7 +196,12 @@ export default function QuantityGroup({
               aria-label={`${rung.label}: ${pct(rung.probability)}`}
             >
               <span
-                title={wideLabels ? rung.label : undefined}
+                title={wideLabels || roomyNumericTrack ? rung.label : undefined}
+                style={
+                  roomyNumericTrack
+                    ? { width: `clamp(2.75rem, calc(${longestLabelChars}ch + 0.5rem), 45%)` }
+                    : undefined
+                }
                 className={[
                   // A FIXED label width, not `max-w-`. With a content-width label
                   // the `flex-1` track below is a different length on every row,
@@ -191,7 +210,9 @@ export default function QuantityGroup({
                   // track always starts at the same x.
                   wideLabels
                     ? "w-[45%] shrink-0 truncate text-[12px] font-semibold leading-tight"
-                    : "w-11 shrink-0 font-mono text-[13px] font-bold tabular-nums",
+                    : roomyNumericTrack
+                      ? "shrink-0 truncate font-mono text-[13px] font-bold tabular-nums"
+                      : "w-11 shrink-0 font-mono text-[13px] font-bold tabular-nums",
                   rung.highlighted ? "text-accent-brand" : "text-text-primary",
                 ].join(" ")}
               >
@@ -361,7 +382,12 @@ function formatThresholdLabel(
     else if (value >= 1_000) num = `$${(value / 1_000).toFixed(0)}K`;
     else num = `$${value}`;
   } else {
-    num = `${value}${u && !u.includes("$") ? u : ""}`;
+    // #4404 — a WORD unit is a separate word: "0.5 goals", not "0.5goals". The
+    // old join glued them into one token on every soccer totals rung on /sports.
+    // A symbol unit ("%", "+", "°") stays welded to its number, which is why the
+    // separator is decided by the unit's first character rather than by a flag.
+    const suffix = u && !u.includes("$") ? (/^[A-Za-z]/.test(u) ? ` ${u}` : u) : "";
+    num = `${value}${suffix}`;
   }
   return `${arrow} ${num}`;
 }
