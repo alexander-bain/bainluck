@@ -520,3 +520,24 @@ def test_the_withdrawn_branch_returns_before_the_snapshot():
     assert "continue" in between, (
         "the withdrawn branch falls through to the snapshot write"
     )
+
+
+def test_the_withdrawn_branch_does_not_reuse_the_single_outcome_fallback():
+    """The one way this repair could destroy a real price.
+
+    The `len(market_outcomes) == 1` fallback exists to land a PRICE that has
+    nowhere else to go. On the withdrawn path it would clear a row the venue
+    named differently — and a market with exactly one outcome is the shape that
+    triggers it. The withdrawn branch must resolve by ticker or do nothing.
+
+    Pinned positionally rather than by grepping the whole function, because the
+    fallback legitimately still exists a few lines below for the pricing path.
+    """
+    src = _inspect.getsource(pmm._poll_live_prediction_market_prices)
+    branch_at = src.index("if withdrawn:")
+    clear_at = src.index("_clear_withdrawn_outcome(outcome, now, stats)")
+    branch = src[branch_at:clear_at]
+    assert "market_outcomes" not in branch, (
+        "the withdrawn branch reaches the single-outcome fallback; it can clear "
+        "a row the venue never named"
+    )
