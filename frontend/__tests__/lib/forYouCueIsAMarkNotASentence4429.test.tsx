@@ -39,6 +39,23 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { FOR_YOU_VOCABULARY, forYouCue } from "@/lib/discover/forYouCue";
 import { ForYouChip } from "@/components/discover/shared";
 
+/**
+ * The text the chip PRINTS, read out of its own element.
+ *
+ * ⚠️ NOT `html.replace(/<[^>]*>/g, "")`. That idiom is what this file used, and
+ * CodeQL's `js/incomplete-multi-character-sanitization` flags it HIGH — it is
+ * shaped exactly like a hand-rolled HTML sanitizer, and a hand-rolled sanitizer
+ * that strips `<...>` in one pass is a real vulnerability class. It is harmless
+ * on `renderToStaticMarkup` output in a test, but a rule cannot tell the two
+ * apart from the shape and should not have to. Capturing the element's own
+ * children is also the more precise assertion: it cannot pass on text that
+ * leaked in from a sibling node.
+ */
+function chipText(html: string): string {
+  const m = html.match(/<span[^>]*data-testid="for-you-cue"[^>]*>([^<]*)<\/span>/);
+  return (m?.[1] ?? "").trim();
+}
+
 /** A card with a real net uprank for the given reason tokens. */
 const boosted = (reasons: string[]) => ({
   personalized: true,
@@ -107,7 +124,7 @@ describe("#4429 — the sentence did not go away, it moved into the hover", () =
 
   it("🔴 the chip PRINTS the mark", () => {
     const html = renderToStaticMarkup(<ForYouChip cue={cue} />);
-    expect(html.replace(/<[^>]*>/g, "").trim()).toBe("Your player");
+    expect(chipText(html)).toBe("Your player");
   });
 
   it("🔴 and the title still carries the WHOLE sentence", () => {
