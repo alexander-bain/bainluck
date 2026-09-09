@@ -115,6 +115,12 @@ export interface BarPair {
   home: string;
 }
 
+/** The opacity each segment is painted at, when the two differ. */
+export interface SegmentOpacity {
+  away: number;
+  home: number;
+}
+
 type Rgb = readonly [number, number, number];
 
 /**
@@ -181,10 +187,19 @@ function visibleOnCard(c: Rgb, opacity: number): boolean {
   return contrastRatio(composite(c, opacity), surface) >= MIN_SURFACE_CONTRAST;
 }
 
-/** Would these two read as one block? */
-function tooClose(a: Rgb, b: Rgb, opacity: number): boolean {
+/**
+ * Would these two read as one block?
+ *
+ * Each side is composited at ITS OWN opacity, because the reader compares the
+ * two painted pixels and nothing else. On a bar that dims one half — the shared
+ * `ProbabilityBar` paints the favourite at 1 and the underdog at 0.4 (#4470b) —
+ * two identical hexes are genuinely distinguishable, and a single-opacity test
+ * would "rescue" a pair that was never one block.
+ */
+function tooClose(a: Rgb, aOpacity: number, b: Rgb, bOpacity: number): boolean {
   return (
-    colorDistance(composite(a, opacity), composite(b, opacity)) < MIN_PAIR_DISTANCE
+    colorDistance(composite(a, aOpacity), composite(b, bOpacity)) <
+    MIN_PAIR_DISTANCE
   );
 }
 
@@ -200,13 +215,25 @@ function usable(hex: string | null | undefined, opacity: number): Rgb | null {
   return visibleOnCard(rgb, opacity) ? rgb : null;
 }
 
-/** First ladder colour that is visible and distinguishable from `other`. */
-function rescue(other: Rgb | null, preferred: string, opacity: number): string {
+/**
+ * First ladder colour that is visible and distinguishable from `other`.
+ *
+ * `opacity` is the opacity the RESCUED side is painted at; `otherOpacity` the
+ * opacity its partner is painted at. On a bar with one dimmed half those two
+ * differ, and using one for both would compare a pixel to a pixel that is never
+ * on screen.
+ */
+function rescue(
+  other: Rgb | null,
+  otherOpacity: number,
+  preferred: string,
+  opacity: number
+): string {
   const candidates = [preferred, ...RESCUE_LADDER];
   for (const hex of candidates) {
     const rgb = toRgb(hex);
     if (!rgb || !visibleOnCard(rgb, opacity)) continue;
-    if (other && tooClose(rgb, other, opacity)) continue;
+    if (other && tooClose(rgb, opacity, other, otherOpacity)) continue;
     return hex;
   }
   // Unreachable over every real and synthetic colour tested; kept so the
@@ -232,40 +259,65 @@ function rescue(other: Rgb | null, preferred: string, opacity: number): string {
  * `SEGMENT_OPACITY` so `FeedCard` is unchanged; `discover/EventCard` paints an
  * opaque bar and passes `1` (#4470). Getting this wrong in either direction is
  * measurable, not theoretical — see the note on `SEGMENT_OPACITY`.
+ *
+ * It may also be a PAIR, because a bar is allowed to dim one half. The shared
+ * `ProbabilityBar` (the /sports, league and search card) paints the favourite
+ * at 1 and the underdog at 0.4, and the two are not interchangeable: measured
+ * over the 324 distinct team colours on events in the 7 days to 2026-09-09,
+ * 8 colours (33 teams, 85 events) fall below the floor at opacity 1 and 36
+ * colours (64 teams, 176 events) fall below it at 0.4. Deciding a 0.4 segment
+ * at 1 leaves it invisible; deciding a 1 segment at 0.4 re-brands a team that
+ * was perfectly visible.
  */
 export function probabilityBarPair(
   awayColor?: string | null,
   homeColor?: string | null,
-  opacity: number = SEGMENT_OPACITY
+  opacity: number | SegmentOpacity = SEGMENT_OPACITY
 ): BarPair {
-  const awayRgb = usable(awayColor, opacity);
-  const homeRgb = usable(homeColor, opacity);
+  const { away: awayOpacity, home: homeOpacity } =
+    typeof opacity === "number" ? { away: opacity, home: opacity } : opacity;
+
+  const awayRgb = usable(awayColor, awayOpacity);
+  const homeRgb = usable(homeColor, homeOpacity);
 
   if (awayRgb && homeRgb) {
-    if (!tooClose(awayRgb, homeRgb, opacity)) {
+    if (!tooClose(awayRgb, awayOpacity, homeRgb, homeOpacity)) {
       return { away: normalize(awayColor), home: normalize(homeColor) };
     }
     return {
       away: normalize(awayColor),
-      home: rescue(awayRgb, HOME_DEFAULT, opacity),
+      home: rescue(awayRgb, awayOpacity, HOME_DEFAULT, homeOpacity),
     };
   }
 
   if (awayRgb) {
     return {
       away: normalize(awayColor),
-      home: rescue(awayRgb, HOME_DEFAULT, opacity),
+      home: rescue(awayRgb, awayOpacity, HOME_DEFAULT, homeOpacity),
     };
   }
 
   if (homeRgb) {
     return {
-      away: rescue(homeRgb, AWAY_DEFAULT, opacity),
+      away: rescue(homeRgb, homeOpacity, AWAY_DEFAULT, awayOpacity),
       home: normalize(homeColor),
     };
   }
 
-  return { away: AWAY_DEFAULT, home: HOME_DEFAULT };
+  // Neither side has a usable colour. The two defaults are the intended answer,
+  // but they are not exempt from clause 3 and this is not hypothetical: at 0.7
+  // they sit at 1.85:1 and 1.94:1, and at 0.4 — the opacity the shared card
+  // dims its underdog to — they are 1.40:1 and 1.46:1, i.e. BELOW the floor this
+  // module exists to enforce. Returning them unchecked would ship a bar that
+  // fails its own contract on precisely the cards that have no team colours at
+  // all, which is most of them. So the defaults walk the same ladder as any
+  // other colour. At `SEGMENT_OPACITY` the ladder returns them untouched, so
+  // `FeedCard` is bit-identical — a control arm asserts exactly that.
+  const away = rescue(null, awayOpacity, AWAY_DEFAULT, awayOpacity);
+  return {
+    away,
+    home: rescue(toRgb(away), awayOpacity, HOME_DEFAULT, homeOpacity),
+  };
 }
 
 /**
