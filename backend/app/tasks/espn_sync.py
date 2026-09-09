@@ -210,14 +210,23 @@ async def _statpal_standby_reading(sport_key: str) -> tuple[str, str]:
     "StatPal has fixtures and ESPN does not" on every quiet day there has ever
     been. `reading_in_window` is where that is fixed and where the window is
     argued; this function's job is to hand it the raw read and the clock.
+
+    **AND FOR TWO SPORTS THERE IS NO READ TO HAND IT (#4320).** Soccer and
+    tennis serve their schedule one calendar board at a time with no board for
+    today, so no `day_offset` reaches that window — see
+    `StatPalAPIService.schedule_can_cover_today`. They return
+    `NO_SCHEDULE_BOARD`, which is neither an outage nor a claim of no games, and
+    they return it without making a network call.
     """
     from app.services.statpal_api import (
         StatPalAPIService,
         StatPalUpstreamError,
         is_available,
+        schedule_can_cover_today,
     )
     from app.utils.authority_failover import (
         DARK,
+        NO_SCHEDULE_BOARD,
         active_fixtures,
         live_reading_for,
         reading_in_window,
@@ -231,6 +240,21 @@ async def _statpal_standby_reading(sport_key: str) -> tuple[str, str]:
         # `decide` must refuse rather than read our own silence as theirs.
         return DARK, DARK
 
+    if not schedule_can_cover_today(statpal_sport):
+        # SOCCER AND TENNIS — nine of the fourteen mapped keys (#4320). Their
+        # schedule is one calendar board at a time and there is no board for
+        # today, so `get_schedule_fixtures` cannot be given a token that reaches
+        # `reading_in_window`'s `[now - 6h, now]`. Asked BY NAME and before the
+        # call, rather than by calling without a token and catching the
+        # `ValueError` that comes back: that exception is this caller's bug and
+        # the client raises it precisely so the two cannot arrive as one value —
+        # *"a caller bug, not an upstream absence, and the two must not arrive as
+        # the same empty list"*. Laundering it through the `except` below would
+        # report a permanent property of StatPal's product as `STANDBY_DARK`,
+        # which is a BLANK code an actor logs at ERROR, and send an operator to
+        # look at a StatPal that is answering perfectly.
+        return NO_SCHEDULE_BOARD, NO_SCHEDULE_BOARD
+
     service = StatPalAPIService()
     try:
         try:
@@ -238,6 +262,21 @@ async def _statpal_standby_reading(sport_key: str) -> tuple[str, str]:
         except StatPalUpstreamError as exc:
             logger.warning("StatPal standby schedule dark for %s: %s", sport_key, exc)
             return DARK, DARK
+        except ValueError as exc:
+            # OUR bug, not StatPal's: `get_schedule_fixtures` raises this only
+            # for a missing or out-of-range `day_offset`, which the guard above
+            # exists to make unreachable. Kept, because "unreachable" is a claim
+            # about today's mapping and this path is the one that would be wrong
+            # if a new day-board sport were added to `STATPAL_SPORT_MAPPING`
+            # without being added to `DAY_BOARD_SPORTS`. Logged at ERROR and
+            # reported as a boundary rather than as an outage — reported and not
+            # raised, because an exception out of here would be an outage in the
+            # sport this whole path exists to protect (see `STANDBY_NOT_READ`).
+            logger.error(
+                "StatPal standby schedule CALLER BUG for %s — not an outage: %s",
+                sport_key, exc,
+            )
+            return NO_SCHEDULE_BOARD, NO_SCHEDULE_BOARD
         except Exception as exc:  # noqa: BLE001 — classified, never swallowed
             logger.warning("StatPal standby schedule failed for %s: %s", sport_key, exc)
             return DARK, DARK
@@ -378,10 +417,16 @@ async def _act_on_failovers(decisions: dict, stats: dict) -> None:
     never take down the ESPN pass that is still working for every other sport.
 
     THE REFUSALS ARE THE OTHER HALF, and they are not consolation.
-    `BLANK_CODES` — ESPN silent AND the standby unable to cover — is the state
+    `BLANK_CODES` — ESPN silent AND the standby FAILED when asked — is the state
     where nothing can say what is happening in a game that is on. Logged at
     ERROR and counted apart, because every other refusal is a fact about the day
     and this one is a fault.
+
+    "Failed when asked" is the whole of it, and it is narrower than "could not
+    cover": `STANDBY_CANNOT_COVER_WINDOW` is a sport StatPal publishes no board
+    for (soccer and tennis, permanently — #4320), which is a boundary of its
+    product rather than an event on this pass. It is benign, it is not in
+    `BLANK_CODES`, and it logs at INFO with the rest.
 
     **The receipts.** Every decision that is not the ordinary `ESPN_ANSWERED` is
     published on the task summary, served or not — an outage the site rode out

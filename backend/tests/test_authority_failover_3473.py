@@ -52,9 +52,11 @@ from app.utils.authority_failover import (
     FIXTURES,
     LIVE_PATH_DARK,
     LIVE_PATH_SILENT_ON_THE_GAME,
+    NO_SCHEDULE_BOARD,
     NOT_GATED,
     NOT_READ,
     NOTHING_TO_SERVE,
+    STANDBY_CANNOT_COVER_WINDOW,
     STANDBY_DARK,
     STANDBY_NOT_READ,
     STANDING_STATPAL,
@@ -2196,3 +2198,203 @@ async def test_the_one_sport_case_reports_exactly_what_it_reported_before(
     assert stats["errors"] == [
         "failover_live_americanfootball_nfl: statpal livescores 503"
     ], "the one-sport error string changed shape"
+
+
+# ── #4320: a sport StatPal publishes no board for is not a dark StatPal ──────
+#
+# `_statpal_standby_reading` called `get_schedule_fixtures(sport)` with no
+# `day_offset`. Soccer and tennis REQUIRE one and the client raises `ValueError`
+# without it — deliberately, so "we asked wrongly" and "they have no games"
+# cannot arrive as one value. The caller's `except Exception` turned that back
+# into `DARK`, which routes to `STANDBY_DARK`, which is in `BLANK_CODES` and is
+# logged at ERROR as a provider fault. Nine of the fourteen mapped sport keys.
+#
+# The fix is not a day token. There is no board that answers, so the honest
+# reading is a fifth symbol; see `NO_SCHEDULE_BOARD`.
+
+
+def test_the_two_day_board_sports_are_the_ones_with_no_board_for_today():
+    """The predicate, and the census that makes "9 of 14" a measurement.
+
+    Asserted over the WHOLE of `STATPAL_SPORT_MAPPING` rather than on a sample,
+    and both arms are asserted: a test that only counted the day-board sports
+    would still pass if the predicate had been widened to refuse everything,
+    which would take the four sports that DO work off the standby entirely.
+    """
+    import app.services.statpal_api as statpal_api
+
+    from app.utils.sport_keys import STATPAL_SPORT_MAPPING
+
+    assert statpal_api.DAY_BOARD_SPORTS == {"tennis", "soccer"}
+    covers = statpal_api.schedule_can_cover_today
+
+    cannot = sorted(
+        k for k, sp in STATPAL_SPORT_MAPPING.items() if not covers(sp)
+    )
+    can = sorted(k for k, sp in STATPAL_SPORT_MAPPING.items() if covers(sp))
+
+    # The eligible denominator, asserted: every mapped key lands in exactly one
+    # arm, so neither count can be read as a share of an unstated population.
+    assert len(cannot) + len(can) == len(STATPAL_SPORT_MAPPING) == 14
+    assert len(cannot) == 9, cannot
+    assert len(can) == 5, can
+
+    assert all(k.startswith(("soccer", "tennis")) for k in cannot), cannot
+    # The control arm has to be non-empty and has to be the four season-schedule
+    # sports plus golf, all of which answer without a token.
+    assert "americanfootball_nfl" in can and "baseball_mlb" in can
+
+
+@pytest.mark.asyncio
+async def test_a_day_board_sport_reads_no_schedule_board_and_makes_no_call(monkeypatch):
+    """Soccer and tennis: refused BY NAME, before the network, and not as DARK.
+
+    Two assertions, and the second is the one with teeth. Returning the right
+    symbol matters, but so does getting there without asking: the old path
+    reached this state by making a call it knew would raise and catching its own
+    `ValueError`, which is both a wasted client construction and the reason the
+    failure wore an outage's clothes.
+    """
+    import app.services.statpal_api as statpal_api
+    from app.tasks.espn_sync import _statpal_standby_reading
+
+    class _Service:  # pragma: no cover - must never be constructed
+        def __init__(self, *a, **k):
+            raise AssertionError(
+                "a client was built for a sport StatPal publishes no board for"
+            )
+
+    monkeypatch.setattr(statpal_api, "StatPalAPIService", _Service)
+    monkeypatch.setattr(statpal_api, "is_available", lambda: True)
+
+    for sport_key in ("soccer_epl", "soccer_uefa_champs_league", "tennis_atp"):
+        assert await _statpal_standby_reading(sport_key) == (
+            NO_SCHEDULE_BOARD,
+            NO_SCHEDULE_BOARD,
+        ), sport_key
+        assert await _statpal_standby_reading(sport_key) != (DARK, DARK), sport_key
+
+
+@pytest.mark.asyncio
+async def test_a_missing_day_token_is_reported_as_our_bug_not_as_an_outage(monkeypatch):
+    """The client's `ValueError` contract, honoured at its only caller.
+
+    The guard above makes this unreachable for today's mapping, so this pins the
+    path that would be wrong TOMORROW — a new day-board sport added to
+    `STATPAL_SPORT_MAPPING` and not to `DAY_BOARD_SPORTS`. It must degrade to the
+    boundary reading, never to `DARK`, and it must not raise: an exception out of
+    here would be an outage in the sport this path exists to protect.
+    """
+    import app.services.statpal_api as statpal_api
+    from app.tasks.espn_sync import _statpal_standby_reading
+
+    class _Service:
+        async def get_schedule_fixtures(self, sport, day_offset=None):
+            raise ValueError(
+                "tennis day_offset must be one of (…); got None"
+            )
+
+        async def get_live_fixtures(self, sport):  # pragma: no cover
+            return []
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(statpal_api, "StatPalAPIService", _Service)
+    monkeypatch.setattr(statpal_api, "is_available", lambda: True)
+    # NFL, so the by-name guard does NOT fire and the `except ValueError` is
+    # genuinely the branch under test rather than being shadowed by it.
+    assert await _statpal_standby_reading(NFL) == (NO_SCHEDULE_BOARD, NO_SCHEDULE_BOARD)
+
+
+def test_no_board_refuses_under_an_open_gate_and_is_not_a_provider_fault():
+    """`STANDBY_CANNOT_COVER_WINDOW` refuses, and refuses BENIGNLY.
+
+    Paired with the DARK control under the identical open gate, because that is
+    the distinction the whole change is about: same gate, same ESPN silence, two
+    different reasons, and only one of them is worth waking someone for.
+    """
+    from app.utils.authority_failover import BLANK_CODES
+
+    gate = _open_gate()
+
+    no_board = decide(
+        NFL, espn=DARK, gate=gate,
+        statpal=NO_SCHEDULE_BOARD, statpal_live=NO_SCHEDULE_BOARD,
+        standing=ESPN,
+    )
+    assert no_board.code == STANDBY_CANNOT_COVER_WINDOW
+    assert no_board.failed_over is False
+    assert no_board.serving == ESPN
+    assert no_board.code not in BLANK_CODES, (
+        "a permanent boundary of StatPal's product is being counted as an "
+        "outage, which sends an operator to look at a provider that is fine"
+    )
+
+    # THE CONTROL, and it must still be a fault.
+    dark = decide(
+        NFL, espn=DARK, gate=gate, statpal=DARK, statpal_live=DARK, standing=ESPN,
+    )
+    assert dark.code == STANDBY_DARK
+    assert dark.code in BLANK_CODES
+    assert no_board.code != dark.code
+
+    # The reason has to separate them for a human too, not just for the counter.
+    assert "outage" in no_board.why and "NOT an outage" in no_board.why
+    assert "no schedule board" in no_board.why
+
+
+def test_the_no_board_reading_never_reads_as_empty_or_as_a_failover():
+    """It must not become `NOTHING_TO_SERVE` (a claim StatPal has no games) and
+    must never be enough to fail over on.
+
+    `EMPTY` is the forged reading #3800 was filed on: an absence wearing a value.
+    """
+    gate = _open_gate()
+    for espn_reading_value in (DARK, EMPTY):
+        got = decide(
+            NFL, espn=espn_reading_value, gate=gate,
+            statpal=NO_SCHEDULE_BOARD, statpal_live=NO_SCHEDULE_BOARD,
+            standing=ESPN,
+        )
+        assert got.code == STANDBY_CANNOT_COVER_WINDOW
+        assert got.code != NOTHING_TO_SERVE
+        assert got.code not in FAILOVER_CODES
+        assert got.failed_over is False
+
+    # And it is its own symbol in the value domain, like NOT_READ before it.
+    assert NO_SCHEDULE_BOARD not in (DARK, EMPTY, FIXTURES, NOT_READ)
+
+
+@pytest.mark.asyncio
+async def test_the_actor_does_not_count_a_day_board_sport_as_uncovered(monkeypatch):
+    """The harm, at the counter that would have carried it.
+
+    `failover_uncovered` is the alarming one — "nothing can say what is happening
+    in a game that is on". Before this change every soccer and tennis key on an
+    ESPN-dark pass incremented it and logged at ERROR, permanently, for a StatPal
+    that was answering perfectly.
+    """
+    import app.services.statpal_api as statpal_api
+
+    from app.tasks.espn_sync import _act_on_failovers, _decide_failovers
+
+    _no_ledger(monkeypatch, days=SEVEN_MEETS_DAYS, why="seven")
+    monkeypatch.setattr(statpal_api, "is_available", lambda: True)
+
+    class _Service:  # pragma: no cover - must never be constructed
+        def __init__(self, *a, **k):
+            raise AssertionError("a client was built for a day-board sport")
+
+    monkeypatch.setattr(statpal_api, "StatPalAPIService", _Service)
+
+    stats = {"errors": []}
+    decisions = await _decide_failovers({}, {"soccer_epl", "tennis_atp"}, stats)
+    await _act_on_failovers(decisions, stats)
+
+    assert stats.get("failover_uncovered", 0) == 0, stats
+    assert stats.get("failover_serving", 0) == 0, stats
+
+    # The receipts still exist — a refusal is published, never swallowed.
+    codes = {d.sport_key: d.code for d in decisions.values()}
+    assert set(codes) == {"soccer_epl", "tennis_atp"}

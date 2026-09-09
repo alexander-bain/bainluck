@@ -158,6 +158,29 @@ FIXTURES = "fixtures"
 #: between them would let the cheaper one masquerade as the graver one.
 NOT_READ = "not-read"
 
+#: The standby HAS no endpoint that could answer about this window, so there is
+#: no question to put to it. Like :data:`NOT_READ` this is a fact about our
+#: integration and not a reading of the provider, and it is separate from
+#: :data:`NOT_READ` because that one is a bug and this one is a boundary.
+#:
+#: **The case is soccer and tennis (#4320).** Their schedule is served one
+#: calendar board at a time and *there is no d0* — tennis's answers HTTP 500,
+#: soccer's `offset=0` is `matches/live` wearing a schedule URL. Nor do the
+#: neighbouring boards close over today: a board runs ~25.5h from 23:00Z the
+#: previous day to 00:30–00:45Z the next, so `d-1` ends ~00:45Z today and `d1`
+#: begins ~23:00Z today, leaving ~22 hours of today reachable from no board at
+#: all. :func:`reading_in_window`'s window is `[now - 6h, now]` and always lies
+#: inside that gap.
+#:
+#: **Why it may not be reported as :data:`DARK`.** DARK routes to
+#: :data:`STANDBY_DARK`, which is in :data:`BLANK_CODES` — the refusals an actor
+#: logs at ERROR because the provider failed. Reporting a permanent property of
+#: StatPal's product as an outage sends an operator to look at a StatPal that is
+#: answering perfectly, and does it for nine of the fourteen mapped sports at
+#: once. **Nor as :data:`EMPTY`**, which asserts StatPal has no games — the
+#: forged reading, and the one #3800 was filed on.
+NO_SCHEDULE_BOARD = "no-schedule-board"
+
 
 def espn_reading(espn_data: Mapping[str, Any], sport_key: str) -> str:
     """ESPN's reading for `sport_key`, from `_sync_espn_live_events`'s own dict.
@@ -449,6 +472,19 @@ LIVE_PATH_SILENT_ON_THE_GAME = "NO-FAILOVER-LIVE-PATH-SILENT-ON-THE-GAME"
 #: outage in the sport we were trying to protect.
 STANDBY_NOT_READ = "NO-FAILOVER-STANDBY-NOT-READ"
 
+#: The standby has no endpoint that covers the window, so it could not be asked
+#: (:data:`NO_SCHEDULE_BOARD`). Soccer and tennis, permanently — nine of the
+#: fourteen mapped sports.
+#:
+#: **Benign, and deliberately NOT in :data:`BLANK_CODES`.** The set's own rule is
+#: that a blank code is a provider FAULT; the benign refusals it names are "a
+#: quiet slate, a sport with no shadow stamper, a streak that has not run yet" —
+#: facts about the day or about our build state. This is the second kind. StatPal
+#: is answering; we have nothing to ask it that would bear on this window, and
+#: that is a property of its product rather than an event on this pass. It reads
+#: like :data:`NOT_GATED`, not like :data:`STANDBY_DARK`.
+STANDBY_CANNOT_COVER_WINDOW = "NO-FAILOVER-STANDBY-CANNOT-COVER-WINDOW"
+
 #: ESPN did not answer, the standby has fixtures, and the gate permits it.
 FAILOVER_ESPN_DARK = "FAILOVER-ESPN-DARK"
 
@@ -518,7 +554,9 @@ def decide(
     """Who serves `sport_key` on this pass?
 
     `espn` and `statpal` are readings (:data:`DARK` / :data:`EMPTY` /
-    :data:`FIXTURES`). `gate` is `config.authority_by_sport.flip_permitted`'s own
+    :data:`FIXTURES`; the standby's may also be :data:`NOT_READ` or
+    :data:`NO_SCHEDULE_BOARD`, the two that are facts about us rather than about
+    it). `gate` is `config.authority_by_sport.flip_permitted`'s own
     `(permitted, why)` — **passed in rather than computed**, for two reasons: it
     needs the sport's durable ledger, which a pure function must not reach for;
     and a test can then put this function in states production will not reach
@@ -598,6 +636,24 @@ def decide(
                 "and nothing may be concluded about StatPal's coverage. BOTH "
                 "halves are required: one endpoint says a game exists, the "
                 "other says what is happening in it"
+            ),
+        )
+
+    if NO_SCHEDULE_BOARD in (statpal, statpal_live):
+        return FailoverDecision(
+            sport_key=sport_key,
+            code=STANDBY_CANNOT_COVER_WINDOW,
+            serving=ESPN,
+            failed_over=False,
+            why=(
+                f"ESPN is {espn} for {sport_key} and the gate permits a "
+                "failover, but StatPal publishes no schedule board that covers "
+                "the window this comparison is made over. Its schedule is one "
+                "calendar board at a time and there is no board for today, so "
+                "the question cannot be put — this is a boundary of StatPal's "
+                "product, NOT an outage and NOT a claim that it has no games. "
+                "Serving this sport from the standby needs a second source for "
+                "today's fixture list, not a retry"
             ),
         )
 
