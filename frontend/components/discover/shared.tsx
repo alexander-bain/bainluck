@@ -517,9 +517,35 @@ export function useSwipe(
     // real drag in onPointerMove.
   }, [beginSwipe]);
 
+  // Declared above onPointerMove because that handler now depends on it.
+  const releaseCapture = useCallback(() => {
+    if (capturedId.current !== null) {
+      ref.current?.releasePointerCapture?.(capturedId.current);
+      capturedId.current = null;
+    }
+  }, []);
+
   const onPointerMove = useCallback((e: React.PointerEvent) => {
     if (e.pointerType === "touch") return;
     if (!swiping.current) return;
+    // #4431: a move with no button held is a HOVER, not a drag — end the gesture.
+    //
+    // onPointerDown deliberately does not capture (L2-175 Item 1, above), so
+    // there is a window where the card is "swiping" and has captured nothing.
+    // If the pointer leaves the card before any pointermove reaches it — a fast
+    // trackpad flick — no capture is taken AND the card never sees the
+    // pointerup, so nothing clears the flag: onPointerUp/onPointerCancel cannot
+    // fire on an element that is neither under the pointer nor holding capture.
+    // Without this check every later bare hover ran updateSwipe, so the card
+    // followed the cursor forever and a wander past 80px armed a real dismiss.
+    // Measured on production: hover left drew -75px and "Less like this".
+    if (e.buttons === 0) {
+      swiping.current = false;
+      setOffset(0);
+      setSwipeAction(null);
+      releaseCapture();
+      return;
+    }
     // Once the press moves past the drag threshold it's a swipe, not a click:
     // capture the pointer so the drag keeps tracking if it leaves the card.
     if (capturedId.current === null) {
@@ -530,14 +556,7 @@ export function useSwipe(
       }
     }
     updateSwipe(e.clientX);
-  }, [updateSwipe]);
-
-  const releaseCapture = useCallback(() => {
-    if (capturedId.current !== null) {
-      ref.current?.releasePointerCapture?.(capturedId.current);
-      capturedId.current = null;
-    }
-  }, []);
+  }, [updateSwipe, releaseCapture]);
 
   const onPointerUp = useCallback((e: React.PointerEvent) => {
     if (e.pointerType === "touch") return;
