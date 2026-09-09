@@ -53,6 +53,38 @@ export function isImpossibleFutureFinal(
   return t > now;
 }
 
+/**
+ * ux/1053 — HOW MANY LOCAL CALENDAR DAYS AGO A SETTLED GAME FINISHED.
+ *
+ * `0` = today, `1` = yesterday, `2+` = older. `null` means "this card has no
+ * trustworthy finish date", and it is returned for exactly the three cases
+ * `formatFinishedGameLabel` returns `""` for — absent, unparseable, and the
+ * gotcha #14 impossible future final. That coupling is the point: a card whose
+ * date cannot be printed must not be sorted into a section headed by a day
+ * either, and two answers to "when did this finish" is how the label and the
+ * bucket would come to disagree on one card.
+ *
+ * Subtracts local midnights rather than raw instants, so a 23- or 25-hour DST
+ * day still classifies as one day. Pure, with `now` injectable (gotcha #44).
+ */
+export function finishedDayOffset(
+  commenceTime: string | null | undefined,
+  now: number = Date.now(),
+): number | null {
+  if (!commenceTime) return null;
+  const game = new Date(commenceTime);
+  if (Number.isNaN(game.getTime())) return null;
+  if (isImpossibleFutureFinal(commenceTime, now)) return null;
+  const MS_PER_DAY = 24 * 60 * 60 * 1000;
+  return Math.round(
+    (localMidnight(new Date(now)) - localMidnight(game)) / MS_PER_DAY,
+  );
+}
+
+function localMidnight(d: Date): number {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+}
+
 /** True when two instants fall on the same local calendar day. */
 function sameCalendarDay(a: Date, b: Date): boolean {
   return (
