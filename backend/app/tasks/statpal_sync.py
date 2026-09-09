@@ -17,7 +17,7 @@ import asyncio
 import logging
 from datetime import datetime, timezone, timedelta
 from itertools import zip_longest
-from typing import Optional
+from typing import Optional, Sequence
 
 from sqlalchemy import select, update, and_, or_, func
 
@@ -48,6 +48,49 @@ def statpal_provided_an_id(value: Optional[str]) -> bool:
     serves ``' '`` has told us nothing, and a truthiness check would disagree.
     """
     return bool(str(value or "").strip())
+
+
+def row_for_statpal_id(rows: Sequence) -> tuple[Optional[object], bool]:
+    """Which of the rows carrying one StatPal id is THE game? (#4307)
+
+    Returns ``(row, collided)``. ``collided`` is the finding; ``row`` is ``None``
+    whenever there is not exactly one candidate.
+
+    Hoisted and named for the same reason ``statpal_provided_an_id`` was: the
+    interesting case is a judgement, not a lookup. ``statpal_fixture_id`` is
+    supposed to name one game, and in production it does not always — seven ids
+    were carried by two rows each on 2026-09-09 (NHL 3, MLB 2, NBA 2), every one
+    of them a twin.
+
+    THE DEFECT THIS REPLACES
+    ════════════════════════
+    The call site read ``fid_result.scalar_one_or_none()``, which **raises**
+    ``MultipleResultsFound`` on two rows. ``get_task_session`` commits only on a
+    clean exit and rolls back on any exception, and ``_sync_statpal_schedules``
+    has no intermediate commit — so one ambiguous fixture discarded the whole
+    sport's pass, including every fixture already processed before it. Measured:
+    7 of ~9.6 MLB passes dead in a 9.56h window, 21 Sentry events in 24h
+    (``BAINLUCK-16X``), from 2026-09-08 01:03Z. Gotcha #42 — one bad item must
+    never wipe a pass.
+
+    WHY NOT ``.first()``
+    ════════════════════
+    Because it answers a question we cannot answer. The two rows are a twin: one
+    is the game and one is a ghost, and which is which is not knowable from the
+    id they share — it is precisely what they disagree about. ``.first()`` would
+    enrich an arbitrary one of them, silently, and stamping the twin deepens it.
+    D55: a collision raises or tags, never silently no-ops. Skipping tags it —
+    the caller counts the refusal and names both rows in the log — and leaves
+    the twin to the matching lane (D35, #2693), which is the only lane that may
+    repair it.
+
+    So a collision costs one fixture's enrichment for one pass. The raise cost
+    every fixture's, every pass.
+    """
+    rows = list(rows)
+    if len(rows) > 1:
+        return None, True
+    return (rows[0] if rows else None), False
 
 
 async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
@@ -108,6 +151,11 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
     # ever carried a `statpal_<home>_<away>` value — and it is reported anyway so
     # that "has never fired" stays a measured claim.
     schedule_created_refused_no_provider_id = 0
+    # #4307. Past fixtures this path declined to enrich because their StatPal id
+    # named more than one event row. Always present; 0 is a reading, and a
+    # non-zero here is a TWIN COUNT — the same population #3093/#3463 track from
+    # the other side — surfaced where the pass that trips over it can be seen.
+    schedule_fid_collision_skipped = 0
 
     # Track StatPal fixture IDs already processed in this run
     # to prevent duplicates across soccer league iterations
@@ -197,7 +245,26 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
                                     Event.statpal_fixture_id == fixture.fixture_id
                                 )
                             )
-                            event = fid_result.scalar_one_or_none()
+                            # #4307. `scalar_one_or_none()` here RAISED on the
+                            # seven ids production carries on two rows each, and
+                            # the raise rolled back the whole sport's pass (see
+                            # `row_for_statpal_id`). Ambiguity is now a counted
+                            # refusal for one fixture instead of a lost hour.
+                            candidates = fid_result.scalars().all()
+                            event, collided = row_for_statpal_id(candidates)
+                            if collided:
+                                schedule_fid_collision_skipped += 1
+                                logger.warning(
+                                    "StatPal schedule-enrich refused: fixture id %s "
+                                    "names %d event rows (%s) for %s vs %s (%s). Two "
+                                    "rows for one game — filed as a matching symptom, "
+                                    "not repaired here (D35, #2693). Skipping this "
+                                    "fixture so the pass survives (#4307).",
+                                    fixture.fixture_id, len(candidates),
+                                    ", ".join(str(getattr(c, "id", "?")) for c in candidates),
+                                    fixture.away_team, fixture.home_team, our_key,
+                                )
+                                continue
                         if not event:
                             continue  # Past game, no existing event — skip
                     else:
@@ -555,6 +622,9 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
         # the fabricator is unreachable rather than merely unobserved.
         "live_created_refused_no_provider_id": live_created_refused_no_provider_id,
         "schedule_created_refused_no_provider_id": schedule_created_refused_no_provider_id,
+        # #4307 — same rule: always present, and 0 is the reading that says no
+        # fixture in this window is claimed by two rows.
+        "schedule_fid_collision_skipped": schedule_fid_collision_skipped,
     }
 
 
