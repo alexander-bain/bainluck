@@ -194,7 +194,6 @@ def build_plan(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[s
         "children_inheriting": 0,
     }
 
-    by_id = {r["id"]: r for r in rows}
     # A child's parent is the row in its group that carries the tags. Resolved from
     # the SAME selection, so a parent that is not on the suspect shelf (already
     # correct, or already repaired) cannot silently re-shelve its children.
