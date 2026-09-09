@@ -340,7 +340,9 @@ def _disable_sample_gate(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_route_serves_the_shared_compute_payload_unaltered(healthy_staged_bank):
+async def test_route_serves_the_shared_compute_payload_unaltered(
+    healthy_staged_bank, monkeypatch
+):
     """One payload, one shape — the route is a serving tier, not a second builder.
 
     Queue 300B removed the route's in-request build, so the seam this guards
@@ -394,7 +396,36 @@ async def test_route_serves_the_shared_compute_payload_unaltered(healthy_staged_
     envelope_keys = {"availability", "producer", "staged", "scorecard", "source_labels"}
 
     shared = await compute_calibration_payload(_FakeDB())
-    calibration._cache = {"data": shared, "timestamp": _time.time()}
+
+    # CERT-2308: the memo may answer only while the bytes it was decoded from are
+    # still the bytes the shared store holds, so a seeded memo needs the store
+    # seeded with it. Seeding ``_cache`` alone modelled a state no publish can
+    # produce, and the route now correctly declines it and stale-marks a lower
+    # tier's answer — which would quietly turn this into a test about tier 4.
+    #
+    # The memo still serves the OBJECT (``shared``), not a decode of these bytes,
+    # so the byte-identity assertion below is about the route and not about a
+    # JSON round trip.
+    import json as _json
+
+    from app.utils import request_cache as rc
+
+    raw = _json.dumps(shared, default=str)
+
+    class _PublishedStore:
+        async def get(self, key):
+            return raw if key == "bainluck:calibration:main" else None
+
+    async def _getter():
+        return _PublishedStore()
+
+    monkeypatch.setattr(rc, "get_shared_async_redis", _getter)
+
+    calibration._cache = {
+        "data": shared,
+        "timestamp": _time.time(),
+        "source": calibration.main_artifact_fingerprint(raw),
+    }
 
     routed = await calibration.public_calibration(db=_FakeDB())
 

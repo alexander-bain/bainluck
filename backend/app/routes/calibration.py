@@ -1,5 +1,6 @@
 """Public calibration endpoint — no auth required, cached for 1 hour."""
 
+import hashlib as _hashlib
 import json
 import logging
 import time
@@ -36,8 +37,33 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-_cache: dict = {"data": None, "timestamp": 0}
-CACHE_TTL = 3600
+#: ``source`` is the FINGERPRINT of the exact ``main`` bytes this payload was
+#: decoded from — the memo's link back to the shared store, added by the
+#: CERT-2299 repair. Only the main tier sets it; every other writer stores a
+#: stale-marked copy, which tier 1 refuses on its own account.
+_cache: dict = {"data": None, "timestamp": 0, "source": None}
+
+#: THE TIER-1 MEMO NO LONGER HAS A CLOCK, and the absence is the fix (#4072).
+#:
+#: There were two, and both were the same mistake. ``CACHE_TTL = 3600`` bounded
+#: the memo by an hour of WALL CLOCK from whenever this process happened to seed
+#: — two equal periods with an arbitrary phase offset, so a dyno that memoised
+#: the 20:16 artifact at 20:30 served it until 21:30 and missed the 21:16
+#: publish by 14 minutes (measured twice in consecutive hours, no release in
+#: either window). Keying the bound to the artifact's own age instead removed
+#: the offset, and CERT-2299 showed it was still not enough: builds are not all
+#: the same length, so a successor can publish while the incumbent is 3,599 s
+#: old, and for that interval a warm dyno and a cold one serve different curves.
+#:
+#: CERT-2308 closed the last of it. **The quantity being bounded was never time.
+#: It is whether somebody else has published**, and no constant derived from a
+#: clock can answer that — only the shared store can. So the memo asks it, every
+#: request, and answers only on a positive match (``_memo_may_answer``). A
+#: number here would be a fourth guess at a question that now has an answer.
+#:
+#: What a memo miss costs, for whoever re-reads this: one ``GET`` of a bounded
+#: key. Not the multi-CTE aggregation the 3600 was originally sized against —
+#: that compute left the request path in Queue 300B.
 
 #: #2007 / CAL-P076. The staged bank's as-of + drift, memoised per dyno. The two
 #: durable rows behind it are primary-key reads of bounded payloads, but tier 1
@@ -48,6 +74,92 @@ CACHE_TTL = 3600
 #: own ``staged_at`` so a stale read cannot make the disclosure look current.
 _staged_cache: dict = {"data": None, "timestamp": 0.0}
 STAGED_DISCLOSURE_TTL_S = 120.0
+
+
+def main_artifact_fingerprint(raw: Any) -> Optional[str]:
+    """Identity of a published ``main`` artifact, from its RAW bytes.
+
+    Deliberately over the bytes rather than over a decoded field: the point of
+    the memo is to skip the decode (gotcha #38 — ``json.loads`` holds the GIL
+    for the whole C-level parse, and this payload is big), so the check that
+    guards it must not require one. Two publishes are the same artifact exactly
+    when the publisher wrote the same bytes, which is the strongest identity
+    available to a reader and needs nothing from the writer.
+
+    ``None`` for anything that is not a readable value — an absent key, a
+    non-string. ``None`` never matches ``None`` at the call site; a fingerprint
+    we could not take is not evidence of agreement.
+    """
+    if isinstance(raw, (bytes, bytearray)):
+        return _hashlib.sha256(bytes(raw)).hexdigest()
+    if isinstance(raw, str):
+        return _hashlib.sha256(raw.encode("utf-8", "replace")).hexdigest()
+    return None
+
+
+def _memo_may_answer(
+    payload: Any,
+    *,
+    current_fingerprint: Optional[str],
+    memo_fingerprint: Optional[str],
+) -> bool:
+    """May tier 1 answer from process memory, or must the request read on?
+
+    ONE RULE, and it is a positive proof: the memo may answer exactly when the
+    bytes it was decoded from are still the bytes the shared store holds.
+
+    That is a total answer — it cannot be early, late, or racy — and it costs
+    one ``GET`` of a bounded key, never a decode, because the fingerprint is
+    taken over the raw value (gotcha #38: the decode is the expensive part, and
+    a check that guards it must not require one).
+
+    Everything that is NOT a match is a miss: an absent key, a superseded
+    artifact, an unreadable store. The tiers below know how to say so honestly,
+    and every one of them discloses what it served.
+    """
+    if not isinstance(payload, dict):
+        return False
+
+    # Unchanged (Queue #284 Item 3): a stale-marked copy is deliberately NOT
+    # served from here. It stays honestly marked on every response, and every
+    # request re-attempts Redis main so a later fresh-main read replaces it
+    # promptly.
+    if payload.get("cache", {}).get("status") == "stale":
+        return False
+
+    # CERT-2308, THE REPAIR: ``4072-REDIS-FAILURE-CANNOT-REANIMATE-SUPERSEDED-MEMO``.
+    #
+    # There used to be a second branch here, taken when the store could not be
+    # read, which fell back to bounding the memo by the artifact's age. Its
+    # justification was written down and it was FALSE:
+    #
+    #     "The store could not be reached, so there is no successor to be
+    #      superseded BY — nothing published while we cannot read is visible to
+    #      any other dyno either."
+    #
+    # A Redis failure is per-CONNECTION, not global. One dyno timing out says
+    # nothing about the others, and the cert's falsifier is the proof: with the
+    # local read failing, the warm process served 1,000,000 while a cold one
+    # served 2,000,000 — the same two same-instant curves and backward refreshes
+    # this ship exists to end, reached by a different door.
+    #
+    # The generalisation, and the reason no third guess belongs here: a fallback
+    # is only honest when it is a WEAKER ANSWER TO THE SAME QUESTION. The
+    # question is "has somebody else published?", and a clock cannot answer it at
+    # all — it answers "how old is this?", which is a different question whose
+    # answer happens to correlate. Gotcha #53: unreadable is not "no", and the
+    # reassuring reading of an absent signal is the one that must never be free.
+    #
+    # Refusing costs nothing a reader loses. The request falls to the durable
+    # substrate (one indexed primary-key read) or to this process's own copy
+    # stamped ``redis_unavailable`` — the SAME numbers, disclosed instead of
+    # asserted. There is no cold compute left below to be afraid of; Queue 300B
+    # removed it.
+    return (
+        memo_fingerprint is not None
+        and current_fingerprint is not None
+        and memo_fingerprint == current_fingerprint
+    )
 
 
 def _score_payload(payload: dict) -> dict:
@@ -1207,23 +1319,56 @@ async def public_calibration(
     #    disclosure, which refuses ``fresh``.
     staged_block = await _read_staged_disclosure(db, now=now)
 
-    # 1. In-process cache (survives between requests on same dyno). A
-    #    stale-marked copy (Tier 2b, main key absent) is deliberately NOT served
-    #    from here: it stays honestly marked on every response, but each request
-    #    re-attempts Redis main so a later fresh-main read replaces it promptly
-    #    (Queue #284 Item 3). TTL and compute behavior are unchanged.
-    if (
-        isinstance(_cache["data"], dict)
-        and (now - _cache["timestamp"]) < CACHE_TTL
-        and _cache["data"].get("cache", {}).get("status") != "stale"
+    # 0b. The shared store's CURRENT ``main`` bytes, read ONCE and used twice:
+    #     by the memo gate immediately below, and by the main tier at step 2.
+    #
+    #     CERT-2299 moved this read ABOVE the memo. The memo used to be a true
+    #     short-circuit — it answered without consulting anything shared — and
+    #     that is precisely why it could serve a superseded artifact: it had no
+    #     way to learn that somebody had published. Reading first costs one GET
+    #     of a bounded key; it does NOT cost a decode, which is the expensive
+    #     part (gotcha #38) and is still skipped on a memo hit.
+    #
+    #     ``_redis_failed`` keeps its exact prior meaning — a genuine Redis
+    #     failure, not a clean miss (Queue 300B) — because tier 2b reads it to
+    #     decide whether the durable last-good is worth attempting.
+    main_raw: Any = None
+    _redis_failed = False
+    try:
+        rc = await _rc.get_shared_async_redis()
+        res = await _rc.bounded_redis_call(lambda: rc.get("bainluck:calibration:main"))
+        main_raw = res.value if res.is_ok else None
+        _redis_failed = res.is_failure
+    except Exception:
+        _redis_failed = True
+
+    # ``None`` when the key is absent AND when the read failed — the two are the
+    # same thing to the memo (CERT-2308: neither is a positive read of the
+    # current artifact), and ``_redis_failed`` still separates them for tier 2b,
+    # which needs to know whether the durable last-good is worth attempting.
+    current_fingerprint = main_artifact_fingerprint(main_raw)
+
+    # 1. In-process cache (survives between requests on same dyno). Admission is
+    #    ``_memo_may_answer``, and since CERT-2308 it is ONE positive rule: the
+    #    memo answers only while the bytes it was decoded from are still the
+    #    bytes the shared store holds. Stale-marked copies were already excluded
+    #    (Queue #284 Item 3); the artifact-age bound (#4072) and the wall-clock
+    #    TTL are both gone, because neither could answer the question that
+    #    actually decides — has somebody else published? Compute behavior is
+    #    unchanged.
+    #
+    #    Ruling 025: this tier re-derives the declaration from the CONTENT it is
+    #    about to serve rather than replaying whatever the producing tier
+    #    stamped. The memo can only hold an unmarked copy admitted by the main
+    #    tier, and "it was fresh when I stored it" is a claim about the past.
+    #    Age only — no shape re-check, for the reason recorded at the main tier
+    #    below.
+    memo_age = payload_age_s(_cache["data"])
+    if _memo_may_answer(
+        _cache["data"],
+        current_fingerprint=current_fingerprint,
+        memo_fingerprint=_cache.get("source"),
     ):
-        # Ruling 025: this tier re-derives the declaration from the CONTENT it is
-        # about to serve rather than replaying whatever the producing tier
-        # stamped an hour ago. The memo can only hold an unmarked copy admitted
-        # by the main tier, but it can hold it for up to CACHE_TTL, and "it was
-        # fresh when I stored it" is a claim about the past. Age only — no shape
-        # re-check, for the reason recorded at the main tier below.
-        memo_age = payload_age_s(_cache["data"])
         if _cache["data"].get("availability") == AVAILABILITY_DEGRADED:
             # A memo cannot HEAL. The copy stored here was already declared
             # unvalidated by the tier that admitted it, and re-deriving purely
@@ -1241,13 +1386,12 @@ async def public_calibration(
             )
         return _serve(_cache["data"], memo_state)
 
-    # 2. Redis precomputed cache (survives deploys) — shared async client + a
-    #    hard-bounded op so a Redis stall can never block the loop or the router.
-    _redis_failed = False
+    # 2. Redis precomputed cache (survives deploys) — the bytes were fetched at
+    #    step 0b with a hard-bounded op, so a Redis stall can never block the loop
+    #    or the router, and the memo gate and this tier can never disagree about
+    #    what the store holds: there is one read and they both use it.
     try:
-        rc = await _rc.get_shared_async_redis()
-        res = await _rc.bounded_redis_call(lambda: rc.get("bainluck:calibration:main"))
-        if res.is_ok:
+        if main_raw is not None:
             # Queue 300B: a MALFORMED value is a miss, not a Redis failure.
             # Previously this decode ran bare inside the tier's outer try, so a
             # truncated/corrupt ``main`` (an eviction mid-write, a partial read)
@@ -1256,7 +1400,7 @@ async def public_calibration(
             # Nothing surfaced it before, because the request then fell through
             # to the cold compute and served a curve anyway.
             try:
-                data = _json.loads(res.value)
+                data = _json.loads(main_raw)
             except Exception:
                 logger.warning(
                     "calibration: main key is not decodable JSON — treating as a "
@@ -1309,6 +1453,7 @@ async def public_calibration(
                     degraded = _degraded(data, "main_key_over_age", main_verdict)
                     _cache["data"] = degraded
                     _cache["timestamp"] = now
+                    _cache["source"] = None
                     _rc.remember_last_good(_lg_key, degraded)
                     return degraded
                 # Queue 300C: same guard as the stale tiers. A ``main`` key
@@ -1332,15 +1477,24 @@ async def public_calibration(
                     data = _serve(data, AVAILABILITY_FRESH)
                 _cache["data"] = data
                 _cache["timestamp"] = now
+                # CERT-2299: the ONE memo write whose copy tier 1 can actually
+                # serve, and therefore the one that must record where it came
+                # from. Every other writer below stores a stale-marked copy,
+                # which tier 1 refuses on its own account (Queue #284 Item 3).
+                _cache["source"] = current_fingerprint
                 _rc.remember_last_good(_lg_key, data)
                 return data
             logger.warning(
                 "calibration: main key rejected (%s: %s) — falling back to last-good",
                 main_verdict.status, main_verdict.reason,
             )
-        _redis_failed = res.is_failure
     except Exception:
-        _redis_failed = True
+        # The bounded GET already happened at step 0b and set ``_redis_failed``;
+        # anything raising here is decode/verdict work, which Queue 300B says is
+        # a miss rather than a Redis failure. Do NOT reassign ``_redis_failed``:
+        # doing so would take the healthy ``last_good`` sibling down with one
+        # poisoned ``main``, which is the exact regression Queue 300B closed.
+        logger.warning("calibration: main tier failed after the read", exc_info=True)
 
     # 2b. Clean miss of the FRESH key (Redis healthy, ``main`` key just absent —
     #     the observed failure: the hourly precompute timed out for >2h and the 2h
@@ -1381,6 +1535,7 @@ async def public_calibration(
                     degraded = _degraded(data, "main_key_absent", verdict)
                     _cache["data"] = degraded
                     _cache["timestamp"] = now
+                    _cache["source"] = None
                     _rc.remember_last_good(_lg_key, degraded)
                     return degraded
                 logger.warning(
@@ -1476,6 +1631,7 @@ async def public_calibration(
                     )
                     _cache["data"] = degraded
                     _cache["timestamp"] = now
+                    _cache["source"] = None
                     _rc.remember_last_good(_lg_key, degraded)
                     return degraded
                 logger.warning(
