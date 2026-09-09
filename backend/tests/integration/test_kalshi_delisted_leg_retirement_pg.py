@@ -89,7 +89,11 @@ async def db():
     """A real Postgres carrying the real schema."""
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-    import app.models.models  # noqa: F401  — registers every table on Base
+    # One import STYLE for this module across the file (`from ... import ...`),
+    # because `_seed` below also needs its names: mixing `import x.y` here with
+    # `from x.y import Z` there trips CodeQL's `py/import-and-import-from`.
+    # Still imported for its side effect — it registers every table on `Base`.
+    from app.models import models as _models  # noqa: F401
     from app.services.database import Base
 
     engine = create_async_engine(DB_URL)
