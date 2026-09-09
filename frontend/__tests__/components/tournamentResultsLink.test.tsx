@@ -201,16 +201,34 @@ describe("the rendered finished list", () => {
     expect(anchor![0]).toMatch(/class="[^"]*\bcontents\b/);
   });
 
-  it("names the gap rather than leaving dead rows unexplained", () => {
+  // ═══ #4125 ITEM 1 — THE GAP IS NAMED TO A PROBE, NOT TO A READER ═══
+  //
+  // These three tests pinned the sentence "1 of 3 open a match page. We cannot
+  // link the rest to one yet." Alex removed it on 2026-09-08 ("all the grey
+  // text is madness") and notice 34 names the class: coverage counts belong in
+  // the PR, the artifact, or a tooltip — never the page body.
+  //
+  // The COUNT was the part worth keeping and it did not die, it moved: the
+  // provenance mark carries `data-linked` / `data-link-total`. So each test
+  // below keeps its original arithmetic — which is the thing that was ever
+  // capable of regressing — and asserts it where it now lives, plus the
+  // absence of the prose so the paragraph cannot come back unnoticed.
+  it("counts the routable rows for a probe, and says nothing to the reader", () => {
     const html = markup(BY_MATCHUP);
-    expect(html).toContain('data-testid="results-link-note"');
-    expect(html).toContain("1 of 3");
+    expect(html).not.toContain('data-testid="results-link-note"');
+    expect(html).not.toContain("open a match page. We cannot link");
+    expect(html).toContain('data-linked="1"');
+    expect(html).toContain('data-link-total="3"');
   });
 
   it("says nothing about links when it can route none of them", () => {
-    // A note reading "0 of 3 open a match page" is worse than silence: it
-    // advertises a feature the reader cannot use anywhere on the list.
-    expect(markup({})).not.toContain('data-testid="results-link-note"');
+    // Unchanged in spirit: silence for the reader. The count is now always on
+    // the mark, and zero is a true and useful thing for a probe to read — what
+    // must never appear is a sentence advertising a feature nobody can use.
+    const html = markup({});
+    expect(html).not.toContain('data-testid="results-link-note"');
+    expect(html).not.toContain("open a match page");
+    expect(html).toContain('data-linked="0"');
   });
 
   it("counts LINKED rows in the note, not rendered rows", () => {
@@ -222,7 +240,10 @@ describe("the rendered finished list", () => {
     );
     const html = markup(both);
     expect(hrefs(html).filter((h) => h.startsWith("/events/"))).toHaveLength(2);
-    expect(html).toContain("2 of 3");
+    // The original point survives exactly: the count follows LINKED rows (2),
+    // not rendered rows (3). Only the surface it is read from changed.
+    expect(html).toContain('data-linked="2"');
+    expect(html).toContain('data-link-total="3"');
   });
 
   it("says nothing about links when every row on the list routes", () => {

@@ -4,9 +4,8 @@ import React from "react";
 
 import LiquidityMark from "../LiquidityMark";
 import ShowMore, { COLLAPSED_LIST_COUNT } from "./ShowMore";
-import { LIQUIDITY_DEFINITION, isMarked, readLiquidity } from "@/lib/liquidity";
+import { isMarked, readLiquidity } from "@/lib/liquidity";
 import {
-  FRESHNESS_DEFINITION,
   answerOutcome,
   curatedProps,
   curatedPropsEmptyReason,
@@ -581,36 +580,25 @@ function PropCard({
 }
 
 /**
- * WHERE THE ROUND QUESTIONS WENT — and why this sentence is unconditional.
+ * ═══ `MovedToGrid` IS GONE — IT POINTED AT A TAB THAT NO LONGER EXISTS ═══
  *
- * UX-P138 printed it only when `curated.dropped.advance > 0`, i.e. only when a
- * reach question was in the payload and got rotated out at render. UX-P139
- * removed those eight from the register itself (`props_declined`), which is the
- * more correct fix — one market in two collections is a divergence waiting to
- * happen — and the side effect was that the pointer disappeared with them.
+ * It printed *"Questions about reaching a round — the quarters, the semis, the
+ * final — are on the Bracket tab."* Two of Alex's five items land on that one
+ * sentence at once (2026-09-08 4:00pm PT):
  *
- * That made the sentence a fact about our BUILD PIPELINE rather than about the
- * page: it appeared when the rotation happened to fire and vanished once the
- * same decision was made one layer earlier, even though what it tells the
- * reader ("reach-a-round questions live on the Bracket tab") became MORE true,
- * not less. On a page whose ship is "a hub that orients at a glance", an
- * orientation line that blinks out when the underlying structure hardens is
- * backwards. So it is structural now, and the count rides it only while a
- * rotation is genuinely what happened.
+ *   item 1  it is grey explanatory text in the page body (notice 34)
+ *   item 5  *"Build it straight into the Tournament tab; we wouldn't need that
+ *           level of tab hierarchy"* — the bracket renders inline below the
+ *           draw now, so the sentence directs a reader to a tab that is not
+ *           there, which is worse than saying nothing
+ *
+ * 🔴 AND ITS OWN REASONING PREDICTED THIS. The doc comment argued the line had
+ * to be unconditional because it was an ORIENTATION aid — true while the reach
+ * questions lived one tab away. Delete the tab and the orientation problem it
+ * solved goes with it: the questions are now on the same scroll as this
+ * section, which is the strongest possible version of what the sentence was
+ * trying to say. Nothing is left to point at.
  */
-function MovedToGrid({ dropped }: { dropped: number }) {
-  return (
-    <p
-      className="mt-2 text-[11px] text-text-muted"
-      data-testid="props-moved-to-grid"
-      data-dropped={dropped}
-    >
-      {dropped > 0
-        ? `${dropped} question${dropped === 1 ? " about reaching a round is" : "s about reaching a round are"} on the Bracket tab.`
-        : "Questions about reaching a round — the quarters, the semis, the final — are on the Bracket tab."}
-    </p>
-  );
-}
 
 export default function TournamentProps({
   markets,
@@ -690,7 +678,6 @@ export default function TournamentProps({
             None have a probability against them today.
           </p>
         </div>
-        <MovedToGrid dropped={curated.dropped.advance} />
       </section>
     );
   }
@@ -758,52 +745,33 @@ export default function TournamentProps({
         )}
       </div>
 
-      {/* WHAT THE AGE MEANS, ONCE (UX-P154, Alex's item 3).
+      {/* ═══ AND THE "LAST NUMBER" DEFINITION GOES WITH IT (notice 34) ═══
+        *
+        * Alex named this one in the same breath: *"last number is when we last
+        * saw…"*. UX-P154's reasoning for putting it here was sound and is now
+        * overruled by a later ruling — it argued the definition belongs once
+        * under the section rather than on every card, and notice 34's answer is
+        * that the choice was never between once and four times, it was between
+        * the page body and a tooltip.
+        *
+        * `FRESHNESS_DEFINITION` is unchanged and still exported. `anyQuiet` is
+        * still computed and still drives the per-card status, which is the part
+        * a reader acts on. */}
 
-          "32 hours ago" is ambiguous — created? updated? last traded? — and
-          the answer is none of those: it is when a probability for that
-          question last reached us. That is a definition, so it belongs once
-          under the section and not on every card, where it would be four
-          repetitions of a footnote. The cards carry the STATUS; this carries
-          the UNIT. */}
-      {anyQuiet && (
-        <p
-          className="mt-2 max-w-[62ch] text-[11px] leading-snug text-text-muted"
-          data-testid="props-freshness-definition"
-        >
-          {FRESHNESS_DEFINITION}
-        </p>
-      )}
-
-      {/* AND WHAT THE MARK MEANS, ONCE (UX-P157, Alex's illiquidity ruling).
-          Same rule as the sentence above it and deliberately a SECOND
-          paragraph, not an extension of the first: age and thinness are two
-          independent facts about a question, and a reader who has worked out
-          what one mark means has learned nothing about the other. Gated on a
-          mark actually being on screen. */}
-      {anyThin && (
-        <p
-          className="mt-1.5 flex max-w-[62ch] items-start gap-1.5 text-[11px] leading-snug text-text-muted"
-          data-testid="props-liquidity-definition"
-        >
-          <span className="mt-[3px] flex shrink-0 items-center gap-1">
-            <LiquidityMark
-              facts={{ liquidity: "thin", liquidity_reasons: ["no_trades_24h"] }}
-              size="sm"
-              decorative
-            />
-            <LiquidityMark
-              facts={{
-                liquidity: "barely",
-                liquidity_reasons: ["no_trades_24h", "spread_exceeds_price"],
-              }}
-              size="sm"
-              decorative
-            />
-          </span>
-          <span>{LIQUIDITY_DEFINITION}</span>
-        </p>
-      )}
+      {/* ═══ THE MARK EXPLAINS ITSELF ON HOVER; THE PARAGRAPH IS GONE ═══
+        *
+        * Notice 34 (Alex, 2026-09-08 4:00pm PT), on this very page: method
+        * notes *"go in the PR, the artifact, or a tooltip on the source mark —
+        * never in the page body"*. This block was six lines of grey teaching
+        * two glyphs, and it is the one item in Alex's list that notice 34
+        * explicitly offers a home to.
+        *
+        * It already has that home and always did: `LiquidityMark` renders
+        * `title={sentence}` for the mouse and `aria-label` for the button, both
+        * built from `liquidityReveal`, so the definition reaches a reader who
+        * asks — hover, focus or screen reader — and stops preaching to one who
+        * did not. `LIQUIDITY_DEFINITION` is unchanged and still exported; it
+        * is the legend that goes, not the vocabulary. */}
 
       {/* A COMBINED CARD SAYS IT IS ONE (UX-P154, Alex's item 1). Not an
           apology — the opposite. Two questions became one card and every
@@ -821,7 +789,6 @@ export default function TournamentProps({
           one card.
         </p>
       )}
-      <MovedToGrid dropped={curated.dropped.advance} />
     </section>
   );
 }

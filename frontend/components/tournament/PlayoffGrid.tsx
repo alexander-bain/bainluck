@@ -3,7 +3,6 @@
 import React from "react";
 
 import LiquidityMark from "../LiquidityMark";
-import { LIQUIDITY_DEFINITION } from "@/lib/liquidity";
 import PlayerAvatar from "./PlayerAvatar";
 import ShowMore, { COLLAPSED_LIST_COUNT } from "./ShowMore";
 import {
@@ -511,6 +510,11 @@ export default function PlayoffGrid({
       data-rows={grid.rows.length}
       data-priced={grid.pricedCells}
       data-alarms={grid.alarmCells}
+      // #4125 item 1: `data-marked` used to hang off the illiquidity key
+      // paragraph, so removing that paragraph would have taken the count with
+      // it. It belongs here anyway, beside `data-priced` and `data-alarms` —
+      // the three are one family and a probe reads them together.
+      data-marked={marked}
       data-scrolls={scrolls ? "true" : "false"}
     >
       <h2 className="mb-2 text-xs font-bold uppercase tracking-[0.07em] text-text-muted">
@@ -683,45 +687,20 @@ export default function PlayoffGrid({
         quoted for exactly the question in its column.
       </p>
 
-      {/* ═══ THE ILLIQUIDITY KEY (UX-P157, Alex's ruling / #2256) ═══
-
-          Said ONCE, under the grid, and only when the grid actually has marks
-          on it — a key to a symbol that is not on screen is furniture. The two
-          glyphs are the real component at the real size, not a drawing of it:
-          if the mark ever changes shape this key changes with it, which is the
-          only way a key stays true without anybody remembering to update it. */}
-      {marked > 0 && (
-        <p
-          className="mt-1.5 flex max-w-[80ch] items-start gap-1.5 text-[11px] leading-snug text-text-muted"
-          data-testid="grid-liquidity-key"
-          data-marked={marked}
-        >
-          <span className="mt-[3px] flex shrink-0 items-center gap-1">
-            <LiquidityMark
-              facts={{ liquidity: "thin", liquidity_reasons: ["no_trades_24h"] }}
-              size="sm"
-              decorative
-            />
-            <LiquidityMark
-              facts={{
-                liquidity: "barely",
-                liquidity_reasons: ["no_trades_24h", "spread_exceeds_price"],
-              }}
-              size="sm"
-              decorative
-            />
-          </span>
-          {/* The lead-in is a COUNT and nothing else. It used to restate what
-              the definition says next ("come off a market barely anybody is
-              trading"), which put the same clause on screen twice in a row —
-              the verbosity Alex's 2026-08-29 ruling was about, one paragraph
-              below the tooltip it was about. */}
-          <span>
-            <b className="font-semibold text-text-secondary">{marked}</b> of{" "}
-            {grid.pricedCells} numbers here carry a mark. {LIQUIDITY_DEFINITION}
-          </span>
-        </p>
-      )}
+      {/* ═══ THE ILLIQUIDITY KEY IS A TOOLTIP NOW, NOT A KEY (notice 34) ═══
+        *
+        * Removed under Alex's 2026-09-08 4:00pm ruling on this page — *"all the
+        * grey text is madness"* — and specifically under notice 34's clause
+        * that a method note may live *"as a tooltip on the source mark"*.
+        *
+        * UX-P157's argument for a key was that a symbol on screen needs a
+        * legend somewhere. It does; it just does not need a paragraph, because
+        * `LiquidityMark` carries the legend itself (`title` + `aria-label`,
+        * both from `liquidityReveal`) on every instance the grid draws. A key
+        * beneath the grid told every reader; the mark tells the one who asks.
+        *
+        * `marked` is still computed — `SumCheck` and the grid's own attributes
+        * use it — so the count remains available to a probe. */}
 
       <SumCheck grid={grid} />
     </section>

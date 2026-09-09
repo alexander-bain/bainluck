@@ -285,15 +285,24 @@ describe("ruling 8 — an advance-to-round question is not a prop", () => {
     expect(result.dropped.advance).toBe(3);
   });
 
-  it("says where they went, rather than quietly having three fewer cards", () => {
+  it("does not point at a Bracket tab, because there is no longer one", () => {
+    // WAS: the section printed "…are on the Bracket tab." Two of Alex's five
+    // 2026-09-08 items kill that sentence at once — it is grey explanatory text
+    // (item 1) AND the tab it names is gone (item 5, the bracket renders inline
+    // on this same scroll). A pointer to a tab that does not exist is worse
+    // than silence, so it is asserted absent in both spellings.
     const html = renderToStaticMarkup(
       <TournamentProps
         markets={[prop("alcaraz-semifinals"), prop("sinner-competes")]}
         draw="mens-singles"
       />
     );
-    expect(html).toContain('data-testid="props-moved-to-grid"');
-    expect(html).toContain("on the Bracket tab");
+    expect(html).not.toContain('data-testid="props-moved-to-grid"');
+    expect(html).not.toContain("Bracket tab");
+    // POSITIVE CONTROL: the rotation itself is untouched — the reach question
+    // is still dropped from this section, which is what ruling 8 is about.
+    expect(html).not.toContain("alcaraz-semifinals");
+    expect(html).toContain("sinner-competes");
   });
 });
 
@@ -354,8 +363,10 @@ describe("Alex's item 4 — an illiquid question is still a question", () => {
     );
     expect(html).toContain('data-freshness="quiet"');
     expect(html).toContain("Last number");
-    // And the definition, once, so "Last number" is not a second riddle.
-    expect(html).toContain('data-testid="props-freshness-definition"');
+    // #4125 item 1: the definition paragraph is gone. The chip still SAYS
+    // "Last number", which is the self-labelling half UX-P154 built it for —
+    // the label rides the number and the essay does not ride the page.
+    expect(html).not.toContain('data-testid="props-freshness-definition"');
   });
 
   it("distinguishes waiting from quiet, because 30 hours is not a month", () => {
@@ -423,15 +434,20 @@ describe("Alex's item 3 — the age says what it is the age OF", () => {
     expect(html).toContain('data-freshness="quiet"');
   });
 
-  it("defines the unit once per section, not once per card", () => {
+  it("defines the unit nowhere on the page, and labels it on every card", () => {
+    // The original worry was four copies of a footnote. #4125 item 1 answers it
+    // by removing the footnote entirely: the count that used to be 1 is now 0,
+    // and the label a reader actually needs is on each chip.
     const html = renderToStaticMarkup(
       <TournamentProps
         markets={[dark("one"), dark("two"), dark("three")]}
         draw="mens-singles"
       />
     );
-    expect(count(html, 'data-testid="props-freshness-definition"')).toBe(1);
-    expect(html).toContain("not when it was created");
+    expect(count(html, 'data-testid="props-freshness-definition"')).toBe(0);
+    expect(html).not.toContain("not when it was created");
+    // …and all three cards still carry the self-labelling chip.
+    expect(count(html, 'data-testid="prop-age"')).toBe(3);
   });
 
   it("says nothing about ages when every card is live", () => {
@@ -905,13 +921,14 @@ describe("an empty section says WHY — and age is no longer a way to be empty",
       />
     );
     expect(html).toContain('data-considered="3"');
-    // Three considered, two rendered, and the one that is not here MOVED — the
-    // section says where. `props-rotated-out` used to sit beside this and
-    // counted the HIDDEN ones; there are none, so the sentence went with the
-    // behaviour rather than staying as a line that always reads zero.
+    // Three considered, two rendered, and the one that is not here MOVED. The
+    // section no longer SAYS where — #4125 item 5 put the grid on this same
+    // scroll, so there is nowhere to send anybody. The audit trail this test is
+    // named for is `data-considered`, which is untouched: the section is still
+    // auditable from the markup, which was always the point.
     expect(count(html, 'data-testid="prop-market"')).toBe(2);
     expect(html).not.toContain('data-testid="props-rotated-out"');
-    expect(html).toContain('data-testid="props-moved-to-grid"');
+    expect(html).not.toContain('data-testid="props-moved-to-grid"');
   });
 
   it("does not count a moved reach market as 'rotated out' — it moved", () => {
@@ -921,7 +938,13 @@ describe("an empty section says WHY — and age is no longer a way to be empty",
         draw="mens-singles"
       />
     );
+    // Neither sentence exists now: `props-rotated-out` went when nothing was
+    // hidden, `props-moved-to-grid` went when the grid stopped being a tab.
+    // The distinction the test is named for still holds and is still checked —
+    // a moved market is absent from the list without being counted as dropped.
     expect(html).not.toContain('data-testid="props-rotated-out"');
-    expect(html).toContain('data-testid="props-moved-to-grid"');
+    expect(html).not.toContain('data-testid="props-moved-to-grid"');
+    expect(html).not.toContain("alcaraz-semifinals");
+    expect(html).toContain("live-one");
   });
 });

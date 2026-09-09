@@ -393,8 +393,19 @@ describe("UX-P145: the desktop layout exists", () => {
       expect(scroller![0]).not.toMatch(/max-w-\[\d+ch\]/);
     });
 
-    it("the page footer is capped", () => {
-      expect(pageSource()).toMatch(/block max-w-\[\d+ch\]/);
+    it("the page has no footer prose left to cap (#4125 item 1)", () => {
+      // UX-P145 capped this page's footer at 74ch because a 12px paragraph
+      // across 1200px is unreadable. Alex's answer on 2026-09-08 was that the
+      // paragraph should not be there at any width — *"all the grey text is
+      // madness"* — so the cap has nothing to apply to.
+      //
+      // ⚠️ THE RULE IT BELONGED TO IS NOT REPEALED, and the arms above still
+      // enforce it: every surviving prose block on these surfaces carries its
+      // own `max-w-[NNch]`. This one is asserted as an ABSENCE so that a future
+      // footer cannot be reintroduced uncapped AND unnoticed — if prose comes
+      // back here, this test says which ruling to re-read first.
+      expect(pageSource()).not.toContain("<footer");
+      expect(pageSource()).not.toContain("Each probability combines");
     });
   });
 

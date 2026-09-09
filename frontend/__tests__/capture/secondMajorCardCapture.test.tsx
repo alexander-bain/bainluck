@@ -317,8 +317,11 @@ describe("UX-P154 — the combined card, and who builds it", () => {
     expect(html).not.toContain('data-testid="props-empty"');
     expect(html).toContain("Who wins a second major this year?");
     expect(html).toContain('data-live="false"');
+    // The chip says the age AND what it is the age of, on the card, which is
+    // the whole of Alex's item-4 requirement here.
     expect(html).toContain("Last number 35 days ago");
-    expect(html).toContain("not when it was created");
+    // #4125 item 1: the section-level definition beneath it is gone (notice 34).
+    expect(html).not.toContain("not when it was created");
   });
 
   it("writes the artifact when UX_CAPTURE_DIR is set", () => {

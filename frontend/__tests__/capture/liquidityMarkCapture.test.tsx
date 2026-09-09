@@ -334,7 +334,11 @@ describe("UX-P158 — the illiquidity mark, graded on the surfaces it was built 
 
     const html = renderToStaticMarkup(<PlayoffGrid grid={grid} initialExpanded />);
     expect(html).toContain('data-testid="liquidity-mark"');
-    expect(html).toContain('data-testid="grid-liquidity-key"');
+    // #4125 item 1 / notice 34: the KEY beneath the grid is gone; the mark
+    // explains itself on its own tooltip. `data-marked` was the auditable half
+    // and is asserted below exactly as before — this rig still proves the grid
+    // counted the same marks it drew.
+    expect(html).not.toContain('data-testid="grid-liquidity-key"');
     expect(html).toContain(`data-marked="${marked}"`);
     // The reveal rides the cell's own tooltip, because an 8px mark in a 46px
     // value track is not a hover target anybody can find. (The apostrophe in
@@ -393,11 +397,12 @@ describe("UX-P158 — the illiquidity mark, graded on the surfaces it was built 
     );
     expect(html).toContain('data-level="barely"');
     expect(html).toContain('data-level="thin"');
-    expect(html).toContain('data-testid="props-liquidity-definition"');
-    // ONE definition for the section, not one per card.
+    // ONE definition for the section became NO definition on the page (#4125
+    // item 1). Both marks above still render and each carries the sentence on
+    // its own `title`/`aria-label`, which is where notice 34 puts it.
     expect(
       (html.match(/data-testid="props-liquidity-definition"/g) ?? []).length
-    ).toBe(1);
+    ).toBe(0);
   });
 
   it("writes the artifact when UX_CAPTURE_DIR is set", () => {

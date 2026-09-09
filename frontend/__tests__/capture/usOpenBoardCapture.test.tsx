@@ -525,9 +525,11 @@ describe("US Open board capture rig", () => {
     // The real questions, on the page, in Alex's own curated words.
     expect(men).toContain("Will Sinner actually play?");
     expect(men).toContain("Who wins a second major this year?");
-    // Each with its OWN age, said in a way that answers "the age of what".
+    // Each with its OWN age, said in a way that answers "the age of what" —
+    // on the chip, which is where it always was. #4125 item 1 removed the
+    // section-level definition that repeated it in grey underneath.
     expect(men).toContain("Last number");
-    expect(men).toContain("not when it was created");
+    expect(men).not.toContain("not when it was created");
     // And never presented as current: 856 hours is not a live number.
     expect(men).toContain('data-live="false"');
     expect(men).toContain('data-freshness="quiet"');

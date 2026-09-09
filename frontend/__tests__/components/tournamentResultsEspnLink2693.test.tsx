@@ -254,10 +254,16 @@ describe("the rendered finished list", () => {
     expect(html).toContain('data-total="4"');
   });
 
-  it("still names the gap — a list that routes some rows must say which", () => {
-    expect(markup(BY_MATCHUP, BY_ESPN)).toContain(
-      "open a match page. We cannot link the rest to one yet."
-    );
+  it("names the gap to a probe and not to a reader (#4125 item 1)", () => {
+    // The sentence "N open a match page. We cannot link the rest to one yet."
+    // left the page with the rest of the grey text on 2026-09-08. The claim
+    // this test was protecting — that a partially-routing list does not pass
+    // itself off as fully routed — is unchanged and is asserted one test up,
+    // where `data-linked="3"` / `data-total="4"` carry it.
+    const html = markup(BY_MATCHUP, BY_ESPN);
+    expect(html).not.toContain("open a match page");
+    expect(html).not.toContain('data-testid="results-link-note"');
+    expect(html).toContain('data-linked="3"');
   });
 });
 

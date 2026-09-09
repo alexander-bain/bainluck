@@ -769,8 +769,14 @@ describe("item 9 — decided matches carry their score", () => {
     expect(html).not.toContain("usually a retirement");
     // The outcome is still there — knowing who won is most of the value.
     expect(html).toContain("Jacob Fearnley");
-    // And the section says it once more, counted, at the bottom.
-    expect(html).toContain("1 was a walkover, with no set played");
+    // ⚠️ #4125 ITEM 1 — AND IT NO LONGER SAYS IT A SECOND TIME AT THE BOTTOM.
+    // The aggregate "1 was a walkover, with no set played" went with the rest
+    // of the grey text (Alex, 2026-09-08). Fable's brief asks for a *"tiny
+    // inline tag on that row"* and the row above already IS one — `walkover` in
+    // the score cell, with the full sentence on its `title`/`sr-only`. The
+    // count was a second copy of a fact the row states, so removing it costs a
+    // reader nothing; asserted absent so it cannot drift back.
+    expect(html).not.toContain("was a walkover, with no set played");
   });
 
   it("MARKS a retirement's score instead of passing it off as a finished one", () => {
@@ -793,7 +799,9 @@ describe("item 9 — decided matches carry their score", () => {
     expect(html).toContain('<span class="whitespace-nowrap">3-1 ret.</span>');
     expect(html).toContain("4-6, 7-5, 3-1, when the loser retired");
     expect(html).toContain('data-score-kind="retired"');
-    expect(html).toContain("1 ended in a retirement");
+    // #4125 item 1: the per-row `ret.` above is the whole disclosure now. The
+    // aggregate sentence beneath the list is gone with the other method notes.
+    expect(html).not.toContain("ended in a retirement");
   });
 
   it("still refuses to guess when the source gives neither a score nor a reason", () => {
@@ -897,11 +905,20 @@ describe("item 9 — decided matches carry their score", () => {
     expect(html).toContain("7-6 (7-4), 3-6, 6-4");
   });
 
-  it("counts the coverage gap rather than letting a short list speak for it", () => {
+  it("does not count the coverage gap at the reader — notice 34", () => {
+    // WAS: `expect(html).toContain("117 other finished matches")`. Alex removed
+    // every coverage sentence from this page on 2026-09-08 (#4125 item 1), and
+    // notice 34 puts this exact class — a limitation about our own join —
+    // in the PR or the artifact rather than under the list.
     const html = renderToStaticMarkup(
       <TournamentResults results={results({ unregistered_pairs: 117 })} draw="mens-singles" />
     );
-    expect(html).toContain("117 other finished matches");
+    expect(html).not.toContain("other finished matches");
+    expect(html).not.toContain("players we hold no market for");
+    // POSITIVE CONTROL: the list still renders, so the absence above is a
+    // removal and not an empty section.
+    expect(html).toContain("Jacob Fearnley");
+    expect(html).toContain('data-testid="results-provenance"');
   });
 
   /* ═══ live/071: THE PHONE'S NAME COLUMN, AND THE TWO THINGS THAT ATE IT ═══
@@ -1191,7 +1208,10 @@ describe("UX-P146 — the prior beside the result", () => {
     expect(html).toContain("Jacob Fearnley");
   });
 
-  it("states the coverage when only some rows have a prior", () => {
+  it("publishes the coverage to a probe when only some rows have a prior", () => {
+    // The ratio itself is unchanged and still computed per draw; #4125 item 1
+    // moved WHERE it is legible. `1 of 2` was the sentence; the two attributes
+    // are the artifact, and they now ride the provenance mark.
     const mixed = results({
       matches: [withPrior(0.62, 0.38), result({ matchup_key: "espn:2" })],
       count: 2,
@@ -1199,19 +1219,20 @@ describe("UX-P146 — the prior beside the result", () => {
     const html = renderToStaticMarkup(<TournamentResults results={mixed} draw="mens-singles" />);
     expect(html).toContain('data-with-prematch="1"');
     expect(html).toContain('data-total="2"');
-    expect(html).toContain("1 of 2");
+    expect(html).not.toContain("1 of 2");
   });
 
   it("does not state a coverage ratio when every row has one", () => {
-    // "2 of 2" is noise. The note still explains WHAT the number is, because
-    // that part is owed whether or not anything is missing.
+    // "2 of 2" is noise, and after #4125 item 1 so is every other ratio on the
+    // page. What is owed — and all that is owed — is the one short caption
+    // notice 34 allows, saying WHAT the grey number is.
     const all = results({
       matches: [withPrior(0.62, 0.38), withPrior(0.7, 0.3, { matchup_key: "espn:2" })],
       count: 2,
     });
     const html = renderToStaticMarkup(<TournamentResults results={all} draw="mens-singles" />);
-    expect(html).toContain('data-testid="results-prematch-note"');
-    expect(html).toContain("before the match started");
+    expect(html).toContain('data-testid="results-provenance"');
+    expect(html).toContain("Grey is the pre-match probability.");
     expect(html).not.toContain("2 of 2");
   });
 

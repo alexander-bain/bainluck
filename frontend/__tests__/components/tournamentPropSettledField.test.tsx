@@ -247,7 +247,10 @@ describe("UX-P211 — a settled FIELD card stops presenting an open market", () 
     expect(card).toContain('data-testid="prop-field"');
     expect((card.match(/data-testid="liquidity-mark"/g) ?? []).length).toBeGreaterThanOrEqual(2);
     expect(card).toContain("text-text-primary");
-    expect(html).toContain('data-testid="props-liquidity-definition"');
+    // #4125 item 1: the legend PARAGRAPH is gone (notice 34 sends it to the
+    // mark's own tooltip). What this control is really about — the open card
+    // keeps its MARKS — is asserted on the line above and unaffected.
+    expect(html).not.toContain('data-testid="props-liquidity-definition"');
     // …and it must NOT have grown the settled rendering.
     expect(card).not.toContain('data-testid="prop-settled-field"');
     expect(card).not.toContain('data-testid="prop-settled"');
@@ -274,8 +277,11 @@ describe("UX-P211 — a settled FIELD card stops presenting an open market", () 
     expect(openCard).toContain('data-settled="false"');
     expect(openCard).toContain('data-testid="prop-field"');
     expect(openCard).toContain('data-testid="liquidity-mark"');
-    // The open card's mark is on screen, so the legend is owed and printed.
-    expect(html).toContain('data-testid="props-liquidity-definition"');
+    // The open card's mark is on screen and carries its own explanation
+    // (`title` + `aria-label`); the legend paragraph beneath the section went
+    // with the rest of the grey text on 2026-09-08 (#4125 item 1).
+    expect(html).not.toContain('data-testid="props-liquidity-definition"');
+    expect(openCard).toMatch(/data-testid="liquidity-mark"/);
     // Exactly one of each rendering on the page.
     expect((html.match(/data-testid="prop-field"/g) ?? []).length).toBe(1);
     expect((html.match(/data-testid="prop-settled-field"/g) ?? []).length).toBe(1);

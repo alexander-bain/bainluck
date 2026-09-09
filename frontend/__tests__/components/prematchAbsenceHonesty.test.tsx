@@ -109,29 +109,48 @@ describe("ux/1034 A3 — why a finished row has no pre-match number", () => {
     });
   });
 
-  it("no longer tells the reader what a venue did or did not list", () => {
+  // ═══ #4125 ITEM 1 — THE WHOLE PARAGRAPH LEFT THE PAGE (notice 34) ═══
+  //
+  // This test used to pin four clauses of a coverage paragraph. Alex read that
+  // paragraph on 2026-09-08 and ruled it off the page — *"all the grey text is
+  // madness, and shouldn't be user-facing at all"* — and notice 34 names both
+  // halves of what it was doing: a coverage count ("Shown on 53 of 111") and a
+  // limitation ("55 are fixtures we could not tie to a market of ours").
+  //
+  // 🔴 THE LAST CLAUSE IS THE ONE TO READ TWICE. The paragraph ended *"we would
+  // rather leave the space empty than fill it with a number about a different
+  // question"* — an explanation of an emptiness, which notice 34 forbids **by
+  // name**: *"If a number cannot be shown honestly, leave the space empty; do
+  // not explain the emptiness in a paragraph."* The page now does the first
+  // half of that sentence and not the second.
+  //
+  // ⚠️ WHAT THIS SUITE IS STILL FOR, AND WHY IT IS NOT DELETED. ux/1034 A3's
+  // finding was that the page made a FALSE CLAIM about a venue ("the rest are
+  // matches nobody ran a market on") when the truth was only ever about our own
+  // register. That claim can return the moment anybody writes a sentence here
+  // again, so the honesty arm stays and gets stricter: not "phrased carefully"
+  // but "absent". The counts it was phrased from are asserted below, on the
+  // attributes, and `prematchAbsenceNote` keeps its own unit tests further down
+  // — the vocabulary is intact and unexported to the page, which is the state
+  // notice 34 asks for.
+  it("makes no claim about a venue, because it makes no claim at all", () => {
     const text = visibleText(render("mens-singles"));
 
-    // THE DEFECT, gone.
+    // THE ORIGINAL DEFECT, still gone.
     expect(text).not.toContain("nobody ran a market on");
 
-    // The ratio still leads, because it is true and it is the useful part.
-    expect(text).toContain("Shown on 53 of 111");
+    // And now the whole apparatus that replaced it is gone too.
+    expect(text).not.toContain("Shown on 53 of 111");
+    expect(text).not.toContain("could not tie to a market of ours");
+    expect(text).not.toContain("caught no price on before play started");
+    expect(text).not.toContain("whether a venue listed one");
+    expect(text).not.toContain("rather leave the space empty");
 
-    // Both reasons, in the payload's own terms.
-    expect(text).toContain("55 are fixtures we could not tie to a market of ours");
-    expect(text).toContain(
-      "3 are matches we hold but caught no price on before play started"
-    );
-
-    // And the refusal to make the third claim.
-    expect(text).toContain("neither is a statement about whether a venue listed one");
-
-    // The standing sentence survives — this is a wording repair, not a rewrite.
-    expect(text).toContain("before the match started");
-    expect(text).toContain(
-      "rather leave the space empty than fill it with a number about a different question"
-    );
+    // POSITIVE CONTROL — the list itself is still rendering, so the absences
+    // above are a removal rather than an empty page. The source mark stays
+    // (D91) and so does the one short caption notice 34 allows.
+    expect(text).toContain("Scores from ESPN.");
+    expect(text).toContain("Grey is the pre-match probability.");
   });
 
   /** The counts are queryable, so a future drift is a failing assertion rather

@@ -161,12 +161,22 @@ import {
 } from "@/lib/tournament/hubBoot";
 import { mergeTournamentSections, type TournamentPayload } from "@/lib/tournament";
 
-type Tab = "tournament" | "bracket";
-
-const TABS: { id: Tab; label: string }[] = [
-  { id: "tournament", label: "Tournament" },
-  { id: "bracket", label: "Bracket" },
-];
+/* ═══ THE TAB BAR IS GONE — ALEX, 2026-09-08 4:00pm PT (#4125, item 5) ═══
+ *
+ * *"The bracket section feels empty. Build it straight into the Tournament tab;
+ * we wouldn't need that level of tab hierarchy."*
+ *
+ * `Tab`, `TABS` and the `tab` state all went with it. The page is one scroll:
+ * chart, matches, results, board, more predictions, then the playoff grid.
+ *
+ * 🔴 READ THE DIAGNOSIS BEFORE RESTORING IT. The long comment at the top of
+ * this file works out which content belongs on which tab, and every word of
+ * that reasoning is about what a reader meets FIRST — it is a ranking problem
+ * wearing a navigation costume. A second tab answers it by hiding half the page
+ * behind a click, and Alex's complaint is that the half behind the click looked
+ * empty *because nobody clicked*. Ordering solves the same problem without the
+ * hiding, so if the grid is ever judged too heavy for page one the fix is to
+ * move it further down, not to put a door in front of it. */
 
 /**
  * `TOURNAMENT_SHELL` / `TOURNAMENT_COLUMNS` live in
@@ -187,7 +197,6 @@ export default function TournamentPage() {
   const [data, setData] = useState<TournamentPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<Tab>("tournament");
   /**
    * The draw on screen, or `null` for "the payload has not opened one yet".
    *
@@ -433,41 +442,23 @@ export default function TournamentPage() {
           </p>
         </header>
 
-        <div className="flex border-b border-surface-border bg-surface-card" role="tablist">
-          {TABS.map((entry) => (
-            <button
-              key={entry.id}
-              role="tab"
-              type="button"
-              aria-selected={tab === entry.id}
-              onClick={() => setTab(entry.id)}
-              className={`flex-1 border-b-2 py-3 text-[13.5px] font-semibold ${
-                tab === entry.id
-                  ? "border-text-primary text-text-primary"
-                  : "border-transparent text-text-muted"
-              }`}
-            >
-              {entry.label}
-            </button>
-          ))}
-        </div>
 
-        {/* The gender pill shows on the Bracket tab too once the draw exists,
-            because the grid is one draw's field — but NOT before it, where
-            ruling 1 deliberately shows both boards unfiltered and a pill would
-            offer to filter something that is not filtered. */}
-        {(tab === "tournament" || data.draw_released) && (
-          <DrawToggle
+        {/* Unconditional since the tabs went (#4125 item 5): the old gate was
+            `tab === "tournament" || data.draw_released`, whose left arm is now
+            always true. The pill filters the draw the whole page is about. */}
+        <DrawToggle
             draw={draw}
-            onSelect={(id) => {
-              setDrawChoice(id);
-              setSelection(null);
-            }}
-          />
-        )}
+          onSelect={(id) => {
+            setDrawChoice(id);
+            setSelection(null);
+          }}
+        />
 
         <div className="px-4 pb-16 lg:px-6">
-          {tab === "tournament" && (
+          {/* Unconditional since the tabs went (#4125 item 5). The container is
+              kept rather than unwrapped so this ship's diff stays reviewable —
+              unwrapping re-indents ~130 untouched lines and buries the change. */}
+          {(
             /**
              * TWO COLUMNS AT `lg`, ONE BELOW IT (UX-P145).
              *
@@ -601,7 +592,13 @@ export default function TournamentPage() {
             </div>
           )}
 
-          {tab === "bracket" && (
+          {/* ═══ THE BRACKET, INLINE — ALEX ITEM 5 (#4125) ═══
+              Was `{tab === "bracket" && …}`, one click away and reading as an
+              empty section because a reader had to guess it was there. It is
+              the last block on the same scroll now: chart, matches, results,
+              board, more predictions, grid. Same component, same props, same
+              full width — only the door is gone. */}
+          {(
             <div className="mt-6">
               {/* THE PLAYOFF GRID (UX-P139). It no longer waits for the draw:
                   its cells come from round-advancement markets that are live
@@ -625,22 +622,28 @@ export default function TournamentPage() {
           )}
         </div>
 
-        {/* UX-P145: "Probabilities blended across prediction markets" — *blend*
-            is our word for our own aggregation step, and a reader has no reason
-            to know it. The `max-w-[74ch]` is the other half of the desktop
-            work: at 1280px this line would otherwise run the full shell. */}
-        <footer className="border-t border-surface-border px-4 py-5 text-[11.5px] leading-relaxed text-text-muted lg:px-6">
-          {/* #2451: this said "a fixed 0–100 scale" and that is no longer
-              true — the trend chart's ceiling now steps to fit the field while
-              its baseline stays pinned at zero. A footer that describes a scale
-              the chart no longer uses is the same class of defect as an
-              unlabelled axis, so it changed in the same commit. */}
-          <span className="block max-w-[74ch]">
-            Each probability combines what several prediction markets are saying. Trend
-            lines are daily readings with no smoothing, drawn from zero to a labelled
-            top that fits the field.
-          </span>
-        </footer>
+        {/* ═══ THE FOOTER METHOD NOTE IS GONE — NOTICE 34 (#4125) ═══
+          *
+          * Alex, reading this page on 2026-09-08 at 4:00pm PT: *"All the grey
+          * text is madness, and shouldn't be user-facing at all."* This
+          * sentence was the last line of it, and it is the clearest case of
+          * the class — three clauses about our method (what a probability
+          * combines, at what resolution we sample, how the axis is scaled),
+          * printed under every tournament, answering a question no reader had.
+          *
+          * ⚠️ IT IS NOT MOVED TO A TOOLTIP, AND THAT IS THE RULING. Notice 34
+          * allows method text to survive as a tooltip *on the source mark* —
+          * that is the D91 mark beside a number, which this footer is not. A
+          * page-level note has nothing to attach to, and re-hanging it off some
+          * new affordance would be the same paragraph wearing a disclosure
+          * triangle. Where the method genuinely matters it belongs in the PR or
+          * the artifact.
+          *
+          * 🔴 AND THE THIRD CLAUSE HAD BECOME FALSE ANYWAY: "daily readings
+          * with no smoothing" describes the resolution Alex's item 3 is about
+          * (`ContenderChart` draws every observation we hold, not one point per
+          * day), so leaving it would have been a footnote contradicting the
+          * chart above it — the same defect #2451 fixed here once already. */}
       </div>
     </ErrorBoundary>
   );

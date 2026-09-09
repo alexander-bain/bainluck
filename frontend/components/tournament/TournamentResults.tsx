@@ -10,7 +10,6 @@ import {
   completionNote,
   drawIsPriced,
   formatPrematch,
-  prematchAbsenceNote,
   prematchAttribution,
   prematchCoverage,
   prematchPercents,
@@ -594,106 +593,75 @@ export default function TournamentResults({
           />
         )}
       </div>
-      {/* PROVENANCE, and the coverage number with it. A results list shorter
-          than the day's play is either a join problem or the schedule, and the
-          reader is entitled to know which without asking. */}
-      {/* WHAT THE GREY NUMBER IS (UX-P146). Two facts, and both are owed: what
-          the number means, and why most rows have not got one. A column that
-          appears on twelve rows out of twenty-four and explains itself nowhere
-          reads as a bug in the page rather than as the edge of our coverage. */}
-      {prior.withPrior > 0 && (
-        <p
-          className="mt-2 max-w-[80ch] text-[11px] leading-snug text-text-muted"
-          data-testid="results-prematch-note"
-          data-with-prematch={prior.withPrior}
-          data-total={prior.total}
-          data-held-without-opening={prior.heldWithoutOpening}
-          data-untied={prior.untied}
-        >
-          The grey figure beside a name is that player&rsquo;s probability{" "}
-          <b className="font-semibold text-text-secondary">before the match started</b> —
-          its opening number, not a reading taken after the result was known.{" "}
-          {/* ═══ D88 = A + D91 (Alex, 2026-09-08): WHY THE SUPPLIER SENTENCE IS
-              GONE AND THE LEAD SENTENCE CHANGED IN THE SAME EDIT ═══
-
-              This paragraph used to open "what the market gave that player" and
-              then spend a whole sentence taking it back: *"62 of them are a
-              sportsbook opening rather than a prediction market's, marked books
-              beside the number."* Both halves were ux/1036's answer to Alex's
-              *"labelled when not a prediction market"*, and CERT-812 is why the
-              second half exists at all — the lead sentence is FALSE on a books
-              row, so a caveat had to follow it.
-
-              D91 bans exactly that caveat: *"no 'the books' in captions"*.
-              Deleting it alone would have re-shipped CERT-812's false claim, so
-              the fix is one level up — D88's own words, *"the pre-match number
-              is labelled pre-match probability"*. A lead sentence that names no
-              rung is true of every rung, and then nothing needs taking back.
-
-              The attribution did not go anywhere. D91 keeps the small-font mark
-              beside each number (`prematchAttribution`.`marker`, below), which
-              is CERT-812's real remedy — per-row, not an aggregate count that
-              told a reader some unidentified rows meant something else. The
-              count went with the sentence because the marks say which. */}
-          {prior.withPrior < prior.total && (
-            <>
-              Shown on{" "}
-              <b className="font-semibold text-text-secondary">
-                {prior.withPrior} of {prior.total}
-              </b>
-              .{" "}
-              {/* ═══ ux/1034 A3: THIS SENTENCE USED TO BE A CLAIM ABOUT A VENUE
-                  ═══
-
-                  It read "The rest are matches nobody ran a market on". Alex
-                  found it under Shelton–Hurkacz, where it is false and
-                  measurably so: Polymarket had a market on that match, its
-                  price history simply begins at 17:38Z and the match began at
-                  17:08Z. What is missing is an OPENING, not a market.
-
-                  The field it was written from only ever described US — whether
-                  our register tied the fixture to a market of ours. Nothing in
-                  this payload knows what Kalshi or Polymarket chose to list, so
-                  the two cases it CAN tell apart are named and the third is not
-                  asserted. `prematchCoverage` counts them. */}
-              {prematchAbsenceNote(prior)}{" "}
-              We would rather leave the space empty than fill it with a number about
-              a different question.
-            </>
-          )}
-        </p>
-      )}
-      {links.linked > 0 && links.linked < links.total && (
-        <p
-          className="mt-2 text-[11px] leading-snug text-text-muted"
-          data-testid="results-link-note"
-          data-linked={links.linked}
-          data-total={links.total}
-        >
-          <b className="font-semibold text-text-secondary">
-            {links.linked} of {links.total}
-          </b>{" "}
-          {/* Careful with this sentence: the rows that do not link fail for TWO
-              different reasons — most are qualifying matches we hold no market
-              for at all, but some do have a market that is simply not yet tied
-              to an event (#2592). "We hold no market for them" would be false
-              of the second group, so the claim is about the LINK, which is the
-              only thing true of both. */}
-          open a match page. We cannot link the rest to one yet.
-        </p>
-      )}
-      <p className="mt-2 text-[11px] leading-snug text-text-muted" data-testid="results-provenance">
-        Scores from ESPN.{" "}
-        {/* UX-P147: this used to read "N finished without a completed set
-            score (retirement or walkover)" — a hedge between two things the
-            source distinguishes, whose count was the walkovers only while the
-            retirements it named printed above as ordinary results. Both are
-            named now, and both are counted. */}
-        {completion && <span data-testid="results-completion-note">{completion} </span>}
-        {(results?.unregistered_pairs ?? 0) > 0 &&
-          `${results?.unregistered_pairs} other finished match${
-            results?.unregistered_pairs === 1 ? "" : "es"
-          } involve players we hold no market for.`}
+      {/* ═══ THE PARAGRAPHS UNDER THIS LIST ARE GONE — NOTICE 34 (#4125) ═══
+        *
+        * Alex, on this page at 2026-09-08 4:00pm PT: *"All the grey text is
+        * madness, and shouldn't be user-facing at all."* Four blocks used to
+        * sit here, and every one of them was written to answer a reviewer:
+        *
+        *   • the pre-match legend, plus `Shown on 121 of 152` and
+        *     `31 are fixtures we could not tie to a market of ours`
+        *   • `116 of 152 open a match page. We cannot link the rest to one yet.`
+        *   • the retirement / walkover completion count
+        *   • `N other finished matches involve players we hold no market for.`
+        *
+        * Notice 34 names that class exactly — coverage counts, limitations and
+        * method notes go in the PR, the artifact, or a tooltip on the source
+        * mark, never the page body — and it settles the awkward case in this
+        * block too: *"If a number cannot be shown honestly, leave the space
+        * empty; do not explain the emptiness in a paragraph."* The removed
+        * sentence *"We would rather leave the space empty than fill it with a
+        * number about a different question"* was literally an explanation of an
+        * emptiness, so it goes by name.
+        *
+        * ⚠️ WHAT SURVIVES, AND WHY EACH ONE IS NOT A PARAGRAPH:
+        *
+        *   1. THE SOURCE MARK. `Scores from ESPN.` stays. D91 protects the
+        *      small mark that says whose number this is — notice 34's own
+        *      sentence is "a reader sees the number, the small source mark, and
+        *      at most one short caption", so the mark is the thing it keeps.
+        *   2. ONE SHORT CAPTION for the grey figure. D65/D88 make the grey
+        *      number a *pre-match probability*, and a bare unexplained figure
+        *      beside a name is the defect UX-P146 originally fixed. Notice 34
+        *      permits one short caption and this is it: one clause, no counts,
+        *      no exceptions, no supplier word.
+        *
+        * 🔴 NOTHING TRUE WAS LOST WITH THE COMPLETION COUNT, WHICH IS WHY IT
+        * COULD GO RATHER THAN MOVE. Fable's brief asks for "a tiny inline tag on
+        * that row (`ret.`)" — the row ALREADY has it. `scoreLineFor` returns
+        * `kind: "retired"` / `"walkover"` with its own text and `explanation`,
+        * and the score cell above renders both with a `title`. The aggregate
+        * sentence was a second copy of a fact each row already states, which is
+        * the only reason deleting it is honest rather than a hidden regression.
+        *
+        * THE COUNTS THEMSELVES ARE NOT LOST, AND THEY MOVED RATHER THAN DIED —
+        * `data-with-prematch`, `data-total`, `data-held-without-opening`,
+        * `data-untied`, `data-linked` and `data-link-total` are all carried
+        * down onto the mark below. They were the machine-readable half of the
+        * deleted paragraphs and their consumers are probes and guards
+        * (`prematchAbsenceHonesty`), never a reader: notice 33's own
+        * clarification is that attributes are not copy, and notice 34 sends
+        * these numbers to "the PR, the artifact" — an attribute IS the
+        * artifact. Deleting them would have turned a copy ruling into a
+        * measurement outage.
+        *
+        * ⚠️ `data-link-total` is a NEW name on purpose. The two paragraphs each
+        * carried a `data-total` and they are different denominators —
+        * `prior.total` is the rows with a settled result, `links.total` is the
+        * rows a link was attempted for. Folding them onto one element under one
+        * name would have made whichever lost the collision silently wrong,
+        * which is worse than the paragraph this ship is removing. */}
+      <p
+        className="mt-2 text-[11px] leading-snug text-text-muted"
+        data-testid="results-provenance"
+        data-with-prematch={prior.withPrior}
+        data-total={prior.total}
+        data-held-without-opening={prior.heldWithoutOpening}
+        data-untied={prior.untied}
+        data-linked={links.linked}
+        data-link-total={links.total}
+      >
+        Scores from ESPN.{prior.withPrior > 0 ? " Grey is the pre-match probability." : ""}
       </p>
     </section>
   );

@@ -268,9 +268,13 @@ describe("UX-P145: the tournament surfaces speak the reader's language", () => {
       );
       assertPlain(html, "TournamentProps (quiet cards)");
       // Ruling 138/145 in the new copy: no "stale", no "dark", no "priced".
+      // The self-labelling chip is what answers the ambiguity Alex named in
+      // UX-P154 — "32 hours since WHAT" — and it does it on the card.
       expect(html).toContain("Last number");
-      // And the ambiguity Alex named is answered once, in the section.
-      expect(html).toContain("not when it was created");
+      // #4125 item 1: the section-level definition that used to answer it a
+      // second time is gone (notice 34). The chip carries the label; the page
+      // carries no essay about it.
+      expect(html).not.toContain("not when it was created");
     });
   });
 
@@ -317,7 +321,11 @@ describe("UX-P145: the tournament surfaces speak the reader's language", () => {
       <TournamentProps markets={[fresh, ...darkMarkets()]} draw="mens-singles" />
     );
     expect(html).toContain('data-testid="prop-market"');
-    expect(html).toContain('data-testid="props-freshness-definition"');
+    // #4125 item 1: no definition paragraph any more. The jargon sweep below is
+    // the point of this test and is unchanged — it now runs over a section that
+    // has less prose to be wrong about.
+    expect(html).not.toContain('data-testid="props-freshness-definition"');
+    expect(html).toContain('data-testid="prop-age"');
     assertPlain(html, "TournamentProps (populated)");
   });
 

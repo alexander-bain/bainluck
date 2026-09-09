@@ -481,38 +481,51 @@ describe("D91: the rows carry the attribution and the caption says nothing", () 
     expect(html).toContain(`>${BOOKS_MARKER}<`);
   });
 
-  test("the footnote no longer narrates a supplier", () => {
+  // ═══ #4125 ITEM 1 — THE CAPTION SAYS NOTHING BECAUSE THERE IS NO CAPTION ═══
+  //
+  // These three tests were the D91 settlement: the per-row MARK carries the
+  // attribution, and the paragraph beneath the list stops narrating a supplier.
+  // Alex went one step further on 2026-09-08 — *"all the grey text is madness"*
+  // — and the paragraph itself is gone (notice 34).
+  //
+  // 🔴 THAT STRENGTHENS THIS SUITE RATHER THAN RETIRING IT, and the reason is
+  // CERT-812. Its finding was that a lead sentence ("what the market gave that
+  // player") is FALSE on a sportsbook row, which is why a caveat naming the
+  // supplier had to follow it. D88 = A fixed the sentence; #4125 removes the
+  // sentence. Both repairs point the same way and the invariant underneath is
+  // unchanged and still worth a guard: **the attribution lives on the row, and
+  // no prose anywhere on this list makes a claim about a rung.** The first test
+  // above (122 marked rows) is the positive half and is untouched.
+  test("no paragraph narrates a supplier, because no paragraph is left to", () => {
     const html = `${render("mens-singles")}${render("womens-singles")}`;
-    const note = html.match(/data-testid="results-prematch-note"[^>]*>([\s\S]*?)<\/p>/)?.[1];
-    // An extractor that returns nothing turns every `not.toMatch` below into a
-    // pass for the wrong reason. Pin that it found the real paragraph first.
-    expect(note).toBeDefined();
-    const text = note!.replace(/<[^>]*>/g, " ");
-    expect(text.length).toBeGreaterThan(80);
-    expect(text).toContain("before the match started");
-    // The deleted sentence, and each supplier word it was built from.
+    expect(html).not.toContain('data-testid="results-prematch-note"');
+    expect(html).not.toContain("results-prematch-source-note");
+    expect(html).not.toContain("what the market gave");
+
+    // The surviving text on the list is the source mark plus the one short
+    // caption notice 34 allows. Extract it and hold it to the same D91 test the
+    // deleted paragraph was held to — this is the arm that keeps the ruling
+    // enforced now that its original subject is gone.
+    const mark = html.match(/data-testid="results-provenance"[^>]*>([\s\S]*?)<\/p>/)?.[1];
+    expect(mark).toBeDefined();
+    const text = mark!.replace(/<[^>]*>/g, " ");
+    expect(text).toContain("Scores from ESPN.");
     expect(text).not.toMatch(/sportsbook/i);
     expect(text).not.toMatch(/\bbooks?\b/i);
     expect(text).not.toMatch(/prediction market/i);
-    // The legend's own container is gone rather than rendering empty.
-    expect(html).not.toContain("results-prematch-source-note");
   });
 
-  test("the lead sentence names no rung, which is why no caveat is owed", () => {
-    // CERT-812's actual complaint: "what the market gave that player" is false
-    // on a books row. D88 = A replaced it with a phrase true of every rung. If
-    // this reverts, the deleted caption has to come back with it.
-    const html = render("mens-singles");
-    expect(html).not.toContain("what the market gave");
-    expect(html).toMatch(/is that player&#x27;s probability|is that player’s probability/);
-  });
-
-  test("a prediction-market-only draw still renders the note (CONTROL)", () => {
-    // The old control asserted the LEGEND went silent on a market-only payload.
-    // The note itself must not go silent — it explains the grey figure — so the
-    // control now pins that the paragraph survives with no marker inside it.
+  test("a prediction-market-only draw is silent in exactly the same way (CONTROL)", () => {
+    // The control has followed this ruling twice: it first pinned that the
+    // LEGEND went silent on a market-only payload, then that the note SURVIVED
+    // with no marker in it. Now neither exists, and what the control is for is
+    // unchanged — a payload with no sportsbook rung must not render a marker,
+    // and must not be a different page in any other respect.
     const html = render("mens-singles", withSource("kalshi"));
-    expect(html).toContain('data-testid="results-prematch-note"');
     expect(html).not.toContain('data-testid="result-prematch-marker"');
+    expect(html).not.toContain('data-testid="results-prematch-note"');
+    // POSITIVE: the list and its mark still render, so this is not an empty page.
+    expect(html).toContain('data-testid="results-provenance"');
+    expect(html).toContain('data-testid="result-prematch"');
   });
 });
