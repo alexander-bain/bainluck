@@ -63,6 +63,18 @@ enum TeamShortName {
         "lfc", // 2   Liverpool LFC
         "pfk", // 2   Neftçi PFK
         "nps", // 2   Volos NPS
+        // #4271. The Italian society initials, siblings of `ac`, `as` and `ssc`
+        // above, which this set had always lacked. They were unreachable until
+        // #4250 added `calcio`: before it, `short("SS Scafatese Calcio")`
+        // returned "Calcio" and the badge never saw the leading token; after
+        // it, `short` correctly returns the whole name and `glyphs` skipped
+        // nothing, so the badge read `SSS`. Measured over the whole production
+        // population 2026-09-09: **zero** distinct `events` team names END in
+        // either token, so both can only ever act as the leading skip and can
+        // never refuse a shortening. The browser reaches both by its
+        // `length <= 2` clause, so its set is unchanged and parity holds.
+        "ss", // SS Scafatese Calcio (Società Sportiva)
+        "us", // US Sassuolo Calcio (Unione Sportiva)
         // English generic club words.
         "united", "city", "town", "county", "club", "athletic", "atletico",
         "rovers", "wanderers", "albion",

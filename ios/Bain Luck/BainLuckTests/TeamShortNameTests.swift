@@ -133,7 +133,13 @@ final class TeamShortNameTests: XCTestCase {
             ("AS Roma U20", "ROM"),
             ("1. FC Heidenheim 1846", "HEI"),
             ("FC Viktoria Köln 1904", "VIK"),
-            ("US Catanzaro 1929", "USC"),
+            // #4271. This row read `USC` until the Italian society initials
+            // went into the designator set, and it was the one name in this
+            // list that the test's own thesis did not hold for: "US" is
+            // Unione Sportiva, so `USC` names the kind of club and then
+            // borrows three letters from a university in another sport.
+            // Unlike "AE Kifisia" above, nobody calls Catanzaro "USC".
+            ("US Catanzaro 1929", "CAT"),
             ("OB Odense BK", "OBO"),
             ("FK Pardubice W", "PAR"),
         ] {
