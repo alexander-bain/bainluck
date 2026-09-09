@@ -219,9 +219,53 @@ CANCEL_CAUSE_PREFIX = _cancel_cause_prefix()
 #: lifts, promote this to the import and delete the guard.
 CURSOR_PREFIX = "staged:cursor_"
 
+#: The FOURTH prefix, added by CAL-P1066 (#4314): why NO unit cost may be quoted
+#: off this beat.
+#:
+#: 🔴 THE RING KEPT THE COST NUMBER THE PRODUCER CALLS THE WRONG ONE AND DROPPED
+#: THE RIGHT ONE. CAL-P1048 split cost from progress at the write site, and its
+#: own comment says which is which: ``staged:unit_ms_mean`` times every unit the
+#: beat ran "INCLUDING the one cancelled at the deadline, so it is the right
+#: number for attributing elapsed time and **the wrong one for costing a unit**",
+#: while ``staged:unit_ms_mean_completed`` costs the units that finished. Neither
+#: that gauge, nor the ``no_unit_completed`` reason that explains its absence,
+#: was ever added to :data:`OPERATIONAL_GAUGES`. Measured over the live 168-beat
+#: ring (2026-09-02T14:22Z → 2026-09-09T11:37Z): ``staged:unit_ms_mean`` on 146
+#: beats, ``staged:unit_ms_mean_completed`` on **0**, every
+#: ``staged:unit_cost_reason:*`` on **0**.
+#:
+#: So a cancelled unit — the most expensive unit of the beat, by construction,
+#: since it is the one that did not fit — is excluded from the only cost figure
+#: a reader can reach, and there is no key saying so. Every cost claim taken off
+#: this ring (#3437's 156s → 928s climb, PARKED-MEASUREMENTS' 107 s floor) is a
+#: survivor of that exclusion.
+#:
+#: A LITERAL WOULD HAVE BEEN THE WRONG CALL HERE. :data:`CURSOR_PREFIX` is
+#: retyped only because its emitter is the ruling-009 frozen module; this one is
+#: emitted by ``calibration_main_build``, so CAL-P993's rule — read the constant
+#: off the module that emits it — is available and taken.
+_UNIT_COST_REASON_PREFIX_FALLBACK = "staged:unit_cost_reason:"
+
+
+def _unit_cost_reason_prefix() -> str:
+    """The producer's own constant, read off the module that emits it."""
+    try:
+        from app.tasks.calibration_main_build import UNIT_COST_REASON_PREFIX
+    except Exception:  # noqa: BLE001 — a sampler must never fail on an import
+        return _UNIT_COST_REASON_PREFIX_FALLBACK
+    return UNIT_COST_REASON_PREFIX
+
+
+UNIT_COST_REASON_PREFIX = _unit_cost_reason_prefix()
+
 #: Every prefix ``select_gauges`` scans for. One tuple so a third prefix is one
 #: line here and nowhere else.
-CAPTURED_PREFIXES = (CONVERGENCE_REASON_PREFIX, CANCEL_CAUSE_PREFIX, CURSOR_PREFIX)
+CAPTURED_PREFIXES = (
+    CONVERGENCE_REASON_PREFIX,
+    CANCEL_CAUSE_PREFIX,
+    CURSOR_PREFIX,
+    UNIT_COST_REASON_PREFIX,
+)
 
 #: The FOURTH capture rule, added by CAL-P1030 (#3454) — and the first one that
 #: is not a prefix, because a prefix cannot express it.
@@ -277,7 +321,7 @@ def is_stop_key(key: Any) -> bool:
 #: So the row says what it could see, and a row that does not say is UNKNOWN. A
 #: version is the only marker that works here: the fields themselves are absent
 #: on a legacy row, and "absent" is precisely the value that must not be read.
-GAUGE_CAPTURE_VERSION = 2
+GAUGE_CAPTURE_VERSION = 3
 
 #: The first capture version whose :func:`select_gauges` retains
 #: ``staged:units_dropped`` and every ``staged:<stem>_stop:<reason>`` key —
@@ -285,7 +329,28 @@ GAUGE_CAPTURE_VERSION = 2
 #: the BEAT rather than a fact about the sampler. Separate from
 #: :data:`GAUGE_CAPTURE_VERSION` so a later capture rule can bump the stamp
 #: without silently re-dating this floor.
+#:
+#: CAL-P1066 bumped the stamp to 3 and this floor did NOT move, which is the
+#: whole reason the two constants are separate. A row banked at version 2 still
+#: licenses the drop-and-stop reading it always did.
 DROP_AND_STOP_CAPTURE_VERSION = 2
+
+#: The first capture version whose :func:`select_gauges` retains the cost half of
+#: CAL-P1048's split — ``staged:unit_ms_mean_completed``,
+#: ``staged:units_completion_not_banked`` and every
+#: ``staged:unit_cost_reason:<reason>`` key.
+#:
+#: 🔴 THE SEVEN DAYS BEHIND THIS FLOOR ARE THE REASON IT IS A CONSTANT AND NOT A
+#: COMMENT. The ring holds 168 rows, so for a week after this ships every row
+#: below the floor carries a gauge map these keys were discarded from AT CAPTURE
+#: TIME. On such a row "no ``unit_cost_reason``" must read as UNKNOWN, never as
+#: "a cost was quotable", and "no ``units_completion_not_banked``" must read as
+#: UNKNOWN, never as "the cursor write did not fail" — the second being the
+#: durable-state failure that CAL-P1048's own comment calls the opposite
+#: diagnosis to a designed cancellation. This lane read exactly that absence as a
+#: measured zero while writing #4314, on the live ring, before finding the
+#: capture gap. Gotcha #53, one layer above the field added to end it.
+UNIT_COST_CAPTURE_VERSION = 3
 
 #: A row banked before CAL-P1030 carries no version at all. Zero, so the
 #: comparison against the floor is an ordinary ``<`` and an unparseable or
@@ -345,6 +410,18 @@ OPERATIONAL_GAUGES = (
     "staged:beats_to_publish",
     "staged:unit_ms_mean",
     "staged:unit_ms_worst",
+    # CAL-P1066 (#4314). The COST half of CAL-P1048's cost/progress split, and
+    # the reason the 🔴 on :data:`UNIT_COST_REASON_PREFIX` exists: the tuple
+    # above kept the timed mean, which the write site names as the wrong number
+    # for costing a unit, and never gained the right one. These two are the pair
+    # that makes the timed mean readable — the cost over units that FINISHED,
+    # and the count of units that finished and lost their cursor write.
+    #
+    # Like ``staged:units_dropped`` below, these are outside the tuple's "one
+    # forgotten name costs a column in a report" licence: their absence is not a
+    # missing column but a reader silently costing a unit off a survivor mean.
+    "staged:unit_ms_mean_completed",
+    "staged:units_completion_not_banked",
     "staged:window_left_ms",
     "staged:cursor_resume",
     "staged:units_cancelled",
