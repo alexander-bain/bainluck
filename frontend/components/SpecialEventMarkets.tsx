@@ -12,7 +12,7 @@ import {
 } from "@/lib/otherMarketGroups";
 import {
   isSettledStatus,
-  settledSectionNote,
+  SETTLED_SECTION_NOTE_NO_QUOTES,
   SETTLED_QUOTE_PREFIX,
 } from "@/lib/settledQuote";
 import { renderedPercent } from "@/lib/renderedPercent";
@@ -184,46 +184,54 @@ export default function SpecialEventMarkets({
 
   if (section.categories.length === 0) return null;
 
-  const { renderedOutcomes, quotedOutcomes, withheld } = section;
-
   return (
     <div>
       <div className="flex items-end justify-between mb-4">
         <div>
           <h3 className="text-lg font-semibold tracking-tight">Additional Markets</h3>
-          <p className="text-sm text-text-secondary mt-0.5">
-            {renderedOutcomes} market{renderedOutcomes === 1 ? "" : "s"} grouped by category
-            {/* Said ONCE, at section level, following `PropDivergenceDetail`'s
-                "Not graded" group rather than `PropTravelBar`'s per-row label.
-                The rail labels each row because its rows differ — some HIT,
-                some MISS, some ungraded — so the label discriminates; repeating
-                this ten times would discriminate nothing and just crowd the
-                card.
+          {/* ── NOTICE 34 (#4167): THE SUBTITLE WAS THREE DIAGNOSTICS ──────────
+              It read, in grey, under the heading:
 
-                #3752: which sentence, though, is decided by the ROWS. The note
-                used to promise "each market's last quote" unconditionally, and
-                a settled tennis page renders decided rows as results and
-                impossible ones struck through — six rows, no quote, on
-                `/events/15305016`. `quotedOutcomes` is counted off the same
-                arrays mapped below, so the header cannot promise a number the
-                grid does not print. */}
-            {settled && (
-              <>
-                {" · "}
-                <span className="text-text-muted" data-testid="special-markets-settled-note">
-                  {settledSectionNote(quotedOutcomes)}
-                </span>
-              </>
-            )}
-            {withheld > 0 && (
-              <>
-                {" · "}
-                <span className="text-text-muted">
-                  {withheld} hidden (conflicting duplicate price{withheld === 1 ? "" : "s"})
-                </span>
-              </>
-            )}
-          </p>
+                58 markets grouped by category · settled — any percentage is a
+                last quote · 1 hidden (conflicting duplicate price)
+
+              Alex, 2026-09-08 4:00pm PT, on exactly this class of text: "all the
+              grey text is madness, and shouldn't be user-facing at all". The
+              ruling names three shapes and bans all three from the page body,
+              and this one line held one of each:
+
+                * a COVERAGE COUNT   — "58 markets grouped by category"
+                * a METHOD NOTE      — "any percentage is a last quote"
+                * a LIMITATION       — "1 hidden (conflicting duplicate price)"
+
+              The count and the limitation are gone. The reader can see how many
+              cards there are by looking at them, and "1 hidden" explains an
+              absence they cannot see and could not act on — the ruling's own
+              remedy is to leave it out, not to narrate it.
+
+              THE STATE WORD SURVIVES, AND IT IS THE ONE JUDGEMENT HERE.
+              Notice 34 allows "at most one short caption", and bans method
+              NOTES rather than state. `settled` on its own is state: it is what
+              the section is, not how we computed it. Dropping it outright is
+              the single move that could make a last quote on a finished game
+              read as a live price, which is the harm #3752 was filed on — so
+              the clause reduces to `SETTLED_SECTION_NOTE_NO_QUOTES`, a constant
+              the codebase already models for the case where no row quotes.
+
+              `settledSectionNote(quotedOutcomes)` is therefore no longer called
+              from the web render. Both constants stay exported: `lib/settledQuote`
+              is mirrored in Swift and `settledQuoteParity.test.ts` pins
+              `SETTLED_QUOTE_SECTION_NOTE` against the app's own string. The app
+              half of notice 34 is native's to make, not something to force by
+              deleting a shared constant out from under it (#4167 records it). */}
+          {settled && (
+            <p
+              className="text-sm text-text-muted mt-0.5"
+              data-testid="special-markets-settled-note"
+            >
+              {SETTLED_SECTION_NOTE_NO_QUOTES}
+            </p>
+          )}
         </div>
       </div>
 

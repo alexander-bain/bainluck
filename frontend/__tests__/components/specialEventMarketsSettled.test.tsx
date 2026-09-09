@@ -41,7 +41,11 @@ import { renderToStaticMarkup } from "react-dom/server";
 import React from "react";
 
 import SpecialEventMarkets from "../../components/SpecialEventMarkets";
-import { SETTLED_QUOTE_PREFIX, SETTLED_QUOTE_SECTION_NOTE } from "@/lib/settledQuote";
+import {
+  SETTLED_QUOTE_PREFIX,
+  SETTLED_QUOTE_SECTION_NOTE,
+  SETTLED_SECTION_NOTE_NO_QUOTES,
+} from "@/lib/settledQuote";
 import { SETTLED_VOCABULARY } from "@/lib/propGrade";
 import type { GameMarketsResponse } from "@/lib/api";
 
@@ -146,9 +150,20 @@ describe("Additional Markets: a settled game states quotes, not chances", () => 
     expect(text).toContain(`${SETTLED_QUOTE_PREFIX} 1%`);
   });
 
+  // NOTICE 34 (#4167). The section note is no longer the METHOD sentence
+  // "settled — any percentage is a last quote"; it is the bare state word,
+  // `SETTLED_SECTION_NOTE_NO_QUOTES`. The "said ONCE" property this test exists
+  // for is unchanged and still asserted — what changed is which string is said.
   test("the settled note is said ONCE, not once per row", () => {
     const text = visible(render("closed"));
-    const occurrences = text.split(SETTLED_QUOTE_SECTION_NOTE).length - 1;
+    // The banned method clause is gone from the page entirely. Asserted on the
+    // clause that makes it a METHOD note, not on the words "last quote" alone:
+    // `SETTLED_QUOTE_PREFIX` is also "last quote" and it stays, because a row
+    // saying what its own number IS is the #2019 refusal, not a method note.
+    expect(text).not.toContain(SETTLED_QUOTE_SECTION_NOTE);
+    expect(text).not.toContain("any percentage is a last quote");
+    // The state word survives, exactly once, at section level.
+    const occurrences = text.split(SETTLED_SECTION_NOTE_NO_QUOTES).length - 1;
     expect(occurrences).toBe(1);
     // Eight outcomes are on screen, so a per-row label would have said it 8x.
     expect(text.split(`${SETTLED_QUOTE_PREFIX} `).length - 1).toBeGreaterThan(1);

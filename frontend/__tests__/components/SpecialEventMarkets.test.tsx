@@ -34,9 +34,17 @@ describe("SpecialEventMarkets — the wrong number never reaches the screen", ()
     expect(html).not.toContain("Ronald Acuña");
   });
 
-  test("the withheld row is COUNTED on screen, not silently dropped", () => {
-    expect(html).toContain("1 hidden");
-    expect(html).toContain("conflicting duplicate price");
+  // NOTICE 34 (#4167) INVERTED THIS TEST, AND THE BEHAVIOUR IT GUARDED IS
+  // UNCHANGED. The row is still withheld — the assertion directly above proves
+  // it, and it is the assertion that matters. What went is the LIMITATION
+  // sentence that narrated the withholding: "1 hidden (conflicting duplicate
+  // price)". Alex, 2026-09-08: an emptiness the reader cannot see and could not
+  // act on is left out, not explained.
+  test("the withheld row is dropped SILENTLY — no limitation prose", () => {
+    expect(html).not.toContain("hidden (conflicting");
+    expect(html).not.toContain("conflicting duplicate price");
+    // The count is gone as a SENTENCE, not by the number happening to be 1.
+    expect(html).not.toMatch(/\d+ hidden/);
   });
 
   test("the rows we can attribute still render", () => {
@@ -56,13 +64,23 @@ describe("SpecialEventMarkets — grouping and honest counts", () => {
     expect(html).toContain("Player Props");
   });
 
-  test("the header counts the bars, and pluralizes", () => {
+  // NOTICE 34 (#4167). The old pair of tests here pinned the pluralisation of a
+  // COVERAGE COUNT — "3 markets grouped by category" / "1 market grouped by
+  // category". The ruling names coverage counts first and bans them from the
+  // page body outright, so the count is gone and the pluralisation question
+  // with it. The grouping BEHAVIOUR those tests were really about is asserted
+  // straight, off the rendered bars, which is a stronger claim than counting
+  // them in a sentence: the sentence could always disagree with the grid.
+  test("the bars group without announcing how many there are", () => {
     // 6 rows, 3 of them one conflicting label -> 3 bars render.
-    expect(html).toContain("3 markets grouped by category");
-    expect(html).not.toContain("3 market grouped");
+    expect(html).toContain("Aaron Judge O/U 0.5");
+    expect(html).toContain("Matt Olson O/U 0.5");
+    expect(html).toContain("Max Fried O/U 5.5");
+    expect(html).not.toContain("grouped by category");
+    expect(html).not.toMatch(/\d+ markets? grouped/);
   });
 
-  test("a single rendered bar says 'market', not 'markets'", () => {
+  test("a single rendered bar announces no count either", () => {
     const single = renderToStaticMarkup(
       <SpecialEventMarkets
         data={payload([
@@ -74,7 +92,10 @@ describe("SpecialEventMarkets — grouping and honest counts", () => {
         ])}
       />,
     );
-    expect(single).toContain("1 market grouped by category");
+    // The bar is there; the sentence about it is not. Asserted in that order so
+    // this cannot pass by rendering nothing at all (the empty-render trap).
+    expect(single).toContain("A O/U 0.5");
+    expect(single).not.toMatch(/\d+ markets? grouped/);
   });
 });
 
@@ -97,8 +118,13 @@ describe("SpecialEventMarkets — the wall collapses, both directions", () => {
     }
   });
 
-  test("the header still counts all of them", () => {
-    expect(html).toContain(`${MAX_OUTCOMES_PER_CARD + 10} markets grouped by category`);
+  // NOTICE 34 (#4167): the header used to say "18 markets grouped by category"
+  // over a card showing 8. The reachability that mattered is asserted by the
+  // test directly above — every one of the 18 is in the markup — so removing
+  // the count loses no coverage claim, only the sentence making it.
+  test("the header counts nothing, and the disclosure still carries the rest", () => {
+    expect(html).toContain("10 more");
+    expect(html).not.toMatch(/\d+ markets? grouped/);
   });
 });
 
@@ -119,7 +145,8 @@ describe("SpecialEventMarkets — graceful degradation", () => {
     // NB: assert the NOTE, not the word "hidden" — `overflow-hidden` is a class
     // on every bar, and the looser assertion passed for the wrong reason.
     expect(html).not.toContain("conflicting duplicate price");
-    expect(html).toContain("3 markets grouped by category");
+    // NOTICE 34 (#4167): was `toContain("3 markets grouped by category")`.
+    expect(html).not.toMatch(/\d+ markets? grouped/);
   });
 
   test("too few rows renders nothing at all", () => {
