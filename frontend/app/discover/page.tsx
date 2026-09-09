@@ -30,6 +30,7 @@ import {
   initialFeedRequest,
   nextFeedRequest,
   dedupeById,
+  reconcilePage1,
   shouldLoadNextPage,
 } from "@/lib/discover/feedPaging";
 import FeedBootScript from "@/components/discover/FeedBootScript";
@@ -716,7 +717,14 @@ export default function DiscoverPage() {
       hasRenderedItems: renderedCountRef.current > 0,
     });
     setFeedUnavailable(decision.showUnavailable);
-    if (decision.acceptItems) setPage1Items(data.items ?? []);
+    // #4430: fold the payload into the edition the reader is holding instead of
+    // assigning over the top. A background tick updates cards in place and
+    // appends what is new; it never removes or reorders one under the reader.
+    // Cold load still takes the served page wholesale. See `reconcilePage1`.
+    if (decision.acceptItems) {
+      const incoming = data.items ?? [];
+      setPage1Items((prev) => reconcilePage1(prev, incoming, getItemId));
+    }
     setHasMore(decision.hasMore);
   }, [data]);
 
