@@ -340,3 +340,115 @@ def test_premier_league_is_discounted_for_soccer_and_no_one_else():
         f"ambiguous when SOCCER claims it (Premier League Darts is the other "
         f"reading, and darts has its own strong evidence)"
     )
+
+
+# ---------------------------------------------------------------------------
+# #4229 — "Senators" is a hockey club AND the US Senate
+#
+# Production specimen: a card for "How many senators will vote for Trump's Fed
+# chair nominee?" carried the eyebrow HOCKEY next to a Politics pill, at 390px.
+# 17 rows in all (12 open + 5 resolved), across BOTH sources.
+#
+# Heeding this file's own lesson from the Jaxson Dart case -- "a control set that
+# only samples the easy half of a class does not cover the class" -- the hockey
+# controls below are deliberately the HARD half: rows carrying "senators" and
+# NOTHING ELSE that commits to hockey. "Senators vs. Maple Leafs" would pass
+# against a fix that broke every bare-Senators row, because "maple leafs" scores
+# on its own.
+# ---------------------------------------------------------------------------
+
+# The political half: (title, why it is here). Every one of these returned
+# "hockey" before the repair in this commit.
+_SENATE_POLITICS_TITLES = [
+    "Which Senators will vote for Kevin Warsh as Fed chair?",
+    "How many Senators will vote for Kevin Warsh for Fed Chair?",
+    "How many Republican senators will lose reelection in 2026?",
+    "How many Democratic Senators will lose reelection in 2026?",
+    "How many senators will vote for Trump's Fed chair nominee?",
+    # No policy noun, no figure, no date -- the bare construction alone.
+    "Which Senators will vote for Kari Lake?",
+    "How many Senators will vote for the Clarity Act?",
+    "Which Senators will vote for the Clarity Act?",
+    "How many senators will vote for Todd Blanche as Attorney General?",
+    "Which Senators will vote to confirm Tulsi Gabbard?",
+    "How many Senators vote to confirm Tulsi Gabbard?",
+    "Which Senators will vote for Heidi Overton?",
+    # "running", not "vote" -- the verb list has to cover the electoral sense.
+    "How many Republican Senators not running in 2026?",
+    "How many Senators will vote to convict Donald Trump on incitement by March 31?",
+    "How many Senators vote to confirm Jay Clayton as Director of National Intelligence?",
+]
+
+# The hockey half, all bare: "senators" is the ONLY hockey-committing token in
+# the first two, so these are what a too-greedy politics rule would break.
+_SENATE_HOCKEY_TITLES = [
+    "Belleville Senators vs Hartford Wolf Pack",
+    "Senators vs. Wolf Pack",
+    "Senators vs. Maple Leafs",
+    "Canadiens vs. Senators",
+    "AHL: Belleville Senators vs. Hartford Wolf Pack",
+    "OTT Senators at TOR Maple Leafs: Player Goals",
+]
+
+
+@pytest.mark.parametrize("title", _SENATE_POLITICS_TITLES)
+def test_4229_a_senate_vote_is_politics_not_hockey(title):
+    """The upper chamber does not play in the NHL.
+
+    Note WHY weakening the noun is not the whole repair, since that is the
+    obvious-looking fix: several of these titles carry no other evidence at all,
+    so a 1-point hockey match would still win unopposed (the exact failure mode
+    `test_p1_a_track_meet_is_not_filed_as_baseball` documents for "athletics").
+    What carries this test is the strong legislative-construction pattern; the
+    `_AMBIGUOUS_EVIDENCE` entry only stops bare "senators" outscoring it.
+    """
+    assert categorize_by_rules(title) == "politics", (
+        f"{title!r} classified as {categorize_by_rules(title)!r}; scores "
+        f"{score_sport_evidence(title)}"
+    )
+
+
+@pytest.mark.parametrize("title", _SENATE_HOCKEY_TITLES)
+def test_4229_the_hockey_club_is_still_hockey(title):
+    """The control, and the half that actually constrains the fix.
+
+    A politics rule keyed on the NOUN rather than the CONSTRUCTION reddens
+    here -- which is the point. The first two carry no second hockey token.
+    """
+    assert categorize_by_rules(title) == "hockey", (
+        f"{title!r} classified as {categorize_by_rules(title)!r}; scores "
+        f"{score_sport_evidence(title)}"
+    )
+
+
+def test_4229_senators_is_discounted_for_hockey_and_no_one_else():
+    """The pairing, stated once — same shape as the 'premier league' guard."""
+    from app.utils.futures_categorization import _AMBIGUOUS_FOR
+
+    claimants = {c for c, token in _AMBIGUOUS_FOR if token == "senators"}
+    assert claimants == {"hockey"}, (
+        f"'senators' is discounted for {sorted(claimants)}; only HOCKEY's claim "
+        f"on the word is doubtful"
+    )
+
+
+def test_4229_reaches_politics_through_the_whole_cascade():
+    """The full caller, not the unit — this file's CERT-1967 lesson.
+
+    Every assertion above stops at `categorize_by_rules`. The poller reaches the
+    classifier through `resolve_event_category`, which consults tags first and
+    can arrive at a different answer; a repair that is green at the unit and
+    inert at the caller is the failure this test exists to refuse.
+    """
+    from app.tasks.polymarket import _tags_to_category, resolve_event_category
+
+    title = "How many senators will vote for Trump's Fed chair nominee?"
+    category, sport = _tags_to_category([])
+    _resolved_category, resolved_sport, _arm = resolve_event_category(
+        category, sport, title, [title]
+    )
+
+    assert resolved_sport == "politics", (
+        f"the production specimen resolved as {resolved_sport!r} through the "
+        f"cascade the poller actually calls -- the unit-level repair is inert"
+    )

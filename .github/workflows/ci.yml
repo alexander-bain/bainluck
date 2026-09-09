@@ -1318,6 +1318,35 @@ jobs:
             exit 1
           fi
 
+      - name: "#4229 Kalshi senate backfill moves the stored row (real Postgres)"
+        # CERT-2372 blocked the classifier-only SHA because the diff made these
+        # markets CLASSIFY as politics while every stored row stayed `hockey`:
+        # `app/tasks/kalshi.py` writes the tag through
+        # `coalesce(nullif(existing,'other'), new)`, so a real tag is never
+        # overwritten. The claim under test is therefore "a stored row changed
+        # value", and only a server that stored it can observe that. A mock
+        # session returns the very rowcount under test, and the failure being
+        # guarded is a write that appears to succeed and changes nothing.
+        #
+        # Two-armed like the gates above: the Ottawa control is forced INSIDE
+        # the repair's id list, so only the shipped classifier's per-row verdict
+        # can spare it, AND `test_a_blind_id_update_cannot_pass_this` executes
+        # the naive one-statement update and requires it to corrupt that
+        # control. A green run therefore means the classifier gate was proved
+        # necessary, not that nothing objected.
+        #
+        # Same skip-detection as every gate in this job. Adding the file is not
+        # adding the gate: without this step the suite goes green while the
+        # file's mere existence reads as coverage (lane1b/102's #4157 lesson).
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_repair_kalshi_senate_category_4229_real_postgres.py \
+            -v -s -rs 2>&1 | tee /tmp/senate4229.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/senate4229.txt; then
+            echo "::error::#4229 senate backfill gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
   frontend-build:
     runs-on: ubuntu-latest
     defaults:

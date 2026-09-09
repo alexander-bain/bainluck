@@ -203,6 +203,36 @@ async def list_uncategorized_futures(
     }
 
 
+@router.post("/futures/repair-senate-categories")
+async def repair_senate_categories(
+    request: Request,
+    secret: str = Query(None, description="Admin secret for authorization"),
+    apply: bool = Query(False, description="Write the change; default is a dry run"),
+    db: AsyncSession = Depends(get_db_rw),
+):
+    """#4229 — move the Kalshi Senate rows that are stored under a sport tag.
+
+    The classifier fix cannot reach these rows: `app/tasks/kalshi.py` writes
+    `llm_sport_category` through `coalesce(nullif(existing, 'other'), new)`, so
+    an existing real tag is never overwritten (#1888 honest-empty). Polymarket
+    rows in the same class assign unconditionally and retag on their own poll,
+    so they are out of scope by design.
+
+    Bounded by an enumerated id list AND gated per row by the SHIPPED
+    classifier, so a mislisted id is refused rather than relabelled. Dry run by
+    default; `apply=true` returns every changed row's `before` value, which is
+    the D51 backup, and logs the one-statement restore.
+    """
+    _check_admin_secret(secret, request=request)
+
+    from app.tasks.repair_kalshi_senate_category import repair
+
+    try:
+        return await repair(db, apply=apply)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Repair failed: {str(e)}")
+
+
 @router.post("/futures/force-categorize")
 async def force_categorize_futures(
     request: Request,
