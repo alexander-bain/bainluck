@@ -362,29 +362,25 @@ import ast  # noqa: E402  (kept beside the census it serves)
 #: ORM price assignments that are NOT this lane's to rewire, by
 #: `file:function`, with why.
 #:
-#: `prediction_market_matching.py` belongs to lane1 under D39 — lane1b reads it
-#: and never edits it — and it is live territory: three lane1 branches and PR
-#: #2640 touch that file today. Both sites sit in
-#: `_poll_live_prediction_market_prices`, the 2-minute realtime poll, and both
-#: write a real venue price with no stamp.
+#: 🟢 EMPTY, AND THE EMPTINESS IS THE POINT. It held one entry — both sites in
+#: `prediction_market_matching._poll_live_prediction_market_prices`, the
+#: 2-minute realtime poll, parked because that file is lane1's under D39.
+#: CERT-2354 blocked #3879's acceptance-1 on precisely that park: the arms wrote
+#: a real venue price and `last_updated` while leaving the freshness clock NULL,
+#: so a live-only observation could never refresh it. Fable-5 waived D39 for
+#: that one function (Wed 2026-09-09 4:15am PT) and lane1b/102 made the repair
+#: (`4157-LIVE-MATCHER-ADVANCES-THE-OBSERVATION-CLOCK`); both arms now go
+#: through `apply_observed_price`, and the executed proof on a real server is
+#: `tests/integration/test_live_poll_stamps_observation_clock_4157_real_postgres.py`.
 #:
-#: 🔴 THIS IS A DEFECT PARKED AT AN OWNERSHIP BOUNDARY, NOT A JUSTIFIED
-#: OMISSION. The exact two-line patch is in lane1's runner inbox
-#: (`NOTE-TO-LANE1-FROM-LANE1B-090-...`). The cost while it sits here is bounded
-#: and was measured, not assumed: these arms only UPDATE outcomes that already
-#: exist, and the legs they reach are overwhelmingly also reached by the Kalshi
-#: and Polymarket polls, which DO stamp. The population that reads stale is legs
-#: this poll reaches and the venue polls do not.
+#: An entry added here is a defect parked at a boundary, never a justified
+#: omission — it needs the owning lane, the handed-over patch and the measured
+#: cost of the wait, as the retired one did.
 #:
-#: Keyed by function, not by line number, so the entry survives the file moving
+#: Keyed by function, not by line number, so an entry survives the file moving
 #: — and an exact-set pin never carries a `file:line`, because a comment added
 #: above the site reds the guard for a reason the guard does not mean.
-ORM_PRICE_ASSIGNMENTS_NOT_OURS = {
-    (
-        "app/tasks/prediction_market_matching.py",
-        "_poll_live_prediction_market_prices",
-    ): ("lane1's file under D39; patch handed to lane1's inbox by lane1b/090"),
-}
+ORM_PRICE_ASSIGNMENTS_NOT_OURS: dict[tuple[str, str], str] = {}
 
 #: Assignments to a `current_probability` attribute that is not a
 #: `FuturesOutcome` column at all. `tasks/event_chart_backfill.py` defines a
@@ -410,11 +406,19 @@ def _enclosing_function(tree: ast.Module, line: int) -> str | None:
     return best.name if best else None
 
 
-def _orm_price_assignments() -> list[tuple[str, str, int]]:
-    """Every `<x>.current_probability = ...` under `app/tasks`, as
-    (file, function, line), excluding non-ORM receivers."""
+def _scan_for_orm_price_assignments(
+    trees: dict[str, ast.Module],
+) -> list[tuple[str, str, int]]:
+    """Every `<x>.current_probability = ...` in `trees`, as
+    (file, function, line), excluding non-ORM receivers.
+
+    Takes its trees as an argument so the instrument can be pointed at a
+    specimen it is KNOWN to match. Reading `app/tasks` from inside the matcher
+    would tie the parser's proof of life to the production population, which
+    since #4157 is legitimately empty.
+    """
     found = []
-    for rel, tree in _task_trees().items():
+    for rel, tree in trees.items():
         for node in ast.walk(tree):
             if not isinstance(node, ast.Assign):
                 continue
@@ -432,6 +436,24 @@ def _orm_price_assignments() -> list[tuple[str, str, int]]:
     return found
 
 
+def _orm_price_assignments() -> list[tuple[str, str, int]]:
+    """Every unstamped ORM price write under `app/tasks`. Empty is the goal."""
+    return _scan_for_orm_price_assignments(_task_trees())
+
+
+#: A file that the walk MUST match, held as source rather than as a fixture on
+#: disk so the specimen and the predicate it exercises are read together.
+_ORM_ASSIGNMENT_SPECIMEN = """
+def writes_a_price(outcome, prob):
+    outcome.current_probability = prob
+
+
+class Row:
+    def __init__(self):
+        self.current_probability = None   # excluded: not an ORM receiver
+"""
+
+
 def test_the_orm_census_instrument_still_finds_assignments() -> None:
     """The parser before the measurement, as section 3 does for its own.
 
@@ -440,8 +462,20 @@ def test_the_orm_census_instrument_still_finds_assignments() -> None:
     subscript — would return an empty list and make every assertion below pass
     by finding nothing. #3879 is an issue about a population that looked empty;
     its guards do not get to fail that way.
+
+    🔴 This asserts against a SPECIMEN, not against `app/tasks`. It used to
+    assert the production scan was non-empty, which worked only for as long as
+    the defect existed: #4157 removed the last bare assignment in the tree, and
+    the guard that was supposed to prove the instrument works started reporting
+    the ship as a broken parser. A liveness check that goes red when the bug is
+    fixed is measuring the bug, not the instrument.
     """
-    assert _orm_price_assignments(), "the ORM price-assignment walk found nothing"
+    found = _scan_for_orm_price_assignments(
+        {"specimen.py": ast.parse(_ORM_ASSIGNMENT_SPECIMEN)}
+    )
+    assert [(fn, line) for _, fn, line in found] == [("writes_a_price", 3)], (
+        f"the ORM price-assignment walk no longer matches its own specimen: {found}"
+    )
 
 
 def test_no_task_writes_an_orm_price_without_the_stamp_helpers() -> None:
@@ -465,29 +499,76 @@ def test_no_task_writes_an_orm_price_without_the_stamp_helpers() -> None:
     }
 
 
-def test_the_ownership_exemption_still_matches_exactly_its_sites() -> None:
-    """An exemption that stops matching has silently widened.
+def test_every_exemption_still_matches_a_real_site() -> None:
+    """A stale excuse outlives the defect it excuses.
 
-    Two directions, one dangerous. If lane1 applies the handed-over patch the
-    sites disappear and this reds — noisy, and the fix is to DELETE the entry,
-    which is the outcome being waited for. If the matcher grows a THIRD
-    unstamped price write it also reds, and that one is a real new defect.
+    Vacuous while the dict is empty, and deliberately kept: the next entry is
+    the one that needs policing. An exemption whose site has since been fixed
+    or moved silently widens the census above.
     """
     actual = {(rel, fn) for rel, fn, _ in _orm_price_assignments()}
     for key in ORM_PRICE_ASSIGNMENTS_NOT_OURS:
         assert key in actual, (
-            f"exemption {key} matches no site — if lane1 has applied the patch, "
+            f"exemption {key} matches no site — if the patch has been applied, "
             "delete the entry rather than leaving a stale excuse in place"
         )
+
+
+def test_the_live_matcher_has_no_unstamped_price_write_left() -> None:
+    """#4157 / CERT-2354: the two parked sites are gone, and stayed gone.
+
+    Stated as its own assertion rather than folded into the census above so a
+    regression here names the issue that paid for it. The census would also
+    catch it, with a message about a population.
+    """
     matcher_sites = [
         (rel, fn, line)
         for rel, fn, line in _orm_price_assignments()
         if rel == "app/tasks/prediction_market_matching.py"
     ]
-    assert len(matcher_sites) == 2, (
-        f"expected exactly the 2 known unstamped matcher writes, found "
-        f"{len(matcher_sites)}: {matcher_sites}. A third is a new defect, not a "
-        "number to bump."
+    assert matcher_sites == [], (
+        f"the live matcher writes a price without a stamp again: {matcher_sites}. "
+        "Both arms of `_poll_live_prediction_market_prices` must go through "
+        "`apply_observed_price` — see CERT-2354 for what a NULL freshness clock "
+        "costs a live leg."
+    )
+
+
+def test_both_live_matcher_arms_call_the_observed_price_helper() -> None:
+    """The other direction: deleting the writes entirely also empties the census.
+
+    `test_the_live_matcher_has_no_unstamped_price_write_left` is satisfied by a
+    file with no price writes at all, which is what a bad rebase produces. This
+    pins the two CALLS, scoped to the function rather than the file, and pins
+    the `observed_at` keyword — the argument that carries the ship — rather than
+    a neighbouring token that a nearby edit could supply.
+    """
+    tree = _task_trees()["app/tasks/prediction_market_matching.py"]
+    fn = next(
+        (
+            n
+            for n in ast.walk(tree)
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and n.name == "_poll_live_prediction_market_prices"
+        ),
+        None,
+    )
+    assert fn is not None, (
+        "`_poll_live_prediction_market_prices` is gone from the matcher — this "
+        "guard cannot testify about a function that does not exist"
+    )
+    calls = [
+        n
+        for n in ast.walk(fn)
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Name)
+        and n.func.id == "apply_observed_price"
+        and any(kw.arg == "observed_at" for kw in n.keywords)
+    ]
+    assert len(calls) == 2, (
+        f"expected both venue arms to stamp through apply_observed_price("
+        f"..., observed_at=...), found {len(calls)}. One means a venue arm "
+        "regressed to a bare assignment or was deleted."
     )
 
 
