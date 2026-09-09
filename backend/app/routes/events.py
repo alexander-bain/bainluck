@@ -46,6 +46,11 @@ from app.utils.event_completion import (
     is_retired_event_status,
 )
 from app.utils.graded_card import rendered_duel_percents
+from app.utils.market_shape import (
+    SHAPE_CONTAINER_MEMBER,
+    SHAPE_FIELD,
+    SHAPE_QUANTITY,
+)
 from app.utils.hero_probability import resolve_hero
 # `resolve_settled_hero` survives here for the graded-card gate around L12626,
 # which asks the settled question on its own account. The hero cascade itself
@@ -10150,6 +10155,110 @@ _SINGLE_INNING_RE = re.compile(r"\binning\b")
 _NON_SCORING_TOTAL_RE = re.compile(r"\bbases\b")
 
 
+#: The shapes that only ever exist as the *output* of decomposing a container
+#: (`app/utils/market_shape.py`: "container_member — a yes/no member of a
+#: decomposed field (shared group_id) → rolls up into a container").
+_DECOMPOSED_MEMBER_SHAPES = (SHAPE_CONTAINER_MEMBER, SHAPE_QUANTITY)
+
+
+def _decomposed_container_parent_candidates(markets: list) -> set[int]:
+    """The `field` parents that MIGHT be redundant — the candidates, not the verdict.
+
+    🔴 THIS SET IS NOT A SUPPRESSION LIST, AND TWO CERTS ARE WHY IT SAYS SO IN
+    THE NAME. The first cut called the same set
+    `_decomposed_container_parent_ids` and skipped every id in it. Being in the
+    served list is not the same as reaching the page: the render loop drops a
+    market that has no outcomes, that `has_no_real_price`, or whose name is a
+    placeholder — all AFTER this ran. So a group could suppress its parent with
+    children that then emitted nothing, and the whole market vanished
+    (CERT-2335). The second cut watched the render loop's BUCKETS instead, which
+    is one layer better and still not the reader's: ten filters run after the
+    loop, and CERT-2340's falsifier is a real-priced 99%/1% `player_prop` member
+    that appends a bucket row and is then deleted by the 5–95% guard at step 9.
+    Bucket row present, final row absent, parent already skipped, page empty.
+
+    The verdict now belongs to the FINAL PAYLOAD, taken immediately before the
+    response dict is assembled: a candidate is dropped only if a row produced by
+    one of its own group's members is still there after every filter has run.
+    Each rendered row carries `_market_id` so that question can be asked of the
+    thing a reader actually receives rather than of any proxy for it. This
+    function only answers "which parents are worth watching", and being wrong
+    here can no longer delete anything.
+
+    ═══ THE ORIGINAL FINDING (#4189) ═══
+
+    Polymarket game events arrive as one container plus nested sub-markets
+    (gotcha #18). Decomposition already splits them: on event 15307447 the
+    match container `60457478` has nine properly-named children — Set 1 Winner,
+    Set Handicap, four Match O/U rungs — each its own row on the shared
+    `group_id`. What survived the decomposition is the *parent*, still holding
+    the union of its children as raw outcome strings:
+
+        0.4150  "US Open WTA: Mirra Andreeva vs Coco Gauff Set 1 Winner"
+        0.4050  "US Open WTA: Mirra Andreeva vs Coco Gauff Set Handicap +/-1.5"
+        0.3550  "Mirra Andreeva"
+
+    Those are sub-market TITLES, not outcomes, and `_extract_threshold` happily
+    pulls `1.5` out of the second one — so each cleared the `threshold is not
+    None` gate and was minted as a player prop. That is why the rail printed
+    eight rows at one identical price (the parent's single price, stamped onto
+    every decomposed leg) next to a bare player name.
+
+    THE MEMBERS MUST BE IN THE SERVED SET, NOT MERELY IN THE GROUP — so this
+    reads `markets`, never the group. That is necessary and, as CERT-2335 and
+    CERT-2340 each showed at a different layer, nowhere near sufficient: "in the
+    served list", "in a render bucket" and "in the payload" are three different
+    facts, and only the third one makes a parent redundant.
+
+    Scope measured on production 2026-09-08: 12,687 (group_id, event_id) pairs
+    hold a `field` parent alongside decomposed members, so this is a class, not
+    one match. Every event-linked sample is a Polymarket container — "… -
+    Player Props", "… - More Markets", the match container above. The
+    non-container `field` markets that share a group with members ("Which
+    cities face tornado risk on August 23?") are all `event_id IS NULL` and
+    never reach this serializer.
+
+    A NULL `market_type` is left alone deliberately: the shape backfill lags
+    ingest, and an unshaped parent is the current behaviour, so this fails
+    closed toward serving too much rather than too little.
+    """
+    groups_with_members = {
+        m.group_id
+        for m in markets
+        if m.group_id and (m.market_type or "") in _DECOMPOSED_MEMBER_SHAPES
+    }
+    return {
+        m.id
+        for m in markets
+        if (m.market_type or "") == SHAPE_FIELD and m.group_id in groups_with_members
+    }
+
+
+def _row_market_ids(row: dict) -> set:
+    """Which market(s) a rendered `/game-markets` row came from.
+
+    Row-level provenance is what lets #4189's suppression be decided against the
+    payload instead of against a bucket (CERT-2340). Every append in the render
+    loop stamps `_market_id`; the ONE filter that MERGES two rows rather than
+    dropping or capping them — the cross-source player-prop dedup at step 9b —
+    stamps `_market_ids` with the union, because a merged row belongs to every
+    market that fed it and disowning one of them is how a survivor gets thrown
+    out with a redundant parent.
+
+    Every other filter either drops a dict or copies it with `{**item}`, and
+    both preserve the stamp, so a scalar is enough everywhere else.
+
+    An untagged row returns the empty set and is therefore never suppressed:
+    this fails toward serving too much, which is the correct direction for a
+    removal (`TestTheChildrenStillArrive` is the guard on the other one).
+    """
+    ids = row.get("_market_ids")
+    if ids:
+        return set(ids)
+    market_id = row.get("_market_id")
+    return {market_id} if market_id is not None else set()
+
+
 def _classify_game_market(name: str, external_id: Optional[str] = None) -> str:
     """Classify a game-level market name into a type.
 
@@ -11279,6 +11388,35 @@ async def _build_game_markets(
     # Only reads box_score_data for completed/closed events — None otherwise.
     _prop_ctx = _build_prop_grade_context(event) if event_is_finished else None
 
+    # #4189 / CERT-2335 / CERT-2340: a decomposed container parent is not served
+    # beside its own children — but only once those children have reached THE
+    # READER. `_decomposed_container_parent_candidates` says which parents are
+    # worth watching; the verdict is taken at the very bottom of this function,
+    # against the assembled payload, under "the redundant parent leaves".
+    #
+    # 🔴 NOTHING IS SUPPRESSED IN THIS LOOP, AND THAT IS THE REPAIR. Two earlier
+    # cuts decided here and both deleted groups. The first suppressed on the
+    # SERVED set, so children dropped by this loop's own gates (no outcomes,
+    # `has_no_real_price`, placeholder name) took the parent with them. The
+    # second suppressed on the BUCKETS this loop appends to, which is one layer
+    # better and still not the reader's: ten filters run after the loop, and a
+    # real-priced 99%/1% player prop appends a bucket row and is then deleted by
+    # the 5–95% guard at step 9. Both left the page empty.
+    #
+    # So the parent renders exactly as it does today and its rows are removed at
+    # the end if — and only if — a row from one of its own group's members is
+    # still standing. Every predicate short of the payload is a guess about ten
+    # filters that were written for other reasons and will change again; the
+    # payload is not a guess, and it is the only thing a reader ever sees.
+    #
+    # The cost of rendering first is that a redundant parent's rows take part in
+    # the dedup/cap/merge passes below. That is EXACTLY what master does today,
+    # so it is not a new behaviour — but two of those passes pick one row and
+    # discard the others, and a parent row that wins and is then removed takes
+    # the member's row with it. Both are given an explicit preference for the
+    # non-candidate row where they choose (steps 7 and 9b).
+    _parent_candidates = _decomposed_container_parent_candidates(markets)
+
     for market in markets:
         market_outcomes = outcomes_by_market.get(market.id, [])
         if not market_outcomes:
@@ -11350,6 +11488,7 @@ async def _build_game_markets(
                         "source": market.source,
                         "movement": round(float(o.current_probability) - float(o.opening_probability), 4)
                             if o.opening_probability is not None and o.current_probability is not None else None,
+                        "_market_id": market.id,
                     }
                     pp.update(_grade_settled_prop(event_is_finished, _prop_ctx, market, o, threshold, is_under))
                     player_props.append(pp)
@@ -11412,6 +11551,7 @@ async def _build_game_markets(
                     "source": market.source,
                     "movement": round(float(o.current_probability) - float(o.opening_probability), 4)
                         if o.opening_probability is not None and o.current_probability is not None else None,
+                    "_market_id": market.id,
                 }
                 pp.update(_grade_settled_prop(event_is_finished, _prop_ctx, market, o, threshold, is_under))
                 player_props.append(pp)
@@ -11432,6 +11572,7 @@ async def _build_game_markets(
                     "probability": round(prob, 4) if prob else None,
                     "source": market.source,
                     **_settled_grade_fields(market, o),
+                    "_market_id": market.id,
                 })
 
         elif market_type in ("half_spread", "quarter_spread", "half_winner", "quarter_winner"):
@@ -11447,6 +11588,7 @@ async def _build_game_markets(
                     "market_type": market_type,
                     "period": market_period,
                     **_settled_grade_fields(market, o),
+                    "_market_id": market.id,
                 })
 
         elif market_type in ("h2h", "3ball"):
@@ -11466,6 +11608,7 @@ async def _build_game_markets(
                     "type": market_type,
                     "source": market.source,
                     "outcomes": outcomes_list,
+                    "_market_id": market.id,
                 })
 
         else:
@@ -11505,6 +11648,7 @@ async def _build_game_markets(
                             "source": market.source,
                             "movement": round(float(o.current_probability) - float(o.opening_probability), 4)
                                 if o.opening_probability is not None and o.current_probability is not None else None,
+                            "_market_id": market.id,
                         }
                         pp.update(_grade_settled_prop(event_is_finished, _prop_ctx, market, o, threshold, is_under))
                         player_props.append(pp)
@@ -11537,6 +11681,7 @@ async def _build_game_markets(
                         "source": market.source,
                         "movement": round(float(o.current_probability) - float(o.opening_probability), 4)
                             if o.opening_probability is not None and o.current_probability is not None else None,
+                        "_market_id": market.id,
                     }
                     pp.update(_grade_settled_prop(event_is_finished, _prop_ctx, market, o, threshold, is_under))
                     player_props.append(pp)
@@ -11547,6 +11692,7 @@ async def _build_game_markets(
                     "probability": round(prob, 4) if prob else None,
                     "source": market.source,
                     **_settled_grade_fields(market, o),
+                    "_market_id": market.id,
                 })
 
     # 6. Sort totals and spreads by threshold value
@@ -11561,8 +11707,25 @@ async def _build_game_markets(
     for t in totals_thresholds:
         if t["market_type"] == "game_total":
             key = t["threshold"]
-            if key not in seen_thresholds or t["source"] == "kalshi":
+            incumbent = seen_thresholds.get(key)
+            if incumbent is None:
                 seen_thresholds[key] = t
+            else:
+                # #4189: this pass keeps ONE row per threshold, so a redundant
+                # container parent that wins here does not merely add a row —
+                # it evicts its own member's. The parent's row is deleted at the
+                # bottom of this function and the evicted member's is not
+                # recoverable by then, so the threshold would vanish outright.
+                # A candidate therefore never displaces a non-candidate; among
+                # rows of equal standing the Kalshi rule decides as before.
+                held = incumbent.get("_market_id") in _parent_candidates
+                challenger = t.get("_market_id") in _parent_candidates
+                if held and not challenger:
+                    seen_thresholds[key] = t
+                elif challenger and not held:
+                    pass
+                elif t["source"] == "kalshi":
+                    seen_thresholds[key] = t
         elif t["market_type"] == "team_total":
             mname = (t.get("market_name") or "").lower()
             if home_lower and any(w in mname for w in home_lower.split() if len(w) >= 4):
@@ -11712,6 +11875,19 @@ async def _build_game_markets(
                 best["over_probability"] = avg_prob
                 best["all_sources"] = list({e.get("source") for e in entries})
                 best["source_count"] = len(entries)
+                # #4189: the ONE filter in this function that MERGES rows rather
+                # than dropping or capping them, so the one place provenance has
+                # to be unioned. `best` is a single entry and carries a single
+                # `_market_id`; if that happens to be a redundant container
+                # parent's, the merged row is deleted at the bottom of this
+                # function — taking with it the member's price, which is half of
+                # the average the row now displays. The union is what makes a
+                # merged row belong to every market that fed it.
+                merged_ids = sorted(
+                    {i for e in entries for i in _row_market_ids(e)}
+                )
+                if merged_ids:
+                    best["_market_ids"] = merged_ids
                 merged_props.append(best)
         player_props = merged_props
 
@@ -11845,6 +12021,66 @@ async def _build_game_markets(
     team_total_items = [m for m in team_total_items if _window_open(m)]
     period_markets = [m for m in period_markets if _window_open(m)]
     other_markets = [m for m in other_markets if _window_open(m)]
+
+    # ── #4189 / CERT-2340 — the redundant parent leaves, judged on the payload ──
+    #
+    # Everything above this line is the pipeline as it was. This is the whole of
+    # the suppression, and it is here, last, because here is the first point at
+    # which "did this group reach the reader?" is a fact rather than a forecast.
+    # Two earlier cuts asked it earlier — of the served market list, then of the
+    # render buckets — and both were wrong in the same direction: they skipped a
+    # parent on the strength of children that a later stage then deleted, and
+    # the group left the page entirely. Ten filters run between the loop and
+    # here, and any of them can empty a group; none of them knows about #4189
+    # and none of them should have to.
+    #
+    # So: a candidate parent's rows are dropped only when a row belonging to one
+    # of its own group's MEMBERS is still in the payload below. Not the parent's
+    # own rows — a parent that is its group's sole survivor is the group's only
+    # representation and must stay, which is the fail-safe
+    # `TestAParentWithNoServedChildrenStays` guards.
+    if _parent_candidates:
+        member_ids_by_group: dict = {}
+        for _m in markets:
+            if _m.group_id and (_m.market_type or "") in _DECOMPOSED_MEMBER_SHAPES:
+                member_ids_by_group.setdefault(_m.group_id, set()).add(_m.id)
+
+        payload_lists = (
+            game_totals,
+            player_props,
+            team_total_items,
+            spreads,
+            period_markets,
+            matchups,
+            other_markets,
+        )
+        surviving_ids: set = set()
+        for _rows in payload_lists:
+            for _row in _rows:
+                surviving_ids |= _row_market_ids(_row)
+
+        redundant_parents = {
+            _m.id
+            for _m in markets
+            if _m.id in _parent_candidates
+            and member_ids_by_group.get(_m.group_id, set()) & surviving_ids
+        }
+
+        if redundant_parents:
+            # A merged row (step 9b) carries several ids and is kept unless
+            # EVERY one of them is a redundant parent — dropping it on a partial
+            # match would delete a member's price along with the container's.
+            def _not_redundant(row: dict) -> bool:
+                ids = _row_market_ids(row)
+                return not ids or not ids <= redundant_parents
+
+            game_totals = [r for r in game_totals if _not_redundant(r)]
+            player_props = [r for r in player_props if _not_redundant(r)]
+            team_total_items = [r for r in team_total_items if _not_redundant(r)]
+            spreads = [r for r in spreads if _not_redundant(r)]
+            period_markets = [r for r in period_markets if _not_redundant(r)]
+            matchups = [r for r in matchups if _not_redundant(r)]
+            other_markets = [r for r in other_markets if _not_redundant(r)]
 
     response = {
         "event_id": event_id,

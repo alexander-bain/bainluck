@@ -717,6 +717,13 @@ class TestGameMarketsPopulatedShape:
         # #2089: every game-market row now carries the settlement verdict. Both
         # keys are None here because this fixture's market is `status='open'` —
         # an ungraded row must state NO verdict, never a bare `false` (gotcha #33).
+        # #4189: every rendered row also carries `_market_id`, the row-level
+        # provenance the container-parent suppression reads off the assembled
+        # payload. `totals` has carried it for far longer; this is the same key
+        # on the rest of the sections. 202 is the seeded spread market above —
+        # spelled out, because a row that stamped the WRONG market would let a
+        # container's suppression reach somebody else's row, and a self-derived
+        # expectation could not tell the difference.
         assert spread == {
             "market_name": "Celtics at 76ers Spread",
             "outcome_name": "Celtics -4.5",
@@ -725,6 +732,7 @@ class TestGameMarketsPopulatedShape:
             "source": "kalshi",
             "is_winner": None,
             "resolution_source": None,
+            "_market_id": 202,
         }
         period = body["period_markets"][0]
         assert period["market_type"] == "half_total"
