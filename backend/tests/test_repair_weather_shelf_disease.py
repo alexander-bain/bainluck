@@ -20,8 +20,11 @@ import pytest
 from app.tasks.repair_weather_shelf_disease import (
     APPLY_CAP,
     NON_SPORT_DESTINATIONS,
+    RECEIPT_PLAN_SUPERSET,
+    RECEIPT_WRITTEN,
     SOURCE,
     SUSPECT_CATEGORY,
+    _receipt_rows,
     build_plan,
     plan_hash_for,
     undo_identity_for,
@@ -201,7 +204,12 @@ def test_a_child_whose_parent_does_not_move_does_not_move():
     )
     plan, counts = build_plan([parent, child])
     assert plan == []
-    assert counts["refused_unchanged"] == 2
+    # The parent is `refused_unchanged` (the cascade agrees it is weather); the
+    # child is `refused_parent_not_accepted`, which since CERT-2364 is its own
+    # terminal rather than being folded in with the parent's reason. Two rows,
+    # two distinct causes, both named.
+    assert counts["refused_unchanged"] == 1
+    assert counts["refused_parent_not_accepted"] == 1
 
 
 # --------------------------------------------------------------------------
@@ -363,3 +371,237 @@ def test_module_constants_are_what_the_ship_describes():
     assert SOURCE == "polymarket"
     assert "health" in NON_SPORT_DESTINATIONS
     assert APPLY_CAP == 60
+
+
+# ==========================================================================
+# CERT-2364 — the plan may make ONE transition, and the control is a TAG
+# ==========================================================================
+#
+# The BLOCK: against the live 892-row shelf the first cut planned 23 writes for
+# 22 disease rows. The 23rd was `58435808`, a genuine weather market moved to
+# GEOPOLITICS, because its stored tags are `['china', 'weather']` and the tag map
+# sends `china` to geopolitics.
+#
+# Why the controls above could not see it: every one of them varies the TITLE and
+# holds `tags=('weather',)`. The tags are the cascade's actual input, so a control
+# that holds them fixed is a control on the wrong axis. These fix that.
+
+# The production row, verbatim, including its real tag list.
+CHINA_CYCLONES = {
+    "id": 58435808,
+    "name": "How many tropical cyclones will make landfall in China during 2026?",
+    "category": "weather",
+    "llm_sport_category": "weather",
+    "category_tags": ["china", "weather"],
+    "group_id": None,
+    "external_id": "58435808",
+}
+
+
+def test_the_china_cyclone_market_is_never_planned():
+    """CERT-2364's exact specimen. The cascade says geopolitics; we refuse."""
+    plan, counts = build_plan([dict(CHINA_CYCLONES)])
+    assert plan == [], f"a tropical-cyclone market was planned: {plan}"
+    assert counts["refused_not_health_subject"] == 1
+
+
+@pytest.mark.parametrize(
+    "tags,label",
+    [
+        (["china", "weather"], "geopolitics via a country tag"),
+        (["russia", "weather"], "geopolitics via a country tag"),
+        (["weather", "elections"], "politics via a second topic tag"),
+        (["weather", "crypto"], "crypto via a second topic tag"),
+        (["weather", "tech"], "tech via a second topic tag"),
+    ],
+)
+def test_a_second_tag_can_never_carry_a_weather_market_off_its_shelf(tags, label):
+    """The general form of the CERT-2364 defect, held on the TAG axis.
+
+    A genuine weather title whose tag list carries a second, stronger signal must
+    stay put. This repair moves rows for one reason — the TITLE names a disease —
+    and a tag is not a title.
+
+    Asserts NOT-PLANNED rather than a specific terminal, deliberately: which
+    refusal fires depends on what the tag map makes of the pair, and two of these
+    resolve back to `weather` (`refused_unchanged`) while the country tags resolve
+    to geopolitics (`refused_not_health_subject`). Pinning the terminal here would
+    make the test fail when the tag map changes in a way that is still correct.
+    The specimen test above pins the terminal for the row CERT-2364 actually named.
+    """
+    row_ = dict(CHINA_CYCLONES)
+    row_["category_tags"] = tags
+    plan, counts = build_plan([row_])
+    assert plan == [], f"{label}: {plan}"
+    assert counts["planned"] == 0
+
+
+def test_only_the_subject_arm_to_health_is_ever_planned():
+    """Stated as an invariant over a mixed shelf, not just the one specimen."""
+    rows = [dict(CHINA_CYCLONES)] + [row(mid, n) for mid, n in STALE_PARENTS]
+    plan, _ = build_plan(rows)
+    assert plan, "the invariant must not be vacuous"
+    for p in plan:
+        assert p["to_shelf"] == "health", p
+        assert p["kind"] == "child" or p["arm"] == "subject", p
+
+
+# --------------------------------------------------------------------------
+# The full-shelf replay: 22 and only 22
+# --------------------------------------------------------------------------
+
+
+def _full_shelf():
+    """A stand-in for the live `weather` shelf: every bug row, every control kind.
+
+    Not 892 rows, but it carries every SHAPE the live shelf has — tagged parents,
+    tagless children, title controls, and the tag-carrying control that broke the
+    first cut. A fixture that omits the shape that caused the defect is a fixture
+    that would have passed the defect.
+    """
+    rows = [row(mid, n) for mid, n in STALE_PARENTS]
+    rows[4]["group_id"] = "polymarket:511422"
+    rows += _ebola_group()[1:]                        # 13 tagless children
+    rows += [
+        row(11544821, "Flu Hospitalization Rate Week 15, 2026?"),
+        row(16625227, "Flu Hospitalization Rate Week 17, 2026?"),
+        row(18121552, "Flu Hospitalization Rate Week 18, 2026?"),
+        row(32600266, "Flu Hospitalization Rate Week 22, 2026?"),
+    ]
+    rows += [row(9000 + i, n) for i, n in enumerate(GENUINELY_WEATHER)]
+    rows.append(dict(CHINA_CYCLONES))
+    return rows
+
+
+def test_the_full_shelf_replay_plans_exactly_the_twenty_two_disease_rows():
+    """CERT-2364 required this: 22, not 23.
+
+    The count is the assertion. "The controls each stay put" and "the plan is
+    exactly the bug set" are different claims, and only the second one catches a
+    row that no individual control happens to name.
+    """
+    rows = _full_shelf()
+    plan, counts = build_plan(rows)
+
+    expected = {
+        16630403, 113563, 16630404, 21221338, 25196374,     # stale parents
+        11544821, 16625227, 18121552, 32600266,             # flu rows
+        25196375, 25196376, 25196377, 25196378, 25196379,   # ebola children
+        25196380, 25196381, 25196382, 25196383, 25196384,
+        25196385, 25196386, 25196387,
+    }
+    assert len(expected) == 22
+    assert {p["id"] for p in plan} == expected
+    assert len(plan) == 22, f"planned {len(plan)}, not 22: {counts}"
+    assert 58435808 not in {p["id"] for p in plan}
+    assert counts["refused_not_health_subject"] == 1
+    assert counts["refused_unchanged"] == len(GENUINELY_WEATHER)
+
+
+# --------------------------------------------------------------------------
+# A child may not inherit a decision the repair refused on its parent
+# --------------------------------------------------------------------------
+
+
+def test_a_child_of_a_refused_parent_is_refused_and_counted():
+    parent = dict(CHINA_CYCLONES)
+    parent["group_id"] = "polymarket:58435808"
+    child = row(
+        58435809, "Will cyclone #3 make landfall?",
+        category="game_prop", tags=[], group_id="polymarket:58435808",
+    )
+    plan, counts = build_plan([parent, child])
+    assert plan == []
+    assert counts["refused_not_health_subject"] == 1
+    assert counts["refused_parent_not_accepted"] == 1
+
+
+def test_counts_still_account_for_every_examined_row():
+    rows = _full_shelf()
+    plan, counts = build_plan(rows)
+    accounted = (
+        counts["planned"]
+        + counts["refused_unchanged"]
+        + counts["refused_other"]
+        + counts["refused_sport"]
+        + counts["refused_not_health_subject"]
+        + counts["refused_no_tags_no_parent"]
+        + counts["refused_parent_not_accepted"]
+    )
+    assert accounted == counts["examined"] == len(rows)
+
+
+# --------------------------------------------------------------------------
+# FOLLOW-UP `4264-UNDO-RESTORES-ONLY-RECEIPTED-WRITES` (CERT-2364)
+# --------------------------------------------------------------------------
+#
+# The undo record has to exist BEFORE the first write, so it is written from the
+# PLAN. A plan is not a receipt: a row whose compare-and-set missed was never
+# touched, and the restore must not claim it. `_receipt_rows` is the narrowing
+# rule, kept pure so it can be guarded without a session.
+
+
+def test_the_receipt_lists_only_rows_that_were_actually_written():
+    plan, _ = build_plan([row(mid, n) for mid, n in STALE_PARENTS])
+    assert len(plan) == 5
+    written = [plan[0]["id"], plan[3]["id"]]
+
+    receipt = _receipt_rows(plan, written)
+
+    assert [p["id"] for p in receipt] == written
+    # The rows the compare-and-set missed are absent, not merely reordered.
+    for p in receipt:
+        assert p["id"] in set(written)
+
+
+def test_a_fully_written_plan_needs_no_narrowing():
+    """The common case: every row landed, so the receipt already IS the plan."""
+    plan, _ = build_plan([row(mid, n) for mid, n in STALE_PARENTS])
+    receipt = _receipt_rows(plan, [p["id"] for p in plan])
+    assert receipt == plan
+
+
+def test_a_fully_skipped_plan_receipts_nothing():
+    """If a concurrent poll beat us to every row, the undo record claims none.
+
+    The dangerous direction: a receipt that still listed all five would report
+    "restored 0 of 5" against rows this apply never touched.
+    """
+    plan, _ = build_plan([row(mid, n) for mid, n in STALE_PARENTS])
+    assert _receipt_rows(plan, []) == []
+
+
+def test_the_receipt_carries_the_prior_state_the_restore_needs():
+    """Narrowing must not drop the fields the undo record is built from."""
+    plan, _ = build_plan([row(mid, n) for mid, n in STALE_PARENTS])
+    for p in _receipt_rows(plan, [plan[1]["id"]]):
+        assert p["from_shelf"] == "weather"
+        assert p["from_category"]
+        assert p["to_shelf"] == "health"
+
+
+def test_the_two_receipt_states_are_distinct_and_named():
+    """`plan_superset` exists so a failed narrowing is TOLD, never assumed.
+
+    The pre-write record stays in force in that case — safe to restore from,
+    because the restore compare-and-sets on the value this apply wrote, but it
+    over-lists. A single unnamed state would make the two indistinguishable.
+    """
+    assert RECEIPT_WRITTEN != RECEIPT_PLAN_SUPERSET
+    assert RECEIPT_WRITTEN == "written"
+    assert RECEIPT_PLAN_SUPERSET == "plan_superset"
+
+
+def test_the_apply_reports_which_receipt_is_in_force():
+    """Source-scan: the apply's return must carry `undo_receipt`.
+
+    Precedent `test_the_repair_signature_declares_the_params_it_documents` —
+    a value the operator is promised but never sent is the same defect class.
+    """
+    import inspect
+
+    from app.tasks import repair_weather_shelf_disease as mod
+
+    src = inspect.getsource(mod.repair)
+    assert '"undo_receipt": undo_receipt' in src
+    assert "RECEIPT_PLAN_SUPERSET" in src

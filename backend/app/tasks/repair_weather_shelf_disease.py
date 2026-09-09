@@ -45,16 +45,40 @@ repair cannot reconstruct. A child classified alone could be relabelled
 ``table_tennis``. So a child is NEVER classified alone: it inherits, or it is
 skipped and counted.
 
+ONE TRANSITION ONLY: ``weather -> health``, DECIDED BY THE SUBJECT ARM (CERT-2364).
+
+The first cut accepted whatever the cascade returned, reasoning that replaying the
+shipped cascade cannot be wrong. It can, because the cascade answers a DIFFERENT
+question than this repair asks. Against the live shelf it planned 23 writes for 22
+disease rows. The 23rd was ``58435808`` — "How many tropical cyclones will make
+landfall in China during 2026?" — whose stored tags are ``['china', 'weather']``.
+The tag map sends ``china`` to geopolitics, so the cascade returned
+``('geopolitics', 'geopolitics', 'tag')`` and this repair would have filed a
+tropical-cyclone market under geopolitics: a genuine weather market moved, by a
+repair whose whole ship is that disease markets are not weather.
+
+The controls did not catch it because every one of them varied the TITLE while
+holding tags at ``('weather',)`` — and the tags are the cascade's actual input. A
+control that holds the deciding variable fixed is not a control.
+
+So the gate is now the repair's ship, exactly: arm must be ``subject`` (which means
+``misfiled_subject`` read the title and said health) and the destination must be
+``health``. Arm ``tag`` means the venue's own tags already decided; re-litigating
+that is the poller's job on its next pass, not a repair's.
+
 REFUSALS, each counted separately so no zero is silent (gotcha #53):
 
-    refused_no_tags_no_parent   a child whose parent is absent or itself unresolved
+    refused_no_tags_no_parent   a child whose parent is absent from the selection
+    refused_parent_not_accepted a child whose parent this repair itself refused —
+                                inheriting that would move children somewhere the
+                                parent was not allowed to go
     refused_other               the cascade returned None/"other" — the writer's own
                                 rule is that "other" never overwrites a real value
     refused_unchanged           the cascade agrees with what is stored; nothing to do
-    refused_sport               the cascade promoted it to a SPORT category. Out of
-                                scope here and a signal something else is wrong;
-                                this repair only moves rows between non-sport
-                                shelves, exactly as its ship describes.
+    refused_sport               the cascade promoted it to a SPORT category
+    refused_not_health_subject  the cascade answered, but not `weather -> health` via
+                                the subject arm. This is the `58435808` terminal and
+                                it is expected to be NON-ZERO on the live shelf.
 
 D51 — REVERSIBLE, THEREFORE UNATTENDED. The undo record is written to the durable
 snapshot rail BEFORE any row is touched, and it stores each row's prior
@@ -113,6 +137,15 @@ UNDO_MAX_AGE_S = 365 * 86400
 REASON_UNDO_UNWRITTEN = "UNDO_NOT_PERSISTED"
 REASON_UNDO_MISSING = "UNDO_MISSING"
 REASON_UNDO_CORRUPT = "UNDO_CORRUPT"
+
+#: What the stored undo record actually lists, reported by every apply.
+#: ``written`` — exactly the rows this apply wrote; "restored N of N" is literal.
+#: ``plan_superset`` — the narrowing re-publish failed, so the pre-write record
+#: (every PLANNED row) is still in force. Safe to restore from, because the
+#: restore compare-and-sets on the value this apply wrote and an untouched row
+#: cannot match — but it over-lists, so the operator is told.
+RECEIPT_WRITTEN = "written"
+RECEIPT_PLAN_SUPERSET = "plan_superset"
 
 #: A hard ceiling on one invocation. The measured population is 22 and shrinking
 #: as the poller converges the reachable ones; anything an order of magnitude
@@ -190,7 +223,9 @@ def build_plan(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[s
         "refused_unchanged": 0,
         "refused_other": 0,
         "refused_sport": 0,
+        "refused_not_health_subject": 0,
         "refused_no_tags_no_parent": 0,
+        "refused_parent_not_accepted": 0,
         "children_inheriting": 0,
     }
 
@@ -203,7 +238,9 @@ def build_plan(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[s
             parents_by_group.setdefault(r["group_id"], r)
 
     plan: list[dict[str, Any]] = []
-    resolved_parent_shelf: dict[int, Optional[str]] = {}
+    #: Parent id -> the shelf it was ACCEPTED into. Only accepted parents are in
+    #: here: a child may not inherit a decision this repair itself refused.
+    accepted_parents: dict[int, str] = {}
 
     # Parents first, so a child can read its parent's decided value rather than
     # re-deriving it — one decision per group, which is what the poller does.
@@ -216,7 +253,6 @@ def build_plan(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[s
             tags=r["category_tags"],
             group_names=[r["name"] or ""],
         )
-        resolved_parent_shelf[r["id"]] = new_shelf
         if not new_shelf or new_shelf == "other":
             counts["refused_other"] += 1
             continue
@@ -226,6 +262,34 @@ def build_plan(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[s
         if new_shelf == r["llm_sport_category"]:
             counts["refused_unchanged"] += 1
             continue
+        # ═══ THE ONLY TRANSITION THIS REPAIR MAY MAKE (CERT-2364) ═══
+        #
+        # `weather -> health`, decided by the SUBJECT arm — `misfiled_subject`
+        # reading the title — and nothing else.
+        #
+        # The first cut accepted whatever the cascade returned, on the reasoning
+        # that replaying the shipped cascade cannot be wrong. It can, because the
+        # cascade answers a DIFFERENT question than this repair asks. Given the
+        # live shelf it planned 23 writes for 22 disease rows, and the 23rd was
+        # `58435808` — "How many tropical cyclones will make landfall in China
+        # during 2026?" — whose stored tags are `['china', 'weather']`. The tag
+        # map sends `china` to geopolitics, so the cascade returned
+        # `('geopolitics', 'geopolitics', 'tag')` and this repair would have filed
+        # a tropical-cyclone market under geopolitics. A genuine weather market,
+        # moved, by a repair whose entire ship is that disease markets are not
+        # weather.
+        #
+        # My controls could not see it: every one of them varied the TITLE while
+        # holding tags at `('weather',)`, and the tags are the cascade's actual
+        # input. A control that holds the deciding variable fixed is not a control.
+        #
+        # Narrowing to the subject arm makes the repair's scope exactly its ship.
+        # Arm `tag` means the venue's own tags already decided, and re-litigating
+        # that is the poller's job on its next pass, not a repair's.
+        if arm != "subject" or new_shelf != "health":
+            counts["refused_not_health_subject"] += 1
+            continue
+        accepted_parents[r["id"]] = new_shelf
         plan.append(
             {
                 "id": r["id"],
@@ -239,7 +303,7 @@ def build_plan(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[s
             }
         )
 
-    # Children inherit. Never classified alone — see the module docstring.
+    # Children inherit — from an ACCEPTED parent only. Never classified alone.
     for r in rows:
         if r.get("category_tags") or []:
             continue
@@ -247,12 +311,12 @@ def build_plan(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[s
         if parent is None:
             counts["refused_no_tags_no_parent"] += 1
             continue
-        new_shelf = resolved_parent_shelf.get(parent["id"])
-        if not new_shelf or new_shelf == "other":
-            counts["refused_other"] += 1
-            continue
-        if new_shelf not in NON_SPORT_DESTINATIONS:
-            counts["refused_sport"] += 1
+        new_shelf = accepted_parents.get(parent["id"])
+        if new_shelf is None:
+            # The parent was refused for one of the reasons above. Inheriting a
+            # decision this repair declined to make on the parent would move the
+            # children somewhere the parent itself was not allowed to go.
+            counts["refused_parent_not_accepted"] += 1
             continue
         if new_shelf == r["llm_sport_category"]:
             counts["refused_unchanged"] += 1
@@ -275,6 +339,18 @@ def build_plan(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[s
 
     counts["planned"] = len(plan)
     return plan, counts
+
+
+def _receipt_rows(
+    plan: list[dict[str, Any]], written: list[int]
+) -> list[dict[str, Any]]:
+    """The rows the undo record may honestly claim: those actually written.
+
+    Pure, so the rule can be guarded without a session. Order follows the plan,
+    not the write log, so the receipt is stable for a given plan.
+    """
+    written_ids = set(written)
+    return [p for p in plan if p["id"] in written_ids]
 
 
 async def _write_undo(identity: str, invocation: str, plan: list[dict[str, Any]]) -> bool:
@@ -414,6 +490,30 @@ async def repair(
         (written if result.rowcount == 1 else skipped).append(p["id"])
     await session.commit()
 
+    # FOLLOW-UP `4264-UNDO-RESTORES-ONLY-RECEIPTED-WRITES` (CERT-2364).
+    #
+    # The record written above lists every PLANNED row, because it has to exist
+    # before the first write — a record written afterwards is not a safety net.
+    # But a plan is not a receipt: a row whose compare-and-set missed was never
+    # touched by this apply, and the restore must not claim it.
+    #
+    # The restore is already SAFE without this: it compare-and-sets on the value
+    # this apply wrote, so an untouched row cannot match and is simply skipped.
+    # What it was not, was HONEST — an untouched row landed in
+    # `skipped_changed_since`, which names a cause that did not happen. Narrowing
+    # the receipt to `written` makes "restored N of N" mean what it says.
+    #
+    # The re-publish can itself fail, and then the pre-write record — a strict
+    # SUPERSET of what was written — stays in force. That is still safe to
+    # restore from, for the same compare-and-set reason, but it is no longer the
+    # honest receipt, so the caller is TOLD rather than left to assume. A silent
+    # fallback here would be exactly the class of zero this module counts.
+    receipt = _receipt_rows(plan, written)
+    undo_receipt = RECEIPT_WRITTEN
+    if len(receipt) != len(plan):
+        if not await _write_undo(identity, invocation, receipt):
+            undo_receipt = RECEIPT_PLAN_SUPERSET
+
     return {
         "measured": True,
         "applied": True,
@@ -421,6 +521,7 @@ async def repair(
         "counts": counts,
         "plan_hash": digest,
         "undo_identity": identity,
+        "undo_receipt": undo_receipt,
         "rows_written": len(written),
         "written_ids": written,
         "skipped_changed_under_us": skipped,
