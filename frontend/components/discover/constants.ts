@@ -1,3 +1,5 @@
+import { categoryEmoji } from "@/lib/categoryEmoji";
+
 export const CATEGORY_GRADIENTS: Record<string, string> = {
   basketball: "linear-gradient(135deg, #7c2d12, #c2410c)",
   football: "linear-gradient(135deg, #14532d, #15803d)",
@@ -24,34 +26,49 @@ export const CATEGORY_GRADIENTS: Record<string, string> = {
   health: "linear-gradient(135deg, #134e4a, #0d9488)",
 };
 
-const CATEGORY_COLORS: Record<string, { bg: string; text: string; emoji: string }> = {
-  basketball: { bg: "bg-orange-500/15", text: "text-orange-600", emoji: "🏀" },
-  football: { bg: "bg-green-700/15", text: "text-green-700", emoji: "🏈" },
-  baseball: { bg: "bg-red-500/15", text: "text-red-600", emoji: "⚾" },
-  hockey: { bg: "bg-blue-500/15", text: "text-blue-600", emoji: "🏒" },
-  soccer: { bg: "bg-emerald-500/15", text: "text-emerald-600", emoji: "⚽" },
-  golf: { bg: "bg-lime-600/15", text: "text-lime-700", emoji: "⛳" },
-  mma: { bg: "bg-red-700/15", text: "text-red-700", emoji: "🥊" },
-  boxing: { bg: "bg-red-600/15", text: "text-red-600", emoji: "🥊" },
-  motorsports: { bg: "bg-gray-600/15", text: "text-gray-600", emoji: "🏎" },
-  economics: { bg: "bg-violet-500/15", text: "text-violet-600", emoji: "📈" },
-  culture: { bg: "bg-pink-500/15", text: "text-pink-600", emoji: "🎭" },
-  tech: { bg: "bg-cyan-500/15", text: "text-cyan-600", emoji: "💻" },
-  politics: { bg: "bg-indigo-500/15", text: "text-indigo-600", emoji: "🏛" },
-  geopolitics: { bg: "bg-indigo-500/15", text: "text-indigo-600", emoji: "🌍" },
-  olympics: { bg: "bg-amber-500/15", text: "text-amber-600", emoji: "🏅" },
-  cricket: { bg: "bg-teal-500/15", text: "text-teal-600", emoji: "🏏" },
-  weather: { bg: "bg-sky-500/15", text: "text-sky-600", emoji: "🌤" },
-  entertainment: { bg: "bg-fuchsia-500/15", text: "text-fuchsia-600", emoji: "🎬" },
-  // #4264. 🏥 is the emoji both iOS maps already use (DiscoverFuturesCard.swift,
-  // FuturesDetailView.swift), so the web now agrees with the app rather than
-  // inventing a third answer for the same shelf.
-  health: { bg: "bg-teal-500/15", text: "text-teal-600", emoji: "🏥" },
+const CATEGORY_COLORS: Record<string, { bg: string; text: string }> = {
+  basketball: { bg: "bg-orange-500/15", text: "text-orange-600" },
+  football: { bg: "bg-green-700/15", text: "text-green-700" },
+  baseball: { bg: "bg-red-500/15", text: "text-red-600" },
+  hockey: { bg: "bg-blue-500/15", text: "text-blue-600" },
+  soccer: { bg: "bg-emerald-500/15", text: "text-emerald-600" },
+  golf: { bg: "bg-lime-600/15", text: "text-lime-700" },
+  mma: { bg: "bg-red-700/15", text: "text-red-700" },
+  boxing: { bg: "bg-red-600/15", text: "text-red-600" },
+  motorsports: { bg: "bg-gray-600/15", text: "text-gray-600" },
+  economics: { bg: "bg-violet-500/15", text: "text-violet-600" },
+  culture: { bg: "bg-pink-500/15", text: "text-pink-600" },
+  tech: { bg: "bg-cyan-500/15", text: "text-cyan-600" },
+  politics: { bg: "bg-indigo-500/15", text: "text-indigo-600" },
+  geopolitics: { bg: "bg-indigo-500/15", text: "text-indigo-600" },
+  olympics: { bg: "bg-amber-500/15", text: "text-amber-600" },
+  cricket: { bg: "bg-teal-500/15", text: "text-teal-600" },
+  weather: { bg: "bg-sky-500/15", text: "text-sky-600" },
+  entertainment: { bg: "bg-fuchsia-500/15", text: "text-fuchsia-600" },
+  health: { bg: "bg-teal-500/15", text: "text-teal-600" },
 };
 
-const DEFAULT_CAT = { bg: "bg-gray-500/15", text: "text-gray-600", emoji: "📊" };
+const DEFAULT_COLORS = { bg: "bg-gray-500/15", text: "text-gray-600" };
+const DEFAULT_EMOJI = "📊";
 
+/** Chip colours + icon for a shelf.
+ *
+ * #4326. The icon comes from `lib/categoryEmoji.ts`, the one map every web
+ * surface reads, so a card cannot wear one glyph here and another on Browse.
+ *
+ * Colours and icons fall back INDEPENDENTLY, and that is the point. A shelf
+ * with a named icon but no colour entry now draws its real icon on a neutral
+ * chip instead of the grey 📊 — measured 2026-09-09, 10 of 113 served Discover
+ * cards were falling through to 📊 (esports, cycling, lacrosse, legal), and
+ * `tennis` had 7,463 open markets and no entry at all. Colours are a design
+ * call per shelf; an icon is not, and withholding the icon until someone picks
+ * a colour is how `health` came to wear a weather chip (#4264).
+ */
 export function getCat(cat: string | null | undefined) {
-  if (!cat) return DEFAULT_CAT;
-  return CATEGORY_COLORS[cat.toLowerCase()] ?? DEFAULT_CAT;
+  if (!cat) return { ...DEFAULT_COLORS, emoji: DEFAULT_EMOJI };
+  const key = cat.toLowerCase();
+  return {
+    ...(CATEGORY_COLORS[key] ?? DEFAULT_COLORS),
+    emoji: categoryEmoji(key) ?? DEFAULT_EMOJI,
+  };
 }

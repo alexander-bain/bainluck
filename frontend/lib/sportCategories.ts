@@ -1,5 +1,13 @@
 import type { FuturesMarket } from "./types";
 import { toTitleCaseAcronymSafe } from "./titleCase";
+// #4326 — one emoji per shelf across every web surface. This file used to
+// carry its own answers, and three of them were the odd one out: `tech` 🔬
+// (💻 everywhere else, including the app), `politics` 🗳️ (a ballot box where
+// every other surface draws the building 🏛) and `weather` 🌤️ WITH U+FE0F
+// where Discover carries the bare 🌤 — a difference no grep for the glyph
+// would ever surface. Every key here is in the shared map — `categoryEmojiDrift4326.test.ts`
+// asserts that, so a new entry cannot quietly render `undefined`.
+import { CATEGORY_EMOJI } from "./categoryEmoji";
 
 /**
  * Sport categories for grouping leagues under parent sports.
@@ -31,7 +39,7 @@ export const SPORT_CATEGORIES: SportCategory[] = [
   {
     key: "football",
     name: "Football",
-    emoji: "🏈",
+    emoji: CATEGORY_EMOJI["football"],
     prefixes: ["americanfootball_"],
     tier: 1,
   },
@@ -39,42 +47,42 @@ export const SPORT_CATEGORIES: SportCategory[] = [
   {
     key: "nfl",
     name: "NFL",
-    emoji: "🏈",
+    emoji: CATEGORY_EMOJI["nfl"],
     prefixes: [],  // Not used for prefix matching — affinity display only
     tier: 1,
   },
   {
     key: "college_football",
     name: "College Football",
-    emoji: "🏈",
+    emoji: CATEGORY_EMOJI["college_football"],
     prefixes: [],
     tier: 2,
   },
   {
     key: "basketball",
     name: "Basketball",
-    emoji: "🏀",
+    emoji: CATEGORY_EMOJI["basketball"],
     prefixes: ["basketball_"],
     tier: 1,
   },
   {
     key: "nba",
     name: "NBA",
-    emoji: "🏀",
+    emoji: CATEGORY_EMOJI["nba"],
     prefixes: [],
     tier: 1,
   },
   {
     key: "college_basketball",
     name: "College Basketball",
-    emoji: "🏀",
+    emoji: CATEGORY_EMOJI["college_basketball"],
     prefixes: [],
     tier: 2,
   },
   {
     key: "baseball",
     name: "Baseball",
-    emoji: "⚾",
+    emoji: CATEGORY_EMOJI["baseball"],
     prefixes: ["baseball_"],
     tier: 1,
   },
@@ -82,28 +90,28 @@ export const SPORT_CATEGORIES: SportCategory[] = [
   {
     key: "hockey",
     name: "Hockey",
-    emoji: "🏒",
+    emoji: CATEGORY_EMOJI["hockey"],
     prefixes: ["icehockey_"],
     tier: 2,
   },
   {
     key: "mma",
     name: "MMA",
-    emoji: "🥋",
+    emoji: CATEGORY_EMOJI["mma"],
     prefixes: ["mma_"],
     tier: 2,
   },
   {
     key: "boxing",
     name: "Boxing",
-    emoji: "🥊",
+    emoji: CATEGORY_EMOJI["boxing"],
     prefixes: ["boxing_"],
     tier: 2,
   },
   {
     key: "golf",
     name: "Golf",
-    emoji: "⛳",
+    emoji: CATEGORY_EMOJI["golf"],
     prefixes: ["golf_"],
     tier: 2,
   },
@@ -111,35 +119,35 @@ export const SPORT_CATEGORIES: SportCategory[] = [
   {
     key: "golf_pga",
     name: "PGA Tour & Majors",
-    emoji: "⛳",
+    emoji: CATEGORY_EMOJI["golf_pga"],
     prefixes: [],
     tier: 2,
   },
   {
     key: "golf_dp_world",
     name: "DP World Tour",
-    emoji: "⛳",
+    emoji: CATEGORY_EMOJI["golf_dp_world"],
     prefixes: [],
     tier: 2,
   },
   {
     key: "golf_lpga",
     name: "LPGA",
-    emoji: "⛳",
+    emoji: CATEGORY_EMOJI["golf_lpga"],
     prefixes: [],
     tier: 2,
   },
   {
     key: "golf_liv",
     name: "LIV Golf",
-    emoji: "⛳",
+    emoji: CATEGORY_EMOJI["golf_liv"],
     prefixes: [],
     tier: 2,
   },
   {
     key: "tennis",
     name: "Tennis",
-    emoji: "🎾",
+    emoji: CATEGORY_EMOJI["tennis"],
     prefixes: ["tennis_"],
     tier: 2,
   },
@@ -147,21 +155,21 @@ export const SPORT_CATEGORIES: SportCategory[] = [
   {
     key: "soccer",
     name: "Soccer",
-    emoji: "⚽",
+    emoji: CATEGORY_EMOJI["soccer"],
     prefixes: ["soccer_"],
     tier: 2,
   },
   {
     key: "cricket",
     name: "Cricket",
-    emoji: "🏏",
+    emoji: CATEGORY_EMOJI["cricket"],
     prefixes: ["cricket_"],
     tier: 2,
   },
   {
     key: "rugby",
     name: "Rugby",
-    emoji: "🏉",
+    emoji: CATEGORY_EMOJI["rugby"],
     // #4247: "rugby_" is not redundant with the two below — neither
     // "rugbyleague_" nor "rugbyunion_" matches `rugby_other`, the bucket the
     // sports table actually holds (307 events), which fell through to the
@@ -172,7 +180,7 @@ export const SPORT_CATEGORIES: SportCategory[] = [
   {
     key: "aussierules",
     name: "AFL",
-    emoji: "🏈",
+    emoji: CATEGORY_EMOJI["aussierules"],
     prefixes: ["aussierules_"],
     tier: 2,
   },
@@ -180,14 +188,14 @@ export const SPORT_CATEGORIES: SportCategory[] = [
   {
     key: "politics",
     name: "Politics",
-    emoji: "🗳️",
+    emoji: CATEGORY_EMOJI["politics"],
     prefixes: ["politics_"],
     tier: 2,
   },
   {
     key: "entertainment",
     name: "Entertainment",
-    emoji: "🎬",
+    emoji: CATEGORY_EMOJI["entertainment"],
     prefixes: ["entertainment_"],
     tier: 2,
   },
@@ -195,14 +203,14 @@ export const SPORT_CATEGORIES: SportCategory[] = [
   {
     key: "esports",
     name: "Esports",
-    emoji: "🎮",
+    emoji: CATEGORY_EMOJI["esports"],
     prefixes: ["esports_"],
     tier: 3,
   },
   {
     key: "lacrosse",
     name: "Lacrosse",
-    emoji: "🥍",
+    emoji: CATEGORY_EMOJI["lacrosse"],
     prefixes: ["lacrosse_"],
     tier: 3,
   },
@@ -219,42 +227,42 @@ export const SPORT_CATEGORIES: SportCategory[] = [
     // page while 142 open markets sat under `motorsports` (#2627).
     key: "motorsports",
     name: "Motorsport",
-    emoji: "🏎️",
+    emoji: CATEGORY_EMOJI["motorsports"],
     prefixes: ["motorsport_", "racing_"],
     tier: 3,
   },
   {
     key: "horse_racing",
     name: "Horse Racing",
-    emoji: "🏇",
+    emoji: CATEGORY_EMOJI["horse_racing"],
     prefixes: ["horseracing_"],
     tier: 3,
   },
   {
     key: "olympics",
     name: "Olympics",
-    emoji: "🏅",
+    emoji: CATEGORY_EMOJI["olympics"],
     prefixes: ["olympics_"],
     tier: 3,
   },
   {
     key: "chess",
     name: "Chess",
-    emoji: "♟️",
+    emoji: CATEGORY_EMOJI["chess"],
     prefixes: ["chess_"],
     tier: 3,
   },
   {
     key: "poker",
     name: "Poker",
-    emoji: "🃏",
+    emoji: CATEGORY_EMOJI["poker"],
     prefixes: ["poker_"],
     tier: 3,
   },
   {
     key: "darts",
     name: "Darts",
-    emoji: "🎯",
+    emoji: CATEGORY_EMOJI["darts"],
     prefixes: ["darts_"],
     tier: 3,
   },
@@ -262,49 +270,49 @@ export const SPORT_CATEGORIES: SportCategory[] = [
   {
     key: "economics",
     name: "Economics",
-    emoji: "📊",
+    emoji: CATEGORY_EMOJI["economics"],
     prefixes: ["economics_"],
     tier: 3,
   },
   {
     key: "tech",
     name: "Tech & Science",
-    emoji: "🔬",
+    emoji: CATEGORY_EMOJI["tech"],
     prefixes: ["tech_"],
     tier: 3,
   },
   {
     key: "weather",
     name: "Weather",
-    emoji: "🌤️",
+    emoji: CATEGORY_EMOJI["weather"],
     prefixes: ["weather_"],
     tier: 3,
   },
   {
     key: "health",
     name: "Health",
-    emoji: "🏥",
+    emoji: CATEGORY_EMOJI["health"],
     prefixes: ["health_"],
     tier: 3,
   },
   {
     key: "geopolitics",
     name: "Geopolitics",
-    emoji: "🌍",
+    emoji: CATEGORY_EMOJI["geopolitics"],
     prefixes: ["geopolitics_"],
     tier: 3,
   },
   {
     key: "legal",
     name: "Legal",
-    emoji: "⚖️",
+    emoji: CATEGORY_EMOJI["legal"],
     prefixes: ["legal_"],
     tier: 3,
   },
   {
     key: "culture",
     name: "Culture",
-    emoji: "🎭",
+    emoji: CATEGORY_EMOJI["culture"],
     prefixes: ["culture_"],
     tier: 3,
   },
@@ -991,7 +999,7 @@ export function getActiveCategoriesFromLeagues(leagueKeys: string[]): SportCateg
     activeCategories.push({
       key: "other",
       name: "Other",
-      emoji: "🏆",
+      emoji: CATEGORY_EMOJI["other"],
       prefixes: [],
       tier: 3,
     });

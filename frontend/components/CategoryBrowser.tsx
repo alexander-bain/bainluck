@@ -6,6 +6,7 @@ import Link from "next/link";
 import { fetchFuturesBrowse, fetchFuturesCategories, formatProbability } from "@/lib/api";
 import { createSearchDebouncer } from "@/lib/searchDebounce";
 import { toTitleCaseAcronymSafe } from "@/lib/titleCase";
+import { categoryEmoji } from "@/lib/categoryEmoji";
 import type { FuturesBrowseItem } from "@/lib/types";
 
 /**
@@ -16,49 +17,14 @@ import type { FuturesBrowseItem } from "@/lib/types";
  */
 export const SEARCH_DEBOUNCE_MS = 200;
 
-const CATEGORY_EMOJI: Record<string, string> = {
-  basketball: "🏀",
-  football: "🏈",
-  baseball: "⚾",
-  hockey: "🏒",
-  soccer: "⚽",
-  golf: "⛳",
-  tennis: "🎾",
-  mma: "🥋",
-  boxing: "🥊",
-  motorsports: "🏎️",
-  cricket: "🏏",
-  rugby: "🏉",
-  aussierules: "🏉",
-  horse_racing: "🏇",
-  olympics: "🥇",
-  esports: "🎮",
-  entertainment: "🎬",
-  politics: "🏛️",
-  economics: "📊",
-  tech: "💻",
-  weather: "🌦️",
-  geopolitics: "🌍",
-  culture: "🎭",
-  lacrosse: "🥍",
-  chess: "♟️",
-  poker: "🃏",
-  darts: "🎯",
-  crypto: "🪙",
-  health: "💊",
-  legal: "⚖️",
-  space: "🚀",
-  commodities: "🛢️",
-  watchmaking: "⌚",
-  auto_industry: "🚗",
-  pickleball: "🏓",
-  sailing: "⛵",
-  surfing: "🏄",
-  adventure: "🧗",
-  business: "💼",
-  squash: "🎾",
-  other: "📋",
-};
+// #4326 — the emoji map that used to live here is now `lib/categoryEmoji.ts`,
+// read by Discover cards and /categories too. It carried its own answers for
+// ten shelves; the two a reader was most likely to notice were `health` (💊
+// here, 🏥 everywhere else including the app) and `economics` (📊 here, 📈 on
+// the Discover card the reader had just tapped).
+//
+// The `other` fallback stays 📋 and is also the shared map's `other` entry, so
+// an unnamed shelf reads the same on every surface.
 
 // Overrides for labels the acronym-safe caser can't derive (single-token names
 // that should split into words). Acronyms (mma/epl/mlb/…) and underscore names
@@ -120,7 +86,7 @@ export default function CategoryBrowser() {
                 : "bg-surface-card border-surface-border hover:bg-surface-elevated hover:border-text-muted"
             }`}
           >
-            <span className="text-lg">{CATEGORY_EMOJI[cat.key] ?? "📋"}</span>
+            <span className="text-lg">{categoryEmoji(cat.key) ?? "📋"}</span>
             <div className="min-w-0">
               <div className="text-sm font-medium text-text-primary truncate">
                 {formatCategoryName(cat.key)}
@@ -207,7 +173,7 @@ export function CategoryMarkets({ category, onClose }: { category: string; onClo
     <div className="bg-surface-card rounded-card border border-surface-border p-4">
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-sm font-semibold text-text-primary flex items-center gap-2">
-          <span>{CATEGORY_EMOJI[category] ?? "📋"}</span>
+          <span>{categoryEmoji(category) ?? "📋"}</span>
           {formatCategoryName(category)}
           {data && (
             <span className="text-micro text-text-muted font-normal">
