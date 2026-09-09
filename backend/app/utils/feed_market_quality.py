@@ -1037,6 +1037,25 @@ _GENERIC_HEADLINES = {
     "Multi-source",
 }
 
+#: Headlines that are a state word and nothing else. Each is true, and none of
+#: them is an explanation: "Live" tells a reader the game is on, not what the card
+#: teaches them. A state word explains a card only when the copy underneath it
+#: says something (#4169 — the blank hero of #4150 scored as explained because
+#: `bool("Live" or "")` is True).
+_STATUS_ONLY_HEADLINES = frozenset(
+    {
+        "live",
+        "final",
+        "upcoming",
+        "scheduled",
+        "in progress",
+        "halftime",
+        "postponed",
+        "delayed",
+        "tbd",
+    }
+)
+
 
 @dataclass(frozen=True)
 class MarketQuality:
@@ -2477,16 +2496,36 @@ def has_specific_explanation(
     *,
     hook_description: str | None,
     headline: str | None,
-    quality: MarketQuality,
+    quality: MarketQuality | None = None,
+    reason: str | None = None,
 ) -> bool:
-    """Return whether a card has enough explanation to stand on its own."""
+    """Return whether a card has enough explanation to stand on its own.
+
+    `reason` is optional because the two kinds of caller stand at different
+    points in the pipeline. The RANKING path scores a card to decide its order,
+    before any reason line has been composed — it has no served copy to pass, so
+    it passes none and this reads exactly as it always did. The MEASURING path
+    (`feed_quality_debug`) reads a finished payload and must pass it: a card whose
+    headline is a bare state word and whose reason is empty is a blank card, and
+    a coverage metric that calls it explained can never fail (#4169).
+
+    `quality` is optional for the same reason — an `event` card has no
+    `MarketQuality`, and before this it was given a second, weaker definition of
+    "explained" rather than this one.
+    """
     if has_strong_hook(hook_description):
         return True
-    if (
+    if quality is not None and (
         "health_outbreak" in quality.reasons
         or "sports_personnel_story" in quality.reasons
     ):
         return True
+    if reason is not None:
+        served = reason.strip()
+        if served and served.lower() not in _STATUS_ONLY_HEADLINES:
+            return True
+        if (headline or "").strip().lower() in _STATUS_ONLY_HEADLINES:
+            return False
     return headline not in _GENERIC_HEADLINES
 
 
