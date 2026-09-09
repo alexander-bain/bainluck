@@ -344,77 +344,41 @@ struct EvolutionChartView: View {
 
     // MARK: - Control Bar
 
+    /// 🔴 #4199 — THREE GROUPS COMPETED FOR ONE ROW AND `Text` WAS THE ONLY THING
+    /// IN IT THAT COULD GIVE, so SwiftUI took the width out of the words. At 402pt
+    /// the bar read `Sea/son  7d  24/h  To-/day`; at 375pt it degraded to about one
+    /// character per line (`Se/aso/n`). This is the control that decides what the
+    /// chart underneath is showing, and it was unreadable at every phone width —
+    /// not a narrow-phone edge case, the default state.
+    ///
+    /// ✅ TWO MODIFIERS AND A LAST RESORT. `lineLimit(1)` alone would only convert
+    /// wrapping into truncation — the same information loss, which is #3966's
+    /// finding — so each chip also claims its intrinsic width with `fixedSize`.
+    /// That guarantees whole words and makes the row's real ink visible to the
+    /// layout, and `ViewThatFits` then picks the widest arm that actually fits:
+    /// roomy padding, else compact, else a horizontal scroller.
+    ///
+    /// **NO SECOND COPY OF THE ARITHMETIC.** There is deliberately no width model
+    /// here to compare against — `ViewThatFits` measures the real chips at the real
+    /// Dynamic Type size, so it cannot drift from a literal the way #3817's
+    /// per-character bound did. `EvolutionControlBarLayoutTests` hosts these very
+    /// views and asserts the row is ONE line tall at 375 and 402 across the
+    /// vocabulary, including the mid-tournament `Event` variant.
+    ///
+    /// **`minimumScaleFactor` was measured and rejected** before this — see
+    /// `CalibrationSourceTableGeometry`: SwiftUI scales sibling `Text` together, so
+    /// it shrinks every chip in the row to half-rescue one, and still truncates.
     private var controlBar: some View {
-        VStack(spacing: 8) {
-            HStack(spacing: 8) {
-                // Time range picker
-                HStack(spacing: 0) {
-                    ForEach(availableRanges) { range in
-                        Button {
-                            selectedRange = range
-                            crosshair = nil
-                            Task { await loadData() }
-                        } label: {
-                            Text(range.rawValue)
-                                .font(.caption2)
-                                .fontWeight(selectedRange == range ? .semibold : .regular)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 5)
-                                .background(selectedRange == range ? Color.blue.opacity(0.15) : Color.clear)
-                                .foregroundStyle(selectedRange == range ? .blue : .secondary)
-                        }
-                    }
-                }
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color.secondary.opacity(0.2), lineWidth: 0.5)
-                )
-
-                Spacer()
-
-                // Combined toggle
-                Button {
-                    showCombinedProbability.toggle()
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: showCombinedProbability ? "checkmark.square.fill" : "square")
-                            .font(.system(size: 11))
-                        Text("Sum")
-                            .font(.caption2)
-                            .fontWeight(.medium)
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
-                    .foregroundStyle(showCombinedProbability ? .blue : .secondary)
-                }
-
-                // Top N filter
-                HStack(spacing: 0) {
-                    ForEach([5, 10, 20], id: \.self) { n in
-                        Button {
-                            topFilter = n
-                        } label: {
-                            Text("Top \(n)")
-                                .font(.caption2)
-                                .fontWeight(.medium)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 5)
-                                .background(topFilter == n ? Color.primary : Color.clear)
-                                .foregroundStyle(topFilter == n ? Color.systemBackground : .secondary)
-                        }
-                    }
-                }
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color.barTrack, lineWidth: 0.5)
-                )
+        EvolutionControlBar(
+            availableRanges: availableRanges,
+            selectedRange: $selectedRange,
+            showCombinedProbability: $showCombinedProbability,
+            topFilter: $topFilter,
+            onRangeChange: {
+                crosshair = nil
+                Task { await loadData() }
             }
-        }
-        .padding(.horizontal)
-        .padding(.vertical, 8)
-        .background(Color.cardBackground.opacity(0.5))
+        )
     }
 
     // MARK: - Chart
@@ -750,6 +714,164 @@ struct EvolutionChartView: View {
             selectedNames.remove(name)
         } else {
             selectedNames.insert(name)
+        }
+    }
+}
+
+// MARK: - Control Bar
+
+/// The Evolution chart's control bar, as its own view so the suite can host and
+/// measure the real thing rather than a model of it (#4199).
+struct EvolutionControlBar: View {
+    /// Chip padding for the two single-row arms, roomiest first.
+    ///
+    /// 🔴 THERE IS NO PADDING THAT FITS EIGHT CHIPS ON ONE ROW AT 375pt, and finding
+    /// that out is what the third arm below exists for. Measured by
+    /// `EvolutionControlBarLayoutTests`: the four-range bar wants ~399pt at 8pt
+    /// padding and ~351pt at 5pt, while the card on an iPhone SE gives the bar about
+    /// **310pt**. Even zero padding leaves ~271pt of pure ink plus the checkbox and
+    /// the group gaps. A third rung at 4pt was tried and photographed: it still
+    /// overflowed, and `ViewThatFits` fell through to a horizontal scroller that put
+    /// `Top 20` off the right edge — the same defect, quieter.
+    static let chipPaddings: [CGFloat] = [8, 5]
+
+    let availableRanges: [EvolutionTimeRange]
+    @Binding var selectedRange: EvolutionTimeRange
+    @Binding var showCombinedProbability: Bool
+    @Binding var topFilter: Int
+    var onRangeChange: () -> Void = {}
+
+    var body: some View {
+        VStack(spacing: 8) {
+            ViewThatFits(in: .horizontal) {
+                row(chipPadding: Self.chipPaddings[0])
+                row(chipPadding: Self.chipPaddings[1])
+                stackedRows(chipPadding: Self.chipPaddings[0])
+            }
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 8)
+        .background(Color.cardBackground.opacity(0.5))
+    }
+
+    /// The three groups, defined once. Every arm composes THESE, so no arm can
+    /// disagree with another about what the bar contains or how a chip is drawn —
+    /// the one-row and two-row layouts differ only in where the groups are put.
+    ///
+    /// Each chip carries `lineLimit(1)` AND `fixedSize`. The pair is the whole fix:
+    /// `lineLimit` alone turns wrapping into truncation, which loses the same
+    /// information (#3966), and `fixedSize` alone would still let a chip wrap.
+    ///
+    /// Exposed to the suite so a test can measure a chosen arm directly — asking
+    /// `ViewThatFits` which one it picked is not something a test can do.
+    @ViewBuilder
+    func rangeGroup(chipPadding: CGFloat) -> some View {
+        HStack(spacing: 0) {
+            ForEach(availableRanges) { range in
+                Button {
+                    selectedRange = range
+                    onRangeChange()
+                } label: {
+                    Text(range.rawValue)
+                        .font(.caption2)
+                        .fontWeight(selectedRange == range ? .semibold : .regular)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .padding(.horizontal, chipPadding)
+                        .padding(.vertical, 5)
+                        .background(selectedRange == range ? Color.blue.opacity(0.15) : Color.clear)
+                        .foregroundStyle(selectedRange == range ? .blue : .secondary)
+                }
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(Color.secondary.opacity(0.2), lineWidth: 0.5)
+        )
+    }
+
+    @ViewBuilder
+    func sumToggle(chipPadding: CGFloat) -> some View {
+        Button {
+            showCombinedProbability.toggle()
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: showCombinedProbability ? "checkmark.square.fill" : "square")
+                    .font(.system(size: 11))
+                Text("Sum")
+                    .font(.caption2)
+                    .fontWeight(.medium)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+            .padding(.horizontal, chipPadding)
+            .padding(.vertical, 5)
+            .foregroundStyle(showCombinedProbability ? .blue : .secondary)
+        }
+    }
+
+    @ViewBuilder
+    func topGroup(chipPadding: CGFloat) -> some View {
+        HStack(spacing: 0) {
+            ForEach([5, 10, 20], id: \.self) { n in
+                Button {
+                    topFilter = n
+                } label: {
+                    Text("Top \(n)")
+                        .font(.caption2)
+                        .fontWeight(.medium)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .padding(.horizontal, chipPadding)
+                        .padding(.vertical, 5)
+                        .background(topFilter == n ? Color.primary : Color.clear)
+                        .foregroundStyle(topFilter == n ? Color.systemBackground : .secondary)
+                }
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(Color.barTrack, lineWidth: 0.5)
+        )
+    }
+
+    /// All three groups on one row — the layout the bar has always had, now with
+    /// chips that keep their words.
+    @ViewBuilder
+    func row(chipPadding: CGFloat) -> some View {
+        HStack(spacing: 8) {
+            rangeGroup(chipPadding: chipPadding)
+            Spacer(minLength: 0)
+            sumToggle(chipPadding: chipPadding)
+            topGroup(chipPadding: chipPadding)
+        }
+    }
+
+    /// 🔴 THE ARM THAT MAKES THE NARROW PHONE HONEST. Ranges above, `Sum` and the
+    /// `Top N` group below. Its width is the wider of the two rows rather than the
+    /// sum of all three groups, so it fits any phone — which is why it is the LAST
+    /// arm and why there is no scroller behind it: a terminal arm that always fits
+    /// leaves no case for one, and a fallback that can never be reached is a branch
+    /// nobody will ever have tested.
+    ///
+    /// A second ROW is not the defect this ship fixes. #4199 is about words broken
+    /// mid-syllable — `Se/aso/n` — not about a control that takes two lines. Every
+    /// chip here is whole, on one line, and on screen; nothing is truncated and
+    /// nothing has to be scrolled to.
+    @ViewBuilder
+    func stackedRows(chipPadding: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                rangeGroup(chipPadding: chipPadding)
+                Spacer(minLength: 0)
+            }
+            HStack(spacing: 8) {
+                sumToggle(chipPadding: chipPadding)
+                topGroup(chipPadding: chipPadding)
+                Spacer(minLength: 0)
+            }
         }
     }
 }
