@@ -578,6 +578,78 @@ def discovery_state(sport_key: str) -> tuple[str, str]:
     )
 
 
+#: What a permitted streak's own days say it was counted on, as a clause.
+#:
+#: **This is disclosure, never a gate (#3071).** The minimum denominator for a
+#: flip is UNRULED — `alex-inbox/authority-016` puts it to Alex as question A
+#: with a stated default (A1, a floor below which a day scores `NO-SCORE`) and it
+#: has not been answered. This module will not invent the answer, so nothing
+#: below compares a coverage figure to anything. It states the number and names
+#: the open question, and the boolean is decided entirely without it.
+#:
+#: WHY A `True` HAS TO CARRY THIS. `flip_permitted`'s docstring argues at length
+#: that a bare `False` is a failure, because six different "no"s prescribe six
+#: different pieces of work and a reader needs to know which one they are in. A
+#: `True` that will not say what it was counted on is that same failure with the
+#: sign flipped, and it is the more expensive one: on 2026-09-11 `basketball_nba`
+#: reaches seven days on 41 of 1,208 fixtures — 3.4% of a season that has not
+#: started — and the sentence it would have returned was *"D50's measured half is
+#: met"*, full stop. True, and silent about the only fact a person deciding needs.
+#: Since #3473 this gate is read by `espn_sync._decide_failovers` as well as by
+#: the admin page, so the silence would also be a machine's.
+#:
+#: Read off the STREAK's own days, `since`..`through`, not off the whole ledger:
+#: a retained day before the streak began was not part of what was cleared, and
+#: including it would describe a different measurement than the one being
+#: permitted. A range is reported rather than a single figure when the days
+#: disagree, because a denominator that grew from 3 to 41 over seven days and one
+#: that sat at 41 throughout are different facts and the ruling's third candidate
+#: option turns on exactly that difference.
+def _counted_on(ledger_days: Iterable[dict[str, Any]], streak: dict[str, Any]) -> str:
+    since, through = streak.get("since"), streak.get("through")
+    window = [
+        d
+        for d in ledger_days
+        if isinstance(d, dict)
+        and d.get("day")
+        and (since is None or d["day"] >= since)
+        and (through is None or d["day"] <= through)
+    ]
+    pairs = [
+        (d.get("both"), d.get("denominator"))
+        for d in window
+        if isinstance(d.get("both"), int) and isinstance(d.get("denominator"), int)
+    ]
+    if not pairs:
+        # Not "0 of 0" and not silence. A ledger day predating these fields is a
+        # day whose denominator we cannot state, and saying so is the disclosure
+        # (gotcha #53: an absent answer is not a zero answer).
+        return (
+            "its days do not record what they were counted on, so this streak's "
+            "denominator cannot be stated here"
+        )
+
+    def _span(values: set[Any]) -> str:
+        lo, hi = min(values), max(values)
+        fmt = (lambda v: f"{v:,}") if isinstance(lo, int) else str
+        return fmt(lo) if lo == hi else f"{fmt(lo)}–{fmt(hi)}"
+
+    boths = {b for b, _ in pairs}
+    denoms = {d for _, d in pairs}
+    pcts = {round(100.0 * b / d, 1) for b, d in pairs if d}
+    coverage = f" ({_span(pcts)}%)" if pcts else ""
+    steady = len(boths) == 1 and len(denoms) == 1
+    return (
+        f"counted over {_span(boths)} of the {_span(denoms)} fixtures in the "
+        f"measured population{coverage}, "
+        + (
+            "on every day of the streak"
+            if steady
+            else f"varying across its {len(pairs)} recorded days"
+        )
+    )
+
+
 def flip_permitted(
     sport_key: str, ledger_days: Iterable[dict[str, Any]]
 ) -> tuple[bool, str]:
@@ -662,7 +734,14 @@ def flip_permitted(
             "row can advance its streak however good the agreement is — this "
             "needs a ruling, not more days"
         )
-    streak = compute_streak(ledger_days)
+    # Materialised ONCE, before anything reads it. `compute_streak` consumes the
+    # iterable, and `_counted_on` reads it again afterwards — handed a generator,
+    # the second read would see an empty sequence and report "its days do not
+    # record what they were counted on" about a ledger that records it perfectly
+    # well. Every caller passes a list today; the annotation says `Iterable` and
+    # the next one is under no obligation to.
+    days_recorded = list(ledger_days)
+    streak = compute_streak(days_recorded)
     if streak is None:
         # `None` is not zero. An empty ledger has never been measured, and
         # reporting it as "0/7 consecutive days" would describe a sport that
@@ -680,6 +759,9 @@ def flip_permitted(
         )
     return True, (
         f"{sport_key} has {days}/{REQUIRED_STREAK_DAYS} consecutive days at or "
-        f"above {FLIP_BAR_PCT}%. D50's measured half is met; the flip still "
-        "needs a YOUR-TURN entry Alex has seen, which is not checkable here"
+        f"above {FLIP_BAR_PCT}%, {_counted_on(days_recorded, streak)}. The "
+        "minimum denominator for a flip is UNRULED (#3071) — this gate applies "
+        "no floor and none of the above narrowed it. D50's measured half is met "
+        "as the bar is currently written; the flip still needs a YOUR-TURN entry "
+        "Alex has seen, which is not checkable here"
     )
