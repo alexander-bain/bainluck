@@ -124,32 +124,38 @@ final class CalibrationRowOrderingTests: XCTestCase {
         XCTAssertTrue(CalibrationRowOrdering.orderedByECE([Row]()).isEmpty)
     }
 
-    // MARK: - Naming the absence, and the remedy
+    // MARK: - The absence, which is now shown rather than narrated
 
     func testWithheldSelectsExactlyTheZeroOutcomeRows() {
         let rows = [Row.make("DataGolf", n: 0, ece: 0), Row.make("Kalshi", n: 219_022, ece: 1.29)]
         XCTAssertEqual(CalibrationRowOrdering.withheld(rows).map(\.name), ["DataGolf"])
     }
 
-    func testTheNoteNamesTheSourceAndTheToggleThatMeasuresIt() throws {
-        let note = try XCTUnwrap(CalibrationRowOrdering.withheldNote(
-            labels: ["DataGolf"], toggleLabel: "Include never-moved (+303,577)"))
-        XCTAssertTrue(note.contains("DataGolf"))
-        XCTAssertTrue(note.contains("no outcomes in this cohort"))
-        XCTAssertTrue(note.contains("not ranked above"))
-        // The remedy must be NAMED, not implied.
-        XCTAssertTrue(note.contains("Include never-moved (+303,577)"))
-        XCTAssertTrue(note.contains("has"), "singular agreement")
-        XCTAssertFalse(note.contains("have"))
-    }
+    /// #4118 — `withheldNote` is deleted, and the two tests that pinned its
+    /// wording with it. They asserted the paragraph named the source, named the
+    /// toggle, agreed in number and stayed absent for an empty set. All four
+    /// were true of a sentence standing notice 34 says may not be on the screen
+    /// at all: "do not explain the emptiness in a paragraph."
+    ///
+    /// The contract those tests were really defending — a row the ranking cannot
+    /// place is ACCOUNTED FOR, not silently dropped — outlives the sentence in
+    /// two places, and this is the test that says where, so the next reader does
+    /// not restore the paragraph to satisfy an untested-looking rule:
+    ///
+    ///   1. `withheld(_:)`, asserted directly above and at the view-model level.
+    ///   2. `CalibrationView.sourceRow`'s accessibility label, "…, no outcomes
+    ///      in this cohort, not ranked", which a screen reader still speaks.
+    ///
+    /// The sighted reader gets the em dash in all three numeric columns and the
+    /// toggle on the same screen, which is the whole of what the paragraph said.
+    func testTheUnrankableRowIsAccountedForWithoutASentenceAboutIt() {
+        let rows = [Row.make("DataGolf", n: 0, ece: 0), Row.make("Kalshi", n: 219_022, ece: 1.29)]
+        let ordered = CalibrationRowOrdering.orderedByECE(rows)
 
-    func testTheNotePluralisesAndIsAbsentWhenNothingWasWithheld() {
-        let many = CalibrationRowOrdering.withheldNote(labels: ["A", "B"], toggleLabel: "T")
-        XCTAssertEqual(many?.contains("A, B"), true)
-        XCTAssertEqual(many?.contains("have no outcomes"), true)
-        XCTAssertEqual(many?.contains("they are"), true)
-        // No sentence about an empty set.
-        XCTAssertNil(CalibrationRowOrdering.withheldNote(labels: [], toggleLabel: "T"))
+        // Present, last, and carrying no metric to print.
+        XCTAssertEqual(ordered.map(\.name), ["Kalshi", "DataGolf"])
+        XCTAssertNil(ordered.last?.ece)
+        XCTAssertEqual(CalibrationRowOrdering.withheld(ordered).map(\.name), ["DataGolf"])
     }
 
     // MARK: - The view model, on the production shape
@@ -194,14 +200,18 @@ final class CalibrationRowOrderingTests: XCTestCase {
         XCTAssertEqual(rows.first?.source, "kalshi", "the measured source leads")
         XCTAssertNotNil(rows.first?.ece)
 
-        let note = try XCTUnwrap(vm.withheldSourcesNote)
-        XCTAssertTrue(note.contains(CalibrationViewModel.sourceDisplayName("datagolf")))
-        XCTAssertTrue(note.contains(vm.cohortToggleLabel),
-                      "the note must name the toggle that measures it")
+        // #4118 — this used to unwrap `vm.withheldSourcesNote` and assert the
+        // paragraph named DataGolf and the toggle. The paragraph is gone under
+        // notice 34; what it was carrying is not. The row is still SELECTED as
+        // unrankable by the same predicate, which is the fact the ordering and
+        // the accessibility label both read.
+        XCTAssertEqual(
+            CalibrationRowOrdering.withheld(vm.sourceRows).map(\.source), ["datagolf"],
+            "the ranking must still know which row it could not place")
     }
 
-    /// Turning the toggle on is the remedy the note promises, so it has to work:
-    /// the row becomes measured, carries a real metric, and the note disappears.
+    /// Turning the toggle on is the remedy, so it has to work: the row becomes
+    /// measured, carries a real metric, and stops being withheld.
     @MainActor
     func testTheToggleTheNoteNamesActuallyMeasuresTheWithheldSource() throws {
         let vm = try model()
@@ -213,7 +223,8 @@ final class CalibrationRowOrderingTests: XCTestCase {
         // 30/36 won against a 45% average prediction: ~38.3pp of error. The
         // point is that it is LARGE and REAL, not the 0.0 it used to print.
         XCTAssertGreaterThan(try XCTUnwrap(golf.ece), 20)
-        XCTAssertNil(vm.withheldSourcesNote, "nothing is withheld once the toggle is on")
+        XCTAssertTrue(CalibrationRowOrdering.withheld(vm.sourceRows).isEmpty,
+                      "nothing is withheld once the toggle is on")
         XCTAssertEqual(vm.sourceRows.last?.source, "datagolf",
                        "and now it is last on merit, not on absence")
     }

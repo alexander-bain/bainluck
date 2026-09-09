@@ -478,15 +478,20 @@ struct CalibrationSurfaceView: View {
                 .background(Color.systemGray5.opacity(0.5))
             }
             .background(Color.systemGray6, in: RoundedRectangle(cornerRadius: 10))
-            // #3650: a source the cohort emptied is shown, states its own
-            // emptiness, and names the toggle that measures it — an absence a
-            // reader cannot act on is just a smaller mystery.
-            if let note = viewModel.withheldSourcesNote {
-                Text(note)
-                    .font(.caption2).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
+            // #4118 — the paragraph that used to sit here is gone. #3650 put it
+            // there on the rule that "an absence a reader cannot act on is just a
+            // smaller mystery", and named the toggle so the absence was
+            // actionable. Standing notice 34 (Alex, 2026-09-08) overrules that
+            // for the SIGHTED reader in terms: "If a number cannot be shown
+            // honestly, leave the space empty; do not explain the emptiness in a
+            // paragraph." The row already draws an em dash in all three numeric
+            // columns and the toggle it pointed at is on the same screen.
+            //
+            // #3650's CONTRACT — a row that cannot be ranked is accounted for —
+            // is not dropped, it is where it always independently was: the row's
+            // accessibility label in `sourceRow` below reads "…, no outcomes in
+            // this cohort, not ranked". A screen-reader user keeps the fact.
+            // Change that label and this deletion starts costing something.
         }
     }
 
