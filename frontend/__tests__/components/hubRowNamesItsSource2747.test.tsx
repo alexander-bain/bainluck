@@ -150,6 +150,7 @@ function cellsOf(html: string, testid: string): string[] {
 function priors(html: string): Array<{
   source: string | null;
   marker: string | null;
+  rung: string | null;
   clause: string | null;
   said: string | null;
 }> {
@@ -165,9 +166,21 @@ function priors(html: string): Array<{
     // something else reads as `null` here and fails the coverage assertions,
     // exactly as an unrecognised fork used to.
     const clause: string | null = said?.startsWith(SAID) ? SAID : null;
+    const source = sourceMatch ? sourceMatch[1] : null;
     return {
-      source: sourceMatch ? sourceMatch[1] : null,
+      source,
+      // #4125 item 2: STILL EXTRACTED, and it must now always be `null`.
+      // Deleting this field would have removed the only thing that can catch
+      // the word coming back, so it is kept and asserted absent instead.
       marker: markerMatch ? markerMatch[1].trim() : null,
+      /* THE ATTRIBUTION, in the register that survives the ship.
+         The suite's real protection is a BINDING — the right rung on the right
+         player — and that binding used to be read off the visible span. It is
+         read off the cell's own `data-prematch-source` now. This is not
+         circular with `allowedMarkers()`: that map is built from the FIXTURE's
+         `prematch_source` values, this comes out of the rendered DOM, so a
+         positional re-index that permutes subjects still goes red. */
+      rung: source === "books" ? BOOKS_MARKER : null,
       clause,
       said,
     };
@@ -293,12 +306,17 @@ function allRendered() {
 }
 
 describe("SHIP — a books prior says so, in both registers", () => {
-  test("the VISIBLE marker lands on exactly the books slots", () => {
+  test("the RUNG lands on exactly the books slots, and no slot says it out loud", () => {
     const rows = allRendered();
-    expect(rows.filter((r) => r.marker === BOOKS_MARKER)).toHaveLength(
+    // Unchanged in substance: 122 slots are a sportsbook median and the page
+    // has to be able to tell you which. #4125 item 2 changed only WHERE it
+    // tells you — `data-prematch-source`, not a word beside the number.
+    expect(rows.filter((r) => r.rung === BOOKS_MARKER)).toHaveLength(
       EXPECTED_BOOKS_SLOTS,
     );
-    expect(rows.filter((r) => r.marker !== null)).toHaveLength(EXPECTED_BOOKS_SLOTS);
+    expect(rows.filter((r) => r.rung !== null)).toHaveLength(EXPECTED_BOOKS_SLOTS);
+    // THE SHIP: not one of the 344 slots renders the visible marker.
+    expect(rows.filter((r) => r.marker !== null)).toHaveLength(0);
   });
 
   test("the SPOKEN clause is the SAME on every slot, books or market (D65)", () => {
@@ -326,27 +344,38 @@ describe("SHIP — a books prior says so, in both registers", () => {
     }
   });
 
-  test("each MARKER is bound to a player the fixture permits it for", () => {
-    // The near-miss this catches: right rows marked, wrong names attached — a
-    // positional re-index that keeps the counts and permutes the subjects.
-    // Reads the marker now that the clause no longer varies; the subject still
-    // comes out of the spoken text, so the pair is still read together.
+  test("each RUNG is bound to a player the fixture permits it for", () => {
+    // The near-miss this catches: right rows attributed, wrong names attached —
+    // a positional re-index that keeps the counts and permutes the subjects.
+    // The subject still comes out of the spoken text and the rung out of the
+    // cell's attribute, so the pair is still read together off one element.
     const allowed = allowedMarkers();
     const wrong = allRendered().filter((r) => {
       const permitted = allowed.get(subjectOf(r));
-      return !permitted || !permitted.has(r.marker);
+      return !permitted || !permitted.has(r.rung);
     });
     expect(wrong).toHaveLength(0);
   });
 
-  test("CONTROL (green on the parent too) — the marker tracks the rung exactly", () => {
-    // Arm-independent by design: on the parent nothing is marked and no row is
-    // a books rung by the cell's own attribute, so the biconditional holds
-    // there too. It is here to catch a HALF-fix, and it now reads the DOM's own
-    // `data-prematch-source` rather than the clause, which no longer forks.
-    for (const row of allRendered()) {
-      expect(row.marker === BOOKS_MARKER).toBe(row.source === "books");
-    }
+  test("CONTROL (green on the parent too) — nobody wears the word, on either draw", () => {
+    /* WHAT THIS USED TO BE, AND WHY IT COULD NOT STAY.
+       It asserted `row.marker === BOOKS_MARKER` iff `row.source === "books"`.
+       With the visible marker gone that reads as "null === 'sportsbooks' is
+       false" on every row — true, and true no matter what the component does,
+       which is a guard that has stopped guarding. Re-expressing it over `rung`
+       would be worse: `rung` is DERIVED from `source` in the extractor, so the
+       biconditional would be true by construction and green on any render at
+       all, including one that emitted nothing.
+
+       So it becomes the assertion the ship actually needs a control for: the
+       word is absent from every slot on BOTH draws, checked against the raw
+       markup rather than the extractor, with a positive count beside it so it
+       cannot pass on an empty page. */
+    const html = `${render("mens-singles")}${render("womens-singles")}`;
+    expect(html.toLowerCase()).not.toContain(BOOKS_MARKER.toLowerCase());
+    expect(allRendered()).toHaveLength(
+      EXPECTED_BOOKS_SLOTS + EXPECTED_MARKET_SLOTS,
+    );
   });
 
   test("the rung reaches the DOM as a queryable fact on the cell", () => {
@@ -369,6 +398,7 @@ describe("CONTROL — a prediction-market prior renders exactly as it always did
     // number is the useful one, and the gap is what proves the binding test
     // above is doing work a count could not (ux/1016's lesson #5).
     expect(marketOnly).toHaveLength(154);
+    expect(marketOnly.every((r) => r.rung === null)).toBe(true);
     expect(marketOnly.every((r) => r.marker === null)).toBe(true);
     // The clause is the same one everybody hears — asserted here too, because
     // "market-only" is the population most likely to be special-cased back into
@@ -387,6 +417,7 @@ describe("CONTROL — a prediction-market prior renders exactly as it always did
     (source) => {
       const rows = priorsChecked(render("mens-singles", withSource(source)));
       expect(rows.length).toBeGreaterThan(0);
+      expect(rows.every((r) => r.rung === null)).toBe(true);
       expect(rows.every((r) => r.marker === null)).toBe(true);
       expect(rows.every((r) => r.clause === SAID)).toBe(true);
     },
@@ -406,7 +437,11 @@ describe("CONTROL — a prediction-market prior renders exactly as it always did
     expect(rows.length).toBeGreaterThan(0);
     expect(rows.length).toBeLessThan(170);
     for (const row of rows) {
-      expect(row.marker === BOOKS_MARKER).toBe(row.source === "books");
+      // The collapsed head is a SLICE, so it is the arm most likely to be
+      // special-cased: assert the same three facts the full list asserts —
+      // the rung is on the cell, the word is not, the clause is the neutral one.
+      expect(row.rung === BOOKS_MARKER).toBe(row.source === "books");
+      expect(row.marker).toBeNull();
       expect(row.clause).toBe(SAID);
     }
   });
@@ -445,14 +480,26 @@ describe("one decision, one owner", () => {
     expect(attribution.said).toBe(SAID);
   });
 
-  test("a player with no prior gets no marker whatever its source says", () => {
+  test("a player with no prior is attributed nothing, whatever its source says", () => {
     expect(prematchAttribution(player("books", null)).source).toBe("books");
-    // The component gates on `prior`, so the marker never renders; assert the
-    // rendered fact rather than the helper's opinion.
+    // The component gates the whole cell on `prior`, so a player we hold no
+    // pre-match number for must carry no rung either — attributing a rung to a
+    // number that is not on the page is the "count is not an attribution"
+    // failure pointing the other way.
+    //
+    // #4125 item 2 moved WHERE that is asserted, not whether. This used to
+    // count `result-prematch-marker` spans against `data-prematch-source`
+    // attributes and require the two to agree. The visible marker is gone (see
+    // the D91 block below), so the attribute is now the whole of the
+    // attribution and the pairing is against the rendered NUMBER instead.
     const html = render("mens-singles");
-    const cells = html.match(/data-testid="result-prematch-marker"/g) ?? [];
-    const bookCells = (html.match(/data-prematch-source="books"/g) ?? []).length;
-    expect(cells.length).toBe(bookCells);
+    const sourced = (html.match(/data-prematch-source="books"/g) ?? []).length;
+    const priors = (html.match(/data-testid="result-prematch"/g) ?? []).length;
+    expect(sourced).toBeGreaterThan(0);
+    // Every attributed cell is a cell that printed a number. Not equality:
+    // a Kalshi prior renders a number and carries no books rung, so priors is
+    // legitimately the larger of the two.
+    expect(sourced).toBeLessThanOrEqual(priors);
   });
 });
 
@@ -473,12 +520,40 @@ describe("one decision, one owner", () => {
  * wears its mark, and the caption no longer says a supplier word at all.
  */
 describe("D91: the rows carry the attribution and the caption says nothing", () => {
-  test("every books row is still marked — 61 matches, both players", () => {
+  /* ═══ #4125 ITEM 2 (Alex, 2026-09-08 4:00pm PT) INVERTED THIS ONE ═══
+   *
+   * It used to require 122 VISIBLE `sportsbooks` markers — one per player on
+   * each of the 61 books-priced matches — and the literal word inside them.
+   * Alex then read this page: *"Why does the tournament page awkwardly include
+   * the word 'books' on each completed event card … Keep the design consistent
+   * with event cards elsewhere."*
+   *
+   * "Elsewhere" is checkable and neither surface prints a word per row:
+   * `FeedCard` prints a bare grey `NN%` beside the name, Discover's `EventCard`
+   * prints one caption per card. This list printed it twice per match.
+   *
+   * CERT-812's protection is NOT weakened, because the register it was won in
+   * has moved twice since. Its finding was a FALSE CLAIM — the spoken clause
+   * said "the market gave" on 61 of 172 rows that were a sportsbook median.
+   * D65 replaced that clause with `PREMATCH_SAID`, which names no venue and so
+   * cannot name the wrong one. What is left to protect is that a books number
+   * is still IDENTIFIABLE as one, and that is `data-prematch-source` — the
+   * attribute every guard and census already reads. So the count assertion
+   * survives at full strength on the attribute, and the word is asserted
+   * ABSENT.
+   */
+  test("every books row is still attributed — 61 matches, both players — and no row says a venue", () => {
     const html = `${render("mens-singles")}${render("womens-singles")}`;
-    const marked = (html.match(/data-testid="result-prematch-marker"/g) ?? []).length;
-    expect(marked).toBe(122);
-    // The mark is the WORD D91 protects, not an empty span.
-    expect(html).toContain(`>${BOOKS_MARKER}<`);
+    const sourced = (html.match(/data-prematch-source="books"/g) ?? []).length;
+    expect(sourced).toBe(122);
+
+    // The visible marker is gone, on every one of those 122 rows.
+    expect(html).not.toContain('data-testid="result-prematch-marker"');
+    // …and so is the word itself, anywhere a reader could see it. Checked
+    // against the constant rather than a literal so a future rename of
+    // `BOOKS_LABEL` cannot walk the word back onto the page past this guard.
+    expect(html).not.toContain(`>${BOOKS_MARKER}<`);
+    expect(html.toLowerCase()).not.toContain(BOOKS_MARKER.toLowerCase());
   });
 
   /* ═══ notice 34 / #4122: THE FOOTNOTE IS GONE, SO D91's CLAIM MOVES ═══

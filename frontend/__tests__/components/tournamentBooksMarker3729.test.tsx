@@ -87,8 +87,26 @@ function quarterfinal(overrides: Partial<SlateMatch> = {}): SlateMatch {
   };
 }
 
+/* ═══ #4125 ITEM 2 MOVED THIS SUITE'S REGISTER, NOT ITS SUBJECT ═══
+ *
+ * #3729's finding was that a quarter-final priced from a sportsbook consensus
+ * printed a number that looked exactly like a prediction-market one, so the
+ * card said where it came from. Alex, reading this page on 2026-09-08:
+ * *"Why does the tournament page awkwardly include the word 'books' on each
+ * completed event card … Keep the design consistent with event cards
+ * elsewhere."* The finished list one section down dropped its visible marker
+ * under that sentence, and this card's marker existed to match it — the old
+ * comment in `TournamentMatches` said so in as many words ("one page may not
+ * caveat it in two vocabularies"). So it moves with it, or the page ends up
+ * with the two vocabularies that comment was written to prevent.
+ *
+ * The rung is still on the row, as `data-price-source` — the same spelling and
+ * the same `books` id the finished list has carried since CERT-812. These
+ * tests therefore assert the identical FACT ("this number is identifiable as a
+ * sportsbook consensus, and a market's is not") against the attribute.
+ */
 describe("#3729 — the filled quarterfinal names its own source", () => {
-  it("prints the number AND the page's own books marker", () => {
+  it("prints the number and carries its rung, without saying a venue", () => {
     const html = renderToStaticMarkup(
       <TournamentMatches
         entries={matchListFromSlate([quarterfinal({ price_source: "books" })])}
@@ -96,8 +114,10 @@ describe("#3729 — the filled quarterfinal names its own source", () => {
     );
 
     expect(html).toContain("70%");
-    expect(html).toContain('data-testid="match-price-marker"');
-    expect(html).toContain(BOOKS_MARKER);
+    expect(html).toContain('data-price-source="books"');
+    // The word is gone from the card, and so is the span that carried it.
+    expect(html).not.toContain('data-testid="match-price-marker"');
+    expect(html.toLowerCase()).not.toContain(BOOKS_MARKER.toLowerCase());
     // And the row is a real row, not the collapsed no-number treatment.
     expect(html).toContain("Aryna Sabalenka");
     expect(html).not.toContain("no probability against it");
@@ -110,6 +130,10 @@ describe("#3729 — the filled quarterfinal names its own source", () => {
 
     expect(html).toContain("70%");
     expect(html).not.toContain('data-testid="match-price-marker"');
+    // The CONTROL that makes the assertion above mean something: a
+    // prediction-market row must not carry the attribute either, or
+    // `data-price-source` would be present on every row and prove nothing.
+    expect(html).not.toContain("data-price-source");
   });
 
   it("a prediction market's number wears no caveat", () => {
