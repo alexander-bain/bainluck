@@ -13,6 +13,7 @@ import { useLiveEventStream } from "@/hooks/useLiveEventStream";
 import FreshnessChip from "@/components/event/FreshnessChip";
 import { applyLiveFrame, eventRefreshInterval } from "@/lib/eventLivePush";
 import LiveAgeStamp from "@/components/event/LiveAgeStamp";
+import { heroFreshness } from "@/lib/event/heroFreshness";
 import LiveSparkline from "@/components/event/LiveSparkline";
 import {
   eventTournamentKey,
@@ -702,6 +703,22 @@ export default function EventPage({ params }: EventPageProps) {
     linescore: event.linescore,
   });
 
+  // #4469 — THE BADGE AGES FROM THE OLDEST FACT IN THE HERO, NOT THE FRESHEST
+  // PRICE. `freshestSourceStamp` above is a MAX across sources and is right for
+  // the blend; the hero is not a blend but a glance, and a glance is only as
+  // current as the oldest thing in it. Measured on Andreeva v Gauff 2026-09-09:
+  // score median 482.9s old, price median 8.4s, so the page printed a green
+  // `live · 6s ago` over a score eight minutes behind. The reasoning, and why
+  // max-within-the-number and min-across-the-facts are not in conflict, is on
+  // `heroFreshness`.
+  //
+  // Gated on `liveGamesLine`, not on `event.linescore`, and deliberately: an
+  // unrendered fact cannot mislead anyone, so it must not age the badge either.
+  const heroStamp = heroFreshness({
+    priceStamp: freshestSourceStamp,
+    scoreStamp: liveGamesLine ? event.linescore?.observed_at : null,
+  });
+
   // L2-131 Item 1: the settled hero gains the pregame mark — the winner's
   // pre-game win probability ("were 35% pregame"). This is what makes an upset
   // read surprising at a glance. Data = the opening blend (opening_odds).
@@ -850,7 +867,11 @@ export default function EventPage({ params }: EventPageProps) {
         {!isFinished && streamConnected && (
           <div className="ml-auto flex items-center gap-3">
             <LiveSparkline points={sparklinePoints} />
-            <LiveAgeStamp updatedAt={freshestSourceStamp} connected={streamConnected} />
+            <LiveAgeStamp
+              updatedAt={heroStamp.stamp}
+              oldestFact={heroStamp.fact}
+              connected={streamConnected}
+            />
           </div>
         )}
 
