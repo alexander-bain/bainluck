@@ -250,7 +250,11 @@ def test_a_field_market_keeps_its_leads_copy():
     # off the screen. The point of this test is unchanged and still tested: a
     # FIELD market keeps its "leads" copy, and only yes/no questions were
     # rescued from being rendered as a race.
-    assert headline == "Los Angeles Dodgers leads at 30%"
+    # 30% -> 31% with #4146: 0.305 is a .5 boundary, and the card's own row
+    # prints 31 (`rendered_percent`, half-up like web and native). This fixture
+    # had pinned the number Python's banker's `round` gave, which is the number
+    # the reader could see the card disagreeing with.
+    assert headline == "Los Angeles Dodgers leads at 31%"
 
 
 # ── The dated baseline itself ────────────────────────────────────────────────

@@ -526,6 +526,7 @@
     "tests/test_candidate_probe_covering_2796.py": 0.025,
     "tests/test_capture_census.py": 0.05,
     "tests/test_card_integrity.py": 0.118,
+    "tests/test_card_sentence_states_the_printed_percent_4146.py": 0.13,
     "tests/test_card_sum_reason_2088.py": 0.028,
     "tests/test_categorize_c1_corpus.py": 0.145,
     "tests/test_celery_inspect_availability.py": 0.57,
