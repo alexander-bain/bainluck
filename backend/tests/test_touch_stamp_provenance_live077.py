@@ -88,7 +88,7 @@ COLUMN = "last_updated"
 _SHAPES = (
     ("mapping", re.compile(r'["\']last_updated["\']\s*:\s*(?P<v>.*)$')),
     ("attr", re.compile(r'(?P<t>[\w\[\]"\'.]+)\.last_updated\s*=(?!=)\s*(?P<v>.*)$')),
-    ("kwarg", re.compile(r'(?<![\w.])last_updated\s*=(?!=)\s*(?P<v>.*)$')),
+    ("kwarg", re.compile(r"(?<![\w.])last_updated\s*=(?!=)\s*(?P<v>.*)$")),
 )
 
 #: A line that OPENS with a SQL boolean connective is a predicate, not a SET
@@ -98,10 +98,17 @@ _SHAPES = (
 _PREDICATE = re.compile(r"^\s*(AND|OR|WHERE)\b", re.I)
 
 #: Values that stamp a clock — the writes.
-_CLOCK_VALUES = frozenset({
-    "func.now()", "now()", "NOW()", "now", "at",
-    ":applied_version", ":restored_version",
-})
+_CLOCK_VALUES = frozenset(
+    {
+        "func.now()",
+        "now()",
+        "NOW()",
+        "now",
+        "at",
+        ":applied_version",
+        ":restored_version",
+    }
+)
 
 #: Values that hand the stored stamp back out — serialisers, not writes. Matched
 #: on shape rather than enumerated, because every route that renders an outcome
@@ -114,17 +121,44 @@ _READ_VALUE = re.compile(
 #: observation. `opening_probability` counts: it is only ever written beside a
 #: current price.
 _PRICE_COLUMNS = (
-    "current_probability", "current_yes_bid", "current_yes_ask",
-    "current_american_odds", "current_decimal_odds", "price_changed_at",
-    "opening_probability", "probability_change_24h", "last_trade_price",
+    "current_probability",
+    "current_yes_bid",
+    "current_yes_ask",
+    "current_american_odds",
+    "current_decimal_odds",
+    "price_changed_at",
+    "opening_probability",
+    "probability_change_24h",
+    "last_trade_price",
 )
 
 #: Columns whose presence makes the stamp a settlement write. These land on rows
 #: that have stopped being rendered live — PROVIDED the statement has not said
 #: otherwise about its own scope. See `_OPEN_SCOPE`.
 _SETTLED_COLUMNS = (
-    "is_winner", "resolution_source", "calibration_probability", "settled_at",
+    "is_winner",
+    "resolution_source",
+    "calibration_probability",
+    "settled_at",
 )
+
+#: Calls that ARE a price write, though no price column is named in the window.
+#:
+#: #3879 (CERT-2302) moved the ORM price paths behind `price_change_stamp`'s two
+#: entry points, which assign `current_probability` themselves — a stamp-only
+#: helper would be correct only until somebody reordered two adjacent lines. So
+#: `outcome.last_updated = now` now sits beside `apply_observed_price(outcome,
+#: prob, observed_at=now)` and the word `current_probability` is not in the
+#: window any more.
+#:
+#: This is vocabulary, not a new exemption, and it CHANGES NO SITE'S
+#: CLASSIFICATION. Every site it admits was classified `price` before the
+#: refactor on the strength of the assignment the helper absorbed. Both helpers
+#: are listed for the same reason: the stale-kill arms
+#: (`apply_unobserved_price`) previously read as `price` too, because
+#: `probability_change_24h = None` is written beside them and is already in
+#: `_PRICE_COLUMNS`.
+_PRICE_WRITING_CALLS = ("apply_observed_price", "apply_unobserved_price")
 
 #: A statement that says IN ITS OWN PREDICATE that it lands on non-terminal rows.
 #:
@@ -198,6 +232,7 @@ NON_PRICE_REGISTER: dict[tuple[str, str], tuple[str, str]] = {
 # The scan
 # ---------------------------------------------------------------------------
 
+
 def _rel(path: pathlib.Path) -> str:
     """``app/``-relative where possible; the bare name for a synthetic source.
 
@@ -230,6 +265,9 @@ class Site:
     @property
     def klass(self) -> str:
         if any(c in self.window for c in _PRICE_COLUMNS):
+            return PRICE
+        if any(c in self.window for c in _PRICE_WRITING_CALLS):
+            # The helper assigns the price, so the window names no price column.
             return PRICE
         if any(c in self.window for c in _SETTLED_COLUMNS):
             # CERT-1936. A settlement write earns its exemption because it lands
@@ -317,8 +355,21 @@ def _attribute_run(lines: list[str], line: int, target: str) -> tuple[int, int]:
     = prob`` then five siblings then ``existing.last_updated = now`` — so the
     statement the stamp belongs to is the paragraph, not the one assignment.
     Comment lines and blanks inside the run are crossed; anything else ends it.
+
+    Since #3879 (CERT-2302) a paragraph can also contain a CALL that writes the
+    target's price — `apply_observed_price(outcome, prob, observed_at=now)` —
+    because those helpers assign `current_probability` themselves rather than
+    leaving the caller to do it in the right order. A call is not an attribute
+    assignment, so without this it ENDS the run, and the window collapses to the
+    lone `outcome.last_updated = now` line: the stamp then looks like a
+    provenance-free touch and this guard reports a stray where the price write
+    is one line above it. Crossing the call is what keeps the paragraph a
+    paragraph; classifying it is `_PRICE_WRITING_CALLS`' job.
     """
-    pattern = re.compile(rf"^\s*{re.escape(target)}\.\w+\s*=(?!=)")
+    pattern = re.compile(
+        rf"^\s*(?:{re.escape(target)}\.\w+\s*=(?!=)"
+        rf"|(?:{'|'.join(_PRICE_WRITING_CALLS)})\(\s*{re.escape(target)}\s*,)"
+    )
     start = end = line
     for i in range(line - 1, 0, -1):
         text = lines[i - 1]
@@ -404,14 +455,16 @@ def scan_touch_stamp_writes(
                     f"statement; the scan cannot say what this stamp is beside."
                 )
 
-            sites.append(Site(
-                path=path,
-                line=number,
-                function=_enclosing_function(tree, number),
-                kind=kind,
-                value=value,
-                window="\n".join(lines[span[0] - 1: span[1]]),
-            ))
+            sites.append(
+                Site(
+                    path=path,
+                    line=number,
+                    function=_enclosing_function(tree, number),
+                    kind=kind,
+                    value=value,
+                    window="\n".join(lines[span[0] - 1 : span[1]]),
+                )
+            )
     return sites
 
 
@@ -469,9 +522,9 @@ def test_the_column_is_unique_to_futures_outcomes():
 
 def test_the_sweep_is_the_weak_reading_not_a_list():
     swept = {str(p.relative_to(APP_ROOT)) for p in weak_reading_files()}
-    assert swept >= ANCHOR_WRITERS, (
-        f"the text sweep no longer reaches {sorted(ANCHOR_WRITERS - swept)}"
-    )
+    assert (
+        swept >= ANCHOR_WRITERS
+    ), f"the text sweep no longer reaches {sorted(ANCHOR_WRITERS - swept)}"
     # And it is wider than the anchors — the anchors are a floor, and a sweep
     # that had collapsed onto them would be a hand-written list wearing a scan.
     assert len(swept) > len(ANCHOR_WRITERS)
@@ -509,7 +562,8 @@ def test_every_non_price_writer_is_registered():
     was filed for, arriving from the other direction.
     """
     strays = [
-        site for site in scan_touch_stamp_writes()
+        site
+        for site in scan_touch_stamp_writes()
         if site.klass == NON_PRICE
         and (site.rel, site.function) not in NON_PRICE_REGISTER
     ]
@@ -546,7 +600,7 @@ def test_the_register_has_no_dead_entries():
     "key", sorted(k for k, v in NON_PRICE_REGISTER.items() if v[0] == "unwired")
 )
 def test_an_unwired_non_price_writer_really_has_no_caller(key):
-    """"Never scheduled" is a claim about the call graph, so it gets checked.
+    """ "Never scheduled" is a claim about the call graph, so it gets checked.
 
     Any mention of the name under ``app/`` outside its own ``def`` — a call, an
     import, a beat entry — ends the claim; the register entry then has to move
@@ -576,7 +630,8 @@ def test_an_unwired_non_price_writer_really_has_no_caller(key):
 
 
 @pytest.mark.parametrize(
-    "key", sorted(k for k, v in NON_PRICE_REGISTER.items() if v[0].startswith("attended:"))
+    "key",
+    sorted(k for k, v in NON_PRICE_REGISTER.items() if v[0].startswith("attended:")),
 )
 def test_an_attended_non_price_writer_is_attended_and_stays_that_way(key):
     """The attended claim is proven against the repair registry, and against the
@@ -596,9 +651,9 @@ def test_an_attended_non_price_writer_is_attended_and_stays_that_way(key):
         f"in admin_repairs._REPAIRS"
     )
     module, entry = admin_repairs._REPAIRS[slug]
-    assert module.replace(".", "/") == f"app/{rel}"[:-3] and entry == function, (
-        f"repair {slug!r} runs {module}:{entry}, not app/{rel}:{function}"
-    )
+    assert (
+        module.replace(".", "/") == f"app/{rel}"[:-3] and entry == function
+    ), f"repair {slug!r} runs {module}:{entry}, not app/{rel}:{function}"
 
     registry_source = pathlib.Path(admin_repairs.__file__).read_text()
     assert "ATTENDED ONLY: never wire this to a beat." in registry_source
@@ -631,17 +686,21 @@ def _synthetic(tmp_path: pathlib.Path, name: str, body: str) -> pathlib.Path:
 def test_a_bare_touch_added_to_a_price_poll_is_caught(tmp_path):
     """The case this file exists for: a new writer stamps the column with no
     price beside it."""
-    path = _synthetic(tmp_path, "newpoll.py", (
-        "from sqlalchemy import func\n"
-        "async def _refresh_volumes(session):\n"
-        "    await session.execute(\n"
-        '        """\n'
-        "        UPDATE futures_outcomes\n"
-        "        SET volume = :v, last_updated = NOW()\n"
-        "        WHERE id = :oid\n"
-        '        """\n'
-        "    )\n"
-    ))
+    path = _synthetic(
+        tmp_path,
+        "newpoll.py",
+        (
+            "from sqlalchemy import func\n"
+            "async def _refresh_volumes(session):\n"
+            "    await session.execute(\n"
+            '        """\n'
+            "        UPDATE futures_outcomes\n"
+            "        SET volume = :v, last_updated = NOW()\n"
+            "        WHERE id = :oid\n"
+            '        """\n'
+            "    )\n"
+        ),
+    )
     sites = scan_touch_stamp_writes([path])
     assert [s.klass for s in sites] == [NON_PRICE]
     assert sites[0].function == "_refresh_volumes"
@@ -649,44 +708,97 @@ def test_a_bare_touch_added_to_a_price_poll_is_caught(tmp_path):
 
 def test_the_same_write_beside_a_price_is_not_flagged(tmp_path):
     """The other direction, so the guard is not merely 'everything is bad'."""
-    path = _synthetic(tmp_path, "goodpoll.py", (
-        "async def _refresh(session):\n"
-        "    await session.execute(\n"
-        '        """\n'
-        "        UPDATE futures_outcomes\n"
-        "        SET current_probability = :p, last_updated = NOW()\n"
-        "        WHERE id = :oid\n"
-        '        """\n'
-        "    )\n"
-    ))
+    path = _synthetic(
+        tmp_path,
+        "goodpoll.py",
+        (
+            "async def _refresh(session):\n"
+            "    await session.execute(\n"
+            '        """\n'
+            "        UPDATE futures_outcomes\n"
+            "        SET current_probability = :p, last_updated = NOW()\n"
+            "        WHERE id = :oid\n"
+            '        """\n'
+            "    )\n"
+        ),
+    )
     assert [s.klass for s in scan_touch_stamp_writes([path])] == [PRICE]
+
+
+def test_a_stamp_beside_a_price_HELPER_CALL_is_not_flagged(tmp_path):
+    """#3879's shape. The price write is a call, not an assignment.
+
+    `apply_observed_price` assigns `current_probability` itself, so the window
+    around `o.last_updated = now` names no price column and the call is not an
+    attribute assignment that `_attribute_run` would cross. Both halves have to
+    hold or this reads as a provenance-free touch with the price write sitting
+    one line above it — which is exactly how it failed when #3879 first wired
+    `tasks/datagolf.py`.
+    """
+    path = _synthetic(
+        tmp_path,
+        "helperorm.py",
+        (
+            "def update(o, prob, now):\n"
+            "    o.name = 'x'\n"
+            "    apply_observed_price(o, prob, observed_at=now)\n"
+            "    o.last_updated = now\n"
+        ),
+    )
+    assert [s.klass for s in scan_touch_stamp_writes([path])] == [PRICE]
+
+
+def test_the_helper_run_does_not_cross_a_call_on_a_DIFFERENT_target(tmp_path):
+    """The widening this must not do.
+
+    Crossing any `apply_observed_price(...)` regardless of its first argument
+    would let a price write on one row launder the touch stamp of another. The
+    run is anchored to the target by name.
+    """
+    path = _synthetic(
+        tmp_path,
+        "otherorm.py",
+        (
+            "def update(o, other, prob, now):\n"
+            "    apply_observed_price(other, prob, observed_at=now)\n"
+            "    o.last_updated = now\n"
+        ),
+    )
+    assert [s.klass for s in scan_touch_stamp_writes([path])] == [
+        NON_PRICE
+    ], "a price written to a DIFFERENT row must not excuse this stamp"
 
 
 def test_an_orm_stamp_is_read_with_its_paragraph_not_its_line(tmp_path):
     """The attribute-run window. On its own line ``o.last_updated = now`` is
     bare; the price it belongs to is two lines up."""
-    path = _synthetic(tmp_path, "orm.py", (
-        "def update(o, prob, now):\n"
-        "    o.name = 'x'\n"
-        "    o.current_probability = prob\n"
-        "    o.last_updated = now\n"
-    ))
+    path = _synthetic(
+        tmp_path,
+        "orm.py",
+        (
+            "def update(o, prob, now):\n"
+            "    o.name = 'x'\n"
+            "    o.current_probability = prob\n"
+            "    o.last_updated = now\n"
+        ),
+    )
     assert [s.klass for s in scan_touch_stamp_writes([path])] == [PRICE]
 
-    lonely = _synthetic(tmp_path, "orm_bare.py", (
-        "def touch(o, now):\n"
-        "    o.volume = 7\n"
-        "    o.last_updated = now\n"
-    ))
+    lonely = _synthetic(
+        tmp_path,
+        "orm_bare.py",
+        ("def touch(o, now):\n" "    o.volume = 7\n" "    o.last_updated = now\n"),
+    )
     assert [s.klass for s in scan_touch_stamp_writes([lonely])] == [NON_PRICE]
 
 
 def test_the_scan_refuses_a_value_it_cannot_read(tmp_path):
     """gotcha #157 — the scan must not skip what it does not understand."""
-    path = _synthetic(tmp_path, "weird.py", (
-        "def touch(o):\n"
-        "    o.last_updated = whatever_the_venue_said\n"
-    ))
+    path = _synthetic(
+        tmp_path,
+        "weird.py",
+        ("def touch(o):\n" "    o.last_updated = whatever_the_venue_said\n"),
+    )
     with pytest.raises(AssertionError, match="cannot read"):
         scan_touch_stamp_writes([path])
 
@@ -694,17 +806,21 @@ def test_the_scan_refuses_a_value_it_cannot_read(tmp_path):
 def test_a_compare_and_set_predicate_is_not_counted_as_a_writer(tmp_path):
     """``AND last_updated = :applied_version`` in the fabricated-loss restore is
     a guard on the value apply wrote, not a second write of it."""
-    path = _synthetic(tmp_path, "restore.py", (
-        "async def restore(session):\n"
-        "    await session.execute(\n"
-        '        """\n'
-        "        UPDATE futures_outcomes\n"
-        "        SET is_winner = NULL, last_updated = :restored_version\n"
-        "        WHERE id = ANY(:ids)\n"
-        "          AND last_updated = :applied_version\n"
-        '        """\n'
-        "    )\n"
-    ))
+    path = _synthetic(
+        tmp_path,
+        "restore.py",
+        (
+            "async def restore(session):\n"
+            "    await session.execute(\n"
+            '        """\n'
+            "        UPDATE futures_outcomes\n"
+            "        SET is_winner = NULL, last_updated = :restored_version\n"
+            "        WHERE id = ANY(:ids)\n"
+            "          AND last_updated = :applied_version\n"
+            '        """\n'
+            "    )\n"
+        ),
+    )
     sites = scan_touch_stamp_writes([path])
     assert len(sites) == 1 and sites[0].klass == SETTLED
 
@@ -838,24 +954,28 @@ def test_a_synthetic_open_market_winner_write_is_refused(tmp_path):
         ("eq_open.py", "status = 'open'"),
         ("in_active.py", "status IN ('active')"),
     ):
-        path = _synthetic(tmp_path, name, (
-            "async def _retag_open_winners(session):\n"
-            "    await session.execute(\n"
-            '        """\n'
-            "        UPDATE futures_outcomes fo\n"
-            "        SET is_winner = true,\n"
-            "            resolution_source = 'pass2_guess',\n"
-            "            last_updated = NOW()\n"
-            "        FROM futures_markets fm\n"
-            "        WHERE fo.market_id = fm.id\n"
-            f"          AND fm.{predicate}\n"
-            '        """\n'
-            "    )\n"
-        ))
-        sites = scan_touch_stamp_writes([path])
-        assert [s.klass for s in sites] == [NON_PRICE], (
-            f"{name}: an open-market winner write was exempted as a settlement"
+        path = _synthetic(
+            tmp_path,
+            name,
+            (
+                "async def _retag_open_winners(session):\n"
+                "    await session.execute(\n"
+                '        """\n'
+                "        UPDATE futures_outcomes fo\n"
+                "        SET is_winner = true,\n"
+                "            resolution_source = 'pass2_guess',\n"
+                "            last_updated = NOW()\n"
+                "        FROM futures_markets fm\n"
+                "        WHERE fo.market_id = fm.id\n"
+                f"          AND fm.{predicate}\n"
+                '        """\n'
+                "    )\n"
+            ),
         )
+        sites = scan_touch_stamp_writes([path])
+        assert [s.klass for s in sites] == [
+            NON_PRICE
+        ], f"{name}: an open-market winner write was exempted as a settlement"
         assert (sites[0].rel, sites[0].function) not in NON_PRICE_REGISTER
 
 
@@ -867,35 +987,43 @@ def test_a_real_settlement_write_is_still_exempt(tmp_path):
     this shape. If the rule demanded a positive `status IN ('resolved','closed')`
     clause it would flag all of them, and 46 register entries is not a guard.
     """
-    settled = _synthetic(tmp_path, "settle.py", (
-        "async def _grade(session):\n"
-        "    await session.execute(\n"
-        '        """\n'
-        "        UPDATE futures_outcomes\n"
-        "        SET is_winner = :won,\n"
-        "            resolution_source = 'api_settlement',\n"
-        "            last_updated = NOW()\n"
-        "        WHERE id = :oid\n"
-        '        """\n'
-        "    )\n"
-    ))
+    settled = _synthetic(
+        tmp_path,
+        "settle.py",
+        (
+            "async def _grade(session):\n"
+            "    await session.execute(\n"
+            '        """\n'
+            "        UPDATE futures_outcomes\n"
+            "        SET is_winner = :won,\n"
+            "            resolution_source = 'api_settlement',\n"
+            "            last_updated = NOW()\n"
+            "        WHERE id = :oid\n"
+            '        """\n'
+            "    )\n"
+        ),
+    )
     assert [s.klass for s in scan_touch_stamp_writes([settled])] == [SETTLED]
 
     # And a settlement that DOES name a terminal status keeps its exemption —
     # the rule reads which scope was claimed, not whether one was.
-    terminal = _synthetic(tmp_path, "settle_terminal.py", (
-        "async def _grade_closed(session):\n"
-        "    await session.execute(\n"
-        '        """\n'
-        "        UPDATE futures_outcomes fo\n"
-        "        SET is_winner = :won,\n"
-        "            last_updated = NOW()\n"
-        "        FROM futures_markets fm\n"
-        "        WHERE fo.market_id = fm.id\n"
-        "          AND fm.status IN ('resolved', 'closed')\n"
-        '        """\n'
-        "    )\n"
-    ))
+    terminal = _synthetic(
+        tmp_path,
+        "settle_terminal.py",
+        (
+            "async def _grade_closed(session):\n"
+            "    await session.execute(\n"
+            '        """\n'
+            "        UPDATE futures_outcomes fo\n"
+            "        SET is_winner = :won,\n"
+            "            last_updated = NOW()\n"
+            "        FROM futures_markets fm\n"
+            "        WHERE fo.market_id = fm.id\n"
+            "          AND fm.status IN ('resolved', 'closed')\n"
+            '        """\n'
+            "    )\n"
+        ),
+    )
     assert [s.klass for s in scan_touch_stamp_writes([terminal])] == [SETTLED]
 
 
@@ -908,7 +1036,8 @@ def test_the_scope_rule_refuses_exactly_one_site_on_the_real_tree():
     tree has zero; the pre-fix statement above carries the positive case.
     """
     settled_or_refused = [
-        site for site in scan_touch_stamp_writes()
+        site
+        for site in scan_touch_stamp_writes()
         if any(c in site.window for c in _SETTLED_COLUMNS)
         and not any(c in site.window for c in _PRICE_COLUMNS)
     ]
@@ -917,7 +1046,7 @@ def test_the_scope_rule_refuses_exactly_one_site_on_the_real_tree():
         "A settlement-family write on the tree now claims non-terminal scope:\n"
         + "\n".join(f"  {s.where}" for s in refused)
         + "\nEither drop its touch stamp (it lands on rows still rendered live) "
-          "or narrow its predicate to the rows it actually settles."
+        "or narrow its predicate to the rows it actually settles."
     )
     assert len(settled_or_refused) >= 40, (
         "The settlement population collapsed; the scan is no longer finding "
