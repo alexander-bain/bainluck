@@ -83,7 +83,10 @@ describe("the search row draws the side it named first", () => {
     // The defect, exactly: a home-side probability handed to the formatter.
     expect(slice).not.toMatch(/formatProbability\(\s*(odds\.)?home/);
     // And no second rounding beside a rule that already decided the integer.
-    expect(slice).not.toContain(".rounded()");
+    // Read from the string-KEEPING text: see the note on the share-message
+    // assertion below — Swift rounds inside string interpolations, and the
+    // identifier-ban text cannot see in there.
+    expect(drawnText(SEARCH_VIEW, "private func searchEventRow(")).not.toContain(".rounded()");
   });
 
   it("still keys its title and its score off the same side", () => {
@@ -104,10 +107,21 @@ describe("the sentence that leaves the app", () => {
     expect(slice).toContain("homePercent: duel[1]");
   });
 
+  /**
+   * 🔴 READ FROM THE STRING-KEEPING TEXT, AND THIS IS NOT A DETAIL. The sentence
+   * this replaced did its rounding INSIDE a string interpolation:
+   *
+   *     "\(away) vs \(home) — \(Int((prob * 100).rounded()))% on Bain Luck"
+   *
+   * `swiftCode` deletes string bodies, so an assertion written against it cannot
+   * see `Int(` or `.rounded()` there at all. The first draft of this guard was
+   * written that way and the mutant that restores the old sentence killed only
+   * one of its three assertions — this one passed on the defect it names.
+   */
   it("quotes no number it rounded itself", () => {
-    const slice = fn();
-    expect(slice).not.toContain(".rounded()");
-    expect(slice).not.toMatch(/Int\(/);
+    const drawn = drawnText(DISCOVER_CARD, "private var shareMessage:");
+    expect(drawn).not.toContain(".rounded()");
+    expect(drawn).not.toMatch(/Int\(/);
   });
 
   it("names a side in front of every percent it prints", () => {
