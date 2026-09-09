@@ -254,7 +254,12 @@ def test_the_settled_backfill_uses_the_shared_namer():
     through #4223's fix.
     """
     body = _function_source("_create_settled_market")
-    assert "_kalshi_outcome_name(" in body
+    # #4316 moved the shared namer up a level: the backfill now calls
+    # `kalshi_outcome_names`, which calls `_kalshi_outcome_name` for every leg
+    # and then guarantees the legs differ. Either is "the shared namer" for
+    # this guard's purpose — what it forbids is a re-inlined ladder, and the
+    # `_is_generic_outcome_name` assertion below is what actually enforces that.
+    assert "kalshi_outcome_names(" in body or "_kalshi_outcome_name(" in body
     # Pinned on the LADDER's own signature, not on `yes_sub_title`: this
     # function also forwards `yes_sub_title` to the game-market namer, which is
     # a different and legitimate read. `_is_generic_outcome_name` is the rung

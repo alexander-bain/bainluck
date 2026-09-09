@@ -328,14 +328,29 @@ class TestTheVenuesLegIsRecorded:
         A name that merely looks right could have been computed at the call site,
         which is how the hoist could be silently unwired. Patch the helper to
         return a string no fixture carries and require it back out of the server.
+
+        The sentinel is per-TICKER since #4316. It used to be one constant for
+        every leg, which now means the two legs of this event collide — and
+        `kalshi_outcome_names` exists precisely to refuse a name that cannot tell
+        two rows apart, so it re-derived them from the venue's own sub-titles and
+        this assertion read the wiring as broken when it was not. Keeping the
+        sentinel distinct per leg preserves exactly what the test was written to
+        prove (the branch returns whatever the helper returned) and additionally
+        pins that the collision pass leaves a distinct name alone.
         """
         ev = _all_unpriced_event()
-        await _run_poll(pg_session, [ev], name_patch=lambda *a, **k: NAME_SENTINEL)
+        await _run_poll(
+            pg_session,
+            [ev],
+            name_patch=lambda event_title, market, count: (
+                f"{NAME_SENTINEL} {market.ticker}"
+            ),
+        )
 
         got = await _outcomes(pg_session, ev.event_ticker)
         assert got, "no rows written, so the sentinel proves nothing"
         for ticker, row in got.items():
-            assert row["name"] == NAME_SENTINEL, (
+            assert row["name"] == f"{NAME_SENTINEL} {ticker}", (
                 f"{ticker} stored name={row['name']!r}, not the helper's return "
                 "value — the unpriced branch is not wired to `_kalshi_outcome_name`"
             )
@@ -416,4 +431,67 @@ class TestTheWriteOnlyEverAdds:
         row = (await _outcomes(pg_session, t))[f"{t}-BUF"]
         assert row["prob"] is not None and 0.61 < float(row["prob"]) < 0.63, (
             f"the placeholder did not accept the price that arrived later: {row}"
+        )
+
+
+def _numbered_field_market(event_ticker, n, event_title):
+    """One leg of a Kalshi "how many" field event, exactly as the venue serves it.
+
+    Read from `api.elections.kalshi.com/trade-api/v2/markets?series_ticker=
+    KXTRUMPAGCOUNT` on 2026-09-09 (notice 26): the leg's `title` EQUALS the
+    event title and `yes_sub_title` is a bare count. Both halves matter — the
+    equal title is what skips the ladder's step 4, and the bare count is what
+    `_is_generic_outcome_name` rejects on the way past.
+    """
+    return KalshiMarket(
+        ticker=f"{event_ticker}-{n}",
+        event_ticker=event_ticker,
+        title=event_title,
+        yes_sub_title=str(n),
+        status="active",
+        close_time=CLOSE,
+        occurrence_datetime=KICKOFF,
+        yes_bid=0.20,
+        yes_ask=0.22,
+        last_price=0.21,
+        volume=1500,
+    )
+
+
+class TestTheLegsOfOneEventGetDistinctNames:
+    """#4316, proved through the REAL poll rather than the pure function.
+
+    `kalshi_outcome_names` is unit-tested in
+    `tests/test_kalshi_outcome_names_must_distinguish_siblings_4316.py`, but a
+    pure function proves nothing about its call site's reach. This runs the
+    actual `_poll_kalshi_markets` against real Postgres and reads the stored
+    rows back, which is the claim that matters: production wrote five outcomes
+    all reading "Kxtrumpagcount" on an open tier-2 market.
+    """
+
+    async def test_a_numbered_field_event_does_not_store_one_name_five_times(
+        self, pg_session
+    ):
+        title = "How many Attorneys General will Trump have?"
+        t = "KXTRUMPAGCOUNT-29"
+        ev = _event(
+            t, [_numbered_field_market(t, n, title) for n in (2, 3, 4, 5)], title
+        )
+
+        await _run_poll(pg_session, [ev])
+
+        got = await _outcomes(pg_session, t)
+        assert len(got) == 4, f"expected a row per leg, got {got}"
+        names = [row["name"] for row in got.values()]
+        assert len(set(names)) == 4, (
+            f"the legs of one event share a name: {names}. This is the #4316 "
+            "collapse — five rows, five prices, one string — and it is the "
+            "reader-visible failure, not an internal tidiness point."
+        )
+        assert sorted(names) == ["2", "3", "4", "5"], (
+            f"expected the venue's own answers, got {sorted(names)}"
+        )
+        assert not any("Kxtrumpagcount" in n for n in names), (
+            "a leg is still carrying the parsed SERIES ticker, which every leg "
+            "shares — `_parse_kalshi_ticker_name` walks past numeric segments"
         )
