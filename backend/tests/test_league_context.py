@@ -194,7 +194,11 @@ class TestLeagueContextService:
 
         assert ctx is not None
         assert ctx.league_slug == "nba"
-        assert ctx.league_name == "NBA Playoffs 2025-26"
+        # Read from the config rather than pinned to a literal (#4441): the
+        # claim is "the context carries the league's configured display name",
+        # and a hard-coded season makes this test fail when the season rolls
+        # over while staying silent when the config itself goes stale.
+        assert ctx.league_name == LEAGUE_CONFIGS["nba"].name
         assert ctx.sport_group == "basketball"
         assert {"key": "championship", "label": "Champion"} in ctx.columns
         assert list(ctx.teams) == ["boston celtics"]
@@ -234,7 +238,11 @@ class TestLeagueContextService:
 
         assert ctx is not None
         assert ctx.league_slug == "nba"
-        assert ctx.league_name == "NBA Playoffs 2025-26"
+        # Read from the config rather than pinned to a literal (#4441): the
+        # claim is "the context carries the league's configured display name",
+        # and a hard-coded season makes this test fail when the season rolls
+        # over while staying silent when the config itself goes stale.
+        assert ctx.league_name == LEAGUE_CONFIGS["nba"].name
         assert ctx.sport_group == "basketball"
         assert ctx.teams == {}
 
@@ -317,7 +325,11 @@ class TestLeagueContextService:
 
         assert result == {
             "league_slug": "nba",
-            "league_name": "NBA Playoffs 2025-26",
+            # Config, not the fake context above (#4441). The fixture at
+            # `fake_league_context` deliberately supplies a DIFFERENT name and
+            # this value still wins, which is the behaviour being pinned:
+            # enrichment takes the display name from `LEAGUE_CONFIGS`.
+            "league_name": LEAGUE_CONFIGS["nba"].name,
             "columns": [{"key": "championship", "label": "Champion"}],
             "league_page_url": "/basketball/nba",
             "home_team": {

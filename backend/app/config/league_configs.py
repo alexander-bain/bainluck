@@ -39,7 +39,7 @@ class LeagueConfig:
     """Full configuration for a league's playoff grid page."""
 
     slug: str  # URL slug: "nba", "nhl", "ncaa-basketball", "golf"
-    name: str  # Display name: "NBA Playoffs 2025-26"
+    name: str  # Display name, e.g. "NBA Playoffs <season>" — SERVED to readers
     sport_category: str  # llm_sport_category value: "basketball", "hockey", etc.
     sport_keys: list[str]  # Odds API sport key prefixes for market discovery
     stage_key: str  # Key into SPORT_STAGES in tournament_stages.py
@@ -69,7 +69,15 @@ class LeagueConfig:
     region_split: bool = False  # Show teams grouped by region (March Madness)?
     trend_hours: int = 168  # Default trend chart window (7 days)
     max_teams: int = 40  # Cap on teams shown in grid
-    season_pattern: str = "2025-26"  # For filtering to current season markets
+    # NOT only a filter (#4441). This string is also SERVED to readers as
+    # `season` on `GET /api/playoffs/{slug}`, and it sets the `max_year` bound
+    # in `_extract_season_max_year`, so a stale value captions a hub with a
+    # season that has ended AND drops that season's own futures markets. Seven
+    # leagues sat on this default a full season past its end because nothing
+    # ever failed when it went stale; `tests/test_league_hub_season_is_not_
+    # last_season_4441.py` now fails when the two-calendar-year leagues stop
+    # agreeing with each other, which is the tell that one was forgotten.
+    season_pattern: str = "2026-27"  # For filtering to current season markets
 
 
 # ---------------------------------------------------------------------------
@@ -78,7 +86,7 @@ class LeagueConfig:
 
 NBA_CONFIG = LeagueConfig(
     slug="nba",
-    name="NBA Playoffs 2025-26",
+    name="NBA Playoffs 2026-27",
     sport_category="basketball",
     sport_keys=["basketball_nba"],
     stage_key="basketball",
@@ -151,7 +159,7 @@ NBA_CONFIG = LeagueConfig(
 
 NHL_CONFIG = LeagueConfig(
     slug="nhl",
-    name="NHL Playoffs 2025-26",
+    name="NHL Playoffs 2026-27",
     sport_category="hockey",
     sport_keys=["icehockey_nhl"],
     stage_key="hockey",
@@ -374,7 +382,7 @@ WNCAA_BASKETBALL_CONFIG = LeagueConfig(
 
 NFL_CONFIG = LeagueConfig(
     slug="nfl",
-    name="NFL Playoffs 2025-26",
+    name="NFL Playoffs 2026-27",
     sport_category="football",
     sport_keys=["americanfootball_nfl"],
     external_id_prefixes=["KXNFL"],
@@ -688,7 +696,7 @@ NCAA_FOOTBALL_CONFIG = LeagueConfig(
 
 EPL_CONFIG = LeagueConfig(
     slug="epl",
-    name="Premier League 2025-26",
+    name="Premier League 2026-27",
     sport_category="soccer",
     sport_keys=["soccer_epl"],
     stage_key="soccer",
@@ -756,7 +764,7 @@ EPL_CONFIG = LeagueConfig(
 
 LA_LIGA_CONFIG = LeagueConfig(
     slug="la-liga",
-    name="La Liga 2025-26",
+    name="La Liga 2026-27",
     sport_category="soccer",
     sport_keys=["soccer_spain_la_liga"],
     stage_key="soccer",
@@ -804,7 +812,7 @@ LA_LIGA_CONFIG = LeagueConfig(
 
 CHAMPIONS_LEAGUE_CONFIG = LeagueConfig(
     slug="champions-league",
-    name="Champions League 2025-26",
+    name="Champions League 2026-27",
     sport_category="soccer",
     sport_keys=["soccer_uefa_champs_league"],
     stage_key="soccer",
@@ -862,7 +870,7 @@ CHAMPIONS_LEAGUE_CONFIG = LeagueConfig(
 
 BUNDESLIGA_CONFIG = LeagueConfig(
     slug="bundesliga",
-    name="Bundesliga 2025-26",
+    name="Bundesliga 2026-27",
     sport_category="soccer",
     sport_keys=["soccer_germany_bundesliga"],
     stage_key="soccer",
