@@ -81,6 +81,34 @@ struct NativeFuturesDiscoverCard: View {
         return caption.isEmpty ? nil : caption
     }
 
+    /// The capsule under the card: the names of the sources behind the number,
+    /// or nil to draw nothing.
+    ///
+    /// 🔴 #4351 — BOTH BRANCHES USED TO `.uppercased()` THE RAW KEY, so the first
+    /// card on the app's default screen read `ODDS_API`: a database value, with an
+    /// underscore in it, printed as the name of where a probability came from.
+    /// `SourceLabels` has named that key "Sportsbooks" since #4135; nothing on
+    /// Discover was asking it, because #4135's site list was discovered by grepping
+    /// for the `switch source` these two files never had.
+    ///
+    /// ✅ SO THE NIL IS A DECISION, not an accident: a key the app cannot name is a
+    /// key the app does not print (`SourceLabels`' own contract). The sibling rows
+    /// in `DiscoverView` used to spell that case `?? "market"` and invent a source
+    /// called `MARKET`; drawing nothing is the honest rendering, and standing
+    /// notice 34 says the same — leave the space empty rather than explain it.
+    ///
+    /// The capitals go with the keys. `SourceLabels` returns "Sportsbooks", and
+    /// uppercasing a name back to `SPORTSBOOKS` would re-create the defect in a
+    /// nicer font; D91 asks for a small mark that reads as sourcing, by name.
+    private var sourceMark: String? {
+        let keys: [String] = {
+            if let sources = data.sources, sources.count > 1 { return sources }
+            return [data.source].compactMap { $0 }
+        }()
+        let named = keys.compactMap { SourceLabels.label(for: $0) }
+        return named.isEmpty ? nil : named.joined(separator: " + ")
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             ZStack(alignment: .bottomLeading) {
@@ -179,15 +207,8 @@ struct NativeFuturesDiscoverCard: View {
                 }
 
                 HStack(spacing: 8) {
-                    if let sources = data.sources, sources.count > 1 {
-                        Text(sources.map { $0.uppercased() }.joined(separator: " + "))
-                            .font(.caption2.weight(.heavy))
-                            .foregroundStyle(.blue)
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 3)
-                            .background(Color.blue.opacity(0.10), in: Capsule())
-                    } else if let src = data.source {
-                        Text(src.uppercased())
+                    if let mark = sourceMark {
+                        Text(mark)
                             .font(.caption2.weight(.heavy))
                             .foregroundStyle(.blue)
                             .padding(.horizontal, 7)

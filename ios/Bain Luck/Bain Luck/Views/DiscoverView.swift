@@ -1775,9 +1775,15 @@ private struct NativeIPOComparisonRow: View {
                         .font(.caption.weight(.heavy))
                         .lineLimit(1)
                         .minimumScaleFactor(0.78)
-                    Text((data.source ?? "market").uppercased())
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(.secondary)
+                    // #4351: named, or not drawn. This used to be
+                    // `(data.source ?? "market").uppercased()`, which printed
+                    // `ODDS_API` for a key SourceLabels calls "Sportsbooks" and
+                    // invented a source named `MARKET` when there was none.
+                    if let mark = SourceLabels.label(for: data.source) {
+                        Text(mark)
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 comparisonSummary(title: "Likely", point: likely, emphasized: true)
                 comparisonSummary(title: "High end", point: highEnd, emphasized: false)
@@ -1819,9 +1825,13 @@ private struct NativeThresholdComparisonRow: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.78)
                 Spacer()
-                Text((data.source ?? "market").uppercased())
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(.secondary)
+                // #4351: same rule as the threshold row above — the mark names
+                // its source or is not drawn.
+                if let mark = SourceLabels.label(for: data.source) {
+                    Text(mark)
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.secondary)
+                }
             }
 
             HStack(spacing: 8) {
