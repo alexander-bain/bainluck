@@ -266,3 +266,52 @@ runs. Live production `events_query` sampled the same day: 35-89 ms median acros
 * The general lesson, which is the one worth carrying: **measure the arm inside the query that
   actually runs.** A recall predicate timed without its scope is a different query, and it can be
   three orders of magnitude off in the direction that invents work.
+
+---
+
+## Step 3 — the live real-route reading (2026-09-09, LAT-P289)
+
+Everything above is `EXPLAIN ANALYZE` against production Postgres. CERT-2324's required repair
+`4140-SEARCH-DROPDOWN-INDEX-LIVE-AND-GREEN` also asks for the thing a reader actually waits on: the
+**route**, over HTTP, after the index. This is that reading, banked as
+`lat-p275-typeahead-route-after.json`.
+
+`GET /api/events/typeahead?q=…&debug_timing=1`, production, 9 terms × 5 rounds, interleaved.
+`debug_timing` bypasses the response cache in **both** directions (`routes/events.py` :3692-3693,
+:4032), so every sample is the **uncached** keystroke — the worst case a reader can hit, not a
+warmed head off the typeahead warmer.
+
+| term | `events_query` med / max | `total_ms` med | | term | `events_query` med / max | `total_ms` med |
+|---|---|---|---|---|---|---|
+| `yank` | **33** / 89 ms | 140 ms | | `chi` | **32** / 79 ms | 518 ms |
+| `yankees` | 34 / 58 ms | 156 ms | | `nfl` | 44 / 67 ms | 132 ms |
+| `celt` | 29 / 134 ms | 117 ms | | `lakers` | 30 / 81 ms | 214 ms |
+| `celtics` | 25 / 214 ms | 90 ms | | `red sox` | **28** / 33 ms | **764 ms** |
+| `dodg` | 26 / 46 ms | 118 ms | | | | |
+
+Two things fall out of it, and the second is the more useful one.
+
+**1. It closes #4140's headline honestly.** `yank` — the term the issue leads with at "127-263 ms,
+234,575 rows removed" — is **33 ms median** in the stage the index could have moved, on the
+uncached path. It was already there before the DDL (the counterfactual table above shows the same
+speed with the FTS half deliberately unindexable), so this is not the index's win; it is the
+correction. The gate's own `yank` collapse (3,575 → 0.1 ms) is real and is a different query.
+
+**2. `events_query` is nowhere near the dominant stage, and now we know which is.** Per-stage on
+the two slowest terms, three rounds each:
+
+| term | total | the stage that owns it | `events_query` |
+|---|---|---|---|
+| `red sox` | 790 / 553 / 491 ms | `headline_contenders` **615 / 413 / 380 ms** | 30 / 38 / 25 ms |
+| `chi` | 338 / 348 / 298 ms | `futures_outcome_arm` **191 / 195 / 160 ms** | 28 / 27 / 27 ms |
+| `yank` | 130 / 117 / 116 ms | `futures_query` 34 / 37 / 33 ms | 33 / 23 / 24 ms |
+
+So the dropdown's slow keystroke is `headline_contenders` and `futures_outcome_arm`, not the events
+arm — on `red sox`, one stage is **78% of a 790 ms request** while the events arm is 4%. That is the
+next lever on this surface, and it is filed on its own account rather than smuggled into #4140,
+whose subject is the events arm and whose subject is now answered.
+
+**Reproduce:** `.lat289-route-sampler.py` (untracked, worktree root) — or the one-liner
+`curl -s "$BAINLUCK_API/api/events/typeahead?q=red%20sox&debug_timing=1" | jq .debug_timing`.
+Remember the cache bypass: without `debug_timing=1` a warmed head answers in single-digit ms and
+tells you nothing about the cold path.
