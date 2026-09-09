@@ -51,6 +51,32 @@ import UIKit
 /// `lineLimit(2)` alone still truncates when a parent proposes one line's
 /// height. Past the clamp, at the largest accessibility sizes, a long label
 /// takes two lines; it does not truncate.
+///
+/// ---
+///
+/// #4208 — AND THE TWO PROBABILITY COLUMNS BESIDE IT WERE A HARDCODED 36pt.
+///
+/// #4107 fixed the label and left the numbers, so at accessibility sizes the two
+/// trailing columns stacked one glyph per line — `4` / `9` / `%`, twice per row,
+/// a column of loose digits where two percentages should be. Same class of
+/// defect, one column over: a point count that was correct at `.large` and
+/// nowhere else.
+///
+/// Measured in the face they are drawn in (`.caption2.monospacedDigit()`, 11pt at
+/// `.large` and 40pt at a11y5):
+///
+///   - `.large`   `>99%` = 31.2 — the 36pt box was GENEROUS, by 4.8pt
+///   - a11y1      = 53.6 — over by half again
+///   - a11y5      = 106.3 — nearly three times the box
+///
+/// Note the first line: sized to ink the numbers get NARROWER at default size,
+/// so on the phone most people use this hands the probability bar back ~10-24pt
+/// per row on top of what #4107 already returned. The bug only LOOKS like it is
+/// about accessibility sizes.
+///
+/// This is why `fixedRowCost` stopped being a constant and `Columns` exists: the
+/// numeric columns are part of the cost the label clamps against, so the two
+/// have to be computed in one place or a later change fixes half of them again.
 enum EventSourceLabelColumn {
 
     // MARK: - The row's fixed costs
@@ -60,19 +86,23 @@ enum EventSourceLabelColumn {
     /// `HStack(spacing: 6)` — three gaps between the row's four children.
     static let interColumnSpacing: Double = 6
     static let interColumnGapCount: Double = 3
-    /// The two trailing probability columns, each `.frame(width: 36)`.
-    static let numericColumnWidth: Double = 36
+    /// The two trailing probability columns.
     static let numericColumnCount: Double = 2
 
     /// Everything in the row that is not the label or the bar.
     ///
-    /// A named sum rather than `122` written down, because the whole defect
+    /// A named sum rather than a number written down, because the whole defect
     /// being fixed here is a layout number that stopped matching the layout it
     /// described. If a padding changes, this follows it.
-    static var fixedRowCost: Double {
+    ///
+    /// #4208 — this is a FUNCTION of the text size now, not a constant. It used
+    /// to be `122` because the numeric columns were a fixed `36`; once those
+    /// track Dynamic Type the row's fixed cost does too, which is why the label
+    /// and the numbers have to be computed together (see `Columns`).
+    static func fixedRowCost(numericWidth: Double) -> Double {
         horizontalPadding * 2
             + interColumnSpacing * interColumnGapCount
-            + numericColumnWidth * numericColumnCount
+            + numericWidth * numericColumnCount
     }
 
     /// The floor under the probability bar.
@@ -115,6 +145,19 @@ enum EventSourceLabelColumn {
         return UIFont.systemFont(ofSize: base.pointSize, weight: uiWeight(weight))
     }
 
+    /// `.font(.caption2.monospacedDigit())` at both call sites — a DIFFERENT text
+    /// style from the label (`caption1`) and a different face, so it cannot reuse
+    /// `labelFont`. `caption2` is 11pt at `.large` and 40pt at a11y5; measuring
+    /// the label's style instead would under-charge the numeric column at every
+    /// size, which is the same class of mistake as the literal it replaces.
+    static func numericFont(at typeSize: DynamicTypeSize) -> UIFont {
+        let traits = UITraitCollection(
+            preferredContentSizeCategory:
+                CalibrationSourceTableGeometry.CellFont.contentSizeCategory(typeSize))
+        let base = UIFont.preferredFont(forTextStyle: .caption2, compatibleWith: traits)
+        return UIFont.monospacedDigitSystemFont(ofSize: base.pointSize, weight: .regular)
+    }
+
     /// Only the two faces these rows actually use are mapped. Anything else
     /// resolves to `.regular` rather than guessing: an unmapped weight that
     /// silently measured as `.medium` would over-reserve invisibly, and this
@@ -140,6 +183,48 @@ enum EventSourceLabelColumn {
         #endif
     }
 
+    /// The ink a rendered probability occupies, in the numbers' own face.
+    static func numericTextWidth(_ string: String, typeSize: DynamicTypeSize = .large) -> Double {
+        #if canImport(UIKit)
+        return Double((string as NSString)
+            .size(withAttributes: [.font: numericFont(at: typeSize)]).width)
+        #else
+        return Double(string.count) * fallbackCharacterWidth
+        #endif
+    }
+
+    // MARK: - The numeric columns
+
+    /// The shape a reader expects in these columns, used as their floor.
+    ///
+    /// A template rather than a point count, so the floor tracks Dynamic Type
+    /// like everything else here — a literal floor would be this file's own bug
+    /// reintroduced one constant over. With monospaced digits `00%` is exactly as
+    /// wide as `49%` or any other two-digit percentage, which is what the column
+    /// draws on all but a handful of rows.
+    ///
+    /// It exists for the degenerate list — a books table where no row carries
+    /// both prices draws no numbers at all, and a column measured purely on ink
+    /// would collapse to zero and quietly hand the label a wider clamp than the
+    /// row really has.
+    static let numericFloorTemplate = "00%"
+
+    /// One width for BOTH probability columns, sized to the widest number this
+    /// render will draw in either of them.
+    ///
+    /// Shared rather than per-column on purpose: the pair is one away–home unit
+    /// that mirrors the hero, and two differently-sized boxes for the same
+    /// quantity read as a mistake. Measured worst case (a11y5, `>99%` in both
+    /// columns) still leaves the bar 49pt on a 375pt phone, so the symmetry costs
+    /// nothing that independent widths would have bought.
+    static func numericColumnWidth(
+        for values: [String], typeSize: DynamicTypeSize = .large
+    ) -> Double {
+        let ink = values.map { numericTextWidth($0, typeSize: typeSize) }.max() ?? 0
+        let floor = numericTextWidth(numericFloorTemplate, typeSize: typeSize)
+        return max(ink, floor).rounded(.up) + inkSlack
+    }
+
     // MARK: - The column
 
     /// The widest the label column may become, given the row it sits in.
@@ -149,21 +234,95 @@ enum EventSourceLabelColumn {
     /// `.infinity` there uses the ink-derived width for that frame rather than
     /// slamming the column to `minimumLabelWidth` and visibly snapping wider a
     /// frame later.
-    static func maximumLabelWidth(availableWidth: Double) -> Double {
+    static func maximumLabelWidth(availableWidth: Double, numericWidth: Double) -> Double {
         guard availableWidth > 0 else { return .infinity }
-        return max(minimumLabelWidth, availableWidth - fixedRowCost - minimumBarWidth)
+        return max(
+            minimumLabelWidth,
+            availableWidth - fixedRowCost(numericWidth: numericWidth) - minimumBarWidth)
     }
 
     /// The label column for THIS render: the widest label it will draw, at the
     /// view's own text size, clamped to what the row can spare.
     static func width(
-        for labels: [String], availableWidth: Double, typeSize: DynamicTypeSize = .large,
-        weight: Font.Weight = .medium
+        for labels: [String], availableWidth: Double, numericWidth: Double,
+        typeSize: DynamicTypeSize = .large, weight: Font.Weight = .medium
     ) -> Double {
         let ink = labels.map { textWidth($0, typeSize: typeSize, weight: weight) }.max() ?? 0
         let wanted = ink.rounded(.up) + inkSlack
         return min(
             max(wanted, minimumLabelWidth),
-            maximumLabelWidth(availableWidth: availableWidth))
+            maximumLabelWidth(availableWidth: availableWidth, numericWidth: numericWidth))
+    }
+
+    // MARK: - Both columns, computed together
+
+    /// #4208 — THE TWO COLUMNS CANNOT BE SIZED SEPARATELY.
+    ///
+    /// The numeric columns are part of `fixedRowCost`, which is what the label
+    /// clamps against, so a numeric width that tracks Dynamic Type changes what
+    /// the label may take at every size. Returning them as one value makes that
+    /// coupling impossible to get half-right at a call site — which is how the
+    /// numbers were left behind when #4107 fixed the label.
+    ///
+    /// **The priority order, stated, because at accessibility sizes on a 375pt
+    /// phone the row genuinely cannot have everything.** The numbers are sized to
+    /// their ink and are never clamped; the label yields; the bar yields last.
+    /// That order is not a preference — it follows from which elements can
+    /// degrade legibly. The label has a designed degradation (`lineLimit(2)` +
+    /// `.fixedSize`, #3966) and the bar simply gets shorter, but a number has
+    /// none: `49%` broken across lines is `4` / `9` / `%`, which is the defect
+    /// this exists to fix, and a truncated `4…` is a WRONG number rather than a
+    /// cramped one.
+    ///
+    /// Measured cost of that order at the extreme (a11y5, 375pt, `>99%` in both
+    /// columns — the widest string `formatProbability` can return): the numbers
+    /// take 108pt each, the label sits on its 60pt floor, and the bar gets 49pt
+    /// rather than its usual 72pt minimum. Degraded, present, and readable as a
+    /// split.
+    ///
+    /// `barWidth` is deliberately NOT clamped to zero: a row that over-subscribes
+    /// should show up as a negative number in a test, not as a silent overflow on
+    /// a phone. That it stays positive at every shipped width and text size is a
+    /// claim, and `testTheBarSurvivesEveryTypeSizeOnTheNarrowestPhone` is where
+    /// that claim is checked.
+    struct Columns: Equatable {
+        /// The label column, already clamped.
+        let label: Double
+        /// Each of the two probability columns.
+        let numeric: Double
+
+        /// Everything in the row that is not the label or the bar.
+        var fixedRowCost: Double {
+            EventSourceLabelColumn.fixedRowCost(numericWidth: numeric)
+        }
+
+        /// What the probability bar is actually left with on a row this wide.
+        ///
+        /// The guards assert against THIS rather than recomputing the clamp's own
+        /// arithmetic: a test that re-derives `available - fixed - label` from the
+        /// same constants the clamp uses moves both sides of its comparison at
+        /// once and cannot fail (native/079's surviving mutant, one file over).
+        func barWidth(availableWidth: Double) -> Double {
+            availableWidth - fixedRowCost - label
+        }
+    }
+
+    /// Both column widths for one render of one list.
+    ///
+    /// - Parameters:
+    ///   - labels: every label this list will draw.
+    ///   - values: every probability string this list will draw, from BOTH
+    ///     columns — they share a width, so a `>99%` in the home column binds the
+    ///     away column too.
+    static func columns(
+        labels: [String], values: [String], availableWidth: Double,
+        typeSize: DynamicTypeSize = .large, weight: Font.Weight = .medium
+    ) -> Columns {
+        let numeric = numericColumnWidth(for: values, typeSize: typeSize)
+        return Columns(
+            label: width(
+                for: labels, availableWidth: availableWidth, numericWidth: numeric,
+                typeSize: typeSize, weight: weight),
+            numeric: numeric)
     }
 }

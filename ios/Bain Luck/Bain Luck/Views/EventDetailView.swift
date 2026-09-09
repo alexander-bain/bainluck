@@ -1105,8 +1105,16 @@ struct EventDetailView: View {
         // is where Alex's truncation actually came from. See
         // `EventSourceLabelColumn` for the measurements and for why
         // `.minimumScaleFactor` is gone rather than raised.
-        let labelWidth = EventSourceLabelColumn.width(
-            for: entries.map(\.label),
+        //
+        // #4208 — and the two probability columns are sized here too, in the same
+        // call, because they are part of the cost the label clamps against. The
+        // strings passed are the ones this list will actually print, from BOTH
+        // columns: they share one width, so a `>99%` on either side binds both.
+        let columns = EventSourceLabelColumn.columns(
+            labels: entries.map(\.label),
+            values: entries.flatMap {
+                [formatProbability(1 - $0.homeProbability), formatProbability($0.homeProbability)]
+            },
             availableWidth: sourceRowWidth,
             typeSize: dynamicTypeSize)
         return VStack(spacing: 0) {
@@ -1116,7 +1124,7 @@ struct EventDetailView: View {
                 HStack(spacing: EventSourceLabelColumn.interColumnSpacing) {
                     Text(entry.label)
                         .font(.caption.weight(.medium))
-                        .frame(width: labelWidth, alignment: .leading)
+                        .frame(width: columns.label, alignment: .leading)
                         // Both are load-bearing (#3966): `lineLimit(2)` alone
                         // still truncates when the parent proposes one line's
                         // height. This only engages past the clamp, at the
@@ -1137,14 +1145,10 @@ struct EventDetailView: View {
                     // stopped describing its layout.
                     Text(formatProbability(awayProbability))
                         .font(.caption2.monospacedDigit())
-                        .frame(
-                            width: EventSourceLabelColumn.numericColumnWidth,
-                            alignment: .trailing)
+                        .frame(width: columns.numeric, alignment: .trailing)
                     Text(formatProbability(homeProbability))
                         .font(.caption2.monospacedDigit())
-                        .frame(
-                            width: EventSourceLabelColumn.numericColumnWidth,
-                            alignment: .trailing)
+                        .frame(width: columns.numeric, alignment: .trailing)
                 }
                 .padding(.horizontal, EventSourceLabelColumn.horizontalPadding)
                 .padding(.vertical, 4)
@@ -1164,6 +1168,23 @@ struct EventDetailView: View {
         }
     }
 
+    /// The away–home pair a bookmaker row draws, or `nil` if it draws none.
+    ///
+    /// Extracted for #4208 so the width model and the row read the SAME rule. The
+    /// column is sized from the strings the list prints, and a row prints numbers
+    /// only when it has both sides — if this predicate and the `if let` below it
+    /// ever disagreed, the column would be measured against a set of strings the
+    /// view does not draw, which is a width bug that no screenshot would show
+    /// (the column would simply be too wide, silently).
+    private static func bookmakerProbabilities(
+        _ bm: BookmakerOdds
+    ) -> (away: Double, home: Double)? {
+        guard let away = bm.awayProbability ?? bm.awayMoneyline.map({ moneylineToProbability($0) }),
+              let home = bm.homeProbability ?? bm.homeMoneyline.map({ moneylineToProbability($0) })
+        else { return nil }
+        return (away, home)
+    }
+
     private func bookmakerContent(_ event: EventDetail) -> some View {
         let colors = teamColors(event)
         let bookmakers = Array((event.bookmakerOdds ?? []).prefix(10))
@@ -1178,43 +1199,48 @@ struct EventDetailView: View {
         // Sized off the same `sourceRowWidth`, because both lists are children of
         // the same disclosure and therefore the same width. Measured `.regular`,
         // which is the face THIS list draws in.
-        let labelWidth = EventSourceLabelColumn.width(
-            for: bookmakers.map { $0.bookmaker ?? "Unknown" },
+        //
+        // #4208 — as in `sourceContent`. Only rows carrying BOTH prices draw
+        // numbers, so the strings measured are the ones that survive that filter;
+        // measuring every bookmaker would charge the column for rows it never
+        // prints. A list where no row has both draws no numbers at all and falls
+        // back to the model's own floor.
+        let columns = EventSourceLabelColumn.columns(
+            labels: bookmakers.map { $0.bookmaker ?? "Unknown" },
+            values: bookmakers.flatMap { bm -> [String] in
+                guard let pair = Self.bookmakerProbabilities(bm) else { return [] }
+                return [formatProbability(pair.away), formatProbability(pair.home)]
+            },
             availableWidth: sourceRowWidth,
             typeSize: dynamicTypeSize,
             weight: .regular)
         return VStack(spacing: 0) {
             ForEach(bookmakers, id: \.bookmaker) { bm in
-                let awayProb = bm.awayProbability ?? bm.awayMoneyline.map { moneylineToProbability($0) }
-                let homeProb = bm.homeProbability ?? bm.homeMoneyline.map { moneylineToProbability($0) }
+                let probabilities = Self.bookmakerProbabilities(bm)
 
                 HStack(spacing: EventSourceLabelColumn.interColumnSpacing) {
                     Text(bm.bookmaker ?? "Unknown")
                         .font(.caption)
-                        .frame(width: labelWidth, alignment: .leading)
+                        .frame(width: columns.label, alignment: .leading)
                         // Both load-bearing together (#3966), as in `sourceContent`.
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
 
-                    if let awayProbability = awayProb, let homeProbability = homeProb {
+                    if let probabilities {
                         ProbabilityBar(
-                            awayProb: awayProbability, homeProb: homeProbability,
+                            awayProb: probabilities.away, homeProb: probabilities.home,
                             awayColor: colors.away,
                             homeColor: colors.home,
                             height: 6
                         )
                         .frame(maxWidth: .infinity)
 
-                        Text(formatProbability(awayProbability))
+                        Text(formatProbability(probabilities.away))
                             .font(.caption2.monospacedDigit())
-                            .frame(
-                                width: EventSourceLabelColumn.numericColumnWidth,
-                                alignment: .trailing)
-                        Text(formatProbability(homeProbability))
+                            .frame(width: columns.numeric, alignment: .trailing)
+                        Text(formatProbability(probabilities.home))
                             .font(.caption2.monospacedDigit())
-                            .frame(
-                                width: EventSourceLabelColumn.numericColumnWidth,
-                                alignment: .trailing)
+                            .frame(width: columns.numeric, alignment: .trailing)
                     }
                 }
                 .padding(.horizontal, EventSourceLabelColumn.horizontalPadding)

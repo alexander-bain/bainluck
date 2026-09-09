@@ -150,7 +150,10 @@ describe.each([
   });
 
   it("asks the width model instead of writing a number down", () => {
-    expect(slice).toContain("EventSourceLabelColumn.width(");
+    // #4208 — one call returns BOTH columns. It used to be `.width(`, which
+    // sized the label alone and is why the numbers beside it were left on a
+    // literal through the whole of #4107.
+    expect(slice).toContain("EventSourceLabelColumn.columns(");
     expect(slice).toContain("typeSize: dynamicTypeSize");
   });
 
@@ -171,8 +174,82 @@ describe.each([
 
   it("reads the row's own constants from the model it clamps against", () => {
     expect(slice).toContain("EventSourceLabelColumn.interColumnSpacing");
-    expect(slice).toContain("EventSourceLabelColumn.numericColumnWidth");
     expect(slice).toContain("EventSourceLabelColumn.horizontalPadding");
+    // #4208 — `numericColumnWidth` used to be a constant read here. It is a
+    // measurement now and arrives with the label, from the one call above.
+    expect(slice).toContain("columns.numeric");
+  });
+});
+
+/**
+ * ═══ #4208 — AND THE TWO COLUMNS OF NUMBERS BESIDE THE LABEL ═══
+ *
+ * Every assertion above passed while both probability columns were pinned at a
+ * hardcoded 36pt, so at accessibility sizes each `49%` wrapped to one glyph per
+ * line: `4` / `9` / `%`, twice per row. Same class as the label, one column over
+ * — and the third time on this row that a literal correct at `.large` was left
+ * behind by a fix aimed at the thing next to it.
+ *
+ * Measured in `.caption2.monospacedDigit()`, the widest string
+ * `formatProbability` can return is `>99%`: 31.2pt at `.large` (so the 36pt box
+ * was GENEROUS) and 106.3pt at a11y5 (nearly three times it).
+ *
+ * The Swift model tests own the arithmetic. What they cannot see — CI compiles
+ * no Swift, and even locally they only exercise `EventSourceLabelColumn` — is
+ * whether the VIEW spends the measurement or goes back to writing a number
+ * down. That is this file's job, and it is the failure mode with the track
+ * record here.
+ */
+describe.each([
+  ["sourceContent", sourceContent],
+  ["bookmakerContent", bookmakerContent],
+])("#4208 %s sizes its probability columns against ink", (name, slice) => {
+  it("draws the numbers at the measured width", () => {
+    const frames = slice.match(/\.frame\(\s*width: columns\.numeric, alignment: \.trailing\)/g);
+    // Two columns, away and home. One match would mean half the row was fixed —
+    // which is the exact shape of the bug this file keeps finding.
+    expect(frames).toHaveLength(2);
+  });
+
+  it("has not gone back to the 36pt literal", () => {
+    expect(slice).not.toContain("width: 36");
+    expect(slice).not.toContain("numericColumnWidth");
+  });
+
+  /**
+   * The column is sized from the strings the list PRINTS, so the model has to be
+   * handed them. A `values:` that is empty, or built from something other than
+   * the row's own formatter, sizes the column against a different table than the
+   * one on screen.
+   */
+  it("hands the model the strings it will actually print", () => {
+    const call = slice.slice(slice.indexOf("EventSourceLabelColumn.columns("));
+    expect(call).toContain("values:");
+    expect(call.slice(0, call.indexOf("availableWidth:"))).toContain("formatProbability(");
+  });
+});
+
+/**
+ * `bookmakerContent` draws numbers only on rows that have BOTH prices. The width
+ * model must apply the same test, or the column is measured against strings the
+ * view never draws — too wide, silently, starving the bar with whitespace.
+ *
+ * One predicate, named once and used twice, is the only way to keep those in
+ * step; a second inline copy is how they drift.
+ */
+describe("#4208 the books column measures the rows it actually draws", () => {
+  it("derives the measured values through the same predicate as the row", () => {
+    expect(bookmakerContent).toContain(
+      "guard let pair = Self.bookmakerProbabilities(bm) else { return [] }",
+    );
+    expect(bookmakerContent).toContain("if let probabilities {");
+    expect(bookmakerContent).toContain("Self.bookmakerProbabilities(bm)");
+  });
+
+  it("never substitutes a made-up price for a row that has none", () => {
+    // A fallback pair would both fabricate a number and widen the column to the
+    // widest string there is.
+    expect(bookmakerContent).not.toMatch(/\?\?\s*\(away:/);
   });
 });
 
