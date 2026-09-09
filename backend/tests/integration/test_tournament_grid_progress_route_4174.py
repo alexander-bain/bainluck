@@ -61,10 +61,16 @@ def _a_registered_player() -> dict:
         for r in reg.reaches
         if r.get("draw") == DRAW and r.get("round") in ("SF", "F")
     }
-    for player in reg.players:
-        if player.get("draw") == DRAW and str(player.get("entity_key")) in with_reaches:
-            return player
-    pytest.fail(f"no {DRAW} player in the committed register carries an SF/F reach cell")
+    candidates = [
+        player
+        for player in reg.players
+        if player.get("draw") == DRAW and str(player.get("entity_key")) in with_reaches
+    ]
+    assert candidates, (
+        f"no {DRAW} player in the committed register carries an SF/F reach cell — "
+        "this fixture would settle nobody and pass anyway"
+    )
+    return candidates[0]
 
 
 def _scoreboard(display_name: str) -> dict:
