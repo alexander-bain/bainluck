@@ -17,6 +17,8 @@
 // "visibly different bars in the band the reader is looking at" is.
 
 import { renderToStaticMarkup } from "react-dom/server";
+import { readFileSync } from "fs";
+import { join } from "path";
 import React from "react";
 
 jest.mock("@/hooks/useAnalytics", () => ({
@@ -137,6 +139,26 @@ describe("#4261 — the progression bar encodes probability at the width the rea
     // spans under 15 points across that band, which is the complaint again.
     const sqrtScaled = band.map((p) => Math.sqrt(p / band[0]) * 100);
     expect(sqrtScaled[0] - sqrtScaled[band.length - 1]).toBeLessThan(15);
+  });
+
+  it("the scroll cue sits on the header row, never over the bars", () => {
+    // Measured on production 2026-09-09: the first cut of this affordance was
+    // `inset-y-0`, a full-height fade over the last 32px of every cell — which
+    // is where the bar ends and therefore the only place the encoding lives.
+    // It washed 87% and 66% back into the same picture. The cue is now the
+    // header row's height, and the guard is here because a white fade over a
+    // white card is exactly the thing an eye skips in a screenshot.
+    const src = readFileSync(
+      join(__dirname, "../../components/TournamentProgressionTable.tsx"),
+      "utf8",
+    );
+    const marker = 'data-testid="progression-scroll-affordance"';
+    expect(src).toContain(marker); // positive control: the slice exists to scan
+    const start = src.lastIndexOf("<div", src.indexOf(marker));
+    const slice = src.slice(start, src.indexOf("/>", start));
+    expect(slice).toContain("top-0");
+    expect(slice).toContain("height: headHeight");
+    expect(slice).not.toContain("inset-y-0");
   });
 
   it("scales to the table it is given, not to a constant", () => {
