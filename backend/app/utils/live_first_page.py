@@ -230,14 +230,75 @@ def hoist_live_events_into_first_page(
         if swaps <= 0:
             return items, meta
 
+        # WHICH slots to vacate and WHICH live row goes into each are two
+        # decisions, and only the first one wants "worst first" (live/123,
+        # #4460). Pairing `displaceable` index-for-index with `live_in_tail` ran
+        # them together: `displaceable` counts DOWN from the last slot and
+        # `live_in_tail` is in served order, so the best available live row was
+        # placed in the last slot of the page and the worst in the earliest —
+        # the hoisted run read in exactly reverse rank order.
+        #
+        # On Discover that is diffuse. On `/sports` it is the whole rail:
+        # `groupFeedIntoSections` partitions the payload and **never re-sorts**,
+        # so "Live Now" renders these rows in the order they are left in here.
+        # Measured on production 2026-09-09 14:15 PT the live run served
+        # 38, 45, 68, 72, 73, 76 — strictly ascending — and the section opened
+        # with a non-league FA Cup tie (`tier:3`) above the US Open and four MLB
+        # games. On the 2026-09-03 corpus the same inversion put Naomi Osaka —
+        # the name #2709 was filed about — fifth of nine, behind a match the
+        # ranker served 119th.
+        #
+        # Vacating the WORST slots is untouched: the selection above still walks
+        # back-first and still skips `MARQUEE_PIN_KEY`, so the same slots are
+        # freed, the same items are displaced, and `compose_lead`'s prefix is
+        # protected by both mechanisms exactly as before.
+        #
+        # REPAIR, CERT-2409 (`4460-MERGE-ALL-FIRST-PAGE-LIVE-ROWS-IN-RANK-ORDER`).
+        # Sorting the vacated slots and filling them in tail order fixed the
+        # HOISTED run's order and nothing else, so a live row ALREADY inside the
+        # window kept whatever slot it had — and if that slot was late, every
+        # row hoisted below it still rendered above it. The bus proved it on this
+        # branch's own committed corpus: ranked live order begins Struff,
+        # Pittsburgh, Keys, Osaka, Auger-Aliassime, and the first patch rendered
+        # Pittsburgh, Keys, Osaka, Auger-Aliassime, **Struff** — the best live
+        # game last again, by a different route. Fixing the pairing was necessary
+        # and not sufficient; the unit that has to come out in rank order is the
+        # whole first-page live set, not the half of it this pass moved.
+        #
+        # So: the slots that will hold a live row after this pass are the ones
+        # already holding one PLUS the ones being vacated, and that union is
+        # refilled with every admitted live row in original global served order.
+        chosen_slots = sorted(displaceable[:swaps])
+        hoisted_tail_idx = live_in_tail[:swaps]
+
+        # A pinned row is not part of the reorder — it keeps its exact slot.
+        # `displaceable` already refuses to VACATE a pin, but a pin that is
+        # itself a live row sits in `live_in_window`, so refilling that slot
+        # would move the pin by the one route the skip above cannot see. C185 is
+        # guarded on both halves or on neither.
+        movable_live_in_window = [
+            i for i in live_in_window if not window[i].get(MARQUEE_PIN_KEY)
+        ]
+        live_slots = sorted(set(movable_live_in_window) | set(chosen_slots))
+        # Original global served index: a window row's is its own index, a tail
+        # row's is the window's length plus its index into the tail. Sorting on
+        # it is what "rank order" means here — the pool arrives ranked.
+        live_rows = sorted(
+            [(i, window[i]) for i in movable_live_in_window]
+            + [(window_size + t, tail[t]) for t in hoisted_tail_idx],
+            key=lambda pair: pair[0],
+        )
+
         new_window = list(window)
         new_tail = list(tail)
-        # Best available live row (the tail is already in served order, so
-        # "first" IS "best") pairs with the worst displaceable window slot.
-        for pair in range(swaps):
-            w_idx = displaceable[pair]
-            t_idx = live_in_tail[pair]
-            new_window[w_idx], new_tail[t_idx] = new_tail[t_idx], new_window[w_idx]
+        # The displaced cards take the tail slots the hoisted rows vacate — the
+        # same pairing, and so the same displaced multiset, as the swap it
+        # replaces.
+        for w_idx, t_idx in zip(chosen_slots, hoisted_tail_idx):
+            new_tail[t_idx] = window[w_idx]
+        # Every live slot on the page, refilled in rank order.
+        for w_idx, (_, row) in zip(live_slots, live_rows):
+            new_window[w_idx] = row
 
         meta["hoisted"] = swaps
         meta["live_in_window_after"] = len(live_in_window) + swaps
