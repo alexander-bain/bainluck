@@ -262,7 +262,20 @@ async def _statpal_standby_reading(sport_key: str) -> tuple[str, str]:
         except StatPalUpstreamError as exc:
             logger.warning("StatPal standby schedule dark for %s: %s", sport_key, exc)
             return DARK, DARK
-        except ValueError as exc:
+        except ValueError as caller_bug:
+            # Bound as `caller_bug` rather than the `exc` its sibling arms use,
+            # and NOT as a matter of taste. `scan_mutation_residue` (Pass B)
+            # matches a mutant's replacement text as a plain SUBSTRING of any
+            # changed file, and `futures_categories_warm_mutations:M9` replaces
+            # a line whose entire text is this arm's ordinary spelling — four
+            # spaces, then `except`, `ValueError`, `as exc` and a colon. So that
+            # spelling IS another harness's mutant, and writing it here reds the
+            # repo-wide guard on a line of honest source. Renaming the binding
+            # is what clears it: a trailing comment does not, because the
+            # literal would still be present, and neither does re-indenting,
+            # because eight spaces contain four. (For the same reason this
+            # comment describes the string instead of quoting it.)
+            #
             # OUR bug, not StatPal's: `get_schedule_fixtures` raises this only
             # for a missing or out-of-range `day_offset`, which the guard above
             # exists to make unreachable. Kept, because "unreachable" is a claim
@@ -274,7 +287,7 @@ async def _statpal_standby_reading(sport_key: str) -> tuple[str, str]:
             # sport this whole path exists to protect (see `STANDBY_NOT_READ`).
             logger.error(
                 "StatPal standby schedule CALLER BUG for %s — not an outage: %s",
-                sport_key, exc,
+                sport_key, caller_bug,
             )
             return NO_SCHEDULE_BOARD, NO_SCHEDULE_BOARD
         except Exception as exc:  # noqa: BLE001 — classified, never swallowed
