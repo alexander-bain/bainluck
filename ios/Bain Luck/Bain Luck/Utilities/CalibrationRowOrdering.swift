@@ -116,26 +116,18 @@ enum CalibrationRowOrdering {
         }
     }
 
-    /// The rows withheld from the ranking, for the sentence that names them.
+    /// The rows withheld from the ranking.
     ///
     /// Derived from the SAME rows the table renders, never from a second
     /// condition that has to be kept in step with them.
+    ///
+    /// #4118 — this used to feed `withheldNote`, which built the grey paragraph
+    /// under the Source Comparison table ("DataGolf has no outcomes in this
+    /// cohort, so it is not ranked above. Tap …"). Standing notice 34 bans that
+    /// shape from a reader's screen, so the paragraph and its builder are gone.
+    /// The predicate stays because it is the ranking's own definition of a row
+    /// it cannot place, and `CalibrationRowOrderingTests` holds it to that.
     static func withheld<Row: CalibrationMetricRow>(_ rows: [Row]) -> [Row] {
         rows.filter { state(outcomes: $0.n) == .noCohortData }
-    }
-
-    /// The sentence the table owes when the cohort empties a source it still shows.
-    ///
-    /// Returns `nil` when nothing was withheld, so the screen renders no
-    /// sentence rather than a sentence about an empty set. The remedy is NAMED
-    /// (the toggle, with its own label passed in) because **an absence a reader
-    /// cannot act on is just a smaller mystery.**
-    static func withheldNote(labels: [String], toggleLabel: String) -> String? {
-        guard !labels.isEmpty else { return nil }
-        let names = labels.joined(separator: ", ")
-        let one = labels.count == 1
-        return "\(names) \(one ? "has" : "have") no outcomes in this cohort, so "
-            + "\(one ? "it is" : "they are") not ranked above. "
-            + "Tap \u{201C}\(toggleLabel)\u{201D} to measure \(one ? "it" : "them")."
     }
 }

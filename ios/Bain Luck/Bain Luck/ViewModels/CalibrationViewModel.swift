@@ -359,16 +359,6 @@ final class CalibrationViewModel: ObservableObject {
         return CalibrationRowOrdering.orderedByECE(rows)
     }
 
-    /// The sentence Source Comparison owes when the cohort empties a source it
-    /// still lists, naming the toggle that measures it. `nil` when every source
-    /// has cohort data — which is the case whenever the toggle is already on.
-    var withheldSourcesNote: String? {
-        CalibrationRowOrdering.withheldNote(
-            labels: CalibrationRowOrdering.withheld(sourceRows).map(\.name),
-            toggleLabel: cohortToggleLabel
-        )
-    }
-
     /// #3650: the same guard as `sourceRows`, and it is load-bearing rather than
     /// decorative. `categories` gates on outcomes counted across ALL buckets,
     /// while the row's own `n` is counted over the ACTIVE COHORT — so a category

@@ -112,3 +112,60 @@ describe("#3650 calibration row ordering has one implementation", () => {
     expect(vm).toContain("CalibrationRowOrdering.orderedByECE(rows)");
   });
 });
+
+/**
+ * #4118 — the Source Comparison table does not explain its own emptiness.
+ *
+ * #3650 shipped a grey paragraph under the table: *"DataGolf has no outcomes in
+ * this cohort, so it is not ranked above. Tap "Include never-moved (+316,972)"
+ * to measure it."* It was built for a good reason — an absence a reader cannot
+ * act on is a smaller mystery — and standing notice 34 (Alex, 2026-09-08)
+ * overrules it for the sighted reader in terms: **"If a number cannot be shown
+ * honestly, leave the space empty; do not explain the emptiness in a paragraph."**
+ *
+ * 🔴 A BAN IS THE RIGHT SHAPE HERE, WHICH IS THE OPPOSITE OF #4406's GUARD, AND
+ * THE DIFFERENCE IS WORTH STATING. There the defect was an OMISSION — a number
+ * absent — and no ban could see it, so the predicate had to be an existence
+ * claim. Here the defect is a PRESENCE: prose on a screen. A ban is exactly the
+ * predicate that fits, and the existence half is carried separately below, since
+ * a ban alone would also pass a version of this file that deleted the fact
+ * instead of relocating it.
+ */
+describe("#4118 the source table shows the absence rather than narrating it", () => {
+  const CALIBRATION_VIEW = join(IOS_ROOT, "Bain Luck/Views/CalibrationView.swift");
+
+  it("builds no sentence about a row the cohort emptied", () => {
+    const canonical = stripComments(readFileSync(CANONICAL, "utf8"));
+    const vm = stripComments(readFileSync(VIEW_MODEL, "utf8"));
+    const view = stripComments(readFileSync(CALIBRATION_VIEW, "utf8"));
+
+    // The builder, its view-model property, and the render site — all three, so
+    // a partial restoration (a dead helper someone later wires up) is caught at
+    // the helper rather than only at the screen.
+    expect(canonical).not.toContain("withheldNote");
+    expect(vm).not.toContain("withheldSourcesNote");
+    expect(view).not.toContain("withheldSourcesNote");
+
+    // And the wording itself, in case it comes back inline rather than through
+    // a helper — which is how deleted prose usually returns.
+    for (const fragment of ["not ranked above", "to measure it", "no outcomes in this cohort, so"]) {
+      expect(view).not.toContain(fragment);
+    }
+  });
+
+  it("keeps the fact in the accessibility label, which is where it now lives", () => {
+    const view = readFileSync(CALIBRATION_VIEW, "utf8");
+    // The deletion above is only honest while this line exists: a screen-reader
+    // user is told the row is unranked and why. Delete this and #3650's contract
+    // is genuinely gone rather than relocated, and this file must go red.
+    expect(view).toContain("no outcomes in this cohort, not ranked");
+  });
+
+  it("still selects the unrankable rows, because the ordering needs to know", () => {
+    // The predicate is not prose and does not go with it. `withheld(_:)` is the
+    // ranking's own definition of a row it cannot place.
+    expect(stripComments(readFileSync(CANONICAL, "utf8"))).toContain(
+      "static func withheld<Row: CalibrationMetricRow>",
+    );
+  });
+});
