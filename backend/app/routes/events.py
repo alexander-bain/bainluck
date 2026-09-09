@@ -365,7 +365,104 @@ _SPORT_SEARCH_ALIASES: dict[str, list[str]] = {
     "hockey": ["icehockey_nhl"],
     "golf": ["golf_pga", "golf_lpga"],
     "tennis": ["tennis_atp", "tennis_wta"],
+    # #4126: single-token TOURNAMENT names. A tournament is a sport row here, so
+    # it resolves through exactly the same league arm a league does.
+    "wimbledon": ["tennis_atp_wimbledon", "tennis_wta_wimbledon"],
 }
+
+#: #4126: MULTI-TOKEN tournament names, longest match first.
+#:
+#: `us open` returned FOUR event_concepts and **ZERO game rows** from production
+#: — tonight's Shelton–Alcaraz match (event 15306813) was unreachable by the name
+#: of the tournament it belongs to. It always would be, because the tournament
+#: name is nowhere on the event row: that row carries the two PLAYERS in
+#: `home_team_name`/`away_team_name`, and `event_tags` holding only audience /
+#: structure / narrative / provenance entries. The identity lives one table over,
+#: in `sports.name` ("ATP US Open", `tennis_atp_us_open`).
+#:
+#: So this is NOT a text-matching problem and must not be built as one. The
+#: existing league arm (`Sport.key.in_(sport_alias_keys)`) already answers it —
+#: measured on production the same evening, a bare league query returns 25 game
+#: rows for each of `ncaaf`, `nba` and `tennis`, through this exact path. The
+#: only thing missing was a resolver that turns the tournament's NAME into sport
+#: keys, and `_SPORT_SEARCH_ALIASES` could not: it is keyed per single token, and
+#: neither `us` nor `open` may claim the US Open on its own.
+#:
+#: 🔴 Keys are copied from `sports.key` on production, never guessed — note
+#: `tennis_atp_aus_open_singles` (not `australian`) and that golf's US Open is a
+#: futures-shaped `_winner` row.
+_SPORT_SEARCH_PHRASE_ALIASES: dict[tuple[str, ...], list[str]] = {
+    ("us", "open"): [
+        "tennis_atp_us_open", "tennis_wta_us_open", "golf_us_open_winner",
+    ],
+    ("french", "open"): ["tennis_atp_french_open", "tennis_wta_french_open"],
+    ("australian", "open"): [
+        "tennis_atp_aus_open_singles", "tennis_wta_aus_open_singles",
+    ],
+    ("aus", "open"): [
+        "tennis_atp_aus_open_singles", "tennis_wta_aus_open_singles",
+    ],
+    ("indian", "wells"): ["tennis_atp_indian_wells", "tennis_wta_indian_wells"],
+    ("miami", "open"): ["tennis_atp_miami_open", "tennis_wta_miami_open"],
+    ("madrid", "open"): ["tennis_atp_madrid_open", "tennis_wta_madrid_open"],
+    ("italian", "open"): ["tennis_atp_italian_open", "tennis_wta_italian_open"],
+    ("canadian", "open"): ["tennis_atp_canadian_open", "tennis_wta_canadian_open"],
+    ("cincinnati", "open"): [
+        "tennis_atp_cincinnati_open", "tennis_wta_cincinnati_open",
+    ],
+    ("monte", "carlo"): ["tennis_atp_monte_carlo_masters"],
+    ("pga", "championship"): ["golf_pga_championship_winner"],
+}
+
+#: Longest phrase we ever need to try, so the scan does not guess a bound.
+_SPORT_SEARCH_MAX_PHRASE_LEN = max(
+    (len(phrase) for phrase in _SPORT_SEARCH_PHRASE_ALIASES), default=0
+)
+
+
+def _resolve_sport_aliases(expanded) -> tuple[list[str] | None, set[str]]:
+    """Resolve league AND tournament names to sport keys (#4126).
+
+    Returns ``(sport_alias_keys | None, consumed_terms)``. Longest phrase wins,
+    scanning left to right; unmatched tokens fall back to the single-token
+    league map, exactly as before.
+
+    🔴 ``consumed_terms`` IS LOAD-BEARING AND IS THE WHOLE REASON THIS RETURNS A
+    PAIR. Both call sites compute their remaining terms as "every term that is
+    not an alias", and they used to spell that `t.lower() not in
+    _SPORT_SEARCH_ALIASES` — a per-token membership test. A phrase alias is
+    invisible to that test, so `us open` would resolve to the two tennis keys
+    AND STILL require the literal terms ``us`` and ``open`` to match a team
+    name, AND-ed into the league arm — which is zero rows, the same answer the
+    bug already gives. Returning what was consumed is what stops this shipping
+    as a no-op that looks implemented.
+    """
+    terms = [term.lower() for term, _ in expanded]
+    keys: list[str] = []
+    consumed: set[str] = set()
+    i = 0
+    while i < len(terms):
+        phrase_len = 0
+        for length in range(
+            min(_SPORT_SEARCH_MAX_PHRASE_LEN, len(terms) - i), 1, -1
+        ):
+            phrase_keys = _SPORT_SEARCH_PHRASE_ALIASES.get(tuple(terms[i:i + length]))
+            if phrase_keys:
+                keys += phrase_keys
+                consumed.update(terms[i:i + length])
+                phrase_len = length
+                break
+        if phrase_len:
+            i += phrase_len
+            continue
+        single = _SPORT_SEARCH_ALIASES.get(terms[i])
+        if single:
+            keys += single
+            consumed.add(terms[i])
+        i += 1
+    # Preserve order while dropping duplicates ("us open" + "tennis" overlap).
+    deduped = list(dict.fromkeys(keys))
+    return (deduped or None), consumed
 
 # Marquee pro leagues — used only to break FTS-rank TIES in the team search
 # surface. A nickname shared by a college and a pro franchise ("patriots",
@@ -1287,6 +1384,13 @@ def _compose_futures_families(
 
 _SEARCH_TS_CONFIG_SQL = literal_column("'english'")
 _SEARCH_EVENT_TEAM_WEIGHT = "A"
+
+#: How much a last-token PREFIX match is worth against a whole-lexeme match on
+#: the Teams surface (#4126). Strictly between 0 and 1: above 0 so a prefix-only
+#: row is ORDERED rather than left to the alphabetical tiebreak, below 1 so an
+#: exact match — which earns on both terms — always outranks a row that merely
+#: starts the same way. `yankees` must still answer with the Yankees.
+_SEARCH_TEAM_PREFIX_RANK_WEIGHT = 0.5
 _SEARCH_FUTURES_MARKET_WEIGHT = "B"
 _SEARCH_FUTURES_OUTCOME_WEIGHT = "C"
 
@@ -1955,6 +2059,70 @@ def _futures_name_match_term(term: str, exp: str | None):
     )
 
 
+def _team_prefix_tsquery(q: str):
+    """#4126: a ``to_tsquery`` whose LAST token is a lexeme PREFIX, for TEAMS only.
+
+    ``yank`` returned nothing at all from production — no team, no game — while
+    the futures bucket answered with ``M15 Hurghada: Mayank Sharma`` and
+    ``Yanki Erel``. The Yankees were unreachable until the eighth character.
+    The cause is `_build_team_search_filter`'s whole-lexeme gate: ``yank`` is not
+    a lexeme of ``yankees`` (which stems to ``yanke``), so every arm votes no.
+
+    🔴 PREFIX MATCHING IS REFUSED IN THIS FILE, AND THAT REFUSAL STANDS.
+    `_event_name_match`'s LAT-P037 docstring rules it out "in full", with numbers,
+    naming this very query: ``to_tsquery('re:*')`` … "even fix `yank` -> Yankees
+    (#1757). It also matches `fed:*` -> `federico`, which is the entire defect
+    LAT-P033/LAT-P034 measured and closed (25 rows of minor-tour tennis presented
+    as the answer to `fed`)."
+
+    **Read the scope before the verdict.** That refusal governs `_event_name_match`
+    — the FUTURES-MARKET-NAME arm — and it is untouched here. This helper is used
+    by the TEAMS arm only, and the two surfaces have opposite risk profiles:
+
+    * `Team` is small and curated (real franchises), not a market feed;
+    * the teams surface **already strips individual-sport rows** — tennis players,
+      MMA fighters, golfers, boxers — at the `_is_individual_sport(row.sport_key)`
+      filter after the query. That is precisely the population `fed` -> `federico`
+      was made of, so this arm is structurally immune to the defect the refusal
+      is about.
+
+    And the refusal is not currently protecting the futures arm from that defect
+    anyway: ``Mayank Sharma`` and ``Yanki Erel`` ARE minor-tour tennis presented
+    as the answer to a four-letter query, produced by the substring ILIKE
+    fallback with no prefix matching involved. What the refusal forbids is a
+    SECOND route to a place the query already arrives at.
+
+    SHAPE. Only the LAST token gets ``:*`` — it is the one still being typed;
+    every earlier token must still match as a whole lexeme, AND-ed. That is what
+    keeps ``super bowl`` off ``Bowling Green Falcons``: English stemming already
+    collapses ``bowling`` -> ``bowl``, so the ``bowl`` half matches either way,
+    and it is the required ``super`` that excludes it. A prefix arm that OR-ed
+    its tokens would reopen every case the FTS gate closed.
+
+    BOUNDARY. The last token must clear `_has_extractable_trigram`, which is this
+    surface's ONE cliff (LAT-P013/LAT-P037 deliberately replaced `len(term)` with
+    the alnum-run rule so a second copy could not drift). Below it there is no
+    word to be right about and a prefix would match most of the table.
+
+    Returns ``None`` when there is nothing safe to build; callers must treat that
+    as "no prefix arm", never as a match-nothing predicate.
+    """
+    tokens = re.findall(r"[^\W_]+", q or "", re.UNICODE)
+    if not tokens or not _has_extractable_trigram(tokens[-1]):
+        return None
+    # Tokens are alnum-only by construction above, so no tsquery operator can be
+    # injected here and `to_tsquery` cannot raise on syntax. A stopword token
+    # yields an empty tsquery, which matches nothing — harmless inside an OR.
+    parts = tokens[:-1] + [f"{tokens[-1]}:*"]
+    return func.to_tsquery(_SEARCH_TS_CONFIG_SQL, " & ".join(parts))
+
+
+def _team_ts_columns():
+    """The three columns the Teams surface matches on, in one place so the
+    recall filter and the prefix rank cannot list them differently."""
+    return (Team.name, Team.abbreviation, cast(Team.alternate_names, String))
+
+
 def _build_team_search_filter(q: str):
     """Gate the dedicated Teams surface on a genuine full-text match — every query
     token must appear as a whole lexeme in the team's name / abbreviation /
@@ -1962,12 +2130,46 @@ def _build_team_search_filter(q: str):
     as top-1 ("super bowl" -> Bowling Green Falcons, "IPO" -> Asteras Tripolis,
     "messi" -> ACR Messina); an FTS match keeps the real hits (red sox, celtics,
     yankees, duke) and drops the garbage. Alternate_names is cast to text so a
-    nickname stored in the JSONB array ("Lakers", "LA Lakers") still matches."""
-    return or_(
-        _fts_filter(Team.name, q),
-        _fts_filter(Team.abbreviation, q),
-        _fts_filter(cast(Team.alternate_names, String), q),
-    )
+    nickname stored in the JSONB array ("Lakers", "LA Lakers") still matches.
+
+    #4126 adds a last-token PREFIX arm beside it — see `_team_prefix_tsquery` for
+    why that is allowed here and refused for futures. Whole-lexeme arms stay
+    first and stay unchanged; the prefix arm only ADDS recall, so no row that
+    reaches a user today stops reaching them."""
+    arms = [_fts_filter(column, q) for column in _team_ts_columns()]
+    prefix_q = _team_prefix_tsquery(q)
+    if prefix_q is not None:
+        arms += [
+            func.to_tsvector(
+                _SEARCH_TS_CONFIG_SQL, func.coalesce(column, "")
+            ).op("@@")(prefix_q)
+            for column in _team_ts_columns()
+        ]
+    return or_(*arms)
+
+
+def _team_search_rank(q: str):
+    """Rank for the Teams surface: whole-lexeme score, plus a DISCOUNTED prefix
+    score (#4126).
+
+    Recall without ranking is a scrambled list. `ts_rank_cd` against
+    `websearch_to_tsquery('yank')` is **0.0 for every row** the prefix arm
+    recalls — ``yank`` matches no whole lexeme — so ordering would collapse to
+    the `Team.name` ASC tiebreak and hand top-1 to whichever ``yank…`` team
+    sorts first alphabetically. The Yankees would be reachable and still not be
+    the answer.
+
+    Summing the two scores keeps exact matches strictly above prefix-only ones
+    (an exact match earns on BOTH terms), while giving prefix-only rows a real
+    ordering among themselves. The discount is what preserves today's ranking:
+    ``yankees`` must still rank New York Yankees first, ahead of any row that
+    merely starts with the same letters."""
+    vector = _team_search_vector()
+    rank = _search_rank(vector, q)
+    prefix_q = _team_prefix_tsquery(q)
+    if prefix_q is None:
+        return rank
+    return rank + (_SEARCH_TEAM_PREFIX_RANK_WEIGHT * _search_rank_tsquery(vector, prefix_q))
 
 
 def _build_league_ticker_match(expanded: list[tuple[str, str | None]]):
@@ -3859,13 +4061,16 @@ async def search_events(
     # Collect sport alias keys from any term (not just full query), and remember
     # WHICH terms were league tokens — LAT-P002/#1494 needs the split to stop a
     # league token from widening the event predicate (see below).
-    sport_alias_keys: list[str] | None = None
-    for term, _ in expanded:
-        keys = _SPORT_SEARCH_ALIASES.get(term.lower())
-        if keys:
-            sport_alias_keys = keys if not sport_alias_keys else sport_alias_keys + keys
+    #
+    # #4126: `_resolve_sport_aliases` also resolves multi-token TOURNAMENT names
+    # ("us open"), and hands back the terms it consumed. `non_league_expanded`
+    # MUST be built from that set rather than from `_SPORT_SEARCH_ALIASES`
+    # membership — a phrase is invisible to a per-token test, and leaving `us`
+    # and `open` in the remaining terms would AND them against team names and
+    # return the same zero rows the bug already returns.
+    sport_alias_keys, _alias_consumed_terms = _resolve_sport_aliases(expanded)
     non_league_expanded = [
-        (t, e) for t, e in expanded if t.lower() not in _SPORT_SEARCH_ALIASES
+        (t, e) for t, e in expanded if t.lower() not in _alias_consumed_terms
     ]
 
     # LAT-P033/#1732: the `fts_q = " ".join(exp if exp else term …)` string that
@@ -5393,7 +5598,11 @@ async def search_events(
     # fallback + the top-level did_you_mean field. Fetch a wider candidate set (25)
     # so the marquee tie-break has the real contenders before the 5-row cap.
     _mark("futures_format_concepts")
-    team_rank = _search_rank(_team_search_vector(), q).label("team_rank")
+    # #4126: `_team_search_rank`, not `_search_rank` — the prefix arm this query
+    # now recalls scores 0.0 against the whole-lexeme tsquery, so ranking it with
+    # the old expression would recall the Yankees for `yank` and then sort them
+    # by name. Identical expression when the query has no usable prefix token.
+    team_rank = _team_search_rank(q).label("team_rank")
     team_search_q = (
         # `alternate_names` is SELECTed for the scorer, not for the payload — the
         # same correction typeahead needed (spec §3). The recall arms had always
@@ -6007,12 +6216,11 @@ async def typeahead_search(
     is_multi_word = len(terms) > 1
     ta_expanded = _apply_search_synonyms(expand_search_terms(terms))  # #993 Slice C
 
-    # Collect sport alias keys from any term
-    sport_alias_keys: list[str] | None = None
-    for term, _ in ta_expanded:
-        keys = _SPORT_SEARCH_ALIASES.get(term.lower())
-        if keys:
-            sport_alias_keys = keys if not sport_alias_keys else sport_alias_keys + keys
+    # Collect sport alias keys from any term. #4126: the SAME resolver /search
+    # uses, so tournament names reach the dropdown too. This file's own comments
+    # record that /search and /typeahead drifted for three cycles by keeping two
+    # copies of one rule; there is one copy now.
+    sport_alias_keys, _ = _resolve_sport_aliases(ta_expanded)
 
     # FTS query with expansions
     ta_fts_q = " ".join(exp if exp else term for term, exp in ta_expanded)
